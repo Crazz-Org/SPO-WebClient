@@ -74,7 +74,7 @@
     "7zip-min": "^3.0.1",
     "cheerio": "^1.1.2",
     "gifuct-js": "^2.1.2",
-    "lucide-react": "^1.33.0",
+    "lucide-react": "^1.35.0",
     "node-fetch": "^2.7.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.8",
