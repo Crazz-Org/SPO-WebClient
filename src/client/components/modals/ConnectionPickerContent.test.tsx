@@ -6,8 +6,8 @@ import { useBuildingStore } from '../../store/building-store';
 import { ConnectionPickerContent } from './ConnectionPickerModal';
 import { ClientBridge } from '../../bridge/client-bridge';
 
-function openPicker() {
-  useBuildingStore.getState().setConnectionPicker({ fluidName: 'Cotton', fluidId: 'Cotton', direction: 'input', buildingX: 100, buildingY: 100 });
+function openPicker(direction: 'input' | 'output' = 'input') {
+  useBuildingStore.getState().setConnectionPicker({ fluidName: 'Cotton', fluidId: 'Cotton', direction, buildingX: 100, buildingY: 100 });
 }
 
 describe('ConnectionPickerContent (T3)', () => {
@@ -25,8 +25,47 @@ describe('ConnectionPickerContent (T3)', () => {
     fireEvent.change(company, { target: { value: 'Crazz' } });
     fireEvent.keyDown(company, { key: 'Enter' });
     expect(onConnectionSearch).toHaveBeenCalledTimes(1);
-    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ company: 'Crazz' });
+    // Every box ticked on a supplier search is 54, the value of the captured trace.
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ company: 'Crazz', roles: 54 });
     expect(useUiStore.getState().connectionFilters.company).toBe('Crazz');
+  });
+
+  it('a customer search offers Import Warehouses, and unticking it drops bit 64', () => {
+    openPicker('output');
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
+    // Voyager's customer form has no Trade Centers box — 78 excludes rolImporter (16).
+    expect(screen.queryByRole('checkbox', { name: 'Trade Centers' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 78 });
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Import Warehouses' }));
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    expect(onConnectionSearch.mock.calls[1][4]).toMatchObject({ roles: 14 });
+
+    // And Stores on its own is rolBuyer (8), not rolDistributer (4).
+    for (const name of ['Factories', 'Warehouses']) {
+      fireEvent.click(screen.getByRole('checkbox', { name }));
+    }
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    expect(onConnectionSearch.mock.calls[2][4]).toMatchObject({ roles: 8 });
+
+    // Nothing left ticked is a genuine 0 — no fallback rescues it into "all roles".
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Stores' }));
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    expect(onConnectionSearch.mock.calls[3][4]).toMatchObject({ roles: 0 });
+  });
+
+  it('a supplier search offers Export Warehouses, and Factories alone sends rolProducer (2)', () => {
+    openPicker('input');
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
+    for (const name of ['Warehouses', 'Trade Centers', 'Export Warehouses']) {
+      fireEvent.click(screen.getByRole('checkbox', { name }));
+    }
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    // Not 1: bit 1 is rolNeutral, and no box names it.
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 2 });
   });
 
   it('a new picker starts from the remembered filters', () => {

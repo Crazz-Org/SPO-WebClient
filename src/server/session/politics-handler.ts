@@ -20,6 +20,7 @@ import type {
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
+import { ALL_CONNECTION_ROLES, rolesToMask } from '../../shared/connection-roles';
 import { writeRdoFrame } from '../rdo-helpers';
 import { splitMultilinePayload as splitMultilinePayloadHelper, isTrueOrdinal } from '../rdo-helpers';
 import { toErrorMessage } from '../../shared/error-utils';
@@ -1179,7 +1180,10 @@ export async function searchConnections(
       RdoValue.int(buildingX),                   // X
       RdoValue.int(buildingY),                   // Y
       RdoValue.int(1),                           // SortMode (1=quality)
-      RdoValue.int(filters?.roles || 31),        // Role bitmask (31 = all 5 roles)
+      // TFacilityRoleSet as a byte (CacheCommon.pas:53). `??`, not `||`: no box ticked is a
+      // genuine 0 on the wire, as Voyager's byte([]) is; only an absent filter takes the
+      // all-checked default — 54 for a supplier search, 78 for a customer one.
+      RdoValue.int(filters?.roles ?? rolesToMask(direction, ALL_CONNECTION_ROLES)), // Role bitmask
     ).packet, undefined, TimeoutCategory.SLOW);
 
     const results = parseRdoConnectionResults(packet.payload || '', direction);

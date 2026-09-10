@@ -1,5 +1,5 @@
 /**
- * Scenario integrity tests for all 11 mock server scenario factory functions
+ * Scenario integrity tests for all 12 mock server scenario factory functions
  * and the scenario registry.
  */
 import { describe, it, expect } from '@jest/globals';
@@ -22,6 +22,7 @@ import {
   ALL_MOCK_BUILDINGS,
 } from './building-details-scenario';
 import { createCivicMutationsScenario } from './civic-mutations-scenario';
+import { createConnectionSearchScenario } from './connection-search-scenario';
 import { HANDLER_TO_GROUP } from '@/shared/building-details/template-groups';
 import type { BuildingTemplate, PropertyGroup } from '@/shared/building-details/property-definitions';
 import { collectTemplatePropertyNamesStructured } from '@/shared/building-details/property-templates';
@@ -597,9 +598,21 @@ describe('civic-mutations scenario', () => {
   });
 });
 
+// =============================================================================
+// Scenario 17: connection-search
+// =============================================================================
+
+describe('connection-search scenario', () => {
+  it('creates the RDO pair — one supplier search, one customer search', () => {
+    const { rdo } = createConnectionSearchScenario();
+    expect(rdo.name).toBe('connection-search');
+    expect(rdo.exchanges).toHaveLength(2);
+  });
+});
+
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 11 entries', () => {
-    expect(SCENARIO_NAMES).toHaveLength(11);
+  it('SCENARIO_NAMES has 12 entries', () => {
+    expect(SCENARIO_NAMES).toHaveLength(12);
   });
 
   it('loadScenario returns bundle for each name', () => {

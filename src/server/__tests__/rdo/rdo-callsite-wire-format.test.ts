@@ -133,15 +133,17 @@ describe('searchConnections — FindSuppliers / FindClients argument bytes', () 
     );
   });
 
-  it('defaults the empty filters to "%" exactly as before', async () => {
+  it('defaults the empty filters to "%", and the role set to the all-checked 78', async () => {
     const h = createHarness();
     prime(h);
 
     await searchConnections(h.session as unknown as SessionContext, 1, 2, 'Food', 'output');
 
     const find = h.frames().map(withoutRid).find((f) => f.includes('FindClients'));
+    // 78 = rolCompInport 64 | rolBuyer 8 | rolDistributer 4 | rolProducer 2 — every box of
+    // Voyager's customer form (InputSearchHandlerViewer.pas:313-327).
     expect(find).toBe(
-      'C sel 40133496 call FindClients "^" "%Food","%planitia","%","%","#20","#1","#2","#1","#31"'
+      'C sel 40133496 call FindClients "^" "%Food","%planitia","%","%","#20","#1","#2","#1","#78"'
     );
   });
 

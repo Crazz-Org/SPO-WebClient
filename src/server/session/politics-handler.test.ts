@@ -1851,14 +1851,31 @@ describe('searchConnections', () => {
     });
   });
 
-  it('FindClients for the output direction, defaulting count 20 and roles 31', async () => {
+  it('FindClients for the output direction, defaulting count 20 and roles 78', async () => {
     const fake = makeSearchCtx();
     fake.respond(() => 'res="%"');
     await searchConnections(fake.ctx, 1, 2, 'Food', 'output');
     expect(fake.sent[0].packet.member).toBe('FindClients');
     expect(fake.sent[0].packet.args?.slice(4)).toEqual([
-      RdoValue.int(20).format(), RdoValue.int(1).format(), RdoValue.int(2).format(), RdoValue.int(1).format(), RdoValue.int(31).format(),
+      RdoValue.int(20).format(), RdoValue.int(1).format(), RdoValue.int(2).format(), RdoValue.int(1).format(), RdoValue.int(78).format(),
     ]);
+  });
+
+  it('FindSuppliers with no filters defaults the role set to the all-checked 54', async () => {
+    // The value of the captured trace (connection-search.test.ts:9): the supplier form's four
+    // boxes are rolCompExport 32 | rolImporter 16 | rolDistributer 4 | rolProducer 2.
+    const fake = makeSearchCtx();
+    fake.respond(() => 'res="%"');
+    await searchConnections(fake.ctx, 459, 389, 'Drugs', 'input');
+    expect(fake.sent[0].packet.member).toBe('FindSuppliers');
+    expect(fake.sent[0].packet.args?.[8]).toBe(RdoValue.int(54).format());
+  });
+
+  it('a role set of 0 travels as 0 — every box unticked is not an absent filter', async () => {
+    const fake = makeSearchCtx();
+    fake.respond(() => 'res="%"');
+    await searchConnections(fake.ctx, 1, 2, 'Food', 'input', { roles: 0 });
+    expect(fake.sent[0].packet.args?.[8]).toBe(RdoValue.int(0).format());
   });
 
   it('parses 7-field supplier rows with price and quality, 5-field client rows without', async () => {

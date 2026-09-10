@@ -27,14 +27,30 @@ FindSuppliers(Output, World, Town, Name, Count, XPos, YPos, SortMode, Roles)
 | SortMode | integer | 0=cost, 1=quality |
 | Roles | integer | Role bitmask filter |
 
-**Role bitmask:**
+**Role bitmask.** A Pascal `set of TFacilityRole` cast to a byte (`Cache/OutputSearch.pas:45`
+takes it as `TFacilityRoleSet`), so **bit n is enum ordinal n** of
+`(rolNeutral, rolProducer, rolDistributer, rolBuyer, rolImporter, rolCompExport, rolCompInport)`
+— `Cache/CacheCommon.pas:53`:
+
 | Value | Constant | Meaning |
 |-------|----------|---------|
-| 1 | rolProducer | Producer |
-| 2 | rolDistributer | Distributor |
-| 4 | rolBuyer | Buyer |
-| 8 | rolCompExport | Company Export |
-| 16 | rolImporter | Importer |
+| 1 | rolNeutral | Neutral — no search form offers it |
+| 2 | rolProducer | Producer (Factories) |
+| 4 | rolDistributer | Distributor (Warehouses) |
+| 8 | rolBuyer | Buyer (Stores) |
+| 16 | rolImporter | Importer (Trade Centers) |
+| 32 | rolCompExport | Company Export (Export Warehouses) |
+| 64 | rolCompInport | Company Import (Import Warehouses) |
+
+**The two all-checked defaults.** Each direction offers its own four boxes, and the client
+sends the sum of the ticked ones — `src/shared/connection-roles.ts`:
+
+- supplier search (`FindSuppliers`) — Export Warehouses, Warehouses, Trade Centers, Factories:
+  32+4+16+2 = **54** (`Voyager/URLHandlers/OutputSearchHandlerViewer.pas:337-351`);
+- customer search (`FindClients`) — Import Warehouses, Warehouses, Stores, Factories:
+  64+4+8+2 = **78** (`Voyager/URLHandlers/InputSearchHandlerViewer.pas:313-327`).
+
+No box ticked is 0, which is what Voyager's `byte([])` sends; there is no "all roles" fallback.
 
 ## Supply operations — what each one means
 

@@ -15,6 +15,7 @@ import { splitMultilinePayload } from '../../rdo-helpers';
 import { RdoProtocol } from '../../rdo';
 import { RdoVerb, RdoAction } from '../../../shared/types/protocol-types';
 import type { RdoPacket } from '../../../shared/types/protocol-types';
+import { rolesToMask, ALL_CONNECTION_ROLES } from '../../../shared/connection-roles';
 
 // ============================================================================
 // Types
@@ -302,16 +303,25 @@ describe('FindSuppliers RDO request construction', () => {
     expect(methodMap['output']).toBe('FindClients');
   });
 
-  it('defaults roles to 31 (all 5 roles)', () => {
-    const roles = undefined;
-    const defaultRoles = roles || 31;
-    expect(defaultRoles).toBe(31);
-    // 31 = rolProducer(1) | rolDistributer(2) | rolBuyer(4) | rolCompExport(8) | rolImporter(16)
-    expect(defaultRoles & 1).toBe(1);   // Producer
-    expect(defaultRoles & 2).toBe(2);   // Distributer
-    expect(defaultRoles & 4).toBe(4);   // Buyer
-    expect(defaultRoles & 8).toBe(8);   // CompExport
-    expect(defaultRoles & 16).toBe(16); // Importer
+  it('defaults roles to the all-checked mask of the direction', () => {
+    // The set is a Pascal `set of TFacilityRole` cast to a byte (CacheCommon.pas:53), so bit n
+    // is enum ordinal n: rolNeutral 1, rolProducer 2, rolDistributer 4, rolBuyer 8,
+    // rolImporter 16, rolCompExport 32, rolCompInport 64.
+    const suppliers = rolesToMask('input', ALL_CONNECTION_ROLES);
+    // 54 — the value of the captured trace at the top of this file.
+    expect(suppliers).toBe(54);
+    expect(suppliers & 32).toBe(32); // CompExport
+    expect(suppliers & 16).toBe(16); // Importer
+    expect(suppliers & 4).toBe(4);   // Distributer
+    expect(suppliers & 2).toBe(2);   // Producer
+    expect(suppliers & 1).toBe(0);   // never rolNeutral
+
+    const clients = rolesToMask('output', ALL_CONNECTION_ROLES);
+    expect(clients).toBe(78);
+    expect(clients & 64).toBe(64); // CompInport
+    expect(clients & 8).toBe(8);   // Buyer
+    expect(clients & 4).toBe(4);   // Distributer
+    expect(clients & 2).toBe(2);   // Producer
   });
 
   it('defaults count to 20', () => {

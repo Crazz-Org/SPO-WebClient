@@ -28,7 +28,12 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`.
+Available scenarios: `auth`, `world-list`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`.
+
+`connection-search` is the supplier / customer search pair — `FindSuppliers` and `FindClients`,
+each with the nine arguments the gateway emits. Its ninth argument is the role set as a byte
+(`Cache/CacheCommon.pas:53`) and it is part of the match, so a frame carrying the wrong bits
+matches nothing: **54** with every box of the supplier form ticked, **78** for the customer form.
 
 `newspaper` is the daily paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
 renders, and one `home.asp` per kept issue. HTTP only — the paper is reachable through the
