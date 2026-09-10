@@ -759,3 +759,140 @@ describe('favorites-folders', () => {
     expect(result.assertions.find(a => !a.ok)?.what).toMatch(/moved link.*path now sits under the folder/);
   });
 });
+
+describe('newspaper-read', () => {
+  const TOWN = {
+    name: 'Helartia',
+    iconUrl: '',
+    mayor: 'SPO_test3',
+    population: 0,
+    unemploymentPercent: 0,
+    qualityOfLife: 0,
+    x: 1,
+    y: 2,
+    path: '',
+    classId: '512',
+  };
+
+  const ISSUES = [
+    { folder: '002147483640@3-1-2027', date: '3/1/2027' },
+    { folder: '002147483641@2-28-2027', date: '2/28/2027' },
+  ];
+
+  const ISSUE = {
+    paperName: 'Helartia Herald',
+    folder: '002147483640@3-1-2027',
+    townName: 'Helartia',
+    title: 'Helartia Herald',
+    date: 'Monday, March 01, 2027',
+    stories: [{ headline: 'Domestic Wars!', byline: '', body: 'One person died.' }],
+    error: '',
+  };
+
+  /**
+   * The flow is three round-trips: the inspector read that names the paper,
+   * the bar, then one issue. The first is a session helper, the other two go
+   * through the driver — so each can be moved while the others hold still.
+   */
+  function arrange(over: {
+    paper?: string;
+    list?: { paperName: string; issues: typeof ISSUES; error: string };
+    issue?: typeof ISSUE;
+  } = {}) {
+    const {
+      paper = 'Helartia Herald',
+      list = { paperName: paper, issues: ISSUES, error: '' },
+      issue = ISSUE,
+    } = over;
+
+    const requests: WsMessage[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+      requests.push(msg);
+      if (msg.type === WsMessageType.REQ_NEWSPAPER_ISSUES) return { list };
+      if (msg.type === WsMessageType.REQ_NEWSPAPER_ISSUE) return { issue };
+      return undefined;
+    }));
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'resolveVisualClass').mockResolvedValue('7010');
+    jest.spyOn(session, 'findTown').mockResolvedValue(TOWN);
+    jest.spyOn(session, 'readBuildingDetails').mockResolvedValue({
+      tabs: [{ id: 'townGeneral' }],
+      groups: paper === ''
+        ? { townGeneral: [{ name: 'Town', value: 'Helartia' }] }
+        : { townGeneral: [{ name: 'NewspaperName', value: paper }] },
+    } as unknown as Awaited<ReturnType<typeof session.readBuildingDetails>>);
+
+    return requests;
+  }
+
+  it('passes when the paper lists issues and the newest one opens', async () => {
+    arrange();
+    expect((await flowByName('newspaper-read').run(ctx)).status).toBe('PASS');
+  });
+
+  it('fails when the town hall names no paper', async () => {
+    arrange({ paper: '' });
+    const result = await flowByName('newspaper-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/names its paper/);
+  });
+
+  // A bar that parses but lists nothing is the world running no news server —
+  // an environment exception. It is recorded, and no issue is opened.
+  it('records an exception, and opens no issue, when the paper keeps none', async () => {
+    const requests = arrange({ list: { paperName: 'Helartia Herald', issues: [], error: '' } });
+    const result = await flowByName('newspaper-read').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.assertions.find(a => /environment exception/.test(a.what))).toMatchObject({
+      ok: true,
+      detail: 'Helartia Herald: 0 issues',
+    });
+    expect(requests.some(m => m.type === WsMessageType.REQ_NEWSPAPER_ISSUE)).toBe(false);
+  });
+
+  it('fails when the bar itself could not be read', async () => {
+    arrange({ list: { paperName: 'Helartia Herald', issues: [], error: 'HTTP 500' } });
+    const result = await flowByName('newspaper-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.detail).toBe('HTTP 500');
+  });
+
+  it('fails when the issue answers with an error', async () => {
+    arrange({ issue: { ...ISSUE, stories: [], error: 'The issue could not be read.' } });
+    const result = await flowByName('newspaper-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/newest issue was read/);
+  });
+
+  it('fails when the issue opens with no story in it', async () => {
+    arrange({ issue: { ...ISSUE, stories: [] } });
+    const result = await flowByName('newspaper-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/opens with stories/);
+  });
+
+  it('fails when the issue answers for another folder', async () => {
+    arrange({ issue: { ...ISSUE, folder: '002147483641@2-28-2027' } });
+    const result = await flowByName('newspaper-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/folder that was asked for/);
+  });
+
+  // `ShowBar.asp:87` selects the first folder when nothing is chosen, and the
+  // gateway hands the list back newest first.
+  it('requests the newest folder, and the paper the town hall named', async () => {
+    const requests = arrange();
+    await flowByName('newspaper-read').run(ctx);
+
+    const bar = requests.find(m => m.type === WsMessageType.REQ_NEWSPAPER_ISSUES);
+    expect(bar).toMatchObject({
+      paperName: 'Helartia Herald',
+      townName: 'Helartia',
+      isCapitol: false,
+      buildingX: 1,
+      buildingY: 2,
+    });
+    const opened = requests.find(m => m.type === WsMessageType.REQ_NEWSPAPER_ISSUE);
+    expect(opened).toMatchObject({ folder: '002147483640@3-1-2027' });
+  });
+});

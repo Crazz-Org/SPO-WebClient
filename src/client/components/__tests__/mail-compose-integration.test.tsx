@@ -19,7 +19,11 @@ import {
 } from '../../__tests__/setup/render-helpers';
 import { useMailStore } from '../../store/mail-store';
 import { MailPanel, MAIL_BODY_MAX_CHARS } from '../mail/MailPanel';
+import { ClientBridge } from '../../bridge/client-bridge';
+import { WsMessageType } from '@/shared/types';
 import type { MailMessageFull } from '@/shared/types';
+
+jest.mock('../common/Toast', () => ({ showToast: jest.fn() }));
 
 jest.mock('../common', () => ({
   ...(jest.requireActual('../common') as object),
@@ -98,7 +102,7 @@ describe('Mail compose — integration flow', () => {
 
     // Verify client callback was invoked with the right args — a fresh letter
     // has nothing to thread, so it carries no header block.
-    expect(sendSpy).toHaveBeenCalledWith('player42', 'Trade Offer', 'I have wheat for sale.', undefined);
+    expect(sendSpy).toHaveBeenCalledWith('player42', 'Trade Offer', 'I have wheat for sale.', undefined, undefined);
 
     // Criterion changed (T6, audit P2): the draft is KEPT until the server answers —
     // a failed send must not lose the letter. The form is locked meanwhile.
@@ -194,7 +198,7 @@ describe('Mail compose — integration flow', () => {
     fireEvent.change(body, { target: { value: 'Fine, thanks.' } });
     fireEvent.click(screen.getByText('Send'));
     expect(sendSpy).toHaveBeenCalledWith(
-      'alice', 'Re: Hello there', 'Fine, thanks.', expect.stringContaining('In-Reply-To=msg-99'),
+      'alice', 'Re: Hello there', 'Fine, thanks.', expect.stringContaining('In-Reply-To=msg-99'), undefined,
     );
   });
 
@@ -266,6 +270,62 @@ describe('Mail compose — integration flow', () => {
     });
   });
 
+  // #511 — one click on a Draft row lands in the composer, not the read view.
+  describe('One click on a Draft row', () => {
+    it('opens the composer with To, Subject and body filled, and composeDraftId set', () => {
+      useMailStore.setState({ currentFolder: 'Draft' });
+      renderWithProviders(<MailPanel />);
+
+      const draft: MailMessageFull = {
+        messageId: 'draft-4', from: 'Me', fromAddr: 'me', to: 'Bob', toAddr: 'bob',
+        subject: 'Half written', date: '2025-01-15', dateFmt: 'Jan 15',
+        body: ['first line', 'second line'], read: true, stamp: 3, noReply: false, attachments: [],
+      };
+      act(() => ClientBridge.handleMailResponse({ type: WsMessageType.RESP_MAIL_MESSAGE, message: draft } as never));
+
+      expect(useMailStore.getState().currentView).toBe('compose');
+      expect(useMailStore.getState().composeDraftId).toBe('draft-4');
+      expect((screen.getByPlaceholderText('To') as HTMLInputElement).value).toBe('bob');
+      expect((screen.getByPlaceholderText('Subject') as HTMLInputElement).value).toBe('Half written');
+      expect((screen.getByPlaceholderText('Message...') as HTMLTextAreaElement).value).toBe('first line\nsecond line');
+    });
+
+    // #510 — sending a letter opened from Drafts must carry the draft's id, so
+    // the server removes that copy once the send succeeds.
+    it('sending an opened draft carries its id as the fifth argument', () => {
+      const sendSpy = jest.fn();
+      renderWithProviders(<MailPanel />, { clientCallbacks: createSpiedCallbacks({ onMailSend: sendSpy }) });
+
+      const draft: MailMessageFull = {
+        messageId: 'draft-4', from: 'Me', fromAddr: 'me', to: 'Bob', toAddr: 'bob',
+        subject: 'Half written', date: '2025-01-15', dateFmt: 'Jan 15',
+        body: ['first line', 'second line'], read: true, stamp: 3, noReply: false, attachments: [],
+      };
+      act(() => useMailStore.getState().startEditDraft(draft));
+
+      fireEvent.click(screen.getByText('Send'));
+
+      expect(sendSpy).toHaveBeenCalledWith('bob', 'Half written', 'first line\nsecond line', undefined, 'draft-4');
+    });
+
+    it('an Inbox row still opens the read view', () => {
+      useMailStore.setState({ currentFolder: 'Inbox' });
+      renderWithProviders(<MailPanel />);
+
+      const msg: MailMessageFull = {
+        messageId: 'msg-1', from: 'Alice', fromAddr: 'alice', to: 'Me', toAddr: 'me',
+        subject: 'Hello', date: '2025-01-15', dateFmt: 'Jan 15',
+        body: ['hi'], read: true, stamp: 3, noReply: false, attachments: [],
+      };
+      act(() => ClientBridge.handleMailResponse({ type: WsMessageType.RESP_MAIL_MESSAGE, message: msg } as never));
+
+      expect(useMailStore.getState().currentView).toBe('read');
+      expect(useMailStore.getState().composeDraftId).toBeNull();
+      expect(screen.getByRole('button', { name: 'Reply' })).toBeTruthy();
+      expect(screen.queryByPlaceholderText('To')).toBeNull();
+    });
+  });
+
   // #120 — REQ_MAIL_SAVE_DRAFT had a gateway handler, a bridge response and a Drafts tab,
   // and no control anywhere that emitted it.
   describe('Save draft', () => {
@@ -309,12 +369,10 @@ describe('Mail compose — integration flow', () => {
       useMailStore.setState({ currentFolder: 'Draft' });
       renderWithProviders(<MailPanel />, { clientCallbacks: createSpiedCallbacks({ onMailSaveDraft: saveSpy }) });
 
-      act(() => useMailStore.getState().setCurrentMessage(draft));
-      // A draft has no sender to answer — the read view offers Edit in place of Reply.
-      expect(screen.queryByRole('button', { name: 'Reply' })).toBeNull();
-      // #509 — a draft is unsent, so there is nothing to pass on either.
+      // One click on the Draft row (#511) lands straight in the composer — a Draft never
+      // reaches the read view, so neither Reply nor Forward is reachable for one (#509).
+      act(() => ClientBridge.handleMailResponse({ type: WsMessageType.RESP_MAIL_MESSAGE, message: draft } as never));
       expect(screen.queryByRole('button', { name: 'Forward' })).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: 'Edit draft' }));
 
       expect((screen.getByPlaceholderText('To') as HTMLInputElement).value).toBe('bob');
       expect((screen.getByPlaceholderText('Message...') as HTMLTextAreaElement).value).toBe('first line\nsecond line');
@@ -335,6 +393,31 @@ describe('Mail compose — integration flow', () => {
       act(() => useMailStore.getState().setCurrentMessage(msg));
       expect(screen.getByRole('button', { name: 'Reply' })).toBeTruthy();
       expect(screen.queryByRole('button', { name: 'Edit draft' })).toBeNull();
+    });
+
+    it('a noReply message offers no Reply control', () => {
+      const msg: MailMessageFull = {
+        messageId: 'msg-2', from: 'System', fromAddr: 'system', to: 'Me', toAddr: 'me',
+        subject: 'Notice', date: '2025-01-15', dateFmt: 'Jan 15',
+        body: ['this is a broadcast'], read: true, stamp: 3, noReply: true, attachments: [],
+      };
+      renderWithProviders(<MailPanel />);
+      act(() => useMailStore.getState().setCurrentMessage(msg));
+      expect(screen.queryByRole('button', { name: 'Reply' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Edit draft' })).toBeNull();
+    });
+
+    it('a message with noReply false still offers Reply alongside Delete', () => {
+      const msg: MailMessageFull = {
+        messageId: 'msg-3', from: 'Alice', fromAddr: 'alice', to: 'Me', toAddr: 'me',
+        subject: 'Hello again', date: '2025-01-15', dateFmt: 'Jan 15',
+        body: ['hi'], read: true, stamp: 3, noReply: false, attachments: [],
+      };
+      renderWithProviders(<MailPanel />);
+      act(() => useMailStore.getState().setCurrentMessage(msg));
+      expect(screen.getByRole('button', { name: 'Reply' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
     });
 
     it('a send in flight locks the draft button too — one letter, one gesture', () => {
@@ -410,12 +493,16 @@ describe('Mail compose — integration flow', () => {
       expect(screen.getByText('To: Bob')).toBeTruthy();
     });
 
-    it('appears in the Draft folder, alongside the Edit draft button', () => {
+    it('a draft opens the composer with the To field filled, not a read view', () => {
       useMailStore.setState({ currentFolder: 'Draft' });
       renderWithProviders(<MailPanel />);
-      act(() => useMailStore.getState().setCurrentMessage({ ...baseMsg, to: 'Bob', toAddr: 'bob' }));
-      expect(screen.getByText('To: Bob')).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Edit draft' })).toBeTruthy();
+      act(() => ClientBridge.handleMailResponse({
+        type: WsMessageType.RESP_MAIL_MESSAGE,
+        message: { ...baseMsg, to: 'Bob', toAddr: 'bob' },
+      } as never));
+      expect((screen.getByPlaceholderText('To') as HTMLInputElement).value).toBe('bob');
+      expect(screen.queryByText('To: Bob')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Edit draft' })).toBeNull();
     });
   });
 

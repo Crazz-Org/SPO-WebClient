@@ -34,6 +34,8 @@ import {
   PolicyData,
   PoliticsData,
   NewspaperBoard,
+  NewspaperIssue,
+  NewspaperIssueList,
   PoliticalRoleInfo,
   ConnectionSearchResult,
   FavoritesItem,
@@ -1067,8 +1069,8 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
     }
   }
   // -- MAIL (facade -> mail-handler) ----------------------------------------
-  public async composeMail(to: string, subject: string, bodyLines: string[], headers?: string): Promise<boolean> {
-    return mailHandler.composeMail(this, to, subject, bodyLines, headers);
+  public async composeMail(to: string, subject: string, bodyLines: string[], headers?: string, existingDraftId?: string): Promise<boolean> {
+    return mailHandler.composeMail(this, to, subject, bodyLines, headers, existingDraftId);
   }
 
   public async saveDraft(to: string, subject: string, bodyLines: string[], headers?: string, existingDraftId?: string): Promise<boolean> {
@@ -1190,6 +1192,14 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
 
   public async postNewspaperColumn(target: NewspaperTarget, subject: string, body: string, replyToPath?: string): Promise<{ success: boolean; message: string; board: NewspaperBoard | null }> {
     return newspaperHandler.postNewspaperColumn(this, target, subject, body, replyToPath);
+  }
+
+  public async getNewspaperIssues(target: NewspaperTarget): Promise<NewspaperIssueList> {
+    return newspaperHandler.getNewspaperIssues(this, target);
+  }
+
+  public async getNewspaperIssue(target: NewspaperTarget, folder: string): Promise<NewspaperIssue> {
+    return newspaperHandler.getNewspaperIssue(this, target, folder);
   }
 
   public async politicsVote(buildingX: number, buildingY: number, candidateName: string): Promise<{ success: boolean; message: string }> {

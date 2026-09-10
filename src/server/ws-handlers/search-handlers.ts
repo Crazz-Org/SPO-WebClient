@@ -12,6 +12,7 @@ import type {
   WsRespSearchMenuRankings,
   WsRespSearchMenuRankingDetail,
   WsRespSearchMenuBanks,
+  WsRespSearchMenuNewspapers,
 } from '../../shared/types';
 import { WsMessageType } from '../../shared/types';
 import * as ErrorCodes from '../../shared/error-codes';
@@ -110,6 +111,20 @@ export async function handleSearchMenuBanks(ctx: WsHandlerContext, msg: WsMessag
     type: WsMessageType.RESP_SEARCH_MENU_BANKS,
     wsRequestId: msg.wsRequestId,
     banks,
+  };
+  sendResponse(ctx.ws, response);
+}
+
+export async function handleSearchMenuNewspapers(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
+  if (!ctx.searchMenuService) {
+    sendError(ctx.ws, msg.wsRequestId, 'Search menu not available. Please log in first.', ErrorCodes.ERROR_AccessDenied);
+    return;
+  }
+  const newspapers = await ctx.searchMenuService.getNewspapers();
+  const response: WsRespSearchMenuNewspapers = {
+    type: WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS,
+    wsRequestId: msg.wsRequestId,
+    newspapers,
   };
   sendResponse(ctx.ws, response);
 }

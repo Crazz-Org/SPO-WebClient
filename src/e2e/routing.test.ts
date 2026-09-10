@@ -244,3 +244,19 @@ describe('launderedTests', () => {
     expect(launderedTests(['src/a.ts'], ['src/a.test.ts'])).toEqual([]);
   });
 });
+
+describe('the town paper', () => {
+  // The paper is not on the RDO wire at all — it is scraped off the ASP pages —
+  // so the governance flows would prove nothing about a change to it.
+  it('routes the newspaper gateway handler to newspaper-read, not to the governance flows', () => {
+    const d = route(['src/server/session/newspaper-handler.ts']);
+    expect(d.required).toEqual([SPINE_FLOW, 'newspaper-read']);
+  });
+
+  it('routes the modal and the store the same way', () => {
+    expect(route(['src/client/components/modals/NewspaperModal.tsx']).required)
+      .toContain('newspaper-read');
+    expect(route(['src/client/store/newspaper-store.ts']).required)
+      .toContain('newspaper-read');
+  });
+});

@@ -68,9 +68,12 @@ import {
   type WsRespSearchMenuRankings,
   type WsRespSearchMenuRankingDetail,
   type WsRespSearchMenuBanks,
+  type WsRespSearchMenuNewspapers,
   type WsRespPoliticsData,
   type WsRespNewspaperBoard,
   type WsRespNewspaperPost,
+  type WsRespNewspaperIssues,
+  type WsRespNewspaperIssue,
   type WsRespTycoonRole,
   type WsRespEmpireFacilities,
 } from '@/shared/types';
@@ -213,7 +216,7 @@ export interface ClientCallbacks {
   // Mail
   onMailGetFolder: (folder: MailFolder) => void;
   onMailReadMessage: (messageId: string) => void;
-  onMailSend: (to: string, subject: string, body: string, headers?: string) => void;
+  onMailSend: (to: string, subject: string, body: string, headers?: string, existingDraftId?: string) => void;
   onMailSaveDraft: (to: string, subject: string, body: string, headers?: string, existingDraftId?: string) => void;
   onMailDelete: (messageId: string) => void;
 
@@ -225,6 +228,7 @@ export interface ClientCallbacks {
   onSearchMenuRankings: () => void;
   onSearchMenuRankingDetail: (rankingPath: string) => void;
   onSearchMenuBanks: () => void;
+  onSearchMenuNewspapers: () => void;
 
   // Profile tabs
   onProfileCurriculum: () => void;
@@ -254,6 +258,8 @@ export interface ClientCallbacks {
   // Newspaper
   onRequestNewspaperBoard: (path?: string) => void;
   onPostNewspaperColumn: (subject: string, body: string, replyToPath?: string) => void;
+  onRequestNewspaperIssues: () => void;
+  onRequestNewspaperIssue: (folder: string) => void;
 
   // Empire
   onRequestFacilities: () => void;
@@ -671,7 +677,9 @@ export const ClientBridge = {
       }
       case WsMessageType.RESP_MAIL_MESSAGE: {
         const resp = msg as WsRespMailMessage;
-        mail.setCurrentMessage(resp.message);
+        // A draft is unsent, so there is nothing to "read" — the row opens it for editing (#511).
+        if (mail.currentFolder === 'Draft') mail.startEditDraft(resp.message);
+        else mail.setCurrentMessage(resp.message);
         break;
       }
       case WsMessageType.RESP_MAIL_SENT: {
@@ -759,6 +767,9 @@ export const ClientBridge = {
         break;
       case WsMessageType.RESP_SEARCH_MENU_BANKS:
         search.setBanksData(msg as WsRespSearchMenuBanks);
+        break;
+      case WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS:
+        search.setNewspapersData(msg as WsRespSearchMenuNewspapers);
         break;
     }
   },
@@ -899,6 +910,14 @@ export const ClientBridge = {
   // ---- Newspaper response handling ----
 
   handleNewspaperResponse(msg: WsMessage): void {
+    if (msg.type === WsMessageType.RESP_NEWSPAPER_ISSUES) {
+      useNewspaperStore.getState().setIssues((msg as WsRespNewspaperIssues).list);
+      return;
+    }
+    if (msg.type === WsMessageType.RESP_NEWSPAPER_ISSUE) {
+      useNewspaperStore.getState().setIssue((msg as WsRespNewspaperIssue).issue);
+      return;
+    }
     if (msg.type === WsMessageType.RESP_NEWSPAPER_BOARD) {
       useNewspaperStore.getState().setBoard((msg as WsRespNewspaperBoard).board);
       return;

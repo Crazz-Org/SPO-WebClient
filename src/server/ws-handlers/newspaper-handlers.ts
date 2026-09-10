@@ -5,12 +5,18 @@ import {
   type WsRespNewspaperBoard,
   type WsReqNewspaperPost,
   type WsRespNewspaperPost,
+  type WsReqNewspaperIssues,
+  type WsRespNewspaperIssues,
+  type WsReqNewspaperIssue,
+  type WsRespNewspaperIssue,
 } from '../../shared/types';
 import type { NewspaperTarget } from '../session/newspaper-handler';
 import type { WsHandlerContext, WsHandler } from './types';
 import { sendResponse } from './ws-utils';
 
-function targetOf(req: WsReqNewspaperBoard | WsReqNewspaperPost): NewspaperTarget {
+function targetOf(
+  req: WsReqNewspaperBoard | WsReqNewspaperPost | WsReqNewspaperIssues | WsReqNewspaperIssue,
+): NewspaperTarget {
   return {
     paperName: req.paperName,
     townName: req.townName,
@@ -44,6 +50,30 @@ export const handleNewspaperPost: WsHandler = async (ctx: WsHandlerContext, msg:
     success: result.success,
     message: result.message,
     board: result.board,
+  };
+  sendResponse(ctx.ws, response);
+};
+
+export const handleNewspaperIssues: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  const req = msg as WsReqNewspaperIssues;
+  console.log(`[Gateway] Reading the issue bar of ${req.paperName}`);
+  const list = await ctx.session.getNewspaperIssues(targetOf(req));
+  const response: WsRespNewspaperIssues = {
+    type: WsMessageType.RESP_NEWSPAPER_ISSUES,
+    wsRequestId: msg.wsRequestId,
+    list,
+  };
+  sendResponse(ctx.ws, response);
+};
+
+export const handleNewspaperIssue: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  const req = msg as WsReqNewspaperIssue;
+  console.log(`[Gateway] Reading issue ${req.folder} of ${req.paperName}`);
+  const issue = await ctx.session.getNewspaperIssue(targetOf(req), req.folder);
+  const response: WsRespNewspaperIssue = {
+    type: WsMessageType.RESP_NEWSPAPER_ISSUE,
+    wsRequestId: msg.wsRequestId,
+    issue,
   };
   sendResponse(ctx.ws, response);
 };

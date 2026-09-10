@@ -5,12 +5,12 @@
  * Folder tabs at top, message list scrollable, compose form.
  */
 
-import { useCallback, useEffect, useRef, memo } from 'react';
+import { useCallback, useEffect, useRef, useState, memo } from 'react';
 import { Send, Trash2, Reply, Forward, PenSquare, Save } from 'lucide-react';
 import { useMailStore } from '../../store/mail-store';
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
-import { TabBar, Skeleton, showToast } from '../common';
+import { TabBar, Skeleton, showToast, EmptyState } from '../common';
 import type { MailFolder, MailMessageHeader } from '@/shared/types';
 import { isHtmlContent } from '@/shared/mail-html-utils';
 import { HtmlMailBody } from './HtmlMailBody';
@@ -22,6 +22,18 @@ const FOLDERS: { id: MailFolder; label: string; badge?: boolean }[] = [
   { id: 'Draft', label: 'Drafts' },
 ];
 
+// What each folder holds, in the WebClient's own voice — carries the sense of
+// Voyager.lng:81-83 (strClickInbox / strClickSent / strInDraft) without the "click the tab"
+// framing, since the player is already on it.
+export const EMPTY_FOLDER_TEXT: Record<MailFolder, { title: string; description: string }> = {
+  Inbox: { title: 'Nothing received yet', description: 'Messages other tycoons send you land here.' },
+  Sent: { title: 'Nothing sent yet', description: 'Every message you send is kept here.' },
+  Draft: {
+    title: 'No drafts',
+    description: 'A draft is a message you saved before finishing it. Save one from Compose and it waits here.',
+  },
+};
+
 // Client-side budget on a letter body — the server has no documented limit, so this is
 // a sane cap chosen to keep a paste from silently becoming an unusable wall of text.
 export const MAIL_BODY_MAX_CHARS = 10240;
@@ -30,28 +42,36 @@ interface MailMessageRowProps {
   msg: MailMessageHeader;
   isSentFolder: boolean;
   onClick: (msg: MailMessageHeader) => void;
+  onDelete: (msg: MailMessageHeader) => void;
 }
 
-const MailMessageRow = memo(function MailMessageRow({ msg, isSentFolder, onClick }: MailMessageRowProps) {
+const MailMessageRow = memo(function MailMessageRow({ msg, isSentFolder, onClick, onDelete }: MailMessageRowProps) {
   const person = isSentFolder
     ? (msg.to || msg.toAddr || '')
     : (msg.from || msg.fromAddr || '');
   return (
-    <button
-      className={`${styles.messageRow} ${!msg.read ? styles.unread : ''}`}
-      onClick={() => onClick(msg)}
-    >
-      <div className={styles.msgAvatar}>
-        {(person || '?')[0].toUpperCase()}
-      </div>
-      <div className={styles.msgContent}>
-        <div className={styles.msgHeader}>
-          <span className={styles.msgSender}>{isSentFolder ? `To: ${person}` : person}</span>
-          <span className={styles.msgDate}>{msg.dateFmt || msg.date}</span>
+    <div className={`${styles.messageRow} ${!msg.read ? styles.unread : ''}`}>
+      <button className={styles.messageOpen} onClick={() => onClick(msg)}>
+        <div className={styles.msgAvatar}>
+          {(person || '?')[0].toUpperCase()}
         </div>
-        <span className={styles.msgSubject}>{msg.subject}</span>
-      </div>
-    </button>
+        <div className={styles.msgContent}>
+          <div className={styles.msgHeader}>
+            <span className={styles.msgSender}>{isSentFolder ? `To: ${person}` : person}</span>
+            <span className={styles.msgDate}>{msg.dateFmt || msg.date}</span>
+          </div>
+          <span className={styles.msgSubject}>{msg.subject}</span>
+        </div>
+      </button>
+      <button
+        className={styles.rowDeleteBtn}
+        onClick={() => onDelete(msg)}
+        aria-label={`Delete “${msg.subject || '(no subject)'}”`}
+        title="Delete"
+      >
+        <Trash2 size={14} aria-hidden="true" />
+      </button>
+    </div>
   );
 });
 
@@ -69,7 +89,6 @@ export function MailPanel() {
   const startReply = useMailStore((s) => s.startReply);
   const startForward = useMailStore((s) => s.startForward);
   const composeFocusTo = useMailStore((s) => s.composeFocusTo);
-  const startEditDraft = useMailStore((s) => s.startEditDraft);
   const clearCompose = useMailStore((s) => s.clearCompose);
 
   const composeTo = useMailStore((s) => s.composeTo);
@@ -85,6 +104,14 @@ export function MailPanel() {
   const isMessageLoading = useMailStore((s) => s.isMessageLoading);
   const setMessageLoading = useMailStore((s) => s.setMessageLoading);
   const requestConfirm = useUiStore((s) => s.requestConfirm);
+
+  // The stamp picture can fail (missing on the world's IIS, or the proxy's 1x1
+  // placeholder for a missing upstream) — hidden per message so one broken stamp
+  // never hides the next message's.
+  const [stampHidden, setStampHidden] = useState(false);
+  useEffect(() => {
+    setStampHidden(false);
+  }, [currentMessage?.messageId]);
 
   const client = useClient();
   const setLoading = useMailStore((s) => s.setLoading);
@@ -111,8 +138,10 @@ export function MailPanel() {
   const handleSend = useCallback(() => {
     if (!canSend) return;
     setSending(true);
-    client.onMailSend(composeTo.trim(), composeSubject, composeBody, composeHeaders || undefined);
-  }, [canSend, setSending, client, composeTo, composeSubject, composeBody, composeHeaders]);
+    // Sending a letter that was opened from Drafts carries its id so the server removes
+    // that copy once the send succeeds.
+    client.onMailSend(composeTo.trim(), composeSubject, composeBody, composeHeaders || undefined, composeDraftId ?? undefined);
+  }, [canSend, setSending, client, composeTo, composeSubject, composeBody, composeHeaders, composeDraftId]);
 
   // Warn once per compose session — a pasted-in wall of text should not toast on every
   // keystroke once it is already clipped to the cap.
@@ -163,19 +192,26 @@ export function MailPanel() {
   }, [canSaveDraft, setSavingDraft, client, composeTo, composeSubject, composeBody, composeHeaders, composeDraftId]);
 
   // Deleting asks first (B5); the row is removed locally when the server confirms.
+  // Shared by the read-view Delete button and each list row's own delete control (#512) —
+  // neither path issues OpenMessage.
+  const requestDelete = useCallback(
+    (msg: Pick<MailMessageHeader, 'messageId' | 'subject'>) => {
+      const id = msg.messageId;
+      requestConfirm(
+        'Delete this message?',
+        `“${msg.subject || '(no subject)'}” will be removed from ${currentFolder}.`,
+        () => {
+          useMailStore.getState().setPendingDeleteId(id);
+          client.onMailDelete(id);
+        },
+        { kind: 'destructive', confirmLabel: 'Delete', typeToConfirm: null },
+      );
+    },
+    [currentFolder, client, requestConfirm],
+  );
   const handleDelete = useCallback(() => {
-    if (!currentMessage) return;
-    const id = currentMessage.messageId;
-    requestConfirm(
-      'Delete this message?',
-      `“${currentMessage.subject || '(no subject)'}” will be removed from ${currentFolder}.`,
-      () => {
-        useMailStore.getState().setPendingDeleteId(id);
-        client.onMailDelete(id);
-      },
-      { kind: 'destructive', confirmLabel: 'Delete', typeToConfirm: null },
-    );
-  }, [currentMessage, currentFolder, client, requestConfirm]);
+    if (currentMessage) requestDelete(currentMessage);
+  }, [currentMessage, requestDelete]);
 
   const folderTabs = FOLDERS.map((f) => ({
     id: f.id,
@@ -213,7 +249,11 @@ export function MailPanel() {
       {!isLoading && currentView === 'list' && (
         <div className={styles.messageList}>
           {messages.length === 0 && (
-            <div className={styles.empty}>No messages</div>
+            <EmptyState
+              title={EMPTY_FOLDER_TEXT[currentFolder].title}
+              description={EMPTY_FOLDER_TEXT[currentFolder].description}
+              className={styles.empty}
+            />
           )}
           {messages.map((msg) => (
             <MailMessageRow
@@ -221,6 +261,7 @@ export function MailPanel() {
               msg={msg}
               isSentFolder={currentFolder === 'Sent' || currentFolder === 'Draft'}
               onClick={handleReadMessage}
+              onDelete={requestDelete}
             />
           ))}
         </div>
@@ -242,36 +283,43 @@ export function MailPanel() {
               ← Back
             </button>
             <div className={styles.readActions}>
-              {/* A draft is unsent, so there is nobody to reply to — it is re-opened for editing. */}
-              {currentFolder === 'Draft' ? (
-                <button className={styles.actionBtn} onClick={() => startEditDraft(currentMessage)} aria-label="Edit draft" title="Edit draft">
-                  <PenSquare size={14} aria-hidden="true" />
+              {/* Reply-only guard, matching MessageHeader.asp:197 — Forward stays outside it, as :217-221 does. */}
+              {currentMessage.noReply ? null : (
+                <button className={styles.actionBtn} onClick={() => startReply(currentMessage)} aria-label="Reply" title="Reply">
+                  <Reply size={14} aria-hidden="true" />
                 </button>
-              ) : (
-                <>
-                  {/* A system letter cannot be answered, but it can still be passed on. */}
-                  {!currentMessage.noReply && (
-                    <button className={styles.actionBtn} onClick={() => startReply(currentMessage)} aria-label="Reply" title="Reply">
-                      <Reply size={14} aria-hidden="true" />
-                    </button>
-                  )}
-                  <button className={styles.actionBtn} onClick={() => startForward(currentMessage)} aria-label="Forward" title="Forward">
-                    <Forward size={14} aria-hidden="true" />
-                  </button>
-                </>
               )}
+              {/* A system letter cannot be answered, but it can still be passed on. A Draft never
+                  reaches this view — client-bridge.ts opens it straight in the composer. */}
+              <button className={styles.actionBtn} onClick={() => startForward(currentMessage)} aria-label="Forward" title="Forward">
+                <Forward size={14} aria-hidden="true" />
+              </button>
               <button className={styles.actionBtn} onClick={handleDelete} aria-label="Delete" title="Delete">
                 <Trash2 size={14} aria-hidden="true" />
               </button>
             </div>
           </div>
           <h3 className={styles.readSubject}>{currentMessage.subject}</h3>
-          <div className={styles.readMeta}>
-            <div className={styles.readMetaRow}>
-              <span>From: {currentMessage.from || currentMessage.fromAddr}</span>
-              <span>{currentMessage.dateFmt || currentMessage.date}</span>
+          <div className={styles.readMetaRowWithStamp}>
+            <div className={styles.readMeta}>
+              <div className={styles.readMetaRow}>
+                <span>From: {currentMessage.from || currentMessage.fromAddr}</span>
+                <span>{currentMessage.dateFmt || currentMessage.date}</span>
+              </div>
+              <span>To: {currentMessage.to || currentMessage.toAddr}</span>
             </div>
-            <span>To: {currentMessage.to || currentMessage.toAddr}</span>
+            {currentMessage.stampUrl && !stampHidden && (
+              <img
+                className={styles.readStamp}
+                src={currentMessage.stampUrl}
+                alt=""
+                aria-hidden="true"
+                onError={() => setStampHidden(true)}
+                onLoad={(e) => {
+                  if (e.currentTarget.naturalWidth <= 1) setStampHidden(true);
+                }}
+              />
+            )}
           </div>
           {isHtmlContent(currentMessage.body) ? (
             <HtmlMailBody body={currentMessage.body} />

@@ -140,6 +140,27 @@ describe('Mail body splitting', () => {
       client.callbacks.onMailSend('recipient@test.com', 'Subject', 'plain');
       expect('headers' in (sendSpy.mock.calls[1][0] as Record<string, unknown>)).toBe(false);
     });
+
+    // #510 — sending a letter opened from Drafts must remove the draft copy.
+    it('carries the draft id when sending an opened draft', () => {
+      const sendSpy = jest.spyOn(client, 'sendMessage' as any);
+      client.callbacks.onMailSend('recipient@test.com', 'Subject', 'plain', undefined, 'draft-456');
+
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          existingDraftId: 'draft-456',
+        })
+      );
+    });
+
+    it('omits existingDraftId for a fresh letter', () => {
+      const sendSpy = jest.spyOn(client, 'sendMessage' as any);
+      client.callbacks.onMailSend('recipient@test.com', 'Subject', 'plain', undefined, '');
+      expect('existingDraftId' in (sendSpy.mock.calls[0][0] as Record<string, unknown>)).toBe(false);
+
+      client.callbacks.onMailSend('recipient@test.com', 'Subject', 'plain');
+      expect('existingDraftId' in (sendSpy.mock.calls[1][0] as Record<string, unknown>)).toBe(false);
+    });
   });
 
   describe('onMailSaveDraft', () => {

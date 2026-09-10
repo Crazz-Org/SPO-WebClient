@@ -1,12 +1,18 @@
 /**
- * newspaper-handler — two scrapes of `Visual/News/boardmsg.asp` and one form POST.
+ * newspaper-handler — the town paper's two halves, scraped.
  *
- * There is no RDO here: the board is a `NewsBoard.NewsObject` COM tree reachable
- * only through the ASP pages, which is why "Rate the Mayor" navigates to
- * `boardreader.asp` (Voyager/TownHallSheet.pas:343) rather than calling anything.
+ * The board: two reads of `Visual/News/boardmsg.asp` and one form POST. The
+ * paper: one read of `ShowBar.asp` for the issue list, one of an issue's own
+ * `home.asp` for its stories.
  *
- * The fixtures below are instantiated from
- * `IIS_ROOT/Five/0/Visual/News/boardmsg.asp`, not from the parsers.
+ * There is no RDO in either: the board is a `NewsBoard.NewsObject` COM tree and
+ * the paper is a folder of generated pages, both reachable only through IIS —
+ * which is why "Rate the Mayor" navigates to `boardreader.asp`
+ * (`Voyager/TownHallSheet.pas:343`) and "Read News" to `newsreader.asp` (`:361`)
+ * rather than calling anything.
+ *
+ * The fixtures below are instantiated from the pages under
+ * `IIS_ROOT/Five/0/Visual/News/`, not from the parsers.
  */
 
 jest.mock('node-fetch', () => ({
@@ -21,6 +27,12 @@ import {
   parseNewspaperArticle,
   getNewspaperBoard,
   postNewspaperColumn,
+  decodeIssueDate,
+  parseNewspaperIssueList,
+  parseNewspaperIssue,
+  getNewspaperIssues,
+  getNewspaperIssue,
+  isBoardRoot,
   type NewspaperTarget,
 } from './newspaper-handler';
 import { makeSessionCtx } from '../__tests__/session/fake-session-context';
@@ -119,8 +131,9 @@ function articlePage(opts: {
   authorDesc?: string;
   body: string;
   replies?: Array<{ author: string; subject: string; summary: string; path: string }>;
+  parentPath?: string;
 }): string {
-  const { subject, author, authorDesc = '', body, replies = [] } = opts;
+  const { subject, author, authorDesc = '', body, replies = [], parentPath = '' } = opts;
   const replyBlock = replies.map((r) => [
     '\t\t\t\t<div style="margin-top: 5px">',                            // :169
     `\t\t\t\t\t<b>${r.author}</b> - <a href="boardmsg.asp?root=${ROOT}&path=${encodeURIComponent(r.path)}&TownName=Helartia&WorldName=Planitia&tycoon=SPO_test3&DAAddr=10.0.0.5&DAPort=1111"> ${r.subject}</a><br>`,
@@ -134,7 +147,7 @@ function articlePage(opts: {
 
   return [
     '\t\t<div style="text-align: right; border-style-bottom: solid; border-style-size: 1;">',
-    '\t\t\t<a href="boardmsg.asp?root=' + ROOT + '&path=&tycoon=SPO_test3">',
+    '\t\t\t<a href="boardmsg.asp?root=' + ROOT + '&path=' + encodeURIComponent(parentPath) + '&tycoon=SPO_test3">',
     '\t\t\t\t<img src="images\\up.gif" width=36 height=30 border=0></a>',
     '\t\t</div>',
     '\t\t<table>',                                                      // :242
@@ -219,7 +232,36 @@ describe('parseNewspaperArticle', () => {
       byline: 'By SPO_test3 of Yellow Inc.',
       body: 'VOTE FOR HIM',
       replies: [],
+      parentPath: '',
+      photoUrl: '/fivedata/userinfo/Planitia/SPO_test3/largephoto.jpg',
     });
+  });
+
+  // `boardmsg.asp:236-237` — the Up link carries the parent column's own path
+  // for a reply, and the board root for a top-level column.
+  it('reads the parent path of the Up link for a reply', () => {
+    const parentPath = 'C:\\news\\boards\\Planitia\\Helartia Herald\\m1.five\\';
+    const article = parseNewspaperArticle(articlePage({
+      subject: 'S', author: 'A', body: 'B', parentPath,
+    }));
+    expect(article?.parentPath).toBe(parentPath);
+  });
+
+  // The root-page half of the criterion: no article at all, so no parent path.
+  it('yields no parent path for the index (root) page', () => {
+    const article = parseNewspaperArticle(indexPage([
+      { author: 'A', subject: 'S', summary: 'x', path: 'm.five' },
+    ]));
+    expect(article?.parentPath).toBeUndefined();
+  });
+
+  // `:263` — the index page's own `<img id=picture>` has no `src`; a column
+  // page that somehow carries none either should not crash the parser.
+  it('yields an empty photo URL when the picture tag has no src', () => {
+    const html = articlePage({ subject: 'S', author: 'A', body: 'B' })
+      .replace(/<img id=picture src="[^"]*"[^>]*>/, '<img id=picture style="display: none">');
+    const article = parseNewspaperArticle(html);
+    expect(article?.photoUrl).toBe('');
   });
 
   // `NewsObj.BodyHTML` (`:255`) is markup other players typed. This client has no
@@ -271,6 +313,31 @@ describe('parseNewspaperArticle', () => {
     expect(article?.subject).toBe('S');
     expect(article?.byline).toBe('');
     expect(article?.body).toContain('B');
+  });
+});
+
+// =============================================================================
+// isBoardRoot
+// =============================================================================
+describe('isBoardRoot', () => {
+  const root = 'boards\\Planitia\\Helartia Herald\\';
+
+  it('treats an empty parent path as the root', () => {
+    expect(isBoardRoot('', root)).toBe(true);
+  });
+
+  it('treats the relative root, with or without a trailing backslash, as the root', () => {
+    expect(isBoardRoot(root, root)).toBe(true);
+    expect(isBoardRoot(root.replace(/\\$/, ''), root)).toBe(true);
+  });
+
+  it('treats the globalized root, case-insensitively, as the root', () => {
+    const globalized = 'C:\\news\\BOARDS\\Planitia\\Helartia Herald\\';
+    expect(isBoardRoot(globalized, root)).toBe(true);
+  });
+
+  it('does not treat a column under the root as the root', () => {
+    expect(isBoardRoot(root + 'm1.five\\', root)).toBe(false);
   });
 });
 
@@ -330,6 +397,36 @@ describe('getNewspaperBoard', () => {
     // `RenderGlobal` is not called on a column page (`:266-272`), so the index
     // is legitimately empty here rather than missing.
     expect(board.columns).toEqual([]);
+  });
+
+  // The parser reads the parent path exactly as printed; the transport is
+  // what decides a top-level column's parent (the board root) means "none".
+  // The portrait must come back through the image proxy — a raw cross-origin
+  // `http://<worldIp>/…` URL is blocked by the gateway's own CSP (`img-src
+  // 'self' data: blob:`), same as the mail stamp (`mail-handlers.ts:54`).
+  it('keeps the parent path of a reply and resolves the photo through the proxy', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse(articlePage({
+      subject: 'Agreed', author: 'Bob', body: 'Well said', parentPath: 'm1.five',
+    })));
+
+    const board = await getNewspaperBoard(fake.ctx, TARGET, 'm1.five\\r1.five');
+
+    expect(board.article?.parentPath).toBe('m1.five');
+    expect(board.article?.photoUrl).toBe(
+      '/proxy-image?url=' + encodeURIComponent('http://158.69.153.134/fivedata/userinfo/Planitia/Bob/largephoto.jpg'),
+    );
+  });
+
+  it('clears the parent path of a top-level column whose Up link points at the board root', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse(articlePage({
+      subject: 'Roads', author: 'Innos', body: 'More of them', parentPath: ROOT,
+    })));
+
+    const board = await getNewspaperBoard(fake.ctx, TARGET, 'm1.five');
+
+    expect(board.article?.parentPath).toBe('');
   });
 
   it('a Capitol board carries Capitol=YES with x/y and an empty TownName', async () => {
@@ -504,5 +601,416 @@ describe('postNewspaperColumn', () => {
     const result = await postNewspaperColumn(fake.ctx, TARGET, 'S', 'B');
     expect(result).toEqual({ success: false, message: 'ECONNRESET', board: null });
     expect(fake.log.warn).toHaveBeenCalledWith('[Newspaper] Post failed: ECONNRESET');
+  });
+});
+
+// =============================================================================
+// THE DAILY PAPER — `ShowBar.asp` and an issue's `home.asp`
+// =============================================================================
+
+const NEWEST = '002147483640@3-1-2027';
+const MIDDLE = '002147483641@2-28-2027';
+const OLDEST = '002147483642@2-27-2027';
+
+/**
+ * `ShowBar.asp:74-162` — the issue row. `selectedIdx` picks which cell gets the
+ * `selectedDate` treatment (`:89-94`); every other cell is a link (`:98-102`).
+ */
+function barPage(folders: string[], selectedIdx = 0): string {
+  const cells = folders.map((folder, i) => i === selectedIdx
+    ? [
+      '\t\t\t\t\t<td class=selectedDate>',
+      `\t\t\t\t\t\t${decodeIssueDate(folder)}`,
+      '\t\t\t\t\t</td>',
+      '\t\t\t\t\t<script language="JScript">',
+      `\t\t\t\t\t\tselected = "${folder}";`,
+      '\t\t\t\t\t</script>',
+    ].join('\n')
+    : [
+      '\t\t\t\t\t<td class=normalDate>',
+      `\t\t\t\t\t\t<a href="showbar.asp?WorldName=Planitia&TownName=Helartia&Selected=${folder}&PaperName=Helartia%20Herald&Tycoon=SPO_test3&DAAddr=10.0.0.5&DAPort=1111">`,
+      `\t\t\t\t\t\t\t${decodeIssueDate(folder)}`,
+      '\t\t\t\t\t\t</a>',
+      '\t\t\t\t\t</td>',
+    ].join('\n'));
+
+  return [
+    '<html>',
+    '\t<head>',
+    '\t\t<script language="JavaScript">',
+    '\t\t\tvar selected = "";',                                 // `:48` — names no folder
+    '\t\t</script>',
+    '\t</head>',
+    '\t<body onLoad="onPageLoad()">',
+    '\t\t<table><tr>',
+    ...cells,
+    '\t\t</tr></table>',
+    '\t\t<td class=button onClick="onBoardBtnClick()">READ COLUMNS</td>',
+    '\t\t<td class=button onClick="onNewsBtnClick()">READ NEWS</td>',
+    '\t</body>',
+    '</html>',
+  ].join('\n');
+}
+
+/** One story block — `domesticwars.story:5-9`, byline as `michelangelo.story:15-17`. */
+function storyBlock(headline: string, byline: string, body: string): string {
+  return [
+    '\t\t\t<h2>',
+    `\t\t\t\t${headline}`,
+    '\t\t\t</h2>',
+    ...(byline === '' ? [] : [
+      '\t\t\t<div class=author>',
+      `\t\t\t\t${byline}`,
+      '\t\t\t</div>',
+    ]),
+    '\t\t\t<div class=articleBody>',
+    `\t\t\t\t${body}`,
+    '\t\t\t</div>',
+  ].join('\n');
+}
+
+/**
+ * An issue's `home.asp`, IIS-processed: `News.pas:750-759` wraps the style's
+ * header (`standard.header:7-19`) and a layout of stories.
+ */
+function issuePage(opts: {
+  town?: string;
+  title?: string;
+  date?: string;
+  stories?: string[];
+  pgi?: boolean;
+} = {}): string {
+  const {
+    town = 'Helartia',
+    title = 'Helartia Herald',
+    date = 'Monday, March 01, 2027',
+    stories = [storyBlock('Domestic Wars!', '', 'One person died last night.')],
+    pgi = false,
+  } = opts;
+
+  return [
+    '<html>',
+    '\t<head><link rel="stylesheet" href="../../../../styles/standard/standard.css"></head>',
+    '\t<body>',
+    '\t\t<table width=100%><tr><td valign="bottom"><table><tr>',
+    '\t\t\t<td width=150>',
+    `\t\t\t\t<div class=townName>${town}</div>`,
+    '\t\t\t</td>',
+    '\t\t\t<td>',
+    // `PGI.header:13` puts an `<img>` inside the title; `standard.header:14` does not.
+    pgi
+      ? `\t\t\t\t<div class=title><nobr><img src="../../../../styles/pgi/images/pgisun.gif"> ${title}</nobr></div>`
+      : `\t\t\t\t<div class=title>${title}</div>`,
+    '\t\t\t</td>',
+    '\t\t\t<td width=150>',
+    `\t\t\t\t<div class=date align="right" valign="bottom">${date}</div>`,
+    '\t\t\t</td>',
+    '\t\t</tr></table></td></tr></table>',
+    '\t\t<table cellpadding=3><tr><td valign="top">',
+    ...stories,
+    '\t\t</td></tr></table>',
+    '\t\t<div class=footer>Starpeace Online</div>',
+    '\t</body>',
+    '</html>',
+  ].join('\n');
+}
+
+// =============================================================================
+// decodeIssueDate
+// =============================================================================
+describe('decodeIssueDate', () => {
+  it('keeps what follows the @ and turns every hyphen into a slash', () => {
+    expect(decodeIssueDate(NEWEST)).toBe('3/1/2027');
+    expect(decodeIssueDate(MIDDLE)).toBe('2/28/2027');
+  });
+
+  // `:19-29` tests the hyphen BEFORE the `@` test, so a hyphen in the id half
+  // still emits a slash. The port is literal because the page is.
+  it('emits a slash for a hyphen sitting before the @, as the page does', () => {
+    expect(decodeIssueDate('00-21@3-1-2027')).toBe('/3/1/2027');
+  });
+
+  it('a folder with no @ yields only the slashes of its hyphens', () => {
+    expect(decodeIssueDate('002147483640')).toBe('');
+    expect(decodeIssueDate('0021-4764')).toBe('/');
+  });
+
+  it('an empty folder decodes to nothing', () => {
+    expect(decodeIssueDate('')).toBe('');
+  });
+});
+
+// =============================================================================
+// parseNewspaperIssueList
+// =============================================================================
+describe('parseNewspaperIssueList', () => {
+  // The folder id is `IssueMax - Issue` (`News.pas:956-961`), so ascending
+  // string order is newest first — whatever order the page listed them in.
+  it('sorts the folders newest first, whatever order the page listed them', () => {
+    expect(parseNewspaperIssueList(barPage([MIDDLE, NEWEST, OLDEST]))).toEqual([
+      { folder: NEWEST, date: '3/1/2027' },
+      { folder: MIDDLE, date: '2/28/2027' },
+      { folder: OLDEST, date: '2/27/2027' },
+    ]);
+  });
+
+  it('reads the selected cell as well as the links', () => {
+    const issues = parseNewspaperIssueList(barPage([NEWEST, MIDDLE], 0));
+    expect(issues.map(i => i.folder)).toEqual([NEWEST, MIDDLE]);
+  });
+
+  it('reads a selected cell that is not the first one', () => {
+    const issues = parseNewspaperIssueList(barPage([NEWEST, MIDDLE, OLDEST], 2));
+    expect(issues.map(i => i.folder)).toEqual([NEWEST, MIDDLE, OLDEST]);
+  });
+
+  // `:48` declares `var selected = ""` before any cell exists. It names no
+  // folder and must not become an issue.
+  it('ignores the empty `selected` the page declares before the loop', () => {
+    expect(parseNewspaperIssueList(barPage([]))).toEqual([]);
+  });
+
+  it('de-duplicates a folder that appears twice', () => {
+    const html = barPage([NEWEST, MIDDLE]) + barPage([MIDDLE, NEWEST]);
+    expect(parseNewspaperIssueList(html).map(i => i.folder)).toEqual([NEWEST, MIDDLE]);
+  });
+
+  it('finds nothing in a page carrying no issue row', () => {
+    expect(parseNewspaperIssueList('<html><body>Connecting...</body></html>')).toEqual([]);
+  });
+});
+
+// =============================================================================
+// parseNewspaperIssue
+// =============================================================================
+describe('parseNewspaperIssue', () => {
+  it('reads the masthead and every story of an issue', () => {
+    const issue = parseNewspaperIssue(issuePage({
+      stories: [
+        storyBlock('Domestic Wars!', '', 'One person died last night.'),
+        storyBlock('Renaissance art in Helartia', 'by Marco Ferrari', 'The IFEL collection arrived.'),
+      ],
+    }));
+    expect(issue.townName).toBe('Helartia');
+    expect(issue.title).toBe('Helartia Herald');
+    expect(issue.date).toBe('Monday, March 01, 2027');
+    expect(issue.stories).toEqual([
+      { headline: 'Domestic Wars!', byline: '', body: 'One person died last night.' },
+      { headline: 'Renaissance art in Helartia', byline: 'by Marco Ferrari', body: 'The IFEL collection arrived.' },
+    ]);
+  });
+
+  // `PGI.header:13` wraps the name in a `<nobr>` beside an `<img>`.
+  it('reads the title of the PGI style, image and all', () => {
+    const issue = parseNewspaperIssue(issuePage({ pgi: true, title: 'The PGI Sun' }));
+    expect(issue.title).toBe('The PGI Sun');
+  });
+
+  // The stories are markup the News Server assembled from templates; nothing
+  // leaves the gateway as HTML, same rule as the board's bodies.
+  it('strips the markup of a story body', () => {
+    const issue = parseNewspaperIssue(issuePage({
+      stories: [storyBlock('S', '', 'First line<br>Second <b>line</b>')],
+    }));
+    expect(issue.stories[0].body).not.toContain('<');
+    expect(issue.stories[0].body).toBe('First line\nSecond line');
+  });
+
+  it('reads a headline at any layout level — `LayoutImp` is the frame name', () => {
+    const html = issuePage({ stories: [storyBlock('Top of the page', '', 'Body')] })
+      .replace(/<h2>/g, '<h1>').replace(/<\/h2>/g, '</h1>');
+    expect(parseNewspaperIssue(html).stories[0].headline).toBe('Top of the page');
+  });
+
+  it('yields an empty issue for a page that is not one', () => {
+    expect(parseNewspaperIssue('<html><body>404 - File not found</body></html>')).toEqual({
+      townName: '', title: '', date: '', stories: [],
+    });
+  });
+});
+
+// =============================================================================
+// getNewspaperIssues
+// =============================================================================
+describe('getNewspaperIssues', () => {
+  it('reads showbar.asp with an empty Selected and the paper named as the bar names it', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse(barPage([MIDDLE, NEWEST, OLDEST])));
+
+    const list = await getNewspaperIssues(fake.ctx, TARGET);
+
+    const url = mockFetch.mock.calls[0][0];
+    expect(url).toMatch(/^http:\/\/158\.69\.153\.134\/Five\/0\/Visual\/News\/showbar\.asp\?/);
+    expect(url).not.toContain('+');
+    const q = queryOf(0);
+    // `:87` selects the first folder when `Selected` is empty — which is what
+    // the frameset's own first load sends.
+    expect(q.get('Selected')).toBe('');
+    expect(q.get('PaperName')).toBe('Helartia Herald');
+    expect(q.get('TownName')).toBe('Helartia');
+    expect(q.get('WorldName')).toBe('Planitia');
+    expect(q.get('Tycoon')).toBe('SPO_test3');
+    expect(q.get('TycoonName')).toBeNull();
+    expect(q.get('DAAddr')).toBe('10.0.0.5');
+    expect(q.get('DAPort')).toBe('1111');
+
+    expect(list).toEqual({
+      paperName: 'Helartia Herald',
+      issues: [
+        { folder: NEWEST, date: '3/1/2027' },
+        { folder: MIDDLE, date: '2/28/2027' },
+        { folder: OLDEST, date: '2/27/2027' },
+      ],
+      error: '',
+    });
+  });
+
+  it('a Capitol bar carries an empty TownName', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse(barPage([])));
+    await getNewspaperIssues(fake.ctx, { ...TARGET, isCapitol: true });
+    expect(queryOf(0).get('TownName')).toBe('');
+  });
+
+  // A paper that has printed nothing yet is not an error: `ShowPaper.asp:10-24`
+  // shows the connecting page for it, and so does the client.
+  it('an empty bar is an empty list, not a failure', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse(barPage([])));
+    const list = await getNewspaperIssues(fake.ctx, TARGET);
+    expect(list.issues).toEqual([]);
+    expect(list.error).toBe('');
+  });
+
+  it('does not fetch when the world is unknown', async () => {
+    const fake = makeWebCtx({ currentWorldInfo: null });
+    const list = await getNewspaperIssues(fake.ctx, TARGET);
+    expect(list.error).toBe('Not connected to a world.');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch when the town has no newspaper', async () => {
+    const fake = makeWebCtx();
+    const list = await getNewspaperIssues(fake.ctx, { ...TARGET, paperName: '' });
+    expect(list.error).toBe('This town has no newspaper.');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the DA lock channel is unset', async () => {
+    const fake = makeWebCtx({ daAddr: null, daPort: null });
+    const list = await getNewspaperIssues(fake.ctx, TARGET);
+    expect(list.error).toBe('ASP call refused: DA lock channel not announced yet (daAddr/daPort unset)');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('reports an HTTP failure instead of parsing the error body', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse('<html><title>500</title></html>', 500));
+    const list = await getNewspaperIssues(fake.ctx, TARGET);
+    expect(list.error).toBe('The newspaper answered HTTP 500.');
+    expect(list.issues).toEqual([]);
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('issue bar answered HTTP 500'));
+  });
+
+  it('reports a transport failure', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockRejectedValue(new Error('ETIMEDOUT'));
+    const list = await getNewspaperIssues(fake.ctx, TARGET);
+    expect(list.error).toBe('ETIMEDOUT');
+    expect(fake.log.warn).toHaveBeenCalledWith('[Newspaper] Issue list read failed: ETIMEDOUT');
+  });
+});
+
+// =============================================================================
+// getNewspaperIssue
+// =============================================================================
+describe('getNewspaperIssue', () => {
+  it('fetches the folder`s own home.asp, each path segment escaped', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse(issuePage()));
+
+    const issue = await getNewspaperIssue(fake.ctx, TARGET, NEWEST);
+
+    // The path `ShowPaper.asp:30-31` redirects to, relative to `Visual/News/`.
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      'http://158.69.153.134/Five/0/Visual/News/Newspapers/Planitia/Helartia%20Herald'
+      + '/002147483640%403-1-2027/home.asp?Tycoon=SPO_test3',
+    );
+    expect(issue).toEqual({
+      paperName: 'Helartia Herald',
+      folder: NEWEST,
+      townName: 'Helartia',
+      title: 'Helartia Herald',
+      date: 'Monday, March 01, 2027',
+      stories: [{ headline: 'Domestic Wars!', byline: '', body: 'One person died last night.' }],
+      error: '',
+    });
+  });
+
+  // `home.asp` takes only `Tycoon` (`ShowPaper.asp:30`) — no DA channel, no
+  // paper name: the folder path already identifies the issue.
+  it('sends the reader and nothing else', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse(issuePage()));
+    await getNewspaperIssue(fake.ctx, TARGET, NEWEST);
+    const q = queryOf(0);
+    expect([...q.keys()]).toEqual(['Tycoon']);
+  });
+
+  it('does not fetch for an empty folder — there is no issue to open', async () => {
+    const fake = makeWebCtx();
+    const issue = await getNewspaperIssue(fake.ctx, TARGET, '');
+    expect(issue.error).toBe('This paper has not printed an issue yet.');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch when the world is unknown', async () => {
+    const fake = makeWebCtx({ currentWorldInfo: null });
+    const issue = await getNewspaperIssue(fake.ctx, TARGET, NEWEST);
+    expect(issue.error).toBe('Not connected to a world.');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch when the town has no newspaper', async () => {
+    const fake = makeWebCtx();
+    const issue = await getNewspaperIssue(fake.ctx, { ...TARGET, paperName: '' }, NEWEST);
+    expect(issue.error).toBe('This town has no newspaper.');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('reports an HTTP failure', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse('', 404));
+    const issue = await getNewspaperIssue(fake.ctx, TARGET, NEWEST);
+    expect(issue.error).toBe('The newspaper answered HTTP 404.');
+    expect(issue.stories).toEqual([]);
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('issue answered HTTP 404'));
+  });
+
+  // IIS answers 200 for a directory listing too. Reading one as an empty paper
+  // would show a blank frame instead of saying what went wrong.
+  it('refuses a 200 that carries neither a title nor a story', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse('<html><body><h1>Index of /</h1></body></html>'));
+    const issue = await getNewspaperIssue(fake.ctx, TARGET, NEWEST);
+    expect(issue.error).toBe('The issue could not be read.');
+  });
+
+  it('accepts a masthead-less page that still carries a story', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse(
+      `<html><body>${storyBlock('Late edition', '', 'Body')}</body></html>`,
+    ));
+    const issue = await getNewspaperIssue(fake.ctx, TARGET, NEWEST);
+    expect(issue.error).toBe('');
+    expect(issue.stories[0].headline).toBe('Late edition');
+  });
+
+  it('reports a transport failure', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
+    const issue = await getNewspaperIssue(fake.ctx, TARGET, NEWEST);
+    expect(issue.error).toBe('ECONNREFUSED');
+    expect(fake.log.warn).toHaveBeenCalledWith('[Newspaper] Issue read failed: ECONNREFUSED');
   });
 });

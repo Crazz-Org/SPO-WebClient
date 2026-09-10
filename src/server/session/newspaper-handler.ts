@@ -1,5 +1,10 @@
 /**
- * Newspaper handler — the town paper's editorial board.
+ * Newspaper handler — the town paper: its editorial board, and its daily issues.
+ *
+ * Two halves, both scraped from `Visual/News/`:
+ *   - the **board** (`boardmsg.asp`), what "Rate the Mayor" opens;
+ *   - the **paper** (`ShowBar.asp` + an issue's own `home.asp`), what "Read
+ *     News" opens — see the second section header below.
  *
  * This is what Voyager's "Rate the Mayor" button opens: `TownHallSheet.pas:343`
  * navigates to `Visual/News/boardreader.asp` with the town's `PaperName`, not to
@@ -11,6 +16,9 @@
  *   - read   `?top=TRUE&root=…&path=…`      -> the index, or one column
  *   - post   `?action=post&…` + a form body -> `NewsObj.NewMessage` (`:146`)
  *
+ * A column page also carries the Up link (`:236-237`, the parent's `path`) and
+ * the author's portrait (`:244`), both read here alongside the title/byline/body.
+ *
  * **Bodies come back as TEXT, never as HTML.** `NewsObj.BodyHTML` (`:255`) is
  * markup typed by other players and stored verbatim; this client has no
  * sanitiser and no `dangerouslySetInnerHTML` anywhere, and adding both to render
@@ -19,8 +27,17 @@
  */
 
 import type { SessionContext } from './session-context';
-import type { NewspaperArticle, NewspaperBoard, NewspaperColumn } from '../../shared/types';
+import type {
+  NewspaperArticle,
+  NewspaperBoard,
+  NewspaperColumn,
+  NewspaperIssue,
+  NewspaperIssueList,
+  NewspaperIssueRef,
+  NewspaperStory,
+} from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { toProxyUrl } from '../../shared/proxy-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
 import { redactUrlCredentials } from '../url-redact';
 import { requireDaParams } from './asp-da-params';
@@ -72,6 +89,11 @@ const REPLY_ENTRY =
 const ARTICLE_TITLE = /<div\s+class=title>([\s\S]*?)<\/div>/i;
 const ARTICLE_AUTHOR = /<div\s+class=author>([\s\S]*?)<\/div>/i;
 const ARTICLE_MESSAGE = /<div\s+class=message>([\s\S]*?)<\/div>\s*<\/td>/i;
+
+/** `boardmsg.asp:236-237` — the Up link: an anchor wrapping `images\up.gif`. */
+const ARTICLE_UP_LINK = /<a\b[^>]*href="([^"]*)"[^>]*>\s*<img\b[^>]*\bup\.gif/i;
+/** `boardmsg.asp:244` — the author's portrait. The index page's `<img id=picture>` (`:263`) has no `src`. */
+const ARTICLE_PICTURE = /<img\b[^>]*\bid=picture\b[^>]*\bsrc="([^"]*)"/i;
 
 function pathOf(href: string): string {
   const match = LINK_PATH.exec(href);
@@ -129,12 +151,17 @@ export function parseNewspaperArticle(html: string): NewspaperArticle | null {
     });
   }
 
+  const up = ARTICLE_UP_LINK.exec(html);
+  const picture = ARTICLE_PICTURE.exec(html);
+
   return {
     subject: title ? toText(title[1]) : '',
     // `:258` prints "By <author> <authorDesc>" — one line, kept as one line.
     byline: author ? toText(author[1]) : '',
     body: toText(afterByline),
     replies,
+    parentPath: up ? pathOf(up[1]) : '',
+    photoUrl: picture ? picture[1].trim() : '',
   };
 }
 
@@ -177,6 +204,33 @@ function boardParams(ctx: SessionContext, target: NewspaperTarget, root: string,
 /** Paper names and town names carry spaces; `+` is not decoded by these pages. */
 function encodeParams(params: URLSearchParams): string {
   return params.toString().replace(/\+/g, '%20');
+}
+
+/**
+ * `NewsObject.pas:487-490` returns the parent GLOBALIZED — the registry `Path`
+ * prefixed to the relative root — so a top-level column's parent is an absolute
+ * disk path that ENDS with `boards\<World>\<Paper>\`. Compared without case and
+ * without the trailing backslash `CanonicalizePath` (`:86-91`) appends.
+ */
+export function isBoardRoot(parentPath: string, root: string): boolean {
+  const norm = (p: string) => p.replace(/\\+$/, '').toLowerCase();
+  const parent = norm(parentPath);
+  const base = norm(root);
+  return parent === '' || parent === base || parent.endsWith('\\' + base);
+}
+
+/** The article as the client needs it: no Up onto the index, portrait resolved through the proxy. */
+function resolveArticle(article: NewspaperArticle | null, worldIp: string, root: string): NewspaperArticle | null {
+  if (!article) return null;
+  return {
+    ...article,
+    parentPath: isBoardRoot(article.parentPath, root) ? '' : article.parentPath,
+    // `:244` is root-relative and the browser's CSP (`img-src 'self' data: blob:`,
+    // server.ts setSecurityHeaders) blocks a raw cross-origin `http://<worldIp>/…`
+    // image — route it through the same `/proxy-image` mechanism mail-handlers.ts:54
+    // and search-menu-service.ts:111 use for the same kind of world-hosted picture.
+    photoUrl: article.photoUrl === '' ? '' : toProxyUrl(article.photoUrl, worldIp),
+  };
 }
 
 function emptyBoard(target: NewspaperTarget, error: string): NewspaperBoard {
@@ -228,7 +282,7 @@ export async function getNewspaperBoard(
       // The index is only rendered on the folder page (`:266-272`), so on a
       // column page this is legitimately empty and `article` carries the content.
       columns: parseNewspaperIndex(html),
-      article: parseNewspaperArticle(html),
+      article: resolveArticle(parseNewspaperArticle(html), worldIp, root),
       error: '',
     };
   } catch (e: unknown) {
@@ -314,12 +368,240 @@ export async function postNewspaperColumn(
         root,
         path: root,
         columns,
-        article: parseNewspaperArticle(html),
+        article: resolveArticle(parseNewspaperArticle(html), worldIp, root),
         error: '',
       },
     };
   } catch (e: unknown) {
     ctx.log.warn(`[Newspaper] Post failed: ${toErrorMessage(e)}`);
     return { success: false, message: toErrorMessage(e), board: null };
+  }
+}
+
+// =========================================================================
+// THE DAILY PAPER — `Newsreader.asp`
+// =========================================================================
+
+/**
+ * Voyager's third Town Hall button, `ReadNews` (`TownHallSheet.pas:361`), opens
+ * `newsreader.asp`: a frameset (`Newsreader.asp:2-5`) whose bar frame is
+ * `ShowBar.asp` — the row of kept issues — and whose main frame is
+ * `ShowPaper.asp`, which does nothing but redirect to the selected issue's own
+ * `home.asp` (`ShowPaper.asp:30-31`).
+ *
+ * We read both pages directly: the bar for the issue list, the issue page for
+ * the stories. The issue page is IIS-processed HTML written by the News Server
+ * (`News.pas:750-802`), so it is markup we did not author — the same rule as
+ * the board applies and every string leaves here as TEXT.
+ */
+
+/**
+ * `ShowBar.asp:14-31` — `DecodeDate`, character for character.
+ *
+ * A folder is `<issueId>@<date>` (`News.pas:986`), where the date part is
+ * `DateToStr` with `/` swapped for `-`. The page walks the whole string: a `-`
+ * always becomes `/`, an `@` opens the gate, and every other character is kept
+ * only once the gate is open. That is not the same as splitting on `@` — a
+ * hyphen BEFORE the `@` still emits a slash — so it is ported literally rather
+ * than "cleaned up". Nothing is parsed into a `Date`: the server's `DateToStr`
+ * locale is unknown, and the bar's own text is what a player recognises.
+ */
+export function decodeIssueDate(folder: string): string {
+  let decoded = '';
+  let dotFound = false;
+  for (const char of folder) {
+    if (char === '-') {
+      decoded += '/';
+    } else if (char === '@') {
+      dotFound = true;
+    } else if (dotFound) {
+      decoded += char;
+    }
+  }
+  return decoded;
+}
+
+/** `ShowBar.asp:89-94` — the selected cell, and the script that names its folder. */
+const SELECTED_ISSUE =
+  /<td\s+class=selectedDate>[\s\S]*?<script\b[^>]*>[\s\S]*?selected\s*=\s*"([^"]*)"/gi;
+
+/** `ShowBar.asp:98-102` — every other cell, a link carrying `Selected=<folder>`. */
+const NORMAL_ISSUE =
+  /<td\s+class=normalDate>[\s\S]*?<a\b[^>]*href="[^"]*[?&]Selected=([^"&]*)/gi;
+
+/**
+ * The paper's kept issues, newest first.
+ *
+ * The page order is the filesystem's (`FindFirst`/`FindNext`, `:83`/`:107`) and
+ * says nothing about age. The folder name does: the id is `IssueMax - Issue`
+ * zero-padded to 12 digits (`News.pas:956-961`), so ascending string order IS
+ * newest first — the same order `ManageSite` deletes from when it trims the site
+ * to `MaxIssues` (`:869-919`).
+ */
+export function parseNewspaperIssueList(html: string): NewspaperIssueRef[] {
+  const folders = new Set<string>();
+  for (const pattern of [SELECTED_ISSUE, NORMAL_ISSUE]) {
+    pattern.lastIndex = 0;
+    let cell: RegExpExecArray | null;
+    while ((cell = pattern.exec(html)) !== null) {
+      if (cell[1]) folders.add(cell[1]);
+    }
+  }
+  return [...folders]
+    .sort()
+    .map(folder => ({ folder, date: decodeIssueDate(folder) }));
+}
+
+/** The paper's masthead — `standard.header:7-19`, `PGI.header:7-19`. */
+const ISSUE_TOWN = /<div\s+class=townName(?=[\s>])[^>]*>([\s\S]*?)<\/div>/i;
+const ISSUE_TITLE = /<div\s+class=title(?=[\s>])[^>]*>([\s\S]*?)<\/div>/i;
+const ISSUE_DATE = /<div\s+class=date(?=[\s>])[^>]*>([\s\S]*?)<\/div>/i;
+
+/**
+ * One story: the headline in an `<h<LayoutImp>>` (`News.pas:783` sets
+ * `LayoutImp` to the layout frame's name, a digit), an optional `<div
+ * class=author>` byline, then the body (`domesticwars.story:5-9`,
+ * `michelangelo.story:15-17`).
+ */
+const ISSUE_STORY =
+  /<h(\d)\b[^>]*>([\s\S]*?)<\/h\1>\s*(?:<div\s+class=author(?=[\s>])[^>]*>([\s\S]*?)<\/div>\s*)?<div\s+class=articleBody(?=[\s>])[^>]*>([\s\S]*?)<\/div>/gi;
+
+/** Read the masthead and the stories off an issue's `home.asp`. */
+export function parseNewspaperIssue(
+  html: string,
+): Pick<NewspaperIssue, 'townName' | 'title' | 'date' | 'stories'> {
+  const town = ISSUE_TOWN.exec(html);
+  const title = ISSUE_TITLE.exec(html);
+  const date = ISSUE_DATE.exec(html);
+
+  const stories: NewspaperStory[] = [];
+  ISSUE_STORY.lastIndex = 0;
+  let story: RegExpExecArray | null;
+  while ((story = ISSUE_STORY.exec(html)) !== null) {
+    stories.push({
+      headline: toText(story[2]),
+      byline: story[3] ? toText(story[3]) : '',
+      body: toText(story[4]),
+    });
+  }
+
+  return {
+    townName: town ? toText(town[1]) : '',
+    // PGI puts an `<img>` inside the title (`PGI.header:13`); `toText` drops it.
+    title: title ? toText(title[1]) : '',
+    date: date ? toText(date[1]) : '',
+    stories,
+  };
+}
+
+function emptyIssueList(target: NewspaperTarget, error: string): NewspaperIssueList {
+  return { paperName: target.paperName, issues: [], error };
+}
+
+function emptyIssue(target: NewspaperTarget, folder: string, error: string): NewspaperIssue {
+  return {
+    paperName: target.paperName,
+    folder,
+    townName: '',
+    title: '',
+    date: '',
+    stories: [],
+    error,
+  };
+}
+
+/**
+ * The issue bar — every issue this paper still keeps.
+ *
+ * `Selected` is sent empty on purpose: `:87` then marks the FIRST folder as
+ * selected, which costs nothing here (we sort ourselves) and is exactly what
+ * the frameset does on its first load.
+ *
+ * An empty list with an empty error is a legitimate answer, not a failure: a
+ * paper whose News Server has printed nothing yet has no folder to iterate, and
+ * `ShowPaper.asp:10-24` shows the "connecting" page for it forever.
+ */
+export async function getNewspaperIssues(
+  ctx: SessionContext, target: NewspaperTarget,
+): Promise<NewspaperIssueList> {
+  const worldIp = ctx.currentWorldInfo?.ip;
+  const worldName = ctx.currentWorldInfo?.name || '';
+  if (!worldIp) return emptyIssueList(target, 'Not connected to a world.');
+  if (!target.paperName) return emptyIssueList(target, 'This town has no newspaper.');
+
+  try {
+    // The parameters `Newsreader.asp:4` forwards to the bar frame. `Tycoon`,
+    // not `TycoonName` — same trap as the board pages.
+    const params = new URLSearchParams({
+      WorldName: worldName,
+      TownName: target.isCapitol ? '' : target.townName,
+      Selected: '',
+      PaperName: target.paperName,
+      Tycoon: ctx.activeUsername || ctx.cachedUsername || '',
+      ...requireDaParams(ctx),
+    });
+    const url = `http://${worldIp}/Five/0/Visual/News/showbar.asp?${encodeParams(params)}`;
+    ctx.log.debug(`[Newspaper] Reading the issue bar ${redactUrlCredentials(url)}`);
+
+    const resp = await fetchWithTimeout(url, { redirect: 'follow' });
+    if (!resp.ok) {
+      ctx.log.warn(`[Newspaper] issue bar answered HTTP ${resp.status} — ${redactUrlCredentials(url)}`);
+      return emptyIssueList(target, `The newspaper answered HTTP ${resp.status}.`);
+    }
+
+    return {
+      paperName: target.paperName,
+      issues: parseNewspaperIssueList(await resp.text()),
+      error: '',
+    };
+  } catch (e: unknown) {
+    ctx.log.warn(`[Newspaper] Issue list read failed: ${toErrorMessage(e)}`);
+    return emptyIssueList(target, toErrorMessage(e));
+  }
+}
+
+/**
+ * One issue, read from the page `ShowPaper.asp:30-31` redirects to.
+ *
+ * That URL is relative to `Visual/News/`, which is where the News Server writes
+ * the folders (`News.pas:986`) and what the issue's own stylesheet links climb
+ * out of (`News.pas:359-361`). `Server.URLPathEncode` there and
+ * `encodeURIComponent` here agree on what matters — a space becomes `%20` —
+ * and IIS decodes `%40` back to `@` like any other escape. [INFERRED]
+ */
+export async function getNewspaperIssue(
+  ctx: SessionContext, target: NewspaperTarget, folder: string,
+): Promise<NewspaperIssue> {
+  const worldIp = ctx.currentWorldInfo?.ip;
+  const worldName = ctx.currentWorldInfo?.name || '';
+  if (!worldIp) return emptyIssue(target, folder, 'Not connected to a world.');
+  if (!target.paperName) return emptyIssue(target, folder, 'This town has no newspaper.');
+  if (folder === '') return emptyIssue(target, folder, 'This paper has not printed an issue yet.');
+
+  try {
+    const enc = encodeURIComponent;
+    const tycoon = enc(ctx.activeUsername || ctx.cachedUsername || '');
+    const path = `Newspapers/${enc(worldName)}/${enc(target.paperName)}/${enc(folder)}/home.asp`;
+    const url = `http://${worldIp}/Five/0/Visual/News/${path}?Tycoon=${tycoon}`;
+    ctx.log.debug(`[Newspaper] Reading issue ${redactUrlCredentials(url)}`);
+
+    const resp = await fetchWithTimeout(url, { redirect: 'follow' });
+    if (!resp.ok) {
+      ctx.log.warn(`[Newspaper] issue answered HTTP ${resp.status} — ${redactUrlCredentials(url)}`);
+      return emptyIssue(target, folder, `The newspaper answered HTTP ${resp.status}.`);
+    }
+
+    const parsed = parseNewspaperIssue(await resp.text());
+    // A page with neither a masthead title nor a single story is not an issue —
+    // IIS answers 200 for a directory listing too, and reading one as an empty
+    // paper would show a blank frame rather than say what went wrong.
+    if (parsed.title === '' && parsed.stories.length === 0) {
+      return emptyIssue(target, folder, 'The issue could not be read.');
+    }
+
+    return { paperName: target.paperName, folder, ...parsed, error: '' };
+  } catch (e: unknown) {
+    ctx.log.warn(`[Newspaper] Issue read failed: ${toErrorMessage(e)}`);
+    return emptyIssue(target, folder, toErrorMessage(e));
   }
 }

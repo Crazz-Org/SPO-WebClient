@@ -82,7 +82,8 @@ afterEach(() => {
 });
 
 // ===========================================================================
-// composeMail — NewMail → [AddHeaders] → AddLine ×n → Post → CloseMessage
+// composeMail — NewMail → [AddHeaders] → AddLine ×n → Post → [DeleteMessage
+// old draft, on success] → CloseMessage
 // ===========================================================================
 
 describe('composeMail', () => {
@@ -266,6 +267,60 @@ describe('composeMail', () => {
     const fake = makeMailCtx(override);
     await expect(composeMail(fake.ctx, 'A', 'S', ['x'])).rejects.toThrow('Mail service not connected');
     expect(fake.sent).toHaveLength(0);
+  });
+
+  it('sent from an opened draft, fires DeleteMessage on the Draft folder after Post succeeds', async () => {
+    const fake = makeMailCtx();
+    answerCompose(fake);
+
+    const ok = await composeMail(fake.ctx, 'A', 'S', ['x'], undefined, 'OLD_DRAFT_7');
+
+    expect(ok).toBe(true);
+    expect(fake.frames.mail).toEqual([
+      RdoCommand.sel(MAIL_SERVER).call('DeleteMessage').push()
+        .args(RdoValue.string('Shamba'), RdoValue.string(ACCOUNT), RdoValue.string('Draft'), RdoValue.string('OLD_DRAFT_7'))
+        .build(),
+    ]);
+    expect(membersOf(fake.sent)).toEqual(['NewMail', 'AddLine', 'Post', 'CloseMessage']);
+  });
+
+  it('the delete goes out after Post answered and before CloseMessage', async () => {
+    const fake = makeMailCtx();
+    let frameCountAtPost = -1;
+    let frameCountAtClose = -1;
+    fake.respond(p => {
+      if (p.member === 'NewMail') return `NewMail="#${MSG_ID}"`;
+      if (p.member === 'Post') {
+        frameCountAtPost = fake.frames.mail.length;
+        return 'Post="#-1"';
+      }
+      if (p.member === 'CloseMessage') {
+        frameCountAtClose = fake.frames.mail.length;
+        return '';
+      }
+      return '';
+    });
+
+    await composeMail(fake.ctx, 'A', 'S', ['x'], undefined, 'OLD_DRAFT_7');
+
+    expect(frameCountAtPost).toBe(0);
+    expect(frameCountAtClose).toBe(1);
+  });
+
+  it('a failed Post keeps the draft: no DeleteMessage', async () => {
+    const fake = makeMailCtx();
+    answerCompose(fake, '#0');
+
+    expect(await composeMail(fake.ctx, 'A', 'S', ['x'], undefined, 'OLD_DRAFT_7')).toBe(false);
+    expect(fake.frames.mail).toHaveLength(0);
+  });
+
+  it('a Post that answers an empty payload keeps the draft too', async () => {
+    const fake = makeMailCtx();
+    fake.respond(p => (p.member === 'NewMail' ? `NewMail="#${MSG_ID}"` : ''));
+
+    expect(await composeMail(fake.ctx, 'A', 'S', ['x'], undefined, 'OLD_DRAFT_7')).toBe(false);
+    expect(fake.frames.mail).toHaveLength(0);
   });
 });
 

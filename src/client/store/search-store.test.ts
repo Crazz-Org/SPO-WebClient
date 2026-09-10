@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import { useSearchStore } from './search-store';
 import { WsMessageType } from '@/shared/types';
-import type { WsRespSearchMenuTycoonProfile, WsRespSearchMenuPeopleSearch } from '@/shared/types';
+import type { WsRespSearchMenuTycoonProfile, WsRespSearchMenuPeopleSearch, WsRespSearchMenuNewspapers } from '@/shared/types';
 
 function resetStore() {
   useSearchStore.setState({
@@ -19,6 +19,7 @@ function resetStore() {
     rankingDetailData: null,
     tycoonProfileData: null,
     banksData: null,
+    newspapersData: null,
   });
 }
 
@@ -108,5 +109,39 @@ describe('Search Store — people search', () => {
     const state = useSearchStore.getState();
     expect(state.peopleData?.results).toEqual(['Alice', 'Bob', 'SPO_test3']);
     expect(state.isLoading).toBe(false);
+  });
+});
+
+describe('Search Store — media (newspaper directory)', () => {
+  beforeEach(resetStore);
+
+  it('setNewspapersData stores the payload and clears loading', () => {
+    useSearchStore.getState().setLoading(true);
+
+    const mockData: WsRespSearchMenuNewspapers = {
+      type: WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS,
+      newspapers: [
+        { paperName: 'Shamba Daily', townName: 'Shamba' },
+        { paperName: 'Helartia Herald', townName: 'Helartia' },
+      ],
+    };
+
+    useSearchStore.getState().setNewspapersData(mockData);
+
+    const state = useSearchStore.getState();
+    expect(state.newspapersData).toEqual(mockData);
+    expect(state.isLoading).toBe(false);
+  });
+
+  it('reset nulls newspapersData', () => {
+    useSearchStore.getState().setNewspapersData({
+      type: WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS,
+      newspapers: [{ paperName: 'Shamba Daily', townName: 'Shamba' }],
+    });
+    expect(useSearchStore.getState().newspapersData).not.toBeNull();
+
+    useSearchStore.getState().reset();
+
+    expect(useSearchStore.getState().newspapersData).toBeNull();
   });
 });

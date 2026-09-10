@@ -62,6 +62,7 @@ export type {
   BuildingDetailsResponse,
   SearchMenuCategory,
   TownInfo,
+  NewspaperListing,
   TycoonProfile,
   RankingCategory,
   RankingEntry,
@@ -97,6 +98,10 @@ export type {
   NewspaperColumn,
   NewspaperArticle,
   NewspaperBoard,
+  NewspaperIssueRef,
+  NewspaperStory,
+  NewspaperIssueList,
+  NewspaperIssue,
   PoliticalRoleInfo,
   // Cluster / company creation types
   ClusterInfo,
@@ -204,6 +209,8 @@ export type {
   WsRespSearchMenuRankingDetail,
   WsReqSearchMenuBanks,
   WsRespSearchMenuBanks,
+  WsReqSearchMenuNewspapers,
+  WsRespSearchMenuNewspapers,
   // Road building messages
   WsReqBuildRoad,
   WsRespBuildRoad,
@@ -281,6 +288,10 @@ export type {
   WsRespNewspaperBoard,
   WsReqNewspaperPost,
   WsRespNewspaperPost,
+  WsReqNewspaperIssues,
+  WsRespNewspaperIssues,
+  WsReqNewspaperIssue,
+  WsRespNewspaperIssue,
   // Connection Search
   WsReqSearchConnections,
   WsRespSearchConnections,

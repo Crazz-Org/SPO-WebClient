@@ -18,6 +18,7 @@ import { createBuildRoadsScenario } from './build-roads-scenario';
 import { createMailScenario } from './mail-scenario';
 import { createBuildingDetailsScenario } from './building-details-scenario';
 import { createCivicMutationsScenario } from './civic-mutations-scenario';
+import { createNewspaperScenario } from './newspaper-scenario';
 
 /** All recognized scenario names */
 export type ScenarioName =
@@ -30,7 +31,8 @@ export type ScenarioName =
   | 'build-roads'
   | 'mail'
   | 'building-details'
-  | 'civic-mutations';
+  | 'civic-mutations'
+  | 'newspaper';
 
 /** Ordered list of all scenario names */
 export const SCENARIO_NAMES: ScenarioName[] = [
@@ -44,6 +46,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'mail',
   'building-details',
   'civic-mutations',
+  'newspaper',
 ];
 
 /** Union result from any scenario factory */
@@ -68,6 +71,7 @@ const SCENARIO_FACTORIES: Record<
   'mail': (o) => createMailScenario(o),
   'building-details': (o) => createBuildingDetailsScenario(o),
   'civic-mutations': (o) => createCivicMutationsScenario(o),
+  'newspaper': (o) => createNewspaperScenario(o),
 };
 
 /**
@@ -126,7 +130,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 10 mock server scenarios',
+    description: 'Combined: all 11 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -135,7 +139,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 10 scenarios',
+    description: 'Combined: all RDO exchanges from 11 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };

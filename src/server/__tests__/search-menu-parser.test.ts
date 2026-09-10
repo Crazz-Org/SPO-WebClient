@@ -2,7 +2,7 @@
  * Tests for search-menu-parser — parseHomePage, parseTycoonProfile.
  */
 
-import { parseHomePage, parseTycoonProfile } from '../search-menu-parser';
+import { parseHomePage, parseTycoonProfile, parseNewspapersPage } from '../search-menu-parser';
 
 const BASE_URL = 'http://142.4.193.58/five/0/visual/voyager/new%20directory';
 
@@ -148,5 +148,51 @@ describe('parseTycoonProfile', () => {
     expect(profile.ntaRanking).toBe('N/A');
     expect(profile.level).toBe('Unknown');
     expect(profile.prestige).toBe(0);
+  });
+});
+
+describe('parseNewspapersPage', () => {
+  it('extracts paper and town in page order, dropping the &nbsp;', () => {
+    const html = `<html><body>
+      <div class=header2>Media</div>
+      <table>
+        <tr dirHref="../../news/newsreader.asp?RIWS=&Tycoon=SPO_test3&WorldName=Shamba&TownName=Shamba&PaperName=Shamba%20Daily&DAAddr=127.0.0.1&DAPort=7001">
+          <td><div class=listItem>Shamba Daily\u00A0</div></td>
+        </tr>
+        <tr><td class=gradient></td></tr>
+        <tr dirHref="../../news/newsreader.asp?RIWS=&Tycoon=SPO_test3&WorldName=Shamba&TownName=Helartia&PaperName=Helartia%20Herald&DAAddr=127.0.0.1&DAPort=7001">
+          <td><div class=listItem>Helartia Herald\u00A0</div></td>
+        </tr>
+        <tr><td class=gradient></td></tr>
+      </table>
+    </body></html>`;
+
+    const papers = parseNewspapersPage(html);
+
+    expect(papers).toEqual([
+      { paperName: 'Shamba Daily', townName: 'Shamba' },
+      { paperName: 'Helartia Herald', townName: 'Helartia' },
+    ]);
+  });
+
+  it('skips a row with no .listItem text', () => {
+    const html = `<html><body>
+      <table>
+        <tr dirHref="../../news/newsreader.asp?TownName=Shamba&PaperName=">
+          <td><div class=listItem></div></td>
+        </tr>
+      </table>
+    </body></html>`;
+
+    expect(parseNewspapersPage(html)).toEqual([]);
+  });
+
+  it('returns [] for the heading with an empty table', () => {
+    const html = `<html><body>
+      <div class=header2>Media</div>
+      <table></table>
+    </body></html>`;
+
+    expect(parseNewspapersPage(html)).toEqual([]);
   });
 });

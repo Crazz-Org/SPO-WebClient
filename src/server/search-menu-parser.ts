@@ -10,6 +10,7 @@ import type { AnyNode } from 'domhandler';
 import type {
   SearchMenuCategory,
   TownInfo,
+  NewspaperListing,
   TycoonProfile,
   RankingCategory,
   RankingEntry
@@ -233,6 +234,34 @@ export function parseRankingsPage(html: string): RankingCategory[] {
 
   const $mainTable = $('body table').first();
   return parseLevel($mainTable, 0);
+}
+
+/**
+ * Parse Newspapers.asp - Directory Media page (New Directory/Newspapers.asp:12-24)
+ */
+export function parseNewspapersPage(html: string): NewspaperListing[] {
+  const $ = cheerio.load(html);
+  const papers: NewspaperListing[] = [];
+
+  $('tr[dirhref]').each((_, el) => {
+    const $row = $(el);
+    const dirHref = $row.attr('dirhref') || $row.attr('dirHref');
+    const paperName = $row.find('.listItem').text().replace(/\u00A0/g, ' ').trim();
+
+    if (!paperName) return;
+
+    const townMatch = dirHref?.match(/[?&]TownName=([^&]*)/);
+    let townName = townMatch ? townMatch[1] : '';
+    try {
+      townName = townMatch ? decodeURIComponent(townName) : townName;
+    } catch {
+      // Keep the raw value if it isn't valid percent-encoding
+    }
+
+    papers.push({ paperName, townName });
+  });
+
+  return papers;
 }
 
 /**

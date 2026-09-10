@@ -120,13 +120,36 @@ describe('OverviewSection', () => {
         />
       );
       fireEvent.click(screen.getByText('Read News'));
+      // `TownHallSheet.pas:361` opens `newsreader.asp` — the daily paper, not
+      // the editorial board `RateMayor` opens.
       expect(openFor).toHaveBeenCalledWith({
         paperName: 'Helartia Herald',
         townName: 'Helartia',
         isCapitol: false,
         buildingX: 510,
         buildingY: 420,
-      });
+      }, 'paper');
+      expect(useNewspaperStore.getState().view).toBe('paper');
+      expect(useNewspaperStore.getState().issuesState).toBe('idle');
+      expect(useUiStore.getState().modal).toBe('newspaper');
+    });
+
+    it('"Rate the Mayor" opens the same paper on its editorial board', () => {
+      const openFor = jest.spyOn(useNewspaperStore.getState(), 'openFor');
+      renderWithProviders(
+        <OverviewSection
+          generalProperties={TOWN_HALL_WITH_PAPER}
+          votesProperties={[]}
+          buildingX={510}
+          buildingY={420}
+          serverTabs={TOWN_HALL_TABS}
+        />
+      );
+      fireEvent.click(screen.getByText('Rate the Mayor'));
+      expect(openFor).toHaveBeenCalledWith(expect.objectContaining({
+        paperName: 'Helartia Herald',
+      }), 'board');
+      expect(useNewspaperStore.getState().view).toBe('board');
       expect(useNewspaperStore.getState().loadState).toBe('idle');
       expect(useUiStore.getState().modal).toBe('newspaper');
     });

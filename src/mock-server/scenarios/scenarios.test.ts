@@ -1,5 +1,5 @@
 /**
- * Scenario integrity tests for all 10 mock server scenario factory functions
+ * Scenario integrity tests for all 11 mock server scenario factory functions
  * and the scenario registry.
  */
 import { describe, it, expect } from '@jest/globals';
@@ -598,8 +598,8 @@ describe('civic-mutations scenario', () => {
 });
 
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 10 entries', () => {
-    expect(SCENARIO_NAMES).toHaveLength(10);
+  it('SCENARIO_NAMES has 11 entries', () => {
+    expect(SCENARIO_NAMES).toHaveLength(11);
   });
 
   it('loadScenario returns bundle for each name', () => {

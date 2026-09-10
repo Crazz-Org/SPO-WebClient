@@ -5,8 +5,10 @@
  *       MessageList.asp (folder listing), MessageBody.asp (Inbox read-touch that
  *       sets the mail server's Read header flag — see mail-handler.ts's file header)
  * WS: REQ_MAIL_COMPOSE -> RESP_MAIL_SENT, REQ_MAIL_GET_FOLDER -> RESP_MAIL_FOLDER,
- *     and the reply form of REQ_MAIL_COMPOSE (mail-ws-003) — same request carrying
- *     a `headers` block, which the gateway turns into AddHeaders before AddLine
+ *     the reply form of REQ_MAIL_COMPOSE (mail-ws-003) — same request carrying
+ *     a `headers` block, which the gateway turns into AddHeaders before AddLine —
+ *     and the send-from-Drafts form (mail-ws-004), carrying `existingDraftId`, which
+ *     makes the gateway emit DeleteMessage on the Draft folder once Post succeeds
  *
  * NOTE on Save vs Post (from MailServer.pas):
  *   - Save(WorldName, MessageId) → saves to DRAFT folder only
@@ -66,6 +68,9 @@ export const CAPTURED_MAIL_REPLY: CapturedMailReplyData = {
   subject: `Re: ${CAPTURED_MAIL_SEND.subject}`,
   body: `> ${CAPTURED_MAIL_SEND.body}`,
 };
+
+/** The draft id a send-from-Drafts (mail-ws-004) carries — distinct from every other id here. */
+export const CAPTURED_DRAFT_ID = '30430751';
 
 function buildMailFolderHtml(vars: ScenarioVariables): string {
   return `<html>
@@ -425,6 +430,29 @@ export function createMailScenario(
           {
             type: WsMessageType.RESP_MAIL_SENT,
             wsRequestId: 'mail-003',
+            success: true,
+          } as WsMessage,
+        ],
+        tags: ['mail'],
+      },
+      {
+        // Sending a letter opened from Drafts: same request, plus the draft's id. It is
+        // what makes the gateway emit DeleteMessage on the Draft folder after a
+        // successful Post (mail-rdo-008 by member) — proven in mail-draft-send-scenario.test.ts.
+        id: 'mail-ws-004',
+        timestamp: '2026-02-18T21:37:00.000Z',
+        request: {
+          type: WsMessageType.REQ_MAIL_COMPOSE,
+          wsRequestId: 'mail-004',
+          to: CAPTURED_MAIL_SEND.to,
+          subject: CAPTURED_MAIL_SEND.subject,
+          body: [CAPTURED_MAIL_SEND.body],
+          existingDraftId: CAPTURED_DRAFT_ID,
+        } as WsMessage,
+        responses: [
+          {
+            type: WsMessageType.RESP_MAIL_SENT,
+            wsRequestId: 'mail-004',
             success: true,
           } as WsMessage,
         ],

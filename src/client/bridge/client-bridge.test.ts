@@ -9,6 +9,8 @@ import { useBuildingStore } from '../store/building-store';
 import { useLogStore } from '../store/log-store';
 import { useChatStore } from '../store/chat-store';
 import { useProfileStore } from '../store/profile-store';
+import { useNewspaperStore } from '../store/newspaper-store';
+import { useSearchStore } from '../store/search-store';
 import { WsMessageType, type WsMessage } from '../../shared/types';
 
 // Mock showToast to prevent import issues in test environment
@@ -215,6 +217,57 @@ describe('ClientBridge mail responses (T6)', () => {
     showToast.mockClear();
   });
 
+  it('RESP_MAIL_MESSAGE in the Draft folder opens the composer with the draft filled', () => {
+    useMailStore.setState({ currentFolder: 'Draft', currentView: 'list', isMessageLoading: true });
+    const message = {
+      messageId: 'draft-4',
+      fromAddr: 'me@starworld.net',
+      toAddr: 'bob@starworld.net',
+      from: 'Me',
+      to: 'Bob',
+      subject: 'Hi',
+      date: '1',
+      dateFmt: '1',
+      read: true,
+      stamp: 0,
+      noReply: false,
+      body: ['line one', 'line two'],
+      attachments: [],
+    };
+    ClientBridge.handleMailResponse({ type: WsMessageType.RESP_MAIL_MESSAGE, message } as never);
+    const s = useMailStore.getState();
+    expect(s.currentView).toBe('compose');
+    expect(s.composeDraftId).toBe('draft-4');
+    expect(s.composeTo).toBe('bob@starworld.net');
+    expect(s.composeSubject).toBe('Hi');
+    expect(s.composeBody).toBe('line one\nline two');
+    expect(s.isMessageLoading).toBe(false);
+  });
+
+  it('RESP_MAIL_MESSAGE in the Inbox folder opens the read view', () => {
+    useMailStore.setState({ currentFolder: 'Inbox', currentView: 'list', isMessageLoading: true, composeDraftId: null });
+    const message = {
+      messageId: 'msg-1',
+      fromAddr: 'alice@starworld.net',
+      toAddr: 'me@starworld.net',
+      from: 'Alice',
+      to: 'Me',
+      subject: 'Hello',
+      date: '1',
+      dateFmt: '1',
+      read: true,
+      stamp: 0,
+      noReply: false,
+      body: ['hi there'],
+      attachments: [],
+    };
+    ClientBridge.handleMailResponse({ type: WsMessageType.RESP_MAIL_MESSAGE, message } as never);
+    const s = useMailStore.getState();
+    expect(s.currentView).toBe('read');
+    expect(s.currentMessage).toEqual(message);
+    expect(s.composeDraftId).toBeNull();
+  });
+
   it('a failed send keeps the draft and says so', () => {
     ClientBridge.handleMailResponse({ type: WsMessageType.RESP_MAIL_SENT, success: false } as never);
     const s = useMailStore.getState();
@@ -363,5 +416,69 @@ describe('ClientBridge handleProfileResponse — RESP_PROFILE_COMPANY_PROFITLOSS
     expect(useProfileStore.getState().companyProfitLoss).toEqual({
       companyName: 'Green Co', cluster: 'A', status: 'error', data: null, error: 'boom',
     });
+  });
+});
+
+describe('ClientBridge handleNewspaperResponse — the paper view (#516)', () => {
+  const LIST = {
+    paperName: 'Helartia Herald',
+    issues: [{ folder: '002147483640@3-1-2027', date: '3/1/2027' }],
+    error: '',
+  };
+
+  const ISSUE = {
+    paperName: 'Helartia Herald',
+    folder: '002147483640@3-1-2027',
+    townName: 'Helartia',
+    title: 'Helartia Herald',
+    date: 'Monday, March 01, 2027',
+    stories: [{ headline: 'Domestic Wars!', byline: '', body: 'One person died.' }],
+    error: '',
+  };
+
+  beforeEach(() => {
+    useNewspaperStore.getState().reset();
+  });
+
+  it('puts the issue list in the store', () => {
+    ClientBridge.handleNewspaperResponse({
+      type: WsMessageType.RESP_NEWSPAPER_ISSUES,
+      list: LIST,
+    } as unknown as WsMessage);
+
+    expect(useNewspaperStore.getState().issues).toEqual(LIST.issues);
+    expect(useNewspaperStore.getState().issuesState).toBe('loaded');
+  });
+
+  it('puts the issue in the store, under the folder that was asked for', () => {
+    useNewspaperStore.getState().selectIssue(ISSUE.folder);
+
+    ClientBridge.handleNewspaperResponse({
+      type: WsMessageType.RESP_NEWSPAPER_ISSUE,
+      issue: ISSUE,
+    } as unknown as WsMessage);
+
+    expect(useNewspaperStore.getState().issue).toEqual(ISSUE);
+    expect(useNewspaperStore.getState().issueState).toBe('loaded');
+  });
+});
+
+describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_NEWSPAPERS (#517)', () => {
+  beforeEach(() => {
+    useSearchStore.getState().reset();
+  });
+
+  it('puts the newspaper listings in the search store', () => {
+    const newspapers = [
+      { paperName: 'Shamba Daily', townName: 'Shamba' },
+      { paperName: 'Helartia Herald', townName: 'Helartia' },
+    ];
+
+    ClientBridge.handleSearchMenuResponse({
+      type: WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS,
+      newspapers,
+    } as unknown as WsMessage);
+
+    expect(useSearchStore.getState().newspapersData?.newspapers).toEqual(newspapers);
   });
 });

@@ -397,12 +397,12 @@ export class StarpeaceClient implements ClientHandlerContext {
         folder: useMailStore.getState().currentFolder,
         messageId,
       }),
-      onMailSend: (to, subject, body, headers) => this.sendMessage({
+      onMailSend: (to, subject, body, headers, existingDraftId) => this.sendMessage({
         type: WsMessageType.REQ_MAIL_COMPOSE,
         to, subject, body: body.split('\n'),
-        // Optional on the wire — a letter with nothing to thread sends no header
-        // block at all, rather than an empty one (same idiom as the draft below).
+        // Both optional on the wire — omitted rather than sent empty (same idiom as the draft below).
         ...(headers ? { headers } : {}),
+        ...(existingDraftId ? { existingDraftId } : {}),
       }),
       onMailSaveDraft: (to, subject, body, headers, existingDraftId) => this.sendMessage({
         type: WsMessageType.REQ_MAIL_SAVE_DRAFT,
@@ -432,6 +432,7 @@ export class StarpeaceClient implements ClientHandlerContext {
         type: WsMessageType.REQ_SEARCH_MENU_RANKING_DETAIL, rankingPath,
       }),
       onSearchMenuBanks: () => this.sendMessage({ type: WsMessageType.REQ_SEARCH_MENU_BANKS }),
+      onSearchMenuNewspapers: () => this.sendMessage({ type: WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS }),
 
       // Profile tabs
       onProfileCurriculum: () => this.sendMessage({ type: WsMessageType.REQ_PROFILE_CURRICULUM }),
@@ -529,6 +530,18 @@ export class StarpeaceClient implements ClientHandlerContext {
         this.sendMessage({
           type: WsMessageType.REQ_NEWSPAPER_POST, ...context, subject, body, replyToPath,
         });
+      },
+      onRequestNewspaperIssues: () => {
+        const context = useNewspaperStore.getState().context;
+        if (!context) return;
+        useNewspaperStore.getState().setIssuesState('loading');
+        this.sendMessage({ type: WsMessageType.REQ_NEWSPAPER_ISSUES, ...context });
+      },
+      onRequestNewspaperIssue: (folder) => {
+        const context = useNewspaperStore.getState().context;
+        if (!context) return;
+        useNewspaperStore.getState().selectIssue(folder);
+        this.sendMessage({ type: WsMessageType.REQ_NEWSPAPER_ISSUE, ...context, folder });
       },
 
       // Empire

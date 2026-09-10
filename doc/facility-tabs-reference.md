@@ -1013,14 +1013,16 @@ header name, so only `supplies` — and `ads`, which shares its key — ever bro
 
 ### Embedded ASP URLs
 
-Non-operational (no ASP server runs these paths today). Kept for the parameter shapes.
+Kept for the parameter shapes. The two News rows are **reproduced by the WebClient** — the
+gateway scrapes those pages and `NewspaperModal` draws the result; the others are not, and no
+ASP page is embedded anywhere in the client.
 
 | Handler | URL |
 |---|---|
 | capitolGeneral | `{WorldURL}/Visual/Voyager/Politics/politics.asp?WorldName=&TycoonName=&Password=&Capitol=YES&X=&Y=&DAAddr=&DAPort=` |
 | townGeneral | the same page with `&TownName=` instead of `Capitol=YES` |
-| townGeneral | `{WorldURL}/Visual/News/boardreader.asp?...&PaperName=` (rate mayor) |
-| townGeneral | `{WorldURL}/Visual/News/newsreader.asp?...&PaperName=` (read news) |
+| townGeneral | `{WorldURL}/Visual/News/boardreader.asp?...&PaperName=` (rate mayor) — WebClient: the board view of `NewspaperModal` |
+| townGeneral | `{WorldURL}/Visual/News/newsreader.asp?...&PaperName=` (read news) — WebClient: the paper view of `NewspaperModal` (#516) |
 | Antennas | double-click navigates the map: `?frame_Id=MapIsoView&frame_Action=MoveTo&x=&y=` |
 | IndGeneral | `{WorldURL}/Visual/Clusters/WebLoader.asp?Page=Home&x=&y=&WorldName=&DAAddr=&DAPort=&frame_Id=FacilitySiteView&frame_Class=HTMLView&frame_NoBorder=Yes&frame_Align=client`, plus `&Access=MODIFY` when the viewer owns the facility |
 | every facility | `{WorldURL}/Visual/Voyager/IsoMap/FacilityImage.asp?ClassId=&WorldName=&xPos=&yPos=` |

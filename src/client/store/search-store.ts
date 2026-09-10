@@ -1,5 +1,5 @@
 /**
- * Search Store — Directory search pages (home, towns, tycoons, rankings, banks).
+ * Search Store — Directory search pages (home, towns, tycoons, rankings, banks, media).
  */
 
 import { create } from 'zustand';
@@ -11,9 +11,10 @@ import type {
   WsRespSearchMenuRankings,
   WsRespSearchMenuRankingDetail,
   WsRespSearchMenuBanks,
+  WsRespSearchMenuNewspapers,
 } from '@/shared/types';
 
-export type SearchPage = 'home' | 'towns' | 'people' | 'rankings' | 'ranking-detail' | 'banks' | 'tycoon-profile';
+export type SearchPage = 'home' | 'towns' | 'people' | 'rankings' | 'ranking-detail' | 'banks' | 'tycoon-profile' | 'media';
 
 interface SearchState {
   // Navigation
@@ -29,6 +30,7 @@ interface SearchState {
   rankingDetailData: WsRespSearchMenuRankingDetail | null;
   tycoonProfileData: WsRespSearchMenuTycoonProfile | null;
   banksData: WsRespSearchMenuBanks | null;
+  newspapersData: WsRespSearchMenuNewspapers | null;
 
   // Actions
   navigateTo: (page: SearchPage) => void;
@@ -42,6 +44,7 @@ interface SearchState {
   clearRankingDetail: () => void;
   setTycoonProfileData: (data: WsRespSearchMenuTycoonProfile) => void;
   setBanksData: (data: WsRespSearchMenuBanks) => void;
+  setNewspapersData: (data: WsRespSearchMenuNewspapers) => void;
   reset: () => void;
 }
 
@@ -57,6 +60,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   rankingDetailData: null,
   tycoonProfileData: null,
   banksData: null,
+  newspapersData: null,
 
   navigateTo: (page) =>
     set((state) => ({
@@ -84,6 +88,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   clearRankingDetail: () => set({ rankingDetailData: null }),
   setTycoonProfileData: (data) => set({ tycoonProfileData: data, isLoading: false }),
   setBanksData: (data) => set({ banksData: data, isLoading: false }),
+  setNewspapersData: (data) => set({ newspapersData: data, isLoading: false }),
 
   reset: () =>
     set({
@@ -97,5 +102,6 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       rankingDetailData: null,
       tycoonProfileData: null,
       banksData: null,
+      newspapersData: null,
     }),
 }));

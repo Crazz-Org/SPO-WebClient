@@ -138,12 +138,19 @@ function parseMailAttachment(attachText: string): MailAttachment {
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
+/**
+ * Compose and send a mail message.
+ * Reference: MsgComposerHandler.pas:329-338
+ * Flow: NewMail -> AddHeaders? -> AddLine (per line) -> Post -> [DeleteMessage old draft, on
+ * success] -> CloseMessage
+ */
 export async function composeMail(
   ctx: SessionContext,
   to: string,
   subject: string,
   bodyLines: string[],
-  headers?: string
+  headers?: string,
+  existingDraftId?: string
 ): Promise<boolean> {
   await ctx.ensureMailConnection();
   if (!ctx.mailServerId || !ctx.mailAccount) {
@@ -191,6 +198,13 @@ export async function composeMail(
   const resultStr = parsePropertyResponseHelper(postPacket.payload!, 'Post');
   const success = resultStr === '-1';
   ctx.log.debug(`[Mail] Post result: ${resultStr} (success=${success})`);
+
+  // 3b. Sent from an opened draft: Voyager deletes the Draft copy only once Post has
+  // answered true (MsgComposerHandler.pas:329-333), before CloseMessage (:338). A failed
+  // Post leaves the draft where it is.
+  if (success && existingDraftId) {
+    await deleteMailMessage(ctx, 'Draft', existingDraftId);
+  }
 
   // 4. Close message to release server memory (MsgComposerHandler.pas:338)
   // Synchronous — Delphi WaitForAnswer still true from AddLine setting.

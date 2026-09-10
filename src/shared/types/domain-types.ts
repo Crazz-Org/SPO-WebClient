@@ -698,6 +698,12 @@ export interface TownInfo {
   classId: string;
 }
 
+/** One row of the directory's Media page (New Directory/Newspapers.asp:12-24). */
+export interface NewspaperListing {
+  paperName: string;
+  townName: string;
+}
+
 /**
  * Tycoon profile from RenderTycoon.asp
  */
@@ -766,6 +772,7 @@ export interface MailMessageHeader {
 export interface MailMessageFull extends MailMessageHeader {
   body: string[];               // Message body lines
   attachments: MailAttachment[];
+  stampUrl?: string;            // Proxied stamp picture (MessageHeader.asp:167-169); absent when no world is joined
 }
 
 /**
@@ -1205,6 +1212,14 @@ export interface NewspaperArticle {
   byline: string;
   body: string;
   replies: NewspaperColumn[];
+  /**
+   * Board path of the parent column — the `path` of the Up link
+   * (`boardmsg.asp:236`). `''` when the parent is the board root: the index
+   * is what "All columns" already opens, so there is nothing to go up to.
+   */
+  parentPath: string;
+  /** Absolute URL of the author's portrait (`boardmsg.asp:244`), or `''`. */
+  photoUrl: string;
 }
 
 export interface NewspaperBoard {
@@ -1217,6 +1232,52 @@ export interface NewspaperBoard {
   columns: NewspaperColumn[];
   article: NewspaperArticle | null;
   /** Non-empty when the board could not be read; everything else is then empty. */
+  error: string;
+}
+
+// =============================================================================
+// NEWSPAPER — the daily paper (Visual/News/Newsreader.asp)
+// =============================================================================
+
+/** One kept issue: the folder `ShowBar.asp` iterates and the date it prints for it. */
+export interface NewspaperIssueRef {
+  /** `<issueId>@<date>`, the folder name (`News.pas:986`). The id of the issue. */
+  folder: string;
+  /** What the bar shows for it — `DecodeDate(folder)` (`ShowBar.asp:14-31`). */
+  date: string;
+}
+
+/**
+ * One story of an issue.
+ *
+ * `body` is PLAIN TEXT, not markup, for the same reason as `NewspaperArticle`:
+ * nothing leaves the gateway as HTML, so the client never needs a sanitiser.
+ */
+export interface NewspaperStory {
+  headline: string;
+  /** `<div class=author>` when the story carries one, else empty. */
+  byline: string;
+  body: string;
+}
+
+export interface NewspaperIssueList {
+  paperName: string;
+  /** Newest first — the folder id is `IssueMax - Issue` (`News.pas:956-961`). */
+  issues: NewspaperIssueRef[];
+  /** Non-empty when the bar could not be read; `issues` is then empty. */
+  error: string;
+}
+
+export interface NewspaperIssue {
+  paperName: string;
+  /** The folder this issue was read from — echoed so a stale answer is detectable. */
+  folder: string;
+  townName: string;
+  title: string;
+  /** The long date the issue's own header prints (`standard.header:19`). */
+  date: string;
+  stories: NewspaperStory[];
+  /** Non-empty when the issue could not be read; everything else is then empty. */
   error: string;
 }
 

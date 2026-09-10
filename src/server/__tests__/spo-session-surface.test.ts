@@ -164,8 +164,8 @@ const DELEGATIONS: readonly Delegation[] = [
   {
     method: 'composeMail',
     install: () => jest.spyOn(mailHandler, 'composeMail'),
-    call: s => s.composeMail('bob@planitia', 'Subject', ['line 1', 'line 2'], 'X-Reply: 7'),
-    forwarded: ['bob@planitia', 'Subject', ['line 1', 'line 2'], 'X-Reply: 7'],
+    call: s => s.composeMail('bob@planitia', 'Subject', ['line 1', 'line 2'], 'X-Reply: 7', '30430748'),
+    forwarded: ['bob@planitia', 'Subject', ['line 1', 'line 2'], 'X-Reply: 7', '30430748'],
     result: true,
   },
   {

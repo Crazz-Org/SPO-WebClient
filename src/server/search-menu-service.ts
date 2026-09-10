@@ -8,6 +8,7 @@ import http from 'http';
 import {
   SearchMenuCategory,
   TownInfo,
+  NewspaperListing,
   TycoonProfile,
   RankingCategory,
   RankingEntry
@@ -17,7 +18,8 @@ import {
   parseTownsPage,
   parseTycoonProfile,
   parseRankingsPage,
-  parseRankingDetail
+  parseRankingDetail,
+  parseNewspapersPage
 } from './search-menu-parser';
 import { toProxyUrl, isProxyUrl } from '../shared/proxy-utils';
 
@@ -218,5 +220,11 @@ export class SearchMenuService {
     await this.fetchPage(path);
     // Banks page is usually empty, return empty array
     return [];
+  }
+
+  /** Get every newspaper in the world — New Directory/Newspapers.asp (`:4` reads WorldName only). */
+  async getNewspapers(): Promise<NewspaperListing[]> {
+    const path = `/five/0/visual/voyager/new%20directory/Newspapers.asp?WorldName=${encodeURIComponent(this.worldName)}&RIWS=`;
+    return parseNewspapersPage(await this.fetchPage(path));
   }
 }

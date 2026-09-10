@@ -98,6 +98,13 @@ export const ROUTES: RouteRule[] = [
     why: 'the mail-socket handler changed — the one flow that drives it',
   },
   {
+    // Before the broad wire-level rule below: the paper is not on the RDO wire
+    // at all, so the governance flows would say nothing about it.
+    test: /newspaper-handlers?\.ts$|^src\/client\/components\/modals\/NewspaperModal\.tsx$|^src\/client\/store\/newspaper-store\.ts$/,
+    flows: ['newspaper-read'],
+    why: 'the town paper — the one flow that reads it',
+  },
+  {
     test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$|^src\/server\/session\//,
     flows: ['politics-read', 'politics-write', 'building-details'],
     why: 'wire-level change: frames, session phases or RDO members',

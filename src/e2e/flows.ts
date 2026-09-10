@@ -19,6 +19,8 @@ import type {
   WsRespMailMessage,
   WsRespMailSent,
   WsRespMailUnreadCount,
+  WsRespNewspaperIssue,
+  WsRespNewspaperIssues,
   WsRespPoliticsData,
   WsRespSearchMenuPeopleSearch,
 } from '../shared/types/message-types';
@@ -603,6 +605,89 @@ const favoritesFolders: Flow = {
   },
 };
 
+/**
+ * The town paper, read end to end: the town hall names it, the bar lists its
+ * kept issues, and the newest one opens with stories in it.
+ *
+ * Read-only, and outside the RDO wire entirely — the paper lives on the ASP
+ * side (`Visual/News/`), so what this proves is the other half of the gateway:
+ * that the pages are reachable, that the folder names still decode, and that
+ * an issue page still parses into stories.
+ *
+ * A paper with no kept issue is an environment exception, not a failure. The
+ * issues are folders under `Newspapers\<World>\<Paper>\` written by the News
+ * Server (`News.pas:986`), a process planitia does not run — its log listing
+ * carries FIVECACHE, FIVEINTERFACE, FIVEMAIL and FIVEMODELSERVER and no news
+ * server — so `ShowBar.asp:81-109` has nothing to iterate and the gateway
+ * correctly answers an empty list with no error. What still holds live is the
+ * half this world can prove: the town hall names its paper, and `showbar.asp`
+ * is reachable and parses. The empty-list rendering itself is covered at L0/L1.
+ */
+const newspaperRead: Flow = {
+  name: 'newspaper-read',
+  what: 'town hall -> its paper -> the issue bar -> the newest issue',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const visualClass = await resolveVisualClass(session, town.x, town.y);
+      const details = await readBuildingDetails(session, town.x, town.y, visualClass);
+      const paperName = propertyValue(details.groups, 'townGeneral', 'NewspaperName') ?? '';
+      assertions.check('the town hall names its paper', paperName !== '', paperName || '(none)');
+
+      const target = {
+        paperName,
+        townName: town.name,
+        isCapitol: false,
+        buildingX: town.x,
+        buildingY: town.y,
+      };
+
+      const listed = await session.driver.request<WsRespNewspaperIssues>(
+        { type: WsMessageType.REQ_NEWSPAPER_ISSUES, ...target },
+        WsMessageType.RESP_NEWSPAPER_ISSUES,
+      );
+      assertions.check('the issue bar was read', listed.list.error === '', listed.list.error);
+
+      const issues = listed.list.issues;
+      if (issues.length > 0) {
+        // The newest, which is what the bar selects with `Selected` empty.
+        const newest = issues[0].folder;
+        const opened = await session.driver.request<WsRespNewspaperIssue>(
+          { type: WsMessageType.REQ_NEWSPAPER_ISSUE, ...target, folder: newest },
+          WsMessageType.RESP_NEWSPAPER_ISSUE,
+        );
+        assertions.check('the newest issue was read', opened.issue.error === '', opened.issue.error);
+        assertions.check(
+          'the issue answers for the folder that was asked for',
+          opened.issue.folder === newest,
+          `${opened.issue.folder} vs ${newest}`,
+        );
+        assertions.check(
+          'the newest issue opens with stories',
+          opened.issue.stories.length > 0,
+          `${opened.issue.stories.length} stories`,
+        );
+      } else {
+        // Environment exception, not a defect — see the flow's note above. Never
+        // fall through to REQ_NEWSPAPER_ISSUE with the folder `''`.
+        assertions.check(
+          'the bar kept no issue — environment exception, no news server prints on this world',
+          true,
+          `${paperName}: 0 issues`,
+        );
+      }
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('newspaper-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   politicsRead,
@@ -613,6 +698,7 @@ export const FLOWS: Flow[] = [
   favoritesRoundTrip,
   favoritesFolders,
   peopleSearch,
+  newspaperRead,
 ];
 
 export function flowByName(name: string): Flow {

@@ -5,7 +5,8 @@
 Matches and validates RDO exchanges without a real game server. This is **L1** in
 [doc/E2E-POLICY.md](../../doc/E2E-POLICY.md) — the layer that proves a frame is well formed
 before it ever reaches the wire — and it is consumed by 19 suites under
-`src/server/__tests__/`, plus the `toPassStrictRdoValidation` matcher.
+`src/server/__tests__/`, plus the `toPassStrictRdoValidation` matcher and the scenario
+tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 > **It is not a mock backend for E2E.** The replay half (`capture-store.ts`,
 > `replay-engine.ts`, `mock-ws-client.ts`, `index.ts`, `test-helpers.ts` and the
@@ -27,7 +28,15 @@ before it ever reaches the wire — and it is consumed by 19 suites under
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`.
+Available scenarios: `auth`, `world-list`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`.
+
+`newspaper` is the daily paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
+renders, and one `home.asp` per kept issue. HTTP only — the paper is reachable through the
+ASP pages alone. Its bar serves the cells in an order that is **not** the answer order, so
+the sort the gateway derives from the folder id (`News.pas:956-961`) has something to prove;
+`createNewspaperScenario(vars, { issues: [] })` is the paper that has printed nothing yet.
+It also serves the directory's `New Directory/Newspapers.asp` listing (`{ papers: [] }` is
+the world with no papers).
 
 `civic-mutations` is the write half of the Politics surface — one RDO exchange per
 civic `procedure` the gateway emits (built by `rdoCall`, so it cannot drift), the two

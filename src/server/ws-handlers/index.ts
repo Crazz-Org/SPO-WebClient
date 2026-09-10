@@ -30,10 +30,15 @@ import { handleMailConnect, handleMailGetFolder, handleMailReadMessage, handleMa
 import { handleGetProfile, handleProfileCurriculum, handleProfileBank, handleProfileBankAction, handleProfileProfitLoss, handleProfileCompanies, handleProfileCompanyProfitLoss, handleProfileAutoConnections, handleProfileAutoConnectionAction, handleProfilePolicy, handleProfilePolicySet, handleProfileCurriculumAction } from './profile-handlers';
 
 // Search menu
-import { handleSearchMenuHome, handleSearchMenuTowns, handleSearchMenuPeopleSearch, handleSearchMenuTycoonProfile, handleSearchMenuRankings, handleSearchMenuRankingDetail, handleSearchMenuBanks } from './search-handlers';
+import { handleSearchMenuHome, handleSearchMenuTowns, handleSearchMenuPeopleSearch, handleSearchMenuTycoonProfile, handleSearchMenuRankings, handleSearchMenuRankingDetail, handleSearchMenuBanks, handleSearchMenuNewspapers } from './search-handlers';
 
 // Politics
-import { handleNewspaperBoard, handleNewspaperPost } from './newspaper-handlers';
+import {
+  handleNewspaperBoard,
+  handleNewspaperPost,
+  handleNewspaperIssues,
+  handleNewspaperIssue,
+} from './newspaper-handlers';
 import { handlePoliticsData, handlePoliticsVote, handlePoliticsLaunchCampaign, handlePoliticsCancelCampaign, handlePoliticsSetRating, handlePoliticsSetPublicity, handlePoliticsSetProject, handleTycoonRole } from './politics-handlers';
 
 // Miscellaneous
@@ -118,6 +123,7 @@ export const wsHandlerRegistry: Partial<Record<WsMessageType, WsHandler>> = {
   [WsMessageType.REQ_SEARCH_MENU_RANKINGS]: handleSearchMenuRankings,
   [WsMessageType.REQ_SEARCH_MENU_RANKING_DETAIL]: handleSearchMenuRankingDetail,
   [WsMessageType.REQ_SEARCH_MENU_BANKS]: handleSearchMenuBanks,
+  [WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS]: handleSearchMenuNewspapers,
 
   // Politics
   [WsMessageType.REQ_POLITICS_DATA]: handlePoliticsData,
@@ -129,6 +135,8 @@ export const wsHandlerRegistry: Partial<Record<WsMessageType, WsHandler>> = {
   [WsMessageType.REQ_POLITICS_SET_PROJECT]: handlePoliticsSetProject,
   [WsMessageType.REQ_NEWSPAPER_BOARD]: handleNewspaperBoard,
   [WsMessageType.REQ_NEWSPAPER_POST]: handleNewspaperPost,
+  [WsMessageType.REQ_NEWSPAPER_ISSUES]: handleNewspaperIssues,
+  [WsMessageType.REQ_NEWSPAPER_ISSUE]: handleNewspaperIssue,
   [WsMessageType.REQ_TYCOON_ROLE]: handleTycoonRole,
 
   // Miscellaneous

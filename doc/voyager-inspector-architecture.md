@@ -607,7 +607,17 @@ Loaded in the `IECompPanel` embedded browser at the top of the inspector.
 
 ### WebClient Relevance
 
-These ASP pages are non-operational (no ASP servers running). If politics/news features are recreated in the WebClient, they should be implemented as client-rendered React components, not embedded web views. The URL patterns document the expected parameters for reference.
+Both of these pages are live, and the gateway scrapes them — they are not an embedded web view
+in the client, and nothing here is rendered as HTML: the gateway strips the markup and the
+client draws React from the text.
+
+- `boardreader.asp` / `boardmsg.asp` → the **editorial board** of `NewspaperModal`
+  (`server/session/newspaper-handler.ts`), what "Rate the Mayor" opens.
+- `newsreader.asp` → the **paper view** of the same modal (issue #516): its bar frame
+  `ShowBar.asp` lists the kept issue folders, and `ShowPaper.asp:30` redirects to the issue's
+  own `home.asp`, which is what the gateway fetches for the stories.
+
+The URL patterns above are the parameters both still take.
 
 ---
 

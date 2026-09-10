@@ -68,8 +68,8 @@ interface MailState {
   /**
    * The draft this compose form was opened from, or null for a fresh letter.
    *
-   * Saving sends it as `existingDraftId` so the server deletes the old copy
-   * instead of leaving two (`saveDraft`, `mail-handler.ts:186`).
+   * Saving **or sending** sends it as `existingDraftId` so the server deletes the
+   * old copy instead of leaving two (`saveDraft`, and `composeMail` once Post succeeds).
    */
   composeDraftId: string | null;
   /** The compose form should open with the caret in To (MsgComposerHandlerViewer.pas:155). */
@@ -190,6 +190,7 @@ export const useMailStore = create<MailState>((set) => ({
       composeHeaders: '',
       composeDraftId: message.messageId,
       composeFocusTo: false,
+      isMessageLoading: false,
     }),
 
   clearCompose: () =>

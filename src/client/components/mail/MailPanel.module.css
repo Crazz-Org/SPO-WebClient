@@ -49,20 +49,61 @@
 .messageRow {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
   width: 100%;
-  padding: var(--space-3) var(--space-4);
-  background: transparent;
-  border: none;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  cursor: pointer;
-  font-family: var(--font-sans);
-  text-align: left;
+  background: transparent;
   transition: background var(--duration-fast) var(--ease-default);
 }
 
 .messageRow:hover {
   background: var(--bg-tertiary);
+}
+
+.messageOpen {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  text-align: left;
+}
+
+/* Hidden on desktop until the row is hovered/focused; touch has no hover so it stays visible. */
+.rowDeleteBtn {
+  background: none;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin-right: var(--space-2);
+  opacity: 0;
+}
+
+.rowDeleteBtn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.messageRow:hover .rowDeleteBtn,
+.rowDeleteBtn:focus-visible,
+.messageRow:focus-within .rowDeleteBtn {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .rowDeleteBtn {
+    opacity: 1;
+  }
 }
 
 .unread {
@@ -197,6 +238,34 @@
 .readMetaRow {
   display: flex;
   justify-content: space-between;
+}
+
+/* Header fields + stamp (MessageHeader.asp:178 puts the stamp beside the header table).
+   The fields own the width; the stamp is a fixed-size box that shrinks to nothing first. */
+.readMetaRowWithStamp {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.readMetaRowWithStamp .readMeta {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.readStamp {
+  flex-shrink: 0;
+  width: 64px;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+/* Narrow viewports: the header fields keep every pixel; the stamp goes. */
+@media (max-width: 479px) {
+  .readStamp {
+    display: none;
+  }
 }
 
 .readBody {

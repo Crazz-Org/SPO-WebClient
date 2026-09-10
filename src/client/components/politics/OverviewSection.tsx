@@ -7,7 +7,7 @@
 import { useCallback, useMemo } from 'react';
 import type { BuildingPropertyValue } from '@/shared/types';
 import { usePoliticsStore } from '../../store/politics-store';
-import { useNewspaperStore } from '../../store/newspaper-store';
+import { useNewspaperStore, type NewspaperView } from '../../store/newspaper-store';
 import { useBuildingStore } from '../../store/building-store';
 import { useUiStore } from '../../store/ui-store';
 import { PropertyGroup } from '../building/PropertyGroup';
@@ -41,14 +41,14 @@ export function OverviewSection({
   const newspaperName = generalMap.get('NewspaperName') ?? '';
   const townName = data?.townName ?? generalMap.get('Town') ?? '';
 
-  const openNewspaper = useCallback(() => {
+  const openNewspaper = useCallback((view: NewspaperView) => {
     useNewspaperStore.getState().openFor({
       paperName: newspaperName,
       townName,
       isCapitol,
       buildingX,
       buildingY,
-    });
+    }, view);
     // Single-slot modal, like Voyager: `TownHallSheet.pas:352` closes the object
     // inspector when it opens the board.
     useUiStore.getState().openModal('newspaper');
@@ -127,15 +127,16 @@ export function OverviewSection({
             the presidential board is a town paper the Capitol does not own, and
             `boardmsg.asp:19` only fills the ratings folder for a town anyway. */}
         {!isCapitol && newspaperName !== '' && (
-          <button className={styles.actionBtn} onClick={openNewspaper}>
+          <button className={styles.actionBtn} onClick={() => openNewspaper('board')}>
             Rate the Mayor
           </button>
         )}
-        {/* Voyager's third button, `ReadNews` (`TownHallSheet.pas:49`, `:355-371`):
-            same town and paper as RateMayor, opened to read. The board opens on
-            its column index with the composer collapsed, which is read mode. */}
+        {/* Voyager's third button, `ReadNews` (`TownHallSheet.pas:49`, `:361`):
+            same town and paper as RateMayor, but a different page — it opens
+            `newsreader.asp`, the daily issue, not the editorial board. So this
+            one opens the modal on its paper view. */}
         {!isCapitol && newspaperName !== '' && (
-          <button className={styles.actionBtn} onClick={openNewspaper}>
+          <button className={styles.actionBtn} onClick={() => openNewspaper('paper')}>
             Read News
           </button>
         )}

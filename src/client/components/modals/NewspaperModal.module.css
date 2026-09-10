@@ -1,5 +1,6 @@
-/* NewspaperModal — the town paper's editorial board, in a modal rather than the
-   full-screen frameset Voyager opens (boardreader.asp). */
+/* NewspaperModal — the town paper (its daily issue and its editorial board), in
+   a modal rather than the two full-screen framesets Voyager opens
+   (newsreader.asp, boardreader.asp). */
 
 .backdrop {
   position: fixed;
@@ -52,6 +53,40 @@
   margin-top: var(--space-1);
   font-size: var(--text-xs);
   color: var(--text-muted);
+}
+
+/* The bar's own two buttons (ShowBar.asp:114-160), which swap the section
+   without leaving the paper. */
+.switch {
+  display: flex;
+  gap: var(--space-1);
+  margin: 0 var(--space-3);
+}
+
+.switchBtn {
+  padding: var(--space-1) var(--space-3);
+  background: none;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-semibold);
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-default);
+}
+
+.switchBtn:hover {
+  color: var(--text-primary);
+}
+
+.switchBtn[aria-pressed='true'] {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-gold);
+  color: var(--text-primary);
 }
 
 .headerActions {
@@ -108,6 +143,79 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
+}
+
+.muted {
+  margin: 0;
+  font-size: var(--text-2xs);
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+/* ---- The issue rail (ShowBar.asp:81-109) ---- */
+
+.rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.railBtn {
+  padding: 2px var(--space-2);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--accent-gold);
+  font-size: var(--text-2xs);
+  font-family: var(--font-sans);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.railBtn:hover {
+  text-decoration: none;
+}
+
+.railBtn[aria-current='true'] {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: var(--font-semibold);
+  text-decoration: none;
+}
+
+/* ---- One issue ---- */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--surface-border);
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+
+.mastheadTitle {
+  font-size: var(--text-base);
+  font-weight: var(--font-bold);
+  color: var(--text-primary);
+}
+
+.story {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.storyHeadline {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--font-bold);
+  color: var(--text-primary);
 }
 
 /* ---- Column index ---- */
@@ -196,6 +304,38 @@
   margin: 0;
   font-size: var(--text-2xs);
   color: var(--text-muted);
+}
+
+.articleNav {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.bylineRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.portrait {
+  width: 48px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+
+.portraitFallback {
+  width: 48px;
+  height: 64px;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: var(--surface-border);
 }
 
 /* The body is plain text stripped at the gateway — `white-space: pre-wrap`

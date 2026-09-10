@@ -1,13 +1,13 @@
 /**
  * SearchPanel — World directory search with breadcrumb navigation.
  *
- * Home page: category cards (Towns, Tycoons, People, Rankings, Banks).
+ * Home page: category cards (Towns, Tycoons, People, Rankings, Banks, Media).
  * Drill-down pages render actual data from the search store.
  */
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  ChevronRight, Building2, UserSearch, Trophy, Landmark, Search,
+  ChevronRight, Building2, UserSearch, Trophy, Landmark, Search, Newspaper,
 } from 'lucide-react';
 import { useSearchStore, type SearchPage } from '../../store/search-store';
 import { useClient } from '../../context';
@@ -16,6 +16,7 @@ import type {
   TownInfo, RankingCategory, RankingEntry,
 } from '@/shared/types';
 import { TycoonProfileView } from './TycoonProfileView';
+import { MediaPage } from './MediaPage';
 import styles from './SearchPanel.module.css';
 
 const CATEGORIES: { id: SearchPage; label: string; icon: React.ReactNode }[] = [
@@ -23,6 +24,7 @@ const CATEGORIES: { id: SearchPage; label: string; icon: React.ReactNode }[] = [
   { id: 'people', label: 'People', icon: <UserSearch size={20} /> },
   { id: 'rankings', label: 'Rankings', icon: <Trophy size={20} /> },
   { id: 'banks', label: 'Banks', icon: <Landmark size={20} /> },
+  { id: 'media', label: 'Media', icon: <Newspaper size={20} /> },
 ];
 
 // ---------------------------------------------------------------------------
@@ -243,6 +245,7 @@ const PAGE_COMPONENTS: Record<string, React.FC> = {
   'tycoon-profile': TycoonProfileView,
   rankings: RankingsPage,
   banks: BanksPage,
+  media: MediaPage,
 };
 
 const PAGE_LABELS: Record<string, string> = {
@@ -252,6 +255,7 @@ const PAGE_LABELS: Record<string, string> = {
   rankings: 'Rankings',
   'ranking-detail': 'Ranking Detail',
   banks: 'Banks',
+  media: 'Media',
 };
 
 // ---------------------------------------------------------------------------
@@ -282,6 +286,7 @@ export function SearchPanel() {
       },
       rankings: () => client.onSearchMenuRankings(),
       banks: () => client.onSearchMenuBanks(),
+      media: () => client.onSearchMenuNewspapers(),
     };
     fetchers[currentPage]?.();
   }, [currentPage, client]);
