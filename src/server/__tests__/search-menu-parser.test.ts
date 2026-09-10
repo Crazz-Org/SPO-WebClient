@@ -63,6 +63,22 @@ describe('parseHomePage', () => {
     expect(capitol!.y).toBeUndefined();
   });
 
+  it('should assign the enabled Capitol cell the stable id "capitol"', () => {
+    const html = wrapInTable(`
+      <td align="center" valign="bottom"
+        onclick="onKindClick()"
+        ref="http://local.asp?frame_Id=MapIsoView&frame_Action=SELECT&x=220&y=41"
+        style="cursor: hand">
+        <div class="link">Capitol</div>
+      </td>
+    `);
+
+    const categories = parseHomePage(html, BASE_URL);
+    const capitol = categories.find(c => c.label === 'Capitol');
+
+    expect(capitol!.id).toBe('capitol');
+  });
+
   it('should not extract coordinates from refs without x/y params', () => {
     const html = wrapInTable(`
       <td align="center" valign="bottom"

@@ -23,10 +23,13 @@ export async function handleSearchMenuHome(ctx: WsHandlerContext, msg: WsMessage
     return;
   }
   const categories = await ctx.searchMenuService.getHomePage();
+  // The Media cell is commented out in DirectoryMain.asp (New Directory/DirectoryMain.asp:212-227)
+  // so the ASP never sends it, but the gateway itself serves the page (getNewspapers,
+  // search-menu-service.ts) and MediaPage has no other entry point in the client.
   const response: WsRespSearchMenuHome = {
     type: WsMessageType.RESP_SEARCH_MENU_HOME,
     wsRequestId: msg.wsRequestId,
-    categories,
+    categories: [...categories, { id: 'newspapers', label: 'Media', enabled: true }],
   };
   sendResponse(ctx.ws, response);
 }

@@ -9,7 +9,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import type { WebSocket } from 'ws';
 import { WsMessageType, type WsMessage } from '../../../shared/types';
-import { handleSearchMenuPeopleSearch, handleSearchMenuNewspapers } from '../search-handlers';
+import { handleSearchMenuPeopleSearch, handleSearchMenuNewspapers, handleSearchMenuHome } from '../search-handlers';
 import * as ErrorCodes from '../../../shared/error-codes';
 import type { WsHandlerContext } from '../types';
 
@@ -39,6 +39,60 @@ const request = (over: Partial<Record<string, unknown>> = {}): WsMessage => ({
   searchStr: 'mayor',
   ...over,
 }) as unknown as WsMessage;
+
+describe('handleSearchMenuHome', () => {
+  const homeRequest: WsMessage = {
+    type: WsMessageType.REQ_SEARCH_MENU_HOME,
+    wsRequestId: '789',
+  } as unknown as WsMessage;
+
+  it('appends the Media tile after the parsed categories', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const ws = {
+      send(payload: string): void {
+        sent.push(JSON.parse(payload) as Record<string, unknown>);
+      },
+    } as unknown as WebSocket;
+    const categories = [
+      { id: 'capitol', label: 'Capitol', enabled: false },
+      { id: 'towns', label: 'Towns', enabled: true },
+    ];
+    const getHomePage = jest.fn(async () => categories);
+    const ctx = { ws, searchMenuService: { getHomePage } } as unknown as WsHandlerContext;
+
+    await handleSearchMenuHome(ctx, homeRequest);
+
+    expect(getHomePage).toHaveBeenCalled();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      type: WsMessageType.RESP_SEARCH_MENU_HOME,
+      wsRequestId: '789',
+      categories: [
+        ...categories,
+        { id: 'newspapers', label: 'Media', enabled: true },
+      ],
+    });
+  });
+
+  it('sends an error frame when the search menu service is unavailable', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const ws = {
+      send(payload: string): void {
+        sent.push(JSON.parse(payload) as Record<string, unknown>);
+      },
+    } as unknown as WebSocket;
+    const ctx = { ws, searchMenuService: null } as unknown as WsHandlerContext;
+
+    await handleSearchMenuHome(ctx, homeRequest);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      type: WsMessageType.RESP_ERROR,
+      wsRequestId: '789',
+      code: ErrorCodes.ERROR_AccessDenied,
+    });
+  });
+});
 
 describe('handleSearchMenuPeopleSearch', () => {
   it('calls session.searchPeople and returns results', async () => {

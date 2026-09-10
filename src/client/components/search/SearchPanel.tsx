@@ -1,31 +1,39 @@
 /**
  * SearchPanel — World directory search with breadcrumb navigation.
  *
- * Home page: category cards (Towns, Tycoons, People, Rankings, Banks, Media).
+ * Home page: the category grid the server sends (`homeData.categories`) — adding or
+ * removing a tile server-side changes the panel with no client edit.
  * Drill-down pages render actual data from the search store.
  */
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  ChevronRight, Building2, UserSearch, Trophy, Landmark, Search, Newspaper,
+  ChevronRight, Building, Building2, UserRound, UserSearch, Trophy, Landmark, Search, Newspaper,
 } from 'lucide-react';
 import { useSearchStore, type SearchPage } from '../../store/search-store';
 import { useClient } from '../../context';
 import { GlassCard, Skeleton, ErrorBoundary } from '../common';
 import type {
-  TownInfo, RankingCategory, RankingEntry,
+  TownInfo, RankingCategory, RankingEntry, SearchMenuCategory,
 } from '@/shared/types';
 import { TycoonProfileView } from './TycoonProfileView';
 import { MediaPage } from './MediaPage';
+import { pageForCategoryId } from './home-tiles';
 import styles from './SearchPanel.module.css';
 
-const CATEGORIES: { id: SearchPage; label: string; icon: React.ReactNode }[] = [
-  { id: 'towns', label: 'Towns', icon: <Building2 size={20} /> },
-  { id: 'people', label: 'People', icon: <UserSearch size={20} /> },
-  { id: 'rankings', label: 'Rankings', icon: <Trophy size={20} /> },
-  { id: 'banks', label: 'Banks', icon: <Landmark size={20} /> },
-  { id: 'media', label: 'Media', icon: <Newspaper size={20} /> },
-];
+const ICON_BY_ID: Record<string, React.ReactNode> = {
+  capitol: <Building size={20} />,
+  towns: <Building2 size={20} />,
+  rendertycoon: <UserRound size={20} />,
+  tycoons: <UserSearch size={20} />,
+  rankings: <Trophy size={20} />,
+  banks: <Landmark size={20} />,
+  newspapers: <Newspaper size={20} />,
+};
+
+function iconForCategoryId(id: string): React.ReactNode {
+  return ICON_BY_ID[id.toLowerCase()] ?? <Search size={20} />;
+}
 
 // ---------------------------------------------------------------------------
 // Towns sub-page
@@ -262,12 +270,38 @@ const PAGE_LABELS: Record<string, string> = {
 // Main panel
 // ---------------------------------------------------------------------------
 
+/** Action a home tile fires when clicked, or undefined for a tile that is dimmed and inert. */
+function tileAction(
+  cat: SearchMenuCategory,
+  client: ReturnType<typeof useClient>,
+  navigateTo: (page: SearchPage) => void,
+): (() => void) | undefined {
+  if (!cat.enabled) return undefined;
+  const id = cat.id.toLowerCase();
+
+  if (id === 'capitol') {
+    if (typeof cat.x !== 'number' || typeof cat.y !== 'number') return undefined;
+    return () => client.onNavigateToBuilding(cat.x as number, cat.y as number);
+  }
+
+  const page = pageForCategoryId(id);
+  if (page === 'tycoon-profile') {
+    return () => {
+      navigateTo('tycoon-profile');
+      client.onSearchMenuTycoonProfile('YOU');
+    };
+  }
+  if (page === null) return undefined;
+  return () => navigateTo(page);
+}
+
 export function SearchPanel() {
   const currentPage = useSearchStore((s) => s.currentPage);
   const isLoading = useSearchStore((s) => s.isLoading);
   const navigateTo = useSearchStore((s) => s.navigateTo);
   const goBack = useSearchStore((s) => s.goBack);
   const pageHistory = useSearchStore((s) => s.pageHistory);
+  const homeData = useSearchStore((s) => s.homeData);
   const client = useClient();
 
   // Request home data when opened
@@ -317,19 +351,30 @@ export function SearchPanel() {
         </div>
       )}
 
-      {/* Home — category grid */}
+      {/* Home — category grid, built from the server's homeData.categories */}
       {!isLoading && currentPage === 'home' && (
         <div className={styles.categoryGrid}>
-          {CATEGORIES.map((cat) => (
-            <GlassCard
-              key={cat.id}
-              className={styles.categoryCard}
-              onClick={() => navigateTo(cat.id)}
-            >
-              <span className={styles.categoryIcon}>{cat.icon}</span>
-              <span className={styles.categoryLabel}>{cat.label}</span>
-            </GlassCard>
-          ))}
+          {homeData === null ? (
+            <div className={styles.emptyState}>Loading directory…</div>
+          ) : (
+            homeData.categories.map((cat) => {
+              const onClick = tileAction(cat, client, navigateTo);
+              return (
+                <GlassCard
+                  key={cat.id}
+                  className={
+                    onClick
+                      ? styles.categoryCard
+                      : `${styles.categoryCard} ${styles.categoryCardDisabled}`
+                  }
+                  onClick={onClick}
+                >
+                  <span className={styles.categoryIcon}>{iconForCategoryId(cat.id)}</span>
+                  <span className={styles.categoryLabel} data-tile={cat.id}>{cat.label}</span>
+                </GlassCard>
+              );
+            })
+          )}
         </div>
       )}
 

@@ -32,8 +32,12 @@ export function parseHomePage(html: string, baseUrl: string): SearchMenuCategory
     const enabled = true;
 
     if (ref && label) {
+      // The Capitol cell's ref is a map jump (frame_Action=SELECT), not a page — give it the
+      // same 'capitol' id the disabled branch below uses, instead of the accidental 'local'
+      // parsed from the ref's own host.
+      const id = ref.includes('frame_Action=SELECT') ? 'capitol' : ref.split('.asp')[0].split('/').pop() || label.toLowerCase();
       const cat: SearchMenuCategory = {
-        id: ref.split('.asp')[0].split('/').pop() || label.toLowerCase(),
+        id,
         label,
         enabled,
         iconUrl: imgSrc ? `${baseUrl}/${imgSrc}` : undefined

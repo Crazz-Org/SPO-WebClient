@@ -67,6 +67,11 @@
   text-align: center;
 }
 
+.categoryCardDisabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .categoryIcon {
   color: var(--accent-gold);
 }
