@@ -13,16 +13,22 @@
  * switch here changes the view and nothing else — neither side is re-read.
  *
  * The board's two frames become one column with a back link. The rating form
- * Voyager bolts onto the board is NOT here — it lives on the Politics tab,
- * where it talks to `RDOSetRatingFrom` directly.
+ * Voyager bolts onto the board (`boardmsg.asp:308-382`) is here too, inside the
+ * composer: the criteria the player fills in ride along with the post, and the
+ * gateway sends each one to `RDOSetRatingFrom` before publishing the column,
+ * exactly as `boardmsg.asp:96-146` orders it. Left untouched, it changes
+ * nothing about what is posted.
  */
 
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowUp, User, X, RefreshCw } from 'lucide-react';
+import type { NewspaperRatingChoice, PoliticsRatingEntry } from '@/shared/types';
 import { useUiStore } from '../../store/ui-store';
 import { useNewspaperStore } from '../../store/newspaper-store';
+import { usePoliticsStore } from '../../store/politics-store';
 import { useClient } from '../../context';
 import { IconButton, SkeletonLines } from '../common';
+import { RATING_CHOICES } from '../politics/RatingsRail';
 import styles from './NewspaperModal.module.css';
 
 /**
@@ -56,12 +62,28 @@ export function NewspaperModal() {
   const issue = useNewspaperStore((s) => s.issue);
   const issueState = useNewspaperStore((s) => s.issueState);
 
+  const politicsData = usePoliticsStore((s) => s.data);
+  const politicsLoadState = usePoliticsStore((s) => s.loadState);
+  const politicsX = usePoliticsStore((s) => s.buildingX);
+  const politicsY = usePoliticsStore((s) => s.buildingY);
+  const politicsIsCapitol = usePoliticsStore((s) => s.isCapitol);
+  const politicsTownName = usePoliticsStore((s) => s.townName);
+
   const [composing, setComposing] = useState(false);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [chosen, setChosen] = useState<Map<string, number>>(new Map());
 
   const isOpen = modal === 'newspaper';
   const hasPaper = context !== null && context.paperName !== '';
+
+  // Whose ratings would these be? Only a board opened from a civic building has
+  // a political entity behind it — the politics store's context is set when that
+  // building's details land (`client-bridge.ts:517-519`). A paper opened from
+  // the Media page carries no such building, and offers no ratings.
+  const ratesThisBuilding = context !== null && !context.isCapitol
+    && politicsX === context.buildingX && politicsY === context.buildingY
+    && politicsIsCapitol === context.isCapitol;
 
   // Same lazy contract as the Politics tab: nothing is read until the section is
   // on screen, and its load state back at `idle` is the re-read signal.
@@ -70,6 +92,16 @@ export function NewspaperModal() {
       client.onRequestNewspaperBoard();
     }
   }, [isOpen, hasPaper, view, loadState, client]);
+
+  // The rating block needs the town's criteria, which is the Politics tab's own
+  // read. `onRequestPoliticsData` flips the store to `loading`, so the tab's
+  // effect and this one cannot both fire.
+  useEffect(() => {
+    if (isOpen && hasPaper && view === 'board' && ratesThisBuilding && politicsLoadState === 'idle') {
+      client.onRequestPoliticsData(politicsTownName, politicsX, politicsY, false);
+    }
+  }, [isOpen, hasPaper, view, ratesThisBuilding, politicsLoadState, politicsTownName,
+    politicsX, politicsY, client]);
 
   useEffect(() => {
     if (isOpen && hasPaper && view === 'paper' && issuesState === 'idle') {
@@ -92,6 +124,7 @@ export function NewspaperModal() {
       setComposing(false);
       setSubject('');
       setBody('');
+      setChosen(new Map());
     }
   }, [isPosting, composing, board, subject]);
 
@@ -110,9 +143,35 @@ export function NewspaperModal() {
     }
   };
 
+  // The criteria this player may rate. `!isRuler` is the incumbent guard of
+  // `boardmsg.asp:283-285`, the same one `RatingsRail.tsx:185-186` applies; a
+  // vacant seat has nobody to rate (`ratingtabs.asp:76`), and a row with no
+  // cache id has no `RatingId` to send back.
+  const ratable: PoliticsRatingEntry[] =
+    ratesThisBuilding && politicsLoadState === 'loaded'
+      && politicsData && politicsData.hasRuler && !politicsData.isRuler
+      ? politicsData.tycoonsRatings.filter((r) => r.id !== undefined)
+      : [];
+
+  const chooseRating = (id: string, value: string) => {
+    setChosen((prev) => {
+      const next = new Map(prev);
+      if (value === '') next.delete(id); else next.set(id, parseInt(value, 10));
+      return next;
+    });
+  };
+
   const handlePost = () => {
     // A reply goes under the open column; otherwise it is a new top-level column.
-    client.onPostNewspaperColumn(subject.trim(), body, article ? board?.path : undefined);
+    const replyPath = article ? board?.path : undefined;
+    const ratings: NewspaperRatingChoice[] = ratable
+      .filter((r) => chosen.has(r.id!))
+      .map((r) => ({ id: r.id!, name: r.name, value: chosen.get(r.id!)! }));
+    if (ratings.length > 0) {
+      client.onPostNewspaperColumn(subject.trim(), body, replyPath, ratings);
+    } else {
+      client.onPostNewspaperColumn(subject.trim(), body, replyPath);
+    }
   };
 
   const noPaper = <p className={styles.empty}>This town has no newspaper.</p>;
@@ -344,6 +403,44 @@ export function NewspaperModal() {
                           onChange={(e) => setBody(e.target.value)}
                         />
                       </label>
+
+                      {/* `boardmsg.asp:308-382` — the ratings the column carries.
+                          Hidden for the incumbent, who cannot rate their own
+                          term (`:283-285`). */}
+                      {ratable.length > 0 && (
+                        <>
+                          <h4 className={styles.sectionTitle}>Rate the Mayor</h4>
+                          {/* News.lng:25 */}
+                          <p className={styles.muted}>
+                            Enter your ratings here. Leave blank the values you do not want
+                            to change.
+                          </p>
+                          {ratable.map((rating) => (
+                            <div className={styles.ratingRow} key={rating.id}>
+                              <span>{rating.name}</span>
+                              <span className={styles.ratingCurrent}>{rating.value}%</span>
+                              <select
+                                className={styles.input}
+                                aria-label={`Your rating for ${rating.name}`}
+                                value={chosen.get(rating.id!) ?? ''}
+                                onChange={(e) => chooseRating(rating.id!, e.target.value)}
+                              >
+                                {/* The `-` placeholder of `:338` — no change. */}
+                                <option value="">—</option>
+                                {RATING_CHOICES.map((v) => (
+                                  <option key={v} value={v}>{v}%</option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                          {/* News.lng:26, printed at `:366-370`. */}
+                          <p className={styles.muted}>
+                            Note: your ratings will be taken into account depending on your
+                            prestige.
+                          </p>
+                        </>
+                      )}
+
                       <div className={styles.composerActions}>
                         <button
                           className={styles.primaryBtn}
@@ -355,7 +452,7 @@ export function NewspaperModal() {
                         <button
                           className={styles.secondaryBtn}
                           disabled={isPosting}
-                          onClick={() => { setSubject(''); setBody(''); }}
+                          onClick={() => { setSubject(''); setBody(''); setChosen(new Map()); }}
                         >
                           Reset Form
                         </button>

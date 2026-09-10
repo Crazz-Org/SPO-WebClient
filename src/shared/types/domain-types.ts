@@ -1235,6 +1235,18 @@ export interface NewspaperBoard {
   error: string;
 }
 
+/**
+ * One rating the player chose to publish with a column — the `<select name=parm<Id>>`
+ * of `boardmsg.asp:337-350` that was not left on `-`. `name` is what the report line
+ * prints (`:125` prints `CacheObj.Name`); `id` is the `RatingId` argument of
+ * `RDOSetRatingFrom` (`:120`), the same cache id `PoliticsRatingEntry.id` carries.
+ */
+export interface NewspaperRatingChoice {
+  id: string;
+  name: string;
+  value: number;
+}
+
 // =============================================================================
 // NEWSPAPER — the daily paper (Visual/News/Newsreader.asp)
 // =============================================================================

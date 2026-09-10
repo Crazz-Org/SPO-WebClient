@@ -45,7 +45,10 @@ id lookups that precede a tax or budget write, and the five Politics ASP pages
 purpose: a `procedure` answers nothing, so no reply can ever say the write landed.
 It also serves the two cache reads by path `getPoliticsData` makes — the town
 folder's ruler block and `world.five`'s `ElectionsOn`, `1` by default, `0` via
-`createCivicMutationsScenario(vars, { electionsOn: false })`.
+`createCivicMutationsScenario(vars, { electionsOn: false })`. It also serves the newspaper
+pair — the two `RDOSetRatingFrom` exchanges a column posted with ratings emits
+(`NEWSPAPER_RATING_CHOICES`, other values than the standalone rating write so each frame
+lands on its own exchange) and the `POST boardmsg.asp` fixture that post reads back.
 
 ### Scenario Structure
 

@@ -29,11 +29,19 @@
  * not an omission: the WebClient does not fetch them. Voyager posted into a
  * hidden iframe because a browser had no socket; the gateway emits the same
  * procedures directly (`politics-handler.ts:940-1035`).
+ *
+ * **The newspaper pair.** `boardmsg.asp` is the one page that puts both halves
+ * on the wire at once: a column posted with ratings emits one
+ * `RDOSetRatingFrom` per chosen criterion (`:120`) and only then posts the form
+ * (`:146`). Those two rating exchanges live here — same member, same bind
+ * target, other values than the standalone rating write, so each frame lands on
+ * its own exchange — beside the `POST boardmsg.asp` fixture the post reads back.
  */
 
 import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoMemberName } from '@/shared/rdo-members';
+import type { NewspaperRatingChoice } from '@/shared/types';
 import { RULER_PROPS } from '@/server/session/politics-handler';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { HttpScenario, HttpExchange } from '../types/http-exchange-types';
@@ -485,6 +493,70 @@ function campaignPage(): string {
 }
 
 // =============================================================================
+// THE NEWSPAPER PAIR — a column that carries ratings
+// =============================================================================
+
+/**
+ * The two criteria a column publishes ratings for.
+ *
+ * They are the two rows this scenario's own `tycoonratings.asp` already serves
+ * (`tycoonRatingRow` above), so the page a player reads and the frames the post
+ * emits describe the same town. The values differ from the standalone
+ * `set-rating-from` write (75) on purpose: exact matching then puts each of the
+ * three frames on its own exchange.
+ */
+export const NEWSPAPER_RATING_CHOICES: NewspaperRatingChoice[] = [
+  { id: '41123456', name: 'Taxation', value: 80 },
+  { id: '41123457', name: 'Public Works', value: 40 },
+];
+
+/** `boardmsg.asp:120` — one `RDOSetRatingFrom` per criterion the player filled in. */
+function buildNewspaperRatingExchanges(): RdoExchange[] {
+  return NEWSPAPER_RATING_CHOICES.map(choice => {
+    const args = [
+      RdoValue.string(choice.id), RdoValue.string('SPO_test3'), RdoValue.int(choice.value),
+    ];
+    return {
+      id: `civic-rdo-newspaper-rating-${choice.name.toLowerCase().replace(/\s+/g, '-')}`,
+      request: rdoCall('RDOSetRatingFrom', CIVIC_TARGETS.townHallId, ...args).toFrame(),
+      // A procedure answers nothing — same as every mutation above.
+      response: '',
+      matchKeys: {
+        verb: 'sel',
+        targetId: CIVIC_TARGETS.townHallId,
+        action: 'call',
+        member: 'RDOSetRatingFrom' as RdoMemberName,
+        argsPattern: args.map(a => a.format()),
+      },
+    };
+  });
+}
+
+/**
+ * `boardmsg.asp:198-219` re-rendered after a post — the index the gateway reads
+ * back as its only oracle that the column was published.
+ */
+function boardIndexPage(author: string, subject: string, summary: string): string {
+  return [
+    '\t\t\t<table cellspacing=0 cellpading=0>',
+    '\t\t\t\t<tr>',
+    '\t\t\t\t\t<td valign="bottom">',
+    `\t\t\t\t\t\t<div class=author><b>${author}</b></div>`,
+    '\t\t\t\t\t</td>',
+    '\t\t\t\t\t<td valign="top">',
+    `\t\t\t\t\t\t<a target="BoardMain" href="BoardMsg.asp?root=boards&path=m1.five&TownName=Shamba">${subject}</a>`,
+    '\t\t\t\t\t</td>',
+    '\t\t\t\t</tr>',
+    '\t\t\t\t<tr>',
+    '\t\t\t\t\t<td colspan=2>',
+    '\t\t\t\t\t</td>',
+    `\t\t\t\t\t<td class=comment>${summary}</td>`,
+    '\t\t\t\t</tr>',
+    '\t\t\t</table>',
+  ].join('\n');
+}
+
+// =============================================================================
 // SCENARIO FACTORY
 // =============================================================================
 
@@ -526,7 +598,7 @@ function buildRdoExchanges(electionsOn: boolean): RdoExchange[] {
 
   const pathReads = buildPathReadExchanges(electionsOn);
 
-  return [...lookups, ...pathReads, ...mutations];
+  return [...lookups, ...pathReads, ...mutations, ...buildNewspaperRatingExchanges()];
 }
 
 function buildHttpExchanges(): HttpExchange[] {
@@ -561,6 +633,16 @@ function buildHttpExchanges(): HttpExchange[] {
       ],
     )),
     page('campaign', 'tycooncampaign.asp', campaignPage()),
+    {
+      // The board post itself (`boardmsg.asp:83-153`), which answers 200 with
+      // the index re-rendered — the gateway's only oracle.
+      id: 'civic-http-board-post',
+      method: 'POST',
+      urlPattern: '/Five/0/Visual/News/boardmsg.asp',
+      status: 200,
+      contentType: 'text/html',
+      body: boardIndexPage('SPO_test3', 'Rated', 'My column'),
+    },
   ];
 }
 

@@ -588,7 +588,9 @@ describe('civic-mutations scenario', () => {
     expect(rdo.name).toBe('civic-mutations');
     expect(http.name).toBe('civic-mutations');
     expect(rdo.exchanges.length).toBeGreaterThan(0);
-    expect(http.exchanges).toHaveLength(5);
+    // The five Politics pages `getPoliticsData` reads, plus the `POST
+    // boardmsg.asp` a column that carries ratings reads back.
+    expect(http.exchanges).toHaveLength(6);
   });
 
   it('variable override reaches the campaign page body', () => {

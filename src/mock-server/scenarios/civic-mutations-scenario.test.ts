@@ -42,11 +42,14 @@ import { makeSessionCtx } from '@/server/__tests__/session/fake-session-context'
 import { RdoMock } from '../rdo-mock';
 import { HttpMock } from '../http-mock';
 import type { RdoExchange } from '../types/rdo-exchange-types';
+import { postNewspaperColumn } from '@/server/session/newspaper-handler';
+import type { NewspaperTarget } from '@/server/session/newspaper-handler';
 import {
   createCivicMutationsScenario,
   CIVIC_MUTATIONS,
   CIVIC_MUTATION_MEMBERS,
   CIVIC_TARGETS,
+  NEWSPAPER_RATING_CHOICES,
   POLITICS_PATH,
 } from './civic-mutations-scenario';
 
@@ -352,5 +355,96 @@ describe('civic-mutations scenario — the world.five flag drives getPoliticsDat
       const ex = rdo.exchanges.find(e => e.id === id)!;
       expect(mock.match(ex.request)!.exchange.id).toBe(ex.id);
     }
+  });
+});
+
+// =============================================================================
+// A column that carries ratings — `boardmsg.asp:96-146`
+// =============================================================================
+
+describe('civic-mutations scenario — a column that carries ratings (boardmsg.asp:96-146)', () => {
+  const TARGET: NewspaperTarget = {
+    paperName: 'Shamba Herald',
+    townName: 'Shamba',
+    isCapitol: false,
+    buildingX: 118,
+    buildingY: 226,
+  };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  /** The gateway wired to both mocks: RDO through the socket, the post through fetch. */
+  function drive() {
+    const { rdo, http } = createCivicMutationsScenario();
+    const rdoMock = new RdoMock();
+    rdoMock.addScenario(rdo);
+    const httpMock = new HttpMock();
+    httpMock.addScenario(http);
+
+    const fake = makeSessionCtx({
+      sockets: ['construction'],
+      currentWorldInfo: { name: 'Shamba', url: 'http://158.69.153.134', ip: '158.69.153.134', port: 7000 },
+      activeUsername: 'SPO_test3', cachedPassword: 'test3',
+      daAddr: '158.69.153.134', daPort: 7001,
+    });
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([CIVIC_TARGETS.townHallId, '']);
+
+    const state = { framesAtPost: -1, postedForm: '' };
+    mockFetch.mockImplementation(async (url: string, init?: unknown) => {
+      state.framesAtPost = fake.frames.construction.length;
+      state.postedForm = (init as { body: string }).body;
+      const result = httpMock.match('POST', url);
+      if (!result) throw new Error(`L1: no HTTP exchange for POST ${url}`);
+      return { ok: true, status: 200, text: async () => result.body } as unknown as Response;
+    });
+
+    return { fake, rdoMock, state };
+  }
+
+  it('emits one RDOSetRatingFrom per chosen criterion, each on its own exchange', async () => {
+    const { fake, rdoMock } = drive();
+
+    await postNewspaperColumn(
+      fake.ctx, TARGET, 'Rated', 'My column', undefined, NEWSPAPER_RATING_CHOICES,
+    );
+
+    expect(fake.frames.construction).toHaveLength(2);
+    expect(rdoMock.match(fake.frames.construction[0])!.exchange.id)
+      .toBe('civic-rdo-newspaper-rating-taxation');
+    expect(rdoMock.match(fake.frames.construction[1])!.exchange.id)
+      .toBe('civic-rdo-newspaper-rating-public-works');
+    for (const frame of fake.frames.construction) {
+      expect(frame).toContain('"*"');
+      expect(frame).not.toContain('"^"');
+    }
+  });
+
+  it('the body ends on the two criteria and the values actually sent', async () => {
+    const { fake, state } = drive();
+
+    const result = await postNewspaperColumn(
+      fake.ctx, TARGET, 'Rated', 'My column', undefined, NEWSPAPER_RATING_CHOICES,
+    );
+
+    const body = new URLSearchParams(state.postedForm).get('Body')!;
+    expect(body).toBe(
+      'My column\r\n\r\nRatings from SPO_test3:\r\nTaxation: 80%\r\nPublic Works: 40%\r\n',
+    );
+    expect(body.trimEnd().split('\r\n').slice(-2))
+      .toEqual(['Taxation: 80%', 'Public Works: 40%']);
+    // The ratings went out first, as `:96-143` precedes `:146`.
+    expect(state.framesAtPost).toBe(2);
+    expect(result.success).toBe(true);
+  });
+
+  it('a post with no ratings puts nothing on the wire and posts the plain body', async () => {
+    const { fake, state } = drive();
+
+    await postNewspaperColumn(fake.ctx, TARGET, 'Rated', 'My column');
+
+    expect(fake.frames.construction).toHaveLength(0);
+    expect(new URLSearchParams(state.postedForm).get('Body')).toBe('My column');
   });
 });

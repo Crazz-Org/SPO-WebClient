@@ -5,11 +5,13 @@
  * paper: one read of `ShowBar.asp` for the issue list, one of an issue's own
  * `home.asp` for its stories.
  *
- * There is no RDO in either: the board is a `NewsBoard.NewsObject` COM tree and
- * the paper is a folder of generated pages, both reachable only through IIS —
+ * Neither is reachable by RDO: the board is a `NewsBoard.NewsObject` COM tree
+ * and the paper is a folder of generated pages, both served by IIS alone —
  * which is why "Rate the Mayor" navigates to `boardreader.asp`
  * (`Voyager/TownHallSheet.pas:343`) and "Read News" to `newsreader.asp` (`:361`)
- * rather than calling anything.
+ * rather than calling anything. A post can still put frames on the wire: the
+ * ratings a column carries go out as `RDOSetRatingFrom` before it is published
+ * (`boardmsg.asp:96-146`), which the last block here drives.
  *
  * The fixtures below are instantiated from the pages under
  * `IIS_ROOT/Five/0/Visual/News/`, not from the parsers.
@@ -36,8 +38,7 @@ import {
   type NewspaperTarget,
 } from './newspaper-handler';
 import { makeSessionCtx } from '../__tests__/session/fake-session-context';
-import type { FakeSessionCtx } from '../__tests__/session/fake-session-context';
-import type { SessionContext } from './session-context';
+import type { FakeSessionCtx, FakeSessionOptions } from '../__tests__/session/fake-session-context';
 import type { WorldInfo } from '../../shared/types';
 
 const mockFetch = fetch as unknown as jest.MockedFunction<
@@ -60,7 +61,7 @@ const TARGET: NewspaperTarget = {
 
 const ROOT = 'boards\\Planitia\\Helartia Herald\\';
 
-function makeWebCtx(overrides: Partial<SessionContext> = {}): FakeSessionCtx {
+function makeWebCtx(overrides: FakeSessionOptions = {}): FakeSessionCtx {
   return makeSessionCtx({
     currentWorldInfo: WORLD, activeUsername: 'SPO_test3', cachedPassword: 'test3',
     daAddr: '10.0.0.5', daPort: 1111, ...overrides,
@@ -601,6 +602,126 @@ describe('postNewspaperColumn', () => {
     const result = await postNewspaperColumn(fake.ctx, TARGET, 'S', 'B');
     expect(result).toEqual({ success: false, message: 'ECONNRESET', board: null });
     expect(fake.log.warn).toHaveBeenCalledWith('[Newspaper] Post failed: ECONNRESET');
+  });
+});
+
+// =============================================================================
+// postNewspaperColumn — the ratings the column carries (`boardmsg.asp:96-146`)
+// =============================================================================
+describe('postNewspaperColumn — with ratings', () => {
+  const RATINGS = [
+    { id: '41123456', name: 'Taxation', value: 80 },
+    { id: '41123457', name: 'Public Works', value: 40 },
+  ];
+
+  const POSTED = indexPage([
+    { author: 'SPO_test3', subject: 'Rated', summary: 'My column', path: 'm1.five' },
+  ]);
+
+  /** A context that can emit on the construction socket, with a town hall behind it. */
+  function makeRatingCtx(): FakeSessionCtx {
+    const fake = makeWebCtx({ sockets: ['construction'] });
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue(['90210', '']);
+    return fake;
+  }
+
+  function bodyOf(callIndex = 0): string {
+    const form = new URLSearchParams((mockFetch.mock.calls[callIndex][1] as { body: string }).body);
+    return form.get('Body') ?? '';
+  }
+
+  it('sends each rating and reports exactly those in the body', async () => {
+    const fake = makeRatingCtx();
+    mockFetch.mockResolvedValue(htmlResponse(POSTED));
+
+    const result = await postNewspaperColumn(
+      fake.ctx, TARGET, 'Rated', 'My column', undefined, RATINGS,
+    );
+
+    expect(fake.frames.construction).toHaveLength(2);
+    for (const frame of fake.frames.construction) {
+      // A `procedure`: `"^"` here would leave a result pointer nobody pops.
+      expect(frame).toContain('"*"');
+      expect(frame).not.toContain('"^"');
+    }
+    expect(fake.frames.construction[0]).toContain('41123456');
+    expect(fake.frames.construction[1]).toContain('41123457');
+    // `:125` / `:133` — CRLF throughout, trailing CRLF kept as the page keeps it.
+    expect(bodyOf()).toBe(
+      'My column\r\n\r\nRatings from SPO_test3:\r\nTaxation: 80%\r\nPublic Works: 40%\r\n',
+    );
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
+  });
+
+  // `boardmsg.asp:96-143` precedes `NewMessage` (`:146`): a rating that failed
+  // must be knowable before the column claiming it is published.
+  it('emits every rating before the column is posted', async () => {
+    const fake = makeRatingCtx();
+    let framesAtPost = -1;
+    mockFetch.mockImplementation(async () => {
+      framesAtPost = fake.frames.construction.length;
+      return htmlResponse(POSTED);
+    });
+
+    await postNewspaperColumn(fake.ctx, TARGET, 'Rated', 'My column', undefined, RATINGS);
+
+    expect(framesAtPost).toBe(2);
+  });
+
+  it('leaves a refused rating out of the report', async () => {
+    const fake = makeWebCtx({ sockets: ['construction'] });
+    const at = fake.ctx.getCacherPropertyListAt as jest.Mock;
+    at.mockResolvedValueOnce(['90210', '']);
+    at.mockResolvedValueOnce([]);
+    mockFetch.mockResolvedValue(htmlResponse(POSTED));
+
+    await postNewspaperColumn(fake.ctx, TARGET, 'Rated', 'My column', undefined, RATINGS);
+
+    expect(fake.frames.construction).toHaveLength(1);
+    expect(bodyOf()).toBe('My column\r\n\r\nRatings from SPO_test3:\r\nTaxation: 80%\r\n');
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[Newspaper] Rating "Public Works" not sent: No political entity at (118, 226)',
+    );
+  });
+
+  // `:132` — no report, no header. The column is then what it would have been.
+  it('posts the plain body when no rating could be sent', async () => {
+    const fake = makeWebCtx();
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue(['90210', '']);
+    mockFetch.mockResolvedValue(htmlResponse(POSTED));
+
+    await postNewspaperColumn(fake.ctx, TARGET, 'Rated', 'My column', undefined, RATINGS);
+
+    expect(bodyOf()).toBe('My column');
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[Newspaper] Rating "Taxation" not sent: Construction socket unavailable',
+    );
+  });
+
+  it('posts byte-identically when the block was left untouched', async () => {
+    const fake = makeRatingCtx();
+    mockFetch.mockResolvedValue(htmlResponse(POSTED));
+
+    await postNewspaperColumn(fake.ctx, TARGET, 'Rated', 'My column', undefined, []);
+
+    expect(bodyOf()).toBe('My column');
+    expect(fake.ctx.getCacherPropertyListAt).not.toHaveBeenCalled();
+    expect(fake.frames.construction).toHaveLength(0);
+  });
+
+  it('names the cached author when there is no active one', async () => {
+    const fake = makeWebCtx({
+      sockets: ['construction'], activeUsername: null, cachedUsername: 'Crazz',
+    });
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue(['90210', '']);
+    mockFetch.mockResolvedValue(htmlResponse(indexPage([
+      { author: 'Crazz', subject: 'Rated', summary: 'My column', path: 'm1.five' },
+    ])));
+
+    await postNewspaperColumn(fake.ctx, TARGET, 'Rated', 'My column', undefined, [RATINGS[0]]);
+
+    expect(bodyOf()).toBe('My column\r\n\r\nRatings from Crazz:\r\nTaxation: 80%\r\n');
   });
 });
 

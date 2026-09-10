@@ -98,6 +98,7 @@ export type {
   NewspaperColumn,
   NewspaperArticle,
   NewspaperBoard,
+  NewspaperRatingChoice,
   NewspaperIssueRef,
   NewspaperStory,
   NewspaperIssueList,

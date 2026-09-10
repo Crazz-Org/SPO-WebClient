@@ -15,9 +15,12 @@ import {
   createSpiedCallbacks,
 } from '../../__tests__/setup/render-helpers';
 import { useNewspaperStore } from '../../store/newspaper-store';
+import { usePoliticsStore } from '../../store/politics-store';
 import { useUiStore } from '../../store/ui-store';
 import { NewspaperModal } from './NewspaperModal';
-import type { NewspaperBoard, NewspaperIssue, NewspaperIssueRef } from '@/shared/types';
+import type {
+  NewspaperBoard, NewspaperIssue, NewspaperIssueRef, PoliticsData,
+} from '@/shared/types';
 
 const CONTEXT = {
   paperName: 'Helartia Herald',
@@ -66,6 +69,7 @@ function openWith(
 beforeEach(() => {
   resetStores();
   useNewspaperStore.getState().reset();
+  usePoliticsStore.getState().reset();
 });
 
 describe('NewspaperModal', () => {
@@ -264,6 +268,202 @@ describe('NewspaperModal', () => {
     renderWithProviders(<NewspaperModal />);
     fireEvent.click(screen.getByLabelText('Close'));
     expect(useUiStore.getState().modal).toBeNull();
+  });
+});
+
+// =============================================================================
+// The rating form the board carries — `boardmsg.asp:308-382`
+// =============================================================================
+
+const POLITICS: PoliticsData = {
+  townName: 'Helartia',
+  isCapitol: false,
+  hasRuler: true,
+  yearsToElections: 2,
+  mayorName: 'Rio',
+  mayorPrestige: 240,
+  mayorRating: 55,
+  tycoonsRating: 48,
+  ifelRating: 61,
+  mandateNo: 1,
+  rulerPhotoUrl: '',
+  popularRatings: [{ name: 'Housing', value: 55 }],
+  ifelRatings: [{ name: 'Economy', value: 61 }],
+  tycoonsRatings: [
+    { name: 'Taxation', value: 75, id: '41123456' },
+    { name: 'Public Works', value: 30, id: '41123457' },
+    // No cache id — no `RatingId` to send, so no control, as on the Politics tab.
+    { name: 'Roads', value: 30 },
+  ],
+  publicity: [],
+  publicityAds: '',
+  campaignCount: 0,
+  campaigns: [],
+  campaignState: 'ruler',
+  campaignMessage: '',
+  canLaunchCampaign: false,
+  prestigeThreshold: 200,
+  projects: [],
+  promise: '',
+  townHallId: 130500777,
+  isRuler: false,
+};
+
+/** The politics store as it stands once THIS town hall's data has landed. */
+function withPolitics(over: Partial<PoliticsData> = {}, storeOver: Record<string, unknown> = {}): void {
+  usePoliticsStore.setState({
+    data: { ...POLITICS, ...over },
+    loadState: 'loaded',
+    townName: 'Helartia',
+    buildingX: 118,
+    buildingY: 226,
+    isCapitol: false,
+    ...storeOver,
+  });
+}
+
+describe('NewspaperModal — the ratings a column carries', () => {
+  function openComposer(): void {
+    openWith(INDEX);
+  }
+
+  it('offers one control per ratable criterion', () => {
+    openComposer();
+    withPolitics();
+    renderWithProviders(<NewspaperModal />);
+    fireEvent.click(screen.getByText('Post a column'));
+
+    expect(screen.getByLabelText('Your rating for Taxation')).toBeTruthy();
+    expect(screen.getByLabelText('Your rating for Public Works')).toBeTruthy();
+    expect(screen.queryByLabelText('Your rating for Roads')).toBeNull();
+  });
+
+  it('posts the chosen ratings with the column', () => {
+    const spy = jest.fn();
+    openComposer();
+    withPolitics();
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onPostNewspaperColumn: spy }) },
+    );
+    fireEvent.click(screen.getByText('Post a column'));
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Roads' } });
+    fireEvent.change(screen.getByLabelText('Column'), { target: { value: 'We need more' } });
+    fireEvent.change(screen.getByLabelText('Your rating for Taxation'), { target: { value: '80' } });
+    fireEvent.change(screen.getByLabelText('Your rating for Public Works'), { target: { value: '40' } });
+    fireEvent.click(screen.getByText('Post Column'));
+
+    expect(spy).toHaveBeenCalledWith('Roads', 'We need more', undefined, [
+      { id: '41123456', name: 'Taxation', value: 80 },
+      { id: '41123457', name: 'Public Works', value: 40 },
+    ]);
+  });
+
+  // The `-` placeholder of `:338` is "no change": an untouched block posts
+  // exactly what it posted before this form existed.
+  it('a block left untouched posts exactly what it posted before', () => {
+    const spy = jest.fn();
+    openComposer();
+    withPolitics();
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onPostNewspaperColumn: spy }) },
+    );
+    fireEvent.click(screen.getByText('Post a column'));
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Roads' } });
+    fireEvent.click(screen.getByText('Post Column'));
+
+    expect(spy.mock.calls[0]).toHaveLength(3);
+  });
+
+  it('drops a criterion put back on the placeholder', () => {
+    const spy = jest.fn();
+    openComposer();
+    withPolitics();
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onPostNewspaperColumn: spy }) },
+    );
+    fireEvent.click(screen.getByText('Post a column'));
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Roads' } });
+    fireEvent.change(screen.getByLabelText('Your rating for Taxation'), { target: { value: '80' } });
+    fireEvent.change(screen.getByLabelText('Your rating for Taxation'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('Post Column'));
+
+    expect(spy.mock.calls[0]).toHaveLength(3);
+  });
+
+  // `boardmsg.asp:283-285` — the incumbent never sees the form; the same guard
+  // `RatingsRail.tsx:185-186` applies on the Politics tab.
+  it('is hidden for the incumbent', () => {
+    openComposer();
+    withPolitics({ isRuler: true });
+    renderWithProviders(<NewspaperModal />);
+    fireEvent.click(screen.getByText('Post a column'));
+    expect(screen.queryByLabelText('Your rating for Taxation')).toBeNull();
+  });
+
+  // `ratingtabs.asp:76` — a vacant seat has nobody to rate.
+  it('is hidden when the seat is vacant', () => {
+    openComposer();
+    withPolitics({ hasRuler: false });
+    renderWithProviders(<NewspaperModal />);
+    fireEvent.click(screen.getByText('Post a column'));
+    expect(screen.queryByLabelText('Your rating for Taxation')).toBeNull();
+  });
+
+  it('is hidden when the politics data describes another building', () => {
+    openComposer();
+    withPolitics({}, { buildingX: 999 });
+    renderWithProviders(<NewspaperModal />);
+    fireEvent.click(screen.getByText('Post a column'));
+    expect(screen.queryByLabelText('Your rating for Taxation')).toBeNull();
+  });
+
+  it('reads the politics data when it has not been read for this building', () => {
+    const spy = jest.fn();
+    openComposer();
+    withPolitics({}, { loadState: 'idle', data: null });
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onRequestPoliticsData: spy }) },
+    );
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('Helartia', 118, 226, false);
+  });
+
+  it('does not read the politics data for a paper with no building behind it', () => {
+    const spy = jest.fn();
+    openComposer();
+    withPolitics({}, { loadState: 'idle', data: null, buildingX: 0, buildingY: 0 });
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onRequestPoliticsData: spy }) },
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('does not read again while a read is in flight', () => {
+    const spy = jest.fn();
+    openComposer();
+    withPolitics({}, { loadState: 'loading', data: null });
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onRequestPoliticsData: spy }) },
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('Reset Form clears the chosen ratings', () => {
+    openComposer();
+    withPolitics();
+    renderWithProviders(<NewspaperModal />);
+    fireEvent.click(screen.getByText('Post a column'));
+    const select = screen.getByLabelText('Your rating for Taxation') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: '80' } });
+    expect(select.value).toBe('80');
+    fireEvent.click(screen.getByText('Reset Form'));
+    expect((screen.getByLabelText('Your rating for Taxation') as HTMLSelectElement).value).toBe('');
   });
 });
 
