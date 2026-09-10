@@ -129,6 +129,12 @@
   color: var(--text-muted);
 }
 
+.townIcon {
+  width: 30px;
+  height: auto;
+  flex-shrink: 0;
+}
+
 /* Search row (tycoon / people) */
 .searchRow {
   display: flex;

@@ -689,6 +689,8 @@ export interface TownInfo {
   name: string;
   iconUrl: string;
   mayor: string | null;
+  /** Elected term number, present only when the world runs elections and the ruler has served >=1 (RenderTown.inc:23-30). */
+  mayorTerm?: number;
   population: number;
   unemploymentPercent: number;
   qualityOfLife: number;

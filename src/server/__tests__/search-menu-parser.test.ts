@@ -2,7 +2,7 @@
  * Tests for search-menu-parser — parseHomePage, parseTycoonProfile.
  */
 
-import { parseHomePage, parseTycoonProfile, parseNewspapersPage } from '../search-menu-parser';
+import { parseHomePage, parseTycoonProfile, parseNewspapersPage, parseTownsPage } from '../search-menu-parser';
 
 const BASE_URL = 'http://142.4.193.58/five/0/visual/voyager/new%20directory';
 
@@ -194,5 +194,94 @@ describe('parseNewspapersPage', () => {
     </body></html>`;
 
     expect(parseNewspapersPage(html)).toEqual([]);
+  });
+});
+
+/**
+ * One town, rendered exactly as New Directory/RenderTown.inc:6-35 emits it:
+ * a header row carrying the icon and the name, then an info row whose first cell
+ * holds the "Mayor:" heading and a second <center> with the ruler (or the red "none").
+ */
+function renderTownRows(name: string, rulerCenter: string, uePercent: number): string {
+  return `
+  <tr onMouseOver="onItemMouseOver()" onMouseOut="onItemMouseOut()" onClick="onItemMouseClick()" dirHref="RenderTownIn.asp?Path=Towns\\${name}&WorldName=Shamba&ClassId=1000&RIWS=" textId="text_1">
+    <td width="60"><div class=FacIcon><img src="/five/icons/townhall.gif" width="60" border="0"></div></td>
+    <td width="*" style="padding-left: 7px"><div id=text_1 class=ItemHeader>${name}</div></td>
+  </tr>
+  <tr>
+    <td><div class=ItemInfo><center><b>Mayor:</b></center>
+      ${rulerCenter}
+    </td>
+    <td style="padding-left: 7px;padding-bottom: 7px">
+      <div class=ItemInfo>12,400
+        &nbsp;inhabitants
+        <br>(${uePercent}% UE)
+        <br>
+        QoL: 71%
+        <br>
+        <a href="http://local.asp?frame_Id=MapIsoView&frame_Action=SELECT&x=120&y=340">Show in map</a>
+      </div>
+    </td>
+  </tr>
+  <tr><td colspan="2" height="2" background="images/itemgradient.jpg"></td></tr>`;
+}
+
+describe('parseTownsPage', () => {
+  const html = `<html><body><table>
+    ${renderTownRows('Helartia', '<center>SPO_test3\n      <br>(Term 2)\n    </center>', 4)}
+    ${renderTownRows('Nova Roma', '<center>Rio\n    </center>', 9)}
+    ${renderTownRows('Dunmore', '<center><font color="red">none</font></center>', 0)}
+  </table></body></html>`;
+
+  it('reads the ruler and the term number for a town with an elected mayor', () => {
+    const towns = parseTownsPage(html, BASE_URL);
+
+    expect(towns).toHaveLength(3);
+    expect(towns[0].name).toBe('Helartia');
+    expect(towns[0].mayor).toBe('SPO_test3');
+    expect(towns[0].mayorTerm).toBe(2);
+    expect(towns[0].unemploymentPercent).toBe(4);
+    expect(towns[0].iconUrl).toContain('townhall.gif');
+  });
+
+  it('reads the ruler with no term on a world with no elections', () => {
+    const towns = parseTownsPage(html, BASE_URL);
+
+    expect(towns[1].name).toBe('Nova Roma');
+    expect(towns[1].mayor).toBe('Rio');
+    expect(towns[1].mayorTerm).toBeUndefined();
+    expect(towns[1].unemploymentPercent).toBe(9);
+  });
+
+  it('maps the legacy red "none" to a null mayor', () => {
+    const towns = parseTownsPage(html, BASE_URL);
+
+    expect(towns[2].name).toBe('Dunmore');
+    expect(towns[2].mayor).toBeNull();
+    expect(towns[2].mayorTerm).toBeUndefined();
+    expect(towns[2].unemploymentPercent).toBe(0);
+  });
+
+  it('does not throw when the info row carries only the "Mayor:" heading', () => {
+    const bare = `<html><body><table>
+      ${renderTownRows('Bareville', '', 0)}
+    </table></body></html>`;
+
+    const towns = parseTownsPage(bare, BASE_URL);
+
+    expect(towns).toHaveLength(1);
+    expect(towns[0].mayor).toBeNull();
+    expect(towns[0].mayorTerm).toBeUndefined();
+  });
+
+  it('skips a header row with no name', () => {
+    const nameless = `<html><body><table>
+      <tr onMouseOver="onItemMouseOver()" dirHref="RenderTownIn.asp?Path=Towns\\X&ClassId=1000">
+        <td><div class=ItemHeader></div></td>
+      </tr>
+      <tr><td><div class=ItemInfo><center><b>Mayor:</b></center><center>Rio</center></td></tr>
+    </table></body></html>`;
+
+    expect(parseTownsPage(nameless, BASE_URL)).toEqual([]);
   });
 });

@@ -89,10 +89,16 @@ export function parseTownsPage(html: string, baseUrl: string): TownInfo[] {
 
     if (!name) return;
 
-    // Extract mayor
-    const mayorMatch = infoText.match(/Mayor:.*?<center>(.*?)<\/center>/s);
-    let mayor: string | null = mayorMatch ? mayorMatch[1].replace(/<[^>]+>/g, '').trim() : null;
-    if (mayor === 'none') mayor = null;
+    // Mayor: the info row's first cell holds <center>Mayor:</center> then a second <center>
+    // with the ruler name (+ optional "<br>(Term n)") or <font color="red">none</font>
+    // (New Directory/RenderTown.inc:19-35). A row with no second <center> yields '' here.
+    const rulerText = $info.find('td').first().find('center').eq(1).text()
+      .replace(/\s+/g, ' ')
+      .trim();
+    const rulerMatch = rulerText.match(/^(.*?)\s*(?:\(Term (\d+)\))?$/);
+    const rulerName = rulerMatch ? rulerMatch[1].trim() : '';
+    const mayor: string | null = rulerName && rulerName !== 'none' ? rulerName : null;
+    const mayorTerm = mayor && rulerMatch?.[2] ? parseInt(rulerMatch[2], 10) : undefined;
 
     // Extract population
     const popMatch = infoText.match(/(\d{1,3}(?:,\d{3})*)\s*inhabitants/);
@@ -123,6 +129,7 @@ export function parseTownsPage(html: string, baseUrl: string): TownInfo[] {
       name,
       iconUrl: iconUrl ? `${baseUrl}/${iconUrl}` : '',
       mayor,
+      ...(mayorTerm !== undefined ? { mayorTerm } : {}),
       population,
       unemploymentPercent,
       qualityOfLife,

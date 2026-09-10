@@ -49,12 +49,17 @@ function TownsPage() {
           onClick={() => client.onNavigateToBuilding(town.x, town.y)}
         >
           <div className={styles.listItemHeader}>
-            <Building2 size={16} className={styles.listItemIcon} />
+            {town.iconUrl
+              ? <img className={styles.townIcon} src={town.iconUrl} alt="" />
+              : <Building2 size={16} className={styles.listItemIcon} />}
             <span className={styles.listItemTitle}>{town.name}</span>
           </div>
           <div className={styles.listItemDetails}>
-            {town.mayor && <span>Mayor: {town.mayor}</span>}
+            <span>
+              {`Mayor: ${town.mayor ?? 'none'}${town.mayor && town.mayorTerm ? ` (Term ${town.mayorTerm})` : ''}`}
+            </span>
             <span>Pop: {town.population.toLocaleString()}</span>
+            <span>UE: {town.unemploymentPercent}%</span>
             <span>QoL: {town.qualityOfLife}%</span>
           </div>
         </GlassCard>
