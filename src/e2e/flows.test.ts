@@ -3,7 +3,7 @@ import type { WsMessage, FavoritesItem } from '@/shared/types/message-types';
 import { FLOWS, flowByName, nudge, runFlow } from './flows';
 import { ROUTES } from './routing';
 import { WorldLock } from './world-lock';
-import { WsDriver } from './ws-driver';
+import { WsDriver, WsDriverError } from './ws-driver';
 import * as session from './session';
 import * as probeModule from './probe';
 import * as liveLog from './live-log';
@@ -894,5 +894,95 @@ describe('newspaper-read', () => {
     });
     const opened = requests.find(m => m.type === WsMessageType.REQ_NEWSPAPER_ISSUE);
     expect(opened).toMatchObject({ folder: '002147483640@3-1-2027' });
+  });
+});
+
+describe('zoning-alert-read', () => {
+  const ZONED_ANCHOR = 'http://local.asp?frame_Id=MapIsoView&frame_Action=SELECT&x=220&y=41';
+
+  function arrange(over: {
+    inboxSubjects?: string[];
+    htmlBody?: string | undefined;
+    noHtmlBody?: boolean;
+    onRequest?: (msg: WsMessage) => void;
+    focusResult?: 'ok' | 'error';
+  } = {}) {
+    const {
+      inboxSubjects = ['Zoning Alert!'],
+      htmlBody = over.noHtmlBody ? undefined : `<a href="${ZONED_ANCHOR}">Demolished Building</a>`,
+      onRequest,
+      focusResult = 'ok',
+    } = over;
+
+    const requests: WsMessage[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(
+      stubSession(msg => {
+        requests.push(msg);
+        onRequest?.(msg);
+        switch (msg.type) {
+          case WsMessageType.REQ_MAIL_CONNECT:
+            return { type: WsMessageType.RESP_MAIL_CONNECTED, unreadCount: 0 };
+          case WsMessageType.REQ_MAIL_GET_FOLDER:
+            return {
+              type: WsMessageType.RESP_MAIL_FOLDER,
+              folder: 'Inbox',
+              messages: inboxSubjects.map((subject, i) => ({ messageId: String(i), subject })),
+            };
+          case WsMessageType.REQ_MAIL_READ_MESSAGE:
+            return { type: WsMessageType.RESP_MAIL_MESSAGE, message: { htmlBody } };
+          case WsMessageType.REQ_BUILDING_FOCUS:
+            if (focusResult === 'error') {
+              throw new WsDriverError('not found', 404, WsMessageType.REQ_BUILDING_FOCUS);
+            }
+            return { type: WsMessageType.RESP_BUILDING_FOCUS, building: {} };
+          case WsMessageType.REQ_BUILDING_UNFOCUS:
+            return { type: WsMessageType.RESP_CHAT_SUCCESS };
+          default:
+            return undefined;
+        }
+      }),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    return requests;
+  }
+
+  it('opens the newest alert, translates the link and drives REQ_BUILDING_FOCUS', async () => {
+    const requests = arrange();
+
+    const result = await flowByName('zoning-alert-read').run(ctx);
+
+    expect(result.status).toBe('PASS');
+    expect(requests).toContainEqual(
+      expect.objectContaining({ type: WsMessageType.REQ_BUILDING_FOCUS, x: 220, y: 41 }),
+    );
+    expect(requests.some(m => m.type === WsMessageType.REQ_BUILDING_UNFOCUS)).toBe(true);
+  });
+
+  it('an empty inbox is an environment exception, and sends no REQ_BUILDING_FOCUS', async () => {
+    const requests = arrange({ inboxSubjects: [] });
+
+    const result = await flowByName('zoning-alert-read').run(ctx);
+
+    expect(result.status).toBe('PASS');
+    expect(result.assertions.find(a => /nothing was zoned out/.test(a.what))).toMatchObject({ ok: true });
+    expect(requests.some(m => m.type === WsMessageType.REQ_BUILDING_FOCUS)).toBe(false);
+  });
+
+  it('FAILs when the alert page has no htmlBody', async () => {
+    arrange({ noHtmlBody: true });
+
+    const result = await flowByName('zoning-alert-read').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/map-select link/);
+  });
+
+  it('accepts a demolished-building focus error without failing the flow', async () => {
+    arrange({ focusResult: 'error' });
+
+    const result = await flowByName('zoning-alert-read').run(ctx);
+
+    expect(result.status).toBe('PASS');
+    expect(result.assertions.find(a => /building is gone/.test(a.what))).toMatchObject({ ok: true });
   });
 });

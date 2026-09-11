@@ -773,6 +773,7 @@ export interface MailMessageFull extends MailMessageHeader {
   body: string[];               // Message body lines
   attachments: MailAttachment[];
   stampUrl?: string;            // Proxied stamp picture (MessageHeader.asp:167-169); absent when no world is joined
+  htmlBody?: string;            // The page a system mail's META REFRESH points at (World.pas:2710), fetched by the gateway from the world's own web server; absent for plain mail, for a refresh to any other host, and when the fetch failed
 }
 
 /**

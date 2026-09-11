@@ -308,7 +308,7 @@ export function MailPanel() {
             )}
           </div>
           {isHtmlContent(currentMessage.body) ? (
-            <HtmlMailBody body={currentMessage.body} />
+            <HtmlMailBody body={currentMessage.body} htmlBody={currentMessage.htmlBody} />
           ) : (
             <div className={styles.readBody}>{currentMessage.body.join('\n')}</div>
           )}

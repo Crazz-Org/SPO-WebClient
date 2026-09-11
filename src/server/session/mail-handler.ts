@@ -14,8 +14,12 @@
  * is "^" WITHOUT a QueryId.
  * Ref: MsgComposerHandler.pas:324-326.
  *
- * There are two HTTP scrapes: `MessageList.asp` (folder listing, `getMailFolder`)
- * and `MessageBody.asp` (Inbox read-touch, `markInboxMessageRead`). RDO has no member
+ * There are three HTTP scrapes: `MessageList.asp` (folder listing, `getMailFolder`),
+ * `MessageBody.asp` (Inbox read-touch, `markInboxMessageRead`) and the page a system
+ * mail's META REFRESH points at, fetched only from the world's own IIS
+ * (`fetchSystemMailPage`) so a zoning alert (or any other system notification) can be
+ * rendered same-origin on the client instead of loaded as a dead cross-origin iframe.
+ * RDO has no member
  * that clears the mail server's `Read` flag — `CheckNewMail` counts Inbox headers whose
  * `Read` is not `1` (`~/SPO-Original/Mail Server/MailServer.pas:557`, walk at `:543-560`),
  * and the only writer of that flag is the ASP COM object `TFiveMessage.LoadHeader`
@@ -38,6 +42,7 @@ import { parsePropertyResponse as parsePropertyResponseHelper, writeRdoFrame } f
 import { parseMessageListHtml } from '../mail-list-parser';
 import { toErrorMessage } from '../../shared/error-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
+import { extractMetaRefreshUrl } from '../../shared/mail-html-utils';
 
 // ── Fire-and-forget helper for void mail procedures ──────────────────────
 function mailFireAndForget(ctx: SessionContext, targetId: string, method: RdoMemberName, ...args: RdoValue[]): void {
@@ -80,6 +85,44 @@ async function markInboxMessageRead(ctx: SessionContext, messageId: string): Pro
     }
   } catch (e: unknown) {
     ctx.log.warn('[Mail] Header touch failed — unread flag not cleared:', toErrorMessage(e));
+  }
+}
+
+const MAIL_PAGE_FETCH_TIMEOUT_MS = 5000;
+
+/**
+ * The page a system mail's META REFRESH points at (World.pas:2710), fetched only from
+ * the world's own web server — a mail body is player-writable, so the hostname must
+ * match `ctx.currentWorldInfo.ip`, the host the Delphi server itself puts in the URL
+ * (`GetWorldURL`). Never throws.
+ */
+async function fetchSystemMailPage(ctx: SessionContext, bodyLines: string[]): Promise<string | undefined> {
+  const refreshUrl = extractMetaRefreshUrl(bodyLines.join('\n'));
+  if (refreshUrl === null) return undefined;
+
+  let url: URL;
+  try {
+    url = new URL(refreshUrl);
+  } catch {
+    return undefined;
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+  if (!ctx.currentWorldInfo || url.hostname !== ctx.currentWorldInfo.ip) {
+    ctx.log.debug(`[Mail] System mail page host does not match the world server — not fetched: ${url.hostname}`);
+    return undefined;
+  }
+
+  try {
+    const response = await fetchWithTimeout(refreshUrl, { redirect: 'follow' }, MAIL_PAGE_FETCH_TIMEOUT_MS);
+    if (!response.ok) {
+      ctx.log.warn(`[Mail] system mail page returned ${response.status} — body shown as a plain frame`);
+      return undefined;
+    }
+    return await response.text();
+  } catch (e: unknown) {
+    ctx.log.warn('[Mail] system mail page fetch failed:', toErrorMessage(e));
+    return undefined;
   }
 }
 
@@ -302,7 +345,8 @@ export async function saveDraft(
  * Open and read a mail message.
  * Reference: MsgComposerHandler.pas:416-420
  * Flow: OpenMessage -> GetHeaders -> GetLines -> GetAttachmentCount -> GetAttachment -> CloseMessage
- * -> [Inbox only] MessageBody.asp header touch (see the file header for why).
+ * -> system mail page fetch (same-host only) -> [Inbox only] MessageBody.asp header touch
+ * (see the file header for why).
  */
 export async function readMailMessage(
   ctx: SessionContext,
@@ -382,6 +426,9 @@ export async function readMailMessage(
       ctx.log.warn('[Mail] Failed to close message:', e);
     }
   }
+
+  const htmlBody = await fetchSystemMailPage(ctx, message.body);
+  if (htmlBody !== undefined) message.htmlBody = htmlBody;
 
   // 6. Inbox only — Sent/Draft carry no meaningful Read flag (MailServer.pas:544 walks tidInbox).
   if (folder.toLowerCase() === 'inbox') {
