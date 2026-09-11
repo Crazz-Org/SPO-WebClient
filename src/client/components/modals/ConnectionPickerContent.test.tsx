@@ -77,6 +77,49 @@ describe('ConnectionPickerContent (T3)', () => {
     expect(useBuildingStore.getState().connectionPicker?.fluidName).toBe('Cotton');
   });
 
+  it('a supplier search with every box ticked sends Role 54', () => {
+    // The four boxes of OutputSearchHandlerViewer.pas:337-351 — the `#54` of the
+    // captured trace (src/server/__tests__/rdo/connection-search.test.ts:9).
+    openPicker();
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 54 });
+  });
+
+  it('a customer search with every box ticked sends Role 78, from its own boxes', () => {
+    useBuildingStore.getState().setConnectionPicker({ fluidName: 'Cotton', fluidId: 'Cotton', direction: 'output', buildingX: 100, buildingY: 100 });
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
+    expect(screen.getByText('Stores')).toBeTruthy();
+    expect(screen.getByText('Import Warehouses')).toBeTruthy();
+    expect(screen.queryByText('Trade Centers')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 78 });
+  });
+
+  it('unticking Stores and Import Warehouses leaves a customer search on 6', () => {
+    useBuildingStore.getState().setConnectionPicker({ fluidName: 'Cotton', fluidId: 'Cotton', direction: 'output', buildingX: 100, buildingY: 100 });
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
+    fireEvent.click(screen.getByLabelText('Stores'));
+    fireEvent.click(screen.getByLabelText('Import Warehouses'));
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    // rolProducer(2) | rolDistributer(4) — the two boxes both forms share
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 6 });
+  });
+
+  it('Factories alone sends Role 2 — rolProducer, with no fallback mask', () => {
+    openPicker();
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
+    for (const caption of ['Warehouses', 'Trade Centers', 'Export Warehouses']) {
+      fireEvent.click(screen.getByLabelText(caption));
+    }
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 2 });
+  });
+
   it('the bridge stacks the picker on the building surface and closing pops it', () => {
     useUiStore.getState().setRootSurface({ kind: 'building' });
     ClientBridge.showConnectionPicker({ fluidName: 'Cotton', fluidId: 'Cotton', direction: 'input', buildingX: 1, buildingY: 2 });
