@@ -91,11 +91,18 @@ export const ROUTES: RouteRule[] = [
     why: 'the search WS handler changed — including the people-search request path',
   },
   {
+    // Before everything else below: a change to the translator itself is exercised only
+    // by the flow that reads a link through it, not by the broader mail-handler rule.
+    test: /^src\/shared\/local-asp-url\.ts$/,
+    flows: ['zoning-alert-read'],
+    why: 'the local.asp translator — the one flow that reads a link through it',
+  },
+  {
     // Before the broad wire-level rule below, which would otherwise route a
     // mail-handler change through flows that never open the mail socket.
     test: /^src\/server\/session\/mail-handler\.ts$/,
-    flows: ['mail-roundtrip'],
-    why: 'the mail-socket handler changed — the one flow that drives it',
+    flows: ['mail-roundtrip', 'zoning-alert-read'],
+    why: 'the mail-socket handler changed — the flows that drive it',
   },
   {
     // Before the broad wire-level rule below: the paper is not on the RDO wire
@@ -131,7 +138,7 @@ export const ROUTES: RouteRule[] = [
   },
   {
     test: /^src\/client\/components\/mail\/|^src\/server\/mail/,
-    flows: ['mail-roundtrip'],
+    flows: ['mail-roundtrip', 'zoning-alert-read'],
     why: 'mail path',
   },
   {

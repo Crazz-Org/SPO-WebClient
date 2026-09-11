@@ -8,6 +8,7 @@
 
 import { WsMessageType } from '../shared/types/message-types';
 import type {
+  WsRespBuildingFocus,
   WsRespEmpireFacilities,
   WsRespFavoriteAdd,
   WsRespFavoriteDelete,
@@ -26,6 +27,8 @@ import type {
 } from '../shared/types/message-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
+import { parseLocalAspUrl } from '../shared/local-asp-url';
+import { WsDriverError } from './ws-driver';
 import { GOVERNED_TOWN, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
 import { findCurrentSurvivalLog, openLogWindow } from './live-log';
 import { runProbe, probeFailure, type ProbeResult, type ProbeSpec } from './probe';
@@ -688,6 +691,95 @@ const newspaperRead: Flow = {
   },
 };
 
+const ZONING_ALERT_SUBJECT = 'Zoning Alert!'; // World.pas:2721
+
+/**
+ * Opens the newest "Zoning Alert!" mail (issue #515), reads the gateway-fetched HTML page
+ * (see mail-handler.ts's `fetchSystemMailPage`), translates the first building-name link
+ * through `parseLocalAspUrl` — the same translator the client's link interceptor uses —
+ * and sends the very REQ_BUILDING_FOCUS the client sends on a click.
+ *
+ * No zoning alert in the inbox is an environment exception, not a failure — nothing was
+ * zoned out of this account lately. A demolished building answering `ERROR_FacilityNotFound`
+ * is also accepted: the whole point of the alert is that the building is gone.
+ */
+const zoningAlertRead: Flow = {
+  name: 'zoning-alert-read',
+  what: 'Inbox -> newest "Zoning Alert!" -> gateway-fetched page -> link -> tile -> REQ_BUILDING_FOCUS',
+  mutates: false, // reads the driving account's own inbox; nothing in the world changes
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      await session.driver.request<WsRespMailConnected>(
+        { type: WsMessageType.REQ_MAIL_CONNECT },
+        WsMessageType.RESP_MAIL_CONNECTED,
+      );
+      const inbox = await session.driver.request<WsRespMailFolder>(
+        { type: WsMessageType.REQ_MAIL_GET_FOLDER, folder: 'Inbox' },
+        WsMessageType.RESP_MAIL_FOLDER,
+      );
+      const alert = inbox.messages.find(m => m.subject === ZONING_ALERT_SUBJECT);
+
+      if (!alert) {
+        assertions.check(
+          'no zoning alert in the inbox — nothing was zoned out of this account lately',
+          true,
+        );
+        return report('zoning-alert-read', assertions, [], session);
+      }
+
+      const opened = await session.driver.request<WsRespMailMessage>(
+        { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder: 'Inbox', messageId: alert.messageId },
+        WsMessageType.RESP_MAIL_MESSAGE,
+      );
+      const htmlBody = opened.message.htmlBody;
+      assertions.check(
+        'the alert page was fetched and contains a map-select link',
+        typeof htmlBody === 'string' && htmlBody.includes('frame_Action=SELECT'),
+        htmlBody ? `${htmlBody.length} chars` : '(none)',
+      );
+
+      const hrefs = [...(htmlBody ?? '').matchAll(/href="([^"]+)"/gi)].map(m => m[1]);
+      const targets = hrefs.map(parseLocalAspUrl).filter((t): t is NonNullable<typeof t> => t !== null);
+      assertions.check('at least one link translates to a map tile', targets.length > 0, `${targets.length} targets`);
+
+      if (targets.length > 0) {
+        const { x, y } = targets[0];
+        let focused = false;
+        try {
+          await session.driver.request<WsRespBuildingFocus>(
+            { type: WsMessageType.REQ_BUILDING_FOCUS, x, y },
+            WsMessageType.RESP_BUILDING_FOCUS,
+          );
+          focused = true;
+        } catch (err: unknown) {
+          // The building the alert names was, by definition, demolished — a gateway
+          // "not found" for that exact tile is an accepted outcome, not a wire failure.
+          assertions.check(
+            'REQ_BUILDING_FOCUS answered — either the tile focused, or the building is gone',
+            err instanceof WsDriverError,
+            toErrorMessage(err),
+          );
+        }
+
+        if (focused) {
+          await session.driver.request(
+            { type: WsMessageType.REQ_BUILDING_UNFOCUS },
+            WsMessageType.RESP_CHAT_SUCCESS,
+          );
+          assertions.check('the map centred on the demolished building tile', true, `x=${x} y=${y}`);
+          assertions.check('no gateway errors', session.driver.errors.length === 0);
+        }
+      }
+
+      return report('zoning-alert-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   politicsRead,
@@ -699,6 +791,7 @@ export const FLOWS: Flow[] = [
   favoritesFolders,
   peopleSearch,
   newspaperRead,
+  zoningAlertRead,
 ];
 
 export function flowByName(name: string): Flow {

@@ -721,6 +721,122 @@ describe('readMailMessage', () => {
 });
 
 // ===========================================================================
+// readMailMessage — system mail page (a zoning alert or any other META REFRESH,
+// fetched only from the world's own web server)
+// ===========================================================================
+
+describe('readMailMessage — system mail page', () => {
+  const ALERT_URL =
+    'http://158.69.153.134/Five//0/Visual/Voyager/Mail/SpecialMessages//MsgZoned.asp?Zoned=SPO_test3&BuildNo=1&x=220&y=41';
+  const ALERT_BODY = ['<HEAD>', '</HEAD>', `<META HTTP-EQUIV="REFRESH" CONTENT="0; URL=${ALERT_URL}">`];
+
+  function answerRead(fake: FakeSessionCtx, body: string[] = ALERT_BODY): void {
+    fake.respond(p => {
+      switch (p.member) {
+        case 'OpenMessage': return `OpenMessage="#${MSG_ID}"`;
+        case 'GetHeaders': return 'res="%"';
+        // RDO strings double an embedded quote (rdo-helpers.ts:184) — the fixture HTML
+        // has its own quoted attributes, so they must be doubled to round-trip.
+        case 'GetLines': return `res="%${body.join('\n').replace(/"/g, '""')}"`;
+        case 'GetAttachmentCount': return 'GetAttachmentCount="#0"';
+        default: return '';
+      }
+    });
+  }
+
+  it('an Inbox read fetches the alert page then MessageBody.asp, and sets htmlBody', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake);
+    mockFetch.mockResolvedValue(htmlResponse('<html>zoned out</html>'));
+
+    const msg = await readMailMessage(fake.ctx, 'Inbox', 'MSG-77');
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const [firstUrl, firstInit] = mockFetch.mock.calls[0];
+    expect(firstUrl).toBe(ALERT_URL);
+    expect(firstInit).toEqual(expect.objectContaining({ redirect: 'follow' }));
+    expect((firstInit as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
+    const [secondUrl] = mockFetch.mock.calls[1];
+    expect(secondUrl).toContain('MessageBody.asp');
+    expect(msg.htmlBody).toBe('<html>zoned out</html>');
+  });
+
+  it('a Sent read fetches only the page, and does not touch MessageBody.asp', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake);
+    mockFetch.mockResolvedValue(htmlResponse('<html>zoned out</html>'));
+
+    const msg = await readMailMessage(fake.ctx, 'Sent', 'MSG-77');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toBe(ALERT_URL);
+    expect(msg.htmlBody).toBe('<html>zoned out</html>');
+  });
+
+  it('a refresh to a foreign host is not fetched, and htmlBody is left undefined', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake, ['<HEAD>', '</HEAD>', '<META HTTP-EQUIV="REFRESH" CONTENT="0; URL=http://169.254.169.254/x">']);
+
+    const msg = await readMailMessage(fake.ctx, 'Sent', 'MSG-77');
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(msg.htmlBody).toBeUndefined();
+  });
+
+  it('an unparseable refresh URL is not fetched and does not throw', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake, ['<HEAD>', '</HEAD>', '<META HTTP-EQUIV="REFRESH" CONTENT="0; URL=http://">']);
+
+    const msg = await readMailMessage(fake.ctx, 'Sent', 'MSG-77');
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(msg.htmlBody).toBeUndefined();
+  });
+
+  it('a non-OK page response leaves htmlBody undefined and warns', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake);
+    mockFetch.mockResolvedValue(htmlResponse('', 500));
+
+    const msg = await readMailMessage(fake.ctx, 'Sent', 'MSG-77');
+
+    expect(msg.htmlBody).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalledWith('[Mail] system mail page returned 500 — body shown as a plain frame');
+  });
+
+  it('a rejected page fetch leaves htmlBody undefined and warns', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake);
+    mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
+
+    const msg = await readMailMessage(fake.ctx, 'Sent', 'MSG-77');
+
+    expect(msg.htmlBody).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalledWith('[Mail] system mail page fetch failed:', 'ECONNREFUSED');
+  });
+
+  it('with no currentWorldInfo, the page is never fetched', async () => {
+    const fake = makeMailCtx({ currentWorldInfo: null });
+    answerRead(fake);
+
+    const msg = await readMailMessage(fake.ctx, 'Sent', 'MSG-77');
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(msg.htmlBody).toBeUndefined();
+  });
+
+  it('a plain-text body has no META REFRESH, so no page fetch and htmlBody stays undefined', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake, ['Hello, this is a plain message']);
+
+    const msg = await readMailMessage(fake.ctx, 'Sent', 'MSG-77');
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(msg.htmlBody).toBeUndefined();
+  });
+});
+
+// ===========================================================================
 // deleteMailMessage — fire-and-forget DeleteMessage
 // ===========================================================================
 
