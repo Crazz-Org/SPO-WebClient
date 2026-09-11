@@ -1201,6 +1201,16 @@ export interface NewspaperColumn {
 }
 
 /**
+ * One node of the board's full column tree — `boardlist.asp:22-36`, the frame
+ * `boardreader.asp:12` puts beside the index. Same fields as an index entry
+ * plus the nesting the page draws with `margin-left` (`boardlist.asp:25`).
+ */
+export interface NewspaperTreeEntry extends NewspaperColumn {
+  /** 0 for a top-level column, 1 for a reply to it, and so on. */
+  depth: number;
+}
+
+/**
  * One open column.
  *
  * `body` is PLAIN TEXT, not markup: `boardmsg.asp:255` emits `NewsObj.BodyHTML`,
@@ -1229,8 +1239,17 @@ export interface NewspaperBoard {
   root: string;
   /** What this response describes: the root for the index, else a column path. */
   path: string;
-  /** The latest columns. Empty when `article` is set — the index is not rendered then. */
+  /**
+   * The ten-entry index `boardmsg.asp:191` renders — kept because it is what a
+   * post re-renders (the post oracle). Empty when `article` is set.
+   */
   columns: NewspaperColumn[];
+  /**
+   * Every column and every reply on the board, depth-first, as `boardlist.asp`
+   * lists them (`:78-79`). Empty when `article` is set — only the root read
+   * fetches the list frame.
+   */
+  tree: NewspaperTreeEntry[];
   article: NewspaperArticle | null;
   /** Non-empty when the board could not be read; everything else is then empty. */
   error: string;

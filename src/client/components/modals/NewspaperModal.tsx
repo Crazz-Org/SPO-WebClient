@@ -12,7 +12,9 @@
  * and swaps the main frame in place, without ever leaving the paper. So the
  * switch here changes the view and nothing else — neither side is re-read.
  *
- * The board's two frames become one column with a back link. The rating form
+ * The board's two frames become one column with a back link. The root view
+ * lists the list frame's tree (`boardlist.asp`, every column and reply — not
+ * the ten-entry index `boardmsg.asp` alone would give). The rating form
  * Voyager bolts onto the board is NOT here — it lives on the Politics tab,
  * where it talks to `RDOSetRatingFrom` directly.
  */
@@ -24,6 +26,9 @@ import { useNewspaperStore } from '../../store/newspaper-store';
 import { useClient } from '../../context';
 import { IconButton, SkeletonLines } from '../common';
 import styles from './NewspaperModal.module.css';
+
+/** `boardlist.asp:25` indents each nesting level 20px; the modal uses its own scale. */
+const TREE_INDENT_PX = 16;
 
 /**
  * The author's portrait (`boardmsg.asp:244`). Most tycoons have no photo on
@@ -296,21 +301,21 @@ export function NewspaperModal() {
                       Read the columns published by your fellow investors, or post one
                       of your own.
                     </p>
-                    <h4 className={styles.sectionTitle}>Latest columns</h4>
-                    {board.columns.length === 0 ? (
+                    <h4 className={styles.sectionTitle}>All columns</h4>
+                    {board.tree.length === 0 ? (
                       <p className={styles.empty}>Nobody has written a column yet.</p>
                     ) : (
                       <ul className={styles.columnList}>
-                        {board.columns.map((column) => (
-                          <li key={column.path}>
+                        {board.tree.map((entry) => (
+                          <li key={entry.path} style={{ marginLeft: `${entry.depth * TREE_INDENT_PX}px` }}>
                             <button
                               className={styles.columnLink}
-                              onClick={() => client.onRequestNewspaperBoard(column.path)}
+                              onClick={() => client.onRequestNewspaperBoard(entry.path)}
                             >
-                              <span className={styles.columnAuthor}>{column.author}</span>
-                              <span className={styles.columnSubject}>{column.subject}</span>
+                              {entry.author !== '' && <span className={styles.columnAuthor}>{entry.author}</span>}
+                              <span className={styles.columnSubject}>{entry.subject || 'Untitled column'}</span>
                             </button>
-                            {column.summary && <p className={styles.columnSummary}>{column.summary}</p>}
+                            {entry.summary && <p className={styles.columnSummary}>{entry.summary}</p>}
                           </li>
                         ))}
                       </ul>
