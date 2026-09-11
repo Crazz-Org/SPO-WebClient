@@ -129,6 +129,11 @@
   color: var(--text-muted);
 }
 
+/* "Mayor: none" — the legacy page writes that word in red (RenderTown.inc:34). */
+.mayorNone {
+  color: var(--error);
+}
+
 /* Search row (tycoon / people) */
 .searchRow {
   display: flex;

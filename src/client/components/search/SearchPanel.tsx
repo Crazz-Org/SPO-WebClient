@@ -49,12 +49,20 @@ function TownsPage() {
           onClick={() => client.onNavigateToBuilding(town.x, town.y)}
         >
           <div className={styles.listItemHeader}>
-            <Building2 size={16} className={styles.listItemIcon} />
+            {town.iconUrl
+              ? <img src={town.iconUrl} alt="" width={32} className={styles.listItemIcon} />
+              : <Building2 size={16} className={styles.listItemIcon} />}
             <span className={styles.listItemTitle}>{town.name}</span>
           </div>
           <div className={styles.listItemDetails}>
-            {town.mayor && <span>Mayor: {town.mayor}</span>}
+            {/* RenderTown.inc:19-35 — a town with no ruler says "none" in red, it does not omit the line. */}
+            <span className={town.mayor ? undefined : styles.mayorNone}>
+              {town.mayor
+                ? `Mayor: ${town.mayor}${town.mayorTerm ? ` (Term ${town.mayorTerm})` : ''}`
+                : 'Mayor: none'}
+            </span>
             <span>Pop: {town.population.toLocaleString()}</span>
+            <span>Unemployment: {town.unemploymentPercent}%</span>
             <span>QoL: {town.qualityOfLife}%</span>
           </div>
         </GlassCard>

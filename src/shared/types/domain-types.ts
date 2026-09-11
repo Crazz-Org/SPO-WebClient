@@ -689,6 +689,8 @@ export interface TownInfo {
   name: string;
   iconUrl: string;
   mayor: string | null;
+  /** Ruler's term number (RenderTown.inc:28-30); absent when the world has no elections or the ruler has no term. */
+  mayorTerm?: number;
   population: number;
   unemploymentPercent: number;
   qualityOfLife: number;

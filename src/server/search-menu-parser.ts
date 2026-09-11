@@ -89,10 +89,17 @@ export function parseTownsPage(html: string, baseUrl: string): TownInfo[] {
 
     if (!name) return;
 
-    // Extract mayor
-    const mayorMatch = infoText.match(/Mayor:.*?<center>(.*?)<\/center>/s);
-    let mayor: string | null = mayorMatch ? mayorMatch[1].replace(/<[^>]+>/g, '').trim() : null;
-    if (mayor === 'none') mayor = null;
+    // Extract mayor — RenderTown.inc:19-35. The first .ItemInfo div holds
+    // <center><b>Mayor:</b></center> then either <center>Name<br>(Term N)</center>
+    // or <center><font color="red">none</font></center>.
+    const $mayorCenters = $info.find('.ItemInfo').first().find('center');
+    const mayorText = $mayorCenters.length > 1
+      ? $mayorCenters.eq(1).text().replace(/\s+/g, ' ').trim()
+      : '';
+    const termMatch = mayorText.match(/\(Term (\d+)\)/);
+    const mayorName = mayorText.replace(/\(Term \d+\)/, '').trim();
+    const mayor: string | null = mayorName && mayorName !== 'none' ? mayorName : null;
+    const mayorTerm = termMatch ? parseInt(termMatch[1], 10) : undefined;
 
     // Extract population
     const popMatch = infoText.match(/(\d{1,3}(?:,\d{3})*)\s*inhabitants/);
@@ -121,8 +128,13 @@ export function parseTownsPage(html: string, baseUrl: string): TownInfo[] {
 
     towns.push({
       name,
-      iconUrl: iconUrl ? `${baseUrl}/${iconUrl}` : '',
+      // RenderTown.inc:10-14 writes an absolute path (/five/icons/…) — resolve it
+      // against the host, not the directory, or the URL comes out doubled.
+      iconUrl: iconUrl
+        ? (iconUrl.startsWith('/') ? new URL(iconUrl, baseUrl).toString() : `${baseUrl}/${iconUrl}`)
+        : '',
       mayor,
+      ...(mayorTerm !== undefined && { mayorTerm }),
       population,
       unemploymentPercent,
       qualityOfLife,
