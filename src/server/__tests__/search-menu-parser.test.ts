@@ -2,7 +2,7 @@
  * Tests for search-menu-parser — parseHomePage, parseTycoonProfile.
  */
 
-import { parseHomePage, parseTycoonProfile, parseNewspapersPage } from '../search-menu-parser';
+import { parseHomePage, parseTycoonProfile, parseNewspapersPage, parseTownsPage } from '../search-menu-parser';
 
 const BASE_URL = 'http://142.4.193.58/five/0/visual/voyager/new%20directory';
 
@@ -148,6 +148,138 @@ describe('parseTycoonProfile', () => {
     expect(profile.ntaRanking).toBe('N/A');
     expect(profile.level).toBe('Unknown');
     expect(profile.prestige).toBe(0);
+  });
+});
+
+describe('parseTownsPage', () => {
+  const BASE = 'http://158.69.153.134/five/0/visual/voyager/new%20directory';
+
+  /**
+   * One town, laid out exactly as RenderTown.inc:6-60 writes it: the header row
+   * (icon + .ItemHeader), the info row (two .ItemInfo tds), the gradient row.
+   */
+  function townRows(opts: {
+    name: string;
+    mayorCell: string;
+    inhabitants: string;
+    uePercent: number;
+    qol: number;
+    x: number;
+    y: number;
+    icon?: string;
+  }): string {
+    const icon = opts.icon === undefined ? '/five/icons/TownHall64.gif' : opts.icon;
+    return `
+      <tr onMouseOver="onItemMouseOver()" onMouseOut="onItemMouseOut()" onClick="onItemMouseClick()" dirHref="RenderTownIn.asp?Path=Towns\\${opts.name}&WorldName=Shamba&ClassId=1234&RIWS=" textId="text_1">
+        ${icon ? `<td width="60"><div class=FacIcon><img src="${icon}" width="60" border="0"></div></td>` : ''}
+        <td width="*" style="padding-left: 7px"><div id=text_1 class=ItemHeader>${opts.name}</div></td>
+      </tr>
+      <tr>
+        <td><div class=ItemInfo><center><b>Mayor:</b></center>
+          ${opts.mayorCell}
+        </div></td>
+        <td style="padding-left: 7px;padding-bottom: 7px">
+          <div class=ItemInfo>${opts.inhabitants}
+            &nbsp;inhabitants
+            <br>(${opts.uePercent}% UE)
+            <br>
+            QoL: ${opts.qol}%
+            <br>
+            <a href="http://local.asp?frame_Id=MapIsoView&frame_Action=SELECT&x=${opts.x}&y=${opts.y}">Show in map</a>
+          </div>
+        </td>
+      </tr>
+      <tr><td colspan="2" height="2" background="images/itemgradient.jpg"></td></tr>`;
+  }
+
+  const html = `<html><body><table>
+    ${townRows({ name: 'Helartia', mayorCell: '<center>SPO_test3<br>(Term 3)</center>', inhabitants: '12,400', uePercent: 4, qol: 71, x: 120, y: 340 })}
+    ${townRows({ name: 'NovaRoma', mayorCell: '<center>Crazz</center>', inhabitants: '3,120', uePercent: 9, qol: 55, x: 10, y: 20 })}
+    ${townRows({ name: 'Dunmore', mayorCell: '<center><font color="red">none</font></center>', inhabitants: '0', uePercent: 0, qol: 0, x: 5, y: 6 })}
+  </table></body></html>`;
+
+  it('reads the ruler and the term from the second <center> (RenderTown.inc:19-35)', () => {
+    const towns = parseTownsPage(html, BASE);
+
+    expect(towns).toHaveLength(3);
+    expect(towns[0].name).toBe('Helartia');
+    expect(towns[0].mayor).toBe('SPO_test3');
+    expect(towns[0].mayorTerm).toBe(3);
+    expect(towns[0].unemploymentPercent).toBe(4);
+    expect(towns[0].population).toBe(12400);
+    expect(towns[0].qualityOfLife).toBe(71);
+    expect(towns[0].x).toBe(120);
+    expect(towns[0].y).toBe(340);
+  });
+
+  it('parses a ruler with no term — the world with no elections (RenderTown.inc:23-27)', () => {
+    const towns = parseTownsPage(html, BASE);
+
+    expect(towns[1].mayor).toBe('Crazz');
+    expect(towns[1].mayorTerm).toBeUndefined();
+    expect(towns[1].unemploymentPercent).toBe(9);
+  });
+
+  it('maps the red "none" cell to a null mayor with no term', () => {
+    const towns = parseTownsPage(html, BASE);
+
+    expect(towns[2].mayor).toBeNull();
+    expect(towns[2].mayorTerm).toBeUndefined();
+    expect(towns[2].unemploymentPercent).toBe(0);
+  });
+
+  it('resolves the absolute /five/icons/ path against the host, not the directory', () => {
+    const towns = parseTownsPage(html, BASE);
+
+    expect(towns[0].iconUrl).toBe('http://158.69.153.134/five/icons/TownHall64.gif');
+  });
+
+  it('joins a relative icon path onto the directory base', () => {
+    const relative = `<html><body><table>${townRows({
+      name: 'Relative', mayorCell: '<center>Crazz</center>', inhabitants: '1', uePercent: 0, qol: 1, x: 1, y: 1,
+      icon: 'images/town.gif',
+    })}</table></body></html>`;
+
+    expect(parseTownsPage(relative, BASE)[0].iconUrl).toBe(`${BASE}/images/town.gif`);
+  });
+
+  it('leaves iconUrl empty when the row has no image', () => {
+    const noIcon = `<html><body><table>${townRows({
+      name: 'NoIcon', mayorCell: '<center>Crazz</center>', inhabitants: '1', uePercent: 0, qol: 1, x: 1, y: 1,
+      icon: '',
+    })}</table></body></html>`;
+
+    expect(parseTownsPage(noIcon, BASE)[0].iconUrl).toBe('');
+  });
+
+  it('skips a row whose .ItemHeader is empty', () => {
+    const nameless = `<html><body><table>
+      <tr onMouseOver="onItemMouseOver()" dirHref="RenderTownIn.asp?Path=Towns\\Ghost&ClassId=9">
+        <td><div class=ItemHeader></div></td>
+      </tr>
+      <tr><td><div class=ItemInfo><center><b>Mayor:</b></center><center>Crazz</center></div></td></tr>
+    </table></body></html>`;
+
+    expect(parseTownsPage(nameless, BASE)).toEqual([]);
+  });
+
+  it('falls back to zeros and a null mayor when the info row is missing entirely', () => {
+    const bare = `<html><body><table>
+      <tr onMouseOver="onItemMouseOver()"><td><div class=ItemHeader>Orphan</div></td></tr>
+    </table></body></html>`;
+
+    const towns = parseTownsPage(bare, BASE);
+
+    expect(towns).toHaveLength(1);
+    expect(towns[0].mayor).toBeNull();
+    expect(towns[0].mayorTerm).toBeUndefined();
+    expect(towns[0].population).toBe(0);
+    expect(towns[0].unemploymentPercent).toBe(0);
+    expect(towns[0].qualityOfLife).toBe(0);
+    expect(towns[0].x).toBe(0);
+    expect(towns[0].y).toBe(0);
+    expect(towns[0].path).toBe('');
+    expect(towns[0].classId).toBe('');
   });
 });
 
