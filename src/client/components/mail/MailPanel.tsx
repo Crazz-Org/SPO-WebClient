@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, memo } from 'react';
-import { Send, Trash2, Reply, PenSquare, Save } from 'lucide-react';
+import { Send, Trash2, Reply, Forward, PenSquare, Save } from 'lucide-react';
 import { useMailStore } from '../../store/mail-store';
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
@@ -87,6 +87,7 @@ export function MailPanel() {
   const setView = useMailStore((s) => s.setView);
   const startCompose = useMailStore((s) => s.startCompose);
   const startReply = useMailStore((s) => s.startReply);
+  const startForward = useMailStore((s) => s.startForward);
   const clearCompose = useMailStore((s) => s.clearCompose);
 
   const composeTo = useMailStore((s) => s.composeTo);
@@ -95,6 +96,7 @@ export function MailPanel() {
   const setComposeField = useMailStore((s) => s.setComposeField);
   const composeHeaders = useMailStore((s) => s.composeHeaders);
   const composeDraftId = useMailStore((s) => s.composeDraftId);
+  const composeFocusTo = useMailStore((s) => s.composeFocusTo);
   const isSending = useMailStore((s) => s.isSending);
   const setSending = useMailStore((s) => s.setSending);
   const isSavingDraft = useMailStore((s) => s.isSavingDraft);
@@ -274,10 +276,15 @@ export function MailPanel() {
               ← Back
             </button>
             <div className={styles.readActions}>
-              {/* Reply-only guard, matching MessageHeader.asp:197 — Forward (once it exists) stays outside it, as :217-221 does. */}
+              {/* Reply stays inside the noReply guard (MessageHeader.asp:197); Forward stays outside it (:211-222) and is hidden in Draft. */}
               {currentMessage.noReply ? null : (
                 <button className={styles.actionBtn} onClick={() => startReply(currentMessage)} aria-label="Reply" title="Reply">
                   <Reply size={14} aria-hidden="true" />
+                </button>
+              )}
+              {currentFolder !== 'Draft' && (
+                <button className={styles.actionBtn} onClick={() => startForward(currentMessage)} aria-label="Forward" title="Forward">
+                  <Forward size={14} aria-hidden="true" />
                 </button>
               )}
               <button className={styles.actionBtn} onClick={handleDelete} aria-label="Delete" title="Delete">
@@ -326,6 +333,7 @@ export function MailPanel() {
             value={composeTo}
             onChange={(e) => setComposeField('to', e.target.value)}
             disabled={isBusy}
+            autoFocus={composeFocusTo}
           />
           <span className={styles.composeHint} id="mail-to-hint">
             Several recipients? Separate the addresses with ;

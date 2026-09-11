@@ -72,6 +72,11 @@ interface MailState {
    * old copy instead of leaving two (`saveDraft`, and `composeMail` once Post succeeds).
    */
   composeDraftId: string | null;
+  /**
+   * The compose form opened with an empty To that the player must fill (Forward), so the
+   * caret starts there — `MsgComposerHandlerViewer.pas:155`.
+   */
+  composeFocusTo: boolean;
   /** A send is in flight — the compose form is kept until the server answers (T6). */
   isSending: boolean;
   /** A draft save is in flight — the form is locked so one click cannot make two drafts. */
@@ -99,6 +104,11 @@ interface MailState {
   setLoading: (loading: boolean) => void;
   startCompose: (to?: string, subject?: string, body?: string, headers?: string) => void;
   startReply: (message: MailMessageFull) => void;
+  /**
+   * Open the compose form with an empty To, a `Fw: ` subject and the source message
+   * quoted — `MsgComposerHandler.pas:216-243`.
+   */
+  startForward: (message: MailMessageFull) => void;
   /** Re-open a saved draft in the compose form, remembering the copy to replace. */
   startEditDraft: (message: MailMessageFull) => void;
   clearCompose: () => void;
@@ -127,6 +137,7 @@ export const useMailStore = create<MailState>((set) => ({
   composeBody: '',
   composeHeaders: '',
   composeDraftId: null,
+  composeFocusTo: false,
   isSending: false,
   isSavingDraft: false,
   isMessageLoading: false,
@@ -148,6 +159,7 @@ export const useMailStore = create<MailState>((set) => ({
       composeBody: body,
       composeHeaders: headers,
       composeDraftId: null,
+      composeFocusTo: false,
     }),
 
   startReply: (message) =>
@@ -160,6 +172,19 @@ export const useMailStore = create<MailState>((set) => ({
       composeBody: buildReplyBody(message),
       composeHeaders: buildReplyHeaders(message),
       composeDraftId: null,
+      composeFocusTo: false,
+    }),
+
+  startForward: (message) =>
+    set({
+      currentView: 'compose',
+      composeTo: '',
+      // Same case-insensitive test as Reply (MsgComposerHandler.pas:227-229).
+      composeSubject: /^fw:/i.test(message.subject.trim()) ? message.subject : `Fw: ${message.subject}`,
+      composeBody: buildReplyBody(message),
+      composeHeaders: '',
+      composeDraftId: null,
+      composeFocusTo: true,
     }),
 
   startEditDraft: (message) =>
@@ -171,6 +196,7 @@ export const useMailStore = create<MailState>((set) => ({
       composeHeaders: '',
       composeDraftId: message.messageId,
       isMessageLoading: false,
+      composeFocusTo: false,
     }),
 
   clearCompose: () =>
@@ -183,6 +209,7 @@ export const useMailStore = create<MailState>((set) => ({
       currentView: 'list',
       isSending: false,
       isSavingDraft: false,
+      composeFocusTo: false,
     }),
 
   setComposeField: (field, value) =>

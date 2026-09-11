@@ -31,6 +31,7 @@ function resetStore() {
     composeBody: '',
     composeHeaders: '',
     composeDraftId: null,
+    composeFocusTo: false,
     isSavingDraft: false,
   });
 }
@@ -192,6 +193,56 @@ describe('Mail Store — Reply quoting', () => {
     useMailStore.getState().startReply(mockFullMessage);
     useMailStore.getState().startEditDraft({ ...mockFullMessage, messageId: 'draft-4' });
     expect(useMailStore.getState().composeHeaders).toBe('');
+  });
+});
+
+// #509 — Forward opens the composer with an empty To, a prefixed subject and the
+// source message quoted, the same way Reply does.
+describe('Mail Store — Forward', () => {
+  beforeEach(resetStore);
+
+  it('startForward opens compose with an empty To, a prefixed subject, the quoted body and focus in To', () => {
+    useMailStore.getState().startForward(mockFullMessage);
+    const state = useMailStore.getState();
+    expect(state.currentView).toBe('compose');
+    expect(state.composeTo).toBe('');
+    expect(state.composeSubject).toBe('Fw: Hello');
+    expect(state.composeBody).toBe(
+      [REPLY_SEPARATOR, 'Alice wrote, on "Hello":', '> Test body'].join('\n'),
+    );
+    expect(state.composeHeaders).toBe('');
+    expect(state.composeDraftId).toBeNull();
+    expect(state.composeFocusTo).toBe(true);
+  });
+
+  it('does not double-prefix an already-forwarded subject', () => {
+    useMailStore.getState().startForward({ ...mockFullMessage, subject: 'Fw: Already forwarded' });
+    expect(useMailStore.getState().composeSubject).toBe('Fw: Already forwarded');
+  });
+
+  it('does not double-prefix a lower-case fw:', () => {
+    useMailStore.getState().startForward({ ...mockFullMessage, subject: 'fw: quiet' });
+    expect(useMailStore.getState().composeSubject).toBe('fw: quiet');
+  });
+
+  it('forwards a noReply message the same way', () => {
+    useMailStore.getState().startForward({ ...mockFullMessage, noReply: true });
+    expect(useMailStore.getState().composeTo).toBe('');
+    expect(useMailStore.getState().composeSubject).toBe('Fw: Hello');
+  });
+
+  it('startReply, startCompose and clearCompose reset composeFocusTo after a forward', () => {
+    useMailStore.getState().startForward(mockFullMessage);
+    useMailStore.getState().startReply(mockFullMessage);
+    expect(useMailStore.getState().composeFocusTo).toBe(false);
+
+    useMailStore.getState().startForward(mockFullMessage);
+    useMailStore.getState().startCompose();
+    expect(useMailStore.getState().composeFocusTo).toBe(false);
+
+    useMailStore.getState().startForward(mockFullMessage);
+    useMailStore.getState().clearCompose();
+    expect(useMailStore.getState().composeFocusTo).toBe(false);
   });
 });
 

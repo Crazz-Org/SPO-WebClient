@@ -230,3 +230,66 @@ describe('MailPanel — message stamp', () => {
     expect(container.querySelector('img[src*="stamp5.jpg"]')).toBeTruthy();
   });
 });
+
+describe('MailPanel — Forward', () => {
+  const full: MailMessageFull = {
+    messageId: 'msg-1', from: 'Alice', fromAddr: 'alice', to: 'Me', toAddr: 'me', subject: 'First',
+    date: '', dateFmt: 'Jan 1', body: ['hi'], read: true, stamp: 1, noReply: false, attachments: [],
+  };
+
+  beforeEach(() => {
+    resetStores();
+    useMailStore.setState({
+      currentFolder: 'Inbox',
+      currentView: 'list',
+      messages: [],
+      currentMessage: null,
+      isLoading: false,
+      isMessageLoading: false,
+      pendingDeleteId: null,
+      folderRefreshToken: 0,
+    });
+  });
+
+  it('shows a Forward button; clicking it opens compose with an empty To and a Fw: subject, focus in To', () => {
+    renderWithProviders(<MailPanel />);
+    act(() => useMailStore.getState().setCurrentMessage(full));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Forward' }));
+
+    expect(useMailStore.getState().currentView).toBe('compose');
+    expect(useMailStore.getState().composeTo).toBe('');
+    expect(useMailStore.getState().composeSubject).toBe('Fw: First');
+    expect(document.activeElement).toBe(screen.getByLabelText('To'));
+  });
+
+  it('offers Forward on noReply mail, where Reply is absent', () => {
+    renderWithProviders(<MailPanel />);
+    act(() => useMailStore.getState().setCurrentMessage({ ...full, noReply: true }));
+
+    expect(screen.queryByRole('button', { name: 'Reply' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeTruthy();
+  });
+
+  it('hides Forward in Draft, shows it in Sent', () => {
+    useMailStore.setState({ currentFolder: 'Draft' });
+    const { unmount } = renderWithProviders(<MailPanel />);
+    act(() => useMailStore.getState().setCurrentMessage(full));
+    expect(screen.queryByRole('button', { name: 'Forward' })).toBeNull();
+    unmount();
+
+    useMailStore.setState({ currentFolder: 'Sent', currentView: 'list', currentMessage: null });
+    renderWithProviders(<MailPanel />);
+    act(() => useMailStore.getState().setCurrentMessage(full));
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeTruthy();
+  });
+
+  it('leaves focus unchanged after Reply — the To input is not the active element', () => {
+    renderWithProviders(<MailPanel />);
+    act(() => useMailStore.getState().setCurrentMessage(full));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+
+    expect(document.activeElement).not.toBe(screen.getByLabelText('To'));
+  });
+});
