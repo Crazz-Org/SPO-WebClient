@@ -5,11 +5,14 @@
  * paper: one read of `ShowBar.asp` for the issue list, one of an issue's own
  * `home.asp` for its stories.
  *
- * There is no RDO in either: the board is a `NewsBoard.NewsObject` COM tree and
- * the paper is a folder of generated pages, both reachable only through IIS —
- * which is why "Rate the Mayor" navigates to `boardreader.asp`
+ * Neither is *reached* over RDO: the board is a `NewsBoard.NewsObject` COM tree
+ * and the paper is a folder of generated pages, both served by IIS — which is
+ * why "Rate the Mayor" navigates to `boardreader.asp`
  * (`Voyager/TownHallSheet.pas:343`) and "Read News" to `newsreader.asp` (`:361`)
- * rather than calling anything.
+ * rather than calling anything. A post can still CARRY RDO: `boardmsg.asp:96-143`
+ * emits one `RDOSetRatingFrom` per rated criterion before it publishes, and the
+ * report it appends to the body must name only those — see the ratings block at
+ * the end of `postNewspaperColumn`.
  *
  * The fixtures below are instantiated from the pages under
  * `IIS_ROOT/Five/0/Visual/News/`, not from the parsers.
@@ -34,11 +37,12 @@ import {
   getNewspaperIssues,
   getNewspaperIssue,
   isBoardRoot,
+  appendRatingsReport,
   type NewspaperTarget,
 } from './newspaper-handler';
+import { RdoValue, RdoCommand } from '../../shared/rdo-types';
 import { makeSessionCtx } from '../__tests__/session/fake-session-context';
-import type { FakeSessionCtx } from '../__tests__/session/fake-session-context';
-import type { SessionContext } from './session-context';
+import type { FakeSessionCtx, FakeSessionOptions } from '../__tests__/session/fake-session-context';
 import type { WorldInfo } from '../../shared/types';
 
 const mockFetch = fetch as unknown as jest.MockedFunction<
@@ -61,7 +65,7 @@ const TARGET: NewspaperTarget = {
 
 const ROOT = 'boards\\Planitia\\Helartia Herald\\';
 
-function makeWebCtx(overrides: Partial<SessionContext> = {}): FakeSessionCtx {
+function makeWebCtx(overrides: FakeSessionOptions = {}): FakeSessionCtx {
   return makeSessionCtx({
     currentWorldInfo: WORLD, activeUsername: 'SPO_test3', cachedPassword: 'test3',
     daAddr: '10.0.0.5', daPort: 1111, ...overrides,
@@ -817,6 +821,130 @@ describe('postNewspaperColumn', () => {
     const result = await postNewspaperColumn(fake.ctx, TARGET, 'VERY NICE GUY', 'VOTE FOR HIM');
 
     expect(result).toEqual({ success: false, message: 'The newspaper answered HTTP 500.', board: null });
+  });
+
+  // ===========================================================================
+  // The ratings a column carries — `boardmsg.asp:96-143`, before `:146`
+  // ===========================================================================
+
+  const TOWN_HALL_ID = '90210';
+  const RATINGS = [
+    { id: '41123456', name: 'Taxation', value: 80 },
+    { id: '41123457', name: 'Public Works', value: 40 },
+  ];
+
+  function ratingFrame(id: string, value: number): string {
+    return RdoCommand.sel(TOWN_HALL_ID).call('RDOSetRatingFrom').push()
+      .args(RdoValue.string(id), RdoValue.string('SPO_test3'), RdoValue.int(value)).build();
+  }
+
+  function formOf(n: number): URLSearchParams {
+    return new URLSearchParams((mockFetch.mock.calls[n][1] as { body: string }).body);
+  }
+
+  describe('appendRatingsReport', () => {
+    it('returns the body unchanged when nothing was sent', () => {
+      expect(appendRatingsReport('VOTE FOR HIM', 'SPO_test3', [])).toBe('VOTE FOR HIM');
+    });
+
+    // `:133` — a blank line, the header, then one `Name: Value%` line each,
+    // every line CRLF-terminated as `Chr(13) & Chr(10)`.
+    it('glues the header and one line per criterion onto the body', () => {
+      expect(appendRatingsReport('VOTE FOR HIM', 'SPO_test3', [
+        { id: '1', name: 'A', value: 80 },
+        { id: '2', name: 'B', value: 40 },
+      ])).toBe('VOTE FOR HIM\r\n\r\nRatings from SPO_test3:\r\nA: 80%\r\nB: 40%\r\n');
+    });
+
+    it('still opens with the blank line when the column itself is empty', () => {
+      expect(appendRatingsReport('', 'SPO_test3', [{ id: '1', name: 'A', value: 0 }]))
+        .toBe('\r\n\r\nRatings from SPO_test3:\r\nA: 0%\r\n');
+    });
+  });
+
+  it('emits one RDOSetRatingFrom per criterion and reports them at the end of the body', async () => {
+    const fake = makeWebCtx({ sockets: ['construction'] });
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([TOWN_HALL_ID, '']);
+    mockFetch.mockResolvedValue(htmlResponse(POSTED));
+
+    const result = await postNewspaperColumn(
+      fake.ctx, TARGET, 'VERY NICE GUY', 'VOTE FOR HIM', undefined, RATINGS,
+    );
+
+    expect(fake.frames.construction).toEqual([
+      ratingFrame('41123456', 80),
+      ratingFrame('41123457', 40),
+    ]);
+    expect(formOf(0).get('Body')).toBe(
+      'VOTE FOR HIM\r\n\r\nRatings from SPO_test3:\r\nTaxation: 80%\r\nPublic Works: 40%\r\n',
+    );
+    expect(result.success).toBe(true);
+    expect(result.message).toBe('Column published');
+  });
+
+  // `:96-143` runs before `NewMessage` (`:146`): a rating that could not be sent
+  // must not be able to be published by a column that already went out.
+  it('emits every rating before the POST leaves', async () => {
+    const fake = makeWebCtx({ sockets: ['construction'] });
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([TOWN_HALL_ID, '']);
+    let framesAtPost = -1;
+    mockFetch.mockImplementation(async (_url: string, init?: unknown) => {
+      if ((init as { method?: string } | undefined)?.method === 'POST') {
+        framesAtPost = fake.frames.construction.length;
+      }
+      return htmlResponse(POSTED);
+    });
+
+    await postNewspaperColumn(fake.ctx, TARGET, 'VERY NICE GUY', 'VOTE FOR HIM', undefined, RATINGS);
+
+    expect(framesAtPost).toBe(2);
+  });
+
+  it('reports only what was sent, and says how many were not', async () => {
+    const fake = makeWebCtx({ sockets: ['construction'] });
+    (fake.ctx.getCacherPropertyListAt as jest.Mock)
+      .mockResolvedValueOnce([TOWN_HALL_ID, ''])
+      // No political entity at the tile on the second read — nothing to bind to,
+      // so nothing goes out and nothing may be reported.
+      .mockResolvedValueOnce(['', '']);
+    mockFetch.mockResolvedValue(htmlResponse(POSTED));
+
+    const result = await postNewspaperColumn(
+      fake.ctx, TARGET, 'VERY NICE GUY', 'VOTE FOR HIM', undefined, RATINGS,
+    );
+
+    expect(fake.frames.construction).toEqual([ratingFrame('41123456', 80)]);
+    expect(formOf(0).get('Body')).toBe(
+      'VOTE FOR HIM\r\n\r\nRatings from SPO_test3:\r\nTaxation: 80%\r\n',
+    );
+    expect(result.message).toBe('Column published; 1 of 2 ratings could not be sent.');
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[Newspaper] Rating "Public Works" not sent: No political entity at (118, 226)',
+    );
+  });
+
+  it('a subject-less post emits no rating and reaches nothing', async () => {
+    const fake = makeWebCtx({ sockets: ['construction'] });
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([TOWN_HALL_ID, '']);
+
+    const result = await postNewspaperColumn(fake.ctx, TARGET, '  ', 'B', undefined, RATINGS);
+
+    expect(result.message).toBe('A column needs a subject.');
+    expect(fake.frames.construction).toEqual([]);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  // The untouched block: the posted body is the string it was passed, CRLFs and
+  // all — byte for byte what this handler posted before the block existed.
+  it('posts the body untouched when no rating rides along', async () => {
+    const fake = makeWebCtx({ sockets: ['construction'] });
+    mockFetch.mockResolvedValue(htmlResponse(POSTED));
+    const body = 'VOTE FOR HIM\r\nHe is a very nice guy.\r\n';
+
+    await postNewspaperColumn(fake.ctx, TARGET, 'VERY NICE GUY', body);
+
+    expect(formOf(0).get('Body')).toBe(body);
+    expect(fake.frames.construction).toEqual([]);
   });
 });
 

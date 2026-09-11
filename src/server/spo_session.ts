@@ -34,6 +34,7 @@ import {
   PolicyData,
   PoliticsData,
   NewspaperBoard,
+  NewspaperRatingEntry,
   NewspaperIssue,
   NewspaperIssueList,
   PoliticalRoleInfo,
@@ -1190,8 +1191,8 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
     return newspaperHandler.getNewspaperBoard(this, target, path);
   }
 
-  public async postNewspaperColumn(target: NewspaperTarget, subject: string, body: string, replyToPath?: string): Promise<{ success: boolean; message: string; board: NewspaperBoard | null }> {
-    return newspaperHandler.postNewspaperColumn(this, target, subject, body, replyToPath);
+  public async postNewspaperColumn(target: NewspaperTarget, subject: string, body: string, replyToPath?: string, ratings?: NewspaperRatingEntry[]): Promise<{ success: boolean; message: string; board: NewspaperBoard | null }> {
+    return newspaperHandler.postNewspaperColumn(this, target, subject, body, replyToPath, ratings);
   }
 
   public async getNewspaperIssues(target: NewspaperTarget): Promise<NewspaperIssueList> {

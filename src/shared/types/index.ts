@@ -99,6 +99,7 @@ export type {
   NewspaperTreeEntry,
   NewspaperArticle,
   NewspaperBoard,
+  NewspaperRatingEntry,
   NewspaperIssueRef,
   NewspaperStory,
   NewspaperIssueList,

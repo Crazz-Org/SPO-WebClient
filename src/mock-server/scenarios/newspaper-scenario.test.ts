@@ -1,3 +1,4 @@
+/// <reference path="../../server/__tests__/matchers/rdo-matchers.d.ts" />
 jest.mock('node-fetch', () => ({
   __esModule: true,
   default: jest.fn(),
@@ -19,15 +20,18 @@ import http from 'http';
 import { EventEmitter } from 'events';
 import fetch from 'node-fetch';
 import type { Response } from 'node-fetch';
-import { getNewspaperIssues, getNewspaperIssue } from '@/server/session/newspaper-handler';
+import { getNewspaperIssues, getNewspaperIssue, postNewspaperColumn } from '@/server/session/newspaper-handler';
 import type { NewspaperTarget } from '@/server/session/newspaper-handler';
 import { makeSessionCtx } from '@/server/__tests__/session/fake-session-context';
 import type { FakeSessionCtx } from '@/server/__tests__/session/fake-session-context';
 import { SearchMenuService } from '@/server/search-menu-service';
 import { parseNewspapersPage } from '@/server/search-menu-parser';
 import { HttpMock } from '../http-mock';
+import { RdoMock } from '../rdo-mock';
+import { CIVIC_TARGETS } from './civic-mutations-scenario';
 import {
   createNewspaperScenario,
+  MOCK_RATED_POST,
   MOCK_ISSUES,
   MOCK_ISSUE_FOLDERS,
   MOCK_PAPER_NAME,
@@ -223,5 +227,110 @@ describe('newspaper scenario — the directory Media listing', () => {
     const service = new SearchMenuService('158.69.153.134', 8000, 'Shamba', 'SPO_test3', 'Co', '158.69.153.134', 7001);
     const result = await service.getNewspapers();
     expect(result).toEqual([]);
+  });
+});
+
+// =============================================================================
+// The rated post — two protocols that must agree
+// =============================================================================
+
+/**
+ * A post carrying ratings is the board's combined act (`boardmsg.asp:96-146`):
+ * the frames go out first, then the column is published with a report of what
+ * went out. Neither half proves the act on its own — the report is only honest
+ * if the frames it names preceded it — so this suite drives the real handler
+ * across both halves of the scenario at once.
+ */
+describe('newspaper scenario — the rated post', () => {
+  const TOWN_HALL = CIVIC_TARGETS.townHallId;
+
+  /** The frame count observed at the moment the POST was issued. */
+  let framesAtPost = -1;
+  let postedForm: URLSearchParams | null = null;
+
+  function driveRatedPost(): { fake: FakeSessionCtx; rdoMock: RdoMock } {
+    const { rdo, http } = createNewspaperScenario();
+    const httpMock = new HttpMock();
+    httpMock.addScenario(http);
+    const rdoMock = new RdoMock();
+    rdoMock.addScenario(rdo);
+
+    const fake = makeSessionCtx({
+      sockets: ['construction'],
+      currentWorldInfo: { name: 'Shamba', url: 'http://158.69.153.134', ip: '158.69.153.134', port: 7000 },
+      activeUsername: 'SPO_test3', cachedPassword: 'test3',
+      daAddr: '158.69.153.134', daPort: 7001,
+    });
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([TOWN_HALL, '']);
+
+    mockFetch.mockImplementation(async (url: string, init?: unknown) => {
+      const method = (init as { method?: string } | undefined)?.method ?? 'GET';
+      if (method === 'POST') {
+        framesAtPost = fake.frames.construction.length;
+        postedForm = new URLSearchParams((init as { body: string }).body);
+      }
+      const result = httpMock.match(method, url, { worldName: 'Shamba' });
+      if (!result) {
+        return { ok: false, status: 404, text: async () => '' } as unknown as Response;
+      }
+      return {
+        ok: result.status === 200,
+        status: result.status,
+        text: async () => result.body,
+      } as unknown as Response;
+    });
+
+    return { fake, rdoMock };
+  }
+
+  beforeEach(() => {
+    framesAtPost = -1;
+    postedForm = null;
+  });
+
+  it('passes strict RDO validation', () => {
+    const { rdo } = createNewspaperScenario();
+    expect(rdo).toPassStrictRdoValidation();
+  });
+
+  it('a post carrying two changed criteria emits two RDOSetRatingFrom frames before the column, and the body ends with those two lines', async () => {
+    const { fake, rdoMock } = driveRatedPost();
+
+    const result = await postNewspaperColumn(
+      fake.ctx, TARGET, MOCK_RATED_POST.subject, MOCK_RATED_POST.body,
+      undefined, [...MOCK_RATED_POST.ratings],
+    );
+
+    // One frame per criterion, in the order the reader's block listed them —
+    // and each matched back through the scenario, so the frame the gateway
+    // built is the frame the fixture declares.
+    expect(fake.frames.construction).toHaveLength(2);
+    const matched = fake.frames.construction.map((f) => rdoMock.match(f)?.exchange.id);
+    expect(matched).toEqual([
+      'newspaper-rdo-set-rating-41123456',
+      'newspaper-rdo-set-rating-41123457',
+    ]);
+    expect(rdoMock.getConsumedIds().size).toBe(2);
+
+    // `:96-143` before `:146` — both frames were already out when the POST left.
+    expect(framesAtPost).toBe(2);
+
+    const body = postedForm!.get('Body');
+    expect(body?.startsWith(MOCK_RATED_POST.body)).toBe(true);
+    expect(body?.endsWith('Taxation: 80%\r\nPublic Works: 40%\r\n')).toBe(true);
+    expect(result.success).toBe(true);
+    expect(result.message).toBe('Column published');
+  });
+
+  it('with the block untouched the body is byte-identical and no frame is emitted', async () => {
+    const { fake } = driveRatedPost();
+
+    const result = await postNewspaperColumn(
+      fake.ctx, TARGET, MOCK_RATED_POST.subject, MOCK_RATED_POST.body,
+    );
+
+    expect(fake.frames.construction).toHaveLength(0);
+    expect(postedForm!.get('Body')).toBe(MOCK_RATED_POST.body);
+    expect(result.success).toBe(true);
   });
 });

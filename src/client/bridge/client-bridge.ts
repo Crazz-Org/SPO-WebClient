@@ -37,6 +37,7 @@ import type {
   BankActionType,
   AutoConnectionActionType,
   CurriculumActionType,
+  NewspaperRatingEntry,
 } from '@/shared/types';
 import { CLUSTER_IDS } from '@/shared/cluster-data';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
@@ -257,7 +258,9 @@ export interface ClientCallbacks {
 
   // Newspaper
   onRequestNewspaperBoard: (path?: string) => void;
-  onPostNewspaperColumn: (subject: string, body: string, replyToPath?: string) => void;
+  onPostNewspaperColumn: (
+    subject: string, body: string, replyToPath?: string, ratings?: NewspaperRatingEntry[],
+  ) => void;
   onRequestNewspaperIssues: () => void;
   onRequestNewspaperIssue: (folder: string) => void;
 
