@@ -324,6 +324,22 @@
   color: var(--accent-gold);
 }
 
+.podium {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: center;
+  margin-bottom: var(--space-3);
+}
+
+.podiumCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
 .rankingTable {
   display: flex;
   flex-direction: column;

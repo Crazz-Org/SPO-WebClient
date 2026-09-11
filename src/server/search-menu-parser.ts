@@ -285,43 +285,49 @@ export function parseRankingDetail(html: string, baseUrl: string): { title: stri
   const title = $('h2').text().trim() || 'Ranking';
   const entries: RankingEntry[] = [];
 
-  // Parse top 3 with photos
-  $('table img[id^="picture"]').each((idx, el) => {
+  // Podium — ranks 1..3, each its own <td> with a photo (Ranking.asp:78-106).
+  // The rank and name live in the <b>, the value in the <div class=label>; the
+  // whole-cell text used to be regex-scanned, which chopped "$7,000,000" down to
+  // its last digit run.
+  $('table img[id^="picture"]').each((_, el) => {
     const $img = $(el);
     const $td = $img.closest('td');
-    const text = $td.text();
 
-    const rankMatch = text.match(/(\d+)\./);
-    const nameMatch = text.match(/\d+\.\s+([^\n]+)/);
-    const valueMatch = text.match(/(\d+)\s*$/);
+    // <b>1. Name</b> (Ranking.asp:82, :90, :98)
+    const headMatch = $td.find('b').first().text().match(/^\s*(\d+)\.\s*(.+?)\s*$/);
+    if (!headMatch) return;
 
-    if (rankMatch && nameMatch) {
-      entries.push({
-        rank: parseInt(rankMatch[1], 10),
-        name: nameMatch[1].trim(),
-        value: valueMatch ? parseInt(valueMatch[1], 10) : 0,
-        photoUrl: $img.attr('src') ? `${baseUrl}/${$img.attr('src')}` : undefined
-      });
-    }
+    const src = $img.attr('src');
+
+    entries.push({
+      rank: parseInt(headMatch[1], 10),
+      name: headMatch[2],
+      valueText: $td.find('div.label').first().text().trim(),
+      // Ranking.asp:81 writes an absolute /fivedata/… path — resolve it against
+      // the host, not the directory, or the URL comes out doubled.
+      photoUrl: src
+        ? (src.startsWith('/') ? new URL(src, baseUrl).toString() : `${baseUrl}/${src}`)
+        : undefined
+    });
   });
 
-  // Parse remaining entries
-  $('table[style*="margin-top: 20px"] tr').each((_, el) => {
-    const $row = $(el);
-    const $cells = $row.find('td');
+  // Tail — ranks 4..Count (Ranking.asp:107-131). The page never opens a <tr>:
+  // its guard reads `i - 3 mod 2 = 0`, which VBScript evaluates as `i - (3 mod 2)`
+  // and is never true, while the closer `(i - 2) mod 2 = 0` fires on every other
+  // entry — so the HTML parser packs two entries into each implicit row. Anchor
+  // on the name cell instead, the only td carrying class=value (:116, :118): one
+  // per entry, whatever the row grouping turned out to be.
+  $('table[style*="margin-top: 20px"] td.value').each((_, el) => {
+    const $name = $(el);
+    const rank = parseInt($name.prev('td').text().trim(), 10);
+    const name = $name.text().trim();
 
-    if ($cells.length >= 3) {
-      const rank = parseInt($cells.eq(0).text().trim(), 10);
-      const name = $cells.eq(1).text().trim();
-      const value = parseInt($cells.eq(2).text().trim().replace(/,/g, ''), 10);
-
-      if (!isNaN(rank) && name) {
-        entries.push({
-          rank,
-          name,
-          value: isNaN(value) ? 0 : value
-        });
-      }
+    if (!isNaN(rank) && name) {
+      entries.push({
+        rank,
+        name,
+        valueText: $name.next('td').text().trim()
+      });
     }
   });
 

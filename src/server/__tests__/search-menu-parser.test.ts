@@ -2,7 +2,7 @@
  * Tests for search-menu-parser — parseHomePage, parseTycoonProfile.
  */
 
-import { parseHomePage, parseTycoonProfile, parseNewspapersPage, parseTownsPage } from '../search-menu-parser';
+import { parseHomePage, parseTycoonProfile, parseNewspapersPage, parseTownsPage, parseRankingDetail } from '../search-menu-parser';
 
 const BASE_URL = 'http://142.4.193.58/five/0/visual/voyager/new%20directory';
 
@@ -326,5 +326,144 @@ describe('parseNewspapersPage', () => {
     </body></html>`;
 
     expect(parseNewspapersPage(html)).toEqual([]);
+  });
+});
+
+describe('parseRankingDetail', () => {
+  const NAMES = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta'];
+  // FormatMoney-shaped values — the server writes the formatted string, not a number.
+  const VALUES = ['$7,000,000', '$6,000,000', '$5,000,000', '$4,000', '$3,000', '$2,000', '$7,000'];
+
+  /**
+   * Reproduce Ranking.asp:77-131 for `count` entries, including the broken row
+   * grouping: the `<tr>` opener at :109 is guarded by `i - 3 mod 2 = 0`, which
+   * VBScript reads as `i - (3 mod 2)` and never fires, while the `</tr>` closer
+   * at :127 fires whenever `(i - 2) mod 2 = 0`.
+   */
+  function rankingPage(count: number): string {
+    let podium = '';
+    for (let i = 0; i < Math.min(count, 3); i++) {
+      podium += `<td align="center">
+        <img id="picture${i + 1}" src="/fivedata/userinfo/planitia/${NAMES[i]}/largephoto.jpg" border="0" width=150 height=200><br>
+        <b>${i + 1}. ${NAMES[i]}</b>
+        <div class=label>
+        ${VALUES[i]}
+        </div>
+      </td>`;
+    }
+
+    let tail = '';
+    for (let i = 3; i < count; i++) {
+      tail += `<td align="right" style="font-weight: bold">
+          ${i + 1}
+        </td>
+        <td class=value style="font-weight: bold">
+          ${NAMES[i]}
+        </td>
+        <td align="right" style="color: #EEEEEE">
+          ${VALUES[i]}
+        </td>
+        <td width=30>
+        </td>`;
+      if ((i - 2) % 2 === 0) tail += '</tr>';
+    }
+
+    return `<html><body>
+      <h2>Wealth Ranking</h2>
+      <center>
+        <table><tr>${podium}</tr></table>
+        <table style="margin-top: 20px">${tail}</table>
+      </center>
+    </body></html>`;
+  }
+
+  it('yields one entry per rank, with no rank lost to the page\'s broken row grouping', () => {
+    const { title, entries } = parseRankingDetail(rankingPage(7), BASE_URL);
+
+    expect(title).toBe('Wealth Ranking');
+    expect(entries).toHaveLength(7);
+    expect(entries.map(e => e.rank).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(entries.map(e => e.name).sort()).toEqual([...NAMES].sort());
+  });
+
+  it('carries the server\'s own formatted money string for a tail entry', () => {
+    const { entries } = parseRankingDetail(rankingPage(7), BASE_URL);
+    const eta = entries.find(e => e.rank === 7);
+
+    expect(eta).toBeDefined();
+    expect(eta!.name).toBe('Eta');
+    expect(eta!.valueText).toBe('$7,000');
+  });
+
+  it('carries the full podium value, not its trailing digit run', () => {
+    const { entries } = parseRankingDetail(rankingPage(7), BASE_URL);
+
+    expect(entries[0]).toMatchObject({ rank: 1, name: 'Alpha', valueText: '$7,000,000' });
+    expect(entries[1]).toMatchObject({ rank: 2, name: 'Beta', valueText: '$6,000,000' });
+    expect(entries[2]).toMatchObject({ rank: 3, name: 'Gamma', valueText: '$5,000,000' });
+  });
+
+  it('resolves the absolute podium photo path against the host, not the directory', () => {
+    const { entries } = parseRankingDetail(rankingPage(3), BASE_URL);
+
+    expect(entries[0].photoUrl).toBe('http://142.4.193.58/fivedata/userinfo/planitia/Alpha/largephoto.jpg');
+  });
+
+  it('joins a relative podium photo path onto the directory', () => {
+    const html = `<html><body><table><tr><td align="center">
+      <img id="picture1" src="images/nopicture.jpg"><br>
+      <b>1. Alpha</b>
+      <div class=label>$1</div>
+    </td></tr></table></body></html>`;
+
+    const { entries } = parseRankingDetail(html, BASE_URL);
+
+    expect(entries[0].photoUrl).toBe(`${BASE_URL}/images/nopicture.jpg`);
+  });
+
+  it('leaves photoUrl undefined when the podium cell carries no src', () => {
+    const html = `<html><body><table><tr><td align="center">
+      <img id="picture1"><br>
+      <b>1. Alpha</b>
+      <div class=label>$1</div>
+    </td></tr></table></body></html>`;
+
+    expect(parseRankingDetail(html, BASE_URL).entries[0].photoUrl).toBeUndefined();
+  });
+
+  it('returns no entries for a ranking the server reports empty', () => {
+    const html = `<html><body>
+      <h2>Wealth Ranking</h2>
+      <center>
+        <h4 style="margin-top: 100px">
+          <div>There is no relevant performance to highlight in this area.</div>
+        </h4>
+      </center>
+    </body></html>`;
+
+    const { title, entries } = parseRankingDetail(html, BASE_URL);
+
+    expect(entries).toEqual([]);
+    expect(title).toBe('Wealth Ranking');
+  });
+
+  it('falls back to the generic title on a page with no heading', () => {
+    expect(parseRankingDetail('', BASE_URL)).toEqual({ title: 'Ranking', entries: [] });
+  });
+
+  it('skips a podium cell whose caption has no rank prefix and a tail cell with a non-numeric rank', () => {
+    const html = `<html><body>
+      <table><tr><td align="center">
+        <img id="picture1" src="/fivedata/x.jpg"><br>
+        <b>Alpha</b>
+        <div class=label>$1</div>
+      </td></tr></table>
+      <table style="margin-top: 20px">
+        <td align="right">n/a</td><td class=value>Delta</td><td align="right">$4,000</td>
+        <td align="right">5</td><td class=value></td><td align="right">$3,000</td>
+      </table>
+    </body></html>`;
+
+    expect(parseRankingDetail(html, BASE_URL).entries).toEqual([]);
   });
 });

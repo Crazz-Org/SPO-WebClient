@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  ChevronRight, Building2, UserSearch, Trophy, Landmark, Search, Newspaper,
+  ChevronRight, Building2, UserSearch, Trophy, Landmark, Search, Newspaper, User,
 } from 'lucide-react';
 import { useSearchStore, type SearchPage } from '../../store/search-store';
 import { useClient } from '../../context';
@@ -154,6 +154,33 @@ function flattenCategories(categories: RankingCategory[], depth: number = 0): Fl
   return result;
 }
 
+/**
+ * One podium place (Ranking.asp:78-106). Its own component because the photo
+ * fallback needs a `useState` and hooks cannot live inside a `.map` — same shape
+ * as RulerCard.
+ */
+function PodiumCard({ entry }: { entry: RankingEntry }) {
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const showPhoto = Boolean(entry.photoUrl) && !photoFailed;
+
+  return (
+    <div className={styles.podiumCard}>
+      {showPhoto ? (
+        <img
+          className={styles.profilePhoto}
+          src={entry.photoUrl}
+          alt=""
+          onError={() => setPhotoFailed(true)}
+        />
+      ) : (
+        <div className={styles.profilePhotoPlaceholder}><User size={28} /></div>
+      )}
+      <span className={styles.rankingName}>#{entry.rank} {entry.name}</span>
+      <span className={styles.rankingValue}>{entry.valueText}</span>
+    </div>
+  );
+}
+
 function RankingsPage() {
   const categories = useSearchStore((s) => s.rankingsData?.categories) ?? [];
   const detail = useSearchStore((s) => s.rankingDetailData);
@@ -168,6 +195,9 @@ function RankingsPage() {
 
   // Show detail view if loaded
   if (detail) {
+    const podium = detail.entries.filter((e: RankingEntry) => e.rank <= 3);
+    const tail = detail.entries.filter((e: RankingEntry) => e.rank > 3);
+
     return (
       <div className={styles.listContainer}>
         <button
@@ -177,15 +207,32 @@ function RankingsPage() {
           ← Back to rankings
         </button>
         <h3 className={styles.sectionTitle}>{detail.title}</h3>
-        <div className={styles.rankingTable}>
-          {detail.entries.map((entry: RankingEntry) => (
-            <div key={`${entry.rank}-${entry.name}`} className={styles.rankingRow}>
-              <span className={styles.rankingRank}>#{entry.rank}</span>
-              <span className={styles.rankingName}>{entry.name}</span>
-              <span className={styles.rankingValue}>{entry.value.toLocaleString()}</span>
+        {detail.entries.length === 0 ? (
+          // Ranking.asp:132-136 prints strNoRelevant when Count = 0
+          // (New Directory.lng:24).
+          <div className={styles.emptyState}>
+            There is no relevant performance to highlight in this area.
+          </div>
+        ) : (
+          <>
+            {podium.length > 0 && (
+              <div className={styles.podium}>
+                {podium.map((entry: RankingEntry) => (
+                  <PodiumCard key={`${entry.rank}-${entry.name}`} entry={entry} />
+                ))}
+              </div>
+            )}
+            <div className={styles.rankingTable}>
+              {tail.map((entry: RankingEntry) => (
+                <div key={`${entry.rank}-${entry.name}`} className={styles.rankingRow}>
+                  <span className={styles.rankingRank}>#{entry.rank}</span>
+                  <span className={styles.rankingName}>{entry.name}</span>
+                  <span className={styles.rankingValue}>{entry.valueText}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
       </div>
     );
   }
