@@ -16,14 +16,8 @@ import { X, Search } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useBuildingStore } from '../../store/building-store';
 import { useClient } from '../../context';
+import { rolesToMask } from '@/shared/connection-roles';
 import styles from './ConnectionPickerModal.module.css';
-
-/** Facility role bitmask values (from Voyager TFacilityRoleSet) */
-const ROLE_PRODUCER = 1;
-const ROLE_DISTRIBUTER = 2;
-const ROLE_BUYER = 4;
-const ROLE_EXPORTER = 8;
-const ROLE_IMPORTER = 16;
 
 export interface ConnectionPickerContentProps {
   /** Called when the picker is dismissed (the sheet pops the surface; the modal closes). */
@@ -67,12 +61,9 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
   const handleSearch = useCallback(() => {
     if (!picker) return;
 
-    let rolesMask = 0;
-    if (roles.producer) rolesMask |= ROLE_PRODUCER;
-    if (roles.distributer) rolesMask |= ROLE_DISTRIBUTER;
-    if (roles.importer) rolesMask |= ROLE_IMPORTER;
-    if (roles.buyer) rolesMask |= ROLE_BUYER;
-    if (roles.exporter) rolesMask |= ROLE_EXPORTER;
+    // The direction decides which boxes count — the other direction's flags are
+    // remembered but never sent (connection-roles.ts).
+    const rolesMask = rolesToMask(picker.direction, roles);
 
     setConnectionFilters({ company, town, maxResults, roles });
     client.onConnectionSearch(
@@ -84,7 +75,7 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
         company: company || undefined,
         town: town || undefined,
         maxResults: parseInt(maxResults) || 20,
-        roles: rolesMask || 255,
+        roles: rolesMask,
       },
     );
   }, [picker, company, town, maxResults, roles, client, setConnectionFilters]);
@@ -230,32 +221,48 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
               />
               Warehouses
             </label>
-            <label className={styles.roleLabel}>
-              <input
-                type="checkbox"
-                checked={roles.importer}
-                onChange={(e) => setRoles((r) => ({ ...r, importer: e.target.checked }))}
-              />
-              Trade Centers
-            </label>
+            {/* The last two boxes are the direction's own, as in Voyager:
+                OutputSearchHandlerViewer.pas:337-351 offers Trade Centers and
+                Export Warehouses; InputSearchHandlerViewer.pas:313-327 offers
+                Stores and Import Warehouses. */}
             {picker.direction === 'output' ? (
-              <label className={styles.roleLabel}>
-                <input
-                  type="checkbox"
-                  checked={roles.buyer}
-                  onChange={(e) => setRoles((r) => ({ ...r, buyer: e.target.checked }))}
-                />
-                Stores
-              </label>
+              <>
+                <label className={styles.roleLabel}>
+                  <input
+                    type="checkbox"
+                    checked={roles.buyer}
+                    onChange={(e) => setRoles((r) => ({ ...r, buyer: e.target.checked }))}
+                  />
+                  Stores
+                </label>
+                <label className={styles.roleLabel}>
+                  <input
+                    type="checkbox"
+                    checked={roles.compImporter}
+                    onChange={(e) => setRoles((r) => ({ ...r, compImporter: e.target.checked }))}
+                  />
+                  Import Warehouses
+                </label>
+              </>
             ) : (
-              <label className={styles.roleLabel}>
-                <input
-                  type="checkbox"
-                  checked={roles.exporter}
-                  onChange={(e) => setRoles((r) => ({ ...r, exporter: e.target.checked }))}
-                />
-                Exporters
-              </label>
+              <>
+                <label className={styles.roleLabel}>
+                  <input
+                    type="checkbox"
+                    checked={roles.importer}
+                    onChange={(e) => setRoles((r) => ({ ...r, importer: e.target.checked }))}
+                  />
+                  Trade Centers
+                </label>
+                <label className={styles.roleLabel}>
+                  <input
+                    type="checkbox"
+                    checked={roles.exporter}
+                    onChange={(e) => setRoles((r) => ({ ...r, exporter: e.target.checked }))}
+                  />
+                  Export Warehouses
+                </label>
+              </>
             )}
             <button
               className={styles.searchBtn}

@@ -27,14 +27,30 @@ FindSuppliers(Output, World, Town, Name, Count, XPos, YPos, SortMode, Roles)
 | SortMode | integer | 0=cost, 1=quality |
 | Roles | integer | Role bitmask filter |
 
-**Role bitmask:**
+**Role bitmask.** A Delphi set cast to a byte — `byte(rl)` where `rl : TFacilityRoleSet`
+(`Voyager/WHGeneralSheet.pas:155`), so every member carries the bit of its ordinal and
+`rolNeutral`, not `rolProducer`, is bit 0:
+
 | Value | Constant | Meaning |
 |-------|----------|---------|
-| 1 | rolProducer | Producer |
-| 2 | rolDistributer | Distributor |
-| 4 | rolBuyer | Buyer |
-| 8 | rolCompExport | Company Export |
+| 1 | rolNeutral | Neutral |
+| 2 | rolProducer | Producer |
+| 4 | rolDistributer | Distributor |
+| 8 | rolBuyer | Buyer |
 | 16 | rolImporter | Importer |
+| 32 | rolCompExport | Company Export |
+| 64 | rolCompInport | Company Import |
+
+The two search forms of the reference client offer four boxes each, and neither offers
+`rolNeutral`:
+
+- supplier search (`FindSuppliers`) — Factories, Regular Warehouses, City Trade Centers,
+  Export Warehouses; all four = **54** (`OutputSearchHandlerViewer.pas:337-351`), the `#54` of
+  the captured trace.
+- client search (`FindClients`) — Factories, Regular Warehouses, Stores, Import Warehouses;
+  all four = **78** (`InputSearchHandlerViewer.pas:313-327`).
+
+The client builds the mask in one place, `src/shared/connection-roles.ts`.
 
 ## Supply operations — what each one means
 

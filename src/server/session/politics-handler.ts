@@ -1179,7 +1179,11 @@ export async function searchConnections(
       RdoValue.int(buildingX),                   // X
       RdoValue.int(buildingY),                   // Y
       RdoValue.int(1),                           // SortMode (1=quality)
-      RdoValue.int(filters?.roles || 31),        // Role bitmask (31 = all 5 roles)
+      // Role bitmask — TFacilityRole bits (WHGeneralSheet.pas:155), built by
+      // `rolesToMask` (shared/connection-roles.ts). `??`, not `||`: a mask of 0
+      // is "no box ticked", which is what Voyager's `byte([])` puts on the wire.
+      // 31 is the legacy default, used only when a caller sends no roles at all.
+      RdoValue.int(filters?.roles ?? 31),        // Role
     ).packet, undefined, TimeoutCategory.SLOW);
 
     const results = parseRdoConnectionResults(packet.payload || '', direction);

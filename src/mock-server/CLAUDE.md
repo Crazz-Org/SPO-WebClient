@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`.
+Available scenarios: `auth`, `world-list`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`.
 
 `newspaper` is the daily paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
 renders, and one `home.asp` per kept issue. HTTP only — the paper is reachable through the
@@ -46,6 +46,16 @@ purpose: a `procedure` answers nothing, so no reply can ever say the write lande
 It also serves the two cache reads by path `getPoliticsData` makes — the town
 folder's ruler block and `world.five`'s `ElectionsOn`, `1` by default, `0` via
 `createCivicMutationsScenario(vars, { electionsOn: false })`.
+
+`connection-search` is the pair of searches a fluid gate offers — `FindSuppliers`
+(`direction: 'input'`) and `FindClients` (`direction: 'output'`) — and it exists for their
+**ninth argument**. `Role` is a `TFacilityRoleSet` cast to a byte
+(`Voyager/WHGeneralSheet.pas:155`), so every checkbox contributes the bit of its ordinal:
+every box of the supplier form ticked is `#54`, of the client form `#78`. A wrong mask
+produces no crash and no error reply — the server simply answers about facilities nobody asked
+about — so the captured `#54` (`src/server/__tests__/rdo/connection-search.test.ts:9`) is the
+only thing that can catch it. Its test drives the real `searchConnections` and matches the
+emitted frame back against the exchange.
 
 ### Scenario Structure
 

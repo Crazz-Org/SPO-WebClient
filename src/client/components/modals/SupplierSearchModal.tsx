@@ -10,14 +10,8 @@ import { X, Search } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useProfileStore } from '../../store/profile-store';
 import { useClient } from '../../context';
+import { ALL_CONNECTION_ROLES, rolesToMask, type ConnectionRoleFlags } from '@/shared/connection-roles';
 import styles from './ConnectionPickerModal.module.css';
-
-/** Facility role bitmask values (from Voyager TFacilityRoleSet) */
-const ROLE_PRODUCER = 1;
-const ROLE_DISTRIBUTER = 2;
-const ROLE_BUYER = 4;
-const ROLE_EXPORTER = 8;
-const ROLE_IMPORTER = 16;
 
 export function SupplierSearchModal() {
   const modal = useUiStore((s) => s.modal);
@@ -30,13 +24,7 @@ export function SupplierSearchModal() {
   const [company, setCompany] = useState('');
   const [town, setTown] = useState('');
   const [maxResults, setMaxResults] = useState('20');
-  const [roles, setRoles] = useState({
-    producer: true,
-    distributer: true,
-    importer: true,
-    buyer: true,
-    exporter: true,
-  });
+  const [roles, setRoles] = useState<ConnectionRoleFlags>(ALL_CONNECTION_ROLES);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
 
   const client = useClient();
@@ -48,7 +36,7 @@ export function SupplierSearchModal() {
       setCompany('');
       setTown('');
       setMaxResults('20');
-      setRoles({ producer: true, distributer: true, importer: true, buyer: true, exporter: true });
+      setRoles(ALL_CONNECTION_ROLES);
       setSelectedIndices(new Set());
       requestAnimationFrame(() => companyRef.current?.focus());
     }
@@ -69,12 +57,8 @@ export function SupplierSearchModal() {
 
     useProfileStore.getState().setSupplierSearchLoading(true);
 
-    let rolesMask = 0;
-    if (roles.producer) rolesMask |= ROLE_PRODUCER;
-    if (roles.distributer) rolesMask |= ROLE_DISTRIBUTER;
-    if (roles.importer) rolesMask |= ROLE_IMPORTER;
-    if (roles.buyer) rolesMask |= ROLE_BUYER;
-    if (roles.exporter) rolesMask |= ROLE_EXPORTER;
+    // This dialog only ever searches suppliers (connection-roles.ts).
+    const rolesMask = rolesToMask('input', roles);
 
     // Use (0,0) as building coords — profile-level search, not building-specific
     client.onConnectionSearch(
@@ -85,7 +69,7 @@ export function SupplierSearchModal() {
         company: company || undefined,
         town: town || undefined,
         maxResults: parseInt(maxResults) || 20,
-        roles: rolesMask || 255,
+        roles: rolesMask,
       },
     );
   }, [supplierSearch, company, town, maxResults, roles, client]);
@@ -222,7 +206,7 @@ export function SupplierSearchModal() {
                 checked={roles.exporter}
                 onChange={(e) => setRoles((r) => ({ ...r, exporter: e.target.checked }))}
               />
-              Exporters
+              Export Warehouses
             </label>
             <button
               className={styles.searchBtn}

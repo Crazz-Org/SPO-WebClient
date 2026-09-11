@@ -302,15 +302,18 @@ describe('FindSuppliers RDO request construction', () => {
     expect(methodMap['output']).toBe('FindClients');
   });
 
-  it('defaults roles to 31 (all 5 roles)', () => {
+  it('defaults roles to 31 — the gateway legacy value, used only with no filter', () => {
+    // 31 is not a role set the UI can produce: the dialogs always send a mask
+    // built from TFacilityRole bits (54 suppliers, 78 clients — see line 9).
+    // It survives as the default of a caller that passes no `roles` at all.
     const roles = undefined;
     const defaultRoles = roles || 31;
     expect(defaultRoles).toBe(31);
-    // 31 = rolProducer(1) | rolDistributer(2) | rolBuyer(4) | rolCompExport(8) | rolImporter(16)
-    expect(defaultRoles & 1).toBe(1);   // Producer
-    expect(defaultRoles & 2).toBe(2);   // Distributer
-    expect(defaultRoles & 4).toBe(4);   // Buyer
-    expect(defaultRoles & 8).toBe(8);   // CompExport
+    // 31 = rolNeutral(1) | rolProducer(2) | rolDistributer(4) | rolBuyer(8) | rolImporter(16)
+    expect(defaultRoles & 1).toBe(1);   // Neutral
+    expect(defaultRoles & 2).toBe(2);   // Producer
+    expect(defaultRoles & 4).toBe(4);   // Distributer
+    expect(defaultRoles & 8).toBe(8);   // Buyer
     expect(defaultRoles & 16).toBe(16); // Importer
   });
 

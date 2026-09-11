@@ -5,6 +5,7 @@
 
 import { create } from 'zustand';
 import type { BuildingCategory, BuildingInfo } from '@/shared/types';
+import { ALL_CONNECTION_ROLES, type ConnectionRoleFlags } from '@/shared/connection-roles';
 import { useBuildingStore } from './building-store';
 import { useGameStore } from './game-store';
 import type { SnapPoint } from '../hooks/useSheetGesture';
@@ -42,11 +43,11 @@ export interface ConnectionFilters {
   company: string;
   town: string;
   maxResults: string;
-  roles: { producer: boolean; distributer: boolean; importer: boolean; buyer: boolean; exporter: boolean };
+  roles: ConnectionRoleFlags;
 }
 export const DEFAULT_CONNECTION_FILTERS: ConnectionFilters = {
   company: '', town: '', maxResults: '20',
-  roles: { producer: true, distributer: true, importer: true, buyer: true, exporter: true },
+  roles: ALL_CONNECTION_ROLES,
 };
 export interface Surface {
   kind: SurfaceKind;
