@@ -77,6 +77,11 @@
   color: var(--text-primary);
 }
 
+.categoryCardDisabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* Page content */
 .pageContent {
   flex: 1;
