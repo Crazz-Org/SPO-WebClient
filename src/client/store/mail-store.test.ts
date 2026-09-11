@@ -195,6 +195,42 @@ describe('Mail Store — Reply quoting', () => {
   });
 });
 
+// #509 — Forward opens the composer with an empty To, a `Fw: `-prefixed subject and
+// the source body quoted, the same shape as Reply's quoting.
+describe('Mail Store — Forward', () => {
+  beforeEach(resetStore);
+
+  it('startForward opens compose with an empty To, a Fw: subject and the quoted body', () => {
+    useMailStore.getState().startForward(mockFullMessage);
+    const state = useMailStore.getState();
+    expect(state.currentView).toBe('compose');
+    expect(state.composeTo).toBe('');
+    expect(state.composeSubject).toBe('Fw: Hello');
+    expect(state.composeBody).toBe(buildReplyBody(mockFullMessage));
+    expect(state.composeBody).toBe(
+      [REPLY_SEPARATOR, 'Alice wrote, on "Hello":', '> Test body'].join('\n'),
+    );
+    expect(state.composeHeaders).toBe('');
+    expect(state.composeDraftId).toBeNull();
+  });
+
+  it('startForward does not double-prefix Fw:', () => {
+    useMailStore.getState().startForward({ ...mockFullMessage, subject: 'Fw: Already sent' });
+    expect(useMailStore.getState().composeSubject).toBe('Fw: Already sent');
+  });
+
+  it('startForward does not double-prefix a lower-case fw:', () => {
+    useMailStore.getState().startForward({ ...mockFullMessage, subject: 'fw: lower case' });
+    expect(useMailStore.getState().composeSubject).toBe('fw: lower case');
+  });
+
+  it('a noReply message still forwards', () => {
+    useMailStore.getState().startForward({ ...mockFullMessage, noReply: true });
+    expect(useMailStore.getState().currentView).toBe('compose');
+    expect(useMailStore.getState().composeSubject).toBe('Fw: Hello');
+  });
+});
+
 // #120 — the compose form has to say WHICH draft it came from, or saving an edited
 // draft leaves the old copy beside the new one.
 describe('Mail Store — Drafts', () => {

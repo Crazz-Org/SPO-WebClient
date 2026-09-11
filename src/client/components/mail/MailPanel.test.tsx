@@ -96,6 +96,77 @@ describe('MailPanel — list-row delete', () => {
   });
 });
 
+// #509 — a message cannot be forwarded.
+describe('MailPanel — Forward', () => {
+  const full: MailMessageFull = {
+    messageId: 'msg-1', from: 'Alice', fromAddr: 'alice', to: 'Me', toAddr: 'me', subject: 'First',
+    date: '', dateFmt: 'Jan 1', body: ['hi'], read: true, stamp: 1, noReply: false, attachments: [],
+  };
+
+  beforeEach(() => {
+    resetStores();
+    useMailStore.setState({
+      currentFolder: 'Inbox',
+      currentView: 'list',
+      messages: [],
+      currentMessage: null,
+      isLoading: false,
+      isMessageLoading: false,
+      pendingDeleteId: null,
+      folderRefreshToken: 0,
+    });
+  });
+
+  it('the read view shows both Reply and Forward', () => {
+    renderWithProviders(<MailPanel />);
+    act(() => useMailStore.getState().setCurrentMessage(full));
+
+    expect(screen.getByRole('button', { name: 'Reply' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeTruthy();
+  });
+
+  it('a noReply message shows Forward and no Reply', () => {
+    renderWithProviders(<MailPanel />);
+    act(() => useMailStore.getState().setCurrentMessage({ ...full, noReply: true }));
+
+    expect(screen.queryByRole('button', { name: 'Reply' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeTruthy();
+  });
+
+  it('Draft offers no Forward button', () => {
+    renderWithProviders(<MailPanel />);
+    act(() => {
+      useMailStore.setState({ currentFolder: 'Draft' });
+      useMailStore.getState().setCurrentMessage(full);
+    });
+
+    expect(screen.queryByRole('button', { name: 'Forward' })).toBeNull();
+  });
+
+  it('clicking Forward opens compose with an empty To, a Fw: subject, and puts the caret in To', () => {
+    renderWithProviders(<MailPanel />);
+    act(() => useMailStore.getState().setCurrentMessage(full));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Forward' }));
+
+    const toInput = screen.getByLabelText('To') as HTMLInputElement;
+    expect(toInput.value).toBe('');
+    expect((screen.getByLabelText('Subject') as HTMLInputElement).value).toBe('Fw: First');
+    expect(document.activeElement).toBe(toInput);
+  });
+
+  it('opening Reply leaves the caret off the To input', () => {
+    renderWithProviders(<MailPanel />);
+    act(() => useMailStore.getState().setCurrentMessage(full));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+
+    const toInput = screen.getByLabelText('To') as HTMLInputElement;
+    expect(toInput.value).toBe('alice');
+    expect(document.activeElement).not.toBe(toInput);
+  });
+});
+
 describe('MailPanel — folder empty state', () => {
   beforeEach(() => {
     resetStores();

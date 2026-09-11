@@ -99,6 +99,8 @@ interface MailState {
   setLoading: (loading: boolean) => void;
   startCompose: (to?: string, subject?: string, body?: string, headers?: string) => void;
   startReply: (message: MailMessageFull) => void;
+  /** Open the composer as a forward: empty To, `Fw: ` subject, quoted source body. */
+  startForward: (message: MailMessageFull) => void;
   /** Re-open a saved draft in the compose form, remembering the copy to replace. */
   startEditDraft: (message: MailMessageFull) => void;
   clearCompose: () => void;
@@ -159,6 +161,18 @@ export const useMailStore = create<MailState>((set) => ({
       composeSubject: /^re:/i.test(message.subject.trim()) ? message.subject : `Re: ${message.subject}`,
       composeBody: buildReplyBody(message),
       composeHeaders: buildReplyHeaders(message),
+      composeDraftId: null,
+    }),
+
+  startForward: (message) =>
+    set({
+      currentView: 'compose',
+      composeTo: '',
+      // Same case-insensitive test as Reply (MsgComposerHandler.pas:226-228) — a subject
+      // already forwarded once must not collect a second prefix.
+      composeSubject: /^fw:/i.test(message.subject.trim()) ? message.subject : `Fw: ${message.subject}`,
+      composeBody: buildReplyBody(message),
+      composeHeaders: '',
       composeDraftId: null,
     }),
 
