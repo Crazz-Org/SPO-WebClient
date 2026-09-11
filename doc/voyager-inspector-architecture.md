@@ -611,8 +611,10 @@ Both of these pages are live, and the gateway scrapes them — they are not an e
 in the client, and nothing here is rendered as HTML: the gateway strips the markup and the
 client draws React from the text.
 
-- `boardreader.asp` / `boardmsg.asp` → the **editorial board** of `NewspaperModal`
-  (`server/session/newspaper-handler.ts`), what "Rate the Mayor" opens.
+- `boardreader.asp` / `boardlist.asp` / `boardmsg.asp` → the **editorial board** of
+  `NewspaperModal` (`server/session/newspaper-handler.ts`), what "Rate the Mayor" opens: the
+  list frame (`boardlist.asp`) is what the root view lists, and the index (`boardmsg.asp`) is
+  what a post re-renders.
 - `newsreader.asp` → the **paper view** of the same modal (issue #516): its bar frame
   `ShowBar.asp` lists the kept issue folders, and `ShowPaper.asp:30` redirects to the issue's
   own `home.asp`, which is what the gateway fetches for the stories.

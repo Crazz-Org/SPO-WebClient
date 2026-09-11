@@ -20,6 +20,7 @@ const BOARD: NewspaperBoard = {
   root: 'boards\\Planitia\\Helartia Herald\\',
   path: 'boards\\Planitia\\Helartia Herald\\',
   columns: [{ author: 'A', subject: 'S', summary: 'x', path: 'm1.five' }],
+  tree: [],
   article: null,
   error: '',
 };

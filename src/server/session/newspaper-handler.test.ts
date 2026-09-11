@@ -25,6 +25,7 @@ import type { Response } from 'node-fetch';
 import {
   parseNewspaperIndex,
   parseNewspaperArticle,
+  parseNewspaperTree,
   getNewspaperBoard,
   postNewspaperColumn,
   decodeIssueDate,
@@ -172,6 +173,143 @@ function articlePage(opts: {
     ...(replies.length > 0 ? ['\t\t<h2>Replies:</h2>', replyBlock] : []),
   ].join('\n');
 }
+
+type TreeNode = { author: string; subject: string; path: string; summary?: string; children?: TreeNode[] };
+
+/** `boardlist.asp:22-36`, per node, depth-first — the recursive `RenderLevel(root)`. */
+function entryBlock(e: TreeNode): string[] {
+  const summaryLines = e.summary === undefined ? [] : [
+    '\t<!--',
+    '\t<div class=comment style="margin-left: 20px">',
+    `\t\t${e.summary}...`,
+    '\t</div>',
+    '\t-->',
+  ];
+  const childLines = e.children ? renderTree(e.children) : [];
+  return [
+    `<b>${e.author}</b> - <a target="BoardMain" href="boardmsg.asp?root=${ROOT}&TownName=Helartia&path=${encodeURIComponent(e.path)}&tycoon=SPO_test3&WorldName=Planitia&PaperName=Helartia%20Herald&DAAddr=10.0.0.5&DAPort=1111"> ${e.subject}</a><br>`,
+    '<div style="margin-left: 20px">',
+    ...summaryLines,
+    ...childLines,
+    '</div>',
+  ];
+}
+
+function renderTree(entries: TreeNode[]): string[] {
+  return entries.flatMap(entryBlock);
+}
+
+/** `boardlist.asp:7-16, 22-36, 68-83` — the left frame `boardreader.asp:12` loads. */
+function listPage(entries: TreeNode[]): string {
+  return [
+    '<html><head><link rel="stylesheet" href="BoardList.css"></head><body>',
+    "<h1>Helartia Herald</h1>",
+    '<!--',
+    '<br><h2>Latest 3 columns</h2>',
+    '-->',
+    '<br><h2>All columns</h2>',
+    ...renderTree(entries),
+    '<body>',
+    '</html>',
+  ].join('\n');
+}
+
+// =============================================================================
+// parseNewspaperTree
+// =============================================================================
+describe('parseNewspaperTree', () => {
+  it('reads author, subject, path, summary and depth of a nested tree', () => {
+    const tree = parseNewspaperTree(listPage([
+      {
+        author: 'A', subject: 'A-subject', path: 'a.five', summary: 'a-summary',
+        children: [
+          {
+            author: 'A1', subject: 'A1-subject', path: 'a.five\\a1.five', summary: 'a1-summary',
+            children: [{ author: 'A1a', subject: 'A1a-subject', path: 'a.five\\a1.five\\a1a.five', summary: 'a1a-summary' }],
+          },
+          { author: 'A2', subject: 'A2-subject', path: 'a.five\\a2.five', summary: 'a2-summary' },
+        ],
+      },
+      { author: 'B', subject: 'B-subject', path: 'b.five', summary: 'b-summary' },
+      { author: 'C', subject: 'C-subject', path: 'c.five', summary: 'c-summary' },
+    ]));
+
+    expect(tree.map(e => [e.path, e.depth])).toEqual([
+      ['a.five', 0],
+      ['a.five\\a1.five', 1],
+      ['a.five\\a1.five\\a1a.five', 2],
+      ['a.five\\a2.five', 1],
+      ['b.five', 0],
+      ['c.five', 0],
+    ]);
+    expect(tree[0]).toEqual({ author: 'A', subject: 'A-subject', path: 'a.five', summary: 'a-summary', depth: 0 });
+  });
+
+  it('a board of 25 top-level columns yields 25 entries whose paths are the 25 in order', () => {
+    const entries: TreeNode[] = Array.from({ length: 25 }, (_, i) => ({
+      author: `Author${i}`, subject: `Subject${i}`, path: `m${i}.five`, summary: '',
+    }));
+    const tree = parseNewspaperTree(listPage(entries));
+    expect(tree).toHaveLength(25);
+    expect(tree.map(e => e.path)).toEqual(entries.map(e => e.path));
+  });
+
+  it('an entry with an empty author or subject still yields a row with its own path, and its neighbours are intact', () => {
+    const tree = parseNewspaperTree(listPage([
+      { author: 'Before', subject: 'Before-subject', path: 'before.five', summary: '' },
+      { author: '', subject: 'No author', path: 'noauthor.five', summary: '' },
+      { author: 'No subject', subject: '', path: 'nosubject.five', summary: '' },
+      { author: 'After', subject: 'After-subject', path: 'after.five', summary: '' },
+    ]));
+    expect(tree).toHaveLength(4);
+    expect(tree.map(e => e.path)).toEqual(['before.five', 'noauthor.five', 'nosubject.five', 'after.five']);
+    expect(tree[1]).toMatchObject({ author: '', subject: 'No author', path: 'noauthor.five' });
+    expect(tree[2]).toMatchObject({ author: 'No subject', subject: '', path: 'nosubject.five' });
+  });
+
+  it('reads a summary carried inside the HTML comment and strips its trailing ellipsis', () => {
+    const [entry] = parseNewspaperTree(listPage([
+      { author: 'A', subject: 'S', path: 'm.five', summary: 'A long column' },
+    ]));
+    expect(entry.summary).toBe('A long column');
+  });
+
+  it('an entry whose comment block is removed yields an empty summary', () => {
+    const [entry] = parseNewspaperTree(listPage([
+      { author: 'A', subject: 'S', path: 'm.five' },
+    ]));
+    expect(entry.summary).toBe('');
+  });
+
+  it('an entry whose link carries no path is dropped and does not receive the following summary', () => {
+    const html = listPage([
+      { author: 'A', subject: 'S', path: 'm.five', summary: 'orphan summary' },
+      { author: 'B', subject: 'T', path: 'n.five', summary: 'n-summary' },
+    ]).replace('path=m.five', 'other=m.five');
+    const tree = parseNewspaperTree(html);
+    expect(tree).toHaveLength(1);
+    expect(tree[0]).toEqual({ author: 'B', subject: 'T', path: 'n.five', summary: 'n-summary', depth: 0 });
+  });
+
+  it('a stray closing div before the first entry does not push depth below 0', () => {
+    const html = '</div>\n' + listPage([{ author: 'A', subject: 'S', path: 'm.five', summary: '' }]);
+    const [entry] = parseNewspaperTree(html);
+    expect(entry.depth).toBe(0);
+  });
+
+  it('an empty board yields an empty list', () => {
+    expect(parseNewspaperTree(listPage([]))).toEqual([]);
+  });
+
+  it('a page with no list yields an empty list', () => {
+    expect(parseNewspaperTree('<html><body>Nothing here</body></html>')).toEqual([]);
+  });
+
+  it('the commented "Latest 3 columns" heading produces nothing', () => {
+    const tree = parseNewspaperTree(listPage([{ author: 'A', subject: 'S', path: 'm.five', summary: '' }]));
+    expect(tree.some(e => e.subject.includes('Latest'))).toBe(false);
+  });
+});
 
 // =============================================================================
 // parseNewspaperIndex
@@ -481,6 +619,56 @@ describe('getNewspaperBoard', () => {
     expect(board.error).toBe('This town has no newspaper.');
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it('a root read fetches boardlist.asp second, with root and path both the board root, no top, Tycoon set, %20-encoded, and board.tree holds the parsed entries', async () => {
+    const fake = makeWebCtx();
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(indexPage([
+        { author: 'SPO_test3', subject: 'VERY NICE GUY', summary: 'VOTE FOR HIM', path: 'm1.five' },
+      ])))
+      .mockResolvedValueOnce(htmlResponse(listPage([
+        { author: 'A', subject: 'S', path: 'm1.five', summary: 'x' },
+      ])));
+
+    const board = await getNewspaperBoard(fake.ctx, TARGET);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const listUrl = mockFetch.mock.calls[1][0];
+    expect(listUrl).toMatch(/^http:\/\/158\.69\.153\.134\/Five\/0\/Visual\/News\/boardlist\.asp\?/);
+    expect(listUrl).not.toContain('+');
+    const q = queryOf(1);
+    expect(q.get('root')).toBe(ROOT);
+    expect(q.get('path')).toBe(ROOT);
+    expect(q.get('top')).toBeNull();
+    expect(q.get('Tycoon')).toBe('SPO_test3');
+    expect(board.tree).toEqual([{ author: 'A', subject: 'S', path: 'm1.five', summary: 'x', depth: 0 }]);
+  });
+
+  it('a column read makes exactly one fetch and board.tree is []', async () => {
+    const fake = makeWebCtx();
+    mockFetch.mockResolvedValue(htmlResponse(articlePage({
+      subject: 'Roads', author: 'Innos', body: 'More of them',
+    })));
+
+    const board = await getNewspaperBoard(fake.ctx, TARGET, 'm1.five');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(board.tree).toEqual([]);
+  });
+
+  it('a list answering HTTP 500 after a good index yields the list error and warns', async () => {
+    const fake = makeWebCtx();
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(indexPage([
+        { author: 'A', subject: 'S', summary: 'x', path: 'm1.five' },
+      ])))
+      .mockResolvedValueOnce(htmlResponse('', 500));
+
+    const board = await getNewspaperBoard(fake.ctx, TARGET);
+
+    expect(board.error).toBe('The newspaper answered HTTP 500.');
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('column list answered HTTP 500'));
+  });
 });
 
 // =============================================================================
@@ -601,6 +789,34 @@ describe('postNewspaperColumn', () => {
     const result = await postNewspaperColumn(fake.ctx, TARGET, 'S', 'B');
     expect(result).toEqual({ success: false, message: 'ECONNRESET', board: null });
     expect(fake.log.warn).toHaveBeenCalledWith('[Newspaper] Post failed: ECONNRESET');
+  });
+
+  // `boardmsg.asp:46-48` — a successful post reloads the list frame too.
+  it('after the post, the second call reads boardlist.asp and the board carries the tree', async () => {
+    const fake = makeWebCtx();
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(POSTED))
+      .mockResolvedValueOnce(htmlResponse(listPage([
+        { author: 'SPO_test3', subject: 'VERY NICE GUY', path: 'm1.five', summary: 'x' },
+      ])));
+
+    const result = await postNewspaperColumn(fake.ctx, TARGET, 'VERY NICE GUY', 'VOTE FOR HIM');
+
+    expect(mockFetch.mock.calls[1][0]).toMatch(/boardlist\.asp\?/);
+    expect(result.board?.tree).toEqual([
+      { author: 'SPO_test3', subject: 'VERY NICE GUY', path: 'm1.five', summary: 'x', depth: 0 },
+    ]);
+  });
+
+  it('a list read that fails after the post is reported as a failure', async () => {
+    const fake = makeWebCtx();
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(POSTED))
+      .mockResolvedValueOnce(htmlResponse('', 500));
+
+    const result = await postNewspaperColumn(fake.ctx, TARGET, 'VERY NICE GUY', 'VOTE FOR HIM');
+
+    expect(result).toEqual({ success: false, message: 'The newspaper answered HTTP 500.', board: null });
   });
 });
 

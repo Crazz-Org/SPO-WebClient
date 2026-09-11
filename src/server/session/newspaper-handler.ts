@@ -12,9 +12,11 @@
  * rooted at `boards\<World>\<Paper>\`, reachable only through the ASP pages —
  * there is no RDO member for it.
  *
- * Two operations, both on `boardmsg.asp`:
- *   - read   `?top=TRUE&root=…&path=…`      -> the index, or one column
- *   - post   `?action=post&…` + a form body -> `NewsObj.NewMessage` (`:146`)
+ * Three operations:
+ *   - read   `boardmsg.asp?top=TRUE&root=…&path=…`  -> the index, or one column
+ *   - read   `boardlist.asp?root=…&path=…`          -> the full tree, the left
+ *     frame `boardreader.asp:12` puts beside the index
+ *   - post   `boardmsg.asp?action=post&…` + a form body -> `NewsObj.NewMessage` (`:146`)
  *
  * A column page also carries the Up link (`:236-237`, the parent's `path`) and
  * the author's portrait (`:244`), both read here alongside the title/byline/body.
@@ -31,6 +33,7 @@ import type {
   NewspaperArticle,
   NewspaperBoard,
   NewspaperColumn,
+  NewspaperTreeEntry,
   NewspaperIssue,
   NewspaperIssueList,
   NewspaperIssueRef,
@@ -116,6 +119,48 @@ export function parseNewspaperIndex(html: string): NewspaperColumn[] {
     });
   }
   return columns;
+}
+
+/**
+ * `boardlist.asp:22-36` — the column tree, one token at a time: an entry
+ * (`<b>author</b> - <a …path=…>subject</a>`, `:24`), an HTML comment (the
+ * summary `:26-30` is emitted inside one — ASP evaluates `<%= %>` regardless
+ * of HTML comments — and `:68-71` is another), and the `<div>`s whose nesting
+ * is the depth (`:25`, `:34`). Author and subject may be empty: `[\s\S]*?`
+ * matches nothing, and the anchors around them keep one entry from swallowing
+ * the next.
+ */
+const TREE_TOKEN =
+  /(<b>([\s\S]*?)<\/b>\s*-\s*<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>)|(<!--[\s\S]*?-->)|(<div\b)|(<\/div>)/gi;
+/** The commented-out summary block of `boardlist.asp:27-29`. */
+const TREE_SUMMARY = /<div\s+class=comment[^>]*>([\s\S]*?)<\/div>/i;
+
+/** Every column and every reply of the board, depth-first, as `boardlist.asp` renders them. */
+export function parseNewspaperTree(html: string): NewspaperTreeEntry[] {
+  const entries: NewspaperTreeEntry[] = [];
+  let depth = 0;
+  let last: NewspaperTreeEntry | null = null;
+  TREE_TOKEN.lastIndex = 0;
+  let token: RegExpExecArray | null;
+  while ((token = TREE_TOKEN.exec(html)) !== null) {
+    if (token[1] !== undefined) {
+      const path = pathOf(token[3]);
+      last = null;
+      if (!path) continue;
+      last = { author: toText(token[2]), subject: toText(token[4]), path, summary: '', depth };
+      entries.push(last);
+    } else if (token[5] !== undefined) {
+      // The summary comment sits first inside the entry's own child block (`:25-30`),
+      // so it always belongs to the entry pushed last.
+      const summary = TREE_SUMMARY.exec(token[5]);
+      if (summary && last) last.summary = toText(summary[1]).replace(/\.{3}$/, '');
+    } else if (token[6] !== undefined) {
+      depth++;
+    } else if (depth > 0) {
+      depth--;
+    }
+  }
+  return entries;
 }
 
 /**
@@ -239,9 +284,29 @@ function emptyBoard(target: NewspaperTarget, error: string): NewspaperBoard {
     root: '',
     path: '',
     columns: [],
+    tree: [],
     article: null,
     error,
   };
+}
+
+/**
+ * The list frame — `boardlist.asp`, what `boardreader.asp:12` loads beside the
+ * index. Takes the same query as `boardmsg.asp` (`:12-13` forward one set to
+ * both) with no `top`: it is a standalone page already. Throws on a non-OK
+ * answer so each caller's own catch reports it.
+ */
+async function readColumnTree(
+  ctx: SessionContext, target: NewspaperTarget, worldIp: string, root: string,
+): Promise<NewspaperTreeEntry[]> {
+  const url = `http://${worldIp}/Five/0/Visual/News/boardlist.asp?${encodeParams(boardParams(ctx, target, root, root))}`;
+  ctx.log.debug(`[Newspaper] Reading the column list ${redactUrlCredentials(url)}`);
+  const resp = await fetchWithTimeout(url, { redirect: 'follow' });
+  if (!resp.ok) {
+    ctx.log.warn(`[Newspaper] column list answered HTTP ${resp.status} — ${redactUrlCredentials(url)}`);
+    throw new Error(`The newspaper answered HTTP ${resp.status}.`);
+  }
+  return parseNewspaperTree(await resp.text());
 }
 
 /**
@@ -274,6 +339,7 @@ export async function getNewspaperBoard(
       return emptyBoard(target, `The newspaper answered HTTP ${resp.status}.`);
     }
     const html = await resp.text();
+    const tree = wanted === root ? await readColumnTree(ctx, target, worldIp, root) : [];
 
     return {
       paperName: target.paperName,
@@ -282,6 +348,7 @@ export async function getNewspaperBoard(
       // The index is only rendered on the folder page (`:266-272`), so on a
       // column page this is legitimately empty and `article` carries the content.
       columns: parseNewspaperIndex(html),
+      tree,
       article: resolveArticle(parseNewspaperArticle(html), worldIp, root),
       error: '',
     };
@@ -358,6 +425,11 @@ export async function postNewspaperColumn(
     const published = columns.some(c => c.author.toLowerCase() === author.toLowerCase()
       && c.subject.trim() === subject.trim());
 
+    // `boardmsg.asp:46-48` — after a post the page reloads the `BoardList`
+    // frame too, so the tree is re-read the same way. A failed re-read lands
+    // in the catch below and is reported truthfully; a Refresh still shows it.
+    const tree = await readColumnTree(ctx, target, worldIp, root);
+
     return {
       success: published,
       message: published
@@ -368,6 +440,7 @@ export async function postNewspaperColumn(
         root,
         path: root,
         columns,
+        tree,
         article: resolveArticle(parseNewspaperArticle(html), worldIp, root),
         error: '',
       },

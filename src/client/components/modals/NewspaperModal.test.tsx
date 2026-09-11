@@ -36,6 +36,9 @@ const INDEX: NewspaperBoard = {
   columns: [
     { author: 'SPO_test3', subject: 'VERY NICE GUY', summary: 'VOTE FOR HIM', path: 'm1.five' },
   ],
+  tree: [
+    { author: 'SPO_test3', subject: 'VERY NICE GUY', summary: 'VOTE FOR HIM', path: 'm1.five', depth: 0 },
+  ],
   article: null,
   error: '',
 };
@@ -96,7 +99,7 @@ describe('NewspaperModal', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('lists the latest columns with their author and summary', () => {
+  it('lists every column of the board with its author and summary', () => {
     openWith(INDEX);
     renderWithProviders(<NewspaperModal />);
     expect(screen.getByText('Helartia Herald')).toBeTruthy();
@@ -106,7 +109,7 @@ describe('NewspaperModal', () => {
   });
 
   it('says so when nobody has written yet', () => {
-    openWith({ ...INDEX, columns: [] });
+    openWith({ ...INDEX, columns: [], tree: [] });
     renderWithProviders(<NewspaperModal />);
     expect(screen.getByText('Nobody has written a column yet.')).toBeTruthy();
   });
@@ -120,6 +123,69 @@ describe('NewspaperModal', () => {
     );
     fireEvent.click(screen.getByText('VERY NICE GUY'));
     expect(spy).toHaveBeenCalledWith('m1.five');
+  });
+
+  it('a tree of 25 top-level entries renders 25 rows and opens the 25th by its path', () => {
+    const spy = jest.fn();
+    const tree = Array.from({ length: 25 }, (_, i) => ({
+      author: `Author${i}`, subject: `Subject${i}`, summary: '', path: `m${i}.five`, depth: 0,
+    }));
+    openWith({ ...INDEX, tree });
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onRequestNewspaperBoard: spy }) },
+    );
+    expect(screen.getAllByRole('listitem')).toHaveLength(25);
+    fireEvent.click(screen.getByText('Subject24'));
+    expect(spy).toHaveBeenCalledWith('m24.five');
+  });
+
+  it('a tree of 3 renders exactly 3 rows and no empty scaffolding', () => {
+    const tree = Array.from({ length: 3 }, (_, i) => ({
+      author: `Author${i}`, subject: `Subject${i}`, summary: '', path: `m${i}.five`, depth: 0,
+    }));
+    openWith({ ...INDEX, tree });
+    renderWithProviders(<NewspaperModal />);
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+  });
+
+  it('indents a reply and leaves a top-level column flush', () => {
+    openWith({
+      ...INDEX,
+      tree: [
+        { author: 'A', subject: 'Top', summary: '', path: 'm1.five', depth: 0 },
+        { author: 'B', subject: 'Reply', summary: '', path: 'm1.five\\r1.five', depth: 1 },
+      ],
+    });
+    renderWithProviders(<NewspaperModal />);
+    const rows = screen.getAllByRole('listitem');
+    expect((rows[0] as HTMLElement).style.marginLeft).toBe('0px');
+    expect((rows[1] as HTMLElement).style.marginLeft).toBe('16px');
+  });
+
+  it('an entry with no subject shows a placeholder and still opens its path', () => {
+    const spy = jest.fn();
+    openWith({
+      ...INDEX,
+      tree: [{ author: 'A', subject: '', summary: '', path: 'm1.five', depth: 0 }],
+    });
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onRequestNewspaperBoard: spy }) },
+    );
+    expect(screen.getByText('Untitled column')).toBeTruthy();
+    fireEvent.click(screen.getByText('Untitled column'));
+    expect(spy).toHaveBeenCalledWith('m1.five');
+  });
+
+  it('an entry with no author renders no author span', () => {
+    openWith({
+      ...INDEX,
+      tree: [{ author: '', subject: 'Solo subject', summary: '', path: 'm1.five', depth: 0 }],
+    });
+    renderWithProviders(<NewspaperModal />);
+    expect(screen.getByText('Solo subject')).toBeTruthy();
+    expect(screen.queryByText('SPO_test3')).toBeNull();
   });
 
   it('shows an open column with its byline, body and replies', () => {

@@ -96,6 +96,7 @@ export type {
   CampaignState,
   PoliticsData,
   NewspaperColumn,
+  NewspaperTreeEntry,
   NewspaperArticle,
   NewspaperBoard,
   NewspaperIssueRef,
