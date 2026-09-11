@@ -738,7 +738,13 @@ export interface RankingCategory {
 export interface RankingEntry {
   rank: number;
   name: string;
-  value: number;
+  /**
+   * The server's own formatted string for this ranking (`Ranking.asp:84`, `:123`
+   * write `Obj.Value0` / `Obj.Value(i)` verbatim). A money ranking ships
+   * `$7,000`; re-parsing it into a number loses the currency and the scale, so
+   * it is carried and printed as received.
+   */
+  valueText: string;
   photoUrl?: string;
 }
 

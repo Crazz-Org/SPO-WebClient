@@ -2243,6 +2243,13 @@ describe('runWithDeadline: an actual kill, not just a timer that gives up waitin
   // the backstop does and does not guarantee), so the resolved CODE alone cannot catch that
   // mutation. Only checking that the OS process is actually gone afterward can — the pid is
   // written to `pidFile` by the child itself, then polled here.
+  //
+  // The deadline has to outlast node's OWN startup: the child writes its pid as its first
+  // statement, but it only gets to run that statement once the runtime is up. A deadline
+  // tighter than that startup cost makes SIGKILL land before the file is ever written, and
+  // the read below dies on ENOENT — a machine-load flake, not a regression. 3s of headroom
+  // for a boot that normally takes tens of milliseconds; the bound below still proves the
+  // wait is bounded and not "however long the OS takes".
   it('kills a process that ignores SIGTERM — SIGKILL still ends it, the OS process is actually gone, and the wait is bounded', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-bench-deadline-'));
     const logFile = path.join(dir, 'job.log');
@@ -2256,15 +2263,15 @@ describe('runWithDeadline: an actual kill, not just a timer that gives up waitin
           "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);",
       ],
       { cwd: process.cwd(), logFile },
-      { stage: 'ignores-sigterm', deadlineMs: 150, killGraceMs: 150 },
+      { stage: 'ignores-sigterm', deadlineMs: 3_000, killGraceMs: 250 },
     );
     expect(code).toBe(DEADLINE_EXIT_CODE);
     // Bound: deadlineMs + 2*killGraceMs + slack, never "however long the OS takes".
-    expect(Date.now() - start).toBeLessThan(3_000);
+    expect(Date.now() - start).toBeLessThan(8_000);
     expect(fs.readFileSync(logFile, 'utf8')).toMatch(/exceeded its .*deadline — killing/);
     const pid = Number(fs.readFileSync(pidFile, 'utf8'));
     expect(() => process.kill(pid, 0)).toThrow(); // ESRCH: no such process — SIGKILL actually landed
-  }, 10_000);
+  }, 20_000);
 
   // Mutation target: "kill the direct child only" (drop detached:true, or signal +pid instead
   // of -pid) — a real grandchild, spawned the way `npm run build:*` spawns `tsc`, must die too.
