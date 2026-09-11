@@ -9,6 +9,7 @@ import {
   SearchMenuCategory,
   TownInfo,
   NewspaperListing,
+  BankInfo,
   TycoonProfile,
   RankingCategory,
   RankingEntry
@@ -19,7 +20,8 @@ import {
   parseTycoonProfile,
   parseRankingsPage,
   parseRankingDetail,
-  parseNewspapersPage
+  parseNewspapersPage,
+  parseBanksPage
 } from './search-menu-parser';
 import { toProxyUrl, isProxyUrl } from '../shared/proxy-utils';
 
@@ -211,15 +213,10 @@ export class SearchMenuService {
     };
   }
 
-  /**
-   * Get banks list (usually empty)
-   */
-  async getBanks(): Promise<unknown[]> {
+  /** Get every bank in the world — New Directory/Banks.asp (`:6` reads WorldName only). */
+  async getBanks(): Promise<BankInfo[]> {
     const path = `/five/0/visual/voyager/new%20directory/Banks.asp?WorldName=${encodeURIComponent(this.worldName)}&RIWS=`;
-
-    await this.fetchPage(path);
-    // Banks page is usually empty, return empty array
-    return [];
+    return parseBanksPage(await this.fetchPage(path));
   }
 
   /** Get every newspaper in the world — New Directory/Newspapers.asp (`:4` reads WorldName only). */

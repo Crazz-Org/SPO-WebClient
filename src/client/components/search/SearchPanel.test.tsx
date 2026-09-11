@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach } from '@jest/globals';
-import { screen } from '@testing-library/react';
-import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { screen, fireEvent } from '@testing-library/react';
+import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useSearchStore } from '../../store/search-store';
 import { SearchPanel } from './SearchPanel';
 import { WsMessageType } from '@/shared/types';
-import type { TownInfo } from '@/shared/types';
+import type { TownInfo, BankInfo } from '@/shared/types';
 
 const TOWN_BASE: TownInfo = {
   name: 'Helartia',
@@ -94,5 +94,53 @@ describe('SearchPanel — towns page', () => {
     renderWithProviders(<SearchPanel />);
 
     expect(screen.getByText('No towns found.')).toBeTruthy();
+  });
+});
+
+function showBanks(banks: BankInfo[]): void {
+  useSearchStore.setState({
+    currentPage: 'banks',
+    isLoading: false,
+    banksData: { type: WsMessageType.RESP_SEARCH_MENU_BANKS, banks },
+  });
+}
+
+describe('SearchPanel — banks page', () => {
+  beforeEach(() => {
+    resetStores();
+    useSearchStore.getState().reset();
+  });
+
+  it('lists every bank with its owning company', () => {
+    showBanks([
+      { name: 'Helartia Central Bank', company: 'Moneyworks Inc', x: 220, y: 41 },
+      { name: 'Shamba Savings', company: 'Crazz Holdings', x: 87, y: 133 },
+    ]);
+
+    renderWithProviders(<SearchPanel />);
+
+    expect(screen.getByText('Helartia Central Bank')).toBeTruthy();
+    expect(screen.getByText('Company: Moneyworks Inc')).toBeTruthy();
+    expect(screen.getByText('Shamba Savings')).toBeTruthy();
+    expect(screen.getByText('Company: Crazz Holdings')).toBeTruthy();
+  });
+
+  it('shows the bank on the map when its card is clicked', () => {
+    showBanks([{ name: 'Helartia Central Bank', company: 'Moneyworks Inc', x: 220, y: 41 }]);
+
+    const onNavigateToBuilding = jest.fn();
+    renderWithProviders(<SearchPanel />, { clientCallbacks: createSpiedCallbacks({ onNavigateToBuilding }) });
+
+    fireEvent.click(screen.getByText('Helartia Central Bank'));
+
+    expect(onNavigateToBuilding).toHaveBeenCalledWith(220, 41);
+  });
+
+  it('shows the empty state only when the \\Banks folder really is empty', () => {
+    showBanks([]);
+
+    renderWithProviders(<SearchPanel />);
+
+    expect(screen.getByText('No banks found.')).toBeTruthy();
   });
 });

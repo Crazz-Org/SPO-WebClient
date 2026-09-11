@@ -706,6 +706,15 @@ export interface NewspaperListing {
   townName: string;
 }
 
+/** One row of the directory's Banks page (New Directory/Banks.asp:40-43 via BrowseFacFolder.inc:15-52). */
+export interface BankInfo {
+  name: string;
+  /** Owning company — BrowseFacFolder.inc:26-28, rendered because Banks.asp:40 sets ShowCompany = true. */
+  company: string;
+  x: number;
+  y: number;
+}
+
 /**
  * Tycoon profile from RenderTycoon.asp
  */
