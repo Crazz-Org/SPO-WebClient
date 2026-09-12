@@ -1,4 +1,4 @@
-import { login, handleCreateCompany } from './auth-handler';
+import { login, handleCreateCompany, performAuthCheck } from './auth-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { WsMessageType } from '../../shared/types';
 import type { ClientHandlerContext } from './client-context';
@@ -15,6 +15,7 @@ jest.mock('../bridge/client-bridge', () => ({
     setCredentials: jest.fn(),
     setPublicOfficeRole: jest.fn(),
     setMapLoadingProgress: jest.fn(),
+    setAuthError: jest.fn(),
   },
 }));
 
@@ -148,6 +149,44 @@ describe('auth-handler', () => {
 
       expect(ClientBridge.showError).toHaveBeenCalledWith('Session lost, please reconnect');
       expect(ClientBridge.showCompanies).not.toHaveBeenCalled();
+    });
+  });
+
+  // #532 — the refusal the modal shows is the gateway's sentence, not the one
+  // the client's general ERROR_* table would build from the same number.
+  describe('performAuthCheck()', () => {
+    it('shows the gateway sentence carried on the rejection', async () => {
+      const err = Object.assign(new Error('Unknown tycoon'), {
+        code: 7,
+        serverMessage: 'There are two possible causes for this error',
+      });
+      const ctx = makeCtx({ sendRequest: jest.fn().mockRejectedValue(err) });
+
+      await performAuthCheck(ctx, 'testUser', 'badPass');
+
+      expect(ClientBridge.setAuthError).toHaveBeenCalledWith({
+        code: 7,
+        message: 'There are two possible causes for this error',
+      });
+      expect(ClientBridge.setLoginLoading).toHaveBeenLastCalledWith(false);
+    });
+
+    it('falls back to the error message when the rejection carries no server sentence', async () => {
+      const err = Object.assign(new Error('Request Timeout'), { code: 7 });
+      const ctx = makeCtx({ sendRequest: jest.fn().mockRejectedValue(err) });
+
+      await performAuthCheck(ctx, 'testUser', 'badPass');
+
+      expect(ClientBridge.setAuthError).toHaveBeenCalledWith({ code: 7, message: 'Request Timeout' });
+    });
+
+    it('stores the credentials and raises no error on a valid logon', async () => {
+      const ctx = makeCtx({ sendRequest: jest.fn().mockResolvedValue({ type: WsMessageType.RESP_AUTH_SUCCESS }) });
+
+      await performAuthCheck(ctx, 'testUser', 'testPass');
+
+      expect(ClientBridge.setCredentials).toHaveBeenCalledWith('testUser');
+      expect(ClientBridge.setAuthError).not.toHaveBeenCalled();
     });
   });
 

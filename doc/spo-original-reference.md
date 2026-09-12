@@ -40,7 +40,7 @@
 
 | Member | Kind | Verb | Signature | Return | Line | Notes |
 |--------|------|------|-----------|--------|------|-------|
-| `RDOLogonUser` | function | `call` | `(%Alias, %Password)` | `#errorCode` | 92 | 0=success |
+| `RDOLogonUser` | function | `call` | `(%Alias, %Password)` | `#errorCode` | 92 | 0 or -1 (still-trial) = success, `DirectoryServerProtocol.pas:9-10` |
 | `RDOMapSegaUser` | function | `call` | `(%Alias)` | olevariant | 93 | |
 | `RDOGenAccountId` | function | `call` | `(#FamilyId)` | olevariant | 87 | |
 | `RDONewUserId` | function | `call` | `(%Alias, %Password, %AccountId, #FamilyId)` | olevariant | 91 | |

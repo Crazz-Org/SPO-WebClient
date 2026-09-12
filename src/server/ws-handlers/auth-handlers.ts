@@ -1,6 +1,6 @@
 import { AuthError } from '../../shared/auth-error';
 import * as ErrorCodes from '../../shared/error-codes';
-import { getErrorMessage } from '../../shared/error-codes';
+import { getDirectoryErrorMessage } from '../../shared/directory-error-codes';
 import { toErrorMessage } from '../../shared/error-utils';
 import {
   WsMessageType,
@@ -35,7 +35,9 @@ export const handleAuthCheck: WsHandler = async (ctx: WsHandlerContext, msg: WsM
     sendResponse(ctx.ws, response);
   } catch (err: unknown) {
     if (err instanceof AuthError) {
-      sendError(ctx.ws, msg.wsRequestId, getErrorMessage(err.authCode), err.authCode);
+      // `authCode` comes from RDOLogonUser: it is a DIR_* code
+      // (DirectoryServerProtocol.pas:9-20), not an ERROR_* one.
+      sendError(ctx.ws, msg.wsRequestId, getDirectoryErrorMessage(err.authCode), err.authCode);
     } else {
       throw err;
     }

@@ -16,6 +16,7 @@ jest.mock('./handlers/chat-handler');
 
 import { StarpeaceClient } from './client';
 import * as chatHandler from './handlers/chat-handler';
+import { WsMessageType, type WsMessage } from '../shared/types';
 
 class FakeSocket {
   onopen: (() => void) | null = null;
@@ -60,6 +61,44 @@ describe('StarpeaceClient callback wiring', () => {
         cluster: 'A',
       })
     );
+  });
+});
+
+/**
+ * #532 — a RESP_ERROR answering a pending request carries the gateway's own
+ * sentence. The rejection keeps the table-derived `message` (every existing flow
+ * prints it) and gains `serverMessage`, which only the auth check reads.
+ */
+describe('RESP_ERROR on a pending request', () => {
+  let client: StarpeaceClient;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    client = new StarpeaceClient();
+  });
+
+  it('rejects with the gateway sentence alongside the code and the table message', async () => {
+    (client as unknown as { isConnected: boolean }).isConnected = true;
+
+    const req = { type: WsMessageType.REQ_AUTH_CHECK } as unknown as WsMessage;
+    const pending = client.sendRequest(req, 5000);
+    const wsRequestId = req.wsRequestId;
+    expect(wsRequestId).toBeTruthy();
+
+    (client as unknown as { handleMessage(m: WsMessage): void }).handleMessage({
+      type: WsMessageType.RESP_ERROR,
+      wsRequestId,
+      errorMessage: 'gateway sentence',
+      code: 7,
+    } as unknown as WsMessage);
+
+    await expect(pending).rejects.toMatchObject({
+      code: 7,
+      message: 'Unknown tycoon',
+      serverMessage: 'gateway sentence',
+    });
   });
 });
 

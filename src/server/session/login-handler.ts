@@ -15,6 +15,7 @@ import { rdoCall, rdoGet, rdoSet, rdoIdOf } from '../../shared/rdo-frame';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { config } from '../../shared/config';
 import { AuthError } from '../../shared/auth-error';
+import { DIR_NOERROR, DIR_NOERROR_StillTrial } from '../../shared/directory-error-codes';
 import { toErrorMessage } from '../../shared/error-utils';
 import {
   parsePropertyResponse as parsePropertyResponseHelper,
@@ -206,7 +207,9 @@ async function performDirectoryAuth(ctx: LoginContext, username: string, pass: s
     ).packet);
     const res = parsePropertyResponseHelper(logonPacket.payload || '', 'res');
     const authCode = parseInt(res, 10);
-    if (authCode !== 0) throw new AuthError(authCode);
+    // Voyager treats DIR_NOERROR and DIR_NOERROR_StillTrial (-1) alike
+    // (LogonHandlerViewer.pas:548-565). NaN from a bodiless answer still refuses.
+    if (authCode !== DIR_NOERROR && authCode !== DIR_NOERROR_StillTrial) throw new AuthError(authCode);
 
     // 3. End Session & Close — fire-and-forget without RID: ACCEPTED DIVERGENCE
     // (audit 2026-07-02, P2 — the captured legacy client sends this WITH a RID and

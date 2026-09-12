@@ -212,6 +212,26 @@ describe('checkAuth — the ephemeral directory session', () => {
 
     await expect(checkAuth(fake.ctx, 'SPO_test3', 'test3')).rejects.toBeInstanceOf(AuthError);
   });
+
+  it('accepts DIR_NOERROR_StillTrial (-1) as a successful logon', async () => {
+    const fake = makeLoginCtx();
+    // The Directory answers -1 for an account still inside its trial period;
+    // Voyager takes that branch together with 0 (LogonHandlerViewer.pas:548-565).
+    fake.respond(directoryResponder('#-1'));
+
+    await expect(checkAuth(fake.ctx, 'SPO_test3', 'test3')).resolves.toBeUndefined();
+    // The success branch really ran: RDOEndSession left the socket.
+    expect(fake.frames.directory_auth).toEqual([
+      RdoCommand.sel(DIRECTORY_SESSION_ID).call('RDOEndSession').push().build(),
+    ]);
+  });
+
+  it.each([[1], [7], [9], [10]])('refuses DIR code %i, carrying that code on the AuthError', async (code) => {
+    const fake = makeLoginCtx();
+    fake.respond(directoryResponder(`#${code}`));
+
+    await expect(checkAuth(fake.ctx, 'SPO_test3', 'test3')).rejects.toMatchObject({ authCode: code });
+  });
 });
 
 describe('connectDirectory — world list parsing', () => {

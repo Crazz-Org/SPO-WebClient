@@ -49,8 +49,10 @@ export async function performAuthCheck(ctx: ClientHandlerContext, username: stri
     useGameStore.getState().setLoginStage('zones');
   } catch (err: unknown) {
     ClientBridge.log('Auth', `Failed: ${toErrorMessage(err)}`);
-    const code = (err as { code?: number }).code ?? 0;
-    ClientBridge.setAuthError({ code, message: toErrorMessage(err) });
+    // `code` is a DIR_* code and the gateway already worded it; the client's own
+    // getErrorMessage() would re-word it from the wrong table (issue 532).
+    const { code = 0, serverMessage } = err as { code?: number; serverMessage?: string };
+    ClientBridge.setAuthError({ code, message: serverMessage || toErrorMessage(err) });
   } finally {
     ClientBridge.setLoginLoading(false);
   }
