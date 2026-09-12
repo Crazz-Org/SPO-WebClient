@@ -54,6 +54,7 @@ const WORLD: WorldInfo = {
   population: 0, investors: 0, online: 0, players: 0, mapSizeX: 0, mapSizeY: 0,
 };
 const COMPANY: CompanyInfo = { id: '55', name: 'SPO_test3 - Green', ownerRole: 'SPO_test3' };
+const onBatch = jest.fn();
 
 /**
  * The smallest thing `createSocket()` accepts. The lifecycle suite drives real
@@ -413,6 +414,13 @@ const DELEGATIONS: readonly Delegation[] = [
     forwarded: [706, 436, 'Plastics', 'input', { town: 'Kalisz', maxResults: 20 }],
     result: [],
   },
+  {
+    method: 'resolveConnectionReachability',
+    install: () => jest.spyOn(politicsHandler, 'resolveConnectionReachability'),
+    call: s => s.resolveConnectionReachability(706, 436, [{ x: 1, y: 2 }], onBatch),
+    forwarded: [706, 436, [{ x: 1, y: 2 }], onBatch],
+    result: [],
+  },
 
   // ── building-management-handler ──────────────────────────────────────────
   {
@@ -671,7 +679,7 @@ describe('StarpeaceSession — handler delegation', () => {
   it('covers every one-line handler delegation the facade declares', () => {
     // A guard on the table itself: if a delegation is added to the facade and
     // not to the table, the count stops matching and this row says so.
-    expect(DELEGATIONS).toHaveLength(72);
+    expect(DELEGATIONS).toHaveLength(73);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 
