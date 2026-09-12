@@ -21,6 +21,7 @@ import { showToast } from '../components/common/Toast';
 import {
   SurfaceType,
 } from '@/shared/types';
+import type { RememberedSession } from '../store/remembered-session';
 import type {
   WorldInfo,
   CompanyInfo,
@@ -134,6 +135,8 @@ export interface ClientCallbacks {
   onCompanySelect: (companyId: string) => void;
   onCreateCompany: () => void;
   onCreateCompanySubmit: (companyName: string, cluster: string) => Promise<void>;
+  /** One-click re-entry: replays the four login stages against the remembered record. */
+  onResumeSession: (record: RememberedSession, password: string) => void;
   onRequestClusterInfo: (clusterName: string) => void;
   onRequestClusterFacilities: (cluster: string, folder: string) => void;
 
@@ -382,6 +385,10 @@ export const ClientBridge = {
       useGameStore.getState().setDisconnectReason(reason);
     }
     useGameStore.getState().setStatus('disconnected');
+    // Every caller means "back to the login screen", which remounts with no stored
+    // creds — any stage but 'auth' would be a dead screen there.
+    useGameStore.getState().setLoginStage('auth');
+    useGameStore.getState().setResumeTarget(null);
   },
 
   setReconnecting(): void {

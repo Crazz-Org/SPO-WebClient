@@ -39,9 +39,16 @@ export function LoginScreen() {
   const authError = useGameStore((s) => s.authError);
   const loginPage = useGameStore((s) => s.loginPage);
   const admission = useGameStore((s) => s.loginAdmission);
+  const rememberedSession = useGameStore((s) => s.rememberedSession);
+  const resumeTarget = useGameStore((s) => s.resumeTarget);
+  const forgetRememberedSession = useGameStore((s) => s.forgetRememberedSession);
   const setLoginStage = useGameStore((s) => s.setLoginStage);
   const setLoginLoading = useGameStore((s) => s.setLoginLoading);
   const setAuthError = useGameStore((s) => s.setAuthError);
+
+  // The chained re-entry hides the zone/world/company stages while it runs; the store
+  // still advances loginStage underneath, so a failed step still lands on the right one.
+  const visibleStage = resumeTarget ? 'auth' : stage;
 
   const client = useClient();
   const [storedCreds, setStoredCreds] = useState<{ username: string; password: string } | null>(null);
@@ -114,6 +121,16 @@ export function LoginScreen() {
     client.onCreateCompany();
   }, [client]);
 
+  const handleResume = useCallback(
+    (password: string) => {
+      if (!rememberedSession) return;
+      setStoredCreds({ username: rememberedSession.username, password });
+      setLoginLoading(true);
+      client.onResumeSession(rememberedSession, password);
+    },
+    [client, rememberedSession, setLoginLoading],
+  );
+
   const handleBackToZones = useCallback(() => {
     setLoginStage('zones');
   }, [setLoginStage]);
@@ -126,22 +143,26 @@ export function LoginScreen() {
     <div className={styles.screen}>
       <LoginBackground />
 
-      {stage === 'auth' && (
+      {visibleStage === 'auth' && (
         <AuthStage
           onConnect={handleConnect}
           isLoading={isLoading}
           status={status}
+          rememberedSession={rememberedSession}
+          resumeTarget={resumeTarget}
+          onResume={handleResume}
+          onForgetSession={forgetRememberedSession}
         />
       )}
 
-      {stage === 'zones' && (
+      {visibleStage === 'zones' && (
         <ZoneStage
           onSelect={handleZoneSelect}
           isLoading={isLoading}
         />
       )}
 
-      {stage === 'worlds' && (
+      {visibleStage === 'worlds' && (
         <WorldStage
           worlds={worlds}
           onSelect={handleWorldSelect}
@@ -150,7 +171,7 @@ export function LoginScreen() {
         />
       )}
 
-      {stage === 'companies' && (
+      {visibleStage === 'companies' && (
         <CompanyStage
           companies={companies}
           worldName={selectedWorld}

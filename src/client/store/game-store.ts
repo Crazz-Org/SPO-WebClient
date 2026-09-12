@@ -6,6 +6,9 @@
 import { create } from 'zustand';
 import type { CompanyInfo, WorldInfo, ClusterInfo, ClusterFacilityPreview, LoginPageOutcome, WorldAdmission } from '@/shared/types';
 import { SurfaceType } from '@/shared/types/domain-types';
+import { loadRememberedSession, saveRememberedSession, clearRememberedSession, type RememberedSession } from './remembered-session';
+
+export type { RememberedSession };
 
 /* ---- Utilities ---- */
 
@@ -137,6 +140,10 @@ interface GameState {
   loginPage: LoginPageOutcome | null;
   /** Set when CanJoinWorldEx said this player may not found a company in this world. */
   loginAdmission: WorldAdmission | null;
+  /** The world and company entered last time, from localStorage — null on a fresh browser. */
+  rememberedSession: RememberedSession | null;
+  /** Non-null while the one-click re-entry is replaying the four stages. */
+  resumeTarget: RememberedSession | null;
 
   // Server switch overlay (browse regions/worlds while in-game)
   serverSwitchMode: boolean;
@@ -186,6 +193,9 @@ interface GameState {
   setLoginLoading: (loading: boolean) => void;
   setAuthError: (error: { code: number; message: string } | null) => void;
   setLoginPage: (page: LoginPageOutcome | null) => void;
+  rememberSession: (record: RememberedSession) => void;
+  forgetRememberedSession: () => void;
+  setResumeTarget: (target: RememberedSession | null) => void;
   setCompanyCreationClusters: (clusters: string[]) => void;
   setClusterInfo: (info: ClusterInfo | null) => void;
   setClusterInfoLoading: (loading: boolean) => void;
@@ -232,6 +242,8 @@ export const useGameStore = create<GameState>((set) => ({
   authError: null,
   loginPage: null,
   loginAdmission: null,
+  rememberedSession: loadRememberedSession(),
+  resumeTarget: null,
   serverSwitchMode: false,
   serverSwitchOriginWorld: '',
   companyCreationClusters: [],
@@ -279,6 +291,9 @@ export const useGameStore = create<GameState>((set) => ({
   setLoginLoading: (loading) => set({ loginLoading: loading }),
   setAuthError: (error) => set({ authError: error }),
   setLoginPage: (page) => set({ loginPage: page, companies: [], loginStage: 'companies', loginLoading: false, loginAdmission: null }),
+  rememberSession: (record) => { saveRememberedSession(record); set({ rememberedSession: record }); },
+  forgetRememberedSession: () => { clearRememberedSession(); set({ rememberedSession: null }); },
+  setResumeTarget: (target) => set({ resumeTarget: target }),
 
   setCompanyCreationClusters: (clusters) => set({ companyCreationClusters: clusters }),
   setClusterInfo: (info) => set({ clusterInfo: info, clusterInfoLoading: false }),
@@ -350,6 +365,7 @@ export const useGameStore = create<GameState>((set) => ({
       authError: null,
       loginPage: null,
       loginAdmission: null,
+      resumeTarget: null,
       serverSwitchMode: false,
       serverSwitchOriginWorld: '',
       companyCreationClusters: [],
