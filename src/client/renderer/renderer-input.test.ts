@@ -148,6 +148,7 @@ function makeRenderer(opts: FakeRendererOptions = {}) {
     onRoadDemolishAreaComplete: jest.fn(),
     onRoadSegmentComplete: jest.fn(),
     onZoneAreaComplete: jest.fn(),
+    onMapContextMenu: jest.fn(),
 
     getBuildingAt: jest.fn(() => opts.building ?? null),
   };
@@ -281,6 +282,51 @@ describe('placement mode — release places, drag pans', () => {
     up(r, 110, 55, 2);
     expect(r.onCancelPlacement).not.toHaveBeenCalled();
     expect(r.terrainRenderer.pan).toHaveBeenCalled();
+  });
+});
+
+describe('setMapContextMenuCallback', () => {
+  it('stores the callback that onMouseUp calls on release without drag', () => {
+    const r = makeRenderer();
+    const cb = jest.fn();
+    proto.setMapContextMenuCallback.call(r, cb);
+    down(r, 100, 50, 2);
+    up(r, 100, 50, 2);
+    expect(cb).toHaveBeenCalledWith(100, 50, 10, 5);
+  });
+});
+
+describe('right-click menu on release without drag', () => {
+  it('opens the menu at the tile under the pointer on release without drag', () => {
+    const r = makeRenderer();
+    down(r, 100, 50, 2);
+    up(r, 100, 50, 2);
+    expect(r.onMapContextMenu).toHaveBeenCalledWith(100, 50, 10, 5);
+  });
+
+  it('does not open the menu when the release followed a drag; pans instead', () => {
+    const r = makeRenderer();
+    down(r, 100, 50, 2);
+    move(r, 110, 55); // |10| + |5| = 15 > 8
+    up(r, 110, 55, 2);
+    expect(r.onMapContextMenu).not.toHaveBeenCalled();
+    expect(r.terrainRenderer.pan).toHaveBeenCalled();
+  });
+
+  it('cancels placement instead of opening the menu on release without drag', () => {
+    const r = makeRenderer({ placementMode: true });
+    down(r, 100, 50, 2);
+    up(r, 100, 50, 2);
+    expect(r.onCancelPlacement).toHaveBeenCalledTimes(1);
+    expect(r.onMapContextMenu).not.toHaveBeenCalled();
+  });
+
+  it('cancels road drawing on press and never reaches the menu on the following release', () => {
+    const r = makeRenderer({ roadDrawingMode: true });
+    down(r, 100, 50, 2);
+    expect(r.onCancelRoadDrawing).toHaveBeenCalledTimes(1);
+    up(r, 100, 50, 2);
+    expect(r.onMapContextMenu).not.toHaveBeenCalled();
   });
 });
 

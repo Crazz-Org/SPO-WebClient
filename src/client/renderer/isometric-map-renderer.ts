@@ -435,6 +435,7 @@ export class IsometricMapRenderer {
   private onCancelRoadDemolish: (() => void) | null = null;
   private onEmptyMapClick: (() => void) | null = null;
   private onViewportChanged: (() => void) | null = null;
+  private onMapContextMenu: ((clientX: number, clientY: number, tileX: number, tileY: number) => void) | null = null;
 
   // Zone overlay
   private zoneOverlayEnabled: boolean = false;
@@ -1736,6 +1737,10 @@ export class IsometricMapRenderer {
 
   public setEmptyMapClickCallback(callback: () => void) {
     this.onEmptyMapClick = callback;
+  }
+
+  public setMapContextMenuCallback(callback: ((clientX: number, clientY: number, tileX: number, tileY: number) => void) | null) {
+    this.onMapContextMenu = callback;
   }
 
   public setViewportChangedCallback(callback: () => void) {
@@ -5276,6 +5281,12 @@ export class IsometricMapRenderer {
       if (!this.rightClickDragged && this.placementMode && this.onCancelPlacement) {
         this.onCancelPlacement();
         return;
+      }
+
+      // Right-click release without drag → context menu at the pointer (x = column j, y = row i)
+      if (!this.rightClickDragged && this.onMapContextMenu) {
+        const pos = this.screenToMap(e.clientX, e.clientY);
+        this.onMapContextMenu(e.clientX, e.clientY, pos.j, pos.i);
       }
 
       // Mark movement stopped and trigger delayed zone loading

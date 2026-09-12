@@ -71,6 +71,16 @@ function legacyView(stack: Surface[]): { rightPanel: RightPanelType | null; left
 export type ModalType = 'buildMenu' | 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'connectionPicker' | 'zonePicker' | 'supplierSearch' | 'buildingInspector' | 'newspaper' | 'changelog';
 export type MobileTab = 'map' | 'chat' | 'build' | 'more';
 
+/** The right-click map context menu — what tile it opened on, and what sits there. */
+export interface MapContextMenuState {
+  clientX: number;
+  clientY: number;
+  tileX: number;
+  tileY: number;
+  layer: 'building' | 'road' | 'concrete' | 'terrain';
+  visualClass?: string;
+}
+
 interface UiState {
   // Surfaces — the universal sheet's stack (source of truth)
   stack: Surface[];
@@ -127,6 +137,9 @@ interface UiState {
    * `subject` is what the pick is for (a fluid name, or the source building).
    */
   connectMode: { active: boolean; subject: string };
+
+  /** The right-click map context menu; null when closed. */
+  mapContextMenu: MapContextMenuState | null;
 
   // Actions — Surfaces
   /** Push a surface on top (never replaces). No-op if the top already is that kind+params. */
@@ -188,6 +201,10 @@ interface UiState {
   setConnectionFilters: (f: ConnectionFilters) => void;
   setConnectMode: (active: boolean, subject?: string) => void;
 
+  // Actions — Map context menu
+  openMapContextMenu: (m: MapContextMenuState) => void;
+  closeMapContextMenu: () => void;
+
   // Actions — Escape (close topmost layer)
   dismissTopmost: () => void;
 }
@@ -213,6 +230,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   placingFacility: null,
   connectionFilters: DEFAULT_CONNECTION_FILTERS,
   connectMode: { active: false, subject: '' },
+  mapContextMenu: null,
 
   // Surfaces — one stack; the legacy panel fields follow its top
   pushSurface: (surface) => {
@@ -335,9 +353,19 @@ export const useUiStore = create<UiState>((set, get) => ({
   setConnectionFilters: (f) => set({ connectionFilters: f }),
   setConnectMode: (active, subject = '') => set({ connectMode: { active, subject } }),
 
+  // Map context menu
+  openMapContextMenu: (m) => set({ mapContextMenu: m }),
+  closeMapContextMenu: () => set({ mapContextMenu: null }),
+
   // Escape — dismiss topmost layer in priority order
   dismissTopmost: () => {
     const state = get();
+    // The map context menu is a lightweight popover above everything else —
+    // Escape closes just it, leaving any surface underneath untouched.
+    if (state.mapContextMenu) {
+      set({ mapContextMenu: null });
+      return;
+    }
     // Connect mode owns Escape: its own listener cancels the mode and reveals
     // the hidden stack — popping a surface the player cannot see would be worse.
     if (state.connectMode.active) return;

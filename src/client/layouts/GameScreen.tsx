@@ -17,6 +17,7 @@ import { useUiStore } from '../store';
 import { StatusPill, CommandBar, RightRail, VersionBadge } from '../components/hud';
 import { ChatStrip } from '../components/chat';
 import { StatusOverlay } from '../components/building';
+import { MapContextMenu } from '../components/map/MapContextMenu';
 import { ServerSwitchOverlay, ZoneTypePicker } from '../components/modals';
 import { useChangelogCheck } from '../hooks/useChangelogCheck';
 import { useCameraHistory } from '../hooks/useCameraHistory';
@@ -51,6 +52,9 @@ export function GameScreen() {
 
       {/* StatusOverlay — floating building preview (z-250, between map and panels) */}
       <StatusOverlay />
+
+      {/* MapContextMenu — right-click release (without drag) menu at the pointer */}
+      <MapContextMenu />
 
 
       {/* StatusPill — top, the player's state in one line */}

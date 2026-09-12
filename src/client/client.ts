@@ -883,6 +883,13 @@ export class StarpeaceClient implements ClientHandlerContext {
         buildingFocusHandler.unfocusBuilding(this);
       });
 
+      this.mapNavigationUI.setOnMapContextMenu((clientX, clientY) => {
+        const r = this.mapNavigationUI?.getRenderer();
+        if (!r) return;
+        const a = r.getCanvasAnchorAt(clientX, clientY);
+        useUiStore.getState().openMapContextMenu({ clientX, clientY, tileX: a.tileX, tileY: a.tileY, layer: a.layer, visualClass: a.visualClass });
+      });
+
       const renderer = this.mapNavigationUI.getRenderer();
       if (renderer) {
         setWorldToScreenFn((worldX, worldY) => renderer.worldToScreen(worldX, worldY));
