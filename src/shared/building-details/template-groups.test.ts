@@ -8,6 +8,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { RDO_MEMBERS, isCataloguedRdoMember } from '../rdo-members';
 import { PropertyType } from './property-definitions';
+import { HIDDEN_PROPERTY_NAMES } from './hidden-properties';
 import {
   HANDLER_TO_GROUP,
   GROUP_BY_ID,
@@ -237,6 +238,43 @@ describe('General handler RDO properties', () => {
     const comercials = TV_GENERAL_GROUP.properties.find(p => p.rdoName === 'Comercials');
     expect(comercials).toBeDefined();
     expect(comercials!.type).toBe(PropertyType.SLIDER);
+  });
+
+  it('BankGeneral bounds Interest 0-50 and Term 1-100, as Voyager does', () => {
+    // BankGeneralSheet.dfm: peInterest MinPerc 0 / MaxPerc 50, peTerm 1 / 100.
+    const interest = BANK_GENERAL_GROUP.properties.find(p => p.rdoName === 'Interest')!;
+    expect([interest.min, interest.max]).toEqual([0, 50]);
+    const term = BANK_GENERAL_GROUP.properties.find(p => p.rdoName === 'Term')!;
+    expect([term.min, term.max]).toEqual([1, 100]);
+  });
+
+  it('TVGeneral bounds HoursOnAir 0-24 in hours, not as a percentage', () => {
+    // TVGeneralSheet.dfm peHoursOnAir 0..24 — a count of hours in a day.
+    const hours = TV_GENERAL_GROUP.properties.find(p => p.rdoName === 'HoursOnAir')!;
+    expect([hours.min, hours.max]).toEqual([0, 24]);
+    expect(hours.step).toBe(1); // PropertyGroup defaults a missing step to 5
+    expect(hours.unit).toBeDefined();
+    expect(hours.unit).not.toBe('%');
+  });
+
+  it('the six values StoreToCache never writes are marked notCached', () => {
+    // TBankBlock.StoreToCache (StdBlocks/Banks.pas:188-206) and
+    // TBroadcaster.StoreToCache (StdBlocks/Broadcast.pas:431-453) hold none of them.
+    for (const name of ['EstLoan', 'Interest', 'Term', 'BudgetPerc']) {
+      expect(BANK_GENERAL_GROUP.properties.find(p => p.rdoName === name)!.notCached).toBe(true);
+    }
+    for (const name of ['HoursOnAir', 'Comercials']) {
+      expect(TV_GENERAL_GROUP.properties.find(p => p.rdoName === name)!.notCached).toBe(true);
+    }
+  });
+
+  it('both groups request the hidden CurrBlock the live reads bind to', () => {
+    for (const group of [BANK_GENERAL_GROUP, TV_GENERAL_GROUP]) {
+      const block = group.properties.find(p => p.rdoName === 'CurrBlock');
+      expect(block).toBeDefined();
+      expect(block!.notCached).toBeUndefined(); // it IS in the cache — it is what we read
+      expect(HIDDEN_PROPERTY_NAMES.has('CurrBlock')).toBe(true);
+    }
   });
 
   it('capitolGeneral should have coverage TABLE', () => {
