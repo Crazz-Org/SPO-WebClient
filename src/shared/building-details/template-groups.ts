@@ -68,6 +68,15 @@ export const IND_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT, editable: true },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — the three location rows every facility carries.
+    // The kind is a multi-string: StoreMultiStringToCache appends the language
+    // index (Languages.pas:248), so the cache key is MetaFacilityName0, never the
+    // bare name (KernelCache.pas:419-420). Town is written only inside a town
+    // (KernelCache.pas:421-422) and the kind can be empty for a class whose
+    // meta-block has no name — hideEmpty drops the row rather than showing a blank.
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
@@ -103,6 +112,10 @@ export const SRV_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT, editable: true },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
@@ -149,6 +162,10 @@ export const RES_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT, editable: true },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
@@ -192,6 +209,10 @@ export const HQ_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
@@ -246,6 +267,10 @@ export const BANK_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     // Read, never shown (HIDDEN_PROPERTY_NAMES): the block id `enrichBankTab`
     // binds its four live reads to, exactly as the Voyager sheet does —
     // `fCurrBlock := StrToInt(Prop.Values[tidCurrBlock])` then
@@ -284,6 +309,10 @@ export const WH_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
@@ -316,6 +345,10 @@ export const TV_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },

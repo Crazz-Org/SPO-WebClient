@@ -178,8 +178,8 @@ describe('General handler RDO properties', () => {
     expect(maintProp!.editable).toBe(true);
   });
 
-  it('ResGeneral should have 20 properties (PopulatedBlock stats + investment sliders + repair control + stop toggle + demolish)', () => {
-    expect(RES_GENERAL_GROUP.properties).toHaveLength(20);
+  it('ResGeneral should have 23 properties (PopulatedBlock stats + investment sliders + repair control + stop toggle + demolish + kind/cluster/town)', () => {
+    expect(RES_GENERAL_GROUP.properties).toHaveLength(23);
   });
 
   it('ResGeneral should have residential stats from PopulatedBlock.StoreToCache', () => {
@@ -1093,5 +1093,55 @@ describe('civic templates request the SecurityId the gate needs', () => {
     expect(prop).toBeDefined();
     // It is an authorisation input, not a figure to show the player.
     expect(prop!.hideEmpty).toBe(true);
+  });
+});
+
+/**
+ * GeneralInfo.inc:9,14,19 — every ordinary facility shows its kind, cluster and
+ * town. The kind is a multi-string on the cache: StoreMultiStringToCache appends
+ * the language index (Languages.pas:248) and the bare name is commented out
+ * (KernelCache.pas:419-420), so the request must be MetaFacilityName0.
+ */
+describe('ordinary-facility general groups declare kind, cluster and town', () => {
+  const ORDINARY_GENERAL_GROUPS = [
+    ['IndGeneral', IND_GENERAL_GROUP],
+    ['SrvGeneral', SRV_GENERAL_GROUP],
+    ['ResGeneral', RES_GENERAL_GROUP],
+    ['HqGeneral', HQ_GENERAL_GROUP],
+    ['BankGeneral', BANK_GENERAL_GROUP],
+    ['WHGeneral', WH_GENERAL_GROUP],
+    ['TVGeneral', TV_GENERAL_GROUP],
+  ] as const;
+
+  it.each(ORDINARY_GENERAL_GROUPS)('%s declares the three GeneralInfo.inc rows', (_id, group) => {
+    const rdoNames = group.properties.map(p => p.rdoName);
+    expect(rdoNames).toContain('MetaFacilityName0');
+    expect(rdoNames).toContain('Cluster');
+    expect(rdoNames).toContain('Town');
+  });
+
+  it.each(ORDINARY_GENERAL_GROUPS)('%s requests the kind as MetaFacilityName0, never bare', (_id, group) => {
+    const rdoNames = group.properties.map(p => p.rdoName);
+    expect(rdoNames).not.toContain('MetaFacilityName');
+    const kind = group.properties.find(p => p.rdoName === 'MetaFacilityName0')!;
+    expect(kind.type).toBe(PropertyType.TEXT);
+    // An empty kind renders no row rather than an empty one.
+    expect(kind.hideEmpty).toBe(true);
+  });
+
+  it.each(ORDINARY_GENERAL_GROUPS)('%s puts the three rows on the wire as regular reads', (id, _group) => {
+    clearInspectorTabsCache();
+    registerInspectorTabs(`test580_${id}`, [{ tabName: 'General', tabHandler: id }]);
+    const collected = collectTemplatePropertyNamesStructured(getTemplateForVisualClass(`test580_${id}`));
+    expect(collected.regularProperties).toContain('MetaFacilityName0');
+    expect(collected.regularProperties).toContain('Cluster');
+    expect(collected.regularProperties).toContain('Town');
+    expect(collected.regularProperties).not.toContain('MetaFacilityName');
+  });
+
+  it('none of the three is hidden at render time', () => {
+    for (const name of ['MetaFacilityName0', 'Cluster', 'Town']) {
+      expect(HIDDEN_PROPERTY_NAMES.has(name)).toBe(false);
+    }
   });
 });
