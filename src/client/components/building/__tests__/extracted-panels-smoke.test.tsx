@@ -9,7 +9,7 @@ import { CompInputsPanel } from '../InputsGroup';
 import { ProductsPanel } from '../ProductsGroup';
 import { SuppliesPanel } from '../SuppliesGroup';
 import type { CompInputData, BuildingProductData, BuildingSupplyData, BuildingConnectionData } from '@/shared/types';
-import { fireEvent } from '@testing-library/react';
+import { fireEvent, act } from '@testing-library/react';
 import { useBuildingStore, gateKey } from '../../../store/building-store';
 import { useUiStore } from '../../../store/ui-store';
 
@@ -55,6 +55,15 @@ function makeConnection(overrides: Partial<BuildingConnectionData> = {}): Buildi
     y: 200,
     ...overrides,
   };
+}
+
+/** Three named rows at distinct coordinates — the multi-selection cases below. */
+function threeConnections(): BuildingConnectionData[] {
+  return [
+    makeConnection({ facilityName: 'A', x: 10, y: 20 }),
+    makeConnection({ facilityName: 'B', x: 30, y: 40 }),
+    makeConnection({ facilityName: 'C', x: 50, y: 60 }),
+  ];
 }
 
 function makeCompInput(overrides: Partial<CompInputData> = {}): CompInputData {
@@ -430,7 +439,94 @@ describe('ProductsPanel', () => {
     expect(onDisconnectConnection).not.toHaveBeenCalled();
     confirmPendingDialog();
 
-    expect(onDisconnectConnection).toHaveBeenCalledWith(100, 200, 'fluid_chem', 'output', 300, 400);
+    expect(onDisconnectConnection).toHaveBeenCalledWith(100, 200, 'fluid_chem', 'output', [{ x: 300, y: 400 }]);
+  });
+
+  it('Delete with three rows selected sends one call carrying the three pairs', () => {
+    const onDisconnectConnection = jest.fn();
+    const callbacks = createSpiedCallbacks({ onDisconnectConnection });
+    const product = makeProduct({
+      metaFluid: 'fluid_chem',
+      connections: [
+        makeConnection({ facilityName: 'A', x: 10, y: 20 }),
+        makeConnection({ facilityName: 'B', x: 30, y: 40 }),
+        makeConnection({ facilityName: 'C', x: 50, y: 60 }),
+      ],
+    });
+
+    const { container } = renderWithProviders(
+      <ProductsPanel onPropertyChange={() => {}} products={[product]} canEdit={true} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    container.querySelectorAll('tbody tr').forEach(row => fireEvent.click(row));
+    fireEvent.keyDown(container.querySelector('table') as HTMLTableElement, { key: 'Delete' });
+
+    expect(onDisconnectConnection).not.toHaveBeenCalled();
+    expect(useUiStore.getState().confirmPayload?.title).toBe('Disconnect 3 buyers?');
+    confirmPendingDialog();
+
+    expect(onDisconnectConnection).toHaveBeenCalledTimes(1);
+    expect(onDisconnectConnection).toHaveBeenCalledWith(100, 200, 'fluid_chem', 'output', [
+      { x: 10, y: 20 }, { x: 30, y: 40 }, { x: 50, y: 60 },
+    ]);
+  });
+
+  it('Remove with a multi-selection is one call, and the title names the count', () => {
+    const onDisconnectConnection = jest.fn();
+    const callbacks = createSpiedCallbacks({ onDisconnectConnection });
+    const product = makeProduct({
+      metaFluid: 'fluid_chem',
+      connections: [
+        makeConnection({ facilityName: 'A', x: 10, y: 20 }),
+        makeConnection({ facilityName: 'B', x: 30, y: 40 }),
+      ],
+    });
+
+    const { container } = renderWithProviders(
+      <ProductsPanel onPropertyChange={() => {}} products={[product]} canEdit={true} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    container.querySelectorAll('tbody tr').forEach(row => fireEvent.click(row));
+
+    const removeBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Remove');
+    fireEvent.click(removeBtn!);
+    expect(useUiStore.getState().confirmPayload?.title).toBe('Disconnect 2 buyers?');
+    expect(useUiStore.getState().confirmPayload?.message).toContain('A, B');
+    confirmPendingDialog();
+
+    expect(onDisconnectConnection).toHaveBeenCalledTimes(1);
+    expect(onDisconnectConnection).toHaveBeenCalledWith(100, 200, 'fluid_chem', 'output', [
+      { x: 10, y: 20 }, { x: 30, y: 40 },
+    ]);
+  });
+
+  it('clicking a selected row deselects it', () => {
+    const onDisconnectConnection = jest.fn();
+    const callbacks = createSpiedCallbacks({ onDisconnectConnection });
+    const product = makeProduct({ metaFluid: 'fluid_chem', connections: threeConnections() });
+
+    const { container } = renderWithProviders(
+      <ProductsPanel onPropertyChange={() => {}} products={[product]} canEdit={true} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    const rows = container.querySelectorAll('tbody tr');
+    fireEvent.click(rows[0]);
+    fireEvent.click(rows[1]);
+    fireEvent.click(rows[0]);   // take the first one back out
+
+    const removeBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Remove');
+    fireEvent.click(removeBtn!);
+    confirmPendingDialog();
+
+    expect(onDisconnectConnection).toHaveBeenCalledWith(100, 200, 'fluid_chem', 'output', [{ x: 30, y: 40 }]);
   });
 
   it('renders multiple products', () => {
@@ -732,7 +828,133 @@ describe('SuppliesPanel', () => {
     expect(onDisconnectConnection).not.toHaveBeenCalled();
     confirmPendingDialog();
 
-    expect(onDisconnectConnection).toHaveBeenCalledWith(50, 60, 'fluid_steel', 'input', 100, 200);
+    expect(onDisconnectConnection).toHaveBeenCalledWith(50, 60, 'fluid_steel', 'input', [{ x: 100, y: 200 }]);
+  });
+
+  it('Delete with three rows selected sends one call carrying the three pairs', () => {
+    const onDisconnectConnection = jest.fn();
+    const callbacks = createSpiedCallbacks({ onDisconnectConnection });
+    const supply = makeSupply({ metaFluid: 'fluid_steel', connections: threeConnections() });
+
+    const { container } = renderWithProviders(
+      <SuppliesPanel supplies={[supply]} canEdit={true} buildingX={50} buildingY={60} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    container.querySelectorAll('tbody tr').forEach(row => fireEvent.click(row));
+    fireEvent.keyDown(container.querySelector('table') as HTMLTableElement, { key: 'Delete' });
+
+    expect(onDisconnectConnection).not.toHaveBeenCalled();
+    expect(useUiStore.getState().confirmPayload?.title).toBe('Disconnect 3 suppliers?');
+    confirmPendingDialog();
+
+    expect(onDisconnectConnection).toHaveBeenCalledTimes(1);
+    expect(onDisconnectConnection).toHaveBeenCalledWith(50, 60, 'fluid_steel', 'input', [
+      { x: 10, y: 20 }, { x: 30, y: 40 }, { x: 50, y: 60 },
+    ]);
+  });
+
+  it('Fire with two rows selected is one call, and the selection is cleared after', () => {
+    const onDisconnectConnection = jest.fn();
+    const callbacks = createSpiedCallbacks({ onDisconnectConnection });
+    const supply = makeSupply({ metaFluid: 'fluid_steel', connections: threeConnections() });
+
+    const { container } = renderWithProviders(
+      <SuppliesPanel supplies={[supply]} canEdit={true} buildingX={50} buildingY={60} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    const rows = container.querySelectorAll('tbody tr');
+    fireEvent.click(rows[0]);
+    fireEvent.click(rows[2]);
+
+    const fireBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Fire');
+    fireEvent.click(fireBtn!);
+    expect(useUiStore.getState().confirmPayload?.title).toBe('Disconnect 2 suppliers?');
+    // Confirming clears the selection, which is a React state update — act() so
+    // the re-render it causes has landed before the rows are read back.
+    act(confirmPendingDialog);
+
+    expect(onDisconnectConnection).toHaveBeenCalledTimes(1);
+    expect(onDisconnectConnection).toHaveBeenCalledWith(50, 60, 'fluid_steel', 'input', [
+      { x: 10, y: 20 }, { x: 50, y: 60 },
+    ]);
+    // Nothing stays selected once the selection has gone.
+    expect(container.querySelectorAll('tbody tr[class*="Selected"]')).toHaveLength(0);
+  });
+
+  it('clicking a selected row deselects it', () => {
+    const onDisconnectConnection = jest.fn();
+    const callbacks = createSpiedCallbacks({ onDisconnectConnection });
+    const supply = makeSupply({ metaFluid: 'fluid_steel', connections: threeConnections() });
+
+    const { container } = renderWithProviders(
+      <SuppliesPanel supplies={[supply]} canEdit={true} buildingX={50} buildingY={60} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    const rows = container.querySelectorAll('tbody tr');
+    fireEvent.click(rows[0]);
+    fireEvent.click(rows[1]);
+    fireEvent.click(rows[0]);   // take the first one back out
+
+    const fireBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Fire');
+    fireEvent.click(fireBtn!);
+    confirmPendingDialog();
+
+    expect(onDisconnectConnection).toHaveBeenCalledWith(50, 60, 'fluid_steel', 'input', [{ x: 30, y: 40 }]);
+  });
+
+  it('Modify needs exactly one selected row', () => {
+    const supply = makeSupply({ metaFluid: 'fluid_steel', connections: threeConnections() });
+
+    const { container } = renderWithProviders(
+      <SuppliesPanel supplies={[supply]} canEdit={true} buildingX={50} buildingY={60} />,
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    const modifyBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Modify') as HTMLButtonElement;
+    expect(modifyBtn.disabled).toBe(true);
+
+    const rows = container.querySelectorAll('tbody tr');
+    fireEvent.click(rows[0]);
+    expect(modifyBtn.disabled).toBe(false);
+
+    fireEvent.click(rows[1]);
+    expect(modifyBtn.disabled).toBe(true);
+  });
+
+  it('the overpayment popover Delete disconnects only the row it was opened on', () => {
+    const onDisconnectConnection = jest.fn();
+    const callbacks = createSpiedCallbacks({ onDisconnectConnection });
+    const supply = makeSupply({ metaFluid: 'fluid_steel', connections: threeConnections() });
+
+    const { container } = renderWithProviders(
+      <SuppliesPanel supplies={[supply]} canEdit={true} buildingX={50} buildingY={60} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    const rows = container.querySelectorAll('tbody tr');
+    fireEvent.click(rows[0]);
+    fireEvent.click(rows[2]);
+    // The popover is opened on the middle row, which is NOT in the selection.
+    fireEvent.contextMenu(rows[1]);
+
+    const deleteBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Delete');
+    fireEvent.click(deleteBtn!);
+    expect(useUiStore.getState().confirmPayload?.title).toBe('Disconnect B?');
+    confirmPendingDialog();
+
+    expect(onDisconnectConnection).toHaveBeenCalledTimes(1);
+    expect(onDisconnectConnection).toHaveBeenCalledWith(50, 60, 'fluid_steel', 'input', [{ x: 30, y: 40 }]);
   });
 
   it('opens overpayment popover on Modify click', () => {
@@ -847,7 +1069,7 @@ describe('SuppliesPanel', () => {
     expect(onDisconnectConnection).not.toHaveBeenCalled();
     confirmPendingDialog();
 
-    expect(onDisconnectConnection).toHaveBeenCalledWith(50, 60, 'fluid_steel', 'input', 100, 200);
+    expect(onDisconnectConnection).toHaveBeenCalledWith(50, 60, 'fluid_steel', 'input', [{ x: 100, y: 200 }]);
   });
 
   it('renders multiple supplies', () => {

@@ -31,6 +31,7 @@ import { createProductOwnerScenario } from './product-owner-scenario';
 import { createServiceFiguresScenario } from './service-figures-scenario';
 import { createBankTvLiveReadsScenario } from './bank-tv-live-reads-scenario';
 import { createAutoBuyScenario } from './auto-buy-scenario';
+import { createDisconnectConnectionsScenario } from './disconnect-connections-scenario';
 import { createWorkerCountsScenario } from './worker-counts-scenario';
 
 /** All recognized scenario names */
@@ -58,6 +59,7 @@ export type ScenarioName =
   | 'service-figures'
   | 'bank-tv-live-reads'
   | 'auto-buy'
+  | 'disconnect-connections'
   | 'worker-counts';
 
 /** Ordered list of all scenario names */
@@ -85,6 +87,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'service-figures',
   'bank-tv-live-reads',
   'auto-buy',
+  'disconnect-connections',
   'worker-counts',
 ];
 
@@ -123,6 +126,7 @@ const SCENARIO_FACTORIES: Record<
   'service-figures': (o) => createServiceFiguresScenario(o),
   'bank-tv-live-reads': (o) => createBankTvLiveReadsScenario(o),
   'auto-buy': (o) => createAutoBuyScenario(o),
+  'disconnect-connections': (o) => createDisconnectConnectionsScenario(o),
   'worker-counts': (o) => createWorkerCountsScenario(o),
 };
 
@@ -182,7 +186,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 24 mock server scenarios',
+    description: 'Combined: all 25 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -191,7 +195,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 24 scenarios',
+    description: 'Combined: all RDO exchanges from 25 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };
