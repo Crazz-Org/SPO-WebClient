@@ -16,6 +16,7 @@ import type {
   TownInfo, RankingCategory, RankingEntry,
 } from '@/shared/types';
 import { TycoonProfileView } from './TycoonProfileView';
+import { TycoonFullProfileView } from './TycoonFullProfileView';
 import { MediaPage } from './MediaPage';
 import { DirectoryPage, openDirectory } from './DirectoryPage';
 import styles from './SearchPanel.module.css';
@@ -311,6 +312,7 @@ const PAGE_COMPONENTS: Record<string, React.FC> = {
   towns: TownsPage,
   people: PeoplePage,
   'tycoon-profile': TycoonProfileView,
+  'tycoon-full-profile': TycoonFullProfileView,
   rankings: RankingsPage,
   banks: BanksPage,
   media: MediaPage,
@@ -321,6 +323,7 @@ const PAGE_LABELS: Record<string, string> = {
   towns: 'Towns',
   people: 'People',
   'tycoon-profile': 'Tycoon Profile',
+  'tycoon-full-profile': 'Profile',
   rankings: 'Rankings',
   'ranking-detail': 'Ranking Detail',
   banks: 'Banks',
@@ -349,7 +352,7 @@ export function SearchPanel() {
   useEffect(() => {
     // 'directory' is caller-fetched: openDirectory asks for the exact level it pushed.
     if (currentPage === 'home' || currentPage === 'ranking-detail' || currentPage === 'tycoon-profile'
-      || currentPage === 'directory') return;
+      || currentPage === 'tycoon-full-profile' || currentPage === 'directory') return;
     const fetchers: Record<string, () => void> = {
       towns: () => client.onSearchMenuTowns(),
       people: () => {

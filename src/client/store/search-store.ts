@@ -8,6 +8,7 @@ import type {
   WsRespSearchMenuTowns,
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuTycoonProfile,
+  WsRespSearchMenuTycoonFullProfile,
   WsRespSearchMenuRankings,
   WsRespSearchMenuRankingDetail,
   WsRespSearchMenuBanks,
@@ -16,7 +17,7 @@ import type {
   DirectoryPage,
 } from '@/shared/types';
 
-export type SearchPage = 'home' | 'towns' | 'people' | 'rankings' | 'ranking-detail' | 'banks' | 'tycoon-profile' | 'media' | 'directory';
+export type SearchPage = 'home' | 'towns' | 'people' | 'rankings' | 'ranking-detail' | 'banks' | 'tycoon-profile' | 'tycoon-full-profile' | 'media' | 'directory';
 
 /** One level of the directory descent. `page` is null until the gateway answers. */
 export interface DirectoryEntry {
@@ -37,6 +38,8 @@ interface SearchState {
   rankingsData: WsRespSearchMenuRankings | null;
   rankingDetailData: WsRespSearchMenuRankingDetail | null;
   tycoonProfileData: WsRespSearchMenuTycoonProfile | null;
+  /** The full curriculum page of whichever tycoon "Show Profile" was used on. */
+  tycoonFullProfileData: WsRespSearchMenuTycoonFullProfile | null;
   banksData: WsRespSearchMenuBanks | null;
   newspapersData: WsRespSearchMenuNewspapers | null;
 
@@ -57,6 +60,7 @@ interface SearchState {
   setRankingDetailData: (data: WsRespSearchMenuRankingDetail) => void;
   clearRankingDetail: () => void;
   setTycoonProfileData: (data: WsRespSearchMenuTycoonProfile) => void;
+  setTycoonFullProfileData: (data: WsRespSearchMenuTycoonFullProfile) => void;
   setBanksData: (data: WsRespSearchMenuBanks) => void;
   setNewspapersData: (data: WsRespSearchMenuNewspapers) => void;
   pushDirectory: (ref: DirectoryRef) => void;
@@ -75,6 +79,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   rankingsData: null,
   rankingDetailData: null,
   tycoonProfileData: null,
+  tycoonFullProfileData: null,
   banksData: null,
   newspapersData: null,
   directoryStack: [],
@@ -113,6 +118,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   setRankingDetailData: (data) => set({ rankingDetailData: data, isLoading: false }),
   clearRankingDetail: () => set({ rankingDetailData: null }),
   setTycoonProfileData: (data) => set({ tycoonProfileData: data, isLoading: false }),
+  setTycoonFullProfileData: (data) => set({ tycoonFullProfileData: data, isLoading: false }),
   setBanksData: (data) => set({ banksData: data, isLoading: false }),
   setNewspapersData: (data) => set({ newspapersData: data, isLoading: false }),
 
@@ -153,6 +159,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       rankingsData: null,
       rankingDetailData: null,
       tycoonProfileData: null,
+      tycoonFullProfileData: null,
       banksData: null,
       newspapersData: null,
       directoryStack: [],

@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`.
+Available scenarios: `auth`, `world-list`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`.
 
 `newspaper` is the daily paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
 renders, and one `home.asp` per kept issue. HTTP only — the paper is reachable through the
@@ -37,6 +37,16 @@ the sort the gateway derives from the folder id (`News.pas:956-961`) has somethi
 `createNewspaperScenario(vars, { issues: [] })` is the paper that has printed nothing yet.
 It also serves the directory's `New Directory/Newspapers.asp` listing (`{ papers: [] }` is
 the world with no papers).
+
+`tycoon-profile` is `NewTycoon/TycoonCurriculum.asp` served TWICE, under two different
+`Tycoon` query parameters, because that parameter is the only thing that decides whose page
+comes back. The frame carries the VIEWER's password (`Tycoon.asp:14-17`), so for a tycoon who
+is not the viewer `FullAccess` is false (`TycoonCurriculum.asp:25`) and the server withholds
+the Reset / Abandon table (`:175-211`) and the upgrade checkbox (`:250-261`); everything else
+renders for any viewer. A fixture serving one page could not catch a gateway that asked for
+the viewer's own name — two pages keyed on the parameter can. It also serves the avatar card
+`New Directory/RenderTycoon.asp` and a trailing 404, so an unserved tycoon fails loudly.
+HTTP only — the page is reachable through ASP alone.
 
 `civic-mutations` is the write half of the Politics surface — one RDO exchange per
 civic `procedure` the gateway emits (built by `rdoCall`, so it cannot drift), the two

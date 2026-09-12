@@ -1102,6 +1102,11 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
     return profileFinanceHandler.fetchCurriculumData(this);
   }
 
+  /** Another tycoon's curriculum page — what "Show Profile" opens (RenderTycoon.asp:119-124). */
+  public async fetchTycoonFullProfile(tycoonName: string): Promise<CurriculumData> {
+    return profileFinanceHandler.fetchCurriculumData(this, tycoonName);
+  }
+
   public async fetchBankAccount(): Promise<BankAccountData> {
     return profileFinanceHandler.fetchBankAccount(this);
   }

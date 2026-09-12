@@ -30,7 +30,7 @@ import { handleMailConnect, handleMailGetFolder, handleMailReadMessage, handleMa
 import { handleGetProfile, handleProfileCurriculum, handleProfileBank, handleProfileBankAction, handleProfileProfitLoss, handleProfileCompanies, handleProfileCompanyProfitLoss, handleProfileAutoConnections, handleProfileAutoConnectionAction, handleProfilePolicy, handleProfilePolicySet, handleProfileCurriculumAction } from './profile-handlers';
 
 // Search menu
-import { handleSearchMenuHome, handleSearchMenuTowns, handleSearchMenuPeopleSearch, handleSearchMenuTycoonProfile, handleSearchMenuRankings, handleSearchMenuRankingDetail, handleSearchMenuBanks, handleSearchMenuNewspapers, handleSearchMenuDirectory } from './search-handlers';
+import { handleSearchMenuHome, handleSearchMenuTowns, handleSearchMenuPeopleSearch, handleSearchMenuTycoonProfile, handleSearchMenuRankings, handleSearchMenuRankingDetail, handleSearchMenuBanks, handleSearchMenuNewspapers, handleSearchMenuDirectory, handleSearchMenuTycoonFullProfile } from './search-handlers';
 
 // Politics
 import {
@@ -125,6 +125,7 @@ export const wsHandlerRegistry: Partial<Record<WsMessageType, WsHandler>> = {
   [WsMessageType.REQ_SEARCH_MENU_BANKS]: handleSearchMenuBanks,
   [WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS]: handleSearchMenuNewspapers,
   [WsMessageType.REQ_SEARCH_MENU_DIRECTORY]: handleSearchMenuDirectory,
+  [WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE]: handleSearchMenuTycoonFullProfile,
 
   // Politics
   [WsMessageType.REQ_POLITICS_DATA]: handlePoliticsData,

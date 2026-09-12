@@ -66,3 +66,26 @@ describe('TycoonProfileView — companies (#526)', () => {
     expect(useSearchStore.getState().directoryStack).toEqual([{ ref: expected, page: null }]);
   });
 });
+
+describe('TycoonProfileView — show profile (#528)', () => {
+  beforeEach(() => {
+    resetStores();
+    useGameStore.setState({ worldName: 'Shamba' });
+    useSearchStore.setState({ tycoonProfileData: null });
+  });
+
+  it('asks for the card\'s own tycoon, not the logged-in player (RenderTycoon.asp:119-124)', () => {
+    useSearchStore.setState({ tycoonProfileData: { profile } as never });
+    const onSearchMenuTycoonFullProfile = jest.fn();
+    renderWithProviders(<TycoonProfileView />, {
+      clientCallbacks: createSpiedCallbacks({
+        onSearchMenuTycoonFullProfile: onSearchMenuTycoonFullProfile as never,
+      }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show Profile' }));
+
+    expect(onSearchMenuTycoonFullProfile).toHaveBeenCalledWith('Alice');
+    expect(useSearchStore.getState().currentPage).toBe('tycoon-full-profile');
+  });
+});

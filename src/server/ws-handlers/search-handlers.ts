@@ -4,6 +4,7 @@ import type {
   WsMessage,
   WsReqSearchMenuPeopleSearch,
   WsReqSearchMenuTycoonProfile,
+  WsReqSearchMenuTycoonFullProfile,
   WsReqSearchMenuRankingDetail,
   WsReqSearchMenuDirectory,
   WsRespSearchMenuDirectory,
@@ -11,6 +12,7 @@ import type {
   WsRespSearchMenuTowns,
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuTycoonProfile,
+  WsRespSearchMenuTycoonFullProfile,
   WsRespSearchMenuRankings,
   WsRespSearchMenuRankingDetail,
   WsRespSearchMenuBanks,
@@ -18,6 +20,7 @@ import type {
 } from '../../shared/types';
 import { WsMessageType } from '../../shared/types';
 import * as ErrorCodes from '../../shared/error-codes';
+import { toErrorMessage } from '../../shared/error-utils';
 
 export async function handleSearchMenuHome(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
   if (!ctx.searchMenuService) {
@@ -149,4 +152,33 @@ export async function handleSearchMenuDirectory(ctx: WsHandlerContext, msg: WsMe
     page,
   };
   sendResponse(ctx.ws, response);
+}
+
+/**
+ * "Show Profile" on a directory card — the full curriculum page of ANY tycoon
+ * (RenderTycoon.asp:119-124 opens `NewTycoon/Tycoon.asp?Tycoon=<other>`, whose
+ * Main frame is TycoonCurriculum.asp for that tycoon).
+ *
+ * `ctx.session` rather than `ctx.searchMenuService`: the page is an ASP fetch
+ * the session already knows how to sign, like handleSearchMenuPeopleSearch.
+ */
+export async function handleSearchMenuTycoonFullProfile(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
+  const req = msg as WsReqSearchMenuTycoonFullProfile;
+  const tycoonName = (req.tycoonName ?? '').trim();
+  if (tycoonName === '') {
+    sendError(ctx.ws, msg.wsRequestId, 'A tycoon name is required', ErrorCodes.ERROR_InvalidParameter);
+    return;
+  }
+  try {
+    const data = await ctx.session.fetchTycoonFullProfile(tycoonName);
+    const response: WsRespSearchMenuTycoonFullProfile = {
+      type: WsMessageType.RESP_SEARCH_MENU_TYCOON_FULL_PROFILE,
+      wsRequestId: msg.wsRequestId,
+      tycoonName,
+      data,
+    };
+    sendResponse(ctx.ws, response);
+  } catch (e: unknown) {
+    sendError(ctx.ws, msg.wsRequestId, toErrorMessage(e), ErrorCodes.ERROR_Unknown);
+  }
 }

@@ -3,7 +3,7 @@
  * Used inside SearchPanel when currentPage is 'tycoon-profile'.
  */
 
-import { User, DollarSign, Trophy, Star, Award, Mail, Briefcase } from 'lucide-react';
+import { User, DollarSign, Trophy, Star, Award, Mail, Briefcase, FileText } from 'lucide-react';
 import { formatMoney } from '../../format-utils';
 import { useSearchStore } from '../../store/search-store';
 import { useGameStore } from '../../store/game-store';
@@ -79,8 +79,18 @@ export function TycoonProfileView() {
           <Mail size={14} /> Write to {profile.name}
         </button>
 
-        {/* RenderTycoon.asp:139 — the profile's own link into the tycoon's companies. */}
+        {/* RenderTycoon.asp:119-139 — the card's own links: Show Profile, then Companies. */}
         <div className={styles.directoryActions}>
+          <button
+            type="button"
+            className={styles.rowAction}
+            onClick={() => {
+              useSearchStore.getState().navigateTo('tycoon-full-profile');
+              client.onSearchMenuTycoonFullProfile(profile.name);
+            }}
+          >
+            <FileText size={12} /> Show Profile
+          </button>
           <button
             type="button"
             className={styles.rowAction}

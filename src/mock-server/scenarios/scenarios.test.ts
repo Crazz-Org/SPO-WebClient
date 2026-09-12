@@ -598,8 +598,8 @@ describe('civic-mutations scenario', () => {
 });
 
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 12 entries', () => {
-    expect(SCENARIO_NAMES).toHaveLength(12);
+  it('SCENARIO_NAMES has 13 entries', () => {
+    expect(SCENARIO_NAMES).toHaveLength(13);
   });
 
   it('loadScenario returns bundle for each name', () => {

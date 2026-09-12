@@ -235,3 +235,39 @@ describe('Search Store — directory descent', () => {
     expect(useSearchStore.getState().currentPage).toBe('home');
   });
 });
+
+/**
+ * The full profile of another tycoon (#528) — its own slot, deliberately
+ * separate from `tycoonProfileData` (the directory card) and from the profile
+ * store (the logged-in player's own panel).
+ */
+describe('search store — tycoon full profile', () => {
+  beforeEach(() => {
+    useSearchStore.getState().reset();
+  });
+
+  const reply = {
+    type: 'RESP_SEARCH_MENU_TYCOON_FULL_PROFILE',
+    tycoonName: 'Rival',
+    data: { tycoonName: 'Rival', canUpgrade: false },
+  } as never;
+
+  it('stores the reply and stops the loading spinner', () => {
+    useSearchStore.getState().navigateTo('tycoon-full-profile');
+    expect(useSearchStore.getState().isLoading).toBe(true);
+
+    useSearchStore.getState().setTycoonFullProfileData(reply);
+
+    expect(useSearchStore.getState().tycoonFullProfileData).toBe(reply);
+    expect(useSearchStore.getState().isLoading).toBe(false);
+    expect(useSearchStore.getState().currentPage).toBe('tycoon-full-profile');
+  });
+
+  it('reset clears it, so the next card does not show the previous tycoon', () => {
+    useSearchStore.getState().setTycoonFullProfileData(reply);
+
+    useSearchStore.getState().reset();
+
+    expect(useSearchStore.getState().tycoonFullProfileData).toBeNull();
+  });
+});

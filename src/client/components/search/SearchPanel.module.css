@@ -252,6 +252,13 @@
   border: 1px solid var(--surface-border);
 }
 
+/* TycoonCurriculum.asp:228-236 renders the level badge at 80x80. */
+.levelBadge {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+}
+
 .profilePhotoPlaceholder {
   width: 64px;
   height: 80px;
