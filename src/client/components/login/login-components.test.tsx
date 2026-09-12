@@ -56,6 +56,12 @@ describe('ZoneStage', () => {
     renderWithProviders(<ZoneStage onSelect={() => {}} isLoading={false} />);
     expect(screen.getByText('BETA')).toBeTruthy();
   });
+
+  it('shows a deadline gauge while loading', () => {
+    const { unmount } = renderWithProviders(<ZoneStage onSelect={() => {}} isLoading />);
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+    unmount();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -130,6 +136,12 @@ describe('WorldStage', () => {
     renderWithProviders(<WorldStage worlds={[]} onSelect={() => {}} isLoading={false} />);
     expect(screen.getByText(/servers are down/i)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('shows a deadline gauge while loading', () => {
+    const { unmount } = renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} isLoading />);
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+    unmount();
   });
 });
 
@@ -276,6 +288,12 @@ describe('CompanyStage', () => {
     renderWithProviders(<CompanyStage {...defaultProps} username="minister of health" />);
     expect(screen.queryByText('Create New Company')).toBeNull();
     expect(screen.getByText('TestCo')).toBeTruthy();
+  });
+
+  it('shows a deadline gauge while loading', () => {
+    const { unmount } = renderWithProviders(<CompanyStage {...defaultProps} isLoading />);
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+    unmount();
   });
 });
 

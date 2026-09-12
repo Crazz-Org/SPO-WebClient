@@ -7,6 +7,8 @@
 
 import { GlassCard } from '../common';
 import type { WorldInfo } from '@/shared/types';
+import { TimeoutCategory } from '@/shared/timeout-categories';
+import { ConnectingGauge } from './ConnectingGauge';
 import styles from './WorldStage.module.css';
 
 interface WorldStageProps {
@@ -99,8 +101,7 @@ export function WorldStage({ worlds, onSelect, onBack, onRetry, isLoading }: Wor
       {isLoading && (
         <div className={styles.overlay}>
           <div className={styles.overlayContent}>
-            <div className={styles.spinner} />
-            <span className={styles.overlayText}>Connecting to world...</span>
+            <ConnectingGauge label="Connecting to world..." category={TimeoutCategory.NORMAL} />
           </div>
         </div>
       )}

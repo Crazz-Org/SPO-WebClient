@@ -10,6 +10,8 @@ import { GlassCard } from '../common';
 import { Plus, ArrowLeft } from 'lucide-react';
 import type { CompanyInfo, LoginPageOutcome, WorldAdmission } from '@/shared/types';
 import { isMinisterAccount } from '../../minister-account';
+import { TimeoutCategory } from '@/shared/timeout-categories';
+import { ConnectingGauge } from './ConnectingGauge';
 import styles from './CompanyStage.module.css';
 
 /** LogonNoAccess.asp:97-100 — the `01/01/2008` PA value is the sentinel for "never had access", not an expiry date. */
@@ -199,8 +201,7 @@ export function CompanyStage({
       {isLoading && (
         <div className={styles.overlay}>
           <div className={styles.overlayContent}>
-            <div className={styles.spinner} />
-            <span className={styles.overlayText}>Entering world...</span>
+            <ConnectingGauge label="Entering world..." category={TimeoutCategory.NORMAL} />
           </div>
         </div>
       )}
