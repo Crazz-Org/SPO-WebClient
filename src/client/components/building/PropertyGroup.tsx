@@ -376,6 +376,7 @@ function DefinedProperties({
       elements.push(
         <TradeConnectButtons
           key="trade-connect"
+          properties={properties}
           onAction={handleActionButton}
         />,
       );
@@ -555,6 +556,14 @@ function DefinedProperties({
           />,
         );
       }
+      continue;
+    }
+
+    // Facility kind, read by the industry sheet for the Quick Trade gate only
+    // (IndustryGeneralSheet.pas:143). Declared TEXT there; the warehouse sheet's
+    // ENUM `Role` is the trade-mode alias handled just below. Never a row.
+    if (def.rdoName === 'Role' && def.type === PropertyType.TEXT) {
+      rendered.add(def.rdoName);
       continue;
     }
 

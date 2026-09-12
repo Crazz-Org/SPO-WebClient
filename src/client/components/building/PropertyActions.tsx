@@ -3,7 +3,8 @@
  *
  * UpgradeActions: upgrade/downgrade building level controls
  * RepairControl: repair progress bar + start/stop buttons
- * TradeConnectButtons: quick trade connect/disconnect grid
+ * TradeConnectButtons: quick trade connect/disconnect grid, disables the
+ *   warehouse row when the facility's own Role is 'Warehouse'
  * ActionButton: generic action button from property definition
  * CloneSettings: clone configuration checklist + apply
  *
@@ -202,20 +203,42 @@ const TRADE_KINDS = [
   { kind: '1', label: 'Warehouses' },    // ftpWarehouses = $01
 ] as const;
 
-export function TradeConnectButtons({ onAction }: { onAction: (id: string) => void }) {
+export function TradeConnectButtons({
+  properties,
+  onAction,
+}: {
+  properties: BuildingPropertyValue[];
+  onAction: (id: string) => void;
+}) {
   const inFlightActions = useBuildingStore((s) => s.inFlightActions);
+  const vm = new Map<string, string>();
+  for (const p of properties) vm.set(p.name, p.value);
+  // Voyager's IsInd (IndustryGeneralSheet.pas:143): a warehouse is not offered
+  // warehouse-to-warehouse quick trade — unless its TradeRole is one of the
+  // non-warehouse roles rolNeutral/rolProducer/rolBuyer/rolImporter (:191-197).
+  // The buttons are disabled, not hidden (:233-234).
+  const isWarehouse = vm.get('Role') === 'Warehouse';
+  const nonWarehouseTradeRole = ['0', '1', '3', '4'].includes(vm.get('TradeRole') ?? '');
+  const warehouseTradeOffered = !isWarehouse || nonWarehouseTradeRole;
   return (
     <div className={styles.tradeConnectGrid}>
       {TRADE_KINDS.map(({ kind, label }) => {
         const connectBusy = inFlightActions.has(`tradeConnect:${kind}`);
         const disconnectBusy = inFlightActions.has(`tradeDisconnect:${kind}`);
+        const kindOffered = kind !== '1' || warehouseTradeOffered;
         return (
           <div key={kind} className={styles.tradeConnectRow}>
             <button
               className={`${styles.tradeConnectBtn} ${styles.tradeConnectBtnLink}`}
               onClick={() => onAction(`tradeConnect:${kind}`)}
-              disabled={connectBusy || disconnectBusy}
-              title={connectBusy ? 'Connecting...' : `Connect all your ${label.toLowerCase()} to this building`}
+              disabled={connectBusy || disconnectBusy || !kindOffered}
+              title={
+                !kindOffered
+                  ? 'Not offered to a warehouse'
+                  : connectBusy
+                    ? 'Connecting...'
+                    : `Connect all your ${label.toLowerCase()} to this building`
+              }
             >
               {connectBusy ? (
                 <svg className={styles.tradeConnectSpinner} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -232,8 +255,14 @@ export function TradeConnectButtons({ onAction }: { onAction: (id: string) => vo
             <button
               className={`${styles.tradeConnectBtn} ${styles.tradeConnectBtnUnlink}`}
               onClick={() => onAction(`tradeDisconnect:${kind}`)}
-              disabled={connectBusy || disconnectBusy}
-              title={disconnectBusy ? 'Disconnecting...' : `Disconnect all your ${label.toLowerCase()} from this building`}
+              disabled={connectBusy || disconnectBusy || !kindOffered}
+              title={
+                !kindOffered
+                  ? 'Not offered to a warehouse'
+                  : disconnectBusy
+                    ? 'Disconnecting...'
+                    : `Disconnect all your ${label.toLowerCase()} from this building`
+              }
             >
               {disconnectBusy ? (
                 <svg className={styles.tradeConnectSpinner} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
