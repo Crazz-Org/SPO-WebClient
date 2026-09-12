@@ -155,16 +155,16 @@ async function createInspectorForBuilding(
   try {
     await ctx.cacherSetObject(tempObjectId, x, y);
 
-    // Fetch GateMap for warehouse wares (lightweight — single property)
+    // Fetch GateMap (lightweight — single property). The building class disables
+    // gates on any facility, not just warehouses (Voyager/SupplySheetForm.pas:382,
+    // Voyager/ProdSheetForm.pas:324) — warehouse wares also key off it.
     let gateMap = '';
     const isWarehouse = template.groups.some(g => g.id === 'whGeneral');
-    if (isWarehouse) {
-      try {
-        const vals = await ctx.cacherGetPropertyList(tempObjectId, ['GateMap']);
-        gateMap = vals[0] || '';
-      } catch {
-        // Non-critical — warehouse wares will just show all disabled
-      }
+    try {
+      const vals = await ctx.cacherGetPropertyList(tempObjectId, ['GateMap']);
+      gateMap = vals[0] || '';
+    } catch {
+      // Non-critical — every gate/ware will just show as enabled
     }
 
     const inspector: ActiveInspector = {
@@ -1240,9 +1240,19 @@ async function listGates<T>(
   spec: GateSpec<T>,
 ): Promise<T[]> {
   let paths = await getGatePaths(ctx, tempObjectId, spec);
-  // Warehouses: skip disabled gates (GateMap bit = '0') — they have no gate to open
-  if (isWarehouse && gateMap) {
-    paths = paths.filter((_, i) => i < gateMap.length && gateMap[i] === '1');
+  // Warehouses: a gate needs an explicit '1' bit — a short map closes the rest
+  // (pairs with getWarehouseWareNames, which reads the same bits for the ware
+  // checklist). Every other facility follows the Voyager finger-strip rule instead:
+  // a finger is shown unless the map has an explicit '0' at that position
+  // (Voyager/SupplySheetForm.pas:382, Voyager/ProdSheetForm.pas:324) — an empty map,
+  // a map shorter than the gate index, or any character other than '0' all leave
+  // the gate listed.
+  if (isWarehouse) {
+    if (gateMap) {
+      paths = paths.filter((_, i) => i < gateMap.length && gateMap[i] === '1');
+    }
+  } else {
+    paths = paths.filter((_, i) => gateMap[i] !== '0');
   }
 
   ctx.log.debug(`[BuildingDetails] Listed ${paths.length} ${spec.tabId} gates, headers deferred`);

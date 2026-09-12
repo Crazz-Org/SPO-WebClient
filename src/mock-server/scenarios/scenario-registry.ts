@@ -25,6 +25,7 @@ import { createTycoonProfileScenario } from './tycoon-profile-scenario';
 import { createAbandonRoleScenario } from './abandon-role-scenario';
 import { createPeopleSearchScenario } from './people-search-scenario';
 import { createTradeSettingsScenario } from './trade-settings-scenario';
+import { createGateMapScenario } from './gate-map-scenario';
 
 /** All recognized scenario names */
 export type ScenarioName =
@@ -44,7 +45,8 @@ export type ScenarioName =
   | 'tycoon-profile'
   | 'abandon-role'
   | 'people-search'
-  | 'trade-settings';
+  | 'trade-settings'
+  | 'gate-map';
 
 /** Ordered list of all scenario names */
 export const SCENARIO_NAMES: ScenarioName[] = [
@@ -65,6 +67,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'abandon-role',
   'people-search',
   'trade-settings',
+  'gate-map',
 ];
 
 /** Union result from any scenario factory */
@@ -96,6 +99,7 @@ const SCENARIO_FACTORIES: Record<
   'abandon-role': (o) => createAbandonRoleScenario(o),
   'people-search': (o) => createPeopleSearchScenario(o),
   'trade-settings': (o) => createTradeSettingsScenario(o),
+  'gate-map': (o) => createGateMapScenario(o),
 };
 
 /**
@@ -154,7 +158,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 17 mock server scenarios',
+    description: 'Combined: all 18 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -163,7 +167,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 17 scenarios',
+    description: 'Combined: all RDO exchanges from 18 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };

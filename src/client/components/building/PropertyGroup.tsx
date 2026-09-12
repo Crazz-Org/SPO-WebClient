@@ -100,7 +100,7 @@ export function PropertyGroup({ properties, buildingX, buildingY }: PropertyGrou
   );
 
   // Special: supplies tab — render structured supply UI from details.supplies
-  // Warehouse filtering is done server-side (GateMap) — only enabled wares are fetched.
+  // GateMap filtering is done server-side — a gate the building class disables is never listed.
   if (activeGroup?.special === 'supplies') {
     const supplies = details?.supplies ?? [];
     return (
@@ -116,7 +116,7 @@ export function PropertyGroup({ properties, buildingX, buildingY }: PropertyGrou
   }
 
   // Special: products tab — render structured product UI from details.products
-  // Warehouse filtering is done server-side (GateMap) — only enabled wares are fetched.
+  // GateMap filtering is done server-side — a gate the building class disables is never listed.
   if (activeGroup?.special === 'products') {
     const products = details?.products ?? [];
     return (
