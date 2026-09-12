@@ -9,6 +9,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
+import type { TycoonStats } from '../../store/game-store';
 import { useClient } from '../../context';
 import { CLUSTER_DISPLAY_NAMES, INVALID_COMPANY_NAME_CHARS } from '@/shared/cluster-data';
 import type { ClusterId } from '@/shared/cluster-data';
@@ -18,6 +19,16 @@ import styles from './CompanyCreationModal.module.css';
 
 const MAX_NAME_LENGTH = 50;
 
+/** Kernel/Kernel.pas:13155 (TTycoon.GetCanBuildAdvanced), World.pas:4116 (TycoonIsNoble).
+ *  An unknown profile is locked, as entername.asp:19 defaults CanBuildAdvanced to 0. */
+export function magnaSealUnlocked(stats: Pick<TycoonStats, 'levelTier' | 'nobPoints'> | null): boolean {
+  if (!stats) return false;
+  return (stats.levelTier ?? 0) >= 4 || (stats.nobPoints ?? 0) >= 100;
+}
+
+/** NewLogon.lng:86 — strCannotBuildMagna, verbatim. */
+export const MAGNA_REFUSAL = 'Sorry, you need to achieve the level Paradigm or to have at least 100 Nobility Points to have access to the Magna Seal.';
+
 export function CompanyCreationModal() {
   const modal = useUiStore((s) => s.modal);
   const closeModal = useUiStore((s) => s.closeModal);
@@ -26,6 +37,9 @@ export function CompanyCreationModal() {
   const clusterInfoLoading = useGameStore((s) => s.clusterInfoLoading);
   const facilities = useGameStore((s) => s.clusterFacilities);
   const facilitiesLoading = useGameStore((s) => s.clusterFacilitiesLoading);
+  const tycoonStats = useGameStore((s) => s.tycoonStats);
+  const magnaLocked = !magnaSealUnlocked(tycoonStats);
+  const isGated = useCallback((id: string) => id === 'Magna' && magnaLocked, [magnaLocked]);
 
   const [selectedCluster, setSelectedCluster] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<ClusterCategory | null>(null);
@@ -64,13 +78,14 @@ export function CompanyCreationModal() {
 
   const handleClusterTabClick = useCallback((clusterId: string) => {
     if (clusterId === selectedCluster) return;
+    if (isGated(clusterId)) return;
     setSelectedCluster(clusterId);
     setSelectedCategory(null);
     useGameStore.getState().setClusterFacilities([]);
     if (client.onRequestClusterInfo) {
       client.onRequestClusterInfo(clusterId);
     }
-  }, [selectedCluster, client]);
+  }, [selectedCluster, client, isGated]);
 
   const handleCategoryClick = useCallback((category: ClusterCategory) => {
     if (category.folder === selectedCategory?.folder) return;
@@ -86,6 +101,11 @@ export function CompanyCreationModal() {
 
   const handleSubmit = useCallback(async () => {
     if (loading) return;
+
+    if (isGated(selectedCluster)) {
+      setError(MAGNA_REFUSAL);
+      return;
+    }
 
     const trimmed = name.trim();
     if (trimmed.length === 0) {
@@ -119,7 +139,7 @@ export function CompanyCreationModal() {
     } finally {
       setLoading(false);
     }
-  }, [name, selectedCluster, loading, closeModal, client]);
+  }, [name, selectedCluster, loading, closeModal, client, isGated]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -153,8 +173,11 @@ export function CompanyCreationModal() {
           {clusters.map((id) => (
             <button
               key={id}
-              className={`${styles.clusterTab} ${id === selectedCluster ? styles.clusterTabActive : ''}`}
+              className={`${styles.clusterTab} ${id === selectedCluster ? styles.clusterTabActive : ''} ${isGated(id) ? styles.clusterTabDisabled : ''}`}
               onClick={() => handleClusterTabClick(id)}
+              disabled={isGated(id)}
+              aria-disabled={isGated(id) || undefined}
+              title={isGated(id) ? MAGNA_REFUSAL : undefined}
             >
               {CLUSTER_DISPLAY_NAMES[id as ClusterId] ?? id}
             </button>
@@ -243,25 +266,29 @@ export function CompanyCreationModal() {
         {/* Bottom bar: error + name input + submit */}
         <div className={styles.bottomSection}>
           {error && <div className={styles.error} style={{ margin: '0 var(--space-5)' }}>{error}</div>}
-          <div className={styles.bottomBar}>
-            <input
-              ref={inputRef}
-              className={styles.nameInput}
-              type="text"
-              maxLength={MAX_NAME_LENGTH}
-              placeholder="Enter company name..."
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={loading}
-            />
-            <button
-              className={styles.submitBtn}
-              onClick={handleSubmit}
-              disabled={loading || !selectedCluster}
-            >
-              {loading ? 'Creating...' : 'Create Company'}
-            </button>
-          </div>
+          {selectedCluster === 'Magna' && magnaLocked ? (
+            <div className={styles.refusal} role="note">{MAGNA_REFUSAL}</div>
+          ) : (
+            <div className={styles.bottomBar}>
+              <input
+                ref={inputRef}
+                className={styles.nameInput}
+                type="text"
+                maxLength={MAX_NAME_LENGTH}
+                placeholder="Enter company name..."
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={loading}
+              />
+              <button
+                className={styles.submitBtn}
+                onClick={handleSubmit}
+                disabled={loading || !selectedCluster}
+              >
+                {loading ? 'Creating...' : 'Create Company'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </>
