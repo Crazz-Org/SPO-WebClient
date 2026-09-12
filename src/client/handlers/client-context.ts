@@ -42,6 +42,7 @@ export interface ClientHandlerContext {
   availableCompanies: CompanyInfo[];
   currentCompanyName: string;
   currentWorldName: string;
+  currentZonePath: string;
   worldXSize: number | null;
   worldYSize: number | null;
   worldSeason: number | null;

@@ -1,4 +1,4 @@
-import { buildMonotonePath, computeYTicks } from './RevenueGraph';
+import { buildMonotonePath, computeYTicks, formatThousands, xAxisYears } from './RevenueGraph';
 
 // =============================================================================
 // buildMonotonePath
@@ -159,5 +159,47 @@ describe('computeYTicks', () => {
     const ticks = computeYTicks(-0.5, 1.2, 4);
     expect(ticks[0]).toBeLessThanOrEqual(-0.5);
     expect(ticks[ticks.length - 1]).toBeGreaterThanOrEqual(1.2);
+  });
+});
+
+// =============================================================================
+// formatThousands
+// =============================================================================
+
+describe('formatThousands', () => {
+  it('formats a positive value in thousands', () => {
+    expect(formatThousands(42)).toBe('$42.00K');
+  });
+
+  it('formats a negative value in thousands', () => {
+    expect(formatThousands(-29)).toBe('-$29.00K');
+  });
+
+  it('formats zero', () => {
+    expect(formatThousands(0)).toBe('$0.00');
+  });
+
+  it('picks the million suffix once the thousands value crosses 1e6', () => {
+    expect(formatThousands(1500)).toBe('$1.50M');
+  });
+});
+
+// =============================================================================
+// xAxisYears
+// =============================================================================
+
+describe('xAxisYears', () => {
+  it('ends at endYear and counts back for each preceding point', () => {
+    expect(xAxisYears(12, 2333)).toEqual([
+      2322, 2323, 2324, 2325, 2326, 2327, 2328, 2329, 2330, 2331, 2332, 2333,
+    ]);
+  });
+
+  it('returns just endYear for a single point', () => {
+    expect(xAxisYears(1, 2333)).toEqual([2333]);
+  });
+
+  it('falls back to a 1-based index when endYear is undefined', () => {
+    expect(xAxisYears(3, undefined)).toEqual([1, 2, 3]);
   });
 });

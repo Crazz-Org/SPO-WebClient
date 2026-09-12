@@ -152,6 +152,7 @@ export const RDO_MEMBERS = {
   RDOCacncelTransc:          { kind: 'procedure', arity: 0 },                // src/server/session/building-property-handler.ts:194,223
   RDOCancelMovie:            { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
   RDOCancelResearch:         { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
+  RDOCanJoinNewWorld:        { kind: 'function',  arity: 1 },                // DServer/DirectoryServer.pas:116; src/server/session/login-handler.ts (checkWorldLimit)
   RDOCnntId:                 { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts:421
   RDOConnectInput:           { kind: 'procedure', arity: 2 },                // src/server/session/building-property-handler.ts:194,223
   RDOConnectOutput:          { kind: 'procedure', arity: 2 },                // src/server/session/building-property-handler.ts:194,223

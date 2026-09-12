@@ -52,7 +52,7 @@ export async function handleSearchMenuTowns(ctx: WsHandlerContext, msg: WsMessag
 
 export async function handleSearchMenuPeopleSearch(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
   const req = msg as WsReqSearchMenuPeopleSearch;
-  const results = await ctx.session.searchPeople(req.searchStr);
+  const results = await ctx.session.searchPeople(req.searchStr, req.mode ?? 'contains');
   const response: WsRespSearchMenuPeopleSearch = {
     type: WsMessageType.RESP_SEARCH_MENU_PEOPLE_SEARCH,
     wsRequestId: msg.wsRequestId,

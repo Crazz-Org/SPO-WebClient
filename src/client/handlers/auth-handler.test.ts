@@ -1,13 +1,26 @@
-import { login, handleCreateCompany, performAuthCheck, profileSwitchCompany, applyLocalCompanySwitch, abandonRole } from './auth-handler';
+import {
+  login,
+  handleCreateCompany,
+  performAuthCheck,
+  performDirectoryLogin,
+  visitWorld,
+  VISITOR_COMPANY_ID,
+  resumeSession,
+  profileSwitchCompany,
+  applyLocalCompanySwitch,
+  abandonRole,
+} from './auth-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { WsMessageType } from '../../shared/types';
 import type { ClientHandlerContext } from './client-context';
+import type { RememberedSession } from '../store/remembered-session';
 
 jest.mock('../bridge/client-bridge', () => ({
   ClientBridge: {
     log: jest.fn(),
     showCompanies: jest.fn(),
     showLoginPage: jest.fn(),
+    showWorlds: jest.fn(),
     showError: jest.fn(),
     showSuccess: jest.fn(),
     setLoginLoading: jest.fn(),
@@ -24,14 +37,24 @@ jest.mock('../bridge/client-bridge', () => ({
 /** The language the store holds for the current test — `login()` reads it on every send. */
 const mockStoreSettings = { languageId: '0' };
 
-/** Shared so a test can assert against the same spies `getState()` hands back every time. */
+/**
+ * Shared so a test can assert against the same spies `getState()` hands back every time.
+ * `gameStoreState` is the same object under its older name — the resume tests read it.
+ */
 const mockGameStoreMethods = {
   setLoginStage: jest.fn(),
   setSwitchingCompany: jest.fn(),
   enterServerSwitch: jest.fn(),
   setLoginCompanies: jest.fn(),
   setLoginLoading: jest.fn(),
+  rememberSession: jest.fn(),
+  forgetRememberedSession: jest.fn(),
+  setResumeTarget: jest.fn(),
+  serverSwitchMode: false,
+  completeServerSwitch: jest.fn(),
 };
+
+const gameStoreState = mockGameStoreMethods;
 
 jest.mock('../store/game-store', () => ({
   useGameStore: { getState: () => ({ ...mockGameStoreMethods, settings: mockStoreSettings }) },
@@ -59,6 +82,7 @@ function makeCtx(overrides: Partial<ClientHandlerContext> = {}): ClientHandlerCo
     storedUsername: 'testUser',
     storedPassword: 'testPass',
     currentWorldName: '',
+    currentZonePath: '',
     availableCompanies: [],
     worldXSize: null,
     worldYSize: null,
@@ -366,6 +390,216 @@ describe('auth-handler', () => {
         'Company "NewCo" created!',
         'success',
       );
+    });
+  });
+
+  describe('performDirectoryLogin() — the world limit', () => {
+    it('forwards the flag and says so in the log when the directory refused', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_CONNECT_SUCCESS,
+          worlds: [{ name: 'Shamba' }],
+          atWorldLimit: true,
+        }),
+      });
+
+      await performDirectoryLogin(ctx, 'testUser', 'testPass', 'Root/Areas/Asia/Worlds');
+
+      expect(ClientBridge.showWorlds).toHaveBeenCalledWith([{ name: 'Shamba' }], true);
+      expect(ClientBridge.log).toHaveBeenCalledWith(
+        'Directory',
+        'World limit reached — a new world can only be visited',
+      );
+    });
+
+    it('says nothing and forwards nothing when the answer carried no flag', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_CONNECT_SUCCESS,
+          worlds: [{ name: 'Shamba' }],
+        }),
+      });
+
+      await performDirectoryLogin(ctx, 'testUser', 'testPass', 'Root/Areas/Asia/Worlds');
+
+      expect(ClientBridge.showWorlds).toHaveBeenCalledWith([{ name: 'Shamba' }], undefined);
+      expect(ClientBridge.log).not.toHaveBeenCalledWith(
+        'Directory',
+        'World limit reached — a new world can only be visited',
+      );
+    });
+  });
+
+  describe('visitWorld()', () => {
+    function makeVisitorCtx(): ClientHandlerContext {
+      return makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({ type: 'RESP_SELECT_COMPANY' }),
+        switchToGameView: jest.fn().mockResolvedValue(undefined),
+        preloadFacilityDimensions: jest.fn().mockResolvedValue(undefined),
+        connectMailService: jest.fn().mockResolvedValue(undefined),
+        getProfile: jest.fn().mockResolvedValue(undefined),
+        initChatChannels: jest.fn().mockResolvedValue(undefined),
+        sendMessage: jest.fn(),
+      } as unknown as Partial<ClientHandlerContext>);
+    }
+
+    it('selects the synthetic id 0 company and enters the world', async () => {
+      const ctx = makeVisitorCtx();
+
+      await visitWorld(ctx);
+
+      expect(ctx.availableCompanies).toEqual([
+        { id: VISITOR_COMPANY_ID, name: 'Visitor', ownerRole: 'testUser' },
+      ]);
+      // Own username: the plain REQ_SELECT_COMPANY path, not a role switch.
+      expect(ctx.sendRequest).toHaveBeenCalledWith({
+        type: WsMessageType.REQ_SELECT_COMPANY,
+        companyId: VISITOR_COMPANY_ID,
+      });
+      expect(ClientBridge.log).toHaveBeenCalledWith('Company', 'Entering as a visitor');
+      expect(ClientBridge.setCompany).toHaveBeenCalledWith('Visitor', VISITOR_COMPANY_ID);
+    });
+
+    it('does not add a second visitor entry when called twice', async () => {
+      const ctx = makeVisitorCtx();
+
+      await visitWorld(ctx);
+      await visitWorld(ctx);
+
+      expect(ctx.availableCompanies).toHaveLength(1);
+    });
+  });
+
+  describe('resumeSession()', () => {
+    const RECORD: RememberedSession = {
+      username: 'testUser',
+      zonePath: '',
+      worldName: 'Shamba',
+      companyId: '1',
+      companyName: 'TestCorp',
+      ownerRole: 'testUser',
+    };
+
+    function makeResumeCtx(sendRequest: jest.Mock): ClientHandlerContext {
+      return makeCtx({
+        sendRequest,
+        switchToGameView: jest.fn().mockResolvedValue(undefined),
+        preloadFacilityDimensions: jest.fn().mockResolvedValue(undefined),
+        connectMailService: jest.fn().mockResolvedValue(undefined),
+        getProfile: jest.fn().mockResolvedValue(undefined),
+        initChatChannels: jest.fn().mockResolvedValue(undefined),
+        sendMessage: jest.fn(),
+        getMapNavigationUI: () => null,
+        getRenderer: () => null,
+      });
+    }
+
+    function typesOf(sendRequest: jest.Mock): string[] {
+      return sendRequest.mock.calls.map(([req]) => (req as { type: string }).type);
+    }
+
+    it('replays the four requests in order and records the session on a happy path', async () => {
+      const sendRequest = jest.fn()
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_AUTH_SUCCESS })
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: RECORD.worldName }] })
+        .mockResolvedValueOnce({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '1',
+          companies: [{ id: RECORD.companyId, name: RECORD.companyName, ownerRole: RECORD.ownerRole }],
+        })
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_RDO_RESULT });
+      const ctx = makeResumeCtx(sendRequest);
+
+      await resumeSession(ctx, RECORD, 'pw');
+
+      expect(typesOf(sendRequest)).toEqual([
+        WsMessageType.REQ_AUTH_CHECK,
+        WsMessageType.REQ_CONNECT_DIRECTORY,
+        WsMessageType.REQ_LOGIN_WORLD,
+        WsMessageType.REQ_SELECT_COMPANY,
+      ]);
+      expect(ctx.currentZonePath).toBe('');
+      expect(gameStoreState.rememberSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          username: RECORD.username,
+          zonePath: '',
+          worldName: RECORD.worldName,
+          companyId: RECORD.companyId,
+          companyName: RECORD.companyName,
+        }),
+      );
+      expect(gameStoreState.forgetRememberedSession).not.toHaveBeenCalled();
+      expect(gameStoreState.setResumeTarget).toHaveBeenLastCalledWith(null);
+    });
+
+    it('stops after the first request and forgets the record when the sign-in is refused', async () => {
+      const sendRequest = jest.fn().mockRejectedValueOnce(new Error('bad credentials'));
+      const ctx = makeResumeCtx(sendRequest);
+
+      await resumeSession(ctx, RECORD, 'pw');
+
+      expect(sendRequest).toHaveBeenCalledTimes(1);
+      expect(gameStoreState.forgetRememberedSession).toHaveBeenCalled();
+      expect(ClientBridge.showError).toHaveBeenCalledWith(
+        expect.stringContaining(RECORD.worldName),
+      );
+    });
+
+    it('stops after two requests when the world is no longer listed in its region', async () => {
+      const sendRequest = jest.fn()
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_AUTH_SUCCESS })
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: 'SomeOtherWorld' }] });
+      const ctx = makeResumeCtx(sendRequest);
+
+      await resumeSession(ctx, RECORD, 'pw');
+
+      expect(sendRequest).toHaveBeenCalledTimes(2);
+      expect(gameStoreState.forgetRememberedSession).toHaveBeenCalled();
+    });
+
+    it('stops after three requests when the company is no longer there', async () => {
+      const sendRequest = jest.fn()
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_AUTH_SUCCESS })
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: RECORD.worldName }] })
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '1', companies: [] });
+      const ctx = makeResumeCtx(sendRequest);
+
+      await resumeSession(ctx, RECORD, 'pw');
+
+      expect(sendRequest).toHaveBeenCalledTimes(3);
+      expect(gameStoreState.forgetRememberedSession).toHaveBeenCalled();
+      expect(ClientBridge.showError).toHaveBeenCalledWith(
+        expect.stringContaining(RECORD.companyName),
+      );
+    });
+
+    it('stops after three requests when the world login itself returns a denial page', async () => {
+      const sendRequest = jest.fn()
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_AUTH_SUCCESS })
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: RECORD.worldName }] })
+        .mockResolvedValueOnce({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '1',
+          companies: [],
+          loginPage: { kind: 'denied', expiresOn: '01/01/2020' },
+        });
+      const ctx = makeResumeCtx(sendRequest);
+
+      await resumeSession(ctx, RECORD, 'pw');
+
+      expect(sendRequest).toHaveBeenCalledTimes(3);
+      expect(gameStoreState.forgetRememberedSession).toHaveBeenCalled();
+    });
+
+    it('sets ctx.currentZonePath from performDirectoryLogin regardless of the caller', async () => {
+      const sendRequest = jest.fn().mockResolvedValue({ type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [] });
+      const ctx = makeResumeCtx(sendRequest);
+      ctx.storedUsername = 'testUser';
+      ctx.storedPassword = 'pw';
+
+      await performDirectoryLogin(ctx, 'testUser', 'pw', 'Root/Areas/Asia/Worlds');
+
+      expect(ctx.currentZonePath).toBe('Root/Areas/Asia/Worlds');
     });
   });
 

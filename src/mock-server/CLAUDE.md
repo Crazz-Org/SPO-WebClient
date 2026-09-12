@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -39,6 +39,16 @@ its user cap, a positive number for the nobility the player is short, `0` (the d
 single `%`-prefixed string, because that is the whole shape of the declaration
 (`Interface Server/InterfaceServer.pas:441`, a one-argument `function`): a second argument or a
 frame sent against the context id would answer about nobody, with no error to show for it.
+
+`world-list` is the directory query session: the world list itself, plus the world-limit
+question the reference client asked before offering a new world.
+`createWorldListScenario(vars, { canJoinNewWorld })` sets what the directory answers —
+`true` (the default) may join, `false` is an account already holding as many worlds as its
+nobility allows (`DServer/DirectoryServer.pas:116`, body `:1217-1234`;
+`logonComplete.asp:100-106`). That exchange targets the directory **session** id, not the
+`DirectoryServer` id: `RDOCanJoinNewWorld` is declared on `TDirectorySession`, the object
+`get RDOOpenSession` hands back, so a frame sent against the server id would reach a member
+that is not there.
 
 `newspaper` is the town paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
 renders, and one `home.asp` per kept issue. It also carries the **rated post**, which is two
@@ -88,6 +98,15 @@ produces no crash and no error reply — the server simply answers about facilit
 about — so the captured `#54` (`src/server/__tests__/rdo/connection-search.test.ts:9`) is the
 only thing that can catch it. Its test drives the real `searchConnections` and matches the
 emitted frame back against the exchange.
+
+`people-search` is the pair of patterns the directory's People page puts in the first argument
+of `RDOSearchKey`. The A-Z index sends the bare `*` inside one `Root/Users/<Letter>` bucket —
+what the reference client emitted for a letter (`DirectoryServer.wsc:841-847`), which the
+server turns into `Entry LIKE 'Root/Users/<Letter>/%'` (`DirectoryManager.pas:1001-1017`) — and
+a typed term sends the wrapped `*term*` across all 26 buckets. A wrong pattern draws no error,
+just other people's names, so the two frames are fixed here. Both are built by the emitter
+(`rdoCall`); only `idof` is written out, because it has no fire-and-forget form. Its test
+drives the real `searchPeople` and matches each emitted frame back against the exchange.
 
 ### Scenario Structure
 

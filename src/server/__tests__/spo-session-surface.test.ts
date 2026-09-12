@@ -128,8 +128,8 @@ const DELEGATIONS: readonly Delegation[] = [
   {
     method: 'searchPeople',
     install: () => jest.spyOn(loginHandler, 'searchPeople'),
-    call: s => s.searchPeople('mayor'),
-    forwarded: ['mayor'],
+    call: s => s.searchPeople('mayor', 'contains'),
+    forwarded: ['mayor', 'contains'],
     result: ['Mayor of Kalisz'],
   },
   {
@@ -945,6 +945,21 @@ describe('session state accessors', () => {
 
     expect(session.tycoonId).toBeNull();
     expect(session.cachedUsername).toBeNull();
+  });
+
+  it('carries the RDOCanJoinNewWorld answer, and reports it unknown until asked', () => {
+    const session = newSession();
+
+    expect(session.isAtWorldLimit()).toBeNull();
+
+    session.setAtWorldLimit(true);
+    expect(session.isAtWorldLimit()).toBe(true);
+
+    session.setAtWorldLimit(false);
+    expect(session.isAtWorldLimit()).toBe(false);
+
+    session.setAtWorldLimit(null);
+    expect(session.isAtWorldLimit()).toBeNull();
   });
 
   it('reports no DA port until the world announces one', () => {

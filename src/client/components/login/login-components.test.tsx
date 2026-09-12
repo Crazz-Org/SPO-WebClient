@@ -89,6 +89,20 @@ describe('WorldStage', () => {
     expect(screen.getByText('Offline World')).toBeTruthy();
   });
 
+  // RDOCanJoinNewWorld (DServer/DirectoryServer.pas:116) answered 0 — the player is told
+  // before picking a world, which is the whole point of asking during connectDirectory.
+  it('warns about the world limit when the directory refused another world', () => {
+    renderWithProviders(
+      <WorldStage worlds={worlds} onSelect={() => {}} isLoading={false} atWorldLimit />,
+    );
+    expect(screen.getByText(/reached the number of worlds your nobility allows/)).toBeTruthy();
+  });
+
+  it('says nothing about a limit when the directory did not refuse', () => {
+    renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} isLoading={false} />);
+    expect(screen.queryByText(/reached the number of worlds your nobility allows/)).toBeNull();
+  });
+
   // General/Date comes back from the directory as a bare year (login-handler.ts:1001).
   it('shows the in-game year on an online world that carries a date', () => {
     const dated: WorldInfo[] = [
@@ -267,6 +281,18 @@ describe('CompanyStage', () => {
     expect(screen.queryByText('Create New Company')).toBeNull();
   });
 
+  // RDOCanJoinNewWorld (DServer/DirectoryServer.pas:116) answered 0 and the player holds
+  // nothing here — chooseVisa.asp withheld the Tycoon visa but kept the Visitor one.
+  it('withholds company creation and offers the visitor entry at the world limit', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} companies={[]} atWorldLimit />);
+    expect(screen.getByText('World Limit Reached')).toBeTruthy();
+    expect(screen.getByText(/no company can be founded in Shamba/)).toBeTruthy();
+    expect(screen.getByText('Enter as a visitor')).toBeTruthy();
+    expect(screen.getByText('Choose another world')).toBeTruthy();
+    expect(screen.queryByText('Create New Company')).toBeNull();
+    expect(screen.queryByText(/Create your first company/)).toBeNull();
+  });
+
   it.each(['Mayor of Helartia', 'President of Shamba'])(
     'offers company creation to a %s',
     (username) => {
@@ -282,6 +308,54 @@ describe('CompanyStage', () => {
     );
     expect(screen.queryByText('Create New Company')).toBeNull();
     expect(screen.queryByText(/Create your first company/)).toBeNull();
+  });
+
+  it('enters as a visitor when that card is clicked', () => {
+    const onVisit = jest.fn();
+    renderWithProviders(
+      <CompanyStage {...defaultProps} companies={[]} atWorldLimit onVisit={onVisit} />,
+    );
+    fireEvent.click(screen.getByText('Enter as a visitor'));
+    expect(onVisit).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the player back to the world list from the world-limit message', () => {
+    const onBack = jest.fn();
+    renderWithProviders(
+      <CompanyStage {...defaultProps} companies={[]} atWorldLimit onBack={onBack} />,
+    );
+    fireEvent.click(screen.getByText('Choose another world'));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing when the visitor card is clicked while loading', () => {
+    const onVisit = jest.fn();
+    renderWithProviders(
+      <CompanyStage {...defaultProps} companies={[]} atWorldLimit onVisit={onVisit} isLoading />,
+    );
+    fireEvent.click(screen.getByText('Enter as a visitor'));
+    expect(onVisit).not.toHaveBeenCalled();
+  });
+
+  // logonComplete.asp:106 vs :144 — the reference client never asked CanJoinWorldEx after a
+  // false RDOCanJoinNewWorld, so the world-limit block wins and the admission one is not shown.
+  it('takes precedence over the world admission answer', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} companies={[]} atWorldLimit admission={{ kind: 'full' }} />,
+    );
+    expect(screen.getByText('World Limit Reached')).toBeTruthy();
+    expect(screen.queryByText('World Full')).toBeNull();
+    expect(screen.queryByText(/Shamba has reached its maximum number of tycoons/)).toBeNull();
+  });
+
+  // Kernel/World.pas:6028 guards the whole check on Companies.Count = 0.
+  it('changes nothing in a world where the player already owns a company', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} atWorldLimit />);
+    expect(screen.getByText('Select a Company')).toBeTruthy();
+    expect(screen.getByText('TestCo')).toBeTruthy();
+    expect(screen.getByText('Create New Company')).toBeTruthy();
+    expect(screen.queryByText('World Limit Reached')).toBeNull();
+    expect(screen.queryByText('Enter as a visitor')).toBeNull();
   });
 
   it('withholds company creation from a minister account case-insensitively', () => {

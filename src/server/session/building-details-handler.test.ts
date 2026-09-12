@@ -873,26 +873,58 @@ describe('property collection and grouping', () => {
     });
   });
 
-  it('parses MoneyGraphInfo into the revenue series, skipping the leading count', async () => {
+  it('decodes a captured MoneyGraphInfo payload into exactly count points', async () => {
     const fake = makeDetailsCtx();
     registerTabs('9010', ['Chart']);
     focusReturns(fake, '40133602');
-    cacheValues(fake, { MoneyGraphInfo: '4,1200,-350,0,987.5' });
+    cacheValues(fake, { MoneyGraphInfo: '12,-29,42,0,18,40,68,122,158,183,212,205,230,255,241,' });
 
     const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9010');
 
-    expect(details.moneyGraph).toEqual([1200, -350, 0, 987.5]);
+    const expected = [
+      -29, -23.98824, -17.86275, -10.06667, 4.96863, 14.99216,
+      21.95294, 30.02745, 28.07843, 35.03922, 42, 38.10196,
+    ];
+    expect(details.moneyGraph).toHaveLength(12);
+    expected.forEach((v, i) => {
+      expect(details.moneyGraph?.[i]).toBeCloseTo(v, 3);
+    });
+    expect(details.moneyGraph).not.toContain(12);
+    expect(details.moneyGraph?.[1]).not.toBe(-29);
+    expect(details.moneyGraph?.[2]).not.toBe(42);
   });
 
-  it('drops non-numeric samples out of the revenue series', async () => {
+  it('empties the series when a byte is non-numeric', async () => {
     const fake = makeDetailsCtx();
     registerTabs('9010', ['Chart']);
     focusReturns(fake, '40133602');
-    cacheValues(fake, { MoneyGraphInfo: '3,100,n/a,300' });
+    cacheValues(fake, { MoneyGraphInfo: '12,-29,42,0,18,x,68,122,158,183,212,205,230,255,241,' });
 
     const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9010');
 
-    expect(details.moneyGraph).toEqual([100, 300]);
+    expect(details.moneyGraph).toEqual([]);
+  });
+
+  it('empties the series when fewer bytes than count are present', async () => {
+    const fake = makeDetailsCtx();
+    registerTabs('9010', ['Chart']);
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { MoneyGraphInfo: '12,-29,42,0,18,40,' });
+
+    const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9010');
+
+    expect(details.moneyGraph).toEqual([]);
+  });
+
+  it('ignores extra trailing tokens beyond count bytes', async () => {
+    const fake = makeDetailsCtx();
+    registerTabs('9010', ['Chart']);
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { MoneyGraphInfo: '12,-29,42,0,18,40,68,122,158,183,212,205,230,255,241,,7,9' });
+
+    const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9010');
+
+    expect(details.moneyGraph).toHaveLength(12);
   });
 
   it('returns an empty series for a graph string with no samples', async () => {

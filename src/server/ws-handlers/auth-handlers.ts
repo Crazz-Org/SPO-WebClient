@@ -52,10 +52,12 @@ export const handleConnectDirectory: WsHandler = async (ctx: WsHandlerContext, m
     return;
   }
   const worlds = await ctx.session.connectDirectory(req.username, req.password, req.zonePath);
+  const atWorldLimit = ctx.session.isAtWorldLimit();
   const response: WsRespConnectSuccess = {
     type: WsMessageType.RESP_CONNECT_SUCCESS,
     wsRequestId: msg.wsRequestId,
     worlds,
+    ...(atWorldLimit ? { atWorldLimit: true } : {}),
   };
   sendResponse(ctx.ws, response);
 };

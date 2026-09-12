@@ -39,10 +39,18 @@ export function LoginScreen() {
   const authError = useGameStore((s) => s.authError);
   const loginPage = useGameStore((s) => s.loginPage);
   const admission = useGameStore((s) => s.loginAdmission);
+  const atWorldLimit = useGameStore((s) => s.loginAtWorldLimit);
+  const rememberedSession = useGameStore((s) => s.rememberedSession);
+  const resumeTarget = useGameStore((s) => s.resumeTarget);
+  const forgetRememberedSession = useGameStore((s) => s.forgetRememberedSession);
   const username = useGameStore((s) => s.username);
   const setLoginStage = useGameStore((s) => s.setLoginStage);
   const setLoginLoading = useGameStore((s) => s.setLoginLoading);
   const setAuthError = useGameStore((s) => s.setAuthError);
+
+  // The chained re-entry hides the zone/world/company stages while it runs; the store
+  // still advances loginStage underneath, so a failed step still lands on the right one.
+  const visibleStage = resumeTarget ? 'auth' : stage;
 
   const client = useClient();
   const [storedCreds, setStoredCreds] = useState<{ username: string; password: string } | null>(null);
@@ -122,6 +130,21 @@ export function LoginScreen() {
     client.onCreateCompany();
   }, [client]);
 
+  const handleVisit = useCallback(() => {
+    setLoginLoading(true);
+    client.onVisitWorld();
+  }, [client, setLoginLoading]);
+
+  const handleResume = useCallback(
+    (password: string) => {
+      if (!rememberedSession) return;
+      setStoredCreds({ username: rememberedSession.username, password });
+      setLoginLoading(true);
+      client.onResumeSession(rememberedSession, password);
+    },
+    [client, rememberedSession, setLoginLoading],
+  );
+
   const handleBackToZones = useCallback(() => {
     setLoginStage('zones');
   }, [setLoginStage]);
@@ -134,40 +157,47 @@ export function LoginScreen() {
     <div className={styles.screen}>
       <LoginBackground />
 
-      {stage === 'auth' && (
+      {visibleStage === 'auth' && (
         <AuthStage
           onConnect={handleConnect}
           isLoading={isLoading}
           status={status}
+          rememberedSession={rememberedSession}
+          resumeTarget={resumeTarget}
+          onResume={handleResume}
+          onForgetSession={forgetRememberedSession}
         />
       )}
 
-      {stage === 'zones' && (
+      {visibleStage === 'zones' && (
         <ZoneStage
           onSelect={handleZoneSelect}
           isLoading={isLoading}
         />
       )}
 
-      {stage === 'worlds' && (
+      {visibleStage === 'worlds' && (
         <WorldStage
           worlds={worlds}
           onSelect={handleWorldSelect}
           onBack={handleBackToZones}
           onRetry={handleRetryWorlds}
           isLoading={isLoading}
+          atWorldLimit={atWorldLimit}
         />
       )}
 
-      {stage === 'companies' && (
+      {visibleStage === 'companies' && (
         <CompanyStage
           companies={companies}
           worldName={selectedWorld}
           loginPage={loginPage}
           admission={admission}
+          atWorldLimit={atWorldLimit}
           username={username}
           onSelect={handleCompanySelect}
           onCreate={handleCreateCompany}
+          onVisit={handleVisit}
           onBack={handleBackToWorlds}
           isLoading={isLoading}
         />

@@ -7,11 +7,21 @@
  * actually reaches the player.
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { act, screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders, createSpiedCallbacks } from '../__tests__/setup/render-helpers';
 import { useGameStore } from '../store';
+import type { RememberedSession } from '../store';
 import { LoginScreen } from './LoginScreen';
+
+const RECORD: RememberedSession = {
+  username: 'SPO_test3',
+  zonePath: 'Root/Areas/Asia/Worlds',
+  worldName: 'Shamba',
+  companyId: '28',
+  companyName: 'Yellow Inc.',
+  ownerRole: 'SPO_test3',
+};
 
 describe('LoginScreen', () => {
   beforeEach(() => {
@@ -35,6 +45,71 @@ describe('LoginScreen', () => {
     expect(screen.getByText('World Full')).toBeTruthy();
     expect(screen.getByText('Choose another world')).toBeTruthy();
     expect(screen.queryByText('Create New Company')).toBeNull();
+  });
+
+  it('passes the world-limit answer down to the world stage', () => {
+    useGameStore.getState().setLoginWorlds(
+      [{ name: 'Shamba', url: '', ip: '127.0.0.1', port: 1234, running3: true }] as never[],
+      true,
+    );
+
+    renderWithProviders(<LoginScreen />);
+
+    expect(screen.getByText(/reached the number of worlds your nobility allows/)).toBeTruthy();
+  });
+
+  it('passes the world-limit answer down to the company stage', () => {
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba' }] as never[], true);
+    useGameStore.getState().setLoginCompanies([]);
+
+    renderWithProviders(<LoginScreen />);
+
+    expect(screen.getByText('World Limit Reached')).toBeTruthy();
+    expect(screen.getByText('Enter as a visitor')).toBeTruthy();
+    expect(screen.queryByText('Create New Company')).toBeNull();
+  });
+
+  it('asks the client to enter as a visitor, and shows the loading overlay while it runs', () => {
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba' }] as never[], true);
+    useGameStore.getState().setLoginCompanies([]);
+    const onVisitWorld = jest.fn();
+
+    renderWithProviders(<LoginScreen />, {
+      clientCallbacks: createSpiedCallbacks({ onVisitWorld }),
+    });
+    fireEvent.click(screen.getByText('Enter as a visitor'));
+
+    expect(onVisitWorld).toHaveBeenCalledTimes(1);
+    expect(useGameStore.getState().loginLoading).toBe(true);
+  });
+
+  it('hides the world stage and shows the progress line while resumeTarget is set', () => {
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba', status: 'online', players: 1 } as never]);
+    useGameStore.getState().setResumeTarget(RECORD);
+
+    renderWithProviders(<LoginScreen />);
+
+    expect(screen.queryByText('Select a World')).toBeNull();
+    expect(screen.getByText('Returning to Shamba as Yellow Inc.…')).toBeTruthy();
+  });
+
+  it('clicking the return button calls onResumeSession, and forgetting empties rememberedSession', () => {
+    useGameStore.getState().rememberSession(RECORD);
+    const resumed: unknown[] = [];
+    const callbacks = createSpiedCallbacks({
+      onResumeSession: (...args: unknown[]) => { resumed.push(args); },
+    });
+
+    renderWithProviders(<LoginScreen />, { clientCallbacks: callbacks });
+
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'test3' } });
+    fireEvent.click(screen.getByLabelText('Return to Shamba as Yellow Inc.'));
+
+    expect(resumed).toEqual([[RECORD, 'test3']]);
+
+    fireEvent.click(screen.getByLabelText('Forget remembered session'));
+
+    expect(useGameStore.getState().rememberedSession).toBeNull();
   });
 
   it('retries the same zone query after an empty world list', () => {

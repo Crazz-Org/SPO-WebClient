@@ -6,7 +6,10 @@
 import { create } from 'zustand';
 import type { CompanyInfo, WorldInfo, ClusterInfo, ClusterFacilityPreview, LoginPageOutcome, WorldAdmission } from '@/shared/types';
 import { SurfaceType } from '@/shared/types/domain-types';
+import { loadRememberedSession, saveRememberedSession, clearRememberedSession, type RememberedSession } from './remembered-session';
 import { DEFAULT_LANGUAGE_ID } from '@/shared/language';
+
+export type { RememberedSession };
 
 /* ---- Utilities ---- */
 
@@ -141,6 +144,12 @@ interface GameState {
   loginPage: LoginPageOutcome | null;
   /** Set when CanJoinWorldEx said this player may not found a company in this world. */
   loginAdmission: WorldAdmission | null;
+  /** RDOCanJoinNewWorld said this account may not join another world. */
+  loginAtWorldLimit: boolean;
+  /** The world and company entered last time, from localStorage — null on a fresh browser. */
+  rememberedSession: RememberedSession | null;
+  /** Non-null while the one-click re-entry is replaying the four stages. */
+  resumeTarget: RememberedSession | null;
 
   // Server switch overlay (browse regions/worlds while in-game)
   serverSwitchMode: boolean;
@@ -184,12 +193,15 @@ interface GameState {
   setCityZonesEnabled: (enabled: boolean) => void;
   setOverlayBeforeMode: (v: { type: 'zones' | 'overlay' | 'none'; overlay?: SurfaceType } | null) => void;
   setActiveOverlay: (overlay: SurfaceType | null) => void;
-  setLoginWorlds: (worlds: WorldInfo[]) => void;
+  setLoginWorlds: (worlds: WorldInfo[], atWorldLimit?: boolean) => void;
   setLoginCompanies: (companies: CompanyInfo[], admission?: WorldAdmission | null) => void;
   setLoginStage: (stage: 'auth' | 'zones' | 'worlds' | 'companies') => void;
   setLoginLoading: (loading: boolean) => void;
   setAuthError: (error: { code: number; message: string } | null) => void;
   setLoginPage: (page: LoginPageOutcome | null) => void;
+  rememberSession: (record: RememberedSession) => void;
+  forgetRememberedSession: () => void;
+  setResumeTarget: (target: RememberedSession | null) => void;
   setCompanyCreationClusters: (clusters: string[]) => void;
   setClusterInfo: (info: ClusterInfo | null) => void;
   setClusterInfoLoading: (loading: boolean) => void;
@@ -236,6 +248,9 @@ export const useGameStore = create<GameState>((set) => ({
   authError: null,
   loginPage: null,
   loginAdmission: null,
+  loginAtWorldLimit: false,
+  rememberedSession: loadRememberedSession(),
+  resumeTarget: null,
   serverSwitchMode: false,
   serverSwitchOriginWorld: '',
   companyCreationClusters: [],
@@ -277,12 +292,15 @@ export const useGameStore = create<GameState>((set) => ({
   setOverlayBeforeMode: (v) => set({ overlayBeforeMode: v }),
   setActiveOverlay: (overlay) => set({ activeOverlay: overlay }),
 
-  setLoginWorlds: (worlds) => set({ loginWorlds: worlds, loginStage: 'worlds', loginLoading: false }),
+  setLoginWorlds: (worlds, atWorldLimit) => set({ loginWorlds: worlds, loginStage: 'worlds', loginLoading: false, loginAtWorldLimit: atWorldLimit ?? false }),
   setLoginCompanies: (companies, admission) => set({ companies, loginStage: 'companies', loginLoading: false, loginPage: null, loginAdmission: admission ?? null }),
   setLoginStage: (stage) => set({ loginStage: stage }),
   setLoginLoading: (loading) => set({ loginLoading: loading }),
   setAuthError: (error) => set({ authError: error }),
   setLoginPage: (page) => set({ loginPage: page, companies: [], loginStage: 'companies', loginLoading: false, loginAdmission: null }),
+  rememberSession: (record) => { saveRememberedSession(record); set({ rememberedSession: record }); },
+  forgetRememberedSession: () => { clearRememberedSession(); set({ rememberedSession: null }); },
+  setResumeTarget: (target) => set({ resumeTarget: target }),
 
   setCompanyCreationClusters: (clusters) => set({ companyCreationClusters: clusters }),
   setClusterInfo: (info) => set({ clusterInfo: info, clusterInfoLoading: false }),
@@ -354,6 +372,8 @@ export const useGameStore = create<GameState>((set) => ({
       authError: null,
       loginPage: null,
       loginAdmission: null,
+      loginAtWorldLimit: false,
+      resumeTarget: null,
       serverSwitchMode: false,
       serverSwitchOriginWorld: '',
       companyCreationClusters: [],

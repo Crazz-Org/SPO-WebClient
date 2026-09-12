@@ -6,7 +6,7 @@
  *
  * Flow under test:
  *   Phase 1 (directory_auth socket): idof → OpenSession → MapSegaUser → LogonUser → EndSession
- *   Phase 2 (directory_query socket): idof → OpenSession → QueryKey → EndSession
+ *   Phase 2 (directory_query socket): idof → OpenSession → QueryKey → CanJoinNewWorld → EndSession
  */
 
 // Must mock before any imports that use them
@@ -180,11 +180,26 @@ describe('Protocol Validation: connectDirectory()', () => {
       expect(endCmd).toBeDefined();
     });
 
-    it('should send exactly 4 commands in Phase 2', async () => {
+    it('should send RDOCanJoinNewWorld once, with the username, after RDOQueryKey and before RDOEndSession', async () => {
       await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
 
       const phase2Commands = harness.getCapturedCommands(1);
-      expect(phase2Commands).toHaveLength(4);
+      const canJoinCmds = phase2Commands.filter(cmd => cmd.includes('RDOCanJoinNewWorld'));
+      expect(canJoinCmds).toHaveLength(1);
+      expect(canJoinCmds[0]).toMatch(/call RDOCanJoinNewWorld "\^" "%SPO_test3"$/);
+
+      const canJoinIdx = phase2Commands.findIndex(cmd => cmd.includes('RDOCanJoinNewWorld'));
+      const queryIdx = phase2Commands.findIndex(cmd => cmd.includes('RDOQueryKey'));
+      const endIdx = phase2Commands.findIndex(cmd => cmd.includes('RDOEndSession'));
+      expect(queryIdx).toBeLessThan(canJoinIdx);
+      expect(canJoinIdx).toBeLessThan(endIdx);
+    });
+
+    it('should send exactly 5 commands in Phase 2', async () => {
+      await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
+
+      const phase2Commands = harness.getCapturedCommands(1);
+      expect(phase2Commands).toHaveLength(5);
     });
   });
 
@@ -233,11 +248,11 @@ describe('Protocol Validation: connectDirectory()', () => {
   });
 
   describe('Full flow compliance', () => {
-    it('should send exactly 9 commands total (5 auth + 4 query)', async () => {
+    it('should send exactly 10 commands total (5 auth + 5 query)', async () => {
       await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
 
       const allCommands = harness.getAllCapturedCommands();
-      expect(allCommands).toHaveLength(9);
+      expect(allCommands).toHaveLength(10);
     });
 
     it('should use RDO call format for method invocations', async () => {

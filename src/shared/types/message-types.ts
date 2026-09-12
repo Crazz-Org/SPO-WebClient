@@ -23,6 +23,7 @@ import type {
   SearchMenuCategory,
   TownInfo,
   NewspaperListing,
+  BankInfo,
   TycoonProfile,
   TycoonProfileFull,
   RankingCategory,
@@ -398,6 +399,11 @@ export interface WsRespAuthSuccess extends WsMessage {
 export interface WsRespConnectSuccess extends WsMessage {
   type: WsMessageType.RESP_CONNECT_SUCCESS;
   worlds: WorldInfo[];
+  /**
+   * RDOCanJoinNewWorld (DServer/DirectoryServer.pas:116) answered 0: this account already
+   * holds as many worlds as its nobility allows. Absent otherwise.
+   */
+  atWorldLimit?: boolean;
 }
 
 /** Where logonComplete.asp sent the login when it was not the company list (logonComplete.asp:182-186). */
@@ -988,9 +994,21 @@ export interface WsRespSearchMenuTycoonFullProfile extends WsMessage {
   data: CurriculumData;
 }
 
+/**
+ * Which of the two people-search paths a request asks for.
+ *
+ * `contains` is the typed path — the pattern is wrapped (`*term*`) and swept
+ * across the 26 `Root/Users` buckets. `prefix` is the A-Z index path — one
+ * bucket, the bare `*` pattern the reference client emitted for a letter
+ * (`DirectoryServer.wsc:841-847`).
+ */
+export type PeopleSearchMode = 'contains' | 'prefix';
+
 export interface WsReqSearchMenuPeopleSearch extends WsMessage {
   type: WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH;
   searchStr: string;
+  /** Absent means `'contains'`, the behaviour every sender had before the index. */
+  mode?: PeopleSearchMode;
 }
 
 export interface WsRespSearchMenuPeopleSearch extends WsMessage {
@@ -1024,7 +1042,7 @@ export interface WsReqSearchMenuBanks extends WsMessage {
 
 export interface WsRespSearchMenuBanks extends WsMessage {
   type: WsMessageType.RESP_SEARCH_MENU_BANKS;
-  banks: unknown[];
+  banks: BankInfo[];
 }
 
 export interface WsReqSearchMenuNewspapers extends WsMessage {

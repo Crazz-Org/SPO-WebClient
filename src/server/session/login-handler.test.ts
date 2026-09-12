@@ -170,6 +170,8 @@ describe('checkAuth — the ephemeral directory session', () => {
     expect(fake.sent.slice(1).map(s => s.packet.member)).toEqual([
       'RDOOpenSession', 'RDOMapSegaUser', 'RDOLogonUser',
     ]);
+    // The world-limit question belongs to the world-list phase, not to the credentials probe.
+    expect(fake.sent.map(s => s.packet.member)).not.toContain('RDOCanJoinNewWorld');
     // Every directory frame carries the legacy 20 s deadline (DSProxy.TimeOut,
     // LogonHandlerViewer.pas:341) — not the 60 s default.
     expect(fake.sent.every(s => s.category === TimeoutCategory.DIRECTORY)).toBe(true);
@@ -372,6 +374,135 @@ describe('connectDirectory — world list parsing', () => {
   });
 });
 
+describe('connectDirectory — the world limit', () => {
+  /**
+   * The query phase with a chosen answer for `RDOCanJoinNewWorld`
+   * (DServer/DirectoryServer.pas:116).
+   */
+  function limitResponder(answer: string | RdoPacket | Error): Responder {
+    return (packet) => {
+      if (packet.verb === RdoVerb.IDOF) return `objid="${DIRECTORY_SERVER_ID}"`;
+      if (packet.member === 'RDOOpenSession') return `RDOOpenSession="#${DIRECTORY_SESSION_ID}"`;
+      if (packet.member === 'RDOQueryKey') {
+        return `res="%${['Count=1', 'Key0=planitia', 'Interface/IP0=1.2.3.4', 'Interface/Port0=8000'].join('\n')}"`;
+      }
+      if (packet.member === 'RDOCanJoinNewWorld') return answer;
+      if (packet.member === 'RDOLogonUser') return 'res="#0"';
+      return 'res="%"';
+    };
+  }
+
+  it('asks inside the query session, against the session id, with one OLEString argument', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(limitResponder('res="#-1"'));
+
+    await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    const ask = fake.sent.find(s => s.packet.member === 'RDOCanJoinNewWorld');
+    expect(ask).toBeDefined();
+    expect(ask!.socketName).toBe('directory_query');
+    expect(ask!.packet.targetId).toBe(DIRECTORY_SESSION_ID);
+    expect(ask!.packet.args).toEqual(['"%SPO_test3"']);
+    expect(ask!.category).toBe(TimeoutCategory.DIRECTORY);
+  });
+
+  it('asks after RDOQueryKey and still ends the session afterwards', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(limitResponder('res="#0"'));
+
+    await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    const members = fake.sent.filter(s => s.socketName === 'directory_query').map(s => s.packet.member);
+    expect(members.indexOf('RDOCanJoinNewWorld')).toBeGreaterThan(members.indexOf('RDOQueryKey'));
+    expect(fake.frames.directory_query).toEqual([
+      RdoCommand.sel(DIRECTORY_SESSION_ID).call('RDOEndSession').push().build(),
+    ]);
+  });
+
+  it('reads a literal 0 as "at the limit"', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(limitResponder('res="#0"'));
+
+    await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    expect(fake.state.atWorldLimit).toBe(true);
+  });
+
+  it('reads -1 as "may still join"', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(limitResponder('res="#-1"'));
+
+    await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    expect(fake.state.atWorldLimit).toBe(false);
+  });
+
+  it('reads DIR_ERROR_Unknown (1) as "may still join" — the Delphi caller does too', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(limitResponder('res="#1"'));
+
+    await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    expect(fake.state.atWorldLimit).toBe(false);
+  });
+
+  it.each([['res="%"'], ['']])('leaves the answer unknown when it does not parse (%s)', async (answer) => {
+    const fake = makeLoginCtx();
+    fake.respond(limitResponder(answer));
+
+    const worlds = await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    expect(fake.state.atWorldLimit).toBeNull();
+    expect(worlds).toHaveLength(1);
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('RDOCanJoinNewWorld answered'));
+  });
+
+  it('leaves the answer unknown on a bodiless ack', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(limitResponder(EMPTY_ANSWER));
+
+    await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    expect(fake.state.atWorldLimit).toBeNull();
+  });
+
+  it('leaves the answer unknown on an error reply, without failing the login', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(limitResponder({ raw: '', type: 'RESPONSE', rid: 1, errorCode: 2, errorName: 'errUnexistentMethod' }));
+
+    const worlds = await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    expect(fake.state.atWorldLimit).toBeNull();
+    expect(worlds).toHaveLength(1);
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('errUnexistentMethod'));
+  });
+
+  it('leaves the answer unknown on a timeout, still returns the worlds and ends the session', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(limitResponder(new Error('Request timeout: RDOCanJoinNewWorld')));
+
+    const worlds = await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    expect(fake.state.atWorldLimit).toBeNull();
+    expect(worlds).toHaveLength(1);
+    expect(fake.frames.directory_query).toEqual([
+      RdoCommand.sel(DIRECTORY_SESSION_ID).call('RDOEndSession').push().build(),
+    ]);
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('RDOCanJoinNewWorld failed'));
+  });
+
+  it('clears a previous answer before asking again', async () => {
+    const fake = makeLoginCtx();
+    fake.state.atWorldLimit = true;
+    fake.respond(limitResponder(new Error('Request timeout: RDOCanJoinNewWorld')));
+
+    await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    // Reset to null up front, and the unreadable answer did not restore the stale `true`.
+    expect(fake.state.atWorldLimit).toBeNull();
+  });
+});
+
 // ── People search ───────────────────────────────────────────────────────────
 
 describe('searchPeople', () => {
@@ -443,6 +574,39 @@ describe('searchPeople', () => {
     expect(searches[0].packet.args).toEqual(['"%*"', '"%Alias\r\n"']);
 
     expect(names).toEqual(['Crazz']);
+  });
+
+  it('a prefix request lands on one bucket with the bare "*" pattern (DirectoryServer.wsc:841-847)', async () => {
+    const fake = makeLoginCtx();
+    fake.respond((packet) => {
+      const plumbing = directoryPlumbing(packet);
+      if (plumbing) return plumbing;
+      if (packet.member === 'RDOSetCurrentKey') return 'res="#-1"';
+      if (packet.member === 'RDOSearchKey') return 'res="%Count=1\r\nKey0=crazz\r\nAlias0=Crazz"';
+      return 'res="%"';
+    });
+
+    const names = await searchPeople(fake.ctx, 'c', 'prefix');
+
+    const setKeys = fake.sent.filter(s => s.packet.member === 'RDOSetCurrentKey');
+    expect(setKeys).toHaveLength(1);
+    expect(setKeys[0].packet.args).toEqual(['"%Root/Users/C"']);
+
+    const searches = fake.sent.filter(s => s.packet.member === 'RDOSearchKey');
+    expect(searches).toHaveLength(1);
+    expect(searches[0].packet.args).toEqual(['"%*"', '"%Alias\r\n"']);
+
+    expect(names).toEqual(['Crazz']);
+  });
+
+  it('a prefix request that is not one letter answers [] without opening a socket', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(() => 'res="%"');
+
+    await expect(searchPeople(fake.ctx, 'Cr', 'prefix')).resolves.toEqual([]);
+    await expect(searchPeople(fake.ctx, '1', 'prefix')).resolves.toEqual([]);
+
+    expect(fake.sent).toHaveLength(0);
   });
 
   it('skips a bucket whose RDOSetCurrentKey answers false — no RDOSearchKey follows it', async () => {
