@@ -71,6 +71,9 @@ export const IND_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
+    // Read for the Quick Trade gate only — Voyager compares it with 'Warehouse'
+    // (IndustryGeneralSheet.pas:143) and never shows it. PropertyGroup skips the row.
+    { rdoName: 'Role', displayName: 'Role', type: PropertyType.TEXT },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
     { rdoName: 'TradeRole', displayName: 'Trade Role', type: PropertyType.ENUM, editable: true, enumLabels: { '0': 'Neutral', '1': 'Producer', '2': 'Distributor', '3': 'Buyer', '4': 'Importer', '5': 'Export', '6': 'Import' } },
     { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true, enumLabels: { '0': 'Same Owner', '1': 'Subsidiaries', '2': 'Allies', '3': 'Anyone' } },
