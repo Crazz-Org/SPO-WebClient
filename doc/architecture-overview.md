@@ -24,7 +24,6 @@ src/
 │   │   ├── chat/              # ChatStrip
 │   │   ├── search/            # SearchPanel
 │   │   ├── politics/          # Capitol tabs (Towns, Ministries, Jobs, Votes)
-│   │   ├── transport/         # TransportPanel
 │   │   ├── modals/            # BuildMenu, Settings, CompanyCreation
 │   │   ├── mobile/            # MobileShell, BottomNav, BottomSheet
 │   │   └── command-palette/   # CommandPalette (Cmd+K)
@@ -41,6 +40,11 @@ src/
     ├── types/                 # Type definitions
     └── building-details/      # Property templates
 ```
+
+**No Transport panel.** The legacy transport handler was non-visual
+(`Voyager/URLHandlers/TransportHandler.pas:139`, `:180-183` — `hopNonVisual`, `getControl`
+returns `nil`), so there was never a route-management screen to port; the panel, its
+`transport-store.ts` and the `ui-store` entry were removed in PR #270.
 
 ## API Endpoints
 

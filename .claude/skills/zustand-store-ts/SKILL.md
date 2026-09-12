@@ -9,7 +9,7 @@ disable-model-invocation: false
 
 Stores live in `src/client/store/` — one file per domain:
 `building`, `chat`, `empire`, `game`, `log`, `mail`, `politics`, `profile`, `search`,
-`transport`, `ui`. Tests sit beside them as `<name>-store.test.ts`.
+`ui`. Tests sit beside them as `<name>-store.test.ts`.
 
 ## Selector stability comes first
 
