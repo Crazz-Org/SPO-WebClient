@@ -1219,7 +1219,7 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
     return politicsHandler.politicsCancelCampaign(this, buildingX, buildingY, townName);
   }
 
-  public async searchConnections(buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters?: { company?: string; town?: string; maxResults?: number; roles?: number }): Promise<ConnectionSearchResult[]> {
+  public async searchConnections(buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters?: { company?: string; town?: string; maxResults?: number; roles?: number; sortMode?: number }): Promise<ConnectionSearchResult[]> {
     return politicsHandler.searchConnections(this, buildingX, buildingY, fluidId, direction, filters);
   }
 

@@ -205,7 +205,7 @@ export interface ClientCallbacks {
   onBuildingAction: (actionId: string, rowData?: Record<string, string>) => void;
   onCloneFacility: (x: number, y: number, options: number) => void;
   onSearchConnections: (x: number, y: number, fluidId: string, fluidName: string, direction: 'input' | 'output') => void;
-  onConnectionSearch: (buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters: { company?: string; town?: string; maxResults?: number; roles?: number }) => void;
+  onConnectionSearch: (buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters: { company?: string; town?: string; maxResults?: number; roles?: number; sortMode?: number }) => void;
 
   // Research / Inventions
   onResearchLoadInventory: (buildingX: number, buildingY: number, categoryIndex: number) => void;

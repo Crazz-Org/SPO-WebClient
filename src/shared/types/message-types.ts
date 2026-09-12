@@ -1603,6 +1603,8 @@ export interface WsReqSearchConnections extends WsMessage {
     town?: string;
     maxResults?: number;
     roles?: number;
+    /** 1 = smPrice (delivered cost), 2 = smQuality — Cache/FluidLinks.pas:9-11. Ignored by FindClients (Cache/InputSearch.pas:90-96). */
+    sortMode?: number;
   };
 }
 

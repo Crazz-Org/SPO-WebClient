@@ -24,7 +24,7 @@ FindSuppliers(Output, World, Town, Name, Count, XPos, YPos, SortMode, Roles)
 | Name | widestring | Fluid name to search |
 | Count | integer | Max results |
 | XPos, YPos | integer | Building coordinates (for distance sort) |
-| SortMode | integer | 0=cost, 1=quality |
+| SortMode | integer | 0 = smDist, 1 = smPrice (delivered cost: price + transport × distance), 2 = smQuality — `Cache/FluidLinks.pas:9-11`, `Cache/OutputSearch.pas:90-93,112-155`. `FindClients` ignores it and always answers nearest first (`Cache/InputSearch.pas:90-96`) |
 | Roles | integer | Role bitmask filter |
 
 **Role bitmask.** A Delphi set cast to a byte — `byte(rl)` where `rl : TFacilityRoleSet`

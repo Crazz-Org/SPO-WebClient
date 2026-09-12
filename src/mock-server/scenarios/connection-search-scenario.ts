@@ -9,7 +9,7 @@
  * player did not ask for — so the only place it can be caught is here, against
  * the captured frame.
  *
- * The two exchanges reproduce that frame:
+ * The three exchanges reproduce that frame:
  *
  *  - `cs-rdo-001` — the captured FindSuppliers trace of
  *    `src/server/__tests__/rdo/connection-search.test.ts:9-10`, `"#54"` ninth
@@ -18,6 +18,11 @@
  *  - `cs-rdo-002` — the same shape for FindClients, `"#78"` ninth
  *    (`rolProducer|rolDistributer|rolBuyer|rolCompInport`,
  *    `InputSearchHandlerViewer.pas:313-327`), answered with a five-field row.
+ *  - `cs-rdo-003` — the same supplier search asked in quality order, `"#2"` EIGHTH
+ *    (`smQuality`, `Cache/FluidLinks.pas:9-11`). It exists because the eighth argument
+ *    is the only thing that distinguishes it from `cs-rdo-001`: matching is
+ *    argument-by-argument (`rdo-mock.ts:190-194`), so a gateway that ignored the
+ *    player's choice of order would land on the wrong exchange.
  *
  * Both requests are built by the real emitter (`rdoCall`), so the fixture cannot
  * drift from what ships, and the separator and arity come from the catalogue
@@ -53,7 +58,7 @@ export const CONNECTION_SEARCH_QUERY = {
   maxResults: 20,
   x: 459,
   y: 389,
-  /** 1 = quality. */
+  /** 1 = smPrice, the delivered-cost order (Cache/FluidLinks.pas:9-11). */
   sortMode: 1,
 } as const;
 
@@ -61,7 +66,7 @@ export const CONNECTION_SEARCH_QUERY = {
  * The nine arguments of one search, in emitter order
  * (`Cache Server/CacheServerReportForm.pas:108-109`).
  */
-function searchArgs(worldName: string, role: number): RdoValue[] {
+function searchArgs(worldName: string, role: number, sortMode: number = CONNECTION_SEARCH_QUERY.sortMode): RdoValue[] {
   const q = CONNECTION_SEARCH_QUERY;
   return [
     RdoValue.string(q.fluidId),   // Output
@@ -71,13 +76,19 @@ function searchArgs(worldName: string, role: number): RdoValue[] {
     RdoValue.int(q.maxResults),   // Count
     RdoValue.int(q.x),            // X
     RdoValue.int(q.y),            // Y
-    RdoValue.int(q.sortMode),     // SortMode
+    RdoValue.int(sortMode),       // SortMode
     RdoValue.int(role),           // Role
   ];
 }
 
 /** Index of the `Role` argument in the nine — what this scenario is about. */
 export const ROLE_ARG_INDEX = 8;
+
+/** Index of the `SortMode` argument, directly before `Role`. */
+export const SORT_MODE_ARG_INDEX = 7;
+
+/** `smQuality` — the order a player asks for explicitly (Cache/FluidLinks.pas:9-11). */
+export const QUALITY_SORT_MODE = 2;
 
 /** Every box of the supplier form ticked: 54. */
 export const SUPPLIER_SEARCH_ROLE = rolesToMask('input', ALL_CONNECTION_ROLES);
@@ -88,15 +99,17 @@ export const CLIENT_SEARCH_ROLE = rolesToMask('output', ALL_CONNECTION_ROLES);
 export function connectionSearchArgs(
   direction: 'input' | 'output',
   worldName: string,
+  sortMode?: number,
 ): RdoValue[] {
   return direction === 'input'
-    ? searchArgs(worldName, SUPPLIER_SEARCH_ROLE)
-    : searchArgs(worldName, CLIENT_SEARCH_ROLE);
+    ? searchArgs(worldName, SUPPLIER_SEARCH_ROLE, sortMode)
+    : searchArgs(worldName, CLIENT_SEARCH_ROLE, sortMode);
 }
 
 function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
   const supplierArgs = connectionSearchArgs('input', vars.worldName);
   const clientArgs = connectionSearchArgs('output', vars.worldName);
+  const qualityArgs = connectionSearchArgs('input', vars.worldName, QUALITY_SORT_MODE);
 
   return [
     {
@@ -119,6 +132,16 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
         argsPattern: clientArgs.map(a => a.format()),
       },
     },
+    {
+      id: 'cs-rdo-003',
+      request: rdoCall('FindSuppliers', CONNECTION_SEARCH_CACHER_ID, ...qualityArgs).toFrame(),
+      // Same seven-field supplier row — only the order the server chose differs.
+      response: 'A94 res="%463}389}Trade Center}PGI}Olympus}$80}40"',
+      matchKeys: {
+        verb: 'sel', action: 'call', member: 'FindSuppliers',
+        argsPattern: qualityArgs.map(a => a.format()),
+      },
+    },
   ];
 }
 
@@ -129,7 +152,7 @@ export function createConnectionSearchScenario(
 
   const rdo: RdoScenario = {
     name: 'connection-search',
-    description: 'FindSuppliers / FindClients, and the TFacilityRole mask their ninth argument carries',
+    description: 'FindSuppliers / FindClients, the TFacilityRole mask their ninth argument carries, and the SortMode of the eighth',
     exchanges: buildRdoExchanges(vars),
     variables: vars as unknown as Record<string, string>,
   };
