@@ -702,7 +702,7 @@ describe('world-login scenario', () => {
 });
 
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 22 entries', () => {
+  it('SCENARIO_NAMES has 23 entries', () => {
     // 14, not 13: the `world-login` scenario was added with the CanJoinWorldEx
     // admission check (Interface Server/InterfaceServer.pas:441).
     // 15: `abandon-role`, issue 547.
@@ -712,8 +712,9 @@ describe('scenario registry', () => {
     // 19: `service-figures`, issue 574.
     // 20: `bank-tv-live-reads`, issue 570.
     // 21: `product-owner`, issue 581.
-    // 22: `disconnect-connections`, issue 563.
-    expect(SCENARIO_NAMES).toHaveLength(22);
+    // 22: `connection-reachability`, issue 584.
+    // 23: `disconnect-connections`, issue 563.
+    expect(SCENARIO_NAMES).toHaveLength(23);
   });
 
   it('loadScenario returns bundle for each name', () => {

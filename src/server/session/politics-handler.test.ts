@@ -40,6 +40,8 @@ import {
   politicsSetPublicity,
   politicsSetProjectData,
   searchConnections,
+  resolveConnectionReachability,
+  REACHABILITY_BATCH_SIZE,
   holdsOffice,
 } from './politics-handler';
 import { makeSessionCtx, FAKE_CONTEXT_IDS } from '../__tests__/session/fake-session-context';
@@ -1931,6 +1933,193 @@ describe('searchConnections', () => {
     fake.respond(() => new Error('Request timeout: FindSuppliers'));
     expect(await searchConnections(fake.ctx, 1, 2, 'F', 'input')).toEqual([]);
     expect(fake.log.warn).toHaveBeenCalledWith('[Connections] input search failed: Request timeout: FindSuppliers');
+  });
+});
+
+// =============================================================================
+// resolveConnectionReachability — Connected(i) from FiveSearchSite.inc:27,43:
+// the building's NearCircuits (Kernel/KernelCache.pas:440) against each
+// candidate's, compared as TFluidLink.Intercept (Cache/FluidLinks.pas:116-134).
+//
+// `ctx.cacherSetObject` discards SetObject's reply, so this module issues its
+// own SetObject frame and reads the WordBool answer
+// (Cache Server/CachedObjectAuto.pas:15) to tell "nothing loaded here" from
+// "loaded, with an empty circuit string" — the two both read back '' from
+// GetPropertyList (Cache Server/CachedObjectWrap.pas:209-235).
+// =============================================================================
+describe('resolveConnectionReachability', () => {
+  const TEMP_ID = '900584';
+  const BUILDING = { x: 706, y: 436 };
+  const CONNECTED_POS = { x: 480, y: 392 };
+  const ISOLATED_POS = { x: 600, y: 700 };
+  const ISOLATED_EMPTY_POS = { x: 300, y: 300 }; // FluidLinks.pas:121 — empty side is false
+  const UNKNOWN_POS = { x: 11, y: 11 };
+
+  const CIRCUITS: Record<string, string> = {
+    [key(BUILDING)]: '17,42,',
+    [key(CONNECTED_POS)]: '17,',
+    [key(ISOLATED_POS)]: '99,',
+    [key(ISOLATED_EMPTY_POS)]: '',
+  };
+
+  function key(p: { x: number; y: number }): string {
+    return `${p.x},${p.y}`;
+  }
+
+  function setObjectArgs(p: { x: number; y: number }): string[] {
+    return [RdoValue.int(p.x).format(), RdoValue.int(p.y).format()];
+  }
+
+  function positionOf(args: string[] | undefined): { x: number; y: number } | undefined {
+    const all = [BUILDING, CONNECTED_POS, ISOLATED_POS, ISOLATED_EMPTY_POS, UNKNOWN_POS];
+    return all.find(p => JSON.stringify(setObjectArgs(p)) === JSON.stringify(args));
+  }
+
+  /** A fake whose SetObject answers `#-1` everywhere except `unloadable`. */
+  function makeReachCtx(unloadable: Array<{ x: number; y: number }> = []): FakeSessionCtx {
+    const fake = makeSessionCtx({ currentWorldInfo: WORLD });
+    fake.cacher.createObject.mockResolvedValue(TEMP_ID);
+    fake.respond((packet) => {
+      const pos = positionOf(packet.args);
+      const loads = !pos || !unloadable.some(p => p.x === pos.x && p.y === pos.y);
+      return loads ? 'res="#-1"' : 'res="#0"';
+    });
+    fake.cacher.getPropertyList.mockImplementation(async (id: string, props: string[]) => {
+      expect(id).toBe(TEMP_ID);
+      expect(props).toEqual(['NearCircuits']);
+      const lastSet = fake.sent[fake.sent.length - 1];
+      const pos = positionOf(lastSet.packet.args);
+      const k = pos ? key(pos) : '';
+      if (!(k in CIRCUITS)) throw new Error(`no NearCircuits fixture for ${k}`);
+      return [CIRCUITS[k]];
+    });
+    return fake;
+  }
+
+  it('resolves connected / isolated / isolated(empty) / unknown, closing the temp object once', async () => {
+    const fake = makeReachCtx([UNKNOWN_POS]);
+
+    const entries = await resolveConnectionReachability(
+      fake.ctx, BUILDING.x, BUILDING.y,
+      [CONNECTED_POS, ISOLATED_POS, ISOLATED_EMPTY_POS, UNKNOWN_POS],
+    );
+
+    expect(entries).toEqual([
+      { x: CONNECTED_POS.x, y: CONNECTED_POS.y, reachability: 'connected' },
+      { x: ISOLATED_POS.x, y: ISOLATED_POS.y, reachability: 'isolated' },
+      { x: ISOLATED_EMPTY_POS.x, y: ISOLATED_EMPTY_POS.y, reachability: 'isolated' },
+      { x: UNKNOWN_POS.x, y: UNKNOWN_POS.y, reachability: 'unknown' },
+    ]);
+    expect(fake.cacher.closeObject).toHaveBeenCalledTimes(1);
+    expect(fake.cacher.closeObject).toHaveBeenCalledWith(TEMP_ID);
+    expect(fake.sent.map(s => s.packet.member)).toEqual(['SetObject', 'SetObject', 'SetObject', 'SetObject', 'SetObject']);
+    expect(fake.sent.map(s => positionOf(s.packet.args))).toEqual([
+      BUILDING, CONNECTED_POS, ISOLATED_POS, ISOLATED_EMPTY_POS, UNKNOWN_POS,
+    ]);
+    // The unloadable position's SetObject answers false: NearCircuits is never read there.
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledTimes(4);
+  });
+
+  it('returns [] and sends nothing for an empty candidate list', async () => {
+    const fake = makeReachCtx();
+    const entries = await resolveConnectionReachability(fake.ctx, BUILDING.x, BUILDING.y, []);
+    expect(entries).toEqual([]);
+    expect(fake.sent).toHaveLength(0);
+    expect(fake.cacher.createObject).not.toHaveBeenCalled();
+  });
+
+  it('gives every candidate unknown, in one batch, when there is no cacherId', async () => {
+    const fake = makeSessionCtx({ currentWorldInfo: WORLD, cacherId: null });
+    const onBatch = jest.fn();
+
+    const entries = await resolveConnectionReachability(fake.ctx, BUILDING.x, BUILDING.y, [CONNECTED_POS, ISOLATED_POS], onBatch);
+
+    expect(entries).toEqual([
+      { x: CONNECTED_POS.x, y: CONNECTED_POS.y, reachability: 'unknown' },
+      { x: ISOLATED_POS.x, y: ISOLATED_POS.y, reachability: 'unknown' },
+    ]);
+    expect(onBatch).toHaveBeenCalledTimes(1);
+    expect(onBatch).toHaveBeenCalledWith(entries);
+    expect(fake.log.warn).toHaveBeenCalled();
+  });
+
+  it('gives every candidate unknown and never closes when CreateObject rejects', async () => {
+    const fake = makeSessionCtx({ currentWorldInfo: WORLD });
+    fake.cacher.createObject.mockRejectedValue(new Error('create failed'));
+
+    const entries = await resolveConnectionReachability(fake.ctx, BUILDING.x, BUILDING.y, [CONNECTED_POS]);
+
+    expect(entries).toEqual([{ x: CONNECTED_POS.x, y: CONNECTED_POS.y, reachability: 'unknown' }]);
+    expect(fake.cacher.closeObject).not.toHaveBeenCalled();
+    expect(fake.log.warn).toHaveBeenCalled();
+  });
+
+  it('gives every candidate unknown, and never reads a candidate, when the building SetObject loads nothing', async () => {
+    const fake = makeReachCtx([BUILDING]);
+
+    const entries = await resolveConnectionReachability(fake.ctx, BUILDING.x, BUILDING.y, [CONNECTED_POS, ISOLATED_POS]);
+
+    expect(entries).toEqual([
+      { x: CONNECTED_POS.x, y: CONNECTED_POS.y, reachability: 'unknown' },
+      { x: ISOLATED_POS.x, y: ISOLATED_POS.y, reachability: 'unknown' },
+    ]);
+    expect(fake.cacher.getPropertyList).not.toHaveBeenCalled();
+    expect(fake.cacher.closeObject).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives every candidate unknown when the building NearCircuits read rejects', async () => {
+    const fake = makeReachCtx();
+    fake.cacher.getPropertyList.mockRejectedValueOnce(new Error('read failed'));
+
+    const entries = await resolveConnectionReachability(fake.ctx, BUILDING.x, BUILDING.y, [CONNECTED_POS, ISOLATED_POS]);
+
+    expect(entries).toEqual([
+      { x: CONNECTED_POS.x, y: CONNECTED_POS.y, reachability: 'unknown' },
+      { x: ISOLATED_POS.x, y: ISOLATED_POS.y, reachability: 'unknown' },
+    ]);
+  });
+
+  it('a candidate whose SetObject loads nothing is unknown without a wasted read; siblings unaffected', async () => {
+    const fake = makeReachCtx([ISOLATED_POS]);
+
+    const entries = await resolveConnectionReachability(fake.ctx, BUILDING.x, BUILDING.y, [CONNECTED_POS, ISOLATED_POS]);
+
+    expect(entries).toEqual([
+      { x: CONNECTED_POS.x, y: CONNECTED_POS.y, reachability: 'connected' },
+      { x: ISOLATED_POS.x, y: ISOLATED_POS.y, reachability: 'unknown' },
+    ]);
+    // Building + CONNECTED_POS only — ISOLATED_POS's SetObject answered false.
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledTimes(2);
+  });
+
+  it('a candidate whose NearCircuits read rejects is unknown, and the temp object still closes once', async () => {
+    const fake = makeReachCtx();
+    fake.cacher.getPropertyList
+      .mockResolvedValueOnce([CIRCUITS[key(BUILDING)]])
+      .mockRejectedValueOnce(new Error('read failed'));
+
+    const entries = await resolveConnectionReachability(fake.ctx, BUILDING.x, BUILDING.y, [CONNECTED_POS]);
+
+    expect(entries).toEqual([{ x: CONNECTED_POS.x, y: CONNECTED_POS.y, reachability: 'unknown' }]);
+    expect(fake.cacher.closeObject).toHaveBeenCalledTimes(1);
+  });
+
+  it('flushes onBatch every REACHABILITY_BATCH_SIZE entries and once for the remainder', async () => {
+    const fake = makeSessionCtx({ currentWorldInfo: WORLD });
+    fake.cacher.createObject.mockResolvedValue(TEMP_ID);
+    fake.respond(() => 'res="#-1"');
+    fake.cacher.getPropertyList.mockResolvedValue(['17,']);
+    const candidates = Array.from({ length: 23 }, (_, i) => ({ x: i, y: i }));
+    const onBatch = jest.fn();
+
+    const entries = await resolveConnectionReachability(fake.ctx, BUILDING.x, BUILDING.y, candidates, onBatch);
+
+    expect(onBatch).toHaveBeenCalledTimes(3);
+    expect(onBatch.mock.calls[0][0]).toHaveLength(REACHABILITY_BATCH_SIZE);
+    expect(onBatch.mock.calls[1][0]).toHaveLength(REACHABILITY_BATCH_SIZE);
+    expect(onBatch.mock.calls[2][0]).toHaveLength(3);
+    expect(onBatch.mock.calls.flatMap(c => c[0])).toEqual(entries);
+    expect(entries.every(e => e.reachability === 'connected')).toBe(true);
   });
 });
 
