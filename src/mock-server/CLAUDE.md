@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -117,6 +117,15 @@ answers nothing, so the frame is the only evidence there is. The values come fro
 `shared/building-details/trade-settings.ts`, the same lists the controls build their options
 from. Its test drives the real `setBuildingProperty` and matches each emitted frame back against
 the exchange it must be.
+
+`gate-map` is a factory with `GateMap = '101'` over three input names: two supplies are listed,
+and the trap — the disabled middle gate's `SetPath` answers exactly like the two enabled ones,
+so a gateway that (re-)applied the old warehouse-only filter would open it and get an answer for
+its trouble. This encodes the Voyager finger-strip rule (`Voyager/SupplySheetForm.pas:382`,
+`Voyager/ProdSheetForm.pas:324`): a gate is listed unless the map has an explicit `'0'` at its
+position. Its test drives the real `getBuildingTabData` and `getBuildingGateConnections` and
+asserts on `RdoMock.getConsumedIds()` that the middle gate's `SetPath` and header exchanges were
+never consumed.
 
 ### Scenario Structure
 

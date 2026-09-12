@@ -1633,6 +1633,129 @@ describe('getBuildingTabData', () => {
     });
   });
 
+  describe('non-warehouse gates and the GateMap', () => {
+    it('lists only the supply gates the GateMap does not mark disabled', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasSupplies: true, isWarehouse: false, gateMap: '101' }));
+      cacheValues(fake, { MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') {
+          return 'res="%In0::\nA\r\nIn1::\nB\r\nIn2::\nC"';
+        }
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies');
+
+      expect(supplies?.map(s => s.path)).toEqual(['In0', 'In2']);
+      expect(fake.sent.some(s => s.packet.member === 'SetPath')).toBe(false);
+      expect(fake.cacher.getPropertyList).not.toHaveBeenCalled();
+    });
+
+    it('lists only the product gates the GateMap does not mark disabled', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasProducts: true, isWarehouse: false, gateMap: '01' }));
+      cacheValues(fake, { MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetOutputNames') return 'res="%Out0::\nA\r\nOut1::\nB"';
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { products } = await getBuildingTabData(fake.ctx, X, Y, 'products');
+
+      expect(products?.map(p => p.path)).toEqual(['Out1']);
+    });
+
+    it('lists every gate when the GateMap is empty', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasSupplies: true, isWarehouse: false, gateMap: '' }));
+      cacheValues(fake, { MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') {
+          return 'res="%In0::\nA\r\nIn1::\nB\r\nIn2::\nC"';
+        }
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies');
+
+      expect(supplies?.map(s => s.path)).toEqual(['In0', 'In1', 'In2']);
+    });
+
+    it('lists every gate when the GateMap is shorter than the gate list — no off-by-one', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasSupplies: true, isWarehouse: false, gateMap: '1' }));
+      cacheValues(fake, { MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') {
+          return 'res="%In0::\nA\r\nIn1::\nB\r\nIn2::\nC"';
+        }
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies');
+
+      expect(supplies?.map(s => s.path)).toEqual(['In0', 'In1', 'In2']);
+    });
+
+    it('leaves a gate listed when its map character is neither "0" nor "1"', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasSupplies: true, isWarehouse: false, gateMap: '1x1' }));
+      cacheValues(fake, { MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') {
+          return 'res="%In0::\nA\r\nIn1::\nB\r\nIn2::\nC"';
+        }
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies');
+
+      expect(supplies?.map(s => s.path)).toEqual(['In0', 'In1', 'In2']);
+    });
+
+    it('reads the GateMap for an on-demand, non-warehouse inspector and applies it', async () => {
+      const fake = makeDetailsCtx();
+      registerTabs('9013', ['Supplies']);
+      cacheValues(fake, { GateMap: '10', MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') return 'res="%In0::\nA\r\nIn1::\nB"';
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies', '9013');
+
+      expect(getActiveInspector(fake.ctx, X, Y)?.gateMap).toBe('10');
+      expect(fake.cacher.getPropertyList).toHaveBeenCalledWith(FIRST_TEMP, ['GateMap']);
+      expect(supplies?.map(s => s.path)).toEqual(['In0']);
+    });
+
+    it('opens a non-warehouse inspector with every gate listed when the GateMap read fails', async () => {
+      const fake = makeDetailsCtx();
+      registerTabs('9013', ['Supplies']);
+      fake.cacher.getPropertyList.mockImplementation(async (_id: string, names: string[]) => {
+        if (names.includes('GateMap')) throw new Error('Request timeout: GetPropertyList');
+        return names.map(() => '');
+      });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') return 'res="%In0::\nA\r\nIn1::\nB"';
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies', '9013');
+
+      expect(getActiveInspector(fake.ctx, X, Y)?.gateMap).toBe('');
+      expect(supplies?.map(s => s.path)).toEqual(['In0', 'In1']);
+    });
+  });
+
   describe('company inputs', () => {
     it('reads seven indexed properties per input', async () => {
       const fake = makeDetailsCtx();
