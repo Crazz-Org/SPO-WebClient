@@ -120,6 +120,8 @@ async function setBuildingPropertyImpl(
     const tempObjectId = await ctx.cacherCreateObject();
     let currBlock: string;
     let objectId: string;
+    /** The gate's own id, for the one member that is declared on a gate. */
+    let gateObjectId: string | null = null;
 
     try {
       await ctx.cacherSetObject(tempObjectId, x, y);
@@ -132,6 +134,29 @@ async function setBuildingPropertyImpl(
       }
 
       ctx.log.debug(`[BuildingDetails] Found CurrBlock: ${currBlock}, ObjectId: ${objectId} for building at (${x}, ${y})`);
+
+      // RDOSelSelected is declared on the INPUT GATE, not the block: `published
+      // procedure RDOSelSelected(value : WordBool)` on TPullInput
+      // (Kernel/Kernel.pas:1623, body :7886-7895). Voyager binds it to the
+      // ObjectId it read off the GATE header (Voyager/SupplySheetForm.pas:1001
+      // -> :1100 -> :697-699), and that id is `integer(Obj)` of the gate
+      // (Cache/CacheAgent.pas:89, `ppObjId = 'ObjectId'`
+      // Cache/CacheCommon.pas:30). Neither CurrBlock nor the facility's own
+      // ObjectId is that object — both are the block, which does not publish
+      // the member. Resolve the gate the way the read-back does: by fluid name.
+      if (propertyName === 'RDOSelSelected') {
+        gateObjectId = await readGateWitness(
+          ctx, tempObjectId, 'Input',
+          additionalParams?.fluidId || additionalParams?.metaFluid, 'ObjectId',
+        );
+        if (!gateObjectId) {
+          throw new Error(
+            'RDOSelSelected cannot be addressed: no input gate ObjectId resolved for ' +
+            `fluid "${additionalParams?.fluidId ?? additionalParams?.metaFluid ?? ''}" — ` +
+            'the member lives on the gate, not on the block'
+          );
+        }
+      }
     } finally {
       await ctx.cacherCloseObject(tempObjectId);
     }
@@ -189,6 +214,10 @@ async function setBuildingPropertyImpl(
     // Output/input gate commands bind to ObjectId, not CurrBlock.
     // For warehouses these differ; for other buildings they are equal.
     // RDOSetOutputPrice BindTo: objectId (direct)
+    //
+    // The choice is three-way, not two: RDOSelSelected binds to neither of
+    // these ids but to the GATE's own ObjectId, resolved above. Both entries
+    // here name the facility's block, which does not publish that member.
     const RDO_OBJECTID_COMMANDS: ReadonlySet<string> = new Set([
       'RDOSetOutputPrice', 'RDOSetInputOverPrice', 'RDOSetInputMaxPrice', 'RDOSetInputMinK',
       'RDOConnectInput', 'RDODisconnectInput', 'RDOConnectOutput', 'RDODisconnectOutput',
@@ -270,7 +299,7 @@ async function setBuildingPropertyImpl(
 
       // Fire-and-forget RDO method call — no RID, no response expected.
       // Always use "*" (VoidId) — "^" without RID crashes the Delphi server.
-      const target = RDO_OBJECTID_COMMANDS.has(propertyName) ? objectId : currBlock;
+      const target = gateObjectId ?? (RDO_OBJECTID_COMMANDS.has(propertyName) ? objectId : currBlock);
       assertCallable(propertyName);
       fireAndForget(rdoCall(propertyName, target, ...rdoArgs).toFrame());
       await new Promise(resolve => setTimeout(resolve, 200));

@@ -1229,7 +1229,7 @@ const SUPPLY_GATES: GateSpec<BuildingSupplyData> = {
   // Same list, same order, as Voyager/SupplySheetForm.pas:460.
   headerProps: [
     'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
-    'QPSorted', 'SortMode', 'cnxCount', 'ObjectId',
+    'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
   ],
   // Same list, same order, as Voyager/SupplySheetForm.pas:480-490.
   connectionProps: [
@@ -1250,6 +1250,11 @@ const SUPPLY_GATES: GateSpec<BuildingSupplyData> = {
     maxPrice: header[4] || undefined,
     qpSorted: header[5] || undefined,
     sortMode: header[6] || undefined,
+    // `tidSelected` — the auto-buy flag `TPullInput.StoreToCache` writes with
+    // `Cache.WriteBoolean('Selected', fSelected)` (Kernel/Kernel.pas:7815), i.e.
+    // '1'/'0' (Cache/CacheAgent.pas:150-152). Undefined means "not published /
+    // not read", the convention every other header field here already uses.
+    selected: header[8] || undefined,
     connectionCount,
     connections,
   }),

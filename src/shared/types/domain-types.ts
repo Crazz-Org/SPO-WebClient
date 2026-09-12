@@ -515,6 +515,11 @@ export interface BuildingSupplyData {
   qpSorted?: string;
   /** Sort mode: 0=cost, 1=quality */
   sortMode?: string;
+  /**
+   * Auto-buy flag off the gate header ('1'/'0', Kernel/Kernel.pas:7815).
+   * Undefined until the gate is opened, or when the gate does not publish it.
+   */
+  selected?: string;
   /** Connection count. Undefined until the gate is opened — not zero. */
   connectionCount?: number;
   /** Connections — empty until the gate is opened. */
