@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `auto-buy`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -117,6 +117,18 @@ answers nothing, so the frame is the only evidence there is. The values come fro
 `shared/building-details/trade-settings.ts`, the same lists the controls build their options
 from. Its test drives the real `setBuildingProperty` and matches each emitted frame back against
 the exchange it must be.
+
+`auto-buy` is the automatic-buying flag of an input gate, and it fixes two things a reply could
+never catch. The gate header is read with **ten** names, in the reference client's order
+(`Voyager/SupplySheetForm.pas:460`) — `tidSelected` is the ninth, and without it the browser
+never learns the flag's state. And the two `RDOSelSelected` frames are addressed to the gate's
+own `ObjectId`: the member is declared on `TPullInput` (`Kernel/Kernel.pas:1623`), not on the
+block, and Voyager binds the id it read off the gate header before forking the call
+(`SupplySheetForm.pas:1001` → `:697-699`). The scenario's four ids are deliberately all
+different, so a handler that picked the facility's block or object fails instead of matching by
+accident. Responses are **empty**, the usual reason: a `procedure` answers nothing, so the frame
+is the only evidence there is. Its test drives the real `setBuildingProperty` and the real
+`getBuildingGateConnections`.
 
 ### Scenario Structure
 

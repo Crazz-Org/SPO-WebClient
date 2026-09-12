@@ -683,13 +683,14 @@ describe('world-login scenario', () => {
 });
 
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 17 entries', () => {
+  it('SCENARIO_NAMES has 18 entries', () => {
     // 14, not 13: the `world-login` scenario was added with the CanJoinWorldEx
     // admission check (Interface Server/InterfaceServer.pas:441).
     // 15: `abandon-role`, issue 547.
     // 16: `people-search`, issue 527.
     // 17: `trade-settings`, issue 551.
-    expect(SCENARIO_NAMES).toHaveLength(17);
+    // 18: `auto-buy`, issue 554.
+    expect(SCENARIO_NAMES).toHaveLength(18);
   });
 
   it('loadScenario returns bundle for each name', () => {

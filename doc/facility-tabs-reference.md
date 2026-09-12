@@ -632,7 +632,7 @@ threadEnd:   if update != fLastUpdate → discard results (tab already changed)
 | `RDOSetInputMinK` | (fluidId, minK) | Set minimum quantity |
 | `RDOSetInputMaxPrice` | (fluidId, maxPrice) | Set max acceptable price |
 | `RDOSetInputSortMode` | (fluidId, mode) | Sort by cost or quality |
-| `RDOSelSelected` | (bool) | Toggle auto-buy |
+| `RDOSelSelected` | (bool) | Toggle auto-buy — bound to the gate's own `ObjectId` read off the gate header (Voyager/SupplySheetForm.pas:1001, :1100) |
 
 **UI**: Tabs per input supply, stock display, cost/min-K/max-price controls, auto-buy toggle, supplier list sortable by cost or quality.
 
