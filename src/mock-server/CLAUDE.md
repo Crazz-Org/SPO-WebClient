@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -107,6 +107,16 @@ a typed term sends the wrapped `*term*` across all 26 buckets. A wrong pattern d
 just other people's names, so the two frames are fixed here. Both are built by the emitter
 (`rdoCall`); only `idof` is written out, because it has no fire-and-forget form. Its test
 drives the real `searchPeople` and matches each emitted frame back against the exchange.
+
+`trade-settings` is every argument the two facility trade controls can send: `RDOSetRole` with
+2, 5 or 6 and `RDOSetTradeLevel` with 0, 2 or 3 — one exchange per value, six in all. Both are
+`procedure`s with no server-side range check (`StdBlocks/Warehouses.pas:527`,
+`Kernel/Kernel.pas:6408`), so the legal set is enforced by the client alone, and `1`
+(`tlvPupil`) is provably absent. Their responses are **empty** for the usual reason: a procedure
+answers nothing, so the frame is the only evidence there is. The values come from
+`shared/building-details/trade-settings.ts`, the same lists the controls build their options
+from. Its test drives the real `setBuildingProperty` and matches each emitted frame back against
+the exchange it must be.
 
 ### Scenario Structure
 

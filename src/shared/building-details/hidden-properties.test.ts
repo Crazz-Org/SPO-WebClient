@@ -4,15 +4,22 @@ import { HANDLER_TO_GROUP } from './template-groups';
 
 describe('hidden properties', () => {
   it('hides every name the redesign took off the sheet', () => {
-    for (const name of ['TradeRole', 'Role', 'TradeLevel', 'MoneyGraph',
+    for (const name of ['MoneyGraph',
       'UpgradeActions', 'SecurityId', 'Trouble', 'Creator', 'OwnerName',
       'CurrBlock']) {
       expect(isHiddenProperty(name)).toBe(true);
     }
   });
 
-  it('leaves everything else alone', () => {
-    for (const name of ['ROI', 'Cost', 'Name', 'Stopped', 'Workers0', 'GateMap']) {
+  /**
+   * `TradeRole`/`Role` and `TradeLevel` left the list with issue 551: they are
+   * the two trade settings the owner changes, and the sheet now carries a
+   * control for each (Voyager's `cbMode` / `cbTrade`), so hiding the row hid the
+   * only way to reach `RDOSetRole` and `RDOSetTradeLevel` from the UI.
+   */
+  it('leaves everything else alone, the two trade settings included', () => {
+    for (const name of ['ROI', 'Cost', 'Name', 'Stopped', 'Workers0', 'GateMap',
+      'TradeRole', 'Role', 'TradeLevel']) {
       expect(isHiddenProperty(name)).toBe(false);
     }
   });

@@ -11,13 +11,13 @@
  *
  * The rest are duplicates of what the header already states (`Creator`,
  * `OwnerName`) or raw fields with no reading for a player (`Trouble`,
- * `TradeRole`/`Role`, `TradeLevel`, `UpgradeActions`).
+ * `UpgradeActions`).
+ *
+ * `TradeRole`/`Role` and `TradeLevel` were once on this list and are not any
+ * more: they are the two trade settings the owner changes, and PropertyGroup
+ * renders them as controls (TradeControls.tsx), not as raw rows.
  */
 export const HIDDEN_PROPERTY_NAMES: ReadonlySet<string> = new Set([
-  // Trade role — declared as `TradeRole` in most templates, `Role` in others
-  'TradeRole',
-  'Role',
-  'TradeLevel',
   // "Has Graph" — the boolean behind the revenue chart, not a fact to display
   'MoneyGraph',
   'UpgradeActions',
