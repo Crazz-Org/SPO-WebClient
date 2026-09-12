@@ -1024,8 +1024,11 @@ export class StarpeaceClient implements ClientHandlerContext {
       if (msg.type === WsMessageType.RESP_ERROR) {
         const errorResp = msg as WsRespError;
         const localizedMessage = getErrorMessage(errorResp.code);
-        const err = new Error(localizedMessage);
-        (err as Error & { code: number }).code = errorResp.code;
+        const err = new Error(localizedMessage) as Error & { code: number; serverMessage: string };
+        err.code = errorResp.code;
+        // The gateway's own sentence. The auth check needs it: its code is a DIR_* code,
+        // which getErrorMessage() above mistranslates (issue 532). Other flows keep `message`.
+        err.serverMessage = errorResp.errorMessage;
         reject(err);
       } else {
         resolve(msg);
