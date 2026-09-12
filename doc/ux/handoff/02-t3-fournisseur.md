@@ -25,7 +25,7 @@ fournisseur → cocher → Connecter = 5 interactions** dans une seule feuille e
 | Curseurs | écritures `MaxPrice` / `minK` | au relâchement, debounce 300 ms conservé |
 | Recherche | `onSearchConnections(fluidId, filtres, rôles)` → `FindSuppliers` | **à Entrée / bouton**, jamais à la frappe |
 | Connecter | `onConnectionConnect([{x,y}])` | clic « Connecter » |
-| Déconnecter | `onDisconnectConnection(…, x, y)` | **après** `Dialog kind=destructive` |
+| Déconnecter | `onDisconnectConnection(…, [{x,y}, …])` | **après** `Dialog kind=destructive` |
 | Distance | calcul local `√((x−bx)²+(y−by)²)` | sur les résultats reçus |
 
 Ligne repliée = **nom seul**. Toute information de plus est une requête par ligne : interdit.

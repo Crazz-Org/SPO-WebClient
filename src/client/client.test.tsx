@@ -13,6 +13,11 @@
  */
 
 jest.mock('./handlers/chat-handler');
+jest.mock('./handlers/building-action-handler', () => ({
+  ...(jest.requireActual('./handlers/building-action-handler') as object),
+  setBuildingProperty: jest.fn(),
+  refreshAfterConnectionChange: jest.fn(),
+}));
 jest.mock('./handlers/auth-handler', () => ({
   ...(jest.requireActual('./handlers/auth-handler') as object),
   visitWorld: jest.fn(),
@@ -21,6 +26,7 @@ jest.mock('./handlers/auth-handler', () => ({
 import { StarpeaceClient } from './client';
 import * as chatHandler from './handlers/chat-handler';
 import * as authHandler from './handlers/auth-handler';
+import * as buildingActionHandler from './handlers/building-action-handler';
 import { WsMessageType, type WsMessage } from '../shared/types';
 
 class FakeSocket {
@@ -72,6 +78,89 @@ describe('StarpeaceClient callback wiring', () => {
     client.callbacks.onVisitWorld();
 
     expect(authHandler.visitWorld).toHaveBeenCalledWith(client);
+  });
+});
+
+/**
+ * #563 — a selection of any size leaves as ONE frame. The pairs are joined into
+ * the single `ParseGateList` string the server splits back apart
+ * (`Kernel/Kernel0.pas:4157-4180`), trailing comma included, exactly as the
+ * reference client built it (`Voyager/SupplySheetForm.pas:889-908`).
+ */
+describe('StarpeaceClient onDisconnectConnection', () => {
+  let client: StarpeaceClient;
+  const setProp = buildingActionHandler.setBuildingProperty as jest.MockedFunction<
+    typeof buildingActionHandler.setBuildingProperty
+  >;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    jest.clearAllMocks();
+    setProp.mockResolvedValue(true);
+    client = new StarpeaceClient();
+  });
+
+  it('joins every selected pair into one connectionList, in one call', async () => {
+    const notify = jest.spyOn(client, 'showNotification');
+
+    client.callbacks.onDisconnectConnection(50, 60, 'Plastics', 'input', [
+      { x: 10, y: 20 }, { x: 30, y: 40 }, { x: 50, y: 60 },
+    ]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(setProp).toHaveBeenCalledTimes(1);
+    expect(setProp).toHaveBeenCalledWith(
+      client, 50, 60, 'RDODisconnectInput', '0',
+      { fluidId: 'Plastics', connectionList: '10,20,30,40,50,60,' },
+      expect.any(String),
+    );
+    expect(notify).toHaveBeenCalledWith('3 suppliers disconnected', 'success');
+    expect(buildingActionHandler.refreshAfterConnectionChange).toHaveBeenCalledWith(client, 50, 60);
+  });
+
+  it('keeps the singular wording, and the output member, for one row', async () => {
+    const notify = jest.spyOn(client, 'showNotification');
+
+    client.callbacks.onDisconnectConnection(50, 60, 'Plastics', 'output', [{ x: 7, y: 8 }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(setProp).toHaveBeenCalledWith(
+      client, 50, 60, 'RDODisconnectOutput', '0',
+      { fluidId: 'Plastics', connectionList: '7,8,' },
+      expect.any(String),
+    );
+    expect(notify).toHaveBeenCalledWith('Client disconnected', 'success');
+  });
+
+  it('says so when several buyers go', async () => {
+    const notify = jest.spyOn(client, 'showNotification');
+
+    client.callbacks.onDisconnectConnection(50, 60, 'Plastics', 'output', [{ x: 7, y: 8 }, { x: 9, y: 10 }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(notify).toHaveBeenCalledWith('2 clients disconnected', 'success');
+  });
+
+  it('sends nothing at all for an empty selection', () => {
+    client.callbacks.onDisconnectConnection(50, 60, 'Plastics', 'input', []);
+
+    expect(setProp).not.toHaveBeenCalled();
+  });
+
+  it('reports a failure as an error notification', async () => {
+    setProp.mockRejectedValue(new Error('socket gone'));
+    const notify = jest.spyOn(client, 'showNotification');
+
+    client.callbacks.onDisconnectConnection(50, 60, 'Plastics', 'input', [{ x: 1, y: 2 }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(notify).toHaveBeenCalledWith('Failed to disconnect: socket gone', 'error');
   });
 });
 

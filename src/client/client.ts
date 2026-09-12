@@ -370,13 +370,24 @@ export class StarpeaceClient implements ClientHandlerContext {
           buildingActionHandler.connectFacilities(this, picker.buildingX, picker.buildingY, fluidId, direction, selectedCoords);
         }
       },
-      onDisconnectConnection: (buildingX, buildingY, fluidId, direction, x, y) => {
+      onDisconnectConnection: (buildingX, buildingY, fluidId, direction, connections) => {
+        if (connections.length === 0) return;
         const rdoCommand = direction === 'input' ? 'RDODisconnectInput' : 'RDODisconnectOutput';
+        // The whole selection leaves as one frame: Voyager built the same single
+        // string from every selected row (SupplySheetForm.pas:889-908,
+        // ProdSheetForm.pas:715-734) and the server splits it back into pairs
+        // (Kernel0.pas:4157-4180). The trailing comma is required — the token
+        // after the last one is never read.
+        const connectionList = connections.map(c => `${c.x},${c.y},`).join('');
+        const n = connections.length;
         buildingActionHandler.setBuildingProperty(this, buildingX, buildingY, rdoCommand, '0', {
-          fluidId, connectionList: `${x},${y},`,  // trailing comma required by Delphi ParseGateList
+          fluidId, connectionList,
         }, connectionPendingKey(rdoCommand, fluidId)).then(success => {
           if (success) {
-            this.showNotification(direction === 'input' ? 'Supplier disconnected' : 'Client disconnected', 'success');
+            const label = direction === 'input'
+              ? (n === 1 ? 'Supplier disconnected' : `${n} suppliers disconnected`)
+              : (n === 1 ? 'Client disconnected' : `${n} clients disconnected`);
+            this.showNotification(label, 'success');
             // Re-reads the connection lists too. A plain refreshProperties leaves
             // the lazy tabs carried forward, so the removed row stayed on screen.
             return buildingActionHandler.refreshAfterConnectionChange(this, buildingX, buildingY);

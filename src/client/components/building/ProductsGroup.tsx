@@ -6,7 +6,7 @@
  */
 
 import { memo, useState } from 'react';
-import type { BuildingProductData } from '@/shared/types';
+import type { BuildingProductData, BuildingConnectionData } from '@/shared/types';
 import { formatCurrency } from '@/shared/building-details';
 import { useClient } from '../../context';
 import { useUiStore } from '../../store/ui-store';
@@ -18,14 +18,24 @@ import styles from './PropertyGroup.module.css';
 
 /**
  * Disconnecting is destructive and used to fire at once (Fire button, Delete key). It now goes
- * through the shared Dialog (T3, B5): focus lands on Cancel, Escape cancels.
+ * through the shared Dialog (T3, B5): focus lands on Cancel, Escape cancels. One dialog covers
+ * the whole selection — it names the count when more than one row is going.
  */
-function confirmDisconnect(name: string, fluidLabel: string, direction: 'input' | 'output', onConfirm: () => void): void {
+function confirmDisconnect(names: string[], fluidLabel: string, direction: 'input' | 'output', onConfirm: () => void): void {
+  const n = names.length;
+  const title = n === 1
+    ? `Disconnect ${names[0]}?`
+    : `Disconnect ${n} ${direction === 'input' ? 'suppliers' : 'buyers'}?`;
+  const message = direction === 'input'
+    ? (n === 1
+      ? `This building will stop receiving ${fluidLabel} from ${names[0]}. You can reconnect it later.`
+      : `This building will stop receiving ${fluidLabel} from ${n} suppliers: ${names.join(', ')}. You can reconnect them later.`)
+    : (n === 1
+      ? `${names[0]} will stop buying ${fluidLabel} here. You can reconnect it later.`
+      : `${n} buyers will stop buying ${fluidLabel} here: ${names.join(', ')}. You can reconnect them later.`);
   useUiStore.getState().requestConfirm(
-    `Disconnect ${name}?`,
-    direction === 'input'
-      ? `This building will stop receiving ${fluidLabel} from ${name}. You can reconnect it later.`
-      : `${name} will stop buying ${fluidLabel} here. You can reconnect it later.`,
+    title,
+    message,
     onConfirm,
     { kind: 'destructive', confirmLabel: 'Disconnect', typeToConfirm: null },
   );
@@ -95,7 +105,11 @@ const ProductCard = memo(function ProductCard({
   const { expanded, toggle, loaded, failed } = useGateConnections(
     'products', product.path, product.name, buildingX, buildingY,
   );
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  // A click toggles a row in or out of the selection: several buyers can go in
+  // one Remove, the way the reference client fired a multi-row list selection
+  // (Voyager/ProdSheetForm.pas:715-734). Kept sorted so the pairs leave in
+  // table order.
+  const [selectedRows, setSelectedRows] = useState<number[]>([]);
 
   // Quality, price and market price are header properties: unknown until this
   // gate has been opened. `hasHeader` is what separates "not read yet" from a
@@ -126,7 +140,9 @@ const ProductCard = memo(function ProductCard({
   const fluidId = product.metaFluid;
 
   const handleRowClick = (idx: number) => {
-    setSelectedIdx(selectedIdx === idx ? null : idx);
+    setSelectedRows(prev => prev.includes(idx)
+      ? prev.filter(i => i !== idx)
+      : [...prev, idx].sort((a, b) => a - b));
   };
 
   const handleHire = () => {
@@ -135,12 +151,14 @@ const ProductCard = memo(function ProductCard({
   };
 
   const handleFire = () => {
-    if (selectedIdx === null || !fluidId) return;
-    const conn = product.connections[selectedIdx];
-    if (!conn) return;
-    confirmDisconnect(conn.facilityName, product.name || fluidId, 'output', () => {
-      client.onDisconnectConnection(buildingX, buildingY, fluidId, 'output', conn.x, conn.y);
-      setSelectedIdx(null);
+    if (selectedRows.length === 0 || !fluidId) return;
+    const conns = selectedRows
+      .map(i => product.connections[i])
+      .filter((c): c is BuildingConnectionData => c !== undefined);
+    if (conns.length === 0) return;
+    confirmDisconnect(conns.map(c => c.facilityName), product.name || fluidId, 'output', () => {
+      client.onDisconnectConnection(buildingX, buildingY, fluidId, 'output', conns.map(c => ({ x: c.x, y: c.y })));
+      setSelectedRows([]);
     });
   };
 
@@ -214,7 +232,7 @@ const ProductCard = memo(function ProductCard({
               className={styles.productTable}
               tabIndex={0}
               onKeyDown={(e) => {
-                if (e.key === 'Delete' && canEdit && selectedIdx !== null) {
+                if (e.key === 'Delete' && canEdit && selectedRows.length > 0) {
                   handleFire();
                 }
               }}
@@ -231,7 +249,7 @@ const ProductCard = memo(function ProductCard({
                 {product.connections.map((conn, j) => (
                   <tr
                     key={`${j}:${conn.x},${conn.y}`}
-                    className={`${styles.productTableRow}${selectedIdx === j ? ` ${styles.productTableRowSelected}` : ''}`}
+                    className={`${styles.productTableRow}${selectedRows.includes(j) ? ` ${styles.productTableRowSelected}` : ''}`}
                     onClick={() => handleRowClick(j)}
                   >
                     <td className={styles.productFacilityCell}>
@@ -271,7 +289,7 @@ const ProductCard = memo(function ProductCard({
               <button
                 className={styles.fireBtn}
                 onClick={handleFire}
-                disabled={selectedIdx === null}
+                disabled={selectedRows.length === 0}
               >
                 Remove
               </button>
