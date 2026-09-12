@@ -209,6 +209,23 @@ describe('auth-handler', () => {
       expect(ClientBridge.setLoginLoading).toHaveBeenCalledWith(false);
     });
 
+    it('shows the gateway sentence when the world refused the credentials', async () => {
+      // AccountStatus refusals are worded by the gateway; the code's own generic
+      // sentence would hide which credential was wrong.
+      const err = Object.assign(new Error('Invalid password'), {
+        code: 13,
+        serverMessage: 'You supplied an invalid password.',
+      });
+      const ctx = makeCtx({ sendRequest: jest.fn().mockRejectedValue(err) });
+
+      await login(ctx, 'Shamba');
+
+      expect(ctx.showNotification).toHaveBeenCalledWith(
+        'World login failed: You supplied an invalid password.',
+        'error',
+      );
+    });
+
     it('aborts if credentials are missing', async () => {
       const ctx = makeCtx({ storedUsername: '', storedPassword: '' });
 

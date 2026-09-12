@@ -135,7 +135,10 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
   } catch (err: unknown) {
     ClientBridge.log('Error', `Login failed: ${toErrorMessage(err)}`);
     ClientBridge.setLoginLoading(false);
-    ctx.showNotification(`World login failed: ${toErrorMessage(err)}`, 'error');
+    // The gateway words a world-side refusal itself (AccountStatus); showing the
+    // code's generic sentence instead would hide which credential was wrong.
+    const { serverMessage } = err as { serverMessage?: string };
+    ctx.showNotification(`World login failed: ${serverMessage || toErrorMessage(err)}`, 'error');
   }
 }
 
