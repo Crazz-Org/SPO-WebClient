@@ -204,8 +204,9 @@ const ProductCard = memo(function ProductCard({
               <thead>
                 <tr>
                   <th>Facility</th>
-                  <th style={{ width: 50 }}>Price</th>
-                  <th style={{ width: 50 }}>Quality</th>
+                  <th style={{ width: 80 }}>Company</th>
+                  <th style={{ width: 80 }}>Last</th>
+                  <th style={{ width: 60 }}>T.Cost</th>
                 </tr>
               </thead>
               <tbody>
@@ -214,7 +215,6 @@ const ProductCard = memo(function ProductCard({
                     key={`${j}:${conn.x},${conn.y}`}
                     className={`${styles.productTableRow}${selectedIdx === j ? ` ${styles.productTableRowSelected}` : ''}`}
                     onClick={() => handleRowClick(j)}
-                    title={conn.companyName || undefined}
                   >
                     <td className={styles.productFacilityCell}>
                       <span className={styles.productFacilityName}>
@@ -222,12 +222,10 @@ const ProductCard = memo(function ProductCard({
                           <span className={styles.unnamedConnection}>no data</span>
                         )}
                       </span>
-                      {conn.companyName && (
-                        <span className={styles.productOwnerDot}> · {conn.companyName}</span>
-                      )}
                     </td>
-                    <td>{conn.price ? `${conn.price}%` : ''}</td>
-                    <td>{conn.quality ? `${conn.quality}%` : ''}</td>
+                    <td>{conn.companyName}</td>
+                    <td>{conn.lastValue}</td>
+                    <td>{conn.cost}</td>
                   </tr>
                 ))}
               </tbody>
