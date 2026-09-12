@@ -3,6 +3,12 @@
  *
  * Same minister rule as the login CompanyStage (chooseCompany.asp:23): a minister
  * switching servers is not offered company creation either.
+ *
+ * No company here means the visa page, exactly as on the sign-in screen: the journey is
+ * the same one, only the entry point differs (maintainer decision, 2026-09-12). The
+ * legacy branched the same way — ServerCnxHandler.pas:2796-2798 sets NEWACCOUNT when
+ * GetCompanyCount = 0, and logonComplete.asp:168-181 routes that to chooseVisa.asp, whose
+ * Tycoon Visa is how a first company gets created.
  */
 
 import { renderWithProviders } from '../../__tests__/setup/render-helpers';
@@ -22,14 +28,15 @@ describe('ServerSwitchOverlay — companies stage', () => {
     });
   });
 
-  it('offers company creation to a non-minister account', () => {
+  it('offers the two visas to a non-minister account with no company', () => {
     useGameStore.getState().setWorld('Shamba');
     useGameStore.getState().setCredentials('SPO_test3');
     useGameStore.getState().enterServerSwitch();
     useGameStore.getState().setLoginCompanies([]);
 
     const { getByText } = renderWithProviders(<ServerSwitchOverlay />);
-    expect(getByText('Create New Company')).toBeTruthy();
+    expect(getByText('Tycoon Visa')).toBeTruthy();
+    expect(getByText('Visitor Visa')).toBeTruthy();
   });
 
   it('withholds company creation from a minister account', () => {

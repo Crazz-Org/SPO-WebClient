@@ -64,6 +64,7 @@ function MoreMenu({ onClose }: { onClose: () => void }) {
   const isRoadBuild = useGameStore((s) => s.isRoadBuildingMode);
   const isRoadDemolish = useGameStore((s) => s.isRoadDemolishMode);
   const isZone = useGameStore((s) => s.isZonePaintingMode);
+  const isVisitor = useGameStore((s) => s.isVisitor);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -101,12 +102,12 @@ function MoreMenu({ onClose }: { onClose: () => void }) {
 
   return (
     <div ref={ref} className={styles.menu} role="menu" aria-label="More actions">
-      {item(isRoadBuild ? 'Stop building roads' : 'Build road', <Route size={16} />, () => client.onBuildRoad(), isRoadBuild)}
-      {item(isRoadDemolish ? 'Stop demolishing roads' : 'Demolish road', <Eraser size={16} />, () => client.onDemolishRoad(), isRoadDemolish)}
+      {!isVisitor && item(isRoadBuild ? 'Stop building roads' : 'Build road', <Route size={16} />, () => client.onBuildRoad(), isRoadBuild)}
+      {!isVisitor && item(isRoadDemolish ? 'Stop demolishing roads' : 'Demolish road', <Eraser size={16} />, () => client.onDemolishRoad(), isRoadDemolish)}
       {isPublicOfficeRole && item(isZone ? 'Stop zone painting' : 'Zone painting', <Grid2x2 size={16} />, () => (isZone ? client.onCancelZonePainting() : openModal('zonePicker')), isZone)}
       {item('Map overlays', <Layers size={16} />, () => toggleLeftPanel('overlays'))}
       {item('Docked minimap', <Map size={16} />, () => client.onToggleMinimap())}
-      {item('My facilities', <Heart size={16} />, () => toggleLeftPanel('facilities'))}
+      {!isVisitor && item('My facilities', <Heart size={16} />, () => toggleLeftPanel('facilities'))}
       {item('Settings', <Settings size={16} />, () => openModal('settings'))}
       {item('Switch server', <Server size={16} />, () => client.onSwitchServer())}
     </div>
@@ -126,6 +127,7 @@ export function CommandBar() {
   const isRoadDemolish = useGameStore((s) => s.isRoadDemolishMode);
   const isZone = useGameStore((s) => s.isZonePaintingMode);
   const unread = useMailStore((s) => s.unreadCount);
+  const isVisitor = useGameStore((s) => s.isVisitor);
   const mode = useModeDescriptor();
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -136,7 +138,7 @@ export function CommandBar() {
     { id: 'politics', label: 'Government', kbd: 'P', icon: <Landmark size={20} />, active: rightPanel === 'politics', onClick: () => toggleRightPanel('politics') },
     { id: 'mail', label: 'Mail', kbd: 'L', icon: <Mail size={20} />, active: rightPanel === 'mail', badge: unread, onClick: () => toggleRightPanel('mail') },
     { id: 'more', label: 'More', icon: <MoreHorizontal size={20} />, active: moreOpen || isRoadBuild || isRoadDemolish || isZone, onClick: () => setMoreOpen((v) => !v) },
-  ];
+  ].filter((t) => !isVisitor || (t.id !== 'build' && t.id !== 'empire'));
 
   const connectActive = useUiStore((s) => s.connectMode.active);
   const cls = [styles.bar, stack.length > 0 && !connectActive ? styles.shifted : ''].filter(Boolean).join(' ');

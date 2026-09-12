@@ -9,6 +9,7 @@ import { useMemo } from 'react';
 import { GlassCard } from '../common';
 import { Plus, ArrowLeft, Eye } from 'lucide-react';
 import type { CompanyInfo, LoginPageOutcome, WorldAdmission } from '@/shared/types';
+import { VISITOR_COMPANY_ID } from '@/shared/visitor-visa';
 import { isMinisterAccount } from '../../minister-account';
 import { TimeoutCategory } from '@/shared/timeout-categories';
 import { ConnectingGauge } from './ConnectingGauge';
@@ -115,6 +116,62 @@ export function CompanyStage({
   // never asked CanJoinWorldEx after a false RDOCanJoinNewWorld (logonComplete.asp:106, :144).
   const worldLimitBlocks = atWorldLimit === true && companies.length === 0;
 
+  // No company here means the visa page, as the legacy did: chooseVisa.asp offers the
+  // Visitor Visa and the Tycoon Visa, and the Tycoon Visa is how a first company gets
+  // created (ServerCnxHandler.pas:2796-2798 sets NEWACCOUNT on AccountStatus
+  // ACCOUNT_Unexisting OR GetCompanyCount = 0; logonComplete.asp:168-181 then routes to
+  // chooseVisa.asp). It yields to every refusal the server actually made — the world
+  // limit and the world's admission answer both win — and to a minister account, which
+  // is not a tycoon and is never offered a visa.
+  if (!worldLimitBlocks && !admission && !isMinister
+      && (loginPage?.kind === 'visa' || companies.length === 0)) {
+    const firstVisit = loginPage?.kind === 'visa' ? loginPage.firstVisit : false;
+    return (
+      <div className={styles.stage}>
+        <button className={styles.backLink} onClick={onBack}>
+          <ArrowLeft size={14} />
+          <span>Back to worlds</span>
+        </button>
+
+        <div className={styles.header}>
+          <h2 className={styles.title}>
+            {firstVisit ? 'Apply for a Visa' : `Welcome back to ${worldName}`}
+          </h2>
+          <span className={styles.worldTag}>{worldName}</span>
+        </div>
+
+        <p className={styles.emptyMessage}>
+          {firstVisit
+            ? `There is no record of you in IFEL's files for ${worldName}. You need a visa to enter this world.`
+            : `It seems that you already visited ${worldName}. Visitor Visas have to be renewed every time you enter — maybe it is time to become a Tycoon!`}
+        </p>
+
+        <div className={styles.grid}>
+          <GlassCard className={styles.companyCard} onClick={() => !isLoading && onCreate()}>
+            <div className={styles.companyName}>Tycoon Visa</div>
+            <span className={styles.visaHint}>Found a company · Build an empire</span>
+          </GlassCard>
+          <GlassCard
+            className={styles.companyCard}
+            onClick={() => !isLoading && onSelect(VISITOR_COMPANY_ID)}
+          >
+            <div className={styles.companyName}>Visitor Visa</div>
+            <span className={styles.visaHint}>Meet new people · See what&apos;s happening · Become a Tycoon later</span>
+          </GlassCard>
+        </div>
+
+        {isLoading && (
+          <div className={styles.overlay}>
+            <div className={styles.overlayContent}>
+              <div className={styles.spinner} />
+              <span className={styles.overlayText}>Entering world...</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // With companies the player still picks one; with none, the title names why there is
   // nothing to pick from.
   let emptyTitle = companies.length > 0 ? 'Select a Company' : 'Get Started';
@@ -168,12 +225,6 @@ export function CompanyStage({
             <span>Choose another world</span>
           </button>
         </>
-      )}
-
-      {!worldLimitBlocks && !admission && !isMinister && companies.length === 0 && (
-        <p className={styles.emptyMessage}>
-          Welcome to {worldName}! Create your first company to start building your empire.
-        </p>
       )}
 
       {/* Player-owned companies */}

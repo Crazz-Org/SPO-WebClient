@@ -144,6 +144,28 @@ describe('game-store existing state', () => {
   });
 });
 
+describe('game-store isVisitor', () => {
+  beforeEach(() => {
+    useGameStore.getState().reset();
+  });
+
+  it('setCompany with the visitor visa id "0" sets isVisitor true', () => {
+    useGameStore.getState().setCompany('[VISITOR VISA]', '0');
+    expect(useGameStore.getState().isVisitor).toBe(true);
+  });
+
+  it('setCompany with a real company id sets isVisitor false', () => {
+    useGameStore.getState().setCompany('X', '28');
+    expect(useGameStore.getState().isVisitor).toBe(false);
+  });
+
+  it('reset clears isVisitor', () => {
+    useGameStore.getState().setCompany('[VISITOR VISA]', '0');
+    useGameStore.getState().reset();
+    expect(useGameStore.getState().isVisitor).toBe(false);
+  });
+});
+
 describe('game-store gameDate', () => {
   beforeEach(() => {
     useGameStore.getState().reset();

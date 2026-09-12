@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import { useUiStore } from '../../store/ui-store';
+import { useGameStore } from '../../store/game-store';
 import { useEmpireStore } from '../../store/empire-store';
 import { useSearchStore } from '../../store/search-store';
 import { useClient } from '../../context';
@@ -26,6 +27,7 @@ export function CommandPalette() {
   const openModal = useUiStore((s) => s.openModal);
   const toggleLeftPanel = useUiStore((s) => s.toggleLeftPanel);
   const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
+  const isVisitor = useGameStore((s) => s.isVisitor);
 
   const client = useClient();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -34,20 +36,24 @@ export function CommandPalette() {
   // Register all commands
   const commands: Command[] = useMemo(
     () => [
-      {
-        id: 'build',
-        label: 'Open Build Menu',
-        shortcut: 'B',
-        category: 'navigation',
-        execute: () => useUiStore.getState().toggleBuildSurface(),
-      },
-      {
-        id: 'empire',
-        label: 'Open Empire Overview',
-        shortcut: 'E',
-        category: 'navigation',
-        execute: () => toggleLeftPanel('empire'),
-      },
+      ...(isVisitor
+        ? []
+        : [
+            {
+              id: 'build',
+              label: 'Open Build Menu',
+              shortcut: 'B',
+              category: 'navigation',
+              execute: () => useUiStore.getState().toggleBuildSurface(),
+            },
+            {
+              id: 'empire',
+              label: 'Open Empire Overview',
+              shortcut: 'E',
+              category: 'navigation',
+              execute: () => toggleLeftPanel('empire'),
+            },
+          ] as Command[]),
       {
         id: 'mail',
         label: 'Open Mail',
@@ -91,7 +97,7 @@ export function CommandPalette() {
         },
       },
     ],
-    [openModal, toggleLeftPanel, toggleRightPanel, client],
+    [openModal, toggleLeftPanel, toggleRightPanel, client, isVisitor],
   );
 
   // Dynamic entries (T7, missing-features S1 / N5): my facilities (the favorites list the
