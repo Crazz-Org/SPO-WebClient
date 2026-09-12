@@ -427,6 +427,7 @@ const SupplyCard = memo(function SupplyCard({
                     className={`${styles.supplyTableRow}${selectedIdx === j ? ` ${styles.supplyTableRowSelected}` : ''}`}
                     onClick={() => handleRowClick(j)}
                     onContextMenu={(e) => canEdit && handleRowContextMenu(e, j)}
+                    title={conn.companyName || undefined}
                   >
                     <td>
                       {conn.connected && <span className={styles.supplyConnectedIcon}>&#10003;</span>}
@@ -436,7 +437,7 @@ const SupplyCard = memo(function SupplyCard({
                         <span className={styles.unnamedConnection}>no data</span>
                       )}
                     </td>
-                    <td>{conn.companyName}</td>
+                    <td>{conn.createdBy}</td>
                     <td>${conn.price}</td>
                     <td>{conn.overprice}%</td>
                     <td>{conn.lastValue}</td>

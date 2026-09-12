@@ -613,7 +613,8 @@ threadEnd:   if update != fLastUpdate → discard results (tab already changed)
 | Property | Type | Description |
 |----------|------|-------------|
 | `cnxFacilityName{i}` | string | Supplier facility name |
-| `cnxCreatedBy{i}` | string | Supplier company name |
+| `cnxCreatedBy{i}` | string | Tycoon who owns the supplier |
+| `cnxCompanyName{i}` | string | Name of the supplier's company |
 | `cnxNfPrice{i}` | number | Negotiated price |
 | `OverPriceCnxInfo{i}` | number | Overprice % |
 | `LastValueCnxInfo{i}` | number | Amount per cycle |
