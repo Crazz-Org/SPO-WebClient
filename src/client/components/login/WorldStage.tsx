@@ -13,10 +13,11 @@ interface WorldStageProps {
   worlds: WorldInfo[];
   onSelect: (worldName: string) => void;
   onBack?: () => void;
+  onRetry?: () => void;
   isLoading: boolean;
 }
 
-export function WorldStage({ worlds, onSelect, onBack, isLoading }: WorldStageProps) {
+export function WorldStage({ worlds, onSelect, onBack, onRetry, isLoading }: WorldStageProps) {
   const available = worlds.filter((w) => w.running3 !== false);
   const offline = worlds.filter((w) => w.running3 === false);
 
@@ -27,6 +28,16 @@ export function WorldStage({ worlds, onSelect, onBack, isLoading }: WorldStagePr
         Choose your destination — each world has its own economy and politics
       </p>
 
+      {worlds.length === 0 ? (
+        <div className={styles.emptyState}>
+          <p>The servers are down. No world in this region is reachable right now.</p>
+          {onRetry && (
+            <button className={styles.retryBtn} onClick={onRetry} disabled={isLoading}>
+              Retry
+            </button>
+          )}
+        </div>
+      ) : (
       <div className={styles.grid}>
         {available.map((world) => (
           <GlassCard
@@ -83,6 +94,7 @@ export function WorldStage({ worlds, onSelect, onBack, isLoading }: WorldStagePr
           </GlassCard>
         ))}
       </div>
+      )}
 
       {isLoading && (
         <div className={styles.overlay}>

@@ -46,6 +46,7 @@ export function LoginScreen() {
   const client = useClient();
   const [storedCreds, setStoredCreds] = useState<{ username: string; password: string } | null>(null);
   const [selectedWorld, setSelectedWorld] = useState('');
+  const lastZoneRef = useRef<WorldZone | null>(null);
 
   // Stage A: validate credentials via RDO auth check, then advance to zones on success
   const handleConnect = useCallback(
@@ -66,11 +67,17 @@ export function LoginScreen() {
   const handleZoneSelect = useCallback(
     (zone: WorldZone) => {
       if (!storedCreds) return;
+      lastZoneRef.current = zone;
       setLoginLoading(true);
       client.onDirectoryConnect(storedCreds.username, storedCreds.password, zone.path);
     },
     [client, storedCreds, setLoginLoading],
   );
+
+  // Stage C: retry the last directory query after an empty/failed world list
+  const handleRetryWorlds = useCallback(() => {
+    if (lastZoneRef.current) handleZoneSelect(lastZoneRef.current);
+  }, [handleZoneSelect]);
 
   // Stage C → D: select world
   const handleWorldSelect = useCallback(
@@ -146,6 +153,7 @@ export function LoginScreen() {
           worlds={worlds}
           onSelect={handleWorldSelect}
           onBack={handleBackToZones}
+          onRetry={handleRetryWorlds}
           isLoading={isLoading}
         />
       )}

@@ -108,6 +108,29 @@ describe('WorldStage', () => {
     expect(screen.queryByText('Year')).toBeNull();
     expect(screen.queryByText('2232')).toBeNull();
   });
+
+  it('shows the servers-down message and a retry control when no world came back', () => {
+    const onRetry = jest.fn();
+    renderWithProviders(<WorldStage worlds={[]} onSelect={() => {}} onRetry={onRetry} isLoading={false} />);
+    expect(screen.getByText(/servers are down/i)).toBeTruthy();
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    expect(retryButton).toBeTruthy();
+    fireEvent.click(retryButton);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not show the servers-down message when a world is listed', () => {
+    const onRetry = jest.fn();
+    renderWithProviders(<WorldStage worlds={[worlds[0]]} onSelect={() => {}} onRetry={onRetry} isLoading={false} />);
+    expect(screen.queryByText(/servers are down/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('hides the retry control when no retry handler is given', () => {
+    renderWithProviders(<WorldStage worlds={[]} onSelect={() => {}} isLoading={false} />);
+    expect(screen.getByText(/servers are down/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

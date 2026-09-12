@@ -987,7 +987,7 @@ function parseDirectoryResult(ctx: LoginContext, payload: string): WorldInfo[] {
   if (!countStr) {
     ctx.log.warn('[Session] Directory Parse Error: "count" key not found in response.');
     ctx.log.warn('[Session] First 5 keys:', Array.from(data.keys()).slice(0, 5));
-    return [];
+    throw new Error('Directory answer could not be parsed: no "Count" key');
   }
 
   const count = parseInt(countStr, 10);

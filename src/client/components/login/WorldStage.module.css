@@ -160,6 +160,36 @@
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+/* Empty state — no world reachable */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-secondary);
+  padding: var(--space-8);
+  text-align: center;
+}
+
+.retryBtn {
+  background: none;
+  border: 1px solid var(--accent-gold-dark);
+  border-radius: var(--radius-lg);
+  color: var(--accent-gold);
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-default),
+    border-color var(--duration-fast) var(--ease-default);
+}
+
+.retryBtn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
 /* Back button */
 .backBtn {
   background: none;
