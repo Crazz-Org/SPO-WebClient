@@ -170,7 +170,7 @@ Une **pile** de surfaces dans `ui-store` remplace `rightPanel` / `leftPanel` / `
 
 ```ts
 type SurfaceKind = 'build' | 'building' | 'supplierSearch' | 'mail' | 'search' | 'empire' |
-                   'politics' | 'transport' | 'map' | 'overlays' | 'settings' | 'newspaper' |
+                   'politics' | 'map' | 'overlays' | 'settings' | 'newspaper' |
                    'changelog' | 'companyCreation' | 'zonePicker';
 interface Surface { kind: SurfaceKind; params?: Record<string, unknown>; title: string }
 interface UiState {
@@ -288,7 +288,7 @@ pris par Empire — la paire Q/E est morte-née), flèches = pan (renderer), `+`
    `Dialog` (branché sur `requestConfirm/Prompt`) et `Toast`. *Sortie* : composants + tests
    ≥ 93 %, `ConfirmDialog`/`PromptDialog` remplacés, Settings utilisable au clavier.
 3. **PR socle-3 — feuille + pile** : §3 avec le contenu `building` (inspecteur standard +
-   civique fusionnés), `mail`, `search`, `transport`, `empire`, `politics` (desktop **et**
+   civique fusionnés), `mail`, `search`, `empire`, `politics` (desktop **et**
    mobile → ferme P1, E1). *Sortie* : `modalBeneath` supprimé, aucun `openModal` destructif,
    L2 `test:live` vert sur inspecteur / taxes.
 4. **PR socle-4 — HUD** : §4 (StatusPill, CommandBar, barre de mode, raccourcis). *Sortie* :

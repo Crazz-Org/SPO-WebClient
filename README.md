@@ -42,7 +42,6 @@ Browser Client ──WebSocket──> Node.js Gateway ──RDO/TCP──> Game 
 - **Mail system** — Folder-based mail (Inbox, Sent, Drafts) with compose, reply, save draft, and HTML body rendering
 - **Chat system** — Channel-based chat with typing indicators
 - **Politics** — Six tabs: Jobs, Ministries, Ratings, Residentials, Towns, Votes
-- **Transport** — Route management panel
 - **Search** — Cross-entity search: Home, Towns, People, Rankings, Banks with tycoon profile view
 - **Build menu** — Category-based building placement with zone-type picker and placement validation
 - **Command palette** — Ctrl+K keyboard launcher for quick navigation and actions
@@ -140,7 +139,6 @@ src/
 │   │   ├── politics-store.ts    # Capitol and voting data
 │   │   ├── profile-store.ts     # User and tycoon profiles
 │   │   ├── search-store.ts      # Search queries and results
-│   │   ├── transport-store.ts   # Transport routes
 │   │   └── ui-store.ts          # Panels, modals, HUD state
 │   ├── hooks/                   # Custom hooks
 │   │   ├── usePanel.ts          # Panel open/close logic
@@ -160,7 +158,6 @@ src/
 │   │   ├── chat/                # ChatStrip
 │   │   ├── search/              # SearchPanel, TycoonProfileView
 │   │   ├── politics/            # JobsTab, MinistriesTab, RatingsTab, VotesTab, ...
-│   │   ├── transport/           # TransportPanel
 │   │   ├── modals/              # BuildMenu, SettingsDialog, CompanyCreationModal, ...
 │   │   ├── mobile/              # MobileShell, BottomNav, BottomSheet
 │   │   ├── command-palette/     # CommandPalette (Ctrl+K)
