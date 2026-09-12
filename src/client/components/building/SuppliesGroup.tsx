@@ -27,14 +27,24 @@ function hasPosition(conn: BuildingConnectionData): boolean {
 
 /**
  * Disconnecting is destructive and used to fire at once (Fire button, Delete key). It now goes
- * through the shared Dialog (T3, B5): focus lands on Cancel, Escape cancels.
+ * through the shared Dialog (T3, B5): focus lands on Cancel, Escape cancels. One dialog covers
+ * the whole selection — it names the count when more than one row is going.
  */
-function confirmDisconnect(name: string, fluidLabel: string, direction: 'input' | 'output', onConfirm: () => void): void {
+function confirmDisconnect(names: string[], fluidLabel: string, direction: 'input' | 'output', onConfirm: () => void): void {
+  const n = names.length;
+  const title = n === 1
+    ? `Disconnect ${names[0]}?`
+    : `Disconnect ${n} ${direction === 'input' ? 'suppliers' : 'buyers'}?`;
+  const message = direction === 'input'
+    ? (n === 1
+      ? `This building will stop receiving ${fluidLabel} from ${names[0]}. You can reconnect it later.`
+      : `This building will stop receiving ${fluidLabel} from ${n} suppliers: ${names.join(', ')}. You can reconnect them later.`)
+    : (n === 1
+      ? `${names[0]} will stop buying ${fluidLabel} here. You can reconnect it later.`
+      : `${n} buyers will stop buying ${fluidLabel} here: ${names.join(', ')}. You can reconnect them later.`);
   useUiStore.getState().requestConfirm(
-    `Disconnect ${name}?`,
-    direction === 'input'
-      ? `This building will stop receiving ${fluidLabel} from ${name}. You can reconnect it later.`
-      : `${name} will stop buying ${fluidLabel} here. You can reconnect it later.`,
+    title,
+    message,
     onConfirm,
     { kind: 'destructive', confirmLabel: 'Disconnect', typeToConfirm: null },
   );
@@ -126,8 +136,8 @@ function OverpaymentPopover({
 
   const handleDelete = () => {
     if (!fluidId) return;
-    confirmDisconnect(conn.facilityName, supply.name || fluidId, 'input', () => {
-      client.onDisconnectConnection(buildingX, buildingY, fluidId, 'input', conn.x, conn.y);
+    confirmDisconnect([conn.facilityName], supply.name || fluidId, 'input', () => {
+      client.onDisconnectConnection(buildingX, buildingY, fluidId, 'input', [{ x: conn.x, y: conn.y }]);
     });
     onClose();
   };
@@ -224,7 +234,11 @@ const SupplyCard = memo(function SupplyCard({
   const { expanded, toggle, loaded, failed } = useGateConnections(
     'supplies', supply.path, supply.name, buildingX, buildingY,
   );
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  // A click toggles a row in or out of the selection: several suppliers can go
+  // in one Fire, the way the reference client fired a multi-row list selection
+  // (Voyager/SupplySheetForm.pas:889-908). Kept sorted so the pairs leave in
+  // table order.
+  const [selectedRows, setSelectedRows] = useState<number[]>([]);
   const [overpayTarget, setOverpayTarget] = useState<number | null>(null);
   const maxPriceTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const minKTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -357,22 +371,28 @@ const SupplyCard = memo(function SupplyCard({
     client.onSearchConnections(buildingX, buildingY, fluidId, supply.name, 'input');
   };
 
+  // Overpayment is a per-connection property (index-addressed), so Modify only
+  // makes sense on exactly one row.
   const handleModify = () => {
-    if (selectedIdx !== null) setOverpayTarget(selectedIdx);
+    if (selectedRows.length === 1) setOverpayTarget(selectedRows[0]);
   };
 
   const handleFire = () => {
-    if (selectedIdx === null || !fluidId) return;
-    const conn = supply.connections[selectedIdx];
-    if (!conn) return;
-    confirmDisconnect(conn.facilityName, supply.name || fluidId, 'input', () => {
-      client.onDisconnectConnection(buildingX, buildingY, fluidId, 'input', conn.x, conn.y);
-      setSelectedIdx(null);
+    if (selectedRows.length === 0 || !fluidId) return;
+    const conns = selectedRows
+      .map(i => supply.connections[i])
+      .filter((c): c is BuildingConnectionData => c !== undefined);
+    if (conns.length === 0) return;
+    confirmDisconnect(conns.map(c => c.facilityName), supply.name || fluidId, 'input', () => {
+      client.onDisconnectConnection(buildingX, buildingY, fluidId, 'input', conns.map(c => ({ x: c.x, y: c.y })));
+      setSelectedRows([]);
     });
   };
 
   const handleRowClick = (idx: number) => {
-    setSelectedIdx(selectedIdx === idx ? null : idx);
+    setSelectedRows(prev => prev.includes(idx)
+      ? prev.filter(i => i !== idx)
+      : [...prev, idx].sort((a, b) => a - b));
   };
 
   const handleNavigate = (conn: BuildingConnectionData) => {
@@ -481,14 +501,16 @@ const SupplyCard = memo(function SupplyCard({
               tabIndex={0}
               onKeyDown={(e) => {
                 if (e.target !== e.currentTarget) return;
-                if (e.key === 'Delete' && canEdit && selectedIdx !== null) {
+                if (e.key === 'Delete' && canEdit && selectedRows.length > 0) {
                   handleFire();
                 }
                 if (e.key === 'Insert' && canEdit) {
                   handleHire();
                 }
-                if (e.key === 'Enter' && selectedIdx !== null) {
-                  const conn = supply.connections[selectedIdx];
+                // Enter follows one row, so it needs exactly one selected — the rule
+                // Modify already applies to a multi-selection (#563 meets #564).
+                if (e.key === 'Enter' && selectedRows.length === 1) {
+                  const conn = supply.connections[selectedRows[0]];
                   if (conn) handleNavigate(conn);
                 }
               }}
@@ -522,7 +544,7 @@ const SupplyCard = memo(function SupplyCard({
                 {supply.connections.map((conn, j) => (
                   <tr
                     key={`${j}:${conn.x},${conn.y}`}
-                    className={`${styles.supplyTableRow}${selectedIdx === j ? ` ${styles.supplyTableRowSelected}` : ''}`}
+                    className={`${styles.supplyTableRow}${selectedRows.includes(j) ? ` ${styles.supplyTableRowSelected}` : ''}`}
                     onClick={() => handleRowClick(j)}
                     onDoubleClick={() => handleNavigate(conn)}
                     onContextMenu={(e) => canEdit && handleRowContextMenu(e, j)}
@@ -597,14 +619,14 @@ const SupplyCard = memo(function SupplyCard({
               <button
                 className={styles.modifyBtn}
                 onClick={handleModify}
-                disabled={selectedIdx === null}
+                disabled={selectedRows.length !== 1}
               >
                 Modify
               </button>
               <button
                 className={styles.fireBtn}
                 onClick={handleFire}
-                disabled={selectedIdx === null}
+                disabled={selectedRows.length === 0}
               >
                 Fire
               </button>

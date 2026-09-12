@@ -232,7 +232,7 @@ export interface ClientCallbacks {
   onResearchCancelInvention: (buildingX: number, buildingY: number, inventionId: string) => void;
   onResearchFetchCategoryTabs: () => void;
   onConnectionConnect: (fluidId: string, direction: 'input' | 'output', selectedCoords: Array<{ x: number; y: number }>) => void;
-  onDisconnectConnection: (buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', x: number, y: number) => void;
+  onDisconnectConnection: (buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', connections: Array<{ x: number; y: number }>) => void;
 
   // Mail
   onMailGetFolder: (folder: MailFolder) => void;

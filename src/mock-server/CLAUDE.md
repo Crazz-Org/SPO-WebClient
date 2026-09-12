@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -183,6 +183,16 @@ different, so a handler that picked the facility's block or object fails instead
 accident. Responses are **empty**, the usual reason: a `procedure` answers nothing, so the frame
 is the only evidence there is. Its test drives the real `setBuildingProperty` and the real
 `getBuildingGateConnections`.
+
+`disconnect-connections` pins what a multi-row disconnect looks like on the wire: **one**
+`RDODisconnectInput` / `RDODisconnectOutput` frame whose second argument carries every selected
+pair, `"%10,20,30,40,50,60,"` — not one frame per row. That is the form the reference client
+emitted (`Voyager/SupplySheetForm.pas:889-908`, `Voyager/ProdSheetForm.pas:715-734`, each
+building a single `Cnxs` string from the whole list selection), and the server reads it back in
+pairs (`Kernel/Kernel0.pas:4157-4180`, `ParseGateList`), so the trailing comma is mandatory and
+any even token count is legal. Both members bind to `ObjectId`, not `CurrBlock`, and both are
+`procedure`s — the responses are **empty**, so the frame is the only evidence there is. Its test
+drives the real `setBuildingProperty` and asserts a single emitted frame carrying the list once.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under

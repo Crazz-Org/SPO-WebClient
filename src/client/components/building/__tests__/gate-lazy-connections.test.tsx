@@ -529,7 +529,7 @@ describe('disconnecting asks first (T3, B5)', () => {
     expect(s.confirmPayload?.options?.kind).toBe('destructive');
     expect(onDisconnectConnection).not.toHaveBeenCalled();
     s.confirmPayload?.onConfirm();
-    expect(onDisconnectConnection).toHaveBeenCalledWith(X, Y, 'Books', 'input', 40, 50);
+    expect(onDisconnectConnection).toHaveBeenCalledWith(X, Y, 'Books', 'input', [{ x: 40, y: 50 }]);
     useUiStore.getState().closeModal();
   });
 });
