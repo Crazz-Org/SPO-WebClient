@@ -58,7 +58,7 @@ Every member below is a Delphi `procedure`.
 
 | Operation | Meaning and range |
 |---|---|
-| `RDOSetInputMaxPrice` | the highest price the facility will pay, 0-1000 |
+| `RDOSetInputMaxPrice` | the highest price the facility will pay, 0-400 |
 | `RDOSetInputMinK` | the minimum quality it will accept, 0-100 |
 | `RDOSetInputOverPrice` | per-supplier overpayment, 0-150 % — used to outbid competitors for a scarce input |
 | `RDOConnectInput` | attach suppliers. The supplier list is a flat coordinate string `"x1,y1,x2,y2,..."` |
@@ -73,7 +73,7 @@ Every member below is a Delphi `procedure`.
 | `FluidValue` | string | Current production/consumption value |
 | `LastCostPerc` | string | Last cost as percentage |
 | `minK` | string | Minimum quality threshold (0-100) |
-| `MaxPrice` | string | Maximum price (0-1000) |
+| `MaxPrice` | string | Maximum price (0-400) |
 | `cnxCount` | integer | Number of connections |
 | `SortMode` | string | Sort mode: 0=cost, 1=quality |
 | `QPSorted` | string | Whether Q/P sorted ("Yes"/"No") |

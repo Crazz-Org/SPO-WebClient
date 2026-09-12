@@ -347,8 +347,8 @@ const SupplyCard = memo(function SupplyCard({
                 type="range"
                 className={styles.slider}
                 min={0}
-                max={500}
-                step={10}
+                max={400}
+                step={1}
                 value={localMaxPrice}
                 onChange={handleMaxPriceChange}
               />

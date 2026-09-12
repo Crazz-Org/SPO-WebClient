@@ -105,7 +105,12 @@ const ProductCard = memo(function ProductCard({
   const pricePc = parseFloat(product.pricePc ?? '') || 0;
   const avgPrice = parseFloat(product.avgPrice ?? '') || 0;
   const marketPrice = parseFloat(product.marketPrice ?? '') || 0;
-  const dollarPrice = marketPrice > 0 ? (pricePc / 100) * marketPrice : 0;
+  // The dollar figure beside the slider is the slider's own value priced out,
+  // so it has to follow the thumb rather than the server's last answer. Seeded
+  // once from that answer, exactly as PriceSliderWithMarker seeds its localVal,
+  // so the two stay equal for the life of the card (Voyager/ProdSheetForm.pas:687-698).
+  const [livePricePc, setLivePricePc] = useState(pricePc);
+  const dollarPrice = marketPrice > 0 ? (livePricePc / 100) * marketPrice : 0;
   const fluidId = product.metaFluid;
 
   const handleRowClick = (idx: number) => {
@@ -173,11 +178,12 @@ const ProductCard = memo(function ProductCard({
               <PriceSliderWithMarker
                 value={pricePc}
                 avgPrice={avgPrice}
-                max={300}
-                step={5}
+                max={400}
+                step={1}
                 canEdit={canEdit}
                 rdoName="PricePc"
                 onPropertyChange={handlePriceChange}
+                onValueChange={setLivePricePc}
               />
               {dollarPrice > 0 && (
                 <span className={styles.productDollarPrice}>{formatCurrency(dollarPrice)}</span>
