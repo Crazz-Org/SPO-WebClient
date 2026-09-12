@@ -526,6 +526,7 @@ function DefinedProperties({
             rdoCommands={rdoCommands}
             onPropertyChange={handlePropertyChange}
             onRowAction={handleRowAction}
+            onRowNavigate={client.onNavigateToBuilding}
           />,
         );
       }

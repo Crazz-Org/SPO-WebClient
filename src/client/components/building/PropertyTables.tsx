@@ -8,7 +8,7 @@
  * Extracted from PropertyGroup.tsx.
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, type KeyboardEvent } from 'react';
 import type { BuildingProductData } from '@/shared/types';
 import {
   PropertyType,
@@ -35,6 +35,7 @@ export function DataTable({
   rdoCommands,
   onPropertyChange,
   onRowAction,
+  onRowNavigate,
 }: {
   def: PropertyDefinition;
   rowCount: number;
@@ -43,9 +44,13 @@ export function DataTable({
   rdoCommands?: Record<string, RdoCommandMapping>;
   onPropertyChange: (name: string, value: number) => void;
   onRowAction?: (actionId: string, rowIndex: number) => void;
+  onRowNavigate?: (x: number, y: number) => void;
 }) {
   const propSuffix = def.indexSuffix || '';
   const cols = def.columns!;
+  const xCol = cols.find((c) => c.rdoSuffix === 'antX');
+  const yCol = cols.find((c) => c.rdoSuffix === 'antY');
+  const navigable = !!onRowNavigate && !!xCol && !!yCol;
 
   return (
     <table className={styles.dataTable}>
@@ -67,8 +72,29 @@ export function DataTable({
             const iSuffix = c.indexSuffix !== undefined ? c.indexSuffix : propSuffix;
             rowValues[c.rdoSuffix] = valueMap.get(`${c.rdoSuffix}${i}${cSuffix}${iSuffix}`) ?? '';
           }
+          const activateRow = () => {
+            if (!navigable) return;
+            const x = parseInt(rowValues['antX'], 10);
+            const y = parseInt(rowValues['antY'], 10);
+            if (Number.isNaN(x) || Number.isNaN(y)) return;
+            onRowNavigate(x, y);
+          };
+          const navProps = navigable
+            ? {
+                onDoubleClick: activateRow,
+                tabIndex: 0,
+                onKeyDown: (e: KeyboardEvent<HTMLTableRowElement>) => {
+                  if (e.key === 'Enter' && e.target === e.currentTarget) activateRow();
+                },
+                title: 'Double-click or press Enter to view on the map',
+              }
+            : {};
           return (
-            <tr key={i} className={styles.dataRow}>
+            <tr
+              key={i}
+              className={navigable ? `${styles.dataRow} ${styles.dataRowNavigable}` : styles.dataRow}
+              {...navProps}
+            >
               {cols.map((col) => {
                 const colSuffix = col.columnSuffix || '';
                 const idxSuffix = col.indexSuffix !== undefined ? col.indexSuffix : propSuffix;
