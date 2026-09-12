@@ -49,7 +49,7 @@ export const GATE_MAP_VALUE = '101';
  */
 export const SUPPLY_HEADER_NAMES = [
   'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
-  'QPSorted', 'SortMode', 'cnxCount', 'ObjectId',
+  'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
 ] as const;
 
 function buildRdoExchanges(): RdoExchange[] {
@@ -114,7 +114,7 @@ function buildRdoExchanges(): RdoExchange[] {
       // SUPPLY_HEADER_NAMES) answers 0 so the gate opens with no connections.
       id: 'gm-rdo-header',
       request: rdoCall('GetPropertyList', tempObject, RdoValue.string(headerQuery)).toFrame(),
-      response: 'A200 res="%CHEMICALS\t120\t\t\t\t\t\t0\t40133600"',
+      response: 'A200 res="%CHEMICALS\t120\t\t\t\t\t\t0\t1\t40133600"',
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'GetPropertyList',
         argsPattern: [`"%${headerQuery}"`],

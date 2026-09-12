@@ -10,8 +10,11 @@
 import { memo, useState, useCallback, useRef } from 'react';
 import { Crosshair } from 'lucide-react';
 import type { BuildingSupplyData, BuildingConnectionData } from '@/shared/types';
+import { isTradeModeValue } from '@/shared/building-details/trade-settings';
 import { useClient } from '../../context';
 import { useUiStore } from '../../store/ui-store';
+import { useBuildingStore } from '../../store/building-store';
+import { findPropertyValue } from './InspectorHeader';
 import { useGateConnections } from './useGateConnections';
 import { connectionPendingKey } from '../../handlers/connection-pending-key';
 import { SaveIndicator } from './SaveIndicator';
@@ -62,6 +65,18 @@ export function SuppliesPanel({
   buildingX: number;
   buildingY: number;
 }) {
+  // Whether the automatic-buying checkbox is offered at all is a property of
+  // the FACILITY, not of a gate: `cbAlmBuy.Visible := ((i=2) or (i=5) or (i=6))
+  // and fHandler.fOwnsFac` (Voyager/SupplySheetForm.pas:359), where `i` is the
+  // facility's trade role (`tidTradeRole`, :349). The three roles are the same
+  // three the mode combo offers, so the predicate is shared rather than
+  // restated. `Role` is the warehouse template's name for it.
+  const groups = useBuildingStore((s) => s.details?.groups);
+  const tradeRole = groups
+    ? (findPropertyValue(groups, 'TradeRole') ?? findPropertyValue(groups, 'Role'))
+    : undefined;
+  const autoBuyOffered = canEdit && tradeRole !== undefined && isTradeModeValue(tradeRole);
+
   if (supplies.length === 0) {
     return <div className={styles.empty}>No supply inputs</div>;
   }
@@ -71,7 +86,14 @@ export function SuppliesPanel({
           which is not read until the gate is opened. The path comes from
           GetInputNames and is there from the start. */}
       {supplies.map((supply) => (
-        <SupplyCard key={supply.path} supply={supply} canEdit={canEdit} buildingX={buildingX} buildingY={buildingY} />
+        <SupplyCard
+          key={supply.path}
+          supply={supply}
+          canEdit={canEdit}
+          autoBuyOffered={autoBuyOffered}
+          buildingX={buildingX}
+          buildingY={buildingY}
+        />
       ))}
     </div>
   );
@@ -195,11 +217,14 @@ function SortHeader({
 const SupplyCard = memo(function SupplyCard({
   supply,
   canEdit,
+  autoBuyOffered,
   buildingX,
   buildingY,
 }: {
   supply: BuildingSupplyData;
   canEdit: boolean;
+  /** The facility's role and ownership allow the automatic-buying checkbox. */
+  autoBuyOffered: boolean;
   buildingX: number;
   buildingY: number;
 }) {
@@ -257,6 +282,20 @@ const SupplyCard = memo(function SupplyCard({
     if (supply.sortMode !== undefined) setLocalSortMode(supply.sortMode === '1' ? 1 : 0);
   }
 
+  // Automatic buying, same "seen / local" shape: the box has to move on the
+  // click, before the gate has been re-read, and still follow a value the
+  // server sends that this card has not shown yet. `'1'` is what
+  // `Cache.WriteBoolean` stores for true (Cache/CacheAgent.pas:150-152) and
+  // what Voyager tests (`Info.IntValue[tidSelected] = 1`,
+  // Voyager/SupplySheetForm.pas:997).
+  const [seenSelected, setSeenSelected] = useState(supply.selected);
+  const [localAutoBuy, setLocalAutoBuy] = useState(supply.selected === '1');
+
+  if (supply.selected !== seenSelected) {
+    setSeenSelected(supply.selected);
+    if (supply.selected !== undefined) setLocalAutoBuy(supply.selected === '1');
+  }
+
   // Every mutation below addresses the gate by its fluid id, and that id is a
   // header property — unknown until this gate has been opened and read. The
   // controls that use it are rendered only once it is known; the guards are the
@@ -268,6 +307,16 @@ const SupplyCard = memo(function SupplyCard({
   // that mark. A gate the server does not sort by quality/price ratio has no
   // sort to change, so the headers stay the plain text they were.
   const sortable = canEdit && supply.qpSorted === '1' && !!fluidId;
+
+  // The control appears only once the state has actually been read: an unopened
+  // gate, or one that does not publish `Selected` (a non-pull input has no
+  // RDOSelSelected to call), shows nothing rather than a default.
+  const autoBuyShown = autoBuyOffered && supply.selected !== undefined && !!fluidId;
+
+  // `BuySet` (Voyager/SupplySheetForm.pas:1123-1139) hides the sliders panel,
+  // the supplier list and the value/cost labels when the box is off. A gate with
+  // no checkbox is always "buying", so it renders exactly as it did before.
+  const buying = !autoBuyShown || localAutoBuy;
 
   const handleMaxPriceChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value, 10);
@@ -302,6 +351,19 @@ const SupplyCard = memo(function SupplyCard({
     client.onSetBuildingProperty(buildingX, buildingY, 'RDOSetInputSortMode', String(mode), {
       fluidId,
     });
+  };
+
+  // One click, one write — no debounce: Voyager forks the call straight from the
+  // click (`Threads.Fork(threadedSetSelect, ...)`, SupplySheetForm.pas:1100).
+  // The gateway turns '1'/'0' into the `#-1`/`#0` the WordBool argument takes,
+  // and `fluidId` is not a wire argument: it names the gate the frame is
+  // addressed to.
+  const handleAutoBuyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!fluidId) return;
+    setLocalAutoBuy(e.target.checked);
+    client.onSetBuildingProperty(
+      buildingX, buildingY, 'RDOSelSelected', e.target.checked ? '1' : '0', { fluidId },
+    );
   };
 
   const handleHire = () => {
@@ -360,18 +422,34 @@ const SupplyCard = memo(function SupplyCard({
 
       {expanded && (
         <div className={styles.supplyBody}>
+          {/* Automatic buying — the gate's own `Selected` flag */}
+          {autoBuyShown && (
+            <label className={styles.row}>
+              <span className={styles.name}>Automatic buying</span>
+              <input
+                type="checkbox"
+                className={styles.checkbox}
+                checked={localAutoBuy}
+                onChange={handleAutoBuyChange}
+              />
+              <SaveIndicator propertyKey={`RDOSelSelected:${JSON.stringify({ fluidId })}`} />
+            </label>
+          )}
+
           {/* Stats row */}
-          <div className={styles.supplyStats}>
-            {supply.fluidValue && (
-              <span className={styles.supplyStat}>Last Value: <strong>{supply.fluidValue}</strong></span>
-            )}
-            {supply.lastCostPerc && (
-              <span className={styles.supplyStat}>Cost: <strong>{supply.lastCostPerc}%</strong></span>
-            )}
-          </div>
+          {buying && (
+            <div className={styles.supplyStats}>
+              {supply.fluidValue && (
+                <span className={styles.supplyStat}>Last Value: <strong>{supply.fluidValue}</strong></span>
+              )}
+              {supply.lastCostPerc && (
+                <span className={styles.supplyStat}>Cost: <strong>{supply.lastCostPerc}%</strong></span>
+              )}
+            </div>
+          )}
 
           {/* Max Price slider */}
-          {canEdit && supply.maxPrice !== undefined ? (
+          {buying && (canEdit && supply.maxPrice !== undefined ? (
             <div className={styles.supplySliderRow}>
               <span className={styles.sliderLabel}>Max Price</span>
               <input
@@ -391,10 +469,10 @@ const SupplyCard = memo(function SupplyCard({
               <span className={styles.name}>Max Price</span>
               <span className={styles.value}>{supply.maxPrice}%</span>
             </div>
-          ) : null}
+          ) : null)}
 
           {/* Min Quality slider */}
-          {canEdit && supply.minK !== undefined ? (
+          {buying && (canEdit && supply.minK !== undefined ? (
             <div className={styles.supplySliderRow}>
               <span className={styles.sliderLabel}>Min Quality</span>
               <input
@@ -414,10 +492,10 @@ const SupplyCard = memo(function SupplyCard({
               <span className={styles.name}>Min Quality</span>
               <span className={styles.value}>{supply.minK}%</span>
             </div>
-          ) : null}
+          ) : null)}
 
           {/* Connections table */}
-          {supply.connections.length > 0 ? (
+          {buying && (supply.connections.length > 0 ? (
             <table
               className={styles.supplyTable}
               tabIndex={0}
@@ -520,7 +598,7 @@ const SupplyCard = memo(function SupplyCard({
                     ? `${supply.connectionCount} supplier${supply.connectionCount !== 1 ? 's' : ''} connected — details unavailable`
                     : 'No suppliers connected'}
             </div>
-          )}
+          ))}
 
           {/* Overpayment popover */}
           {overpayTarget !== null && canEdit && supply.connections[overpayTarget] && (
