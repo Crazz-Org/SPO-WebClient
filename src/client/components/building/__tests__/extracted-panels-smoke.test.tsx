@@ -285,6 +285,30 @@ describe('ProductsPanel', () => {
     expect(container.querySelector('table')).toBeTruthy();
   });
 
+  it('shows what each buyer took and what delivering it cost, and names the company in a cell', () => {
+    // Output connections carry LastValueCnxInfo and tCostCnxInfo and nothing else
+    // (building-details-handler.ts PRODUCT_GATES.connectionProps); Price and Quality
+    // were columns the server never fills for a buyer.
+    const conn = makeConnection({ facilityName: 'Pharma Plant', companyName: 'AcmeCorp', lastValue: '4321', cost: '$77' });
+    const product = makeProduct({ connections: [conn], connectionCount: 1 });
+    const { container } = renderWithProviders(
+      <ProductsPanel onPropertyChange={() => {}} products={[product]} canEdit={true} buildingX={100} buildingY={200} />,
+    );
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    const cells = Array.from(container.querySelectorAll('tbody td')).map((td) => td.textContent);
+    expect(cells).toContain('4321');
+    expect(cells).toContain('$77');
+    expect(cells).toContain('AcmeCorp');
+    const row = container.querySelector('tbody tr') as HTMLTableRowElement;
+    expect(row.getAttribute('title')).toBeNull();
+
+    const headers = Array.from(container.querySelectorAll('thead th')).map((th) => th.textContent);
+    expect(headers).not.toContain('Price');
+    expect(headers).not.toContain('Quality');
+    expect(headers).toEqual(expect.arrayContaining(['Facility', 'Company', 'Last', 'T.Cost']));
+  });
+
   it('shows "No buyers connected" when expanded with no connections', () => {
     const product = makeProduct({ connections: [], connectionCount: 0 });
     markGateLoaded('products', product.path);

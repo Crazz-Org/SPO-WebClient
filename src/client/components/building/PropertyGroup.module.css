@@ -1900,11 +1900,6 @@
   color: var(--text-primary);
 }
 
-.productOwnerDot {
-  color: var(--text-disabled);
-  font-size: 10px;
-}
-
 /* Product action buttons (compact) */
 .productActions {
   display: flex;
