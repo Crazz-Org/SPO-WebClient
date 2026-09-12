@@ -43,6 +43,7 @@ import type {
   PolicyData,
   PoliticsData,
   NewspaperBoard,
+  NewspaperRatingEntry,
   NewspaperIssue,
   NewspaperIssueList,
   PoliticalRoleInfo,
@@ -1546,6 +1547,12 @@ export interface WsReqNewspaperPost extends WsMessage {
   body: string;
   /** Reply to this column rather than opening a new one. */
   replyToPath?: string;
+  /**
+   * The ratings block, when the reader filled it in. Omitted or empty = a plain
+   * column; each entry goes out as `RDOSetRatingFrom` before the post
+   * (`boardmsg.asp:96-143`).
+   */
+  ratings?: NewspaperRatingEntry[];
 }
 
 export interface WsRespNewspaperPost extends WsMessage {

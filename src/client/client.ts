@@ -532,12 +532,12 @@ export class StarpeaceClient implements ClientHandlerContext {
         useNewspaperStore.getState().setRequestedPath(path ?? '');
         this.sendMessage({ type: WsMessageType.REQ_NEWSPAPER_BOARD, ...context, path });
       },
-      onPostNewspaperColumn: (subject, body, replyToPath) => {
+      onPostNewspaperColumn: (subject, body, replyToPath, ratings) => {
         const context = useNewspaperStore.getState().context;
         if (!context) return;
         useNewspaperStore.getState().setPosting(true);
         this.sendMessage({
-          type: WsMessageType.REQ_NEWSPAPER_POST, ...context, subject, body, replyToPath,
+          type: WsMessageType.REQ_NEWSPAPER_POST, ...context, subject, body, replyToPath, ratings,
         });
       },
       onRequestNewspaperIssues: () => {

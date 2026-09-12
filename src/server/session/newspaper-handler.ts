@@ -10,7 +10,10 @@
  * navigates to `Visual/News/boardreader.asp` with the town's `PaperName`, not to
  * anything under `Politics/`. The board is a `NewsBoard.NewsObject` COM tree
  * rooted at `boards\<World>\<Paper>\`, reachable only through the ASP pages —
- * there is no RDO member for it.
+ * the board itself has no RDO member. A post can nonetheless carry ratings:
+ * `boardmsg.asp:96-143` emits one `RDOSetRatingFrom` per chosen criterion and
+ * appends a report of what it sent to the body, all before `NewMessage`
+ * (`:146`). That half of the page runs here too — see `postNewspaperColumn`.
  *
  * Three operations:
  *   - read   `boardmsg.asp?top=TRUE&root=…&path=…`  -> the index, or one column
@@ -37,8 +40,10 @@ import type {
   NewspaperIssue,
   NewspaperIssueList,
   NewspaperIssueRef,
+  NewspaperRatingEntry,
   NewspaperStory,
 } from '../../shared/types';
+import { politicsSetRating } from './politics-handler';
 import { toErrorMessage } from '../../shared/error-utils';
 import { toProxyUrl } from '../../shared/proxy-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
@@ -360,6 +365,22 @@ export async function getNewspaperBoard(
 }
 
 /**
+ * The report `boardmsg.asp:125,133` glues onto the body: a blank line,
+ * "Ratings from <tycoon>:", then one `Name: Value%` line per criterion,
+ * CRLF-terminated like the page (`Chr(13) & Chr(10)`). The page concatenates
+ * `strRatingsFrom` (News.lng:4, "Ratings from") and the name with no space;
+ * that is column text, not wire, so the space is added here.
+ *
+ * `sent` is what actually went out, never what was asked for — an empty list
+ * returns `body` unchanged, so a column can never claim a rating nobody sent.
+ */
+export function appendRatingsReport(body: string, tycoon: string, sent: NewspaperRatingEntry[]): string {
+  if (sent.length === 0) return body;
+  const report = sent.map(r => `${r.name}: ${r.value}%\r\n`).join('');
+  return `${body}\r\n\r\nRatings from ${tycoon}:\r\n${report}`;
+}
+
+/**
  * Publish a column, or a reply to one.
  *
  * `boardmsg.asp:83-153` posts through `NewsObj.NewMessage( parentPath, Tycoon,
@@ -372,6 +393,11 @@ export async function getNewspaperBoard(
  * 200 either way, so the response body is the only oracle. A post that took
  * effect re-renders the index with the new column in it (`:47` also reloads the
  * list frame), which is what we read back.
+ *
+ * `ratings` is the page's other half (`:96-143`): each chosen criterion goes out
+ * as `RDOSetRatingFrom` and earns a line in the report appended to the body,
+ * all of it before the post, exactly as the page orders it. An empty list is
+ * the plain column — byte for byte what it was before.
  */
 export async function postNewspaperColumn(
   ctx: SessionContext,
@@ -379,6 +405,7 @@ export async function postNewspaperColumn(
   subject: string,
   body: string,
   replyToPath?: string,
+  ratings: NewspaperRatingEntry[] = [],
 ): Promise<{ success: boolean; message: string; board: NewspaperBoard | null }> {
   const worldIp = ctx.currentWorldInfo?.ip;
   const worldName = ctx.currentWorldInfo?.name || '';
@@ -393,6 +420,23 @@ export async function postNewspaperColumn(
     return { success: false, message: 'Not signed in.', board: null };
   }
 
+  // `boardmsg.asp:96-143` runs BEFORE `NewMessage` (`:146`): the ratings go out
+  // first, and the report names only the ones that did. A rating the gateway
+  // could not emit (no political entity, no socket) is left out of the report
+  // and counted in the message; the column still posts, as the page still calls
+  // `NewMessage` when the proxy could not bind (`:135-146`).
+  const sent: NewspaperRatingEntry[] = [];
+  for (const rating of ratings) {
+    const result = await politicsSetRating(ctx, target.buildingX, target.buildingY, rating.id, rating.value);
+    if (result.success) {
+      sent.push(rating);
+    } else {
+      ctx.log.warn(`[Newspaper] Rating "${rating.name}" not sent: ${result.message}`);
+    }
+  }
+  const postedBody = appendRatingsReport(body, author, sent);
+  const unsent = ratings.length - sent.length;
+
   const root = boardRoot(worldName, target.paperName);
   const isReply = replyToPath !== undefined && replyToPath !== '' && replyToPath !== root;
 
@@ -405,7 +449,7 @@ export async function postNewspaperColumn(
     // it to the literal "YES" (`:87`), so anything else means "post at root".
     const form = new URLSearchParams({
       Subject: subject,
-      Body: body,
+      Body: postedBody,
       Reply: isReply ? 'YES' : 'NO',
     });
 
@@ -434,7 +478,9 @@ export async function postNewspaperColumn(
     return {
       success: published,
       message: published
-        ? 'Column published'
+        ? (unsent === 0
+          ? 'Column published'
+          : `Column published; ${unsent} of ${ratings.length} ratings could not be sent.`)
         : 'The newspaper did not publish the column.',
       board: {
         paperName: target.paperName,

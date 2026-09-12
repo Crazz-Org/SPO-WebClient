@@ -1308,6 +1308,19 @@ export interface NewspaperArticle {
   photoUrl: string;
 }
 
+/**
+ * One criterion the reader chose to rate while posting a column — the
+ * `<select name=parm<Id>>` of `boardmsg.asp:337-350` that was not left on `-`.
+ */
+export interface NewspaperRatingEntry {
+  /** Rating cache id — the `RatingId` argument of `RDOSetRatingFrom` (`:120`). */
+  id: string;
+  /** Criterion name as the Politics page printed it; what the report prints (`:125`). */
+  name: string;
+  /** Percentage, 0..100. */
+  value: number;
+}
+
 export interface NewspaperBoard {
   paperName: string;
   /** `boards\<World>\<Paper>\` — the board root (`boardreader.asp:5`). */

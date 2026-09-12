@@ -1,16 +1,22 @@
 /**
- * Scenario 17: the daily paper — `Newsreader.asp`'s two pages, plus the
- * directory's Media listing (`New Directory/Newspapers.asp`).
+ * Scenario 17: the town paper — the board's rated post, `Newsreader.asp`'s two
+ * pages, and the directory's Media listing (`New Directory/Newspapers.asp`).
  *
- * The board half of the town paper already had no L1 fixture and no need for
- * one: `boardmsg.asp` is a single page and its parsers are unit-tested against
- * it. The *paper* half is different, because it is two pages that have to agree
- * with each other — the bar names the folders, and the folder name is what
- * builds the URL of the issue page. A mistake in between (a folder sorted the
- * wrong way, an `@` left unescaped, a `Selected=` read off the wrong cell)
- * cannot be caught by testing either page alone.
+ * The *paper* half is two pages that have to agree with each other — the bar
+ * names the folders, and the folder name is what builds the URL of the issue
+ * page. A mistake in between (a folder sorted the wrong way, an `@` left
+ * unescaped, a `Selected=` read off the wrong cell) cannot be caught by testing
+ * either page alone.
  *
- * So this scenario serves all three, and its suites drive the real handlers
+ * The *board* half needs a fixture for the same reason, one protocol further
+ * out: a rated post is TWO protocols that must agree. `boardmsg.asp:96-143`
+ * emits one `RDOSetRatingFrom` per chosen criterion and then posts a body whose
+ * last lines report exactly those criteria — and the report is only honest if
+ * the frames it names actually went out first (`:146` runs last). So this
+ * scenario carries both halves of that act: the RDO exchanges, and the two
+ * pages the post reads back.
+ *
+ * So this scenario serves them all, and its suites drive the real handlers
  * across them:
  *
  *  - `showbar.asp` — the issue row of `ShowBar.asp:81-109`, with the cells in
@@ -27,15 +33,24 @@
  *  - `New Directory/Newspapers.asp` — the directory's Media listing, one row
  *    per paper in the world (`Newspapers.asp:12-24`); `papers: []` is the
  *    world with no newspapers.
+ *  - two `RDOSetRatingFrom` exchanges — the rated post's frames, built by the
+ *    emitter and answered by nothing, because a `procedure` answers nothing.
+ *  - `POST boardmsg.asp?action=post` — the index `RenderGlobal` re-renders with
+ *    the new column in it (`:198-219`), the only oracle a post has; and
+ *    `GET boardlist.asp` — the tree the page reloads beside it (`:46-48`).
  *
- * There is no RDO half: the paper is reachable only through the ASP pages,
- * exactly like the board.
+ * The paper's own pages have no RDO half: an issue is a folder of generated
+ * HTML, reachable through IIS alone.
  */
 
 import type { HttpScenario, HttpExchange } from '../types/http-exchange-types';
+import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { NewspaperIssueRef, NewspaperListing } from '../../shared/types';
+import { rdoCall } from '@/shared/rdo-frame';
+import { RdoValue } from '@/shared/rdo-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
+import { CIVIC_TARGETS } from './civic-mutations-scenario';
 
 /** Where `Newsreader.asp` and everything it frames live. */
 export const NEWS_PATH = '/Five/0/Visual/News';
@@ -51,6 +66,26 @@ export const MOCK_DIRECTORY_PAPERS: NewspaperListing[] = [
   { paperName: MOCK_PAPER_NAME, townName: 'Shamba' },
   { paperName: 'Helartia Herald', townName: 'Helartia' },
 ];
+
+/**
+ * The rated post: a column and the two criteria it carries.
+ *
+ * The ids are the ones `tycoonratings.asp` serves in `civic-mutations`, and the
+ * political entity they bind to is that scenario's `townHallId` — the same
+ * object `rdoModifyRating.asp:24-27` binds to.
+ */
+export const MOCK_RATED_POST = {
+  subject: 'Taxes are too high',
+  body: 'Lower them.',
+  path: 'm1.five',
+  ratings: [
+    { id: '41123456', name: 'Taxation', value: 80 },
+    { id: '41123457', name: 'Public Works', value: 40 },
+  ],
+} as const;
+
+/** `boardreader.asp:5` — the tree the board is rooted at, for `{{worldName}}`. */
+const BOARD_ROOT = `boards\\{{worldName}}\\${MOCK_PAPER_NAME}\\`;
 
 /**
  * Three kept issues, newest first.
@@ -263,6 +298,100 @@ function newspapersPage(papers: NewspaperListing[]): string {
 }
 
 /**
+ * The board index as `RenderGlobal` re-renders it after a post
+ * (`boardmsg.asp:198-219`) — the author cell, the subject as a link carrying
+ * the column's `path`, and the summary row under it. This IS the post's oracle:
+ * the page answers 200 whether or not it posted, so the gateway looks for its
+ * own column here.
+ */
+function boardIndexPage(): string {
+  const href = `BoardMsg.asp?root=${BOARD_ROOT}&path=${MOCK_RATED_POST.path}`
+    + `&TownName=Shamba&WorldName={{worldName}}&tycoon={{username}}`
+    + `&PaperName=${encodeURIComponent(MOCK_PAPER_NAME)}&DAAddr=127.0.0.1&DAPort=7001`;
+  return [
+    '\t<img id=picture style="display: none">',                     // :263
+    `\t<h1>Welcome to the ${MOCK_PAPER_NAME}'s editorial section</h1>`,
+    '\t<h2>"Latest 10 columns:"</h2>',                              // :269
+    '\t\t<div style="margin-left: 20px">',                          // :194
+    '\t\t\t<table cellspacing=0 cellpading=0>',
+    '\t\t\t\t\t<tr>',                                               // :203
+    '\t\t\t\t\t\t<td valign="bottom">',
+    '\t\t\t\t\t\t\t<div class=author><b>{{username}}</b></div>',    // :205
+    '\t\t\t\t\t\t</td>',
+    '\t\t\t\t\t\t<td width=10>',
+    '\t\t\t\t\t\t</td>',
+    '\t\t\t\t\t\t<td valign="top">',
+    `\t\t\t\t\t\t\t<a target="BoardMain" href="${href}">${MOCK_RATED_POST.subject}</a>`,
+    '\t\t\t\t\t\t</td>',
+    '\t\t\t\t\t</tr>',
+    '\t\t\t\t\t<tr>',                                               // :214
+    '\t\t\t\t\t\t<td colspan=2>',
+    '\t\t\t\t\t\t</td>',
+    `\t\t\t\t\t\t<td class=comment>${MOCK_RATED_POST.body}...</td>`, // :217
+    '\t\t\t\t\t</tr>',
+    '\t\t\t</table>',
+    '\t\t</div>',
+  ].join('\n');
+}
+
+/**
+ * The list frame `boardmsg.asp:46-48` reloads beside the index — one entry of
+ * `boardlist.asp:22-36` for the column that was just posted.
+ */
+function boardListPage(): string {
+  const href = `boardmsg.asp?root=${BOARD_ROOT}&TownName=Shamba&path=${MOCK_RATED_POST.path}`
+    + `&tycoon={{username}}&WorldName={{worldName}}`
+    + `&PaperName=${encodeURIComponent(MOCK_PAPER_NAME)}&DAAddr=127.0.0.1&DAPort=7001`;
+  return [
+    '<html><head><link rel="stylesheet" href="BoardList.css"></head><body>',
+    `<h1>${MOCK_PAPER_NAME}</h1>`,
+    `<b>{{username}}</b> - <a target="BoardMain" href="${href}"> ${MOCK_RATED_POST.subject}</a><br>`,
+    '<div style="margin-left: 20px">',
+    '\t<!--',
+    '\t<div class=comment style="margin-left: 20px">',
+    `\t\t${MOCK_RATED_POST.body}...`,
+    '\t</div>',
+    '\t-->',
+    '</div>',
+    '</body></html>',
+  ].join('\n');
+}
+
+/**
+ * The rated post's RDO half — one `RDOSetRatingFrom` per criterion, in the
+ * order the reader's block lists them.
+ *
+ * Built by the emitter, so the frame cannot drift from the catalogue. The
+ * response is **empty on purpose**: `RDOSetRatingFrom` is a `procedure`
+ * (`Kernel/TownPolitics.pas:40`), so nothing ever comes back to say the write
+ * landed — the report the column carries is the only record, and it is written
+ * from what went out.
+ */
+function buildRdoExchanges(): RdoExchange[] {
+  return MOCK_RATED_POST.ratings.map((rating) => {
+    const args = [
+      RdoValue.string(rating.id),
+      // The rater. `matchKeys` are never variable-substituted (`rdo-mock.ts:85-105`),
+      // so this is the literal default of `scenario-variables.ts:50`.
+      RdoValue.string('SPO_test3'),
+      RdoValue.int(rating.value),
+    ];
+    return {
+      id: `newspaper-rdo-set-rating-${rating.id}`,
+      request: rdoCall('RDOSetRatingFrom', CIVIC_TARGETS.townHallId, ...args).toFrame(),
+      response: '',
+      matchKeys: {
+        verb: 'sel',
+        targetId: CIVIC_TARGETS.townHallId,
+        action: 'call',
+        member: 'RDOSetRatingFrom',
+        argsPattern: args.map((a) => a.format()),
+      },
+    };
+  });
+}
+
+/**
  * Put the SECOND folder first, so the page never arrives in the order the
  * gateway must answer in — and the selected cell (`:87`, the first one) is not
  * the newest issue either, which is the case a test would otherwise miss.
@@ -274,6 +403,25 @@ function pageOrderOf(folders: string[]): string[] {
 
 function buildHttpExchanges(folders: string[], papers: NewspaperListing[]): HttpExchange[] {
   const exchanges: HttpExchange[] = [
+    {
+      // The post itself — `boardmsg.asp:146` then re-renders the index (`:47`).
+      id: 'newspaper-http-board-post',
+      method: 'POST',
+      urlPattern: `${NEWS_PATH}/boardmsg.asp`,
+      queryPatterns: { action: 'post', PaperName: MOCK_PAPER_NAME },
+      status: 200,
+      contentType: 'text/html',
+      body: boardIndexPage(),
+    },
+    {
+      // The list frame the page reloads beside it (`:46-48`).
+      id: 'newspaper-http-board-list',
+      method: 'GET',
+      urlPattern: `${NEWS_PATH}/boardlist.asp`,
+      status: 200,
+      contentType: 'text/html',
+      body: boardListPage(),
+    },
     {
       id: 'newspaper-http-bar',
       method: 'GET',
@@ -334,12 +482,18 @@ function buildHttpExchanges(folders: string[], papers: NewspaperListing[]): Http
 export function createNewspaperScenario(
   overrides?: Partial<ScenarioVariables>,
   opts: { issues?: string[]; papers?: NewspaperListing[] } = {},
-): { http: HttpScenario } {
+): { rdo: RdoScenario; http: HttpScenario } {
   const vars = mergeVariables(overrides);
   const folders = opts.issues ?? MOCK_ISSUE_FOLDERS;
   const papers = opts.papers ?? MOCK_DIRECTORY_PAPERS;
 
   return {
+    rdo: {
+      name: 'newspaper',
+      description: 'The rated post: the ratings a column carries, emitted before it is posted',
+      exchanges: buildRdoExchanges(),
+      variables: vars as unknown as Record<string, string>,
+    },
     http: {
       name: 'newspaper',
       exchanges: buildHttpExchanges(folders, papers),

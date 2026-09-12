@@ -40,9 +40,13 @@ single `%`-prefixed string, because that is the whole shape of the declaration
 (`Interface Server/InterfaceServer.pas:441`, a one-argument `function`): a second argument or a
 frame sent against the context id would answer about nobody, with no error to show for it.
 
-`newspaper` is the daily paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
-renders, and one `home.asp` per kept issue. HTTP only — the paper is reachable through the
-ASP pages alone. Its bar serves the cells in an order that is **not** the answer order, so
+`newspaper` is the town paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
+renders, and one `home.asp` per kept issue. It also carries the **rated post**, which is two
+protocols that must agree — the RDO half is two `RDOSetRatingFrom` exchanges with an **empty
+response** (a `procedure` answers nothing), and the HTTP half is the `POST boardmsg.asp` the
+column is published with and the `GET boardlist.asp` the page reloads beside it; the report
+the posted body ends with may only name ratings whose frame went out first
+(`boardmsg.asp:96-146`). Its bar serves the cells in an order that is **not** the answer order, so
 the sort the gateway derives from the folder id (`News.pas:956-961`) has something to prove;
 `createNewspaperScenario(vars, { issues: [] })` is the paper that has printed nothing yet.
 It also serves the directory's `New Directory/Newspapers.asp` listing (`{ papers: [] }` is
