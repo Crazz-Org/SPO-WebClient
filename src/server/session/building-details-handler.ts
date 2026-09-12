@@ -1187,9 +1187,14 @@ const PRODUCT_GATES: GateSpec<BuildingProductData> = {
     'MetaFluid', 'LastFluid', 'FluidQuality', 'PricePc',
     'AvgPrice', 'MarketPrice', 'cnxCount',
   ],
+  // First seven: Voyager/ProdSheetForm.pas:407-413, same order. Eighth is what
+  // the cache also writes for an output (Kernel/KernelCache.pas:707-712) that
+  // the reference client never asked for — appended last so the seven Voyager
+  // positions stay put; a missing owner answers an empty column
+  // (Cache Server/CachedObjectWrap.pas:225-230).
   connectionProps: [
     'cnxFacilityName', 'cnxCompanyName', 'LastValueCnxInfo',
-    'ConnectedCnxInfo', 'tCostCnxInfo', 'cnxXPos', 'cnxYPos',
+    'ConnectedCnxInfo', 'tCostCnxInfo', 'cnxXPos', 'cnxYPos', 'cnxCreatedBy',
   ],
   gateLabel: 'product',
   rowLabel: 'client connection',
@@ -1209,7 +1214,7 @@ const PRODUCT_GATES: GateSpec<BuildingProductData> = {
   buildConnection: (v) => ({
     facilityName: v[0] || '',
     companyName: v[1] || '',
-    createdBy: '',
+    createdBy: v[7] || '',
     price: '',
     overprice: '',
     lastValue: v[2] || '',

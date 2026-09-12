@@ -128,7 +128,7 @@ const MOCK_FACTORY: MockBuilding = {
         {
           facilityName: 'Drug Store 10',
           companyName: 'Yellow Inc.',
-          createdBy: '',
+          createdBy: 'SPO_test3',
           price: '',
           overprice: '',
           lastValue: '120',
@@ -141,7 +141,7 @@ const MOCK_FACTORY: MockBuilding = {
         {
           facilityName: 'Warehouse 5',
           companyName: 'Yellow Inc.',
-          createdBy: '',
+          createdBy: 'SPO_test3',
           price: '',
           overprice: '',
           lastValue: '365',
