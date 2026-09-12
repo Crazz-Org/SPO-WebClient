@@ -18,6 +18,8 @@ export interface RuntimeConfigInput {
   forceWorld?: string;
   /** Dev-only: turns on the in-app bug-reporting capture. */
   bugReport?: boolean;
+  /** Registration page for "Create an account" on the sign-in screen; empty renders no action. */
+  registerUrl?: string;
 }
 
 export function buildRuntimeConfigScript(input: RuntimeConfigInput): string {
@@ -30,6 +32,9 @@ export function buildRuntimeConfigScript(input: RuntimeConfigInput): string {
   }
   if (input.bugReport) {
     lines.push(`window.__SPO_BUG_REPORT__=true;`);
+  }
+  if (input.registerUrl) {
+    lines.push(`window.__SPO_REGISTER_URL__=${JSON.stringify(input.registerUrl)};`);
   }
   return lines.join('\n');
 }

@@ -428,6 +428,7 @@ const server = http.createServer(async (req, res) => {
       singleUserMode: SINGLE_USER_MODE,
       forceWorld: config.server.forceWorld,
       bugReport: config.server.bugReportMode,
+      registerUrl: config.server.registerUrl,
     });
     res.writeHead(200, {
       'Content-Type': 'text/javascript',
@@ -889,10 +890,10 @@ const server = http.createServer(async (req, res) => {
       html = html.replace('href="app.css"', cssPaths.map(p => `href="${p}"`).join('" />\n    <link rel="stylesheet" '));
 
       // Inject a runtime config script tag into index.html so the client can use
-      // the /cdn/ proxy when CHUNK_CDN_URL is overridden.
+      // the /cdn/ proxy when CHUNK_CDN_URL is overridden, or a registration URL is configured.
       // Uses an external script (CSP-compliant) instead of inline script.
       // In Docker/default mode, config.cdn.url is the default and no injection occurs.
-      if (config.cdn.url !== 'https://spo.zz.works' || config.server.forceWorld || config.server.bugReportMode) {
+      if (config.cdn.url !== 'https://spo.zz.works' || config.server.forceWorld || config.server.bugReportMode || config.server.registerUrl) {
         const injection = `<script src="/spo-runtime-config.js"></script>`;
         html = html.replace('</head>', `${injection}</head>`);
       }

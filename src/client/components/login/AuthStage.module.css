@@ -131,6 +131,24 @@
   cursor: not-allowed;
 }
 
+/* "Create an account" — only rendered when a registration URL is configured */
+.registerLink {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.registerLink:hover {
+  color: var(--accent-gold);
+}
+
+.registerLink:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
 /* Version tag */
 .version {
   font-size: var(--text-xs);
