@@ -222,6 +222,13 @@ export function isFilmActionOffered(
   return null;
 }
 
+/** Mausoleum epitaph paragraphs: the server stores them `|`-separated
+ *  (MausoleumSheet.pas:76 ParagraphSep, :78-107 Encode/DecodeParagraph).
+ *  Empty segments are dropped, so '' → [] and 'a||b' → ['a', 'b']. */
+export function splitParagraphs(value: string): string[] {
+  return value.split('|').filter((s) => s !== '');
+}
+
 /**
  * Parse a currency string ('$10,000,000', '2500000') into a finite number, or
  * `null` if it is not a plain amount — never `NaN`, matching FilmsSheet.pas:382-384

@@ -60,6 +60,27 @@
   font-size: var(--text-sm);
 }
 
+/* A row whose value is a block (mausoleum paragraphs): label above, text below. */
+.rowStacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.paragraphs {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  text-align: left;
+  white-space: normal;
+}
+
+.paragraphs p {
+  margin: 0 0 var(--space-2) 0;
+}
+
+.paragraphs p:last-child {
+  margin-bottom: 0;
+}
+
 /* Color classes */
 .positive { color: var(--success); }
 .negative { color: var(--error); }
