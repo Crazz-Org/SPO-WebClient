@@ -229,6 +229,14 @@ export function splitParagraphs(value: string): string[] {
   return value.split('|').filter((s) => s !== '');
 }
 
+/** Inverse of splitParagraphs for the editor: one textarea line per paragraph,
+ *  joined with `|` like Voyager's EncodeParagraph (MausoleumSheet.pas:78-90).
+ *  Empty lines are dropped because DecodeParagraph (:92-106) stops at the first
+ *  empty segment — an empty line would truncate everything after it in Voyager. */
+export function joinParagraphs(text: string): string {
+  return text.split(/\r?\n/).filter((s) => s !== '').join('|');
+}
+
 /**
  * Parse a currency string ('$10,000,000', '2500000') into a finite number, or
  * `null` if it is not a plain amount — never `NaN`, matching FilmsSheet.pas:382-384

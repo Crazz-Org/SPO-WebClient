@@ -35,6 +35,7 @@ import { DataTable, ServiceCardList, ProductSummaryCards } from './PropertyTable
 import { WorkforceTable } from './WorkforceTable';
 import { UpgradeActions, RepairControl, TradeConnectButtons, ActionButton, CloneSettings, WarehouseWares, FilmLaunchForm } from './PropertyActions';
 import { TradeModeControl, TradeLevelControl } from './TradeControls';
+import { EpitaphEditor, CancelTranscendence } from './MausoleumControls';
 import styles from './PropertyGroup.module.css';
 
 // Re-export utility functions for backward compatibility (tests import from here)
@@ -606,6 +607,20 @@ function DefinedProperties({
     if (def.rdoName === 'WordsOfWisdom') {
       const words = valueMap.get(def.rdoName);
       if (words === undefined) continue;
+      if (canEdit) {
+        rendered.add(def.rdoName);
+        elements.push(
+          <div key={def.rdoName} className={`${styles.row} ${styles.rowStacked}`}>
+            <span className={styles.name} title={def.tooltip}>{def.displayName}</span>
+            <EpitaphEditor
+              value={words}
+              pendingKey={computePendingKey(def.rdoName, rdoCommands)}
+              onSave={(joined) => handleStringPropertyChange(def.rdoName, joined)}
+            />
+          </div>,
+        );
+        continue;
+      }
       const paragraphs = splitParagraphs(words);
       if (paragraphs.length !== 1) {
         rendered.add(def.rdoName);
@@ -624,6 +639,36 @@ function DefinedProperties({
         continue;
       }
       // exactly one paragraph: fall through to the regular row below
+    }
+
+    // Mausoleum: the cancel control is offered to the owner only while the
+    // transcendence has not completed — MausoleumSheet.pas:145
+    // `btnCancel.Enabled := fOwnFac and (Transcended <> '1')`. Cancelling deletes
+    // the facility (TranscendBlock.pas:231-232), hence the confirmation.
+    if (def.rdoName === 'Transcended') {
+      const transcended = valueMap.get(def.rdoName);
+      if (transcended === undefined) continue;
+      rendered.add(def.rdoName);
+      elements.push(
+        <DefinedPropertyRow
+          key={def.rdoName}
+          def={def}
+          value={transcended}
+          canEdit={canEdit}
+          onPropertyChange={handlePropertyChange}
+          onStringPropertyChange={handleStringPropertyChange}
+          rdoCommands={rdoCommands}
+        />,
+      );
+      if (canEdit && transcended !== '1') {
+        elements.push(
+          <CancelTranscendence
+            key="cancel-transcendence"
+            onCancel={() => handleStringPropertyChange('RDOCacncelTransc', '0')}
+          />,
+        );
+      }
+      continue;
     }
 
     // Regular property
