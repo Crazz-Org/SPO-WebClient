@@ -159,6 +159,16 @@ describe('ClientBridge existing methods', () => {
     expect(useGameStore.getState().resumeTarget).toBeNull();
   });
 
+  it('setDisconnected clears the focused building and the remembered section', () => {
+    useBuildingStore.getState().setFocus({ x: 10, y: 20, buildingId: 'B1' } as never);
+    useBuildingStore.getState().setCurrentTab('workforce');
+
+    ClientBridge.setDisconnected();
+
+    expect(useBuildingStore.getState().focusedBuilding).toBeNull();
+    expect(useBuildingStore.getState().rememberedSection).toBeNull();
+  });
+
   it('setCredentials should set username', () => {
     ClientBridge.setCredentials('testUser');
     expect(useGameStore.getState().username).toBe('testUser');
@@ -193,6 +203,14 @@ describe('ClientBridge existing methods', () => {
     expect(state.status).toBe('disconnected');
     expect(state.username).toBe('');
     expect(state.worldName).toBe('');
+  });
+
+  it('reset should forget the remembered section too', () => {
+    useBuildingStore.getState().setCurrentTab('workforce');
+
+    ClientBridge.reset();
+
+    expect(useBuildingStore.getState().rememberedSection).toBeNull();
   });
 
   it('setRoadBuildingMode should toggle road building', () => {

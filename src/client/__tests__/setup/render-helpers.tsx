@@ -48,6 +48,7 @@ export function createSpiedCallbacks(overrides: Record<string, (...args: unknown
 /** Reset Zustand stores to initial state. */
 export function resetStores(): void {
   useBuildingStore.getState().clearFocus();
+  useBuildingStore.getState().forgetSection();
   useUiStore.getState().closeModal();
   useUiStore.getState().closeRightPanel();
   useGameStore.setState({ isPublicOfficeRole: false });

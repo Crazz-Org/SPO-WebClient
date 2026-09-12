@@ -395,6 +395,10 @@ export const ClientBridge = {
     // creds — any stage but 'auth' would be a dead screen there.
     useGameStore.getState().setLoginStage('auth');
     useGameStore.getState().setResumeTarget(null);
+    // The focus and the remembered section belong to the play session that
+    // just ended.
+    useBuildingStore.getState().clearFocus();
+    useBuildingStore.getState().forgetSection();
   },
 
   setReconnecting(): void {
@@ -1036,6 +1040,7 @@ export const ClientBridge = {
   reset(): void {
     useGameStore.getState().reset();
     useBuildingStore.getState().clearFocus();
+    useBuildingStore.getState().forgetSection();
     useSearchStore.getState().reset();
     usePoliticsStore.getState().reset();
     useProfileStore.getState().reset();
