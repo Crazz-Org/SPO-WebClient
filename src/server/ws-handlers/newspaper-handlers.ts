@@ -42,7 +42,7 @@ export const handleNewspaperPost: WsHandler = async (ctx: WsHandlerContext, msg:
   const req = msg as WsReqNewspaperPost;
   console.log(`[Gateway] Posting a column to ${req.paperName}`);
   const result = await ctx.session.postNewspaperColumn(
-    targetOf(req), req.subject, req.body, req.replyToPath,
+    targetOf(req), req.subject, req.body, req.replyToPath, req.ratings,
   );
   const response: WsRespNewspaperPost = {
     type: WsMessageType.RESP_NEWSPAPER_POST,

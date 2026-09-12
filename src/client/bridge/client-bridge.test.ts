@@ -34,6 +34,13 @@ describe('ClientBridge login flow (replaces window.__spoLoginHandlers)', () => {
     expect(state.loginWorlds).toEqual(worlds);
     expect(state.loginStage).toBe('worlds');
     expect(state.loginLoading).toBe(false);
+    expect(state.loginAtWorldLimit).toBe(false);
+  });
+
+  it('showWorlds should forward the world-limit answer', () => {
+    ClientBridge.showWorlds([{ name: 'Shamba' }] as never[], true);
+
+    expect(useGameStore.getState().loginAtWorldLimit).toBe(true);
   });
 
   it('showCompanies should push companies to game-store', () => {
@@ -69,6 +76,19 @@ describe('ClientBridge login flow (replaces window.__spoLoginHandlers)', () => {
     const state = useGameStore.getState();
     expect(state.loginPage).toBeNull();
     expect(state.companies).toEqual(companies);
+  });
+
+  it('showCompanies forwards the admission answer to the store', () => {
+    const companies = [{ id: '1', name: 'TestCorp', cluster: 'General' }];
+    ClientBridge.showCompanies(companies as never[], { kind: 'nobility', shortfall: 2 });
+
+    expect(useGameStore.getState().loginAdmission).toEqual({ kind: 'nobility', shortfall: 2 });
+  });
+
+  it('showCompanies without an admission answer leaves loginAdmission null', () => {
+    ClientBridge.showCompanies([{ id: '1', name: 'TestCorp' }] as never[]);
+
+    expect(useGameStore.getState().loginAdmission).toBeNull();
   });
 
   it('setLoginLoading should update game-store loading', () => {
@@ -121,6 +141,22 @@ describe('ClientBridge existing methods', () => {
     ClientBridge.setConnecting();
     ClientBridge.setDisconnected();
     expect(useGameStore.getState().status).toBe('disconnected');
+  });
+
+  it('setDisconnected puts loginStage back to auth and clears resumeTarget', () => {
+    useGameStore.getState().setLoginStage('worlds');
+    useGameStore.getState().setResumeTarget({
+      username: 'SPO_test3',
+      zonePath: '',
+      worldName: 'Shamba',
+      companyId: '28',
+      companyName: 'Yellow Inc.',
+    });
+
+    ClientBridge.setDisconnected();
+
+    expect(useGameStore.getState().loginStage).toBe('auth');
+    expect(useGameStore.getState().resumeTarget).toBeNull();
   });
 
   it('setCredentials should set username', () => {

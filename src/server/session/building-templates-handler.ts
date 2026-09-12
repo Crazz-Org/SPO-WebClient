@@ -19,6 +19,7 @@ import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
 import { deriveResidenceClass } from './session-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
+import { withLangId } from '../../shared/language';
 import { parseResultCode } from '../rdo-helpers';
 import { VISITOR_COMPANY_ID } from '../../shared/visitor-visa';
 
@@ -40,7 +41,7 @@ import { VISITOR_COMPANY_ID } from '../../shared/visitor-visa';
  * path that will not open all answer 200 with a different body.
  */
 async function fetchVoyagerPage(ctx: SessionContext, url: string, what: string): Promise<string | null> {
-  const response = await fetchWithTimeout(url, { redirect: 'follow' });
+  const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
   if (!response.ok) {
     ctx.log.error(`[ClusterBrowse] ${what} answered HTTP ${response.status} — ${url}`);
     return null;

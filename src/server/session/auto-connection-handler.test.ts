@@ -45,6 +45,7 @@ import { makeSessionCtx, FAKE_CONTEXT_IDS } from '../__tests__/session/fake-sess
 import type { FakeSessionCtx, AspActionUrl } from '../__tests__/session/fake-session-context';
 import type { SessionContext } from './session-context';
 import type { WorldInfo } from '../../shared/types';
+import { DEFAULT_LANGUAGE_ID, withLangId } from '../../shared/language';
 
 const mockFetch = fetch as unknown as jest.MockedFunction<
   (url: string, init?: unknown) => Promise<Response>
@@ -1048,7 +1049,7 @@ describe('setPolicyStatus', () => {
     expect(getCache(fake)).toHaveBeenCalledWith(POLICY);
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe(cachedUrl);
+    expect(url).toBe(withLangId(cachedUrl, DEFAULT_LANGUAGE_ID));
     expect(init).toEqual(expect.objectContaining({
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1284,7 +1285,7 @@ describe('executeCurriculumAction', () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
       expect(mockFetch.mock.calls[0][0].startsWith(`${IS_BASE}abandonRole.asp?`)).toBe(true);
       expect(mockFetch.mock.calls[1][0]).toBe(
-        `${IS_BASE}rdoAbandonRole.asp?Tycoon=SPO_test3&WorldName=Shamba&DAAddr=10.0.0.5&DAPort=1111&TycoonId=&Password=test3&RN=Robin Aleman`,
+        withLangId(`${IS_BASE}rdoAbandonRole.asp?Tycoon=SPO_test3&WorldName=Shamba&DAAddr=10.0.0.5&DAPort=1111&TycoonId=&Password=test3&RN=Robin Aleman`, DEFAULT_LANGUAGE_ID),
       );
       // The state oracle: the curriculum now offers "Reset Account", not "Resign".
       expect(fetchAsp(fake)).toHaveBeenCalledWith(CURRICULUM, { RIWS: '' });
@@ -1432,7 +1433,7 @@ describe('executeCurriculumAction', () => {
       mockFetch.mockResolvedValue(htmlResponse(CURRICULUM_AFTER_RESET));
       warmCache(fake, 'rdoResetTycoon.asp', `${IS_BASE}rdoResetTycoon.asp?Tycoon=X&Password=Y`);
       await executeCurriculumAction(fake.ctx, 'resetAccount');
-      expect(mockFetch.mock.calls[0][0]).toBe(`${IS_BASE}rdoResetTycoon.asp?Tycoon=X&Password=Y`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${IS_BASE}rdoResetTycoon.asp?Tycoon=X&Password=Y`, DEFAULT_LANGUAGE_ID));
       expect(fake.log.debug).toHaveBeenCalledWith('[Curriculum] Using cached URL for resetAccount');
     });
 
@@ -1444,7 +1445,7 @@ describe('executeCurriculumAction', () => {
         .mockResolvedValueOnce(htmlResponse(RDO_ABANDON_BODY));
       fetchAsp(fake).mockResolvedValue(curriculumWithButton('reset'));
       const result = await executeCurriculumAction(fake.ctx, 'abandonRole');
-      expect(mockFetch.mock.calls[0][0]).toBe(`${IS_BASE}abandonRole.asp?Tycoon=SPO_test3&Password=test3`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${IS_BASE}abandonRole.asp?Tycoon=SPO_test3&Password=test3`, DEFAULT_LANGUAGE_ID));
       expect(result.success).toBe(true);
     });
 
@@ -1453,7 +1454,7 @@ describe('executeCurriculumAction', () => {
       mockFetch.mockResolvedValue(htmlResponse(ADVANCE_OK));
       warmCache(fake, 'rdoSetAdvanceLevel.asp', `${SCRIPT_BASE}rdoSetAdvanceLevel.asp?TycoonId=1&Value=&WorldName=Shamba`);
       await executeCurriculumAction(fake.ctx, 'upgradeLevel', false);
-      expect(mockFetch.mock.calls[0][0]).toBe(`${SCRIPT_BASE}rdoSetAdvanceLevel.asp?TycoonId=1&Value=false&WorldName=Shamba`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${SCRIPT_BASE}rdoSetAdvanceLevel.asp?TycoonId=1&Value=false&WorldName=Shamba`, DEFAULT_LANGUAGE_ID));
     });
 
     it('upgradeLevel without a value leaves the cached URL untouched', async () => {
@@ -1461,7 +1462,7 @@ describe('executeCurriculumAction', () => {
       mockFetch.mockResolvedValue(htmlResponse(ADVANCE_OK));
       warmCache(fake, 'rdoSetAdvanceLevel.asp', `${IS_BASE}rdoSetAdvanceLevel.asp?Value=`);
       await executeCurriculumAction(fake.ctx, 'upgradeLevel');
-      expect(mockFetch.mock.calls[0][0]).toBe(`${IS_BASE}rdoSetAdvanceLevel.asp?Value=`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${IS_BASE}rdoSetAdvanceLevel.asp?Value=`, DEFAULT_LANGUAGE_ID));
     });
 
     it('a cache lacking the key for this action falls back to reconstruction', async () => {

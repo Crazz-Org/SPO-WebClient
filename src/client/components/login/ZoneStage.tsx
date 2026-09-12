@@ -7,6 +7,8 @@
 
 import { GlassCard } from '../common';
 import { WORLD_ZONES, type WorldZone } from '@/shared/types';
+import { TimeoutCategory } from '@/shared/timeout-categories';
+import { ConnectingGauge } from './ConnectingGauge';
 import styles from './ZoneStage.module.css';
 
 interface ZoneStageProps {
@@ -47,8 +49,7 @@ export function ZoneStage({ onSelect, isLoading }: ZoneStageProps) {
       {isLoading && (
         <div className={styles.overlay}>
           <div className={styles.overlayContent}>
-            <div className={styles.spinner} />
-            <span className={styles.overlayText}>Querying region...</span>
+            <ConnectingGauge label="Querying region..." category={TimeoutCategory.DIRECTORY} />
           </div>
         </div>
       )}

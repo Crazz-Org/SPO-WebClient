@@ -48,6 +48,14 @@ function worldLoginRdo(accountStatusPayload: string): RdoScenario {
         matchKeys: { verb: 'idof', targetId: 'InterfaceServer' },
       },
       {
+        // #538 put CanJoinWorldEx between idof and AccountStatus (login-handler.ts:430);
+        // `0` = admitted, so the visa page here is decided by the company count alone.
+        id: 'wl-rdo-canjoin',
+        request: `C 1 sel ${INTERFACE_SERVER_ID} call CanJoinWorldEx "^" "%SPO_test3"`,
+        response: `A1 res="#0"`,
+        matchKeys: { verb: 'sel', action: 'call', member: 'CanJoinWorldEx' },
+      },
+      {
         id: 'wl-rdo-acct',
         request: `C 1 sel ${INTERFACE_SERVER_ID} call AccountStatus "^" "%SPO_test3","%test3"`,
         response: `A1 ${accountStatusPayload}`,

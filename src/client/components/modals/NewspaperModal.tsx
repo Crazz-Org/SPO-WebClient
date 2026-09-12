@@ -14,17 +14,25 @@
  *
  * The board's two frames become one column with a back link. The root view
  * lists the list frame's tree (`boardlist.asp`, every column and reply — not
- * the ten-entry index `boardmsg.asp` alone would give). The rating form
- * Voyager bolts onto the board is NOT here — it lives on the Politics tab,
- * where it talks to `RDOSetRatingFrom` directly.
+ * the ten-entry index `boardmsg.asp` alone would give).
+ *
+ * The rating block Voyager bolts onto the board (`boardmsg.asp:306-382`) is
+ * here too, inside the composer: the criteria the reader fills in ride along
+ * with the post, and the gateway sends each one to the same `RDOSetRatingFrom`
+ * the Politics tab uses — before publishing the column, as `:96-146` orders it.
+ * It is hidden from the incumbent (`:283-285`). Left untouched it changes
+ * nothing about what is posted.
  */
 
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowUp, User, X, RefreshCw } from 'lucide-react';
+import type { NewspaperRatingEntry, PoliticsRatingEntry } from '@/shared/types';
 import { useUiStore } from '../../store/ui-store';
 import { useNewspaperStore } from '../../store/newspaper-store';
+import { usePoliticsStore } from '../../store/politics-store';
 import { useClient } from '../../context';
 import { IconButton, SkeletonLines } from '../common';
+import { RATING_CHOICES } from '../politics/RatingsRail';
 import styles from './NewspaperModal.module.css';
 
 /** `boardlist.asp:25` indents each nesting level 20px; the modal uses its own scale. */
@@ -61,9 +69,14 @@ export function NewspaperModal() {
   const issue = useNewspaperStore((s) => s.issue);
   const issueState = useNewspaperStore((s) => s.issueState);
 
+  const politicsData = usePoliticsStore((s) => s.data);
+  const politicsLoadState = usePoliticsStore((s) => s.loadState);
+  const politicsLoadedFor = usePoliticsStore((s) => s.loadedFor);
+
   const [composing, setComposing] = useState(false);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [choices, setChoices] = useState<Map<string, number>>(new Map());
 
   const isOpen = modal === 'newspaper';
   const hasPaper = context !== null && context.paperName !== '';
@@ -97,6 +110,7 @@ export function NewspaperModal() {
       setComposing(false);
       setSubject('');
       setBody('');
+      setChoices(new Map());
     }
   }, [isPosting, composing, board, subject]);
 
@@ -115,9 +129,39 @@ export function NewspaperModal() {
     }
   };
 
+  // The criteria this reader may rate while posting.
+  //
+  // The Capitol branch of `boardmsg.asp:11-16` sets no `TownPath`, so the page
+  // iterates no rating there. The politics data on hand must describe THIS
+  // building — a paper opened from the Media page carries (0,0) and gets no
+  // block. `!isRuler` is the incumbent guard of `:283-285`, the same one
+  // `RatingsRail.tsx:185-186` applies; a row with no cache id has no `RatingId`
+  // to send back.
+  const ratesThisBuilding = context !== null && !context.isCapitol
+    && politicsLoadState === 'loaded'
+    && politicsLoadedFor === `${context.buildingX}:${context.buildingY}`;
+  const ratable: PoliticsRatingEntry[] =
+    ratesThisBuilding && politicsData && !politicsData.isRuler
+      ? politicsData.tycoonsRatings.filter((r) => r.id !== undefined)
+      : [];
+
+  const chooseRating = (id: string, value: string) => {
+    setChoices((prev) => {
+      const next = new Map(prev);
+      if (value === '') next.delete(id); else next.set(id, parseInt(value, 10));
+      return next;
+    });
+  };
+
   const handlePost = () => {
     // A reply goes under the open column; otherwise it is a new top-level column.
-    client.onPostNewspaperColumn(subject.trim(), body, article ? board?.path : undefined);
+    const replyPath = article ? board?.path : undefined;
+    const ratings: NewspaperRatingEntry[] = ratable
+      .filter((r) => r.id !== undefined && choices.has(r.id))
+      .map((r) => ({ id: r.id as string, name: r.name, value: choices.get(r.id as string) as number }));
+    client.onPostNewspaperColumn(
+      subject.trim(), body, replyPath, ratings.length > 0 ? ratings : undefined,
+    );
   };
 
   const noPaper = <p className={styles.empty}>This town has no newspaper.</p>;
@@ -349,6 +393,39 @@ export function NewspaperModal() {
                           onChange={(e) => setBody(e.target.value)}
                         />
                       </label>
+
+                      {/* `boardmsg.asp:306-382` — the ratings the column carries.
+                          Hidden for the incumbent, who cannot rate their own
+                          term (`:283-285`). */}
+                      {ratable.length > 0 && (
+                        <fieldset className={styles.ratingBlock}>
+                          {/* `:309` — strRateThe + strMayor. */}
+                          <legend className={styles.sectionTitle}>Rate the Mayor</legend>
+                          <p className={styles.muted}>
+                            Leave a criterion on “—” to publish the column without
+                            changing it.
+                          </p>
+                          {ratable.map((rating) => (
+                            <div className={styles.ratingRow} key={rating.id}>
+                              <span>{rating.name}</span>
+                              <span className={styles.ratingCurrent}>{rating.value}%</span>
+                              <select
+                                className={styles.input}
+                                aria-label={`Rate ${rating.name}`}
+                                value={choices.get(rating.id as string) ?? ''}
+                                onChange={(e) => chooseRating(rating.id as string, e.target.value)}
+                              >
+                                {/* The `-` placeholder of `:338` — no change. */}
+                                <option value="">—</option>
+                                {RATING_CHOICES.map((v) => (
+                                  <option key={v} value={v}>{v}%</option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </fieldset>
+                      )}
+
                       <div className={styles.composerActions}>
                         <button
                           className={styles.primaryBtn}
@@ -360,7 +437,7 @@ export function NewspaperModal() {
                         <button
                           className={styles.secondaryBtn}
                           disabled={isPosting}
-                          onClick={() => { setSubject(''); setBody(''); }}
+                          onClick={() => { setSubject(''); setBody(''); setChoices(new Map()); }}
                         >
                           Reset Form
                         </button>

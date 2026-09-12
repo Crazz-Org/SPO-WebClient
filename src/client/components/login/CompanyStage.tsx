@@ -7,9 +7,12 @@
 
 import { useMemo } from 'react';
 import { GlassCard } from '../common';
-import { Plus, ArrowLeft } from 'lucide-react';
-import type { CompanyInfo, LoginPageOutcome } from '@/shared/types';
+import { Plus, ArrowLeft, Eye } from 'lucide-react';
+import type { CompanyInfo, LoginPageOutcome, WorldAdmission } from '@/shared/types';
 import { VISITOR_COMPANY_ID } from '@/shared/visitor-visa';
+import { isMinisterAccount } from '../../minister-account';
+import { TimeoutCategory } from '@/shared/timeout-categories';
+import { ConnectingGauge } from './ConnectingGauge';
 import styles from './CompanyStage.module.css';
 
 /** LogonNoAccess.asp:97-100 — the `01/01/2008` PA value is the sentinel for "never had access", not an expiry date. */
@@ -23,6 +26,17 @@ interface CompanyStageProps {
   onBack: () => void;
   isLoading: boolean;
   loginPage?: LoginPageOutcome | null;
+  /** CanJoinWorldEx said this world will refuse a new company — so it is not offered. */
+  admission?: WorldAdmission | null;
+  /**
+   * RDOCanJoinNewWorld said this account is at its nobility-bound world limit. It only blocks
+   * a world the player holds no company in — the guard Kernel/World.pas:6028 applies.
+   */
+  atWorldLimit?: boolean;
+  /** Enter with no company, the Visitor visa of chooseVisa.asp:108-127. */
+  onVisit?: () => void;
+  /** chooseCompany.asp:23 — a minister account is never offered company creation. */
+  username: string;
 }
 
 export function CompanyStage({
@@ -33,7 +47,12 @@ export function CompanyStage({
   onBack,
   isLoading,
   loginPage,
+  admission,
+  atWorldLimit,
+  onVisit,
+  username,
 }: CompanyStageProps) {
+  const isMinister = isMinisterAccount(username);
   // Group companies: player-owned vs political offices
   const { owned, political } = useMemo(() => {
     const ownedList: CompanyInfo[] = [];
@@ -92,7 +111,20 @@ export function CompanyStage({
     );
   }
 
-  if (loginPage?.kind === 'visa' || companies.length === 0) {
+  // The world limit only bites where the player holds nothing here (Kernel/World.pas:6028),
+  // and it takes precedence over the world's own admission answer — the reference client
+  // never asked CanJoinWorldEx after a false RDOCanJoinNewWorld (logonComplete.asp:106, :144).
+  const worldLimitBlocks = atWorldLimit === true && companies.length === 0;
+
+  // No company here means the visa page, as the legacy did: chooseVisa.asp offers the
+  // Visitor Visa and the Tycoon Visa, and the Tycoon Visa is how a first company gets
+  // created (ServerCnxHandler.pas:2796-2798 sets NEWACCOUNT on AccountStatus
+  // ACCOUNT_Unexisting OR GetCompanyCount = 0; logonComplete.asp:168-181 then routes to
+  // chooseVisa.asp). It yields to every refusal the server actually made — the world
+  // limit and the world's admission answer both win — and to a minister account, which
+  // is not a tycoon and is never offered a visa.
+  if (!worldLimitBlocks && !admission && !isMinister
+      && (loginPage?.kind === 'visa' || companies.length === 0)) {
     const firstVisit = loginPage?.kind === 'visa' ? loginPage.firstVisit : false;
     return (
       <div className={styles.stage}>
@@ -117,7 +149,7 @@ export function CompanyStage({
         <div className={styles.grid}>
           <GlassCard className={styles.companyCard} onClick={() => !isLoading && onCreate()}>
             <div className={styles.companyName}>Tycoon Visa</div>
-            <span className={styles.visaHint}>Get $100,000,000 · Create a company · Build an empire</span>
+            <span className={styles.visaHint}>Found a company · Build an empire</span>
           </GlassCard>
           <GlassCard
             className={styles.companyCard}
@@ -140,6 +172,15 @@ export function CompanyStage({
     );
   }
 
+  // With companies the player still picks one; with none, the title names why there is
+  // nothing to pick from.
+  let emptyTitle = companies.length > 0 ? 'Select a Company' : 'Get Started';
+  if (worldLimitBlocks) {
+    emptyTitle = 'World Limit Reached';
+  } else if (companies.length === 0 && admission) {
+    emptyTitle = admission.kind === 'full' ? 'World Full' : 'Nobility Too Low';
+  }
+
   return (
     <div className={styles.stage}>
       <button className={styles.backLink} onClick={onBack}>
@@ -148,9 +189,43 @@ export function CompanyStage({
       </button>
 
       <div className={styles.header}>
-        <h2 className={styles.title}>Select a Company</h2>
+        <h2 className={styles.title}>{emptyTitle}</h2>
         <span className={styles.worldTag}>{worldName}</span>
       </div>
+
+      {worldLimitBlocks && (
+        <>
+          <p className={styles.denialMessage}>
+            You have reached the number of worlds your nobility allows, so no company can be
+            founded in {worldName}. You can look around as a visitor, or choose a world where you
+            already own a company.
+          </p>
+          <div className={styles.grid}>
+            <GlassCard className={styles.createCard} onClick={() => !isLoading && onVisit?.()}>
+              <Eye size={24} className={styles.createIcon} />
+              <span className={styles.createLabel}>Enter as a visitor</span>
+            </GlassCard>
+          </div>
+          <button className={styles.backLink} onClick={onBack}>
+            <ArrowLeft size={14} />
+            <span>Choose another world</span>
+          </button>
+        </>
+      )}
+
+      {!worldLimitBlocks && admission && (
+        <>
+          <p className={styles.denialMessage}>
+            {admission.kind === 'full'
+              ? `${worldName} has reached its maximum number of tycoons, so no new company can be founded here. The other worlds are still open.`
+              : `Your nobility is ${admission.shortfall} point(s) below the minimum ${worldName} requires to found a company.`}
+          </p>
+          <button className={styles.backLink} onClick={onBack}>
+            <ArrowLeft size={14} />
+            <span>Choose another world</span>
+          </button>
+        </>
+      )}
 
       {/* Player-owned companies */}
       {owned.length > 0 && (
@@ -199,19 +274,22 @@ export function CompanyStage({
         </section>
       )}
 
-      {/* Create new company */}
-      <div className={styles.grid}>
-        <GlassCard className={styles.createCard} onClick={() => !isLoading && onCreate()}>
-          <Plus size={24} className={styles.createIcon} />
-          <span className={styles.createLabel}>Create New Company</span>
-        </GlassCard>
-      </div>
+      {/* Create new company — withheld when the server already said NewCompany would fail,
+          when the account is at its world limit, or when the account is a minister
+          (chooseCompany.asp:23, :233). */}
+      {!worldLimitBlocks && !admission && !isMinister && (
+        <div className={styles.grid}>
+          <GlassCard className={styles.createCard} onClick={() => !isLoading && onCreate()}>
+            <Plus size={24} className={styles.createIcon} />
+            <span className={styles.createLabel}>Create New Company</span>
+          </GlassCard>
+        </div>
+      )}
 
       {isLoading && (
         <div className={styles.overlay}>
           <div className={styles.overlayContent}>
-            <div className={styles.spinner} />
-            <span className={styles.overlayText}>Entering world...</span>
+            <ConnectingGauge label="Entering world..." category={TimeoutCategory.NORMAL} />
           </div>
         </div>
       )}

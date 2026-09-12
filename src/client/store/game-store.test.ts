@@ -3,6 +3,7 @@
  */
 
 import { useGameStore, delphiTDateTimeToJsDate } from './game-store';
+import { REMEMBERED_SESSION_KEY, type RememberedSession } from './remembered-session';
 
 describe('game-store login flow state', () => {
   beforeEach(() => {
@@ -30,6 +31,28 @@ describe('game-store login flow state', () => {
     expect(state.loginLoading).toBe(false);
   });
 
+  it('setLoginWorlds should store the world-limit answer when one is given', () => {
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba' }] as never[], true);
+
+    expect(useGameStore.getState().loginAtWorldLimit).toBe(true);
+  });
+
+  it('setLoginWorlds should default the world-limit answer to false', () => {
+    expect(useGameStore.getState().loginAtWorldLimit).toBe(false);
+
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba' }] as never[], true);
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba' }] as never[]);
+
+    expect(useGameStore.getState().loginAtWorldLimit).toBe(false);
+  });
+
+  it('reset should clear the world-limit answer', () => {
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba' }] as never[], true);
+    useGameStore.getState().reset();
+
+    expect(useGameStore.getState().loginAtWorldLimit).toBe(false);
+  });
+
   it('setLoginCompanies should set companies, stage, and clear loading', () => {
     useGameStore.getState().setLoginLoading(true);
     const companies = [
@@ -41,6 +64,34 @@ describe('game-store login flow state', () => {
     expect(state.companies).toEqual(companies);
     expect(state.loginStage).toBe('companies');
     expect(state.loginLoading).toBe(false);
+  });
+
+  it('setLoginCompanies should store the admission answer when one is given', () => {
+    const companies = [{ id: '1', name: 'TestCorp', cluster: 'General' }];
+    useGameStore.getState().setLoginCompanies(companies as never[], { kind: 'full' });
+
+    expect(useGameStore.getState().loginAdmission).toEqual({ kind: 'full' });
+  });
+
+  it('setLoginCompanies should leave loginAdmission null when none is given', () => {
+    useGameStore.getState().setLoginCompanies([{ id: '1', name: 'TestCorp' }] as never[], { kind: 'full' });
+    useGameStore.getState().setLoginCompanies([{ id: '1', name: 'TestCorp' }] as never[]);
+
+    expect(useGameStore.getState().loginAdmission).toBeNull();
+  });
+
+  it('setLoginPage should clear a previous admission answer', () => {
+    useGameStore.getState().setLoginCompanies([] as never[], { kind: 'nobility', shortfall: 4 });
+    useGameStore.getState().setLoginPage({ kind: 'error', errorCode: 'ERROR_FIVEISDOWN' });
+
+    expect(useGameStore.getState().loginAdmission).toBeNull();
+  });
+
+  it('reset should clear the admission answer', () => {
+    useGameStore.getState().setLoginCompanies([] as never[], { kind: 'full' });
+    useGameStore.getState().reset();
+
+    expect(useGameStore.getState().loginAdmission).toBeNull();
   });
 
   it('setLoginStage should update stage independently', () => {
@@ -362,6 +413,81 @@ describe('game-store company switching state', () => {
     useGameStore.getState().setSwitchingCompany(true);
     useGameStore.getState().reset();
     expect(useGameStore.getState().isSwitchingCompany).toBe(false);
+  });
+});
+
+describe('game-store rememberedSession slice', () => {
+  const RECORD: RememberedSession = {
+    username: 'SPO_test3',
+    zonePath: 'Root/Areas/Asia/Worlds',
+    worldName: 'Shamba',
+    companyId: '28',
+    companyName: 'Yellow Inc.',
+    ownerRole: 'SPO_test3',
+  };
+
+  const memoryStore = new Map<string, string>();
+  function installStorage() {
+    (globalThis as unknown as { localStorage: unknown }).localStorage = {
+      getItem: (k: string) => memoryStore.get(k) ?? null,
+      setItem: (k: string, v: string) => { memoryStore.set(k, v); },
+      removeItem: (k: string) => { memoryStore.delete(k); },
+    };
+  }
+
+  beforeEach(() => {
+    memoryStore.clear();
+    installStorage();
+    useGameStore.getState().reset();
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: unknown }).localStorage; });
+
+  it('loads the remembered record from localStorage at module init', () => {
+    memoryStore.set(REMEMBERED_SESSION_KEY, JSON.stringify(RECORD));
+    jest.isolateModules(() => {
+      const fresh = require('./game-store') as typeof import('./game-store');
+      expect(fresh.useGameStore.getState().rememberedSession).toEqual(RECORD);
+    });
+  });
+
+  it('yields null on a fresh browser', () => {
+    jest.isolateModules(() => {
+      const fresh = require('./game-store') as typeof import('./game-store');
+      expect(fresh.useGameStore.getState().rememberedSession).toBeNull();
+    });
+  });
+
+  it('rememberSession writes the key and the state', () => {
+    useGameStore.getState().rememberSession(RECORD);
+
+    expect(useGameStore.getState().rememberedSession).toEqual(RECORD);
+    expect(JSON.parse(memoryStore.get(REMEMBERED_SESSION_KEY)!)).toEqual(RECORD);
+  });
+
+  it('forgetRememberedSession removes both', () => {
+    useGameStore.getState().rememberSession(RECORD);
+    useGameStore.getState().forgetRememberedSession();
+
+    expect(useGameStore.getState().rememberedSession).toBeNull();
+    expect(memoryStore.has(REMEMBERED_SESSION_KEY)).toBe(false);
+  });
+
+  it('setResumeTarget stores and clears the target', () => {
+    useGameStore.getState().setResumeTarget(RECORD);
+    expect(useGameStore.getState().resumeTarget).toEqual(RECORD);
+
+    useGameStore.getState().setResumeTarget(null);
+    expect(useGameStore.getState().resumeTarget).toBeNull();
+  });
+
+  it('reset clears resumeTarget but keeps rememberedSession', () => {
+    useGameStore.getState().rememberSession(RECORD);
+    useGameStore.getState().setResumeTarget(RECORD);
+
+    useGameStore.getState().reset();
+
+    expect(useGameStore.getState().resumeTarget).toBeNull();
+    expect(useGameStore.getState().rememberedSession).toEqual(RECORD);
   });
 });
 

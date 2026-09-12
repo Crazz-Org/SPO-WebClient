@@ -70,6 +70,8 @@ export interface SessionContext {
   readonly lastRanking: number;
   readonly lastBuildingCount: number;
   readonly lastMaxBuildings: number;
+  /** The session language, carried as `LangId` on every ASP fetch. */
+  readonly languageId: string;
 
   // ── Writable State (explicit setters) ──────────────────────────────────
   setCurrentChannel(channel: string): void;

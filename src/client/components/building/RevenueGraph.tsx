@@ -12,6 +12,8 @@ import styles from './RevenueGraph.module.css';
 interface RevenueGraphProps {
   data: number[];
   height?: number;
+  /** Year of the last data point (current world year minus one, ChartSheet.pas:83-84). */
+  endYear?: number;
 }
 
 // Layout constants
@@ -104,7 +106,26 @@ export function computeYTicks(min: number, max: number, count: number): number[]
   return ticks;
 }
 
-export const RevenueGraph = memo(function RevenueGraph({ data, height = 160 }: RevenueGraphProps) {
+/**
+ * Points are in thousands of dollars (Kernel/Kernel.pas:4182); `formatCurrency` already
+ * picks the K/M/B suffix, matching Voyager's `FormatMoney(val) + 'K'` (PlotterGrid.pas:121-125).
+ */
+export function formatThousands(v: number): string {
+  return formatCurrency(v * 1000);
+}
+
+/**
+ * Year for each point, ending at `endYear` (PlotterGrid.pas:129). Falls back to a 1-based
+ * index when no world date has been received yet.
+ */
+export function xAxisYears(count: number, endYear: number | undefined): (number | string)[] {
+  if (endYear === undefined) {
+    return Array.from({ length: count }, (_, i) => i + 1);
+  }
+  return Array.from({ length: count }, (_, i) => endYear - (count - 1 - i));
+}
+
+export const RevenueGraph = memo(function RevenueGraph({ data, height = 160, endYear }: RevenueGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [pathLength, setPathLength] = useState(0);
@@ -171,7 +192,7 @@ export const RevenueGraph = memo(function RevenueGraph({ data, height = 160 }: R
       <div className={styles.header}>
         <span className={styles.title}>Revenue History</span>
         <span className={`${styles.currentValue} ${currentValueClass}`}>
-          {formatCurrency(currentValue)}
+          {formatThousands(currentValue)}
         </span>
       </div>
 
@@ -267,7 +288,7 @@ export const RevenueGraph = memo(function RevenueGraph({ data, height = 160 }: R
               className={styles.axisLabel}
               textAnchor="end"
             >
-              {formatCurrency(tick)}
+              {formatThousands(tick)}
             </text>
           ))}
 
@@ -286,7 +307,7 @@ export const RevenueGraph = memo(function RevenueGraph({ data, height = 160 }: R
                 y={PADDING_TOP + chartH + 4}
                 className={`${styles.axisLabel} ${styles.axisLabelX}`}
               >
-                {i + 1}
+                {xAxisYears(data.length, endYear)[i]}
               </text>
             );
           })}
@@ -314,7 +335,7 @@ export const RevenueGraph = memo(function RevenueGraph({ data, height = 160 }: R
               top: `${(toY(data[hoveredIndex]) / height) * 100}%`,
             }}
           >
-            {formatCurrency(data[hoveredIndex])}
+            {formatThousands(data[hoveredIndex])}
           </div>
         )}
       </div>

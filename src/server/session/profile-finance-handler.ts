@@ -21,6 +21,7 @@ import type {
 import { extractAllActionUrls } from '../asp-url-extractor';
 import { toErrorMessage } from '../../shared/error-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
+import { withLangId } from '../../shared/language';
 import { requireDaParams } from './asp-da-params';
 import { isCacheUnavailablePage } from './asp-cache-unavailable';
 
@@ -138,7 +139,7 @@ export async function fetchTycoonProfile(ctx: SessionContext, tycoonName?: strin
     const worldName = ctx.currentWorldInfo?.name || '';
     if (worldIp && name) {
       const renderUrl = `http://${worldIp}/five/0/visual/voyager/new%20directory/RenderTycoon.asp?WorldName=${encodeURIComponent(worldName)}&Tycoon=${encodeURIComponent(name)}&RIWS=`;
-      const renderHtml = await (await fetchWithTimeout(renderUrl, { redirect: 'follow' })).text();
+      const renderHtml = await (await fetchWithTimeout(withLangId(renderUrl, ctx.languageId), { redirect: 'follow' })).text();
       const photoMatch = /<img[^>]+id=["']?picture["']?[^>]+src=["']([^"']+)["']/i.exec(renderHtml)
         || /<img[^>]+src=["']([^"']+)["'][^>]+id=["']?picture["']?/i.exec(renderHtml);
       if (photoMatch) {
@@ -757,7 +758,7 @@ export async function executeBankAction(
     }
 
     ctx.log.debug(`[Bank] Executing ${action}: ${url}`);
-    const response = await fetchWithTimeout(url, { redirect: 'follow' });
+    const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     const html = await response.text();
 
     // The HTML markers below are the ONLY evidence this function used to consult.

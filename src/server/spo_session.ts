@@ -10,6 +10,7 @@ import {
   RDO_PORTS,
   SessionPhase,
   WorldInfo,
+  PeopleSearchMode,
   WsMessageType,
   CompanyInfo,
   MapData,
@@ -34,6 +35,7 @@ import {
   PolicyData,
   PoliticsData,
   NewspaperBoard,
+  NewspaperRatingEntry,
   NewspaperIssue,
   NewspaperIssueList,
   PoliticalRoleInfo,
@@ -55,6 +57,7 @@ import { config } from '../shared/config';
 import { createLogger, generateSessionId } from '../shared/logger';
 import { toProxyUrl, isProxyUrl } from '../shared/proxy-utils';
 import { toErrorMessage } from '../shared/error-utils';
+import { DEFAULT_LANGUAGE_ID, normalizeLanguageId, withLangId, type LanguageId } from '../shared/language';
 import {
   cleanPayload as cleanPayloadHelper,
   splitMultilinePayload as splitMultilinePayloadHelper,
@@ -89,6 +92,8 @@ import * as buildingPropertyHandler from './session/building-property-handler';
 import * as researchHandler from './session/research-handler';
 import { dispatchPush } from './session/push-dispatcher';
 import * as loginHandler from './session/login-handler';
+import * as abandonRoleHandler from './session/abandon-role-handler';
+import type { AbandonRoleResult } from './session/abandon-role-handler';
 import { canBufferRequest, isConnectionBoundMember } from './session/request-routing';
 import { requireDaParams } from './session/asp-da-params';
 import { classifyRdoError, ErrorRecovery } from './session/rdo-error-classifier';
@@ -228,6 +233,8 @@ export class StarpeaceSession extends EventEmitter {
   // to catch late responses instead of logging "Unmatched response RID"
   private pendingRequests = new Map<number, PendingRdoRequest>();
   private availableWorlds: Map<string, WorldInfo> = new Map();
+  /** What RDOCanJoinNewWorld answered during the last directory query; null = never asked / unreadable. */
+  private atWorldLimit: boolean | null = null;
 
   // Event synchronization
   private interfaceEventsId: string | null = null;
@@ -287,6 +294,10 @@ export class StarpeaceSession extends EventEmitter {
   public get cachedPassword(): string | null { return this._cachedPassword; }
   private cachedZonePath: string = 'Root/Areas/Asia/Worlds';
 
+  // The language the player picked — sent to the world with SetLanguage and carried as LangId
+  // on every ASP fetch. Survives a world switch; the next REQ_LOGIN_WORLD overwrites it.
+  public languageId: LanguageId = DEFAULT_LANGUAGE_ID;
+
   // Active login identity — differs from cachedUsername during role-based company switches
   // (e.g., "President of Shamba" vs original tycoon "SPO_test3")
   public activeUsername: string | null = null;
@@ -297,6 +308,8 @@ export class StarpeaceSession extends EventEmitter {
 
   // Additional world properties
   public mailAccount: string | null = null;
+  /** ACCOUNT_* answer of the last AccountStatus (Protocol.pas:82-86); null until asked. */
+  public accountStatus: number | null = null;
   public interfaceServerId: string | null = null;
   private mailAddr: string | null = null;
   private mailPort: number | null = null;
@@ -495,6 +508,7 @@ export class StarpeaceSession extends EventEmitter {
   public setDaPort(value: number | null): void { this.daPort = value; }
   public setDaAddr(value: string | null): void { this.daAddr = value; }
   public setMailAccount(value: string | null): void { this.mailAccount = value; }
+  public setAccountStatus(value: number | null): void { this.accountStatus = value; }
   public setMailAddr(value: string | null): void { this.mailAddr = value; }
   public setMailPort(value: number | null): void { this.mailPort = value; }
   public setWorldXSize(value: number | null): void { this.worldXSize = value; }
@@ -508,6 +522,7 @@ export class StarpeaceSession extends EventEmitter {
     }
   }
   public setCachedPassword(value: string | null): void { this._cachedPassword = value; }
+  public setLanguageId(value: string | undefined): void { this.languageId = normalizeLanguageId(value); }
   public setCachedZonePath(value: string): void { this.cachedZonePath = value; }
   public setActiveUsername(value: string | null): void { this.activeUsername = value; }
   public setCorrelationId(corrId: string | null): void { this.log.setField('corrId', corrId); }
@@ -516,6 +531,7 @@ export class StarpeaceSession extends EventEmitter {
   public setLastPlayerY(value: number): void { this.lastPlayerY = value; }
   public getAvailableWorlds(): Map<string, WorldInfo> { return this.availableWorlds; }
   public setAvailableWorlds(worlds: Map<string, WorldInfo>): void { this.availableWorlds = worlds; }
+  public setAtWorldLimit(value: boolean | null): void { this.atWorldLimit = value; }
   public getAvailableCompanies(): CompanyInfo[] { return this.availableCompanies; }
   public setAvailableCompanies(companies: CompanyInfo[]): void { this.availableCompanies = companies; }
   public pushAvailableCompany(company: CompanyInfo): void {
@@ -616,12 +632,17 @@ export class StarpeaceSession extends EventEmitter {
     return this.availableWorlds.get(name);
   }
 
+  /** True when RDOCanJoinNewWorld answered 0 (at the limit); null when it could not be read. */
+  public isAtWorldLimit(): boolean | null {
+    return this.atWorldLimit;
+  }
+
   /**
    * The RDO people search. Active RDO implementation: REQ_SEARCH_MENU_PEOPLE_SEARCH is
    * served by this method (#118).
    */
-  public async searchPeople(searchStr: string): Promise<string[]> {
-    return loginHandler.searchPeople(this, searchStr);
+  public async searchPeople(searchStr: string, mode: PeopleSearchMode = 'contains'): Promise<string[]> {
+    return loginHandler.searchPeople(this, searchStr, mode);
   }
 
 public async loginWorld(username: string, pass: string, world: WorldInfo): Promise<loginHandler.LoginWorldResult> {
@@ -940,7 +961,7 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
   public async fetchAspPage(aspPath: string, extraParams?: Record<string, string>): Promise<string> {
     const url = this.buildAspUrl(aspPath, extraParams);
     this.log.debug(`[ASP] Fetching ${aspPath}`);
-    const response = await fetchWithTimeout(url, { redirect: 'follow' });
+    const response = await fetchWithTimeout(withLangId(url, this.languageId), { redirect: 'follow' });
     if (!response.ok) {
       throw new Error(`ASP request failed: ${response.status} ${response.statusText}`);
     }
@@ -1141,6 +1162,17 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
     return autoConnectionHandler.executeCurriculumAction(this, action, value);
   }
 
+  public async readPersonalCompanies(): Promise<CompanyInfo[]> {
+    const ip = this.currentWorldInfo?.ip;
+    if (!ip || !this.cachedUsername) return [];
+    const r = await loginHandler.fetchCompaniesViaHttp(this, ip, this.cachedUsername);
+    return r.kind === 'companies' ? r.companies : [];
+  }
+
+  public async abandonRole(): Promise<AbandonRoleResult> {
+    return abandonRoleHandler.abandonRole(this);
+  }
+
   // -- FAVORITES (facade -> favorites-handler) ------------------------------
   public async fetchOwnedFacilities(): Promise<FavoritesItem[]> {
     return favoritesHandler.fetchOwnedFacilities(this);
@@ -1188,8 +1220,8 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
     return newspaperHandler.getNewspaperBoard(this, target, path);
   }
 
-  public async postNewspaperColumn(target: NewspaperTarget, subject: string, body: string, replyToPath?: string): Promise<{ success: boolean; message: string; board: NewspaperBoard | null }> {
-    return newspaperHandler.postNewspaperColumn(this, target, subject, body, replyToPath);
+  public async postNewspaperColumn(target: NewspaperTarget, subject: string, body: string, replyToPath?: string, ratings?: NewspaperRatingEntry[]): Promise<{ success: boolean; message: string; board: NewspaperBoard | null }> {
+    return newspaperHandler.postNewspaperColumn(this, target, subject, body, replyToPath, ratings);
   }
 
   public async getNewspaperIssues(target: NewspaperTarget): Promise<NewspaperIssueList> {
@@ -2733,6 +2765,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.interfaceServerId = null;
     this.interfaceEventsId = null;
     this.mailAccount = null;
+    this.accountStatus = null;
     this.mailAddr = null;
     this.mailPort = null;
     this.mailServerId = null;
@@ -2878,6 +2911,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.framers.clear();
     this.pendingRequests.clear();
     this.availableWorlds.clear();
+    this.atWorldLimit = null;
     this.knownObjects.clear();
     this.chatUsers.clear();
     this.requestBuffer = [];

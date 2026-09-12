@@ -23,6 +23,7 @@ import type {
   SearchMenuCategory,
   TownInfo,
   NewspaperListing,
+  BankInfo,
   TycoonProfile,
   TycoonProfileFull,
   RankingCategory,
@@ -43,6 +44,7 @@ import type {
   PolicyData,
   PoliticsData,
   NewspaperBoard,
+  NewspaperRatingEntry,
   NewspaperIssue,
   NewspaperIssueList,
   PoliticalRoleInfo,
@@ -358,6 +360,8 @@ export interface WsReqLoginWorld extends WsMessage {
   username: string;
   password: string;
   worldName: string;
+  /** The language the player picked. Absent means the default (`'0'`, English). */
+  languageId?: string;
 }
 
 export interface WsReqMapLoad extends WsMessage {
@@ -395,6 +399,11 @@ export interface WsRespAuthSuccess extends WsMessage {
 export interface WsRespConnectSuccess extends WsMessage {
   type: WsMessageType.RESP_CONNECT_SUCCESS;
   worlds: WorldInfo[];
+  /**
+   * RDOCanJoinNewWorld (DServer/DirectoryServer.pas:116) answered 0: this account already
+   * holds as many worlds as its nobility allows. Absent otherwise.
+   */
+  atWorldLimit?: boolean;
 }
 
 /** Where logonComplete.asp sent the login when it was not the company list (logonComplete.asp:182-186). */
@@ -402,6 +411,15 @@ export type LoginPageOutcome =
   | { kind: 'denied'; expiresOn: string }   // logonNoAccess.asp — PA query value, e.g. "01/01/2020"
   | { kind: 'error'; errorCode: string }    // logonError.asp — ErrorCode query value, or the mismatch tag
   | { kind: 'visa'; firstVisit: boolean };  // chooseVisa.asp — firstVisit ≡ AccountStatus was ACCOUNT_Unexisting (Protocol.pas:84)
+
+/**
+ * InterfaceServer.CanJoinWorldEx (Interface Server/InterfaceServer.pas:441, body :3471-3486) — the
+ * admission answer logonComplete.asp:144 read before offering company creation.
+ * `-1` → the world is at its user cap; `> 0` → MinNobility minus the player's NobPoints.
+ */
+export type WorldAdmission =
+  | { kind: 'full' }
+  | { kind: 'nobility'; shortfall: number };
 
 export interface WsRespLoginSuccess extends WsMessage {
   type: WsMessageType.RESP_LOGIN_SUCCESS;
@@ -413,6 +431,7 @@ export interface WsRespLoginSuccess extends WsMessage {
   worldYSize?: number;
   worldSeason?: number;  // 0=Winter, 1=Spring, 2=Summer, 3=Autumn
   loginPage?: LoginPageOutcome;
+  admission?: WorldAdmission;
 }
 
 export interface WsRespRdoResult extends WsMessage {
@@ -976,9 +995,21 @@ export interface WsRespSearchMenuTycoonFullProfile extends WsMessage {
   data: CurriculumData;
 }
 
+/**
+ * Which of the two people-search paths a request asks for.
+ *
+ * `contains` is the typed path — the pattern is wrapped (`*term*`) and swept
+ * across the 26 `Root/Users` buckets. `prefix` is the A-Z index path — one
+ * bucket, the bare `*` pattern the reference client emitted for a letter
+ * (`DirectoryServer.wsc:841-847`).
+ */
+export type PeopleSearchMode = 'contains' | 'prefix';
+
 export interface WsReqSearchMenuPeopleSearch extends WsMessage {
   type: WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH;
   searchStr: string;
+  /** Absent means `'contains'`, the behaviour every sender had before the index. */
+  mode?: PeopleSearchMode;
 }
 
 export interface WsRespSearchMenuPeopleSearch extends WsMessage {
@@ -1012,7 +1043,7 @@ export interface WsReqSearchMenuBanks extends WsMessage {
 
 export interface WsRespSearchMenuBanks extends WsMessage {
   type: WsMessageType.RESP_SEARCH_MENU_BANKS;
-  banks: unknown[];
+  banks: BankInfo[];
 }
 
 export interface WsReqSearchMenuNewspapers extends WsMessage {
@@ -1367,6 +1398,10 @@ export interface WsRespProfileCurriculumAction extends WsMessage {
   type: WsMessageType.RESP_PROFILE_CURRICULUM_ACTION;
   success: boolean;
   message?: string;
+  /** abandonRole only: the personal company the session now plays as (rdoAbandonRole.asp:40). */
+  switchedTo?: CompanyInfo;
+  /** abandonRole only: no personal company is left — the client returns to the company stage. */
+  returnToCompanyStage?: boolean;
 }
 
 // =============================================================================
@@ -1535,6 +1570,12 @@ export interface WsReqNewspaperPost extends WsMessage {
   body: string;
   /** Reply to this column rather than opening a new one. */
   replyToPath?: string;
+  /**
+   * The ratings block, when the reader filled it in. Omitted or empty = a plain
+   * column; each entry goes out as `RDOSetRatingFrom` before the post
+   * (`boardmsg.asp:96-143`).
+   */
+  ratings?: NewspaperRatingEntry[];
 }
 
 export interface WsRespNewspaperPost extends WsMessage {

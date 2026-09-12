@@ -1,0 +1,18 @@
+/* ConnectingGauge — deadline progress inside a login stage overlay */
+
+.gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.bar {
+  width: 240px;
+  max-width: 80vw;
+}
+
+.text {
+  font-size: var(--text-sm);
+  color: var(--accent-gold);
+}

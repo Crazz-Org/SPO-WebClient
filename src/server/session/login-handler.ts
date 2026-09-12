@@ -8,13 +8,22 @@
 
 import * as net from 'net';
 import { fetchWithTimeout } from '../fetch-with-timeout';
-import type { RdoPacket, WorldInfo, CompanyInfo, LoginPageOutcome } from '../../shared/types';
+import { withLangId } from '../../shared/language';
+import type {
+  RdoPacket,
+  WorldInfo,
+  CompanyInfo,
+  LoginPageOutcome,
+  WorldAdmission,
+  PeopleSearchMode,
+} from '../../shared/types';
 import { SessionPhase, DIRECTORY_QUERY } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall, rdoGet, rdoSet, rdoIdOf } from '../../shared/rdo-frame';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { config } from '../../shared/config';
 import { AuthError } from '../../shared/auth-error';
+import { accountStatusRefusal, parseAccountStatus, ACCOUNT_Unexisting } from '../../shared/account-status';
 import { DIR_NOERROR, DIR_NOERROR_StillTrial } from '../../shared/directory-error-codes';
 import { toErrorMessage } from '../../shared/error-utils';
 import {
@@ -26,8 +35,6 @@ import {
 import { RDO_PREFIX_STRIP } from '../../shared/rdo-types';
 import { VISITOR_COMPANY_ID, VISITOR_COMPANY } from '../../shared/visitor-visa';
 
-// Voyager: AccountStatus = ACCOUNT_Unexisting → ResultType 'NEWACCOUNT' (ServerCnxHandler.pas:1087-1089); the constant is 2 (Protocol.pas:84).
-const ACCOUNT_UNEXISTING = 2;
 
 // ── Login Context ───────────────────────────────────────────────────────────
 
@@ -68,6 +75,8 @@ export interface LoginContext {
   readonly cachedPassword: string | null;
   readonly rdoCnntId: string | null;
   readonly currentCompany: CompanyInfo | null;
+  /** The session language — the SetLanguage argument and the `LangId` on every ASP fetch. */
+  readonly languageId: string;
 
   // ── Phase management ──
   getPhase(): SessionPhase;
@@ -92,10 +101,13 @@ export interface LoginContext {
   setCachedUsername(value: string | null): void;
   setCachedPassword(value: string | null): void;
   setCachedZonePath(value: string): void;
+  setAtWorldLimit(value: boolean | null): void;
   setActiveUsername(value: string | null): void;
   setCurrentCompany(value: CompanyInfo | null): void;
   setLastPlayerX(value: number): void;
   setLastPlayerY(value: number): void;
+  /** The world's AccountStatus answer (ACCOUNT_*), kept so the login flow can act on a first-time player. */
+  setAccountStatus(value: number | null): void;
 
   // ── Collections ──
   getAvailableWorlds(): Map<string, WorldInfo>;
@@ -164,12 +176,14 @@ export async function connectDirectory(
   ctx.setActiveUsername(username);
   ctx.setCachedPassword(pass);
   ctx.setCachedZonePath(zonePath || 'Root/Areas/Asia/Worlds');
+  // A re-connect (a zone change, a server switch) must not carry the previous answer.
+  ctx.setAtWorldLimit(null);
 
   // Run auth and world query in parallel (independent sockets & sessions)
   ctx.log.info('Directory: connecting...');
   const [, worlds] = await Promise.all([
     performDirectoryAuth(ctx, username, pass),
-    performDirectoryQuery(ctx, zonePath),
+    performDirectoryQuery(ctx, username, zonePath),
   ]);
   ctx.log.info('Directory: auth + query complete');
   return worlds;
@@ -228,9 +242,9 @@ async function performDirectoryAuth(ctx: LoginContext, username: string, pass: s
 }
 
 /**
- * Helper Phase 2: OpenSession -> QueryKey -> EndSession
+ * Helper Phase 2: OpenSession -> QueryKey -> CanJoinNewWorld -> EndSession
  */
-async function performDirectoryQuery(ctx: LoginContext, zonePath?: string): Promise<WorldInfo[]> {
+async function performDirectoryQuery(ctx: LoginContext, username: string, zonePath?: string): Promise<WorldInfo[]> {
   const socket = await ctx.createSocket('directory_query', config.rdo.directoryHost, config.rdo.ports.directory);
   try {
     // 1. Resolve & Open NEW Session
@@ -253,6 +267,9 @@ async function performDirectoryQuery(ctx: LoginContext, zonePath?: string): Prom
       worldMap.set(w.name, w);
     }
     ctx.setAvailableWorlds(worldMap);
+
+    // 2b. World limit — may this player join ANOTHER world? (logonComplete.asp:100-106)
+    ctx.setAtWorldLimit(await checkWorldLimit(ctx, sessionId, username));
 
     // 3. End Session & Close — fire-and-forget without RID: ACCEPTED DIVERGENCE
     // (audit 2026-07-02, P2 — the captured legacy client sends this WITH a RID and
@@ -287,9 +304,25 @@ function isTrueAnswer(value: string): boolean {
  * Mirrors `SearchUsers` (DirectoryServer.wsc:830-880): one session, one bucket
  * per letter of `Root/Users/<Letter>`, single-character searches narrowed to
  * their own bucket. Opens an ephemeral directory session and closes it.
+ *
+ * `mode` distinguishes the two paths the People page offers:
+ *  - `'contains'` — the typed path. Pattern `*term*` across all 26 buckets
+ *    (a single typed letter still narrows, as it always has).
+ *  - `'prefix'` — the A-Z index. `searchStr` must be exactly one ASCII letter;
+ *    anything else answers `[]` without opening a socket. It lands on the
+ *    one-bucket, bare-`*` form the reference client emitted for a letter
+ *    (`DirectoryServer.wsc:841-847`), which the server turns into
+ *    `Entry LIKE 'Root/Users/<Letter>/%'` (`DirectoryManager.pas:1001-1017`).
  */
-export async function searchPeople(ctx: LoginContext, searchStr: string): Promise<string[]> {
+export async function searchPeople(
+  ctx: LoginContext,
+  searchStr: string,
+  mode: PeopleSearchMode = 'contains',
+): Promise<string[]> {
   if (!searchStr.trim()) return [];
+  // A prefix request is only ever one letter — reject anything else before a
+  // socket is opened, so a malformed index request costs no RDO traffic.
+  if (mode === 'prefix' && !/^[A-Za-z]$/.test(searchStr)) return [];
 
   const socket = await ctx.createSocket('directory_search', config.rdo.directoryHost, config.rdo.ports.directory);
   try {
@@ -359,6 +392,7 @@ export interface LoginWorldResult {
   worldYSize: number | null;
   worldSeason: number | null;
   loginPage?: LoginPageOutcome;
+  admission?: WorldAdmission;
 }
 
 export async function loginWorld(
@@ -392,6 +426,9 @@ export async function loginWorld(
   // 2. Retrieve World Properties (10 properties)
   await fetchWorldProperties(ctx, interfaceServerId);
 
+  // 2b. Admission — may this player found a company here? (logonComplete.asp:143-144)
+  const admission = await checkWorldAdmission(ctx, interfaceServerId, username);
+
   // 3. Check AccountStatus
   const statusPacket = await ctx.sendRdoRequest('world', rdoCall(
     'AccountStatus', interfaceServerId,
@@ -399,8 +436,28 @@ export async function loginWorld(
     RdoValue.string(pass),
   ).packet, undefined, TimeoutCategory.FAST);
   const statusPayload = parsePropertyResponseHelper(statusPacket.payload!, 'res');
-  ctx.log.debug(`[Session] AccountStatus: ${statusPayload}`);
-  const firstVisit = parseInt(statusPayload, 10) === ACCOUNT_UNEXISTING;
+  const accountStatus = parseAccountStatus(statusPayload);
+  // #537 needs this after the branch; an unreadable answer (null) is not a first visit.
+  const firstVisit = accountStatus === ACCOUNT_Unexisting;
+  if (accountStatus === null) {
+    // The live server has only ever answered an integer here. Aborting on an
+    // unreadable answer would regress every login for nothing — the same rule
+    // checkWorldAdmission follows just above.
+    ctx.log.warn(`[Session] AccountStatus answer is not an integer: ${statusPayload}`);
+    ctx.setAccountStatus(null);
+  } else {
+    ctx.setAccountStatus(accountStatus);
+    ctx.log.debug(`[Session] AccountStatus: ${accountStatus}`);
+    if (accountStatus === ACCOUNT_Unexisting) {
+      ctx.log.info('[Session] AccountStatus: first-time player in this world');
+    }
+    // The reference client branched here, before Logon (ServerCnxHandler.pas:2763-2846).
+    const refusal = accountStatusRefusal(accountStatus);
+    if (refusal) {
+      ctx.log.warn(`[Session] AccountStatus refused: ${refusal.message}`);
+      throw refusal;
+    }
+  }
 
   // 4. Authenticate (call Logon)
   const logonPacket = await ctx.sendRdoRequest('world', rdoCall(
@@ -415,7 +472,10 @@ export async function loginWorld(
   }
 
   if (!contextId || contextId === '0' || contextId.startsWith('error')) {
-    throw new Error(`Login failed: ${logonPacket.payload}`);
+    // The payload stays in the gateway log, where redactSensitiveRdoFrame governs
+    // what is printed; the error the player sees carries no RDO text.
+    ctx.log.error(`[Session] Logon refused: ${logonPacket.payload}`);
+    throw new Error('Login failed: the world refused the logon');
   }
 
   ctx.setWorldContextId(contextId);
@@ -476,9 +536,9 @@ export async function loginWorld(
   // 8. SetLanguage - CLIENT sends this as PUSH command (no RID)
   const socket = ctx.getSocket('world');
   if (socket) {
-    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string('0')).toFrame();
+    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string(ctx.languageId)).toFrame();
     writeRdoFrame(socket, setLangCmd);
-    ctx.log.debug(`[Session] Sent SetLanguage push command`);
+    ctx.log.debug(`[Session] Sent SetLanguage push command (LangId=${ctx.languageId})`);
   }
 
   // 9. GetCompanyCount
@@ -522,6 +582,7 @@ export async function loginWorld(
     worldYSize: ctx.currentWorldInfo?.mapSizeY ?? null,
     worldSeason: null, // worldSeason is set during fetchWorldProperties
     loginPage,
+    admission,
   };
 }
 
@@ -849,6 +910,75 @@ async function fetchWorldProperties(ctx: LoginContext, interfaceServerId: string
   }
 }
 
+/**
+ * Ask the Interface Server whether this player may found a company here —
+ * `CanJoinWorldEx` (Interface Server/InterfaceServer.pas:441, :3471-3486), the call
+ * logonComplete.asp:143-144 makes against `InterfaceServer` before the company page.
+ * `-1` is a full world, a positive number is the nobility shortfall, `0` is "go ahead".
+ * Anything else — timeout, an error reply from a server without the member, an
+ * unparsable answer — returns undefined and the login proceeds exactly as before.
+ */
+async function checkWorldAdmission(
+  ctx: LoginContext, interfaceServerId: string, username: string,
+): Promise<WorldAdmission | undefined> {
+  try {
+    const packet = await ctx.sendRdoRequest('world', rdoCall(
+      'CanJoinWorldEx', interfaceServerId,
+      RdoValue.string(username),
+    ).packet, undefined, TimeoutCategory.FAST);
+    // An error reply normally rejects (config.rdo.errorContract defaults to
+    // reject-except-stale), but in `observe` mode it arrives as a success packet
+    // carrying errorCode — both paths degrade to today's flow.
+    if (packet.errorCode && packet.errorCode > 0) {
+      ctx.log.warn(`[Session] CanJoinWorldEx answered ${packet.errorName ?? 'error'} ${packet.errorCode} — proceeding without the admission check`);
+      return undefined;
+    }
+    const raw = parsePropertyResponseHelper(packet.payload ?? '', 'res');
+    const code = parseInt(raw, 10);
+    ctx.log.debug(`[Session] CanJoinWorldEx: ${raw}`);
+    if (code === -1) return { kind: 'full' };
+    if (code > 0) return { kind: 'nobility', shortfall: code };
+    return undefined;              // 0 (admitted) or NaN (unreadable): today's flow
+  } catch (err: unknown) {
+    ctx.log.warn(`[Session] CanJoinWorldEx failed — proceeding without the admission check: ${toErrorMessage(err)}`);
+    return undefined;
+  }
+}
+
+/**
+ * Ask the Directory Server whether this account may join ANOTHER world —
+ * `RDOCanJoinNewWorld(Alias)` (DServer/DirectoryServer.pas:116, a 1-arg `function`),
+ * body `:1217-1234`: a boolean olevariant, `#-1` may join / `#0` at the nobility-bound
+ * world limit, or `DIR_ERROR_Unknown` on exception. `logonComplete.asp:100-106` asked it
+ * in a bare directory session before any Interface Server check. Only a literal `0` is a
+ * refusal (Kernel/World.pas:6031-6033 reads the variant the same way); an error reply, a
+ * timeout or an unreadable answer returns null and the login proceeds exactly as before.
+ * Returns true when the player IS at the limit.
+ */
+async function checkWorldLimit(ctx: LoginContext, sessionId: string, username: string): Promise<boolean | null> {
+  try {
+    const packet = await sendDirectoryRequest(ctx, 'directory_query', rdoCall(
+      'RDOCanJoinNewWorld', sessionId,
+      RdoValue.string(username),
+    ).packet);
+    if (packet.errorCode && packet.errorCode > 0) {
+      ctx.log.warn(`[Session] RDOCanJoinNewWorld answered ${packet.errorName ?? 'error'} ${packet.errorCode} — proceeding without the world-limit check`);
+      return null;
+    }
+    const raw = parsePropertyResponseHelper(packet.payload ?? '', 'res');
+    const code = parseInt(raw, 10);
+    ctx.log.debug(`[Session] RDOCanJoinNewWorld: ${raw}`);
+    if (Number.isNaN(code)) {
+      ctx.log.warn(`[Session] RDOCanJoinNewWorld answered "${raw}" — proceeding without the world-limit check`);
+      return null;
+    }
+    return code === 0;
+  } catch (err: unknown) {
+    ctx.log.warn(`[Session] RDOCanJoinNewWorld failed — proceeding without the world-limit check: ${toErrorMessage(err)}`);
+    return null;
+  }
+}
+
 type FetchCompaniesResult =
   | { kind: 'companies'; companies: CompanyInfo[]; realContextId: string | null }
   | { kind: 'denied'; expiresOn: string }
@@ -858,7 +988,7 @@ type FetchCompaniesResult =
 /**
  * Fetch companies via HTTP (ASP endpoint)
  */
-async function fetchCompaniesViaHttp(
+export async function fetchCompaniesViaHttp(
   ctx: LoginContext,
   worldIp: string,
   username: string,
@@ -878,14 +1008,13 @@ async function fetchCompaniesViaHttp(
     DSPort: String(config.rdo.ports.directory),
     ISAddr: worldIp,
     ISPort: '8000',
-    LangId: '0',
   });
 
   const url = `http://${worldIp}/Five/0/Visual/Voyager/NewLogon/logonComplete.asp?${params.toString().replace(/\+/g, '%20')}`;
   ctx.log.debug(`[HTTP] Fetching companies from ${url}`);
 
   try {
-    const response = await fetchWithTimeout(url, { redirect: 'follow' });
+    const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     const text = await response.text();
     const finalUrl = response.url;
     const finalUrlLower = finalUrl.toLowerCase();
@@ -963,7 +1092,7 @@ function parseDirectoryResult(ctx: LoginContext, payload: string): WorldInfo[] {
   if (!countStr) {
     ctx.log.warn('[Session] Directory Parse Error: "count" key not found in response.');
     ctx.log.warn('[Session] First 5 keys:', Array.from(data.keys()).slice(0, 5));
-    return [];
+    throw new Error('Directory answer could not be parsed: no "Count" key');
   }
 
   const count = parseInt(countStr, 10);
@@ -1160,7 +1289,7 @@ async function fullWorldRelogin(ctx: LoginContext): Promise<void> {
 
   const socket = ctx.getSocket('world');
   if (socket) {
-    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string('0')).toFrame();
+    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string(ctx.languageId)).toFrame();
     writeRdoFrame(socket, setLangCmd);
   }
 

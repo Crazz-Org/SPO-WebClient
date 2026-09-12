@@ -10,6 +10,7 @@ import type { ScenarioVariables } from './scenario-variables';
 
 import { createAuthScenario } from './auth-scenario';
 import { createWorldListScenario } from './world-list-scenario';
+import { createWorldLoginScenario } from './world-login-scenario';
 import { createCompanyListScenario } from './company-list-scenario';
 import { createSelectCompanyScenario } from './select-company-scenario';
 import { createSwitchFocusScenario } from './switch-focus-scenario';
@@ -21,11 +22,14 @@ import { createCivicMutationsScenario } from './civic-mutations-scenario';
 import { createNewspaperScenario } from './newspaper-scenario';
 import { createConnectionSearchScenario } from './connection-search-scenario';
 import { createTycoonProfileScenario } from './tycoon-profile-scenario';
+import { createAbandonRoleScenario } from './abandon-role-scenario';
+import { createPeopleSearchScenario } from './people-search-scenario';
 
 /** All recognized scenario names */
 export type ScenarioName =
   | 'auth'
   | 'world-list'
+  | 'world-login'
   | 'company-list'
   | 'select-company'
   | 'switch-focus'
@@ -36,12 +40,15 @@ export type ScenarioName =
   | 'civic-mutations'
   | 'newspaper'
   | 'connection-search'
-  | 'tycoon-profile';
+  | 'tycoon-profile'
+  | 'abandon-role'
+  | 'people-search';
 
 /** Ordered list of all scenario names */
 export const SCENARIO_NAMES: ScenarioName[] = [
   'auth',
   'world-list',
+  'world-login',
   'company-list',
   'select-company',
   'switch-focus',
@@ -53,6 +60,8 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'newspaper',
   'connection-search',
   'tycoon-profile',
+  'abandon-role',
+  'people-search',
 ];
 
 /** Union result from any scenario factory */
@@ -69,6 +78,7 @@ const SCENARIO_FACTORIES: Record<
 > = {
   'auth': (o) => createAuthScenario(o),
   'world-list': (o) => createWorldListScenario(o),
+  'world-login': (o) => createWorldLoginScenario(o),
   'company-list': (o) => createCompanyListScenario(o),
   'select-company': (o) => createSelectCompanyScenario(o),
   'switch-focus': (o) => createSwitchFocusScenario(o),
@@ -80,6 +90,8 @@ const SCENARIO_FACTORIES: Record<
   'newspaper': (o) => createNewspaperScenario(o),
   'connection-search': (o) => createConnectionSearchScenario(o),
   'tycoon-profile': (o) => createTycoonProfileScenario(o),
+  'abandon-role': (o) => createAbandonRoleScenario(o),
+  'people-search': (o) => createPeopleSearchScenario(o),
 };
 
 /**
@@ -138,7 +150,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 13 mock server scenarios',
+    description: 'Combined: all 16 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -147,7 +159,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 13 scenarios',
+    description: 'Combined: all RDO exchanges from 16 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };

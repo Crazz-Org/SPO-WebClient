@@ -252,6 +252,7 @@ export function makeSessionCtx(overrides: FakeSessionOptions = {}): FakeSessionC
     cachedUsername: null,
     cachedPassword: null,
     currentCompany: null as CompanyInfo | null,
+    languageId: '0',
     daAddr: null,
     daPort: null,
     mailAccount: null,
@@ -414,10 +415,14 @@ export interface FakeLoginState {
   worldXSize: number | null;
   worldYSize: number | null;
   worldSeason: number | null;
+  accountStatus: number | null;
   currentWorldInfo: WorldInfo | null;
   cachedUsername: string | null;
   cachedPassword: string | null;
+  languageId: string;
   cachedZonePath: string;
+  /** What RDOCanJoinNewWorld answered; null = never asked / unreadable. */
+  atWorldLimit: boolean | null;
   activeUsername: string | null;
   currentCompany: CompanyInfo | null;
   lastPlayerX: number;
@@ -504,10 +509,13 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     worldXSize: null,
     worldYSize: null,
     worldSeason: null,
+    accountStatus: null,
     currentWorldInfo: null,
     cachedUsername: null,
     cachedPassword: null,
+    languageId: '0',
     cachedZonePath: '',
+    atWorldLimit: null,
     activeUsername: null,
     currentCompany: null,
     lastPlayerX: 0,
@@ -578,6 +586,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     get currentWorldInfo() { return state.currentWorldInfo; },
     get cachedUsername() { return state.cachedUsername; },
     get cachedPassword() { return state.cachedPassword; },
+    get languageId() { return state.languageId; },
     get rdoCnntId() { return state.rdoCnntId; },
     get currentCompany() { return state.currentCompany; },
 
@@ -602,10 +611,12 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     setCachedUsername: jest.fn((value: string | null) => { state.cachedUsername = value; }),
     setCachedPassword: jest.fn((value: string | null) => { state.cachedPassword = value; }),
     setCachedZonePath: jest.fn((value: string) => { state.cachedZonePath = value; }),
+    setAtWorldLimit: jest.fn((value: boolean | null) => { state.atWorldLimit = value; }),
     setActiveUsername: jest.fn((value: string | null) => { state.activeUsername = value; }),
     setCurrentCompany: jest.fn((value: CompanyInfo | null) => { state.currentCompany = value; }),
     setLastPlayerX: jest.fn((value: number) => { state.lastPlayerX = value; }),
     setLastPlayerY: jest.fn((value: number) => { state.lastPlayerY = value; }),
+    setAccountStatus: jest.fn((value: number | null) => { state.accountStatus = value; }),
 
     getAvailableWorlds: jest.fn(() => state.availableWorlds),
     setAvailableWorlds: jest.fn((worlds: Map<string, WorldInfo>) => { state.availableWorlds = worlds; }),

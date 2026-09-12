@@ -1,33 +1,38 @@
 /**
  * SearchPanel — World directory search with breadcrumb navigation.
  *
- * Home page: category cards (Towns, Tycoons, People, Rankings, Banks, Media).
+ * Home page: category cards built from the gateway's home menu (`homeData.categories`) —
+ * see home-tiles.ts for the id -> action mapping.
  * Drill-down pages render actual data from the search store.
  */
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  ChevronRight, Building2, UserSearch, Trophy, Landmark, Search, Newspaper, User, MapPin,
+  ChevronRight, Building2, UserSearch, Trophy, Landmark, Search, Newspaper, User, MapPin, Flag,
 } from 'lucide-react';
-import { useSearchStore, type SearchPage } from '../../store/search-store';
+import { useSearchStore } from '../../store/search-store';
 import { useClient } from '../../context';
 import { GlassCard, Skeleton, ErrorBoundary } from '../common';
 import type {
-  TownInfo, RankingCategory, RankingEntry,
+  TownInfo, BankInfo, RankingCategory, RankingEntry, SearchMenuCategory,
 } from '@/shared/types';
 import { TycoonProfileView } from './TycoonProfileView';
 import { TycoonFullProfileView } from './TycoonFullProfileView';
 import { MediaPage } from './MediaPage';
 import { DirectoryPage, openDirectory } from './DirectoryPage';
+import { homeTileAction, type HomeTileAction } from './home-tiles';
 import styles from './SearchPanel.module.css';
 
-const CATEGORIES: { id: SearchPage; label: string; icon: React.ReactNode }[] = [
-  { id: 'towns', label: 'Towns', icon: <Building2 size={20} /> },
-  { id: 'people', label: 'People', icon: <UserSearch size={20} /> },
-  { id: 'rankings', label: 'Rankings', icon: <Trophy size={20} /> },
-  { id: 'banks', label: 'Banks', icon: <Landmark size={20} /> },
-  { id: 'media', label: 'Media', icon: <Newspaper size={20} /> },
-];
+const TILE_ICONS: Record<string, React.ReactNode> = {
+  Towns: <Building2 size={20} />,
+  Tycoons: <UserSearch size={20} />,
+  Rankings: <Trophy size={20} />,
+  Banks: <Landmark size={20} />,
+  Newspapers: <Newspaper size={20} />,
+  local: <Flag size={20} />,
+  capitol: <Flag size={20} />,
+  RenderTycoon: <User size={20} />,
+};
 
 // ---------------------------------------------------------------------------
 // Towns sub-page
@@ -89,19 +94,32 @@ function TownsPage() {
 // People search sub-page (RDO-based directory search)
 // ---------------------------------------------------------------------------
 
+/** The A-Z index of the People page — one bucket of `Root/Users` per letter. */
+const PEOPLE_INDEX_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
 function PeoplePage() {
   const results = useSearchStore((s) => s.peopleData?.results) ?? [];
   const isLoading = useSearchStore((s) => s.isLoading);
+  const peopleQuery = useSearchStore((s) => s.peopleQuery);
   const client = useClient();
   const [searchStr, setSearchStr] = useState('');
 
   const handleSearch = useCallback(() => {
     const trimmed = searchStr.trim();
     if (trimmed) {
+      useSearchStore.getState().setPeopleQuery({ mode: 'contains', term: trimmed });
       useSearchStore.getState().setLoading(true);
-      client.onSearchMenuPeopleSearch(trimmed);
+      client.onSearchMenuPeopleSearch(trimmed, 'contains');
     }
   }, [searchStr, client]);
+
+  /** Browse the roster: one letter, no text typed. */
+  const handleLetter = useCallback((letter: string) => {
+    setSearchStr('');
+    useSearchStore.getState().setPeopleQuery({ mode: 'prefix', term: letter });
+    useSearchStore.getState().setLoading(true);
+    client.onSearchMenuPeopleSearch(letter, 'prefix');
+  }, [client]);
 
   return (
     <div className={styles.listContainer}>
@@ -117,6 +135,24 @@ function PeoplePage() {
         <button className={styles.searchBtn} onClick={handleSearch} disabled={isLoading}>
           <Search size={14} />
         </button>
+      </div>
+
+      {/* A-Z index — browse without typing anything */}
+      <div className={styles.letterIndex} role="group" aria-label="Browse players by first letter">
+        {PEOPLE_INDEX_LETTERS.map((letter) => {
+          const active = peopleQuery?.mode === 'prefix' && peopleQuery.term === letter;
+          return (
+            <button
+              key={letter}
+              type="button"
+              className={`${styles.letterBtn} ${active ? styles.letterBtnActive : ''}`}
+              aria-pressed={active}
+              onClick={() => handleLetter(letter)}
+            >
+              {letter}
+            </button>
+          );
+        })}
       </div>
 
       {/* Search results list */}
@@ -138,9 +174,14 @@ function PeoplePage() {
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty state — a letter that found nobody says so, it does not fall
+          back to the "type something" placeholder. */}
       {results.length === 0 && !isLoading && (
-        <div className={styles.emptyState}>Search for people by name.</div>
+        <div className={styles.emptyState}>
+          {peopleQuery?.mode === 'prefix'
+            ? `No players whose name starts with ${peopleQuery.term}.`
+            : 'Search for people by name.'}
+        </div>
       )}
     </div>
   );
@@ -282,6 +323,7 @@ function RankingsPage() {
 
 function BanksPage() {
   const banks = useSearchStore((s) => s.banksData?.banks) ?? [];
+  const client = useClient();
 
   if (banks.length === 0) {
     return <div className={styles.emptyState}>No banks found.</div>;
@@ -289,17 +331,22 @@ function BanksPage() {
 
   return (
     <div className={styles.listContainer}>
-      {banks.map((bank, idx) => {
-        const b = bank as Record<string, unknown>;
-        return (
-          <GlassCard key={String(b.name ?? idx)} className={styles.listItem} light>
-            <div className={styles.listItemHeader}>
-              <Landmark size={16} className={styles.listItemIcon} />
-              <span className={styles.listItemTitle}>{String(b.name ?? `Bank ${idx + 1}`)}</span>
-            </div>
-          </GlassCard>
-        );
-      })}
+      {banks.map((bank: BankInfo) => (
+        <GlassCard
+          key={bank.name}
+          className={styles.listItem}
+          light
+          onClick={() => client.onNavigateToBuilding(bank.x, bank.y)}
+        >
+          <div className={styles.listItemHeader}>
+            <Landmark size={16} className={styles.listItemIcon} />
+            <span className={styles.listItemTitle}>{bank.name}</span>
+          </div>
+          <div className={styles.listItemDetails}>
+            <span>Company: {bank.company}</span>
+          </div>
+        </GlassCard>
+      ))}
     </div>
   );
 }
@@ -341,12 +388,26 @@ export function SearchPanel() {
   const navigateTo = useSearchStore((s) => s.navigateTo);
   const goBack = useSearchStore((s) => s.goBack);
   const pageHistory = useSearchStore((s) => s.pageHistory);
+  const tiles = useSearchStore((s) => s.homeData?.categories);
   const client = useClient();
 
   // Request home data when opened
   useEffect(() => {
     client.onSearchMenuHome();
   }, [client]);
+
+  const runTile = useCallback((cat: SearchMenuCategory, action: HomeTileAction) => {
+    switch (action.kind) {
+      case 'page': navigateTo(action.page); return;
+      case 'you':
+        navigateTo('tycoon-profile');
+        client.onSearchMenuTycoonProfile('YOU');   // search-menu-service.ts:217-218 resolves YOU
+        return;
+      case 'capitol':
+        if (cat.x !== undefined && cat.y !== undefined) client.onNavigateToBuilding(cat.x, cat.y);
+        return;
+    }
+  }, [navigateTo, client]);
 
   // Fetch category data when navigating to a category page
   useEffect(() => {
@@ -392,19 +453,27 @@ export function SearchPanel() {
         </div>
       )}
 
-      {/* Home — category grid */}
-      {!isLoading && currentPage === 'home' && (
+      {/* Home — category grid, built from homeData.categories */}
+      {!isLoading && currentPage === 'home' && tiles === undefined && (
+        <div className={styles.loading}><Skeleton width="100%" height="60px" /></div>
+      )}
+      {!isLoading && currentPage === 'home' && tiles !== undefined && (
         <div className={styles.categoryGrid}>
-          {CATEGORIES.map((cat) => (
-            <GlassCard
-              key={cat.id}
-              className={styles.categoryCard}
-              onClick={() => navigateTo(cat.id)}
-            >
-              <span className={styles.categoryIcon}>{cat.icon}</span>
-              <span className={styles.categoryLabel}>{cat.label}</span>
-            </GlassCard>
-          ))}
+          {tiles.map((cat) => {
+            const action = homeTileAction(cat);
+            const usable = cat.enabled && action !== null
+              && (action.kind !== 'capitol' || (cat.x !== undefined && cat.y !== undefined));
+            return (
+              <GlassCard
+                key={cat.id}
+                className={`${styles.categoryCard} ${usable ? '' : styles.categoryCardDisabled}`}
+                onClick={usable ? () => runTile(cat, action) : undefined}
+              >
+                <span className={styles.categoryIcon}>{TILE_ICONS[cat.id] ?? <Search size={20} />}</span>
+                <span className={styles.categoryLabel}>{cat.label}</span>
+              </GlassCard>
+            );
+          })}
         </div>
       )}
 

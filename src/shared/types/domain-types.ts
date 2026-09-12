@@ -706,6 +706,15 @@ export interface NewspaperListing {
   townName: string;
 }
 
+/** One row of the directory's Banks page (New Directory/Banks.asp:40-43 via BrowseFacFolder.inc:15-52). */
+export interface BankInfo {
+  name: string;
+  /** Owning company — BrowseFacFolder.inc:26-28, rendered because Banks.asp:40 sets ShowCompany = true. */
+  company: string;
+  x: number;
+  y: number;
+}
+
 /**
  * Tycoon profile from RenderTycoon.asp
  */
@@ -1306,6 +1315,19 @@ export interface NewspaperArticle {
   parentPath: string;
   /** Absolute URL of the author's portrait (`boardmsg.asp:244`), or `''`. */
   photoUrl: string;
+}
+
+/**
+ * One criterion the reader chose to rate while posting a column — the
+ * `<select name=parm<Id>>` of `boardmsg.asp:337-350` that was not left on `-`.
+ */
+export interface NewspaperRatingEntry {
+  /** Rating cache id — the `RatingId` argument of `RDOSetRatingFrom` (`:120`). */
+  id: string;
+  /** Criterion name as the Politics page printed it; what the report prints (`:125`). */
+  name: string;
+  /** Percentage, 0..100. */
+  value: number;
 }
 
 export interface NewspaperBoard {

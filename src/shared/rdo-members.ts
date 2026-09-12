@@ -91,6 +91,7 @@ export const RDO_MEMBERS = {
   AddHeaders:                { kind: 'procedure', arity: 1 },                // src/server/session/mail-handler.ts:131,224
   AddLine:                   { kind: 'procedure', arity: 1 },                // src/server/session/mail-handler.ts:137
   BreakCircuitAt:            { kind: 'function',  arity: 4 },                // src/server/session/road-handler.ts:333
+  CanJoinWorldEx:            { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:441; src/server/session/login-handler.ts (checkWorldAdmission)
   CheckNewMail:              { kind: 'function',  arity: 2 },                // src/server/session/mail-handler.ts:416
   ClientAware:               { kind: 'procedure', arity: 0 },                // src/server/session/login-handler.ts:587
   ClientNotAware:            { kind: 'procedure', arity: 0 },                // src/server/spo_session.ts:2890
@@ -151,6 +152,7 @@ export const RDO_MEMBERS = {
   RDOCacncelTransc:          { kind: 'procedure', arity: 0 },                // src/server/session/building-property-handler.ts:194,223
   RDOCancelMovie:            { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
   RDOCancelResearch:         { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
+  RDOCanJoinNewWorld:        { kind: 'function',  arity: 1 },                // DServer/DirectoryServer.pas:116; src/server/session/login-handler.ts (checkWorldLimit)
   RDOCnntId:                 { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts:421
   RDOConnectInput:           { kind: 'procedure', arity: 2 },                // src/server/session/building-property-handler.ts:194,223
   RDOConnectOutput:          { kind: 'procedure', arity: 2 },                // src/server/session/building-property-handler.ts:194,223
