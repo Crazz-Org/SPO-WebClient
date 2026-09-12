@@ -13,9 +13,11 @@
  * So the matrix below drives the real function once per command in
  * `KNOWN_RDO_COMMANDS` and pins, in this order:
  *
- *   1. TARGET     — `ObjectId` for the ten gate commands, `CurrBlock` otherwise.
- *                   The fake answers with two DIFFERENT ids (the warehouse case),
- *                   so a handler that always picked one of them fails here.
+ *   1. TARGET     — `ObjectId` for the ten gate commands, the INPUT GATE's own
+ *                   id for the one member declared on a gate (`RDOSelSelected`,
+ *                   Kernel/Kernel.pas:1623), `CurrBlock` otherwise. The fake
+ *                   answers with three DIFFERENT ids (the warehouse case, plus
+ *                   the gate), so a handler that always picked one fails here.
  *   2. SEPARATOR  — `"*"` everywhere, and which channel carries it: a QueryId
  *                   only exists on the `sendRdoRequest` path, never on the
  *                   fire-and-forget frames.
@@ -49,6 +51,14 @@ import { TimeoutCategory } from '../../shared/timeout-categories';
  */
 const CURR_BLOCK = '40133497';
 const OBJECT_ID = '40133512';
+/**
+ * The INPUT GATE's own id — a third, distinct object. `RDOSelSelected` is
+ * declared on `TPullInput` (Kernel/Kernel.pas:1623), and the id the reference
+ * client binds it to is the one written on every cache object,
+ * `Cache.WriteInteger(ppObjId, integer(Obj))` (Cache/CacheAgent.pas:89), read
+ * off the GATE header (Voyager/SupplySheetForm.pas:1001).
+ */
+const GATE_OBJECT_ID = '40134021';
 
 /** Cacher handles — the pool ids the handler must thread through unchanged. */
 const TEMP_OBJECT_ID = 'cacher-obj-7';
@@ -142,6 +152,9 @@ function makeConstructionCtx(options: {
     if (props[0] === 'OutputCount') return [String(outputPaths.length)];
     if (/^InputPath\d+$/.test(props[0])) return props.map((_, i) => inputPaths[i] ?? '');
     if (/^OutputPath\d+$/.test(props[0])) return props.map((_, i) => outputPaths[i] ?? '');
+    // `ObjectId` alone is the GATE's own id, read after SetPath landed on it
+    // (Cache/CacheAgent.pas:89) — not the facility pair above.
+    if (props.length === 1 && props[0] === 'ObjectId') return [GATE_OBJECT_ID];
     return readBack;
   });
   return fake;
@@ -187,8 +200,11 @@ interface MatrixEntry {
   params?: Record<string, string>;
   /** Expected arguments, in order — the contract of `buildRdoCommandArgs`. */
   args: RdoValue[];
-  /** Which id the frame must select. */
-  target: 'currBlock' | 'objectId';
+  /**
+   * Which id the frame must select. `gate` is the input gate's own ObjectId —
+   * a third object, and the only legal target of a member declared on the gate.
+   */
+  target: 'currBlock' | 'objectId' | 'gate';
   /** `call` unless the member is a published property (`RDO_SET_PROPERTIES`). */
   verb: 'call' | 'set';
   /** `frame` = fire-and-forget, no QueryId. `request` = synchronous, QueryId. */
@@ -246,10 +262,14 @@ const MATRIX: readonly MatrixEntry[] = [
     // boolean — `Cache.WriteBoolean('Selected', fSelected)` (:7815) writes '1'
     // (Cache/CacheAgent.pas:150-152), never the `#-1` we emit. `fluidId` is not
     // a wire argument here (the member takes one WordBool); it names the input
-    // gate the witness must be read from.
+    // gate — both the object the frame is ADDRESSED to and the one the witness
+    // is read from. The member is declared on `TPullInput`
+    // (Kernel/Kernel.pas:1623), not on TBlock, so neither block id would reach
+    // it; Voyager binds the id it read off the gate header
+    // (Voyager/SupplySheetForm.pas:1001 -> :1100 -> :697-699).
     command: 'RDOSelSelected', value: '1', params: { fluidId: GATE_FLUID },
     args: [RdoValue.int(-1)],
-    target: 'currBlock', verb: 'call', channel: 'frame', readBack: 'Selected',
+    target: 'gate', verb: 'call', channel: 'frame', readBack: 'Selected',
     echo: '1',
   },
 
@@ -534,8 +554,14 @@ const MATRIX: readonly MatrixEntry[] = [
 ];
 
 /** The frame the handler must have built for this row. */
+const TARGET_IDS: Record<MatrixEntry['target'], string> = {
+  currBlock: CURR_BLOCK,
+  objectId: OBJECT_ID,
+  gate: GATE_OBJECT_ID,
+};
+
 function expectedFrame(entry: MatrixEntry): string {
-  const targetId = entry.target === 'objectId' ? OBJECT_ID : CURR_BLOCK;
+  const targetId = TARGET_IDS[entry.target];
   return entry.verb === 'set'
     ? RdoCommand.sel(targetId).set(entry.command).args(...entry.args).build()
     : RdoCommand.sel(targetId).call(entry.command).push().args(...entry.args).build();
@@ -566,7 +592,7 @@ describe('setBuildingProperty — command matrix', () => {
         socketName: 'construction',
         packet: {
           verb: RdoVerb.SEL,
-          targetId: entry.target === 'objectId' ? OBJECT_ID : CURR_BLOCK,
+          targetId: TARGET_IDS[entry.target],
           action: RdoAction.CALL,
           member: entry.command,
           separator: '"*"',
@@ -643,6 +669,7 @@ describe('setBuildingProperty — command matrix', () => {
 describe('target selection', () => {
   const OBJECT_ID_COMMANDS = MATRIX.filter(e => e.target === 'objectId').map(e => e.command);
   const CURR_BLOCK_COMMANDS = MATRIX.filter(e => e.target === 'currBlock').map(e => e.command);
+  const GATE_COMMANDS = MATRIX.filter(e => e.target === 'gate').map(e => e.command);
 
   it('asks the cacher for both ids at the requested coordinates', async () => {
     const fake = makeConstructionCtx();
@@ -661,7 +688,9 @@ describe('target selection', () => {
       'RDODisconnectFromTycoon', 'RDODisconnectInput', 'RDODisconnectOutput',
       'RDOSetInputMaxPrice', 'RDOSetInputMinK', 'RDOSetInputOverPrice', 'RDOSetOutputPrice',
     ]);
-    expect(CURR_BLOCK_COMMANDS).toHaveLength(MATRIX.length - 10);
+    // And exactly one member is bound to neither: it is declared on the gate.
+    expect(GATE_COMMANDS).toEqual(['RDOSelSelected']);
+    expect(CURR_BLOCK_COMMANDS).toHaveLength(MATRIX.length - 11);
   });
 
   it('binds both synchronous commands to ObjectId — the CurrBlock arm of :193 is dead', () => {
@@ -1036,12 +1065,14 @@ describe('argument construction', () => {
   });
 
   it.each([
-    ['RDOSelSelected', '0'],
-    ['RDOAcceptCloning', '0'],
-  ])('%s encodes false as #0', async (command, value) => {
+    // RDOSelSelected is addressed to the gate, so it needs the fluid that names
+    // one; without it the handler refuses instead of emitting.
+    { command: 'RDOSelSelected', value: '0', params: { fluidId: GATE_FLUID } },
+    { command: 'RDOAcceptCloning', value: '0', params: undefined },
+  ])('$command encodes false as #0', async ({ command, value, params }) => {
     const fake = makeConstructionCtx();
 
-    await settle(setBuildingProperty(fake.ctx, X, Y, command, value));
+    await settle(setBuildingProperty(fake.ctx, X, Y, command, value, params));
 
     expect(onlyFrame(fake)).toContain(RdoValue.int(0).format());
     expect(onlyFrame(fake)).not.toContain(RdoValue.int(-1).format());
@@ -1476,19 +1507,37 @@ describe('read-back on the gate object', () => {
     expect(fake.cacher.setPath).toHaveBeenCalledWith(TEMP_OBJECT_ID, INPUT_PATHS[1]);
   });
 
-  it('reads no gate at all when the command carried no fluid id', async () => {
-    // What the client sends today for RDOSelSelected. Nothing identifies the
-    // gate, so nothing is read — and `confirmed` stays undefined rather than
-    // being settled by a property off the wrong object.
+  it('refuses RDOSelSelected outright when the command carried no fluid id', async () => {
+    // The fluid does not only name the witness here — it names the OBJECT the
+    // frame is addressed to. With no gate resolved there is no legal target, so
+    // nothing goes on the wire at all: the alternative is a frame aimed at the
+    // block, which does not publish the member.
     const fake = makeConstructionCtx({ readBack: ['1'] });
 
     const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOSelSelected', '1'));
 
+    expect(fake.frames.construction).toEqual([]);
     expect(fake.cacher.setPath).not.toHaveBeenCalled();
-    expect(queries(fake)).toEqual([['CurrBlock', 'ObjectId']]);
-    expect(result).toEqual({ success: true, newValue: '', confirmed: undefined });
-    expect(fake.log.debug).toHaveBeenCalledWith(
-      expect.stringContaining('cannot tell which Input gate'),
+    expect(result).toEqual({ success: false, newValue: '' });
+    expect(fake.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('RDOSelSelected cannot be addressed'),
+    );
+  });
+
+  it('refuses RDOSelSelected when no gate carries that fluid', async () => {
+    const fake = makeConstructionCtx({ readBack: ['1'] });
+
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOSelSelected', '1', {
+      fluidId: 'Nope',
+    }));
+
+    expect(fake.frames.construction).toEqual([]);
+    expect(result).toEqual({ success: false, newValue: '' });
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('no Input gate named "Nope"'),
+    );
+    expect(fake.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('RDOSelSelected cannot be addressed'),
     );
   });
 
@@ -1799,13 +1848,15 @@ describe('construction lock', () => {
     const fake = makeConstructionCtx();
 
     const first = setBuildingProperty(fake.ctx, 10, 20, 'RDOAutoProduce', '1');
-    const second = setBuildingProperty(fake.ctx, 30, 40, 'RDOSelSelected', '0');
+    // A second block-bound mutation: this test is about the lock, not about
+    // gate resolution, so it stays clear of the one gate-addressed member.
+    const second = setBuildingProperty(fake.ctx, 30, 40, 'RDOSetTradeLevel', '3');
     await jest.advanceTimersByTimeAsync(400);
     await Promise.all([first, second]);
 
     expect(fake.frames.construction).toEqual([
       RdoCommand.sel(CURR_BLOCK).call('RDOAutoProduce').push().args(RdoValue.int(-1)).build(),
-      RdoCommand.sel(CURR_BLOCK).call('RDOSelSelected').push().args(RdoValue.int(0)).build(),
+      RdoCommand.sel(CURR_BLOCK).call('RDOSetTradeLevel').push().args(RdoValue.int(3)).build(),
     ]);
 
     // The discriminating part: the second mutation's lookup happens AFTER the

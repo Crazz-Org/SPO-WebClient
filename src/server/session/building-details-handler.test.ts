@@ -2048,7 +2048,8 @@ describe('getBuildingGateConnections', () => {
   it("reads one gate on the inspector's own object: SetPath, header, then rows", async () => {
     const fake = gateCtx('supplies', {
       MetaFluid: 'Fresh Food', FluidValue: '1200', LastCostPerc: '85', minK: '30',
-      MaxPrice: '150', QPSorted: '1', SortMode: '0', cnxCount: '1', ObjectId: '40133999',
+      MaxPrice: '150', QPSorted: '1', SortMode: '0', cnxCount: '1', Selected: '1',
+      ObjectId: '40133999',
     }, 'res="%Farm A\tSPO_test3\tYellow Inc.\t100\t10\t900\t$12\t95%\t1\t40\t50\t"');
 
     const { supply } = await getBuildingGateConnections(
@@ -2065,6 +2066,7 @@ describe('getBuildingGateConnections', () => {
       maxPrice: '150',
       qpSorted: '1',
       sortMode: '0',
+      selected: '1',
       connectionCount: 1,
       connections: [{
         facilityName: 'Farm A', createdBy: 'SPO_test3', companyName: 'Yellow Inc.',
@@ -2077,6 +2079,35 @@ describe('getBuildingGateConnections', () => {
     expect(setPath?.packet.targetId).toBe(FIRST_TEMP);
     expect(setPath?.packet.args).toEqual([RdoValue.string('Seg0').format()]);
     expect(setPath?.category).toBe(TimeoutCategory.SLOW);
+  });
+
+  it("asks for the ten header names Voyager asks for, in its order", async () => {
+    // `SheetUtils.GetPropertyArray(Proxy, [tidFluidId, tidFluidValue,
+    // tidLastCost, tidKmin, tidPmax, tidQPSorted, tidSortMode, tidCnxCount,
+    // tidSelected, tidObjectId], ...)` — Voyager/SupplySheetForm.pas:460.
+    // `tidSelected` is the auto-buy flag; reading nine names left the browser
+    // unable to show it at all.
+    const fake = gateCtx('supplies', { MetaFluid: 'Fresh Food', cnxCount: '0' }, '');
+
+    await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Fresh Food');
+
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledWith(FIRST_TEMP, [
+      'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
+      'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
+    ]);
+  });
+
+  it('leaves the auto-buy flag undefined on a gate that does not publish it', async () => {
+    // An input that is not a TPullInput has no `Selected` to store, and the
+    // cacher answers an unknown name with an empty string. Undefined is "no
+    // control offered", never "off".
+    const fake = gateCtx('supplies', { MetaFluid: 'Fresh Food', cnxCount: '0' }, '');
+
+    const { supply } = await getBuildingGateConnections(
+      fake.ctx, X, Y, 'supplies', 'Seg0', 'Fresh Food',
+    );
+
+    expect(supply?.selected).toBeUndefined();
   });
 
   it('reads a product gate with its own column set', async () => {
