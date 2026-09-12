@@ -31,6 +31,9 @@ import {
   WsReqPoliticsVote,
   WsRespPoliticsVote,
   BuildingDetailsResponse,
+  WsReqBuildingWorkerCounts,
+  WsRespBuildingWorkerCounts,
+  WorkerCount,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
 import { showToast, dismissToast } from '../components/common/Toast';
@@ -137,6 +140,36 @@ export async function requestBuildingRefreshProperties(
     return response.details;
   } catch (err: unknown) {
     ClientBridge.log('Error', `Failed to refresh properties: ${toErrorMessage(err)}`);
+    return null;
+  }
+}
+
+// ── Live Worker Counts ──────────────────────────────────────────────────────
+
+/**
+ * Live jobs-filled figures for the listed workforce classes — the Workforce
+ * tab's 20 s poll. The result is handed straight back to the caller: no store
+ * write, because only the open table owns these numbers and writing `details`
+ * would re-render the whole panel.
+ */
+export async function requestWorkerCounts(
+  ctx: ClientHandlerContext,
+  x: number,
+  y: number,
+  kinds: number[],
+): Promise<WorkerCount[] | null> {
+  try {
+    const req: WsReqBuildingWorkerCounts = {
+      type: WsMessageType.REQ_BUILDING_WORKER_COUNTS,
+      x,
+      y,
+      kinds,
+    };
+
+    const response = await ctx.sendRequest(req) as WsRespBuildingWorkerCounts;
+    return response.counts;
+  } catch (err: unknown) {
+    ClientBridge.log('Error', `Failed to read worker counts: ${toErrorMessage(err)}`);
     return null;
   }
 }

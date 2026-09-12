@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `worker-counts`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -107,6 +107,15 @@ a typed term sends the wrapped `*term*` across all 26 buckets. A wrong pattern d
 just other people's names, so the two frames are fixed here. Both are built by the emitter
 (`rdoCall`); only `idof` is written out, because it has no fire-and-forget form. Its test
 drives the real `searchPeople` and matches each emitted frame back against the exchange.
+
+`worker-counts` is the Workforce tab's live jobs-filled read — one `RDOGetWorkers` per class
+whose cached maximum is above zero, the way the reference client polled it
+(`Voyager/WorkforceSheet.pas:365-377`). It fixes three things nothing else can: the separator
+(`RDOGetWorkers` is a 1-argument published FUNCTION, `Kernel/WorkCenterBlock.pas:139`, so the
+frame carries `"^"` and a reply comes back — a `"*"` would be an arbitrary memory write with no
+error to show for it), the **bind target** (the building's block, never the cacher temp object
+the inspector holds), and the call count (one exchange per kind, so a gateway that asked for a
+class with no jobs would leave one unconsumed). Its test drives the real `readWorkerCounts`.
 
 ### Scenario Structure
 

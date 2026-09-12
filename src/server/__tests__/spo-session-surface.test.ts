@@ -617,6 +617,13 @@ const DELEGATIONS: readonly Delegation[] = [
     result: { properties: [] },
   },
   {
+    method: 'readWorkerCounts',
+    install: () => jest.spyOn(buildingDetailsHandler, 'readWorkerCounts'),
+    call: s => s.readWorkerCounts(706, 436, [0, 2]),
+    forwarded: [706, 436, [0, 2]],
+    result: [{ kind: 0, workers: 5 }],
+  },
+  {
     method: 'releaseInspector',
     install: () => jest.spyOn(buildingDetailsHandler, 'releaseInspector'),
     call: s => s.releaseInspector(),
@@ -671,7 +678,8 @@ describe('StarpeaceSession — handler delegation', () => {
   it('covers every one-line handler delegation the facade declares', () => {
     // A guard on the table itself: if a delegation is added to the facade and
     // not to the table, the count stops matching and this row says so.
-    expect(DELEGATIONS).toHaveLength(72);
+    // 73: `readWorkerCounts`, issue 552.
+    expect(DELEGATIONS).toHaveLength(73);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 

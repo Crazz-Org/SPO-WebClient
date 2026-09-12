@@ -22,6 +22,7 @@ import {
   ALL_MOCK_BUILDINGS,
 } from './building-details-scenario';
 import { createCivicMutationsScenario } from './civic-mutations-scenario';
+import { createWorkerCountsScenario } from './worker-counts-scenario';
 import {
   createWorldLoginScenario,
   WORLD_LOGIN_INTERFACE_SERVER_ID,
@@ -612,6 +613,23 @@ describe('civic-mutations scenario', () => {
   });
 });
 
+// =============================================================================
+// Scenario 17: worker-counts
+// =============================================================================
+
+describe('worker-counts scenario', () => {
+  it('creates one RDO exchange per workforce class', () => {
+    const { rdo } = createWorkerCountsScenario();
+    expect(rdo.name).toBe('worker-counts');
+    expect(rdo.exchanges).toHaveLength(3);
+    expect(rdo.exchanges.map(e => e.id)).toEqual([
+      'wc-rdo-get-workers-0',
+      'wc-rdo-get-workers-1',
+      'wc-rdo-get-workers-2',
+    ]);
+  });
+});
+
 describe('world-login scenario', () => {
   const EXCHANGE_IDS = [
     'wlogin-rdo-idof',
@@ -683,12 +701,13 @@ describe('world-login scenario', () => {
 });
 
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 16 entries', () => {
+  it('SCENARIO_NAMES has 17 entries', () => {
     // 14, not 13: the `world-login` scenario was added with the CanJoinWorldEx
     // admission check (Interface Server/InterfaceServer.pas:441).
     // 15: `abandon-role`, issue 547.
     // 16: `people-search`, issue 527.
-    expect(SCENARIO_NAMES).toHaveLength(16);
+    // 17: `worker-counts`, issue 552.
+    expect(SCENARIO_NAMES).toHaveLength(17);
   });
 
   it('loadScenario returns bundle for each name', () => {

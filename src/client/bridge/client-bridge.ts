@@ -29,6 +29,7 @@ import type {
   WorldAdmission,
   BuildingFocusInfo,
   BuildingDetailsResponse,
+  WorkerCount,
   TycoonProfileFull,
   BuildingCategory,
   BuildingInfo,
@@ -197,6 +198,8 @@ export interface ClientCallbacks {
   onRefreshBuilding: (x: number, y: number) => void;
   /** Lightweight refresh: re-read the properties of the focused building only. */
   onRefreshBuildingProperties: (x: number, y: number) => void;
+  /** Live jobs-filled figures for the listed classes — RDOGetWorkers per class, on the Workforce tab's 20 s timer. */
+  onReadWorkerCounts: (x: number, y: number, kinds: number[]) => Promise<WorkerCount[] | null>;
   onRequestTabData: (x: number, y: number, tabId: string, visualClass: string, groupIds?: string[]) => void;
   /** Read one gate's connection rows, on expand. See requestGateConnections. */
   onRequestGateConnections: (

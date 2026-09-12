@@ -423,3 +423,37 @@ describe('downgrade asks first (B5)', () => {
     await expect(result).resolves.toBe(false);
   });
 });
+
+describe('requestWorkerCounts', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('asks for exactly the classes it was given and hands the figures back', async () => {
+    const { requestWorkerCounts } = await import('./building-action-handler');
+    const counts = [{ kind: 0, workers: 5 }, { kind: 2, workers: 69 }];
+    const ctx = {
+      ...makeCtx(),
+      sendRequest: jest.fn().mockResolvedValue({ counts }),
+    } as unknown as ClientHandlerContext;
+
+    await expect(requestWorkerCounts(ctx, 472, 392, [0, 2])).resolves.toEqual(counts);
+    expect(ctx.sendRequest).toHaveBeenCalledWith({
+      type: 'REQ_BUILDING_WORKER_COUNTS',
+      x: 472,
+      y: 392,
+      kinds: [0, 2],
+    });
+  });
+
+  it('returns null and logs when the request fails — a stale figure, not a broken panel', async () => {
+    const { requestWorkerCounts } = await import('./building-action-handler');
+    const ctx = {
+      ...makeCtx(),
+      sendRequest: jest.fn().mockRejectedValue(new Error('timeout')),
+    } as unknown as ClientHandlerContext;
+
+    await expect(requestWorkerCounts(ctx, 472, 392, [1])).resolves.toBeNull();
+    expect(ClientBridge.log).toHaveBeenCalledWith('Error', expect.stringContaining('timeout'));
+  });
+});

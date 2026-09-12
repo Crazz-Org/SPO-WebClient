@@ -31,6 +31,7 @@ import {
   getBuildingTabData,
   getBuildingGateConnections,
   refreshBuildingProperties,
+  readWorkerCounts,
 } from './building-details-handler';
 import type { ActiveInspector } from './building-details-handler';
 import { makeSessionCtx } from '../__tests__/session/fake-session-context';
@@ -2590,5 +2591,134 @@ describe('properties requested from a cache that never holds them', () => {
       expect(bank).toContainEqual({ name, value: '' });
     }
     expect(bank).toContainEqual({ name: 'Name', value: 'First Bank' });
+  });
+});
+
+// ===========================================================================
+// LIVE WORKER COUNTS — RDOGetWorkers on the block
+// ===========================================================================
+
+describe('readWorkerCounts', () => {
+  const BLOCK = '40133888';
+
+  /** A context with an inspector already open on (X, Y) and a construction socket. */
+  function makeWorkersCtx(over: Partial<ActiveInspector> = {}): FakeSessionCtx {
+    const fake = makeDetailsCtx({ sockets: ['map', 'construction'] });
+    setActiveInspectorForTest(fake.ctx, makeInspector(over));
+    cacheValues(fake, { CurrBlock: BLOCK });
+    return fake;
+  }
+
+  /** Answer every RDOGetWorkers with the figure keyed on its argument. */
+  function answerWorkers(fake: FakeSessionCtx, byKind: Record<string, string>): void {
+    fake.respond((packet) => {
+      const arg = packet.args?.[0] ?? '';
+      return byKind[arg] ?? '';
+    });
+  }
+
+  it('returns nothing and touches no wire when the panel is gone', async () => {
+    const fake = makeDetailsCtx({ sockets: ['map', 'construction'] });
+
+    await expect(readWorkerCounts(fake.ctx, X, Y, [0, 1, 2])).resolves.toEqual([]);
+    expect(fake.sent).toEqual([]);
+    expect(fake.cacher.getPropertyList).not.toHaveBeenCalled();
+  });
+
+  it('emits one "^" call per class, on the block, and parses the figures back', async () => {
+    const fake = makeWorkersCtx();
+    answerWorkers(fake, { '"#0"': 'res="#5"', '"#1"': 'res="#14"', '"#2"': 'res="#69"' });
+
+    const counts = await readWorkerCounts(fake.ctx, X, Y, [0, 1, 2]);
+
+    expect(counts).toEqual([
+      { kind: 0, workers: 5 },
+      { kind: 1, workers: 14 },
+      { kind: 2, workers: 69 },
+    ]);
+    expect(fake.sent).toHaveLength(3);
+    for (const [i, { packet, socketName, category }] of fake.sent.entries()) {
+      expect(socketName).toBe('construction');
+      expect(packet.verb).toBe(RdoVerb.SEL);
+      // The count is read off the BLOCK, never off the inspector temp object.
+      expect(packet.targetId).toBe(BLOCK);
+      expect(packet.action).toBe(RdoAction.CALL);
+      expect(packet.member).toBe('RDOGetWorkers');
+      expect(packet.separator).toBe('"^"');
+      expect(packet.args).toEqual([RdoValue.int(i).format()]);
+      expect(category).toBe(TimeoutCategory.NORMAL);
+    }
+  });
+
+  it('reads CurrBlock once and reuses it on the next tick', async () => {
+    const fake = makeWorkersCtx();
+    answerWorkers(fake, { '"#2"': 'res="#69"' });
+
+    await readWorkerCounts(fake.ctx, X, Y, [2]);
+    await readWorkerCounts(fake.ctx, X, Y, [2]);
+
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledTimes(1);
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledWith(FIRST_TEMP, ['CurrBlock']);
+    expect(fake.sent).toHaveLength(2);
+  });
+
+  it('asks for nothing at all when the building has no block', async () => {
+    const fake = makeDetailsCtx({ sockets: ['map', 'construction'] });
+    setActiveInspectorForTest(fake.ctx, makeInspector());
+    cacheValues(fake, {});
+
+    await expect(readWorkerCounts(fake.ctx, X, Y, [0])).resolves.toEqual([]);
+    expect(fake.sent).toEqual([]);
+  });
+
+  it('drops duplicates and anything that is not a class index', async () => {
+    const fake = makeWorkersCtx();
+    answerWorkers(fake, { '"#1"': 'res="#14"' });
+
+    const counts = await readWorkerCounts(fake.ctx, X, Y, [1, 1, 3, -1, 7]);
+
+    expect(counts).toEqual([{ kind: 1, workers: 14 }]);
+    expect(fake.sent).toHaveLength(1);
+  });
+
+  it('asks for nothing when no class was listed', async () => {
+    const fake = makeWorkersCtx();
+
+    await expect(readWorkerCounts(fake.ctx, X, Y, [])).resolves.toEqual([]);
+    expect(fake.sent).toEqual([]);
+    expect(fake.cacher.getPropertyList).not.toHaveBeenCalled();
+  });
+
+  it('keeps the other classes when one call fails', async () => {
+    const fake = makeWorkersCtx();
+    fake.respond((packet) => {
+      const arg = packet.args?.[0] ?? '';
+      if (arg === '"#1"') return new Error('Request timeout: RDOGetWorkers');
+      return arg === '"#0"' ? 'res="#5"' : 'res="#69"';
+    });
+
+    const counts = await readWorkerCounts(fake.ctx, X, Y, [0, 1, 2]);
+
+    expect(counts).toEqual([{ kind: 0, workers: 5 }, { kind: 2, workers: 69 }]);
+  });
+
+  it('omits a class whose answer is not a number', async () => {
+    const fake = makeWorkersCtx();
+    answerWorkers(fake, { '"#0"': 'res="%none"', '"#2"': 'res="#69"' });
+
+    const counts = await readWorkerCounts(fake.ctx, X, Y, [0, 2]);
+
+    expect(counts).toEqual([{ kind: 2, workers: 69 }]);
+  });
+
+  it('connects the construction service first when its socket is down', async () => {
+    const fake = makeDetailsCtx();
+    setActiveInspectorForTest(fake.ctx, makeInspector());
+    cacheValues(fake, { CurrBlock: BLOCK });
+    answerWorkers(fake, { '"#0"': 'res="#5"' });
+
+    await readWorkerCounts(fake.ctx, X, Y, [0]);
+
+    expect(fake.ctx.connectConstructionService).toHaveBeenCalledTimes(1);
   });
 });

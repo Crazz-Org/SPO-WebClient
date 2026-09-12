@@ -19,7 +19,7 @@ import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../..
 import { WorkforceTable } from '../WorkforceTable';
 import { buildSalaryParams, pendingKeyFor, resolveRdoCommand } from '../property-utils';
 import { useBuildingStore } from '../../../store/building-store';
-import type { BuildingPropertyValue, BuildingDetailsResponse } from '@/shared/types';
+import type { BuildingPropertyValue, BuildingDetailsResponse, WorkerCount } from '@/shared/types';
 import type { RdoCommandMapping } from '@/shared/building-details';
 
 const RDO_COMMANDS: Record<string, RdoCommandMapping> = {
@@ -74,6 +74,7 @@ function renderWorkforce(
     canEdit?: boolean;
     onPropertyChange?: (name: string, value: number) => void;
     onRefreshBuildingProperties?: (...args: unknown[]) => unknown;
+    onReadWorkerCounts?: (...args: unknown[]) => unknown;
   } = {},
 ) {
   const emitted: Array<{ name: string; value: number }> = [];
@@ -86,6 +87,8 @@ function renderWorkforce(
 
   const callbacks = createSpiedCallbacks({
     onRefreshBuildingProperties: overrides.onRefreshBuildingProperties ?? (() => { /* no-op */ }),
+    // The poll awaits this one, so the default has to be a Promise.
+    onReadWorkerCounts: overrides.onReadWorkerCounts ?? (() => Promise.resolve(null)),
   });
 
   const view = renderWithProviders(
@@ -325,5 +328,149 @@ describe('WorkforceTable — lock and settle', () => {
       jest.advanceTimersByTime(2000);
     });
     expect((screen.getByLabelText('Workers salary') as HTMLInputElement).disabled).toBe(false);
+  });
+});
+
+/**
+ * The live jobs-filled figure.
+ *
+ * `Workers{n}` is a cached property: it only moves when the whole panel is
+ * re-read. The reference client polled the block directly on a 20 s timer
+ * (`Voyager/WorkforceSheet.pas:365-377`), one call per class whose maximum is
+ * above zero. These tests pin the three things that makes or breaks:
+ * the interval, the class list, and the fact that the number changes without the
+ * card being torn down and rebuilt.
+ */
+describe('WorkforceTable — live worker counts', () => {
+  beforeEach(() => {
+    resetStores();
+    useBuildingStore.setState({ pendingUpdates: new Map(), confirmedUpdates: new Map(), failedUpdates: new Map(), details: null });
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  /** Let the resolved poll promise reach setState. */
+  async function flush(): Promise<void> {
+    await act(async () => { /* microtask drain */ });
+  }
+
+  it('asks for the staffed classes every 20 s and patches the figure in place', async () => {
+    const read = jest.fn<(...args: unknown[]) => Promise<WorkerCount[] | null>>()
+      .mockResolvedValue([{ kind: 2, workers: 70 }]);
+    const { container } = renderWorkforce(props(), { onReadWorkerCounts: read });
+
+    const before = container.querySelector('.wfCard');
+    expect(read).not.toHaveBeenCalled();
+
+    act(() => { jest.advanceTimersByTime(20_000); });
+    // Executives have WorkersMax0 = 0, so they cost no call.
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith(10, 20, [1, 2]);
+
+    await flush();
+    expect(container.textContent).toContain('70/70');
+    // Same element: the number moved, the card did not remount.
+    expect(container.querySelector('.wfCard')!.isSameNode(before)).toBe(true);
+  });
+
+  it('does not ask before the first interval is up', () => {
+    const read = jest.fn<(...args: unknown[]) => Promise<WorkerCount[] | null>>().mockResolvedValue(null);
+    renderWorkforce(props(), { onReadWorkerCounts: read });
+
+    act(() => { jest.advanceTimersByTime(19_999); });
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('never asks for the whole tab again — the poll reads three numbers, not the panel', () => {
+    const refresh = jest.fn();
+    const read = jest.fn<(...args: unknown[]) => Promise<WorkerCount[] | null>>().mockResolvedValue(null);
+    renderWorkforce(props(), { onReadWorkerCounts: read, onRefreshBuildingProperties: refresh });
+
+    act(() => { jest.advanceTimersByTime(60_000); });
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('stops when the tab is left or the inspector closes', () => {
+    const read = jest.fn<(...args: unknown[]) => Promise<WorkerCount[] | null>>().mockResolvedValue(null);
+    const { unmount } = renderWorkforce(props(), { onReadWorkerCounts: read });
+
+    act(() => { jest.advanceTimersByTime(20_000); });
+    expect(read).toHaveBeenCalledTimes(1);
+
+    // Both leaving the tab and closing the inspector unmount the table.
+    unmount();
+    act(() => { jest.advanceTimersByTime(60_000); });
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it('pauses while the document is hidden and resumes when it is shown', () => {
+    const read = jest.fn<(...args: unknown[]) => Promise<WorkerCount[] | null>>().mockResolvedValue(null);
+    renderWorkforce(props(), { onReadWorkerCounts: read });
+
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    act(() => { jest.advanceTimersByTime(60_000); });
+    expect(read).not.toHaveBeenCalled();
+
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    act(() => { jest.advanceTimersByTime(20_000); });
+    expect(read).toHaveBeenCalledTimes(1);
+
+    delete (document as unknown as Record<string, unknown>).hidden;
+  });
+
+  it('lets a fresh property read win over the live figure', async () => {
+    const read = jest.fn<(...args: unknown[]) => Promise<WorkerCount[] | null>>()
+      .mockResolvedValue([{ kind: 2, workers: 70 }]);
+    const { container, rerender } = renderWorkforce(props(), { onReadWorkerCounts: read });
+
+    act(() => { jest.advanceTimersByTime(20_000); });
+    await flush();
+    expect(container.textContent).toContain('70/70');
+
+    rerender(
+      <WorkforceTable
+        properties={props({ Workers2: '65' })}
+        canEdit
+        rdoCommands={RDO_COMMANDS}
+        buildingX={10}
+        buildingY={20}
+        onPropertyChange={() => { /* no-op */ }}
+      />,
+    );
+    expect(container.textContent).toContain('65/70');
+  });
+
+  it('keeps the cached figure when the read comes back empty-handed', async () => {
+    const read = jest.fn<(...args: unknown[]) => Promise<WorkerCount[] | null>>().mockResolvedValue(null);
+    const { container } = renderWorkforce(props(), { onReadWorkerCounts: read });
+
+    act(() => { jest.advanceTimersByTime(20_000); });
+    await flush();
+    expect(container.textContent).toContain('69/70');
+  });
+
+  it('survives a rejected read without breaking the panel', async () => {
+    const read = jest.fn<(...args: unknown[]) => Promise<WorkerCount[] | null>>()
+      .mockRejectedValue(new Error('socket gone'));
+    const { container } = renderWorkforce(props(), { onReadWorkerCounts: read });
+
+    act(() => { jest.advanceTimersByTime(20_000); });
+    await flush();
+    expect(container.textContent).toContain('69/70');
+  });
+
+  it('polls nothing when no class is staffed', () => {
+    const read = jest.fn<(...args: unknown[]) => Promise<WorkerCount[] | null>>().mockResolvedValue(null);
+    const idle = props({ WorkersCap1: '0', WorkersMax1: '0', WorkersCap2: '0', WorkersMax2: '0' });
+    renderWorkforce(idle, { onReadWorkerCounts: read });
+
+    act(() => { jest.advanceTimersByTime(60_000); });
+    expect(read).not.toHaveBeenCalled();
   });
 });

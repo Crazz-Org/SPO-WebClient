@@ -20,6 +20,7 @@ import type {
   BuildingConnectionData,
   CompInputData,
   WarehouseWareData,
+  WorkerCount,
 } from '../../shared/types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import {
@@ -79,6 +80,13 @@ export interface ActiveInspector {
   hasProducts: boolean;
   hasCompInputs: boolean;
   isWarehouse: boolean;
+  /**
+   * The building's block id, memoised on the first worker-count tick. The
+   * workforce poll binds to it 20 s after 20 s; re-reading `CurrBlock` from the
+   * cacher every time would put a cacher round-trip on the wire for a value
+   * that cannot change while the same temp object is open.
+   */
+  currBlock?: string;
 }
 
 /** Per-session active inspector keyed by session context. */
@@ -568,6 +576,87 @@ export async function refreshBuildingProperties(
   } finally {
     release();
   }
+}
+
+/** Workforce classes the wire knows: 0 executives, 1 professionals, 2 workers. */
+const WORKER_KINDS = [0, 1, 2];
+
+/**
+ * Live jobs-filled figure of the listed workforce classes.
+ *
+ * The cached `Workers{n}` property only moves when the whole panel is re-read.
+ * Voyager did not wait for that: `Voyager/WorkforceSheet.pas:365-377` binds to
+ * `CurrBlock` and calls `RDOGetWorkers(kind)` once per staffed class on its own
+ * timer. This is that read path — one call per listed class, on the block, and
+ * nothing else touched.
+ *
+ * `RDOGetWorkers` is a 1-argument published FUNCTION
+ * (`Kernel/WorkCenterBlock.pas:139`), so the frame carries `"^"` and the answer
+ * comes back as `res="#<n>"`.
+ *
+ * No inspector for these coordinates means the panel is gone — a stray tick
+ * must not re-create a Delphi temp object, so it returns without touching the
+ * wire at all.
+ */
+export async function readWorkerCounts(
+  ctx: SessionContext,
+  x: number,
+  y: number,
+  kinds: number[],
+): Promise<WorkerCount[]> {
+  const inspector = getActiveInspector(ctx, x, y);
+  if (!inspector) {
+    ctx.log.debug(`[BuildingDetails] No active inspector for (${x},${y}), worker counts skipped`);
+    return [];
+  }
+
+  // Keep the order asked for, drop anything that is not a real class index.
+  const wanted: number[] = [];
+  for (const kind of kinds) {
+    if (WORKER_KINDS.includes(kind) && !wanted.includes(kind)) wanted.push(kind);
+  }
+  if (wanted.length === 0) return [];
+
+  if (!inspector.currBlock) {
+    // Only the cacher read needs the inspector's mutex: it moves the shared
+    // temp object. The RDOGetWorkers calls below target the block, not the
+    // temp object, so they run outside it.
+    const release = await inspector.mutex.acquire();
+    try {
+      await ctx.cacherSetObject(inspector.tempObjectId, x, y);
+      const [block] = await ctx.cacherGetPropertyList(inspector.tempObjectId, ['CurrBlock']);
+      inspector.currBlock = block || '';
+    } finally {
+      release();
+    }
+  }
+
+  const currBlock = inspector.currBlock;
+  if (!currBlock) {
+    ctx.log.debug(`[BuildingDetails] No CurrBlock for (${x},${y}), worker counts skipped`);
+    return [];
+  }
+
+  if (!ctx.getSocket('construction')) {
+    await ctx.connectConstructionService();
+  }
+
+  const counts: WorkerCount[] = [];
+  // Sequential, like the reference client: it binds and calls one class at a time.
+  for (const kind of wanted) {
+    try {
+      const packet = await ctx.sendRdoRequest('construction', rdoCall(
+        'RDOGetWorkers', currBlock, RdoValue.int(kind),
+      ).packet, undefined, TimeoutCategory.NORMAL);
+      const workers = parseInt(parsePropertyResponseHelper(packet.payload || '', 'res'), 10);
+      if (Number.isFinite(workers)) counts.push({ kind, workers });
+    } catch (e: unknown) {
+      // One class failing is not a reason to drop the others.
+      ctx.log.debug(`[BuildingDetails] RDOGetWorkers(${kind}) failed: ${toErrorMessage(e)}`);
+    }
+  }
+
+  return counts;
 }
 
 // =========================================================================

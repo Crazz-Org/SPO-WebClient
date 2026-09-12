@@ -170,6 +170,7 @@ export const RDO_MEMBERS = {
   RDOFavoritesRenameItem:    { kind: 'function',  arity: 2 },                // src/server/session/favorites-handler.ts
   RDOGetInvDescEx:           { kind: 'function',  arity: 2 },                // src/server/session/research-handler.ts:131
   RDOGetInvPropsByLang:      { kind: 'function',  arity: 2 },                // src/server/session/research-handler.ts:120
+  RDOGetWorkers:             { kind: 'function',  arity: 1 },                // Kernel/WorkCenterBlock.pas:139; src/server/session/building-details-handler.ts (readWorkerCounts)
   RDOLaunchMovie:            { kind: 'procedure', arity: 4 },                // src/server/session/building-property-handler.ts:194,223
   RDOLogonClient:            { kind: 'procedure', arity: 2 },                // Kernel/World.pas:412; src/server/spo_session.ts:997
   RDOLogonUser:              { kind: 'function',  arity: 2 },                // DServer/DirectoryServer.pas:92; src/server/session/login-handler.ts:203
