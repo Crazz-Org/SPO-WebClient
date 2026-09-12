@@ -46,7 +46,7 @@ export interface ConnectionFilters {
   roles: ConnectionRoleFlags;
 }
 export const DEFAULT_CONNECTION_FILTERS: ConnectionFilters = {
-  company: '', town: '', maxResults: '20',
+  company: '', town: '', maxResults: '50',
   roles: ALL_CONNECTION_ROLES,
 };
 export interface Surface {

@@ -17,6 +17,7 @@ import { useUiStore } from '../../store/ui-store';
 import { useBuildingStore } from '../../store/building-store';
 import { useClient } from '../../context';
 import { rolesToMask } from '@/shared/connection-roles';
+import type { ConnectionSearchResult } from '@/shared/types';
 import styles from './ConnectionPickerModal.module.css';
 
 export interface ConnectionPickerContentProps {
@@ -39,6 +40,8 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
   const [maxResults, setMaxResults] = useState(remembered.maxResults);
   const [roles, setRoles] = useState(remembered.roles);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  /** Rows pruned with `Del` — local to the dialog, the store's results are never touched. */
+  const [hiddenIndices, setHiddenIndices] = useState<Set<number>>(new Set());
 
   const client = useClient();
   const companyRef = useRef<HTMLInputElement>(null);
@@ -51,6 +54,7 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
   // Clear selection when results change
   useEffect(() => {
     setSelectedIndices(new Set());
+    setHiddenIndices(new Set());
   }, [picker?.results]);
 
   const handleClose = useCallback(() => {
@@ -74,7 +78,7 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
       {
         company: company || undefined,
         town: town || undefined,
-        maxResults: parseInt(maxResults) || 20,
+        maxResults: parseInt(maxResults) || 50,
         roles: rolesMask,
       },
     );
@@ -95,9 +99,11 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
   const selectAll = useCallback(() => {
     if (!picker) return;
     const all = new Set<number>();
-    for (let i = 0; i < picker.results.length; i++) all.add(i);
+    for (let i = 0; i < picker.results.length; i++) {
+      if (!hiddenIndices.has(i)) all.add(i);
+    }
     setSelectedIndices(all);
-  }, [picker]);
+  }, [picker, hiddenIndices]);
 
   const clearSelection = useCallback(() => {
     setSelectedIndices(new Set());
@@ -115,13 +121,37 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
     handleClose();
   }, [picker, selectedIndices, handleClose, client]);
 
+  /** Double-click commits one row, the same way the footer commits the selection. */
+  const commitRow = useCallback(
+    (r: ConnectionSearchResult) => {
+      if (!picker) return;
+      client.onConnectionConnect(picker.fluidId, picker.direction, [{ x: r.x, y: r.y }]);
+      handleClose();
+    },
+    [picker, client, handleClose],
+  );
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
         handleClose();
       }
+      // Del prunes the selected rows from the list — local only, nothing is sent
+      // (Voyager: OutputSearchHandlerViewer.pas:363-372).
+      if (e.key === 'Delete') {
+        const target = e.target as HTMLElement;
+        if (target instanceof HTMLInputElement && target.type !== 'checkbox') return;
+        if (selectedIndices.size === 0) return;
+        e.preventDefault();
+        setHiddenIndices((prev) => {
+          const next = new Set(prev);
+          for (const i of selectedIndices) next.add(i);
+          return next;
+        });
+        setSelectedIndices(new Set());
+      }
     },
-    [handleClose],
+    [handleClose, selectedIndices],
   );
 
   // Enter in a filter field runs the search (B4)
@@ -144,6 +174,9 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
       .map((r, i) => ({ r, i, d: Math.round(Math.hypot(r.x - bx, r.y - by)) }))
       .sort((a, b) => a.d - b.d);
   }, [picker]);
+
+  // Rows pruned with Del disappear from the list without leaving the store
+  const visible = useMemo(() => sorted.filter(({ i }) => !hiddenIndices.has(i)), [sorted, hiddenIndices]);
 
   if (!picker) return null;
 
@@ -175,6 +208,7 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
                 className={styles.filterInput}
                 type="text"
                 value={company}
+                placeholder="Partial name matches"
                 onChange={(e) => setCompany(e.target.value)}
                 onKeyDown={onFilterKeyDown}
               />
@@ -186,6 +220,7 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
                 className={styles.filterInput}
                 type="text"
                 value={town}
+                placeholder="Partial name matches"
                 onChange={(e) => setTown(e.target.value)}
                 onKeyDown={onFilterKeyDown}
               />
@@ -197,7 +232,7 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
                 className={styles.filterInput}
                 type="number"
                 min="1"
-                max="100"
+                max="150"
                 value={maxResults}
                 onChange={(e) => setMaxResults(e.target.value)}
                 onKeyDown={onFilterKeyDown}
@@ -279,18 +314,19 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
         <div className={styles.results}>
           {picker.isSearching ? (
             <div className={styles.emptyState}>Searching...</div>
-          ) : results.length === 0 ? (
+          ) : visible.length === 0 ? (
             <div className={styles.emptyState}>
-              {picker.results === undefined || picker.results.length === 0
+              {results.length === 0
                 ? 'Click Search to find available connections'
                 : 'No facilities found'}
             </div>
           ) : (
-            sorted.map(({ r, i, d }) => (
+            visible.map(({ r, i, d }) => (
               <div
                 key={`${r.x}-${r.y}`}
                 className={styles.resultRow}
                 onClick={() => toggleIndex(i)}
+                onDoubleClick={() => commitRow(r)}
               >
                 <input
                   type="checkbox"
