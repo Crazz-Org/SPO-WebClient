@@ -13,6 +13,8 @@
  *  - the value shown afterwards is the server's, not the one released. A town
  *    minimum wage raises a salary set below it, and the panel has to show what
  *    the server holds — hence the property refresh before the lock is released.
+ *  - the wage figure beside the slider is a local preview computed from
+ *    `WorkForcePrice`, never a server value.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -33,6 +35,11 @@ const CLASS_NAMES = ['Executives', 'Professionals', 'Workers'] as const;
 
 /** Upper bound of a salary percentage, as the legacy client clamps it. */
 const SALARY_MAX = 250;
+
+/** Wage the slider position implies: base cost scaled by the salary percentage. */
+function formatWage(cost: number, salaryPct: number): string {
+  return `$${Math.round((cost * salaryPct) / 100).toLocaleString('en-US')}`;
+}
 
 /**
  * How long the sliders stay locked when the refreshed properties never arrive.
@@ -272,12 +279,14 @@ function WorkforceClassCard({
             onBlur={release}
           />
           <span className={styles.sliderValue}>{localVal}%</span>
+          <span className={styles.wfSalaryCost} aria-live="polite">{formatWage(cost, localVal)}</span>
           {pendingKey && <SaveIndicator propertyKey={pendingKey} />}
         </div>
       ) : (
         <div className={styles.wfSliderRow}>
           <span className={styles.sliderLabel}>Salary</span>
           <span className={styles.wfSalaryReadonly}>{salary}%</span>
+          <span className={styles.wfSalaryCost} aria-live="polite">{formatWage(cost, salary)}</span>
         </div>
       )}
 
