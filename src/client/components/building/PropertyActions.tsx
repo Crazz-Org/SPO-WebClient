@@ -14,7 +14,7 @@ import { useState, useCallback } from 'react';
 import type { BuildingPropertyValue, WarehouseWareData } from '@/shared/types';
 import type { PropertyDefinition } from '@/shared/building-details';
 import { formatCurrency } from '@/shared/building-details';
-import { parseCloneMenu } from './property-utils';
+import { parseCloneMenu, parseCurrencyInput, parseFilmMonths, FILM_MONTHS_MIN, FILM_MONTHS_MAX } from './property-utils';
 import { useBuildingStore } from '../../store/building-store';
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
@@ -268,6 +268,112 @@ export function ActionButton({ def, onAction }: { def: PropertyDefinition; onAct
       >
         {def.buttonLabel ?? def.displayName}
       </button>
+    </div>
+  );
+}
+
+// =============================================================================
+// FILM LAUNCH FORM (Films tab — FilmsSheet.pas:175,186,200,203,205,382-384)
+// =============================================================================
+
+/**
+ * Launch Movie form — title, budget, months and the two auto flags in one
+ * submission. Budget and months are validated before `onLaunch` is called;
+ * a rejection shows an inline message and sends nothing, matching Voyager's
+ * `CheckMoneyStr` refusal (FilmsSheet.pas:382-384) — never a `NaN` on the wire.
+ */
+export function FilmLaunchForm({
+  autoRelDefault,
+  autoProdDefault,
+  onLaunch,
+}: {
+  autoRelDefault: boolean;
+  autoProdDefault: boolean;
+  onLaunch: (params: Record<string, string>) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [budget, setBudget] = useState('$10,000,000');
+  const [months, setMonths] = useState('12');
+  const [autoRel, setAutoRel] = useState(autoRelDefault);
+  const [autoProd, setAutoProd] = useState(autoProdDefault);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLaunch = useCallback(() => {
+    const budgetNumber = parseCurrencyInput(budget);
+    if (budgetNumber === null) {
+      setError('Budget must be an amount like $10,000,000');
+      return;
+    }
+    const monthsNumber = parseFilmMonths(months);
+    if (monthsNumber === null) {
+      setError(`Months must be between ${FILM_MONTHS_MIN} and ${FILM_MONTHS_MAX}`);
+      return;
+    }
+    setError(null);
+    onLaunch({
+      filmName: title.trim(),
+      budget: String(budgetNumber),
+      months: String(monthsNumber),
+      autoRel: autoRel ? '1' : '0',
+      autoProd: autoProd ? '1' : '0',
+    });
+  }, [title, budget, months, autoRel, autoProd, onLaunch]);
+
+  return (
+    <div className={styles.upgradeContainer}>
+      <div className={styles.upgradeRow}>
+        <span className={styles.upgradeLabel}>Title</span>
+        <input
+          type="text"
+          className={styles.textInput}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </div>
+      <div className={styles.upgradeRow}>
+        <span className={styles.upgradeLabel}>Budget</span>
+        <input
+          type="text"
+          className={styles.textInput}
+          value={budget}
+          onChange={(e) => setBudget(e.target.value)}
+        />
+      </div>
+      <div className={styles.upgradeRow}>
+        <span className={styles.upgradeLabel}>Months</span>
+        <input
+          type="number"
+          className={styles.upgradeQty}
+          min={FILM_MONTHS_MIN}
+          max={FILM_MONTHS_MAX}
+          value={months}
+          onChange={(e) => setMonths(e.target.value)}
+        />
+      </div>
+      <label className={styles.cloneOption}>
+        <input
+          type="checkbox"
+          className={styles.checkbox}
+          checked={autoRel}
+          onChange={(e) => setAutoRel(e.target.checked)}
+        />
+        <span>Auto Release</span>
+      </label>
+      <label className={styles.cloneOption}>
+        <input
+          type="checkbox"
+          className={styles.checkbox}
+          checked={autoProd}
+          onChange={(e) => setAutoProd(e.target.checked)}
+        />
+        <span>Auto Produce</span>
+      </label>
+      {error && <div role="alert" className={styles.filmFormError}>{error}</div>}
+      <div className={styles.actionBtnContainer}>
+        <button className={styles.actionBtn} onClick={handleLaunch}>
+          Launch
+        </button>
+      </div>
     </div>
   );
 }

@@ -401,6 +401,12 @@
   box-shadow: 0 0 12px rgba(212, 168, 83, 0.3);
 }
 
+.filmFormError {
+  color: var(--error);
+  font-size: var(--text-xs);
+  padding: var(--space-1) 0;
+}
+
 .upgradeStopBtn {
   padding: var(--space-1) var(--space-3);
   background: var(--error-bg);
