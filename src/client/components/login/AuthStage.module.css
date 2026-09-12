@@ -79,6 +79,34 @@
   color: var(--text-disabled);
 }
 
+/* Language picker — same tokens as .input, so the field group reads as one column. */
+.languageSelect {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-family: var(--font-sans);
+  outline: none;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition:
+    border-color var(--duration-fast) var(--ease-default),
+    box-shadow var(--duration-fast) var(--ease-default);
+}
+
+.languageSelect:focus {
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 0 3px rgba(212, 168, 83, 0.15);
+}
+
+.languageSelect:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
 /* Remember username checkbox (single-user mode only) */
 .rememberMe {
   display: flex;
@@ -166,6 +194,24 @@
 .connectBtn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* "Create an account" — only rendered when a registration URL is configured */
+.registerLink {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.registerLink:hover {
+  color: var(--accent-gold);
+}
+
+.registerLink:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
 }
 
 /* Version tag */

@@ -44,6 +44,7 @@ import { makeSessionCtx } from '../__tests__/session/fake-session-context';
 import type { FakeSessionCtx, AspActionUrl } from '../__tests__/session/fake-session-context';
 import type { SessionContext } from './session-context';
 import type { WorldInfo, ProfitLossNode } from '../../shared/types';
+import { DEFAULT_LANGUAGE_ID, withLangId } from '../../shared/language';
 
 const mockFetch = fetch as unknown as jest.MockedFunction<
   (url: string, init?: unknown) => Promise<Response>
@@ -391,7 +392,7 @@ describe('fetchTycoonProfile', () => {
     const profile = await fetchTycoonProfile(fake.ctx);
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://158.69.153.134/five/0/visual/voyager/new%20directory/RenderTycoon.asp?WorldName=New%20World&Tycoon=SPO%20test3&RIWS=',
+      withLangId('http://158.69.153.134/five/0/visual/voyager/new%20directory/RenderTycoon.asp?WorldName=New%20World&Tycoon=SPO%20test3&RIWS=', DEFAULT_LANGUAGE_ID),
       expect.objectContaining({ redirect: 'follow', signal: expect.any(AbortSignal) }),
     );
     // Regression guard for B-11. This used to resolve against the page
@@ -1379,7 +1380,7 @@ describe('executeBankAction', () => {
 
       expect(getCache(fake)).toHaveBeenCalledWith(BANK);
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(mockFetch.mock.calls[0][0]).toBe(`${CACHED_URL}&Action=LOAN&LoanValue=250000000`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${CACHED_URL}&Action=LOAN&LoanValue=250000000`, DEFAULT_LANGUAGE_ID));
       expect(mockFetch.mock.calls[0][1]).toEqual(expect.objectContaining({ redirect: 'follow' }));
       expect((mockFetch.mock.calls[0][1] as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
       expect(result).toEqual({ success: true, message: 'borrow completed successfully' });
@@ -1390,7 +1391,7 @@ describe('executeBankAction', () => {
       const fake = withSnapshot(makeWebCtx());
       warmCache(fake, `${IS_BASE}TycoonBankAccount.asp`);
       await executeBankAction(fake.ctx, 'borrow', '1');
-      expect(mockFetch.mock.calls[0][0]).toBe(`${IS_BASE}TycoonBankAccount.asp?Action=LOAN&LoanValue=1`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${IS_BASE}TycoonBankAccount.asp?Action=LOAN&LoanValue=1`, DEFAULT_LANGUAGE_ID));
     });
 
     it('send: Action=SEND, SendValue, SendDest, SendReason — spaces %20-encoded, never +', async () => {
@@ -1399,7 +1400,7 @@ describe('executeBankAction', () => {
 
       const result = await executeBankAction(fake.ctx, 'send', '5000', 'Bob Smith', 'for the farm');
 
-      expect(mockFetch.mock.calls[0][0]).toBe(`${CACHED_URL}&Action=SEND&SendValue=5000&SendDest=Bob%20Smith&SendReason=for%20the%20farm`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${CACHED_URL}&Action=SEND&SendValue=5000&SendDest=Bob%20Smith&SendReason=for%20the%20farm`, DEFAULT_LANGUAGE_ID));
       expect(result).toEqual({ success: true, message: 'send completed successfully' });
     });
 
@@ -1407,7 +1408,7 @@ describe('executeBankAction', () => {
       const fake = withSnapshot(makeWebCtx());
       warmCache(fake);
       await executeBankAction(fake.ctx, 'send', '5000', 'Bob');
-      expect(mockFetch.mock.calls[0][0]).toBe(`${CACHED_URL}&Action=SEND&SendValue=5000&SendDest=Bob&SendReason=`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${CACHED_URL}&Action=SEND&SendValue=5000&SendDest=Bob&SendReason=`, DEFAULT_LANGUAGE_ID));
     });
 
     it('payoff: Action=PAYOFF&LID=<index>, index 0 accepted', async () => {
@@ -1418,7 +1419,7 @@ describe('executeBankAction', () => {
 
       const result = await executeBankAction(fake.ctx, 'payoff', undefined, undefined, undefined, 0);
 
-      expect(mockFetch.mock.calls[0][0]).toBe(`${CACHED_URL}&Action=PAYOFF&LID=0`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${CACHED_URL}&Action=PAYOFF&LID=0`, DEFAULT_LANGUAGE_ID));
       expect(result).toEqual({ success: true, message: 'payoff completed successfully' });
     });
 

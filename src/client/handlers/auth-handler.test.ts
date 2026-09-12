@@ -1,4 +1,4 @@
-import { login, handleCreateCompany, performAuthCheck, performDirectoryLogin, resumeSession } from './auth-handler';
+import { login, handleCreateCompany, performAuthCheck, performDirectoryLogin, resumeSession, profileSwitchCompany, applyLocalCompanySwitch, abandonRole } from './auth-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { WsMessageType } from '../../shared/types';
 import type { ClientHandlerContext } from './client-context';
@@ -11,6 +11,7 @@ jest.mock('../bridge/client-bridge', () => ({
     showLoginPage: jest.fn(),
     showWorlds: jest.fn(),
     showError: jest.fn(),
+    showSuccess: jest.fn(),
     setLoginLoading: jest.fn(),
     setConnected: jest.fn(),
     setWorld: jest.fn(),
@@ -22,10 +23,19 @@ jest.mock('../bridge/client-bridge', () => ({
   },
 }));
 
-// Shared object so repeated getState() calls in the code under test return the SAME
-// jest.fn()s — a fresh object per call would make it impossible to assert on them.
-const gameStoreState = {
+/** The language the store holds for the current test — `login()` reads it on every send. */
+const mockStoreSettings = { languageId: '0' };
+
+/**
+ * Shared so a test can assert against the same spies `getState()` hands back every time.
+ * `gameStoreState` is the same object under its older name — the resume tests read it.
+ */
+const mockGameStoreMethods = {
   setLoginStage: jest.fn(),
+  setSwitchingCompany: jest.fn(),
+  enterServerSwitch: jest.fn(),
+  setLoginCompanies: jest.fn(),
+  setLoginLoading: jest.fn(),
   rememberSession: jest.fn(),
   forgetRememberedSession: jest.fn(),
   setResumeTarget: jest.fn(),
@@ -33,12 +43,19 @@ const gameStoreState = {
   completeServerSwitch: jest.fn(),
 };
 
+const gameStoreState = mockGameStoreMethods;
+
 jest.mock('../store/game-store', () => ({
-  useGameStore: { getState: () => gameStoreState },
+  useGameStore: { getState: () => ({ ...mockGameStoreMethods, settings: mockStoreSettings }) },
 }));
 
+const mockProfileStoreMethods = {
+  reset: jest.fn(),
+  incrementRefresh: jest.fn(),
+};
+
 jest.mock('../store/profile-store', () => ({
-  useProfileStore: { getState: () => ({ reset: jest.fn() }) },
+  useProfileStore: { getState: () => mockProfileStoreMethods },
 }));
 
 jest.mock('../store/building-store', () => ({
@@ -72,9 +89,32 @@ function makeCtx(overrides: Partial<ClientHandlerContext> = {}): ClientHandlerCo
 describe('auth-handler', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockStoreSettings.languageId = '0';
   });
 
   describe('login()', () => {
+    it('sends the language the store holds, so the gateway can carry it', async () => {
+      mockStoreSettings.languageId = '4';
+      const sendRequest = jest.fn().mockResolvedValue({
+        type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [],
+      });
+
+      await login(makeCtx({ sendRequest }), 'Shamba');
+
+      expect(sendRequest).toHaveBeenCalledWith(expect.objectContaining({ languageId: '4' }));
+    });
+
+    it('sends the default when the store holds a language the catalogue does not name', async () => {
+      mockStoreSettings.languageId = '9';
+      const sendRequest = jest.fn().mockResolvedValue({
+        type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [],
+      });
+
+      await login(makeCtx({ sendRequest }), 'Shamba');
+
+      expect(sendRequest).toHaveBeenCalledWith(expect.objectContaining({ languageId: '0' }));
+    });
+
     it('shows companies when server returns a non-empty list', async () => {
       const companies = [{ id: '1', name: 'TestCorp', ownerRole: 'testUser' }];
       const ctx = makeCtx({
@@ -221,6 +261,23 @@ describe('auth-handler', () => {
         'error',
       );
       expect(ClientBridge.setLoginLoading).toHaveBeenCalledWith(false);
+    });
+
+    it('shows the gateway sentence when the world refused the credentials', async () => {
+      // AccountStatus refusals are worded by the gateway; the code's own generic
+      // sentence would hide which credential was wrong.
+      const err = Object.assign(new Error('Invalid password'), {
+        code: 13,
+        serverMessage: 'You supplied an invalid password.',
+      });
+      const ctx = makeCtx({ sendRequest: jest.fn().mockRejectedValue(err) });
+
+      await login(ctx, 'Shamba');
+
+      expect(ctx.showNotification).toHaveBeenCalledWith(
+        'World login failed: You supplied an invalid password.',
+        'error',
+      );
     });
 
     it('aborts if credentials are missing', async () => {
@@ -455,6 +512,103 @@ describe('auth-handler', () => {
       await performDirectoryLogin(ctx, 'testUser', 'pw', 'Root/Areas/Asia/Worlds');
 
       expect(ctx.currentZonePath).toBe('Root/Areas/Asia/Worlds');
+    });
+  });
+
+  describe('profileSwitchCompany() / applyLocalCompanySwitch()', () => {
+    it('applies the local switch after the request resolves', async () => {
+      const ctx = makeCtx({ sendRequest: jest.fn().mockResolvedValue({}) });
+
+      await profileSwitchCompany(ctx, '55', 'SPO_test3 - Green', 'SPO_test3');
+
+      expect(ctx.currentCompanyName).toBe('SPO_test3 - Green');
+      expect(ClientBridge.setCompany).toHaveBeenCalledWith('SPO_test3 - Green', '55');
+      expect(ClientBridge.setPublicOfficeRole).toHaveBeenCalledWith(false, '');
+      expect(mockProfileStoreMethods.reset).toHaveBeenCalled();
+      expect(ClientBridge.showSuccess).toHaveBeenCalledWith('Switched to SPO_test3 - Green');
+    });
+
+    it('a public-office role is flagged and named', () => {
+      const ctx = makeCtx();
+      applyLocalCompanySwitch(ctx, { id: '56', name: 'Mayor of Kalisz', ownerRole: 'Mayor of Kalisz' });
+
+      expect(ClientBridge.setPublicOfficeRole).toHaveBeenCalledWith(true, 'Mayor of Kalisz');
+    });
+
+    it('a request failure shows an error and applies no local switch', async () => {
+      const ctx = makeCtx({ sendRequest: jest.fn().mockRejectedValue(new Error('ECONNRESET')) });
+
+      await profileSwitchCompany(ctx, '55', 'SPO_test3 - Green', 'SPO_test3');
+
+      expect(ClientBridge.showError).toHaveBeenCalledWith('Failed to switch company: ECONNRESET');
+      expect(ClientBridge.setCompany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('abandonRole()', () => {
+    const HOME_COMPANY = { id: '55', name: 'SPO_test3 - Green', ownerRole: 'SPO_test3' };
+
+    it('switched: applies the local switch to the personal company, no login request', async () => {
+      const sendRequest = jest.fn().mockResolvedValue({ success: true, switchedTo: HOME_COMPANY });
+      const ctx = makeCtx({ sendRequest });
+
+      await abandonRole(ctx);
+
+      expect(ClientBridge.setCompany).toHaveBeenCalledWith('SPO_test3 - Green', '55');
+      expect(ClientBridge.setPublicOfficeRole).toHaveBeenCalledWith(false, '');
+      expect(mockProfileStoreMethods.reset).toHaveBeenCalled();
+      expect(sendRequest).toHaveBeenCalledTimes(1);
+      expect(mockGameStoreMethods.enterServerSwitch).not.toHaveBeenCalled();
+    });
+
+    it('unchanged: only the toast and the profile refresh counter', async () => {
+      const sendRequest = jest.fn().mockResolvedValue({ success: true, message: 'abandonRole completed successfully' });
+      const ctx = makeCtx({ sendRequest });
+
+      await abandonRole(ctx);
+
+      expect(mockProfileStoreMethods.incrementRefresh).toHaveBeenCalled();
+      expect(ClientBridge.showSuccess).toHaveBeenCalledWith('abandonRole completed successfully');
+      expect(ClientBridge.setCompany).not.toHaveBeenCalled();
+    });
+
+    it('no-company: re-enters the world as the personal tycoon through a login request', async () => {
+      const sendRequest = jest.fn()
+        .mockResolvedValueOnce({ success: true, returnToCompanyStage: true })
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [] });
+      const ctx = makeCtx({ sendRequest, currentWorldName: 'Shamba' });
+
+      await abandonRole(ctx);
+
+      expect(mockGameStoreMethods.enterServerSwitch).toHaveBeenCalled();
+      expect(mockGameStoreMethods.setLoginCompanies).toHaveBeenCalledWith([]);
+      expect(mockGameStoreMethods.setLoginLoading).toHaveBeenCalledWith(true);
+      expect(sendRequest).toHaveBeenCalledTimes(2);
+      expect(sendRequest.mock.calls[1][0]).toEqual(expect.objectContaining({
+        type: WsMessageType.REQ_LOGIN_WORLD,
+        worldName: 'Shamba',
+      }));
+    });
+
+    it('failure: shows the server message, no store changes', async () => {
+      const sendRequest = jest.fn().mockResolvedValue({ success: false, message: 'abandonRole was not applied: the role is still held' });
+      const ctx = makeCtx({ sendRequest });
+
+      await abandonRole(ctx);
+
+      expect(ClientBridge.showError).toHaveBeenCalledWith('abandonRole was not applied: the role is still held');
+      expect(ClientBridge.setCompany).not.toHaveBeenCalled();
+      expect(mockGameStoreMethods.enterServerSwitch).not.toHaveBeenCalled();
+    });
+
+    it('a rejected request shows the failure without leaving the switching flag set', async () => {
+      const sendRequest = jest.fn().mockRejectedValue(new Error('ECONNRESET'));
+      const ctx = makeCtx({ sendRequest });
+
+      await abandonRole(ctx);
+
+      expect(ClientBridge.showError).toHaveBeenCalledWith('Abandon role failed: ECONNRESET');
+      expect(mockGameStoreMethods.setSwitchingCompany).toHaveBeenLastCalledWith(false);
     });
   });
 });

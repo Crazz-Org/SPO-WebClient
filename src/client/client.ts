@@ -265,6 +265,9 @@ export class StarpeaceClient implements ClientHandlerContext {
       };
     };
     this.soundManager = new SoundManager();
+    // The login screen needs the persisted settings — the language picker reads one of them —
+    // and the game-view init (:797) only loads them after login. Idempotent, so both stand.
+    ClientBridge.loadPersistedSettings();
     const callbacks: Partial<ClientCallbacks> = {
       onBuildRoad: () => roadHandler.toggleRoadBuildingMode(this),
       onDemolishRoad: () => roadHandler.toggleRoadDemolishMode(this),
@@ -465,9 +468,10 @@ export class StarpeaceClient implements ClientHandlerContext {
       onProfilePolicySet: (tycoonName, status) => this.sendMessage({
         type: WsMessageType.REQ_PROFILE_POLICY_SET, tycoonName, status,
       }),
-      onProfileCurriculumAction: (action, value) => this.sendMessage({
-        type: WsMessageType.REQ_PROFILE_CURRICULUM_ACTION, action, value,
-      }),
+      onProfileCurriculumAction: (action, value) => {
+        if (action === 'abandonRole') { void authHandler.abandonRole(this); return; }
+        this.sendMessage({ type: WsMessageType.REQ_PROFILE_CURRICULUM_ACTION, action, value });
+      },
       onProfileSwitchCompany: (companyId, companyName, ownerRole) =>
         authHandler.profileSwitchCompany(this, companyId, companyName, ownerRole),
 
@@ -533,12 +537,12 @@ export class StarpeaceClient implements ClientHandlerContext {
         useNewspaperStore.getState().setRequestedPath(path ?? '');
         this.sendMessage({ type: WsMessageType.REQ_NEWSPAPER_BOARD, ...context, path });
       },
-      onPostNewspaperColumn: (subject, body, replyToPath) => {
+      onPostNewspaperColumn: (subject, body, replyToPath, ratings) => {
         const context = useNewspaperStore.getState().context;
         if (!context) return;
         useNewspaperStore.getState().setPosting(true);
         this.sendMessage({
-          type: WsMessageType.REQ_NEWSPAPER_POST, ...context, subject, body, replyToPath,
+          type: WsMessageType.REQ_NEWSPAPER_POST, ...context, subject, body, replyToPath, ratings,
         });
       },
       onRequestNewspaperIssues: () => {

@@ -16,6 +16,8 @@
 import type { RdoScenario } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
+import { rdoCall } from '../../shared/rdo-frame';
+import { RdoValue } from '../../shared/rdo-types';
 
 /** The id `idof "InterfaceServer"` answers with, and the target every pre-Logon frame carries. */
 export const WORLD_LOGIN_INTERFACE_SERVER_ID = '6892548';
@@ -23,10 +25,12 @@ export const WORLD_LOGIN_INTERFACE_SERVER_ID = '6892548';
 /** The connection id `get RDOCnntId` answers with, and RegisterEventsById's argument. */
 export const WORLD_LOGIN_RDO_CNNT_ID = '12345678';
 
-/** How the world answers CanJoinWorldEx. */
+/** How the world answers CanJoinWorldEx, and the language the session opened with. */
 export interface WorldLoginOptions {
   /** `-1` = full, `0` = admitted (default), `> 0` = nobility shortfall. */
   canJoin?: number;
+  /** The id the session's `SetLanguage` must carry. Default `'0'`. */
+  languageId?: string;
 }
 
 export function createWorldLoginScenario(
@@ -35,6 +39,7 @@ export function createWorldLoginScenario(
 ): { rdo: RdoScenario } {
   const vars = mergeVariables(overrides);
   const canJoin = options?.canJoin ?? 0;
+  const languageId = options?.languageId ?? '0';
 
   const rdo: RdoScenario = {
     name: 'world-login',
@@ -76,6 +81,20 @@ export function createWorldLoginScenario(
         request: `C 4 sel ${vars.clientViewId} call RegisterEventsById "^" "#${WORLD_LOGIN_RDO_CNNT_ID}"`,
         response: `A4 res="#1"`,
         matchKeys: { verb: 'sel', action: 'call', member: 'RegisterEventsById' },
+      },
+      {
+        // Voyager sends it right after RegisterEventsById (`ServerCnxHandler.pas:2792`);
+        // a `procedure` answers nothing (`rdo-members.ts:221`), so the response is empty.
+        id: 'wlogin-rdo-setlang',
+        request: rdoCall('SetLanguage', vars.clientViewId, RdoValue.string(languageId)).toFrame(),
+        response: '',
+        matchKeys: {
+          verb: 'sel',
+          targetId: vars.clientViewId,
+          action: 'call',
+          member: 'SetLanguage',
+          argsPattern: [`"%${languageId}"`],
+        },
       },
     ],
     variables: {},

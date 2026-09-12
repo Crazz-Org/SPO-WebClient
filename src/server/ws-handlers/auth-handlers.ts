@@ -1,4 +1,5 @@
 import { AuthError } from '../../shared/auth-error';
+import { AccountStatusError } from '../../shared/account-status';
 import * as ErrorCodes from '../../shared/error-codes';
 import { getDirectoryErrorMessage } from '../../shared/directory-error-codes';
 import { toErrorMessage } from '../../shared/error-utils';
@@ -76,12 +77,22 @@ export const handleLoginWorld: WsHandler = async (ctx: WsHandlerContext, msg: Ws
     return;
   }
 
+  // The language the player picked travels with the login and stays on the session: it is the
+  // SetLanguage argument and the `LangId` on every ASP fetch, including after a reconnection.
+  ctx.session.setLanguageId(req.languageId);
+
   let result;
   try {
     result = await ctx.session.loginWorld(req.username, req.password, worldInfo);
   } catch (err: unknown) {
     // Reset session phase so the client can retry REQ_LOGIN_WORLD
     try { await ctx.session.cleanupWorldSession(); } catch { /* best-effort */ }
+    if (err instanceof AccountStatusError) {
+      // A world-side refusal (InterfaceServer.pas:3131-3168). Rendered here because the
+      // router (server.ts:1221-1229) would otherwise mask it as "Internal server error".
+      sendError(ctx.ws, msg.wsRequestId, err.message, err.code);
+      return;
+    }
     throw err;
   }
   const response: WsRespLoginSuccess = {

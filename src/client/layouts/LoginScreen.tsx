@@ -42,6 +42,7 @@ export function LoginScreen() {
   const rememberedSession = useGameStore((s) => s.rememberedSession);
   const resumeTarget = useGameStore((s) => s.resumeTarget);
   const forgetRememberedSession = useGameStore((s) => s.forgetRememberedSession);
+  const username = useGameStore((s) => s.username);
   const setLoginStage = useGameStore((s) => s.setLoginStage);
   const setLoginLoading = useGameStore((s) => s.setLoginLoading);
   const setAuthError = useGameStore((s) => s.setAuthError);
@@ -53,6 +54,7 @@ export function LoginScreen() {
   const client = useClient();
   const [storedCreds, setStoredCreds] = useState<{ username: string; password: string } | null>(null);
   const [selectedWorld, setSelectedWorld] = useState('');
+  const lastZoneRef = useRef<WorldZone | null>(null);
 
   // Stage A: validate credentials via RDO auth check, then advance to zones on success
   const handleConnect = useCallback(
@@ -73,11 +75,17 @@ export function LoginScreen() {
   const handleZoneSelect = useCallback(
     (zone: WorldZone) => {
       if (!storedCreds) return;
+      lastZoneRef.current = zone;
       setLoginLoading(true);
       client.onDirectoryConnect(storedCreds.username, storedCreds.password, zone.path);
     },
     [client, storedCreds, setLoginLoading],
   );
+
+  // Stage C: retry the last directory query after an empty/failed world list
+  const handleRetryWorlds = useCallback(() => {
+    if (lastZoneRef.current) handleZoneSelect(lastZoneRef.current);
+  }, [handleZoneSelect]);
 
   // Stage C → D: select world
   const handleWorldSelect = useCallback(
@@ -167,6 +175,7 @@ export function LoginScreen() {
           worlds={worlds}
           onSelect={handleWorldSelect}
           onBack={handleBackToZones}
+          onRetry={handleRetryWorlds}
           isLoading={isLoading}
         />
       )}
@@ -177,6 +186,7 @@ export function LoginScreen() {
           worldName={selectedWorld}
           loginPage={loginPage}
           admission={admission}
+          username={username}
           onSelect={handleCompanySelect}
           onCreate={handleCreateCompany}
           onBack={handleBackToWorlds}

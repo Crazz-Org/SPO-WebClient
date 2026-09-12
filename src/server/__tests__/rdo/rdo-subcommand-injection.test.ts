@@ -106,7 +106,7 @@ function cannedPayload(packet: RdoPacket): string {
     case 'SetPath': return 'res="#-1"';
     case 'CreateObject': return 'res="%4242"';
     case 'GetPropertyList': return 'res="%-1\t\t\t0\t0\t"';
-    case 'RDOQueryKey': return 'res="%"';
+    case 'RDOQueryKey': return 'res="%Count=0"';
     case 'RDOSearchKey': return 'res="%"';
     default: return 'res="#0"';
   }

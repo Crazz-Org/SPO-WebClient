@@ -108,6 +108,29 @@ describe('WorldStage', () => {
     expect(screen.queryByText('Year')).toBeNull();
     expect(screen.queryByText('2232')).toBeNull();
   });
+
+  it('shows the servers-down message and a retry control when no world came back', () => {
+    const onRetry = jest.fn();
+    renderWithProviders(<WorldStage worlds={[]} onSelect={() => {}} onRetry={onRetry} isLoading={false} />);
+    expect(screen.getByText(/servers are down/i)).toBeTruthy();
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    expect(retryButton).toBeTruthy();
+    fireEvent.click(retryButton);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not show the servers-down message when a world is listed', () => {
+    const onRetry = jest.fn();
+    renderWithProviders(<WorldStage worlds={[worlds[0]]} onSelect={() => {}} onRetry={onRetry} isLoading={false} />);
+    expect(screen.queryByText(/servers are down/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('hides the retry control when no retry handler is given', () => {
+    renderWithProviders(<WorldStage worlds={[]} onSelect={() => {}} isLoading={false} />);
+    expect(screen.getByText(/servers are down/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -127,6 +150,7 @@ describe('CompanyStage', () => {
     onCreate: () => {},
     onBack: () => {},
     isLoading: false,
+    username: 'SPO_test3',
   };
 
   it('renders company selection title', () => {
@@ -229,6 +253,29 @@ describe('CompanyStage', () => {
     expect(screen.getByText('Select a Company')).toBeTruthy();
     expect(screen.getByText('TestCo')).toBeTruthy();
     expect(screen.queryByText('Create New Company')).toBeNull();
+  });
+
+  it.each(['Mayor of Helartia', 'President of Shamba'])(
+    'offers company creation to a %s',
+    (username) => {
+      renderWithProviders(<CompanyStage {...defaultProps} username={username} />);
+      expect(screen.getByText('Create New Company')).toBeTruthy();
+    },
+  );
+
+  // chooseCompany.asp:23 — `InStr(UCASE(UserName), "MINISTER OF ") = 1`.
+  it('withholds company creation from a minister account', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} username="Minister of Health" companies={[]} />,
+    );
+    expect(screen.queryByText('Create New Company')).toBeNull();
+    expect(screen.queryByText(/Create your first company/)).toBeNull();
+  });
+
+  it('withholds company creation from a minister account case-insensitively', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} username="minister of health" />);
+    expect(screen.queryByText('Create New Company')).toBeNull();
+    expect(screen.getByText('TestCo')).toBeTruthy();
   });
 });
 

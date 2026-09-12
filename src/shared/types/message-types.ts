@@ -43,6 +43,7 @@ import type {
   PolicyData,
   PoliticsData,
   NewspaperBoard,
+  NewspaperRatingEntry,
   NewspaperIssue,
   NewspaperIssueList,
   PoliticalRoleInfo,
@@ -358,6 +359,8 @@ export interface WsReqLoginWorld extends WsMessage {
   username: string;
   password: string;
   worldName: string;
+  /** The language the player picked. Absent means the default (`'0'`, English). */
+  languageId?: string;
 }
 
 export interface WsReqMapLoad extends WsMessage {
@@ -1376,6 +1379,10 @@ export interface WsRespProfileCurriculumAction extends WsMessage {
   type: WsMessageType.RESP_PROFILE_CURRICULUM_ACTION;
   success: boolean;
   message?: string;
+  /** abandonRole only: the personal company the session now plays as (rdoAbandonRole.asp:40). */
+  switchedTo?: CompanyInfo;
+  /** abandonRole only: no personal company is left — the client returns to the company stage. */
+  returnToCompanyStage?: boolean;
 }
 
 // =============================================================================
@@ -1544,6 +1551,12 @@ export interface WsReqNewspaperPost extends WsMessage {
   body: string;
   /** Reply to this column rather than opening a new one. */
   replyToPath?: string;
+  /**
+   * The ratings block, when the reader filled it in. Omitted or empty = a plain
+   * column; each entry goes out as `RDOSetRatingFrom` before the post
+   * (`boardmsg.asp:96-143`).
+   */
+  ratings?: NewspaperRatingEntry[];
 }
 
 export interface WsRespNewspaperPost extends WsMessage {

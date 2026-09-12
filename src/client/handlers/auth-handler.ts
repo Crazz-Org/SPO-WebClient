@@ -20,10 +20,13 @@ import {
   WsReqClusterFacilities,
   WsReqLogout,
   WsRespLogout,
+  WsReqProfileCurriculumAction,
+  WsRespProfileCurriculumAction,
   CompanyInfo,
   WorldInfo,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { normalizeLanguageId } from '../../shared/language';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useGameStore } from '../store/game-store';
 import { useProfileStore } from '../store/profile-store';
@@ -104,7 +107,9 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
       type: WsMessageType.REQ_LOGIN_WORLD,
       username: ctx.storedUsername,
       password: ctx.storedPassword,
-      worldName
+      worldName,
+      // Read on every send, so the reconnect replay (client.ts:1114) carries it too.
+      languageId: normalizeLanguageId(useGameStore.getState().settings.languageId)
     };
     const resp = (await ctx.sendRequest(req)) as WsRespLoginSuccess;
     ClientBridge.log('Login', `Success! Tycoon: ${resp.tycoonId}`);
@@ -143,7 +148,10 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
   } catch (err: unknown) {
     ClientBridge.log('Error', `Login failed: ${toErrorMessage(err)}`);
     ClientBridge.setLoginLoading(false);
-    ctx.showNotification(`World login failed: ${toErrorMessage(err)}`, 'error');
+    // The gateway words a world-side refusal itself (AccountStatus); showing the
+    // code's generic sentence instead would hide which credential was wrong.
+    const { serverMessage } = err as { serverMessage?: string };
+    ctx.showNotification(`World login failed: ${serverMessage || toErrorMessage(err)}`, 'error');
     return false;
   }
 }
@@ -370,6 +378,17 @@ export function serverSwitchZoneSelect(ctx: ClientHandlerContext, zonePath: stri
   performDirectoryLogin(ctx, ctx.storedUsername, ctx.storedPassword, zonePath);
 }
 
+export function applyLocalCompanySwitch(ctx: ClientHandlerContext, company: CompanyInfo): void {
+  ctx.currentCompanyName = company.name;
+  ClientBridge.setCompany(company.name, String(company.id));
+  const roleLower = (company.ownerRole ?? '').toLowerCase();
+  const isPublicOffice = roleLower.includes('president') || roleLower.includes('minister') || roleLower.includes('mayor');
+  ClientBridge.setPublicOfficeRole(isPublicOffice, isPublicOffice ? (company.ownerRole ?? '') : '');
+  useProfileStore.getState().reset();
+  useBuildingStore.getState().clearFocus();
+  useUiStore.getState().clearBuildMenuData();
+}
+
 export async function profileSwitchCompany(ctx: ClientHandlerContext, companyId: number | string, companyName: string, ownerRole: string): Promise<void> {
   const company: CompanyInfo = { id: String(companyId), name: companyName, ownerRole };
   useGameStore.getState().setSwitchingCompany(true);
@@ -379,8 +398,7 @@ export async function profileSwitchCompany(ctx: ClientHandlerContext, companyId:
       company,
     } as WsReqSwitchCompany);
 
-    ctx.currentCompanyName = companyName;
-    ClientBridge.setCompany(companyName, String(companyId));
+    applyLocalCompanySwitch(ctx, company);
     ClientBridge.showSuccess(`Switched to ${companyName}`);
 
     useGameStore.getState().rememberSession({
@@ -391,17 +409,50 @@ export async function profileSwitchCompany(ctx: ClientHandlerContext, companyId:
       companyName,
       ownerRole,
     });
-
-    // Recalculate public office role for the new company
-    const roleLower = ownerRole.toLowerCase();
-    const isPublicOffice = roleLower.includes('president') || roleLower.includes('minister') || roleLower.includes('mayor');
-    ClientBridge.setPublicOfficeRole(isPublicOffice, isPublicOffice ? ownerRole : '');
-
-    useProfileStore.getState().reset();
-    useBuildingStore.getState().clearFocus();
-    useUiStore.getState().clearBuildMenuData();
   } catch (err: unknown) {
     ClientBridge.showError(`Failed to switch company: ${toErrorMessage(err)}`);
+  } finally {
+    useGameStore.getState().setSwitchingCompany(false);
+  }
+}
+
+/**
+ * Abandon the currently held role. The gateway reads the personal company
+ * list before resigning and switches the session back to it
+ * (`abandon-role-handler.ts`); this applies the same result client-side that
+ * `profileSwitchCompany` applies for a manual switch, or — if no personal
+ * company is left — re-enters the world as the personal tycoon through the
+ * server-switch overlay so the player lands on a live company-creation stage
+ * rather than a dead session.
+ */
+export async function abandonRole(ctx: ClientHandlerContext): Promise<void> {
+  useGameStore.getState().setSwitchingCompany(true);
+  try {
+    const resp = await ctx.sendRequest({
+      type: WsMessageType.REQ_PROFILE_CURRICULUM_ACTION,
+      action: 'abandonRole',
+    } as WsReqProfileCurriculumAction) as WsRespProfileCurriculumAction;
+
+    if (!resp.success) {
+      ClientBridge.showError(resp.message || 'Abandon role failed');
+      return;
+    }
+
+    if (resp.switchedTo) {
+      applyLocalCompanySwitch(ctx, resp.switchedTo);
+      ClientBridge.showSuccess(`Role abandoned — now playing as ${resp.switchedTo.name}`);
+    } else if (resp.returnToCompanyStage) {
+      const game = useGameStore.getState();
+      game.enterServerSwitch();
+      game.setLoginCompanies([]);
+      game.setLoginLoading(true);
+      await login(ctx, ctx.currentWorldName);
+    } else {
+      ClientBridge.showSuccess(resp.message || 'Role abandoned');
+      useProfileStore.getState().incrementRefresh();
+    }
+  } catch (err: unknown) {
+    ClientBridge.showError(`Abandon role failed: ${toErrorMessage(err)}`);
   } finally {
     useGameStore.getState().setSwitchingCompany(false);
   }

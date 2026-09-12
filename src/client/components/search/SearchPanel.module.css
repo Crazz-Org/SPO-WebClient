@@ -77,6 +77,13 @@
   color: var(--text-primary);
 }
 
+/* DirectoryMain.asp:91-99 — a tile the world does not offer (no Capitol) is drawn greyed
+   with a default cursor, not omitted. */
+.categoryCardDisabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* Page content */
 .pageContent {
   flex: 1;

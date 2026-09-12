@@ -9,6 +9,7 @@ import { useMemo } from 'react';
 import { GlassCard } from '../common';
 import { Plus, ArrowLeft } from 'lucide-react';
 import type { CompanyInfo, LoginPageOutcome, WorldAdmission } from '@/shared/types';
+import { isMinisterAccount } from '../../minister-account';
 import styles from './CompanyStage.module.css';
 
 /** LogonNoAccess.asp:97-100 — the `01/01/2008` PA value is the sentinel for "never had access", not an expiry date. */
@@ -24,6 +25,8 @@ interface CompanyStageProps {
   loginPage?: LoginPageOutcome | null;
   /** CanJoinWorldEx said this world will refuse a new company — so it is not offered. */
   admission?: WorldAdmission | null;
+  /** chooseCompany.asp:23 — a minister account is never offered company creation. */
+  username: string;
 }
 
 export function CompanyStage({
@@ -35,7 +38,9 @@ export function CompanyStage({
   isLoading,
   loginPage,
   admission,
+  username,
 }: CompanyStageProps) {
+  const isMinister = isMinisterAccount(username);
   // Group companies: player-owned vs political offices
   const { owned, political } = useMemo(() => {
     const ownedList: CompanyInfo[] = [];
@@ -127,7 +132,7 @@ export function CompanyStage({
         </>
       )}
 
-      {!admission && companies.length === 0 && (
+      {!admission && !isMinister && companies.length === 0 && (
         <p className={styles.emptyMessage}>
           Welcome to {worldName}! Create your first company to start building your empire.
         </p>
@@ -180,8 +185,9 @@ export function CompanyStage({
         </section>
       )}
 
-      {/* Create new company — withheld when the server already said NewCompany would fail. */}
-      {!admission && (
+      {/* Create new company — withheld when the server already said NewCompany would fail,
+          or when the account is a minister (chooseCompany.asp:23, :233). */}
+      {!admission && !isMinister && (
         <div className={styles.grid}>
           <GlassCard className={styles.createCard} onClick={() => !isLoading && onCreate()}>
             <Plus size={24} className={styles.createIcon} />
