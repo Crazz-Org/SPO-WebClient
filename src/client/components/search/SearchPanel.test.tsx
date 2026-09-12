@@ -7,6 +7,7 @@ import { WsMessageType } from '@/shared/types';
 import type { TownInfo, RankingEntry } from '@/shared/types';
 // Separate statement on purpose: the import header above is a frozen span for this change.
 import { fireEvent } from '@testing-library/react';
+import type { SearchMenuCategory } from '@/shared/types';
 
 const TOWN_BASE: TownInfo = {
   name: 'Helartia',
@@ -275,5 +276,122 @@ describe('SearchPanel — towns page opens the town directory (#526)', () => {
     fireEvent.click(screen.getByText('← Back'));
 
     expect(useSearchStore.getState().currentPage).toBe('towns');
+  });
+});
+
+function showHome(categories: SearchMenuCategory[]): void {
+  useSearchStore.setState({
+    currentPage: 'home',
+    isLoading: false,
+    homeData: { type: WsMessageType.RESP_SEARCH_MENU_HOME, categories },
+  });
+}
+
+const HOME_TILES: SearchMenuCategory[] = [
+  { id: 'capitol', label: 'Capitol', enabled: false },
+  { id: 'Towns', label: 'Towns', enabled: true },
+  { id: 'RenderTycoon', label: 'You', enabled: true },
+  { id: 'Tycoons', label: 'Tycoons', enabled: true },
+  { id: 'Rankings', label: 'Rankings', enabled: true },
+  { id: 'Newspapers', label: 'Media', enabled: true },
+];
+
+describe('SearchPanel — home grid (#522)', () => {
+  beforeEach(() => {
+    resetStores();
+    useSearchStore.getState().reset();
+  });
+
+  it('builds six tiles from the fixture', () => {
+    showHome(HOME_TILES);
+    const { container } = renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({}),
+    });
+
+    expect(container.querySelectorAll('.categoryCard')).toHaveLength(6);
+    expect(screen.getByText('Capitol')).toBeTruthy();
+    expect(screen.getByText('You')).toBeTruthy();
+  });
+
+  it('renders a disabled Capitol tile dimmed and inert', () => {
+    showHome(HOME_TILES);
+    const onNavigateToBuilding = jest.fn();
+    const navigateSpy = jest.spyOn(useSearchStore.getState(), 'navigateTo');
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({
+        onNavigateToBuilding: onNavigateToBuilding as never,
+      }),
+    });
+
+    const capitolCard = screen.getByText('Capitol').closest('.categoryCard')!;
+    expect(capitolCard.className).toContain('categoryCardDisabled');
+    expect(capitolCard.getAttribute('role')).toBeNull();
+
+    fireEvent.click(capitolCard);
+
+    expect(onNavigateToBuilding).not.toHaveBeenCalled();
+    expect(navigateSpy).not.toHaveBeenCalled();
+    expect(useSearchStore.getState().currentPage).toBe('home');
+  });
+
+  it('an enabled Capitol tile jumps the map with its parsed coordinates', () => {
+    showHome([{ id: 'local', label: 'Capitol', enabled: true, x: 220, y: 41 }]);
+    const onNavigateToBuilding = jest.fn();
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({
+        onNavigateToBuilding: onNavigateToBuilding as never,
+      }),
+    });
+
+    fireEvent.click(screen.getByText('Capitol'));
+
+    expect(onNavigateToBuilding).toHaveBeenCalledWith(220, 41);
+    expect(useSearchStore.getState().currentPage).toBe('home');
+  });
+
+  it('the You tile opens the player\'s own card', () => {
+    showHome(HOME_TILES);
+    const onSearchMenuTycoonProfile = jest.fn();
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({
+        onSearchMenuTycoonProfile: onSearchMenuTycoonProfile as never,
+      }),
+    });
+
+    fireEvent.click(screen.getByText('You'));
+
+    expect(useSearchStore.getState().currentPage).toBe('tycoon-profile');
+    expect(onSearchMenuTycoonProfile).toHaveBeenCalledWith('YOU');
+  });
+
+  it('a page tile navigates to its drill-down page', () => {
+    showHome(HOME_TILES);
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({}),
+    });
+
+    fireEvent.click(screen.getByText('Towns'));
+
+    expect(useSearchStore.getState().currentPage).toBe('towns');
+  });
+
+  it('dims a tile id the client does not know', () => {
+    showHome([{ id: 'Weather', label: 'Weather', enabled: true }]);
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({}),
+    });
+
+    const card = screen.getByText('Weather').closest('.categoryCard')!;
+    expect(card.className).toContain('categoryCardDisabled');
+    expect(card.getAttribute('role')).toBeNull();
+  });
+
+  it('does not draw the grid before the reply arrives', () => {
+    useSearchStore.setState({ currentPage: 'home', isLoading: false, homeData: null });
+    const { container } = renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({}),
+    });
+
+    expect(container.querySelectorAll('.categoryCard')).toHaveLength(0);
   });
 });
