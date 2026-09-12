@@ -509,7 +509,8 @@ describe('SuppliesPanel', () => {
 
     expect(container.querySelector('table')).toBeTruthy();
     expect(container.textContent).toContain('Steel Mill');
-    expect(container.textContent).toContain('AcmeCorp');
+    expect(container.textContent).toContain('Owner');
+    expect(container.querySelector('tbody tr')?.getAttribute('title')).toBe('AcmeCorp');
   });
 
   it('shows "No suppliers connected" when no connections', () => {
