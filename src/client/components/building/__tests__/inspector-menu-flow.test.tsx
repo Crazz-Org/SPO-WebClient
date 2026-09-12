@@ -183,6 +183,9 @@ describe('INSPECT hidden properties', () => {
    * `Creator` states the owner, which the header already names; the rest carry
    * nothing a player reads. They stay in the response — `SecurityId` decides
    * `canGovern` — and are dropped at render.
+   *
+   * `TradeLevel` was one of them until issue 551 and is not any more: it is a
+   * setting the owner changes, and the sheet now carries a control for it.
    */
   it('keeps the hidden names out of an open section', () => {
     showInspector({
@@ -191,7 +194,6 @@ describe('INSPECT hidden properties', () => {
           { name: 'Creator', value: 'SPO_test3' },
           { name: 'SecurityId', value: '-296197588--295583672--' },
           { name: 'Trouble', value: '3' },
-          { name: 'TradeLevel', value: '1' },
           { name: 'ROI', value: '14%' },
         ],
       },
@@ -201,7 +203,6 @@ describe('INSPECT hidden properties', () => {
     const drawer = screen.getByLabelText('GENERAL');
     expect(drawer.textContent).not.toContain('-296197588');
     expect(drawer.textContent).not.toContain('Trouble');
-    expect(drawer.textContent).not.toContain('Trade Level');
   });
 
   /**

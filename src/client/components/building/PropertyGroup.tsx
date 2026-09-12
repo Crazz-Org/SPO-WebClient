@@ -34,6 +34,7 @@ import { RatioValue, BooleanValue, StopToggle } from './PropertyDisplays';
 import { DataTable, ServiceCardList, ProductSummaryCards } from './PropertyTables';
 import { WorkforceTable } from './WorkforceTable';
 import { UpgradeActions, RepairControl, TradeConnectButtons, ActionButton, CloneSettings, WarehouseWares } from './PropertyActions';
+import { TradeModeControl, TradeLevelControl } from './TradeControls';
 import styles from './PropertyGroup.module.css';
 
 // Re-export utility functions for backward compatibility (tests import from here)
@@ -525,6 +526,48 @@ function DefinedProperties({
             rdoCommands={rdoCommands}
             onPropertyChange={handlePropertyChange}
             onRowAction={handleRowAction}
+          />,
+        );
+      }
+      continue;
+    }
+
+    // Trade mode — Voyager's cbMode (IndustryGeneralSheet.pas:189-235). Declared
+    // as `TradeRole` in most templates and `Role` on the warehouse sheet; both
+    // are the same cache value (Kernel/Kernel.pas:5893) and both write through
+    // RDOSetRole. The member is named here rather than resolved through
+    // `rdoCommands` because WH_GENERAL_GROUP maps no `Role` and TRADE_GROUP maps
+    // nothing at all — resolution would emit `call Role`, which the server does
+    // not publish. WarehouseWares (:412) takes the same direct route.
+    if (def.rdoName === 'TradeRole' || def.rdoName === 'Role') {
+      rendered.add(def.rdoName);
+      const role = valueMap.get(def.rdoName);
+      if (role !== undefined) {
+        elements.push(
+          <TradeModeControl
+            key="trade-mode"
+            value={role}
+            canEdit={canEdit}
+            onSend={(v) => client.onSetBuildingProperty(buildingX, buildingY, 'RDOSetRole', String(v))}
+          />,
+        );
+      }
+      continue;
+    }
+
+    // Trade level — Voyager's cbTrade; item 0 carries the Creator's name (:223).
+    if (def.rdoName === 'TradeLevel') {
+      rendered.add(def.rdoName);
+      const level = valueMap.get(def.rdoName);
+      if (level !== undefined) {
+        const ownerName = valueMap.get('Creator') || details?.ownerName || 'the owner';
+        elements.push(
+          <TradeLevelControl
+            key="trade-level"
+            value={level}
+            ownerName={ownerName}
+            canEdit={canEdit}
+            onSend={(v) => client.onSetBuildingProperty(buildingX, buildingY, 'RDOSetTradeLevel', String(v))}
           />,
         );
       }

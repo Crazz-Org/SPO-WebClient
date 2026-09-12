@@ -83,6 +83,22 @@
   background: var(--surface-border-active);
 }
 
+/* Select (trade mode / trade level combo) — same shape as the text input */
+.select {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--surface-border-active);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  padding: 2px 6px;
+  min-width: 140px;
+  outline: none;
+}
+
+.select:focus {
+  border-color: var(--accent-gold);
+}
+
 .textInputWrapper {
   display: inline-flex;
   align-items: center;
