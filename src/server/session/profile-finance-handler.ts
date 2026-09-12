@@ -54,35 +54,79 @@ function parseAspMoney(text: string): string | null {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PRIVATE — which tycoon is being read
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Which tycoon a profile/curriculum read is about, and whether that is the
+ * session user.
+ *
+ * No name at all is the session user — that is the call every own-profile path
+ * has always made. A name is compared against BOTH `activeUsername` and
+ * `cachedUsername` case-insensitively: the model server's tycoon names are
+ * case-insensitive, and `activeUsername` may hold a role ("Mayor of Helartia")
+ * while the directory card carries the plain tycoon name.
+ */
+function resolveTycoon(ctx: SessionContext, tycoonName?: string): { name: string; isOwn: boolean } {
+  const own = ctx.activeUsername || ctx.cachedUsername || '';
+  const target = (tycoonName ?? '').trim();
+  const sameAs = (candidate: string): boolean =>
+    candidate !== '' && candidate.toLowerCase() === target.toLowerCase();
+  const isOwn = target === ''
+    || sameAs(ctx.activeUsername || '')
+    || sameAs(ctx.cachedUsername || '');
+  return { name: isOwn ? own : target, isOwn };
+}
+
+/**
+ * The query of TycoonCurriculum.asp for that tycoon.
+ *
+ * `buildAspUrl` applies extras with `params.set` (`spo_session.ts:934-938`), so
+ * `Tycoon` here REPLACES the session's own. The viewer's `Password` still
+ * travels — exactly what "Show Profile" sends (`RenderTycoon.asp:119`) — and it
+ * is what makes the server leave `FullAccess` false and withhold the owner-only
+ * sections (`TycoonCurriculum.asp:25`, `:175-211`, `:250-261`).
+ */
+function curriculumParams(name: string, isOwn: boolean): Record<string, string> {
+  return isOwn ? { RIWS: '' } : { RIWS: '', Tycoon: name };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC — fetchTycoonProfile
 // ═══════════════════════════════════════════════════════════════════════════
 
-export async function fetchTycoonProfile(ctx: SessionContext): Promise<TycoonProfileFull> {
+/**
+ * @param tycoonName Another tycoon's name, or omitted for the session user.
+ *   For another tycoon the push-derived fields (ranking, budget, facility
+ *   counts, failure level) are seeded neutrally: those pushes describe the
+ *   session user and would otherwise be reported as the viewed player's.
+ */
+export async function fetchTycoonProfile(ctx: SessionContext, tycoonName?: string): Promise<TycoonProfileFull> {
   // GetUserName RDO call removed — the Delphi server does not publish this method
   // (errUnexistentMethod code 5). Use cached username instead.
-  const name = ctx.activeUsername || ctx.cachedUsername || '';
+  const { name, isOwn } = resolveTycoon(ctx, tycoonName);
 
   const profile: TycoonProfileFull = {
     name,
     realName: '',
-    ranking: ctx.lastRanking,
-    budget: ctx.accountMoney || '0',
+    ranking: isOwn ? ctx.lastRanking : 0,
+    budget: isOwn ? (ctx.accountMoney || '0') : '0',
     prestige: 0,
     facPrestige: 0,
     researchPrestige: 0,
-    facCount: ctx.lastBuildingCount,
-    facMax: ctx.lastMaxBuildings,
+    facCount: isOwn ? ctx.lastBuildingCount : 0,
+    facMax: isOwn ? ctx.lastMaxBuildings : 0,
     area: 0,
     nobPoints: 0,
     licenceLevel: 0,
-    failureLevel: ctx.failureLevel || 0,
+    failureLevel: isOwn ? (ctx.failureLevel || 0) : 0,
     levelName: '',
     levelTier: 0,
   };
 
   // Try to enrich with curriculum ASP page data
   try {
-    const html = await ctx.fetchAspPage('NewTycoon/TycoonCurriculum.asp', { RIWS: '' });
+    const html = await ctx.fetchAspPage('NewTycoon/TycoonCurriculum.asp', curriculumParams(name, isOwn));
     parseCurriculumHtml(html, profile);
   } catch (e: unknown) {
     ctx.log.warn('[Profile] TycoonCurriculum.asp fetch failed, using push data only:', e);
@@ -193,26 +237,28 @@ function parseCurriculumHtml(html: string, profile: TycoonProfileFull): void {
  * Fetch curriculum data — fetches TycoonCurriculum.asp and parses all sections:
  * summary stats, level progression, rankings, and curriculum items.
  */
-export async function fetchCurriculumData(ctx: SessionContext): Promise<CurriculumData> {
-  const profile = await fetchTycoonProfile(ctx);
+export async function fetchCurriculumData(ctx: SessionContext, tycoonName?: string): Promise<CurriculumData> {
+  const { name, isOwn } = resolveTycoon(ctx, tycoonName);
+  const profile = await fetchTycoonProfile(ctx, isOwn ? undefined : name);
   const levelNames = ['Apprentice', 'Entrepreneur', 'Tycoon', 'Master', 'Paradigm', 'Legend', 'BeyondLegend'];
   const level = Math.min(profile.licenceLevel, levelNames.length - 1);
 
   // Fetch the raw HTML again for detailed curriculum-specific parsing
   const aspPath = 'NewTycoon/TycoonCurriculum.asp';
+  const params = curriculumParams(name, isOwn);
   let html = '';
   let baseUrl = '';
   let unavailable = false;
   try {
-    baseUrl = ctx.buildAspUrl(aspPath, { RIWS: '' });
-    html = await ctx.fetchAspPage(aspPath, { RIWS: '' });
+    baseUrl = ctx.buildAspUrl(aspPath, params);
+    html = await ctx.fetchAspPage(aspPath, params);
   } catch {
     ctx.log.warn('[Profile] TycoonCurriculum.asp re-fetch for curriculum details failed');
     unavailable = true;
   }
   if (isCacheUnavailablePage(html)) unavailable = true;
 
-  const data = parseCurriculumDetails(ctx, html, profile, level, levelNames, baseUrl);
+  const data = parseCurriculumDetails(ctx, html, profile, level, levelNames, baseUrl, isOwn);
   if (unavailable) data.cacheUnavailable = true;
   return data;
 }
@@ -231,7 +277,14 @@ function parseCurriculumDetails(
   profile: TycoonProfileFull,
   level: number,
   levelNames: string[],
-  baseUrl: string
+  baseUrl: string,
+  /**
+   * Only the session's OWN page may seed the action-URL cache. Another
+   * tycoon's page carries HIS reset/abandon/advance links — caching those under
+   * `NewTycoon/TycoonCurriculum.asp` would aim the viewer's own curriculum
+   * actions at a stranger's account.
+   */
+  cacheActions: boolean = true
 ): CurriculumData {
   // Fortune & Average Profit — the value span opens inside the label div
   // (:128-133, :135-140). Both go through FormatValue, so both can be negative:
@@ -398,7 +451,7 @@ function parseCurriculumDetails(
   const abilityLoanPoints = abilityMatch ? parseInt(abilityMatch[4], 10) || 0 : 0;
 
   // Extract and cache action URLs from ASP HTML (links to resetTycoon.asp, abandonRole.asp, etc.)
-  if (baseUrl && html) {
+  if (cacheActions && baseUrl && html) {
     const actionUrls = extractAllActionUrls(html, baseUrl);
     if (actionUrls.size > 0) {
       ctx.setAspActionCache('NewTycoon/TycoonCurriculum.asp', actionUrls);

@@ -220,6 +220,15 @@ const DELEGATIONS: readonly Delegation[] = [
     result: { sections: [] },
   },
   {
+    // #528 — "Show Profile" on a directory card. The name is the whole point:
+    // a facade that dropped it would silently answer the viewer's own page.
+    method: 'fetchTycoonFullProfile',
+    install: () => jest.spyOn(profileFinanceHandler, 'fetchCurriculumData'),
+    call: s => s.fetchTycoonFullProfile('Rival'),
+    forwarded: ['Rival'],
+    result: { tycoonName: 'Rival' },
+  },
+  {
     method: 'fetchBankAccount',
     install: () => jest.spyOn(profileFinanceHandler, 'fetchBankAccount'),
     call: s => s.fetchBankAccount(),
@@ -654,7 +663,7 @@ describe('StarpeaceSession — handler delegation', () => {
   it('covers every one-line handler delegation the facade declares', () => {
     // A guard on the table itself: if a delegation is added to the facade and
     // not to the table, the count stops matching and this row says so.
-    expect(DELEGATIONS).toHaveLength(70);
+    expect(DELEGATIONS).toHaveLength(71);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 

@@ -427,6 +427,9 @@ export class StarpeaceClient implements ClientHandlerContext {
       onSearchMenuTycoonProfile: (tycoonName) => this.sendMessage({
         type: WsMessageType.REQ_SEARCH_MENU_TYCOON_PROFILE, tycoonName,
       }),
+      onSearchMenuTycoonFullProfile: (tycoonName) => this.sendMessage({
+        type: WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE, tycoonName,
+      }),
       onSearchMenuRankings: () => this.sendMessage({ type: WsMessageType.REQ_SEARCH_MENU_RANKINGS }),
       onSearchMenuRankingDetail: (rankingPath) => this.sendMessage({
         type: WsMessageType.REQ_SEARCH_MENU_RANKING_DETAIL, rankingPath,

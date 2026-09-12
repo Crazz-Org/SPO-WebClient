@@ -188,6 +188,7 @@ export enum WsMessageType {
   REQ_SEARCH_MENU_BANKS = 'REQ_SEARCH_MENU_BANKS',
   REQ_SEARCH_MENU_NEWSPAPERS = 'REQ_SEARCH_MENU_NEWSPAPERS',
   REQ_SEARCH_MENU_DIRECTORY = 'REQ_SEARCH_MENU_DIRECTORY',
+  REQ_SEARCH_MENU_TYCOON_FULL_PROFILE = 'REQ_SEARCH_MENU_TYCOON_FULL_PROFILE',
 
   RESP_SEARCH_MENU_HOME = 'RESP_SEARCH_MENU_HOME',
   RESP_SEARCH_MENU_TOWNS = 'RESP_SEARCH_MENU_TOWNS',
@@ -198,6 +199,7 @@ export enum WsMessageType {
   RESP_SEARCH_MENU_BANKS = 'RESP_SEARCH_MENU_BANKS',
   RESP_SEARCH_MENU_NEWSPAPERS = 'RESP_SEARCH_MENU_NEWSPAPERS',
   RESP_SEARCH_MENU_DIRECTORY = 'RESP_SEARCH_MENU_DIRECTORY',
+  RESP_SEARCH_MENU_TYCOON_FULL_PROFILE = 'RESP_SEARCH_MENU_TYCOON_FULL_PROFILE',
 
   // Logout
   REQ_LOGOUT = 'REQ_LOGOUT',
@@ -950,6 +952,21 @@ export interface WsReqSearchMenuTycoonProfile extends WsMessage {
 export interface WsRespSearchMenuTycoonProfile extends WsMessage {
   type: WsMessageType.RESP_SEARCH_MENU_TYCOON_PROFILE;
   profile: TycoonProfile;
+}
+
+/**
+ * "Show Profile" on a directory card (RenderTycoon.asp:119-124) — the full
+ * curriculum page of `tycoonName`, whoever that is.
+ */
+export interface WsReqSearchMenuTycoonFullProfile extends WsMessage {
+  type: WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE;
+  tycoonName: string;
+}
+
+export interface WsRespSearchMenuTycoonFullProfile extends WsMessage {
+  type: WsMessageType.RESP_SEARCH_MENU_TYCOON_FULL_PROFILE;
+  tycoonName: string;
+  data: CurriculumData;
 }
 
 export interface WsReqSearchMenuPeopleSearch extends WsMessage {

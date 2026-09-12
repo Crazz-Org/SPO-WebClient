@@ -208,6 +208,8 @@ export type {
   WsRespSearchMenuTowns,
   WsReqSearchMenuTycoonProfile,
   WsRespSearchMenuTycoonProfile,
+  WsReqSearchMenuTycoonFullProfile,
+  WsRespSearchMenuTycoonFullProfile,
   WsReqSearchMenuPeopleSearch,
   WsRespSearchMenuPeopleSearch,
   WsReqSearchMenuRankings,

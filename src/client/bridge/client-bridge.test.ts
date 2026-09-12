@@ -503,3 +503,22 @@ describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_DIRECTORY (
     expect(useSearchStore.getState().isLoading).toBe(false);
   });
 });
+
+describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_TYCOON_FULL_PROFILE (#528)', () => {
+  beforeEach(() => {
+    useSearchStore.getState().reset();
+  });
+
+  it('lands in the search store, never in the logged-in player\'s profile', () => {
+    const reply = {
+      type: WsMessageType.RESP_SEARCH_MENU_TYCOON_FULL_PROFILE,
+      tycoonName: 'Rival',
+      data: { tycoonName: 'Rival', canUpgrade: false },
+    } as unknown as WsMessage;
+
+    ClientBridge.handleSearchMenuResponse(reply);
+
+    expect(useSearchStore.getState().tycoonFullProfileData).toEqual(reply);
+    expect(useSearchStore.getState().isLoading).toBe(false);
+  });
+});
