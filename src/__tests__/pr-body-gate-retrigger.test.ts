@@ -38,6 +38,15 @@ describe('a PR-body edit re-runs the check that reads the PR body', () => {
     expect(ci).toMatch(/run: node scripts\/check-pr-rules\.js/);
   });
 
+  it('the rules step diffs against the base BRANCH, never the sha frozen at opening', () => {
+    // `base.sha` is where the base was when the PR opened; CI checks out the merge ref, so
+    // that sha makes `merge-base` return itself and every file the base gained since is
+    // blamed on this branch. It failed the RDO citation rule on PR #743 — five files, none
+    // of them the catalogue — on 2026-09-12.
+    expect(ci).toMatch(/BASE_SHA: origin\/\$\{\{ github\.event\.pull_request\.base\.ref \}\}/);
+    expect(ci).not.toMatch(/BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
+  });
+
   it('check-pr-rules.js is the consumer that makes the body a merge blocker', () => {
     const rules = read('scripts', 'check-pr-rules.js');
     expect(rules).toMatch(/process\.env\.PR_BODY/);

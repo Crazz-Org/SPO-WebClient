@@ -95,7 +95,15 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # The base BRANCH, never `base.sha`. `base.sha` is frozen at the moment the pull
+          # request was OPENED, while CI checks out the merge ref — this branch merged into
+          # the base's CURRENT tip. Diffing against the frozen sha therefore attributes every
+          # file main gained in between to this pull request. On 2026-09-12 that failed the
+          # RDO citation rule on PR #743, whose five files do not include `rdo-members.ts`:
+          # main had merged a (properly cited) catalogue change between the PR's two pushes,
+          # and the stale base pulled main's 37 files into the PR's 5. `coverage-changed.js`
+          # never had the bug because it resolves `origin/main` itself.
+          BASE_SHA: origin/${{ github.event.pull_request.base.ref }}
         run: node scripts/check-pr-rules.js
 
       # The harness the agent itself runs on. A broken hook makes the push gate silently
