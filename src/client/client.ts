@@ -263,6 +263,9 @@ export class StarpeaceClient implements ClientHandlerContext {
       };
     };
     this.soundManager = new SoundManager();
+    // The login screen needs the persisted settings — the language picker reads one of them —
+    // and the game-view init (:797) only loads them after login. Idempotent, so both stand.
+    ClientBridge.loadPersistedSettings();
     const callbacks: Partial<ClientCallbacks> = {
       onBuildRoad: () => roadHandler.toggleRoadBuildingMode(this),
       onDemolishRoad: () => roadHandler.toggleRoadDemolishMode(this),
@@ -427,12 +430,18 @@ export class StarpeaceClient implements ClientHandlerContext {
       onSearchMenuTycoonProfile: (tycoonName) => this.sendMessage({
         type: WsMessageType.REQ_SEARCH_MENU_TYCOON_PROFILE, tycoonName,
       }),
+      onSearchMenuTycoonFullProfile: (tycoonName) => this.sendMessage({
+        type: WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE, tycoonName,
+      }),
       onSearchMenuRankings: () => this.sendMessage({ type: WsMessageType.REQ_SEARCH_MENU_RANKINGS }),
       onSearchMenuRankingDetail: (rankingPath) => this.sendMessage({
         type: WsMessageType.REQ_SEARCH_MENU_RANKING_DETAIL, rankingPath,
       }),
       onSearchMenuBanks: () => this.sendMessage({ type: WsMessageType.REQ_SEARCH_MENU_BANKS }),
       onSearchMenuNewspapers: () => this.sendMessage({ type: WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS }),
+      onSearchMenuDirectory: (ref) => this.sendMessage({
+        type: WsMessageType.REQ_SEARCH_MENU_DIRECTORY, ref,
+      }),
 
       // Profile tabs
       onProfileCurriculum: () => this.sendMessage({ type: WsMessageType.REQ_PROFILE_CURRICULUM }),
@@ -523,12 +532,12 @@ export class StarpeaceClient implements ClientHandlerContext {
         useNewspaperStore.getState().setRequestedPath(path ?? '');
         this.sendMessage({ type: WsMessageType.REQ_NEWSPAPER_BOARD, ...context, path });
       },
-      onPostNewspaperColumn: (subject, body, replyToPath) => {
+      onPostNewspaperColumn: (subject, body, replyToPath, ratings) => {
         const context = useNewspaperStore.getState().context;
         if (!context) return;
         useNewspaperStore.getState().setPosting(true);
         this.sendMessage({
-          type: WsMessageType.REQ_NEWSPAPER_POST, ...context, subject, body, replyToPath,
+          type: WsMessageType.REQ_NEWSPAPER_POST, ...context, subject, body, replyToPath, ratings,
         });
       },
       onRequestNewspaperIssues: () => {
@@ -1018,8 +1027,11 @@ export class StarpeaceClient implements ClientHandlerContext {
       if (msg.type === WsMessageType.RESP_ERROR) {
         const errorResp = msg as WsRespError;
         const localizedMessage = getErrorMessage(errorResp.code);
-        const err = new Error(localizedMessage);
-        (err as Error & { code: number }).code = errorResp.code;
+        const err = new Error(localizedMessage) as Error & { code: number; serverMessage: string };
+        err.code = errorResp.code;
+        // The gateway's own sentence. The auth check needs it: its code is a DIR_* code,
+        // which getErrorMessage() above mistranslates (issue 532). Other flows keep `message`.
+        err.serverMessage = errorResp.errorMessage;
         reject(err);
       } else {
         resolve(msg);

@@ -28,15 +28,39 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`.
 
-`newspaper` is the daily paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
-renders, and one `home.asp` per kept issue. HTTP only — the paper is reachable through the
-ASP pages alone. Its bar serves the cells in an order that is **not** the answer order, so
+`world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
+arrives over HTTP. It exists for its second exchange: the admission question the reference client
+asked before offering company creation (`logonComplete.asp:143-152`).
+`createWorldLoginScenario(vars, { canJoin })` sets what the world answers — `-1` for a world at
+its user cap, a positive number for the nobility the player is short, `0` (the default) for
+"go ahead". That exchange pins the target to the InterfaceServer id and the argument list to a
+single `%`-prefixed string, because that is the whole shape of the declaration
+(`Interface Server/InterfaceServer.pas:441`, a one-argument `function`): a second argument or a
+frame sent against the context id would answer about nobody, with no error to show for it.
+
+`newspaper` is the town paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
+renders, and one `home.asp` per kept issue. It also carries the **rated post**, which is two
+protocols that must agree — the RDO half is two `RDOSetRatingFrom` exchanges with an **empty
+response** (a `procedure` answers nothing), and the HTTP half is the `POST boardmsg.asp` the
+column is published with and the `GET boardlist.asp` the page reloads beside it; the report
+the posted body ends with may only name ratings whose frame went out first
+(`boardmsg.asp:96-146`). Its bar serves the cells in an order that is **not** the answer order, so
 the sort the gateway derives from the folder id (`News.pas:956-961`) has something to prove;
 `createNewspaperScenario(vars, { issues: [] })` is the paper that has printed nothing yet.
 It also serves the directory's `New Directory/Newspapers.asp` listing (`{ papers: [] }` is
 the world with no papers).
+
+`tycoon-profile` is `NewTycoon/TycoonCurriculum.asp` served TWICE, under two different
+`Tycoon` query parameters, because that parameter is the only thing that decides whose page
+comes back. The frame carries the VIEWER's password (`Tycoon.asp:14-17`), so for a tycoon who
+is not the viewer `FullAccess` is false (`TycoonCurriculum.asp:25`) and the server withholds
+the Reset / Abandon table (`:175-211`) and the upgrade checkbox (`:250-261`); everything else
+renders for any viewer. A fixture serving one page could not catch a gateway that asked for
+the viewer's own name — two pages keyed on the parameter can. It also serves the avatar card
+`New Directory/RenderTycoon.asp` and a trailing 404, so an unserved tycoon fails loudly.
+HTTP only — the page is reachable through ASP alone.
 
 `civic-mutations` is the write half of the Politics surface — one RDO exchange per
 civic `procedure` the gateway emits (built by `rdoCall`, so it cannot drift), the two

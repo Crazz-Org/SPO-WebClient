@@ -44,6 +44,7 @@ import { makeSessionCtx } from '../__tests__/session/fake-session-context';
 import type { FakeSessionCtx, AspActionUrl } from '../__tests__/session/fake-session-context';
 import type { SessionContext } from './session-context';
 import type { WorldInfo, ProfitLossNode } from '../../shared/types';
+import { DEFAULT_LANGUAGE_ID, withLangId } from '../../shared/language';
 
 const mockFetch = fetch as unknown as jest.MockedFunction<
   (url: string, init?: unknown) => Promise<Response>
@@ -391,7 +392,7 @@ describe('fetchTycoonProfile', () => {
     const profile = await fetchTycoonProfile(fake.ctx);
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://158.69.153.134/five/0/visual/voyager/new%20directory/RenderTycoon.asp?WorldName=New%20World&Tycoon=SPO%20test3&RIWS=',
+      withLangId('http://158.69.153.134/five/0/visual/voyager/new%20directory/RenderTycoon.asp?WorldName=New%20World&Tycoon=SPO%20test3&RIWS=', DEFAULT_LANGUAGE_ID),
       expect.objectContaining({ redirect: 'follow', signal: expect.any(AbortSignal) }),
     );
     // Regression guard for B-11. This used to resolve against the page
@@ -1379,7 +1380,7 @@ describe('executeBankAction', () => {
 
       expect(getCache(fake)).toHaveBeenCalledWith(BANK);
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(mockFetch.mock.calls[0][0]).toBe(`${CACHED_URL}&Action=LOAN&LoanValue=250000000`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${CACHED_URL}&Action=LOAN&LoanValue=250000000`, DEFAULT_LANGUAGE_ID));
       expect(mockFetch.mock.calls[0][1]).toEqual(expect.objectContaining({ redirect: 'follow' }));
       expect((mockFetch.mock.calls[0][1] as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
       expect(result).toEqual({ success: true, message: 'borrow completed successfully' });
@@ -1390,7 +1391,7 @@ describe('executeBankAction', () => {
       const fake = withSnapshot(makeWebCtx());
       warmCache(fake, `${IS_BASE}TycoonBankAccount.asp`);
       await executeBankAction(fake.ctx, 'borrow', '1');
-      expect(mockFetch.mock.calls[0][0]).toBe(`${IS_BASE}TycoonBankAccount.asp?Action=LOAN&LoanValue=1`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${IS_BASE}TycoonBankAccount.asp?Action=LOAN&LoanValue=1`, DEFAULT_LANGUAGE_ID));
     });
 
     it('send: Action=SEND, SendValue, SendDest, SendReason — spaces %20-encoded, never +', async () => {
@@ -1399,7 +1400,7 @@ describe('executeBankAction', () => {
 
       const result = await executeBankAction(fake.ctx, 'send', '5000', 'Bob Smith', 'for the farm');
 
-      expect(mockFetch.mock.calls[0][0]).toBe(`${CACHED_URL}&Action=SEND&SendValue=5000&SendDest=Bob%20Smith&SendReason=for%20the%20farm`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${CACHED_URL}&Action=SEND&SendValue=5000&SendDest=Bob%20Smith&SendReason=for%20the%20farm`, DEFAULT_LANGUAGE_ID));
       expect(result).toEqual({ success: true, message: 'send completed successfully' });
     });
 
@@ -1407,7 +1408,7 @@ describe('executeBankAction', () => {
       const fake = withSnapshot(makeWebCtx());
       warmCache(fake);
       await executeBankAction(fake.ctx, 'send', '5000', 'Bob');
-      expect(mockFetch.mock.calls[0][0]).toBe(`${CACHED_URL}&Action=SEND&SendValue=5000&SendDest=Bob&SendReason=`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${CACHED_URL}&Action=SEND&SendValue=5000&SendDest=Bob&SendReason=`, DEFAULT_LANGUAGE_ID));
     });
 
     it('payoff: Action=PAYOFF&LID=<index>, index 0 accepted', async () => {
@@ -1418,7 +1419,7 @@ describe('executeBankAction', () => {
 
       const result = await executeBankAction(fake.ctx, 'payoff', undefined, undefined, undefined, 0);
 
-      expect(mockFetch.mock.calls[0][0]).toBe(`${CACHED_URL}&Action=PAYOFF&LID=0`);
+      expect(mockFetch.mock.calls[0][0]).toBe(withLangId(`${CACHED_URL}&Action=PAYOFF&LID=0`, DEFAULT_LANGUAGE_ID));
       expect(result).toEqual({ success: true, message: 'payoff completed successfully' });
     });
 
@@ -2074,5 +2075,149 @@ describe('fetchCompanies', () => {
       '<body>Sorry, cannot retrieve Tycoon information from server.</body>',
     );
     await expect(fetchCompanies(fake.ctx)).resolves.toMatchObject({ companies: [], cacheUnavailable: true });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Another tycoon — "Show Profile" on a directory card (#528)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('fetchTycoonProfile — another tycoon', () => {
+  it('overrides the Tycoon parameter and seeds nothing from the viewer\'s pushes', async () => {
+    const fake = makeWebCtx();
+    // What the server answers a viewer who is not the account holder (:25).
+    fetchAsp(fake).mockResolvedValue(curriculumPage({ fullAccess: false }));
+    mockFetch.mockResolvedValue(htmlResponse(''));
+
+    const profile = await fetchTycoonProfile(fake.ctx, 'Rival');
+
+    expect(fetchAsp(fake)).toHaveBeenCalledWith(CURRICULUM, { RIWS: '', Tycoon: 'Rival' });
+    expect(queryOf(0).get('Tycoon')).toBe('Rival');
+    expect(profile).toEqual({
+      name: 'Rival',
+      realName: '',
+      // The pushes describe the SESSION user, so they must not be reported as
+      // the viewed tycoon's.
+      ranking: 0,
+      budget: '0',
+      facCount: 0,
+      facMax: 0,
+      failureLevel: 0,
+      // From the page, which is rendered for any viewer.
+      prestige: 1234,
+      nobPoints: 2500,
+      facPrestige: 0,
+      researchPrestige: 0,
+      area: 0,
+      licenceLevel: 4,
+      levelName: 'Paradigm',
+      levelTier: 4,
+    });
+  });
+
+  it('with no name argument it still resolves to the session user', async () => {
+    const fake = makeWebCtx();
+    fetchAsp(fake).mockResolvedValue(CURRICULUM_HTML);
+    mockFetch.mockResolvedValue(htmlResponse(''));
+
+    const profile = await fetchTycoonProfile(fake.ctx);
+
+    expect(fetchAsp(fake)).toHaveBeenCalledWith(CURRICULUM, { RIWS: '' });
+    expect(profile).toMatchObject({
+      name: 'SPO_test3', ranking: 42, budget: '123456789', facCount: 13, facMax: 100, failureLevel: 2,
+    });
+  });
+
+  it('the session user\'s own name, in any case, collapses to the no-argument call', async () => {
+    const fake = makeWebCtx();
+    fetchAsp(fake).mockResolvedValue(CURRICULUM_HTML);
+    mockFetch.mockResolvedValue(htmlResponse(''));
+    const own = await fetchTycoonProfile(fake.ctx);
+
+    fetchAsp(fake).mockClear();
+    const named = await fetchTycoonProfile(fake.ctx, '  spo_TEST3 ');
+
+    expect(named).toEqual(own);
+    expect(fetchAsp(fake)).toHaveBeenCalledWith(CURRICULUM, { RIWS: '' });
+  });
+
+  it('a role in activeUsername still recognises the cached tycoon name as own', async () => {
+    // The card carries the tycoon name; activeUsername may hold the role.
+    const fake = makeWebCtx({ activeUsername: 'Mayor of Helartia', cachedUsername: 'SPO_test3' });
+    fetchAsp(fake).mockResolvedValue(CURRICULUM_HTML);
+    mockFetch.mockResolvedValue(htmlResponse(''));
+
+    const profile = await fetchTycoonProfile(fake.ctx, 'SPO_test3');
+
+    expect(fetchAsp(fake)).toHaveBeenCalledWith(CURRICULUM, { RIWS: '' });
+    // `name` is what the session calls itself, exactly as the no-argument path.
+    expect(profile).toMatchObject({ name: 'Mayor of Helartia', ranking: 42 });
+  });
+
+  it('an empty session name leaves the profile nameless rather than guessing', async () => {
+    const fake = makeWebCtx({ activeUsername: '', cachedUsername: '' });
+    fetchAsp(fake).mockResolvedValue('');
+    mockFetch.mockResolvedValue(htmlResponse(''));
+    const profile = await fetchTycoonProfile(fake.ctx);
+    expect(profile.name).toBe('');
+    // No name: RenderTycoon.asp is not even asked (:95).
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchCurriculumData — another tycoon', () => {
+  it('carries Tycoon on both fetches and on buildAspUrl, and caches no action URL', async () => {
+    const fake = makeWebCtx();
+    fetchAsp(fake).mockResolvedValue(curriculumPage({ fullAccess: false }));
+    mockFetch.mockResolvedValue(htmlResponse(''));
+
+    const data = await fetchCurriculumData(fake.ctx, 'Rival');
+
+    expect(fetchAsp(fake)).toHaveBeenCalledTimes(2);
+    expect(fetchAsp(fake)).toHaveBeenNthCalledWith(1, CURRICULUM, { RIWS: '', Tycoon: 'Rival' });
+    expect(fetchAsp(fake)).toHaveBeenNthCalledWith(2, CURRICULUM, { RIWS: '', Tycoon: 'Rival' });
+    expect(fake.ctx.buildAspUrl).toHaveBeenCalledWith(CURRICULUM, { RIWS: '', Tycoon: 'Rival' });
+    // Another tycoon's reset/abandon/advance links must never become the
+    // viewer's own cached curriculum actions.
+    expect(setCache(fake)).not.toHaveBeenCalled();
+    expect(data).toMatchObject({
+      tycoonName: 'Rival',
+      // FullAccess=false withholds the checkbox, so no upgrade is offered.
+      canUpgrade: false,
+      isUpgradeRequested: false,
+      ranking: 0,
+      facCount: 0,
+      facMax: 0,
+      budget: '0',
+      prestige: 1234,
+      nobPoints: 2500,
+      currentLevelName: 'Paradigm',
+      nextLevelName: 'Legend',
+    });
+  });
+
+  it('the session user\'s own name yields exactly the no-argument result', async () => {
+    const fake = makeWebCtx();
+    fetchAsp(fake).mockResolvedValue(CURRICULUM_HTML);
+    mockFetch.mockResolvedValue(htmlResponse(''));
+    const own = await fetchCurriculumData(fake.ctx);
+
+    setCache(fake).mockClear();
+    const named = await fetchCurriculumData(fake.ctx, 'SPO_test3');
+
+    expect(named).toEqual(own);
+    expect(fake.ctx.buildAspUrl).toHaveBeenCalledWith(CURRICULUM, { RIWS: '' });
+    // The own path still caches its own action URLs.
+    expect(setCache(fake)).toHaveBeenCalledTimes(1);
+  });
+
+  it('a page the server refuses surfaces as cacheUnavailable, not a throw', async () => {
+    const fake = makeWebCtx();
+    fetchAsp(fake).mockRejectedValue(new Error('ASP request failed: 404'));
+    mockFetch.mockResolvedValue(htmlResponse(''));
+
+    const data = await fetchCurriculumData(fake.ctx, 'Nobody');
+
+    expect(data).toMatchObject({ tycoonName: 'Nobody', cacheUnavailable: true, rankings: [] });
   });
 });

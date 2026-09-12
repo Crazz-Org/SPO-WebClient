@@ -1861,6 +1861,24 @@ describe('searchConnections', () => {
     ]);
   });
 
+  it('sortMode 2 reaches the wire as "#2" eighth — smQuality (Cache/FluidLinks.pas:9-11)', async () => {
+    const fake = makeSearchCtx();
+    fake.respond(() => 'res="%"');
+    await searchConnections(fake.ctx, 1, 2, 'Food', 'input', { sortMode: 2 });
+    expect(fake.sent[0].packet.args?.[7]).toBe(RdoValue.int(2).format());
+  });
+
+  it('any other sortMode collapses to "#1", the delivered-cost order Voyager emits', async () => {
+    const fake = makeSearchCtx();
+    fake.respond(() => 'res="%"');
+    for (const sortMode of [0, 1, 7]) {
+      await searchConnections(fake.ctx, 1, 2, 'Food', 'input', { sortMode });
+    }
+    for (const sent of fake.sent) {
+      expect(sent.packet.args?.[7]).toBe(RdoValue.int(1).format());
+    }
+  });
+
   it('parses 7-field supplier rows with price and quality, 5-field client rows without', async () => {
     const fake = makeSearchCtx();
     fake.respond(p => (p.member === 'FindSuppliers'

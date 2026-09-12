@@ -44,11 +44,14 @@ import type {
   PolicyData,
   PoliticsData,
   NewspaperBoard,
+  NewspaperRatingEntry,
   NewspaperIssue,
   NewspaperIssueList,
   PoliticalRoleInfo,
   ClusterInfo,
   ClusterFacilityPreview,
+  DirectoryRef,
+  DirectoryPage,
 } from './domain-types';
 
 
@@ -186,6 +189,8 @@ export enum WsMessageType {
   REQ_SEARCH_MENU_RANKING_DETAIL = 'REQ_SEARCH_MENU_RANKING_DETAIL',
   REQ_SEARCH_MENU_BANKS = 'REQ_SEARCH_MENU_BANKS',
   REQ_SEARCH_MENU_NEWSPAPERS = 'REQ_SEARCH_MENU_NEWSPAPERS',
+  REQ_SEARCH_MENU_DIRECTORY = 'REQ_SEARCH_MENU_DIRECTORY',
+  REQ_SEARCH_MENU_TYCOON_FULL_PROFILE = 'REQ_SEARCH_MENU_TYCOON_FULL_PROFILE',
 
   RESP_SEARCH_MENU_HOME = 'RESP_SEARCH_MENU_HOME',
   RESP_SEARCH_MENU_TOWNS = 'RESP_SEARCH_MENU_TOWNS',
@@ -195,6 +200,8 @@ export enum WsMessageType {
   RESP_SEARCH_MENU_RANKING_DETAIL = 'RESP_SEARCH_MENU_RANKING_DETAIL',
   RESP_SEARCH_MENU_BANKS = 'RESP_SEARCH_MENU_BANKS',
   RESP_SEARCH_MENU_NEWSPAPERS = 'RESP_SEARCH_MENU_NEWSPAPERS',
+  RESP_SEARCH_MENU_DIRECTORY = 'RESP_SEARCH_MENU_DIRECTORY',
+  RESP_SEARCH_MENU_TYCOON_FULL_PROFILE = 'RESP_SEARCH_MENU_TYCOON_FULL_PROFILE',
 
   // Logout
   REQ_LOGOUT = 'REQ_LOGOUT',
@@ -353,6 +360,8 @@ export interface WsReqLoginWorld extends WsMessage {
   username: string;
   password: string;
   worldName: string;
+  /** The language the player picked. Absent means the default (`'0'`, English). */
+  languageId?: string;
 }
 
 export interface WsReqMapLoad extends WsMessage {
@@ -392,6 +401,20 @@ export interface WsRespConnectSuccess extends WsMessage {
   worlds: WorldInfo[];
 }
 
+/** Where logonComplete.asp sent the login when it was not the company list (logonComplete.asp:182-186). */
+export type LoginPageOutcome =
+  | { kind: 'denied'; expiresOn: string }   // logonNoAccess.asp — PA query value, e.g. "01/01/2020"
+  | { kind: 'error'; errorCode: string };   // logonError.asp — ErrorCode query value, or the mismatch tag
+
+/**
+ * InterfaceServer.CanJoinWorldEx (Interface Server/InterfaceServer.pas:441, body :3471-3486) — the
+ * admission answer logonComplete.asp:144 read before offering company creation.
+ * `-1` → the world is at its user cap; `> 0` → MinNobility minus the player's NobPoints.
+ */
+export type WorldAdmission =
+  | { kind: 'full' }
+  | { kind: 'nobility'; shortfall: number };
+
 export interface WsRespLoginSuccess extends WsMessage {
   type: WsMessageType.RESP_LOGIN_SUCCESS;
   tycoonId: string;
@@ -401,6 +424,8 @@ export interface WsRespLoginSuccess extends WsMessage {
   worldXSize?: number;
   worldYSize?: number;
   worldSeason?: number;  // 0=Winter, 1=Spring, 2=Summer, 3=Autumn
+  loginPage?: LoginPageOutcome;
+  admission?: WorldAdmission;
 }
 
 export interface WsRespRdoResult extends WsMessage {
@@ -949,6 +974,21 @@ export interface WsRespSearchMenuTycoonProfile extends WsMessage {
   profile: TycoonProfile;
 }
 
+/**
+ * "Show Profile" on a directory card (RenderTycoon.asp:119-124) — the full
+ * curriculum page of `tycoonName`, whoever that is.
+ */
+export interface WsReqSearchMenuTycoonFullProfile extends WsMessage {
+  type: WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE;
+  tycoonName: string;
+}
+
+export interface WsRespSearchMenuTycoonFullProfile extends WsMessage {
+  type: WsMessageType.RESP_SEARCH_MENU_TYCOON_FULL_PROFILE;
+  tycoonName: string;
+  data: CurriculumData;
+}
+
 export interface WsReqSearchMenuPeopleSearch extends WsMessage {
   type: WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH;
   searchStr: string;
@@ -995,6 +1035,18 @@ export interface WsReqSearchMenuNewspapers extends WsMessage {
 export interface WsRespSearchMenuNewspapers extends WsMessage {
   type: WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS;
   newspapers: NewspaperListing[];
+}
+
+export interface WsReqSearchMenuDirectory extends WsMessage {
+  type: WsMessageType.REQ_SEARCH_MENU_DIRECTORY;
+  ref: DirectoryRef;
+}
+
+/** `ref` is echoed so the store can match the reply to the entry that asked for it. */
+export interface WsRespSearchMenuDirectory extends WsMessage {
+  type: WsMessageType.RESP_SEARCH_MENU_DIRECTORY;
+  ref: DirectoryRef;
+  page: DirectoryPage;
 }
 
 // =============================================================================
@@ -1496,6 +1548,12 @@ export interface WsReqNewspaperPost extends WsMessage {
   body: string;
   /** Reply to this column rather than opening a new one. */
   replyToPath?: string;
+  /**
+   * The ratings block, when the reader filled it in. Omitted or empty = a plain
+   * column; each entry goes out as `RDOSetRatingFrom` before the post
+   * (`boardmsg.asp:96-143`).
+   */
+  ratings?: NewspaperRatingEntry[];
 }
 
 export interface WsRespNewspaperPost extends WsMessage {
@@ -1571,6 +1629,8 @@ export interface WsReqSearchConnections extends WsMessage {
     town?: string;
     maxResults?: number;
     roles?: number;
+    /** 1 = smPrice (delivered cost), 2 = smQuality — Cache/FluidLinks.pas:9-11. Ignored by FindClients (Cache/InputSearch.pas:90-96). */
+    sortMode?: number;
   };
 }
 

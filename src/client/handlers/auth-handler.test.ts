@@ -1,4 +1,4 @@
-import { login, handleCreateCompany } from './auth-handler';
+import { login, handleCreateCompany, performAuthCheck } from './auth-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { WsMessageType } from '../../shared/types';
 import type { ClientHandlerContext } from './client-context';
@@ -7,6 +7,7 @@ jest.mock('../bridge/client-bridge', () => ({
   ClientBridge: {
     log: jest.fn(),
     showCompanies: jest.fn(),
+    showLoginPage: jest.fn(),
     showError: jest.fn(),
     setLoginLoading: jest.fn(),
     setConnected: jest.fn(),
@@ -15,11 +16,15 @@ jest.mock('../bridge/client-bridge', () => ({
     setCredentials: jest.fn(),
     setPublicOfficeRole: jest.fn(),
     setMapLoadingProgress: jest.fn(),
+    setAuthError: jest.fn(),
   },
 }));
 
+/** The language the store holds for the current test — `login()` reads it on every send. */
+const mockStoreSettings = { languageId: '0' };
+
 jest.mock('../store/game-store', () => ({
-  useGameStore: { getState: () => ({ setLoginStage: jest.fn() }) },
+  useGameStore: { getState: () => ({ setLoginStage: jest.fn(), settings: mockStoreSettings }) },
 }));
 
 jest.mock('../store/profile-store', () => ({
@@ -56,9 +61,32 @@ function makeCtx(overrides: Partial<ClientHandlerContext> = {}): ClientHandlerCo
 describe('auth-handler', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockStoreSettings.languageId = '0';
   });
 
   describe('login()', () => {
+    it('sends the language the store holds, so the gateway can carry it', async () => {
+      mockStoreSettings.languageId = '4';
+      const sendRequest = jest.fn().mockResolvedValue({
+        type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [],
+      });
+
+      await login(makeCtx({ sendRequest }), 'Shamba');
+
+      expect(sendRequest).toHaveBeenCalledWith(expect.objectContaining({ languageId: '4' }));
+    });
+
+    it('sends the default when the store holds a language the catalogue does not name', async () => {
+      mockStoreSettings.languageId = '9';
+      const sendRequest = jest.fn().mockResolvedValue({
+        type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [],
+      });
+
+      await login(makeCtx({ sendRequest }), 'Shamba');
+
+      expect(sendRequest).toHaveBeenCalledWith(expect.objectContaining({ languageId: '0' }));
+    });
+
     it('shows companies when server returns a non-empty list', async () => {
       const companies = [{ id: '1', name: 'TestCorp', ownerRole: 'testUser' }];
       const ctx = makeCtx({
@@ -72,7 +100,7 @@ describe('auth-handler', () => {
       await login(ctx, 'Shamba');
 
       expect(ctx.availableCompanies).toEqual(companies);
-      expect(ClientBridge.showCompanies).toHaveBeenCalledWith(companies);
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith(companies, undefined);
       expect(ctx.showNotification).not.toHaveBeenCalled();
     });
 
@@ -88,7 +116,7 @@ describe('auth-handler', () => {
       await login(ctx, 'Shamba');
 
       expect(ctx.availableCompanies).toEqual([]);
-      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([]);
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([], undefined);
       expect(ClientBridge.log).toHaveBeenCalledWith('Login', 'No companies found — showing company creation');
       expect(ctx.showNotification).not.toHaveBeenCalled();
     });
@@ -105,7 +133,7 @@ describe('auth-handler', () => {
       await login(ctx, 'Shamba');
 
       expect(ctx.availableCompanies).toEqual([]);
-      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([]);
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([], undefined);
     });
 
     it('stores world dimensions from response', async () => {
@@ -127,6 +155,72 @@ describe('auth-handler', () => {
       expect(ctx.worldSeason).toBe(2);
     });
 
+    it('shows the denial page and never shows companies when loginPage is a denial', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '42',
+          companies: [],
+          loginPage: { kind: 'denied', expiresOn: '01/01/2020' },
+        }),
+      });
+
+      await login(ctx, 'Shamba');
+
+      expect(ClientBridge.showLoginPage).toHaveBeenCalledWith({ kind: 'denied', expiresOn: '01/01/2020' });
+      expect(ClientBridge.showCompanies).not.toHaveBeenCalled();
+      expect(ctx.availableCompanies).toEqual([]);
+    });
+
+    it('shows companies as before when loginPage is absent', async () => {
+      const companies = [{ id: '1', name: 'TestCorp', ownerRole: 'testUser' }];
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '42',
+          companies,
+        }),
+      });
+
+      await login(ctx, 'Shamba');
+
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith(companies, undefined);
+      expect(ClientBridge.showLoginPage).not.toHaveBeenCalled();
+    });
+
+    // #538 — CanJoinWorldEx told the gateway the world would refuse a new company.
+    it('forwards the admission answer to the company stage and names it in the log', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '42',
+          companies: [],
+          admission: { kind: 'full' },
+        }),
+      });
+
+      await login(ctx, 'Shamba');
+
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([], { kind: 'full' });
+      expect(ClientBridge.log).toHaveBeenCalledWith('Login', 'World full — company creation is closed');
+    });
+
+    it('names the nobility shortfall in the log', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '42',
+          companies: [],
+          admission: { kind: 'nobility', shortfall: 3 },
+        }),
+      });
+
+      await login(ctx, 'Shamba');
+
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([], { kind: 'nobility', shortfall: 3 });
+      expect(ClientBridge.log).toHaveBeenCalledWith('Login', 'Nobility 3 below the world minimum');
+    });
+
     it('shows error notification on request failure', async () => {
       const ctx = makeCtx({
         sendRequest: jest.fn().mockRejectedValue(new Error('Connection lost')),
@@ -141,6 +235,23 @@ describe('auth-handler', () => {
       expect(ClientBridge.setLoginLoading).toHaveBeenCalledWith(false);
     });
 
+    it('shows the gateway sentence when the world refused the credentials', async () => {
+      // AccountStatus refusals are worded by the gateway; the code's own generic
+      // sentence would hide which credential was wrong.
+      const err = Object.assign(new Error('Invalid password'), {
+        code: 13,
+        serverMessage: 'You supplied an invalid password.',
+      });
+      const ctx = makeCtx({ sendRequest: jest.fn().mockRejectedValue(err) });
+
+      await login(ctx, 'Shamba');
+
+      expect(ctx.showNotification).toHaveBeenCalledWith(
+        'World login failed: You supplied an invalid password.',
+        'error',
+      );
+    });
+
     it('aborts if credentials are missing', async () => {
       const ctx = makeCtx({ storedUsername: '', storedPassword: '' });
 
@@ -148,6 +259,44 @@ describe('auth-handler', () => {
 
       expect(ClientBridge.showError).toHaveBeenCalledWith('Session lost, please reconnect');
       expect(ClientBridge.showCompanies).not.toHaveBeenCalled();
+    });
+  });
+
+  // #532 — the refusal the modal shows is the gateway's sentence, not the one
+  // the client's general ERROR_* table would build from the same number.
+  describe('performAuthCheck()', () => {
+    it('shows the gateway sentence carried on the rejection', async () => {
+      const err = Object.assign(new Error('Unknown tycoon'), {
+        code: 7,
+        serverMessage: 'There are two possible causes for this error',
+      });
+      const ctx = makeCtx({ sendRequest: jest.fn().mockRejectedValue(err) });
+
+      await performAuthCheck(ctx, 'testUser', 'badPass');
+
+      expect(ClientBridge.setAuthError).toHaveBeenCalledWith({
+        code: 7,
+        message: 'There are two possible causes for this error',
+      });
+      expect(ClientBridge.setLoginLoading).toHaveBeenLastCalledWith(false);
+    });
+
+    it('falls back to the error message when the rejection carries no server sentence', async () => {
+      const err = Object.assign(new Error('Request Timeout'), { code: 7 });
+      const ctx = makeCtx({ sendRequest: jest.fn().mockRejectedValue(err) });
+
+      await performAuthCheck(ctx, 'testUser', 'badPass');
+
+      expect(ClientBridge.setAuthError).toHaveBeenCalledWith({ code: 7, message: 'Request Timeout' });
+    });
+
+    it('stores the credentials and raises no error on a valid logon', async () => {
+      const ctx = makeCtx({ sendRequest: jest.fn().mockResolvedValue({ type: WsMessageType.RESP_AUTH_SUCCESS }) });
+
+      await performAuthCheck(ctx, 'testUser', 'testPass');
+
+      expect(ClientBridge.setCredentials).toHaveBeenCalledWith('testUser');
+      expect(ClientBridge.setAuthError).not.toHaveBeenCalled();
     });
   });
 

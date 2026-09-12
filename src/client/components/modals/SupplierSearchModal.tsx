@@ -5,12 +5,14 @@
  * to profile-store and commits via the auto-connection ASP action.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { X, Search } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useProfileStore } from '../../store/profile-store';
 import { useClient } from '../../context';
-import { ALL_CONNECTION_ROLES, rolesToMask, type ConnectionRoleFlags } from '@/shared/connection-roles';
+import { type ConnectionRoleFlags } from '@/shared/connection-roles';
+import { excludeTradeCenters, supplierSearchMask, ASP_SUPPLIER_ROLES } from './supplier-search-filter';
+import type { ConnectionSearchResult } from '@/shared/types';
 import styles from './ConnectionPickerModal.module.css';
 
 export function SupplierSearchModal() {
@@ -23,9 +25,13 @@ export function SupplierSearchModal() {
 
   const [company, setCompany] = useState('');
   const [town, setTown] = useState('');
-  const [maxResults, setMaxResults] = useState('20');
-  const [roles, setRoles] = useState<ConnectionRoleFlags>(ALL_CONNECTION_ROLES);
+  const [maxResults, setMaxResults] = useState('50');
+  const [roles, setRoles] = useState<ConnectionRoleFlags>(ASP_SUPPLIER_ROLES);
+  /** `OnlyDist` of TycoonSuppliesSearch.asp:26-30 — overrides the boxes entirely. */
+  const [warehousesOnly, setWarehousesOnly] = useState(false);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  /** Rows pruned with `Del` — local to the dialog, the store's results are never touched. */
+  const [hiddenIndices, setHiddenIndices] = useState<Set<number>>(new Set());
 
   const client = useClient();
   const companyRef = useRef<HTMLInputElement>(null);
@@ -35,9 +41,11 @@ export function SupplierSearchModal() {
     if (modal === 'supplierSearch') {
       setCompany('');
       setTown('');
-      setMaxResults('20');
-      setRoles(ALL_CONNECTION_ROLES);
+      setMaxResults('50');
+      setRoles(ASP_SUPPLIER_ROLES);
+      setWarehousesOnly(false);
       setSelectedIndices(new Set());
+      setHiddenIndices(new Set());
       requestAnimationFrame(() => companyRef.current?.focus());
     }
   }, [modal]);
@@ -45,6 +53,7 @@ export function SupplierSearchModal() {
   // Clear selection when results change
   useEffect(() => {
     setSelectedIndices(new Set());
+    setHiddenIndices(new Set());
   }, [results]);
 
   const handleClose = useCallback(() => {
@@ -58,7 +67,7 @@ export function SupplierSearchModal() {
     useProfileStore.getState().setSupplierSearchLoading(true);
 
     // This dialog only ever searches suppliers (connection-roles.ts).
-    const rolesMask = rolesToMask('input', roles);
+    const rolesMask = supplierSearchMask(warehousesOnly, roles);
 
     // Use (0,0) as building coords — profile-level search, not building-specific
     client.onConnectionSearch(
@@ -68,11 +77,11 @@ export function SupplierSearchModal() {
       {
         company: company || undefined,
         town: town || undefined,
-        maxResults: parseInt(maxResults) || 20,
+        maxResults: parseInt(maxResults) || 50,
         roles: rolesMask,
       },
     );
-  }, [supplierSearch, company, town, maxResults, roles, client]);
+  }, [supplierSearch, company, town, maxResults, roles, warehousesOnly, client]);
 
   const toggleIndex = useCallback((index: number) => {
     setSelectedIndices((prev) => {
@@ -86,11 +95,22 @@ export function SupplierSearchModal() {
     });
   }, []);
 
+  /** Trade Centers never reach this list (TycoonSuppliesSearch.asp:43-44); the store keeps them. */
+  const rows = useMemo(() => excludeTradeCenters(results), [results]);
+
+  // Rows pruned with Del disappear from the list without leaving the store
+  const visible = useMemo(
+    () => rows.map((r, i) => ({ r, i })).filter(({ i }) => !hiddenIndices.has(i)),
+    [rows, hiddenIndices],
+  );
+
   const selectAll = useCallback(() => {
     const all = new Set<number>();
-    for (let i = 0; i < results.length; i++) all.add(i);
+    for (let i = 0; i < rows.length; i++) {
+      if (!hiddenIndices.has(i)) all.add(i);
+    }
     setSelectedIndices(all);
-  }, [results]);
+  }, [rows, hiddenIndices]);
 
   const clearSelection = useCallback(() => {
     setSelectedIndices(new Set());
@@ -100,7 +120,7 @@ export function SupplierSearchModal() {
     if (!supplierSearch || selectedIndices.size === 0) return;
 
     const selected = Array.from(selectedIndices)
-      .map((i) => results[i])
+      .map((i) => rows[i])
       .filter(Boolean);
 
     // Call add action for each selected supplier (format: "x,y,")
@@ -109,15 +129,39 @@ export function SupplierSearchModal() {
     }
 
     handleClose();
-  }, [supplierSearch, selectedIndices, results, handleClose, client]);
+  }, [supplierSearch, selectedIndices, rows, handleClose, client]);
+
+  /** Double-click commits one row, the same way the footer commits the selection. */
+  const commitRow = useCallback(
+    (r: ConnectionSearchResult) => {
+      if (!supplierSearch) return;
+      client.onProfileAutoConnectionAction('add', supplierSearch.fluidId, `${r.x},${r.y},`);
+      handleClose();
+    },
+    [supplierSearch, client, handleClose],
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
         handleClose();
       }
+      // Del prunes the selected rows from the list — local only, nothing is sent
+      // (Voyager: OutputSearchHandlerViewer.pas:363-372).
+      if (e.key === 'Delete') {
+        const target = e.target as HTMLElement;
+        if (target instanceof HTMLInputElement && target.type !== 'checkbox') return;
+        if (selectedIndices.size === 0) return;
+        e.preventDefault();
+        setHiddenIndices((prev) => {
+          const next = new Set(prev);
+          for (const i of selectedIndices) next.add(i);
+          return next;
+        });
+        setSelectedIndices(new Set());
+      }
     },
-    [handleClose],
+    [handleClose, selectedIndices],
   );
 
   if (modal !== 'supplierSearch' || !supplierSearch) return null;
@@ -145,31 +189,36 @@ export function SupplierSearchModal() {
         <div className={styles.filters}>
           <div className={styles.filterRow}>
             <div className={styles.filterField}>
-              <label className={styles.filterLabel}>Company</label>
+              <label className={styles.filterLabel} htmlFor="ss-company">Company</label>
               <input
+                id="ss-company"
                 ref={companyRef}
                 className={styles.filterInput}
                 type="text"
                 value={company}
+                placeholder="Partial name matches"
                 onChange={(e) => setCompany(e.target.value)}
               />
             </div>
             <div className={styles.filterField}>
-              <label className={styles.filterLabel}>Town</label>
+              <label className={styles.filterLabel} htmlFor="ss-town">Town</label>
               <input
+                id="ss-town"
                 className={styles.filterInput}
                 type="text"
                 value={town}
+                placeholder="Partial name matches"
                 onChange={(e) => setTown(e.target.value)}
               />
             </div>
             <div className={styles.filterFieldSmall}>
-              <label className={styles.filterLabel}>Max</label>
+              <label className={styles.filterLabel} htmlFor="ss-max">Max</label>
               <input
+                id="ss-max"
                 className={styles.filterInput}
                 type="number"
                 min="1"
-                max="100"
+                max="150"
                 value={maxResults}
                 onChange={(e) => setMaxResults(e.target.value)}
               />
@@ -179,7 +228,16 @@ export function SupplierSearchModal() {
             <label className={styles.roleLabel}>
               <input
                 type="checkbox"
+                checked={warehousesOnly}
+                onChange={(e) => setWarehousesOnly(e.target.checked)}
+              />
+              Warehouses only
+            </label>
+            <label className={styles.roleLabel}>
+              <input
+                type="checkbox"
                 checked={roles.producer}
+                disabled={warehousesOnly}
                 onChange={(e) => setRoles((r) => ({ ...r, producer: e.target.checked }))}
               />
               Factories
@@ -188,6 +246,7 @@ export function SupplierSearchModal() {
               <input
                 type="checkbox"
                 checked={roles.distributer}
+                disabled={warehousesOnly}
                 onChange={(e) => setRoles((r) => ({ ...r, distributer: e.target.checked }))}
               />
               Warehouses
@@ -196,6 +255,7 @@ export function SupplierSearchModal() {
               <input
                 type="checkbox"
                 checked={roles.importer}
+                disabled={warehousesOnly}
                 onChange={(e) => setRoles((r) => ({ ...r, importer: e.target.checked }))}
               />
               Trade Centers
@@ -204,6 +264,7 @@ export function SupplierSearchModal() {
               <input
                 type="checkbox"
                 checked={roles.exporter}
+                disabled={warehousesOnly}
                 onChange={(e) => setRoles((r) => ({ ...r, exporter: e.target.checked }))}
               />
               Export Warehouses
@@ -223,16 +284,19 @@ export function SupplierSearchModal() {
         <div className={styles.results}>
           {isSearching ? (
             <div className={styles.emptyState}>Searching...</div>
-          ) : results.length === 0 ? (
+          ) : visible.length === 0 ? (
             <div className={styles.emptyState}>
-              Click Search to find available suppliers
+              {rows.length === 0
+                ? 'Click Search to find available suppliers'
+                : 'No facilities found'}
             </div>
           ) : (
-            results.map((r, i) => (
+            visible.map(({ r, i }) => (
               <div
                 key={`${r.x}-${r.y}`}
                 className={styles.resultRow}
                 onClick={() => toggleIndex(i)}
+                onDoubleClick={() => commitRow(r)}
               >
                 <input
                   type="checkbox"
@@ -240,11 +304,13 @@ export function SupplierSearchModal() {
                   checked={selectedIndices.has(i)}
                   onChange={() => toggleIndex(i)}
                   onClick={(e) => e.stopPropagation()}
+                  aria-label={`Select ${r.facilityName}`}
                 />
                 <div className={styles.resultInfo}>
                   <div className={styles.resultName}>{r.facilityName}</div>
                   <div className={styles.resultMeta}>
                     {r.companyName}
+                    {r.town ? ` · ${r.town}` : ''}
                     {r.price ? ` — $${r.price}` : ''}
                     {r.quality ? ` (Q: ${r.quality})` : ''}
                   </div>
@@ -256,7 +322,7 @@ export function SupplierSearchModal() {
 
         {/* Footer */}
         <div className={styles.footer}>
-          <button className={styles.secondaryBtn} onClick={selectAll} disabled={results.length === 0}>
+          <button className={styles.secondaryBtn} onClick={selectAll} disabled={rows.length === 0}>
             Select All
           </button>
           <button className={styles.secondaryBtn} onClick={clearSelection} disabled={selectedIndices.size === 0}>

@@ -67,6 +67,30 @@ companyId="${vars.companyId}">
 </html>`;
 }
 
+/** LogonNoAccess.asp:68-108 — no companyId cell anywhere. */
+function buildLogonNoAccessHtml(expiresOn: string): string {
+  return `<html>
+<head><title>Portal Travel Denied</title></head>
+<body>
+<div class=header2>PORTAL TRAVEL REQUESTED DENIED</div>
+<div class=value>Could not access the portal to this Planet!</div>
+<div class=value>Your portal travel privileges to this planet expired on: ${expiresOn}</div>
+<div class=value>Expired: ${expiresOn}</div>
+</body>
+</html>`;
+}
+
+/** logonError.asp:68-72 */
+function buildLogonErrorHtml(): string {
+  return `<html>
+<head><title>Portal Error</title></head>
+<body>
+<div class=value>Your request was rejected due an error.</div>
+<div class=value>Could not access the portal to this Planet!</div>
+</body>
+</html>`;
+}
+
 function buildPleaseWaitHtml(): string {
   return `<html>
 <head><title> Company List </title>
@@ -202,37 +226,79 @@ export const COMPANY_PAGE_TREE: ProfitLossData = {
   },
 };
 
+export interface CompanyListScenarioOptions {
+  logonResult?: 'companies' | 'noAccess' | 'error';
+  expiresOn?: string;
+  errorCode?: string;
+  /**
+   * When set, `logonComplete.asp` is served ONLY to a request carrying that `LangId` —
+   * a gateway that drops the session language gets a 404 instead of the company page.
+   */
+  languageId?: string;
+}
+
 export function createCompanyListScenario(
-  overrides?: Partial<ScenarioVariables>
+  overrides?: Partial<ScenarioVariables>,
+  options?: CompanyListScenarioOptions,
 ): { ws: WsCaptureScenario; http: HttpScenario } {
   const vars = mergeVariables(overrides);
+  const logonResult = options?.logonResult ?? 'companies';
+  const expiresOn = options?.expiresOn ?? '01/01/2020';
+  const errorCode = options?.errorCode ?? 'ERROR_CANNOTCREATECLIENTVIEW';
 
-  const http: HttpScenario = {
-    name: 'company-list',
-    exchanges: [
-      {
-        id: 'cl-http-001',
-        method: 'GET',
-        urlPattern: '/Five/0/Visual/Voyager/NewLogon/pleasewait.asp',
-        status: 200,
-        contentType: 'text/html',
-        body: buildPleaseWaitHtml(),
+  const logonCompleteLocation = logonResult === 'noAccess'
+    ? `logonNoAccess.asp?PA=${expiresOn}&Logon=FALSE&WorldName= ${vars.worldName}&ErrorCode=ERROR_REQUESTDENIED&frame_NoBorder=True&frame_NoScrollBars=true&frame_Id=LogonView&date=01/09/2026`
+    : logonResult === 'error'
+      ? `logonError.asp?ErrorCode=${errorCode}&Logon=FALSE`
+      : `chooseCompany.asp?ClientViewId=${vars.clientViewId}&PA=&Ooopsy=0&WorldName=${vars.worldName}&UserName=${vars.username}&Logon=FALSE&ISAddr=${vars.worldIp}&ISPort=${vars.worldPort}`;
+
+  const exchanges: HttpScenario['exchanges'] = [
+    {
+      id: 'cl-http-001',
+      method: 'GET',
+      urlPattern: '/Five/0/Visual/Voyager/NewLogon/pleasewait.asp',
+      status: 200,
+      contentType: 'text/html',
+      body: buildPleaseWaitHtml(),
+    },
+    {
+      id: 'cl-http-002',
+      method: 'GET',
+      urlPattern: '/Five/0/Visual/Voyager/NewLogon/logonComplete.asp',
+      queryPatterns: {
+        WorldName: vars.worldName,
+        UserName: vars.username,
+        ...(options?.languageId !== undefined ? { LangId: options.languageId } : {}),
       },
-      {
-        id: 'cl-http-002',
-        method: 'GET',
-        urlPattern: '/Five/0/Visual/Voyager/NewLogon/logonComplete.asp',
-        queryPatterns: {
-          WorldName: vars.worldName,
-          UserName: vars.username,
-        },
-        status: 302,
-        contentType: 'text/html',
-        body: '',
-        headers: {
-          Location: `chooseCompany.asp?ClientViewId=${vars.clientViewId}&PA=&Ooopsy=0&WorldName=${vars.worldName}&UserName=${vars.username}&Logon=FALSE&ISAddr=${vars.worldIp}&ISPort=${vars.worldPort}`,
-        },
+      status: 302,
+      contentType: 'text/html',
+      body: '',
+      headers: {
+        Location: logonCompleteLocation,
       },
+    },
+  ];
+
+  if (logonResult === 'noAccess') {
+    exchanges.push({
+      id: 'cl-http-006',
+      method: 'GET',
+      urlPattern: '/Five/0/Visual/Voyager/NewLogon/logonNoAccess.asp',
+      status: 200,
+      contentType: 'text/html',
+      body: buildLogonNoAccessHtml(expiresOn),
+    });
+  } else if (logonResult === 'error') {
+    exchanges.push({
+      id: 'cl-http-006',
+      method: 'GET',
+      urlPattern: '/Five/0/Visual/Voyager/NewLogon/logonError.asp',
+      status: 200,
+      contentType: 'text/html',
+      body: buildLogonErrorHtml(),
+    });
+  } else {
+    exchanges.push(
       {
         id: 'cl-http-003',
         method: 'GET',
@@ -266,7 +332,12 @@ export function createCompanyListScenario(
         contentType: 'text/html',
         body: buildCompanyPageUnavailableHtml(vars),
       },
-    ],
+    );
+  }
+
+  const http: HttpScenario = {
+    name: 'company-list',
+    exchanges,
     variables: {},
   };
 

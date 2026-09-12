@@ -7,8 +7,12 @@
  * modal shape for the legacy `modal: 'connectionPicker'` path.
  *
  * Filters are remembered for the session (ui-store.connectionFilters) and Enter in any filter
- * field runs the search — the audit found both missing (B4). Results are sorted by distance
- * from the building, computed locally from the coordinates the server already returns.
+ * field runs the search — the audit found both missing (B4). A supplier search shows the rows
+ * in the order the cache server returned them — the delivered-cost order, price plus transport
+ * (`Cache/FluidLinks.pas:9-11`, `Cache/OutputSearch.pas:90-93`) — and nothing re-sorts them.
+ * Quality re-issues the search with `SortMode = 2`; Distance is the only local mode, computed
+ * from the coordinates the server already returns. A customer search has no such control: the
+ * server answers nearest-first whatever mode it was sent (`Cache/InputSearch.pas:90-96`).
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
@@ -17,7 +21,14 @@ import { useUiStore } from '../../store/ui-store';
 import { useBuildingStore } from '../../store/building-store';
 import { useClient } from '../../context';
 import { rolesToMask } from '@/shared/connection-roles';
+import type { ConnectionSearchResult } from '@/shared/types';
 import styles from './ConnectionPickerModal.module.css';
+
+/**
+ * How the rows are ordered. `cost` and `quality` are the server's own modes
+ * (`SortMode` 1 and 2); `distance` is sorted here, from the coordinates in the reply.
+ */
+type SortMode = 'cost' | 'quality' | 'distance';
 
 export interface ConnectionPickerContentProps {
   /** Called when the picker is dismissed (the sheet pops the surface; the modal closes). */
@@ -39,6 +50,15 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
   const [maxResults, setMaxResults] = useState(remembered.maxResults);
   const [roles, setRoles] = useState(remembered.roles);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  /** Rows pruned with `Del` — local to the dialog, the store's results are never touched. */
+  const [hiddenIndices, setHiddenIndices] = useState<Set<number>>(new Set());
+  /**
+   * A supplier search starts in the server's delivered-cost order; a customer search stays
+   * on distance, the only order `FindClients` can answer in (`Cache/InputSearch.pas:90-96`).
+   */
+  const [sortMode, setSortMode] = useState<SortMode>(() =>
+    picker?.direction === 'output' ? 'distance' : 'cost',
+  );
 
   const client = useClient();
   const companyRef = useRef<HTMLInputElement>(null);
@@ -51,6 +71,7 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
   // Clear selection when results change
   useEffect(() => {
     setSelectedIndices(new Set());
+    setHiddenIndices(new Set());
   }, [picker?.results]);
 
   const handleClose = useCallback(() => {
@@ -58,7 +79,7 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
     onClose();
   }, [clearConnectionPicker, onClose]);
 
-  const handleSearch = useCallback(() => {
+  const runSearch = useCallback((mode: SortMode) => {
     if (!picker) return;
 
     // The direction decides which boxes count — the other direction's flags are
@@ -74,11 +95,28 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
       {
         company: company || undefined,
         town: town || undefined,
-        maxResults: parseInt(maxResults) || 20,
+        maxResults: parseInt(maxResults) || 50,
         roles: rolesMask,
+        // `distance` sends 1 too — the local sort does not care what order the
+        // server used, and 1 is what Voyager emits (ObjectInspectorHandleViewer.pas:878).
+        sortMode: mode === 'quality' ? 2 : 1,
       },
     );
   }, [picker, company, town, maxResults, roles, client, setConnectionFilters]);
+
+  const handleSearch = useCallback(() => runSearch(sortMode), [runSearch, sortMode]);
+
+  /**
+   * Switching to a server mode re-issues the search — the order comes from the server,
+   * so there is nothing to re-sort here. Switching to `distance` sends nothing.
+   */
+  const changeSortMode = useCallback(
+    (next: SortMode) => {
+      setSortMode(next);
+      if (next !== 'distance' && picker && picker.results.length > 0) runSearch(next);
+    },
+    [picker, runSearch],
+  );
 
   const toggleIndex = useCallback((index: number) => {
     setSelectedIndices((prev) => {
@@ -95,9 +133,11 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
   const selectAll = useCallback(() => {
     if (!picker) return;
     const all = new Set<number>();
-    for (let i = 0; i < picker.results.length; i++) all.add(i);
+    for (let i = 0; i < picker.results.length; i++) {
+      if (!hiddenIndices.has(i)) all.add(i);
+    }
     setSelectedIndices(all);
-  }, [picker]);
+  }, [picker, hiddenIndices]);
 
   const clearSelection = useCallback(() => {
     setSelectedIndices(new Set());
@@ -115,13 +155,37 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
     handleClose();
   }, [picker, selectedIndices, handleClose, client]);
 
+  /** Double-click commits one row, the same way the footer commits the selection. */
+  const commitRow = useCallback(
+    (r: ConnectionSearchResult) => {
+      if (!picker) return;
+      client.onConnectionConnect(picker.fluidId, picker.direction, [{ x: r.x, y: r.y }]);
+      handleClose();
+    },
+    [picker, client, handleClose],
+  );
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
         handleClose();
       }
+      // Del prunes the selected rows from the list — local only, nothing is sent
+      // (Voyager: OutputSearchHandlerViewer.pas:363-372).
+      if (e.key === 'Delete') {
+        const target = e.target as HTMLElement;
+        if (target instanceof HTMLInputElement && target.type !== 'checkbox') return;
+        if (selectedIndices.size === 0) return;
+        e.preventDefault();
+        setHiddenIndices((prev) => {
+          const next = new Set(prev);
+          for (const i of selectedIndices) next.add(i);
+          return next;
+        });
+        setSelectedIndices(new Set());
+      }
     },
-    [handleClose],
+    [handleClose, selectedIndices],
   );
 
   // Enter in a filter field runs the search (B4)
@@ -135,15 +199,20 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
     [handleSearch],
   );
 
-  // Results with a local distance from the building, nearest first
-  const sorted = useMemo(() => {
+  /**
+   * The rows, each carrying its store index and a local distance from the building.
+   * Only `distance` re-orders them — a server mode is shown exactly as it came back.
+   */
+  const ordered = useMemo(() => {
     if (!picker) return [];
     const bx = picker.buildingX;
     const by = picker.buildingY;
-    return picker.results
-      .map((r, i) => ({ r, i, d: Math.round(Math.hypot(r.x - bx, r.y - by)) }))
-      .sort((a, b) => a.d - b.d);
-  }, [picker]);
+    const rows = picker.results.map((r, i) => ({ r, i, d: Math.round(Math.hypot(r.x - bx, r.y - by)) }));
+    return sortMode === 'distance' ? rows.sort((a, b) => a.d - b.d) : rows;
+  }, [picker, sortMode]);
+
+  // Rows pruned with Del disappear from the list without leaving the store
+  const visible = useMemo(() => ordered.filter(({ i }) => !hiddenIndices.has(i)), [ordered, hiddenIndices]);
 
   if (!picker) return null;
 
@@ -175,6 +244,7 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
                 className={styles.filterInput}
                 type="text"
                 value={company}
+                placeholder="Partial name matches"
                 onChange={(e) => setCompany(e.target.value)}
                 onKeyDown={onFilterKeyDown}
               />
@@ -186,6 +256,7 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
                 className={styles.filterInput}
                 type="text"
                 value={town}
+                placeholder="Partial name matches"
                 onChange={(e) => setTown(e.target.value)}
                 onKeyDown={onFilterKeyDown}
               />
@@ -197,12 +268,29 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
                 className={styles.filterInput}
                 type="number"
                 min="1"
-                max="100"
+                max="150"
                 value={maxResults}
                 onChange={(e) => setMaxResults(e.target.value)}
                 onKeyDown={onFilterKeyDown}
               />
             </div>
+            {/* Only a supplier search has an order to choose: FindClients ignores
+                SortMode and always answers nearest first (Cache/InputSearch.pas:90-96). */}
+            {picker.direction === 'input' && (
+              <div className={styles.filterFieldSmall}>
+                <label className={styles.filterLabel} htmlFor="cp-sort">Sort</label>
+                <select
+                  id="cp-sort"
+                  className={styles.filterInput}
+                  value={sortMode}
+                  onChange={(e) => changeSortMode(e.target.value as SortMode)}
+                >
+                  <option value="cost">Cost</option>
+                  <option value="quality">Quality</option>
+                  <option value="distance">Distance</option>
+                </select>
+              </div>
+            )}
           </div>
           <div className={styles.rolesRow}>
             <label className={styles.roleLabel}>
@@ -279,18 +367,19 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
         <div className={styles.results}>
           {picker.isSearching ? (
             <div className={styles.emptyState}>Searching...</div>
-          ) : results.length === 0 ? (
+          ) : visible.length === 0 ? (
             <div className={styles.emptyState}>
-              {picker.results === undefined || picker.results.length === 0
+              {results.length === 0
                 ? 'Click Search to find available connections'
                 : 'No facilities found'}
             </div>
           ) : (
-            sorted.map(({ r, i, d }) => (
+            visible.map(({ r, i, d }) => (
               <div
                 key={`${r.x}-${r.y}`}
                 className={styles.resultRow}
                 onClick={() => toggleIndex(i)}
+                onDoubleClick={() => commitRow(r)}
               >
                 <input
                   type="checkbox"

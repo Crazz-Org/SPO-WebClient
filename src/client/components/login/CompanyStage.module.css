@@ -65,6 +65,14 @@
   line-height: 1.5;
 }
 
+/* Denied / error state */
+.denialMessage {
+  font-size: var(--text-sm);
+  color: var(--error);
+  margin: 0;
+  line-height: 1.5;
+}
+
 /* Sections */
 .section {
   display: flex;

@@ -67,6 +67,12 @@ export type {
   TycoonProfile,
   RankingCategory,
   RankingEntry,
+  // Directory tree (New Directory/*.asp below the town list)
+  DirectoryRef,
+  DirectoryPage,
+  DirectoryTownPage,
+  DirectoryFacilityRow,
+  DirectoryFacilityCard,
   RoadDrawingState,
   // Mail types
   MailMessageHeader,
@@ -100,6 +106,7 @@ export type {
   NewspaperTreeEntry,
   NewspaperArticle,
   NewspaperBoard,
+  NewspaperRatingEntry,
   NewspaperIssueRef,
   NewspaperStory,
   NewspaperIssueList,
@@ -133,6 +140,8 @@ export type {
   WsRespAuthSuccess,
   WsRespConnectSuccess,
   WsRespLoginSuccess,
+  LoginPageOutcome,
+  WorldAdmission,
   WsRespRdoResult,
   WsRespMapData,
   // Event payloads
@@ -203,6 +212,8 @@ export type {
   WsRespSearchMenuTowns,
   WsReqSearchMenuTycoonProfile,
   WsRespSearchMenuTycoonProfile,
+  WsReqSearchMenuTycoonFullProfile,
+  WsRespSearchMenuTycoonFullProfile,
   WsReqSearchMenuPeopleSearch,
   WsRespSearchMenuPeopleSearch,
   WsReqSearchMenuRankings,
@@ -213,6 +224,8 @@ export type {
   WsRespSearchMenuBanks,
   WsReqSearchMenuNewspapers,
   WsRespSearchMenuNewspapers,
+  WsReqSearchMenuDirectory,
+  WsRespSearchMenuDirectory,
   // Road building messages
   WsReqBuildRoad,
   WsRespBuildRoad,

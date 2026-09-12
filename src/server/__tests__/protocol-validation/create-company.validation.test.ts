@@ -104,20 +104,6 @@ describe('Company Creation RDO Protocol', () => {
       expect(parseInt(intMatch![1], 10)).toBe(11);
     });
 
-    it('should parse known error codes', () => {
-      const errorMessages: Record<number, string> = {
-        6: 'Unknown cluster',
-        11: 'Company name already taken',
-        28: 'Zone tier mismatch',
-        33: 'Maximum number of companies reached',
-      };
-
-      expect(errorMessages[6]).toBe('Unknown cluster');
-      expect(errorMessages[11]).toBe('Company name already taken');
-      expect(errorMessages[28]).toBe('Zone tier mismatch');
-      expect(errorMessages[33]).toBe('Maximum number of companies reached');
-    });
-
     it('should handle company names with special characters', () => {
       const payload = 'res="%[Star & Moon Co.,42]"';
       const resMatch = /res="%(.*)"/.exec(payload);

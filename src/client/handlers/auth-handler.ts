@@ -23,6 +23,7 @@ import {
   CompanyInfo,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { normalizeLanguageId } from '../../shared/language';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useGameStore } from '../store/game-store';
 import { useProfileStore } from '../store/profile-store';
@@ -49,8 +50,10 @@ export async function performAuthCheck(ctx: ClientHandlerContext, username: stri
     useGameStore.getState().setLoginStage('zones');
   } catch (err: unknown) {
     ClientBridge.log('Auth', `Failed: ${toErrorMessage(err)}`);
-    const code = (err as { code?: number }).code ?? 0;
-    ClientBridge.setAuthError({ code, message: toErrorMessage(err) });
+    // `code` is a DIR_* code and the gateway already worded it; the client's own
+    // getErrorMessage() would re-word it from the wrong table (issue 532).
+    const { code = 0, serverMessage } = err as { code?: number; serverMessage?: string };
+    ClientBridge.setAuthError({ code, message: serverMessage || toErrorMessage(err) });
   } finally {
     ClientBridge.setLoginLoading(false);
   }
@@ -95,7 +98,9 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
       type: WsMessageType.REQ_LOGIN_WORLD,
       username: ctx.storedUsername,
       password: ctx.storedPassword,
-      worldName
+      worldName,
+      // Read on every send, so the reconnect replay (client.ts:1114) carries it too.
+      languageId: normalizeLanguageId(useGameStore.getState().settings.languageId)
     };
     const resp = (await ctx.sendRequest(req)) as WsRespLoginSuccess;
     ClientBridge.log('Login', `Success! Tycoon: ${resp.tycoonId}`);
@@ -108,18 +113,35 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
     if (resp.worldYSize !== undefined) ctx.worldYSize = resp.worldYSize;
     if (resp.worldSeason !== undefined) ctx.worldSeason = resp.worldSeason;
 
+    if (resp.loginPage) {
+      ClientBridge.log('Login', resp.loginPage.kind === 'denied'
+        ? `Login denied: access expired on ${resp.loginPage.expiresOn}`
+        : `Login page reported error: ${resp.loginPage.errorCode}`);
+      ctx.availableCompanies = [];
+      ClientBridge.showLoginPage(resp.loginPage);
+      return;
+    }
+
     ctx.availableCompanies = resp.companies ?? [];
     if (ctx.availableCompanies.length > 0) {
       ClientBridge.log('Login', `Found ${ctx.availableCompanies.length} compan${ctx.availableCompanies.length > 1 ? 'ies' : 'y'}`);
     } else {
       ClientBridge.log('Login', 'No companies found — showing company creation');
     }
-    ClientBridge.showCompanies(ctx.availableCompanies);
+    if (resp.admission) {
+      ClientBridge.log('Login', resp.admission.kind === 'full'
+        ? 'World full — company creation is closed'
+        : `Nobility ${resp.admission.shortfall} below the world minimum`);
+    }
+    ClientBridge.showCompanies(ctx.availableCompanies, resp.admission);
 
   } catch (err: unknown) {
     ClientBridge.log('Error', `Login failed: ${toErrorMessage(err)}`);
     ClientBridge.setLoginLoading(false);
-    ctx.showNotification(`World login failed: ${toErrorMessage(err)}`, 'error');
+    // The gateway words a world-side refusal itself (AccountStatus); showing the
+    // code's generic sentence instead would hide which credential was wrong.
+    const { serverMessage } = err as { serverMessage?: string };
+    ctx.showNotification(`World login failed: ${serverMessage || toErrorMessage(err)}`, 'error');
   }
 }
 

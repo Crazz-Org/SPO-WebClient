@@ -25,6 +25,8 @@ import {
   CONNECTION_SEARCH_CACHER_ID,
   CONNECTION_SEARCH_QUERY,
   ROLE_ARG_INDEX,
+  SORT_MODE_ARG_INDEX,
+  QUALITY_SORT_MODE,
   SUPPLIER_SEARCH_ROLE,
   CLIENT_SEARCH_ROLE,
 } from './connection-search-scenario';
@@ -40,14 +42,14 @@ const NO_ROLES: ConnectionRoleFlags = {
  * Drive the real gateway with the captured query and give back the frame it
  * put on the wire. Nothing here builds a frame by hand.
  */
-async function emit(direction: 'input' | 'output', roles: number) {
+async function emit(direction: 'input' | 'output', roles: number, sortMode?: number) {
   const fake = makeSessionCtx({
     currentWorldInfo: { name: 'Shamba', url: 'http://158.69.153.134', ip: '158.69.153.134', port: 7000 },
   });
   fake.respond(() => 'res="%"');
 
   const q = CONNECTION_SEARCH_QUERY;
-  await searchConnections(fake.ctx, q.x, q.y, q.fluidId, direction, { roles });
+  await searchConnections(fake.ctx, q.x, q.y, q.fluidId, direction, { roles, sortMode });
 
   expect(fake.sent).toHaveLength(1);
   const packet = fake.sent[0].packet;
@@ -98,10 +100,26 @@ describe('connection-search scenario — the Role argument on the wire', () => {
 
     expect(packet.member).toBe('FindSuppliers');
     expect(packet.args?.[ROLE_ARG_INDEX]).toBe(RdoValue.int(54).format());
+    // …and "#1" eighth: smPrice, the delivered-cost order (Cache/FluidLinks.pas:9-11).
+    expect(packet.args?.[SORT_MODE_ARG_INDEX]).toBe(RdoValue.int(1).format());
 
     const mock = new RdoMock();
     mock.addScenario(rdo);
     expect(mock.match(frame)!.exchange.id).toBe('cs-rdo-001');
+  });
+
+  it('choosing quality puts "#2" eighth and lands on its own exchange', async () => {
+    const { packet, frame } = await emit('input', SUPPLIER_SEARCH_ROLE, QUALITY_SORT_MODE);
+
+    expect(packet.member).toBe('FindSuppliers');
+    expect(packet.args?.[SORT_MODE_ARG_INDEX]).toBe(RdoValue.int(2).format());
+    expect(packet.args?.[ROLE_ARG_INDEX]).toBe(RdoValue.int(54).format());
+
+    // Only the eighth argument differs from cs-rdo-001 — matching is per-argument
+    // (rdo-mock.ts:190-194), so the two cannot collide.
+    const mock = new RdoMock();
+    mock.addScenario(rdo);
+    expect(mock.match(frame)!.exchange.id).toBe('cs-rdo-003');
   });
 
   it('a customer search with every box ticked puts "#78" ninth', async () => {
@@ -120,6 +138,12 @@ describe('connection-search scenario — the Role argument on the wire', () => {
     expect(CLIENT_SEARCH_ROLE).toBe(78);
     expect(connectionSearchArgs('input', 'Shamba')[ROLE_ARG_INDEX].format()).toBe('"#54"');
     expect(connectionSearchArgs('output', 'Shamba')[ROLE_ARG_INDEX].format()).toBe('"#78"');
+  });
+
+  it('SortMode is the eighth argument, Role the ninth', () => {
+    expect(SORT_MODE_ARG_INDEX).toBe(ROLE_ARG_INDEX - 1);
+    expect(connectionSearchArgs('input', 'Shamba')[SORT_MODE_ARG_INDEX].format()).toBe('"#1"');
+    expect(connectionSearchArgs('input', 'Shamba', QUALITY_SORT_MODE)[SORT_MODE_ARG_INDEX].format()).toBe('"#2"');
   });
 
   it('Factories only puts "#2" on the wire — rolProducer, not rolNeutral', async () => {

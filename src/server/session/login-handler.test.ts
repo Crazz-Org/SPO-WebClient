@@ -38,6 +38,16 @@ import type { CompanyInfo, RdoPacket, WorldInfo } from '../../shared/types';
 import { RdoCommand, RdoValue } from '../../shared/rdo-types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { AuthError } from '../../shared/auth-error';
+import {
+  AccountStatusError,
+  ACCOUNT_Valid,
+  ACCOUNT_UnknownError,
+  ACCOUNT_Unexisting,
+  ACCOUNT_InvalidName,
+  ACCOUNT_InvalidPassword,
+} from '../../shared/account-status';
+import { ERROR_Unknown, ERROR_InvalidUserName, ERROR_InvalidPassword } from '../../shared/error-codes';
+import { DEFAULT_LANGUAGE_ID } from '../../shared/language';
 
 const fetchMock = fetch as unknown as jest.Mock;
 
@@ -134,8 +144,8 @@ async function runLoginWorld(
 }
 
 /** The exact SetLanguage push the login and re-login paths must emit. */
-function setLanguageFrame(contextId: string): string {
-  return RdoCommand.sel(contextId).call('SetLanguage').push().args(RdoValue.string('0')).build();
+function setLanguageFrame(contextId: string, languageId = '0'): string {
+  return RdoCommand.sel(contextId).call('SetLanguage').push().args(RdoValue.string(languageId)).build();
 }
 
 beforeEach(() => {
@@ -211,6 +221,26 @@ describe('checkAuth — the ephemeral directory session', () => {
       : EMPTY_ANSWER));
 
     await expect(checkAuth(fake.ctx, 'SPO_test3', 'test3')).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it('accepts DIR_NOERROR_StillTrial (-1) as a successful logon', async () => {
+    const fake = makeLoginCtx();
+    // The Directory answers -1 for an account still inside its trial period;
+    // Voyager takes that branch together with 0 (LogonHandlerViewer.pas:548-565).
+    fake.respond(directoryResponder('#-1'));
+
+    await expect(checkAuth(fake.ctx, 'SPO_test3', 'test3')).resolves.toBeUndefined();
+    // The success branch really ran: RDOEndSession left the socket.
+    expect(fake.frames.directory_auth).toEqual([
+      RdoCommand.sel(DIRECTORY_SESSION_ID).call('RDOEndSession').push().build(),
+    ]);
+  });
+
+  it.each([[1], [7], [9], [10]])('refuses DIR code %i, carrying that code on the AuthError', async (code) => {
+    const fake = makeLoginCtx();
+    fake.respond(directoryResponder(`#${code}`));
+
+    await expect(checkAuth(fake.ctx, 'SPO_test3', 'test3')).rejects.toMatchObject({ authCode: code });
   });
 });
 
@@ -305,29 +335,38 @@ describe('connectDirectory — world list parsing', () => {
     expect(worlds[0]).toMatchObject({ name: 'Unknown', ip: '127.0.0.1', port: 8000 });
   });
 
-  it('returns nothing and says why when the answer carries no Count', async () => {
+  it('rejects, and says why, when the answer carries no Count', async () => {
     const fake = makeLoginCtx();
     fake.respond(queryResponder('Junk without an equals sign\nSomething/Else=1'));
 
-    const worlds = await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
-
-    expect(worlds).toEqual([]);
+    await expect(connectDirectory(fake.ctx, 'SPO_test3', 'test3')).rejects.toThrow(/Count/);
     expect(fake.log.warn).toHaveBeenCalledWith(
       expect.stringContaining('"count" key not found'),
     );
   });
 
+  it('parses Count=0 as an empty list, not an error', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(queryResponder('Count=0'));
+
+    const worlds = await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    expect(worlds).toEqual([]);
+  });
+
   it('refuses to close a session the directory never opened, rather than sending sel 0', async () => {
     const fake = makeLoginCtx();
     // Both phases parse an empty RDOOpenSession answer into an empty session id.
-    // `RdoCommand.sel('')` then throws instead of putting `sel 0` — a null
-    // pointer server-side — on the wire.
+    // The query phase now rejects on its own unparseable RDOQueryKey answer
+    // (no "Count" key) before ever reaching the `RDOEndSession` step, so that is
+    // the error `Promise.all` surfaces here; the auth phase would separately hit
+    // `RdoCommand.sel('')` at its own `RDOEndSession` — never sent either.
     fake.respond((packet) => (packet.verb === RdoVerb.IDOF
       ? `objid="${DIRECTORY_SERVER_ID}"`
       : (packet.member === 'RDOLogonUser' ? 'res="#0"' : EMPTY_ANSWER)));
 
     await expect(connectDirectory(fake.ctx, 'SPO_test3', 'test3'))
-      .rejects.toThrow(/Invalid RDO target ID/);
+      .rejects.toThrow(/Count/);
     expect(fake.frames.directory_query).toEqual([]);
     expect(fake.frames.directory_auth).toEqual([]);
   });
@@ -625,6 +664,29 @@ describe('loginWorld', () => {
     expect(fake.frames.world).toEqual([setLanguageFrame(CONTEXT_ID)]);
   });
 
+  it('carries the session language, not a pinned "0"', async () => {
+    const fake = makeLoginCtx({ languageId: '3' });
+    fake.respond(loginResponder());
+
+    await runLoginWorld(fake);
+
+    expect(fake.frames.world).toEqual([setLanguageFrame(CONTEXT_ID, '3')]);
+  });
+
+  it('asks logonComplete.asp with the session language as LangId', async () => {
+    const picked = '3';
+    const fake = makeLoginCtx({ languageId: picked });
+    fake.respond(loginResponder());
+
+    await runLoginWorld(fake);
+
+    const asked = fetchMock.mock.calls.map(c => String(c[0]));
+    const logonComplete = asked.find(u => u.includes('logonComplete.asp'));
+    expect(logonComplete).toContain(`LangId=${picked}`);
+    // The old pinned literal is gone — not merely shadowed by a second parameter.
+    expect(logonComplete).not.toContain(`LangId=${DEFAULT_LANGUAGE_ID}`);
+  });
+
   it('skips SetLanguage when the world socket died during the handshake', async () => {
     const fake = makeLoginCtx();
     const base = loginResponder();
@@ -754,6 +816,69 @@ describe('loginWorld', () => {
     expect(fake.log.debug).toHaveBeenCalledWith('[Session] Company Count: 0');
   });
 
+  it('reports a denial when the ASP redirect chain lands on logonNoAccess.asp', async () => {
+    fetchMock.mockResolvedValue({
+      url: 'http://1.2.3.4/Five/0/Visual/Voyager/NewLogon/logonNoAccess.asp?PA=01%2F01%2F2020&Logon=FALSE&ErrorCode=ERROR_REQUESTDENIED',
+      text: async () => '<html>Your portal travel privileges expired</html>',
+    });
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toEqual({ kind: 'denied', expiresOn: '01/01/2020' });
+    expect(result.companies).toEqual([]);
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[HTTP] Login denied by logonNoAccess.asp — access expired on 01/01/2020',
+    );
+  });
+
+  it('reports an error when the ASP redirect chain lands on logonError.asp', async () => {
+    fetchMock.mockResolvedValue({
+      url: 'http://1.2.3.4/Five/0/Visual/Voyager/NewLogon/logonError.asp?ErrorCode=ERROR_FIVEISDOWN&Logon=FALSE',
+      text: async () => '<html>Could not access the portal to this Planet!</html>',
+    });
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toEqual({ kind: 'error', errorCode: 'ERROR_FIVEISDOWN' });
+    expect(result.companies).toEqual([]);
+  });
+
+  it('shows the welcome (no loginPage) for a genuine newcomer: page reached, zero cells, count 0', async () => {
+    fetchMock.mockResolvedValue({
+      url: 'http://1.2.3.4/chooseCompany.asp',
+      text: async () => '<html><body>no companies here</body></html>',
+    });
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder({ GetCompanyCount: '#0' }));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toBeUndefined();
+    expect(result.companies).toEqual([]);
+    expect(fake.log.error).not.toHaveBeenCalled();
+  });
+
+  it('logs an error and reports COMPANY_LIST_MISMATCH when GetCompanyCount > 0 but the scrape is empty', async () => {
+    fetchMock.mockResolvedValue({
+      url: 'http://1.2.3.4/chooseCompany.asp',
+      text: async () => '<html><body>no companies here</body></html>',
+    });
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder()); // default GetCompanyCount: '#2'
+
+    const result = await runLoginWorld(fake);
+
+    expect(fake.log.error).toHaveBeenCalledWith(
+      '[Session] GetCompanyCount says 2 but chooseCompany.asp listed none — company scrape failed',
+    );
+    expect(result.loginPage).toEqual({ kind: 'error', errorCode: 'COMPANY_LIST_MISMATCH' });
+    expect(result.companies).toEqual([]);
+  });
+
   it('gives up after 15 s when the InitClient push never arrives', async () => {
     jest.useFakeTimers();
     try {
@@ -775,6 +900,186 @@ describe('loginWorld', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  // ── CanJoinWorldEx — the admission answer (InterfaceServer.pas:441, :3471-3486) ──
+
+  /** Answer CanJoinWorldEx with `payload`, everything else as usual. */
+  function admissionResponder(payload: string | RdoPacket | Error): Responder {
+    const base = loginResponder();
+    return (packet, index) => (packet.member === 'CanJoinWorldEx'
+      ? payload
+      : base(packet, index));
+  }
+
+  it('asks the InterfaceServer CanJoinWorldEx with one widestring, before AccountStatus', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+
+    await runLoginWorld(fake);
+
+    const canJoinIndex = fake.sent.findIndex(s => s.packet.member === 'CanJoinWorldEx');
+    const statusIndex = fake.sent.findIndex(s => s.packet.member === 'AccountStatus');
+    expect(canJoinIndex).toBeGreaterThanOrEqual(0);
+    expect(canJoinIndex).toBeLessThan(statusIndex);
+
+    const sentCanJoin = fake.sent[canJoinIndex];
+    expect(sentCanJoin.socketName).toBe('world');
+    expect(sentCanJoin.packet.targetId).toBe(INTERFACE_SERVER_ID);
+    // One argument, `%`-prefixed (widestring) — CanJoinWorldEx(Name : widestring).
+    expect(sentCanJoin.packet.args).toEqual(['"%SPO_test3"']);
+  });
+
+  it('reads -1 as a world at its user cap', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(admissionResponder('res="#-1"'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.admission).toEqual({ kind: 'full' });
+    // The rest of the login is untouched — the companies still come back.
+    expect(result.companies).toHaveLength(2);
+  });
+
+  it('reads a positive answer as the nobility shortfall', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(admissionResponder('res="#7"'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.admission).toEqual({ kind: 'nobility', shortfall: 7 });
+  });
+
+  it('reads 0 as "go ahead" and reports no admission at all', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(admissionResponder('res="#0"'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.admission).toBeUndefined();
+  });
+
+  it('ignores an unreadable admission answer', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(admissionResponder('res="%"'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.admission).toBeUndefined();
+  });
+
+  it('does not let a CanJoinWorldEx timeout block the login', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(admissionResponder(new Error('Request timeout: CanJoinWorldEx')));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.contextId).toBe(CONTEXT_ID);
+    expect(result.admission).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('CanJoinWorldEx failed — proceeding without the admission check'),
+    );
+  });
+
+  it('degrades when an older server answers CanJoinWorldEx with an RDO error', async () => {
+    const fake = makeLoginCtx();
+    // `observe` error contract: the error reply is delivered as a packet, not a rejection.
+    fake.respond(admissionResponder({
+      raw: '', type: 'RESPONSE', rid: 1, errorCode: 3, errorName: 'errUnexistentMethod',
+    }));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.admission).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[Session] CanJoinWorldEx answered errUnexistentMethod 3 — proceeding without the admission check',
+    );
+  });
+
+  // ── AccountStatus — the world's verdict on the credentials, before Logon ──
+  //    (Protocol.pas:82-86, InterfaceServer.pas:3131-3168)
+
+  /** Answer AccountStatus with `payload`, everything else as usual. */
+  function accountStatusResponder(payload: string): Responder {
+    const base = loginResponder();
+    return (packet, index) => (packet.member === 'AccountStatus'
+      ? payload
+      : base(packet, index));
+  }
+
+  const CONTINUING: ReadonlyArray<[number, string]> = [
+    [ACCOUNT_Valid, 'a valid account'],
+    [ACCOUNT_Unexisting, 'a first-time player'],
+  ];
+
+  it.each(CONTINUING)('lets ACCOUNT_%i through — %s', async (status) => {
+    const fake = makeLoginCtx();
+    fake.respond(accountStatusResponder(`res="#${status}"`));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.contextId).toBe(CONTEXT_ID);
+    expect(fake.state.accountStatus).toBe(status);
+    const statusIndex = fake.sent.findIndex(s => s.packet.member === 'AccountStatus');
+    const logonIndex = fake.sent.findIndex(s => s.packet.member === 'Logon');
+    expect(statusIndex).toBeGreaterThanOrEqual(0);
+    expect(logonIndex).toBeGreaterThan(statusIndex);
+  });
+
+  const REFUSING: ReadonlyArray<[number, number, string]> = [
+    [ACCOUNT_UnknownError, ERROR_Unknown, 'the world could not answer'],
+    [ACCOUNT_InvalidName, ERROR_InvalidUserName, 'the name is held by another live session'],
+    [ACCOUNT_InvalidPassword, ERROR_InvalidPassword, 'the password is wrong'],
+  ];
+
+  it.each(REFUSING)('aborts before Logon on ACCOUNT_%i with code %i — %s', async (status, code) => {
+    const fake = makeLoginCtx();
+    fake.respond(accountStatusResponder(`res="#${status}"`));
+
+    const err = await runLoginWorld(fake).then(() => null, (e: unknown) => e);
+
+    expect(err).toBeInstanceOf(AccountStatusError);
+    const refusal = err as AccountStatusError;
+    expect(refusal.code).toBe(code);
+    expect(refusal.status).toBe(status);
+    expect(refusal.message).not.toContain('res=');
+    expect(fake.sent.some(s => s.packet.member === 'Logon')).toBe(false);
+    expect(fake.state.worldContextId).toBeNull();
+    expect(fake.state.accountStatus).toBe(status);
+  });
+
+  it('names a first-time player in the log so the login flow can act on it', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(accountStatusResponder(`res="#${ACCOUNT_Unexisting}"`));
+
+    await runLoginWorld(fake);
+
+    expect(fake.log.info).toHaveBeenCalledWith('[Session] AccountStatus: first-time player in this world');
+  });
+
+  it('continues when the AccountStatus answer is unreadable', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(accountStatusResponder('res="%"'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.contextId).toBe(CONTEXT_ID);
+    expect(fake.state.accountStatus).toBeNull();
+    expect(fake.sent.some(s => s.packet.member === 'Logon')).toBe(true);
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('AccountStatus answer is not an integer'),
+    );
+  });
+
+  it('keeps the raw Logon payload out of the error the player is shown', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder({ Logon: 'error 5' }));
+
+    const err = await runLoginWorld(fake).then(() => null, (e: unknown) => e);
+
+    expect((err as Error).message).toBe('Login failed: the world refused the logon');
+    expect((err as Error).message).not.toContain('error 5');
+    expect(fake.log.error).toHaveBeenCalledWith('[Session] Logon refused: error 5');
   });
 });
 
@@ -963,11 +1268,14 @@ describe('createCompany', () => {
     expect(fake.state.availableCompanies).toEqual([{ id: '55', name: 'Green Inc', ownerRole: '' }]);
   });
 
+  // Every code TWorld.RDONewCompany can return (Kernel/World.pas:4110-4184), plus one
+  // unnamed code for the fallback.
   const CREATE_ERRORS: ReadonlyArray<[string, string]> = [
+    ['1', 'Server error while creating the company'],
     ['6', 'Unknown cluster'],
+    ['7', 'Your tycoon level is too low for this seal, or you already own 26 companies'],
     ['11', 'Company name already taken'],
-    ['28', 'Zone tier mismatch'],
-    ['33', 'Maximum number of companies reached'],
+    ['14', 'That name is invalid or longer than 50 characters'],
     ['41', 'Failed with error code 41'],
   ];
 
@@ -979,6 +1287,17 @@ describe('createCompany', () => {
       success: false, companyName: '', companyId: '', message,
     });
     expect(fake.state.availableCompanies).toEqual([]);
+  });
+
+  // 28 (ERROR_ZoneMissmatch) and 33 (ERROR_TooManyFacilities) are building-placement codes
+  // (World.pas:3184, :3195); RDONewCompany never returns them, so they are no longer named.
+  it.each([['28'], ['33']])('no longer names the placement-only code %s', async (code) => {
+    const fake = loggedIn();
+    fake.respond(() => `res="%${code}"`);
+
+    await expect(createCompany(fake.ctx, 'Green Inc', 'Industry')).resolves.toMatchObject({
+      success: false, message: `Failed with error code ${code}`,
+    });
   });
 
   it('reports a widestring result that is neither a pair nor a number', async () => {
@@ -1158,7 +1477,10 @@ describe('switchCompany', () => {
 // ── Reconnection ────────────────────────────────────────────────────────────
 
 describe('reconnectWorldSocket — the full re-login', () => {
-  function reconnectFake(overrides: Record<string, string> = {}): FakeLoginCtx {
+  function reconnectFake(
+    overrides: Record<string, string> = {},
+    stateOverrides: { languageId?: string } = {},
+  ): FakeLoginCtx {
     const fake = makeLoginCtx({
       sockets: ['world'],
       currentWorldInfo: WORLD,
@@ -1168,6 +1490,7 @@ describe('reconnectWorldSocket — the full re-login', () => {
       interfaceServerId: 'stale-interface-id',
       rdoCnntId: 'stale-cnnt-id',
       tycoonId: '1',
+      ...stateOverrides,
     });
     fake.respond((packet) => {
       const member = packet.member ?? '';
@@ -1209,6 +1532,17 @@ describe('reconnectWorldSocket — the full re-login', () => {
     await reconnectWorldSocket(fake.ctx);
 
     expect(fake.frames.world).toContain(setLanguageFrame(NEW_CONTEXT_ID));
+  });
+
+  // The reconnection criterion: the world must be told the player's language again,
+  // not the default, or every MLS lookup after a drop comes back in English.
+  it('re-sends the session language, not "0"', async () => {
+    const fake = reconnectFake({}, { languageId: '3' });
+
+    await reconnectWorldSocket(fake.ctx);
+
+    expect(fake.frames.world).toContain(setLanguageFrame(NEW_CONTEXT_ID, '3'));
+    expect(fake.frames.world).not.toContain(setLanguageFrame(NEW_CONTEXT_ID, '0'));
   });
 
   it('reads the context id out of a Logon answer that carries more than res=', async () => {

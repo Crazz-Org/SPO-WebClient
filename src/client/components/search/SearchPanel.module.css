@@ -77,6 +77,13 @@
   color: var(--text-primary);
 }
 
+/* DirectoryMain.asp:91-99 — a tile the world does not offer (no Capitol) is drawn greyed
+   with a default cursor, not omitted. */
+.categoryCardDisabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* Page content */
 .pageContent {
   flex: 1;
@@ -132,6 +139,37 @@
 /* "Mayor: none" — the legacy page writes that word in red (RenderTown.inc:34). */
 .mayorNone {
   color: var(--error);
+}
+
+/* A secondary action sitting inside a row or under a directory card — "Show on map",
+   "Facilities", "Companies", "Send mail". Deliberately quieter than .profileWriteBtn:
+   several of them can share one line. */
+.rowAction {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: none;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-default),
+              border-color var(--duration-fast) var(--ease-default);
+}
+
+.rowAction:hover {
+  color: var(--accent-gold);
+  border-color: var(--accent-gold);
+}
+
+.directoryActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 /* Search row (tycoon / people) */
@@ -219,6 +257,13 @@
   border-radius: var(--radius-sm);
   object-fit: cover;
   border: 1px solid var(--surface-border);
+}
+
+/* TycoonCurriculum.asp:228-236 renders the level badge at 80x80. */
+.levelBadge {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
 }
 
 .profilePhotoPlaceholder {
@@ -322,6 +367,22 @@
 
 .backLink:hover {
   color: var(--accent-gold);
+}
+
+.podium {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: center;
+  margin-bottom: var(--space-3);
+}
+
+.podiumCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  text-align: center;
 }
 
 .rankingTable {

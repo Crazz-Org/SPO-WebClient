@@ -85,6 +85,13 @@ export const ROUTES: RouteRule[] = [
     why: 'the directory login/search path changed — including the Root/Users sweep',
   },
   {
+    // Before the search-handlers rule and the broad src/ rules below: the directory tree
+    // (town page, folders, facility card) is read by this flow and by nothing else.
+    test: /^src\/server\/search-menu-(service|parser)\.ts$|^src\/client\/components\/search\/(DirectoryPage|SearchPanel|TycoonProfileView)\.tsx$|^src\/client\/components\/search\/directory-refs\.ts$|^src\/client\/store\/search-store\.ts$/,
+    flows: ['directory-browse'],
+    why: 'the directory browse tree — the one flow that walks it',
+  },
+  {
     // Same reason, one rule earlier than the ws-handlers rule below.
     test: /^src\/server\/ws-handlers\/search-handlers\.ts$/,
     flows: ['people-search', 'building-details', 'politics-read'],

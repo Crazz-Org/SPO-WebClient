@@ -986,3 +986,157 @@ describe('zoning-alert-read', () => {
     expect(result.assertions.find(a => /building is gone/.test(a.what))).toMatchObject({ ok: true });
   });
 });
+
+describe('directory-browse', () => {
+  const TOWN = {
+    name: 'Helartia',
+    iconUrl: '',
+    mayor: 'SPO_test3',
+    population: 0,
+    unemploymentPercent: 0,
+    qualityOfLife: 0,
+    x: 1,
+    y: 2,
+    path: 'Towns\\Helartia.five',
+    classId: '512',
+  };
+
+  const CARD = {
+    name: 'Cheap House 1',
+    company: 'Crazz Ltd',
+    iconUrl: '',
+    netProfitText: '$1,234',
+    costText: '-$500',
+    roiText: 'Already.',
+    creator: 'SPO_test3',
+    x: 1,
+    y: 2,
+  };
+
+  const ROW = {
+    name: 'Cheap House 1',
+    itemName: 'Cheap House 1',
+    path: 'Towns\\Helartia.five\\Facilities\\Residentials',
+    iconUrl: '',
+    company: 'Crazz Ltd',
+    x: 1,
+    y: 2,
+  };
+
+  /** One responder keyed on the ref kind, plus the refs the flow actually sent. */
+  function arrange(over: {
+    town?: typeof TOWN;
+    townName?: string;
+    kinds?: string[];
+    rows?: (typeof ROW)[];
+    card?: typeof CARD | null;
+  } = {}) {
+    const {
+      town = TOWN,
+      townName = 'Helartia',
+      kinds = ['Residentials'],
+      rows = [ROW],
+      card = CARD,
+    } = over;
+
+    const refs: { kind: string }[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+      if (msg.type !== WsMessageType.REQ_SEARCH_MENU_DIRECTORY) return undefined;
+      const ref = (msg as unknown as { ref: { kind: string } }).ref;
+      refs.push(ref);
+      switch (ref.kind) {
+        case 'town':
+          return { ref, page: { kind: 'town', town: { name: townName, iconUrl: '', inhabitants: 0, qualityOfLife: 0, unemploymentPercent: 0, x: 1, y: 2 } } };
+        case 'town-facilities':
+          return { ref, page: { kind: 'folder', items: kinds, ownedBy: null } };
+        case 'town-facility-kind':
+          return { ref, page: { kind: 'facility-list', facilities: rows } };
+        default:
+          return { ref, page: { kind: 'facility', facility: card } };
+      }
+    }));
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'findTown').mockResolvedValue(town);
+
+    return refs;
+  }
+
+  it('walks town -> Facilities -> a kind -> a card, in that order', async () => {
+    const refs = arrange();
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('PASS');
+    expect(refs.map(r => r.kind)).toEqual(['town', 'town-facilities', 'town-facility-kind', 'facility']);
+    expect(refs[3]).toEqual({ kind: 'facility', path: ROW.path, name: ROW.itemName });
+  });
+
+  it('is read-only', () => {
+    expect(flowByName('directory-browse').mutates).toBe(false);
+  });
+
+  it('fails, and asks for nothing, when the town list carries no cache path', async () => {
+    const refs = arrange({ town: { ...TOWN, path: '' } });
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/cache path/);
+    expect(refs).toEqual([]);
+  });
+
+  it('fails when the town page comes back as Unknown Town', async () => {
+    const refs = arrange({ townName: 'Unknown Town' });
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.detail).toBe('Unknown Town');
+    expect(refs.map(r => r.kind)).toEqual(['town']);
+  });
+
+  it('fails, and opens no facility, when the town lists no facility kind', async () => {
+    const refs = arrange({ kinds: [] });
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(refs.map(r => r.kind)).toEqual(['town', 'town-facilities']);
+  });
+
+  it('fails when a row under Facilities names no owning company', async () => {
+    arrange({ rows: [{ ...ROW, company: null as unknown as string }] });
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/owning company/);
+  });
+
+  it('fails when the kind lists no facility at all', async () => {
+    const refs = arrange({ rows: [] });
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(refs.map(r => r.kind)).toEqual(['town', 'town-facilities', 'town-facility-kind']);
+  });
+
+  it('fails when the facility card does not resolve', async () => {
+    arrange({ card: null });
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/card resolved/);
+  });
+
+  it('fails when ROI is not one of the three legacy forms', async () => {
+    arrange({ card: { ...CARD, roiText: '12' } });
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/three legacy forms/);
+  });
+});

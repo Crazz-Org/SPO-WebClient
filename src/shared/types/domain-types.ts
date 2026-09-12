@@ -747,9 +747,82 @@ export interface RankingCategory {
 export interface RankingEntry {
   rank: number;
   name: string;
-  value: number;
+  /**
+   * The server's own formatted string for this ranking (`Ranking.asp:84`, `:123`
+   * write `Obj.Value0` / `Obj.Value(i)` verbatim). A money ranking ships
+   * `$7,000`; re-parsing it into a number loses the currency and the scale, so
+   * it is carried and printed as received.
+   */
+  valueText: string;
   photoUrl?: string;
 }
+
+/**
+ * One page of the legacy directory tree (`New Directory/*.asp`), named by what it is
+ * rather than by a URL: no legacy link ever crosses the wire, the gateway rebuilds the
+ * request from these fields. Which `.asp` each kind fetches: `search-menu-service.ts`
+ * `directoryPagePath`.
+ */
+export type DirectoryRef =
+  | { kind: 'town'; path: string; classId: string }                                       // RenderTownIn.asp
+  | { kind: 'town-facilities'; town: string }                                             // InTownFacilities.asp
+  | { kind: 'town-companies'; town: string }                                              // InTownCompanies.asp
+  | { kind: 'town-company'; town: string; company: string }                               // InTownCompany.asp
+  | { kind: 'town-facility-kind'; town: string; facKind: string }                         // BrowseTownFacFolder.asp
+  | { kind: 'town-company-facility-kind'; town: string; company: string; facKind: string }// BrowseTownCompFacFolder.asp
+  | { kind: 'tycoon-companies'; tycoon: string }                                          // TycoonCompanies.asp
+  | { kind: 'tycoon-company'; tycoon: string; company: string }                           // TycoonCompany.asp
+  | { kind: 'tycoon-facility-kind'; tycoon: string; company: string; facKind: string }    // TycoonFacilities.asp
+  | { kind: 'facility'; path: string; name: string };                                     // OpenFacility.asp
+
+/** The town page (`RenderTownIn.asp:44-69`). `name` is `"Unknown Town"` when the cache path failed (`:30`). */
+export interface DirectoryTownPage {
+  name: string;
+  iconUrl: string;
+  inhabitants: number;
+  qualityOfLife: number;
+  unemploymentPercent: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * One facility row (`BrowseFacFolder.inc:15-49`). `company` is null on the coordinates
+ * branch (`:32-34`, `ShowCompany = false`). `path` / `itemName` are the `OpenFacility.asp`
+ * query values the row itself carries (`:15`).
+ */
+export interface DirectoryFacilityRow {
+  name: string;
+  itemName: string;
+  path: string;
+  iconUrl: string;
+  company: string | null;
+  x: number;
+  y: number;
+}
+
+/**
+ * The facility card (`OpenFacility.asp:32-97`). Money and ROI are carried as the page
+ * printed them (`FormatValue` `:17-23`, ROI `:64-72`) — same rule as `RankingEntry.valueText`.
+ */
+export interface DirectoryFacilityCard {
+  name: string;
+  company: string;
+  iconUrl: string;
+  netProfitText: string;
+  costText: string;
+  roiText: string;
+  creator: string;
+  x: number;
+  y: number;
+}
+
+/** What a `DirectoryRef` resolves to. `facility: null` is a cache path that failed to resolve. */
+export type DirectoryPage =
+  | { kind: 'town'; town: DirectoryTownPage }
+  | { kind: 'folder'; items: string[]; ownedBy: string | null }
+  | { kind: 'facility-list'; facilities: DirectoryFacilityRow[] }
+  | { kind: 'facility'; facility: DirectoryFacilityCard | null };
 
 // =============================================================================
 // MAIL SYSTEM
@@ -1242,6 +1315,19 @@ export interface NewspaperArticle {
   parentPath: string;
   /** Absolute URL of the author's portrait (`boardmsg.asp:244`), or `''`. */
   photoUrl: string;
+}
+
+/**
+ * One criterion the reader chose to rate while posting a column — the
+ * `<select name=parm<Id>>` of `boardmsg.asp:337-350` that was not left on `-`.
+ */
+export interface NewspaperRatingEntry {
+  /** Rating cache id — the `RatingId` argument of `RDOSetRatingFrom` (`:120`). */
+  id: string;
+  /** Criterion name as the Politics page printed it; what the report prints (`:125`). */
+  name: string;
+  /** Percentage, 0..100. */
+  value: number;
 }
 
 export interface NewspaperBoard {

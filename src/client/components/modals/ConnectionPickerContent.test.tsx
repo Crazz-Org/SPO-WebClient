@@ -36,19 +36,87 @@ describe('ConnectionPickerContent (T3)', () => {
     expect((screen.getByLabelText('Town') as HTMLInputElement).value).toBe('Helartia');
   });
 
-  it('sorts results by distance from the building and shows it', () => {
+  it('the Distance mode sorts results locally, without re-searching', () => {
+    // Distance is no longer the default (#530) — the server's delivered-cost order is.
+    // Picking Distance sorts what is already on screen and sends nothing.
     openPicker();
-    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />);
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
     act(() => {
       useBuildingStore.getState().setConnectionResults([
         { facilityName: 'Far Farm', companyName: 'A', x: 100, y: 400, town: 'Nova Roma' },
         { facilityName: 'Near Farm', companyName: 'B', x: 103, y: 104 },
       ]);
     });
+    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'distance' } });
+    expect(onConnectionSearch).not.toHaveBeenCalled();
+
     const rows = screen.getAllByText(/tiles/);
     expect(rows[0].textContent).toContain('5 tiles');
     expect(rows[1].textContent).toContain('300 tiles');
     expect(screen.getByText(/Nova Roma/)).toBeTruthy();
+  });
+
+  it('with Cost selected the rendered row order is the response order, unmodified', () => {
+    openPicker();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />);
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Far Farm', companyName: 'A', x: 100, y: 400 },
+        { facilityName: 'Near Farm', companyName: 'B', x: 103, y: 104 },
+        { facilityName: 'Mid Farm', companyName: 'C', x: 100, y: 150 },
+      ]);
+    });
+    expect((screen.getByLabelText('Sort') as HTMLSelectElement).value).toBe('cost');
+    expect(screen.getAllByRole('checkbox', { name: /^Select / }).map((c) => c.getAttribute('aria-label'))).toEqual([
+      'Select Far Farm', 'Select Near Farm', 'Select Mid Farm',
+    ]);
+  });
+
+  it('Quality re-issues the search with sortMode 2, Cost with 1', () => {
+    openPicker();
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Farm A', companyName: 'A', x: 101, y: 100 },
+      ]);
+    });
+    const sort = screen.getByLabelText('Sort');
+    fireEvent.change(sort, { target: { value: 'quality' } });
+    expect(onConnectionSearch).toHaveBeenCalledTimes(1);
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ sortMode: 2 });
+
+    fireEvent.change(sort, { target: { value: 'cost' } });
+    expect(onConnectionSearch).toHaveBeenCalledTimes(2);
+    expect(onConnectionSearch.mock.calls[1][4]).toMatchObject({ sortMode: 1 });
+  });
+
+  it('with no results yet, picking Quality sends nothing — the Search button then carries it', () => {
+    openPicker();
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
+    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'quality' } });
+    expect(onConnectionSearch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ sortMode: 2 });
+  });
+
+  it('a customer search offers no sort control and stays nearest-first', () => {
+    // FindClients ignores SortMode and always answers by distance
+    // (Cache/InputSearch.pas:90-96), so there is no order to offer.
+    useBuildingStore.getState().setConnectionPicker({ fluidName: 'Cotton', fluidId: 'Cotton', direction: 'output', buildingX: 100, buildingY: 100 });
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />);
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Far Store', companyName: 'A', x: 100, y: 400 },
+        { facilityName: 'Near Store', companyName: 'B', x: 103, y: 104 },
+      ]);
+    });
+    expect(screen.queryByLabelText('Sort')).toBeNull();
+    const rows = screen.getAllByText(/tiles/);
+    expect(rows[0].textContent).toContain('5 tiles');
+    expect(rows[1].textContent).toContain('300 tiles');
   });
 
   it('connect sends the selected coordinates and closes', () => {
@@ -63,6 +131,93 @@ describe('ConnectionPickerContent (T3)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Connect Selected/ }));
     expect(onConnectionConnect).toHaveBeenCalledWith('Cotton', 'input', [{ x: 103, y: 104 }]);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('Del removes the selected rows from the list without connecting or re-searching', () => {
+    openPicker();
+    const onConnectionConnect = jest.fn();
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, {
+      clientCallbacks: createSpiedCallbacks({ onConnectionConnect, onConnectionSearch }),
+    });
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Farm A', companyName: 'A', x: 101, y: 100 },
+        { facilityName: 'Farm B', companyName: 'B', x: 102, y: 100 },
+        { facilityName: 'Farm C', companyName: 'C', x: 103, y: 100 },
+        { facilityName: 'Farm D', companyName: 'D', x: 104, y: 100 },
+        { facilityName: 'Farm E', companyName: 'E', x: 105, y: 100 },
+      ]);
+    });
+    expect(screen.getAllByRole('checkbox', { name: /^Select / })).toHaveLength(5);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Farm B' }));
+    const rowD = screen.getByRole('checkbox', { name: 'Select Farm D' });
+    fireEvent.click(rowD);
+    fireEvent.keyDown(rowD, { key: 'Delete' });
+
+    const remaining = screen.getAllByRole('checkbox', { name: /^Select / });
+    expect(remaining.map((c) => c.getAttribute('aria-label'))).toEqual([
+      'Select Farm A', 'Select Farm C', 'Select Farm E',
+    ]);
+    expect(onConnectionConnect).not.toHaveBeenCalled();
+    expect(onConnectionSearch).not.toHaveBeenCalled();
+    // The removal is local: the store still holds all five results
+    expect(useBuildingStore.getState().connectionPicker?.results).toHaveLength(5);
+  });
+
+  it('Select All after a prune covers only the rows still on screen', () => {
+    openPicker();
+    const onConnectionConnect = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, {
+      clientCallbacks: createSpiedCallbacks({ onConnectionConnect }),
+    });
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Farm A', companyName: 'A', x: 101, y: 100 },
+        { facilityName: 'Farm B', companyName: 'B', x: 102, y: 100 },
+        { facilityName: 'Farm C', companyName: 'C', x: 103, y: 100 },
+      ]);
+    });
+    const rowB = screen.getByRole('checkbox', { name: 'Select Farm B' });
+    fireEvent.click(rowB);
+    fireEvent.keyDown(rowB, { key: 'Delete' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+    expect(screen.getByRole('button', { name: /Connect Selected/ }).textContent).toContain('(2)');
+    fireEvent.click(screen.getByRole('button', { name: /Connect Selected/ }));
+    expect(onConnectionConnect).toHaveBeenCalledWith('Cotton', 'input', [
+      { x: 101, y: 100 }, { x: 103, y: 100 },
+    ]);
+  });
+
+  it('double-clicking a row connects that row alone and closes', () => {
+    openPicker();
+    const onConnectionConnect = jest.fn();
+    const onClose = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={onClose} />, {
+      clientCallbacks: createSpiedCallbacks({ onConnectionConnect }),
+    });
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Near Farm', companyName: 'B', x: 103, y: 104 },
+        { facilityName: 'Other Farm', companyName: 'C', x: 200, y: 200 },
+      ]);
+    });
+    fireEvent.doubleClick(screen.getByText('Near Farm'));
+    expect(onConnectionConnect).toHaveBeenCalledTimes(1);
+    expect(onConnectionConnect).toHaveBeenCalledWith('Cotton', 'input', [{ x: 103, y: 104 }]);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('the name filters say a partial name matches and Max defaults to 50, up to 150', () => {
+    openPicker();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />);
+    expect((screen.getByLabelText('Company') as HTMLInputElement).placeholder).toBe('Partial name matches');
+    expect((screen.getByLabelText('Town') as HTMLInputElement).placeholder).toBe('Partial name matches');
+    const max = screen.getByLabelText('Max') as HTMLInputElement;
+    expect(max.value).toBe('50');
+    expect(max.max).toBe('150');
   });
 
   it('Pick on map enters the connect mode without closing the picker (N10)', () => {
