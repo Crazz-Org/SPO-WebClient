@@ -599,3 +599,23 @@ describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_TYCOON_FULL
     expect(useSearchStore.getState().isLoading).toBe(false);
   });
 });
+
+describe('ClientBridge updateConnectionReachability (#584)', () => {
+  it('writes the road flags to building-store', () => {
+    useBuildingStore.getState().setConnectionPicker({
+      fluidName: 'Oil', fluidId: 'oil-1', direction: 'input', buildingX: 100, buildingY: 200,
+    });
+
+    ClientBridge.updateConnectionReachability({
+      type: WsMessageType.RESP_CONNECTION_REACHABILITY,
+      wsRequestId: 'r1',
+      fluidId: 'oil-1',
+      direction: 'input',
+      buildingX: 100,
+      buildingY: 200,
+      entries: [{ x: 10, y: 20, connected: true }],
+    });
+
+    expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({ '10,20': true });
+  });
+});

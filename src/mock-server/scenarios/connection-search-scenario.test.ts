@@ -10,15 +10,19 @@
  * the client used to send 27 for the same four boxes.
  */
 
+import { rdoCall } from '@/shared/rdo-frame';
 import { RdoProtocol } from '@/server/rdo';
 import { RDO_MEMBERS } from '@/shared/rdo-members';
 import { RdoValue } from '@/shared/rdo-types';
+import { cleanPayload } from '@/server/rdo-helpers';
 import {
   ALL_CONNECTION_ROLES, rolesToMask, type ConnectionRoleFlags,
 } from '@/shared/connection-roles';
 import { searchConnections } from '@/server/session/politics-handler';
+import { resolveRoadReachability } from '@/server/session/connection-reachability';
 import { makeSessionCtx, FAKE_CONTEXT_IDS } from '@/server/__tests__/session/fake-session-context';
 import { RdoMock } from '../rdo-mock';
+import type { RdoPacket } from '@/shared/types';
 import {
   createConnectionSearchScenario,
   connectionSearchArgs,
@@ -29,6 +33,9 @@ import {
   QUALITY_SORT_MODE,
   SUPPLIER_SEARCH_ROLE,
   CLIENT_SEARCH_ROLE,
+  REACHABILITY_TEMP_OBJECT,
+  CONNECTION_SEARCH_ROWS,
+  BUILDING_NEAR_CIRCUITS,
 } from './connection-search-scenario';
 
 const { rdo } = createConnectionSearchScenario();
@@ -69,6 +76,12 @@ describe('connection-search scenario — the catalogue', () => {
     for (const ex of rdo.exchanges) {
       expect(ex.request).toContain('"^"');
       expect(ex.request).not.toContain('"*"');
+    }
+  });
+
+  it('SetObject and GetPropertyList — the reachability sweep\'s members — are also catalogued functions', () => {
+    for (const member of ['SetObject', 'GetPropertyList'] as const) {
+      expect(RDO_MEMBERS[member].kind).toBe('function');
     }
   });
 
@@ -156,5 +169,129 @@ describe('connection-search scenario — the Role argument on the wire', () => {
     // through where `||` used to replace it with 31.
     const { packet } = await emit('input', rolesToMask('input', NO_ROLES));
     expect(packet.args?.[ROLE_ARG_INDEX]).toBe('"#0"');
+  });
+});
+
+describe('connection-search scenario — the road flag', () => {
+  /**
+   * Wire `searchConnections` and `resolveRoadReachability` to a single
+   * `RdoMock`, the same pattern as `gate-map-scenario.test.ts:71-92`:
+   * `sendRdoRequest` ("^", captured by `fake.respond`) and the cacher pool
+   * (mocked directly, since the fake never wires it back onto the wire).
+   */
+  function makeReachabilityCtx() {
+    const fake = makeSessionCtx({
+      currentWorldInfo: { name: 'Shamba', url: 'http://158.69.153.134', ip: '158.69.153.134', port: 7000 },
+    });
+    fake.cacher.createObject.mockResolvedValue(REACHABILITY_TEMP_OBJECT);
+
+    const mock = new RdoMock();
+    mock.addScenario(rdo);
+
+    fake.respond((packet) => {
+      const frame = `${RdoProtocol.format(packet as RdoPacket)};`;
+      const r = mock.match(frame);
+      return r ? (RdoProtocol.parse(r.response).payload ?? '') : '';
+    });
+
+    fake.cacher.setObject.mockImplementation(async (id: string, x: number, y: number) => {
+      const frame = rdoCall('SetObject', id, RdoValue.int(x), RdoValue.int(y)).toFrame();
+      const r = mock.match(frame);
+      if (!r) throw new Error(`no SetObject exchange for (${x}, ${y})`);
+      const payload = cleanPayload(RdoProtocol.parse(r.response).payload ?? '');
+      if (payload === '0') throw new Error(`SetObject returned false for (${x}, ${y})`);
+    });
+
+    fake.cacher.getPropertyList.mockImplementation(async (id: string, names: string[]) => {
+      const frame = rdoCall('GetPropertyList', id, RdoValue.string(names.join('\t') + '\t')).toFrame();
+      const r = mock.match(frame);
+      if (!r) throw new Error('no GetPropertyList exchange');
+      // The scenario fixes the query SHAPE with one exchange; the VALUE
+      // depends on which position the last SetObject loaded, exactly as the
+      // real cache server would answer about whatever object is loaded.
+      const [, x, y] = fake.cacher.setObject.mock.calls[fake.cacher.setObject.mock.calls.length - 1];
+      if (x === CONNECTION_SEARCH_QUERY.x && y === CONNECTION_SEARCH_QUERY.y) {
+        return [BUILDING_NEAR_CIRCUITS];
+      }
+      const row = CONNECTION_SEARCH_ROWS.find(r2 => r2.x === x && r2.y === y);
+      if (!row || row.circuits === null) throw new Error(`no cache answer for (${x}, ${y})`);
+      return [row.circuits];
+    });
+
+    return { fake, mock };
+  }
+
+  it('searchConnections returns the four parsed rows', async () => {
+    const { fake } = makeReachabilityCtx();
+    const q = CONNECTION_SEARCH_QUERY;
+
+    const results = await searchConnections(fake.ctx, q.x, q.y, q.fluidId, 'input', { roles: SUPPLIER_SEARCH_ROLE });
+
+    expect(results).toEqual(CONNECTION_SEARCH_ROWS.map(row => ({
+      x: row.x, y: row.y,
+      facilityName: row.facility, companyName: row.company, town: row.town,
+      price: '$80', quality: '40',
+    })));
+  });
+
+  it('resolveRoadReachability resolves the connected/not-connected/unknown split', async () => {
+    const { fake, mock } = makeReachabilityCtx();
+    const q = CONNECTION_SEARCH_QUERY;
+
+    const entries = await resolveRoadReachability(
+      fake.ctx, q.x, q.y,
+      CONNECTION_SEARCH_ROWS.map(({ x, y }) => ({ x, y })),
+    );
+
+    expect(entries.map(e => e.connected)).toEqual(CONNECTION_SEARCH_ROWS.map(r => r.connected));
+
+    const consumed = mock.getConsumedIds();
+    expect(consumed.has('cs-rdo-setobject-building')).toBe(true);
+    expect(consumed.has('cs-rdo-nearcircuits')).toBe(true);
+    for (const row of CONNECTION_SEARCH_ROWS) {
+      expect(consumed.has(`cs-rdo-setobject-${row.x}-${row.y}`)).toBe(true);
+    }
+  });
+
+  it('a run whose building answer is empty resolves every readable candidate false, never null', async () => {
+    const { fake } = makeReachabilityCtx();
+    const q = CONNECTION_SEARCH_QUERY;
+    // Override only the building's NearCircuits answer; the three readable
+    // candidates (row 4's SetObject still fails and stays null regardless).
+    fake.cacher.getPropertyList.mockImplementation(async (id: string, names: string[]) => {
+      const [, x, y] = fake.cacher.setObject.mock.calls[fake.cacher.setObject.mock.calls.length - 1];
+      if (x === q.x && y === q.y) return [''];
+      const frame = rdoCall('GetPropertyList', id, RdoValue.string(names.join('\t') + '\t')).toFrame();
+      const mock = new RdoMock();
+      mock.addScenario(rdo);
+      const r = mock.match(frame);
+      const row = CONNECTION_SEARCH_ROWS.find(r2 => r2.x === x && r2.y === y);
+      if (!r || !row || row.circuits === null) throw new Error(`no cache answer for (${x}, ${y})`);
+      return [row.circuits];
+    });
+
+    const readableRows = CONNECTION_SEARCH_ROWS.filter(r => r.circuits !== null);
+    const entries = await resolveRoadReachability(
+      fake.ctx, q.x, q.y,
+      readableRows.map(({ x, y }) => ({ x, y })),
+    );
+
+    expect(entries.map(e => e.connected)).toEqual(readableRows.map(() => false));
+  });
+
+  it('the consumed ids include the search and every reachability exchange', async () => {
+    const { fake, mock } = makeReachabilityCtx();
+    const q = CONNECTION_SEARCH_QUERY;
+
+    await searchConnections(fake.ctx, q.x, q.y, q.fluidId, 'input', { roles: SUPPLIER_SEARCH_ROLE });
+    await resolveRoadReachability(fake.ctx, q.x, q.y, CONNECTION_SEARCH_ROWS.map(({ x, y }) => ({ x, y })));
+
+    const consumed = mock.getConsumedIds();
+    expect(consumed.has('cs-rdo-001')).toBe(true);
+    expect(consumed.has('cs-rdo-setobject-building')).toBe(true);
+    expect(consumed.has('cs-rdo-nearcircuits')).toBe(true);
+    for (const row of CONNECTION_SEARCH_ROWS) {
+      expect(consumed.has(`cs-rdo-setobject-${row.x}-${row.y}`)).toBe(true);
+    }
   });
 });

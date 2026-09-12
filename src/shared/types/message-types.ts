@@ -287,6 +287,7 @@ export enum WsMessageType {
   // Connection Search
   REQ_SEARCH_CONNECTIONS = 'REQ_SEARCH_CONNECTIONS',
   RESP_SEARCH_CONNECTIONS = 'RESP_SEARCH_CONNECTIONS',
+  RESP_CONNECTION_REACHABILITY = 'RESP_CONNECTION_REACHABILITY',
 
   // Company Creation
   REQ_CREATE_COMPANY = 'REQ_CREATE_COMPANY',
@@ -1702,6 +1703,17 @@ export interface WsRespSearchConnections extends WsMessage {
   results: ConnectionSearchResult[];
   fluidId: string;
   direction: 'input' | 'output';
+}
+
+/** One candidate's road verdict: true = shares a road circuit with the building, false = does not, null = could not be read. */
+export interface ConnectionReachabilityEntry { x: number; y: number; connected: boolean | null; }
+export interface WsRespConnectionReachability extends WsMessage {
+  type: WsMessageType.RESP_CONNECTION_REACHABILITY;
+  fluidId: string;
+  direction: 'input' | 'output';
+  buildingX: number;
+  buildingY: number;
+  entries: ConnectionReachabilityEntry[];
 }
 
 // =============================================================================

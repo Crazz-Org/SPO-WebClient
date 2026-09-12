@@ -97,7 +97,10 @@ every box of the supplier form ticked is `#54`, of the client form `#78`. A wron
 produces no crash and no error reply — the server simply answers about facilities nobody asked
 about — so the captured `#54` (`src/server/__tests__/rdo/connection-search.test.ts:9`) is the
 only thing that can catch it. Its test drives the real `searchConnections` and matches the
-emitted frame back against the exchange.
+emitted frame back against the exchange. It also carries the road-reachability sweep (#584):
+the building's and each candidate's `NearCircuits` is read through `SetObject` +
+`GetPropertyList` on one temp object, and one of the four supplier rows answers with an
+empty circuit string, which `Intercept` treats as not connected (`Cache/FluidLinks.pas:121`).
 
 `people-search` is the pair of patterns the directory's People page puts in the first argument
 of `RDOSearchKey`. The A-Z index sends the bare `*` inside one `Root/Users/<Letter>` bucket —

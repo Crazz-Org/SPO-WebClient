@@ -13,6 +13,13 @@
  * Quality re-issues the search with `SortMode = 2`; Distance is the only local mode, computed
  * from the coordinates the server already returns. A customer search has no such control: the
  * server answers nearest-first whatever mode it was sent (`Cache/InputSearch.pas:90-96`).
+ *
+ * Each row also carries a road flag (#584): whether the candidate shares a road circuit with
+ * the building being connected, per `search_obj.Connected(i)` on the reference search page
+ * (`~/SPO-ASP/Five/0/Visual/Clusters/Common/Includes/FiveSearchSite.inc:43`), which is
+ * `TFluidLink.Intercept` (`~/SPO-Original/Cache/FluidLinks.pas:121`). The gateway resolves it
+ * asynchronously after the list itself renders, so the flag never blocks a row's checkbox,
+ * double-click or Connect action.
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
@@ -29,6 +36,14 @@ import styles from './ConnectionPickerModal.module.css';
  * (`SortMode` 1 and 2); `distance` is sorted here, from the coordinates in the reply.
  */
 type SortMode = 'cost' | 'quality' | 'distance';
+
+/** The road flag a row shows; `undefined` is "not answered yet", which never blocks the row. */
+function roadFlag(value: boolean | null | undefined): { state: string; label: string } {
+  if (value === true) return { state: 'connected', label: 'Road: connected' };
+  if (value === false) return { state: 'not-connected', label: 'Road: not connected' };
+  if (value === null) return { state: 'unknown', label: 'Road: unknown' };
+  return { state: 'pending', label: 'Road: checking…' };
+}
 
 export interface ConnectionPickerContentProps {
   /** Called when the picker is dismissed (the sheet pops the surface; the modal closes). */
@@ -398,6 +413,10 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
                     {r.quality ? ` (Q: ${r.quality})` : ''}
                     {` · ${d} tiles`}
                   </div>
+                  {(() => {
+                    const { state, label } = roadFlag(picker.reachability[`${r.x},${r.y}`]);
+                    return <div className={styles.roadFlag} data-road={state}>{label}</div>;
+                  })()}
                 </div>
               </div>
             ))

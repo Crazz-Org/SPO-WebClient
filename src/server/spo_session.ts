@@ -40,6 +40,7 @@ import {
   NewspaperIssueList,
   PoliticalRoleInfo,
   ConnectionSearchResult,
+  ConnectionReachabilityEntry,
   FavoritesItem,
   ResearchCategoryData,
   ResearchInventionDetails,
@@ -79,6 +80,7 @@ import * as mailHandler from './session/mail-handler';
 import * as profileFinanceHandler from './session/profile-finance-handler';
 import * as autoConnectionHandler from './session/auto-connection-handler';
 import * as politicsHandler from './session/politics-handler';
+import { resolveRoadReachability } from './session/connection-reachability';
 import * as favoritesHandler from './session/favorites-handler';
 import type { FavoriteMutationResult } from './session/favorites-handler';
 import * as newspaperHandler from './session/newspaper-handler';
@@ -1252,6 +1254,10 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
 
   public async searchConnections(buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters?: { company?: string; town?: string; maxResults?: number; roles?: number; sortMode?: number }): Promise<ConnectionSearchResult[]> {
     return politicsHandler.searchConnections(this, buildingX, buildingY, fluidId, direction, filters);
+  }
+
+  public async resolveConnectionReachability(buildingX: number, buildingY: number, positions: ReadonlyArray<{ x: number; y: number }>, isCurrent?: () => boolean): Promise<ConnectionReachabilityEntry[]> {
+    return resolveRoadReachability(this, buildingX, buildingY, positions, isCurrent);
   }
 
 public async loadMapArea(x?: number, y?: number, w: number = 64, h: number = 64): Promise<MapData> {

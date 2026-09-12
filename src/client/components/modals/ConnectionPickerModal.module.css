@@ -210,6 +210,19 @@
   white-space: nowrap;
 }
 
+.roadFlag {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+
+.roadFlag[data-road="connected"] {
+  color: var(--success);
+}
+
+.roadFlag[data-road="not-connected"] {
+  color: var(--text-secondary);
+}
+
 /* Footer */
 .footer {
   padding: var(--space-2) var(--space-5);

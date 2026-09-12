@@ -9,6 +9,7 @@ import type {
   BuildingSupplyData,
   BuildingProductData,
   ConnectionSearchResult,
+  WsRespConnectionReachability,
   ResearchCategoryData,
   ResearchInventionDetails,
 } from '@/shared/types';
@@ -177,6 +178,8 @@ interface BuildingState {
     buildingY: number;
     results: ConnectionSearchResult[];
     isSearching: boolean;
+    /** The road flag per candidate, keyed `${x},${y}`; absent = not answered yet. */
+    reachability: Record<string, boolean | null>;
   } | null;
 
   // Research state
@@ -197,6 +200,7 @@ interface BuildingState {
   clearOverlay: () => void;
   setConnectionPicker: (data: { fluidName: string; fluidId: string; direction: 'input' | 'output'; buildingX: number; buildingY: number }) => void;
   setConnectionResults: (results: ConnectionSearchResult[]) => void;
+  setConnectionReachability: (msg: WsRespConnectionReachability) => void;
   setConnectionSearching: (searching: boolean) => void;
   clearConnectionPicker: () => void;
 
@@ -672,14 +676,29 @@ export const useBuildingStore = create<BuildingState>((set) => ({
   connectionPicker: null,
 
   setConnectionPicker: (data) =>
-    set({ connectionPicker: { ...data, results: [], isSearching: false } }),
+    set({ connectionPicker: { ...data, results: [], isSearching: false, reachability: {} } }),
 
   setConnectionResults: (results) =>
     set((state) => ({
       connectionPicker: state.connectionPicker
-        ? { ...state.connectionPicker, results, isSearching: false }
+        ? { ...state.connectionPicker, results, isSearching: false, reachability: {} }
         : null,
     })),
+
+  setConnectionReachability: (msg) =>
+    set((state) => {
+      const picker = state.connectionPicker;
+      if (!picker) return {};
+      if (picker.fluidId !== msg.fluidId || picker.direction !== msg.direction
+        || picker.buildingX !== msg.buildingX || picker.buildingY !== msg.buildingY) {
+        return {};
+      }
+      const reachability = { ...picker.reachability };
+      for (const entry of msg.entries) {
+        reachability[`${entry.x},${entry.y}`] = entry.connected;
+      }
+      return { connectionPicker: { ...picker, reachability } };
+    }),
 
   setConnectionSearching: (searching) =>
     set((state) => ({

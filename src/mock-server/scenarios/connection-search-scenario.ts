@@ -27,6 +27,16 @@
  * Both requests are built by the real emitter (`rdoCall`), so the fixture cannot
  * drift from what ships, and the separator and arity come from the catalogue
  * rather than from this file.
+ *
+ * The scenario also carries the road-reachability sweep (#584): `FindSuppliers` /
+ * `FindClients` do not carry a candidate's road circuits, so the gateway reads
+ * `NearCircuits` for the building and for every candidate through `SetObject` +
+ * `GetPropertyList` on one temp object (`session/connection-reachability.ts`).
+ * `cs-rdo-001`'s four rows (`CONNECTION_SEARCH_ROWS`) exercise the whole split:
+ * a shared circuit, a disjoint one, an empty circuit string — which
+ * `TFluidLink.Intercept` treats as not connected (`Cache/FluidLinks.pas:121`) —
+ * and a candidate `SetObject` cannot load at all, which must read back `null`,
+ * never a false negative.
  */
 
 import { rdoCall } from '@/shared/rdo-frame';
@@ -106,17 +116,47 @@ export function connectionSearchArgs(
     : searchArgs(worldName, CLIENT_SEARCH_ROLE, sortMode);
 }
 
+/** The temp object the reachability sweep addresses (`session/connection-reachability.ts`). */
+export const REACHABILITY_TEMP_OBJECT = '900584';
+
+/** The `GetPropertyList` query shape for a single `NearCircuits` read. */
+export const NEAR_CIRCUITS_QUERY = 'NearCircuits\t';
+
+/** The building being connected (`CONNECTION_SEARCH_QUERY.x/y`) touches circuits 12 and 34. */
+export const BUILDING_NEAR_CIRCUITS = '12,34,';
+
+/**
+ * Four seven-field supplier rows and what the cache says about each one's roads.
+ * Positions and names are the captured trace of
+ * `src/server/__tests__/rdo/connection-search.test.ts:69-73`.
+ */
+export const CONNECTION_SEARCH_ROWS = [
+  { x: 463, y: 389, facility: 'Trade Center', company: 'PGI',        town: 'Olympus',   circuits: '34,56,', connected: true  },
+  { x: 483, y: 684, facility: 'Trade Center', company: 'Dissidents', town: 'Clementia', circuits: '78,',    connected: false },
+  { x: 205, y: 505, facility: 'Trade Center', company: 'PGI',        town: 'Eraclia',   circuits: '',       connected: false }, // empty → Intercept false (FluidLinks.pas:121)
+  { x: 131, y: 298, facility: 'Trade Center', company: 'Mariko',     town: 'Drakka',    circuits: null,     connected: null  }, // no cache answer → unknown
+] as const;
+
+function connectionSearchRowLine(row: (typeof CONNECTION_SEARCH_ROWS)[number]): string {
+  return `${row.x}}${row.y}}${row.facility}}${row.company}}${row.town}}$80}40`;
+}
+
 function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
   const supplierArgs = connectionSearchArgs('input', vars.worldName);
   const clientArgs = connectionSearchArgs('output', vars.worldName);
   const qualityArgs = connectionSearchArgs('input', vars.worldName, QUALITY_SORT_MODE);
 
+  // x}y}FacName}Company}Town}$Price}Quality per line — the seven-field supplier rows.
+  const supplierRowsPayload = CONNECTION_SEARCH_ROWS.map(connectionSearchRowLine).join('\n');
+
+  const buildingSetObjectArgs = [RdoValue.int(CONNECTION_SEARCH_QUERY.x), RdoValue.int(CONNECTION_SEARCH_QUERY.y)];
+  const nearCircuitsArgs = [RdoValue.string(NEAR_CIRCUITS_QUERY)];
+
   return [
     {
       id: 'cs-rdo-001',
       request: rdoCall('FindSuppliers', CONNECTION_SEARCH_CACHER_ID, ...supplierArgs).toFrame(),
-      // x}y}FacName}Company}Town}$Price}Quality — the seven-field supplier row.
-      response: 'A92 res="%463}389}Trade Center}PGI}Olympus}$80}40"',
+      response: `A92 res="%${supplierRowsPayload}"`,
       matchKeys: {
         verb: 'sel', action: 'call', member: 'FindSuppliers',
         argsPattern: supplierArgs.map(a => a.format()),
@@ -135,11 +175,43 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
     {
       id: 'cs-rdo-003',
       request: rdoCall('FindSuppliers', CONNECTION_SEARCH_CACHER_ID, ...qualityArgs).toFrame(),
-      // Same seven-field supplier row — only the order the server chose differs.
-      response: 'A94 res="%463}389}Trade Center}PGI}Olympus}$80}40"',
+      // Same four supplier rows — only the order the server chose differs.
+      response: `A94 res="%${supplierRowsPayload}"`,
       matchKeys: {
         verb: 'sel', action: 'call', member: 'FindSuppliers',
         argsPattern: qualityArgs.map(a => a.format()),
+      },
+    },
+    {
+      id: 'cs-rdo-setobject-building',
+      request: rdoCall('SetObject', REACHABILITY_TEMP_OBJECT, ...buildingSetObjectArgs).toFrame(),
+      response: 'A95 res="#-1"',
+      matchKeys: {
+        verb: 'sel', targetId: REACHABILITY_TEMP_OBJECT, action: 'call', member: 'SetObject',
+        argsPattern: buildingSetObjectArgs.map(a => a.format()),
+      },
+    },
+    ...CONNECTION_SEARCH_ROWS.map((row) => {
+      const args = [RdoValue.int(row.x), RdoValue.int(row.y)];
+      // TCachedObjectAuto.SetObject returns false when nothing loads (CachedObjectAuto.pas:244).
+      const response = row.circuits === null ? 'A95 res="#0"' : 'A95 res="#-1"';
+      return {
+        id: `cs-rdo-setobject-${row.x}-${row.y}`,
+        request: rdoCall('SetObject', REACHABILITY_TEMP_OBJECT, ...args).toFrame(),
+        response,
+        matchKeys: {
+          verb: 'sel', targetId: REACHABILITY_TEMP_OBJECT, action: 'call', member: 'SetObject',
+          argsPattern: args.map(a => a.format()),
+        },
+      };
+    }),
+    {
+      id: 'cs-rdo-nearcircuits',
+      request: rdoCall('GetPropertyList', REACHABILITY_TEMP_OBJECT, ...nearCircuitsArgs).toFrame(),
+      response: `A96 res="%${BUILDING_NEAR_CIRCUITS}\t"`,
+      matchKeys: {
+        verb: 'sel', targetId: REACHABILITY_TEMP_OBJECT, action: 'call', member: 'GetPropertyList',
+        argsPattern: nearCircuitsArgs.map(a => a.format()),
       },
     },
   ];

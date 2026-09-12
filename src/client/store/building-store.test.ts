@@ -4,7 +4,8 @@
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import { useBuildingStore } from './building-store';
-import type { BuildingFocusInfo, BuildingDetailsResponse, ResearchCategoryData, ResearchInventionDetails } from '@/shared/types';
+import type { BuildingFocusInfo, BuildingDetailsResponse, ResearchCategoryData, ResearchInventionDetails, WsRespConnectionReachability } from '@/shared/types';
+import { WsMessageType } from '@/shared/types';
 
 const mockFocusInfo: BuildingFocusInfo = {
   buildingId: '12345',
@@ -665,6 +666,76 @@ describe('Building Store — Context Loss Prevention', () => {
 
     useBuildingStore.getState().clearFocus();
     expect(useBuildingStore.getState().connectionPicker).toBeNull();
+  });
+
+  // #584: the road-reachability flag on the connection picker
+  describe('connection reachability', () => {
+    const PICKER = { fluidName: 'Oil', fluidId: 'oil-1', direction: 'input' as const, buildingX: 100, buildingY: 200 };
+
+    function reachabilityMsg(overrides: Partial<WsRespConnectionReachability> = {}): WsRespConnectionReachability {
+      return {
+        type: WsMessageType.RESP_CONNECTION_REACHABILITY,
+        wsRequestId: 'r1',
+        fluidId: 'oil-1',
+        direction: 'input',
+        buildingX: 100,
+        buildingY: 200,
+        entries: [{ x: 10, y: 20, connected: true }],
+        ...overrides,
+      };
+    }
+
+    it('a fresh picker starts with an empty reachability map', () => {
+      useBuildingStore.getState().setConnectionPicker(PICKER);
+      expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({});
+    });
+
+    it('setConnectionReachability merges by key and keeps true/false/null distinct', () => {
+      useBuildingStore.getState().setConnectionPicker(PICKER);
+      useBuildingStore.getState().setConnectionReachability(reachabilityMsg({
+        entries: [
+          { x: 10, y: 20, connected: true },
+          { x: 30, y: 40, connected: false },
+          { x: 50, y: 60, connected: null },
+        ],
+      }));
+
+      expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({
+        '10,20': true,
+        '30,40': false,
+        '50,60': null,
+      });
+    });
+
+    it('a message for another fluid is ignored', () => {
+      useBuildingStore.getState().setConnectionPicker(PICKER);
+      useBuildingStore.getState().setConnectionReachability(reachabilityMsg({ fluidId: 'other-fluid' }));
+
+      expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({});
+    });
+
+    it('a message for another building is ignored', () => {
+      useBuildingStore.getState().setConnectionPicker(PICKER);
+      useBuildingStore.getState().setConnectionReachability(reachabilityMsg({ buildingX: 999 }));
+
+      expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({});
+    });
+
+    it('is a no-op when there is no picker', () => {
+      useBuildingStore.getState().clearConnectionPicker();
+      useBuildingStore.getState().setConnectionReachability(reachabilityMsg());
+
+      expect(useBuildingStore.getState().connectionPicker).toBeNull();
+    });
+
+    it('setConnectionResults clears the flags for a new list', () => {
+      useBuildingStore.getState().setConnectionPicker(PICKER);
+      useBuildingStore.getState().setConnectionReachability(reachabilityMsg());
+      expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({ '10,20': true });
+
+      useBuildingStore.getState().setConnectionResults([]);
+      expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({});
+    });
   });
 
   // B4: Research guards — reject when details or research is null

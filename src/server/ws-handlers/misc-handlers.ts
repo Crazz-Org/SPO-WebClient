@@ -11,6 +11,8 @@ import {
   type WsRespClusterFacilities,
   type WsReqSearchConnections,
   type WsRespSearchConnections,
+  type WsRespConnectionReachability,
+  type ConnectionSearchResult,
   type WsRespEmpireFacilities,
   type WsReqFavoriteAdd,
   type WsRespFavoriteAdd,
@@ -30,6 +32,49 @@ import {
 import * as ErrorCodes from '../../shared/error-codes';
 import type { WsHandlerContext, WsHandler } from './types';
 import { sendResponse, sendError, withErrorHandler } from './ws-utils';
+import { toErrorMessage } from '../../shared/error-utils';
+
+/**
+ * One counter per session object, so a later `REQ_SEARCH_CONNECTIONS` on the
+ * same session supersedes an in-flight reachability sweep from an earlier one
+ * (`enrichConnectionReachability` checks `isCurrent()` before sending).
+ */
+const reachabilityRun = new WeakMap<object, number>();
+
+/**
+ * The reachability sweep for a connection search, run detached from the
+ * serialized RDO lane (`server.ts:1134-1139`) so it never holds up a later
+ * request from the same player. Sends `RESP_CONNECTION_REACHABILITY` when it
+ * resolves; a failed or superseded sweep sends nothing.
+ */
+export async function enrichConnectionReachability(
+  ctx: WsHandlerContext,
+  req: WsReqSearchConnections,
+  results: ConnectionSearchResult[],
+  isCurrent: () => boolean,
+): Promise<void> {
+  if (results.length === 0) return;
+  try {
+    const entries = await ctx.session.resolveConnectionReachability(
+      req.buildingX, req.buildingY,
+      results.map(({ x, y }) => ({ x, y })),
+      isCurrent,
+    );
+    if (!isCurrent()) return;
+    const response: WsRespConnectionReachability = {
+      type: WsMessageType.RESP_CONNECTION_REACHABILITY,
+      wsRequestId: req.wsRequestId,
+      fluidId: req.fluidId,
+      direction: req.direction,
+      buildingX: req.buildingX,
+      buildingY: req.buildingY,
+      entries,
+    };
+    sendResponse(ctx.ws, response);
+  } catch (e: unknown) {
+    ctx.session.log.warn(`[Connections] reachability failed: ${toErrorMessage(e)}`);
+  }
+}
 
 export const handleDefineZone: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
   await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_AccessDenied, async () => {
@@ -116,6 +161,10 @@ export const handleSearchConnections: WsHandler = async (ctx: WsHandlerContext, 
     direction: req.direction,
   };
   sendResponse(ctx.ws, response);
+
+  const run = (reachabilityRun.get(ctx.session) ?? 0) + 1;
+  reachabilityRun.set(ctx.session, run);
+  void enrichConnectionReachability(ctx, req, results, () => reachabilityRun.get(ctx.session) === run);
 };
 
 export const handleEmpireFacilities: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {

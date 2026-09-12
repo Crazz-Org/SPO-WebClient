@@ -35,6 +35,7 @@ import type {
   MailFolder,
   PeopleSearchMode,
   ConnectionSearchResult,
+  WsRespConnectionReachability,
   ClusterInfo,
   ClusterFacilityPreview,
 
@@ -1006,6 +1007,10 @@ export const ClientBridge = {
 
   updateConnectionResults(results: ConnectionSearchResult[]): void {
     useBuildingStore.getState().setConnectionResults(results);
+  },
+
+  updateConnectionReachability(msg: WsRespConnectionReachability): void {
+    useBuildingStore.getState().setConnectionReachability(msg);
   },
 
   closeConnectionPicker(): void {

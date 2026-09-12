@@ -24,6 +24,7 @@ import {
   WsRespCapitolCoords,
   WsRespGetProfile,
   WsRespSearchConnections,
+  WsRespConnectionReachability,
   WsRespClusterInfo,
   WsRespClusterFacilities,
   WsRespResearchInventory,
@@ -397,6 +398,10 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
       }
       break;
     }
+
+    case WsMessageType.RESP_CONNECTION_REACHABILITY:
+      ClientBridge.updateConnectionReachability(msg as WsRespConnectionReachability);
+      break;
 
     case WsMessageType.RESP_CLUSTER_INFO: {
       const clusterResp = msg as WsRespClusterInfo;

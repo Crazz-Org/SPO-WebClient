@@ -275,6 +275,93 @@ describe('ConnectionPickerContent (T3)', () => {
     expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 2 });
   });
 
+  it('results show "Road: checking…" on every row before any flag arrives, and stay selectable', () => {
+    openPicker();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />);
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Farm A', companyName: 'A', x: 101, y: 100 },
+      ]);
+    });
+    expect(screen.getByText('Road: checking…')).toBeTruthy();
+    const checkbox = screen.getByRole('checkbox', { name: 'Select Farm A' }) as HTMLInputElement;
+    expect(checkbox.disabled).toBe(false);
+  });
+
+  it('after setConnectionReachability the rows read connected / not connected / unknown in order', () => {
+    openPicker();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />);
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Farm A', companyName: 'A', x: 101, y: 100 },
+        { facilityName: 'Farm B', companyName: 'B', x: 102, y: 100 },
+        { facilityName: 'Farm C', companyName: 'C', x: 103, y: 100 },
+      ]);
+      useBuildingStore.getState().setConnectionReachability({
+        type: 'RESP_CONNECTION_REACHABILITY',
+        wsRequestId: 'r1',
+        fluidId: 'Cotton',
+        direction: 'input',
+        buildingX: 100,
+        buildingY: 100,
+        entries: [
+          { x: 101, y: 100, connected: true },
+          { x: 102, y: 100, connected: false },
+          { x: 103, y: 100, connected: null },
+        ],
+      } as never);
+    });
+
+    const flags = screen.getAllByText(/^Road:/);
+    expect(flags.map((el) => el.textContent)).toEqual([
+      'Road: connected', 'Road: not connected', 'Road: unknown',
+    ]);
+  });
+
+  it('a customer search (output direction) shows the same road flags', () => {
+    useBuildingStore.getState().setConnectionPicker({ fluidName: 'Cotton', fluidId: 'Cotton', direction: 'output', buildingX: 100, buildingY: 100 });
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />);
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Store A', companyName: 'A', x: 101, y: 100 },
+      ]);
+      useBuildingStore.getState().setConnectionReachability({
+        type: 'RESP_CONNECTION_REACHABILITY',
+        wsRequestId: 'r1',
+        fluidId: 'Cotton',
+        direction: 'output',
+        buildingX: 100,
+        buildingY: 100,
+        entries: [{ x: 101, y: 100, connected: true }],
+      } as never);
+    });
+    expect(screen.getByText('Road: connected')).toBeTruthy();
+  });
+
+  it('a row whose flag is unknown (null) can still be selected and connected', () => {
+    openPicker();
+    const onConnectionConnect = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionConnect }) });
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Farm A', companyName: 'A', x: 101, y: 100 },
+      ]);
+      useBuildingStore.getState().setConnectionReachability({
+        type: 'RESP_CONNECTION_REACHABILITY',
+        wsRequestId: 'r1',
+        fluidId: 'Cotton',
+        direction: 'input',
+        buildingX: 100,
+        buildingY: 100,
+        entries: [{ x: 101, y: 100, connected: null }],
+      } as never);
+    });
+    expect(screen.getByText('Road: unknown')).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Farm A' }));
+    fireEvent.click(screen.getByRole('button', { name: /Connect Selected/ }));
+    expect(onConnectionConnect).toHaveBeenCalledWith('Cotton', 'input', [{ x: 101, y: 100 }]);
+  });
+
   it('the bridge stacks the picker on the building surface and closing pops it', () => {
     useUiStore.getState().setRootSurface({ kind: 'building' });
     ClientBridge.showConnectionPicker({ fluidName: 'Cotton', fluidId: 'Cotton', direction: 'input', buildingX: 1, buildingY: 2 });
