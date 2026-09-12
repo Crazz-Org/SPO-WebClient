@@ -76,6 +76,17 @@ describe('RevenueGraph', () => {
     const { container } = renderWithProviders(<RevenueGraph data={[500]} />);
     expect(container.querySelector('svg')).toBeTruthy();
   });
+
+  it('labels the x axis with years ending at endYear and values in thousands', () => {
+    const { container } = renderWithProviders(
+      <RevenueGraph data={[-29, 5, 42]} endYear={2333} />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('2331');
+    expect(text).toContain('2332');
+    expect(text).toContain('2333');
+    expect(text).toContain('$42.00K');
+  });
 });
 
 // ---------------------------------------------------------------------------

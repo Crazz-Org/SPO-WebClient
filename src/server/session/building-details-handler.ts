@@ -852,20 +852,26 @@ async function enrichUpgradeTab(
 }
 
 /**
- * Parse MoneyGraphInfo into array of numbers.
- * Format: "count,val1,val2,val3,..."
+ * Parse MoneyGraphInfo into an array of decoded money values.
+ * Wire format: "count,min,max,b0,b1,...,b(count-1)," (Kernel/Plotter.pas:117-124,
+ * KernelCache.pas:437). Each byte decodes as `((max - min) * byte) / 255 + min`
+ * (Voyager/Components/PlotterGrid.pas:120); the result is in thousands of dollars
+ * (Kernel/Kernel.pas:4182).
  */
 function parseMoneyGraph(graphInfo: string): number[] {
   const parts = graphInfo.split(',');
-  if (parts.length < 2) return [];
+  const count = parseInt(parts[0], 10);
+  const min = parseInt(parts[1], 10);
+  const max = parseInt(parts[2], 10);
+  if (isNaN(count) || isNaN(min) || isNaN(max) || count <= 0 || parts.length < 3 + count) {
+    return [];
+  }
 
   const values: number[] = [];
-  // Skip first value (count), parse rest as numbers
-  for (let i = 1; i < parts.length; i++) {
-    const num = parseFloat(parts[i]);
-    if (!isNaN(num)) {
-      values.push(num);
-    }
+  for (let i = 0; i < count; i++) {
+    const byte = parseInt(parts[3 + i], 10);
+    if (isNaN(byte)) return [];
+    values.push(((max - min) * byte) / 255 + min);
   }
 
   return values;
