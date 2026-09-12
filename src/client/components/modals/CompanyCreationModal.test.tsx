@@ -16,6 +16,8 @@ import {
 } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore, type TycoonStats } from '../../store/game-store';
+import { useProfileStore } from '../../store/profile-store';
+import type { TycoonProfileFull } from '@/shared/types';
 import { MAGNA_REFUSAL } from '@/shared/cluster-data';
 import { CompanyCreationModal } from './CompanyCreationModal';
 
@@ -36,6 +38,7 @@ async function submit(name: string): Promise<void> {
 beforeEach(() => {
   resetStores();
   useGameStore.setState({ companyCreationClusters: [], tycoonStats: null });
+  useProfileStore.setState({ profile: null });
 });
 
 describe('CompanyCreationModal name guard', () => {
@@ -95,7 +98,26 @@ describe('CompanyCreationModal name guard', () => {
   });
 });
 
-const BASE_STATS: TycoonStats = {
+const BASE_PROFILE: TycoonProfileFull = {
+  name: 'T',
+  realName: 'T',
+  ranking: 1,
+  budget: '0',
+  prestige: 0,
+  facPrestige: 0,
+  researchPrestige: 0,
+  facCount: 0,
+  facMax: 10,
+  area: 0,
+  nobPoints: 0,
+  licenceLevel: 0,
+  failureLevel: 0,
+  levelName: 'Tycoon',
+  levelTier: 2,
+};
+
+/** The periodic EVENT_TYCOON_UPDATE push — no level/nobility fields of its own. */
+const TYCOON_UPDATE_STATS: TycoonStats = {
   username: 'T',
   cash: '0',
   incomePerHour: '0',
@@ -104,22 +126,22 @@ const BASE_STATS: TycoonStats = {
   maxBuildings: 10,
 };
 
-function openWith(stats: TycoonStats | null): void {
+function openWith(profile: TycoonProfileFull | null): void {
   useGameStore.setState({
     companyCreationClusters: ['Dissidents', 'PGI', 'Mariko', 'Moab', 'Magna'],
-    tycoonStats: stats,
   });
+  useProfileStore.setState({ profile });
   useUiStore.getState().openModal('createCompany');
 }
 
 describe('CompanyCreationModal Magna gate', () => {
   it.each([
-    ['Paradigm, no nobility', { ...BASE_STATS, levelTier: 4, nobPoints: 0 }, true],
-    ['Tycoon, 100 nobility', { ...BASE_STATS, levelTier: 2, nobPoints: 100 }, true],
-    ['Tycoon, no nobility', { ...BASE_STATS, levelTier: 2, nobPoints: 0 }, false],
+    ['Paradigm, no nobility', { ...BASE_PROFILE, levelTier: 4, nobPoints: 0 }, true],
+    ['Tycoon, 100 nobility', { ...BASE_PROFILE, levelTier: 2, nobPoints: 100 }, true],
+    ['Tycoon, no nobility', { ...BASE_PROFILE, levelTier: 2, nobPoints: 0 }, false],
     ['profile unknown', null, false],
-  ] as const)('%s', (_label, stats, selectable) => {
-    openWith(stats);
+  ] as const)('%s', (_label, profile, selectable) => {
+    openWith(profile);
     renderWithProviders(<CompanyCreationModal />);
 
     fireEvent.click(screen.getByText('Magna Corp'));
@@ -138,7 +160,7 @@ describe('CompanyCreationModal Magna gate', () => {
   });
 
   it('never gates the other four seals', () => {
-    openWith({ ...BASE_STATS, levelTier: 2, nobPoints: 0 });
+    openWith({ ...BASE_PROFILE, levelTier: 2, nobPoints: 0 });
     renderWithProviders(<CompanyCreationModal />);
 
     for (const name of ['Dissidents', 'PGI', 'Mariko Enterprises', 'The Moab']) {
@@ -151,7 +173,7 @@ describe('CompanyCreationModal Magna gate', () => {
 
   it('refuses Enter on a locked Magna tab', () => {
     const onCreateCompanySubmit = jest.fn(async (..._args: unknown[]) => undefined);
-    openWith({ ...BASE_STATS, levelTier: 2, nobPoints: 0 });
+    openWith({ ...BASE_PROFILE, levelTier: 2, nobPoints: 0 });
     renderWithProviders(
       <CompanyCreationModal />,
       { clientCallbacks: createSpiedCallbacks({ onCreateCompanySubmit }) },
@@ -162,5 +184,21 @@ describe('CompanyCreationModal Magna gate', () => {
     fireEvent.keyDown(dialog, { key: 'Enter' });
 
     expect(onCreateCompanySubmit).not.toHaveBeenCalled();
+  });
+
+  it('stays unlocked after a periodic tycoon-stats push follows the profile load', () => {
+    // event-handler.ts:189-205 replaces tycoonStats wholesale on every
+    // EVENT_TYCOON_UPDATE, carrying no levelTier/nobPoints of its own — the gate
+    // must not regress once it reads the profile store instead (see plan diagnosis).
+    openWith({ ...BASE_PROFILE, levelTier: 4, nobPoints: 0 });
+    useGameStore.getState().setTycoonStats(TYCOON_UPDATE_STATS);
+    renderWithProviders(<CompanyCreationModal />);
+
+    fireEvent.click(screen.getByText('Magna Corp'));
+    const magnaTab = screen.getByText('Magna Corp').closest('button');
+
+    expect(magnaTab?.getAttribute('aria-disabled')).toBeNull();
+    expect(screen.getByPlaceholderText('Enter company name...')).toBeTruthy();
+    expect(screen.queryByText(MAGNA_REFUSAL)).toBeNull();
   });
 });

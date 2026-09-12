@@ -9,6 +9,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
+import { useProfileStore } from '../../store/profile-store';
 import { useClient } from '../../context';
 import {
   CLUSTER_DISPLAY_NAMES,
@@ -30,8 +31,11 @@ export function CompanyCreationModal() {
   const clusterInfoLoading = useGameStore((s) => s.clusterInfoLoading);
   const facilities = useGameStore((s) => s.clusterFacilities);
   const facilitiesLoading = useGameStore((s) => s.clusterFacilitiesLoading);
-  const tycoonStats = useGameStore((s) => s.tycoonStats);
-  const magnaLocked = !canBuildAdvanced(tycoonStats?.levelTier, tycoonStats?.nobPoints);
+  // RESP_GET_PROFILE (event-handler.ts:412-433) is the only writer of this slice; unlike
+  // tycoonStats it is never rebuilt by the periodic EVENT_TYCOON_UPDATE push
+  // (event-handler.ts:189-205), which carries no level/nobility fields of its own.
+  const profile = useProfileStore((s) => s.profile);
+  const magnaLocked = !canBuildAdvanced(profile?.levelTier, profile?.nobPoints);
 
   const [selectedCluster, setSelectedCluster] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<ClusterCategory | null>(null);
