@@ -10,7 +10,7 @@ describe('CommandBar', () => {
   beforeEach(() => {
     useUiStore.getState().clearSurfaces();
     useUiStore.setState({ modal: null, commandPaletteOpen: false, isPlacingBuilding: false, placementValid: false, placingFacility: null });
-    useGameStore.setState({ isRoadBuildingMode: false, isRoadDemolishMode: false, isZonePaintingMode: false, isPublicOfficeRole: false, tycoonStats: null, overlayBeforeMode: null });
+    useGameStore.setState({ isRoadBuildingMode: false, isRoadDemolishMode: false, isZonePaintingMode: false, isPublicOfficeRole: false, isVisitor: false, tycoonStats: null, overlayBeforeMode: null });
     useMailStore.setState({ unreadCount: 0 });
   });
 
@@ -167,6 +167,18 @@ describe('CommandBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('a visitor sees no Build/Empire tiles and no road/facilities items in More', () => {
+    useGameStore.setState({ isVisitor: true });
+    renderWithProviders(<CommandBar />);
+    expect(screen.queryByRole('button', { name: 'Build' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Empire' })).toBeNull();
+    for (const name of ['Map', 'Government', 'More']) expect(screen.getByRole('button', { name })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByRole('menuitem', { name: 'Build road' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Demolish road' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'My facilities' })).toBeNull();
   });
 
   it('mail tile opens the mail surface', () => {

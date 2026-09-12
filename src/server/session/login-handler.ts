@@ -24,6 +24,10 @@ import {
   writeRdoFrame,
 } from '../rdo-helpers';
 import { RDO_PREFIX_STRIP } from '../../shared/rdo-types';
+import { VISITOR_COMPANY_ID, VISITOR_COMPANY } from '../../shared/visitor-visa';
+
+// Voyager: AccountStatus = ACCOUNT_Unexisting → ResultType 'NEWACCOUNT' (ServerCnxHandler.pas:1087-1089); the constant is 2 (Protocol.pas:84).
+const ACCOUNT_UNEXISTING = 2;
 
 // ── Login Context ───────────────────────────────────────────────────────────
 
@@ -396,6 +400,7 @@ export async function loginWorld(
   ).packet, undefined, TimeoutCategory.FAST);
   const statusPayload = parsePropertyResponseHelper(statusPacket.payload!, 'res');
   ctx.log.debug(`[Session] AccountStatus: ${statusPayload}`);
+  const firstVisit = parseInt(statusPayload, 10) === ACCOUNT_UNEXISTING;
 
   // 4. Authenticate (call Logon)
   const logonPacket = await ctx.sendRdoRequest('world', rdoCall(
@@ -501,6 +506,11 @@ export async function loginWorld(
   }
   // 'unreachable': companies stays [], loginPage stays undefined — as today.
 
+  if (!loginPage && companyCount === 0 && companies.length === 0) {
+    // chooseCompany.asp:38-40 — zero companies is the visa fork, not an error.
+    loginPage = { kind: 'visa', firstVisit };
+  }
+
   ctx.setAvailableCompanies(companies);
 
   ctx.log.info('Login phase complete. Waiting for company selection...');
@@ -526,10 +536,16 @@ export async function selectCompany(ctx: LoginContext, companyId: string): Promi
   ctx.log.debug(`[Session] Selecting company ID: ${companyId}`);
 
   // Store the selected company for ASP requests (bank, profile, etc.)
-  const matched = ctx.getAvailableCompanies().find(c => c.id === companyId);
-  if (matched) {
-    ctx.setCurrentCompany(matched);
-    ctx.log.debug(`[Session] Current company set: ${matched.name}`);
+  if (companyId === VISITOR_COMPANY_ID) {
+    // chooseVisa.asp:44 → SetCompany Name=[VISITOR VISA] Id=0; Voyager keeps fCompanyId = 0 and still runs EnableEvents (ServerCnxHandler.pas:1167-1169).
+    ctx.setCurrentCompany(VISITOR_COMPANY);
+    ctx.log.info('[Session] Visitor visa — entering the world with no company');
+  } else {
+    const matched = ctx.getAvailableCompanies().find(c => c.id === companyId);
+    if (matched) {
+      ctx.setCurrentCompany(matched);
+      ctx.log.debug(`[Session] Current company set: ${matched.name}`);
+    }
   }
 
   // 1. EnableEvents (set to -1 to activate).

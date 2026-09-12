@@ -104,6 +104,7 @@ function loginResponder(overrides: Record<string, string> = {}): Responder {
       return `${member}="${props[member] ?? ''}"`;
     }
     if (packet.member === 'Logon') return overrides.Logon ?? `res="#${CONTEXT_ID}"`;
+    if (packet.member === 'AccountStatus') return overrides.AccountStatus ?? 'res="#0"';
     return 'res="#0"';
   };
 }
@@ -805,7 +806,7 @@ describe('loginWorld', () => {
     expect(result.companies).toEqual([]);
   });
 
-  it('shows the welcome (no loginPage) for a genuine newcomer: page reached, zero cells, count 0', async () => {
+  it('shows the visa page (returning visitor) for zero companies: page reached, zero cells, count 0', async () => {
     fetchMock.mockResolvedValue({
       url: 'http://1.2.3.4/chooseCompany.asp',
       text: async () => '<html><body>no companies here</body></html>',
@@ -815,9 +816,23 @@ describe('loginWorld', () => {
 
     const result = await runLoginWorld(fake);
 
-    expect(result.loginPage).toBeUndefined();
+    expect(result.loginPage).toEqual({ kind: 'visa', firstVisit: false });
     expect(result.companies).toEqual([]);
     expect(fake.log.error).not.toHaveBeenCalled();
+  });
+
+  it('shows the visa page with firstVisit true when AccountStatus is ACCOUNT_Unexisting (#2)', async () => {
+    fetchMock.mockResolvedValue({
+      url: 'http://1.2.3.4/chooseCompany.asp',
+      text: async () => '<html><body>no companies here</body></html>',
+    });
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder({ GetCompanyCount: '#0', AccountStatus: 'res="#2"' }));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toEqual({ kind: 'visa', firstVisit: true });
+    expect(result.companies).toEqual([]);
   });
 
   it('logs an error and reports COMPANY_LIST_MISMATCH when GetCompanyCount > 0 but the scrape is empty', async () => {
@@ -935,6 +950,22 @@ describe('selectCompany', () => {
 
     expect(fake.state.lastPlayerY).toBe(436);
     expect(fake.state.lastPlayerX).toBe(0);
+  });
+
+  it('enters as the visitor visa for company id "0" — same six-member order, no lookup failure', async () => {
+    const fake = makeLoginCtx({
+      sockets: ['world'], worldContextId: CONTEXT_ID, tycoonId: TYCOON_ID,
+      availableCompanies: COMPANIES,
+    });
+    fake.respond(selectResponder());
+
+    await selectCompany(fake.ctx, '0');
+
+    expect(fake.hooks.setCurrentCompany).toHaveBeenCalledWith({ id: '0', name: '[VISITOR VISA]' });
+    expect(fake.sent.map(s => s.packet.member)).toEqual([
+      'EnableEvents', 'PickEvent', 'GetTycoonCookie', 'GetTycoonCookie', 'GetTycoonCookie', 'PickEvent',
+    ]);
+    expect(fake.state.phase).toBe(SessionPhase.WORLD_CONNECTED);
   });
 
   it('leaves currentCompany alone when the id is not in the list', async () => {

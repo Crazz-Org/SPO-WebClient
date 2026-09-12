@@ -23,6 +23,7 @@ import {
   CompanyInfo,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { VISITOR_COMPANY_ID, VISITOR_COMPANY } from '../../shared/visitor-visa';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useGameStore } from '../store/game-store';
 import { useProfileStore } from '../store/profile-store';
@@ -111,9 +112,12 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
     if (resp.worldSeason !== undefined) ctx.worldSeason = resp.worldSeason;
 
     if (resp.loginPage) {
-      ClientBridge.log('Login', resp.loginPage.kind === 'denied'
-        ? `Login denied: access expired on ${resp.loginPage.expiresOn}`
-        : `Login page reported error: ${resp.loginPage.errorCode}`);
+      const page = resp.loginPage;
+      ClientBridge.log('Login', page.kind === 'denied'
+        ? `Login denied: access expired on ${page.expiresOn}`
+        : page.kind === 'visa'
+          ? 'Login: no companies — showing the visa choice'
+          : `Login page reported error: ${page.errorCode}`);
       ctx.availableCompanies = [];
       ClientBridge.showLoginPage(resp.loginPage);
       return;
@@ -141,7 +145,9 @@ export async function selectCompanyAndStart(ctx: ClientHandlerContext, companyId
   ClientBridge.log('Company', `Selecting company ID: ${companyId}...`);
 
   try {
-    const company = ctx.availableCompanies.find(c => c.id === companyId);
+    const company = companyId === VISITOR_COMPANY_ID
+      ? VISITOR_COMPANY
+      : ctx.availableCompanies.find(c => c.id === companyId);
     if (!company) throw new Error('Company not found');
 
     const needsSwitch = company.ownerRole && company.ownerRole !== ctx.storedUsername;

@@ -400,7 +400,8 @@ export interface WsRespConnectSuccess extends WsMessage {
 /** Where logonComplete.asp sent the login when it was not the company list (logonComplete.asp:182-186). */
 export type LoginPageOutcome =
   | { kind: 'denied'; expiresOn: string }   // logonNoAccess.asp — PA query value, e.g. "01/01/2020"
-  | { kind: 'error'; errorCode: string };   // logonError.asp — ErrorCode query value, or the mismatch tag
+  | { kind: 'error'; errorCode: string }    // logonError.asp — ErrorCode query value, or the mismatch tag
+  | { kind: 'visa'; firstVisit: boolean };  // chooseVisa.asp — firstVisit ≡ AccountStatus was ACCOUNT_Unexisting (Protocol.pas:84)
 
 export interface WsRespLoginSuccess extends WsMessage {
   type: WsMessageType.RESP_LOGIN_SUCCESS;

@@ -91,6 +91,17 @@ function buildLogonErrorHtml(): string {
 </html>`;
 }
 
+/** createCompany.asp — the visitor fork serves this form, no `companyId=` cell anywhere. */
+function buildCreateCompanyHtml(vars: ScenarioVariables): string {
+  return `<html>
+<head><title> Create Company </title></head>
+<body style="margin-top: 20px; padding-left: 20px">
+<div class=header2>Create a New Company</div>
+<div class=value>Welcome to ${vars.worldName}, ${vars.username}. You have no companies yet.</div>
+</body>
+</html>`;
+}
+
 function buildPleaseWaitHtml(): string {
   return `<html>
 <head><title> Company List </title>
@@ -227,7 +238,7 @@ export const COMPANY_PAGE_TREE: ProfitLossData = {
 };
 
 export interface CompanyListScenarioOptions {
-  logonResult?: 'companies' | 'noAccess' | 'error';
+  logonResult?: 'companies' | 'noAccess' | 'error' | 'noCompanies';
   expiresOn?: string;
   errorCode?: string;
 }
@@ -246,6 +257,9 @@ export function createCompanyListScenario(
     : logonResult === 'error'
       ? `logonError.asp?ErrorCode=${errorCode}&Logon=FALSE`
       : `chooseCompany.asp?ClientViewId=${vars.clientViewId}&PA=&Ooopsy=0&WorldName=${vars.worldName}&UserName=${vars.username}&Logon=FALSE&ISAddr=${vars.worldIp}&ISPort=${vars.worldPort}`;
+
+  // chooseCompany.asp:42 — the Logon=FALSE branch, zero companies redirects to createCompany.asp.
+  const chooseCompanyRedirect = `createCompany.asp?RenewVisitorVisa=YES&ClientViewId=${vars.clientViewId}&ISAddr=${vars.worldIp}&ISPort=${vars.worldPort}&WorldName=${vars.worldName}&UserName=${vars.username}&Logon=FALSE`;
 
   const exchanges: HttpScenario['exchanges'] = [
     {
@@ -291,6 +305,32 @@ export function createCompanyListScenario(
       contentType: 'text/html',
       body: buildLogonErrorHtml(),
     });
+  } else if (logonResult === 'noCompanies') {
+    exchanges.push(
+      {
+        id: 'cl-http-007',
+        method: 'GET',
+        urlPattern: '/Five/0/Visual/Voyager/NewLogon/chooseCompany.asp',
+        queryPatterns: {
+          WorldName: vars.worldName,
+          UserName: vars.username,
+        },
+        status: 302,
+        contentType: 'text/html',
+        body: '',
+        headers: {
+          Location: chooseCompanyRedirect,
+        },
+      },
+      {
+        id: 'cl-http-008',
+        method: 'GET',
+        urlPattern: '/Five/0/Visual/Voyager/NewLogon/createCompany.asp',
+        status: 200,
+        contentType: 'text/html',
+        body: buildCreateCompanyHtml(vars),
+      },
+    );
   } else {
     exchanges.push(
       {
@@ -352,20 +392,30 @@ export function createCompanyListScenario(
           worldName: vars.worldName,
         } as WsMessage,
         responses: [
-          {
-            type: WsMessageType.RESP_LOGIN_SUCCESS,
-            wsRequestId: 'cl-001',
-            tycoonId: '22',
-            contextId: vars.clientViewId,
-            companyCount: 1,
-            companies: [
-              {
-                id: vars.companyId,
-                name: vars.companyName,
-                ownerRole: vars.companyOwnerRole,
-              },
-            ],
-          } as WsMessage,
+          logonResult === 'noCompanies'
+            ? {
+                type: WsMessageType.RESP_LOGIN_SUCCESS,
+                wsRequestId: 'cl-001',
+                tycoonId: '22',
+                contextId: vars.clientViewId,
+                companyCount: 0,
+                companies: [],
+                loginPage: { kind: 'visa', firstVisit: false },
+              } as WsMessage
+            : {
+                type: WsMessageType.RESP_LOGIN_SUCCESS,
+                wsRequestId: 'cl-001',
+                tycoonId: '22',
+                contextId: vars.clientViewId,
+                companyCount: 1,
+                companies: [
+                  {
+                    id: vars.companyId,
+                    name: vars.companyName,
+                    ownerRole: vars.companyOwnerRole,
+                  },
+                ],
+              } as WsMessage,
         ],
         tags: ['auth'],
       },

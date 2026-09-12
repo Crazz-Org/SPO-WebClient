@@ -8,6 +8,7 @@ import { useUiStore } from '../../store/ui-store';
 import { useChatStore } from '../../store/chat-store';
 import { useMailStore } from '../../store/mail-store';
 import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
+import { useGameStore } from '../../store/game-store';
 import { BottomNav } from './BottomNav';
 import { BottomSheet } from './BottomSheet';
 
@@ -47,6 +48,13 @@ describe('BottomNav — the mobile command bar', () => {
     expect(useUiStore.getState().mobileTab).toBe('map');
     fireEvent.click(screen.getByLabelText('More'));
     expect(useUiStore.getState().mobileTab).toBe('more');
+  });
+
+  it('a visitor sees no Build tile', () => {
+    useGameStore.setState({ isVisitor: true });
+    renderWithProviders(<BottomNav />);
+    expect(screen.queryByLabelText('Build')).toBeNull();
+    for (const name of ['Map', 'Chat', 'Government', 'Mail', 'More']) expect(screen.getByLabelText(name)).toBeTruthy();
   });
 
   it('badges: unread chat on Chat, unread mail on Mail', () => {

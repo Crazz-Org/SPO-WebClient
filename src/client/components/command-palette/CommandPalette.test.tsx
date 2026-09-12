@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { screen, fireEvent, act } from '@testing-library/react';
 import { renderWithProviders, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
+import { useGameStore } from '../../store/game-store';
 import { useEmpireStore } from '../../store/empire-store';
 import { useSearchStore } from '../../store/search-store';
 import { CommandPalette } from './CommandPalette';
@@ -28,6 +29,7 @@ describe('CommandPalette', () => {
     jest.useFakeTimers();
     useUiStore.getState().clearSurfaces();
     useUiStore.setState({ commandPaletteOpen: true });
+    useGameStore.setState({ isVisitor: false });
     useEmpireStore.getState().reset();
     useSearchStore.getState().reset();
   });
@@ -41,6 +43,15 @@ describe('CommandPalette', () => {
     fireEvent.click(screen.getByText(/Open Government/));
     expect(useUiStore.getState().stack.map((s) => s.kind)).toEqual(['politics']);
     expect(useUiStore.getState().commandPaletteOpen).toBe(false);
+  });
+
+  it('omits Build and Empire commands for a visitor', () => {
+    useGameStore.setState({ isVisitor: true });
+    renderWithProviders(<CommandPalette />);
+    openPalette();
+    expect(screen.queryByText('Open Build Menu')).toBeNull();
+    expect(screen.queryByText('Open Empire Overview')).toBeNull();
+    expect(screen.getByText(/Open Government/)).toBeTruthy();
   });
 
   it('reads the facilities list and the towns page once when it opens empty, not again when loading or filled', () => {

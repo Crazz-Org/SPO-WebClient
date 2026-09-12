@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import type { CompanyInfo, WorldInfo, ClusterInfo, ClusterFacilityPreview, LoginPageOutcome } from '@/shared/types';
 import { SurfaceType } from '@/shared/types/domain-types';
+import { VISITOR_COMPANY_ID } from '@/shared/visitor-visa';
 
 /* ---- Utilities ---- */
 
@@ -94,6 +95,8 @@ interface GameState {
   worldName: string;
   companyName: string;
   companyId: string;
+  /** True when `companyId` is the visitor visa's company id (chooseVisa.asp — `SetCompany&Id=0`). */
+  isVisitor: boolean;
   reconnectAttempt: number;
 
   // World data
@@ -208,6 +211,7 @@ export const useGameStore = create<GameState>((set) => ({
   worldName: '',
   companyName: '',
   companyId: '',
+  isVisitor: false,
   reconnectAttempt: 0,
   companies: [],
   tycoonStats: null,
@@ -247,7 +251,7 @@ export const useGameStore = create<GameState>((set) => ({
   setCredentials: (username, tycoonId) =>
     set(tycoonId === undefined ? { username } : { username, tycoonId }),
   setWorld: (worldName) => set({ worldName }),
-  setCompany: (name, id) => set({ companyName: name, companyId: id }),
+  setCompany: (name, id) => set({ companyName: name, companyId: id, isVisitor: id === VISITOR_COMPANY_ID }),
   setCompanies: (companies) => set({ companies }),
   setSwitchingCompany: (switching) => set({ isSwitchingCompany: switching }),
 
@@ -326,6 +330,7 @@ export const useGameStore = create<GameState>((set) => ({
       worldName: '',
       companyName: '',
       companyId: '',
+      isVisitor: false,
       reconnectAttempt: 0,
       companies: [],
       tycoonStats: null,

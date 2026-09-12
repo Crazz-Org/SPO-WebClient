@@ -20,6 +20,7 @@ import { rdoCall } from '../../shared/rdo-frame';
 import { deriveResidenceClass } from './session-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
 import { parseResultCode } from '../rdo-helpers';
+import { VISITOR_COMPANY_ID } from '../../shared/visitor-visa';
 
 // ===========================================================================
 // SHARED — HTTP oracle
@@ -617,7 +618,7 @@ export async function placeBuilding(
   if (!ctx.worldContextId) {
     throw new Error('Not logged into world - cannot place building');
   }
-  if (!ctx.currentCompany) {
+  if (!ctx.currentCompany || ctx.currentCompany.id === VISITOR_COMPANY_ID) {
     throw new Error('No company selected - cannot place building');
   }
 

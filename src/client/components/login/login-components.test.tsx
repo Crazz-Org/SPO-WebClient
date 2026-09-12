@@ -155,9 +155,41 @@ describe('CompanyStage', () => {
     expect(screen.queryByText('Create New Company')).toBeNull();
   });
 
-  it('shows the welcome message when companies is empty and no loginPage is set', () => {
+  it('shows the two visa cards when companies is empty, no create-first-company message', () => {
     renderWithProviders(<CompanyStage {...defaultProps} companies={[]} />);
-    expect(screen.getByText(/Create your first company/)).toBeTruthy();
+    expect(screen.getByText('Tycoon Visa')).toBeTruthy();
+    expect(screen.getByText('Visitor Visa')).toBeTruthy();
+    expect(screen.queryByText(/Create your first company/)).toBeNull();
+  });
+
+  it('clicking the Visitor Visa card selects company id "0"', () => {
+    const onSelect = jest.fn();
+    renderWithProviders(<CompanyStage {...defaultProps} companies={[]} onSelect={onSelect} />);
+    fireEvent.click(screen.getByText('Visitor Visa'));
+    expect(onSelect).toHaveBeenCalledWith('0');
+  });
+
+  it('clicking the Tycoon Visa card calls onCreate', () => {
+    const onCreate = jest.fn();
+    renderWithProviders(<CompanyStage {...defaultProps} companies={[]} onCreate={onCreate} />);
+    fireEvent.click(screen.getByText('Tycoon Visa'));
+    expect(onCreate).toHaveBeenCalled();
+  });
+
+  it('shows "Apply for a Visa" and the first-visit sentence when firstVisit is true', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} companies={[]} loginPage={{ kind: 'visa', firstVisit: true }} />,
+    );
+    expect(screen.getByText('Apply for a Visa')).toBeTruthy();
+    expect(screen.getByText(/no record of you/)).toBeTruthy();
+  });
+
+  it('shows "Welcome back" and the returning sentence when firstVisit is false', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} companies={[]} loginPage={{ kind: 'visa', firstVisit: false }} />,
+    );
+    expect(screen.getByText('Welcome back to Shamba')).toBeTruthy();
+    expect(screen.getByText(/you already visited/)).toBeTruthy();
   });
 });
 

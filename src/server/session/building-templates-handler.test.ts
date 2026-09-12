@@ -111,6 +111,18 @@ describe('placeBuilding', () => {
     );
   });
 
+  it('refuses to build as a visitor (company id 0)', async () => {
+    const { ctx } = makeCtx('res="#0"');
+    (ctx as { currentCompany: { id: string; name: string } }).currentCompany = {
+      id: '0',
+      name: '[VISITOR VISA]',
+    };
+
+    await expect(placeBuilding(ctx, 'PGISupermarketC', 28, 618)).rejects.toThrow(
+      'No company selected'
+    );
+  });
+
   it('refuses to build when the company id is not a number', async () => {
     const { ctx } = makeCtx('res="#0"');
     (ctx as { currentCompany: { id: string } }).currentCompany = { id: 'Yellow Inc.' };

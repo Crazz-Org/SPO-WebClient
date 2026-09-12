@@ -9,6 +9,7 @@ import { useMemo } from 'react';
 import { GlassCard } from '../common';
 import { Plus, ArrowLeft } from 'lucide-react';
 import type { CompanyInfo, LoginPageOutcome } from '@/shared/types';
+import { VISITOR_COMPANY_ID } from '@/shared/visitor-visa';
 import styles from './CompanyStage.module.css';
 
 /** LogonNoAccess.asp:97-100 — the `01/01/2008` PA value is the sentinel for "never had access", not an expiry date. */
@@ -91,6 +92,54 @@ export function CompanyStage({
     );
   }
 
+  if (loginPage?.kind === 'visa' || companies.length === 0) {
+    const firstVisit = loginPage?.kind === 'visa' ? loginPage.firstVisit : false;
+    return (
+      <div className={styles.stage}>
+        <button className={styles.backLink} onClick={onBack}>
+          <ArrowLeft size={14} />
+          <span>Back to worlds</span>
+        </button>
+
+        <div className={styles.header}>
+          <h2 className={styles.title}>
+            {firstVisit ? 'Apply for a Visa' : `Welcome back to ${worldName}`}
+          </h2>
+          <span className={styles.worldTag}>{worldName}</span>
+        </div>
+
+        <p className={styles.emptyMessage}>
+          {firstVisit
+            ? `There is no record of you in IFEL's files for ${worldName}. You need a visa to enter this world.`
+            : `It seems that you already visited ${worldName}. Visitor Visas have to be renewed every time you enter — maybe it is time to become a Tycoon!`}
+        </p>
+
+        <div className={styles.grid}>
+          <GlassCard className={styles.companyCard} onClick={() => !isLoading && onCreate()}>
+            <div className={styles.companyName}>Tycoon Visa</div>
+            <span className={styles.visaHint}>Get $100,000,000 · Create a company · Build an empire</span>
+          </GlassCard>
+          <GlassCard
+            className={styles.companyCard}
+            onClick={() => !isLoading && onSelect(VISITOR_COMPANY_ID)}
+          >
+            <div className={styles.companyName}>Visitor Visa</div>
+            <span className={styles.visaHint}>Meet new people · See what&apos;s happening · Become a Tycoon later</span>
+          </GlassCard>
+        </div>
+
+        {isLoading && (
+          <div className={styles.overlay}>
+            <div className={styles.overlayContent}>
+              <div className={styles.spinner} />
+              <span className={styles.overlayText}>Entering world...</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={styles.stage}>
       <button className={styles.backLink} onClick={onBack}>
@@ -99,15 +148,9 @@ export function CompanyStage({
       </button>
 
       <div className={styles.header}>
-        <h2 className={styles.title}>{companies.length > 0 ? 'Select a Company' : 'Get Started'}</h2>
+        <h2 className={styles.title}>Select a Company</h2>
         <span className={styles.worldTag}>{worldName}</span>
       </div>
-
-      {companies.length === 0 && (
-        <p className={styles.emptyMessage}>
-          Welcome to {worldName}! Create your first company to start building your empire.
-        </p>
-      )}
 
       {/* Player-owned companies */}
       {owned.length > 0 && (
