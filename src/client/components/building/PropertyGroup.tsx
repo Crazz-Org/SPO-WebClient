@@ -43,8 +43,8 @@ export { resolveRdoCommand, computePendingKey, parseCloneMenu, getColorClass } f
 /** The five values the upgrade group carries alongside its control. */
 const UPGRADE_VALUE_NAMES = ['UpgradeLevel', 'MaxUpgrade', 'NextUpgCost', 'Upgrading', 'Pending'];
 /** The subset the UPGRADE_ACTIONS control prints inside itself — a row would
- *  repeat these. NextUpgCost is NOT among them: the control never shows the
- *  cost, so its row stays. */
+ *  repeat these. NextUpgCost is NOT among them: the control shows the total for
+ *  the chosen count, the row shows the per-level cost, so the row stays. */
 const UPGRADE_WIDGET_OWNED_NAMES = ['UpgradeLevel', 'MaxUpgrade', 'Upgrading', 'Pending'];
 
 interface PropertyGroupProps {
@@ -583,8 +583,8 @@ function DefinedProperties({
     // The UPGRADE_ACTIONS control prints level / max / pending inside itself —
     // a row here would repeat them. When the group has no control (or it were
     // hidden again) they fall through to ordinary rows instead, so no value is
-    // ever silently lost. NextUpgCost always renders as a row: the control
-    // never shows the cost of the spend it triggers.
+    // ever silently lost. NextUpgCost always renders as a row: the control shows
+    // the total for the chosen count, the row shows the per-level cost.
     if (upgradeControlShown && UPGRADE_WIDGET_OWNED_NAMES.includes(def.rdoName)) {
       rendered.add(def.rdoName);
       continue;

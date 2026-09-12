@@ -16,6 +16,7 @@ import type { PropertyDefinition } from '@/shared/building-details';
 import { formatCurrency } from '@/shared/building-details';
 import { parseCloneMenu } from './property-utils';
 import { useBuildingStore } from '../../store/building-store';
+import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
 import styles from './PropertyGroup.module.css';
 
@@ -45,6 +46,32 @@ export function UpgradeActions({
   const pending = parseInt(vm.get('Pending') ?? '0');
   const remaining = Math.max(0, maxLevel - currentLevel);
 
+  // The spend the control is about to trigger. A missing, non-numeric or zero
+  // unit cost means the total cannot be stated, so the row is not offered at all.
+  const unitCost = parseFloat(vm.get('NextUpgCost') ?? '0');
+  const costKnown = Number.isFinite(unitCost) && unitCost > 0;
+  // `qty` is clamped by the - / + / onChange handlers, but `remaining` can shrink
+  // under it between renders — `count` is what the row displays and sends.
+  const count = Math.min(Math.max(1, qty), Math.max(1, remaining));
+  const total = unitCost * count;
+
+  const handleStartUpgrade = () => {
+    useUiStore.getState().requestConfirm(
+      'Start Upgrade',
+      `Start ${count} upgrade level${count === 1 ? '' : 's'} for ${formatCurrency(total)}?`,
+      () => client.onUpgradeBuilding(buildingX, buildingY, 'START_UPGRADE', count),
+      {
+        kind: 'spend',
+        confirmLabel: 'Upgrade',
+        typeToConfirm: null,
+        rows: [
+          { label: 'Levels', value: String(count) },
+          { label: 'Total', value: formatCurrency(total), tone: 'gold' },
+        ],
+      },
+    );
+  };
+
   return (
     <div className={styles.upgradeContainer}>
       <div className={styles.upgradeLevel}>
@@ -63,7 +90,7 @@ export function UpgradeActions({
               STOP
             </button>
           ) : (
-            remaining > 0 && (
+            remaining > 0 && costKnown && (
               <div className={styles.upgradeRow}>
                 <span className={styles.upgradeLabel}>Upgrade</span>
                 <button className={styles.upgradeBtn} onClick={() => setQty((q) => Math.max(1, q - 1))}>-</button>
@@ -72,13 +99,14 @@ export function UpgradeActions({
                   className={styles.upgradeQty}
                   min={1}
                   max={remaining}
-                  value={qty}
+                  value={count}
                   onChange={(e) => setQty(Math.min(remaining, Math.max(1, parseInt(e.target.value) || 1)))}
                 />
                 <button className={styles.upgradeBtn} onClick={() => setQty((q) => Math.min(remaining, q + 1))}>+</button>
+                <span className={styles.upgradeTotal} data-testid="upgrade-total">{formatCurrency(total)}</span>
                 <button
                   className={styles.upgradeOkBtn}
-                  onClick={() => client.onUpgradeBuilding(buildingX, buildingY, 'START_UPGRADE', qty)}
+                  onClick={handleStartUpgrade}
                 >
                   OK
                 </button>

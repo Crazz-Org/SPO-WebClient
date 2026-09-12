@@ -6,7 +6,8 @@
  * so the Upgrade / Downgrade / Stop buttons were unreachable from the UI on
  * every building, and the B5 downgrade confirmation had no entry point.
  * These tests pin the exception: the control renders, its widget-owned values
- * do not repeat as rows, and the cost (which the widget never shows) does.
+ * do not repeat as rows, and the per-level cost does (the widget shows only the
+ * total for the chosen count — see upgrade-confirm.test.tsx).
  */
 
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
@@ -54,7 +55,7 @@ describe('upgrade actions are reachable again', () => {
     // The widget states the level; no duplicate plain rows for what it owns
     expect(screen.queryByText('Current Level')).toBeNull();
     expect(screen.queryByText('Max Level')).toBeNull();
-    // The cost the control never shows still has its row
+    // The per-level cost still has its row; the control shows only the total
     expect(screen.getByText('Upgrade Cost')).toBeTruthy();
   });
 
