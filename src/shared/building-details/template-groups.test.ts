@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from '@jest/globals';
 import { RDO_MEMBERS, isCataloguedRdoMember } from '../rdo-members';
-import { PropertyType } from './property-definitions';
+import { PropertyType, type BuildingTemplate } from './property-definitions';
 import { HIDDEN_PROPERTY_NAMES } from './hidden-properties';
 import {
   HANDLER_TO_GROUP,
@@ -310,12 +310,34 @@ describe('General handler RDO properties', () => {
     const cardProp = SRV_GENERAL_GROUP.properties.find(p => p.type === PropertyType.SERVICE_CARDS);
     expect(cardProp).toBeDefined();
     expect(cardProp!.countProperty).toBe('ServiceCount');
-    expect(cardProp!.columns).toHaveLength(6);
+    expect(cardProp!.columns).toHaveLength(7);
 
     const priceCol = cardProp!.columns!.find(c => c.rdoSuffix === 'srvPrices');
     expect(priceCol).toBeDefined();
     expect(priceCol!.editable).toBe(true);
     expect(priceCol!.type).toBe(PropertyType.SLIDER);
+  });
+
+  it('SrvGeneral declares the srvSales column, unsuffixed, expanding to srvSales0', () => {
+    // Services.asp:57 (mvcProperty=Sales); ServiceBlock.pas:1735 WriteInteger('srvSales'+i)
+    const cardProp = SRV_GENERAL_GROUP.properties.find(p => p.type === PropertyType.SERVICE_CARDS);
+    const salesCol = cardProp!.columns!.find(c => c.rdoSuffix === 'srvSales');
+    expect(salesCol).toBeDefined();
+    expect(salesCol!.label).toBe('Sales');
+    expect(salesCol!.type).toBe(PropertyType.PERCENTAGE);
+    expect(salesCol!.indexSuffix).toBeUndefined();
+    expect(salesCol!.editable).toBeFalsy();
+    // Sits beside Offer and Demand, before the price columns
+    const order = cardProp!.columns!.map(c => c.rdoSuffix);
+    expect(order.indexOf('srvSales')).toBe(order.indexOf('srvDemands') + 1);
+
+    // Property-name expansion for index 0 is exactly `srvSales0` — no language suffix
+    const template = { id: 't', name: 't', groups: [SRV_GENERAL_GROUP] } as unknown as BuildingTemplate;
+    const collected = collectTemplatePropertyNamesStructured(template);
+    const info = collected.indexedByCount.get('ServiceCount')!.find(i => i.rdoName === 'srvNames')!;
+    const col = info.columns!.find(c => c.rdoSuffix === 'srvSales')!;
+    const suffix = col.indexSuffix !== undefined ? col.indexSuffix : (info.indexSuffix ?? '');
+    expect(`${col.rdoSuffix}0${col.columnSuffix ?? ''}${suffix}`).toBe('srvSales0');
   });
 });
 

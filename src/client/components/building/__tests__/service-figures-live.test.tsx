@@ -212,3 +212,31 @@ describe('the selected service is polled off the block', () => {
     hidden.mockRestore();
   });
 });
+
+describe('the Sales column', () => {
+  function renderTabWithProps(props: BuildingPropertyValue[], onRequestServiceFigures: (...a: unknown[]) => unknown) {
+    return renderWithProviders(
+      <PropertyGroup properties={props} buildingX={X} buildingY={Y} />,
+      { clientCallbacks: createSpiedCallbacks({ onRequestServiceFigures }) },
+    );
+  }
+
+  it('renders blank when srvSales is absent from the cache', () => {
+    renderTab(figuresSpy() as never);
+
+    expect(screen.queryByText(/^Sales: /)).toBeNull();
+    expect(screen.queryByText('Sales: 0%')).toBeNull();
+  });
+
+  it('shows the cached srvSales value per service when present', () => {
+    const propsWithSales: BuildingPropertyValue[] = [
+      ...PROPS,
+      { name: 'srvSales0', value: '80' } as BuildingPropertyValue,
+      { name: 'srvSales1', value: '35' } as BuildingPropertyValue,
+    ];
+    renderTabWithProps(propsWithSales, figuresSpy() as never);
+
+    expect(screen.getByText('Sales: 80%')).toBeTruthy();
+    expect(screen.getByText('Sales: 35%')).toBeTruthy();
+  });
+});
