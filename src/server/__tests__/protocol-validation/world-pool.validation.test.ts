@@ -118,7 +118,9 @@ describe('Protocol Validation: world connection pool', () => {
         { rdoScenarios: [authBundle.rdo] },
         { rdoScenarios: [worldListBundle.rdo] },
         {
-          rdoScenarios: [createWorldLoginRdoScenario()],
+          // The company bundle answers the five indexed reads of step 10 —
+          // without it the login hangs waiting for the first one.
+          rdoScenarios: [createWorldLoginRdoScenario(), companyBundle.rdo],
           fallbackResponses: worldFallbacks,
           pushTriggers: buildLoginPushTriggers(CONTEXT_ID),
         },
@@ -128,9 +130,13 @@ describe('Protocol Validation: world connection pool', () => {
     });
   }
 
-  /** Pool connections answer ordinary reads; they must never see login frames. */
+  /**
+   * Pool connections answer ordinary reads; they must never see login frames.
+   * The five indexed company reads of step 10 ARE ordinary reads — they happen
+   * after the pool is populated, so a pool connection is what answers them.
+   */
   const poolSocketConfig = {
-    rdoScenarios: [],
+    rdoScenarios: [companyBundle.rdo],
     fallbackResponses: worldFallbacks,
     disableStrictValidation: true,
   };

@@ -3,6 +3,11 @@
  *
  * Stage C of the cinematic login flow.
  * Company cards grouped by role + "Create New Company" ghost card.
+ *
+ * A card shows everything `chooseCompany.asp` shows before a company is
+ * entered: its cluster seal (`:186`), its facility count, and the owner role —
+ * rendered as "Private" when the role is the logged-in account itself
+ * (`chooseCompany.asp:193-197`).
  */
 
 import { useMemo } from 'react';
@@ -14,15 +19,49 @@ import styles from './CompanyStage.module.css';
 interface CompanyStageProps {
   companies: CompanyInfo[];
   worldName: string;
+  /** The logged-in account — the card whose owner role equals it reads "Private". */
+  username: string;
+  /** Interface Server host the seals are served from; without it, no <img>. */
+  worldIp?: string;
   onSelect: (companyId: string) => void;
   onCreate: () => void;
   onBack: () => void;
   isLoading: boolean;
 }
 
+/**
+ * The cluster seal the page itself loads — `images/comp-<cluster>.gif` under
+ * the world's own NewLogon directory (`chooseCompany.asp:186`). The repo ships
+ * no cluster art, so the image comes from the game host, as the mail bodies do.
+ */
+export function companySealUrl(worldIp: string, cluster: string): string {
+  return `http://${worldIp}/Five/0/Visual/Voyager/NewLogon/images/comp-${cluster.toLowerCase()}.gif`;
+}
+
+/** The seal, or a text medallion when there is no art to point at. */
+function CompanySeal({ cluster, worldIp }: { cluster?: string; worldIp?: string }) {
+  if (cluster && worldIp) {
+    return <img className={styles.seal} alt={cluster} src={companySealUrl(worldIp, cluster)} />;
+  }
+  return <span className={styles.sealFallback}>{cluster || '?'}</span>;
+}
+
+/** The role badge, with the ASP's "Private" rule applied. */
+function roleLabel(company: CompanyInfo, username: string): string | undefined {
+  if (!company.ownerRole) return undefined;
+  return company.ownerRole === username ? 'Private' : company.ownerRole;
+}
+
+/** `38 Facilities` in the ASP; one facility is still singular here. */
+function facilityLabel(count: number): string {
+  return count === 1 ? '1 facility' : `${count} facilities`;
+}
+
 export function CompanyStage({
   companies,
   worldName,
+  username,
+  worldIp,
   onSelect,
   onCreate,
   onBack,
@@ -73,9 +112,13 @@ export function CompanyStage({
                 className={styles.companyCard}
                 onClick={() => !isLoading && onSelect(company.id)}
               >
+                <CompanySeal cluster={company.cluster} worldIp={worldIp} />
                 <div className={styles.companyName}>{company.name}</div>
-                {company.ownerRole && (
-                  <span className={styles.roleBadge}>{company.ownerRole}</span>
+                {roleLabel(company, username) && (
+                  <span className={styles.roleBadge}>{roleLabel(company, username)}</span>
+                )}
+                {typeof company.facilityCount === 'number' && (
+                  <span className={styles.facilities}>{facilityLabel(company.facilityCount)}</span>
                 )}
                 {company.value != null && (
                   <span className={styles.companyValue}>
@@ -99,10 +142,14 @@ export function CompanyStage({
                 className={styles.companyCard}
                 onClick={() => !isLoading && onSelect(company.id)}
               >
+                <CompanySeal cluster={company.cluster} worldIp={worldIp} />
                 <div className={styles.companyName}>{company.name}</div>
                 <span className={`${styles.roleBadge} ${styles.politicalBadge}`}>
-                  {company.ownerRole}
+                  {roleLabel(company, username)}
                 </span>
+                {typeof company.facilityCount === 'number' && (
+                  <span className={styles.facilities}>{facilityLabel(company.facilityCount)}</span>
+                )}
               </GlassCard>
             ))}
           </div>

@@ -1,19 +1,81 @@
+/// <reference path="../../server/__tests__/matchers/rdo-matchers.d.ts" />
+
 /**
- * Proves the L1 CompanyPage.asp exchanges the criterion asks for: a request
- * naming a company is matched, the served markup parses to COMPANY_PAGE_TREE
- * through the real gateway (StarpeaceSession -> fetchCompanyProfitLoss), and
- * the active company is never what was sent or what was switched to.
+ * Proves the L1 exchanges the criterion asks for: the five indexed company
+ * reads carry an INTEGER index and answer the captured company field by field,
+ * a CompanyPage.asp request naming a company is matched, the served markup
+ * parses to COMPANY_PAGE_TREE through the real gateway (StarpeaceSession ->
+ * fetchCompanyProfitLoss), and the active company is never what was sent or
+ * what was switched to.
  */
 
 jest.mock('node-fetch', () => ({ __esModule: true, default: jest.fn() }));
 
 import fetch from 'node-fetch';
 import { StarpeaceSession } from '@/server/spo_session';
+import { RdoProtocol } from '@/server/rdo';
 import { HttpMock } from '../http-mock';
+import { RdoMock } from '../rdo-mock';
+import { RdoStrictValidator, ViolationType } from '../rdo-strict-validator';
 import { DEFAULT_VARIABLES } from './scenario-variables';
-import { createCompanyListScenario, COMPANY_PAGE_TREE } from './company-list-scenario';
+import { createCompanyListScenario, COMPANY_PAGE_TREE, CAPTURED_COMPANY } from './company-list-scenario';
 
 const fetchMock = fetch as unknown as jest.Mock;
+
+describe('company-list scenario — the five indexed company reads', () => {
+  const { rdo } = createCompanyListScenario();
+
+  /** Every field the login path reads, with the answer it must come back with. */
+  const FIELDS: ReadonlyArray<[string, string]> = [
+    ['GetCompanyOwnerRole', `%${CAPTURED_COMPANY.ownerRole}`],
+    ['GetCompanyName', `%${CAPTURED_COMPANY.name}`],
+    ['GetCompanyId', `#${CAPTURED_COMPANY.id}`],
+    ['GetCompanyCluster', `%${CAPTURED_COMPANY.cluster}`],
+    ['GetCompanyFacilityCount', `#${CAPTURED_COMPANY.facilityCount}`],
+  ];
+
+  it('passes strict RDO validation', () => {
+    expect(rdo).toPassStrictRdoValidation();
+  });
+
+  it('carries the count read and the five CALLs, in the ASP\'s order', () => {
+    expect(rdo.exchanges.map(e => e.matchKeys!.member)).toEqual([
+      'GetCompanyCount', ...FIELDS.map(([member]) => member),
+    ]);
+    // All five are functions: "^", never the void "*".
+    for (const exchange of rdo.exchanges.slice(1)) {
+      expect(exchange.request).toContain('"^"');
+      expect(exchange.request).not.toContain('"*"');
+    }
+  });
+
+  it('reads a widestring index as a type mismatch, and an integer one as correct', () => {
+    const validator = new RdoStrictValidator();
+    validator.addScenario(rdo);
+
+    const wrong = `C 1 sel ${DEFAULT_VARIABLES.clientViewId} call GetCompanyName "^" "%0"`;
+    // `index : integer` (InterfaceServer.pas:170) — a widestring lands in the
+    // register as a pointer, and the ASP itself passes CInt(i).
+    expect(validator.validate(RdoProtocol.parse(wrong), wrong).map(v => v.type))
+      .toEqual([ViolationType.ARG_TYPE_PREFIX_MISMATCH]);
+
+    const right = `C 2 sel ${DEFAULT_VARIABLES.clientViewId} call GetCompanyName "^" "#0"`;
+    expect(validator.validate(RdoProtocol.parse(right), right)).toEqual([]);
+  });
+
+  it('answers each frame with the captured company\'s own value', () => {
+    const mock = new RdoMock();
+    mock.addScenario(rdo);
+
+    for (const [member, answer] of FIELDS) {
+      const frame = `C 9 sel ${DEFAULT_VARIABLES.clientViewId} call ${member} "^" "#0"`;
+      const result = mock.match(frame);
+      expect(result).not.toBeNull();
+      expect(result!.exchange.matchKeys!.member).toBe(member);
+      expect(result!.response).toContain(`res="${answer}"`);
+    }
+  });
+});
 
 describe('company-list scenario — CompanyPage.asp matching', () => {
   const { http } = createCompanyListScenario();

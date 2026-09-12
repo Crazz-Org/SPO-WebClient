@@ -547,7 +547,7 @@ A res="%Advertisement\t0\t0\t0\t1680\tyes\thits\tComputer Services\t1\t1\t100\t2
 |--------------------|-------------------|-------------|
 | `auth-scenario` | DirectoryServer.pas | `RDOOpenSession`, `RDOMapSegaUser`, `RDOLogonUser`, `RDOEndSession` |
 | `world-list-scenario` | DirectoryServer.pas | `RDOSetCurrentKey`, `RDOQueryKey` |
-| `company-list-scenario` | InterfaceServer.pas | `GetCompanyList`, `GetCompanyCount`, `GetCompanyName`, `GetCompanyId` |
+| `company-list-scenario` | InterfaceServer.pas | `GetCompanyCount` (property), then `GetCompanyOwnerRole`, `GetCompanyName`, `GetCompanyId`, `GetCompanyCluster`, `GetCompanyFacilityCount` — five 1-arg `function`s on `TClientView` (`:169-173`) |
 | `select-company-scenario` | InterfaceServer.pas | `Logon`, `MailAccount`, `TycoonId`, `RegisterEventsById`, `EnableEvents` |
 | `switch-focus-scenario` | InterfaceServer.pas | `SwitchFocus` / `SwitchFocusEx` |
 | `build-menu-scenario` | InterfaceServer.pas | `NewFacility` |

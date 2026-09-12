@@ -28,6 +28,8 @@ export interface CompanyInfo {
   name: string;
   value?: number;
   ownerRole?: string; // Role de fonction publique (Maire, Ministre, Président) ou username du joueur
+  cluster?: string;   // Cluster seal the company belongs to (PGI, Mariko, Moab, Magna, Dissidents)
+  facilityCount?: number; // Facilities the company owns, as the login path read it
 }
 
 // =============================================================================

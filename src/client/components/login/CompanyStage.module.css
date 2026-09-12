@@ -106,6 +106,34 @@
   box-shadow: 0 4px 20px rgba(212, 168, 83, 0.15);
 }
 
+/* Cluster seal — comp-<cluster>.gif served by the world's own IIS */
+.seal {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  align-self: flex-start;
+}
+
+.sealFallback {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-align: center;
+  overflow: hidden;
+}
+
+.facilities {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
 .companyName {
   font-size: var(--text-base);
   font-weight: var(--font-bold);

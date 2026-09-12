@@ -20,6 +20,7 @@ export function ServerSwitchOverlay() {
   const stage = useGameStore((s) => s.loginStage);
   const worlds = useGameStore((s) => s.loginWorlds);
   const companies = useGameStore((s) => s.companies);
+  const username = useGameStore((s) => s.username);
   const isLoading = useGameStore((s) => s.loginLoading);
   const setLoginStage = useGameStore((s) => s.setLoginStage);
   const setLoginLoading = useGameStore((s) => s.setLoginLoading);
@@ -105,6 +106,8 @@ export function ServerSwitchOverlay() {
           <CompanyStage
             companies={companies}
             worldName={selectedWorld}
+            username={username}
+            worldIp={worlds.find((w) => w.name === selectedWorld)?.ip}
             onSelect={handleCompanySelect}
             onCreate={handleCreateCompany}
             onBack={handleBackToWorlds}

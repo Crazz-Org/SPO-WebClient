@@ -3,11 +3,10 @@
  *
  * Contains the login/company lifecycle: directory authentication, world login,
  * company selection, company creation, and company switching.
- * Also includes directory query helpers (parseDirectoryResult, fetchCompaniesViaHttp, etc.)
+ * Also includes directory query helpers (parseDirectoryResult, fetchCompaniesViaRdo, etc.)
  */
 
 import * as net from 'net';
-import { fetchWithTimeout } from '../fetch-with-timeout';
 import type { RdoPacket, WorldInfo, CompanyInfo } from '../../shared/types';
 import { SessionPhase, DIRECTORY_QUERY } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
@@ -479,8 +478,8 @@ export async function loginWorld(
   const companyCount = parseInt(companyCountStr, 10) || 0;
   ctx.log.debug(`[Session] Company Count: ${companyCount}`);
 
-  // 10. Fetch companies via HTTP for UI
-  const { companies } = await fetchCompaniesViaHttp(ctx, world.ip, username);
+  // 10. Read the companies themselves, one indexed CALL per field
+  const companies = await fetchCompaniesViaRdo(ctx, contextId, companyCount);
   ctx.setAvailableCompanies(companies);
 
   ctx.log.info('Login phase complete. Waiting for company selection...');
@@ -636,7 +635,8 @@ export async function createCompany(
         const newName = companyMatch[1];
         const newId = companyMatch[2];
         ctx.log.info(`[Session] Company created: "${newName}" (ID: ${newId})`);
-        ctx.pushAvailableCompany({ id: newId, name: newName, ownerRole: username });
+        // The cluster is the one the player just chose; a new company owns nothing yet.
+        ctx.pushAvailableCompany({ id: newId, name: newName, ownerRole: username, cluster, facilityCount: 0 });
         return { success: true, companyName: newName, companyId: newId };
       }
 
@@ -728,8 +728,9 @@ export async function switchCompany(ctx: LoginContext, company: CompanyInfo): Pr
   ctx.log.debug(`[Session] Re-logged in as "${loginUsername}", contextId: ${result.contextId}`);
   ctx.log.debug(`[Session] After switchCompany - interfaceServerId: ${ctx.interfaceServerId}, worldId: ${ctx.worldId}`);
 
-  // Ensure the target company exists in the refreshed list — the ASP endpoint
-  // may serve a cached response that does not yet include a freshly created company.
+  // Ensure the target company exists in the refreshed list — the re-login reads
+  // the list off the new ClientView, and a company created seconds ago may not
+  // be in the count that view answers yet.
   const exists = ctx.getAvailableCompanies().find(c => c.id === company.id);
   if (!exists) {
     ctx.log.warn(`[Session] Company "${company.name}" (${company.id}) missing from refreshed list — re-injecting`);
@@ -811,75 +812,63 @@ async function fetchWorldProperties(ctx: LoginContext, interfaceServerId: string
 }
 
 /**
- * Fetch companies via HTTP (ASP endpoint)
+ * Read the player's companies off the ClientView, one indexed CALL per field.
+ *
+ * This is what `chooseCompany.asp:166-170` does with `CInt(i)`: five
+ * `function GetCompanyX( index : integer ) : OleVariant` reads per company
+ * (`Interface Server/InterfaceServer.pas:169-173`), in the page's own order.
+ * They are sent sequentially, like every other login frame.
+ *
+ * `GetCompanyCount` is the authority on how many there are: an answer that
+ * cannot be a company throws, so the list can never be silently shorter than
+ * the count. A transport failure propagates like any other login frame — an
+ * empty list must never stand in for "the server did not answer".
  */
-async function fetchCompaniesViaHttp(
+async function fetchCompaniesViaRdo(
   ctx: LoginContext,
-  worldIp: string,
-  username: string,
-): Promise<{ companies: CompanyInfo[]; realContextId: string | null }> {
-  const params = new URLSearchParams({
-    frame_Id: 'LogonView',
-    frame_Class: 'HTMLView',
-    frame_Align: 'client',
-    ResultType: 'NORMAL',
-    Logon: 'FALSE',
-    frame_NoBorder: 'True',
-    frame_NoScrollBars: 'true',
-    ClientViewId: '0',
-    WorldName: ctx.currentWorldInfo?.name || 'Shamba',
-    UserName: username,
-    DSAddr: config.rdo.directoryHost,
-    DSPort: String(config.rdo.ports.directory),
-    ISAddr: worldIp,
-    ISPort: '8000',
-    LangId: '0',
-  });
+  contextId: string,
+  companyCount: number,
+): Promise<CompanyInfo[]> {
+  const companies: CompanyInfo[] = [];
 
-  const url = `http://${worldIp}/Five/0/Visual/Voyager/NewLogon/logonComplete.asp?${params.toString().replace(/\+/g, '%20')}`;
-  ctx.log.debug(`[HTTP] Fetching companies from ${url}`);
+  for (let i = 0; i < companyCount; i++) {
+    const ownerRole = await readCompanyField(ctx, 'GetCompanyOwnerRole', contextId, i);
+    const name = await readCompanyField(ctx, 'GetCompanyName', contextId, i);
+    const id = await readCompanyField(ctx, 'GetCompanyId', contextId, i);
+    const cluster = await readCompanyField(ctx, 'GetCompanyCluster', contextId, i);
+    const facilityCountStr = await readCompanyField(ctx, 'GetCompanyFacilityCount', contextId, i);
 
-  try {
-    const response = await fetchWithTimeout(url, { redirect: 'follow' });
-    const text = await response.text();
-    const finalUrl = response.url;
-
-    // Extract ClientViewId (priority: URL > body)
-    let realId: string | null = null;
-    const matchUrl = /ClientViewId=(\d+)/i.exec(finalUrl);
-    if (matchUrl) realId = matchUrl[1];
-
-    if (!realId) {
-      const matchBody = /ClientViewId=(\d+)/i.exec(text);
-      if (matchBody) realId = matchBody[1];
+    // A server-side failure answers `#1` (ERROR_Unknown, Protocol/Protocol.pas:30)
+    // in the id slot, which is indistinguishable from company id 1 — but the
+    // widestring slots then answer '' or '#1', so the name check catches it.
+    const facilityCount = parseInt(facilityCountStr, 10);
+    if (!/^\d+$/.test(id) || !name || !Number.isInteger(facilityCount)) {
+      throw new Error(
+        `Company list mismatch: GetCompanyCount answered ${companyCount} but company ${i} ` +
+        `came back as id="${id}", name="${name}", facilityCount="${facilityCountStr}"`
+      );
     }
 
-    // Parse companies with regex
-    const companies: CompanyInfo[] = [];
-    const tdRegex = /<td[^>]*companyId="(\d+)"[^>]*>/gi;
-    let tdMatch;
-
-    while ((tdMatch = tdRegex.exec(text)) !== null) {
-      const companyId = tdMatch[1];
-      const tdElement = tdMatch[0];
-
-      const nameMatch = /companyName="([^"]+)"/i.exec(tdElement);
-      const companyName = nameMatch ? nameMatch[1] : `Company ${companyId}`;
-
-      const roleMatch = /companyOwnerRole="([^"]*)"/i.exec(tdElement);
-      const ownerRole = roleMatch ? roleMatch[1] : username;
-
-      ctx.log.debug(`[HTTP] Company parsed - ID: ${companyId}, Name: ${companyName}, ownerRole: ${ownerRole} ${roleMatch ? '(from HTML)' : '(defaulted to username)'}`);
-
-      companies.push({ id: companyId, name: companyName, ownerRole });
-    }
-
-    ctx.log.debug(`[HTTP] Found ${companies.length} companies, realContextId: ${realId}`);
-    return { companies, realContextId: realId };
-  } catch (e: unknown) {
-    ctx.log.error('[HTTP] Failed to fetch companies:', e);
-    return { companies: [], realContextId: null };
+    companies.push({ id, name, ownerRole, cluster, facilityCount });
+    ctx.log.debug(`[Session] Company ${i}: ${name} (${id}), role ${ownerRole}, ${cluster}, ${facilityCount} facilities`);
   }
+
+  return companies;
+}
+
+/** One `call GetCompanyX "^" "#<index>"` on the ClientView, answer unwrapped. */
+async function readCompanyField(
+  ctx: LoginContext,
+  member: 'GetCompanyOwnerRole' | 'GetCompanyName' | 'GetCompanyId' | 'GetCompanyCluster' | 'GetCompanyFacilityCount',
+  contextId: string,
+  index: number,
+): Promise<string> {
+  // Same pre-play window as the GetCompanyCount read above (legacy DefTimeOut).
+  const packet = await ctx.sendRdoRequest('world', rdoCall(
+    member, contextId,
+    RdoValue.int(index),
+  ).packet, undefined, TimeoutCategory.FAST);
+  return parsePropertyResponseHelper(packet.payload ?? '', 'res');
 }
 
 /**

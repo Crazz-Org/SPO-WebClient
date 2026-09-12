@@ -39,7 +39,21 @@
  *   RDOSetPublicity   Kernel/TownPolitics.pas:41   procedure, 2 args
  *   RDOSetProjectData Kernel/TownPolitics.pas:45   procedure, 3 args
  *
- * All three are declared identically on `TPresidentialHall`
+ * The five indexed company reads of the login path were added the same way — the
+ * gateway had never emitted them, so their `kind` and `arity` come from the
+ * declaring unit and the comment cites it:
+ *
+ *   GetCompanyOwnerRole     Interface Server/InterfaceServer.pas:169   function, 1 arg
+ *   GetCompanyName          Interface Server/InterfaceServer.pas:170   function, 1 arg
+ *   GetCompanyCluster       Interface Server/InterfaceServer.pas:171   function, 1 arg
+ *   GetCompanyId            Interface Server/InterfaceServer.pas:172   function, 1 arg
+ *   GetCompanyFacilityCount Interface Server/InterfaceServer.pas:173   function, 1 arg
+ *
+ * All five are `function  GetCompanyX( index : integer ) : OleVariant` on
+ * `TClientView`, so all five are emitted as `call <name> "^" "#<index>"` — the
+ * form `chooseCompany.asp:166-170` emits with `CInt(i)`.
+ *
+ * All three POLITICS mutations are declared identically on `TPresidentialHall`
  * (Kernel/WorldPolitics.pas:256,257,260), so one entry serves the Town Hall and
  * the Capitol. All three are `procedure` — they must be emitted with `"*"` and
  * no QueryId, which is what `.toFrame()` on a catalogued procedure produces.
@@ -114,7 +128,12 @@ export const RDO_MEMBERS = {
   GetAttachmentCount:        { kind: 'function',  arity: 1 },                // src/server/session/mail-handler.ts:326
   GetChannelInfo:            { kind: 'function',  arity: 1 },                // src/server/session/chat-handler.ts:112
   GetChannelList:            { kind: 'function',  arity: 1 },                // src/server/session/chat-handler.ts:94
+  GetCompanyCluster:         { kind: 'function',  arity: 1 },                // login-handler.ts:848 <- Interface Server/InterfaceServer.pas:171
   GetCompanyCount:           { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts:478
+  GetCompanyFacilityCount:   { kind: 'function',  arity: 1 },                // login-handler.ts:849 <- Interface Server/InterfaceServer.pas:173
+  GetCompanyId:              { kind: 'function',  arity: 1 },                // login-handler.ts:847 <- Interface Server/InterfaceServer.pas:172
+  GetCompanyName:            { kind: 'function',  arity: 1 },                // login-handler.ts:846 <- Interface Server/InterfaceServer.pas:170
+  GetCompanyOwnerRole:       { kind: 'function',  arity: 1 },                // login-handler.ts:845 <- Interface Server/InterfaceServer.pas:169
   GetHeaders:                { kind: 'function',  arity: 1 },                // src/server/session/mail-handler.ts:306
   GetInputNames:             { kind: 'function',  arity: 2 },                // src/server/session/building-details-handler.ts:983
   GetLines:                  { kind: 'function',  arity: 1 },                // src/server/session/mail-handler.ts:316

@@ -1,7 +1,10 @@
 /**
  * Scenario 3: Server Selection + Company List + CompanyPage.asp
- * HTTP: chooseCompany.asp → company HTML with name, id, ownerRole;
- *       CompanyPage.asp → one company's P&L account tree
+ * RDO:  get GetCompanyCount, then the five indexed CALLs the login path emits
+ *       per company — GetCompanyOwnerRole, GetCompanyName, GetCompanyId,
+ *       GetCompanyCluster, GetCompanyFacilityCount, in the order
+ *       `chooseCompany.asp:166-170` emits them, each with an integer index.
+ * HTTP: CompanyPage.asp → one company's P&L account tree
  */
 
 import { WsMessageType } from '@/shared/types/message-types';
@@ -9,10 +12,11 @@ import type { WsMessage } from '@/shared/types/message-types';
 import type { ProfitLossData } from '@/shared/types';
 import type { WsCaptureScenario } from '../types/mock-types';
 import type { HttpScenario } from '../types/http-exchange-types';
+import type { RdoScenario } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
 
-/** Extracted company data from chooseCompany.asp HTML */
+/** The company the capture shows, field by field, as the five CALLs answer them */
 export interface CapturedCompanyData {
   name: string;
   id: string;
@@ -30,55 +34,6 @@ const CAPTURED_COMPANY: CapturedCompanyData = {
   status: 'Private',
   facilityCount: 38,
 };
-
-function buildChooseCompanyHtml(vars: ScenarioVariables): string {
-  return `<html>
-<head><title> Company List </title>
-<link rel="STYLESHEET" href="../voyager.css" type="text/css">
-</head>
-<body style="margin-top: 20px; padding-left: 20px" onLoad="onPageLoad()">
-<div id=allStuff style="display: none">
-<div class=header2>Companies</div>
-<div class=value style="margin-left: 20px; margin-top: 10px">
-You have registered the following companies in ${vars.worldName}.<br>
-Choose one from the list or create a new one.
-</div>
-<div style="margin-top: 25px; text-align: center">
-<table style="padding: 5px">
-<tr><tr>
-<td align="center" valign="bottom"
-style="border-style: solid; border-width: 2px; border-color: black"
-companyOwnerRole="${vars.companyOwnerRole}"
-companyName="${vars.companyName}"
-companyId="${vars.companyId}">
-<img src="images/comp-${vars.companyCluster}.gif" style="cursor: hand" border="0">
-<div class=header3>${vars.companyName}</div>
-<a href="../NewTycoon/CompanyPage.asp?Company=${encodeURIComponent(vars.companyName)}&Tycoon=${vars.username}&WorldName=${vars.worldName}&CompanyCluster=${vars.companyCluster}">more info</a>
-<div class=data>
-<nobr> ${CAPTURED_COMPANY.status} </nobr><br>
-<nobr> ${CAPTURED_COMPANY.facilityCount} Facilities </nobr><br>
-</div>
-</td>
-</tr>
-</table>
-</div>
-</div>
-</body>
-</html>`;
-}
-
-function buildPleaseWaitHtml(): string {
-  return `<html>
-<head><title> Company List </title>
-<link rel="STYLESHEET" href="logon.css" type="text/css">
-</head>
-<body style="margin-top: 20px; padding-left: 20px">
-<div id=allStuff style="display: none">
-<font size=2>PLEASE WAIT</p>If this page doesn't clear please try to join the planet again!</font>
-</div>
-</body>
-</html>`;
-}
 
 /**
  * One account row, CompanyPage.asp:175-232 — same generator as
@@ -202,49 +157,53 @@ export const COMPANY_PAGE_TREE: ProfitLossData = {
   },
 };
 
+/**
+ * One indexed company read: `C <rid> sel <clientView> call GetCompanyX "^" "#0"`.
+ * The index is an INTEGER — `chooseCompany.asp:166-170` passes `CInt(i)`, and a
+ * widestring index would reach the Delphi `index : integer` parameter as garbage.
+ */
+function companyFieldExchange(
+  ordinal: number,
+  member: string,
+  clientViewId: string,
+  answer: string,
+) {
+  return {
+    id: `cl-rdo-00${ordinal + 1}`,
+    request: `C ${ordinal} sel ${clientViewId} call ${member} "^" "#0"`,
+    response: `A${ordinal} res="${answer}"`,
+    matchKeys: { verb: 'sel', action: 'call', member, argsPattern: ['"#0"'] },
+  };
+}
+
 export function createCompanyListScenario(
   overrides?: Partial<ScenarioVariables>
-): { ws: WsCaptureScenario; http: HttpScenario } {
+): { ws: WsCaptureScenario; rdo: RdoScenario; http: HttpScenario } {
   const vars = mergeVariables(overrides);
+
+  const rdo: RdoScenario = {
+    name: 'company-list',
+    description: 'GetCompanyCount + the five indexed company reads of the login path',
+    exchanges: [
+      {
+        id: 'cl-rdo-count',
+        request: `C 0 sel ${vars.clientViewId} get GetCompanyCount`,
+        response: `A0 GetCompanyCount="#1"`,
+        matchKeys: { verb: 'sel', action: 'get', member: 'GetCompanyCount' },
+      },
+      // The ASP's own order (chooseCompany.asp:166-170).
+      companyFieldExchange(1, 'GetCompanyOwnerRole', vars.clientViewId, `%${vars.companyOwnerRole}`),
+      companyFieldExchange(2, 'GetCompanyName', vars.clientViewId, `%${vars.companyName}`),
+      companyFieldExchange(3, 'GetCompanyId', vars.clientViewId, `#${vars.companyId}`),
+      companyFieldExchange(4, 'GetCompanyCluster', vars.clientViewId, `%${vars.companyCluster}`),
+      companyFieldExchange(5, 'GetCompanyFacilityCount', vars.clientViewId, `#${CAPTURED_COMPANY.facilityCount}`),
+    ],
+    variables: {},
+  };
 
   const http: HttpScenario = {
     name: 'company-list',
     exchanges: [
-      {
-        id: 'cl-http-001',
-        method: 'GET',
-        urlPattern: '/Five/0/Visual/Voyager/NewLogon/pleasewait.asp',
-        status: 200,
-        contentType: 'text/html',
-        body: buildPleaseWaitHtml(),
-      },
-      {
-        id: 'cl-http-002',
-        method: 'GET',
-        urlPattern: '/Five/0/Visual/Voyager/NewLogon/logonComplete.asp',
-        queryPatterns: {
-          WorldName: vars.worldName,
-          UserName: vars.username,
-        },
-        status: 302,
-        contentType: 'text/html',
-        body: '',
-        headers: {
-          Location: `chooseCompany.asp?ClientViewId=${vars.clientViewId}&PA=&Ooopsy=0&WorldName=${vars.worldName}&UserName=${vars.username}&Logon=FALSE&ISAddr=${vars.worldIp}&ISPort=${vars.worldPort}`,
-        },
-      },
-      {
-        id: 'cl-http-003',
-        method: 'GET',
-        urlPattern: '/Five/0/Visual/Voyager/NewLogon/chooseCompany.asp',
-        queryPatterns: {
-          WorldName: vars.worldName,
-          UserName: vars.username,
-        },
-        status: 200,
-        contentType: 'text/html',
-        body: buildChooseCompanyHtml(vars),
-      },
       {
         id: 'cl-http-004',
         method: 'GET',
@@ -298,6 +257,8 @@ export function createCompanyListScenario(
                 id: vars.companyId,
                 name: vars.companyName,
                 ownerRole: vars.companyOwnerRole,
+                cluster: vars.companyCluster,
+                facilityCount: CAPTURED_COMPANY.facilityCount,
               },
             ],
           } as WsMessage,
@@ -307,7 +268,7 @@ export function createCompanyListScenario(
     ],
   };
 
-  return { ws, http };
+  return { ws, rdo, http };
 }
 
 export { CAPTURED_COMPANY };

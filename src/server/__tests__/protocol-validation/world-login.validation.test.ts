@@ -13,7 +13,8 @@
  *   6. RegisterEventsById CALL → triggers InitClient push
  *   7. SetLanguage push (no RID, fire-and-forget)
  *   8. GET GetCompanyCount
- *   9. HTTP fetch for company list (logonComplete.asp → chooseCompany.asp)
+ *   9. 5x CALL per company — GetCompanyOwnerRole, GetCompanyName, GetCompanyId,
+ *      GetCompanyCluster, GetCompanyFacilityCount — each on an integer index
  *
  * Prerequisites: connectDirectory() must be called first to establish DIRECTORY_CONNECTED phase.
  */
@@ -99,8 +100,7 @@ describe('Protocol Validation: loginWorld()', () => {
   const authBundle = createAuthScenario({ username: 'SPO_test3', password: 'test3' });
   const worldListBundle = createWorldListScenario({ username: 'SPO_test3', password: 'test3' });
   // Use proper-cased 'Shamba' — loginWorld()'s fetchWorldProperties() overwrites
-  // WorldInfo.name with the InterfaceServer's WorldName response ("Shamba"),
-  // and this name is used in the HTTP logonComplete.asp URL.
+  // WorldInfo.name with the InterfaceServer's WorldName response ("Shamba").
   const companyBundle = createCompanyListScenario({
     username: 'SPO_test3',
     password: 'test3',
@@ -122,7 +122,7 @@ describe('Protocol Validation: loginWorld()', () => {
         { rdoScenarios: [worldListBundle.rdo] },
         // Socket 2: world socket (loginWorld)
         {
-          rdoScenarios: [worldLoginRdo],
+          rdoScenarios: [worldLoginRdo, companyBundle.rdo],
           fallbackResponses: buildWorldPropertyFallbacks({
             worldName: 'Shamba',
             worldIp: '142.44.158.91',
@@ -477,21 +477,43 @@ describe('Protocol Validation: loginWorld()', () => {
       expect(result.tycoonId).toBe(TYCOON_ID);
     });
 
-    it('should return a companies array from HTTP response', async () => {
+    it('should return a companies array', async () => {
       const result = await runFullLoginFlow();
 
       expect(result.companies).toBeDefined();
       expect(Array.isArray(result.companies)).toBe(true);
     });
 
-    it('should parse company data from chooseCompany.asp HTML', async () => {
+    it('should build the CompanyInfo the five indexed reads answered', async () => {
       const result = await runFullLoginFlow();
 
-      // Company list scenario provides "Yellow Inc." with id "28"
-      expect(result.companies.length).toBeGreaterThan(0);
-      const company = result.companies[0];
-      expect(company.id).toBe('28');
-      expect(company.name).toBe('Yellow Inc.');
+      // GetCompanyCount answers 1, and the five CALLs answer the captured company.
+      expect(result.companies).toEqual([{
+        id: '28',
+        name: 'Yellow Inc.',
+        ownerRole: 'SPO_test3',
+        cluster: 'PGI',
+        facilityCount: 38,
+      }]);
+    });
+
+    it('should send the five company reads after GetCompanyCount, in the ASP order, on an integer index', async () => {
+      await runFullLoginFlow();
+
+      const worldCmds = getWorldCommands();
+      const countIdx = worldCmds.findIndex(cmd => cmd.includes('get GetCompanyCount'));
+      const companyCmds = worldCmds.filter(cmd => / call GetCompany\w+ /.test(cmd));
+
+      expect(companyCmds.map(cmd => /call (GetCompany\w+)/.exec(cmd)![1])).toEqual([
+        'GetCompanyOwnerRole', 'GetCompanyName', 'GetCompanyId',
+        'GetCompanyCluster', 'GetCompanyFacilityCount',
+      ]);
+      for (const cmd of companyCmds) {
+        // "^" (function) and "#0" (integer index) — the form chooseCompany.asp emits.
+        expect(cmd).toMatch(/call GetCompany\w+ "\^" "#0"$/);
+        expect(cmd).toContain(`sel ${CONTEXT_ID} call`);
+        expect(worldCmds.indexOf(cmd)).toBeGreaterThan(countIdx);
+      }
     });
   });
 

@@ -18,9 +18,6 @@
  * `EnableEvents` gating every push.
  */
 
-jest.mock('node-fetch', () => ({ __esModule: true, default: jest.fn() }));
-
-import fetch from 'node-fetch';
 import {
   checkAuth,
   connectDirectory,
@@ -38,8 +35,6 @@ import type { CompanyInfo, RdoPacket, WorldInfo } from '../../shared/types';
 import { RdoCommand, RdoValue } from '../../shared/rdo-types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { AuthError } from '../../shared/auth-error';
-
-const fetchMock = fetch as unknown as jest.Mock;
 
 // ── Fixture ids — deliberately distinct so a swap shows up ───────────────────
 const DIRECTORY_SERVER_ID = '39751288';
@@ -74,12 +69,29 @@ const LOGIN_PROPERTIES: Readonly<Record<string, string>> = {
   GetCompanyCount: '#2',
 };
 
-const COMPANY_HTML = [
-  '<html><body><table>',
-  '<td companyId="55" companyName="SPO_test3 - Green" companyOwnerRole="SPO_test3">a</td>',
-  '<td companyId="56" companyName="Mayor of Kalisz" companyOwnerRole="Mayor of Kalisz">b</td>',
-  '</table></body></html>',
-].join('\n');
+/**
+ * The two companies the fake ClientView owns, in index order — `GetCompanyCount`
+ * above answers 2. The five indexed reads answer from this table.
+ */
+const LOGIN_COMPANIES: readonly Required<CompanyInfo>[] = [
+  { id: '55', name: 'SPO_test3 - Green', ownerRole: 'SPO_test3', cluster: 'PGI', facilityCount: 12, value: 0 },
+  { id: '56', name: 'Mayor of Kalisz', ownerRole: 'Mayor of Kalisz', cluster: 'Dissidents', facilityCount: 0, value: 0 },
+];
+
+/** The list `loginWorld` must build out of them. */
+const EXPECTED_COMPANIES: CompanyInfo[] = LOGIN_COMPANIES.map(
+  ({ id, name, ownerRole, cluster, facilityCount }) => ({ id, name, ownerRole, cluster, facilityCount }),
+);
+
+/** The five members `loginWorld` calls per company, in the ASP's order. */
+const COMPANY_MEMBERS = [
+  'GetCompanyOwnerRole', 'GetCompanyName', 'GetCompanyId', 'GetCompanyCluster', 'GetCompanyFacilityCount',
+] as const;
+
+/** `"#1"` → 1: the index the CALL carries, read back off the frame. */
+function companyIndexOf(packet: Partial<RdoPacket>): number {
+  return parseInt(String(packet.args?.[0] ?? '').replace(/[^\d-]/g, ''), 10);
+}
 
 /** `A<rid> ;` — the ack the server sends with no payload at all. */
 const EMPTY_ANSWER: RdoPacket = { raw: '', type: 'RESPONSE', rid: 1 };
@@ -104,6 +116,17 @@ function loginResponder(overrides: Record<string, string> = {}): Responder {
       return `${member}="${props[member] ?? ''}"`;
     }
     if (packet.member === 'Logon') return overrides.Logon ?? `res="#${CONTEXT_ID}"`;
+    const member = packet.member ?? '';
+    if ((COMPANY_MEMBERS as readonly string[]).includes(member)) {
+      if (overrides[member] !== undefined) return overrides[member];
+      const company = LOGIN_COMPANIES[companyIndexOf(packet)];
+      if (!company) return 'res="%"';
+      if (member === 'GetCompanyOwnerRole') return `res="%${company.ownerRole}"`;
+      if (member === 'GetCompanyName') return `res="%${company.name}"`;
+      if (member === 'GetCompanyId') return `res="#${company.id}"`;
+      if (member === 'GetCompanyCluster') return `res="%${company.cluster}"`;
+      return `res="#${company.facilityCount}"`;
+    }
     return 'res="#0"';
   };
 }
@@ -137,14 +160,6 @@ async function runLoginWorld(
 function setLanguageFrame(contextId: string): string {
   return RdoCommand.sel(contextId).call('SetLanguage').push().args(RdoValue.string('0')).build();
 }
-
-beforeEach(() => {
-  fetchMock.mockReset();
-  fetchMock.mockResolvedValue({
-    text: async () => COMPANY_HTML,
-    url: `http://1.2.3.4/chooseCompany.asp?ClientViewId=${CONTEXT_ID}`,
-  });
-});
 
 // ── Directory authentication ────────────────────────────────────────────────
 
@@ -700,78 +715,65 @@ describe('loginWorld', () => {
     expect(fake.state.worldContextId).toBeNull();
   });
 
-  it('returns an empty company list when the ASP fetch fails', async () => {
-    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
+  it('reads each company with five indexed CALLs, in the order chooseCompany.asp emits them', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+
+    await runLoginWorld(fake);
+
+    const calls = fake.sent.filter(s => (COMPANY_MEMBERS as readonly string[]).includes(s.packet.member ?? ''));
+    expect(calls.map(s => s.packet.member)).toEqual([...COMPANY_MEMBERS, ...COMPANY_MEMBERS]);
+    // The index is an INTEGER (chooseCompany.asp passes CInt(i)), company 0 then 1.
+    expect(calls.slice(0, 5).map(s => s.packet.args)).toEqual(Array(5).fill(['"#0"']));
+    expect(calls.slice(5).map(s => s.packet.args)).toEqual(Array(5).fill(['"#1"']));
+    for (const call of calls) {
+      expect(call.socketName).toBe('world');
+      expect(call.packet.targetId).toBe(CONTEXT_ID);
+      // Same pre-play window as the GetCompanyCount read next to it.
+      expect(call.category).toBe(TimeoutCategory.FAST);
+      expect(call.packet.separator).toBe('"^"');
+    }
+  });
+
+  it('builds the list the five reads answered, cluster and facility count included', async () => {
     const fake = makeLoginCtx();
     fake.respond(loginResponder());
 
     const result = await runLoginWorld(fake);
 
-    expect(result.companies).toEqual([]);
+    expect(result.companies).toEqual(EXPECTED_COMPANIES);
+    expect(fake.state.availableCompanies).toEqual(EXPECTED_COMPANIES);
+  });
+
+  it('refuses a company the server could not answer for — the list never shortens silently', async () => {
+    const fake = makeLoginCtx();
+    // `res="%"` in the id slot: GetCompanyCount promised 2, this is not a company.
+    fake.respond(loginResponder({ GetCompanyId: 'res="%"' }));
+
+    await expect(runLoginWorld(fake)).rejects.toThrow(/Company list mismatch/);
     expect(fake.state.availableCompanies).toEqual([]);
-    expect(fake.log.error).toHaveBeenCalledWith(
-      '[HTTP] Failed to fetch companies:', expect.any(Error),
-    );
   });
 
-  it('parses the company table, defaulting the name and the owner role', async () => {
-    fetchMock.mockResolvedValue({
-      url: 'http://1.2.3.4/chooseCompany.asp',
-      text: async () => '<td companyId="77">no attributes</td>',
-    });
+  it('lets a transport failure on a company read reject the login, never an empty list', async () => {
     const fake = makeLoginCtx();
-    fake.respond(loginResponder());
+    const base = loginResponder();
+    fake.respond((packet, index) => (packet.member === 'GetCompanyName'
+      ? new Error('Request timeout: GetCompanyName')
+      : base(packet, index)));
 
-    const result = await runLoginWorld(fake, WORLD, 'SPO_test3');
-
-    expect(result.companies).toEqual([
-      { id: '77', name: 'Company 77', ownerRole: 'SPO_test3' },
-    ]);
+    await expect(runLoginWorld(fake)).rejects.toThrow('Request timeout: GetCompanyName');
+    expect(fake.state.availableCompanies).toEqual([]);
   });
 
-  it('encodes spaces as %20 in the logonComplete URL, as the Voyager client does', async () => {
-    const fake = makeLoginCtx();
-    fake.respond(loginResponder());
-
-    await runLoginWorld(fake, WORLD, 'Mayor of Kalisz');
-
-    const url = String(fetchMock.mock.calls[0][0]);
-    expect(url).toContain('UserName=Mayor%20of%20Kalisz');
-    expect(url).not.toContain('+');
-  });
-
-  it('recovers the ClientViewId from the page body when the URL does not carry it', async () => {
-    fetchMock.mockResolvedValue({
-      url: 'http://1.2.3.4/chooseCompany.asp',
-      text: async () => `<input name="ClientViewId" value="x"><!-- ClientViewId=${CONTEXT_ID} -->${COMPANY_HTML}`,
-    });
-    const fake = makeLoginCtx();
-    fake.respond(loginResponder());
-
-    await runLoginWorld(fake);
-
-    expect(fake.log.debug).toHaveBeenCalledWith(
-      `[HTTP] Found 2 companies, realContextId: ${CONTEXT_ID}`,
-    );
-  });
-
-  it('falls back to Shamba in the ASP URL when no world name is known', async () => {
-    const fake = makeLoginCtx();
-    // WorldName answers empty, so the WorldInfo the caller passed is not rewritten.
-    fake.respond(loginResponder({ WorldName: '%' }));
-
-    await runLoginWorld(fake, { ...WORLD, name: '' });
-
-    expect(String(fetchMock.mock.calls[0][0])).toContain('WorldName=Shamba');
-  });
-
-  it('treats an unreadable company count as zero', async () => {
+  it('treats an unreadable company count as zero, and then emits no company read at all', async () => {
     const fake = makeLoginCtx();
     fake.respond(loginResponder({ GetCompanyCount: '%' }));
 
-    await runLoginWorld(fake);
+    const result = await runLoginWorld(fake);
 
     expect(fake.log.debug).toHaveBeenCalledWith('[Session] Company Count: 0');
+    expect(fake.sent.some(s => (COMPANY_MEMBERS as readonly string[]).includes(s.packet.member ?? ''))).toBe(false);
+    expect(result.companies).toEqual([]);
   });
 
   it('gives up after 15 s when the InitClient push never arrives', async () => {
@@ -969,8 +971,9 @@ describe('createCompany', () => {
 
     // The NAME and ID come back from the server — the request name is not reused.
     expect(result).toEqual({ success: true, companyName: 'Green Inc.', companyId: '55' });
+    // The cluster is the one the caller asked for; a new company owns nothing yet.
     expect(fake.state.availableCompanies).toEqual([
-      { id: '55', name: 'Green Inc.', ownerRole: 'SPO_test3' },
+      { id: '55', name: 'Green Inc.', ownerRole: 'SPO_test3', cluster: 'Industry', facilityCount: 0 },
     ]);
   });
 
@@ -980,7 +983,9 @@ describe('createCompany', () => {
 
     await createCompany(fake.ctx, 'Green Inc', 'Industry');
 
-    expect(fake.state.availableCompanies).toEqual([{ id: '55', name: 'Green Inc', ownerRole: '' }]);
+    expect(fake.state.availableCompanies).toEqual([
+      { id: '55', name: 'Green Inc', ownerRole: '', cluster: 'Industry', facilityCount: 0 },
+    ]);
   });
 
   const CREATE_ERRORS: ReadonlyArray<[string, string]> = [
@@ -1153,14 +1158,14 @@ describe('switchCompany', () => {
     expect(logon?.packet.args?.[0]).toBe('"%"');
   });
 
-  it('re-injects a company the refreshed ASP list does not yet carry', async () => {
+  it('re-injects a company the refreshed list does not yet carry', async () => {
     const fake = switchFake();
     const fresh: CompanyInfo = { id: '99', name: 'Brand New', ownerRole: 'SPO_test3' };
 
     await runSwitch(fake, fresh);
 
-    // The ASP endpoint serves a cached page; a company created seconds ago is
-    // missing from it, and selecting it would then find nothing.
+    // The re-login reads the list off the new ClientView; a company created
+    // seconds ago may be missing from it, and selecting it would find nothing.
     expect(fake.hooks.pushAvailableCompany).toHaveBeenCalledWith(fresh);
     expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('missing from refreshed list'));
     expect(fake.state.currentCompany).toBe(fresh);

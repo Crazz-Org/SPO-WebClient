@@ -9,7 +9,7 @@ import { AuthStage } from './AuthStage';
 import { AuthErrorModal } from './AuthErrorModal';
 import { WorldStage } from './WorldStage';
 import { ZoneStage } from './ZoneStage';
-import { CompanyStage } from './CompanyStage';
+import { CompanyStage, companySealUrl } from './CompanyStage';
 import type { WorldInfo, CompanyInfo } from '@/shared/types';
 
 // ---------------------------------------------------------------------------
@@ -90,13 +90,15 @@ describe('WorldStage', () => {
 
 describe('CompanyStage', () => {
   const companies: CompanyInfo[] = [
-    { id: '1', name: 'TestCo', ownerRole: 'Owner', value: 500000 },
-    { id: '2', name: 'Shamba Gov', ownerRole: 'President of Shamba', value: 0 },
+    { id: '1', name: 'TestCo', ownerRole: 'Owner', value: 500000, cluster: 'PGI', facilityCount: 12 },
+    { id: '2', name: 'Shamba Gov', ownerRole: 'President of Shamba', value: 0, cluster: 'Moab', facilityCount: 1 },
   ];
 
   const defaultProps = {
     companies,
     worldName: 'Shamba',
+    username: 'Owner',
+    worldIp: '1.2.3.4',
     onSelect: () => {},
     onCreate: () => {},
     onBack: () => {},
@@ -129,6 +131,55 @@ describe('CompanyStage', () => {
   it('renders back button', () => {
     renderWithProviders(<CompanyStage {...defaultProps} />);
     expect(screen.getByText('Back to worlds')).toBeTruthy();
+  });
+
+  // chooseCompany.asp:193-197 — the owner role is shown, unless it IS the
+  // logged-in account, in which case the page prints strPrivate.
+  it('reads "Private" for the card whose owner role is the logged-in account', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} />);
+    expect(screen.getByText('Private')).toBeTruthy();
+    expect(screen.queryByText('Owner')).toBeNull();
+  });
+
+  it('keeps the role itself on a card owned by someone else', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} />);
+    expect(screen.getByText('President of Shamba')).toBeTruthy();
+  });
+
+  it('shows the facility count, singular for one', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} />);
+    expect(screen.getByText('12 facilities')).toBeTruthy();
+    expect(screen.getByText('1 facility')).toBeTruthy();
+  });
+
+  it('shows the cluster seal the world serves', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} />);
+    const seal = screen.getByAltText('PGI') as HTMLImageElement;
+    expect(seal.src).toBe('http://1.2.3.4/Five/0/Visual/Voyager/NewLogon/images/comp-pgi.gif');
+  });
+
+  it('falls back to a text medallion when the company has no cluster', () => {
+    const noCluster: CompanyInfo[] = [{ id: '3', name: 'Clusterless', ownerRole: 'Owner' }];
+    renderWithProviders(<CompanyStage {...defaultProps} companies={noCluster} />);
+    expect(screen.queryByAltText('PGI')).toBeNull();
+    expect(screen.getByText('?')).toBeTruthy();
+  });
+
+  it('falls back to the cluster name when the world address is unknown', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} worldIp={undefined} />);
+    expect(screen.queryByAltText('PGI')).toBeNull();
+    expect(screen.getByText('PGI')).toBeTruthy();
+  });
+
+  it('omits the facility line for a company whose count is unknown', () => {
+    const unknown: CompanyInfo[] = [{ id: '4', name: 'Unknown Co', ownerRole: 'Owner', cluster: 'PGI' }];
+    renderWithProviders(<CompanyStage {...defaultProps} companies={unknown} />);
+    expect(screen.queryByText(/facilit/)).toBeNull();
+  });
+
+  it('builds the seal URL the page itself loads', () => {
+    expect(companySealUrl('5.6.7.8', 'Mariko'))
+      .toBe('http://5.6.7.8/Five/0/Visual/Voyager/NewLogon/images/comp-mariko.gif');
   });
 });
 

@@ -134,11 +134,13 @@ describe('world-list scenario', () => {
 // =============================================================================
 
 describe('company-list scenario', () => {
-  it('creates scenario with HTTP and WS', () => {
-    const { ws, http } = createCompanyListScenario();
+  it('creates scenario with HTTP, RDO and WS', () => {
+    const { ws, rdo, http } = createCompanyListScenario();
     expect(ws).toBeDefined();
+    expect(rdo).toBeDefined();
     expect(http).toBeDefined();
     expect(ws.name).toBe('company-list');
+    expect(rdo.name).toBe('company-list');
     expect(http.name).toBe('company-list');
   });
 
@@ -148,28 +150,33 @@ describe('company-list scenario', () => {
     expect(CAPTURED_COMPANY.ownerRole).toBe('SPO_test3');
   });
 
-  it('HTTP has 5 exchanges (pleasewait, logonComplete, chooseCompany, CompanyPage x2)', () => {
+  it('HTTP has 2 exchanges (CompanyPage x2) — the list itself is no longer fetched', () => {
     const { http } = createCompanyListScenario();
-    expect(http.exchanges).toHaveLength(5);
-    expect(http.exchanges[0].urlPattern).toContain('pleasewait.asp');
-    expect(http.exchanges[1].urlPattern).toContain('logonComplete.asp');
-    expect(http.exchanges[2].urlPattern).toContain('chooseCompany.asp');
-    expect(http.exchanges[3].urlPattern).toContain('CompanyPage.asp');
-    expect(http.exchanges[4].urlPattern).toContain('CompanyPage.asp');
+    expect(http.exchanges).toHaveLength(2);
+    expect(http.exchanges[0].urlPattern).toContain('CompanyPage.asp');
+    expect(http.exchanges[1].urlPattern).toContain('CompanyPage.asp');
   });
 
-  it('chooseCompany HTML contains company name and ID', () => {
-    const { http } = createCompanyListScenario();
-    const chooseCompany = http.exchanges[2];
-    expect(chooseCompany.body).toContain('Yellow Inc.');
-    expect(chooseCompany.body).toContain('companyId="28"');
+  it('RDO has GetCompanyCount and the five indexed reads, each on an integer index', () => {
+    const { rdo } = createCompanyListScenario();
+    expect(rdo.exchanges.map(e => e.matchKeys?.member)).toEqual([
+      'GetCompanyCount',
+      'GetCompanyOwnerRole', 'GetCompanyName', 'GetCompanyId',
+      'GetCompanyCluster', 'GetCompanyFacilityCount',
+    ]);
+    for (const exchange of rdo.exchanges.slice(1)) {
+      expect(exchange.matchKeys?.argsPattern).toEqual(['"#0"']);
+    }
   });
 
-  it('variable override changes company name in HTML', () => {
-    const { http } = createCompanyListScenario({ companyName: 'Red Corp.' });
-    const chooseCompany = http.exchanges[2];
-    expect(chooseCompany.body).toContain('Red Corp.');
-    expect(chooseCompany.body).not.toContain('Yellow Inc.');
+  it('GetCompanyName answers the company name, and a variable override changes it', () => {
+    const named = (bundle: ReturnType<typeof createCompanyListScenario>) =>
+      bundle.rdo.exchanges.find(e => e.matchKeys?.member === 'GetCompanyName')!.response;
+
+    expect(named(createCompanyListScenario())).toContain('Yellow Inc.');
+    const overridden = named(createCompanyListScenario({ companyName: 'Red Corp.' }));
+    expect(overridden).toContain('Red Corp.');
+    expect(overridden).not.toContain('Yellow Inc.');
   });
 });
 
