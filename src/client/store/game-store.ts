@@ -137,6 +137,8 @@ interface GameState {
   loginPage: LoginPageOutcome | null;
   /** Set when CanJoinWorldEx said this player may not found a company in this world. */
   loginAdmission: WorldAdmission | null;
+  /** RDOCanJoinNewWorld said this account may not join another world. */
+  loginAtWorldLimit: boolean;
 
   // Server switch overlay (browse regions/worlds while in-game)
   serverSwitchMode: boolean;
@@ -180,7 +182,7 @@ interface GameState {
   setCityZonesEnabled: (enabled: boolean) => void;
   setOverlayBeforeMode: (v: { type: 'zones' | 'overlay' | 'none'; overlay?: SurfaceType } | null) => void;
   setActiveOverlay: (overlay: SurfaceType | null) => void;
-  setLoginWorlds: (worlds: WorldInfo[]) => void;
+  setLoginWorlds: (worlds: WorldInfo[], atWorldLimit?: boolean) => void;
   setLoginCompanies: (companies: CompanyInfo[], admission?: WorldAdmission | null) => void;
   setLoginStage: (stage: 'auth' | 'zones' | 'worlds' | 'companies') => void;
   setLoginLoading: (loading: boolean) => void;
@@ -232,6 +234,7 @@ export const useGameStore = create<GameState>((set) => ({
   authError: null,
   loginPage: null,
   loginAdmission: null,
+  loginAtWorldLimit: false,
   serverSwitchMode: false,
   serverSwitchOriginWorld: '',
   companyCreationClusters: [],
@@ -273,7 +276,7 @@ export const useGameStore = create<GameState>((set) => ({
   setOverlayBeforeMode: (v) => set({ overlayBeforeMode: v }),
   setActiveOverlay: (overlay) => set({ activeOverlay: overlay }),
 
-  setLoginWorlds: (worlds) => set({ loginWorlds: worlds, loginStage: 'worlds', loginLoading: false }),
+  setLoginWorlds: (worlds, atWorldLimit) => set({ loginWorlds: worlds, loginStage: 'worlds', loginLoading: false, loginAtWorldLimit: atWorldLimit ?? false }),
   setLoginCompanies: (companies, admission) => set({ companies, loginStage: 'companies', loginLoading: false, loginPage: null, loginAdmission: admission ?? null }),
   setLoginStage: (stage) => set({ loginStage: stage }),
   setLoginLoading: (loading) => set({ loginLoading: loading }),
@@ -350,6 +353,7 @@ export const useGameStore = create<GameState>((set) => ({
       authError: null,
       loginPage: null,
       loginAdmission: null,
+      loginAtWorldLimit: false,
       serverSwitchMode: false,
       serverSwitchOriginWorld: '',
       companyCreationClusters: [],

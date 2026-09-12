@@ -88,6 +88,7 @@ export interface LoginContext {
   setCachedUsername(value: string | null): void;
   setCachedPassword(value: string | null): void;
   setCachedZonePath(value: string): void;
+  setAtWorldLimit(value: boolean | null): void;
   setActiveUsername(value: string | null): void;
   setCurrentCompany(value: CompanyInfo | null): void;
   setLastPlayerX(value: number): void;
@@ -160,12 +161,14 @@ export async function connectDirectory(
   ctx.setActiveUsername(username);
   ctx.setCachedPassword(pass);
   ctx.setCachedZonePath(zonePath || 'Root/Areas/Asia/Worlds');
+  // A re-connect (a zone change, a server switch) must not carry the previous answer.
+  ctx.setAtWorldLimit(null);
 
   // Run auth and world query in parallel (independent sockets & sessions)
   ctx.log.info('Directory: connecting...');
   const [, worlds] = await Promise.all([
     performDirectoryAuth(ctx, username, pass),
-    performDirectoryQuery(ctx, zonePath),
+    performDirectoryQuery(ctx, username, zonePath),
   ]);
   ctx.log.info('Directory: auth + query complete');
   return worlds;
@@ -224,9 +227,9 @@ async function performDirectoryAuth(ctx: LoginContext, username: string, pass: s
 }
 
 /**
- * Helper Phase 2: OpenSession -> QueryKey -> EndSession
+ * Helper Phase 2: OpenSession -> QueryKey -> CanJoinNewWorld -> EndSession
  */
-async function performDirectoryQuery(ctx: LoginContext, zonePath?: string): Promise<WorldInfo[]> {
+async function performDirectoryQuery(ctx: LoginContext, username: string, zonePath?: string): Promise<WorldInfo[]> {
   const socket = await ctx.createSocket('directory_query', config.rdo.directoryHost, config.rdo.ports.directory);
   try {
     // 1. Resolve & Open NEW Session
@@ -249,6 +252,9 @@ async function performDirectoryQuery(ctx: LoginContext, zonePath?: string): Prom
       worldMap.set(w.name, w);
     }
     ctx.setAvailableWorlds(worldMap);
+
+    // 2b. World limit — may this player join ANOTHER world? (logonComplete.asp:100-106)
+    ctx.setAtWorldLimit(await checkWorldLimit(ctx, sessionId, username));
 
     // 3. End Session & Close — fire-and-forget without RID: ACCEPTED DIVERGENCE
     // (audit 2026-07-02, P2 — the captured legacy client sends this WITH a RID and
@@ -870,6 +876,40 @@ async function checkWorldAdmission(
   } catch (err: unknown) {
     ctx.log.warn(`[Session] CanJoinWorldEx failed — proceeding without the admission check: ${toErrorMessage(err)}`);
     return undefined;
+  }
+}
+
+/**
+ * Ask the Directory Server whether this account may join ANOTHER world —
+ * `RDOCanJoinNewWorld(Alias)` (DServer/DirectoryServer.pas:116, a 1-arg `function`),
+ * body `:1217-1234`: a boolean olevariant, `#-1` may join / `#0` at the nobility-bound
+ * world limit, or `DIR_ERROR_Unknown` on exception. `logonComplete.asp:100-106` asked it
+ * in a bare directory session before any Interface Server check. Only a literal `0` is a
+ * refusal (Kernel/World.pas:6031-6033 reads the variant the same way); an error reply, a
+ * timeout or an unreadable answer returns null and the login proceeds exactly as before.
+ * Returns true when the player IS at the limit.
+ */
+async function checkWorldLimit(ctx: LoginContext, sessionId: string, username: string): Promise<boolean | null> {
+  try {
+    const packet = await sendDirectoryRequest(ctx, 'directory_query', rdoCall(
+      'RDOCanJoinNewWorld', sessionId,
+      RdoValue.string(username),
+    ).packet);
+    if (packet.errorCode && packet.errorCode > 0) {
+      ctx.log.warn(`[Session] RDOCanJoinNewWorld answered ${packet.errorName ?? 'error'} ${packet.errorCode} — proceeding without the world-limit check`);
+      return null;
+    }
+    const raw = parsePropertyResponseHelper(packet.payload ?? '', 'res');
+    const code = parseInt(raw, 10);
+    ctx.log.debug(`[Session] RDOCanJoinNewWorld: ${raw}`);
+    if (Number.isNaN(code)) {
+      ctx.log.warn(`[Session] RDOCanJoinNewWorld answered "${raw}" — proceeding without the world-limit check`);
+      return null;
+    }
+    return code === 0;
+  } catch (err: unknown) {
+    ctx.log.warn(`[Session] RDOCanJoinNewWorld failed — proceeding without the world-limit check: ${toErrorMessage(err)}`);
+    return null;
   }
 }
 

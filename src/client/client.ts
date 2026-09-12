@@ -299,6 +299,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       onCreateCompany: () => ClientBridge.showCompanyCreationDialog(),
       onCreateCompanySubmit: (companyName: string, cluster: string) =>
         authHandler.handleCreateCompany(this, companyName, cluster),
+      onVisitWorld: () => authHandler.visitWorld(this),
       onRequestClusterInfo: (clusterName: string) => authHandler.requestClusterInfo(this, clusterName),
       onRequestClusterFacilities: (cluster: string, folder: string) =>
         authHandler.requestClusterFacilities(this, cluster, folder),

@@ -10,7 +10,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import type { WebSocket } from 'ws';
 import { WsMessageType, type WsMessage } from '../../../shared/types';
-import { handleAuthCheck } from '../auth-handlers';
+import { handleAuthCheck, handleConnectDirectory } from '../auth-handlers';
 import { AuthError } from '../../../shared/auth-error';
 import { getErrorMessage, ERROR_UnknownTycoon, ERROR_InvalidLogonData } from '../../../shared/error-codes';
 import { getDirectoryErrorMessage } from '../../../shared/directory-error-codes';
@@ -97,5 +97,65 @@ describe('handleAuthCheck', () => {
 
     await expect(handleAuthCheck(ctx, request())).rejects.toThrow('socket died');
     expect(sent).toHaveLength(0);
+  });
+});
+
+// ── REQ_CONNECT_DIRECTORY ───────────────────────────────────────────────────
+
+const WORLDS = [{ name: 'planitia', ip: '1.2.3.4', port: 8000, url: '' }];
+
+/** A session whose directory query already ran and reported `atWorldLimit`. */
+function createDirectoryCtx(atWorldLimit: boolean | null): { ctx: WsHandlerContext; sent: Array<Record<string, unknown>> } {
+  const sent: Array<Record<string, unknown>> = [];
+  const ws = {
+    send(payload: string): void {
+      sent.push(JSON.parse(payload) as Record<string, unknown>);
+    },
+  } as unknown as WebSocket;
+  const session = {
+    connectDirectory: jest.fn(async () => WORLDS),
+    isAtWorldLimit: jest.fn(() => atWorldLimit),
+  };
+  return { ctx: { ws, session } as unknown as WsHandlerContext, sent };
+}
+
+const connectRequest = (over: Partial<Record<string, unknown>> = {}): WsMessage => ({
+  type: WsMessageType.REQ_CONNECT_DIRECTORY,
+  wsRequestId: '9',
+  username: 'SPO_test3',
+  password: 'test3',
+  zonePath: 'Root/Areas/Asia/Worlds',
+  ...over,
+}) as unknown as WsMessage;
+
+describe('handleConnectDirectory', () => {
+  it('carries atWorldLimit when RDOCanJoinNewWorld answered 0', async () => {
+    const { ctx, sent } = createDirectoryCtx(true);
+
+    await handleConnectDirectory(ctx, connectRequest());
+
+    expect(sent[0]).toMatchObject({
+      type: WsMessageType.RESP_CONNECT_SUCCESS,
+      wsRequestId: '9',
+      worlds: WORLDS,
+      atWorldLimit: true,
+    });
+  });
+
+  it.each([[false], [null]])('omits the key entirely when the session reports %s', async (answer) => {
+    const { ctx, sent } = createDirectoryCtx(answer);
+
+    await handleConnectDirectory(ctx, connectRequest());
+
+    expect(sent[0]).toMatchObject({ type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: WORLDS });
+    expect(sent[0]).not.toHaveProperty('atWorldLimit');
+  });
+
+  it('refuses a request with no credentials before touching the session', async () => {
+    const { ctx, sent } = createDirectoryCtx(true);
+
+    await handleConnectDirectory(ctx, connectRequest({ username: '', password: '' }));
+
+    expect(sent[0]).toMatchObject({ type: WsMessageType.RESP_ERROR, code: ERROR_InvalidLogonData });
   });
 });

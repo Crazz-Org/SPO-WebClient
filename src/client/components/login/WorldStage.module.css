@@ -28,6 +28,15 @@
   text-align: center;
 }
 
+/* RDOCanJoinNewWorld answered 0 — the account is at its nobility-bound world limit */
+.limitNotice {
+  color: var(--accent-gold);
+  font-size: var(--text-sm);
+  margin: 0;
+  max-width: 640px;
+  text-align: center;
+}
+
 /* World card grid */
 .grid {
   display: grid;

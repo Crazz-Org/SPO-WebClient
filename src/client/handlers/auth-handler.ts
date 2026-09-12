@@ -75,7 +75,10 @@ export async function performDirectoryLogin(ctx: ClientHandlerContext, username:
 
     const resp = (await ctx.sendRequest(req)) as WsRespConnectSuccess;
     ClientBridge.log('Directory', `Authentication Success. Found ${resp.worlds.length} world(s) in ${zoneDisplay}.`);
-    ClientBridge.showWorlds(resp.worlds);
+    if (resp.atWorldLimit) {
+      ClientBridge.log('Directory', 'World limit reached — a new world can only be visited');
+    }
+    ClientBridge.showWorlds(resp.worlds, resp.atWorldLimit);
   } catch (err: unknown) {
     ClientBridge.log('Error', `Directory Auth Failed: ${toErrorMessage(err)}`);
     ClientBridge.showError('Login Failed: ' + toErrorMessage(err));
@@ -137,6 +140,28 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
     ClientBridge.setLoginLoading(false);
     ctx.showNotification(`World login failed: ${toErrorMessage(err)}`, 'error');
   }
+}
+
+/** `chooseVisa.asp:44` entered with `SetCompany&Name=[VISITOR VISA]&Id=0`. */
+export const VISITOR_COMPANY_ID = '0';
+
+/**
+ * Enter the world with no company — what the Visitor visa did.
+ * `chooseVisa.asp:44` posts `SetCompany&Name=[VISITOR VISA]&Id=0`; the gateway's
+ * `selectCompany` never puts the id on the wire, so this is the ordinary company-selection
+ * sequence with a synthetic entry standing in for the visa.
+ */
+export async function visitWorld(ctx: ClientHandlerContext): Promise<void> {
+  if (!ctx.availableCompanies.some(c => c.id === VISITOR_COMPANY_ID)) {
+    ctx.availableCompanies.push({
+      id: VISITOR_COMPANY_ID,
+      name: 'Visitor',
+      // Own username, so selectCompanyAndStart takes the plain select path, not a role switch.
+      ownerRole: ctx.storedUsername,
+    });
+  }
+  ClientBridge.log('Company', 'Entering as a visitor');
+  await selectCompanyAndStart(ctx, VISITOR_COMPANY_ID);
 }
 
 export async function selectCompanyAndStart(ctx: ClientHandlerContext, companyId: string): Promise<void> {

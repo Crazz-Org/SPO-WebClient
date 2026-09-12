@@ -13,9 +13,14 @@
  */
 
 jest.mock('./handlers/chat-handler');
+jest.mock('./handlers/auth-handler', () => ({
+  ...(jest.requireActual('./handlers/auth-handler') as object),
+  visitWorld: jest.fn(),
+}));
 
 import { StarpeaceClient } from './client';
 import * as chatHandler from './handlers/chat-handler';
+import * as authHandler from './handlers/auth-handler';
 import { WsMessageType, type WsMessage } from '../shared/types';
 
 class FakeSocket {
@@ -61,6 +66,12 @@ describe('StarpeaceClient callback wiring', () => {
         cluster: 'A',
       })
     );
+  });
+
+  it('onVisitWorld forwards to authHandler.visitWorld with the client', () => {
+    client.callbacks.onVisitWorld();
+
+    expect(authHandler.visitWorld).toHaveBeenCalledWith(client);
   });
 });
 
