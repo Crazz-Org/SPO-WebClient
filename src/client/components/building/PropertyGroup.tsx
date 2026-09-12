@@ -499,6 +499,8 @@ function DefinedProperties({
             rowCount={rowCount}
             valueMap={valueMap}
             canEdit={canEdit}
+            buildingX={buildingX}
+            buildingY={buildingY}
             onPropertyChange={handlePropertyChange}
           />,
         );

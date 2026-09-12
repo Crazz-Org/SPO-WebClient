@@ -168,8 +168,10 @@ export const RDO_MEMBERS = {
   RDOFavoritesMoveItem:      { kind: 'function',  arity: 2 },                // Interface Server/InterfaceServer.pas:202; src/server/session/favorites-handler.ts
   RDOFavoritesNewItem:       { kind: 'function',  arity: 4 },                // src/server/session/favorites-handler.ts
   RDOFavoritesRenameItem:    { kind: 'function',  arity: 2 },                // src/server/session/favorites-handler.ts
+  RDOGetDemand:              { kind: 'function',  arity: 1 },                // StdBlocks/ServiceBlock.pas:309; src/server/session/building-details-handler.ts (getBuildingServiceFigures)
   RDOGetInvDescEx:           { kind: 'function',  arity: 2 },                // src/server/session/research-handler.ts:131
   RDOGetInvPropsByLang:      { kind: 'function',  arity: 2 },                // src/server/session/research-handler.ts:120
+  RDOGetSupply:              { kind: 'function',  arity: 1 },                // StdBlocks/ServiceBlock.pas:310; src/server/session/building-details-handler.ts (getBuildingServiceFigures)
   RDOLaunchMovie:            { kind: 'procedure', arity: 4 },                // src/server/session/building-property-handler.ts:194,223
   RDOLogonClient:            { kind: 'procedure', arity: 2 },                // Kernel/World.pas:412; src/server/spo_session.ts:997
   RDOLogonUser:              { kind: 'function',  arity: 2 },                // DServer/DirectoryServer.pas:92; src/server/session/login-handler.ts:203

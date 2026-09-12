@@ -30,6 +30,7 @@ import {
   getBuildingBasicDetails,
   getBuildingTabData,
   getBuildingGateConnections,
+  getBuildingServiceFigures,
   refreshBuildingProperties,
 } from './building-details-handler';
 import type { ActiveInspector } from './building-details-handler';
@@ -2713,5 +2714,74 @@ describe('properties requested from a cache that never holds them', () => {
       expect(bank).toContainEqual({ name, value: '' });
     }
     expect(bank).toContainEqual({ name: 'Name', value: 'First Bank' });
+  });
+});
+
+// ===========================================================================
+// getBuildingServiceFigures — the live Offer / Demand pair of one service
+// ===========================================================================
+
+describe('getBuildingServiceFigures', () => {
+  /** A fake whose `getCacherPropertyListAt` answers a CurrBlock, as the map service does. */
+  function serviceCtx(currBlock: string, sockets: string[] = ['construction']): FakeSessionCtx {
+    const fake = makeSessionCtx({ sockets });
+    (fake.ctx.getCacherPropertyListAt as jest.MockedFunction<SessionContext['getCacherPropertyListAt']>)
+      .mockResolvedValue([currBlock]);
+    return fake;
+  }
+
+  it('reads both figures off the block on the construction socket', async () => {
+    const fake = serviceCtx('40133600');
+    rdoMembers(fake, { RDOGetDemand: 'res="#37"', RDOGetSupply: 'res="#64"' });
+
+    const figures = await getBuildingServiceFigures(fake.ctx, X, Y, 1);
+
+    expect(figures).toEqual({ demand: '37', supply: '64' });
+    expect(fake.sent.map(s => s.socketName)).toEqual(['construction', 'construction']);
+    expect(fake.sent.map(s => s.category)).toEqual([TimeoutCategory.NORMAL, TimeoutCategory.NORMAL]);
+  });
+
+  it('sends the service index as the single argument of each call', async () => {
+    const fake = serviceCtx('40133600');
+    rdoMembers(fake, { RDOGetDemand: 'res="#37"', RDOGetSupply: 'res="#64"' });
+
+    await getBuildingServiceFigures(fake.ctx, X, Y, 2);
+
+    expect(fake.sent.map(s => s.packet.member)).toEqual(['RDOGetDemand', 'RDOGetSupply']);
+    for (const s of fake.sent) {
+      expect(s.packet.verb).toBe(RdoVerb.SEL);
+      expect(s.packet.action).toBe(RdoAction.CALL);
+      expect(s.packet.targetId).toBe('40133600');
+      expect(s.packet.args).toEqual([RdoValue.int(2).format()]);
+    }
+  });
+
+  it('refuses a tile with no building rather than calling on an empty id', async () => {
+    const fake = serviceCtx('');
+
+    await expect(getBuildingServiceFigures(fake.ctx, X, Y, 0))
+      .rejects.toThrow(`No building found at (${X}, ${Y})`);
+    expect(fake.sent).toHaveLength(0);
+  });
+
+  it('opens the construction connection only when there is none', async () => {
+    const open = serviceCtx('40133600');
+    rdoMembers(open, { RDOGetDemand: 'res="#1"', RDOGetSupply: 'res="#2"' });
+    await getBuildingServiceFigures(open.ctx, X, Y, 0);
+    expect(open.ctx.connectConstructionService).not.toHaveBeenCalled();
+
+    const closed = serviceCtx('40133600', []);
+    rdoMembers(closed, { RDOGetDemand: 'res="#1"', RDOGetSupply: 'res="#2"' });
+    await getBuildingServiceFigures(closed.ctx, X, Y, 0);
+    expect(closed.ctx.connectConstructionService).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers empty strings when the block says nothing, rather than inventing a 0', async () => {
+    // A blank figure and a figure of 0 are different claims: the client shows
+    // the cached column until a real answer arrives.
+    const fake = serviceCtx('40133600');
+    rdoMembers(fake, { RDOGetDemand: '', RDOGetSupply: '' });
+
+    expect(await getBuildingServiceFigures(fake.ctx, X, Y, 0)).toEqual({ demand: '', supply: '' });
   });
 });

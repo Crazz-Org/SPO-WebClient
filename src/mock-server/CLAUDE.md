@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `service-figures`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -126,6 +126,15 @@ its trouble. This encodes the Voyager finger-strip rule (`Voyager/SupplySheetFor
 position. Its test drives the real `getBuildingTabData` and `getBuildingGateConnections` and
 asserts on `RdoMock.getConsumedIds()` that the middle gate's `SetPath` and header exchanges were
 never consumed.
+
+`service-figures` is the live Offer / Demand pair of one selected service: two 1-argument
+`function` reads on the block, `RDOGetDemand(index)` and `RDOGetSupply(index)`
+(`StdBlocks/ServiceBlock.pas:309-310`), which the reference client polls for the selected finger
+alone (`Voyager/SrvGeneralSheetForm.pas:411-413`). Its answers are chosen to **disagree** with
+the cached `srvSupplies0` / `srvDemands0` columns `building-details` serves — the block says
+64 / 37 where the cache says 5 / 12 — because a client that still drew the cached columns for
+the selected card would otherwise render plausible numbers and pass. The index travels as the
+single `#`-prefixed argument, so a frame built for another service matches nothing.
 
 ### Scenario Structure
 
