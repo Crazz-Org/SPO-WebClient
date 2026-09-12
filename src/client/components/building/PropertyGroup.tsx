@@ -36,6 +36,7 @@ import { WorkforceTable } from './WorkforceTable';
 import { UpgradeActions, RepairControl, TradeConnectButtons, ActionButton, CloneSettings, WarehouseWares, FilmLaunchForm } from './PropertyActions';
 import { TradeModeControl, TradeLevelControl } from './TradeControls';
 import { EpitaphEditor, CancelTranscendence } from './MausoleumControls';
+import { BankLoanRequest } from './BankLoanRequest';
 import styles from './PropertyGroup.module.css';
 
 // Re-export utility functions for backward compatibility (tests import from here)
@@ -381,6 +382,24 @@ function DefinedProperties({
         />,
       );
       rendered.add(def.rdoName);
+      continue;
+    }
+
+    // Bank loan request — the legacy inversion (BankGeneralSheet.pas:156,160):
+    // you borrow from someone ELSE's bank, so the owner never sees the control.
+    // A bank is not a civic building, so `canEdit` here is exactly `isOwner` (:87).
+    if (def.type === PropertyType.BANK_LOAN_REQUEST) {
+      rendered.add(def.rdoName);
+      if (!canEdit) {
+        elements.push(
+          <BankLoanRequest
+            key="bank-loan"
+            estLoan={valueMap.get('EstLoan') ?? ''}
+            buildingX={buildingX}
+            buildingY={buildingY}
+          />,
+        );
+      }
       continue;
     }
 

@@ -436,6 +436,24 @@
   padding: var(--space-1) 0;
 }
 
+/* The bank's LoanResult panel — clGreen for brqApproved, clMaroon for the
+   other three (Voyager/BankGeneralSheet.pas:449-465). */
+.loanVerdictOk {
+  color: var(--success);
+  background: var(--success-bg);
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.loanVerdictBad {
+  color: var(--error);
+  background: var(--error-bg);
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
 .upgradeStopBtn {
   padding: var(--space-1) var(--space-3);
   background: var(--error-bg);

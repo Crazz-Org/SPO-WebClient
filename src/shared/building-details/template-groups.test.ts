@@ -229,6 +229,16 @@ describe('General handler RDO properties', () => {
     expect(BANK_GENERAL_GROUP.rdoCommands!['BudgetPerc']?.command).toBe('RDOSetLoanPerc');
   });
 
+  it('BankGeneral carries exactly one loan request control, outside the rdoCommands map', () => {
+    // The control emits RDOAskLoan through its own request path, not through
+    // `resolveRdoCommand` — an rdoCommands entry for it would be a second,
+    // divergent emitter for the same member.
+    const loanProps = BANK_GENERAL_GROUP.properties.filter(p => p.type === PropertyType.BANK_LOAN_REQUEST);
+    expect(loanProps).toHaveLength(1);
+    expect(loanProps[0].rdoName).toBe('loanRequest');
+    expect(BANK_GENERAL_GROUP.rdoCommands!['loanRequest']).toBeUndefined();
+  });
+
   it('TVGeneral should have HoursOnAir and Comercials sliders', () => {
     const hoursOnAir = TV_GENERAL_GROUP.properties.find(p => p.rdoName === 'HoursOnAir');
     expect(hoursOnAir).toBeDefined();

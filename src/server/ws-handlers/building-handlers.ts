@@ -19,6 +19,8 @@ import {
   type WsRespBuildingGateConnections,
   type WsReqBuildingServiceFigures,
   type WsRespBuildingServiceFigures,
+  type WsReqBankLoan,
+  type WsRespBankLoan,
   type WsReqBuildingRefreshProperties,
   type WsRespBuildingRefreshProperties,
   type WsReqBuildingSetProperty,
@@ -241,6 +243,39 @@ export async function handleBuildingServiceFigures(ctx: WsHandlerContext, msg: W
       serviceIndex: req.serviceIndex,
       supply: figures.supply,
       demand: figures.demand,
+    };
+    sendResponse(ctx.ws, response);
+  });
+}
+
+/**
+ * A visitor's loan request on another tycoon's bank.
+ *
+ * The amount is checked here and nowhere else: the server does `StrToFloat(Amount)`
+ * on it (`StdBlocks/Banks.pas:165`), so a `$1,000` or an empty box would reach a
+ * Delphi float parse. Voyager strips `$` and `,` in the sheet before packing
+ * (`Voyager/BankGeneralSheet.pas:435-436`); what arrives here is already stripped,
+ * and anything that is not a plain number is a bad request, not a facility error.
+ */
+export async function handleBankLoan(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
+  const req = msg as WsReqBankLoan;
+
+  if (typeof req.amount !== 'string' || !/^\d+(\.\d+)?$/.test(req.amount)) {
+    sendError(ctx.ws, msg.wsRequestId, 'amount must be a plain number', ErrorCodes.ERROR_InvalidParameter);
+    return;
+  }
+
+  await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_FacilityNotFound, async () => {
+    const answer = await ctx.session.askBankLoan(req.x, req.y, req.amount);
+
+    const response: WsRespBankLoan = {
+      type: WsMessageType.RESP_BANK_LOAN,
+      wsRequestId: msg.wsRequestId,
+      x: req.x,
+      y: req.y,
+      amount: req.amount,
+      verdict: answer.verdict,
+      result: answer.result,
     };
     sendResponse(ctx.ws, response);
   });

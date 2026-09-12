@@ -39,6 +39,7 @@ import type {
   ClusterFacilityPreview,
 
   BankActionType,
+  BankLoanVerdict,
   AutoConnectionActionType,
   CurriculumActionType,
   NewspaperRatingEntry,
@@ -216,6 +217,12 @@ export interface ClientCallbacks {
     y: number,
     serviceIndex: number,
   ) => Promise<{ supply: string; demand: string } | null>;
+  /**
+   * A visitor's loan request on another tycoon's bank. Answers a verdict rather
+   * than throwing or toasting: the four outcomes are drawn inline, the way
+   * Voyager's LoanResult panel does (BankGeneralSheet.pas:446-468).
+   */
+  onRequestBankLoan: (x: number, y: number, amount: string) => Promise<BankLoanVerdict>;
   onRenameBuilding: (x: number, y: number, newName: string) => void;
   onDeleteBuilding: (x: number, y: number) => void;
   onNavigateToBuilding: (x: number, y: number) => void;

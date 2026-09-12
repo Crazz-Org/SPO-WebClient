@@ -89,6 +89,7 @@ import * as zoneSurfaceHandler from './session/zone-surface-handler';
 import * as buildingTemplatesHandler from './session/building-templates-handler';
 import * as buildingDetailsHandler from './session/building-details-handler';
 import * as buildingPropertyHandler from './session/building-property-handler';
+import * as bankLoanHandler from './session/bank-loan-handler';
 import * as researchHandler from './session/research-handler';
 import { dispatchPush } from './session/push-dispatcher';
 import * as loginHandler from './session/login-handler';
@@ -3030,6 +3031,18 @@ private handlePush(socketName: string, packet: RdoPacket) {
     serviceIndex: number,
   ): Promise<{ supply: string; demand: string }> {
     return buildingDetailsHandler.getBuildingServiceFigures(this, x, y, serviceIndex);
+  }
+
+  /**
+   * A visitor's loan request on another tycoon's bank — RDOAskLoan on the bank's
+   * CurrBlock (StdBlocks/Banks.pas:46).
+   */
+  public async askBankLoan(
+    x: number,
+    y: number,
+    amount: string,
+  ): Promise<{ verdict: import('../shared/types').BankLoanVerdict; result: string }> {
+    return bankLoanHandler.askBankLoan(this, x, y, amount);
   }
 
   public async refreshBuildingProperties(x: number, y: number, visualClass: string, activeTabId?: string): Promise<BuildingDetailsResponse> {

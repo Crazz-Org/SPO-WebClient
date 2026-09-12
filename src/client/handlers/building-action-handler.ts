@@ -17,6 +17,9 @@ import {
   WsRespBuildingGateConnections,
   WsReqBuildingServiceFigures,
   WsRespBuildingServiceFigures,
+  WsReqBankLoan,
+  WsRespBankLoan,
+  BankLoanVerdict,
   WsReqBuildingRefreshProperties,
   WsRespBuildingRefreshProperties,
   WsReqBuildingSetProperty,
@@ -302,6 +305,42 @@ export async function requestServiceFigures(
   } catch (err: unknown) {
     ClientBridge.log('Error', `Failed to read service ${serviceIndex} figures at (${x},${y}): ${toErrorMessage(err)}`);
     return null;
+  }
+}
+
+// ── Bank Loan ───────────────────────────────────────────────────────────────
+
+/**
+ * A visitor's loan request on another tycoon's bank.
+ *
+ * It never throws and never toasts. The bank answers four distinguishable
+ * things — approved, rejected, not enough funds, and the call itself failed
+ * (Voyager/BankGeneralSheet.pas:446-468) — and all four belong in the control's
+ * own panel, where the player can read which one they got. A generic failure
+ * toast would collapse three of them into one.
+ */
+export async function requestBankLoan(
+  ctx: ClientHandlerContext,
+  x: number,
+  y: number,
+  amount: string,
+): Promise<BankLoanVerdict> {
+  if (useGameStore.getState().status !== 'connected') return 'error';
+
+  try {
+    const req: WsReqBankLoan = {
+      type: WsMessageType.REQ_BANK_LOAN,
+      x,
+      y,
+      amount,
+    };
+
+    const response = await ctx.sendRequest(req) as WsRespBankLoan;
+    return response.verdict;
+  } catch (err: unknown) {
+    // BankGeneralSheet.pas:443-444 — a failed call is brqError, an answer of its own.
+    ClientBridge.log('Error', `Loan request at (${x},${y}) failed: ${toErrorMessage(err)}`);
+    return 'error';
   }
 }
 

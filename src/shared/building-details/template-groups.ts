@@ -247,6 +247,7 @@ export const BANK_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
     { rdoName: 'EstLoan', displayName: 'Estimated Loan', type: PropertyType.CURRENCY },
+    { rdoName: 'loanRequest', displayName: 'Request a loan', type: PropertyType.BANK_LOAN_REQUEST },
     { rdoName: 'Interest', displayName: 'Interest Rate', type: PropertyType.SLIDER, editable: true, min: 0, max: 100, step: 1, unit: '%' },
     { rdoName: 'Term', displayName: 'Loan Term', type: PropertyType.SLIDER, editable: true, min: 1, max: 20, step: 1, unit: 'years' },
     { rdoName: 'BudgetPerc', displayName: 'Budget', type: PropertyType.SLIDER, editable: true, min: 0, max: 100, unit: '%' },

@@ -150,6 +150,8 @@ export enum WsMessageType {
   RESP_BUILDING_SET_PROPERTY = 'RESP_BUILDING_SET_PROPERTY',
   REQ_BUILDING_SERVICE_FIGURES = 'REQ_BUILDING_SERVICE_FIGURES',
   RESP_BUILDING_SERVICE_FIGURES = 'RESP_BUILDING_SERVICE_FIGURES',
+  REQ_BANK_LOAN = 'REQ_BANK_LOAN',
+  RESP_BANK_LOAN = 'RESP_BANK_LOAN',
 
 
   // Building Upgrades
@@ -847,6 +849,38 @@ export interface WsRespBuildingServiceFigures extends WsMessage {
   serviceIndex: number;
   supply: string;
   demand: string;
+}
+
+/**
+ * The four answers of `TBankRequestResult` (Kernel/Kernel.pas:1750 — brqApproved,
+ * brqRejected, brqNotEnoughFunds) plus Voyager's client-side brqError, the fourth
+ * ordinal it adds for "the call itself failed" (Voyager/BankGeneralSheet.pas:22).
+ */
+export type BankLoanVerdict = 'approved' | 'rejected' | 'notEnoughFunds' | 'error';
+
+/**
+ * A visitor asks another tycoon's bank for a loan.
+ *
+ * Voyager packs `RDOAskLoan(StrToInt(SecId), Amount)` on the bank's CurrBlock
+ * (Voyager/BankGeneralSheet.pas:434-439) and offers the box to visitors only
+ * (`:156,160` — `Enabled := not fOwnsFacility`).
+ */
+export interface WsReqBankLoan extends WsMessage {
+  type: WsMessageType.REQ_BANK_LOAN;
+  x: number;
+  y: number;
+  /** Already sanitised — digits with an optional decimal part; the gateway refuses anything else. */
+  amount: string;
+}
+
+export interface WsRespBankLoan extends WsMessage {
+  type: WsMessageType.RESP_BANK_LOAN;
+  x: number;
+  y: number;
+  amount: string;
+  verdict: BankLoanVerdict;
+  /** The wire ordinal as answered (`res="#1"` → `'1'`); empty when the call failed. */
+  result: string;
 }
 
 /** Lightweight property refresh — reuses existing Delphi temp object. */

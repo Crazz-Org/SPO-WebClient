@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `service-figures`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `service-figures`, `bank-loan`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -135,6 +135,19 @@ the cached `srvSupplies0` / `srvDemands0` columns `building-details` serves — 
 64 / 37 where the cache says 5 / 12 — because a client that still drew the cached columns for
 the selected card would otherwise render plausible numbers and pass. The index travels as the
 single `#`-prefixed argument, so a frame built for another service matches nothing.
+
+`bank-loan` is a visitor's loan request answered four different ways.
+`RDOAskLoan( ClientId : integer; Amount : widestring )` is a 2-argument `function`
+(`StdBlocks/Banks.pas:46`) whose answer is an ordinal of `TBankRequestResult`
+(`Kernel/Kernel.pas:1750`), plus the fourth ordinal Voyager adds client-side for a call that
+failed (`brqError`, `Voyager/BankGeneralSheet.pas:22`). Each ordinal gets **its own amount** —
+`1000000` → `0` approved, `2000000` → `1` rejected, `3000000` → `2` not enough funds,
+`4000000` → `3` error — because `exactMatch` returns the first exchange whose keys match whether
+or not it was consumed (`rdo-mock.ts:110-113`): four identical frames would all answer `#0` and
+prove nothing. Distinct amounts put the distinction on the wire, so the verdict provably follows
+the argument that was sent. The first argument is the model server's tycoon pointer
+(`TMoneyDealer(ClientId)`, `Banks.pas:165`) and travels `#`-prefixed; the amount travels `%`-prefixed
+because the server parses it itself (`StrToFloat`, same line).
 
 ### Scenario Structure
 
