@@ -325,29 +325,38 @@ describe('connectDirectory — world list parsing', () => {
     expect(worlds[0]).toMatchObject({ name: 'Unknown', ip: '127.0.0.1', port: 8000 });
   });
 
-  it('returns nothing and says why when the answer carries no Count', async () => {
+  it('rejects, and says why, when the answer carries no Count', async () => {
     const fake = makeLoginCtx();
     fake.respond(queryResponder('Junk without an equals sign\nSomething/Else=1'));
 
-    const worlds = await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
-
-    expect(worlds).toEqual([]);
+    await expect(connectDirectory(fake.ctx, 'SPO_test3', 'test3')).rejects.toThrow(/Count/);
     expect(fake.log.warn).toHaveBeenCalledWith(
       expect.stringContaining('"count" key not found'),
     );
   });
 
+  it('parses Count=0 as an empty list, not an error', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(queryResponder('Count=0'));
+
+    const worlds = await connectDirectory(fake.ctx, 'SPO_test3', 'test3');
+
+    expect(worlds).toEqual([]);
+  });
+
   it('refuses to close a session the directory never opened, rather than sending sel 0', async () => {
     const fake = makeLoginCtx();
     // Both phases parse an empty RDOOpenSession answer into an empty session id.
-    // `RdoCommand.sel('')` then throws instead of putting `sel 0` — a null
-    // pointer server-side — on the wire.
+    // The query phase now rejects on its own unparseable RDOQueryKey answer
+    // (no "Count" key) before ever reaching the `RDOEndSession` step, so that is
+    // the error `Promise.all` surfaces here; the auth phase would separately hit
+    // `RdoCommand.sel('')` at its own `RDOEndSession` — never sent either.
     fake.respond((packet) => (packet.verb === RdoVerb.IDOF
       ? `objid="${DIRECTORY_SERVER_ID}"`
       : (packet.member === 'RDOLogonUser' ? 'res="#0"' : EMPTY_ANSWER)));
 
     await expect(connectDirectory(fake.ctx, 'SPO_test3', 'test3'))
-      .rejects.toThrow(/Invalid RDO target ID/);
+      .rejects.toThrow(/Count/);
     expect(fake.frames.directory_query).toEqual([]);
     expect(fake.frames.directory_auth).toEqual([]);
   });

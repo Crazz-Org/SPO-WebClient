@@ -8,8 +8,8 @@
  */
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { screen } from '@testing-library/react';
-import { renderWithProviders } from '../__tests__/setup/render-helpers';
+import { act, screen, fireEvent } from '@testing-library/react';
+import { renderWithProviders, createSpiedCallbacks } from '../__tests__/setup/render-helpers';
 import { useGameStore } from '../store';
 import { LoginScreen } from './LoginScreen';
 
@@ -35,5 +35,28 @@ describe('LoginScreen', () => {
     expect(screen.getByText('World Full')).toBeTruthy();
     expect(screen.getByText('Choose another world')).toBeTruthy();
     expect(screen.queryByText('Create New Company')).toBeNull();
+  });
+
+  it('retries the same zone query after an empty world list', () => {
+    const onDirectoryConnect = jest.fn();
+    const callbacks = createSpiedCallbacks({ onDirectoryConnect });
+
+    renderWithProviders(<LoginScreen />, { clientCallbacks: callbacks });
+
+    fireEvent.change(screen.getByPlaceholderText('Username'), { target: { value: 'SPO_test3' } });
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'test3' } });
+    fireEvent.click(screen.getByText('Enter the World'));
+
+    act(() => useGameStore.setState({ loginStage: 'zones', loginLoading: false }));
+    fireEvent.click(screen.getByText('BETA'));
+
+    expect(onDirectoryConnect).toHaveBeenCalledTimes(1);
+    expect(onDirectoryConnect).toHaveBeenCalledWith('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
+
+    act(() => useGameStore.getState().setLoginWorlds([]));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(onDirectoryConnect).toHaveBeenCalledTimes(2);
+    expect(onDirectoryConnect).toHaveBeenLastCalledWith('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
   });
 });
