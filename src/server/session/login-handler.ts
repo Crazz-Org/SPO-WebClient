@@ -910,7 +910,7 @@ type FetchCompaniesResult =
 /**
  * Fetch companies via HTTP (ASP endpoint)
  */
-async function fetchCompaniesViaHttp(
+export async function fetchCompaniesViaHttp(
   ctx: LoginContext,
   worldIp: string,
   username: string,

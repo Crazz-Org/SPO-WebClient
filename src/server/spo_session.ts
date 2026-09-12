@@ -91,6 +91,8 @@ import * as buildingPropertyHandler from './session/building-property-handler';
 import * as researchHandler from './session/research-handler';
 import { dispatchPush } from './session/push-dispatcher';
 import * as loginHandler from './session/login-handler';
+import * as abandonRoleHandler from './session/abandon-role-handler';
+import type { AbandonRoleResult } from './session/abandon-role-handler';
 import { canBufferRequest, isConnectionBoundMember } from './session/request-routing';
 import { requireDaParams } from './session/asp-da-params';
 import { classifyRdoError, ErrorRecovery } from './session/rdo-error-classifier';
@@ -1149,6 +1151,17 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
 
   public async executeCurriculumAction(action: string, value?: boolean): Promise<{ success: boolean; message?: string }> {
     return autoConnectionHandler.executeCurriculumAction(this, action, value);
+  }
+
+  public async readPersonalCompanies(): Promise<CompanyInfo[]> {
+    const ip = this.currentWorldInfo?.ip;
+    if (!ip || !this.cachedUsername) return [];
+    const r = await loginHandler.fetchCompaniesViaHttp(this, ip, this.cachedUsername);
+    return r.kind === 'companies' ? r.companies : [];
+  }
+
+  public async abandonRole(): Promise<AbandonRoleResult> {
+    return abandonRoleHandler.abandonRole(this);
   }
 
   // -- FAVORITES (facade -> favorites-handler) ------------------------------

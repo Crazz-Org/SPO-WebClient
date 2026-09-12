@@ -39,6 +39,7 @@ import * as buildingDetailsHandler from '../session/building-details-handler';
 import * as buildingPropertyHandler from '../session/building-property-handler';
 import * as researchHandler from '../session/research-handler';
 import * as loginHandler from '../session/login-handler';
+import * as abandonRoleHandler from '../session/abandon-role-handler';
 import { RdoParser } from '../../shared/rdo-types';
 import { PROXY_IMAGE_ENDPOINT } from '../../shared/proxy-utils';
 import { SessionPhase, SurfaceType } from '../../shared/types';
@@ -158,6 +159,13 @@ const DELEGATIONS: readonly Delegation[] = [
     call: s => s.switchCompany(COMPANY),
     forwarded: [COMPANY],
     result: undefined,
+  },
+  {
+    method: 'abandonRole',
+    install: () => jest.spyOn(abandonRoleHandler, 'abandonRole'),
+    call: s => s.abandonRole(),
+    forwarded: [],
+    result: { success: true, outcome: 'unchanged' },
   },
 
   // ── mail-handler ─────────────────────────────────────────────────────────
@@ -663,7 +671,7 @@ describe('StarpeaceSession — handler delegation', () => {
   it('covers every one-line handler delegation the facade declares', () => {
     // A guard on the table itself: if a delegation is added to the facade and
     // not to the table, the count stops matching and this row says so.
-    expect(DELEGATIONS).toHaveLength(71);
+    expect(DELEGATIONS).toHaveLength(72);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 
@@ -831,6 +839,50 @@ describe('fetchAspPage — the HTTP guard rail', () => {
     await session.fetchAspPage('NewTycoon/TycoonReport.asp', { Selection: 'Curriculum' });
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('Selection=Curriculum');
+  });
+});
+
+describe('readPersonalCompanies', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('maps a companies result to the CompanyInfo array', async () => {
+    const session = newSession();
+    session.setCurrentWorldInfo(WORLD);
+    session.setCachedUsername('SPO_test3');
+    jest.spyOn(loginHandler, 'fetchCompaniesViaHttp').mockResolvedValue({
+      kind: 'companies', companies: [COMPANY], realContextId: null,
+    });
+
+    const result = await session.readPersonalCompanies();
+    expect(result).toEqual([COMPANY]);
+    expect(loginHandler.fetchCompaniesViaHttp).toHaveBeenCalledWith(session, WORLD.ip, 'SPO_test3');
+  });
+
+  it('a non-companies result yields an empty array', async () => {
+    const session = newSession();
+    session.setCurrentWorldInfo(WORLD);
+    session.setCachedUsername('SPO_test3');
+    jest.spyOn(loginHandler, 'fetchCompaniesViaHttp').mockResolvedValue({ kind: 'unreachable' });
+
+    await expect(session.readPersonalCompanies()).resolves.toEqual([]);
+  });
+
+  it('without a world IP: empty array, no fetch attempted', async () => {
+    const session = newSession();
+    session.setCachedUsername('SPO_test3');
+    const spy = jest.spyOn(loginHandler, 'fetchCompaniesViaHttp');
+
+    await expect(session.readPersonalCompanies()).resolves.toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('without a cached username: empty array, no fetch attempted', async () => {
+    const session = newSession();
+    session.setCurrentWorldInfo(WORLD);
+    const spy = jest.spyOn(loginHandler, 'fetchCompaniesViaHttp');
+
+    await expect(session.readPersonalCompanies()).resolves.toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

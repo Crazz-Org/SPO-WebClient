@@ -1379,6 +1379,10 @@ export interface WsRespProfileCurriculumAction extends WsMessage {
   type: WsMessageType.RESP_PROFILE_CURRICULUM_ACTION;
   success: boolean;
   message?: string;
+  /** abandonRole only: the personal company the session now plays as (rdoAbandonRole.asp:40). */
+  switchedTo?: CompanyInfo;
+  /** abandonRole only: no personal company is left — the client returns to the company stage. */
+  returnToCompanyStage?: boolean;
 }
 
 // =============================================================================

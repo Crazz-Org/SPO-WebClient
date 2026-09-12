@@ -464,9 +464,10 @@ export class StarpeaceClient implements ClientHandlerContext {
       onProfilePolicySet: (tycoonName, status) => this.sendMessage({
         type: WsMessageType.REQ_PROFILE_POLICY_SET, tycoonName, status,
       }),
-      onProfileCurriculumAction: (action, value) => this.sendMessage({
-        type: WsMessageType.REQ_PROFILE_CURRICULUM_ACTION, action, value,
-      }),
+      onProfileCurriculumAction: (action, value) => {
+        if (action === 'abandonRole') { void authHandler.abandonRole(this); return; }
+        this.sendMessage({ type: WsMessageType.REQ_PROFILE_CURRICULUM_ACTION, action, value });
+      },
       onProfileSwitchCompany: (companyId, companyName, ownerRole) =>
         authHandler.profileSwitchCompany(this, companyId, companyName, ownerRole),
 
