@@ -596,17 +596,17 @@ describe('registerInspectorTabs integration', () => {
     expect(template.groups[1].handlerName).toBe('Supplies');
   });
 
-  it('should use canonical group name regardless of raw CLASSES.BIN tabName', () => {
-    // Building inspector tab name from CLASSES.BIN is 'SERVICES' (all-caps raw value),
-    // but the canonical PropertyGroup name for the Supplies handler is 'Supplies'.
-    // registerInspectorTabs must use baseGroup.name, not the raw tabName.
+  it('should show the raw CLASSES.BIN tabName as the tab label', () => {
+    // Building inspector tab name from CLASSES.BIN is 'SERVICES' (all-caps raw value).
+    // registerInspectorTabs must show that raw tabName, as Voyager does, not the
+    // canonical PropertyGroup name for the Supplies handler ('Supplies').
     registerInspectorTabs('testHQ', [
       { tabName: 'SERVICES', tabHandler: 'Supplies' },
     ]);
     const template = getTemplateForVisualClass('testHQ');
     const suppliesGroup = template.groups.find(g => g.handlerName === 'Supplies');
     expect(suppliesGroup).toBeDefined();
-    expect(suppliesGroup!.name).toBe('Supplies');  // canonical, not 'SERVICES'
+    expect(suppliesGroup!.name).toBe('SERVICES');  // raw CLASSES.BIN value, not 'Supplies'
   });
 
   it('should handle duplicate group IDs with handler suffix', () => {
