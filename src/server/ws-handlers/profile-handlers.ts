@@ -163,12 +163,16 @@ export async function handleProfilePolicySet(ctx: WsHandlerContext, msg: WsMessa
 
 export async function handleProfileCurriculumAction(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
   const req = msg as WsReqProfileCurriculumAction;
-  const result = await ctx.session.executeCurriculumAction(req.action as CurriculumActionType, req.value);
+  const result = req.action === 'abandonRole'
+    ? await ctx.session.abandonRole()
+    : { ...(await ctx.session.executeCurriculumAction(req.action as CurriculumActionType, req.value)), outcome: 'unchanged' as const };
   const response: WsRespProfileCurriculumAction = {
     type: WsMessageType.RESP_PROFILE_CURRICULUM_ACTION,
     wsRequestId: msg.wsRequestId,
     success: result.success,
     message: result.message,
+    ...(result.outcome === 'switched' ? { switchedTo: result.company } : {}),
+    ...(result.outcome === 'no-company' ? { returnToCompanyStage: true } : {}),
   };
   sendResponse(ctx.ws, response);
 }

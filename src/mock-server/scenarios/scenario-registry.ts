@@ -22,6 +22,7 @@ import { createCivicMutationsScenario } from './civic-mutations-scenario';
 import { createNewspaperScenario } from './newspaper-scenario';
 import { createConnectionSearchScenario } from './connection-search-scenario';
 import { createTycoonProfileScenario } from './tycoon-profile-scenario';
+import { createAbandonRoleScenario } from './abandon-role-scenario';
 
 /** All recognized scenario names */
 export type ScenarioName =
@@ -38,7 +39,8 @@ export type ScenarioName =
   | 'civic-mutations'
   | 'newspaper'
   | 'connection-search'
-  | 'tycoon-profile';
+  | 'tycoon-profile'
+  | 'abandon-role';
 
 /** Ordered list of all scenario names */
 export const SCENARIO_NAMES: ScenarioName[] = [
@@ -56,6 +58,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'newspaper',
   'connection-search',
   'tycoon-profile',
+  'abandon-role',
 ];
 
 /** Union result from any scenario factory */
@@ -84,6 +87,7 @@ const SCENARIO_FACTORIES: Record<
   'newspaper': (o) => createNewspaperScenario(o),
   'connection-search': (o) => createConnectionSearchScenario(o),
   'tycoon-profile': (o) => createTycoonProfileScenario(o),
+  'abandon-role': (o) => createAbandonRoleScenario(o),
 };
 
 /**
@@ -142,7 +146,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 14 mock server scenarios',
+    description: 'Combined: all 15 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -151,7 +155,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 14 scenarios',
+    description: 'Combined: all RDO exchanges from 15 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };
