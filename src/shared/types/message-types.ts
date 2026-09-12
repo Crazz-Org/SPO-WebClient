@@ -988,9 +988,21 @@ export interface WsRespSearchMenuTycoonFullProfile extends WsMessage {
   data: CurriculumData;
 }
 
+/**
+ * Which of the two people-search paths a request asks for.
+ *
+ * `contains` is the typed path — the pattern is wrapped (`*term*`) and swept
+ * across the 26 `Root/Users` buckets. `prefix` is the A-Z index path — one
+ * bucket, the bare `*` pattern the reference client emitted for a letter
+ * (`DirectoryServer.wsc:841-847`).
+ */
+export type PeopleSearchMode = 'contains' | 'prefix';
+
 export interface WsReqSearchMenuPeopleSearch extends WsMessage {
   type: WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH;
   searchStr: string;
+  /** Absent means `'contains'`, the behaviour every sender had before the index. */
+  mode?: PeopleSearchMode;
 }
 
 export interface WsRespSearchMenuPeopleSearch extends WsMessage {

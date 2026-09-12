@@ -214,6 +214,7 @@ export type {
   WsReqSearchMenuTycoonFullProfile,
   WsRespSearchMenuTycoonFullProfile,
   WsReqSearchMenuPeopleSearch,
+  PeopleSearchMode,
   WsRespSearchMenuPeopleSearch,
   WsReqSearchMenuRankings,
   WsRespSearchMenuRankings,

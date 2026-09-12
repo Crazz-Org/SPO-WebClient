@@ -428,8 +428,8 @@ export class StarpeaceClient implements ClientHandlerContext {
       // Search menu
       onSearchMenuHome: () => this.sendMessage({ type: WsMessageType.REQ_SEARCH_MENU_HOME }),
       onSearchMenuTowns: () => this.sendMessage({ type: WsMessageType.REQ_SEARCH_MENU_TOWNS }),
-      onSearchMenuPeopleSearch: (searchStr) => this.sendMessage({
-        type: WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH, searchStr,
+      onSearchMenuPeopleSearch: (searchStr, mode) => this.sendMessage({
+        type: WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH, searchStr, mode: mode ?? 'contains',
       }),
       onSearchMenuTycoonProfile: (tycoonName) => this.sendMessage({
         type: WsMessageType.REQ_SEARCH_MENU_TYCOON_PROFILE, tycoonName,

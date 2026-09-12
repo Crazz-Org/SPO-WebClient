@@ -94,19 +94,32 @@ function TownsPage() {
 // People search sub-page (RDO-based directory search)
 // ---------------------------------------------------------------------------
 
+/** The A-Z index of the People page — one bucket of `Root/Users` per letter. */
+const PEOPLE_INDEX_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
 function PeoplePage() {
   const results = useSearchStore((s) => s.peopleData?.results) ?? [];
   const isLoading = useSearchStore((s) => s.isLoading);
+  const peopleQuery = useSearchStore((s) => s.peopleQuery);
   const client = useClient();
   const [searchStr, setSearchStr] = useState('');
 
   const handleSearch = useCallback(() => {
     const trimmed = searchStr.trim();
     if (trimmed) {
+      useSearchStore.getState().setPeopleQuery({ mode: 'contains', term: trimmed });
       useSearchStore.getState().setLoading(true);
-      client.onSearchMenuPeopleSearch(trimmed);
+      client.onSearchMenuPeopleSearch(trimmed, 'contains');
     }
   }, [searchStr, client]);
+
+  /** Browse the roster: one letter, no text typed. */
+  const handleLetter = useCallback((letter: string) => {
+    setSearchStr('');
+    useSearchStore.getState().setPeopleQuery({ mode: 'prefix', term: letter });
+    useSearchStore.getState().setLoading(true);
+    client.onSearchMenuPeopleSearch(letter, 'prefix');
+  }, [client]);
 
   return (
     <div className={styles.listContainer}>
@@ -122,6 +135,24 @@ function PeoplePage() {
         <button className={styles.searchBtn} onClick={handleSearch} disabled={isLoading}>
           <Search size={14} />
         </button>
+      </div>
+
+      {/* A-Z index — browse without typing anything */}
+      <div className={styles.letterIndex} role="group" aria-label="Browse players by first letter">
+        {PEOPLE_INDEX_LETTERS.map((letter) => {
+          const active = peopleQuery?.mode === 'prefix' && peopleQuery.term === letter;
+          return (
+            <button
+              key={letter}
+              type="button"
+              className={`${styles.letterBtn} ${active ? styles.letterBtnActive : ''}`}
+              aria-pressed={active}
+              onClick={() => handleLetter(letter)}
+            >
+              {letter}
+            </button>
+          );
+        })}
       </div>
 
       {/* Search results list */}
@@ -143,9 +174,14 @@ function PeoplePage() {
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty state — a letter that found nobody says so, it does not fall
+          back to the "type something" placeholder. */}
       {results.length === 0 && !isLoading && (
-        <div className={styles.emptyState}>Search for people by name.</div>
+        <div className={styles.emptyState}>
+          {peopleQuery?.mode === 'prefix'
+            ? `No players whose name starts with ${peopleQuery.term}.`
+            : 'Search for people by name.'}
+        </div>
       )}
     </div>
   );

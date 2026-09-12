@@ -1,5 +1,5 @@
 /**
- * Scenario integrity tests for all 12 mock server scenario factory functions
+ * Scenario integrity tests for all 13 mock server scenario factory functions
  * and the scenario registry.
  */
 import { describe, it, expect } from '@jest/globals';
@@ -683,11 +683,12 @@ describe('world-login scenario', () => {
 });
 
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 15 entries', () => {
+  it('SCENARIO_NAMES has 16 entries', () => {
     // 14, not 13: the `world-login` scenario was added with the CanJoinWorldEx
     // admission check (Interface Server/InterfaceServer.pas:441).
     // 15: `abandon-role`, issue 547.
-    expect(SCENARIO_NAMES).toHaveLength(15);
+    // 16: `people-search`, issue 527.
+    expect(SCENARIO_NAMES).toHaveLength(16);
   });
 
   it('loadScenario returns bundle for each name', () => {

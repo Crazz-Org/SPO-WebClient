@@ -33,6 +33,7 @@ import type {
   BuildingCategory,
   BuildingInfo,
   MailFolder,
+  PeopleSearchMode,
   ConnectionSearchResult,
   ClusterInfo,
   ClusterFacilityPreview,
@@ -232,7 +233,7 @@ export interface ClientCallbacks {
   // Search menu
   onSearchMenuHome: () => void;
   onSearchMenuTowns: () => void;
-  onSearchMenuPeopleSearch: (searchStr: string) => void;
+  onSearchMenuPeopleSearch: (searchStr: string, mode?: PeopleSearchMode) => void;
   onSearchMenuTycoonProfile: (tycoonName: string) => void;
   onSearchMenuTycoonFullProfile: (tycoonName: string) => void;
   onSearchMenuRankings: () => void;
