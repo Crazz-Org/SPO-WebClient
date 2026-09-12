@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { screen } from '@testing-library/react';
-import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
+import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useSearchStore } from '../../store/search-store';
 import { SearchPanel } from './SearchPanel';
 import { WsMessageType } from '@/shared/types';
@@ -205,5 +205,75 @@ describe('SearchPanel — ranking detail', () => {
     fireEvent.click(screen.getByText('← Back to rankings'));
 
     expect(useSearchStore.getState().rankingDetailData).toBeNull();
+  });
+});
+
+describe('SearchPanel — towns page opens the town directory (#526)', () => {
+  beforeEach(() => {
+    resetStores();
+    useSearchStore.getState().reset();
+  });
+
+  const HELARTIA: TownInfo = {
+    ...TOWN_BASE,
+    x: 120,
+    y: 340,
+    path: 'Towns\\Helartia.five',
+    classId: '1234',
+  };
+
+  it('opens the town page rather than jumping the map', () => {
+    showTowns([HELARTIA]);
+    const onSearchMenuDirectory = jest.fn();
+    const onNavigateToBuilding = jest.fn();
+    const { container } = renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({
+        onSearchMenuDirectory: onSearchMenuDirectory as never,
+        onNavigateToBuilding: onNavigateToBuilding as never,
+      }),
+    });
+
+    fireEvent.click(container.querySelector('.listItemTitle')!);
+
+    const expected = { kind: 'town', path: 'Towns\\Helartia.five', classId: '1234' };
+    expect(onSearchMenuDirectory).toHaveBeenCalledWith(expected);
+    expect(onNavigateToBuilding).not.toHaveBeenCalled();
+    expect(useSearchStore.getState().currentPage).toBe('directory');
+    expect(useSearchStore.getState().directoryStack).toEqual([{ ref: expected, page: null }]);
+  });
+
+  it('still jumps the map from the row action, without opening the town', () => {
+    showTowns([HELARTIA]);
+    const onSearchMenuDirectory = jest.fn();
+    const onNavigateToBuilding = jest.fn();
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({
+        onSearchMenuDirectory: onSearchMenuDirectory as never,
+        onNavigateToBuilding: onNavigateToBuilding as never,
+      }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show on map' }));
+
+    expect(onNavigateToBuilding).toHaveBeenCalledWith(120, 340);
+    expect(onSearchMenuDirectory).not.toHaveBeenCalled();
+    expect(useSearchStore.getState().currentPage).toBe('towns');
+  });
+
+  it('walks the directory descent one level at a time on Back, then leaves it', () => {
+    showTowns([HELARTIA]);
+    useSearchStore.getState().pushDirectory({ kind: 'town', path: 'Towns\\Helartia.five', classId: '1234' });
+    useSearchStore.getState().pushDirectory({ kind: 'town-facilities', town: 'Helartia' });
+    useSearchStore.setState({ isLoading: false });
+
+    renderWithProviders(<SearchPanel />);
+    fireEvent.click(screen.getByText('← Back'));
+
+    expect(useSearchStore.getState().currentPage).toBe('directory');
+    expect(useSearchStore.getState().directoryStack).toHaveLength(1);
+
+    fireEvent.click(screen.getByText('← Back'));
+
+    expect(useSearchStore.getState().currentPage).toBe('towns');
   });
 });

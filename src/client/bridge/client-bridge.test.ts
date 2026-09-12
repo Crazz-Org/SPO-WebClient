@@ -482,3 +482,24 @@ describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_NEWSPAPERS 
     expect(useSearchStore.getState().newspapersData?.newspapers).toEqual(newspapers);
   });
 });
+
+describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_DIRECTORY (#526)', () => {
+  beforeEach(() => {
+    useSearchStore.getState().reset();
+  });
+
+  it('fills the level that asked for it', () => {
+    const ref = { kind: 'town-facilities', town: 'Helartia' } as const;
+    const page = { kind: 'folder', items: ['Residentials'], ownedBy: null } as const;
+    useSearchStore.getState().pushDirectory(ref);
+
+    ClientBridge.handleSearchMenuResponse({
+      type: WsMessageType.RESP_SEARCH_MENU_DIRECTORY,
+      ref,
+      page,
+    } as unknown as WsMessage);
+
+    expect(useSearchStore.getState().directoryStack).toEqual([{ ref, page }]);
+    expect(useSearchStore.getState().isLoading).toBe(false);
+  });
+});

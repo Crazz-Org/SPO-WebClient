@@ -3,17 +3,20 @@
  * Used inside SearchPanel when currentPage is 'tycoon-profile'.
  */
 
-import { User, DollarSign, Trophy, Star, Award, Mail } from 'lucide-react';
+import { User, DollarSign, Trophy, Star, Award, Mail, Briefcase } from 'lucide-react';
 import { formatMoney } from '../../format-utils';
 import { useSearchStore } from '../../store/search-store';
 import { useGameStore } from '../../store/game-store';
+import { useClient } from '../../context';
 import { GlassCard } from '../common';
 import { tycoonAddress, writeTo } from '../mail/write-to';
+import { openDirectory } from './DirectoryPage';
 import styles from './SearchPanel.module.css';
 
 export function TycoonProfileView() {
   const profile = useSearchStore((s) => s.tycoonProfileData?.profile);
   const worldName = useGameStore((s) => s.worldName);
+  const client = useClient();
 
   if (!profile) {
     return <div className={styles.emptyState}>No profile data available.</div>;
@@ -75,6 +78,17 @@ export function TycoonProfileView() {
         >
           <Mail size={14} /> Write to {profile.name}
         </button>
+
+        {/* RenderTycoon.asp:139 — the profile's own link into the tycoon's companies. */}
+        <div className={styles.directoryActions}>
+          <button
+            type="button"
+            className={styles.rowAction}
+            onClick={() => openDirectory(client, { kind: 'tycoon-companies', tycoon: profile.name })}
+          >
+            <Briefcase size={12} /> Companies
+          </button>
+        </div>
       </GlassCard>
     </div>
   );

@@ -433,6 +433,9 @@ export class StarpeaceClient implements ClientHandlerContext {
       }),
       onSearchMenuBanks: () => this.sendMessage({ type: WsMessageType.REQ_SEARCH_MENU_BANKS }),
       onSearchMenuNewspapers: () => this.sendMessage({ type: WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS }),
+      onSearchMenuDirectory: (ref) => this.sendMessage({
+        type: WsMessageType.REQ_SEARCH_MENU_DIRECTORY, ref,
+      }),
 
       // Profile tabs
       onProfileCurriculum: () => this.sendMessage({ type: WsMessageType.REQ_PROFILE_CURRICULUM }),

@@ -2,7 +2,19 @@
  * Tests for search-menu-parser — parseHomePage, parseTycoonProfile.
  */
 
-import { parseHomePage, parseTycoonProfile, parseNewspapersPage, parseTownsPage, parseRankingDetail } from '../search-menu-parser';
+import {
+  parseHomePage,
+  parseTycoonProfile,
+  parseNewspapersPage,
+  parseTownsPage,
+  parseRankingDetail,
+  parseTownPage,
+  parseFolderPage,
+  parseFacilityListPage,
+  parseFacilityPage,
+  parseDirectoryPage,
+} from '../search-menu-parser';
+import type { DirectoryRef } from '../../shared/types';
 
 const BASE_URL = 'http://142.4.193.58/five/0/visual/voyager/new%20directory';
 
@@ -263,6 +275,13 @@ describe('parseTownsPage', () => {
     expect(parseTownsPage(nameless, BASE)).toEqual([]);
   });
 
+  it('reads the cache path and the visual class off the row link (RenderTown.inc:6)', () => {
+    const towns = parseTownsPage(html, BASE);
+
+    expect(towns[0].path).toBe('Towns\\Helartia');
+    expect(towns[0].classId).toBe('1234');
+  });
+
   it('falls back to zeros and a null mayor when the info row is missing entirely', () => {
     const bare = `<html><body><table>
       <tr onMouseOver="onItemMouseOver()"><td><div class=ItemHeader>Orphan</div></td></tr>
@@ -465,5 +484,433 @@ describe('parseRankingDetail', () => {
     </body></html>`;
 
     expect(parseRankingDetail(html, BASE_URL).entries).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The directory tree below the town list (New Directory/*.asp)
+// ---------------------------------------------------------------------------
+
+const DIR_BASE = 'http://158.69.153.134/five/0/visual/voyager/new%20directory';
+
+describe('parseTownPage', () => {
+  /** RenderTownIn.asp:42-101 for a town whose cache path resolved. */
+  function townPage(opts: {
+    name: string;
+    icon?: string;
+    inhabitants: string;
+    qol: string;
+    unemployment: string;
+    mapLink?: string;
+  }): string {
+    const map = opts.mapLink === undefined
+      ? '<a href="http://local.asp?frame_Id=MapIsoView&frame_Action=SELECT&x=120&y=340">Show in map</a><br>'
+      : opts.mapLink;
+    return `<html><head></head><body style="margin-left: 12px">
+      <div><img src="${opts.icon ?? '/five/icons/TownHall64.gif'}" width=120></div>
+      <div class=header2>
+        ${opts.name}
+      </div>
+      <div style="margin-left: 12px">
+        <span class=label>Inhabitants:</span>
+        <span class=value>${opts.inhabitants} <br></span>
+        <span class=label>Quality of life:</span>
+        <span class=value>${opts.qol}% <br></span>
+        <span class=label>Unemployment:</span>
+        <span class=value>${opts.unemployment}:</span><br>
+        ${map}
+        <div style="margin-top: 7px"><table>
+          <tr><td><img width="12" height="12" src="images/bullet1.gif"></td>
+          <td><a class=mainAnchor href="InTownFacilities.asp?WorldName=planitia&Town=${opts.name}&ClassId=1234&RIWS=">Facilities</a></td></tr>
+          <tr><td><img width="12" height="12" src="images/bullet1.gif"></td>
+          <td><a class=mainAnchor href="InTownCompanies.asp?WorldName=planitia&Town=${opts.name}&ClassId=1234&RIWS=">Companies</a></td></tr>
+        </table></div>
+      </div>
+    </body></html>`;
+  }
+
+  it('reads the name, icon and the three span.value cells in document order', () => {
+    const page = parseTownPage(
+      townPage({ name: 'Helartia', inhabitants: '12400', qol: '71', unemployment: '4' }),
+      DIR_BASE,
+    );
+
+    expect(page).toEqual({
+      name: 'Helartia',
+      iconUrl: 'http://158.69.153.134/five/icons/TownHall64.gif',
+      inhabitants: 12400,
+      qualityOfLife: 71,
+      unemploymentPercent: 4,
+      x: 120,
+      y: 340,
+    });
+  });
+
+  it('strips the thousands separators out of the inhabitant count', () => {
+    const page = parseTownPage(
+      townPage({ name: 'Helartia', inhabitants: '1,204,000', qol: '71', unemployment: '4' }),
+      DIR_BASE,
+    );
+
+    expect(page.inhabitants).toBe(1204000);
+  });
+
+  it('joins a relative town icon onto the directory base', () => {
+    const page = parseTownPage(
+      townPage({ name: 'Helartia', icon: 'images/town.gif', inhabitants: '1', qol: '1', unemployment: '1' }),
+      DIR_BASE,
+    );
+
+    expect(page.iconUrl).toBe(`${DIR_BASE}/images/town.gif`);
+  });
+
+  it('carries "Unknown Town" and zeros when the cache path failed (RenderTownIn.asp:30)', () => {
+    // The detail block sits outside the guard, so it still renders — empty, and with an
+    // x=&y= map link the translator refuses.
+    const page = parseTownPage(
+      townPage({
+        name: 'Unknown Town',
+        icon: '',
+        inhabitants: '',
+        qol: '',
+        unemployment: '',
+        mapLink: '<a href="http://local.asp?frame_Id=MapIsoView&frame_Action=SELECT&x=&y=">Show in map</a>',
+      }),
+      DIR_BASE,
+    );
+
+    expect(page).toEqual({
+      name: 'Unknown Town',
+      iconUrl: '',
+      inhabitants: 0,
+      qualityOfLife: 0,
+      unemploymentPercent: 0,
+      x: 0,
+      y: 0,
+    });
+  });
+
+  it('falls back to 0,0 when the page printed no map link at all', () => {
+    const page = parseTownPage(
+      townPage({ name: 'Helartia', inhabitants: '5', qol: '6', unemployment: '7', mapLink: '' }),
+      DIR_BASE,
+    );
+
+    expect(page).toMatchObject({ x: 0, y: 0, inhabitants: 5, qualityOfLife: 6, unemploymentPercent: 7 });
+  });
+});
+
+describe('parseFolderPage', () => {
+  /** InTownFacilities.asp:16-26 — one row per folder entry, each padded with &nbsp;. */
+  function folderRows(items: string[]): string {
+    return items.map(item => `
+      <tr onMouseOver="onItemMouseOver()" onClick="onItemMouseClick()" dirHref="BrowseTownFacFolder.asp?Town=Helartia&WorldName=planitia&Company=&FacKind=${item}&RIWS=" textId="text_${item}">
+        <td width="*" style="padding-left: 7px">
+          <div id=text_${item} class=listItem>
+          ${item}&nbsp;
+          </div>
+        </td>
+      </tr>
+      <tr><td height="2" background="images/itemgradient.jpg"></td></tr>`).join('');
+  }
+
+  it('returns the entries in page order with the &nbsp; dropped', () => {
+    const html = `<html><body><div class=header2>Helartia</div>
+      <table cellspacing="0">${folderRows(['Residentials', 'Heavy Industry', 'Public Facilities'])}</table>
+    </body></html>`;
+
+    expect(parseFolderPage(html)).toEqual({
+      items: ['Residentials', 'Heavy Industry', 'Public Facilities'],
+      ownedBy: null,
+    });
+  });
+
+  it('names the owner from the composer row and does not count it as an entry (InTownCompany.asp:63-72)', () => {
+    const html = `<html><body>
+      <div style="margin-left: 24px"><table>
+        <tr onClick="onItemMouseClick()" dirHref="http://local?frame_Id=MsgComposer&frame_Class=MsgComposer&frame_Align=client&frame_Height=50%&frame_Action=new">
+          <td>
+            <div class=header1>Crazz Ltd.</div>
+            <div class="listItem">Owned by Crazz</div>
+          </td>
+        </tr>
+      </table></div>
+      <table cellspacing="0">${folderRows(['Residentials', 'Farms'])}</table>
+    </body></html>`;
+
+    expect(parseFolderPage(html)).toEqual({
+      items: ['Residentials', 'Farms'],
+      ownedBy: 'Crazz',
+    });
+  });
+
+  it('leaves ownedBy null when the composer row carries no "Owned by" line (Tycoon <> "" is false)', () => {
+    const html = `<html><body><table>
+      <tr dirHref="http://local?frame_Id=MsgComposer&frame_Action=new">
+        <td><div class=header1>Orphan Ltd.</div></td>
+      </tr>
+      ${folderRows(['Farms'])}
+    </table></body></html>`;
+
+    expect(parseFolderPage(html)).toEqual({ items: ['Farms'], ownedBy: null });
+  });
+
+  it('returns an empty list for a folder the iterator found empty (BrowseFolder.inc:5)', () => {
+    const html = '<html><body><div class=header2>Helartia</div><table cellspacing="0"></table></body></html>';
+
+    expect(parseFolderPage(html)).toEqual({ items: [], ownedBy: null });
+  });
+
+  it('skips a row whose listItem is empty', () => {
+    const html = `<html><body><table>
+      <tr dirHref="InTownCompany.asp?Company="><td><div class=listItem>&nbsp;</div></td></tr>
+    </table></body></html>`;
+
+    expect(parseFolderPage(html)).toEqual({ items: [], ownedBy: null });
+  });
+});
+
+describe('parseFacilityListPage', () => {
+  /** BrowseFacFolder.inc:15-52, both branches of the ShowCompany test at :24. */
+  function facilityRows(opts: {
+    showCompany: boolean;
+    rows: { name: string; company: string; x: number; y: number; icon?: string }[];
+    withMapLink?: boolean;
+  }): string {
+    const path = 'Towns\\Helartia.five\\Facilities\\Residentials';
+    return opts.rows.map((row, i) => `
+      <tr onMouseOver="onItemMouseOver()" onClick="onItemMouseClick()" dirHref="OpenFacility.asp?Path=${path}&WorldName=planitia&Name=${row.name}&RIWS=" textId="text_${i}">
+        <td align="center" valign="top">
+          <img width="30" src="${row.icon ?? '/five/icons/House64.gif'}">
+        </td>
+        <td style="padding-left: 7px" valign="top">
+          <div id=text_${i} class=listItem>
+            ${row.name}&nbsp;
+          </div>
+          <div class=itemInfo>
+            ${opts.showCompany ? row.company : `(${row.x}, ${row.y})`}
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td></td>
+        <td width="*" style="padding-left: 7px" valign="top">
+          ${opts.withMapLink === false ? '' : `<div class=itemInfo style="margin-bottom: 10px">
+            <a href="http://local.asp?frame_Id=MapIsoView&frame_Action=SELECT&x=${row.x}&y=${row.y}">Show in map</a>
+          </div>`}
+        </td>
+      </tr>`).join('');
+  }
+
+  const ROWS = [
+    { name: 'Cheap House 1', company: 'Crazz Ltd.', x: 120, y: 340 },
+    { name: 'Cheap House 2', company: 'Other Ltd.', x: 121, y: 341 },
+  ];
+
+  it('names the owning company on the ShowCompany branch (BrowseTownFacFolder.asp:53)', () => {
+    const html = `<html><body><table cellspacing="0">${facilityRows({ showCompany: true, rows: ROWS })}</table></body></html>`;
+
+    const rows = parseFacilityListPage(html, DIR_BASE);
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({
+      name: 'Cheap House 1',
+      itemName: 'Cheap House 1',
+      path: 'Towns\\Helartia.five\\Facilities\\Residentials',
+      iconUrl: 'http://158.69.153.134/five/icons/House64.gif',
+      company: 'Crazz Ltd.',
+      x: 120,
+      y: 340,
+    });
+    expect(rows[1].company).toBe('Other Ltd.');
+  });
+
+  it('reports no company and the printed pair on the coordinates branch (BrowseTownCompFacFolder.asp:65)', () => {
+    const html = `<html><body><table cellspacing="0">${facilityRows({ showCompany: false, rows: ROWS })}</table></body></html>`;
+
+    const rows = parseFacilityListPage(html, DIR_BASE);
+
+    expect(rows[0].company).toBeNull();
+    expect(rows[0]).toMatchObject({ x: 120, y: 340 });
+    expect(rows[1].company).toBeNull();
+  });
+
+  it('falls back to the printed pair when the row that follows carries no map link', () => {
+    const html = `<html><body><table cellspacing="0">${facilityRows({
+      showCompany: false, rows: [ROWS[0]], withMapLink: false,
+    })}</table></body></html>`;
+
+    expect(parseFacilityListPage(html, DIR_BASE)[0]).toMatchObject({ company: null, x: 120, y: 340 });
+  });
+
+  it('falls back to 0,0 when neither the link nor a printed pair is there', () => {
+    const html = `<html><body><table cellspacing="0">${facilityRows({
+      showCompany: true, rows: [ROWS[0]], withMapLink: false,
+    })}</table></body></html>`;
+
+    expect(parseFacilityListPage(html, DIR_BASE)[0]).toMatchObject({ company: 'Crazz Ltd.', x: 0, y: 0 });
+  });
+
+  it('joins a relative facility icon onto the directory base', () => {
+    const html = `<html><body><table cellspacing="0">${facilityRows({
+      showCompany: true, rows: [{ ...ROWS[0], icon: 'images/fac.gif' }],
+    })}</table></body></html>`;
+
+    expect(parseFacilityListPage(html, DIR_BASE)[0].iconUrl).toBe(`${DIR_BASE}/images/fac.gif`);
+  });
+
+  it('leaves iconUrl empty when the visual class gave no image', () => {
+    const html = `<html><body><table cellspacing="0">${facilityRows({
+      showCompany: true, rows: [{ ...ROWS[0], icon: '' }],
+    })}</table></body></html>`;
+
+    expect(parseFacilityListPage(html, DIR_BASE)[0].iconUrl).toBe('');
+  });
+
+  it('skips a row with no name, and leaves path/itemName empty on a link it cannot read', () => {
+    const html = `<html><body><table cellspacing="0">
+      <tr dirHref="OpenFacility.asp?Path=X&WorldName=planitia&Name=Y&RIWS=">
+        <td><div class=listItem>&nbsp;</div></td>
+      </tr>
+      <tr dirHref="OpenFacility.asp?Broken">
+        <td><div class=listItem>Nameless Link</div><div class=itemInfo>Crazz Ltd.</div></td>
+      </tr>
+    </table></body></html>`;
+
+    const rows = parseFacilityListPage(html, DIR_BASE);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ name: 'Nameless Link', path: '', itemName: '' });
+  });
+});
+
+describe('parseFacilityPage', () => {
+  /** OpenFacility.asp:32-97, with the ROI branch the page took at :64-72. */
+  function facilityPage(opts: {
+    roi: number;
+    netProfit?: string;
+    cost?: string;
+    creator?: string;
+    icon?: string;
+    composerHref?: string;
+  }): string {
+    const roiText = opts.roi === 0 ? 'Already.' : opts.roi > 0 ? `${opts.roi} years.` : 'Never.';
+    const composer = opts.composerHref
+      ?? `http://local.asp?frame_Id=MsgComposer&frame_Class=MsgComposer&frame_Align=client&frame_Height=50%&frame_Action=new&To=${opts.creator ?? 'SPO_test3'}`;
+    return `<html><head></head><body style="margin-left: 12px">
+      <div style="text-align: center">
+        <div><img src="${opts.icon ?? '/five/icons/House64.gif'}"></div>
+        <div class=header2>Cheap House 1</div>
+        <div class=itemHeader>Crazz Ltd.</div>
+        <table cellspacing=0 cellpadding=2 style="margin: 5px">
+          <tr><td class=label>Net profit:</td><td class=value>${opts.netProfit ?? '$1,234,567'}</td></tr>
+          <tr><td class=label>Cost:</td><td class=value>${opts.cost ?? '-$500'}</td></tr>
+          <tr><td class=label>ROI:</td><td class=value>
+            ${roiText}
+          </td></tr>
+        </table>
+        <div><a href="${composer}">Send mail</a></div>
+        <div><a href="http://local.asp?frame_Id=MapIsoView&frame_Action=SELECT&x=120&y=340">Show in map</a></div>
+      </div>
+    </body></html>`;
+  }
+
+  it('reads the whole card, with ROI "Already." when the facility has paid for itself', () => {
+    const card = parseFacilityPage(facilityPage({ roi: 0 }), DIR_BASE);
+
+    expect(card).toEqual({
+      name: 'Cheap House 1',
+      company: 'Crazz Ltd.',
+      iconUrl: 'http://158.69.153.134/five/icons/House64.gif',
+      netProfitText: '$1,234,567',
+      costText: '-$500',
+      roiText: 'Already.',
+      creator: 'SPO_test3',
+      x: 120,
+      y: 340,
+    });
+  });
+
+  it('carries "<N> years." for a positive ROI', () => {
+    expect(parseFacilityPage(facilityPage({ roi: 12 }), DIR_BASE)!.roiText).toBe('12 years.');
+  });
+
+  it('carries "Never." for a negative ROI', () => {
+    expect(parseFacilityPage(facilityPage({ roi: -1 }), DIR_BASE)!.roiText).toBe('Never.');
+  });
+
+  it('carries the "$0" FormatValue writes for a zero amount, verbatim', () => {
+    const card = parseFacilityPage(facilityPage({ roi: 0, netProfit: '$0', cost: '$0' }), DIR_BASE);
+
+    expect(card).toMatchObject({ netProfitText: '$0', costText: '$0' });
+  });
+
+  it('reads a creator name that carries a raw space, past the unescaped frame_Height=50%', () => {
+    expect(parseFacilityPage(facilityPage({ roi: 0, creator: 'SPO test3' }), DIR_BASE)!.creator).toBe('SPO test3');
+  });
+
+  it('names nobody when the composer link is not a URL the parser can read', () => {
+    const card = parseFacilityPage(facilityPage({ roi: 0, composerHref: 'frame_Id=MsgComposer&To=Crazz' }), DIR_BASE);
+
+    expect(card!.creator).toBe('');
+  });
+
+  it('returns null for the empty body a failed cache path renders (OpenFacility.asp:29)', () => {
+    const html = '<html><head></head><body style="margin-left: 12px"></body></html>';
+
+    expect(parseFacilityPage(html, DIR_BASE)).toBeNull();
+  });
+});
+
+describe('parseDirectoryPage', () => {
+  const TOWN_HTML = '<html><body><div class=header2>Helartia</div></body></html>';
+  const FOLDER_HTML = '<html><body><table><tr dirHref="X.asp?A=1"><td><div class=listItem>Farms</div></td></tr></table></body></html>';
+  const LIST_HTML = `<html><body><table>
+    <tr dirHref="OpenFacility.asp?Path=P&WorldName=planitia&Name=N&RIWS=">
+      <td><div class=listItem>Cheap House 1</div><div class=itemInfo>Crazz Ltd.</div></td>
+    </tr>
+  </table></body></html>`;
+  const CARD_HTML = '<html><body><div class=header2>Cheap House 1</div><div class=itemHeader>Crazz Ltd.</div></body></html>';
+
+  const FOLDER_REFS: DirectoryRef[] = [
+    { kind: 'town-facilities', town: 'Helartia' },
+    { kind: 'town-companies', town: 'Helartia' },
+    { kind: 'town-company', town: 'Helartia', company: 'Crazz Ltd.' },
+    { kind: 'tycoon-companies', tycoon: 'Crazz' },
+    { kind: 'tycoon-company', tycoon: 'Crazz', company: 'Crazz Ltd.' },
+  ];
+
+  const LIST_REFS: DirectoryRef[] = [
+    { kind: 'town-facility-kind', town: 'Helartia', facKind: 'Residentials' },
+    { kind: 'town-company-facility-kind', town: 'Helartia', company: 'Crazz Ltd.', facKind: 'Residentials' },
+    { kind: 'tycoon-facility-kind', tycoon: 'Crazz', company: 'Crazz Ltd.', facKind: 'Residentials' },
+  ];
+
+  it('sends a town ref to the town parser', () => {
+    const page = parseDirectoryPage({ kind: 'town', path: 'Towns\\Helartia', classId: '1234' }, TOWN_HTML, DIR_BASE);
+
+    expect(page).toEqual({ kind: 'town', town: expect.objectContaining({ name: 'Helartia' }) });
+  });
+
+  it('sends every folder ref to the folder parser', () => {
+    for (const ref of FOLDER_REFS) {
+      expect(parseDirectoryPage(ref, FOLDER_HTML, DIR_BASE)).toEqual({
+        kind: 'folder', items: ['Farms'], ownedBy: null,
+      });
+    }
+  });
+
+  it('sends every facility-kind ref to the facility list parser', () => {
+    for (const ref of LIST_REFS) {
+      const page = parseDirectoryPage(ref, LIST_HTML, DIR_BASE);
+      expect(page.kind).toBe('facility-list');
+      expect(page).toMatchObject({ facilities: [expect.objectContaining({ name: 'Cheap House 1' })] });
+    }
+  });
+
+  it('sends a facility ref to the card parser', () => {
+    const page = parseDirectoryPage({ kind: 'facility', path: 'P', name: 'N' }, CARD_HTML, DIR_BASE);
+
+    expect(page).toEqual({ kind: 'facility', facility: expect.objectContaining({ name: 'Cheap House 1' }) });
   });
 });

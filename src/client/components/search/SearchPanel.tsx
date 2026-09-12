@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  ChevronRight, Building2, UserSearch, Trophy, Landmark, Search, Newspaper, User,
+  ChevronRight, Building2, UserSearch, Trophy, Landmark, Search, Newspaper, User, MapPin,
 } from 'lucide-react';
 import { useSearchStore, type SearchPage } from '../../store/search-store';
 import { useClient } from '../../context';
@@ -17,6 +17,7 @@ import type {
 } from '@/shared/types';
 import { TycoonProfileView } from './TycoonProfileView';
 import { MediaPage } from './MediaPage';
+import { DirectoryPage, openDirectory } from './DirectoryPage';
 import styles from './SearchPanel.module.css';
 
 const CATEGORIES: { id: SearchPage; label: string; icon: React.ReactNode }[] = [
@@ -46,7 +47,9 @@ function TownsPage() {
           key={town.name}
           className={styles.listItem}
           light
-          onClick={() => client.onNavigateToBuilding(town.x, town.y)}
+          // RenderTown.inc:6 — the row opens the town page; the map jump it used to do
+          // is now the explicit action below.
+          onClick={() => openDirectory(client, { kind: 'town', path: town.path, classId: town.classId })}
         >
           <div className={styles.listItemHeader}>
             {town.iconUrl
@@ -64,6 +67,16 @@ function TownsPage() {
             <span>Pop: {town.population.toLocaleString()}</span>
             <span>Unemployment: {town.unemploymentPercent}%</span>
             <span>QoL: {town.qualityOfLife}%</span>
+            <button
+              type="button"
+              className={styles.rowAction}
+              onClick={(e) => {
+                e.stopPropagation();
+                client.onNavigateToBuilding(town.x, town.y);
+              }}
+            >
+              <MapPin size={12} /> Show on map
+            </button>
           </div>
         </GlassCard>
       ))}
@@ -301,6 +314,7 @@ const PAGE_COMPONENTS: Record<string, React.FC> = {
   rankings: RankingsPage,
   banks: BanksPage,
   media: MediaPage,
+  directory: DirectoryPage,
 };
 
 const PAGE_LABELS: Record<string, string> = {
@@ -311,6 +325,7 @@ const PAGE_LABELS: Record<string, string> = {
   'ranking-detail': 'Ranking Detail',
   banks: 'Banks',
   media: 'Media',
+  directory: 'Directory',
 };
 
 // ---------------------------------------------------------------------------
@@ -332,7 +347,9 @@ export function SearchPanel() {
 
   // Fetch category data when navigating to a category page
   useEffect(() => {
-    if (currentPage === 'home' || currentPage === 'ranking-detail' || currentPage === 'tycoon-profile') return;
+    // 'directory' is caller-fetched: openDirectory asks for the exact level it pushed.
+    if (currentPage === 'home' || currentPage === 'ranking-detail' || currentPage === 'tycoon-profile'
+      || currentPage === 'directory') return;
     const fetchers: Record<string, () => void> = {
       towns: () => client.onSearchMenuTowns(),
       people: () => {
