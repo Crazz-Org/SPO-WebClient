@@ -177,7 +177,13 @@ export const RES_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'QOL', displayName: 'Quality of Life', type: PropertyType.PERCENTAGE },
     { rdoName: 'Beauty', displayName: 'Beauty', type: PropertyType.PERCENTAGE },
     { rdoName: 'Crime', displayName: 'Crime', type: PropertyType.PERCENTAGE },
+    // PopulatedBlock.pas:931-933 — the crime/pollution left after the block's resistance,
+    // and the block's efficiency. Only written for a TMetaPopulatedBlock; hideEmpty drops
+    // the row when the cache has nothing rather than printing 0%.
+    { rdoName: 'ActualCrime', displayName: 'Effective Crime', type: PropertyType.PERCENTAGE, hideEmpty: true },
     { rdoName: 'Pollution', displayName: 'Pollution', type: PropertyType.PERCENTAGE },
+    { rdoName: 'ActualPollution', displayName: 'Effective Pollution', type: PropertyType.PERCENTAGE, hideEmpty: true },
+    { rdoName: 'Efficiency', displayName: 'Efficiency', type: PropertyType.PERCENTAGE, hideEmpty: true },
     // Investment stats (read-only informational data)
     { rdoName: 'invCrimeRes', displayName: 'Crime Resistance', type: PropertyType.PERCENTAGE },
     { rdoName: 'invPollutionRes', displayName: 'Pollution Resistance', type: PropertyType.PERCENTAGE },
