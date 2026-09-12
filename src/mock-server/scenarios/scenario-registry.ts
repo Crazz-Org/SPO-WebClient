@@ -10,6 +10,7 @@ import type { ScenarioVariables } from './scenario-variables';
 
 import { createAuthScenario } from './auth-scenario';
 import { createWorldListScenario } from './world-list-scenario';
+import { createWorldLoginScenario } from './world-login-scenario';
 import { createCompanyListScenario } from './company-list-scenario';
 import { createSelectCompanyScenario } from './select-company-scenario';
 import { createSwitchFocusScenario } from './switch-focus-scenario';
@@ -26,6 +27,7 @@ import { createTycoonProfileScenario } from './tycoon-profile-scenario';
 export type ScenarioName =
   | 'auth'
   | 'world-list'
+  | 'world-login'
   | 'company-list'
   | 'select-company'
   | 'switch-focus'
@@ -42,6 +44,7 @@ export type ScenarioName =
 export const SCENARIO_NAMES: ScenarioName[] = [
   'auth',
   'world-list',
+  'world-login',
   'company-list',
   'select-company',
   'switch-focus',
@@ -69,6 +72,7 @@ const SCENARIO_FACTORIES: Record<
 > = {
   'auth': (o) => createAuthScenario(o),
   'world-list': (o) => createWorldListScenario(o),
+  'world-login': (o) => createWorldLoginScenario(o),
   'company-list': (o) => createCompanyListScenario(o),
   'select-company': (o) => createSelectCompanyScenario(o),
   'switch-focus': (o) => createSwitchFocusScenario(o),
@@ -138,7 +142,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 13 mock server scenarios',
+    description: 'Combined: all 14 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -147,7 +151,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 13 scenarios',
+    description: 'Combined: all RDO exchanges from 14 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };

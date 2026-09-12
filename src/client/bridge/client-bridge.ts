@@ -25,6 +25,7 @@ import type {
   WorldInfo,
   CompanyInfo,
   LoginPageOutcome,
+  WorldAdmission,
   BuildingFocusInfo,
   BuildingDetailsResponse,
   TycoonProfileFull,
@@ -405,8 +406,8 @@ export const ClientBridge = {
     useGameStore.getState().setLoginWorlds(worlds);
   },
 
-  showCompanies(companies: CompanyInfo[]): void {
-    useGameStore.getState().setLoginCompanies(companies);
+  showCompanies(companies: CompanyInfo[], admission?: WorldAdmission): void {
+    useGameStore.getState().setLoginCompanies(companies, admission);
   },
 
   showLoginPage(page: LoginPageOutcome): void {

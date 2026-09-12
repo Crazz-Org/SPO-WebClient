@@ -8,7 +8,7 @@
 
 import * as net from 'net';
 import { fetchWithTimeout } from '../fetch-with-timeout';
-import type { RdoPacket, WorldInfo, CompanyInfo, LoginPageOutcome } from '../../shared/types';
+import type { RdoPacket, WorldInfo, CompanyInfo, LoginPageOutcome, WorldAdmission } from '../../shared/types';
 import { SessionPhase, DIRECTORY_QUERY } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall, rdoGet, rdoSet, rdoIdOf } from '../../shared/rdo-frame';
@@ -355,6 +355,7 @@ export interface LoginWorldResult {
   worldYSize: number | null;
   worldSeason: number | null;
   loginPage?: LoginPageOutcome;
+  admission?: WorldAdmission;
 }
 
 export async function loginWorld(
@@ -387,6 +388,9 @@ export async function loginWorld(
 
   // 2. Retrieve World Properties (10 properties)
   await fetchWorldProperties(ctx, interfaceServerId);
+
+  // 2b. Admission — may this player found a company here? (logonComplete.asp:143-144)
+  const admission = await checkWorldAdmission(ctx, interfaceServerId, username);
 
   // 3. Check AccountStatus
   const statusPacket = await ctx.sendRdoRequest('world', rdoCall(
@@ -512,6 +516,7 @@ export async function loginWorld(
     worldYSize: ctx.currentWorldInfo?.mapSizeY ?? null,
     worldSeason: null, // worldSeason is set during fetchWorldProperties
     loginPage,
+    admission,
   };
 }
 
@@ -830,6 +835,41 @@ async function fetchWorldProperties(ctx: LoginContext, interfaceServerId: string
       }
     }
     if (prop === 'WorldSeason') ctx.setWorldSeason(parseSeasonValue(value));
+  }
+}
+
+/**
+ * Ask the Interface Server whether this player may found a company here —
+ * `CanJoinWorldEx` (Interface Server/InterfaceServer.pas:441, :3471-3486), the call
+ * logonComplete.asp:143-144 makes against `InterfaceServer` before the company page.
+ * `-1` is a full world, a positive number is the nobility shortfall, `0` is "go ahead".
+ * Anything else — timeout, an error reply from a server without the member, an
+ * unparsable answer — returns undefined and the login proceeds exactly as before.
+ */
+async function checkWorldAdmission(
+  ctx: LoginContext, interfaceServerId: string, username: string,
+): Promise<WorldAdmission | undefined> {
+  try {
+    const packet = await ctx.sendRdoRequest('world', rdoCall(
+      'CanJoinWorldEx', interfaceServerId,
+      RdoValue.string(username),
+    ).packet, undefined, TimeoutCategory.FAST);
+    // An error reply normally rejects (config.rdo.errorContract defaults to
+    // reject-except-stale), but in `observe` mode it arrives as a success packet
+    // carrying errorCode — both paths degrade to today's flow.
+    if (packet.errorCode && packet.errorCode > 0) {
+      ctx.log.warn(`[Session] CanJoinWorldEx answered ${packet.errorName ?? 'error'} ${packet.errorCode} — proceeding without the admission check`);
+      return undefined;
+    }
+    const raw = parsePropertyResponseHelper(packet.payload ?? '', 'res');
+    const code = parseInt(raw, 10);
+    ctx.log.debug(`[Session] CanJoinWorldEx: ${raw}`);
+    if (code === -1) return { kind: 'full' };
+    if (code > 0) return { kind: 'nobility', shortfall: code };
+    return undefined;              // 0 (admitted) or NaN (unreadable): today's flow
+  } catch (err: unknown) {
+    ctx.log.warn(`[Session] CanJoinWorldEx failed — proceeding without the admission check: ${toErrorMessage(err)}`);
+    return undefined;
   }
 }
 

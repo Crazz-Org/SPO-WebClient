@@ -4,7 +4,7 @@
  */
 
 import { create } from 'zustand';
-import type { CompanyInfo, WorldInfo, ClusterInfo, ClusterFacilityPreview, LoginPageOutcome } from '@/shared/types';
+import type { CompanyInfo, WorldInfo, ClusterInfo, ClusterFacilityPreview, LoginPageOutcome, WorldAdmission } from '@/shared/types';
 import { SurfaceType } from '@/shared/types/domain-types';
 
 /* ---- Utilities ---- */
@@ -135,6 +135,8 @@ interface GameState {
   authError: { code: number; message: string } | null;
   /** Set when logonComplete.asp redirected to logonNoAccess.asp / logonError.asp instead of the company list. */
   loginPage: LoginPageOutcome | null;
+  /** Set when CanJoinWorldEx said this player may not found a company in this world. */
+  loginAdmission: WorldAdmission | null;
 
   // Server switch overlay (browse regions/worlds while in-game)
   serverSwitchMode: boolean;
@@ -179,7 +181,7 @@ interface GameState {
   setOverlayBeforeMode: (v: { type: 'zones' | 'overlay' | 'none'; overlay?: SurfaceType } | null) => void;
   setActiveOverlay: (overlay: SurfaceType | null) => void;
   setLoginWorlds: (worlds: WorldInfo[]) => void;
-  setLoginCompanies: (companies: CompanyInfo[]) => void;
+  setLoginCompanies: (companies: CompanyInfo[], admission?: WorldAdmission | null) => void;
   setLoginStage: (stage: 'auth' | 'zones' | 'worlds' | 'companies') => void;
   setLoginLoading: (loading: boolean) => void;
   setAuthError: (error: { code: number; message: string } | null) => void;
@@ -229,6 +231,7 @@ export const useGameStore = create<GameState>((set) => ({
   loginLoading: false,
   authError: null,
   loginPage: null,
+  loginAdmission: null,
   serverSwitchMode: false,
   serverSwitchOriginWorld: '',
   companyCreationClusters: [],
@@ -271,11 +274,11 @@ export const useGameStore = create<GameState>((set) => ({
   setActiveOverlay: (overlay) => set({ activeOverlay: overlay }),
 
   setLoginWorlds: (worlds) => set({ loginWorlds: worlds, loginStage: 'worlds', loginLoading: false }),
-  setLoginCompanies: (companies) => set({ companies, loginStage: 'companies', loginLoading: false, loginPage: null }),
+  setLoginCompanies: (companies, admission) => set({ companies, loginStage: 'companies', loginLoading: false, loginPage: null, loginAdmission: admission ?? null }),
   setLoginStage: (stage) => set({ loginStage: stage }),
   setLoginLoading: (loading) => set({ loginLoading: loading }),
   setAuthError: (error) => set({ authError: error }),
-  setLoginPage: (page) => set({ loginPage: page, companies: [], loginStage: 'companies', loginLoading: false }),
+  setLoginPage: (page) => set({ loginPage: page, companies: [], loginStage: 'companies', loginLoading: false, loginAdmission: null }),
 
   setCompanyCreationClusters: (clusters) => set({ companyCreationClusters: clusters }),
   setClusterInfo: (info) => set({ clusterInfo: info, clusterInfoLoading: false }),
@@ -346,6 +349,7 @@ export const useGameStore = create<GameState>((set) => ({
       loginLoading: false,
       authError: null,
       loginPage: null,
+      loginAdmission: null,
       serverSwitchMode: false,
       serverSwitchOriginWorld: '',
       companyCreationClusters: [],

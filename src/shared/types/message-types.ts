@@ -402,6 +402,15 @@ export type LoginPageOutcome =
   | { kind: 'denied'; expiresOn: string }   // logonNoAccess.asp — PA query value, e.g. "01/01/2020"
   | { kind: 'error'; errorCode: string };   // logonError.asp — ErrorCode query value, or the mismatch tag
 
+/**
+ * InterfaceServer.CanJoinWorldEx (Interface Server/InterfaceServer.pas:441, body :3471-3486) — the
+ * admission answer logonComplete.asp:144 read before offering company creation.
+ * `-1` → the world is at its user cap; `> 0` → MinNobility minus the player's NobPoints.
+ */
+export type WorldAdmission =
+  | { kind: 'full' }
+  | { kind: 'nobility'; shortfall: number };
+
 export interface WsRespLoginSuccess extends WsMessage {
   type: WsMessageType.RESP_LOGIN_SUCCESS;
   tycoonId: string;
@@ -412,6 +421,7 @@ export interface WsRespLoginSuccess extends WsMessage {
   worldYSize?: number;
   worldSeason?: number;  // 0=Winter, 1=Spring, 2=Summer, 3=Autumn
   loginPage?: LoginPageOutcome;
+  admission?: WorldAdmission;
 }
 
 export interface WsRespRdoResult extends WsMessage {

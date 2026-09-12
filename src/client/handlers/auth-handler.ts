@@ -125,7 +125,12 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
     } else {
       ClientBridge.log('Login', 'No companies found — showing company creation');
     }
-    ClientBridge.showCompanies(ctx.availableCompanies);
+    if (resp.admission) {
+      ClientBridge.log('Login', resp.admission.kind === 'full'
+        ? 'World full — company creation is closed'
+        : `Nobility ${resp.admission.shortfall} below the world minimum`);
+    }
+    ClientBridge.showCompanies(ctx.availableCompanies, resp.admission);
 
   } catch (err: unknown) {
     ClientBridge.log('Error', `Login failed: ${toErrorMessage(err)}`);
