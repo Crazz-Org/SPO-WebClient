@@ -730,17 +730,36 @@ describe('price sliders offer the range the game had (0..400, step 1)', () => {
     return container;
   }
 
-  /** An opened product gate whose price and market price the server has answered. */
-  function openProductGate(onPropertyChange: (...a: unknown[]) => unknown) {
-    useBuildingStore.getState().mergeTabData('products', { products: [PRICED_PRODUCT] }, X, Y);
-    const { container } = renderWithProviders(
+  /** The products tab as it lists a gate: a path and a name, no price. */
+  const LISTED_PRODUCT: BuildingProductData = { path: 'GateA', name: 'Toys', connections: [] };
+
+  function PricedProductsHost({ onPropertyChange }: {
+    onPropertyChange: (name: string, value: number, params?: Record<string, string>) => void;
+  }) {
+    const products = useBuildingStore((s) => s.details?.products ?? NO_PRODUCTS);
+    return (
       <ProductsPanel
-        products={[PRICED_PRODUCT]}
+        products={products}
         canEdit
         buildingX={X}
         buildingY={Y}
         onPropertyChange={onPropertyChange}
-      />,
+      />
+    );
+  }
+
+  /**
+   * A product gate driven through the sequence the panel actually sees: listed
+   * with a path and a name only, then opened, then answered. The price and the
+   * market price arrive after the card has already mounted, which is what the
+   * dollar label has to survive.
+   */
+  function openProductGate(
+    onPropertyChange: (name: string, value: number, params?: Record<string, string>) => void,
+  ) {
+    useBuildingStore.getState().mergeTabData('products', { products: [LISTED_PRODUCT] }, X, Y);
+    const { container } = renderWithProviders(
+      <PricedProductsHost onPropertyChange={onPropertyChange} />,
       { clientCallbacks: createSpiedCallbacks({ onRequestGateConnections: jest.fn() }) },
     );
     fireEvent.click(screen.getByText('Toys'));

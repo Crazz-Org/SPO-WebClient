@@ -106,10 +106,22 @@ const ProductCard = memo(function ProductCard({
   const avgPrice = parseFloat(product.avgPrice ?? '') || 0;
   const marketPrice = parseFloat(product.marketPrice ?? '') || 0;
   // The dollar figure beside the slider is the slider's own value priced out,
-  // so it has to follow the thumb rather than the server's last answer. Seeded
-  // once from that answer, exactly as PriceSliderWithMarker seeds its localVal,
-  // so the two stay equal for the life of the card (Voyager/ProdSheetForm.pas:687-698).
+  // so it has to follow the thumb rather than the server's last answer
+  // (Voyager/ProdSheetForm.pas:687-698). It is seeded from that answer — and the
+  // answer is not there when the card first renders: `pricePc` is a gate-header
+  // property, read only once the gate is opened. Same "seen / local" shape as
+  // SupplyCard's sliders: the card re-seeds whenever the server sends a value it
+  // has not shown yet, so a drag is never stomped but a first read always lands.
+  const [seenPricePc, setSeenPricePc] = useState(product.pricePc);
   const [livePricePc, setLivePricePc] = useState(pricePc);
+
+  if (product.pricePc !== seenPricePc) {
+    setSeenPricePc(product.pricePc);
+    // A gate being re-listed drops back to undefined for the length of the
+    // re-read; the price row is hidden then, and there is nothing to follow.
+    if (product.pricePc !== undefined) setLivePricePc(parseFloat(product.pricePc) || 0);
+  }
+
   const dollarPrice = marketPrice > 0 ? (livePricePc / 100) * marketPrice : 0;
   const fluidId = product.metaFluid;
 
