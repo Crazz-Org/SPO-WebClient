@@ -17,6 +17,7 @@ import {
   WsEventAreaRefresh,
   WsEventTycoonUpdate,
   WsEventRefreshDate,
+  WsEventRefreshSeason,
   WsEventShowNotification,
   WsEventNewMail,
   WsRespMailConnected,
@@ -40,6 +41,7 @@ import { useBuildingStore } from '../store/building-store';
 import { useProfileStore } from '../store/profile-store';
 import { getFacilityDimensionsCache } from '../facility-dimensions-cache';
 import type { ClientHandlerContext } from './client-context';
+import type { Season } from '../../shared/map-config';
 
 // ── Refresh Throttle (R2 + R3) ────────────────────────────────────────────────
 // The Delphi server pushes EVENT_BUILDING_REFRESH every ~5s. The legacy client
@@ -223,6 +225,17 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     case WsMessageType.EVENT_REFRESH_DATE: {
       const dateEvent = msg as WsEventRefreshDate;
       useGameStore.getState().setGameDate(delphiTDateTimeToJsDate(dateEvent.dateDouble));
+      break;
+    }
+
+    case WsMessageType.EVENT_REFRESH_SEASON: {
+      const seasonEvt = msg as WsEventRefreshSeason;
+      // Mirror the gateway: it stored the pushed season before forwarding it
+      // (push-dispatcher.ts:361), so the value the browser holds must be the same one —
+      // it is what auth-handler.ts:293-298 re-applies on the next login.
+      ctx.worldSeason = seasonEvt.season;
+      ClientBridge.log('Map', `Season changed to ${seasonEvt.season}`);
+      ctx.getRenderer()?.setSeason(seasonEvt.season as Season);
       break;
     }
 

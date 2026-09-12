@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `refresh-season`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -183,6 +183,12 @@ different, so a handler that picked the facility's block or object fails instead
 accident. Responses are **empty**, the usual reason: a `procedure` answers nothing, so the frame
 is the only evidence there is. Its test drives the real `setBuildingProperty` and the real
 `getBuildingGateConnections`.
+
+`refresh-season` is the one server-initiated push fixture (`pushOnly`) in the substrate — a
+`RefreshSeason "*" "#<season>"` frame on the world socket, a `procedure` on `TModelEvents`
+(`Interface Server/InterfaceServer.pas:552`), answered by nothing. Its test drives the real
+`loginWorld`, watches the `ws_event` the gateway emits, and pushes that event through the real
+client `dispatchEvent` into a `TextureCache` to prove the terrain suit itself changes.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under
