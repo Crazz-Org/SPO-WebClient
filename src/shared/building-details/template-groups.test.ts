@@ -178,8 +178,40 @@ describe('General handler RDO properties', () => {
     expect(maintProp!.editable).toBe(true);
   });
 
-  it('ResGeneral should have 23 properties (PopulatedBlock stats + investment sliders + repair control + stop toggle + demolish + kind/cluster/town)', () => {
-    expect(RES_GENERAL_GROUP.properties).toHaveLength(23);
+  it('ResGeneral should have 26 properties (PopulatedBlock stats + effective crime/pollution/efficiency + investment sliders + repair control + stop toggle + demolish + kind/cluster/town)', () => {
+    expect(RES_GENERAL_GROUP.properties).toHaveLength(26);
+  });
+
+  it('ResGeneral should show effective crime, effective pollution and efficiency beside the raw figures', () => {
+    // PopulatedBlock.pas:931-933 — ActualCrime/ActualPollution/Efficiency are only written
+    // for a TMetaPopulatedBlock, so hideEmpty drops the row instead of printing 0%.
+    const effectiveNames = ['ActualCrime', 'ActualPollution', 'Efficiency'];
+    const rdoNames = RES_GENERAL_GROUP.properties.map(p => p.rdoName);
+    for (const name of effectiveNames) {
+      expect(rdoNames).toContain(name);
+      const prop = RES_GENERAL_GROUP.properties.find(p => p.rdoName === name)!;
+      expect(prop.type).toBe(PropertyType.PERCENTAGE);
+      expect(prop.hideEmpty).toBe(true);
+      expect(prop.editable).toBeUndefined();
+    }
+
+    const order = RES_GENERAL_GROUP.properties.map(p => p.rdoName);
+    expect(order.indexOf('ActualCrime')).toBe(order.indexOf('Crime') + 1);
+    expect(order.indexOf('ActualPollution')).toBe(order.indexOf('Pollution') + 1);
+    expect(order.indexOf('Efficiency')).toBe(order.indexOf('ActualPollution') + 1);
+
+    for (const name of effectiveNames) {
+      expect(RES_GENERAL_GROUP.rdoCommands![name]).toBeUndefined();
+    }
+  });
+
+  it('ResGeneral requests the effective crime/pollution/efficiency names on the wire', () => {
+    clearInspectorTabsCache();
+    registerInspectorTabs('test583_ResGeneral', [{ tabName: 'General', tabHandler: 'ResGeneral' }]);
+    const collected = collectTemplatePropertyNamesStructured(getTemplateForVisualClass('test583_ResGeneral'));
+    expect(collected.regularProperties).toContain('ActualCrime');
+    expect(collected.regularProperties).toContain('ActualPollution');
+    expect(collected.regularProperties).toContain('Efficiency');
   });
 
   it('ResGeneral should have residential stats from PopulatedBlock.StoreToCache', () => {
