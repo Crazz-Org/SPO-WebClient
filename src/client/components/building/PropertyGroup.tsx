@@ -406,9 +406,12 @@ function DefinedProperties({
         continue;
       }
 
-      // Owner-only actions (connectMap, demolish) hidden from non-owners
-      const ownerOnlyActions = new Set(['connectMap', 'demolish']);
-      if (ownerOnlyActions.has(def.actionId ?? '') && !canEdit) {
+      // Demolish is the only owner-gated action here: Voyager enables
+      // btnDemolish on fOwnsFacility (IndustryGeneralSheet.pas:167) but leaves
+      // btnConnect on for everyone (SrvGeneralSheetForm.pas:190, TVGeneralSheet.pas:133)
+      // — a visitor connects the building to one of their own. The server decides
+      // (Kernel/World.pas:3717-3724), and its refusal reaches the player as a toast.
+      if (def.actionId === 'demolish' && !canEdit) {
         rendered.add(def.rdoName);
         continue;
       }

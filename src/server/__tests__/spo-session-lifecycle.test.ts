@@ -789,6 +789,48 @@ describe('connectFacilitiesByCoords', () => {
     withoutMessage.session.destroy();
     withoutMessage.cleanup();
   });
+
+  it('classifies the World.pas:3724 refusal as a failure', async () => {
+    const refused = createProtocolTestHarness({
+      socketConfigs: [{
+        rdoScenarios: [],
+        fallbackResponses: [
+          { member: 'ObjectAt', payload: `res="%${OBJECT_ID}"` },
+          { member: 'ConnectFacilities', payload: 'res="%You are not allowed to do that!"' },
+        ],
+        disableStrictValidation: true,
+      }],
+    });
+    await refused.session.createSocket('world', WORLD.ip, WORLD.port);
+    refused.session.setWorldContextId(CONTEXT_ID);
+
+    await expect(refused.session.connectFacilitiesByCoords(700, 430, 706, 436))
+      .resolves.toEqual({ success: false, resultMessage: 'You are not allowed to do that!' });
+
+    refused.session.destroy();
+    refused.cleanup();
+  });
+
+  it('treats "There is nothing to trade!" as an outcome, not a refusal', async () => {
+    const nothingToTrade = createProtocolTestHarness({
+      socketConfigs: [{
+        rdoScenarios: [],
+        fallbackResponses: [
+          { member: 'ObjectAt', payload: `res="%${OBJECT_ID}"` },
+          { member: 'ConnectFacilities', payload: 'res="%There is nothing to trade!"' },
+        ],
+        disableStrictValidation: true,
+      }],
+    });
+    await nothingToTrade.session.createSocket('world', WORLD.ip, WORLD.port);
+    nothingToTrade.session.setWorldContextId(CONTEXT_ID);
+
+    await expect(nothingToTrade.session.connectFacilitiesByCoords(700, 430, 706, 436))
+      .resolves.toEqual({ success: true, resultMessage: 'There is nothing to trade!' });
+
+    nothingToTrade.session.destroy();
+    nothingToTrade.cleanup();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
