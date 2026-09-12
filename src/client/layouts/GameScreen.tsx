@@ -14,7 +14,7 @@
 
 import { lazy, Suspense } from 'react';
 import { useUiStore } from '../store';
-import { StatusPill, CommandBar, RightRail, VersionBadge } from '../components/hud';
+import { StatusPill, CommandBar, RightRail, VersionBadge, ContextStatusStrip } from '../components/hud';
 import { ChatStrip } from '../components/chat';
 import { StatusOverlay } from '../components/building';
 import { ServerSwitchOverlay, ZoneTypePicker } from '../components/modals';
@@ -55,6 +55,9 @@ export function GameScreen() {
 
       {/* StatusPill — top, the player's state in one line */}
       <StatusPill />
+
+      {/* ContextStatusStrip — the town under the camera, while nothing is selected */}
+      <ContextStatusStrip />
 
       {/* CommandBar — bottom: search / mode bar + six tiles */}
       <CommandBar />

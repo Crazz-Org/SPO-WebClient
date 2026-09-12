@@ -1,0 +1,28 @@
+/* ContextStatusStrip — the idle line: the town under the camera, centred just above
+   the CommandBar. Read-only text, so it never takes a click away from the map. */
+
+.strip {
+  position: fixed;
+  bottom: 136px;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: max-content;
+  max-width: min(640px, calc(100% - 2 * var(--space-8)));
+  z-index: var(--z-hud);
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--space-4);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}

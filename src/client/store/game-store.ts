@@ -168,6 +168,9 @@ interface GameState {
   // Capitol location (from DirectoryMain.asp)
   capitolCoords: { x: number; y: number } | null;
 
+  /** The server's sentence for the town under the camera; '' when there is none. */
+  contextStatusText: string;
+
   // Server startup progress (SSE-driven)
   serverStartup: ServerStartupState;
 
@@ -211,6 +214,7 @@ interface GameState {
   setClusterFacilities: (facilities: ClusterFacilityPreview[]) => void;
   setClusterFacilitiesLoading: (loading: boolean) => void;
   setCapitolCoords: (coords: { x: number; y: number } | null) => void;
+  setContextStatusText: (text: string) => void;
   setServerStartup: (partial: Partial<ServerStartupState>) => void;
   setMapLoading: (partial: Partial<MapLoadingState>) => void;
   updateSettings: (partial: Partial<GameSettings>) => void;
@@ -263,6 +267,7 @@ export const useGameStore = create<GameState>((set) => ({
   clusterFacilities: [],
   clusterFacilitiesLoading: false,
   capitolCoords: null,
+  contextStatusText: '',
   settings: { ...DEFAULT_SETTINGS },
   serverStartup: { ready: false, progress: 0, message: 'Connecting...', services: [] },
   mapLoading: { active: false, progress: 0, message: '' },
@@ -313,6 +318,8 @@ export const useGameStore = create<GameState>((set) => ({
   setClusterFacilitiesLoading: (loading) => set({ clusterFacilitiesLoading: loading }),
 
   setCapitolCoords: (coords) => set({ capitolCoords: coords }),
+
+  setContextStatusText: (text) => set({ contextStatusText: text }),
 
   setServerStartup: (partial) =>
     set((state) => ({ serverStartup: { ...state.serverStartup, ...partial } })),
@@ -385,6 +392,7 @@ export const useGameStore = create<GameState>((set) => ({
       clusterInfo: null,
       clusterInfoLoading: false,
       capitolCoords: null,
+      contextStatusText: '',
       clusterFacilities: [],
       clusterFacilitiesLoading: false,
     }),

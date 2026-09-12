@@ -356,6 +356,9 @@ export type {
   // Clone facility
   WsReqCloneFacility,
   WsRespCloneFacility,
+  // Context status — the town under the camera
+  WsReqContextStatus,
+  WsRespContextStatus,
 } from './message-types';
 
 export type { ConnectionSearchResult, ConnectionReachabilityEntry, FavoritesItem, ResearchCategoryData, ResearchInventionItem, ResearchInventionDetails } from './message-types';

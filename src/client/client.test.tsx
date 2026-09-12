@@ -13,6 +13,9 @@
  */
 
 jest.mock('./handlers/chat-handler');
+jest.mock('./handlers/context-status-handler', () => ({
+  refreshContextStatus: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('./handlers/auth-handler', () => ({
   ...(jest.requireActual('./handlers/auth-handler') as object),
   visitWorld: jest.fn(),
@@ -21,6 +24,7 @@ jest.mock('./handlers/auth-handler', () => ({
 import { StarpeaceClient } from './client';
 import * as chatHandler from './handlers/chat-handler';
 import * as authHandler from './handlers/auth-handler';
+import * as contextStatusHandler from './handlers/context-status-handler';
 import { WsMessageType, type WsMessage } from '../shared/types';
 
 class FakeSocket {
@@ -72,6 +76,55 @@ describe('StarpeaceClient callback wiring', () => {
     client.callbacks.onVisitWorld();
 
     expect(authHandler.visitWorld).toHaveBeenCalledWith(client);
+  });
+});
+
+/**
+ * #589 — the cadence of the context status ask. It is deliberately NOT a timer of
+ * its own: it rides `sendCameraPositionNow`, which the 2 s debounce after a move
+ * and the 30 s viewport heartbeat both already call. Voyager polled every 20 s
+ * instead (`Voyager/URLHandlers/MapIsoHandler.pas:188`).
+ */
+describe('the context status cadence', () => {
+  const priv = (c: StarpeaceClient): Record<string, unknown> => c as unknown as Record<string, unknown>;
+
+  function connectedClient(): StarpeaceClient {
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    const client = new StarpeaceClient();
+    priv(client).isConnected = true;
+    priv(client).ws = new FakeSocket();
+    priv(client).mapNavigationUI = {
+      getRenderer: () => ({
+        getCameraPosition: () => ({ x: 472, y: 392 }),
+        getVisibleTileBounds: () => ({ minI: 380, maxI: 404, minJ: 460, maxJ: 484 }),
+      }),
+    };
+    return client;
+  }
+
+  beforeEach(() => {
+    (contextStatusHandler.refreshContextStatus as jest.Mock).mockClear();
+  });
+
+  it('a camera report asks for the town under the camera in the same breath', () => {
+    const client = connectedClient();
+
+    client.sendCameraPositionNow();
+
+    expect(contextStatusHandler.refreshContextStatus).toHaveBeenCalledWith(client);
+  });
+
+  it('asks nothing while there is no renderer to read a camera position from', () => {
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    const client = new StarpeaceClient();
+
+    client.sendCameraPositionNow();
+
+    expect(contextStatusHandler.refreshContextStatus).not.toHaveBeenCalled();
   });
 });
 

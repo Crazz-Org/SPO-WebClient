@@ -34,6 +34,7 @@ import * as favoritesHandler from '../session/favorites-handler';
 import * as buildingManagementHandler from '../session/building-management-handler';
 import * as roadHandler from '../session/road-handler';
 import * as zoneSurfaceHandler from '../session/zone-surface-handler';
+import * as contextStatusHandler from '../session/context-status-handler';
 import * as buildingTemplatesHandler from '../session/building-templates-handler';
 import * as buildingDetailsHandler from '../session/building-details-handler';
 import * as buildingPropertyHandler from '../session/building-property-handler';
@@ -557,6 +558,15 @@ const DELEGATIONS: readonly Delegation[] = [
     result: { width: 6, height: 6, values: [] },
   },
 
+  // ── context-status-handler ───────────────────────────────────────────────
+  {
+    method: 'getContextStatusText',
+    install: () => jest.spyOn(contextStatusHandler, 'getContextStatusText'),
+    call: s => s.getContextStatusText(706, 436),
+    forwarded: [706, 436],
+    result: 'Kalisz — population 12 480',
+  },
+
   // ── building-templates-handler ───────────────────────────────────────────
   {
     method: 'fetchClusterInfo',
@@ -679,7 +689,7 @@ describe('StarpeaceSession — handler delegation', () => {
   it('covers every one-line handler delegation the facade declares', () => {
     // A guard on the table itself: if a delegation is added to the facade and
     // not to the table, the count stops matching and this row says so.
-    expect(DELEGATIONS).toHaveLength(73);
+    expect(DELEGATIONS).toHaveLength(74);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 

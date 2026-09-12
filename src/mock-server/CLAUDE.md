@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `context-status`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -171,6 +171,15 @@ the **InitClient proxy id**, which the server pointer-casts — `TMoneyDealer(Cl
 (`Banks.pas:149`) — so the persistent `TTycoon.Id` would dereference nothing with no error to
 show for it. The `building-details` cache fixture serves a `CurrBlock` pointing at these blocks
 and none of the six values, matching what StoreToCache actually writes.
+
+`context-status` is the town under the camera: two `ContextStatusText(x, y)` calls on the client
+view (`Interface Server/InterfaceServer.pas:149`), one answering a sentence and one answering the
+empty string the world returns when `NearestTown` finds nothing (`Kernel/World.pas:4243`) — the
+answer the strip hides itself on. It is the one scenario here that is **not** a capture: the
+checked-in `TTown.GetContextStatusStr` is a stub returning `''` (`Kernel/Kernel.pas:9307-9310`),
+so no session can produce a non-empty sentence to record, and the first exchange carries a
+plausible one purely to prove the client renders whatever string arrives. Its test drives the
+real `handleContextStatus` and asserts both answers reach the WS frontier.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under

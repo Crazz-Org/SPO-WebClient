@@ -10,6 +10,7 @@ jest.mock('../components/hud', () => ({
   CommandBar: () => <nav>COMMANDBAR</nav>,
   RightRail: () => <nav>RIGHTRAIL</nav>,
   VersionBadge: () => null,
+  ContextStatusStrip: () => null,
 }));
 jest.mock('../components/chat', () => ({ ChatStrip: () => <div>CHAT</div> }));
 jest.mock('../components/building', () => ({ StatusOverlay: () => null }));

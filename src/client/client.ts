@@ -42,6 +42,7 @@ import * as favoritesHandler from './handlers/favorites-handler';
 import * as zoneHandler from './handlers/zone-handler';
 import * as buildMenuHandler from './handlers/build-menu-handler';
 import * as mapHandler from './handlers/map-handler';
+import * as contextStatusHandler from './handlers/context-status-handler';
 import { getReconnectDelay, isMaxAttempts, isSlowPhase, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
 import { connectionPendingKey } from './handlers/connection-pending-key';
 
@@ -764,6 +765,10 @@ export class StarpeaceClient implements ClientHandlerContext {
       viewW: bounds.maxJ - bounds.minJ,
       viewH: bounds.maxI - bounds.minI,
     });
+
+    // The town under the camera refreshes with the camera report, not on a timer
+    // of its own (Voyager polled every 20 s — MapIsoHandler.pas:188).
+    void contextStatusHandler.refreshContextStatus(this);
   }
 
   // ── Game View Initialization ─────────────────────────────────────────────

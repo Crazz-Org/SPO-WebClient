@@ -40,7 +40,7 @@ When adding a new handler:
 2. Accept `SessionContext` as the first parameter
 3. Import it in `spo_session.ts` and wire the delegation
 
-Existing handlers: `chat-handler`, `mail-handler`, `profile-finance-handler`, `auto-connection-handler`, `politics-handler`, `building-management-handler`, `road-handler`, `zone-surface-handler`, `building-templates-handler`, `building-details-handler`, `building-property-handler`, `research-handler`, `login-handler`.
+Existing handlers: `chat-handler`, `mail-handler`, `profile-finance-handler`, `auto-connection-handler`, `politics-handler`, `building-management-handler`, `road-handler`, `zone-surface-handler`, `building-templates-handler`, `building-details-handler`, `building-property-handler`, `research-handler`, `login-handler`, `context-status-handler`.
 
 ## Push Dispatcher
 

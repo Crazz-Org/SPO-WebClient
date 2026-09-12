@@ -3,9 +3,11 @@ import { getCivicVisualClassIds } from '../../shared/building-details/civic-buil
 import {
   WsMessageType,
   type WsMessage,
+  type WsReqContextStatus,
   type WsReqGetSurface,
   type WsReqMapLoad,
   type WsRespAllFacilityDimensions,
+  type WsRespContextStatus,
   type WsRespMapData,
   type WsRespSurfaceData,
 } from '../../shared/types';
@@ -59,6 +61,25 @@ export const handleGetAllFacilityDimensions: WsHandler = async (ctx: WsHandlerCo
     };
 
     console.log(`[Gateway] Sending ${Object.keys(dimensions).length} facility dimensions`);
+    sendResponse(ctx.ws, response);
+  });
+};
+
+/**
+ * The sentence describing the town under the camera. `text` is '' when there is
+ * no town there (World.pas:4243) — the client hides its strip rather than
+ * showing an empty bar.
+ */
+export const handleContextStatus: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_Unknown, async () => {
+    const req = msg as WsReqContextStatus;
+    const text = await ctx.session.getContextStatusText(req.x, req.y);
+
+    const response: WsRespContextStatus = {
+      type: WsMessageType.RESP_CONTEXT_STATUS,
+      wsRequestId: msg.wsRequestId,
+      text,
+    };
     sendResponse(ctx.ws, response);
   });
 };

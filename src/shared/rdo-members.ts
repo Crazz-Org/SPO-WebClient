@@ -108,6 +108,7 @@ export const RDO_MEMBERS = {
   // `Proxy.Commercials := …` (:322).
   Commercials:               { kind: 'accessor',  access: ['get', 'set'] },  // StdBlocks/Broadcast.pas:53; building-details-handler.ts (enrichTvTab), building-property-handler.ts:188
   ConnectFacilities:         { kind: 'function',  arity: 2 },                // src/server/spo_session.ts:795
+  ContextStatusText:         { kind: 'function',  arity: 2 },                // Interface Server/InterfaceServer.pas:149; src/server/session/context-status-handler.ts
   CreateCircuitSeg:          { kind: 'function',  arity: 7 },                // src/server/session/road-handler.ts:192
   CreateObject:              { kind: 'function',  arity: 1 },                // src/server/spo_session.ts:1414
   DAAddr:                    { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts:789

@@ -328,6 +328,10 @@ export enum WsMessageType {
   // Camera Position
   REQ_UPDATE_CAMERA = 'REQ_UPDATE_CAMERA',
 
+  // Context status — the town under the camera
+  REQ_CONTEXT_STATUS = 'REQ_CONTEXT_STATUS',
+  RESP_CONTEXT_STATUS = 'RESP_CONTEXT_STATUS',
+
   // Capitol
   REQ_BUILD_CAPITOL = 'REQ_BUILD_CAPITOL',
   RESP_CAPITOL_PLACED = 'RESP_CAPITOL_PLACED',
@@ -1997,6 +2001,22 @@ export interface WsReqUpdateCamera extends WsMessage {
   viewY?: number;  // viewport top-left row
   viewW?: number;  // viewport width in tiles
   viewH?: number;  // viewport height in tiles
+}
+
+// =============================================================================
+// CONTEXT STATUS MESSAGES
+// =============================================================================
+
+export interface WsReqContextStatus extends WsMessage {
+  type: WsMessageType.REQ_CONTEXT_STATUS;
+  x: number;
+  y: number;
+}
+
+export interface WsRespContextStatus extends WsMessage {
+  type: WsMessageType.RESP_CONTEXT_STATUS;
+  /** '' when there is no town under the camera (World.pas:4243). */
+  text: string;
 }
 
 // =============================================================================

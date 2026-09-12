@@ -87,6 +87,7 @@ import type { NewspaperTarget } from './session/newspaper-handler';
 import * as buildingManagementHandler from './session/building-management-handler';
 import * as roadHandler from './session/road-handler';
 import * as zoneSurfaceHandler from './session/zone-surface-handler';
+import * as contextStatusHandler from './session/context-status-handler';
 import * as buildingTemplatesHandler from './session/building-templates-handler';
 import * as buildingDetailsHandler from './session/building-details-handler';
 import * as buildingPropertyHandler from './session/building-property-handler';
@@ -2964,6 +2965,11 @@ private handlePush(socketName: string, packet: RdoPacket) {
 
   public async getSurfaceData(surfaceType: SurfaceType, x1: number, y1: number, x2: number, y2: number): Promise<SurfaceData> {
     return zoneSurfaceHandler.getSurfaceData(this, surfaceType, x1, y1, x2, y2);
+  }
+
+  // -- CONTEXT STATUS (facade -> context-status-handler) --------------------
+  public async getContextStatusText(x: number, y: number): Promise<string> {
+    return contextStatusHandler.getContextStatusText(this, x, y);
   }
 
   // -- BUILDING TEMPLATES (facade -> building-templates-handler) ------------
