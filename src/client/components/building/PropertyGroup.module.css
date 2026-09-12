@@ -2014,3 +2014,27 @@
   outline: 2px solid var(--accent-gold);
   outline-offset: 2px;
 }
+
+/* Mausoleum epitaph editor (owner only) — issue 576 */
+.epitaphTextarea {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--surface-border-active);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  padding: var(--space-1) var(--space-2);
+}
+.epitaphTextarea:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+.epitaphActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
