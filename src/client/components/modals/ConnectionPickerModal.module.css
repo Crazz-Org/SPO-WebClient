@@ -210,6 +210,23 @@
   white-space: nowrap;
 }
 
+/* Road reachability flag (issue #584) — never disables the row it sits in. */
+.roadFlag {
+  margin-left: 6px;
+}
+
+.roadConnected {
+  color: var(--success);
+}
+
+.roadIsolated {
+  color: var(--error);
+}
+
+.roadUnknown {
+  color: var(--text-muted);
+}
+
 /* Footer */
 .footer {
   padding: var(--space-2) var(--space-5);

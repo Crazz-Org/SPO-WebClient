@@ -22,7 +22,27 @@ import { useBuildingStore } from '../../store/building-store';
 import { useClient } from '../../context';
 import { rolesToMask } from '@/shared/connection-roles';
 import type { ConnectionSearchResult } from '@/shared/types';
+import { reachabilityKey } from '../../store/building-store';
+import type { RoadReachability } from '@/shared/road-circuits';
 import styles from './ConnectionPickerModal.module.css';
+
+/**
+ * The road flag text for a row (issue #584). `undefined` means no answer has
+ * arrived yet — `TFluidLink.Intercept` (`~/SPO-Original/Cache/FluidLinks.pas:121`).
+ * The gateway resolves it after the results are already on screen, so a row is
+ * always usable — nothing here disables selection or connecting.
+ */
+const ROAD_FLAG_TEXT: Record<RoadReachability, string> = {
+  connected: 'Road: connected',
+  isolated: 'Road: not connected',
+  unknown: 'Road: unknown',
+};
+
+const ROAD_FLAG_CLASS: Record<RoadReachability, string> = {
+  connected: styles.roadConnected,
+  isolated: styles.roadIsolated,
+  unknown: styles.roadUnknown,
+};
 
 /**
  * How the rows are ordered. `cost` and `quality` are the server's own modes
@@ -41,6 +61,7 @@ export interface ConnectionPickerContentProps {
 
 export function ConnectionPickerContent({ onClose, showTitle = true, className }: ConnectionPickerContentProps) {
   const picker = useBuildingStore((s) => s.connectionPicker);
+  const reachability = useBuildingStore((s) => s.connectionPicker?.reachability);
   const clearConnectionPicker = useBuildingStore((s) => s.clearConnectionPicker);
   const remembered = useUiStore((s) => s.connectionFilters);
   const setConnectionFilters = useUiStore((s) => s.setConnectionFilters);
@@ -397,6 +418,14 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
                     {r.price ? ` — $${r.price}` : ''}
                     {r.quality ? ` (Q: ${r.quality})` : ''}
                     {` · ${d} tiles`}
+                    {(() => {
+                      const flag = reachability?.[reachabilityKey(r.x, r.y)];
+                      return (
+                        <span className={`${styles.roadFlag} ${flag ? ROAD_FLAG_CLASS[flag] : ''}`}>
+                          {flag ? ROAD_FLAG_TEXT[flag] : 'Road: checking…'}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>

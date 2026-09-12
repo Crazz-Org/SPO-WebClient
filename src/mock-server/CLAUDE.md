@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -98,6 +98,21 @@ produces no crash and no error reply — the server simply answers about facilit
 about — so the captured `#54` (`src/server/__tests__/rdo/connection-search.test.ts:9`) is the
 only thing that can catch it. Its test drives the real `searchConnections` and matches the
 emitted frame back against the exchange.
+
+`connection-reachability` is the road-flag sweep that follows a connection search (issue
+#584): `NearCircuits` is a string the facility cache agent writes into the object cache
+(`RenderCircuitStr`, `Kernel/KernelCache.pas:156-165`/`:440`), never an RDO member, and the
+gateway reads it exactly as it reads any cached property — `SetObject` + `GetPropertyList` on
+one temp object per candidate, compared as `TFluidLink.Intercept` does
+(`Cache/FluidLinks.pas:116-134`), an empty side making the comparison false (`:121`). Because
+`ctx.cacherSetObject` discards `SetObject`'s own reply, the sweep issues that frame itself and
+reads the `WordBool` answer (`Cache Server/CachedObjectAuto.pas:15`) to tell "nothing loaded
+here" from "loaded, with an empty circuit string" — both of which `GetPropertyList` would
+otherwise answer `''` for (`Cache Server/CachedObjectWrap.pas:209-235`). Its `FindSuppliers`
+answers four seven-field rows; one candidate's circuits are empty (the `FluidLinks.pas:121`
+case) and one has no `NearCircuits` fixture at all, so its read fails and the row must come
+back `unknown`, never a false `not connected`. Its test drives the real `searchConnections`
+and `resolveConnectionReachability` and asserts the connected/isolated/isolated/unknown split.
 
 `people-search` is the pair of patterns the directory's People page puts in the first argument
 of `RDOSearchKey`. The A-Z index sends the bare `*` inside one `Root/Users/<Letter>` bucket —

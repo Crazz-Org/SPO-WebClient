@@ -40,6 +40,7 @@ import {
   NewspaperIssueList,
   PoliticalRoleInfo,
   ConnectionSearchResult,
+  ConnectionReachabilityEntry,
   FavoritesItem,
   ResearchCategoryData,
   ResearchInventionDetails,
@@ -1252,6 +1253,10 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
 
   public async searchConnections(buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters?: { company?: string; town?: string; maxResults?: number; roles?: number; sortMode?: number }): Promise<ConnectionSearchResult[]> {
     return politicsHandler.searchConnections(this, buildingX, buildingY, fluidId, direction, filters);
+  }
+
+  public async resolveConnectionReachability(buildingX: number, buildingY: number, candidates: ReadonlyArray<{ x: number; y: number }>, onBatch?: (entries: ConnectionReachabilityEntry[]) => void): Promise<ConnectionReachabilityEntry[]> {
+    return politicsHandler.resolveConnectionReachability(this, buildingX, buildingY, candidates, onBatch);
   }
 
 public async loadMapArea(x?: number, y?: number, w: number = 64, h: number = 64): Promise<MapData> {
@@ -2978,7 +2983,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return buildingTemplatesHandler.fetchBuildingFacilities(this, companyName, cluster, kind, kindName, folder, tycoonLevel);
   }
 
-  public async placeBuilding(facilityClass: string, x: number, y: number): Promise<{ success: boolean; buildingId: string | null }> {
+  public async placeBuilding(facilityClass: string, x: number, y: number): Promise<{ success: boolean; buildingId: string | null; errorCode?: number }> {
     return buildingTemplatesHandler.placeBuilding(this, facilityClass, x, y);
   }
 

@@ -16,12 +16,14 @@ import type {
   PoliticsProjectEntry,
   CampaignState,
   ConnectionSearchResult,
+  ConnectionReachabilityEntry,
 } from '../../shared/types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
 import { writeRdoFrame } from '../rdo-helpers';
-import { splitMultilinePayload as splitMultilinePayloadHelper, isTrueOrdinal } from '../rdo-helpers';
+import { splitMultilinePayload as splitMultilinePayloadHelper, isTrueOrdinal, cleanPayload } from '../rdo-helpers';
+import { sharesRoadCircuit } from '../../shared/road-circuits';
 import { toErrorMessage } from '../../shared/error-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
 import { withLangId } from '../../shared/language';
@@ -1196,5 +1198,124 @@ export async function searchConnections(
   } catch (e: unknown) {
     ctx.log.warn(`[Connections] ${direction} search failed: ${toErrorMessage(e)}`);
     return [];
+  }
+}
+
+/** Batch size of the progressive RESP_CONNECTION_REACHABILITY pushes. */
+export const REACHABILITY_BATCH_SIZE = 10;
+
+/** The settle delay `cacherSetObject` applies before a read (`spo_session.ts:1441-1449`). */
+const SET_OBJECT_SETTLE_MS = 30;
+
+/**
+ * Point the shared temp object at (x, y) and report whether anything loaded there.
+ *
+ * `ctx.cacherSetObject` discards the reply, but `SetObject` is a `WordBool`-returning
+ * function (`Cache Server/CachedObjectAuto.pas:15`) that answers
+ * `fCachedObject <> nil` (`Cache Server/CachedObjectWrap.pas:127-139`) — the only way
+ * to tell "nothing here" from "a facility whose NearCircuits happens to be empty".
+ * Same frame, socket and timeout as `cacherSetObject` (`spo_session.ts:1441-1449`),
+ * only the answer is kept.
+ */
+async function setObjectLoaded(ctx: SessionContext, tempObjectId: string, x: number, y: number): Promise<boolean> {
+  const packet = await ctx.sendRdoRequest('map', rdoCall(
+    'SetObject', tempObjectId,
+    RdoValue.int(x),
+    RdoValue.int(y),
+  ).packet, undefined, TimeoutCategory.SLOW);
+  await new Promise(resolve => setTimeout(resolve, SET_OBJECT_SETTLE_MS));
+  return isTrueOrdinal(cleanPayload(packet.payload || ''));
+}
+
+/**
+ * Read `NearCircuits` at (x, y) through the shared temp object. `null` means the read
+ * could not establish a real value — SetObject loaded nothing there, or the RDO round
+ * trip itself failed — and must never be treated as an empty circuit string.
+ */
+async function readNearCircuits(ctx: SessionContext, tempObjectId: string, x: number, y: number): Promise<string | null> {
+  try {
+    if (!(await setObjectLoaded(ctx, tempObjectId, x, y))) {
+      ctx.log.warn(`[Connections] reachability: nothing loaded at (${x}, ${y})`);
+      return null;
+    }
+    const values = await ctx.cacherGetPropertyList(tempObjectId, ['NearCircuits']);
+    return values[0] ?? '';
+  } catch (e: unknown) {
+    ctx.log.warn(`[Connections] reachability read failed at (${x}, ${y}): ${toErrorMessage(e)}`);
+    return null;
+  }
+}
+
+/**
+ * Road reachability of each candidate from the building — the `Connected(i)` the
+ * original pages printed (`FiveSearchSite.inc:27,43`): the building's cached
+ * `NearCircuits` (`Kernel/KernelCache.pas:440`) against each candidate's, compared as
+ * `TFluidLink.Intercept` does (`Cache/FluidLinks.pas:116-134`). One temp object,
+ * re-bound with `SetObject` per read, as `research-handler.ts:25-33` does. A read
+ * that cannot establish a value is `'unknown'`, never a false `'isolated'`. `onBatch`
+ * fires every `REACHABILITY_BATCH_SIZE` entries and once for the remainder, so the
+ * picker fills in progressively; the returned array is the whole set.
+ */
+export async function resolveConnectionReachability(
+  ctx: SessionContext, buildingX: number, buildingY: number,
+  candidates: ReadonlyArray<{ x: number; y: number }>,
+  onBatch?: (entries: ConnectionReachabilityEntry[]) => void,
+): Promise<ConnectionReachabilityEntry[]> {
+  if (candidates.length === 0) return [];
+
+  const allUnknown = (): ConnectionReachabilityEntry[] =>
+    candidates.map(({ x, y }) => ({ x, y, reachability: 'unknown' as const }));
+
+  await ctx.connectMapService();
+  if (!ctx.cacherId) {
+    ctx.log.warn('[Connections] reachability unavailable: no cacherId');
+    const entries = allUnknown();
+    onBatch?.(entries);
+    return entries;
+  }
+
+  let tempObjectId: string;
+  try {
+    tempObjectId = await ctx.cacherCreateObject();
+  } catch (e: unknown) {
+    ctx.log.warn(`[Connections] reachability unavailable: ${toErrorMessage(e)}`);
+    const entries = allUnknown();
+    onBatch?.(entries);
+    return entries;
+  }
+
+  try {
+    const buildingCircuits = await readNearCircuits(ctx, tempObjectId, buildingX, buildingY);
+    if (buildingCircuits === null) {
+      const entries = allUnknown();
+      onBatch?.(entries);
+      return entries;
+    }
+
+    const entries: ConnectionReachabilityEntry[] = [];
+    let pending: ConnectionReachabilityEntry[] = [];
+    const flush = (): void => {
+      if (pending.length === 0) return;
+      onBatch?.(pending);
+      pending = [];
+    };
+
+    for (const { x, y } of candidates) {
+      const candidateCircuits = await readNearCircuits(ctx, tempObjectId, x, y);
+      const entry: ConnectionReachabilityEntry = {
+        x, y,
+        reachability: candidateCircuits === null
+          ? 'unknown'
+          : sharesRoadCircuit(buildingCircuits, candidateCircuits) ? 'connected' : 'isolated',
+      };
+      entries.push(entry);
+      pending.push(entry);
+      if (pending.length >= REACHABILITY_BATCH_SIZE) flush();
+    }
+    flush();
+
+    return entries;
+  } finally {
+    ctx.cacherCloseObject(tempObjectId);
   }
 }

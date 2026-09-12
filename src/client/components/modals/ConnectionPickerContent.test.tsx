@@ -275,6 +275,65 @@ describe('ConnectionPickerContent (T3)', () => {
     expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 2 });
   });
 
+  // Road reachability flag (issue #584)
+  it('rows show "Road: checking…" right after the results land, before any answer arrives', () => {
+    openPicker();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />);
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Farm A', companyName: 'A', x: 103, y: 104 },
+      ]);
+    });
+    expect(screen.getByText('Road: checking…')).toBeTruthy();
+  });
+
+  it('shows connected / not connected / unknown on the right rows once answers merge (input picker)', () => {
+    openPicker();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />);
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Farm A', companyName: 'A', x: 103, y: 104 },
+        { facilityName: 'Farm B', companyName: 'B', x: 200, y: 200 },
+        { facilityName: 'Farm C', companyName: 'C', x: 300, y: 300 },
+      ]);
+      useBuildingStore.getState().mergeConnectionReachability([
+        { x: 103, y: 104, reachability: 'connected' },
+        { x: 200, y: 200, reachability: 'isolated' },
+      ]);
+    });
+    expect(screen.getByText('Road: connected')).toBeTruthy();
+    expect(screen.getByText('Road: not connected')).toBeTruthy();
+    // Farm C has not answered yet.
+    expect(screen.getByText('Road: checking…')).toBeTruthy();
+  });
+
+  it('shows connected / not connected / unknown the same way for an output (customer) picker', () => {
+    useBuildingStore.getState().setConnectionPicker({ fluidName: 'Cotton', fluidId: 'Cotton', direction: 'output', buildingX: 100, buildingY: 100 });
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />);
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Store A', companyName: 'A', x: 103, y: 104 },
+      ]);
+      useBuildingStore.getState().mergeConnectionReachability([{ x: 103, y: 104, reachability: 'unknown' }]);
+    });
+    expect(screen.getByText('Road: unknown')).toBeTruthy();
+  });
+
+  it('a "Road: unknown" row is still selectable and connectable', () => {
+    openPicker();
+    const onConnectionConnect = jest.fn();
+    renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionConnect }) });
+    act(() => {
+      useBuildingStore.getState().setConnectionResults([
+        { facilityName: 'Farm A', companyName: 'A', x: 103, y: 104 },
+      ]);
+      useBuildingStore.getState().mergeConnectionReachability([{ x: 103, y: 104, reachability: 'unknown' }]);
+    });
+    fireEvent.click(screen.getByLabelText('Select Farm A'));
+    fireEvent.click(screen.getByRole('button', { name: /Connect Selected/ }));
+    expect(onConnectionConnect).toHaveBeenCalledWith('Cotton', 'input', [{ x: 103, y: 104 }]);
+  });
+
   it('the bridge stacks the picker on the building surface and closing pops it', () => {
     useUiStore.getState().setRootSurface({ kind: 'building' });
     ClientBridge.showConnectionPicker({ fluidName: 'Cotton', fluidId: 'Cotton', direction: 'input', buildingX: 1, buildingY: 2 });

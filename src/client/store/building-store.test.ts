@@ -667,6 +667,57 @@ describe('Building Store — Context Loss Prevention', () => {
     expect(useBuildingStore.getState().connectionPicker).toBeNull();
   });
 
+  // Road reachability flag (issue #584)
+  it('a fresh picker starts with no reachability entries', () => {
+    useBuildingStore.getState().setConnectionPicker({
+      fluidName: 'Oil', fluidId: 'oil-1', direction: 'input', buildingX: 100, buildingY: 200,
+    });
+    expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({});
+  });
+
+  it('mergeConnectionReachability writes entries keyed by "x,y"', () => {
+    useBuildingStore.getState().setConnectionPicker({
+      fluidName: 'Oil', fluidId: 'oil-1', direction: 'input', buildingX: 100, buildingY: 200,
+    });
+
+    useBuildingStore.getState().mergeConnectionReachability([
+      { x: 10, y: 20, reachability: 'connected' },
+      { x: 30, y: 40, reachability: 'isolated' },
+    ]);
+
+    expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({
+      '10,20': 'connected',
+      '30,40': 'isolated',
+    });
+  });
+
+  it('mergeConnectionReachability overwrites a previous entry for the same key', () => {
+    useBuildingStore.getState().setConnectionPicker({
+      fluidName: 'Oil', fluidId: 'oil-1', direction: 'input', buildingX: 100, buildingY: 200,
+    });
+    useBuildingStore.getState().mergeConnectionReachability([{ x: 10, y: 20, reachability: 'unknown' }]);
+
+    useBuildingStore.getState().mergeConnectionReachability([{ x: 10, y: 20, reachability: 'connected' }]);
+
+    expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({ '10,20': 'connected' });
+  });
+
+  it('setConnectionResults resets reachability to {}', () => {
+    useBuildingStore.getState().setConnectionPicker({
+      fluidName: 'Oil', fluidId: 'oil-1', direction: 'input', buildingX: 100, buildingY: 200,
+    });
+    useBuildingStore.getState().mergeConnectionReachability([{ x: 10, y: 20, reachability: 'connected' }]);
+
+    useBuildingStore.getState().setConnectionResults([]);
+
+    expect(useBuildingStore.getState().connectionPicker?.reachability).toEqual({});
+  });
+
+  it('mergeConnectionReachability is a no-op when no picker is open', () => {
+    useBuildingStore.getState().mergeConnectionReachability([{ x: 10, y: 20, reachability: 'connected' }]);
+    expect(useBuildingStore.getState().connectionPicker).toBeNull();
+  });
+
   // B4: Research guards — reject when details or research is null
   it('setResearchInventory is a no-op when details is null', () => {
     // No building loaded — research response should be silently dropped

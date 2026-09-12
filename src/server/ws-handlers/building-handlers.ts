@@ -130,7 +130,8 @@ export async function handlePlaceBuilding(ctx: WsHandlerContext, msg: WsMessage)
       };
       sendResponse(ctx.ws, response);
     } else {
-      sendError(ctx.ws, msg.wsRequestId, 'Failed to place building - check placement location and requirements', ErrorCodes.ERROR_AreaNotClear);
+      const code = result.errorCode ?? ErrorCodes.ERROR_Unknown;
+      sendError(ctx.ws, msg.wsRequestId, ErrorCodes.getErrorMessage(code), code);
     }
   });
 }
