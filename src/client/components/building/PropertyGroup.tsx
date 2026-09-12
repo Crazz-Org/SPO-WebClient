@@ -21,6 +21,7 @@ import {
 } from '@/shared/building-details';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
 import { useBuildingStore } from '../../store/building-store';
+import { useGameStore } from '../../store/game-store';
 import { useClient } from '../../context';
 import { ResearchPanel } from './ResearchPanel';
 import { RevenueGraph } from './RevenueGraph';
@@ -202,6 +203,7 @@ function DefinedProperties({
   const client = useClient();
   const details = useBuildingStore((s) => s.details);
   const currentTab = useBuildingStore((s) => s.currentTab);
+  const gameDate = useGameStore((s) => s.gameDate);
   const rendered = new Set<string>();
   const elements: JSX.Element[] = [];
 
@@ -436,7 +438,11 @@ function DefinedProperties({
       const hasGraph = valueMap.get('MoneyGraph') ?? '0';
       if (details?.moneyGraph?.length && hasGraph !== '0') {
         elements.push(
-          <RevenueGraph key="revenue-graph" data={details.moneyGraph} />,
+          <RevenueGraph
+            key="revenue-graph"
+            data={details.moneyGraph}
+            endYear={gameDate ? gameDate.getUTCFullYear() - 1 : undefined}
+          />,
         );
       }
       rendered.add(def.rdoName);
