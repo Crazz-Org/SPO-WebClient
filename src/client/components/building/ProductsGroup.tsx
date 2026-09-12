@@ -6,7 +6,8 @@
  */
 
 import { memo, useState } from 'react';
-import type { BuildingProductData } from '@/shared/types';
+import { Crosshair } from 'lucide-react';
+import type { BuildingProductData, BuildingConnectionData } from '@/shared/types';
 import { formatCurrency } from '@/shared/building-details';
 import { useClient } from '../../context';
 import { useUiStore } from '../../store/ui-store';
@@ -15,6 +16,11 @@ import { useGateConnections } from './useGateConnections';
 import { connectionPendingKey } from '../../handlers/connection-pending-key';
 import { SaveIndicator } from './SaveIndicator';
 import styles from './PropertyGroup.module.css';
+
+/** A connection the server never positioned reads back as 0,0 — there is nothing to centre on. */
+function hasPosition(conn: BuildingConnectionData): boolean {
+  return conn.x !== 0 || conn.y !== 0;
+}
 
 /**
  * Disconnecting is destructive and used to fire at once (Fire button, Delete key). It now goes
@@ -129,6 +135,11 @@ const ProductCard = memo(function ProductCard({
     setSelectedIdx(selectedIdx === idx ? null : idx);
   };
 
+  const handleNavigate = (conn: BuildingConnectionData) => {
+    if (!hasPosition(conn)) return;
+    client.onNavigateToBuilding(conn.x, conn.y);
+  };
+
   const handleHire = () => {
     if (!fluidId) return;
     client.onSearchConnections(buildingX, buildingY, fluidId, product.name || fluidId, 'output');
@@ -214,8 +225,13 @@ const ProductCard = memo(function ProductCard({
               className={styles.productTable}
               tabIndex={0}
               onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
                 if (e.key === 'Delete' && canEdit && selectedIdx !== null) {
                   handleFire();
+                }
+                if (e.key === 'Enter' && selectedIdx !== null) {
+                  const conn = product.connections[selectedIdx];
+                  if (conn) handleNavigate(conn);
                 }
               }}
             >
@@ -225,6 +241,7 @@ const ProductCard = memo(function ProductCard({
                   <th style={{ width: 80 }}>Company</th>
                   <th style={{ width: 80 }}>Last</th>
                   <th style={{ width: 60 }}>T.Cost</th>
+                  <th style={{ width: 24 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -233,6 +250,7 @@ const ProductCard = memo(function ProductCard({
                     key={`${j}:${conn.x},${conn.y}`}
                     className={`${styles.productTableRow}${selectedIdx === j ? ` ${styles.productTableRowSelected}` : ''}`}
                     onClick={() => handleRowClick(j)}
+                    onDoubleClick={() => handleNavigate(conn)}
                   >
                     <td className={styles.productFacilityCell}>
                       <span className={styles.productFacilityName}>
@@ -244,6 +262,19 @@ const ProductCard = memo(function ProductCard({
                     <td>{conn.companyName}</td>
                     <td>{conn.lastValue}</td>
                     <td>{conn.cost}</td>
+                    <td>
+                      {hasPosition(conn) && (
+                        <button
+                          type="button"
+                          className={styles.tableActionBtn}
+                          aria-label={`View ${conn.facilityName || 'facility'} on map`}
+                          title="View on map"
+                          onClick={(e) => { e.stopPropagation(); handleNavigate(conn); }}
+                        >
+                          <Crosshair size={12} />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
