@@ -755,22 +755,22 @@ describe('Products', () => {
     expect(PRODUCTS_GROUP.special).toBe('products');
   });
 
-  it('PricePc: SLIDER, editable=true (output price slider 0-300%)', () => {
+  it('PricePc: SLIDER, editable=true (output price slider 0-400%)', () => {
     const prop = PRODUCTS_GROUP.properties.find(p => p.rdoName === 'PricePc');
     expect(prop).toBeDefined();
     expect(prop?.type).toBe(PropertyType.SLIDER);
     expect(prop?.editable).toBe(true);
     expect(prop?.min).toBe(0);
-    expect(prop?.max).toBe(300);
+    expect(prop?.max).toBe(400);
   });
 
   it('PricePc: rdoCommands maps to RDOSetOutputPrice', () => {
     expect(PRODUCTS_GROUP.rdoCommands?.['PricePc']?.command).toBe('RDOSetOutputPrice');
   });
 
-  it('PricePc: step=5 and unit="%" for percentage display', () => {
+  it('PricePc: step=1 and unit="%" for percentage display', () => {
     const prop = PRODUCTS_GROUP.properties.find(p => p.rdoName === 'PricePc');
-    expect(prop?.step).toBe(5);
+    expect(prop?.step).toBe(1);
     expect(prop?.unit).toBe('%');
   });
 

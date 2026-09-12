@@ -289,8 +289,8 @@ export function ProductSummaryCards({
             pricePc={pricePc}
             avgPricePc={parseFloat(product.avgPrice ?? '') || 0}
             dollarPrice={dollarPrice}
-            priceMax={300}
-            priceStep={5}
+            priceMax={400}
+            priceStep={1}
             canEdit={canEdit}
             rdoName={`PricePc`}
             productPath={product.path}
@@ -386,6 +386,7 @@ export function PriceSliderWithMarker({
   canEdit,
   rdoName,
   onPropertyChange,
+  onValueChange,
 }: {
   value: number;
   avgPrice: number;
@@ -394,6 +395,9 @@ export function PriceSliderWithMarker({
   canEdit: boolean;
   rdoName: string;
   onPropertyChange: (name: string, value: number) => void;
+  /** The thumb's own value, reported on every move — for a label that has to
+   *  follow the drag. Not debounced: the debounce below is for the wire. */
+  onValueChange?: (value: number) => void;
 }) {
   const [localVal, setLocalVal] = useState(isNaN(value) ? 0 : value);
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -402,13 +406,14 @@ export function PriceSliderWithMarker({
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const newVal = parseFloat(e.target.value);
       setLocalVal(newVal);
+      onValueChange?.(newVal);
 
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       timeoutRef.current = setTimeout(() => {
         onPropertyChange(rdoName, newVal);
       }, 300);
     },
-    [rdoName, onPropertyChange],
+    [rdoName, onPropertyChange, onValueChange],
   );
 
   const markerPct = max > 0 ? Math.min(100, (avgPrice / max) * 100) : 0;
