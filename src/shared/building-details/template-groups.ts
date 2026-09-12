@@ -489,7 +489,7 @@ export const SUPPLIES_GROUP: PropertyGroup = {
  * NOT from indexed srvNames/srvPrices properties (those are SrvGeneral inline table).
  *
  * Output gate properties: MetaFluid, LastFluid, FluidQuality, PricePc, AvgPrice, MarketPrice, cnxCount
- * Per-connection: cnxFacilityName, cnxCompanyName, LastValueCnxInfo, ConnectedCnxInfo, tCostCnxInfo, cnxXPos, cnxYPos
+ * Per-connection: cnxFacilityName, cnxCompanyName, LastValueCnxInfo, ConnectedCnxInfo, tCostCnxInfo, cnxXPos, cnxYPos, cnxCreatedBy
  */
 export const PRODUCTS_GROUP: PropertyGroup = {
   id: 'products',

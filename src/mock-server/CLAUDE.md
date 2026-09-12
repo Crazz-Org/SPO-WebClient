@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `service-figures`, `bank-tv-live-reads`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -126,6 +126,13 @@ its trouble. This encodes the Voyager finger-strip rule (`Voyager/SupplySheetFor
 position. Its test drives the real `getBuildingTabData` and `getBuildingGateConnections` and
 asserts on `RdoMock.getConsumedIds()` that the middle gate's `SetPath` and header exchanges were
 never consumed.
+
+`product-owner` is a factory with one output gate and one customer whose `GetSubObjectProps`
+query carries `cnxCreatedBy0` as an eighth name: the server writes it for an output exactly as
+it does for an input (`Kernel/KernelCache.pas:712`), though the reference client's product sheet
+never asked (`Voyager/ProdSheetForm.pas:407-413`). It is appended last so the seven Voyager
+positions still decode unchanged. Its test drives the real `getBuildingTabData` and
+`getBuildingGateConnections` and asserts the full decoded connection, owner included.
 
 `service-figures` is the live Offer / Demand pair of one selected service: two 1-argument
 `function` reads on the block, `RDOGetDemand(index)` and `RDOGetSupply(index)`

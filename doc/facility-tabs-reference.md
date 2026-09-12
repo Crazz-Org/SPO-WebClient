@@ -579,6 +579,7 @@ threadEnd:   if update != fLastUpdate → discard results (tab already changed)
 | `ConnectedCnxInfo{i}` | 0\|1 | Is connection active |
 | `tCostCnxInfo{i}` | number | Transport cost |
 | `cnxXPos{i}`, `cnxYPos{i}` | integer | Buyer map coordinates |
+| `cnxCreatedBy{i}` | string | Tycoon who owns the buyer's company (appended after the Voyager seven; KernelCache.pas:712) |
 
 **RDO write methods**:
 | Method | Params | Purpose |

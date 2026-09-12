@@ -2083,7 +2083,7 @@ describe('getBuildingGateConnections', () => {
     const fake = gateCtx('products', {
       MetaFluid: 'Cars', LastFluid: '80', FluidQuality: '90%', PricePc: '110',
       AvgPrice: '$4', MarketPrice: '$5', cnxCount: '1',
-    }, 'res="%Toy Store 3\tYellow Inc.\t900\t1\t$12\t40\t50\t"');
+    }, 'res="%Toy Store 3\tYellow Inc.\t900\t1\t$12\t40\t50\tSPO_test3\t"');
 
     const { product } = await getBuildingGateConnections(
       fake.ctx, X, Y, 'products', 'Gate0', 'Cars',
@@ -2093,11 +2093,45 @@ describe('getBuildingGateConnections', () => {
       path: 'Gate0', name: 'Cars', metaFluid: 'Cars', lastFluid: '80', quality: '90%',
       pricePc: '110', avgPrice: '$4', marketPrice: '$5', connectionCount: 1,
       connections: [{
-        facilityName: 'Toy Store 3', companyName: 'Yellow Inc.', createdBy: '',
+        facilityName: 'Toy Store 3', companyName: 'Yellow Inc.', createdBy: 'SPO_test3',
         price: '', overprice: '', lastValue: '900', cost: '$12', quality: '',
         connected: true, x: 40, y: 50,
       }],
     });
+  });
+
+  it("reads a product customer's owning tycoon from the eighth column", async () => {
+    const fake = gateCtx('products', {
+      MetaFluid: 'Cars', LastFluid: '80', FluidQuality: '90%', PricePc: '110',
+      AvgPrice: '$4', MarketPrice: '$5', cnxCount: '1',
+    }, 'res="%Toy Store 3\tYellow Inc.\t900\t1\t$12\t40\t50\tCrazz\t"');
+
+    const { product } = await getBuildingGateConnections(
+      fake.ctx, X, Y, 'products', 'Gate0', 'Cars',
+    );
+
+    expect(product?.connections[0]).toEqual({
+      facilityName: 'Toy Store 3', companyName: 'Yellow Inc.', createdBy: 'Crazz',
+      price: '', overprice: '', lastValue: '900', cost: '$12', quality: '',
+      connected: true, x: 40, y: 50,
+    });
+  });
+
+  it('asks the cache for cnxCreatedBy on a product row', async () => {
+    const fake = gateCtx('products', {
+      MetaFluid: 'Cars', LastFluid: '80', FluidQuality: '90%', PricePc: '110',
+      AvgPrice: '$4', MarketPrice: '$5', cnxCount: '1',
+    }, 'res="%Toy Store 3\tYellow Inc.\t900\t1\t$12\t40\t50\tSPO_test3\t"');
+
+    await getBuildingGateConnections(fake.ctx, X, Y, 'products', 'Gate0', 'Cars');
+
+    const query = fake.sent.find(s => s.packet.member === 'GetSubObjectProps')?.packet.args?.[1];
+    expect(query).toEqual(
+      RdoValue.string(
+        'cnxFacilityName0\tcnxCompanyName0\tLastValueCnxInfo0\tConnectedCnxInfo0\t' +
+        'tCostCnxInfo0\tcnxXPos0\tcnxYPos0\tcnxCreatedBy0\t',
+      ).format(),
+    );
   });
 
   it('does not reset the object to the building root first', async () => {
@@ -2205,7 +2239,7 @@ describe('getBuildingGateConnections', () => {
     // was reduced to '' and dropped. The count and the list then disagreed with
     // nothing said. The row must survive, blank.
     const fake = gateCtx('products', { MetaFluid: 'Cars', cnxCount: '1' },
-      'res="%\t\t\t\t\t\t\t"');
+      'res="%\t\t\t\t\t\t\t\t"');
 
     const { product } = await getBuildingGateConnections(fake.ctx, X, Y, 'products', 'Gate0', 'Cars');
 
@@ -2241,13 +2275,15 @@ describe('getBuildingGateConnections', () => {
   });
 
   it('substitutes the documented defaults for every blank product column', async () => {
+    // 8 columns: only the first and last carry text ('tail' lands on index 7,
+    // createdBy) so columns 1-6 blank.
     const fake = gateCtx('products', { MetaFluid: 'Cars', cnxCount: '1' },
       `res="%head${'\t'.repeat(7)}tail"`);
 
     const { product } = await getBuildingGateConnections(fake.ctx, X, Y, 'products', 'Gate0', 'Cars');
 
     expect(product?.connections).toEqual([{
-      facilityName: 'head', companyName: '', createdBy: '', price: '', overprice: '',
+      facilityName: 'head', companyName: '', createdBy: 'tail', price: '', overprice: '',
       lastValue: '', cost: '', quality: '', connected: false, x: 0, y: 0,
     }]);
   });
