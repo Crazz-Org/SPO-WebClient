@@ -29,6 +29,7 @@ import { createGateMapScenario } from './gate-map-scenario';
 import { createProductOwnerScenario } from './product-owner-scenario';
 import { createServiceFiguresScenario } from './service-figures-scenario';
 import { createBankTvLiveReadsScenario } from './bank-tv-live-reads-scenario';
+import { createDefineZoneScenario } from './define-zone-scenario';
 
 /** All recognized scenario names */
 export type ScenarioName =
@@ -52,7 +53,8 @@ export type ScenarioName =
   | 'gate-map'
   | 'product-owner'
   | 'service-figures'
-  | 'bank-tv-live-reads';
+  | 'bank-tv-live-reads'
+  | 'define-zone';
 
 /** Ordered list of all scenario names */
 export const SCENARIO_NAMES: ScenarioName[] = [
@@ -77,6 +79,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'product-owner',
   'service-figures',
   'bank-tv-live-reads',
+  'define-zone',
 ];
 
 /** Union result from any scenario factory */
@@ -112,6 +115,7 @@ const SCENARIO_FACTORIES: Record<
   'product-owner': (o) => createProductOwnerScenario(o),
   'service-figures': (o) => createServiceFiguresScenario(o),
   'bank-tv-live-reads': (o) => createBankTvLiveReadsScenario(o),
+  'define-zone': (o) => createDefineZoneScenario(o),
 };
 
 /**
@@ -170,7 +174,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 21 mock server scenarios',
+    description: 'Combined: all 22 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -179,7 +183,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 21 scenarios',
+    description: 'Combined: all RDO exchanges from 22 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };
