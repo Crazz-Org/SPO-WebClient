@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `move-to`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -156,6 +156,11 @@ the **InitClient proxy id**, which the server pointer-casts — `TMoneyDealer(Cl
 (`Banks.pas:149`) — so the persistent `TTycoon.Id` would dereference nothing with no error to
 show for it. The `building-details` cache fixture serves a `CurrBlock` pointing at these blocks
 and none of the six values, matching what StoreToCache actually writes.
+
+`move-to` is the one push-only scenario — the Interface Server's `MoveTo(x, y)`
+(`Voyager/URLHandlers/ServerCnxHandler.pas:489`), fed through the real `dispatchPush` and the
+real client `dispatchEvent`, proving a server-driven camera pan reaches the renderer and the
+camera history.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under

@@ -17,6 +17,7 @@ import {
   WsEventAreaRefresh,
   WsEventTycoonUpdate,
   WsEventRefreshDate,
+  WsEventMoveTo,
   WsEventShowNotification,
   WsEventNewMail,
   WsRespMailConnected,
@@ -34,6 +35,7 @@ import { requestBuildingRefreshProperties } from './building-action-handler';
 import { migrateLocalBookmarks } from './favorites-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useGameStore, delphiTDateTimeToJsDate } from '../store/game-store';
+import { useMapStore } from '../store/map-store';
 import { useUiStore } from '../store/ui-store';
 import { useBuildingStore } from '../store/building-store';
 import { useProfileStore } from '../store/profile-store';
@@ -222,6 +224,15 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     case WsMessageType.EVENT_REFRESH_DATE: {
       const dateEvent = msg as WsEventRefreshDate;
       useGameStore.getState().setGameDate(delphiTDateTimeToJsDate(dateEvent.dateDouble));
+      break;
+    }
+
+    case WsMessageType.EVENT_MOVE_TO: {
+      // Server-driven camera pan (Delphi MoveTo push, ServerCnxHandler.pas:489 -> syncMoveTo :3211).
+      const move = msg as WsEventMoveTo;
+      ClientBridge.log('Map', `Server moved the camera to (${move.x}, ${move.y})`);
+      ctx.getRenderer()?.centerOn(move.x, move.y);
+      useMapStore.getState().recordPosition(move.x, move.y);
       break;
     }
 
