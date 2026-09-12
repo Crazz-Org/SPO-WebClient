@@ -263,6 +263,9 @@ export class StarpeaceClient implements ClientHandlerContext {
       };
     };
     this.soundManager = new SoundManager();
+    // The login screen needs the persisted settings — the language picker reads one of them —
+    // and the game-view init (:797) only loads them after login. Idempotent, so both stand.
+    ClientBridge.loadPersistedSettings();
     const callbacks: Partial<ClientCallbacks> = {
       onBuildRoad: () => roadHandler.toggleRoadBuildingMode(this),
       onDemolishRoad: () => roadHandler.toggleRoadDemolishMode(this),

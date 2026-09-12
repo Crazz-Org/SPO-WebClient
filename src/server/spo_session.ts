@@ -55,6 +55,7 @@ import { config } from '../shared/config';
 import { createLogger, generateSessionId } from '../shared/logger';
 import { toProxyUrl, isProxyUrl } from '../shared/proxy-utils';
 import { toErrorMessage } from '../shared/error-utils';
+import { DEFAULT_LANGUAGE_ID, normalizeLanguageId, withLangId, type LanguageId } from '../shared/language';
 import {
   cleanPayload as cleanPayloadHelper,
   splitMultilinePayload as splitMultilinePayloadHelper,
@@ -287,6 +288,10 @@ export class StarpeaceSession extends EventEmitter {
   public get cachedPassword(): string | null { return this._cachedPassword; }
   private cachedZonePath: string = 'Root/Areas/Asia/Worlds';
 
+  // The language the player picked — sent to the world with SetLanguage and carried as LangId
+  // on every ASP fetch. Survives a world switch; the next REQ_LOGIN_WORLD overwrites it.
+  public languageId: LanguageId = DEFAULT_LANGUAGE_ID;
+
   // Active login identity — differs from cachedUsername during role-based company switches
   // (e.g., "President of Shamba" vs original tycoon "SPO_test3")
   public activeUsername: string | null = null;
@@ -511,6 +516,7 @@ export class StarpeaceSession extends EventEmitter {
     }
   }
   public setCachedPassword(value: string | null): void { this._cachedPassword = value; }
+  public setLanguageId(value: string | undefined): void { this.languageId = normalizeLanguageId(value); }
   public setCachedZonePath(value: string): void { this.cachedZonePath = value; }
   public setActiveUsername(value: string | null): void { this.activeUsername = value; }
   public setCorrelationId(corrId: string | null): void { this.log.setField('corrId', corrId); }
@@ -943,7 +949,7 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
   public async fetchAspPage(aspPath: string, extraParams?: Record<string, string>): Promise<string> {
     const url = this.buildAspUrl(aspPath, extraParams);
     this.log.debug(`[ASP] Fetching ${aspPath}`);
-    const response = await fetchWithTimeout(url, { redirect: 'follow' });
+    const response = await fetchWithTimeout(withLangId(url, this.languageId), { redirect: 'follow' });
     if (!response.ok) {
       throw new Error(`ASP request failed: ${response.status} ${response.statusText}`);
     }

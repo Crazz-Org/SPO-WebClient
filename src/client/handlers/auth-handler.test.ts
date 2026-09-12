@@ -20,8 +20,11 @@ jest.mock('../bridge/client-bridge', () => ({
   },
 }));
 
+/** The language the store holds for the current test — `login()` reads it on every send. */
+const mockStoreSettings = { languageId: '0' };
+
 jest.mock('../store/game-store', () => ({
-  useGameStore: { getState: () => ({ setLoginStage: jest.fn() }) },
+  useGameStore: { getState: () => ({ setLoginStage: jest.fn(), settings: mockStoreSettings }) },
 }));
 
 jest.mock('../store/profile-store', () => ({
@@ -58,9 +61,32 @@ function makeCtx(overrides: Partial<ClientHandlerContext> = {}): ClientHandlerCo
 describe('auth-handler', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockStoreSettings.languageId = '0';
   });
 
   describe('login()', () => {
+    it('sends the language the store holds, so the gateway can carry it', async () => {
+      mockStoreSettings.languageId = '4';
+      const sendRequest = jest.fn().mockResolvedValue({
+        type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [],
+      });
+
+      await login(makeCtx({ sendRequest }), 'Shamba');
+
+      expect(sendRequest).toHaveBeenCalledWith(expect.objectContaining({ languageId: '4' }));
+    });
+
+    it('sends the default when the store holds a language the catalogue does not name', async () => {
+      mockStoreSettings.languageId = '9';
+      const sendRequest = jest.fn().mockResolvedValue({
+        type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [],
+      });
+
+      await login(makeCtx({ sendRequest }), 'Shamba');
+
+      expect(sendRequest).toHaveBeenCalledWith(expect.objectContaining({ languageId: '0' }));
+    });
+
     it('shows companies when server returns a non-empty list', async () => {
       const companies = [{ id: '1', name: 'TestCorp', ownerRole: 'testUser' }];
       const ctx = makeCtx({

@@ -42,6 +42,7 @@ import { parsePropertyResponse as parsePropertyResponseHelper, writeRdoFrame } f
 import { parseMessageListHtml } from '../mail-list-parser';
 import { toErrorMessage } from '../../shared/error-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
+import { withLangId } from '../../shared/language';
 import { extractMetaRefreshUrl } from '../../shared/mail-html-utils';
 
 // ── Fire-and-forget helper for void mail procedures ──────────────────────
@@ -79,7 +80,7 @@ async function markInboxMessageRead(ctx: SessionContext, messageId: string): Pro
   const url = `http://${ctx.currentWorldInfo.ip}/five/0/visual/voyager/mail/MessageBody.asp?${params.toString().replace(/\+/g, '%20')}`;
 
   try {
-    const response = await fetchWithTimeout(url, { redirect: 'follow' }, MAIL_READ_TOUCH_TIMEOUT_MS);
+    const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' }, MAIL_READ_TOUCH_TIMEOUT_MS);
     if (!response.ok) {
       ctx.log.warn(`[Mail] MessageBody.asp returned ${response.status} — unread flag not cleared`);
     }
@@ -114,7 +115,7 @@ async function fetchSystemMailPage(ctx: SessionContext, bodyLines: string[]): Pr
   }
 
   try {
-    const response = await fetchWithTimeout(refreshUrl, { redirect: 'follow' }, MAIL_PAGE_FETCH_TIMEOUT_MS);
+    const response = await fetchWithTimeout(withLangId(refreshUrl, ctx.languageId), { redirect: 'follow' }, MAIL_PAGE_FETCH_TIMEOUT_MS);
     if (!response.ok) {
       ctx.log.warn(`[Mail] system mail page returned ${response.status} — body shown as a plain frame`);
       return undefined;
@@ -515,7 +516,7 @@ export async function getMailFolder(
   ctx.log.debug(`[Mail] Fetching folder listing from ${url}`);
 
   try {
-    const response = await fetchWithTimeout(url, { redirect: 'follow' });
+    const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     if (!response.ok) {
       ctx.log.warn(`[Mail] MessageList.asp returned ${response.status}`);
       return [];

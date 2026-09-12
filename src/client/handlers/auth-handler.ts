@@ -23,6 +23,7 @@ import {
   CompanyInfo,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { normalizeLanguageId } from '../../shared/language';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useGameStore } from '../store/game-store';
 import { useProfileStore } from '../store/profile-store';
@@ -97,7 +98,9 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
       type: WsMessageType.REQ_LOGIN_WORLD,
       username: ctx.storedUsername,
       password: ctx.storedPassword,
-      worldName
+      worldName,
+      // Read on every send, so the reconnect replay (client.ts:1114) carries it too.
+      languageId: normalizeLanguageId(useGameStore.getState().settings.languageId)
     };
     const resp = (await ctx.sendRequest(req)) as WsRespLoginSuccess;
     ClientBridge.log('Login', `Success! Tycoon: ${resp.tycoonId}`);

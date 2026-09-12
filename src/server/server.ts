@@ -1079,7 +1079,8 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
                 loginCredentials.username,
                 loginCredentials.companyId, // Using companyId as companyName for now
                 daAddr, // Use real DAAddr from session
-                daPort // the InterfaceServer's DALockPort, as Voyager sends it
+                daPort, // the InterfaceServer's DALockPort, as Voyager sends it
+                spSession.languageId
               );
               logger.info(`SearchMenuService initialized with DAAddr: ${daAddr}:${daPort}`);
 

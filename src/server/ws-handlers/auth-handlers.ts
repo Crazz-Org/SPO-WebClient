@@ -77,6 +77,10 @@ export const handleLoginWorld: WsHandler = async (ctx: WsHandlerContext, msg: Ws
     return;
   }
 
+  // The language the player picked travels with the login and stays on the session: it is the
+  // SetLanguage argument and the `LangId` on every ASP fetch, including after a reconnection.
+  ctx.session.setLanguageId(req.languageId);
+
   let result;
   try {
     result = await ctx.session.loginWorld(req.username, req.password, worldInfo);

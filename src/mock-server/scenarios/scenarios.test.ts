@@ -619,9 +619,10 @@ describe('world-login scenario', () => {
     'wlogin-rdo-acct',
     'wlogin-rdo-logon',
     'wlogin-rdo-regevt',
+    'wlogin-rdo-setlang',
   ];
 
-  it('serves the five world-socket exchanges in login order', () => {
+  it('serves the six world-socket exchanges in login order', () => {
     const { rdo } = createWorldLoginScenario();
     expect(rdo.name).toBe('world-login');
     expect(rdo.exchanges.map(e => e.id)).toEqual(EXCHANGE_IDS);
@@ -663,6 +664,21 @@ describe('world-login scenario', () => {
     const canJoin = rdo.exchanges.find(e => e.id === 'wlogin-rdo-canjoin')!;
     expect(canJoin.request).toContain('"%Crazz"');
     expect(canJoin.matchKeys?.argsPattern).toEqual(['"%Crazz"']);
+  });
+
+  it('SetLanguage carries the default id and answers nothing — it is a procedure', () => {
+    const { rdo } = createWorldLoginScenario();
+    const setLang = rdo.exchanges.find(e => e.id === 'wlogin-rdo-setlang')!;
+    expect(setLang.request).toContain('call SetLanguage "*" "%0"');
+    expect(setLang.response).toBe('');
+    expect(setLang.matchKeys?.argsPattern).toEqual(['"%0"']);
+  });
+
+  it('a language override pins the SetLanguage argument to that id', () => {
+    const { rdo } = createWorldLoginScenario(undefined, { languageId: '2' });
+    const setLang = rdo.exchanges.find(e => e.id === 'wlogin-rdo-setlang')!;
+    expect(setLang.matchKeys?.argsPattern).toEqual(['"%2"']);
+    expect(setLang.request).toContain('call SetLanguage "*" "%2"');
   });
 });
 

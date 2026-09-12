@@ -9,6 +9,9 @@ import { useState, useCallback, useEffect, type KeyboardEvent } from 'react';
 import { GlassCard } from '../common';
 import { showToast } from '../common/Toast';
 import { APP_VERSION, BUILD_DATE } from '../../version';
+import { LANGUAGES, normalizeLanguageId } from '@/shared/language';
+import { useGameStore } from '../../store/game-store';
+import { useClient } from '../../context';
 import styles from './AuthStage.module.css';
 
 interface AuthStageProps {
@@ -46,6 +49,18 @@ export function AuthStage({ onConnect, isLoading, status }: AuthStageProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberUsername, setRememberUsername] = useState(false);
+  const client = useClient();
+  // The language must be picked before the login is sent — it travels with it.
+  const languageId = normalizeLanguageId(useGameStore((s) => s.settings.languageId));
+
+  const handleLanguageChange = useCallback(
+    (value: string) => {
+      const picked = normalizeLanguageId(value);
+      useGameStore.getState().updateSettings({ languageId: picked });
+      client.onSettingsChange({ ...useGameStore.getState().settings, languageId: picked });
+    },
+    [client],
+  );
 
   // Load saved username on mount (single-user mode only)
   useEffect(() => {
@@ -105,6 +120,16 @@ export function AuthStage({ onConnect, isLoading, status }: AuthStageProps) {
             onKeyDown={handleKeyDown}
             autoComplete="current-password"
           />
+          <select
+            aria-label="Language"
+            className={styles.languageSelect}
+            value={languageId}
+            onChange={(e) => handleLanguageChange(e.target.value)}
+          >
+            {LANGUAGES.map((lang) => (
+              <option key={lang.id} value={lang.id}>{lang.label}</option>
+            ))}
+          </select>
         </div>
         {isSingleUser && (
           <label className={styles.rememberMe}>
