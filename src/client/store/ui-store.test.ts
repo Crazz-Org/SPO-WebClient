@@ -364,3 +364,33 @@ describe('ui-store surface stack', () => {
     useUiStore.getState().setPinned(false);
   });
 });
+
+describe('ui-store map context menu', () => {
+  beforeEach(() => {
+    useUiStore.getState().closeMapContextMenu();
+  });
+
+  it('starts closed', () => {
+    expect(useUiStore.getState().mapContextMenu).toBeNull();
+  });
+
+  it('openMapContextMenu stores the tile and closeMapContextMenu clears it', () => {
+    useUiStore.getState().openMapContextMenu({ clientX: 100, clientY: 50, tileX: 10, tileY: 5, layer: 'building', visualClass: '100' });
+    expect(useUiStore.getState().mapContextMenu).toEqual({ clientX: 100, clientY: 50, tileX: 10, tileY: 5, layer: 'building', visualClass: '100' });
+
+    useUiStore.getState().closeMapContextMenu();
+    expect(useUiStore.getState().mapContextMenu).toBeNull();
+  });
+
+  it('dismissTopmost closes the menu first and leaves an open surface stack untouched', () => {
+    useUiStore.getState().setRootSurface({ kind: 'mail' });
+    useUiStore.getState().openMapContextMenu({ clientX: 0, clientY: 0, tileX: 1, tileY: 1, layer: 'terrain' });
+
+    useUiStore.getState().dismissTopmost();
+    expect(useUiStore.getState().mapContextMenu).toBeNull();
+    expect(useUiStore.getState().stack.map((s) => s.kind)).toEqual(['mail']);
+
+    useUiStore.getState().dismissTopmost();
+    expect(useUiStore.getState().stack).toEqual([]);
+  });
+});

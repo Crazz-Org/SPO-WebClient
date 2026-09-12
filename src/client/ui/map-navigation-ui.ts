@@ -20,6 +20,7 @@ export class MapNavigationUI {
   private onEmptyMapClick: (() => void) | null = null;
   private onFetchFacilityDimensions: ((visualClass: string) => Promise<FacilityDimensions | null>) | null = null;
   private onViewportChanged: (() => void) | null = null;
+  private onMapContextMenu: ((clientX: number, clientY: number, tileX: number, tileY: number) => void) | null = null;
 
   constructor(private gamePanel: HTMLElement, private worldName: string = 'Shamba') {}
 
@@ -64,6 +65,13 @@ export class MapNavigationUI {
    */
   public setOnViewportChanged(callback: () => void) {
     this.onViewportChanged = callback;
+  }
+
+  /**
+   * Set callback for the right-click map context menu (release without drag)
+   */
+  public setOnMapContextMenu(callback: (clientX: number, clientY: number, tileX: number, tileY: number) => void) {
+    this.onMapContextMenu = callback;
   }
 
   /**
@@ -131,6 +139,10 @@ export class MapNavigationUI {
 
     this.renderer.setViewportChangedCallback(() => {
       if (this.onViewportChanged) this.onViewportChanged();
+    });
+
+    this.renderer.setMapContextMenuCallback((clientX, clientY, tileX, tileY) => {
+      if (this.onMapContextMenu) this.onMapContextMenu(clientX, clientY, tileX, tileY);
     });
   }
 

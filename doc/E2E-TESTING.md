@@ -137,6 +137,7 @@ screenshots — the civic `VISIT` path is covered at L2 by `politics-read` / `po
 | Section menu | `nav[aria-label="Facility sections"]`, one `button` per section |
 | Section open? | that button's `aria-expanded` |
 | Open section body | `section[aria-label="<section name>"]` |
+| Map context menu | `[data-testid="map-context-menu"]`, items are `role="menuitem"` |
 
 ## Programmatic State Verification (`__spoDebug`)
 
@@ -297,6 +298,20 @@ Reach one of your own buildings with the recipe above, then assert in order:
 
 Give a section **~4 s**: `Finances` draws its graph only once the `moneyGraph` payload lands,
 and sampling earlier shows an empty drawer that fills a moment later.
+
+### Phase 6c — Right-click map menu (only when the diff touches it)
+
+*Written from the code, not yet verified live.*
+
+1. Reach one of your own buildings with the recipe above. `page.mouse.click(x, y, { button:
+   'right' })` with no movement — assert `[data-testid="map-context-menu"]` is present with a
+   `menuitem` reading `Inspect`. Click it; assert the building surface opens (`nav[aria-label="Facility sections"]`
+   present), the same as reaching it through INSPECT above.
+2. Right-click a `tileProbe` tile with no building (empty terrain) — assert the menu has no
+   `Inspect` item.
+3. Press `Escape` — assert the menu is gone.
+4. Right-drag 100 px (press, move, release, all with `button: 'right'`) over the map — assert
+   no menu appears and the camera panned instead.
 
 ### Phase 7 — Wire health
 **Assert:** `wire.sent > 10`, `wire.received > 10`, `wire.errors === 0`.
