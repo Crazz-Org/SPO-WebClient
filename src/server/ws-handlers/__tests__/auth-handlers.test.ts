@@ -10,9 +10,10 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import type { WebSocket } from 'ws';
 import { WsMessageType, type WsMessage } from '../../../shared/types';
-import { handleAuthCheck } from '../auth-handlers';
+import { handleAuthCheck, handleLoginWorld } from '../auth-handlers';
 import { AuthError } from '../../../shared/auth-error';
-import { getErrorMessage, ERROR_UnknownTycoon, ERROR_InvalidLogonData } from '../../../shared/error-codes';
+import { AccountStatusError, ACCOUNT_InvalidPassword } from '../../../shared/account-status';
+import { getErrorMessage, ERROR_UnknownTycoon, ERROR_InvalidLogonData, ERROR_InvalidPassword } from '../../../shared/error-codes';
 import { getDirectoryErrorMessage } from '../../../shared/directory-error-codes';
 import type { WsHandlerContext } from '../types';
 
@@ -96,6 +97,69 @@ describe('handleAuthCheck', () => {
     const { ctx, sent } = createCtx(jest.fn(async () => { throw new Error('socket died'); }));
 
     await expect(handleAuthCheck(ctx, request())).rejects.toThrow('socket died');
+    expect(sent).toHaveLength(0);
+  });
+});
+
+/**
+ * The world's `AccountStatus` refusal has to be WORDED here: the top-level router
+ * (`server.ts:1221-1229`) turns every error a handler throws into "Internal server
+ * error", so a refusal that propagates never reaches the player.
+ */
+describe('handleLoginWorld', () => {
+  interface WorldRecorded {
+    ctx: WsHandlerContext;
+    sent: Array<Record<string, unknown>>;
+    cleanupWorldSession: jest.Mock;
+  }
+
+  function createWorldCtx(loginWorld: jest.Mock): WorldRecorded {
+    const sent: Array<Record<string, unknown>> = [];
+    const ws = {
+      send(payload: string): void {
+        sent.push(JSON.parse(payload) as Record<string, unknown>);
+      },
+    } as unknown as WebSocket;
+    const cleanupWorldSession = jest.fn(async () => undefined);
+    const session = {
+      isWorldConnected: () => false,
+      getWorldInfo: () => ({ name: 'planitia', ip: '1.2.3.4', port: 8000 }),
+      cleanupWorldSession,
+      loginWorld,
+    };
+    const ctx = { ws, session } as unknown as WsHandlerContext;
+    return { ctx, sent, cleanupWorldSession };
+  }
+
+  const loginRequest = (): WsMessage => ({
+    type: WsMessageType.REQ_LOGIN_WORLD,
+    wsRequestId: '77',
+    username: 'SPO_test3',
+    password: 'wrong',
+    worldName: 'planitia',
+  }) as unknown as WsMessage;
+
+  it('words a wrong password as a message instead of letting the router mask it', async () => {
+    const { ctx, sent, cleanupWorldSession } = createWorldCtx(jest.fn(async () => {
+      throw new AccountStatusError(ACCOUNT_InvalidPassword, ERROR_InvalidPassword, 'You supplied an invalid password.');
+    }));
+
+    await handleLoginWorld(ctx, loginRequest());
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      type: WsMessageType.RESP_ERROR,
+      wsRequestId: '77',
+      code: ERROR_InvalidPassword,
+      errorMessage: 'You supplied an invalid password.',
+    });
+    expect(cleanupWorldSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a non-AccountStatusError failure propagate', async () => {
+    const { ctx, sent } = createWorldCtx(jest.fn(async () => { throw new Error('socket died'); }));
+
+    await expect(handleLoginWorld(ctx, loginRequest())).rejects.toThrow('socket died');
     expect(sent).toHaveLength(0);
   });
 });

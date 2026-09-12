@@ -38,6 +38,15 @@ import type { CompanyInfo, RdoPacket, WorldInfo } from '../../shared/types';
 import { RdoCommand, RdoValue } from '../../shared/rdo-types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { AuthError } from '../../shared/auth-error';
+import {
+  AccountStatusError,
+  ACCOUNT_Valid,
+  ACCOUNT_UnknownError,
+  ACCOUNT_Unexisting,
+  ACCOUNT_InvalidName,
+  ACCOUNT_InvalidPassword,
+} from '../../shared/account-status';
+import { ERROR_Unknown, ERROR_InvalidUserName, ERROR_InvalidPassword } from '../../shared/error-codes';
 
 const fetchMock = fetch as unknown as jest.Mock;
 
@@ -961,6 +970,92 @@ describe('loginWorld', () => {
     expect(fake.log.warn).toHaveBeenCalledWith(
       '[Session] CanJoinWorldEx answered errUnexistentMethod 3 — proceeding without the admission check',
     );
+  });
+
+  // ── AccountStatus — the world's verdict on the credentials, before Logon ──
+  //    (Protocol.pas:82-86, InterfaceServer.pas:3131-3168)
+
+  /** Answer AccountStatus with `payload`, everything else as usual. */
+  function accountStatusResponder(payload: string): Responder {
+    const base = loginResponder();
+    return (packet, index) => (packet.member === 'AccountStatus'
+      ? payload
+      : base(packet, index));
+  }
+
+  const CONTINUING: ReadonlyArray<[number, string]> = [
+    [ACCOUNT_Valid, 'a valid account'],
+    [ACCOUNT_Unexisting, 'a first-time player'],
+  ];
+
+  it.each(CONTINUING)('lets ACCOUNT_%i through — %s', async (status) => {
+    const fake = makeLoginCtx();
+    fake.respond(accountStatusResponder(`res="#${status}"`));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.contextId).toBe(CONTEXT_ID);
+    expect(fake.state.accountStatus).toBe(status);
+    const statusIndex = fake.sent.findIndex(s => s.packet.member === 'AccountStatus');
+    const logonIndex = fake.sent.findIndex(s => s.packet.member === 'Logon');
+    expect(statusIndex).toBeGreaterThanOrEqual(0);
+    expect(logonIndex).toBeGreaterThan(statusIndex);
+  });
+
+  const REFUSING: ReadonlyArray<[number, number, string]> = [
+    [ACCOUNT_UnknownError, ERROR_Unknown, 'the world could not answer'],
+    [ACCOUNT_InvalidName, ERROR_InvalidUserName, 'the name is held by another live session'],
+    [ACCOUNT_InvalidPassword, ERROR_InvalidPassword, 'the password is wrong'],
+  ];
+
+  it.each(REFUSING)('aborts before Logon on ACCOUNT_%i with code %i — %s', async (status, code) => {
+    const fake = makeLoginCtx();
+    fake.respond(accountStatusResponder(`res="#${status}"`));
+
+    const err = await runLoginWorld(fake).then(() => null, (e: unknown) => e);
+
+    expect(err).toBeInstanceOf(AccountStatusError);
+    const refusal = err as AccountStatusError;
+    expect(refusal.code).toBe(code);
+    expect(refusal.status).toBe(status);
+    expect(refusal.message).not.toContain('res=');
+    expect(fake.sent.some(s => s.packet.member === 'Logon')).toBe(false);
+    expect(fake.state.worldContextId).toBeNull();
+    expect(fake.state.accountStatus).toBe(status);
+  });
+
+  it('names a first-time player in the log so the login flow can act on it', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(accountStatusResponder(`res="#${ACCOUNT_Unexisting}"`));
+
+    await runLoginWorld(fake);
+
+    expect(fake.log.info).toHaveBeenCalledWith('[Session] AccountStatus: first-time player in this world');
+  });
+
+  it('continues when the AccountStatus answer is unreadable', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(accountStatusResponder('res="%"'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.contextId).toBe(CONTEXT_ID);
+    expect(fake.state.accountStatus).toBeNull();
+    expect(fake.sent.some(s => s.packet.member === 'Logon')).toBe(true);
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('AccountStatus answer is not an integer'),
+    );
+  });
+
+  it('keeps the raw Logon payload out of the error the player is shown', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder({ Logon: 'error 5' }));
+
+    const err = await runLoginWorld(fake).then(() => null, (e: unknown) => e);
+
+    expect((err as Error).message).toBe('Login failed: the world refused the logon');
+    expect((err as Error).message).not.toContain('error 5');
+    expect(fake.log.error).toHaveBeenCalledWith('[Session] Logon refused: error 5');
   });
 });
 

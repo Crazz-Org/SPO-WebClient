@@ -297,6 +297,8 @@ export class StarpeaceSession extends EventEmitter {
 
   // Additional world properties
   public mailAccount: string | null = null;
+  /** ACCOUNT_* answer of the last AccountStatus (Protocol.pas:82-86); null until asked. */
+  public accountStatus: number | null = null;
   public interfaceServerId: string | null = null;
   private mailAddr: string | null = null;
   private mailPort: number | null = null;
@@ -495,6 +497,7 @@ export class StarpeaceSession extends EventEmitter {
   public setDaPort(value: number | null): void { this.daPort = value; }
   public setDaAddr(value: string | null): void { this.daAddr = value; }
   public setMailAccount(value: string | null): void { this.mailAccount = value; }
+  public setAccountStatus(value: number | null): void { this.accountStatus = value; }
   public setMailAddr(value: string | null): void { this.mailAddr = value; }
   public setMailPort(value: number | null): void { this.mailPort = value; }
   public setWorldXSize(value: number | null): void { this.worldXSize = value; }
@@ -2733,6 +2736,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.interfaceServerId = null;
     this.interfaceEventsId = null;
     this.mailAccount = null;
+    this.accountStatus = null;
     this.mailAddr = null;
     this.mailPort = null;
     this.mailServerId = null;

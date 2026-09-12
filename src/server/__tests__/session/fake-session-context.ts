@@ -414,6 +414,7 @@ export interface FakeLoginState {
   worldXSize: number | null;
   worldYSize: number | null;
   worldSeason: number | null;
+  accountStatus: number | null;
   currentWorldInfo: WorldInfo | null;
   cachedUsername: string | null;
   cachedPassword: string | null;
@@ -504,6 +505,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     worldXSize: null,
     worldYSize: null,
     worldSeason: null,
+    accountStatus: null,
     currentWorldInfo: null,
     cachedUsername: null,
     cachedPassword: null,
@@ -606,6 +608,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     setCurrentCompany: jest.fn((value: CompanyInfo | null) => { state.currentCompany = value; }),
     setLastPlayerX: jest.fn((value: number) => { state.lastPlayerX = value; }),
     setLastPlayerY: jest.fn((value: number) => { state.lastPlayerY = value; }),
+    setAccountStatus: jest.fn((value: number | null) => { state.accountStatus = value; }),
 
     getAvailableWorlds: jest.fn(() => state.availableWorlds),
     setAvailableWorlds: jest.fn((worlds: Map<string, WorldInfo>) => { state.availableWorlds = worlds; }),

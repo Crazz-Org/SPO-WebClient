@@ -15,6 +15,7 @@ import { rdoCall, rdoGet, rdoSet, rdoIdOf } from '../../shared/rdo-frame';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { config } from '../../shared/config';
 import { AuthError } from '../../shared/auth-error';
+import { accountStatusRefusal, parseAccountStatus, ACCOUNT_Unexisting } from '../../shared/account-status';
 import { DIR_NOERROR, DIR_NOERROR_StillTrial } from '../../shared/directory-error-codes';
 import { toErrorMessage } from '../../shared/error-utils';
 import {
@@ -92,6 +93,8 @@ export interface LoginContext {
   setCurrentCompany(value: CompanyInfo | null): void;
   setLastPlayerX(value: number): void;
   setLastPlayerY(value: number): void;
+  /** The world's AccountStatus answer (ACCOUNT_*), kept so the login flow can act on a first-time player. */
+  setAccountStatus(value: number | null): void;
 
   // ── Collections ──
   getAvailableWorlds(): Map<string, WorldInfo>;
@@ -399,7 +402,26 @@ export async function loginWorld(
     RdoValue.string(pass),
   ).packet, undefined, TimeoutCategory.FAST);
   const statusPayload = parsePropertyResponseHelper(statusPacket.payload!, 'res');
-  ctx.log.debug(`[Session] AccountStatus: ${statusPayload}`);
+  const accountStatus = parseAccountStatus(statusPayload);
+  if (accountStatus === null) {
+    // The live server has only ever answered an integer here. Aborting on an
+    // unreadable answer would regress every login for nothing — the same rule
+    // checkWorldAdmission follows just above.
+    ctx.log.warn(`[Session] AccountStatus answer is not an integer: ${statusPayload}`);
+    ctx.setAccountStatus(null);
+  } else {
+    ctx.setAccountStatus(accountStatus);
+    ctx.log.debug(`[Session] AccountStatus: ${accountStatus}`);
+    if (accountStatus === ACCOUNT_Unexisting) {
+      ctx.log.info('[Session] AccountStatus: first-time player in this world');
+    }
+    // The reference client branched here, before Logon (ServerCnxHandler.pas:2763-2846).
+    const refusal = accountStatusRefusal(accountStatus);
+    if (refusal) {
+      ctx.log.warn(`[Session] AccountStatus refused: ${refusal.message}`);
+      throw refusal;
+    }
+  }
 
   // 4. Authenticate (call Logon)
   const logonPacket = await ctx.sendRdoRequest('world', rdoCall(
@@ -414,7 +436,10 @@ export async function loginWorld(
   }
 
   if (!contextId || contextId === '0' || contextId.startsWith('error')) {
-    throw new Error(`Login failed: ${logonPacket.payload}`);
+    // The payload stays in the gateway log, where redactSensitiveRdoFrame governs
+    // what is printed; the error the player sees carries no RDO text.
+    ctx.log.error(`[Session] Logon refused: ${logonPacket.payload}`);
+    throw new Error('Login failed: the world refused the logon');
   }
 
   ctx.setWorldContextId(contextId);
