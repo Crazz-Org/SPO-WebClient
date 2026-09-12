@@ -136,6 +136,22 @@ describe('ClientBridge existing methods', () => {
     expect(useGameStore.getState().status).toBe('disconnected');
   });
 
+  it('setDisconnected puts loginStage back to auth and clears resumeTarget', () => {
+    useGameStore.getState().setLoginStage('worlds');
+    useGameStore.getState().setResumeTarget({
+      username: 'SPO_test3',
+      zonePath: '',
+      worldName: 'Shamba',
+      companyId: '28',
+      companyName: 'Yellow Inc.',
+    });
+
+    ClientBridge.setDisconnected();
+
+    expect(useGameStore.getState().loginStage).toBe('auth');
+    expect(useGameStore.getState().resumeTarget).toBeNull();
+  });
+
   it('setCredentials should set username', () => {
     ClientBridge.setCredentials('testUser');
     expect(useGameStore.getState().username).toBe('testUser');

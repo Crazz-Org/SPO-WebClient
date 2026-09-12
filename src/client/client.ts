@@ -29,6 +29,7 @@ import { useNewspaperStore } from './store/newspaper-store';
 import { usePoliticsStore } from './store/politics-store';
 import { SoundManager } from './audio/sound-manager';
 import type { ClientHandlerContext } from './handlers/client-context';
+import type { RememberedSession } from './store/remembered-session';
 
 // Handler modules
 import { dispatchEvent } from './handlers/event-handler';
@@ -162,6 +163,7 @@ export class StarpeaceClient implements ClientHandlerContext {
   public availableCompanies: CompanyInfo[] = [];
   public currentCompanyName: string = '';
   public currentWorldName: string = '';
+  public currentZonePath: string = '';
   public worldXSize: number | null = null;
   public worldYSize: number | null = null;
   public savedPlayerX: number | undefined;
@@ -299,6 +301,8 @@ export class StarpeaceClient implements ClientHandlerContext {
         authHandler.performDirectoryLogin(this, username, password, zonePath),
       onWorldSelect: (worldName: string) => authHandler.login(this, worldName),
       onCompanySelect: (companyId: string) => authHandler.selectCompanyAndStart(this, companyId),
+      onResumeSession: (record: RememberedSession, password: string) =>
+        authHandler.resumeSession(this, record, password),
       onCreateCompany: () => ClientBridge.showCompanyCreationDialog(),
       onCreateCompanySubmit: (companyName: string, cluster: string) =>
         authHandler.handleCreateCompany(this, companyName, cluster),
