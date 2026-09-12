@@ -1046,11 +1046,14 @@ describe('createCompany', () => {
     expect(fake.state.availableCompanies).toEqual([{ id: '55', name: 'Green Inc', ownerRole: '' }]);
   });
 
+  // Every code TWorld.RDONewCompany can return (Kernel/World.pas:4110-4184), plus one
+  // unnamed code for the fallback.
   const CREATE_ERRORS: ReadonlyArray<[string, string]> = [
+    ['1', 'Server error while creating the company'],
     ['6', 'Unknown cluster'],
+    ['7', 'Your tycoon level is too low for this seal, or you already own 26 companies'],
     ['11', 'Company name already taken'],
-    ['28', 'Zone tier mismatch'],
-    ['33', 'Maximum number of companies reached'],
+    ['14', 'That name is invalid or longer than 50 characters'],
     ['41', 'Failed with error code 41'],
   ];
 
@@ -1062,6 +1065,17 @@ describe('createCompany', () => {
       success: false, companyName: '', companyId: '', message,
     });
     expect(fake.state.availableCompanies).toEqual([]);
+  });
+
+  // 28 (ERROR_ZoneMissmatch) and 33 (ERROR_TooManyFacilities) are building-placement codes
+  // (World.pas:3184, :3195); RDONewCompany never returns them, so they are no longer named.
+  it.each([['28'], ['33']])('no longer names the placement-only code %s', async (code) => {
+    const fake = loggedIn();
+    fake.respond(() => `res="%${code}"`);
+
+    await expect(createCompany(fake.ctx, 'Green Inc', 'Industry')).resolves.toMatchObject({
+      success: false, message: `Failed with error code ${code}`,
+    });
   });
 
   it('reports a widestring result that is neither a pair nor a number', async () => {

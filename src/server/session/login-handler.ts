@@ -664,11 +664,13 @@ export async function createCompany(
       // Error: numeric error code as string
       const errorCode = parseInt(resultStr, 10);
       if (!isNaN(errorCode)) {
+        // TWorld.RDONewCompany, Kernel/World.pas:4110-4184; values Protocol/Protocol.pas:30-43.
         const errorMessages: Record<number, string> = {
-          6: 'Unknown cluster',
-          11: 'Company name already taken',
-          28: 'Zone tier mismatch',
-          33: 'Maximum number of companies reached',
+          1: 'Server error while creating the company',                               // :4179 ERROR_Unknown
+          6: 'Unknown cluster',                                                        // :4172
+          7: 'Your tycoon level is too low for this seal, or you already own 26 companies', // :4146/:4170, MaxCompaniesAllowed World.pas:31
+          11: 'Company name already taken',                                            // :4174
+          14: 'That name is invalid or longer than 50 characters',                     // :4133/:4181 (also :4168)
         };
         const msg = errorMessages[errorCode] || `Failed with error code ${errorCode}`;
         ctx.log.warn(`[Session] Company creation failed: ${msg}`);

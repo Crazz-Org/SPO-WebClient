@@ -3,7 +3,12 @@
  */
 
 import { describe, it, expect } from '@jest/globals';
-import { CLUSTER_IDS, CLUSTER_DISPLAY_NAMES, INVALID_COMPANY_NAME_CHARS } from './cluster-data';
+import {
+  CLUSTER_IDS,
+  CLUSTER_DISPLAY_NAMES,
+  MAX_COMPANY_NAME_LENGTH,
+  companyNameProblem,
+} from './cluster-data';
 import type { ClusterId } from './cluster-data';
 
 describe('cluster-data', () => {
@@ -49,62 +54,65 @@ describe('cluster-data', () => {
     });
   });
 
-  describe('INVALID_COMPANY_NAME_CHARS', () => {
-    it('rejects backslash', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('My\\Company')).toBe(true);
+  // Fixtures below are read off ValidName (Cache/CacheCommon.pas:110-125) over NotAllowedChars
+  // (:64) with BackslashChar '}', NameSeparator '{', LinkSep '%' (Cache/SpecialChars.pas:6-8),
+  // plus the 50-char cap RDONewCompany applies (Kernel/World.pas:4133).
+  describe('companyNameProblem', () => {
+    it('caps the name at the server length', () => {
+      expect(MAX_COMPANY_NAME_LENGTH).toBe(50);
     });
 
-    it('rejects forward slash', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('My/Company')).toBe(true);
+    const REFUSED: ReadonlyArray<[string, string]> = [
+      ['backslash', 'My\\Company'],
+      ['forward slash', 'My/Company'],
+      ['colon', 'Company:Inc'],
+      ['asterisk', 'Star*Corp'],
+      ['question mark', 'Why?'],
+      ['double quote', 'The "Best"'],
+      ['less-than', '<Corp'],
+      ['greater-than', 'Corp>'],
+      ['pipe', 'A|B'],
+      ['name separator {', 'My{Corp'],
+      ['backslash char }', 'My}Corp'],
+      ['link separator %', '50% Holdings'],
+      ['NUL', 'My\0Corp'],
+      ['two consecutive dots', 'My..Corp'],
+      ['the empty name', ''],
+    ];
+
+    it.each(REFUSED)('refuses %s with a reason', (_label, name) => {
+      const problem = companyNameProblem(name);
+      expect(typeof problem).toBe('string');
+      expect(problem).not.toHaveLength(0);
     });
 
-    it('rejects colon', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('Company:Inc')).toBe(true);
+    const ACCEPTED: ReadonlyArray<[string, string]> = [
+      ['a plain name', 'Acme Industries'],
+      ['a hyphen', 'Corp-123'],
+      ['an apostrophe', "O'Brien Enterprises"],
+      ['an underscore', 'My_Corp'],
+      ['a single dot', 'My.Corp'],
+      ['an ampersand', 'Star & Moon Co.'],
+      ['a plus sign', 'A+B Holdings'],
+    ];
+
+    it.each(ACCEPTED)('accepts %s', (_label, name) => {
+      expect(companyNameProblem(name)).toBeNull();
     });
 
-    it('rejects asterisk', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('Star*Corp')).toBe(true);
+    it('accepts a name of exactly 50 characters and refuses 51', () => {
+      expect(companyNameProblem('A'.repeat(50))).toBeNull();
+      expect(companyNameProblem('A'.repeat(51))).toBe(
+        'Company name must be 50 characters or less',
+      );
     });
 
-    it('rejects question mark', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('Why?')).toBe(true);
+    it('names the empty name as the reason', () => {
+      expect(companyNameProblem('')).toBe('Company name cannot be empty');
     });
 
-    it('rejects double quote', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('The "Best"')).toBe(true);
-    });
-
-    it('rejects angle brackets', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('<Corp>')).toBe(true);
-    });
-
-    it('rejects pipe', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('A|B')).toBe(true);
-    });
-
-    it('rejects ampersand', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('A&B')).toBe(true);
-    });
-
-    it('rejects plus', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('A+B')).toBe(true);
-    });
-
-    it('rejects percent', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('50%')).toBe(true);
-    });
-
-    it('allows normal company names', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('Acme Industries')).toBe(false);
-      expect(INVALID_COMPANY_NAME_CHARS.test('My Company')).toBe(false);
-      expect(INVALID_COMPANY_NAME_CHARS.test('Corp-123')).toBe(false);
-      expect(INVALID_COMPANY_NAME_CHARS.test("O'Brien Enterprises")).toBe(false);
-    });
-
-    it('allows hyphens, underscores, and dots', () => {
-      expect(INVALID_COMPANY_NAME_CHARS.test('My-Corp')).toBe(false);
-      expect(INVALID_COMPANY_NAME_CHARS.test('My_Corp')).toBe(false);
-      expect(INVALID_COMPANY_NAME_CHARS.test('My.Corp')).toBe(false);
+    it('names ".." as the reason, not the character list', () => {
+      expect(companyNameProblem('My..Corp')).toBe('Company name cannot contain ".."');
     });
   });
 });

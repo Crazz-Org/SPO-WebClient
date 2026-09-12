@@ -10,13 +10,15 @@ import { X } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { useClient } from '../../context';
-import { CLUSTER_DISPLAY_NAMES, INVALID_COMPANY_NAME_CHARS } from '@/shared/cluster-data';
+import {
+  CLUSTER_DISPLAY_NAMES,
+  MAX_COMPANY_NAME_LENGTH,
+  companyNameProblem,
+} from '@/shared/cluster-data';
 import type { ClusterId } from '@/shared/cluster-data';
 import type { ClusterCategory } from '@/shared/types';
 import { Skeleton } from '../common/Skeleton';
 import styles from './CompanyCreationModal.module.css';
-
-const MAX_NAME_LENGTH = 50;
 
 export function CompanyCreationModal() {
   const modal = useUiStore((s) => s.modal);
@@ -88,16 +90,9 @@ export function CompanyCreationModal() {
     if (loading) return;
 
     const trimmed = name.trim();
-    if (trimmed.length === 0) {
-      setError('Company name cannot be empty');
-      return;
-    }
-    if (trimmed.length > MAX_NAME_LENGTH) {
-      setError(`Company name must be ${MAX_NAME_LENGTH} characters or less`);
-      return;
-    }
-    if (INVALID_COMPANY_NAME_CHARS.test(trimmed)) {
-      setError('Company name cannot contain: \\ / : * ? " < > | & + %');
+    const problem = companyNameProblem(trimmed);
+    if (problem) {
+      setError(problem);
       return;
     }
     if (!selectedCluster) {
@@ -248,7 +243,7 @@ export function CompanyCreationModal() {
               ref={inputRef}
               className={styles.nameInput}
               type="text"
-              maxLength={MAX_NAME_LENGTH}
+              maxLength={MAX_COMPANY_NAME_LENGTH}
               placeholder="Enter company name..."
               value={name}
               onChange={(e) => setName(e.target.value)}
