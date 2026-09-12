@@ -142,4 +142,22 @@ describe('upgrade control — total and confirmation', () => {
     expect(screen.getByRole('button', { name: 'STOP' })).toBeTruthy();
     expect(screen.queryByTestId('upgrade-total')).toBeNull();
   });
+
+  it('no Downgrade at level 1', () => {
+    renderControl({ UpgradeLevel: '1' });
+    expect(screen.queryByRole('button', { name: 'Downgrade' })).toBeNull();
+  });
+
+  it('Downgrade is offered from level 2', () => {
+    renderControl({ UpgradeLevel: '2' });
+    expect(screen.getByRole('button', { name: 'Downgrade' })).toBeTruthy();
+  });
+
+  it('no Downgrade while an upgrade is running, so nothing is sent', () => {
+    const onUpgradeBuilding = jest.fn();
+    renderControl({ Upgrading: '1', Pending: '2' }, onUpgradeBuilding);
+    expect(screen.queryByRole('button', { name: 'Downgrade' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'STOP' })).toBeTruthy();
+    expect(onUpgradeBuilding).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), 'DOWNGRADE');
+  });
 });
