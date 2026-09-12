@@ -28,8 +28,21 @@ function isSingleUserMode(): boolean {
     (window as unknown as Record<string, unknown>).__SPO_SINGLE_USER__ === true;
 }
 
+/**
+ * Registration page for "Create an account". Set by `/spo-runtime-config.js` as
+ * `window.__SPO_REGISTER_URL__`; empty means no action is offered. Only an http(s) URL is
+ * honoured — anything else is treated as unset rather than rendered into an href.
+ */
+function getRegisterUrl(): string {
+  if (typeof window === 'undefined') return '';
+  const raw = (window as unknown as Record<string, unknown>).__SPO_REGISTER_URL__;
+  if (typeof raw !== 'string') return '';
+  return /^https?:\/\//i.test(raw) ? raw : '';
+}
+
 export function AuthStage({ onConnect, isLoading, status }: AuthStageProps) {
   const isSingleUser = isSingleUserMode();
+  const registerUrl = getRegisterUrl();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberUsername, setRememberUsername] = useState(false);
@@ -110,6 +123,16 @@ export function AuthStage({ onConnect, isLoading, status }: AuthStageProps) {
         >
           {isLoading ? 'Connecting...' : 'Enter the World'}
         </button>
+        {registerUrl && (
+          <a
+            className={styles.registerLink}
+            href={registerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Create an account
+          </a>
+        )}
       </GlassCard>
 
       <span className={styles.version}>Beta {APP_VERSION} ({BUILD_DATE})</span>
