@@ -8,6 +8,7 @@
  */
 
 import { memo, useState, useCallback, useRef } from 'react';
+import { Crosshair } from 'lucide-react';
 import type { BuildingSupplyData, BuildingConnectionData } from '@/shared/types';
 import { isTradeModeValue } from '@/shared/building-details/trade-settings';
 import { useClient } from '../../context';
@@ -18,6 +19,11 @@ import { useGateConnections } from './useGateConnections';
 import { connectionPendingKey } from '../../handlers/connection-pending-key';
 import { SaveIndicator } from './SaveIndicator';
 import styles from './PropertyGroup.module.css';
+
+/** A connection the server never positioned reads back as 0,0 — there is nothing to centre on. */
+function hasPosition(conn: BuildingConnectionData): boolean {
+  return conn.x !== 0 || conn.y !== 0;
+}
 
 /**
  * Disconnecting is destructive and used to fire at once (Fire button, Delete key). It now goes
@@ -369,6 +375,11 @@ const SupplyCard = memo(function SupplyCard({
     setSelectedIdx(selectedIdx === idx ? null : idx);
   };
 
+  const handleNavigate = (conn: BuildingConnectionData) => {
+    if (!hasPosition(conn)) return;
+    client.onNavigateToBuilding(conn.x, conn.y);
+  };
+
   const handleRowContextMenu = (e: React.MouseEvent, idx: number) => {
     e.preventDefault();
     setOverpayTarget(idx);
@@ -425,8 +436,8 @@ const SupplyCard = memo(function SupplyCard({
                 type="range"
                 className={styles.slider}
                 min={0}
-                max={500}
-                step={10}
+                max={400}
+                step={1}
                 value={localMaxPrice}
                 onChange={handleMaxPriceChange}
               />
@@ -469,8 +480,16 @@ const SupplyCard = memo(function SupplyCard({
               className={styles.supplyTable}
               tabIndex={0}
               onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
                 if (e.key === 'Delete' && canEdit && selectedIdx !== null) {
                   handleFire();
+                }
+                if (e.key === 'Insert' && canEdit) {
+                  handleHire();
+                }
+                if (e.key === 'Enter' && selectedIdx !== null) {
+                  const conn = supply.connections[selectedIdx];
+                  if (conn) handleNavigate(conn);
                 }
               }}
             >
@@ -496,6 +515,7 @@ const SupplyCard = memo(function SupplyCard({
                     onSort={handleSortMode}
                   />
                   <th style={{ width: 60 }}>T.Cost</th>
+                  <th style={{ width: 24 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -504,7 +524,9 @@ const SupplyCard = memo(function SupplyCard({
                     key={`${j}:${conn.x},${conn.y}`}
                     className={`${styles.supplyTableRow}${selectedIdx === j ? ` ${styles.supplyTableRowSelected}` : ''}`}
                     onClick={() => handleRowClick(j)}
+                    onDoubleClick={() => handleNavigate(conn)}
                     onContextMenu={(e) => canEdit && handleRowContextMenu(e, j)}
+                    title={conn.companyName || undefined}
                   >
                     <td>
                       {conn.connected && <span className={styles.supplyConnectedIcon}>&#10003;</span>}
@@ -514,12 +536,25 @@ const SupplyCard = memo(function SupplyCard({
                         <span className={styles.unnamedConnection}>no data</span>
                       )}
                     </td>
-                    <td>{conn.companyName}</td>
+                    <td>{conn.createdBy}</td>
                     <td>${conn.price}</td>
                     <td>{conn.overprice}%</td>
                     <td>{conn.lastValue}</td>
                     <td>{conn.quality}</td>
                     <td>{conn.cost}</td>
+                    <td>
+                      {hasPosition(conn) && (
+                        <button
+                          type="button"
+                          className={styles.tableActionBtn}
+                          aria-label={`View ${conn.facilityName || 'facility'} on map`}
+                          title="View on map"
+                          onClick={(e) => { e.stopPropagation(); handleNavigate(conn); }}
+                        >
+                          <Crosshair size={12} />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

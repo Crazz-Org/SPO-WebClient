@@ -334,6 +334,7 @@ export function BuildingInspector({ hideHeader }: BuildingInspectorProps = {}) {
         <div className={styles.stagger0}>
           <InspectorHeader
             buildingName={details.buildingName}
+            iconUrl={details.iconUrl}
             level={richDetails?.upgradeLevel}
             society={details.ownerName}
             owner={ownerTycoon}

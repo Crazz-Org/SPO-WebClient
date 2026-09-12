@@ -302,6 +302,14 @@ describe('HqGeneral', () => {
     expect(propNames).toContain('Stopped');
   });
 
+  // G3 — Connect button
+  it('Connect button: ACTION_BUTTON with actionId="connectMap" present in template', () => {
+    const prop = HQ_GENERAL_GROUP.properties.find(p => p.actionId === 'connectMap');
+    expect(prop).toBeDefined();
+    expect(prop!.type).toBe(PropertyType.ACTION_BUTTON);
+    expect(prop!.buttonLabel).toBe('Connect');
+  });
+
   // G2 — Demolish button
   it('Demolish button: ACTION_BUTTON with actionId="demolish" present in template', () => {
     const prop = HQ_GENERAL_GROUP.properties.find(p => p.actionId === 'demolish');
@@ -394,6 +402,14 @@ describe('TVGeneral', () => {
   it('Stopped fetch: included in Phase 1 list — required for Close/Open button state', () => {
     const propNames = TV_GENERAL_GROUP.properties.map(p => p.rdoName);
     expect(propNames).toContain('Stopped');
+  });
+
+  // G3 — Connect button
+  it('Connect button: ACTION_BUTTON with actionId="connectMap" present in template', () => {
+    const prop = TV_GENERAL_GROUP.properties.find(p => p.actionId === 'connectMap');
+    expect(prop).toBeDefined();
+    expect(prop!.type).toBe(PropertyType.ACTION_BUTTON);
+    expect(prop!.buttonLabel).toBe('Connect');
   });
 
   // G2 — Demolish button

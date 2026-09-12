@@ -26,6 +26,7 @@ import {
   WorldInfo,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { VISITOR_COMPANY_ID, VISITOR_COMPANY } from '../../shared/visitor-visa';
 import { normalizeLanguageId } from '../../shared/language';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useGameStore } from '../store/game-store';
@@ -126,9 +127,12 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
     if (resp.worldSeason !== undefined) ctx.worldSeason = resp.worldSeason;
 
     if (resp.loginPage) {
-      ClientBridge.log('Login', resp.loginPage.kind === 'denied'
-        ? `Login denied: access expired on ${resp.loginPage.expiresOn}`
-        : `Login page reported error: ${resp.loginPage.errorCode}`);
+      const page = resp.loginPage;
+      ClientBridge.log('Login', page.kind === 'denied'
+        ? `Login denied: access expired on ${page.expiresOn}`
+        : page.kind === 'visa'
+          ? 'Login: no companies — showing the visa choice'
+          : `Login page reported error: ${page.errorCode}`);
       ctx.availableCompanies = [];
       ClientBridge.showLoginPage(resp.loginPage);
       return false;
@@ -159,8 +163,10 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
   }
 }
 
-/** `chooseVisa.asp:44` entered with `SetCompany&Name=[VISITOR VISA]&Id=0`. */
-export const VISITOR_COMPANY_ID = '0';
+// One source for the visitor identity: `src/shared/visitor-visa.ts` holds both the id and the
+// CompanyInfo, and #539 imports the id from here — so it is re-exported rather than declared
+// twice with the same value.
+export { VISITOR_COMPANY_ID };
 
 /**
  * Enter the world with no company — what the Visitor visa did.
@@ -188,7 +194,12 @@ export async function selectCompanyAndStart(ctx: ClientHandlerContext, companyId
   ClientBridge.log('Company', `Selecting company ID: ${companyId}...`);
 
   try {
-    const company = ctx.availableCompanies.find(c => c.id === companyId);
+    // The list wins when it holds the id — visitWorld() pushes its own visitor entry, and
+    // overriding it here would rename a company the caller deliberately built. VISITOR_COMPANY
+    // is the fallback for the visa page, which selects id 0 with no entry in the list at all
+    // (chooseVisa.asp:44 posts `SetCompany&Name=[VISITOR VISA]&Id=0`).
+    const company = ctx.availableCompanies.find(c => c.id === companyId)
+      ?? (companyId === VISITOR_COMPANY_ID ? VISITOR_COMPANY : undefined);
     if (!company) throw new Error('Company not found');
 
     const needsSwitch = company.ownerRole && company.ownerRole !== ctx.storedUsername;

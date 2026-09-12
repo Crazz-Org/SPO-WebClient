@@ -123,6 +123,15 @@ interface BuildingState {
   // Details panel
   details: BuildingDetailsResponse | null;
   currentTab: string;
+  /**
+   * The section id the user last opened, or `null` after they closed the
+   * drawer (or no section has been opened yet this play session).
+   *
+   * Deliberately survives `clearFocus` and `clearDetails`: it is a
+   * play-session preference, not part of one facility's focus state. Only an
+   * explicit close (`setCurrentTab('')`) or `forgetSection` (logout) clears it.
+   */
+  rememberedSection: string | null;
   isLoading: boolean;
   detailsError: string | null;
 
@@ -178,6 +187,7 @@ interface BuildingState {
   setOverlayMode: (mode: boolean) => void;
   setDetails: (details: BuildingDetailsResponse) => void;
   setCurrentTab: (tab: string) => void;
+  forgetSection: () => void;
   setLoading: (loading: boolean) => void;
   setDetailsError: (error: string | null) => void;
   setCurrentCompanyName: (name: string) => void;
@@ -246,6 +256,7 @@ export const useBuildingStore = create<BuildingState>((set) => ({
   isOverlayMode: false,
   details: null,
   currentTab: 'overview',
+  rememberedSection: null,
   isLoading: false,
   detailsError: null,
   currentCompanyName: '',
@@ -324,6 +335,9 @@ export const useBuildingStore = create<BuildingState>((set) => ({
         products: details.products ?? state.details?.products,
         compInputs: details.compInputs ?? state.details?.compInputs,
         warehouseWares: details.warehouseWares ?? state.details?.warehouseWares,
+        // A refresh response carries no picture; the one the opening read
+        // brought stays, exactly like the lazy sections.
+        iconUrl: details.iconUrl ?? state.details?.iconUrl,
         // Sections the user already opened survive a header-only refresh. They
         // keep their values on screen while the panel re-reads them, instead of
         // blanking to a skeleton every thirty seconds.
@@ -356,11 +370,22 @@ export const useBuildingStore = create<BuildingState>((set) => ({
           failedUpdates: new Map(),
           confirmedUpdates: new Map(),
         }),
+        // Restore the remembered section on a different facility, if it has
+        // one — otherwise leave currentTab exactly as clearDetails/clearFocus
+        // already put it (the menu for a standard facility, the first civic
+        // tab for a civic one).
+        ...(!isSameBuilding
+          && state.rememberedSection
+          && details.tabs.some((t) => t.id === state.rememberedSection)
+          ? { currentTab: state.rememberedSection }
+          : {}),
       };
     });
   },
 
-  setCurrentTab: (tab) => set({ currentTab: tab }),
+  setCurrentTab: (tab) => set({ currentTab: tab, rememberedSection: tab || null }),
+
+  forgetSection: () => set({ rememberedSection: null }),
 
   setLoading: (loading) => set({ isLoading: loading, ...(loading ? { detailsError: null } : {}) }),
 

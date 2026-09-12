@@ -52,7 +52,11 @@ describe('ServerSwitchOverlay — the world limit', () => {
 
     renderWithProviders(<ServerSwitchOverlay />);
 
+    // No refusal from the directory, so no limit message — and the empty company list
+    // is the visa page (chooseVisa.asp), where the Tycoon Visa founds the first company.
     expect(screen.queryByText('World Limit Reached')).toBeNull();
-    expect(screen.getByText('Create New Company')).toBeTruthy();
+    expect(screen.queryByText(/reached the number of worlds your nobility allows/)).toBeNull();
+    expect(screen.getByText('Tycoon Visa')).toBeTruthy();
+    expect(screen.getByText('Visitor Visa')).toBeTruthy();
   });
 });

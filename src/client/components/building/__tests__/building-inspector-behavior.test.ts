@@ -616,15 +616,16 @@ describe('Demolish button (ACTION_BUTTON — all General handlers)', () => {
 // Full per-handler tests added in Batch 4 above — core logic tests here
 // ---------------------------------------------------------------------------
 
-describe('Connect button (ACTION_BUTTON — IndGeneral, SrvGeneral, WHGeneral)', () => {
+describe('Connect button (ACTION_BUTTON — IndGeneral, SrvGeneral, WHGeneral, HqGeneral, TVGeneral)', () => {
   const connectGroups = [
     { name: 'IndGeneral', group: IND_GENERAL_GROUP },
     { name: 'SrvGeneral', group: SRV_GENERAL_GROUP },
     { name: 'WHGeneral', group: WH_GENERAL_GROUP },
   ];
+  const mapConnectGroups = [...connectGroups, { name: 'HqGeneral', group: HQ_GENERAL_GROUP }, { name: 'TVGeneral', group: TV_GENERAL_GROUP }];
 
-  it('all 3 General groups have a connect ACTION_BUTTON', () => {
-    for (const { name, group } of connectGroups) {
+  it('all 5 General groups have a connect ACTION_BUTTON', () => {
+    for (const { name, group } of mapConnectGroups) {
       const prop = group.properties.find(p => p.actionId === 'connectMap');
       expect(prop).toBeDefined();
       expect(prop!.type).toBe(PropertyType.ACTION_BUTTON);
@@ -641,7 +642,7 @@ describe('Connect button (ACTION_BUTTON — IndGeneral, SrvGeneral, WHGeneral)',
   });
 
   it('connect button appears before demolish button in property list', () => {
-    for (const { group } of connectGroups) {
+    for (const { group } of mapConnectGroups) {
       const connectIdx = group.properties.findIndex(p => p.actionId === 'connectMap');
       const demolishIdx = group.properties.findIndex(p => p.actionId === 'demolish');
       expect(connectIdx).toBeGreaterThan(-1);
@@ -755,22 +756,22 @@ describe('Products', () => {
     expect(PRODUCTS_GROUP.special).toBe('products');
   });
 
-  it('PricePc: SLIDER, editable=true (output price slider 0-300%)', () => {
+  it('PricePc: SLIDER, editable=true (output price slider 0-400%)', () => {
     const prop = PRODUCTS_GROUP.properties.find(p => p.rdoName === 'PricePc');
     expect(prop).toBeDefined();
     expect(prop?.type).toBe(PropertyType.SLIDER);
     expect(prop?.editable).toBe(true);
     expect(prop?.min).toBe(0);
-    expect(prop?.max).toBe(300);
+    expect(prop?.max).toBe(400);
   });
 
   it('PricePc: rdoCommands maps to RDOSetOutputPrice', () => {
     expect(PRODUCTS_GROUP.rdoCommands?.['PricePc']?.command).toBe('RDOSetOutputPrice');
   });
 
-  it('PricePc: step=5 and unit="%" for percentage display', () => {
+  it('PricePc: step=1 and unit="%" for percentage display', () => {
     const prop = PRODUCTS_GROUP.properties.find(p => p.rdoName === 'PricePc');
-    expect(prop?.step).toBe(5);
+    expect(prop?.step).toBe(1);
     expect(prop?.unit).toBe('%');
   });
 
@@ -1375,9 +1376,9 @@ import {
 } from '../../../../shared/building-details/property-templates';
 
 describe('Supplies', () => {
-  it('Supplies: tab name uses canonical group name not raw CLASSES.BIN value', () => {
+  it('Supplies: tab name shows the raw CLASSES.BIN value, not the canonical group name', () => {
     // CLASSES.BIN stores tab names as all-caps raw strings like 'SERVICES'.
-    // registerInspectorTabs must use baseGroup.name ('Supplies') regardless.
+    // registerInspectorTabs must show that raw value, as Voyager does.
     clearInspectorTabsCache();
     registerInspectorTabs('testHQSupplies', [
       { tabName: 'SERVICES', tabHandler: 'Supplies' },
@@ -1385,8 +1386,8 @@ describe('Supplies', () => {
     const template = getTemplateForVisualClass('testHQSupplies');
     const group = template.groups.find(g => g.handlerName === 'Supplies');
     expect(group).toBeDefined();
-    expect(group!.name).toBe('Supplies');  // canonical, not 'SERVICES'
-    expect(group!.special).toBe('supplies');
+    expect(group!.name).toBe('SERVICES');  // raw CLASSES.BIN value, not 'Supplies'
+    expect(group!.special).toBe('supplies');  // group identity did not move
   });
 
   it('Supplies: HANDLER_TO_GROUP maps "Supplies" to SUPPLIES_GROUP', () => {

@@ -135,6 +135,11 @@
   background: rgba(16, 185, 129, 0.1);
 }
 
+.visaHint {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
 .companyValue {
   font-family: var(--font-mono);
   font-size: var(--text-xs);

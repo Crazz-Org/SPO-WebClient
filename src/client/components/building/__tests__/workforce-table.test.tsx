@@ -327,3 +327,56 @@ describe('WorkforceTable — lock and settle', () => {
     expect((screen.getByLabelText('Workers salary') as HTMLInputElement).disabled).toBe(false);
   });
 });
+
+describe('WorkforceTable — wage preview', () => {
+  beforeEach(() => {
+    resetStores();
+    useBuildingStore.setState({ pendingUpdates: new Map(), confirmedUpdates: new Map(), failedUpdates: new Map(), details: null });
+  });
+
+  it('shows the wage the slider position implies, before any commit', () => {
+    const { container, emitted } = renderWorkforce(
+      props({ WorkersCap0: '1', WorkersMax0: '1', WorkForcePrice0: '1000' }),
+    );
+    fireEvent.change(screen.getByLabelText('Executives salary'), { target: { value: '130' } });
+    expect(container.textContent).toContain('$1,300');
+    expect(emitted).toHaveLength(0);
+  });
+
+  it('opens at the current salary, not a stale one', () => {
+    const { container: withRaisedSalary } = renderWorkforce(
+      props({ WorkForcePrice1: '8', Salaries1: '120' }),
+    );
+    expect(withRaisedSalary.textContent).toContain('$10');
+
+    const { container: atDefaultSalary } = renderWorkforce(
+      props({ WorkForcePrice1: '8' }),
+    );
+    expect(atDefaultSalary.textContent).toContain('$8');
+  });
+
+  it('updates on every move, distinctly, before any commit', () => {
+    const { container } = renderWorkforce(props({ WorkForcePrice2: '100' }));
+    const slider = screen.getByLabelText('Workers salary');
+
+    fireEvent.change(slider, { target: { value: '110' } });
+    expect(container.textContent).toContain('$110');
+
+    fireEvent.change(slider, { target: { value: '130' } });
+    expect(container.textContent).toContain('$130');
+
+    fireEvent.change(slider, { target: { value: '150' } });
+    expect(container.textContent).toContain('$150');
+  });
+
+  it('keeps the town minimum visible while dragging', () => {
+    const { container } = renderWorkforce(props());
+    fireEvent.change(screen.getByLabelText('Professionals salary'), { target: { value: '120' } });
+    expect(container.textContent).toContain('Town minimum: 90%');
+  });
+
+  it('shows the figure in the read-only view too', () => {
+    const { container } = renderWorkforce(props(), { canEdit: false });
+    expect(container.textContent).toContain('$8');
+  });
+});

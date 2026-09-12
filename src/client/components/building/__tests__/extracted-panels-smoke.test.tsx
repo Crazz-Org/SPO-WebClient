@@ -285,6 +285,30 @@ describe('ProductsPanel', () => {
     expect(container.querySelector('table')).toBeTruthy();
   });
 
+  it('shows what each buyer took and what delivering it cost, and names the company in a cell', () => {
+    // Output connections carry LastValueCnxInfo and tCostCnxInfo and nothing else
+    // (building-details-handler.ts PRODUCT_GATES.connectionProps); Price and Quality
+    // were columns the server never fills for a buyer.
+    const conn = makeConnection({ facilityName: 'Pharma Plant', companyName: 'AcmeCorp', lastValue: '4321', cost: '$77' });
+    const product = makeProduct({ connections: [conn], connectionCount: 1 });
+    const { container } = renderWithProviders(
+      <ProductsPanel onPropertyChange={() => {}} products={[product]} canEdit={true} buildingX={100} buildingY={200} />,
+    );
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    const cells = Array.from(container.querySelectorAll('tbody td')).map((td) => td.textContent);
+    expect(cells).toContain('4321');
+    expect(cells).toContain('$77');
+    expect(cells).toContain('AcmeCorp');
+    const row = container.querySelector('tbody tr') as HTMLTableRowElement;
+    expect(row.getAttribute('title')).toBeNull();
+
+    const headers = Array.from(container.querySelectorAll('thead th')).map((th) => th.textContent);
+    expect(headers).not.toContain('Price');
+    expect(headers).not.toContain('Quality');
+    expect(headers).toEqual(expect.arrayContaining(['Facility', 'Company', 'Last', 'T.Cost']));
+  });
+
   it('shows "No buyers connected" when expanded with no connections', () => {
     const product = makeProduct({ connections: [], connectionCount: 0 });
     markGateLoaded('products', product.path);
@@ -348,6 +372,38 @@ describe('ProductsPanel', () => {
     fireEvent.click(hireBtn!);
 
     expect(onSearchConnections).toHaveBeenCalledWith(100, 200, 'fluid_chem', 'Chemicals', 'output');
+  });
+
+  it('calls onSearchConnections on Insert when canEdit is true', () => {
+    const onSearchConnections = jest.fn();
+    const callbacks = createSpiedCallbacks({ onSearchConnections });
+    const product = makeProduct({ name: 'Chemicals', metaFluid: 'fluid_chem' });
+
+    const { container } = renderWithProviders(
+      <ProductsPanel onPropertyChange={() => {}} products={[product]} canEdit={true} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.keyDown(container.querySelector('table') as HTMLTableElement, { key: 'Insert' });
+
+    expect(onSearchConnections).toHaveBeenCalledWith(100, 200, 'fluid_chem', 'Chemicals', 'output');
+  });
+
+  it('does not call onSearchConnections on Insert when canEdit is false', () => {
+    const onSearchConnections = jest.fn();
+    const callbacks = createSpiedCallbacks({ onSearchConnections });
+    const product = makeProduct({ name: 'Chemicals', metaFluid: 'fluid_chem' });
+
+    const { container } = renderWithProviders(
+      <ProductsPanel onPropertyChange={() => {}} products={[product]} canEdit={false} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.keyDown(container.querySelector('table') as HTMLTableElement, { key: 'Insert' });
+
+    expect(onSearchConnections).not.toHaveBeenCalled();
   });
 
   it('selects a row and fires onDisconnectConnection on Remove', () => {
@@ -485,7 +541,8 @@ describe('SuppliesPanel', () => {
 
     expect(container.querySelector('table')).toBeTruthy();
     expect(container.textContent).toContain('Steel Mill');
-    expect(container.textContent).toContain('AcmeCorp');
+    expect(container.textContent).toContain('Owner');
+    expect(container.querySelector('tbody tr')?.getAttribute('title')).toBe('AcmeCorp');
   });
 
   it('shows "No suppliers connected" when no connections', () => {
@@ -618,6 +675,38 @@ describe('SuppliesPanel', () => {
     fireEvent.click(hireBtn!);
 
     expect(onSearchConnections).toHaveBeenCalledWith(100, 200, 'fluid_steel', 'Steel', 'input');
+  });
+
+  it('calls onSearchConnections on Insert when canEdit is true', () => {
+    const onSearchConnections = jest.fn();
+    const callbacks = createSpiedCallbacks({ onSearchConnections });
+    const supply = makeSupply({ name: 'Steel', metaFluid: 'fluid_steel' });
+
+    const { container } = renderWithProviders(
+      <SuppliesPanel supplies={[supply]} canEdit={true} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.keyDown(container.querySelector('table') as HTMLTableElement, { key: 'Insert' });
+
+    expect(onSearchConnections).toHaveBeenCalledWith(100, 200, 'fluid_steel', 'Steel', 'input');
+  });
+
+  it('does not call onSearchConnections on Insert when canEdit is false', () => {
+    const onSearchConnections = jest.fn();
+    const callbacks = createSpiedCallbacks({ onSearchConnections });
+    const supply = makeSupply({ name: 'Steel', metaFluid: 'fluid_steel' });
+
+    const { container } = renderWithProviders(
+      <SuppliesPanel supplies={[supply]} canEdit={false} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.keyDown(container.querySelector('table') as HTMLTableElement, { key: 'Insert' });
+
+    expect(onSearchConnections).not.toHaveBeenCalled();
   });
 
   it('selects row and fires onDisconnectConnection on Fire', () => {

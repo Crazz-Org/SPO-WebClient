@@ -77,10 +77,12 @@ export function registerInspectorTabs(
     }
     usedIds.add(groupId);
 
+    // The label is the TabName{i} read from CLASSES.BIN, as Voyager shows it;
+    // only the label moves, the id and the handler still come from the group.
     groups.push({
       ...baseGroup,
       id: groupId,
-      name: baseGroup.name,
+      name: tab.tabName.trim() || baseGroup.name,
       order: i * 10,
       handlerName: tab.tabHandler,
     });

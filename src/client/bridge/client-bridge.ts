@@ -207,6 +207,15 @@ export interface ClientCallbacks {
     name: string,
     visualClass: string,
   ) => void;
+  /**
+   * The live Offer / Demand pair of ONE service, read off the block. Polled by
+   * the General tab for the selected service only. See requestServiceFigures.
+   */
+  onRequestServiceFigures: (
+    x: number,
+    y: number,
+    serviceIndex: number,
+  ) => Promise<{ supply: string; demand: string } | null>;
   onRenameBuilding: (x: number, y: number, newName: string) => void;
   onDeleteBuilding: (x: number, y: number) => void;
   onNavigateToBuilding: (x: number, y: number) => void;
@@ -395,6 +404,10 @@ export const ClientBridge = {
     // creds — any stage but 'auth' would be a dead screen there.
     useGameStore.getState().setLoginStage('auth');
     useGameStore.getState().setResumeTarget(null);
+    // The focus and the remembered section belong to the play session that
+    // just ended.
+    useBuildingStore.getState().clearFocus();
+    useBuildingStore.getState().forgetSection();
   },
 
   setReconnecting(): void {
@@ -1036,6 +1049,7 @@ export const ClientBridge = {
   reset(): void {
     useGameStore.getState().reset();
     useBuildingStore.getState().clearFocus();
+    useBuildingStore.getState().forgetSection();
     useSearchStore.getState().reset();
     usePoliticsStore.getState().reset();
     useProfileStore.getState().reset();

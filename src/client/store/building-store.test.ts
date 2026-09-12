@@ -47,6 +47,7 @@ function resetStore() {
     isOverlayMode: false,
     details: null,
     currentTab: 'overview',
+    rememberedSection: null,
     isLoading: false,
     tabLoadingStates: {},
     gateLoadingStates: {},
@@ -62,7 +63,11 @@ function resetStore() {
   });
 }
 
-const makeBuildingDetails = (x: number, y: number): BuildingDetailsResponse => ({
+const makeBuildingDetails = (
+  x: number,
+  y: number,
+  tabs: BuildingDetailsResponse['tabs'] = [],
+): BuildingDetailsResponse => ({
   buildingId: `bld-${x}-${y}`,
   x,
   y,
@@ -72,10 +77,13 @@ const makeBuildingDetails = (x: number, y: number): BuildingDetailsResponse => (
   ownerName: 'TestCorp',
   securityId: 'sec-1',
   canGovern: true,
-  tabs: [],
+  tabs,
   groups: {},
   timestamp: Date.now(),
 });
+
+const workforceTab = { id: 'workforce', name: 'WORKFORCE', icon: 'W', order: 1, handlerName: 'Workforce' };
+const generalTab = { id: 'general', name: 'GENERAL', icon: 'G', order: 0, handlerName: 'IndGeneral' };
 
 describe('Building Store — Overlay state', () => {
   beforeEach(resetStore);
@@ -744,6 +752,36 @@ describe('Building Store — Lazy tab data preservation', () => {
     expect(useBuildingStore.getState().details!.warehouseWares).toBe(mockWarehouseWares);
   });
 
+  it('setDetails carries forward iconUrl when a refresh omits it', () => {
+    const details = { ...makeBuildingDetails(100, 200), iconUrl: '/cache/BuildingImages/A.gif' };
+    useBuildingStore.getState().setDetails(details);
+
+    const refreshed = makeBuildingDetails(100, 200);
+    useBuildingStore.getState().setDetails(refreshed);
+
+    expect(useBuildingStore.getState().details!.iconUrl).toBe('/cache/BuildingImages/A.gif');
+  });
+
+  it('setDetails replaces iconUrl when a refresh carries a new one', () => {
+    const details = { ...makeBuildingDetails(100, 200), iconUrl: '/cache/BuildingImages/A.gif' };
+    useBuildingStore.getState().setDetails(details);
+
+    const refreshed = { ...makeBuildingDetails(100, 200), iconUrl: '/cache/BuildingImages/B.gif' };
+    useBuildingStore.getState().setDetails(refreshed);
+
+    expect(useBuildingStore.getState().details!.iconUrl).toBe('/cache/BuildingImages/B.gif');
+  });
+
+  it('setDetails does not carry iconUrl across a different building', () => {
+    const details = { ...makeBuildingDetails(100, 200), iconUrl: '/cache/BuildingImages/A.gif' };
+    useBuildingStore.getState().setDetails(details);
+
+    const other = makeBuildingDetails(300, 400);
+    useBuildingStore.getState().setDetails(other);
+
+    expect(useBuildingStore.getState().details!.iconUrl).toBeUndefined();
+  });
+
   it('setDetails does NOT carry forward lazy fields when switching buildings', () => {
     const detailsA = makeBuildingDetails(100, 200);
     useBuildingStore.getState().setDetails(detailsA);
@@ -1057,5 +1095,69 @@ describe('Building Store — gate memo never outlives its rows', () => {
 
     expect(useBuildingStore.getState().details!.supplies![0].connections).toHaveLength(1);
     expect(useBuildingStore.getState().gateLoadingStates['supplies:SegA']).toBe('loaded');
+  });
+});
+
+describe('Building Store — remembered section', () => {
+  beforeEach(resetStore);
+
+  it('setCurrentTab records the section; setCurrentTab(\'\') forgets it', () => {
+    const store = useBuildingStore.getState();
+    store.setCurrentTab('workforce');
+    expect(useBuildingStore.getState().rememberedSection).toBe('workforce');
+
+    store.setCurrentTab('');
+    expect(useBuildingStore.getState().rememberedSection).toBeNull();
+  });
+
+  it('clearFocus and clearDetails keep the remembered section', () => {
+    const store = useBuildingStore.getState();
+    store.setCurrentTab('workforce');
+
+    store.clearFocus();
+    expect(useBuildingStore.getState().rememberedSection).toBe('workforce');
+
+    store.setCurrentTab('workforce');
+    store.clearDetails();
+    expect(useBuildingStore.getState().rememberedSection).toBe('workforce');
+  });
+
+  it('setDetails restores the remembered section on a different facility that has it', () => {
+    const store = useBuildingStore.getState();
+    store.setDetails(makeBuildingDetails(100, 100, [generalTab, workforceTab]));
+    store.setCurrentTab('workforce');
+    store.clearDetails();
+
+    store.setDetails(makeBuildingDetails(200, 200, [generalTab, workforceTab]));
+
+    expect(useBuildingStore.getState().currentTab).toBe('workforce');
+  });
+
+  it('setDetails leaves currentTab at the menu for a facility that lacks the remembered section', () => {
+    const store = useBuildingStore.getState();
+    store.setDetails(makeBuildingDetails(100, 100, [generalTab, workforceTab]));
+    store.setCurrentTab('workforce');
+    store.clearDetails();
+
+    store.setDetails(makeBuildingDetails(300, 300, [generalTab]));
+
+    expect(useBuildingStore.getState().currentTab).toBe('overview');
+  });
+
+  it('a same-building refresh does not move currentTab', () => {
+    const store = useBuildingStore.getState();
+    store.setDetails(makeBuildingDetails(100, 100, [generalTab, workforceTab]));
+    store.setCurrentTab('workforce');
+
+    store.setDetails(makeBuildingDetails(100, 100, [generalTab, workforceTab]));
+
+    expect(useBuildingStore.getState().currentTab).toBe('workforce');
+  });
+
+  it('forgetSection clears the remembered section', () => {
+    const store = useBuildingStore.getState();
+    store.setCurrentTab('workforce');
+    store.forgetSection();
+    expect(useBuildingStore.getState().rememberedSection).toBeNull();
   });
 });

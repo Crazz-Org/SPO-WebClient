@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { renderHook } from '@testing-library/react';
 import { useUiStore } from '../store/ui-store';
+import { useGameStore } from '../store/game-store';
 import { useKeyboardShortcuts, SHORTCUTS, isTextInput } from './useKeyboardShortcuts';
 import type { ClientCallbacks } from '../bridge/client-bridge';
 
@@ -27,6 +28,7 @@ describe('useKeyboardShortcuts', () => {
     client = makeClient();
     useUiStore.setState({ modal: null, commandPaletteOpen: false, minimapFullscreen: false });
     useUiStore.getState().clearSurfaces();
+    useGameStore.setState({ isVisitor: false });
     document.body.innerHTML = '';
   });
 
@@ -77,6 +79,15 @@ describe('useKeyboardShortcuts', () => {
     expect(useUiStore.getState().leftPanel).toBe('empire');
     press('b');
     expect(useUiStore.getState().stack[useUiStore.getState().stack.length - 1]?.kind).toBe('build');
+  });
+
+  it('B and E do nothing for a visitor', () => {
+    useGameStore.setState({ isVisitor: true });
+    renderHook(() => useKeyboardShortcuts(client));
+    press('b');
+    expect(useUiStore.getState().stack).toEqual([]);
+    press('e');
+    expect(useUiStore.getState().leftPanel).toBeNull();
   });
 
   it('M toggles the Map surface, W rotates the view, D toggles debug', () => {

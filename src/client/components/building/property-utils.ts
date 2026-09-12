@@ -181,3 +181,78 @@ export function getColorClass(num: number, colorCode?: string): string {
   }
   return '';
 }
+
+// =============================================================================
+// FILM ACTIONS (Films tab — FilmsSheet.pas)
+// =============================================================================
+
+/** The three ACTION_BUTTON ids the Films group carries (template-groups.ts FILMS_GROUP). */
+export const FILM_ACTION_IDS = ['launchMovie', 'cancelMovie', 'releaseMovie'] as const;
+
+/** Floor from MovieStudios.pas:691 `max(6, months)`. */
+export const FILM_MONTHS_MIN = 6;
+/** Card criterion; no server ceiling was found in the reference source. */
+export const FILM_MONTHS_MAX = 30;
+
+/** The same YES/non-zero test BooleanValue uses (PropertyDisplays.tsx:46-47). */
+function isBooleanTrue(value: string): boolean {
+  const numVal = parseInt(value, 10);
+  return (!isNaN(numVal) && numVal !== 0) || value.toLowerCase() === 'yes' || value.toLowerCase() === 'true';
+}
+
+/**
+ * Whether one of the three film actions is offered, per FilmsSheet.pas:
+ * launch iff owner and no film in production (:175), cancel iff owner and one
+ * is (:199), release iff owner and the current film is done (:198).
+ *
+ * Returns `null` for any other actionId so the caller falls through to its
+ * existing behaviour.
+ */
+export function isFilmActionOffered(
+  actionId: string,
+  canEdit: boolean,
+  valueMap: Map<string, string>,
+): boolean | null {
+  const inProd = (valueMap.get('InProd') ?? '').trim() !== '';
+  const filmDone = isBooleanTrue(valueMap.get('FilmDone') ?? '');
+
+  if (actionId === 'launchMovie') return canEdit && !inProd;
+  if (actionId === 'cancelMovie') return canEdit && inProd;
+  if (actionId === 'releaseMovie') return canEdit && filmDone;
+  return null;
+}
+
+/** Mausoleum epitaph paragraphs: the server stores them `|`-separated
+ *  (MausoleumSheet.pas:76 ParagraphSep, :78-107 Encode/DecodeParagraph).
+ *  Empty segments are dropped, so '' → [] and 'a||b' → ['a', 'b']. */
+export function splitParagraphs(value: string): string[] {
+  return value.split('|').filter((s) => s !== '');
+}
+
+/** Inverse of splitParagraphs for the editor: one textarea line per paragraph,
+ *  joined with `|` like Voyager's EncodeParagraph (MausoleumSheet.pas:78-90).
+ *  Empty lines are dropped because DecodeParagraph (:92-106) stops at the first
+ *  empty segment — an empty line would truncate everything after it in Voyager. */
+export function joinParagraphs(text: string): string {
+  return text.split(/\r?\n/).filter((s) => s !== '').join('|');
+}
+
+/**
+ * Parse a currency string ('$10,000,000', '2500000') into a finite number, or
+ * `null` if it is not a plain amount — never `NaN`, matching FilmsSheet.pas:382-384
+ * (`CheckMoneyStr`, else `Beep` — refused before anything is sent).
+ */
+export function parseCurrencyInput(text: string): number | null {
+  const stripped = text.replace(/[$,\s]/g, '');
+  if (!/^\d+(\.\d+)?$/.test(stripped)) return null;
+  const num = Number(stripped);
+  return Number.isFinite(num) ? num : null;
+}
+
+/** Parse a production-length string, accepted only within FILM_MONTHS_MIN..FILM_MONTHS_MAX. */
+export function parseFilmMonths(text: string): number | null {
+  if (!/^\d+$/.test(text)) return null;
+  const num = Number(text);
+  if (num < FILM_MONTHS_MIN || num > FILM_MONTHS_MAX) return null;
+  return num;
+}

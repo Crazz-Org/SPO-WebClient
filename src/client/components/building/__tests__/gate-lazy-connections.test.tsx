@@ -17,6 +17,7 @@ import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../..
 import { SuppliesPanel } from '../SuppliesGroup';
 import { ProductsPanel } from '../ProductsGroup';
 import { ProductSummaryCards } from '../PropertyTables';
+import { formatCurrency } from '@/shared/building-details';
 import { useBuildingStore, gateKey } from '../../../store/building-store';
 import { useGameStore } from '../../../store/game-store';
 import type {
@@ -683,5 +684,155 @@ describe('two buildings, one gate path', () => {
     // so the assertion is that a read happened at all.)
     fireEvent.click(screen.getByText('Books'));
     expect(onRequest).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ===========================================================================
+// THE RANGE THE GAME ACTUALLY OFFERED
+//
+// Both price bars were TPercentEdit with MinPerc = 0, MaxPerc = 400
+// (Voyager/SupplySheetForm.dfm `xfer_MaxPrice`, Voyager/ProdSheetForm.dfm
+// `PricePc`; the widget maps a drag to round(perc*(fMaxPerc - fMinPerc)),
+// Voyager/Components/PercentEdit.pas:265-273), so every integer 0..400 was
+// reachable and there was no step. The panels had invented three different
+// narrower ranges instead, none of which could express 305 % or 350 %.
+// ===========================================================================
+
+describe('price sliders offer the range the game had (0..400, step 1)', () => {
+  beforeEach(() => { jest.useFakeTimers(); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  const PRICED_SUPPLY: BuildingSupplyData = {
+    path: 'SegA', name: 'Books', metaFluid: 'Books', maxPrice: '200', minK: '20',
+    connectionCount: 0, connections: [],
+  };
+
+  const PRICED_PRODUCT: BuildingProductData = {
+    path: 'GateA', name: 'Toys', metaFluid: 'Toys', lastFluid: '80', quality: '90',
+    pricePc: '110', avgPrice: '105', marketPrice: '5000', connectionCount: 0,
+    connections: [],
+  };
+
+  /** An opened supply gate whose Max Price the server has answered. */
+  function openSupplyGate(onSetBuildingProperty: (...a: unknown[]) => unknown) {
+    const { container } = renderWithProviders(
+      <SuppliesHost canEdit />,
+      {
+        clientCallbacks: createSpiedCallbacks({
+          onRequestGateConnections: jest.fn(), onSetBuildingProperty,
+        }),
+      },
+    );
+    fireEvent.click(screen.getByText('Books'));
+    act(() => {
+      useBuildingStore.getState().mergeGateData('supplies', 'SegA', PRICED_SUPPLY, X, Y);
+    });
+    return container;
+  }
+
+  /** The products tab as it lists a gate: a path and a name, no price. */
+  const LISTED_PRODUCT: BuildingProductData = { path: 'GateA', name: 'Toys', connections: [] };
+
+  function PricedProductsHost({ onPropertyChange }: {
+    onPropertyChange: (name: string, value: number, params?: Record<string, string>) => void;
+  }) {
+    const products = useBuildingStore((s) => s.details?.products ?? NO_PRODUCTS);
+    return (
+      <ProductsPanel
+        products={products}
+        canEdit
+        buildingX={X}
+        buildingY={Y}
+        onPropertyChange={onPropertyChange}
+      />
+    );
+  }
+
+  /**
+   * A product gate driven through the sequence the panel actually sees: listed
+   * with a path and a name only, then opened, then answered. The price and the
+   * market price arrive after the card has already mounted, which is what the
+   * dollar label has to survive.
+   */
+  function openProductGate(
+    onPropertyChange: (name: string, value: number, params?: Record<string, string>) => void,
+  ) {
+    useBuildingStore.getState().mergeTabData('products', { products: [LISTED_PRODUCT] }, X, Y);
+    const { container } = renderWithProviders(
+      <PricedProductsHost onPropertyChange={onPropertyChange} />,
+      { clientCallbacks: createSpiedCallbacks({ onRequestGateConnections: jest.fn() }) },
+    );
+    fireEvent.click(screen.getByText('Toys'));
+    act(() => {
+      useBuildingStore.getState().mergeGateData('products', 'GateA', PRICED_PRODUCT, X, Y);
+    });
+    return container;
+  }
+
+  it('the input max-price slider spans 0..400 in steps of 1', () => {
+    const slider = openSupplyGate(jest.fn())
+      .querySelector('input[type="range"]') as HTMLInputElement;
+
+    expect(slider.min).toBe('0');
+    expect(slider.max).toBe('400');
+    expect(slider.step).toBe('1');
+  });
+
+  it('sends 305 % as the input max price — a value the old 0..500/10 bar could not express', () => {
+    const onSetBuildingProperty = jest.fn();
+    const slider = openSupplyGate(onSetBuildingProperty)
+      .querySelector('input[type="range"]') as HTMLInputElement;
+
+    fireEvent.change(slider, { target: { value: '305' } });
+    act(() => { jest.advanceTimersByTime(400); });
+
+    expect(onSetBuildingProperty).toHaveBeenCalledWith(
+      X, Y, 'RDOSetInputMaxPrice', '305', { fluidId: 'Books' },
+    );
+  });
+
+  it('the output price slider spans 0..400 in steps of 1', () => {
+    const slider = openProductGate(jest.fn())
+      .querySelector('input[type="range"]') as HTMLInputElement;
+
+    expect(slider.min).toBe('0');
+    expect(slider.max).toBe('400');
+    expect(slider.step).toBe('1');
+  });
+
+  it('sends 305 % as the output price', () => {
+    const onPropertyChange = jest.fn();
+    const slider = openProductGate(onPropertyChange)
+      .querySelector('input[type="range"]') as HTMLInputElement;
+
+    fireEvent.change(slider, { target: { value: '305' } });
+    act(() => { jest.advanceTimersByTime(400); });
+
+    expect(onPropertyChange).toHaveBeenCalledWith('PricePc', 305, { fluidId: 'Toys' });
+  });
+
+  it('the dollar figure beside the output slider follows the thumb', () => {
+    // Voyager relabelled the bar on every move: `N% ($X)` with
+    // X = (Value/100) * MarketPrice (Voyager/ProdSheetForm.pas:687-698).
+    const container = openProductGate(jest.fn());
+    const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+
+    expect(container.textContent).toContain(formatCurrency((110 / 100) * 5000));
+
+    fireEvent.change(slider, { target: { value: '350' } });
+
+    // No timer advance: the label is not on the wire's debounce.
+    expect(container.textContent).toContain(formatCurrency((350 / 100) * 5000));
+    expect(container.textContent).not.toContain(formatCurrency((110 / 100) * 5000));
+  });
+
+  it('the General tab summary slider agrees with the Products tab', () => {
+    const { container } = renderWithProviders(
+      <ProductSummaryCards products={[PRICED_PRODUCT]} canEdit onPropertyChange={jest.fn()} />,
+    );
+
+    const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+    expect(slider.max).toBe('400');
+    expect(slider.step).toBe('1');
   });
 });
