@@ -313,6 +313,7 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     case WsMessageType.RESP_SEARCH_MENU_RANKING_DETAIL:
     case WsMessageType.RESP_SEARCH_MENU_BANKS:
     case WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS:
+    case WsMessageType.RESP_SEARCH_MENU_DIRECTORY:
       ClientBridge.handleSearchMenuResponse(msg);
       break;
 

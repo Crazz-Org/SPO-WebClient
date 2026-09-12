@@ -5,6 +5,8 @@ import type {
   WsReqSearchMenuPeopleSearch,
   WsReqSearchMenuTycoonProfile,
   WsReqSearchMenuRankingDetail,
+  WsReqSearchMenuDirectory,
+  WsRespSearchMenuDirectory,
   WsRespSearchMenuHome,
   WsRespSearchMenuTowns,
   WsRespSearchMenuPeopleSearch,
@@ -125,6 +127,26 @@ export async function handleSearchMenuNewspapers(ctx: WsHandlerContext, msg: WsM
     type: WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS,
     wsRequestId: msg.wsRequestId,
     newspapers,
+  };
+  sendResponse(ctx.ws, response);
+}
+
+/**
+ * One page of the directory tree below the town list. The `ref` is echoed back so the
+ * client can match the reply to the entry that asked for it.
+ */
+export async function handleSearchMenuDirectory(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
+  if (!ctx.searchMenuService) {
+    sendError(ctx.ws, msg.wsRequestId, 'Search menu not available. Please log in first.', ErrorCodes.ERROR_AccessDenied);
+    return;
+  }
+  const req = msg as WsReqSearchMenuDirectory;
+  const page = await ctx.searchMenuService.getDirectoryPage(req.ref);
+  const response: WsRespSearchMenuDirectory = {
+    type: WsMessageType.RESP_SEARCH_MENU_DIRECTORY,
+    wsRequestId: msg.wsRequestId,
+    ref: req.ref,
+    page,
   };
   sendResponse(ctx.ws, response);
 }

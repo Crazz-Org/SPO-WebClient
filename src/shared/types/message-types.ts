@@ -48,6 +48,8 @@ import type {
   PoliticalRoleInfo,
   ClusterInfo,
   ClusterFacilityPreview,
+  DirectoryRef,
+  DirectoryPage,
 } from './domain-types';
 
 
@@ -185,6 +187,7 @@ export enum WsMessageType {
   REQ_SEARCH_MENU_RANKING_DETAIL = 'REQ_SEARCH_MENU_RANKING_DETAIL',
   REQ_SEARCH_MENU_BANKS = 'REQ_SEARCH_MENU_BANKS',
   REQ_SEARCH_MENU_NEWSPAPERS = 'REQ_SEARCH_MENU_NEWSPAPERS',
+  REQ_SEARCH_MENU_DIRECTORY = 'REQ_SEARCH_MENU_DIRECTORY',
 
   RESP_SEARCH_MENU_HOME = 'RESP_SEARCH_MENU_HOME',
   RESP_SEARCH_MENU_TOWNS = 'RESP_SEARCH_MENU_TOWNS',
@@ -194,6 +197,7 @@ export enum WsMessageType {
   RESP_SEARCH_MENU_RANKING_DETAIL = 'RESP_SEARCH_MENU_RANKING_DETAIL',
   RESP_SEARCH_MENU_BANKS = 'RESP_SEARCH_MENU_BANKS',
   RESP_SEARCH_MENU_NEWSPAPERS = 'RESP_SEARCH_MENU_NEWSPAPERS',
+  RESP_SEARCH_MENU_DIRECTORY = 'RESP_SEARCH_MENU_DIRECTORY',
 
   // Logout
   REQ_LOGOUT = 'REQ_LOGOUT',
@@ -994,6 +998,18 @@ export interface WsReqSearchMenuNewspapers extends WsMessage {
 export interface WsRespSearchMenuNewspapers extends WsMessage {
   type: WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS;
   newspapers: NewspaperListing[];
+}
+
+export interface WsReqSearchMenuDirectory extends WsMessage {
+  type: WsMessageType.REQ_SEARCH_MENU_DIRECTORY;
+  ref: DirectoryRef;
+}
+
+/** `ref` is echoed so the store can match the reply to the entry that asked for it. */
+export interface WsRespSearchMenuDirectory extends WsMessage {
+  type: WsMessageType.RESP_SEARCH_MENU_DIRECTORY;
+  ref: DirectoryRef;
+  page: DirectoryPage;
 }
 
 // =============================================================================

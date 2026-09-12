@@ -9,7 +9,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import type { WebSocket } from 'ws';
 import { WsMessageType, type WsMessage } from '../../../shared/types';
-import { handleSearchMenuPeopleSearch, handleSearchMenuNewspapers } from '../search-handlers';
+import { handleSearchMenuPeopleSearch, handleSearchMenuNewspapers, handleSearchMenuDirectory } from '../search-handlers';
 import * as ErrorCodes from '../../../shared/error-codes';
 import type { WsHandlerContext } from '../types';
 
@@ -102,6 +102,57 @@ describe('handleSearchMenuNewspapers', () => {
     expect(sent[0]).toMatchObject({
       type: WsMessageType.RESP_ERROR,
       wsRequestId: '456',
+      code: ErrorCodes.ERROR_AccessDenied,
+    });
+  });
+});
+
+describe('handleSearchMenuDirectory', () => {
+  const ref = { kind: 'town-facilities', town: 'Helartia' };
+  const directoryRequest: WsMessage = {
+    type: WsMessageType.REQ_SEARCH_MENU_DIRECTORY,
+    wsRequestId: '789',
+    ref,
+  } as unknown as WsMessage;
+
+  function recorder(): { ws: WebSocket; sent: Array<Record<string, unknown>> } {
+    const sent: Array<Record<string, unknown>> = [];
+    const ws = {
+      send(payload: string): void {
+        sent.push(JSON.parse(payload) as Record<string, unknown>);
+      },
+    } as unknown as WebSocket;
+    return { ws, sent };
+  }
+
+  it('forwards the ref and echoes it back beside the page', async () => {
+    const { ws, sent } = recorder();
+    const page = { kind: 'folder', items: ['Residentials'], ownedBy: null };
+    const getDirectoryPage = jest.fn(async (_ref: unknown) => page);
+    const ctx = { ws, searchMenuService: { getDirectoryPage } } as unknown as WsHandlerContext;
+
+    await handleSearchMenuDirectory(ctx, directoryRequest);
+
+    expect(getDirectoryPage).toHaveBeenCalledWith(ref);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      type: WsMessageType.RESP_SEARCH_MENU_DIRECTORY,
+      wsRequestId: '789',
+      ref,
+      page,
+    });
+  });
+
+  it('sends an error frame when the search menu service is unavailable', async () => {
+    const { ws, sent } = recorder();
+    const ctx = { ws, searchMenuService: null } as unknown as WsHandlerContext;
+
+    await handleSearchMenuDirectory(ctx, directoryRequest);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      type: WsMessageType.RESP_ERROR,
+      wsRequestId: '789',
       code: ErrorCodes.ERROR_AccessDenied,
     });
   });

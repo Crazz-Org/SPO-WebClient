@@ -13,8 +13,14 @@ import type {
   NewspaperListing,
   TycoonProfile,
   RankingCategory,
-  RankingEntry
+  RankingEntry,
+  DirectoryRef,
+  DirectoryPage,
+  DirectoryTownPage,
+  DirectoryFacilityRow,
+  DirectoryFacilityCard
 } from '../shared/types';
+import { parseLocalAspUrl } from '../shared/local-asp-url';
 
 /**
  * Parse DirectoryMain.asp - Home page with category grid
@@ -81,7 +87,10 @@ export function parseTownsPage(html: string, baseUrl: string): TownInfo[] {
 
   $('tr[onmouseOver="onItemMouseOver()"]').each((_, el) => {
     const $row = $(el);
-    const dirHref = $row.attr('dirHref');
+    // Cheerio lower-cases attribute names in HTML mode, so the legacy `dirHref`
+    // (RenderTown.inc:6) only answers to `dirhref` — reading it the other way round
+    // returned undefined and shipped every town with an empty path and classId.
+    const dirHref = $row.attr('dirhref') || $row.attr('dirHref');
     const iconUrl = $row.find('img').attr('src');
     const name = $row.find('.ItemHeader').text().trim();
     const $info = $row.next();
@@ -332,4 +341,198 @@ export function parseRankingDetail(html: string, baseUrl: string): { title: stri
   });
 
   return { title, entries };
+}
+
+// =============================================================================
+// Directory tree below the town list (New Directory/*.asp)
+// =============================================================================
+
+/**
+ * The icon idiom these pages share: `/five/icons/…` is absolute and resolves against
+ * the host, anything else against the directory (same rule as parseTownsPage:133-135).
+ */
+function resolveIcon(src: string | undefined, baseUrl: string): string {
+  if (!src) return '';
+  return src.startsWith('/') ? new URL(src, baseUrl).toString() : `${baseUrl}/${src}`;
+}
+
+/** The `&nbsp;` every list item is padded with (e.g. InTownFacilities.asp:19) is not part of the name. */
+function itemText($el: cheerio.Cheerio<AnyNode>): string {
+  return $el.text().replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** `x`/`y` from a "Show in map" link, or null when the page printed none. */
+function mapCoords($scope: cheerio.Cheerio<AnyNode>): { x: number; y: number } | null {
+  const href = $scope.find('a[href*="frame_Action=SELECT"]').attr('href');
+  return href ? parseLocalAspUrl(href) : null;
+}
+
+/**
+ * Parse RenderTownIn.asp — the town page reached from a town row.
+ *
+ * The detail block (`:49-67`) sits outside the cache-path guard, so a town whose path
+ * failed to resolve still renders it, empty, under the name `"Unknown Town"` (`:30`).
+ * Every missing value therefore reads as 0 rather than as an error.
+ */
+export function parseTownPage(html: string, baseUrl: string): DirectoryTownPage {
+  const $ = cheerio.load(html);
+
+  const name = $('.header2').first().text().trim();
+  const iconUrl = resolveIcon($('img').first().attr('src'), baseUrl);
+
+  // The three span.value cells in document order: Inhabitants (:54), QoL (:60),
+  // Unemployment (:66 — which also prints a stray trailing colon).
+  const values = $('span.value').map((_, el) => $(el).text()).get();
+  const digits = (text: string | undefined): number => {
+    const match = text?.replace(/,/g, '').match(/-?\d+/);
+    return match ? parseInt(match[0], 10) : 0;
+  };
+
+  const coords = mapCoords($.root());
+
+  return {
+    name,
+    iconUrl,
+    inhabitants: digits(values[0]),
+    qualityOfLife: digits(values[1]),
+    unemploymentPercent: digits(values[2]),
+    x: coords?.x ?? 0,
+    y: coords?.y ?? 0
+  };
+}
+
+/**
+ * Parse a folder listing — InTownFacilities.asp, InTownCompanies.asp, InTownCompany.asp,
+ * TycoonCompanies.asp, TycoonCompany.asp. All five render one `tr[dirHref]` per entry
+ * holding a single `div.listItem`.
+ *
+ * InTownCompany.asp:63 opens the list with one extra row of its own — a mail-composer
+ * link carrying the company header and the `Owned by %1` line (`:69-71`,
+ * `New Directory.lng:13`). It names the owner; it is not an entry.
+ */
+export function parseFolderPage(html: string): { items: string[]; ownedBy: string | null } {
+  const $ = cheerio.load(html);
+  const items: string[] = [];
+  let ownedBy: string | null = null;
+
+  $('tr[dirhref]').each((_, el) => {
+    const $row = $(el);
+    const dirHref = $row.attr('dirhref') || $row.attr('dirHref') || '';
+    const label = itemText($row.find('.listItem'));
+
+    if (dirHref.startsWith('http://local')) {
+      const owner = label.match(/^Owned by (.+)$/);
+      if (owner) ownedBy = owner[1];
+      return;
+    }
+
+    if (label) items.push(label);
+  });
+
+  return { items, ownedBy };
+}
+
+/**
+ * Parse a facility folder — the rows BrowseFacFolder.inc:15-49 writes, included by
+ * BrowseTownFacFolder.asp, BrowseTownCompFacFolder.asp and TycoonFacilities.asp.
+ *
+ * Which of the two `div.itemInfo` branches a row took is read off the row itself
+ * (`:24-36`), not inferred from the page: the company name when `ShowCompany` was true,
+ * `(x, y)` when it was false.
+ */
+export function parseFacilityListPage(html: string, baseUrl: string): DirectoryFacilityRow[] {
+  const $ = cheerio.load(html);
+  const rows: DirectoryFacilityRow[] = [];
+
+  $('tr[dirhref*="OpenFacility.asp"]').each((_, el) => {
+    const $row = $(el);
+    const dirHref = $row.attr('dirhref') || $row.attr('dirHref') || '';
+    const name = itemText($row.find('.listItem').first());
+    if (!name) return;
+
+    const info = itemText($row.find('.itemInfo').first());
+    const printedCoords = info.match(/^\((\d+),\s*(\d+)\)$/);
+
+    // The parameter order at :15 is fixed and the values are written raw, so anchoring
+    // on the neighbouring parameter name is what keeps a name containing `&` intact as
+    // far as the page itself allows.
+    const pathMatch = dirHref.match(/[?&]Path=(.*?)&WorldName=/);
+    const nameMatch = dirHref.match(/[?&]Name=(.*?)&RIWS=/);
+
+    // The map link lives in the row that follows (:40-49).
+    const coords = mapCoords($row.next());
+
+    rows.push({
+      name,
+      itemName: nameMatch ? nameMatch[1] : '',
+      path: pathMatch ? pathMatch[1] : '',
+      iconUrl: resolveIcon($row.find('img').attr('src'), baseUrl),
+      company: printedCoords ? null : info,
+      x: coords?.x ?? (printedCoords ? parseInt(printedCoords[1], 10) : 0),
+      y: coords?.y ?? (printedCoords ? parseInt(printedCoords[2], 10) : 0)
+    });
+  });
+
+  return rows;
+}
+
+/**
+ * Parse OpenFacility.asp — the facility card.
+ *
+ * The entire body sits inside the cache-path guard (`:29-100`), so a path that failed to
+ * resolve renders an empty document rather than an error page: no `.header2`, no card.
+ */
+export function parseFacilityPage(html: string, baseUrl: string): DirectoryFacilityCard | null {
+  const $ = cheerio.load(html);
+
+  const $header = $('.header2').first();
+  if ($header.length === 0) return null;
+
+  // FormatValue (:17-23) and the ROI branches (:64-72) are printed strings — "$0",
+  // "-$1,234", "Already.", "12 years.", "Never." — and are carried as written.
+  const stats: Record<string, string> = {};
+  $('td.label').each((_, el) => {
+    const label = $(el).text().trim().replace(/:$/, '');
+    stats[label] = itemText($(el).next('.value'));
+  });
+
+  const composerHref = $('a[href*="frame_Id=MsgComposer"]').attr('href');
+  let creator = '';
+  if (composerHref) {
+    try {
+      creator = new URL(composerHref).searchParams.get('To') ?? '';
+    } catch {
+      // A link shape the URL parser rejects names nobody — the card still renders.
+    }
+  }
+
+  const coords = mapCoords($.root());
+
+  return {
+    name: $header.text().trim(),
+    company: $('.itemHeader').first().text().trim(),
+    iconUrl: resolveIcon($('img').first().attr('src'), baseUrl),
+    netProfitText: stats['Net profit'] ?? '',
+    costText: stats['Cost'] ?? '',
+    roiText: stats['ROI'] ?? '',
+    creator,
+    x: coords?.x ?? 0,
+    y: coords?.y ?? 0
+  };
+}
+
+/** Which parser a directory page needs follows from the ref that asked for it. */
+export function parseDirectoryPage(ref: DirectoryRef, html: string, baseUrl: string): DirectoryPage {
+  switch (ref.kind) {
+    case 'town':
+      return { kind: 'town', town: parseTownPage(html, baseUrl) };
+    case 'facility':
+      return { kind: 'facility', facility: parseFacilityPage(html, baseUrl) };
+    case 'town-facility-kind':
+    case 'town-company-facility-kind':
+    case 'tycoon-facility-kind':
+      return { kind: 'facility-list', facilities: parseFacilityListPage(html, baseUrl) };
+    default:
+      return { kind: 'folder', ...parseFolderPage(html) };
+  }
 }

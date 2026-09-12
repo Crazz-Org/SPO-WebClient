@@ -66,6 +66,12 @@ export type {
   TycoonProfile,
   RankingCategory,
   RankingEntry,
+  // Directory tree (New Directory/*.asp below the town list)
+  DirectoryRef,
+  DirectoryPage,
+  DirectoryTownPage,
+  DirectoryFacilityRow,
+  DirectoryFacilityCard,
   RoadDrawingState,
   // Mail types
   MailMessageHeader,
@@ -212,6 +218,8 @@ export type {
   WsRespSearchMenuBanks,
   WsReqSearchMenuNewspapers,
   WsRespSearchMenuNewspapers,
+  WsReqSearchMenuDirectory,
+  WsRespSearchMenuDirectory,
   // Road building messages
   WsReqBuildRoad,
   WsRespBuildRoad,

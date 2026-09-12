@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react';
-import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
+import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useGameStore } from '../../store/game-store';
 import { useSearchStore } from '../../store/search-store';
 import { useMailStore } from '../../store/mail-store';
@@ -42,5 +42,27 @@ describe('TycoonProfileView — write to', () => {
     renderWithProviders(<TycoonProfileView />);
     expect(screen.getByText('No profile data available.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Write to/ })).toBeNull();
+  });
+});
+
+describe('TycoonProfileView — companies (#526)', () => {
+  beforeEach(() => {
+    resetStores();
+    useGameStore.setState({ worldName: 'Shamba' });
+    useSearchStore.setState({ tycoonProfileData: null, directoryStack: [] });
+  });
+
+  it('opens the tycoon\'s companies folder (RenderTycoon.asp:139)', () => {
+    useSearchStore.setState({ tycoonProfileData: { profile } as never });
+    const onSearchMenuDirectory = jest.fn();
+    renderWithProviders(<TycoonProfileView />, {
+      clientCallbacks: createSpiedCallbacks({ onSearchMenuDirectory: onSearchMenuDirectory as never }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Companies' }));
+
+    const expected = { kind: 'tycoon-companies', tycoon: 'Alice' };
+    expect(onSearchMenuDirectory).toHaveBeenCalledWith(expected);
+    expect(useSearchStore.getState().directoryStack).toEqual([{ ref: expected, page: null }]);
   });
 });

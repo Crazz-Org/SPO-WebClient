@@ -134,6 +134,37 @@
   color: var(--error);
 }
 
+/* A secondary action sitting inside a row or under a directory card — "Show on map",
+   "Facilities", "Companies", "Send mail". Deliberately quieter than .profileWriteBtn:
+   several of them can share one line. */
+.rowAction {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: none;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-default),
+              border-color var(--duration-fast) var(--ease-default);
+}
+
+.rowAction:hover {
+  color: var(--accent-gold);
+  border-color: var(--accent-gold);
+}
+
+.directoryActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
 /* Search row (tycoon / people) */
 .searchRow {
   display: flex;
