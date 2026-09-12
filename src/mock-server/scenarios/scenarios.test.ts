@@ -22,6 +22,10 @@ import {
   ALL_MOCK_BUILDINGS,
 } from './building-details-scenario';
 import { createCivicMutationsScenario } from './civic-mutations-scenario';
+import {
+  createWorldLoginScenario,
+  WORLD_LOGIN_INTERFACE_SERVER_ID,
+} from './world-login-scenario';
 import { HANDLER_TO_GROUP } from '@/shared/building-details/template-groups';
 import type { BuildingTemplate, PropertyGroup } from '@/shared/building-details/property-definitions';
 import { collectTemplatePropertyNamesStructured } from '@/shared/building-details/property-templates';
@@ -608,9 +612,65 @@ describe('civic-mutations scenario', () => {
   });
 });
 
+describe('world-login scenario', () => {
+  const EXCHANGE_IDS = [
+    'wlogin-rdo-idof',
+    'wlogin-rdo-canjoin',
+    'wlogin-rdo-acct',
+    'wlogin-rdo-logon',
+    'wlogin-rdo-regevt',
+  ];
+
+  it('serves the five world-socket exchanges in login order', () => {
+    const { rdo } = createWorldLoginScenario();
+    expect(rdo.name).toBe('world-login');
+    expect(rdo.exchanges.map(e => e.id)).toEqual(EXCHANGE_IDS);
+  });
+
+  it('pins CanJoinWorldEx to the InterfaceServer id and one %-prefixed argument', () => {
+    const { rdo } = createWorldLoginScenario();
+    const canJoin = rdo.exchanges.find(e => e.id === 'wlogin-rdo-canjoin')!;
+    expect(canJoin.matchKeys).toEqual({
+      verb: 'sel',
+      targetId: WORLD_LOGIN_INTERFACE_SERVER_ID,
+      action: 'call',
+      member: 'CanJoinWorldEx',
+      argsPattern: ['"%SPO_test3"'],
+    });
+    expect(canJoin.request).toContain(`sel ${WORLD_LOGIN_INTERFACE_SERVER_ID} call CanJoinWorldEx "^"`);
+  });
+
+  it('answers 0 by default — the world admits the player', () => {
+    const { rdo } = createWorldLoginScenario();
+    const canJoin = rdo.exchanges.find(e => e.id === 'wlogin-rdo-canjoin')!;
+    expect(canJoin.response).toBe('A1 res="#0"');
+  });
+
+  it('answers -1 for a world at its user cap', () => {
+    const { rdo } = createWorldLoginScenario(undefined, { canJoin: -1 });
+    const canJoin = rdo.exchanges.find(e => e.id === 'wlogin-rdo-canjoin')!;
+    expect(canJoin.response).toBe('A1 res="#-1"');
+  });
+
+  it('answers a positive nobility shortfall', () => {
+    const { rdo } = createWorldLoginScenario(undefined, { canJoin: 5 });
+    const canJoin = rdo.exchanges.find(e => e.id === 'wlogin-rdo-canjoin')!;
+    expect(canJoin.response).toBe('A1 res="#5"');
+  });
+
+  it('a username override reaches the CanJoinWorldEx argument', () => {
+    const { rdo } = createWorldLoginScenario({ username: 'Crazz' });
+    const canJoin = rdo.exchanges.find(e => e.id === 'wlogin-rdo-canjoin')!;
+    expect(canJoin.request).toContain('"%Crazz"');
+    expect(canJoin.matchKeys?.argsPattern).toEqual(['"%Crazz"']);
+  });
+});
+
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 13 entries', () => {
-    expect(SCENARIO_NAMES).toHaveLength(13);
+  it('SCENARIO_NAMES has 14 entries', () => {
+    // 14, not 13: the `world-login` scenario was added with the CanJoinWorldEx
+    // admission check (Interface Server/InterfaceServer.pas:441).
+    expect(SCENARIO_NAMES).toHaveLength(14);
   });
 
   it('loadScenario returns bundle for each name', () => {

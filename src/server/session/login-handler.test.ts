@@ -859,6 +859,100 @@ describe('loginWorld', () => {
       jest.useRealTimers();
     }
   });
+
+  // ── CanJoinWorldEx — the admission answer (InterfaceServer.pas:441, :3471-3486) ──
+
+  /** Answer CanJoinWorldEx with `payload`, everything else as usual. */
+  function admissionResponder(payload: string | RdoPacket | Error): Responder {
+    const base = loginResponder();
+    return (packet, index) => (packet.member === 'CanJoinWorldEx'
+      ? payload
+      : base(packet, index));
+  }
+
+  it('asks the InterfaceServer CanJoinWorldEx with one widestring, before AccountStatus', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+
+    await runLoginWorld(fake);
+
+    const canJoinIndex = fake.sent.findIndex(s => s.packet.member === 'CanJoinWorldEx');
+    const statusIndex = fake.sent.findIndex(s => s.packet.member === 'AccountStatus');
+    expect(canJoinIndex).toBeGreaterThanOrEqual(0);
+    expect(canJoinIndex).toBeLessThan(statusIndex);
+
+    const sentCanJoin = fake.sent[canJoinIndex];
+    expect(sentCanJoin.socketName).toBe('world');
+    expect(sentCanJoin.packet.targetId).toBe(INTERFACE_SERVER_ID);
+    // One argument, `%`-prefixed (widestring) — CanJoinWorldEx(Name : widestring).
+    expect(sentCanJoin.packet.args).toEqual(['"%SPO_test3"']);
+  });
+
+  it('reads -1 as a world at its user cap', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(admissionResponder('res="#-1"'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.admission).toEqual({ kind: 'full' });
+    // The rest of the login is untouched — the companies still come back.
+    expect(result.companies).toHaveLength(2);
+  });
+
+  it('reads a positive answer as the nobility shortfall', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(admissionResponder('res="#7"'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.admission).toEqual({ kind: 'nobility', shortfall: 7 });
+  });
+
+  it('reads 0 as "go ahead" and reports no admission at all', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(admissionResponder('res="#0"'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.admission).toBeUndefined();
+  });
+
+  it('ignores an unreadable admission answer', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(admissionResponder('res="%"'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.admission).toBeUndefined();
+  });
+
+  it('does not let a CanJoinWorldEx timeout block the login', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(admissionResponder(new Error('Request timeout: CanJoinWorldEx')));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.contextId).toBe(CONTEXT_ID);
+    expect(result.admission).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('CanJoinWorldEx failed — proceeding without the admission check'),
+    );
+  });
+
+  it('degrades when an older server answers CanJoinWorldEx with an RDO error', async () => {
+    const fake = makeLoginCtx();
+    // `observe` error contract: the error reply is delivered as a packet, not a rejection.
+    fake.respond(admissionResponder({
+      raw: '', type: 'RESPONSE', rid: 1, errorCode: 3, errorName: 'errUnexistentMethod',
+    }));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.admission).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[Session] CanJoinWorldEx answered errUnexistentMethod 3 — proceeding without the admission check',
+    );
+  });
 });
 
 // ── Company selection ───────────────────────────────────────────────────────

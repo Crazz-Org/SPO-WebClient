@@ -74,7 +74,7 @@ describe('auth-handler', () => {
       await login(ctx, 'Shamba');
 
       expect(ctx.availableCompanies).toEqual(companies);
-      expect(ClientBridge.showCompanies).toHaveBeenCalledWith(companies);
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith(companies, undefined);
       expect(ctx.showNotification).not.toHaveBeenCalled();
     });
 
@@ -90,7 +90,7 @@ describe('auth-handler', () => {
       await login(ctx, 'Shamba');
 
       expect(ctx.availableCompanies).toEqual([]);
-      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([]);
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([], undefined);
       expect(ClientBridge.log).toHaveBeenCalledWith('Login', 'No companies found — showing company creation');
       expect(ctx.showNotification).not.toHaveBeenCalled();
     });
@@ -107,7 +107,7 @@ describe('auth-handler', () => {
       await login(ctx, 'Shamba');
 
       expect(ctx.availableCompanies).toEqual([]);
-      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([]);
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([], undefined);
     });
 
     it('stores world dimensions from response', async () => {
@@ -158,8 +158,41 @@ describe('auth-handler', () => {
 
       await login(ctx, 'Shamba');
 
-      expect(ClientBridge.showCompanies).toHaveBeenCalledWith(companies);
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith(companies, undefined);
       expect(ClientBridge.showLoginPage).not.toHaveBeenCalled();
+    });
+
+    // #538 — CanJoinWorldEx told the gateway the world would refuse a new company.
+    it('forwards the admission answer to the company stage and names it in the log', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '42',
+          companies: [],
+          admission: { kind: 'full' },
+        }),
+      });
+
+      await login(ctx, 'Shamba');
+
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([], { kind: 'full' });
+      expect(ClientBridge.log).toHaveBeenCalledWith('Login', 'World full — company creation is closed');
+    });
+
+    it('names the nobility shortfall in the log', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '42',
+          companies: [],
+          admission: { kind: 'nobility', shortfall: 3 },
+        }),
+      });
+
+      await login(ctx, 'Shamba');
+
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith([], { kind: 'nobility', shortfall: 3 });
+      expect(ClientBridge.log).toHaveBeenCalledWith('Login', 'Nobility 3 below the world minimum');
     });
 
     it('shows error notification on request failure', async () => {

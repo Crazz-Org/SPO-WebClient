@@ -56,7 +56,8 @@ const WORLD_PROPERTY_NAMES = [
 
 /**
  * Build the RDO scenario for the loginWorld flow on the world socket.
- * Contains: idof InterfaceServer, AccountStatus, Logon, RegisterEventsById.
+ * Contains: idof InterfaceServer, 2b. CanJoinWorldEx CALL, AccountStatus, Logon,
+ * RegisterEventsById.
  * The world properties + user properties are handled by fallback responses.
  */
 function createWorldLoginRdoScenario(): RdoScenario {
@@ -69,6 +70,12 @@ function createWorldLoginRdoScenario(): RdoScenario {
         request: `C 0 idof "InterfaceServer"`,
         response: `A0 objid="${INTERFACE_SERVER_ID}"`,
         matchKeys: { verb: 'idof', targetId: 'InterfaceServer' },
+      },
+      {
+        id: 'wl-rdo-canjoin',
+        request: `C 1 sel ${INTERFACE_SERVER_ID} call CanJoinWorldEx "^" "%SPO_test3"`,
+        response: `A1 res="#0"`,
+        matchKeys: { verb: 'sel', action: 'call', member: 'CanJoinWorldEx' },
       },
       {
         id: 'wl-rdo-acct',

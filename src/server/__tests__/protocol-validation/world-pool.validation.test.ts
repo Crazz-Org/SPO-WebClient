@@ -60,13 +60,19 @@ const RDO_CNNT_ID = '12345678';
 function createWorldLoginRdoScenario(): RdoScenario {
   return {
     name: 'world-login',
-    description: 'World login RDO exchanges: idof, AccountStatus, Logon, RegisterEventsById',
+    description: 'World login RDO exchanges: idof, CanJoinWorldEx, AccountStatus, Logon, RegisterEventsById',
     exchanges: [
       {
         id: 'wp-rdo-idof',
         request: `C 0 idof "InterfaceServer"`,
         response: `A0 objid="${INTERFACE_SERVER_ID}"`,
         matchKeys: { verb: 'idof', targetId: 'InterfaceServer' },
+      },
+      {
+        id: 'wp-rdo-canjoin',
+        request: `C 1 sel ${INTERFACE_SERVER_ID} call CanJoinWorldEx "^" "%SPO_test3"`,
+        response: `A1 res="#0"`,
+        matchKeys: { verb: 'sel', action: 'call', member: 'CanJoinWorldEx' },
       },
       {
         id: 'wp-rdo-acct',

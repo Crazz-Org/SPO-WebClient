@@ -95,6 +95,7 @@ export const handleLoginWorld: WsHandler = async (ctx: WsHandlerContext, msg: Ws
     worldYSize: result.worldYSize ?? undefined,
     worldSeason: result.worldSeason ?? undefined,
     ...(result.loginPage ? { loginPage: result.loginPage } : {}),
+    ...(result.admission ? { admission: result.admission } : {}),
   };
   sendResponse(ctx.ws, response);
 };

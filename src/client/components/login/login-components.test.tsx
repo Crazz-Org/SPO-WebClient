@@ -126,6 +126,13 @@ describe('CompanyStage', () => {
     expect(screen.getByText('Create New Company')).toBeTruthy();
   });
 
+  it('calls onCreate when the create card is clicked', () => {
+    const onCreate = jest.fn();
+    renderWithProviders(<CompanyStage {...defaultProps} onCreate={onCreate} />);
+    fireEvent.click(screen.getByText('Create New Company'));
+    expect(onCreate).toHaveBeenCalledTimes(1);
+  });
+
   it('renders back button', () => {
     renderWithProviders(<CompanyStage {...defaultProps} />);
     expect(screen.getByText('Back to worlds')).toBeTruthy();
@@ -158,6 +165,44 @@ describe('CompanyStage', () => {
   it('shows the welcome message when companies is empty and no loginPage is set', () => {
     renderWithProviders(<CompanyStage {...defaultProps} companies={[]} />);
     expect(screen.getByText(/Create your first company/)).toBeTruthy();
+  });
+
+  // CanJoinWorldEx (Interface Server/InterfaceServer.pas:441) — the world already said
+  // NewCompany would fail, so the card that produced "error code 7" is not offered.
+  it('says the world is full and offers the other worlds instead of company creation', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} companies={[]} admission={{ kind: 'full' }} />,
+    );
+    expect(screen.getByText('World Full')).toBeTruthy();
+    expect(screen.getByText(/Shamba has reached its maximum number of tycoons/)).toBeTruthy();
+    expect(screen.queryByText('Create New Company')).toBeNull();
+    expect(screen.queryByText(/Create your first company/)).toBeNull();
+    expect(screen.getByText('Choose another world')).toBeTruthy();
+  });
+
+  it('sends the player back to the world list from the full-world message', () => {
+    const onBack = jest.fn();
+    renderWithProviders(
+      <CompanyStage {...defaultProps} companies={[]} admission={{ kind: 'full' }} onBack={onBack} />,
+    );
+    fireEvent.click(screen.getByText('Choose another world'));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('states the nobility shortfall in points', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} companies={[]} admission={{ kind: 'nobility', shortfall: 3 }} />,
+    );
+    expect(screen.getByText('Nobility Too Low')).toBeTruthy();
+    expect(screen.getByText(/3 point\(s\) below/)).toBeTruthy();
+    expect(screen.queryByText('Create New Company')).toBeNull();
+  });
+
+  it('keeps existing companies in a full world, minus the creation card', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} admission={{ kind: 'full' }} />);
+    expect(screen.getByText('Select a Company')).toBeTruthy();
+    expect(screen.getByText('TestCo')).toBeTruthy();
+    expect(screen.queryByText('Create New Company')).toBeNull();
   });
 });
 

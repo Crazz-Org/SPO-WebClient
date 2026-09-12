@@ -43,6 +43,34 @@ describe('game-store login flow state', () => {
     expect(state.loginLoading).toBe(false);
   });
 
+  it('setLoginCompanies should store the admission answer when one is given', () => {
+    const companies = [{ id: '1', name: 'TestCorp', cluster: 'General' }];
+    useGameStore.getState().setLoginCompanies(companies as never[], { kind: 'full' });
+
+    expect(useGameStore.getState().loginAdmission).toEqual({ kind: 'full' });
+  });
+
+  it('setLoginCompanies should leave loginAdmission null when none is given', () => {
+    useGameStore.getState().setLoginCompanies([{ id: '1', name: 'TestCorp' }] as never[], { kind: 'full' });
+    useGameStore.getState().setLoginCompanies([{ id: '1', name: 'TestCorp' }] as never[]);
+
+    expect(useGameStore.getState().loginAdmission).toBeNull();
+  });
+
+  it('setLoginPage should clear a previous admission answer', () => {
+    useGameStore.getState().setLoginCompanies([] as never[], { kind: 'nobility', shortfall: 4 });
+    useGameStore.getState().setLoginPage({ kind: 'error', errorCode: 'ERROR_FIVEISDOWN' });
+
+    expect(useGameStore.getState().loginAdmission).toBeNull();
+  });
+
+  it('reset should clear the admission answer', () => {
+    useGameStore.getState().setLoginCompanies([] as never[], { kind: 'full' });
+    useGameStore.getState().reset();
+
+    expect(useGameStore.getState().loginAdmission).toBeNull();
+  });
+
   it('setLoginStage should update stage independently', () => {
     useGameStore.getState().setLoginStage('worlds');
     expect(useGameStore.getState().loginStage).toBe('worlds');

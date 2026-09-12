@@ -71,6 +71,19 @@ describe('ClientBridge login flow (replaces window.__spoLoginHandlers)', () => {
     expect(state.companies).toEqual(companies);
   });
 
+  it('showCompanies forwards the admission answer to the store', () => {
+    const companies = [{ id: '1', name: 'TestCorp', cluster: 'General' }];
+    ClientBridge.showCompanies(companies as never[], { kind: 'nobility', shortfall: 2 });
+
+    expect(useGameStore.getState().loginAdmission).toEqual({ kind: 'nobility', shortfall: 2 });
+  });
+
+  it('showCompanies without an admission answer leaves loginAdmission null', () => {
+    ClientBridge.showCompanies([{ id: '1', name: 'TestCorp' }] as never[]);
+
+    expect(useGameStore.getState().loginAdmission).toBeNull();
+  });
+
   it('setLoginLoading should update game-store loading', () => {
     ClientBridge.setLoginLoading(true);
     expect(useGameStore.getState().loginLoading).toBe(true);

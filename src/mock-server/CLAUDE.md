@@ -28,7 +28,17 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`.
+
+`world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
+arrives over HTTP. It exists for its second exchange: the admission question the reference client
+asked before offering company creation (`logonComplete.asp:143-152`).
+`createWorldLoginScenario(vars, { canJoin })` sets what the world answers — `-1` for a world at
+its user cap, a positive number for the nobility the player is short, `0` (the default) for
+"go ahead". That exchange pins the target to the InterfaceServer id and the argument list to a
+single `%`-prefixed string, because that is the whole shape of the declaration
+(`Interface Server/InterfaceServer.pas:441`, a one-argument `function`): a second argument or a
+frame sent against the context id would answer about nobody, with no error to show for it.
 
 `newspaper` is the daily paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
 renders, and one `home.asp` per kept issue. HTTP only — the paper is reachable through the
