@@ -47,6 +47,7 @@ import {
   ACCOUNT_InvalidPassword,
 } from '../../shared/account-status';
 import { ERROR_Unknown, ERROR_InvalidUserName, ERROR_InvalidPassword } from '../../shared/error-codes';
+import { DEFAULT_LANGUAGE_ID } from '../../shared/language';
 
 const fetchMock = fetch as unknown as jest.Mock;
 
@@ -143,8 +144,8 @@ async function runLoginWorld(
 }
 
 /** The exact SetLanguage push the login and re-login paths must emit. */
-function setLanguageFrame(contextId: string): string {
-  return RdoCommand.sel(contextId).call('SetLanguage').push().args(RdoValue.string('0')).build();
+function setLanguageFrame(contextId: string, languageId = '0'): string {
+  return RdoCommand.sel(contextId).call('SetLanguage').push().args(RdoValue.string(languageId)).build();
 }
 
 beforeEach(() => {
@@ -661,6 +662,29 @@ describe('loginWorld', () => {
     // %0, not #0: SetLanguage(langid: widestring). An integer nils the
     // widestring and every MLS hint lookup comes back empty.
     expect(fake.frames.world).toEqual([setLanguageFrame(CONTEXT_ID)]);
+  });
+
+  it('carries the session language, not a pinned "0"', async () => {
+    const fake = makeLoginCtx({ languageId: '3' });
+    fake.respond(loginResponder());
+
+    await runLoginWorld(fake);
+
+    expect(fake.frames.world).toEqual([setLanguageFrame(CONTEXT_ID, '3')]);
+  });
+
+  it('asks logonComplete.asp with the session language as LangId', async () => {
+    const picked = '3';
+    const fake = makeLoginCtx({ languageId: picked });
+    fake.respond(loginResponder());
+
+    await runLoginWorld(fake);
+
+    const asked = fetchMock.mock.calls.map(c => String(c[0]));
+    const logonComplete = asked.find(u => u.includes('logonComplete.asp'));
+    expect(logonComplete).toContain(`LangId=${picked}`);
+    // The old pinned literal is gone — not merely shadowed by a second parameter.
+    expect(logonComplete).not.toContain(`LangId=${DEFAULT_LANGUAGE_ID}`);
   });
 
   it('skips SetLanguage when the world socket died during the handshake', async () => {
@@ -1453,7 +1477,10 @@ describe('switchCompany', () => {
 // ── Reconnection ────────────────────────────────────────────────────────────
 
 describe('reconnectWorldSocket — the full re-login', () => {
-  function reconnectFake(overrides: Record<string, string> = {}): FakeLoginCtx {
+  function reconnectFake(
+    overrides: Record<string, string> = {},
+    stateOverrides: { languageId?: string } = {},
+  ): FakeLoginCtx {
     const fake = makeLoginCtx({
       sockets: ['world'],
       currentWorldInfo: WORLD,
@@ -1463,6 +1490,7 @@ describe('reconnectWorldSocket — the full re-login', () => {
       interfaceServerId: 'stale-interface-id',
       rdoCnntId: 'stale-cnnt-id',
       tycoonId: '1',
+      ...stateOverrides,
     });
     fake.respond((packet) => {
       const member = packet.member ?? '';
@@ -1504,6 +1532,17 @@ describe('reconnectWorldSocket — the full re-login', () => {
     await reconnectWorldSocket(fake.ctx);
 
     expect(fake.frames.world).toContain(setLanguageFrame(NEW_CONTEXT_ID));
+  });
+
+  // The reconnection criterion: the world must be told the player's language again,
+  // not the default, or every MLS lookup after a drop comes back in English.
+  it('re-sends the session language, not "0"', async () => {
+    const fake = reconnectFake({}, { languageId: '3' });
+
+    await reconnectWorldSocket(fake.ctx);
+
+    expect(fake.frames.world).toContain(setLanguageFrame(NEW_CONTEXT_ID, '3'));
+    expect(fake.frames.world).not.toContain(setLanguageFrame(NEW_CONTEXT_ID, '0'));
   });
 
   it('reads the context id out of a Logon answer that carries more than res=', async () => {

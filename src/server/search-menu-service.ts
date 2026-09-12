@@ -5,6 +5,7 @@
  */
 
 import http from 'http';
+import { withLangId } from '../shared/language';
 import {
   SearchMenuCategory,
   TownInfo,
@@ -92,6 +93,7 @@ export class SearchMenuService {
   private companyName: string;
   private daAddr: string;
   private daPort: number;
+  private languageId: string;
 
   constructor(
     interfaceServerHost: string,
@@ -100,7 +102,8 @@ export class SearchMenuService {
     tycoonName: string,
     companyName: string,
     daAddr: string,
-    daPort: number
+    daPort: number,
+    languageId: string
   ) {
     this.interfaceServerHost = interfaceServerHost;
     this.interfaceServerPort = interfaceServerPort;
@@ -109,6 +112,7 @@ export class SearchMenuService {
     this.companyName = companyName;
     this.daAddr = daAddr;
     this.daPort = daPort;
+    this.languageId = languageId;
   }
 
   /**
@@ -120,7 +124,7 @@ export class SearchMenuService {
       const options = {
         hostname: this.daAddr,
         port: 80,
-        path,
+        path: withLangId(path, this.languageId),
         method: 'GET',
         headers: {
           'User-Agent': 'StarpeaceWebClient/1.0'
@@ -256,7 +260,7 @@ export class SearchMenuService {
 
     // Build the path with proper encoding
     // Note: The Ranking parameter contains backslashes that must be preserved
-    const path = `/five/0/visual/voyager/new%20directory/ranking.asp?WorldName=${encodeURIComponent(this.worldName)}&Ranking=${rankingValue}&frame_Id=RankingView&frame_Class=HTMLView&frame_Align=client&frame_NoBorder=yes&RIWS=&LangId=0`;
+    const path = `/five/0/visual/voyager/new%20directory/ranking.asp?WorldName=${encodeURIComponent(this.worldName)}&Ranking=${rankingValue}&frame_Id=RankingView&frame_Class=HTMLView&frame_Align=client&frame_NoBorder=yes&RIWS=`;
 
     const html = await this.fetchPage(path);
     const baseUrl = `http://${this.daAddr}/five/0/visual/voyager/new%20directory`;

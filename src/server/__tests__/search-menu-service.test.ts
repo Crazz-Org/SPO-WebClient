@@ -6,6 +6,8 @@
  * dispatch, icon proxying) is the code under test.
  */
 
+import http from 'http';
+import { EventEmitter } from 'events';
 import { describe, it, expect, jest } from '@jest/globals';
 import { SearchMenuService, directoryPagePath } from '../search-menu-service';
 import type { DirectoryRef } from '../../shared/types';
@@ -15,7 +17,7 @@ const DA = '158.69.153.134';
 const DIR = '/five/0/visual/voyager/new%20directory';
 
 function service(): SearchMenuService {
-  return new SearchMenuService('127.0.0.1', 1000, WORLD, 'SPO_test3', 'Crazz Ltd.', DA, 7001);
+  return new SearchMenuService('127.0.0.1', 1000, WORLD, 'SPO_test3', 'Crazz Ltd.', DA, 7001, '0');
 }
 
 /** Replace the HTTP round-trip with a canned page, and record the path that was asked for. */
@@ -180,5 +182,50 @@ describe('getDirectoryPage', () => {
     await expect(svc.getDirectoryPage({ kind: 'wat' } as unknown as DirectoryRef))
       .rejects.toThrow(/Unknown directory page kind/);
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('the session language on a directory page', () => {
+  /** The session language this describe drives with — deliberately not the default `0`. */
+  const SESSION_LANG = '4';
+
+  it('the ranking path no longer pins a language of its own', async () => {
+    const svc = service();
+    const fetch = stubFetch(svc, '<html><body></body></html>');
+
+    await svc.getRankingDetail('Ranks\\Wealth');
+
+    const asked = String(fetch.mock.calls[0][0]);
+    expect(asked).toContain('Ranking=Ranks\\Wealth');
+    expect(asked).not.toContain('LangId');
+  });
+
+  it('fetchPage asks the directory server for the page in the session language', async () => {
+    const svc = new SearchMenuService('127.0.0.1', 1000, WORLD, 'SPO_test3', 'Crazz Ltd.', DA, 7001, SESSION_LANG);
+    const asked: string[] = [];
+    jest.spyOn(http, 'request').mockImplementation(((
+      options: http.RequestOptions,
+      callback?: (res: EventEmitter & { statusCode?: number }) => void,
+    ) => {
+      const req = new EventEmitter() as unknown as http.ClientRequest;
+      Object.assign(req, {
+        end: () => {
+          asked.push(String(options.path));
+          const res = new EventEmitter() as EventEmitter & { statusCode?: number };
+          res.statusCode = 200;
+          callback?.(res);
+          res.emit('data', '<html><body></body></html>');
+          res.emit('end');
+        },
+        setTimeout: () => req,
+        destroy: () => {},
+      });
+      return req;
+    }) as unknown as typeof http.request);
+
+    await svc.getDirectoryPage({ kind: 'town-facilities', town: 'Helartia' });
+
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain(`LangId=${SESSION_LANG}`);
   });
 });

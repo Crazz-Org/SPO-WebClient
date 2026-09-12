@@ -230,6 +230,11 @@ export interface CompanyListScenarioOptions {
   logonResult?: 'companies' | 'noAccess' | 'error';
   expiresOn?: string;
   errorCode?: string;
+  /**
+   * When set, `logonComplete.asp` is served ONLY to a request carrying that `LangId` —
+   * a gateway that drops the session language gets a 404 instead of the company page.
+   */
+  languageId?: string;
 }
 
 export function createCompanyListScenario(
@@ -263,6 +268,7 @@ export function createCompanyListScenario(
       queryPatterns: {
         WorldName: vars.worldName,
         UserName: vars.username,
+        ...(options?.languageId !== undefined ? { LangId: options.languageId } : {}),
       },
       status: 302,
       contentType: 'text/html',

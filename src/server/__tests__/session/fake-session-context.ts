@@ -252,6 +252,7 @@ export function makeSessionCtx(overrides: FakeSessionOptions = {}): FakeSessionC
     cachedUsername: null,
     cachedPassword: null,
     currentCompany: null as CompanyInfo | null,
+    languageId: '0',
     daAddr: null,
     daPort: null,
     mailAccount: null,
@@ -418,6 +419,7 @@ export interface FakeLoginState {
   currentWorldInfo: WorldInfo | null;
   cachedUsername: string | null;
   cachedPassword: string | null;
+  languageId: string;
   cachedZonePath: string;
   activeUsername: string | null;
   currentCompany: CompanyInfo | null;
@@ -509,6 +511,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     currentWorldInfo: null,
     cachedUsername: null,
     cachedPassword: null,
+    languageId: '0',
     cachedZonePath: '',
     activeUsername: null,
     currentCompany: null,
@@ -580,6 +583,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     get currentWorldInfo() { return state.currentWorldInfo; },
     get cachedUsername() { return state.cachedUsername; },
     get cachedPassword() { return state.cachedPassword; },
+    get languageId() { return state.languageId; },
     get rdoCnntId() { return state.rdoCnntId; },
     get currentCompany() { return state.currentCompany; },
 

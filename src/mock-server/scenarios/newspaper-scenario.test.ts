@@ -146,7 +146,7 @@ describe('newspaper scenario — the gateway reads it', () => {
     await getNewspaperIssue(fake.ctx, TARGET, MOCK_ISSUE_FOLDERS[0]);
     expect(mockFetch.mock.calls[0][0]).toBe(
       'http://158.69.153.134/Five/0/Visual/News/Newspapers/Shamba/Shamba%20Daily'
-      + '/002147483640%403-1-2027/home.asp?Tycoon=SPO_test3',
+      + '/002147483640%403-1-2027/home.asp?Tycoon=SPO_test3&LangId=0',
     );
   });
 
@@ -209,7 +209,7 @@ describe('newspaper scenario — the directory Media listing', () => {
     httpMock.addScenario(httpScenario);
     mockHttpRequest(httpMock);
 
-    const service = new SearchMenuService('158.69.153.134', 8000, 'Shamba', 'SPO_test3', 'Co', '158.69.153.134', 7001);
+    const service = new SearchMenuService('158.69.153.134', 8000, 'Shamba', 'SPO_test3', 'Co', '158.69.153.134', 7001, '0');
     const result = await service.getNewspapers();
     expect(result).toEqual(MOCK_DIRECTORY_PAPERS);
   });
@@ -220,7 +220,7 @@ describe('newspaper scenario — the directory Media listing', () => {
     httpMock.addScenario(httpScenario);
     mockHttpRequest(httpMock);
 
-    const service = new SearchMenuService('158.69.153.134', 8000, 'Shamba', 'SPO_test3', 'Co', '158.69.153.134', 7001);
+    const service = new SearchMenuService('158.69.153.134', 8000, 'Shamba', 'SPO_test3', 'Co', '158.69.153.134', 7001, '0');
     const result = await service.getNewspapers();
     expect(result).toEqual([]);
   });

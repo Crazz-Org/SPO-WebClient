@@ -8,6 +8,7 @@
 
 import * as net from 'net';
 import { fetchWithTimeout } from '../fetch-with-timeout';
+import { withLangId } from '../../shared/language';
 import type { RdoPacket, WorldInfo, CompanyInfo, LoginPageOutcome, WorldAdmission } from '../../shared/types';
 import { SessionPhase, DIRECTORY_QUERY } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
@@ -65,6 +66,8 @@ export interface LoginContext {
   readonly cachedPassword: string | null;
   readonly rdoCnntId: string | null;
   readonly currentCompany: CompanyInfo | null;
+  /** The session language — the SetLanguage argument and the `LangId` on every ASP fetch. */
+  readonly languageId: string;
 
   // ── Phase management ──
   getPhase(): SessionPhase;
@@ -500,9 +503,9 @@ export async function loginWorld(
   // 8. SetLanguage - CLIENT sends this as PUSH command (no RID)
   const socket = ctx.getSocket('world');
   if (socket) {
-    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string('0')).toFrame();
+    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string(ctx.languageId)).toFrame();
     writeRdoFrame(socket, setLangCmd);
-    ctx.log.debug(`[Session] Sent SetLanguage push command`);
+    ctx.log.debug(`[Session] Sent SetLanguage push command (LangId=${ctx.languageId})`);
   }
 
   // 9. GetCompanyCount
@@ -927,14 +930,13 @@ async function fetchCompaniesViaHttp(
     DSPort: String(config.rdo.ports.directory),
     ISAddr: worldIp,
     ISPort: '8000',
-    LangId: '0',
   });
 
   const url = `http://${worldIp}/Five/0/Visual/Voyager/NewLogon/logonComplete.asp?${params.toString().replace(/\+/g, '%20')}`;
   ctx.log.debug(`[HTTP] Fetching companies from ${url}`);
 
   try {
-    const response = await fetchWithTimeout(url, { redirect: 'follow' });
+    const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     const text = await response.text();
     const finalUrl = response.url;
     const finalUrlLower = finalUrl.toLowerCase();
@@ -1209,7 +1211,7 @@ async function fullWorldRelogin(ctx: LoginContext): Promise<void> {
 
   const socket = ctx.getSocket('world');
   if (socket) {
-    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string('0')).toFrame();
+    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string(ctx.languageId)).toFrame();
     writeRdoFrame(socket, setLangCmd);
   }
 

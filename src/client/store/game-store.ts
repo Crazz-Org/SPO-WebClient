@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import type { CompanyInfo, WorldInfo, ClusterInfo, ClusterFacilityPreview, LoginPageOutcome, WorldAdmission } from '@/shared/types';
 import { SurfaceType } from '@/shared/types/domain-types';
+import { DEFAULT_LANGUAGE_ID } from '@/shared/language';
 
 /* ---- Utilities ---- */
 
@@ -63,6 +64,8 @@ export interface GameSettings {
   soundVolume: number;
   isDebugOverlay: boolean;
   minimapSize: MinimapSize;
+  /** The language sent to the world on login — one of the six ids in `shared/language.ts`. */
+  languageId: string;
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
@@ -72,6 +75,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   soundVolume: 0.5,
   isDebugOverlay: false,
   minimapSize: 'medium',
+  languageId: DEFAULT_LANGUAGE_ID,
 };
 
 /* ---- Store ---- */

@@ -42,6 +42,7 @@ import type {
 import { toErrorMessage } from '../../shared/error-utils';
 import { toProxyUrl } from '../../shared/proxy-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
+import { withLangId } from '../../shared/language';
 import { redactUrlCredentials } from '../url-redact';
 import { requireDaParams } from './asp-da-params';
 
@@ -301,7 +302,7 @@ async function readColumnTree(
 ): Promise<NewspaperTreeEntry[]> {
   const url = `http://${worldIp}/Five/0/Visual/News/boardlist.asp?${encodeParams(boardParams(ctx, target, root, root))}`;
   ctx.log.debug(`[Newspaper] Reading the column list ${redactUrlCredentials(url)}`);
-  const resp = await fetchWithTimeout(url, { redirect: 'follow' });
+  const resp = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
   if (!resp.ok) {
     ctx.log.warn(`[Newspaper] column list answered HTTP ${resp.status} — ${redactUrlCredentials(url)}`);
     throw new Error(`The newspaper answered HTTP ${resp.status}.`);
@@ -333,7 +334,7 @@ export async function getNewspaperBoard(
     const url = `http://${worldIp}/Five/0/Visual/News/boardmsg.asp?${encodeParams(params)}`;
     ctx.log.debug(`[Newspaper] Reading ${redactUrlCredentials(url)}`);
 
-    const resp = await fetchWithTimeout(url, { redirect: 'follow' });
+    const resp = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     if (!resp.ok) {
       ctx.log.warn(`[Newspaper] board answered HTTP ${resp.status} — ${redactUrlCredentials(url)}`);
       return emptyBoard(target, `The newspaper answered HTTP ${resp.status}.`);
@@ -409,7 +410,7 @@ export async function postNewspaperColumn(
     });
 
     ctx.log.debug(`[Newspaper] Posting "${subject}" to ${target.paperName}`);
-    const resp = await fetchWithTimeout(url, {
+    const resp = await fetchWithTimeout(withLangId(url, ctx.languageId), {
       method: 'POST',
       redirect: 'follow',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -616,7 +617,7 @@ export async function getNewspaperIssues(
     const url = `http://${worldIp}/Five/0/Visual/News/showbar.asp?${encodeParams(params)}`;
     ctx.log.debug(`[Newspaper] Reading the issue bar ${redactUrlCredentials(url)}`);
 
-    const resp = await fetchWithTimeout(url, { redirect: 'follow' });
+    const resp = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     if (!resp.ok) {
       ctx.log.warn(`[Newspaper] issue bar answered HTTP ${resp.status} — ${redactUrlCredentials(url)}`);
       return emptyIssueList(target, `The newspaper answered HTTP ${resp.status}.`);
@@ -658,7 +659,7 @@ export async function getNewspaperIssue(
     const url = `http://${worldIp}/Five/0/Visual/News/${path}?Tycoon=${tycoon}`;
     ctx.log.debug(`[Newspaper] Reading issue ${redactUrlCredentials(url)}`);
 
-    const resp = await fetchWithTimeout(url, { redirect: 'follow' });
+    const resp = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     if (!resp.ok) {
       ctx.log.warn(`[Newspaper] issue answered HTTP ${resp.status} — ${redactUrlCredentials(url)}`);
       return emptyIssue(target, folder, `The newspaper answered HTTP ${resp.status}.`);

@@ -41,7 +41,7 @@ const VARS = { username: 'SPO_test3', password: 'test3' } as const;
 describe('L1: world-login scenario driven through loginWorld()', () => {
   let harness: ProtocolTestHarness;
 
-  function buildHarness(canJoin?: number): void {
+  function buildHarness(canJoin?: number, languageId?: string): void {
     harness = createProtocolTestHarness({
       socketConfigs: [
         // Socket 0: directory_auth
@@ -50,7 +50,7 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
         { rdoScenarios: [createWorldListScenario(VARS).rdo] },
         // Socket 2: world socket
         {
-          rdoScenarios: [createWorldLoginScenario(VARS, canJoin === undefined ? undefined : { canJoin }).rdo],
+          rdoScenarios: [createWorldLoginScenario(VARS, { canJoin, languageId }).rdo],
           fallbackResponses: buildWorldPropertyFallbacks({
             worldName: 'Shamba',
             worldIp: '142.44.158.91',
@@ -67,7 +67,7 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
           worldName: 'Shamba',
           worldIp: '142.44.158.91',
           worldPort: 8000,
-        }).http,
+        }, languageId === undefined ? undefined : { languageId }).http,
       ],
     });
   }
@@ -125,6 +125,29 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
     expect(result.admission).toBeUndefined();
     expect(result.companies.length).toBeGreaterThan(0);
     assertCanJoinFrame();
+    harness.assertNoViolations();
+  });
+
+  // The language criterion, end to end over the wire: a session opened with a non-default
+  // language must put it on BOTH carriers — the SetLanguage frame and the ASP query. The
+  // `logonComplete.asp` exchange is gated on `LangId=2`, so a gateway that drops the id
+  // gets a 404 and no companies come back.
+  it('a session opened with language 2 emits SetLanguage %2 and asks logonComplete.asp with LangId=2', async () => {
+    buildHarness(undefined, '2');
+    harness.session.setLanguageId('2');
+
+    const result = await runLogin();
+
+    const setLang = harness.getSockets()[2].getCapturedWrites().find(w => w.includes('SetLanguage'));
+    expect(setLang).toContain(`sel ${CONTEXT_ID} call SetLanguage "*" "%2"`);
+
+    const fetchMock = jest.requireMock('node-fetch') as { default: { mock: { calls: unknown[][] } } };
+    const asked = fetchMock.default.mock.calls.map(c => String(c[0]));
+    const logonComplete = asked.find(u => u.includes('logonComplete.asp'));
+    expect(logonComplete).toContain('LangId=2');
+
+    // The gated exchange matched — the company page came back, not the 404.
+    expect(result.companies.length).toBeGreaterThan(0);
     harness.assertNoViolations();
   });
 });

@@ -111,6 +111,9 @@ describe('handleLoginWorld', () => {
     ctx: WsHandlerContext;
     sent: Array<Record<string, unknown>>;
     cleanupWorldSession: jest.Mock;
+    setLanguageId: jest.Mock;
+    /** Every session call in order, so "before loginWorld" is checkable. */
+    order: string[];
   }
 
   function createWorldCtx(loginWorld: jest.Mock): WorldRecorded {
@@ -121,14 +124,21 @@ describe('handleLoginWorld', () => {
       },
     } as unknown as WebSocket;
     const cleanupWorldSession = jest.fn(async () => undefined);
+    const order: string[] = [];
+    const setLanguageId = jest.fn(() => { order.push('setLanguageId'); });
+    const recordedLogin = jest.fn((...args: unknown[]) => {
+      order.push('loginWorld');
+      return (loginWorld as (...a: unknown[]) => unknown)(...args);
+    });
     const session = {
       isWorldConnected: () => false,
       getWorldInfo: () => ({ name: 'planitia', ip: '1.2.3.4', port: 8000 }),
       cleanupWorldSession,
-      loginWorld,
+      setLanguageId,
+      loginWorld: recordedLogin,
     };
     const ctx = { ws, session } as unknown as WsHandlerContext;
-    return { ctx, sent, cleanupWorldSession };
+    return { ctx, sent, cleanupWorldSession, setLanguageId, order };
   }
 
   const loginRequest = (): WsMessage => ({
@@ -161,5 +171,23 @@ describe('handleLoginWorld', () => {
 
     await expect(handleLoginWorld(ctx, loginRequest())).rejects.toThrow('socket died');
     expect(sent).toHaveLength(0);
+  });
+
+  it('puts the language the browser picked on the session before the login runs', async () => {
+    const { ctx, setLanguageId, order } = createWorldCtx(jest.fn(async () => ({ companies: [] })));
+
+    await handleLoginWorld(ctx, { ...loginRequest(), languageId: '2' } as unknown as WsMessage);
+
+    expect(setLanguageId).toHaveBeenCalledWith('2');
+    // The language must reach the session before SetLanguage is emitted inside loginWorld.
+    expect(order).toEqual(['setLanguageId', 'loginWorld']);
+  });
+
+  it('a login without the field still sets it, so a stale id cannot survive a re-login', async () => {
+    const { ctx, setLanguageId } = createWorldCtx(jest.fn(async () => ({ companies: [] })));
+
+    await handleLoginWorld(ctx, loginRequest());
+
+    expect(setLanguageId).toHaveBeenCalledWith(undefined);
   });
 });

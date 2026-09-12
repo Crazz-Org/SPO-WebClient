@@ -358,6 +358,8 @@ export interface WsReqLoginWorld extends WsMessage {
   username: string;
   password: string;
   worldName: string;
+  /** The language the player picked. Absent means the default (`'0'`, English). */
+  languageId?: string;
 }
 
 export interface WsReqMapLoad extends WsMessage {

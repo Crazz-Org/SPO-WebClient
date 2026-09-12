@@ -40,6 +40,7 @@ import { makeSessionCtx } from '../__tests__/session/fake-session-context';
 import type { FakeSessionCtx } from '../__tests__/session/fake-session-context';
 import type { SessionContext } from './session-context';
 import type { WorldInfo } from '../../shared/types';
+import { DEFAULT_LANGUAGE_ID, withLangId } from '../../shared/language';
 
 const mockFetch = fetch as unknown as jest.MockedFunction<
   (url: string, init?: unknown) => Promise<Response>
@@ -1148,10 +1149,10 @@ describe('getNewspaperIssue', () => {
     const issue = await getNewspaperIssue(fake.ctx, TARGET, NEWEST);
 
     // The path `ShowPaper.asp:30-31` redirects to, relative to `Visual/News/`.
-    expect(mockFetch.mock.calls[0][0]).toBe(
+    expect(mockFetch.mock.calls[0][0]).toBe(withLangId(
       'http://158.69.153.134/Five/0/Visual/News/Newspapers/Planitia/Helartia%20Herald'
-      + '/002147483640%403-1-2027/home.asp?Tycoon=SPO_test3',
-    );
+      + '/002147483640%403-1-2027/home.asp?Tycoon=SPO_test3', DEFAULT_LANGUAGE_ID,
+    ));
     expect(issue).toEqual({
       paperName: 'Helartia Herald',
       folder: NEWEST,
@@ -1164,13 +1165,14 @@ describe('getNewspaperIssue', () => {
   });
 
   // `home.asp` takes only `Tycoon` (`ShowPaper.asp:30`) — no DA channel, no
-  // paper name: the folder path already identifies the issue.
-  it('sends the reader and nothing else', async () => {
+  // paper name: the folder path already identifies the issue. `LangId` rides on
+  // every page Voyager fetched (`HTMLHandler.pas:141-143`), this one included.
+  it('sends the reader and the language, and nothing else', async () => {
     const fake = makeWebCtx();
     mockFetch.mockResolvedValue(htmlResponse(issuePage()));
     await getNewspaperIssue(fake.ctx, TARGET, NEWEST);
     const q = queryOf(0);
-    expect([...q.keys()]).toEqual(['Tycoon']);
+    expect([...q.keys()]).toEqual(['Tycoon', 'LangId']);
   });
 
   it('does not fetch for an empty folder — there is no issue to open', async () => {
