@@ -108,6 +108,15 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
     if (resp.worldYSize !== undefined) ctx.worldYSize = resp.worldYSize;
     if (resp.worldSeason !== undefined) ctx.worldSeason = resp.worldSeason;
 
+    if (resp.loginPage) {
+      ClientBridge.log('Login', resp.loginPage.kind === 'denied'
+        ? `Login denied: access expired on ${resp.loginPage.expiresOn}`
+        : `Login page reported error: ${resp.loginPage.errorCode}`);
+      ctx.availableCompanies = [];
+      ClientBridge.showLoginPage(resp.loginPage);
+      return;
+    }
+
     ctx.availableCompanies = resp.companies ?? [];
     if (ctx.availableCompanies.length > 0) {
       ClientBridge.log('Login', `Found ${ctx.availableCompanies.length} compan${ctx.availableCompanies.length > 1 ? 'ies' : 'y'}`);

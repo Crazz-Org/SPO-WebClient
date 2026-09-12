@@ -37,6 +37,7 @@ export function LoginScreen() {
   const companies = useGameStore((s) => s.companies);
   const isLoading = useGameStore((s) => s.loginLoading);
   const authError = useGameStore((s) => s.authError);
+  const loginPage = useGameStore((s) => s.loginPage);
   const setLoginStage = useGameStore((s) => s.setLoginStage);
   const setLoginLoading = useGameStore((s) => s.setLoginLoading);
   const setAuthError = useGameStore((s) => s.setAuthError);
@@ -152,6 +153,7 @@ export function LoginScreen() {
         <CompanyStage
           companies={companies}
           worldName={selectedWorld}
+          loginPage={loginPage}
           onSelect={handleCompanySelect}
           onCreate={handleCreateCompany}
           onBack={handleBackToWorlds}

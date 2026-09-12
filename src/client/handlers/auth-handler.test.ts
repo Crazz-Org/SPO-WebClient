@@ -7,6 +7,7 @@ jest.mock('../bridge/client-bridge', () => ({
   ClientBridge: {
     log: jest.fn(),
     showCompanies: jest.fn(),
+    showLoginPage: jest.fn(),
     showError: jest.fn(),
     setLoginLoading: jest.fn(),
     setConnected: jest.fn(),
@@ -125,6 +126,39 @@ describe('auth-handler', () => {
       expect(ctx.worldXSize).toBe(500);
       expect(ctx.worldYSize).toBe(600);
       expect(ctx.worldSeason).toBe(2);
+    });
+
+    it('shows the denial page and never shows companies when loginPage is a denial', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '42',
+          companies: [],
+          loginPage: { kind: 'denied', expiresOn: '01/01/2020' },
+        }),
+      });
+
+      await login(ctx, 'Shamba');
+
+      expect(ClientBridge.showLoginPage).toHaveBeenCalledWith({ kind: 'denied', expiresOn: '01/01/2020' });
+      expect(ClientBridge.showCompanies).not.toHaveBeenCalled();
+      expect(ctx.availableCompanies).toEqual([]);
+    });
+
+    it('shows companies as before when loginPage is absent', async () => {
+      const companies = [{ id: '1', name: 'TestCorp', ownerRole: 'testUser' }];
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '42',
+          companies,
+        }),
+      });
+
+      await login(ctx, 'Shamba');
+
+      expect(ClientBridge.showCompanies).toHaveBeenCalledWith(companies);
+      expect(ClientBridge.showLoginPage).not.toHaveBeenCalled();
     });
 
     it('shows error notification on request failure', async () => {

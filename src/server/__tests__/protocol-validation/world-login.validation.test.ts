@@ -585,3 +585,74 @@ describe('Protocol Validation: loginWorld()', () => {
     });
   });
 });
+
+describe('Protocol Validation: loginWorld() — logonComplete.asp exits', () => {
+  let harness: ProtocolTestHarness;
+
+  const authBundle = createAuthScenario({ username: 'SPO_test3', password: 'test3' });
+  const worldListBundle = createWorldListScenario({ username: 'SPO_test3', password: 'test3' });
+  const worldLoginRdo = createWorldLoginRdoScenario();
+
+  function buildHarness(options: { logonResult: 'noAccess' | 'error'; expiresOn?: string; errorCode?: string }): ProtocolTestHarness {
+    const companyBundle = createCompanyListScenario({
+      username: 'SPO_test3',
+      password: 'test3',
+      worldName: 'Shamba',
+      worldIp: '142.44.158.91',
+      worldPort: 8000,
+    }, options);
+
+    return createProtocolTestHarness({
+      socketConfigs: [
+        { rdoScenarios: [authBundle.rdo] },
+        { rdoScenarios: [worldListBundle.rdo] },
+        {
+          rdoScenarios: [worldLoginRdo],
+          fallbackResponses: buildWorldPropertyFallbacks({
+            worldName: 'Shamba',
+            worldIp: '142.44.158.91',
+            worldPort: '8000',
+            mailAddr: '142.44.158.91',
+            mailPort: '1234',
+          }),
+          pushTriggers: buildLoginPushTriggers(CONTEXT_ID),
+        },
+      ],
+      httpScenarios: [companyBundle.http],
+    });
+  }
+
+  afterEach(() => {
+    harness.assertNoViolations();
+    harness.cleanup();
+  });
+
+  it('reports a denial when logonComplete.asp redirects to logonNoAccess.asp', async () => {
+    harness = buildHarness({ logonResult: 'noAccess', expiresOn: '01/01/2020' });
+
+    const worlds = await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
+    const shamba = worlds.find(w => w.name === 'shamba');
+    expect(shamba).toBeDefined();
+    const result = await harness.session.loginWorld('SPO_test3', 'test3', shamba!);
+
+    expect(result.loginPage).toEqual({ kind: 'denied', expiresOn: '01/01/2020' });
+    expect(result.companies).toEqual([]);
+    expect(harness.session.getAvailableCompanies()).toEqual([]);
+    // The noAccess scenario does not register a chooseCompany.asp exchange at all —
+    // if the gateway had fetched it, the HttpMock would fail to match and the fetch
+    // would reject, turning this result into 'unreachable' instead of 'denied'.
+  });
+
+  it('reports an error when logonComplete.asp redirects to logonError.asp', async () => {
+    harness = buildHarness({ logonResult: 'error', errorCode: 'ERROR_CANNOTCREATECLIENTVIEW' });
+
+    const worlds = await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
+    const shamba = worlds.find(w => w.name === 'shamba');
+    expect(shamba).toBeDefined();
+    const result = await harness.session.loginWorld('SPO_test3', 'test3', shamba!);
+
+    expect(result.loginPage).toEqual({ kind: 'error', errorCode: 'ERROR_CANNOTCREATECLIENTVIEW' });
+    expect(result.companies).toEqual([]);
+    expect(harness.session.getAvailableCompanies()).toEqual([]);
+  });
+});

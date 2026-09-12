@@ -48,6 +48,29 @@ describe('ClientBridge login flow (replaces window.__spoLoginHandlers)', () => {
     expect(state.loginLoading).toBe(false);
   });
 
+  it('showLoginPage should write loginPage, empty companies, and move to companies stage', () => {
+    ClientBridge.showCompanies([{ id: '1', name: 'TestCorp', cluster: 'General' }] as never[]);
+
+    ClientBridge.showLoginPage({ kind: 'denied', expiresOn: '01/01/2020' });
+
+    const state = useGameStore.getState();
+    expect(state.loginPage).toEqual({ kind: 'denied', expiresOn: '01/01/2020' });
+    expect(state.companies).toEqual([]);
+    expect(state.loginStage).toBe('companies');
+    expect(state.loginLoading).toBe(false);
+  });
+
+  it('showCompanies afterwards clears loginPage', () => {
+    ClientBridge.showLoginPage({ kind: 'error', errorCode: 'ERROR_FIVEISDOWN' });
+
+    const companies = [{ id: '1', name: 'TestCorp', cluster: 'General' }];
+    ClientBridge.showCompanies(companies as never[]);
+
+    const state = useGameStore.getState();
+    expect(state.loginPage).toBeNull();
+    expect(state.companies).toEqual(companies);
+  });
+
   it('setLoginLoading should update game-store loading', () => {
     ClientBridge.setLoginLoading(true);
     expect(useGameStore.getState().loginLoading).toBe(true);
