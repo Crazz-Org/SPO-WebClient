@@ -114,7 +114,10 @@ export function UpgradeActions({
             )
           )}
 
-          {currentLevel > 0 && (
+          {/* A level-1 facility has no level to give back (Voyager's fbDowngrade needs
+              upgradeLevel > 1), and while an upgrade is running the only offered action
+              is STOP, so the button is not rendered at all. */}
+          {currentLevel > 1 && !isUpgrading && (
             <button
               className={styles.downgradeBtn}
               onClick={() => client.onUpgradeBuilding(buildingX, buildingY, 'DOWNGRADE')}
