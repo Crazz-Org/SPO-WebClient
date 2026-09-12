@@ -87,7 +87,9 @@ async function defineZoneArea(ctx: ClientHandlerContext, x1: number, y1: number,
 
     if (response.success) {
       const tileCount = (Math.abs(x2 - x1) + 1) * (Math.abs(y2 - y1) + 1);
-      ctx.showNotification(`Zone defined: ${tileCount} tiles`, 'success');
+      // States what was requested, not what was applied: the server skips
+      // refused tiles inside the rectangle silently (Kernel/World.pas:4544-4546).
+      ctx.showNotification(`Zone requested: ${tileCount} tiles`, 'success');
       ctx.toggleZoneOverlay(true, SurfaceType.ZONES);
     } else {
       ctx.showNotification(response.message || 'Failed to define zone', 'error');

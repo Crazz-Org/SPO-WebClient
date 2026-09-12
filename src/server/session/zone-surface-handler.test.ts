@@ -7,6 +7,9 @@
  * type prefix, and — the bulk of the file — the RLE decoder behind
  * `getSurfaceData`, which is only reachable through the public function.
  *
+ * `defineZone` also reads the `res="#N"` result code: `success` is `true`
+ * only on `NOERROR` (0); any other code is a refusal.
+ *
  * RLE format (parseRLEResponse / decodeRLERow): `%width:height:row,:row,:…`,
  * a row being `value=count,value=count`; Delphi CompressMap scales by 1000
  * before encoding, the decoder divides it back.
@@ -48,7 +51,7 @@ describe('defineZone', () => {
         RdoValue.int(40).format(),
       ],
     });
-    expect(result).toEqual({ success: true, message: 'res="#0"' });
+    expect(result).toEqual({ success: true });
   });
 
   it('normalises inverted corners so (x1,y1) is always the min and (x2,y2) the max', async () => {
@@ -67,11 +70,36 @@ describe('defineZone', () => {
     ]);
   });
 
-  it('reports an empty message when the server payload is empty', async () => {
+  it('returns success: false when the payload carries no result code', async () => {
     const fake = makeSessionCtx();
     // default responder: empty payload
     const result = await defineZone(fake.ctx, 1, 0, 0, 1, 1);
-    expect(result).toEqual({ success: true, message: '' });
+    expect(result.success).toBe(false);
+  });
+
+  it('returns success: false and names the code when the server answers ERROR_Unknown (res="#1")', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#1"');
+    const result = await defineZone(fake.ctx, 1, 0, 0, 1, 1);
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/error 1/);
+    expect(result.message).toMatch(/Unknown error/);
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('code 1'));
+  });
+
+  it('returns success: true on NOERROR (res="#0")', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+    const result = await defineZone(fake.ctx, 1, 0, 0, 1, 1);
+    expect(result).toEqual({ success: true });
+  });
+
+  it('returns success: false on any other non-zero code (res="#15")', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#15"');
+    const result = await defineZone(fake.ctx, 1, 0, 0, 1, 1);
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/Access denied/);
   });
 
   it('refuses without a world context and emits nothing', async () => {

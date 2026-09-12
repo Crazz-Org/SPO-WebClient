@@ -10,6 +10,8 @@ import type { SurfaceData, SurfaceType } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
 import { TimeoutCategory } from '../../shared/timeout-categories';
+import { parseResultCode } from '../rdo-helpers';
+import { NOERROR, getErrorMessage } from '../../shared/error-codes';
 
 // =========================================================================
 // PUBLIC — defineZone
@@ -48,10 +50,23 @@ export async function defineZone(
     RdoValue.int(ny2),
   ).packet, undefined, TimeoutCategory.SLOW);
 
-  const result = packet.payload || '';
-  ctx.log.debug(`[Zone] DefineZone response: ${result}`);
+  // RDODefineZone answers res="#<TErrorCode>": NOERROR (0) once the rectangle
+  // was walked (Kernel/World.pas:4568), ERROR_Unknown (1) when the tycoon is
+  // not found or an exception fires (:4581, :4583). A per-tile guard failure
+  // inside the walk is skipped silently (:4544-4546), so NOERROR only means
+  // "processed", never "every tile was zoned".
+  const resultCode = parseResultCode(packet.payload);
 
-  return { success: true, message: result };
+  if (resultCode !== NOERROR) {
+    ctx.log.warn(`[Zone] DefineZone refused by server, code ${resultCode}`);
+    return {
+      success: false,
+      message: `Zone definition refused by the server: ${getErrorMessage(resultCode)} (error ${resultCode})`,
+    };
+  }
+
+  ctx.log.debug('[Zone] DefineZone accepted by server');
+  return { success: true };
 }
 
 // =========================================================================
