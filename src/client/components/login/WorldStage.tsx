@@ -59,6 +59,12 @@ export function WorldStage({ worlds, onSelect, onBack, isLoading }: WorldStagePr
                   <span className={styles.statLabel}>Tycoons</span>
                 </div>
               )}
+              {world.date && (
+                <div className={styles.statItem}>
+                  <span className={styles.statValue}>{world.date}</span>
+                  <span className={styles.statLabel}>Year</span>
+                </div>
+              )}
             </div>
           </GlassCard>
         ))}
