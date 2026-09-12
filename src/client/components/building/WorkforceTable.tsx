@@ -26,7 +26,7 @@ import {
 } from '@/shared/building-details';
 import { useBuildingStore } from '../../store/building-store';
 import { useClient } from '../../context';
-import { resolveRdoCommand, buildSalaryParams, pendingKeyFor } from './property-utils';
+import { resolveRdoCommand, buildSalaryParams, pendingKeyFor, workerPollKinds } from './property-utils';
 import { SaveIndicator } from './SaveIndicator';
 import styles from './PropertyGroup.module.css';
 
@@ -47,6 +47,16 @@ function formatWage(cost: number, salaryPct: number): string {
  * user with no way back.
  */
 const SETTLE_TIMEOUT_MS = 2000;
+
+/**
+ * How often the jobs-filled figure is re-read off the block.
+ *
+ * The reference client polled it on its own timer, `tRefresh`
+ * (`Voyager/WorkforceSheet.pas:69`), whose `Interval` is 20 000 ms in the binary
+ * `Voyager/WorkforceSheet.dfm`. It is not the panel's 30 s refresh: this asks
+ * for three numbers, not for the whole tab.
+ */
+const WORKER_POLL_INTERVAL_MS = 20_000;
 
 // =============================================================================
 // COMMIT / LOCK CYCLE
@@ -127,6 +137,87 @@ function useSalaryCommit(
 }
 
 // =============================================================================
+// LIVE WORKER COUNTS
+// =============================================================================
+
+/**
+ * The jobs-filled figure of each staffed class, re-read every 20 s.
+ *
+ * `Workers{n}` is a cached property: it only moves when the whole panel is
+ * re-read. Voyager did not wait for that — it asked the block directly, one
+ * `RDOGetWorkers` per class whose maximum is above zero, on `tRefresh`.
+ *
+ * The answer lands in component state and overrides one prop of an
+ * already-mounted card, so the number changes in place: nothing is written to
+ * the store or to `details`, and no card remounts.
+ *
+ * @param kinds the staffed classes, already filtered — an empty list polls nothing
+ */
+function useWorkerCountPoll(
+  properties: BuildingPropertyValue[],
+  buildingX: number,
+  buildingY: number,
+  kinds: number[],
+): Partial<Record<number, number>> {
+  const client = useClient();
+  const [live, setLive] = useState<Partial<Record<number, number>>>({});
+
+  // A fresh properties array (the panel's 30 s refresh, or a salary read-back)
+  // is the newer authority — drop what the poll held.
+  useEffect(() => {
+    setLive({});
+  }, [properties]);
+
+  const kindsKey = kinds.join(',');
+
+  useEffect(() => {
+    if (kindsKey === '') return;
+    const pollKinds = kindsKey.split(',').map(Number);
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    const tick = () => {
+      client.onReadWorkerCounts(buildingX, buildingY, pollKinds)
+        .then((counts) => {
+          if (cancelled || !counts) return;
+          setLive((prev) => {
+            const next = { ...prev };
+            for (const c of counts) next[c.kind] = c.workers;
+            return next;
+          });
+        })
+        .catch(() => { /* the handler already logged it; a stale figure is not an error */ });
+    };
+
+    const startTimer = () => {
+      clearInterval(timer);
+      timer = setInterval(tick, WORKER_POLL_INTERVAL_MS);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        clearInterval(timer);
+      } else {
+        startTimer();
+      }
+    };
+
+    // No immediate tick: the figures on screen were just read. The first live
+    // read lands at 20 s, like the reference client.
+    startTimer();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [client, buildingX, buildingY, kindsKey]);
+
+  return live;
+}
+
+// =============================================================================
 // WORKFORCE CARDS
 // =============================================================================
 
@@ -161,7 +252,12 @@ export function WorkforceTable({
     properties, rdoCommands, buildingX, buildingY, onPropertyChange,
   );
 
+  // Declared before the early return below: the poll hook must be called on
+  // every render, staffed classes or none.
   const active = [0, 1, 2].filter(isActive);
+  const pollKinds = workerPollKinds(properties).filter((i) => active.includes(i));
+  const live = useWorkerCountPoll(properties, buildingX, buildingY, pollKinds);
+
   if (active.length === 0) {
     return <div className={styles.empty}>No workforce</div>;
   }
@@ -172,7 +268,7 @@ export function WorkforceTable({
         <WorkforceClassCard
           key={i}
           className={CLASS_NAMES[i]}
-          workers={getNum(`Workers${i}`)}
+          workers={live[i] ?? getNum(`Workers${i}`)}
           workersMax={getNum(`WorkersMax${i}`)}
           quality={getNum(`WorkersK${i}`)}
           cost={getNum(`WorkForcePrice${i}`)}

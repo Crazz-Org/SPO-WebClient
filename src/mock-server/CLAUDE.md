@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -193,6 +193,15 @@ pairs (`Kernel/Kernel0.pas:4157-4180`, `ParseGateList`), so the trailing comma i
 any even token count is legal. Both members bind to `ObjectId`, not `CurrBlock`, and both are
 `procedure`s — the responses are **empty**, so the frame is the only evidence there is. Its test
 drives the real `setBuildingProperty` and asserts a single emitted frame carrying the list once.
+
+`worker-counts` is the Workforce tab's live jobs-filled read — one `RDOGetWorkers` per class
+whose cached maximum is above zero, the way the reference client polled it
+(`Voyager/WorkforceSheet.pas:365-377`). It fixes three things nothing else can: the separator
+(`RDOGetWorkers` is a 1-argument published FUNCTION, `Kernel/WorkCenterBlock.pas:139`, so the
+frame carries `"^"` and a reply comes back — a `"*"` would be an arbitrary memory write with no
+error to show for it), the **bind target** (the building's block, never the cacher temp object
+the inspector holds), and the call count (one exchange per kind, so a gateway that asked for a
+class with no jobs would leave one unconsumed). Its test drives the real `readWorkerCounts`.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under

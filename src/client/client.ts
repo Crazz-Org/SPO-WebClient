@@ -335,6 +335,7 @@ export class StarpeaceClient implements ClientHandlerContext {
           ClientBridge.log('Error', `Failed to refresh properties: ${toErrorMessage(err)}`);
         });
       },
+      onReadWorkerCounts: (x, y, kinds) => buildingActionHandler.requestWorkerCounts(this, x, y, kinds),
       onRequestTabData: (x, y, tabId, visualClass, groupIds) => buildingActionHandler.requestTabData(this, x, y, tabId, visualClass, groupIds),
       onRequestGateConnections: (x, y, tabId, path, name, visualClass) => buildingActionHandler.requestGateConnections(this, x, y, tabId, path, name, visualClass),
       onRequestServiceFigures: (x, y, serviceIndex) => buildingActionHandler.requestServiceFigures(this, x, y, serviceIndex),

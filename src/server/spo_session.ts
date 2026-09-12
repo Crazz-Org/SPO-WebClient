@@ -23,6 +23,7 @@ import {
   SurfaceData,
   SurfaceType,
   BuildingDetailsResponse,
+  WorkerCount,
   MailMessageHeader,
   MailMessageFull,
   TycoonProfileFull,
@@ -3039,6 +3040,10 @@ private handlePush(socketName: string, packet: RdoPacket) {
 
   public async refreshBuildingProperties(x: number, y: number, visualClass: string, activeTabId?: string): Promise<BuildingDetailsResponse> {
     return buildingDetailsHandler.refreshBuildingProperties(this, x, y, visualClass, activeTabId);
+  }
+
+  public async readWorkerCounts(x: number, y: number, kinds: number[]): Promise<WorkerCount[]> {
+    return buildingDetailsHandler.readWorkerCounts(this, x, y, kinds);
   }
 
   public releaseInspector(): void {

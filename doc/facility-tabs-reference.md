@@ -657,10 +657,10 @@ threadEnd:   if update != fLastUpdate → discard results (tab already changed)
 **RDO write methods**:
 | Method | Params | Purpose |
 |--------|--------|---------|
-| `RDOGetWorkers` | (levelIndex) | Fetch current worker count (timer-based) |
+| `RDOGetWorkers` | (levelIndex) | Fetch current worker count (timer-based) — a read, not a write; declared `Kernel/WorkCenterBlock.pas:139` |
 | `RDOSetSalaries` | (sal0, sal1, sal2) | Update all salaries at once |
 
-**UI**: Three panels (high/mid/low skill), each showing worker count, fill %, salary slider. Timer refreshes worker counts every few seconds.
+**UI**: Three panels (high/mid/low skill), each showing worker count, fill %, salary slider. Timer refreshes worker counts every 20 s (`tRefresh`, `WorkforceSheet.dfm`).
 
 ### facManagement (Management)
 

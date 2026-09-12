@@ -151,6 +151,8 @@ export enum WsMessageType {
   RESP_BUILDING_SET_PROPERTY = 'RESP_BUILDING_SET_PROPERTY',
   REQ_BUILDING_SERVICE_FIGURES = 'REQ_BUILDING_SERVICE_FIGURES',
   RESP_BUILDING_SERVICE_FIGURES = 'RESP_BUILDING_SERVICE_FIGURES',
+  REQ_BUILDING_WORKER_COUNTS = 'REQ_BUILDING_WORKER_COUNTS',
+  RESP_BUILDING_WORKER_COUNTS = 'RESP_BUILDING_WORKER_COUNTS',
 
 
   // Building Upgrades
@@ -865,6 +867,32 @@ export interface WsReqBuildingRefreshProperties extends WsMessage {
 export interface WsRespBuildingRefreshProperties extends WsMessage {
   type: WsMessageType.RESP_BUILDING_REFRESH_PROPERTIES;
   details: BuildingDetailsResponse;
+}
+
+/** One class's live jobs-filled figure, as RDOGetWorkers answered it. */
+export interface WorkerCount {
+  kind: number;
+  workers: number;
+}
+
+/**
+ * Live jobs-filled figures for the staffed workforce classes of one building.
+ * The array shape (not a `Record<number, number>`) is deliberate: JSON turns
+ * numeric keys into strings and the type would lie.
+ */
+export interface WsReqBuildingWorkerCounts extends WsMessage {
+  type: WsMessageType.REQ_BUILDING_WORKER_COUNTS;
+  x: number;
+  y: number;
+  /** Class indices to read (0 executives, 1 professionals, 2 workers). A class with no jobs is simply not listed. */
+  kinds: number[];
+}
+
+export interface WsRespBuildingWorkerCounts extends WsMessage {
+  type: WsMessageType.RESP_BUILDING_WORKER_COUNTS;
+  x: number;
+  y: number;
+  counts: WorkerCount[];
 }
 
 export interface WsReqBuildingSetProperty extends WsMessage {

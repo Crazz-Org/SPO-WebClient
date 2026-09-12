@@ -124,6 +124,25 @@ export function buildSalaryParams(
 }
 
 /**
+ * Class indices whose cached `WorkersMax{i}` is above zero — the only ones
+ * Voyager polled (`Voyager/WorkforceSheet.pas:365-377` skips a class whose
+ * cached maximum is zero, and so costs no call for it).
+ *
+ * Lives here rather than in the `.tsx` so the node-side protocol test can
+ * import it without React or CSS modules.
+ */
+export function workerPollKinds(properties: BuildingPropertyValue[]): number[] {
+  const current = new Map<string, string>();
+  for (const p of properties) current.set(p.name, p.value);
+
+  const kinds: number[] = [];
+  for (let i = 0; i < 3; i++) {
+    if ((parseFloat(current.get(`WorkersMax${i}`) ?? '0') || 0) > 0) kinds.push(i);
+  }
+  return kinds;
+}
+
+/**
  * The pending-update key `setBuildingProperty` will register for this command,
  * mirroring building-action-handler.ts: "command" or "command:{...params}".
  */

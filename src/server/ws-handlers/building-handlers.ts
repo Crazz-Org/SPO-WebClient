@@ -23,6 +23,8 @@ import {
   type WsRespBuildingRefreshProperties,
   type WsReqBuildingSetProperty,
   type WsRespBuildingSetProperty,
+  type WsReqBuildingWorkerCounts,
+  type WsRespBuildingWorkerCounts,
   type WsReqCloneFacility,
   type WsRespCloneFacility,
   type WsReqBuildingUpgrade,
@@ -268,6 +270,28 @@ export async function handleBuildingRefreshProperties(ctx: WsHandlerContext, msg
       type: WsMessageType.RESP_BUILDING_REFRESH_PROPERTIES,
       wsRequestId: msg.wsRequestId,
       details,
+    };
+    sendResponse(ctx.ws, response);
+  });
+}
+
+/**
+ * Live jobs-filled figures for the workforce classes the client listed — the
+ * Workforce tab's 20 s poll. One `RDOGetWorkers` per listed class; a class the
+ * client did not list costs nothing here.
+ */
+export async function handleBuildingWorkerCounts(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
+  const req = msg as WsReqBuildingWorkerCounts;
+
+  await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_FacilityNotFound, async () => {
+    const counts = await ctx.session.readWorkerCounts(req.x, req.y, Array.isArray(req.kinds) ? req.kinds : []);
+
+    const response: WsRespBuildingWorkerCounts = {
+      type: WsMessageType.RESP_BUILDING_WORKER_COUNTS,
+      wsRequestId: msg.wsRequestId,
+      x: req.x,
+      y: req.y,
+      counts,
     };
     sendResponse(ctx.ws, response);
   });

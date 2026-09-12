@@ -288,7 +288,7 @@ Some handlers poll for live data using a `TTimer`:
 
 | Handler | Timer Method | RDO Call | Interval |
 |---------|-------------|----------|----------|
-| Workforce | `RenderWorkForce` | `RDOGetWorkers(tierIndex)` | ~5 seconds |
+| Workforce | `RenderWorkForce` | `RDOGetWorkers(tierIndex)` | 20 s (`WorkforceSheet.dfm`, `tRefresh.Interval` = 20000) |
 | SrvGeneral | `tRefresh` | `RDOGetDemand(finger)`, `RDOGetSupply(finger)` | ~5 seconds |
 
 Each timer call uses the same Fork/Join/version-guard pattern.
