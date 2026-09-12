@@ -675,6 +675,16 @@
   line-height: var(--leading-dense);
 }
 
+.dataRowNavigable {
+  cursor: pointer;
+}
+
+.dataRowNavigable:hover,
+.dataRowNavigable:focus-visible {
+  background: rgba(212, 168, 67, 0.12);
+  outline: none;
+}
+
 /* Supplies / Products panel */
 .supplyList {
   display: flex;
