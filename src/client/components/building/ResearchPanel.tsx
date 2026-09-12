@@ -104,6 +104,15 @@ export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
     return groupInventionsByParent(merged);
   }, [inventory]);
 
+  // The heading is the same label the clicked row shows; the server already
+  // defaulted `name` to the id when the .dat index has no entry.
+  const selectedName = useMemo(() => {
+    if (!selectedId || !inventory) return selectedId;
+    const item = [...inventory.available, ...inventory.developing, ...inventory.completed]
+      .find((i) => i.inventionId === selectedId);
+    return item?.name || selectedId;
+  }, [inventory, selectedId]);
+
   return (
     <div className={styles.panel}>
       {/* Category tabs */}
@@ -144,6 +153,7 @@ export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
       {selectedId && (
         <DetailPanel
           inventionId={selectedId}
+          name={selectedName ?? selectedId}
           details={details}
           isLoading={isLoadingDetails}
         />
@@ -319,10 +329,12 @@ function InventionRow({
 
 function DetailPanel({
   inventionId,
+  name,
   details,
   isLoading,
 }: {
   inventionId: string;
+  name: string;
   details: ResearchInventionDetails | null;
   isLoading: boolean;
 }) {
@@ -342,7 +354,7 @@ function DetailPanel({
 
   return (
     <div className={styles.detailPanel}>
-      <div className={styles.detailHeader}>{details.inventionId}</div>
+      <div className={styles.detailHeader}>{name}</div>
       {details.properties && (
         <div className={styles.detailProperties}>{details.properties}</div>
       )}
