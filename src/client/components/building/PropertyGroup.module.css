@@ -633,6 +633,11 @@
   color: var(--text-muted);
 }
 
+.pscSales {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+
 .pscPrice {
   font-size: var(--text-sm);
   font-weight: var(--font-semibold);

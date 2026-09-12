@@ -133,6 +133,8 @@ export const SRV_GENERAL_GROUP: PropertyGroup = {
         { rdoSuffix: 'srvPrices', label: 'Price', type: PropertyType.SLIDER, width: '15%', editable: true, min: 0, max: 500, step: 10 },
         { rdoSuffix: 'srvSupplies', label: 'Offer', type: PropertyType.NUMBER, width: '15%' },
         { rdoSuffix: 'srvDemands', label: 'Demand', type: PropertyType.NUMBER, width: '15%' },
+        // Services.asp:57 `mvcProperty=Sales mvcClass=Percent`; ServiceBlock.pas:1735 WriteInteger — no MLS suffix
+        { rdoSuffix: 'srvSales', label: 'Sales', type: PropertyType.PERCENTAGE, width: '15%' },
         { rdoSuffix: 'srvMarketPrices', label: 'Market', type: PropertyType.CURRENCY, width: '15%' },
         { rdoSuffix: 'srvAvgPrices', label: 'Avg Price', type: PropertyType.CURRENCY, width: '15%' },
       ],

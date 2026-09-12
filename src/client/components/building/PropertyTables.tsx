@@ -277,6 +277,7 @@ export function ServiceCardList({
         const marketPrice = parseFloat(getVal('srvMarketPrices', i)) || 0;
         const dollarPrice = marketPrice > 0 ? (price / 100) * marketPrice : 0;
         const isSelected = i === selected;
+        const salesRaw = getVal('srvSales', i);
 
         return (
           <ProductSaleCard
@@ -284,6 +285,7 @@ export function ServiceCardList({
             name={getVal('srvNames', i) || `Service ${i + 1}`}
             supply={isSelected && live ? live.supply : parseFloat(getVal('srvSupplies', i)) || 0}
             demand={isSelected && live ? live.demand : parseFloat(getVal('srvDemands', i)) || 0}
+            sales={salesRaw === '' ? undefined : parseFloat(salesRaw) || 0}
             selected={isSelected}
             onSelect={() => setSelectedIndex(i)}
             pricePc={price}
@@ -361,6 +363,7 @@ function ProductSaleCard({
   name,
   supply,
   demand,
+  sales,
   selected,
   onSelect,
   pricePc,
@@ -376,6 +379,7 @@ function ProductSaleCard({
   name: string;
   supply?: number;
   demand?: number;
+  sales?: number;
   /** Set only where the card is one of a selectable list (the service cards). */
   selected?: boolean;
   onSelect?: () => void;
@@ -426,6 +430,10 @@ function ProductSaleCard({
 
       {demand !== undefined && (
         <span className={styles.pscDemand}>Local Demand: {demand}%</span>
+      )}
+
+      {sales !== undefined && (
+        <span className={styles.pscSales}>Sales: {sales}%</span>
       )}
 
       <span className={styles.pscPrice}>
