@@ -21,6 +21,7 @@ import { createBuildingDetailsScenario } from './building-details-scenario';
 import { createCivicMutationsScenario } from './civic-mutations-scenario';
 import { createNewspaperScenario } from './newspaper-scenario';
 import { createConnectionSearchScenario } from './connection-search-scenario';
+import { createConnectionReachabilityScenario } from './connection-reachability-scenario';
 import { createTycoonProfileScenario } from './tycoon-profile-scenario';
 import { createAbandonRoleScenario } from './abandon-role-scenario';
 import { createPeopleSearchScenario } from './people-search-scenario';
@@ -45,6 +46,7 @@ export type ScenarioName =
   | 'civic-mutations'
   | 'newspaper'
   | 'connection-search'
+  | 'connection-reachability'
   | 'tycoon-profile'
   | 'abandon-role'
   | 'people-search'
@@ -69,6 +71,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'civic-mutations',
   'newspaper',
   'connection-search',
+  'connection-reachability',
   'tycoon-profile',
   'abandon-role',
   'people-search',
@@ -104,6 +107,7 @@ const SCENARIO_FACTORIES: Record<
   'civic-mutations': (o) => createCivicMutationsScenario(o),
   'newspaper': (o) => createNewspaperScenario(o),
   'connection-search': (o) => createConnectionSearchScenario(o),
+  'connection-reachability': (o) => createConnectionReachabilityScenario(o),
   'tycoon-profile': (o) => createTycoonProfileScenario(o),
   'abandon-role': (o) => createAbandonRoleScenario(o),
   'people-search': (o) => createPeopleSearchScenario(o),
@@ -170,7 +174,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 21 mock server scenarios',
+    description: 'Combined: all 22 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -179,7 +183,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 21 scenarios',
+    description: 'Combined: all RDO exchanges from 22 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };
