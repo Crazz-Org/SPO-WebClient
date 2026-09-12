@@ -370,6 +370,125 @@ describe('the SaveIndicator key of a write (B6)', () => {
   });
 });
 
+describe('movie actions (issue 573)', () => {
+  const drain = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useBuildingStore.getState().clearDetails();
+  });
+
+  function makeMovieCtx(setSucceeds: boolean) {
+    const details = makeDetails(10, 20);
+    const ctx = {
+      currentFocusedVisualClass: '1234',
+      inFlightSetProperty: new Map(),
+      inFlightBuildingDetails: new Map(),
+      showNotification: jest.fn(),
+      sendRequest: jest.fn().mockImplementation(async (req: { type: string }) => {
+        if (req.type === 'REQ_BUILDING_SET_PROPERTY') {
+          return { success: setSucceeds, newValue: '', confirmed: undefined };
+        }
+        return { details };
+      }),
+    } as unknown as ClientHandlerContext;
+    return { ctx, details };
+  }
+
+  it('launchMovie sends the rowData as additionalParams and reports success', async () => {
+    const { ctx, details } = makeMovieCtx(true);
+    const rowData = { filmName: 'Epic', budget: '2500000', months: '18', autoRel: '0', autoProd: '1' };
+
+    handleBuildingAction(ctx, 'launchMovie', details, rowData);
+    await drain();
+
+    expect(ctx.sendRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'REQ_BUILDING_SET_PROPERTY', additionalParams: rowData }),
+    );
+    expect(ctx.showNotification).toHaveBeenCalledWith('Launching movie: Epic', 'success');
+  });
+
+  it('launchMovie with no rowData sends nothing and shows an error', async () => {
+    const { ctx, details } = makeMovieCtx(true);
+
+    handleBuildingAction(ctx, 'launchMovie', details);
+    await drain();
+
+    expect(ctx.sendRequest).not.toHaveBeenCalled();
+    expect(ctx.showNotification).toHaveBeenCalledWith('Launch refused: invalid budget or months', 'error');
+  });
+
+  it('launchMovie with unparseable months sends nothing and shows an error', async () => {
+    const { ctx, details } = makeMovieCtx(true);
+    const rowData = { filmName: 'Epic', budget: '2500000', months: 'x', autoRel: '0', autoProd: '1' };
+
+    handleBuildingAction(ctx, 'launchMovie', details, rowData);
+    await drain();
+
+    expect(ctx.sendRequest).not.toHaveBeenCalled();
+    expect(ctx.showNotification).toHaveBeenCalledWith('Launch refused: invalid budget or months', 'error');
+  });
+
+  it('launchMovie shows "Failed to launch movie" when the SET fails', async () => {
+    const { ctx, details } = makeMovieCtx(false);
+    const rowData = { filmName: 'Epic', budget: '2500000', months: '18', autoRel: '0', autoProd: '1' };
+
+    handleBuildingAction(ctx, 'launchMovie', details, rowData);
+    await drain();
+
+    expect(ctx.showNotification).toHaveBeenCalledWith('Failed to launch movie', 'error');
+  });
+
+  it('cancelMovie shows the success toast and refreshes when the SET succeeds, after confirm', async () => {
+    const originalConfirm = (global as { confirm?: (msg?: string) => boolean }).confirm;
+    (global as { confirm?: (msg?: string) => boolean }).confirm = jest.fn(() => true);
+    try {
+      const { ctx, details } = makeMovieCtx(true);
+
+      handleBuildingAction(ctx, 'cancelMovie', details);
+      await drain();
+
+      expect(ctx.showNotification).toHaveBeenCalledWith('Movie production cancelled', 'success');
+    } finally {
+      (global as { confirm?: (msg?: string) => boolean }).confirm = originalConfirm;
+    }
+  });
+
+  it('releaseMovie shows "Movie released" only when the SET succeeds', async () => {
+    const { ctx, details } = makeMovieCtx(true);
+
+    handleBuildingAction(ctx, 'releaseMovie', details);
+    await drain();
+
+    expect(ctx.showNotification).toHaveBeenCalledWith('Movie released', 'success');
+  });
+
+  it('releaseMovie shows "Failed to release movie" and never "Movie released" when the SET fails', async () => {
+    const { ctx, details } = makeMovieCtx(false);
+
+    handleBuildingAction(ctx, 'releaseMovie', details);
+    await drain();
+
+    expect(ctx.showNotification).toHaveBeenCalledWith('Failed to release movie', 'error');
+    expect(ctx.showNotification).not.toHaveBeenCalledWith('Movie released', 'success');
+  });
+
+  it('cancelMovie shows the error toast when the SET fails, after confirm', async () => {
+    const originalConfirm = (global as { confirm?: (msg?: string) => boolean }).confirm;
+    (global as { confirm?: (msg?: string) => boolean }).confirm = jest.fn(() => true);
+    try {
+      const { ctx, details } = makeMovieCtx(false);
+
+      handleBuildingAction(ctx, 'cancelMovie', details);
+      await drain();
+
+      expect(ctx.showNotification).toHaveBeenCalledWith('Failed to cancel movie', 'error');
+    } finally {
+      (global as { confirm?: (msg?: string) => boolean }).confirm = originalConfirm;
+    }
+  });
+});
+
 describe('downgrade asks first (B5)', () => {
   beforeEach(() => {
     useUiStore.setState({ modal: null, modalBeneath: null, confirmPayload: null });

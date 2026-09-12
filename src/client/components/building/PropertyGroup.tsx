@@ -28,12 +28,12 @@ import { RevenueGraph } from './RevenueGraph';
 import { SuppliesPanel } from './SuppliesGroup';
 import { ProductsPanel } from './ProductsGroup';
 import { CompInputsPanel } from './InputsGroup';
-import { resolveRdoCommand, computePendingKey, getColorClass, buildSalaryParams } from './property-utils';
+import { resolveRdoCommand, computePendingKey, getColorClass, buildSalaryParams, isFilmActionOffered } from './property-utils';
 import { SliderInput, TextInput } from './PropertyInputs';
 import { RatioValue, BooleanValue, StopToggle } from './PropertyDisplays';
 import { DataTable, ServiceCardList, ProductSummaryCards } from './PropertyTables';
 import { WorkforceTable } from './WorkforceTable';
-import { UpgradeActions, RepairControl, TradeConnectButtons, ActionButton, CloneSettings, WarehouseWares } from './PropertyActions';
+import { UpgradeActions, RepairControl, TradeConnectButtons, ActionButton, CloneSettings, WarehouseWares, FilmLaunchForm } from './PropertyActions';
 import { TradeModeControl, TradeLevelControl } from './TradeControls';
 import styles from './PropertyGroup.module.css';
 
@@ -384,6 +384,28 @@ function DefinedProperties({
 
     // Action button
     if (def.type === PropertyType.ACTION_BUTTON) {
+      // Film actions (Launch/Cancel/Release Movie) — offered per FilmsSheet.pas
+      // rules, not the generic owner-only set below.
+      const filmOffered = isFilmActionOffered(def.actionId ?? '', canEdit, valueMap);
+      if (filmOffered === false) {
+        rendered.add(def.rdoName);
+        continue;
+      }
+      if (filmOffered === true && def.actionId === 'launchMovie') {
+        const autoRelValue = (valueMap.get('AutoRel') ?? '').toLowerCase();
+        const autoProdValue = (valueMap.get('AutoProd') ?? '').toLowerCase();
+        elements.push(
+          <FilmLaunchForm
+            key="film-launch"
+            autoRelDefault={autoRelValue !== 'no'}
+            autoProdDefault={autoProdValue === 'yes'}
+            onLaunch={(params) => client.onBuildingAction('launchMovie', params)}
+          />,
+        );
+        rendered.add(def.rdoName);
+        continue;
+      }
+
       // Owner-only actions (connectMap, demolish) hidden from non-owners
       const ownerOnlyActions = new Set(['connectMap', 'demolish']);
       if (ownerOnlyActions.has(def.actionId ?? '') && !canEdit) {
