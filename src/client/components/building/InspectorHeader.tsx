@@ -2,7 +2,7 @@
  * InspectorHeader — the facility identity block, shared shape with the map
  * preview so the two read as the same object.
  *
- *   BUILDING NAME — Lvl N
+ *   [img] BUILDING NAME — Lvl N
  *   Society, Owner
  *   Revenue /h        ROI
  *
@@ -11,7 +11,7 @@
  * the society is a property read the preview does not pay for.
  */
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { BuildingPropertyValue } from '@/shared/types';
 import styles from './InspectorHeader.module.css';
 
@@ -34,6 +34,8 @@ interface InspectorHeaderProps {
   actions?: ReactNode;
   /** Replaces the name when the user is renaming the facility. */
   nameOverride?: ReactNode;
+  /** Class image URL from the details response; omitted when the class has none. */
+  iconUrl?: string;
 }
 
 /** First value found under `name` across every property group. */
@@ -57,6 +59,26 @@ export function revenueTone(revenue: string | undefined): string {
   return styles.neutral;
 }
 
+/**
+ * The facility picture. Hidden until the browser has it and dropped on a
+ * failed load, so a missing file never costs the header a broken-image box
+ * or a jump in layout.
+ */
+function FacilityIcon({ url }: { url: string }) {
+  const [state, setState] = useState<'loading' | 'shown' | 'failed'>('loading');
+  if (state === 'failed') return null;
+  return (
+    <img
+      className={state === 'shown' ? styles.icon : styles.iconPending}
+      src={url}
+      alt=""
+      aria-hidden="true"
+      onLoad={() => setState('shown')}
+      onError={() => setState('failed')}
+    />
+  );
+}
+
 export function InspectorHeader({
   buildingName,
   level,
@@ -68,6 +90,7 @@ export function InspectorHeader({
   y,
   actions,
   nameOverride,
+  iconUrl,
 }: InspectorHeaderProps) {
   // "Society, Owner" collapses to whichever half exists — a facility with no
   // Creator read yet must not render a dangling comma.
@@ -76,6 +99,7 @@ export function InspectorHeader({
   return (
     <header className={styles.header}>
       <div className={styles.nameRow}>
+        {iconUrl && <FacilityIcon key={iconUrl} url={iconUrl} />}
         {nameOverride ?? (
           <>
             <h3 className={styles.name}>{buildingName}</h3>

@@ -152,7 +152,7 @@ window.__spoDebug.getState()                         // full snapshot, see below
 `getState()` (verified live): `session {connected, worldName, companyName, worldSize}`,
 `renderer {mapLoaded, zoom, rotation, cameraPosition, buildingCount, segmentCount,
 mapDimensions, debugMode, canvasSize, canvasHasContent}`,
-`panels {login, chat, mail, profile, politics, settings, transport, minimap, buildMenu,
+`panels {login, chat, mail, profile, politics, settings, minimap, buildMenu,
 buildingDetails, searchMenu}` (note: `minimap` is `true` by default after login),
 `tycoonStats`, `chat {visible, messageCount, lastMessage}`, `wire`.
 

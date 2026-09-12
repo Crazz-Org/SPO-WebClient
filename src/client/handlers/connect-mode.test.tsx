@@ -118,6 +118,22 @@ describe('connect mode from the picker (Pick on map)', () => {
     expect(useUiStore.getState().connectMode.active).toBe(false);
   });
 
+  it('a server refusal is reported as an error, not a success toast', async () => {
+    const ctx = makeCtx();
+    seedPicker();
+    (ctx.sendRequest as jest.Mock).mockImplementation(async () => (
+      { success: false, resultMessage: 'You are not allowed to do that!' }
+    ));
+    startConnectModeFromPicker(ctx);
+
+    const cb = ctx.renderer.setConnectModeCallback.mock.calls[0][0] as (x: number, y: number) => void;
+    cb(60, 70);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(ctx.showNotification).toHaveBeenCalledWith('You are not allowed to do that!', 'error');
+    expect(useUiStore.getState().connectMode.active).toBe(false);
+  });
+
   it('a transport error still leaves the mode and reveals the stack', async () => {
     const ctx = makeCtx();
     seedPicker();

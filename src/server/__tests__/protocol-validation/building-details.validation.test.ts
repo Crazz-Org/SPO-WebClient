@@ -61,8 +61,8 @@ function buildGetPropertyListCommand(
 }
 
 describe('Building Details Scenario Structure', () => {
-  it('should have 9 mock buildings', () => {
-    expect(ALL_MOCK_BUILDINGS).toHaveLength(9);
+  it('should have 10 mock buildings', () => {
+    expect(ALL_MOCK_BUILDINGS).toHaveLength(10);
   });
 
   it('should create scenario with RDO exchanges for all building groups', () => {

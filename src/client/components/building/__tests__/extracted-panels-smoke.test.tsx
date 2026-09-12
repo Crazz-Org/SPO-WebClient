@@ -383,6 +383,38 @@ describe('ProductsPanel', () => {
     expect(onSearchConnections).toHaveBeenCalledWith(100, 200, 'fluid_chem', 'Chemicals', 'output');
   });
 
+  it('calls onSearchConnections on Insert when canEdit is true', () => {
+    const onSearchConnections = jest.fn();
+    const callbacks = createSpiedCallbacks({ onSearchConnections });
+    const product = makeProduct({ name: 'Chemicals', metaFluid: 'fluid_chem' });
+
+    const { container } = renderWithProviders(
+      <ProductsPanel onPropertyChange={() => {}} products={[product]} canEdit={true} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.keyDown(container.querySelector('table') as HTMLTableElement, { key: 'Insert' });
+
+    expect(onSearchConnections).toHaveBeenCalledWith(100, 200, 'fluid_chem', 'Chemicals', 'output');
+  });
+
+  it('does not call onSearchConnections on Insert when canEdit is false', () => {
+    const onSearchConnections = jest.fn();
+    const callbacks = createSpiedCallbacks({ onSearchConnections });
+    const product = makeProduct({ name: 'Chemicals', metaFluid: 'fluid_chem' });
+
+    const { container } = renderWithProviders(
+      <ProductsPanel onPropertyChange={() => {}} products={[product]} canEdit={false} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.keyDown(container.querySelector('table') as HTMLTableElement, { key: 'Insert' });
+
+    expect(onSearchConnections).not.toHaveBeenCalled();
+  });
+
   it('selects a row and fires onDisconnectConnection on Remove', () => {
     const onDisconnectConnection = jest.fn();
     const callbacks = createSpiedCallbacks({ onDisconnectConnection });
@@ -739,6 +771,38 @@ describe('SuppliesPanel', () => {
     fireEvent.click(hireBtn!);
 
     expect(onSearchConnections).toHaveBeenCalledWith(100, 200, 'fluid_steel', 'Steel', 'input');
+  });
+
+  it('calls onSearchConnections on Insert when canEdit is true', () => {
+    const onSearchConnections = jest.fn();
+    const callbacks = createSpiedCallbacks({ onSearchConnections });
+    const supply = makeSupply({ name: 'Steel', metaFluid: 'fluid_steel' });
+
+    const { container } = renderWithProviders(
+      <SuppliesPanel supplies={[supply]} canEdit={true} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.keyDown(container.querySelector('table') as HTMLTableElement, { key: 'Insert' });
+
+    expect(onSearchConnections).toHaveBeenCalledWith(100, 200, 'fluid_steel', 'Steel', 'input');
+  });
+
+  it('does not call onSearchConnections on Insert when canEdit is false', () => {
+    const onSearchConnections = jest.fn();
+    const callbacks = createSpiedCallbacks({ onSearchConnections });
+    const supply = makeSupply({ name: 'Steel', metaFluid: 'fluid_steel' });
+
+    const { container } = renderWithProviders(
+      <SuppliesPanel supplies={[supply]} canEdit={false} buildingX={100} buildingY={200} />,
+      { clientCallbacks: callbacks },
+    );
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.keyDown(container.querySelector('table') as HTMLTableElement, { key: 'Insert' });
+
+    expect(onSearchConnections).not.toHaveBeenCalled();
   });
 
   it('selects row and fires onDisconnectConnection on Fire', () => {

@@ -337,6 +337,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       },
       onRequestTabData: (x, y, tabId, visualClass, groupIds) => buildingActionHandler.requestTabData(this, x, y, tabId, visualClass, groupIds),
       onRequestGateConnections: (x, y, tabId, path, name, visualClass) => buildingActionHandler.requestGateConnections(this, x, y, tabId, path, name, visualClass),
+      onRequestServiceFigures: (x, y, serviceIndex) => buildingActionHandler.requestServiceFigures(this, x, y, serviceIndex),
       onRenameBuilding: (x, y, newName) => buildingActionHandler.renameFacility(this, x, y, newName),
       onDeleteBuilding: (x, y) => buildingActionHandler.deleteFacility(this, x, y).then(success => {
         if (success) ClientBridge.hideBuildingPanel();

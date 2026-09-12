@@ -91,7 +91,16 @@ function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
 }
 
-/** Same base semantics as coverage-changed.js: the merge-base with the PR base, else origin/main. */
+/**
+ * The merge-base with the pull request's base, else origin/main — same semantics as
+ * coverage-changed.js.
+ *
+ * `BASE_SHA` must name the base BRANCH (`origin/main`), not a commit frozen when the pull
+ * request was opened: CI checks out the merge ref, so a stale sha makes `merge-base` return
+ * that sha itself and every file the base gained since is reported as this branch's. See the
+ * comment on the step in .github/workflows/ci.yml. A sha still works for a local run, where
+ * the caller picks it deliberately.
+ */
 function diffBase(baseSha) {
   for (const ref of [baseSha, 'origin/main', 'main'].filter(Boolean)) {
     try {

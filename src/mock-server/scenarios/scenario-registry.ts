@@ -26,6 +26,9 @@ import { createAbandonRoleScenario } from './abandon-role-scenario';
 import { createPeopleSearchScenario } from './people-search-scenario';
 import { createTradeSettingsScenario } from './trade-settings-scenario';
 import { createGateMapScenario } from './gate-map-scenario';
+import { createProductOwnerScenario } from './product-owner-scenario';
+import { createServiceFiguresScenario } from './service-figures-scenario';
+import { createBankTvLiveReadsScenario } from './bank-tv-live-reads-scenario';
 import { createDisconnectConnectionsScenario } from './disconnect-connections-scenario';
 
 /** All recognized scenario names */
@@ -48,6 +51,9 @@ export type ScenarioName =
   | 'people-search'
   | 'trade-settings'
   | 'gate-map'
+  | 'product-owner'
+  | 'service-figures'
+  | 'bank-tv-live-reads'
   | 'disconnect-connections';
 
 /** Ordered list of all scenario names */
@@ -70,6 +76,9 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'people-search',
   'trade-settings',
   'gate-map',
+  'product-owner',
+  'service-figures',
+  'bank-tv-live-reads',
   'disconnect-connections',
 ];
 
@@ -103,6 +112,9 @@ const SCENARIO_FACTORIES: Record<
   'people-search': (o) => createPeopleSearchScenario(o),
   'trade-settings': (o) => createTradeSettingsScenario(o),
   'gate-map': (o) => createGateMapScenario(o),
+  'product-owner': (o) => createProductOwnerScenario(o),
+  'service-figures': (o) => createServiceFiguresScenario(o),
+  'bank-tv-live-reads': (o) => createBankTvLiveReadsScenario(o),
   'disconnect-connections': (o) => createDisconnectConnectionsScenario(o),
 };
 
@@ -162,7 +174,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 19 mock server scenarios',
+    description: 'Combined: all 22 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -171,7 +183,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 19 scenarios',
+    description: 'Combined: all RDO exchanges from 22 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };

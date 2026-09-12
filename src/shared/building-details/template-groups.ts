@@ -68,9 +68,21 @@ export const IND_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT, editable: true },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — the three location rows every facility carries.
+    // The kind is a multi-string: StoreMultiStringToCache appends the language
+    // index (Languages.pas:248), so the cache key is MetaFacilityName0, never the
+    // bare name (KernelCache.pas:419-420). Town is written only inside a town
+    // (KernelCache.pas:421-422) and the kind can be empty for a class whose
+    // meta-block has no name — hideEmpty drops the row rather than showing a blank.
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
+    // Read for the Quick Trade gate only — Voyager compares it with 'Warehouse'
+    // (IndustryGeneralSheet.pas:143) and never shows it. PropertyGroup skips the row.
+    { rdoName: 'Role', displayName: 'Role', type: PropertyType.TEXT },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
     { rdoName: 'TradeRole', displayName: 'Trade Role', type: PropertyType.ENUM, editable: true, enumLabels: { '0': 'Neutral', '1': 'Producer', '2': 'Distributor', '3': 'Buyer', '4': 'Importer', '5': 'Export', '6': 'Import' } },
     { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true, enumLabels: { '0': 'Same Owner', '1': 'Subsidiaries', '2': 'Allies', '3': 'Anyone' } },
@@ -100,6 +112,10 @@ export const SRV_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT, editable: true },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
@@ -117,6 +133,8 @@ export const SRV_GENERAL_GROUP: PropertyGroup = {
         { rdoSuffix: 'srvPrices', label: 'Price', type: PropertyType.SLIDER, width: '15%', editable: true, min: 0, max: 500, step: 10 },
         { rdoSuffix: 'srvSupplies', label: 'Offer', type: PropertyType.NUMBER, width: '15%' },
         { rdoSuffix: 'srvDemands', label: 'Demand', type: PropertyType.NUMBER, width: '15%' },
+        // Services.asp:57 `mvcProperty=Sales mvcClass=Percent`; ServiceBlock.pas:1735 WriteInteger — no MLS suffix
+        { rdoSuffix: 'srvSales', label: 'Sales', type: PropertyType.PERCENTAGE, width: '15%' },
         { rdoSuffix: 'srvMarketPrices', label: 'Market', type: PropertyType.CURRENCY, width: '15%' },
         { rdoSuffix: 'srvAvgPrices', label: 'Avg Price', type: PropertyType.CURRENCY, width: '15%' },
       ],
@@ -146,6 +164,10 @@ export const RES_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT, editable: true },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
@@ -155,7 +177,13 @@ export const RES_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'QOL', displayName: 'Quality of Life', type: PropertyType.PERCENTAGE },
     { rdoName: 'Beauty', displayName: 'Beauty', type: PropertyType.PERCENTAGE },
     { rdoName: 'Crime', displayName: 'Crime', type: PropertyType.PERCENTAGE },
+    // PopulatedBlock.pas:931-933 — the crime/pollution left after the block's resistance,
+    // and the block's efficiency. Only written for a TMetaPopulatedBlock; hideEmpty drops
+    // the row when the cache has nothing rather than printing 0%.
+    { rdoName: 'ActualCrime', displayName: 'Effective Crime', type: PropertyType.PERCENTAGE, hideEmpty: true },
     { rdoName: 'Pollution', displayName: 'Pollution', type: PropertyType.PERCENTAGE },
+    { rdoName: 'ActualPollution', displayName: 'Effective Pollution', type: PropertyType.PERCENTAGE, hideEmpty: true },
+    { rdoName: 'Efficiency', displayName: 'Efficiency', type: PropertyType.PERCENTAGE, hideEmpty: true },
     // Investment stats (read-only informational data)
     { rdoName: 'invCrimeRes', displayName: 'Crime Resistance', type: PropertyType.PERCENTAGE },
     { rdoName: 'invPollutionRes', displayName: 'Pollution Resistance', type: PropertyType.PERCENTAGE },
@@ -189,10 +217,15 @@ export const HQ_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
+    { rdoName: 'connectMap', displayName: 'Connect', type: PropertyType.ACTION_BUTTON, actionId: 'connectMap', buttonLabel: 'Connect' },
     { rdoName: 'demolish', displayName: 'Demolish', type: PropertyType.ACTION_BUTTON, actionId: 'demolish', buttonLabel: 'Demolish' },
   ],
   rdoCommands: {
@@ -242,10 +275,25 @@ export const BANK_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
-    { rdoName: 'EstLoan', displayName: 'Estimated Loan', type: PropertyType.CURRENCY },
-    { rdoName: 'Interest', displayName: 'Interest Rate', type: PropertyType.SLIDER, editable: true, min: 0, max: 100, step: 1, unit: '%' },
-    { rdoName: 'Term', displayName: 'Loan Term', type: PropertyType.SLIDER, editable: true, min: 1, max: 20, step: 1, unit: 'years' },
-    { rdoName: 'BudgetPerc', displayName: 'Budget', type: PropertyType.SLIDER, editable: true, min: 0, max: 100, unit: '%' },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
+    // Read, never shown (HIDDEN_PROPERTY_NAMES): the block id `enrichBankTab`
+    // binds its four live reads to, exactly as the Voyager sheet does —
+    // `fCurrBlock := StrToInt(Prop.Values[tidCurrBlock])` then
+    // `MSProxy.BindTo(fCurrBlock)` (Voyager/BankGeneralSheet.pas:251-259).
+    { rdoName: 'CurrBlock', displayName: 'Block ID', type: PropertyType.TEXT, hideEmpty: true },
+    // `notCached` on all four: TBankBlock.StoreToCache (StdBlocks/Banks.pas:188-206)
+    // writes only the loan list — not EstLoan, Interest, Term or BudgetPerc — so the
+    // cache answered an empty string and the sheet rendered four blank sliders.
+    // `enrichBankTab` supplies the real values with the same live reads Voyager makes
+    // (BankGeneralSheet.pas:261-268). Slider bounds are Voyager's own percent-edit
+    // ranges (BankGeneralSheet.dfm: peInterest 0..50, peTerm 1..100, peBankBudget 0..100).
+    { rdoName: 'EstLoan', displayName: 'Estimated Loan', type: PropertyType.CURRENCY, notCached: true },
+    { rdoName: 'Interest', displayName: 'Interest Rate', type: PropertyType.SLIDER, editable: true, min: 0, max: 50, step: 1, unit: '%', notCached: true },
+    { rdoName: 'Term', displayName: 'Loan Term', type: PropertyType.SLIDER, editable: true, min: 1, max: 100, step: 1, unit: 'years', notCached: true },
+    { rdoName: 'BudgetPerc', displayName: 'Budget', type: PropertyType.SLIDER, editable: true, min: 0, max: 100, unit: '%', notCached: true },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
     { rdoName: 'demolish', displayName: 'Demolish', type: PropertyType.ACTION_BUTTON, actionId: 'demolish', buttonLabel: 'Demolish' },
   ],
@@ -269,6 +317,10 @@ export const WH_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
@@ -301,12 +353,29 @@ export const TV_GENERAL_GROUP: PropertyGroup = {
   properties: [
     { rdoName: 'Name', displayName: 'Name', type: PropertyType.TEXT },
     { rdoName: 'Creator', displayName: 'Owner', type: PropertyType.TEXT },
+    // GeneralInfo.inc:9,14,19 — see IND_GENERAL_GROUP
+    { rdoName: 'MetaFacilityName0', displayName: 'Facility Kind', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Cluster', displayName: 'Cluster', type: PropertyType.TEXT, hideEmpty: true },
+    { rdoName: 'Town', displayName: 'Town', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
-    { rdoName: 'HoursOnAir', displayName: 'Hours On Air', type: PropertyType.SLIDER, editable: true, min: 0, max: 100, unit: '%' },
-    { rdoName: 'Comercials', displayName: 'Commercials', type: PropertyType.SLIDER, editable: true, min: 0, max: 100, unit: '%' },
+    // Read, never shown (HIDDEN_PROPERTY_NAMES): the block id `enrichTvTab` binds
+    // its two live reads to, as `MSProxy.BindTo(fCurrBlock)` does in the Voyager
+    // sheet (Voyager/TVGeneralSheet.pas:270).
+    { rdoName: 'CurrBlock', displayName: 'Block ID', type: PropertyType.TEXT, hideEmpty: true },
+    // `notCached` on both: TBroadcaster.StoreToCache (StdBlocks/Broadcast.pas:431-453)
+    // writes only antenna data, so the cache answered an empty string and both sliders
+    // were permanently blank. `enrichTvTab` reads them live off CurrBlock, as the
+    // Voyager sheet does (Voyager/TVGeneralSheet.pas:269-275). Hours On Air is a count
+    // of hours, not a percentage — Voyager's peHoursOnAir runs 0..24
+    // (TVGeneralSheet.dfm); peAdvertisement runs 0..100.
+    { rdoName: 'HoursOnAir', displayName: 'Hours On Air', type: PropertyType.SLIDER, editable: true, min: 0, max: 24, step: 1, unit: 'h', notCached: true },
+    // Read under this key (one m, `tidComercials`, TVGeneralSheet.pas:15) but read
+    // from the published `Commercials` (StdBlocks/Broadcast.pas:53) — see rdoCommands below.
+    { rdoName: 'Comercials', displayName: 'Commercials', type: PropertyType.SLIDER, editable: true, min: 0, max: 100, unit: '%', notCached: true },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
+    { rdoName: 'connectMap', displayName: 'Connect', type: PropertyType.ACTION_BUTTON, actionId: 'connectMap', buttonLabel: 'Connect' },
     { rdoName: 'demolish', displayName: 'Demolish', type: PropertyType.ACTION_BUTTON, actionId: 'demolish', buttonLabel: 'Demolish' },
   ],
   rdoCommands: {
@@ -461,7 +530,7 @@ export const SUPPLIES_GROUP: PropertyGroup = {
  * NOT from indexed srvNames/srvPrices properties (those are SrvGeneral inline table).
  *
  * Output gate properties: MetaFluid, LastFluid, FluidQuality, PricePc, AvgPrice, MarketPrice, cnxCount
- * Per-connection: cnxFacilityName, cnxCompanyName, LastValueCnxInfo, ConnectedCnxInfo, tCostCnxInfo, cnxXPos, cnxYPos
+ * Per-connection: cnxFacilityName, cnxCompanyName, LastValueCnxInfo, ConnectedCnxInfo, tCostCnxInfo, cnxXPos, cnxYPos, cnxCreatedBy
  */
 export const PRODUCTS_GROUP: PropertyGroup = {
   id: 'products',

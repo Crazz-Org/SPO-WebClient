@@ -41,7 +41,7 @@ pas une re-création d'identité visuelle. À fournir tel quel, Claude Design s'
 | Icônes | `lucide-react` (+ `components/icons/` RoadIcons, ZoneIcon) | Même jeu, même épaisseur de trait, en SVG inline dans les maquettes |
 | Layouts | `src/client/layouts/GameScreen.tsx` (HUD « map-first » : InfoWidget, LeftRail, RightRail, ChatStrip, LeftPanel/RightPanel coulissants, modales, CommandPalette), `LoginScreen.tsx` | Le squelette à faire évoluer |
 | Mobile | `src/client/components/mobile/` — MobileShell, BottomNav, BottomSheet (snap points, `useSheetGesture`), MobileInfoBar, PlacementHUD, ChatBanner ; breakpoints 768 / 1024 (`hooks/useResponsive.ts`) | Les trois tiers à couvrir : mobile / tablette / desktop |
-| État d'interface | `src/client/store/ui-store.ts` — `RightPanelType` (building, mail, politics, search, transport), `LeftPanelType` (empire, facilities, overlays), 11 `ModalType`, 5 `MobileTab` | **L'inventaire des surfaces** : ce sont les écrans à maquetter |
+| État d'interface | `src/client/store/ui-store.ts` — `RightPanelType` (building, mail, politics, search), `LeftPanelType` (empire, facilities, overlays), 11 `ModalType`, 5 `MobileTab` | **L'inventaire des surfaces** : ce sont les écrans à maquetter |
 | Raccourcis | `hooks/useKeyboardShortcuts.ts` (B, E, M, R, D, Esc, Cmd+K) | Contraintes d'interaction à conserver ou redéfinir |
 
 ### Inventaire des écrans à couvrir (dérivé de `ui-store.ts` et `components/`)

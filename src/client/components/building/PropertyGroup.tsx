@@ -28,13 +28,14 @@ import { RevenueGraph } from './RevenueGraph';
 import { SuppliesPanel } from './SuppliesGroup';
 import { ProductsPanel } from './ProductsGroup';
 import { CompInputsPanel } from './InputsGroup';
-import { resolveRdoCommand, computePendingKey, getColorClass, buildSalaryParams } from './property-utils';
+import { resolveRdoCommand, computePendingKey, getColorClass, buildSalaryParams, isFilmActionOffered, splitParagraphs } from './property-utils';
 import { SliderInput, TextInput } from './PropertyInputs';
 import { RatioValue, BooleanValue, StopToggle } from './PropertyDisplays';
 import { DataTable, ServiceCardList, ProductSummaryCards } from './PropertyTables';
 import { WorkforceTable } from './WorkforceTable';
-import { UpgradeActions, RepairControl, TradeConnectButtons, ActionButton, CloneSettings, WarehouseWares } from './PropertyActions';
+import { UpgradeActions, RepairControl, TradeConnectButtons, ActionButton, CloneSettings, WarehouseWares, FilmLaunchForm } from './PropertyActions';
 import { TradeModeControl, TradeLevelControl } from './TradeControls';
+import { EpitaphEditor, CancelTranscendence } from './MausoleumControls';
 import styles from './PropertyGroup.module.css';
 
 // Re-export utility functions for backward compatibility (tests import from here)
@@ -43,8 +44,8 @@ export { resolveRdoCommand, computePendingKey, parseCloneMenu, getColorClass } f
 /** The five values the upgrade group carries alongside its control. */
 const UPGRADE_VALUE_NAMES = ['UpgradeLevel', 'MaxUpgrade', 'NextUpgCost', 'Upgrading', 'Pending'];
 /** The subset the UPGRADE_ACTIONS control prints inside itself — a row would
- *  repeat these. NextUpgCost is NOT among them: the control never shows the
- *  cost, so its row stays. */
+ *  repeat these. NextUpgCost is NOT among them: the control shows the total for
+ *  the chosen count, the row shows the per-level cost, so the row stays. */
 const UPGRADE_WIDGET_OWNED_NAMES = ['UpgradeLevel', 'MaxUpgrade', 'Upgrading', 'Pending'];
 
 interface PropertyGroupProps {
@@ -375,6 +376,7 @@ function DefinedProperties({
       elements.push(
         <TradeConnectButtons
           key="trade-connect"
+          properties={properties}
           onAction={handleActionButton}
         />,
       );
@@ -384,9 +386,34 @@ function DefinedProperties({
 
     // Action button
     if (def.type === PropertyType.ACTION_BUTTON) {
-      // Owner-only actions (connectMap, demolish) hidden from non-owners
-      const ownerOnlyActions = new Set(['connectMap', 'demolish']);
-      if (ownerOnlyActions.has(def.actionId ?? '') && !canEdit) {
+      // Film actions (Launch/Cancel/Release Movie) — offered per FilmsSheet.pas
+      // rules, not the generic owner-only set below.
+      const filmOffered = isFilmActionOffered(def.actionId ?? '', canEdit, valueMap);
+      if (filmOffered === false) {
+        rendered.add(def.rdoName);
+        continue;
+      }
+      if (filmOffered === true && def.actionId === 'launchMovie') {
+        const autoRelValue = (valueMap.get('AutoRel') ?? '').toLowerCase();
+        const autoProdValue = (valueMap.get('AutoProd') ?? '').toLowerCase();
+        elements.push(
+          <FilmLaunchForm
+            key="film-launch"
+            autoRelDefault={autoRelValue !== 'no'}
+            autoProdDefault={autoProdValue === 'yes'}
+            onLaunch={(params) => client.onBuildingAction('launchMovie', params)}
+          />,
+        );
+        rendered.add(def.rdoName);
+        continue;
+      }
+
+      // Demolish is the only owner-gated action here: Voyager enables
+      // btnDemolish on fOwnsFacility (IndustryGeneralSheet.pas:167) but leaves
+      // btnConnect on for everyone (SrvGeneralSheetForm.pas:190, TVGeneralSheet.pas:133)
+      // — a visitor connects the building to one of their own. The server decides
+      // (Kernel/World.pas:3717-3724), and its refusal reaches the player as a toast.
+      if (def.actionId === 'demolish' && !canEdit) {
         rendered.add(def.rdoName);
         continue;
       }
@@ -477,6 +504,8 @@ function DefinedProperties({
             rowCount={rowCount}
             valueMap={valueMap}
             canEdit={canEdit}
+            buildingX={buildingX}
+            buildingY={buildingY}
             onPropertyChange={handlePropertyChange}
           />,
         );
@@ -526,9 +555,18 @@ function DefinedProperties({
             rdoCommands={rdoCommands}
             onPropertyChange={handlePropertyChange}
             onRowAction={handleRowAction}
+            onRowNavigate={client.onNavigateToBuilding}
           />,
         );
       }
+      continue;
+    }
+
+    // Facility kind, read by the industry sheet for the Quick Trade gate only
+    // (IndustryGeneralSheet.pas:143). Declared TEXT there; the warehouse sheet's
+    // ENUM `Role` is the trade-mode alias handled just below. Never a row.
+    if (def.rdoName === 'Role' && def.type === PropertyType.TEXT) {
+      rendered.add(def.rdoName);
       continue;
     }
 
@@ -574,6 +612,77 @@ function DefinedProperties({
       continue;
     }
 
+    // Mausoleum epitaph — the server stores paragraphs `|`-separated
+    // (MausoleumSheet.pas:76, :78-107). One paragraph falls through to the
+    // ordinary text row so it renders exactly as before; zero renders an
+    // empty value cell, never a blank paragraph.
+    if (def.rdoName === 'WordsOfWisdom') {
+      const words = valueMap.get(def.rdoName);
+      if (words === undefined) continue;
+      if (canEdit) {
+        rendered.add(def.rdoName);
+        elements.push(
+          <div key={def.rdoName} className={`${styles.row} ${styles.rowStacked}`}>
+            <span className={styles.name} title={def.tooltip}>{def.displayName}</span>
+            <EpitaphEditor
+              value={words}
+              pendingKey={computePendingKey(def.rdoName, rdoCommands)}
+              onSave={(joined) => handleStringPropertyChange(def.rdoName, joined)}
+            />
+          </div>,
+        );
+        continue;
+      }
+      const paragraphs = splitParagraphs(words);
+      if (paragraphs.length !== 1) {
+        rendered.add(def.rdoName);
+        elements.push(
+          <div key={def.rdoName} className={`${styles.row} ${styles.rowStacked}`}>
+            <span className={styles.name} title={def.tooltip}>{def.displayName}</span>
+            {paragraphs.length > 0 ? (
+              <div className={styles.paragraphs} data-testid="words-of-wisdom">
+                {paragraphs.map((p, i) => <p key={i}>{p}</p>)}
+              </div>
+            ) : (
+              <span className={styles.value} data-testid="words-of-wisdom" />
+            )}
+          </div>,
+        );
+        continue;
+      }
+      // exactly one paragraph: fall through to the regular row below
+    }
+
+    // Mausoleum: the cancel control is offered to the owner only while the
+    // transcendence has not completed — MausoleumSheet.pas:145
+    // `btnCancel.Enabled := fOwnFac and (Transcended <> '1')`. Cancelling deletes
+    // the facility (TranscendBlock.pas:231-232), hence the confirmation.
+    if (def.rdoName === 'Transcended') {
+      const transcended = valueMap.get(def.rdoName);
+      if (transcended === undefined) continue;
+      rendered.add(def.rdoName);
+      elements.push(
+        <DefinedPropertyRow
+          key={def.rdoName}
+          def={def}
+          value={transcended}
+          canEdit={canEdit}
+          onPropertyChange={handlePropertyChange}
+          onStringPropertyChange={handleStringPropertyChange}
+          rdoCommands={rdoCommands}
+        />,
+      );
+      if (canEdit && transcended !== '1') {
+        elements.push(
+          <CancelTranscendence
+            key="cancel-transcendence"
+            onCancel={() => handleStringPropertyChange('RDOCacncelTransc', '0')}
+          />,
+        );
+      }
+      continue;
+    }
+
     // Regular property
     const value = valueMap.get(def.rdoName);
     if (value === undefined) continue;
@@ -583,8 +692,8 @@ function DefinedProperties({
     // The UPGRADE_ACTIONS control prints level / max / pending inside itself —
     // a row here would repeat them. When the group has no control (or it were
     // hidden again) they fall through to ordinary rows instead, so no value is
-    // ever silently lost. NextUpgCost always renders as a row: the control
-    // never shows the cost of the spend it triggers.
+    // ever silently lost. NextUpgCost always renders as a row: the control shows
+    // the total for the chosen count, the row shows the per-level cost.
     if (upgradeControlShown && UPGRADE_WIDGET_OWNED_NAMES.includes(def.rdoName)) {
       rendered.add(def.rdoName);
       continue;

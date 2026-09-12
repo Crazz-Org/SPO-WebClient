@@ -6,6 +6,7 @@
  */
 
 import { memo, useState } from 'react';
+import { Crosshair } from 'lucide-react';
 import type { BuildingProductData, BuildingConnectionData } from '@/shared/types';
 import { formatCurrency } from '@/shared/building-details';
 import { useClient } from '../../context';
@@ -15,6 +16,11 @@ import { useGateConnections } from './useGateConnections';
 import { connectionPendingKey } from '../../handlers/connection-pending-key';
 import { SaveIndicator } from './SaveIndicator';
 import styles from './PropertyGroup.module.css';
+
+/** A connection the server never positioned reads back as 0,0 — there is nothing to centre on. */
+function hasPosition(conn: BuildingConnectionData): boolean {
+  return conn.x !== 0 || conn.y !== 0;
+}
 
 /**
  * Disconnecting is destructive and used to fire at once (Fire button, Delete key). It now goes
@@ -145,6 +151,11 @@ const ProductCard = memo(function ProductCard({
       : [...prev, idx].sort((a, b) => a - b));
   };
 
+  const handleNavigate = (conn: BuildingConnectionData) => {
+    if (!hasPosition(conn)) return;
+    client.onNavigateToBuilding(conn.x, conn.y);
+  };
+
   const handleHire = () => {
     if (!fluidId) return;
     client.onSearchConnections(buildingX, buildingY, fluidId, product.name || fluidId, 'output');
@@ -232,8 +243,18 @@ const ProductCard = memo(function ProductCard({
               className={styles.productTable}
               tabIndex={0}
               onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
                 if (e.key === 'Delete' && canEdit && selectedRows.length > 0) {
                   handleFire();
+                }
+                if (e.key === 'Insert' && canEdit) {
+                  handleHire();
+                }
+                // Enter follows one row, so it needs exactly one selected — the rule
+                // Modify already applies to a multi-selection (#563 meets #564).
+                if (e.key === 'Enter' && selectedRows.length === 1) {
+                  const conn = product.connections[selectedRows[0]];
+                  if (conn) handleNavigate(conn);
                 }
               }}
             >
@@ -243,6 +264,7 @@ const ProductCard = memo(function ProductCard({
                   <th style={{ width: 80 }}>Company</th>
                   <th style={{ width: 80 }}>Last</th>
                   <th style={{ width: 60 }}>T.Cost</th>
+                  <th style={{ width: 24 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -251,6 +273,7 @@ const ProductCard = memo(function ProductCard({
                     key={`${j}:${conn.x},${conn.y}`}
                     className={`${styles.productTableRow}${selectedRows.includes(j) ? ` ${styles.productTableRowSelected}` : ''}`}
                     onClick={() => handleRowClick(j)}
+                    onDoubleClick={() => handleNavigate(conn)}
                   >
                     <td className={styles.productFacilityCell}>
                       <span className={styles.productFacilityName}>
@@ -262,6 +285,19 @@ const ProductCard = memo(function ProductCard({
                     <td>{conn.companyName}</td>
                     <td>{conn.lastValue}</td>
                     <td>{conn.cost}</td>
+                    <td>
+                      {hasPosition(conn) && (
+                        <button
+                          type="button"
+                          className={styles.tableActionBtn}
+                          aria-label={`View ${conn.facilityName || 'facility'} on map`}
+                          title="View on map"
+                          onClick={(e) => { e.stopPropagation(); handleNavigate(conn); }}
+                        >
+                          <Crosshair size={12} />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -664,6 +664,13 @@ export interface BuildingDetailsResponse {
   /** When set, only these group IDs were refreshed (R1 tab-scoped refresh).
    *  Client should merge these groups into existing details, keeping other groups intact. */
   refreshedGroups?: string[];
+  /**
+   * The class image beside the name — the `[MapImages] 64x32x0` file of the
+   * facility's CLASSES.BIN entry, as `/cache/BuildingImages/<file>` on the
+   * gateway (the same path the map renderer fetches, never the CDN). Absent
+   * when the class resolves to no texture; the header then draws no picture.
+   */
+  iconUrl?: string;
 }
 
 // =============================================================================

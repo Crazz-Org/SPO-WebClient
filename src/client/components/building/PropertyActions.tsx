@@ -3,7 +3,8 @@
  *
  * UpgradeActions: upgrade/downgrade building level controls
  * RepairControl: repair progress bar + start/stop buttons
- * TradeConnectButtons: quick trade connect/disconnect grid
+ * TradeConnectButtons: quick trade connect/disconnect grid, disables the
+ *   warehouse row when the facility's own Role is 'Warehouse'
  * ActionButton: generic action button from property definition
  * CloneSettings: clone configuration checklist + apply
  *
@@ -14,8 +15,9 @@ import { useState, useCallback } from 'react';
 import type { BuildingPropertyValue, WarehouseWareData } from '@/shared/types';
 import type { PropertyDefinition } from '@/shared/building-details';
 import { formatCurrency } from '@/shared/building-details';
-import { parseCloneMenu } from './property-utils';
+import { parseCloneMenu, parseCurrencyInput, parseFilmMonths, FILM_MONTHS_MIN, FILM_MONTHS_MAX } from './property-utils';
 import { useBuildingStore } from '../../store/building-store';
+import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
 import styles from './PropertyGroup.module.css';
 
@@ -45,6 +47,32 @@ export function UpgradeActions({
   const pending = parseInt(vm.get('Pending') ?? '0');
   const remaining = Math.max(0, maxLevel - currentLevel);
 
+  // The spend the control is about to trigger. A missing, non-numeric or zero
+  // unit cost means the total cannot be stated, so the row is not offered at all.
+  const unitCost = parseFloat(vm.get('NextUpgCost') ?? '0');
+  const costKnown = Number.isFinite(unitCost) && unitCost > 0;
+  // `qty` is clamped by the - / + / onChange handlers, but `remaining` can shrink
+  // under it between renders — `count` is what the row displays and sends.
+  const count = Math.min(Math.max(1, qty), Math.max(1, remaining));
+  const total = unitCost * count;
+
+  const handleStartUpgrade = () => {
+    useUiStore.getState().requestConfirm(
+      'Start Upgrade',
+      `Start ${count} upgrade level${count === 1 ? '' : 's'} for ${formatCurrency(total)}?`,
+      () => client.onUpgradeBuilding(buildingX, buildingY, 'START_UPGRADE', count),
+      {
+        kind: 'spend',
+        confirmLabel: 'Upgrade',
+        typeToConfirm: null,
+        rows: [
+          { label: 'Levels', value: String(count) },
+          { label: 'Total', value: formatCurrency(total), tone: 'gold' },
+        ],
+      },
+    );
+  };
+
   return (
     <div className={styles.upgradeContainer}>
       <div className={styles.upgradeLevel}>
@@ -63,7 +91,7 @@ export function UpgradeActions({
               STOP
             </button>
           ) : (
-            remaining > 0 && (
+            remaining > 0 && costKnown && (
               <div className={styles.upgradeRow}>
                 <span className={styles.upgradeLabel}>Upgrade</span>
                 <button className={styles.upgradeBtn} onClick={() => setQty((q) => Math.max(1, q - 1))}>-</button>
@@ -72,13 +100,14 @@ export function UpgradeActions({
                   className={styles.upgradeQty}
                   min={1}
                   max={remaining}
-                  value={qty}
+                  value={count}
                   onChange={(e) => setQty(Math.min(remaining, Math.max(1, parseInt(e.target.value) || 1)))}
                 />
                 <button className={styles.upgradeBtn} onClick={() => setQty((q) => Math.min(remaining, q + 1))}>+</button>
+                <span className={styles.upgradeTotal} data-testid="upgrade-total">{formatCurrency(total)}</span>
                 <button
                   className={styles.upgradeOkBtn}
-                  onClick={() => client.onUpgradeBuilding(buildingX, buildingY, 'START_UPGRADE', qty)}
+                  onClick={handleStartUpgrade}
                 >
                   OK
                 </button>
@@ -86,7 +115,10 @@ export function UpgradeActions({
             )
           )}
 
-          {currentLevel > 0 && (
+          {/* A level-1 facility has no level to give back (Voyager's fbDowngrade needs
+              upgradeLevel > 1), and while an upgrade is running the only offered action
+              is STOP, so the button is not rendered at all. */}
+          {currentLevel > 1 && !isUpgrading && (
             <button
               className={styles.downgradeBtn}
               onClick={() => client.onUpgradeBuilding(buildingX, buildingY, 'DOWNGRADE')}
@@ -171,20 +203,42 @@ const TRADE_KINDS = [
   { kind: '1', label: 'Warehouses' },    // ftpWarehouses = $01
 ] as const;
 
-export function TradeConnectButtons({ onAction }: { onAction: (id: string) => void }) {
+export function TradeConnectButtons({
+  properties,
+  onAction,
+}: {
+  properties: BuildingPropertyValue[];
+  onAction: (id: string) => void;
+}) {
   const inFlightActions = useBuildingStore((s) => s.inFlightActions);
+  const vm = new Map<string, string>();
+  for (const p of properties) vm.set(p.name, p.value);
+  // Voyager's IsInd (IndustryGeneralSheet.pas:143): a warehouse is not offered
+  // warehouse-to-warehouse quick trade — unless its TradeRole is one of the
+  // non-warehouse roles rolNeutral/rolProducer/rolBuyer/rolImporter (:191-197).
+  // The buttons are disabled, not hidden (:233-234).
+  const isWarehouse = vm.get('Role') === 'Warehouse';
+  const nonWarehouseTradeRole = ['0', '1', '3', '4'].includes(vm.get('TradeRole') ?? '');
+  const warehouseTradeOffered = !isWarehouse || nonWarehouseTradeRole;
   return (
     <div className={styles.tradeConnectGrid}>
       {TRADE_KINDS.map(({ kind, label }) => {
         const connectBusy = inFlightActions.has(`tradeConnect:${kind}`);
         const disconnectBusy = inFlightActions.has(`tradeDisconnect:${kind}`);
+        const kindOffered = kind !== '1' || warehouseTradeOffered;
         return (
           <div key={kind} className={styles.tradeConnectRow}>
             <button
               className={`${styles.tradeConnectBtn} ${styles.tradeConnectBtnLink}`}
               onClick={() => onAction(`tradeConnect:${kind}`)}
-              disabled={connectBusy || disconnectBusy}
-              title={connectBusy ? 'Connecting...' : `Connect all your ${label.toLowerCase()} to this building`}
+              disabled={connectBusy || disconnectBusy || !kindOffered}
+              title={
+                !kindOffered
+                  ? 'Not offered to a warehouse'
+                  : connectBusy
+                    ? 'Connecting...'
+                    : `Connect all your ${label.toLowerCase()} to this building`
+              }
             >
               {connectBusy ? (
                 <svg className={styles.tradeConnectSpinner} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -201,8 +255,14 @@ export function TradeConnectButtons({ onAction }: { onAction: (id: string) => vo
             <button
               className={`${styles.tradeConnectBtn} ${styles.tradeConnectBtnUnlink}`}
               onClick={() => onAction(`tradeDisconnect:${kind}`)}
-              disabled={connectBusy || disconnectBusy}
-              title={disconnectBusy ? 'Disconnecting...' : `Disconnect all your ${label.toLowerCase()} from this building`}
+              disabled={connectBusy || disconnectBusy || !kindOffered}
+              title={
+                !kindOffered
+                  ? 'Not offered to a warehouse'
+                  : disconnectBusy
+                    ? 'Disconnecting...'
+                    : `Disconnect all your ${label.toLowerCase()} from this building`
+              }
             >
               {disconnectBusy ? (
                 <svg className={styles.tradeConnectSpinner} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -237,6 +297,112 @@ export function ActionButton({ def, onAction }: { def: PropertyDefinition; onAct
       >
         {def.buttonLabel ?? def.displayName}
       </button>
+    </div>
+  );
+}
+
+// =============================================================================
+// FILM LAUNCH FORM (Films tab — FilmsSheet.pas:175,186,200,203,205,382-384)
+// =============================================================================
+
+/**
+ * Launch Movie form — title, budget, months and the two auto flags in one
+ * submission. Budget and months are validated before `onLaunch` is called;
+ * a rejection shows an inline message and sends nothing, matching Voyager's
+ * `CheckMoneyStr` refusal (FilmsSheet.pas:382-384) — never a `NaN` on the wire.
+ */
+export function FilmLaunchForm({
+  autoRelDefault,
+  autoProdDefault,
+  onLaunch,
+}: {
+  autoRelDefault: boolean;
+  autoProdDefault: boolean;
+  onLaunch: (params: Record<string, string>) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [budget, setBudget] = useState('$10,000,000');
+  const [months, setMonths] = useState('12');
+  const [autoRel, setAutoRel] = useState(autoRelDefault);
+  const [autoProd, setAutoProd] = useState(autoProdDefault);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLaunch = useCallback(() => {
+    const budgetNumber = parseCurrencyInput(budget);
+    if (budgetNumber === null) {
+      setError('Budget must be an amount like $10,000,000');
+      return;
+    }
+    const monthsNumber = parseFilmMonths(months);
+    if (monthsNumber === null) {
+      setError(`Months must be between ${FILM_MONTHS_MIN} and ${FILM_MONTHS_MAX}`);
+      return;
+    }
+    setError(null);
+    onLaunch({
+      filmName: title.trim(),
+      budget: String(budgetNumber),
+      months: String(monthsNumber),
+      autoRel: autoRel ? '1' : '0',
+      autoProd: autoProd ? '1' : '0',
+    });
+  }, [title, budget, months, autoRel, autoProd, onLaunch]);
+
+  return (
+    <div className={styles.upgradeContainer}>
+      <div className={styles.upgradeRow}>
+        <span className={styles.upgradeLabel}>Title</span>
+        <input
+          type="text"
+          className={styles.textInput}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </div>
+      <div className={styles.upgradeRow}>
+        <span className={styles.upgradeLabel}>Budget</span>
+        <input
+          type="text"
+          className={styles.textInput}
+          value={budget}
+          onChange={(e) => setBudget(e.target.value)}
+        />
+      </div>
+      <div className={styles.upgradeRow}>
+        <span className={styles.upgradeLabel}>Months</span>
+        <input
+          type="number"
+          className={styles.upgradeQty}
+          min={FILM_MONTHS_MIN}
+          max={FILM_MONTHS_MAX}
+          value={months}
+          onChange={(e) => setMonths(e.target.value)}
+        />
+      </div>
+      <label className={styles.cloneOption}>
+        <input
+          type="checkbox"
+          className={styles.checkbox}
+          checked={autoRel}
+          onChange={(e) => setAutoRel(e.target.checked)}
+        />
+        <span>Auto Release</span>
+      </label>
+      <label className={styles.cloneOption}>
+        <input
+          type="checkbox"
+          className={styles.checkbox}
+          checked={autoProd}
+          onChange={(e) => setAutoProd(e.target.checked)}
+        />
+        <span>Auto Produce</span>
+      </label>
+      {error && <div role="alert" className={styles.filmFormError}>{error}</div>}
+      <div className={styles.actionBtnContainer}>
+        <button className={styles.actionBtn} onClick={handleLaunch}>
+          Launch
+        </button>
+      </div>
     </div>
   );
 }

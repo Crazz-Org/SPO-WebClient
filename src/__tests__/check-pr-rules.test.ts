@@ -205,4 +205,47 @@ describe('the script against a real repository', () => {
     const { code } = run();
     expect(code).toBe(0);
   });
+
+  /**
+   * The base must be the base BRANCH, not the sha the base happened to be at when the pull
+   * request was opened. CI checks out the merge ref — this branch merged into the base's
+   * current tip — so against a frozen sha `merge-base` returns that sha itself and the diff
+   * carries everything the base gained in the meantime. On 2026-09-12 that failed the RDO
+   * citation rule on PR #743, five files none of which is `rdo-members.ts`: main had merged
+   * a properly cited catalogue change between the PR's two pushes.
+   */
+  describe('a base that has moved since the pull request opened', () => {
+    /** Reproduce CI's checkout: the branch's own change, then main's, then the merge ref. */
+    const openThenMainMoves = (): string => {
+      fs.writeFileSync(path.join(repo, 'note.md'), 'the pull request\'s own change\n');
+      git('add', '-A');
+      git('commit', '-qm', 'the change under review');
+      const baseWhenOpened = git('rev-parse', 'main');
+
+      git('checkout', '-q', 'main');
+      fs.writeFileSync(path.join(repo, 'src/shared/rdo-members.ts'), 'export const CATALOGUE = 1;\n');
+      git('add', '-A');
+      git('commit', '-qm', 'someone else cites Kernel/Foo.pas:1 and merges');
+
+      git('checkout', '-q', 'work');
+      git('merge', '-q', 'main', '-m', 'the merge ref CI actually checks out');
+      return baseWhenOpened;
+    };
+
+    it('judges only the pull request\'s own files when given the base branch', () => {
+      openThenMainMoves();
+      // No citation in the body, and the catalogue is untouched BY THIS BRANCH.
+      const { code, out } = run({ BASE_SHA: 'main' });
+      expect(out).toContain('catalogue untouched');
+      expect(code).toBe(0);
+    });
+
+    it('blames the branch for the base\'s own files when given the frozen sha', () => {
+      const baseWhenOpened = openThenMainMoves();
+      const { code, out } = run({ BASE_SHA: baseWhenOpened });
+      // The bug, pinned: rdo-members.ts is main's commit, not this branch's.
+      expect(out).toContain('rdo-members.ts changed');
+      expect(code).toBe(1);
+    });
+  });
 });

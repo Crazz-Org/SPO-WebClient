@@ -152,7 +152,7 @@ montré ») et deux bons précédents : `failureLevel` ne pilote qu'une classe C
 | **`metaFluid`** (classe de fluide interne) | `building/SuppliesGroup.tsx:203` (repli de titre), `template-groups.ts:434` (« Product ») | `fluidId` de tous les appels fourniture (`SuppliesGroup.tsx:68-187`, `ProductsGroup.tsx:99,106`) | Si le serveur n'envoie pas de `name` |
 | **Enums bruts** `SortMode` (0/1), `QPSorted` (`yes`/`0`) | `template-groups.ts:439-440` → `PropertyGroup.tsx:591-593` | sens documenté `domain-types.ts:516-517` ; `TradeRole`/`TradeLevel` ont des `enumLabels` — à généraliser | Oui |
 | **Chaînes serveur non formatées** | `StatusOverlay.tsx:406` (`detailsText` brut si `parseRichDetails` échoue), `:434` (`salesInfo`), `:439` (`hintsText`) ; `mail/MailPanel.tsx:45,175` (`msg.date` = **float de date de jeu** en repli de `dateFmt`) ; `building/InspectorMenu.tsx:46-47,65` (`tab.name` = chaîne CLASSES.BIN `GENERAL`/`JOBS`, `tab.icon` = caractère brut) | `tab.id` est la moitié fonctionnelle (`InspectorMenu.tsx:44` → `onRequestTabData`) | Oui |
-| **Clé interne de panneau** | `layouts/GameScreen.tsx:112` — `RIGHT_PANEL_TITLES[rightPanel] ?? rightPanel` imprime `'building'`/`'transport'` si l'entrée manque | — | Si entrée manquante |
+| **Clé interne de panneau** | `layouts/GameScreen.tsx:112` — `RIGHT_PANEL_TITLES[rightPanel] ?? rightPanel` imprime `'building'`/`'search'` si l'entrée manque | — | Si entrée manquante |
 | **Métadonnées de build / horloge** | `hud/VersionBadge.tsx:16` (`Beta v (date heure #n)`), `hud/InfoWidget.tsx:33-35,176` (« 14s ago » depuis un epoch), `login/AuthErrorModal.tsx:43-45` (« Error code: n », résultat brut `RDOLogonUser`) | diagnostic | Oui / erreur seulement |
 
 ### 5.2 Déjà correctement hors DOM (référence pour le portage)

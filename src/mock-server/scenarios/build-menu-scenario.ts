@@ -1,12 +1,16 @@
 /**
  * Scenario 12: Build Menu + NewFacility
  * HTTP: Build.asp (frameset), FacilityList.asp (facility items with Build now buttons)
- * RDO: NewFacility call (success res=#0, duplicate error res=#33)
+ * RDO: NewFacility call (success res=#0, duplicate error res=#33, zone mismatch res=#28)
  * WS: REQ_PLACE_BUILDING -> RESP_BUILDING_PLACED
  *
  * Captured RDO:
  *   C 147 sel 8184316 call NewFacility "^" "%PGISupermarketC","#28","#618","#117"; A147 res="#0";
  *   C 98 sel 8161308 call NewFacility "^" "%PGIGeneralHeadquarterSTA","#28","#465","#388"; A98 res="#33";
+ *
+ * `createBuildMenuScenario(undefined, { refusal: 'zone-mismatch' })` swaps the first
+ * exchange for a commerce-zoned class placed on an industrial zone (res=#28) instead
+ * of the success case, for the L1 drive that proves the notification names the zone.
  */
 
 import { WsMessageType } from '@/shared/types/message-types';
@@ -40,6 +44,15 @@ export const CAPTURED_BUILD_DUPLICATE: CapturedBuildData = {
   x: 465,
   y: 388,
   result: 33,
+};
+
+/** A commerce-zoned class placed on an industrial zone — ERROR_ZoneMissmatch (28). */
+export const CAPTURED_BUILD_ZONE_MISMATCH: CapturedBuildData = {
+  facilityClass: 'PGISupermarketC',
+  companyId: '28',
+  x: 200,
+  y: 300,
+  result: 28,
 };
 
 function buildBuildAspHtml(vars: ScenarioVariables): string {
@@ -126,9 +139,11 @@ function buildFacilityListHtml(): string {
 }
 
 export function createBuildMenuScenario(
-  overrides?: Partial<ScenarioVariables>
+  overrides?: Partial<ScenarioVariables>,
+  opts?: { refusal?: 'zone-mismatch' }
 ): { ws: WsCaptureScenario; rdo: RdoScenario; http: HttpScenario } {
   const vars = mergeVariables(overrides);
+  const firstExchange = opts?.refusal === 'zone-mismatch' ? CAPTURED_BUILD_ZONE_MISMATCH : CAPTURED_BUILD_SUCCESS;
 
   const rdo: RdoScenario = {
     name: 'build-menu',
@@ -136,8 +151,8 @@ export function createBuildMenuScenario(
     exchanges: [
       {
         id: 'bm-rdo-001',
-        request: `C 147 sel 8184316 call NewFacility "^" "%${CAPTURED_BUILD_SUCCESS.facilityClass}","#${CAPTURED_BUILD_SUCCESS.companyId}","#${CAPTURED_BUILD_SUCCESS.x}","#${CAPTURED_BUILD_SUCCESS.y}"`,
-        response: `A147 res="#${CAPTURED_BUILD_SUCCESS.result}"`,
+        request: `C 147 sel 8184316 call NewFacility "^" "%${firstExchange.facilityClass}","#${firstExchange.companyId}","#${firstExchange.x}","#${firstExchange.y}"`,
+        response: `A147 res="#${firstExchange.result}"`,
         matchKeys: { verb: 'sel', action: 'call', member: 'NewFacility' },
       },
       {

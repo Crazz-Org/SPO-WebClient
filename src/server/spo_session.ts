@@ -104,6 +104,9 @@ import { RdoConnectionPool, PooledConnection } from './session/rdo-connection-po
 // Pure utility functions moved to session/session-utils.ts — re-export for backward compat
 export { parseFavoritesResponse, deriveResidenceClass } from './session/session-utils';
 
+/** The refusal Kernel/World.pas:3724 returns from RDOConnectFacilities. */
+const CONNECT_FACILITIES_REFUSED = 'You are not allowed to do that!';
+
 /** Redact password arguments from sensitive RDO commands before logging. */
 const SENSITIVE_MEMBERS = new Set(['RDOLogonUser', 'Logon', 'AccountStatus', 'RDOLogonClient']);
 function redactRdoRaw(member: string | undefined, raw: string): string {
@@ -810,7 +813,10 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
     const resultMessage = parsePropertyResponseHelper(packet.payload || '', 'res') || '';
     this.log.debug(`[Session] ConnectFacilities result: ${resultMessage}`);
 
-    return { success: true, resultMessage };
+    // Kernel/World.pas:3724 — the one string the world answers when the player
+    // has full access to neither facility. Everything else is an outcome
+    // (:3720-3722), not a refusal, and stays a success for the client to show.
+    return { success: resultMessage !== CONNECT_FACILITIES_REFUSED, resultMessage };
   }
 
   /**
@@ -2972,7 +2978,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return buildingTemplatesHandler.fetchBuildingFacilities(this, companyName, cluster, kind, kindName, folder, tycoonLevel);
   }
 
-  public async placeBuilding(facilityClass: string, x: number, y: number): Promise<{ success: boolean; buildingId: string | null }> {
+  public async placeBuilding(facilityClass: string, x: number, y: number): Promise<{ success: boolean; buildingId: string | null; errorCode?: number }> {
     return buildingTemplatesHandler.placeBuilding(this, facilityClass, x, y);
   }
 
@@ -3012,6 +3018,18 @@ private handlePush(socketName: string, packet: RdoPacket) {
     product?: import('../shared/types').BuildingProductData;
   }> {
     return buildingDetailsHandler.getBuildingGateConnections(this, x, y, tabId, path, name, visualClass);
+  }
+
+  /**
+   * The live Offer / Demand pair of ONE service, read off the block rather than
+   * the cached columns. Polled by the General tab while it is open.
+   */
+  public async getBuildingServiceFigures(
+    x: number,
+    y: number,
+    serviceIndex: number,
+  ): Promise<{ supply: string; demand: string }> {
+    return buildingDetailsHandler.getBuildingServiceFigures(this, x, y, serviceIndex);
   }
 
   public async refreshBuildingProperties(x: number, y: number, visualClass: string, activeTabId?: string): Promise<BuildingDetailsResponse> {
