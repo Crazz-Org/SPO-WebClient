@@ -22,6 +22,7 @@ export function ServerSwitchOverlay() {
   const companies = useGameStore((s) => s.companies);
   const isLoading = useGameStore((s) => s.loginLoading);
   const loginPage = useGameStore((s) => s.loginPage);
+  const atWorldLimit = useGameStore((s) => s.loginAtWorldLimit);
   const username = useGameStore((s) => s.username);
   const setLoginStage = useGameStore((s) => s.setLoginStage);
   const setLoginLoading = useGameStore((s) => s.setLoginLoading);
@@ -60,6 +61,11 @@ export function ServerSwitchOverlay() {
   const handleCreateCompany = useCallback(() => {
     client.onCreateCompany();
   }, [client]);
+
+  const handleVisit = useCallback(() => {
+    setLoginLoading(true);
+    client.onVisitWorld();
+  }, [client, setLoginLoading]);
 
   const handleBackToZones = useCallback(() => {
     setLoginStage('zones');
@@ -100,6 +106,7 @@ export function ServerSwitchOverlay() {
             onSelect={handleWorldSelect}
             onBack={handleBackToZones}
             isLoading={isLoading}
+            atWorldLimit={atWorldLimit}
           />
         )}
 
@@ -108,9 +115,11 @@ export function ServerSwitchOverlay() {
             companies={companies}
             worldName={selectedWorld}
             loginPage={loginPage}
+            atWorldLimit={atWorldLimit}
             username={username}
             onSelect={handleCompanySelect}
             onCreate={handleCreateCompany}
+            onVisit={handleVisit}
             onBack={handleBackToWorlds}
             isLoading={isLoading}
           />

@@ -65,11 +65,11 @@ describe('Protocol Compliance: All scenarios reachable', () => {
     expect(matched).toBe(total);
   });
 
-  it('world-list-scenario: 3 of 5 exchanges are matchable', () => {
+  it('world-list-scenario: 4 of 6 exchanges are matchable', () => {
     const bundle = createWorldListScenario();
-    expect(bundle.rdo.exchanges).toHaveLength(5);
+    expect(bundle.rdo.exchanges).toHaveLength(6);
     const { matched } = countMatchableExchanges(bundle.rdo);
-    // 3 of 5 match: idof, RDOOpenSession, RDOEndSession
+    // 4 of 6 match: idof, RDOOpenSession, RDOCanJoinNewWorld, RDOEndSession
     // 2 RDOQueryKey exchanges have multi-line queryBlock args that don't survive round-trip parsing
     expect(matched).toBeGreaterThanOrEqual(3);
   });
@@ -112,10 +112,10 @@ describe('Protocol Compliance: All scenarios reachable', () => {
 });
 
 describe('Protocol Compliance: Total exchange count', () => {
-  it('should have 35 total RDO exchanges across all 7 scenarios', () => {
+  it('should have 36 total RDO exchanges across all 7 scenarios', () => {
     const totalExchanges = [
       createAuthScenario().rdo.exchanges.length,           // 5
-      createWorldListScenario().rdo.exchanges.length,      // 5
+      createWorldListScenario().rdo.exchanges.length,      // 6
       createSelectCompanyScenario().rdo.exchanges.length,  // 5
       createSwitchFocusScenario().rdo.exchanges.length,    // 2
       createMailScenario().rdo.exchanges.length,            // 15 (incl. LogServerOn)
@@ -123,7 +123,7 @@ describe('Protocol Compliance: Total exchange count', () => {
       createBuildMenuScenario().rdo.exchanges.length,       // 2
     ].reduce((sum, n) => sum + n, 0);
 
-    expect(totalExchanges).toBe(35);
+    expect(totalExchanges).toBe(36);
   });
 });
 

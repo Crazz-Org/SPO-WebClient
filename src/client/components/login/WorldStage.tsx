@@ -17,9 +17,11 @@ interface WorldStageProps {
   onBack?: () => void;
   onRetry?: () => void;
   isLoading: boolean;
+  /** RDOCanJoinNewWorld said this account already holds as many worlds as its nobility allows. */
+  atWorldLimit?: boolean;
 }
 
-export function WorldStage({ worlds, onSelect, onBack, onRetry, isLoading }: WorldStageProps) {
+export function WorldStage({ worlds, onSelect, onBack, onRetry, isLoading, atWorldLimit }: WorldStageProps) {
   const available = worlds.filter((w) => w.running3 !== false);
   const offline = worlds.filter((w) => w.running3 === false);
 
@@ -29,6 +31,13 @@ export function WorldStage({ worlds, onSelect, onBack, onRetry, isLoading }: Wor
       <p className={styles.subtitle}>
         Choose your destination — each world has its own economy and politics
       </p>
+
+      {atWorldLimit && (
+        <p className={styles.limitNotice}>
+          You have reached the number of worlds your nobility allows. You can still enter a world
+          where you already own a company; any other world will only let you in as a visitor.
+        </p>
+      )}
 
       {worlds.length === 0 ? (
         <div className={styles.emptyState}>

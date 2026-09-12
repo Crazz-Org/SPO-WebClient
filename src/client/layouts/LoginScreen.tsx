@@ -39,6 +39,7 @@ export function LoginScreen() {
   const authError = useGameStore((s) => s.authError);
   const loginPage = useGameStore((s) => s.loginPage);
   const admission = useGameStore((s) => s.loginAdmission);
+  const atWorldLimit = useGameStore((s) => s.loginAtWorldLimit);
   const rememberedSession = useGameStore((s) => s.rememberedSession);
   const resumeTarget = useGameStore((s) => s.resumeTarget);
   const forgetRememberedSession = useGameStore((s) => s.forgetRememberedSession);
@@ -129,6 +130,11 @@ export function LoginScreen() {
     client.onCreateCompany();
   }, [client]);
 
+  const handleVisit = useCallback(() => {
+    setLoginLoading(true);
+    client.onVisitWorld();
+  }, [client, setLoginLoading]);
+
   const handleResume = useCallback(
     (password: string) => {
       if (!rememberedSession) return;
@@ -177,6 +183,7 @@ export function LoginScreen() {
           onBack={handleBackToZones}
           onRetry={handleRetryWorlds}
           isLoading={isLoading}
+          atWorldLimit={atWorldLimit}
         />
       )}
 
@@ -186,9 +193,11 @@ export function LoginScreen() {
           worldName={selectedWorld}
           loginPage={loginPage}
           admission={admission}
+          atWorldLimit={atWorldLimit}
           username={username}
           onSelect={handleCompanySelect}
           onCreate={handleCreateCompany}
+          onVisit={handleVisit}
           onBack={handleBackToWorlds}
           isLoading={isLoading}
         />

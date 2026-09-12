@@ -31,6 +31,28 @@ describe('game-store login flow state', () => {
     expect(state.loginLoading).toBe(false);
   });
 
+  it('setLoginWorlds should store the world-limit answer when one is given', () => {
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba' }] as never[], true);
+
+    expect(useGameStore.getState().loginAtWorldLimit).toBe(true);
+  });
+
+  it('setLoginWorlds should default the world-limit answer to false', () => {
+    expect(useGameStore.getState().loginAtWorldLimit).toBe(false);
+
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba' }] as never[], true);
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba' }] as never[]);
+
+    expect(useGameStore.getState().loginAtWorldLimit).toBe(false);
+  });
+
+  it('reset should clear the world-limit answer', () => {
+    useGameStore.getState().setLoginWorlds([{ name: 'Shamba' }] as never[], true);
+    useGameStore.getState().reset();
+
+    expect(useGameStore.getState().loginAtWorldLimit).toBe(false);
+  });
+
   it('setLoginCompanies should set companies, stage, and clear loading', () => {
     useGameStore.getState().setLoginLoading(true);
     const companies = [

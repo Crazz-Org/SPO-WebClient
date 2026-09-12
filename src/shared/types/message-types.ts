@@ -398,6 +398,11 @@ export interface WsRespAuthSuccess extends WsMessage {
 export interface WsRespConnectSuccess extends WsMessage {
   type: WsMessageType.RESP_CONNECT_SUCCESS;
   worlds: WorldInfo[];
+  /**
+   * RDOCanJoinNewWorld (DServer/DirectoryServer.pas:116) answered 0: this account already
+   * holds as many worlds as its nobility allows. Absent otherwise.
+   */
+  atWorldLimit?: boolean;
 }
 
 /** Where logonComplete.asp sent the login when it was not the company list (logonComplete.asp:182-186). */

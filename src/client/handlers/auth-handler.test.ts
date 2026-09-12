@@ -1,4 +1,15 @@
-import { login, handleCreateCompany, performAuthCheck, performDirectoryLogin, resumeSession, profileSwitchCompany, applyLocalCompanySwitch, abandonRole } from './auth-handler';
+import {
+  login,
+  handleCreateCompany,
+  performAuthCheck,
+  performDirectoryLogin,
+  visitWorld,
+  VISITOR_COMPANY_ID,
+  resumeSession,
+  profileSwitchCompany,
+  applyLocalCompanySwitch,
+  abandonRole,
+} from './auth-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { WsMessageType } from '../../shared/types';
 import type { ClientHandlerContext } from './client-context';
@@ -379,6 +390,83 @@ describe('auth-handler', () => {
         'Company "NewCo" created!',
         'success',
       );
+    });
+  });
+
+  describe('performDirectoryLogin() — the world limit', () => {
+    it('forwards the flag and says so in the log when the directory refused', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_CONNECT_SUCCESS,
+          worlds: [{ name: 'Shamba' }],
+          atWorldLimit: true,
+        }),
+      });
+
+      await performDirectoryLogin(ctx, 'testUser', 'testPass', 'Root/Areas/Asia/Worlds');
+
+      expect(ClientBridge.showWorlds).toHaveBeenCalledWith([{ name: 'Shamba' }], true);
+      expect(ClientBridge.log).toHaveBeenCalledWith(
+        'Directory',
+        'World limit reached — a new world can only be visited',
+      );
+    });
+
+    it('says nothing and forwards nothing when the answer carried no flag', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_CONNECT_SUCCESS,
+          worlds: [{ name: 'Shamba' }],
+        }),
+      });
+
+      await performDirectoryLogin(ctx, 'testUser', 'testPass', 'Root/Areas/Asia/Worlds');
+
+      expect(ClientBridge.showWorlds).toHaveBeenCalledWith([{ name: 'Shamba' }], undefined);
+      expect(ClientBridge.log).not.toHaveBeenCalledWith(
+        'Directory',
+        'World limit reached — a new world can only be visited',
+      );
+    });
+  });
+
+  describe('visitWorld()', () => {
+    function makeVisitorCtx(): ClientHandlerContext {
+      return makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({ type: 'RESP_SELECT_COMPANY' }),
+        switchToGameView: jest.fn().mockResolvedValue(undefined),
+        preloadFacilityDimensions: jest.fn().mockResolvedValue(undefined),
+        connectMailService: jest.fn().mockResolvedValue(undefined),
+        getProfile: jest.fn().mockResolvedValue(undefined),
+        initChatChannels: jest.fn().mockResolvedValue(undefined),
+        sendMessage: jest.fn(),
+      } as unknown as Partial<ClientHandlerContext>);
+    }
+
+    it('selects the synthetic id 0 company and enters the world', async () => {
+      const ctx = makeVisitorCtx();
+
+      await visitWorld(ctx);
+
+      expect(ctx.availableCompanies).toEqual([
+        { id: VISITOR_COMPANY_ID, name: 'Visitor', ownerRole: 'testUser' },
+      ]);
+      // Own username: the plain REQ_SELECT_COMPANY path, not a role switch.
+      expect(ctx.sendRequest).toHaveBeenCalledWith({
+        type: WsMessageType.REQ_SELECT_COMPANY,
+        companyId: VISITOR_COMPANY_ID,
+      });
+      expect(ClientBridge.log).toHaveBeenCalledWith('Company', 'Entering as a visitor');
+      expect(ClientBridge.setCompany).toHaveBeenCalledWith('Visitor', VISITOR_COMPANY_ID);
+    });
+
+    it('does not add a second visitor entry when called twice', async () => {
+      const ctx = makeVisitorCtx();
+
+      await visitWorld(ctx);
+      await visitWorld(ctx);
+
+      expect(ctx.availableCompanies).toHaveLength(1);
     });
   });
 

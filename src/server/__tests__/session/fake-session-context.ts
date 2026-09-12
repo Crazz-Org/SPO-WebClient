@@ -421,6 +421,8 @@ export interface FakeLoginState {
   cachedPassword: string | null;
   languageId: string;
   cachedZonePath: string;
+  /** What RDOCanJoinNewWorld answered; null = never asked / unreadable. */
+  atWorldLimit: boolean | null;
   activeUsername: string | null;
   currentCompany: CompanyInfo | null;
   lastPlayerX: number;
@@ -513,6 +515,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     cachedPassword: null,
     languageId: '0',
     cachedZonePath: '',
+    atWorldLimit: null,
     activeUsername: null,
     currentCompany: null,
     lastPlayerX: 0,
@@ -608,6 +611,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     setCachedUsername: jest.fn((value: string | null) => { state.cachedUsername = value; }),
     setCachedPassword: jest.fn((value: string | null) => { state.cachedPassword = value; }),
     setCachedZonePath: jest.fn((value: string) => { state.cachedZonePath = value; }),
+    setAtWorldLimit: jest.fn((value: boolean | null) => { state.atWorldLimit = value; }),
     setActiveUsername: jest.fn((value: string | null) => { state.activeUsername = value; }),
     setCurrentCompany: jest.fn((value: CompanyInfo | null) => { state.currentCompany = value; }),
     setLastPlayerX: jest.fn((value: number) => { state.lastPlayerX = value; }),

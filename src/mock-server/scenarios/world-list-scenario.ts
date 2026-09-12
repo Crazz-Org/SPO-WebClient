@@ -1,6 +1,14 @@
 /**
  * Scenario 2/2bis: Region + World Selection
- * RDO: RDOQueryKey → world list with IP/port/population data
+ * RDO: RDOQueryKey → world list with IP/port/population data, then the world-limit question
+ * the reference client asked before offering a new world.
+ *
+ * `RDOCanJoinNewWorld` is declared `function RDOCanJoinNewWorld( Alias : widestring ) :
+ * olevariant` on `TDirectorySession` (`DServer/DirectoryServer.pas:116`); its body
+ * (`:1217-1234`) answers a boolean olevariant — `#-1` may join, `#0` already at the number of
+ * worlds the account's nobility allows. `logonComplete.asp:100-106` opened a bare directory
+ * session, made that one-argument call, and on a false answer sent the login to
+ * `chooseVisa.asp` with `CanPlay=NO` — the Visitor visa only.
  */
 
 import { WsMessageType } from '@/shared/types/message-types';
@@ -64,10 +72,18 @@ export function buildQueryKeyResponse(worlds: CapturedWorldData[]): string {
   return lines.join('\n');
 }
 
+/** How the directory answers RDOCanJoinNewWorld. */
+export interface WorldListOptions {
+  /** What RDOCanJoinNewWorld answers — true (default) may join, false at the limit. */
+  canJoinNewWorld?: boolean;
+}
+
 export function createWorldListScenario(
-  overrides?: Partial<ScenarioVariables>
+  overrides?: Partial<ScenarioVariables>,
+  options?: WorldListOptions,
 ): { ws: WsCaptureScenario; rdo: RdoScenario } {
   const vars = mergeVariables(overrides);
+  const canJoinNewWorld = options?.canJoinNewWorld ?? true;
 
   const americaResponse = buildQueryKeyResponse(AMERICA_WORLDS);
   const asiaResponse = buildQueryKeyResponse(ASIA_WORLDS);
@@ -108,6 +124,20 @@ export function createWorldListScenario(
           action: 'call',
           member: 'RDOQueryKey',
           argsPattern: ['"%Root/Areas/America/Worlds"'],
+        },
+      },
+      {
+        // One widestring argument, against the directory SESSION id (not the server id),
+        // inside the same query session, after the world list and before EndSession.
+        id: 'wl-rdo-canjoin',
+        request: `C 10 sel ${vars.directorySessionId} call RDOCanJoinNewWorld "^" "%${vars.username}"`,
+        response: `A10 res="#${canJoinNewWorld ? -1 : 0}"`,
+        matchKeys: {
+          verb: 'sel',
+          targetId: vars.directorySessionId,
+          action: 'call',
+          member: 'RDOCanJoinNewWorld',
+          argsPattern: [`"%${vars.username}"`],
         },
       },
       {

@@ -233,6 +233,8 @@ export class StarpeaceSession extends EventEmitter {
   // to catch late responses instead of logging "Unmatched response RID"
   private pendingRequests = new Map<number, PendingRdoRequest>();
   private availableWorlds: Map<string, WorldInfo> = new Map();
+  /** What RDOCanJoinNewWorld answered during the last directory query; null = never asked / unreadable. */
+  private atWorldLimit: boolean | null = null;
 
   // Event synchronization
   private interfaceEventsId: string | null = null;
@@ -529,6 +531,7 @@ export class StarpeaceSession extends EventEmitter {
   public setLastPlayerY(value: number): void { this.lastPlayerY = value; }
   public getAvailableWorlds(): Map<string, WorldInfo> { return this.availableWorlds; }
   public setAvailableWorlds(worlds: Map<string, WorldInfo>): void { this.availableWorlds = worlds; }
+  public setAtWorldLimit(value: boolean | null): void { this.atWorldLimit = value; }
   public getAvailableCompanies(): CompanyInfo[] { return this.availableCompanies; }
   public setAvailableCompanies(companies: CompanyInfo[]): void { this.availableCompanies = companies; }
   public pushAvailableCompany(company: CompanyInfo): void {
@@ -627,6 +630,11 @@ export class StarpeaceSession extends EventEmitter {
 
   public getWorldInfo(name: string): WorldInfo | undefined {
     return this.availableWorlds.get(name);
+  }
+
+  /** True when RDOCanJoinNewWorld answered 0 (at the limit); null when it could not be read. */
+  public isAtWorldLimit(): boolean | null {
+    return this.atWorldLimit;
   }
 
   /**
@@ -2903,6 +2911,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.framers.clear();
     this.pendingRequests.clear();
     this.availableWorlds.clear();
+    this.atWorldLimit = null;
     this.knownObjects.clear();
     this.chatUsers.clear();
     this.requestBuffer = [];

@@ -7,7 +7,7 @@
 
 import { useMemo } from 'react';
 import { GlassCard } from '../common';
-import { Plus, ArrowLeft } from 'lucide-react';
+import { Plus, ArrowLeft, Eye } from 'lucide-react';
 import type { CompanyInfo, LoginPageOutcome, WorldAdmission } from '@/shared/types';
 import { isMinisterAccount } from '../../minister-account';
 import { TimeoutCategory } from '@/shared/timeout-categories';
@@ -27,6 +27,13 @@ interface CompanyStageProps {
   loginPage?: LoginPageOutcome | null;
   /** CanJoinWorldEx said this world will refuse a new company — so it is not offered. */
   admission?: WorldAdmission | null;
+  /**
+   * RDOCanJoinNewWorld said this account is at its nobility-bound world limit. It only blocks
+   * a world the player holds no company in — the guard Kernel/World.pas:6028 applies.
+   */
+  atWorldLimit?: boolean;
+  /** Enter with no company, the Visitor visa of chooseVisa.asp:108-127. */
+  onVisit?: () => void;
   /** chooseCompany.asp:23 — a minister account is never offered company creation. */
   username: string;
 }
@@ -40,6 +47,8 @@ export function CompanyStage({
   isLoading,
   loginPage,
   admission,
+  atWorldLimit,
+  onVisit,
   username,
 }: CompanyStageProps) {
   const isMinister = isMinisterAccount(username);
@@ -101,10 +110,17 @@ export function CompanyStage({
     );
   }
 
+  // The world limit only bites where the player holds nothing here (Kernel/World.pas:6028),
+  // and it takes precedence over the world's own admission answer — the reference client
+  // never asked CanJoinWorldEx after a false RDOCanJoinNewWorld (logonComplete.asp:106, :144).
+  const worldLimitBlocks = atWorldLimit === true && companies.length === 0;
+
   // With companies the player still picks one; with none, the title names why there is
   // nothing to pick from.
   let emptyTitle = companies.length > 0 ? 'Select a Company' : 'Get Started';
-  if (companies.length === 0 && admission) {
+  if (worldLimitBlocks) {
+    emptyTitle = 'World Limit Reached';
+  } else if (companies.length === 0 && admission) {
     emptyTitle = admission.kind === 'full' ? 'World Full' : 'Nobility Too Low';
   }
 
@@ -120,7 +136,27 @@ export function CompanyStage({
         <span className={styles.worldTag}>{worldName}</span>
       </div>
 
-      {admission && (
+      {worldLimitBlocks && (
+        <>
+          <p className={styles.denialMessage}>
+            You have reached the number of worlds your nobility allows, so no company can be
+            founded in {worldName}. You can look around as a visitor, or choose a world where you
+            already own a company.
+          </p>
+          <div className={styles.grid}>
+            <GlassCard className={styles.createCard} onClick={() => !isLoading && onVisit?.()}>
+              <Eye size={24} className={styles.createIcon} />
+              <span className={styles.createLabel}>Enter as a visitor</span>
+            </GlassCard>
+          </div>
+          <button className={styles.backLink} onClick={onBack}>
+            <ArrowLeft size={14} />
+            <span>Choose another world</span>
+          </button>
+        </>
+      )}
+
+      {!worldLimitBlocks && admission && (
         <>
           <p className={styles.denialMessage}>
             {admission.kind === 'full'
@@ -134,7 +170,7 @@ export function CompanyStage({
         </>
       )}
 
-      {!admission && !isMinister && companies.length === 0 && (
+      {!worldLimitBlocks && !admission && !isMinister && companies.length === 0 && (
         <p className={styles.emptyMessage}>
           Welcome to {worldName}! Create your first company to start building your empire.
         </p>
@@ -188,8 +224,9 @@ export function CompanyStage({
       )}
 
       {/* Create new company — withheld when the server already said NewCompany would fail,
-          or when the account is a minister (chooseCompany.asp:23, :233). */}
-      {!admission && !isMinister && (
+          when the account is at its world limit, or when the account is a minister
+          (chooseCompany.asp:23, :233). */}
+      {!worldLimitBlocks && !admission && !isMinister && (
         <div className={styles.grid}>
           <GlassCard className={styles.createCard} onClick={() => !isLoading && onCreate()}>
             <Plus size={24} className={styles.createIcon} />

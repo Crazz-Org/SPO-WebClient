@@ -34,6 +34,13 @@ describe('ClientBridge login flow (replaces window.__spoLoginHandlers)', () => {
     expect(state.loginWorlds).toEqual(worlds);
     expect(state.loginStage).toBe('worlds');
     expect(state.loginLoading).toBe(false);
+    expect(state.loginAtWorldLimit).toBe(false);
+  });
+
+  it('showWorlds should forward the world-limit answer', () => {
+    ClientBridge.showWorlds([{ name: 'Shamba' }] as never[], true);
+
+    expect(useGameStore.getState().loginAtWorldLimit).toBe(true);
   });
 
   it('showCompanies should push companies to game-store', () => {

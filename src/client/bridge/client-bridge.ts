@@ -137,6 +137,8 @@ export interface ClientCallbacks {
   onCompanySelect: (companyId: string) => void;
   onCreateCompany: () => void;
   onCreateCompanySubmit: (companyName: string, cluster: string) => Promise<void>;
+  /** Enter the selected world with no company, the way chooseVisa.asp:44 did with `Id=0`. */
+  onVisitWorld: () => void;
   /** One-click re-entry: replays the four login stages against the remembered record. */
   onResumeSession: (record: RememberedSession, password: string) => void;
   onRequestClusterInfo: (clusterName: string) => void;
@@ -413,8 +415,8 @@ export const ClientBridge = {
 
   // ---- Login flow ----
 
-  showWorlds(worlds: WorldInfo[]): void {
-    useGameStore.getState().setLoginWorlds(worlds);
+  showWorlds(worlds: WorldInfo[], atWorldLimit?: boolean): void {
+    useGameStore.getState().setLoginWorlds(worlds, atWorldLimit);
   },
 
   showCompanies(companies: CompanyInfo[], admission?: WorldAdmission): void {

@@ -40,6 +40,16 @@ single `%`-prefixed string, because that is the whole shape of the declaration
 (`Interface Server/InterfaceServer.pas:441`, a one-argument `function`): a second argument or a
 frame sent against the context id would answer about nobody, with no error to show for it.
 
+`world-list` is the directory query session: the world list itself, plus the world-limit
+question the reference client asked before offering a new world.
+`createWorldListScenario(vars, { canJoinNewWorld })` sets what the directory answers —
+`true` (the default) may join, `false` is an account already holding as many worlds as its
+nobility allows (`DServer/DirectoryServer.pas:116`, body `:1217-1234`;
+`logonComplete.asp:100-106`). That exchange targets the directory **session** id, not the
+`DirectoryServer` id: `RDOCanJoinNewWorld` is declared on `TDirectorySession`, the object
+`get RDOOpenSession` hands back, so a frame sent against the server id would reach a member
+that is not there.
+
 `newspaper` is the town paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
 renders, and one `home.asp` per kept issue. It also carries the **rated post**, which is two
 protocols that must agree — the RDO half is two `RDOSetRatingFrom` exchanges with an **empty
