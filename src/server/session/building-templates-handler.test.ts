@@ -74,7 +74,17 @@ describe('placeBuilding', () => {
 
     const result = await placeBuilding(ctx, 'PGISupermarketC', 28, 618);
 
-    expect(result).toEqual({ success: false, buildingId: null });
+    expect(result).toEqual({ success: false, buildingId: null, errorCode: 33 });
+  });
+
+  // res="#28" is ERROR_ZoneMissmatch — the server's code must reach the caller
+  // unchanged, not be collapsed into a fixed "area not clear" constant.
+  it('carries the server\'s result code through on a zone mismatch', async () => {
+    const { ctx } = makeCtx('res="#28"');
+
+    const result = await placeBuilding(ctx, 'PGISupermarketC', 28, 618);
+
+    expect(result).toMatchObject({ success: false, errorCode: 28 });
   });
 
   it('reports failure when the payload carries no result code at all', async () => {
@@ -83,6 +93,7 @@ describe('placeBuilding', () => {
     const result = await placeBuilding(ctx, 'PGISupermarketC', 28, 618);
 
     expect(result).toEqual({ success: false, buildingId: null });
+    expect('errorCode' in result).toBe(false);
   });
 
   it('reports failure when the transport rejects', async () => {
@@ -92,6 +103,7 @@ describe('placeBuilding', () => {
     const result = await placeBuilding(ctx, 'PGISupermarketC', 28, 618);
 
     expect(result).toEqual({ success: false, buildingId: null });
+    expect('errorCode' in result).toBe(false);
   });
 
   it('refuses to build without a world context', async () => {
@@ -106,6 +118,18 @@ describe('placeBuilding', () => {
   it('refuses to build without a selected company', async () => {
     const { ctx } = makeCtx('res="#0"');
     (ctx as { currentCompany: unknown }).currentCompany = null;
+
+    await expect(placeBuilding(ctx, 'PGISupermarketC', 28, 618)).rejects.toThrow(
+      'No company selected'
+    );
+  });
+
+  it('refuses to build as a visitor (company id 0)', async () => {
+    const { ctx } = makeCtx('res="#0"');
+    (ctx as { currentCompany: { id: string; name: string } }).currentCompany = {
+      id: '0',
+      name: '[VISITOR VISA]',
+    };
 
     await expect(placeBuilding(ctx, 'PGISupermarketC', 28, 618)).rejects.toThrow(
       'No company selected'

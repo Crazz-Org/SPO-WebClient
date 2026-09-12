@@ -5,6 +5,7 @@ import {
   performDirectoryLogin,
   visitWorld,
   VISITOR_COMPANY_ID,
+  selectCompanyAndStart,
   resumeSession,
   profileSwitchCompany,
   applyLocalCompanySwitch,
@@ -211,6 +212,23 @@ describe('auth-handler', () => {
       expect(ctx.availableCompanies).toEqual([]);
     });
 
+    it('shows the visa page and never shows companies when loginPage is a visa', async () => {
+      const ctx = makeCtx({
+        sendRequest: jest.fn().mockResolvedValue({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '42',
+          companies: [],
+          loginPage: { kind: 'visa', firstVisit: true },
+        }),
+      });
+
+      await login(ctx, 'Shamba');
+
+      expect(ClientBridge.showLoginPage).toHaveBeenCalledWith({ kind: 'visa', firstVisit: true });
+      expect(ClientBridge.showCompanies).not.toHaveBeenCalled();
+      expect(ctx.availableCompanies).toEqual([]);
+    });
+
     it('shows companies as before when loginPage is absent', async () => {
       const companies = [{ id: '1', name: 'TestCorp', ownerRole: 'testUser' }];
       const ctx = makeCtx({
@@ -298,6 +316,30 @@ describe('auth-handler', () => {
 
       expect(ClientBridge.showError).toHaveBeenCalledWith('Session lost, please reconnect');
       expect(ClientBridge.showCompanies).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('selectCompanyAndStart()', () => {
+    it('enters as the visitor for company id "0" with an empty company list', async () => {
+      const ctx = makeCtx({
+        availableCompanies: [],
+        sendRequest: jest.fn().mockResolvedValue({ type: 'RESP_SELECT_COMPANY' }),
+        switchToGameView: jest.fn().mockResolvedValue(undefined),
+        preloadFacilityDimensions: jest.fn().mockResolvedValue(undefined),
+        connectMailService: jest.fn().mockResolvedValue(undefined),
+        getProfile: jest.fn().mockResolvedValue(undefined),
+        initChatChannels: jest.fn().mockResolvedValue(undefined),
+        sendMessage: jest.fn(),
+      });
+
+      await selectCompanyAndStart(ctx, '0');
+
+      expect(ctx.sendRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ type: WsMessageType.REQ_SELECT_COMPANY, companyId: '0' }),
+      );
+      expect(ClientBridge.setCompany).toHaveBeenCalledWith('[VISITOR VISA]', '0');
+      expect(ClientBridge.setPublicOfficeRole).toHaveBeenCalledWith(false, '');
+      expect(ctx.showNotification).not.toHaveBeenCalled();
     });
   });
 

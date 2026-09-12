@@ -8,7 +8,7 @@
  * Extracted from PropertyGroup.tsx.
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, type KeyboardEvent } from 'react';
 import type { BuildingProductData } from '@/shared/types';
 import {
   PropertyType,
@@ -20,6 +20,7 @@ import {
   formatNumber,
 } from '@/shared/building-details';
 import { computePendingKey } from './property-utils';
+import { useServiceFigures } from './useServiceFigures';
 import { SliderInput, CurrencyInput } from './PropertyInputs';
 import styles from './PropertyGroup.module.css';
 
@@ -35,6 +36,7 @@ export function DataTable({
   rdoCommands,
   onPropertyChange,
   onRowAction,
+  onRowNavigate,
 }: {
   def: PropertyDefinition;
   rowCount: number;
@@ -43,9 +45,13 @@ export function DataTable({
   rdoCommands?: Record<string, RdoCommandMapping>;
   onPropertyChange: (name: string, value: number) => void;
   onRowAction?: (actionId: string, rowIndex: number) => void;
+  onRowNavigate?: (x: number, y: number) => void;
 }) {
   const propSuffix = def.indexSuffix || '';
   const cols = def.columns!;
+  const xCol = cols.find((c) => c.rdoSuffix === 'antX');
+  const yCol = cols.find((c) => c.rdoSuffix === 'antY');
+  const navigable = !!onRowNavigate && !!xCol && !!yCol;
 
   return (
     <table className={styles.dataTable}>
@@ -67,8 +73,29 @@ export function DataTable({
             const iSuffix = c.indexSuffix !== undefined ? c.indexSuffix : propSuffix;
             rowValues[c.rdoSuffix] = valueMap.get(`${c.rdoSuffix}${i}${cSuffix}${iSuffix}`) ?? '';
           }
+          const activateRow = () => {
+            if (!navigable) return;
+            const x = parseInt(rowValues['antX'], 10);
+            const y = parseInt(rowValues['antY'], 10);
+            if (Number.isNaN(x) || Number.isNaN(y)) return;
+            onRowNavigate(x, y);
+          };
+          const navProps = navigable
+            ? {
+                onDoubleClick: activateRow,
+                tabIndex: 0,
+                onKeyDown: (e: KeyboardEvent<HTMLTableRowElement>) => {
+                  if (e.key === 'Enter' && e.target === e.currentTarget) activateRow();
+                },
+                title: 'Double-click or press Enter to view on the map',
+              }
+            : {};
           return (
-            <tr key={i} className={styles.dataRow}>
+            <tr
+              key={i}
+              className={navigable ? `${styles.dataRow} ${styles.dataRowNavigable}` : styles.dataRow}
+              {...navProps}
+            >
               {cols.map((col) => {
                 const colSuffix = col.columnSuffix || '';
                 const idxSuffix = col.indexSuffix !== undefined ? col.indexSuffix : propSuffix;
@@ -198,22 +225,43 @@ function TableCellValue({
 // SERVICE CARD LIST (PropertyType.SERVICE_CARDS)
 // =============================================================================
 
+/**
+ * The Offer and Demand figures of the SELECTED card come off the block, live
+ * (`useServiceFigures`); every other card keeps the cached `srvSupplies{i}` /
+ * `srvDemands{i}` column, which is all the whole-tab refresh ever gave it.
+ *
+ * The hook is called ONCE, above the map, and that is the point: the reference
+ * client polled `CurrentFinger` alone (Voyager/SrvGeneralSheetForm.pas:411-413),
+ * so a studio with ten services must cost one round-trip pair per tick, not ten.
+ * One card list, one timer — there is no per-card path that could drift.
+ */
 export function ServiceCardList({
   def,
   rowCount,
   valueMap,
   canEdit,
+  buildingX,
+  buildingY,
   onPropertyChange,
 }: {
   def: PropertyDefinition;
   rowCount: number;
   valueMap: Map<string, string>;
   canEdit: boolean;
+  buildingX: number;
+  buildingY: number;
   onPropertyChange: (name: string, value: number) => void;
 }) {
   const propSuffix = def.indexSuffix || '';
   const cols = def.columns!;
   const colByPrefix = new Map(cols.map((c) => [c.rdoSuffix, c]));
+
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  // A refresh that shrinks ServiceCount must not leave the selection off the
+  // end — the poll would then ask for an index the block answers 0 for
+  // (StdBlocks/ServiceBlock.pas:1609).
+  const selected = Math.min(selectedIndex, rowCount - 1);
+  const live = useServiceFigures(buildingX, buildingY, selected);
 
   const getVal = (suffix: string, i: number) => {
     const col = colByPrefix.get(suffix);
@@ -228,13 +276,18 @@ export function ServiceCardList({
         const price = parseFloat(getVal('srvPrices', i)) || 0;
         const marketPrice = parseFloat(getVal('srvMarketPrices', i)) || 0;
         const dollarPrice = marketPrice > 0 ? (price / 100) * marketPrice : 0;
+        const isSelected = i === selected;
+        const salesRaw = getVal('srvSales', i);
 
         return (
           <ProductSaleCard
             key={i}
             name={getVal('srvNames', i) || `Service ${i + 1}`}
-            supply={parseFloat(getVal('srvSupplies', i)) || 0}
-            demand={parseFloat(getVal('srvDemands', i)) || 0}
+            supply={isSelected && live ? live.supply : parseFloat(getVal('srvSupplies', i)) || 0}
+            demand={isSelected && live ? live.demand : parseFloat(getVal('srvDemands', i)) || 0}
+            sales={salesRaw === '' ? undefined : parseFloat(salesRaw) || 0}
+            selected={isSelected}
+            onSelect={() => setSelectedIndex(i)}
             pricePc={price}
             avgPricePc={parseFloat(getVal('srvAvgPrices', i)) || 0}
             dollarPrice={dollarPrice}
@@ -289,8 +342,8 @@ export function ProductSummaryCards({
             pricePc={pricePc}
             avgPricePc={parseFloat(product.avgPrice ?? '') || 0}
             dollarPrice={dollarPrice}
-            priceMax={300}
-            priceStep={5}
+            priceMax={400}
+            priceStep={1}
             canEdit={canEdit}
             rdoName={`PricePc`}
             productPath={product.path}
@@ -310,6 +363,9 @@ function ProductSaleCard({
   name,
   supply,
   demand,
+  sales,
+  selected,
+  onSelect,
   pricePc,
   avgPricePc,
   dollarPrice,
@@ -323,6 +379,10 @@ function ProductSaleCard({
   name: string;
   supply?: number;
   demand?: number;
+  sales?: number;
+  /** Set only where the card is one of a selectable list (the service cards). */
+  selected?: boolean;
+  onSelect?: () => void;
   pricePc: number;
   avgPricePc: number;
   dollarPrice: number;
@@ -343,9 +403,24 @@ function ProductSaleCard({
           : styles.pscSupplyBad;
 
   return (
-    <div className={styles.pscCard}>
+    <div className={`${styles.pscCard}${selected ? ` ${styles.pscCardSelected}` : ''}`}>
       <div className={styles.pscHeader}>
-        <span className={styles.pscName}>{name}</span>
+        {/* A button rather than a styled span: choosing which service is polled
+            has to be reachable by keyboard, and `aria-pressed` is what tells a
+            screen reader which one is currently selected. Cards with no
+            selection (the Products tab) keep the plain label. */}
+        {onSelect ? (
+          <button
+            type="button"
+            className={styles.pscSelect}
+            aria-pressed={!!selected}
+            onClick={onSelect}
+          >
+            {name}
+          </button>
+        ) : (
+          <span className={styles.pscName}>{name}</span>
+        )}
         {supply !== undefined && (
           <span className={`${styles.pscSupply} ${supplyColor}`}>
             Supply {supply}%
@@ -355,6 +430,10 @@ function ProductSaleCard({
 
       {demand !== undefined && (
         <span className={styles.pscDemand}>Local Demand: {demand}%</span>
+      )}
+
+      {sales !== undefined && (
+        <span className={styles.pscSales}>Sales: {sales}%</span>
       )}
 
       <span className={styles.pscPrice}>
@@ -386,6 +465,7 @@ export function PriceSliderWithMarker({
   canEdit,
   rdoName,
   onPropertyChange,
+  onValueChange,
 }: {
   value: number;
   avgPrice: number;
@@ -394,6 +474,9 @@ export function PriceSliderWithMarker({
   canEdit: boolean;
   rdoName: string;
   onPropertyChange: (name: string, value: number) => void;
+  /** The thumb's own value, reported on every move — for a label that has to
+   *  follow the drag. Not debounced: the debounce below is for the wire. */
+  onValueChange?: (value: number) => void;
 }) {
   const [localVal, setLocalVal] = useState(isNaN(value) ? 0 : value);
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -402,13 +485,14 @@ export function PriceSliderWithMarker({
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const newVal = parseFloat(e.target.value);
       setLocalVal(newVal);
+      onValueChange?.(newVal);
 
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       timeoutRef.current = setTimeout(() => {
         onPropertyChange(rdoName, newVal);
       }, 300);
     },
-    [rdoName, onPropertyChange],
+    [rdoName, onPropertyChange, onValueChange],
   );
 
   const markerPct = max > 0 ? Math.min(100, (avgPrice / max) * 100) : 0;

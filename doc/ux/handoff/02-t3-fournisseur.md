@@ -20,7 +20,7 @@ fournisseur → cocher → Connecter = 5 interactions** dans une seule feuille e
 |---|---|---|
 | Aperçu | bloc Inspect poussé (`SwitchFocusEx` puis `RefreshObject` ~5 s → `EVENT_BUILDING_REFRESH`) | au clic ; **aucune** lecture en plus |
 | Feuille `building` | `REQ_BUILDING_DETAILS` (en-tête + groupe générique) | à l'ouverture (comme aujourd'hui) |
-| Onglet Approvisionnements | `REQ_BUILDING_TAB_DATA` → 1 RDO `GetInputNames` (+ `GateMap` entrepôt) → **noms seulement** | à l'ouverture de l'onglet |
+| Onglet Approvisionnements | `REQ_BUILDING_TAB_DATA` → 1 RDO `GetInputNames` (+ `GateMap`) → **noms seulement** | à l'ouverture de l'onglet |
 | Ligne ouverte | `onRequestGateConnections` → `SetPath` + `GetPropertyList` + `GetSubObjectProps` × connexions (≤ 20, 3 à la fois) | **à l'ouverture de la ligne** ; résultat gardé tant que la feuille vit ; « réessayer » = replier/rouvrir **ou** bouton Réessayer dans l'`ErrorState` |
 | Curseurs | écritures `MaxPrice` / `minK` | au relâchement, debounce 300 ms conservé |
 | Recherche | `onSearchConnections(fluidId, filtres, rôles)` → `FindSuppliers` | **à Entrée / bouton**, jamais à la frappe |

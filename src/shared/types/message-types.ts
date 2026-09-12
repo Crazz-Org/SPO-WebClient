@@ -148,6 +148,8 @@ export enum WsMessageType {
   RESP_BUILDING_REFRESH_PROPERTIES = 'RESP_BUILDING_REFRESH_PROPERTIES',
   REQ_BUILDING_SET_PROPERTY = 'REQ_BUILDING_SET_PROPERTY',
   RESP_BUILDING_SET_PROPERTY = 'RESP_BUILDING_SET_PROPERTY',
+  REQ_BUILDING_SERVICE_FIGURES = 'REQ_BUILDING_SERVICE_FIGURES',
+  RESP_BUILDING_SERVICE_FIGURES = 'RESP_BUILDING_SERVICE_FIGURES',
   REQ_BUILDING_WORKER_COUNTS = 'REQ_BUILDING_WORKER_COUNTS',
   RESP_BUILDING_WORKER_COUNTS = 'RESP_BUILDING_WORKER_COUNTS',
 
@@ -411,7 +413,8 @@ export interface WsRespConnectSuccess extends WsMessage {
 /** Where logonComplete.asp sent the login when it was not the company list (logonComplete.asp:182-186). */
 export type LoginPageOutcome =
   | { kind: 'denied'; expiresOn: string }   // logonNoAccess.asp — PA query value, e.g. "01/01/2020"
-  | { kind: 'error'; errorCode: string };   // logonError.asp — ErrorCode query value, or the mismatch tag
+  | { kind: 'error'; errorCode: string }    // logonError.asp — ErrorCode query value, or the mismatch tag
+  | { kind: 'visa'; firstVisit: boolean };  // chooseVisa.asp — firstVisit ≡ AccountStatus was ACCOUNT_Unexisting (Protocol.pas:84)
 
 /**
  * InterfaceServer.CanJoinWorldEx (Interface Server/InterfaceServer.pas:441, body :3471-3486) — the
@@ -817,6 +820,35 @@ export interface WsRespBuildingGateConnections extends WsMessage {
   path: string;
   supply?: BuildingSupplyData;
   product?: BuildingProductData;
+}
+
+/**
+ * The two live figures of ONE service on a service building's General tab.
+ *
+ * The cached `srvSupplies{i}` / `srvDemands{i}` columns only move with the
+ * whole-tab refresh; the reference client polls the block directly instead, on
+ * its own `tRefresh` timer, and for the selected finger alone —
+ * `Proxy.BindTo(fCurrBlock); Proxy.RDOGetDemand(CurrentFinger)` then
+ * `RDOGetSupply(CurrentFinger)` (Voyager/SrvGeneralSheetForm.pas:411-413).
+ * That is why this message carries one index rather than the whole list: a
+ * studio with ten services costs one round-trip pair per tick, not ten.
+ */
+export interface WsReqBuildingServiceFigures extends WsMessage {
+  type: WsMessageType.REQ_BUILDING_SERVICE_FIGURES;
+  x: number;
+  y: number;
+  /** Index of the selected service — the `index` argument of RDOGetDemand / RDOGetSupply. */
+  serviceIndex: number;
+}
+
+/** Wire values as answered (`res="#37"` → `'37'`); empty string when the block answered nothing. */
+export interface WsRespBuildingServiceFigures extends WsMessage {
+  type: WsMessageType.RESP_BUILDING_SERVICE_FIGURES;
+  x: number;
+  y: number;
+  serviceIndex: number;
+  supply: string;
+  demand: string;
 }
 
 /** Lightweight property refresh — reuses existing Delphi temp object. */

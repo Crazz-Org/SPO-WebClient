@@ -18,6 +18,7 @@ import {
   collectHeaderPropertyNames,
   HEADER_PROPERTY_NAMES,
 } from './property-templates';
+import { PRODUCTS_GROUP, HQ_INVENTIONS_GROUP } from './template-groups';
 
 /** A four-group industrial template, the shape the old read paid for in full. */
 function registerFourGroupTemplate(visualClass: string): void {
@@ -104,5 +105,35 @@ describe('collectHeaderPropertyNames', () => {
     for (const name of everything.regularProperties) {
       expect(header.regularProperties).toContain(name);
     }
+  });
+});
+
+describe('registerInspectorTabs tab label', () => {
+  beforeEach(clearInspectorTabsCache);
+
+  it("shows the CLASSES.BIN tab name on the handler's group", () => {
+    registerInspectorTabs('8807', [{ tabName: 'CLIENTS', tabHandler: 'Products' }]);
+    const template = getTemplateForVisualClass('8807');
+    const group = template.groups.find(g => g.handlerName === 'Products');
+    expect(group).toBeDefined();
+    expect(group!.name).toBe('CLIENTS');
+    expect(group!.id).toBe(PRODUCTS_GROUP.id);
+    expect(group!.properties).toBe(PRODUCTS_GROUP.properties);
+  });
+
+  it('keeps the group default label when TabName is empty', () => {
+    registerInspectorTabs('8808', [{ tabName: '', tabHandler: 'Products' }]);
+    const template = getTemplateForVisualClass('8808');
+    const group = template.groups.find(g => g.handlerName === 'Products');
+    expect(group).toBeDefined();
+    expect(group!.name).toBe(PRODUCTS_GROUP.name);
+  });
+
+  it('keeps the default label on a runtime-injected group', () => {
+    registerInspectorTabs('8809', [{ tabName: 'GENERAL', tabHandler: 'HqGeneral' }]);
+    const template = getTemplateForVisualClass('8809');
+    const group = template.groups.find(g => g.handlerName === 'hdqInventions');
+    expect(group).toBeDefined();
+    expect(group!.name).toBe(HQ_INVENTIONS_GROUP.name);
   });
 });

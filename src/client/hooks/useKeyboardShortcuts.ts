@@ -14,6 +14,7 @@
 
 import { useEffect } from 'react';
 import { useUiStore } from '../store/ui-store';
+import { useGameStore } from '../store/game-store';
 import type { ClientCallbacks } from '../bridge/client-bridge';
 
 export interface Shortcut {
@@ -79,10 +80,12 @@ export function useKeyboardShortcuts(client: ClientCallbacks | null): void {
 
       switch (e.key.toLowerCase()) {
         case 'b':
+          if (useGameStore.getState().isVisitor) break;
           e.preventDefault();
           store.toggleBuildSurface();
           break;
         case 'e':
+          if (useGameStore.getState().isVisitor) break;
           e.preventDefault();
           store.toggleLeftPanel('empire');
           break;

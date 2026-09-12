@@ -2,8 +2,8 @@
  * MobileMenu — Full-feature "More" menu for mobile.
  *
  * Grouped menu covering ALL desktop features not available via bottom tabs:
- * Communication (Mail), Exploration (Search, Transport, Capitol),
- * Map Controls (Zoom, Overlays, Refresh), System (Settings, Server Switch, Debug).
+ * Communication (Mail), Exploration (Search, Command palette, Profile, My facilities, Government),
+ * Map Controls (Zoom, Rotate, Overlays, Refresh), System (Settings, Server Switch, Debug).
  */
 
 import {

@@ -60,6 +60,27 @@
   font-size: var(--text-sm);
 }
 
+/* A row whose value is a block (mausoleum paragraphs): label above, text below. */
+.rowStacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.paragraphs {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  text-align: left;
+  white-space: normal;
+}
+
+.paragraphs p {
+  margin: 0 0 var(--space-2) 0;
+}
+
+.paragraphs p:last-child {
+  margin-bottom: 0;
+}
+
 /* Color classes */
 .positive { color: var(--success); }
 .negative { color: var(--error); }
@@ -81,6 +102,22 @@
 .textInput:focus {
   border-color: var(--accent-gold);
   background: var(--surface-border-active);
+}
+
+/* Select (trade mode / trade level combo) — same shape as the text input */
+.select {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--surface-border-active);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  padding: 2px 6px;
+  min-width: 140px;
+  outline: none;
+}
+
+.select:focus {
+  border-color: var(--accent-gold);
 }
 
 .textInputWrapper {
@@ -294,6 +331,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+.wfSalaryCost {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  min-width: 56px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .wfMinHint {
   font-size: var(--text-2xs);
   color: var(--text-disabled);
@@ -360,6 +405,14 @@
   outline: none;
 }
 
+.upgradeTotal {
+  font-size: var(--text-xs);
+  color: var(--accent-gold);
+  font-weight: 600;
+  margin: 0 var(--space-1);
+  white-space: nowrap;
+}
+
 .upgradeOkBtn {
   padding: 2px 10px;
   height: 24px;
@@ -375,6 +428,12 @@
 .upgradeOkBtn:hover {
   background: var(--accent-gold-light);
   box-shadow: 0 0 12px rgba(212, 168, 83, 0.3);
+}
+
+.filmFormError {
+  color: var(--error);
+  font-size: var(--text-xs);
+  padding: var(--space-1) 0;
 }
 
 .upgradeStopBtn {
@@ -526,6 +585,30 @@
   min-width: 0;
 }
 
+/* The service card whose figures are being polled live. */
+.pscCardSelected {
+  border-color: var(--accent-gold);
+}
+
+/* A reset: the selector is a <button> for keyboard and screen-reader reasons,
+   and must read exactly as .pscName did. */
+.pscSelect {
+  all: unset;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pscSelect:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
 .pscSupply {
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
@@ -546,6 +629,11 @@
 }
 
 .pscDemand {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+
+.pscSales {
   font-size: var(--text-2xs);
   color: var(--text-muted);
 }
@@ -649,6 +737,16 @@
   font-variant-numeric: tabular-nums;
   vertical-align: middle;
   line-height: var(--leading-dense);
+}
+
+.dataRowNavigable {
+  cursor: pointer;
+}
+
+.dataRowNavigable:hover,
+.dataRowNavigable:focus-visible {
+  background: rgba(212, 168, 67, 0.12);
+  outline: none;
 }
 
 /* Supplies / Products panel */
@@ -795,6 +893,27 @@
   padding: 2px var(--space-1);
   border-bottom: 1px solid var(--bg-tertiary);
   white-space: nowrap;
+}
+
+/* The two sortable supplier columns: a real button inside the th, reset to look
+   exactly like the header text it replaces until it is hovered or active. */
+.supplySortHeader {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.supplySortHeader:hover,
+.supplySortHeader:focus-visible {
+  text-decoration: underline;
+}
+
+.supplySortActive {
+  color: var(--accent-gold);
+  font-weight: var(--font-semibold);
 }
 
 .supplyTableRow {
@@ -1863,11 +1982,6 @@
   color: var(--text-primary);
 }
 
-.productOwnerDot {
-  color: var(--text-disabled);
-  font-size: 10px;
-}
-
 /* Product action buttons (compact) */
 .productActions {
   display: flex;
@@ -1912,4 +2026,28 @@
 .wareFilterInput:focus-visible {
   outline: 2px solid var(--accent-gold);
   outline-offset: 2px;
+}
+
+/* Mausoleum epitaph editor (owner only) — issue 576 */
+.epitaphTextarea {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--surface-border-active);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  padding: var(--space-1) var(--space-2);
+}
+.epitaphTextarea:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+.epitaphActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }

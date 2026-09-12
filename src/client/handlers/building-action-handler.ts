@@ -15,6 +15,8 @@ import {
   WsRespBuildingTabData,
   WsReqBuildingGateConnections,
   WsRespBuildingGateConnections,
+  WsReqBuildingServiceFigures,
+  WsRespBuildingServiceFigures,
   WsReqBuildingRefreshProperties,
   WsRespBuildingRefreshProperties,
   WsReqBuildingSetProperty,
@@ -45,6 +47,7 @@ import { useUiStore } from '../store/ui-store';
 import type { ClientHandlerContext } from './client-context';
 import { connectionPendingKey } from './connection-pending-key';
 import { isGateTab } from '@/shared/building-details';
+import { parseFilmMonths } from '../components/building/property-utils';
 
 // ── Building Details ────────────────────────────────────────────────────────
 
@@ -298,6 +301,43 @@ export async function requestGateConnections(
   }
 }
 
+// ── Service Figures (live, one service at a time) ───────────────────────────
+
+/**
+ * Read the live Offer / Demand pair of one service off the block.
+ *
+ * The General tab's cached `srvSupplies{i}` / `srvDemands{i}` columns only move
+ * with the 30-second whole-tab refresh. The reference client polls the block
+ * instead, for the selected finger alone (Voyager/SrvGeneralSheetForm.pas:411-413),
+ * which is what this is: one request per tick, whatever the service count.
+ *
+ * The answer is returned rather than written to a store on purpose — the
+ * figures live in the card list's own state, so they disappear with the tab.
+ */
+export async function requestServiceFigures(
+  ctx: ClientHandlerContext,
+  x: number,
+  y: number,
+  serviceIndex: number,
+): Promise<{ supply: string; demand: string } | null> {
+  if (useGameStore.getState().status !== 'connected') return null;
+
+  try {
+    const req: WsReqBuildingServiceFigures = {
+      type: WsMessageType.REQ_BUILDING_SERVICE_FIGURES,
+      x,
+      y,
+      serviceIndex,
+    };
+
+    const response = await ctx.sendRequest(req) as WsRespBuildingServiceFigures;
+    return { supply: response.supply, demand: response.demand };
+  } catch (err: unknown) {
+    ClientBridge.log('Error', `Failed to read service ${serviceIndex} figures at (${x},${y}): ${toErrorMessage(err)}`);
+    return null;
+  }
+}
+
 // ── Set Property ────────────────────────────────────────────────────────────
 
 /**
@@ -530,7 +570,7 @@ export async function deleteFacility(ctx: ClientHandlerContext, x: number, y: nu
 
 export function handleBuildingAction(ctx: ClientHandlerContext, actionId: string, buildingDetails: BuildingDetailsResponse, rowData?: Record<string, string>): void {
   if (actionId === 'launchMovie') {
-    launchMovie(ctx, buildingDetails);
+    launchMovie(ctx, buildingDetails, rowData);
   } else if (actionId === 'cancelMovie') {
     cancelMovie(ctx, buildingDetails);
   } else if (actionId === 'releaseMovie') {
@@ -818,32 +858,26 @@ export async function cloneFacility(ctx: ClientHandlerContext, x: number, y: num
 
 // ── Movie Actions ───────────────────────────────────────────────────────────
 
-async function launchMovie(ctx: ClientHandlerContext, buildingDetails: BuildingDetailsResponse): Promise<void> {
-  const filmName = prompt('Movie name:');
-  if (!filmName) return;
-  const budgetStr = prompt('Budget ($):', '1000000');
-  if (!budgetStr) return;
-  const monthsStr = prompt('Production months:', '12');
-  if (!monthsStr) return;
-
-  // Auto-release is a launch parameter, not a property: no server member sets it
-  // afterwards, it rides bit 0 of AutoInfo (StdBlocks/MovieStudios.pas:19,104). Voyager
-  // reads its checkbox at launch and never emits on the toggle (FilmsSheet.pas:383), so
-  // asking here is the faithful equivalent — the displayed AutoRel belongs to the film
-  // already running, which is not the one being launched.
-  const autoRel = confirm('Release the film automatically when production finishes?') ? '1' : '0';
-
-  // Auto-produce IS a persisted studio flag with a real member behind it
-  // (RDOAutoProduce, MovieStudios.pas:107), so the current value is the right default.
-  const filmsGroup = buildingDetails.groups['films'] || [];
-  const autoProd = filmsGroup.find(p => p.name === 'AutoProd')?.value || '0';
+/**
+ * `params` comes from FilmLaunchForm, already validated there (title, a
+ * finite budget, months within FILM_MONTHS_MIN..FILM_MONTHS_MAX). This is the
+ * second line of defence for a caller that bypasses the form — never send a
+ * budget/months pair that could reach the gateway as `NaN`.
+ */
+async function launchMovie(ctx: ClientHandlerContext, buildingDetails: BuildingDetailsResponse, params?: Record<string, string>): Promise<void> {
+  if (!params || !Number.isFinite(Number(params.budget)) || parseFilmMonths(params.months) === null) {
+    ctx.showNotification('Launch refused: invalid budget or months', 'error');
+    return;
+  }
 
   try {
-    await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RDOLaunchMovie', '0', {
-      filmName, budget: budgetStr, months: monthsStr, autoRel, autoProd,
-    });
-    ctx.showNotification(`Launching movie: ${filmName}`, 'success');
-    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+    const ok = await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RDOLaunchMovie', '0', params);
+    if (ok) {
+      ctx.showNotification(`Launching movie: ${params.filmName}`, 'success');
+      refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+    } else {
+      ctx.showNotification('Failed to launch movie', 'error');
+    }
   } catch (err: unknown) {
     ctx.showNotification(`Failed to launch movie: ${toErrorMessage(err)}`, 'error');
   }
@@ -852,9 +886,13 @@ async function launchMovie(ctx: ClientHandlerContext, buildingDetails: BuildingD
 async function cancelMovie(ctx: ClientHandlerContext, buildingDetails: BuildingDetailsResponse): Promise<void> {
   if (!confirm('Cancel current movie production?')) return;
   try {
-    await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RDOCancelMovie', '0');
-    ctx.showNotification('Movie production cancelled', 'success');
-    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+    const ok = await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RDOCancelMovie', '0');
+    if (ok) {
+      ctx.showNotification('Movie production cancelled', 'success');
+      refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+    } else {
+      ctx.showNotification('Failed to cancel movie', 'error');
+    }
   } catch (err: unknown) {
     ctx.showNotification(`Failed to cancel movie: ${toErrorMessage(err)}`, 'error');
   }
@@ -862,9 +900,13 @@ async function cancelMovie(ctx: ClientHandlerContext, buildingDetails: BuildingD
 
 async function releaseMovie(ctx: ClientHandlerContext, buildingDetails: BuildingDetailsResponse): Promise<void> {
   try {
-    await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RDOReleaseMovie', '0');
-    ctx.showNotification('Movie released!', 'success');
-    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+    const ok = await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RDOReleaseMovie', '0');
+    if (ok) {
+      ctx.showNotification('Movie released', 'success');
+      refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+    } else {
+      ctx.showNotification('Failed to release movie', 'error');
+    }
   } catch (err: unknown) {
     ctx.showNotification(`Failed to release movie: ${toErrorMessage(err)}`, 'error');
   }

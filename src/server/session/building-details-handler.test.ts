@@ -30,11 +30,13 @@ import {
   getBuildingBasicDetails,
   getBuildingTabData,
   getBuildingGateConnections,
+  getBuildingServiceFigures,
   refreshBuildingProperties,
   readWorkerCounts,
 } from './building-details-handler';
 import type { ActiveInspector } from './building-details-handler';
-import { makeSessionCtx } from '../__tests__/session/fake-session-context';
+import { makeSessionCtx, FAKE_CONTEXT_IDS } from '../__tests__/session/fake-session-context';
+import { RdoProtocol } from '../rdo';
 import type { FakeSessionCtx } from '../__tests__/session/fake-session-context';
 import type { SessionContext } from './session-context';
 import type { BuildingPropertyValue, RdoPacket } from '../../shared/types';
@@ -1634,6 +1636,129 @@ describe('getBuildingTabData', () => {
     });
   });
 
+  describe('non-warehouse gates and the GateMap', () => {
+    it('lists only the supply gates the GateMap does not mark disabled', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasSupplies: true, isWarehouse: false, gateMap: '101' }));
+      cacheValues(fake, { MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') {
+          return 'res="%In0::\nA\r\nIn1::\nB\r\nIn2::\nC"';
+        }
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies');
+
+      expect(supplies?.map(s => s.path)).toEqual(['In0', 'In2']);
+      expect(fake.sent.some(s => s.packet.member === 'SetPath')).toBe(false);
+      expect(fake.cacher.getPropertyList).not.toHaveBeenCalled();
+    });
+
+    it('lists only the product gates the GateMap does not mark disabled', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasProducts: true, isWarehouse: false, gateMap: '01' }));
+      cacheValues(fake, { MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetOutputNames') return 'res="%Out0::\nA\r\nOut1::\nB"';
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { products } = await getBuildingTabData(fake.ctx, X, Y, 'products');
+
+      expect(products?.map(p => p.path)).toEqual(['Out1']);
+    });
+
+    it('lists every gate when the GateMap is empty', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasSupplies: true, isWarehouse: false, gateMap: '' }));
+      cacheValues(fake, { MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') {
+          return 'res="%In0::\nA\r\nIn1::\nB\r\nIn2::\nC"';
+        }
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies');
+
+      expect(supplies?.map(s => s.path)).toEqual(['In0', 'In1', 'In2']);
+    });
+
+    it('lists every gate when the GateMap is shorter than the gate list — no off-by-one', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasSupplies: true, isWarehouse: false, gateMap: '1' }));
+      cacheValues(fake, { MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') {
+          return 'res="%In0::\nA\r\nIn1::\nB\r\nIn2::\nC"';
+        }
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies');
+
+      expect(supplies?.map(s => s.path)).toEqual(['In0', 'In1', 'In2']);
+    });
+
+    it('leaves a gate listed when its map character is neither "0" nor "1"', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasSupplies: true, isWarehouse: false, gateMap: '1x1' }));
+      cacheValues(fake, { MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') {
+          return 'res="%In0::\nA\r\nIn1::\nB\r\nIn2::\nC"';
+        }
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies');
+
+      expect(supplies?.map(s => s.path)).toEqual(['In0', 'In1', 'In2']);
+    });
+
+    it('reads the GateMap for an on-demand, non-warehouse inspector and applies it', async () => {
+      const fake = makeDetailsCtx();
+      registerTabs('9013', ['Supplies']);
+      cacheValues(fake, { GateMap: '10', MetaFluid: 'X', cnxCount: '0' });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') return 'res="%In0::\nA\r\nIn1::\nB"';
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies', '9013');
+
+      expect(getActiveInspector(fake.ctx, X, Y)?.gateMap).toBe('10');
+      expect(fake.cacher.getPropertyList).toHaveBeenCalledWith(FIRST_TEMP, ['GateMap']);
+      expect(supplies?.map(s => s.path)).toEqual(['In0']);
+    });
+
+    it('opens a non-warehouse inspector with every gate listed when the GateMap read fails', async () => {
+      const fake = makeDetailsCtx();
+      registerTabs('9013', ['Supplies']);
+      fake.cacher.getPropertyList.mockImplementation(async (_id: string, names: string[]) => {
+        if (names.includes('GateMap')) throw new Error('Request timeout: GetPropertyList');
+        return names.map(() => '');
+      });
+      fake.respond((packet) => {
+        if (packet.member === 'GetInputNames') return 'res="%In0::\nA\r\nIn1::\nB"';
+        if (packet.member === 'SetPath') return 'res="#-1"';
+        return '';
+      });
+
+      const { supplies } = await getBuildingTabData(fake.ctx, X, Y, 'supplies', '9013');
+
+      expect(getActiveInspector(fake.ctx, X, Y)?.gateMap).toBe('');
+      expect(supplies?.map(s => s.path)).toEqual(['In0', 'In1']);
+    });
+  });
+
   describe('company inputs', () => {
     it('reads seven indexed properties per input', async () => {
       const fake = makeDetailsCtx();
@@ -1959,7 +2084,7 @@ describe('getBuildingGateConnections', () => {
     const fake = gateCtx('products', {
       MetaFluid: 'Cars', LastFluid: '80', FluidQuality: '90%', PricePc: '110',
       AvgPrice: '$4', MarketPrice: '$5', cnxCount: '1',
-    }, 'res="%Toy Store 3\tYellow Inc.\t900\t1\t$12\t40\t50\t"');
+    }, 'res="%Toy Store 3\tYellow Inc.\t900\t1\t$12\t40\t50\tSPO_test3\t"');
 
     const { product } = await getBuildingGateConnections(
       fake.ctx, X, Y, 'products', 'Gate0', 'Cars',
@@ -1969,11 +2094,45 @@ describe('getBuildingGateConnections', () => {
       path: 'Gate0', name: 'Cars', metaFluid: 'Cars', lastFluid: '80', quality: '90%',
       pricePc: '110', avgPrice: '$4', marketPrice: '$5', connectionCount: 1,
       connections: [{
-        facilityName: 'Toy Store 3', companyName: 'Yellow Inc.', createdBy: '',
+        facilityName: 'Toy Store 3', companyName: 'Yellow Inc.', createdBy: 'SPO_test3',
         price: '', overprice: '', lastValue: '900', cost: '$12', quality: '',
         connected: true, x: 40, y: 50,
       }],
     });
+  });
+
+  it("reads a product customer's owning tycoon from the eighth column", async () => {
+    const fake = gateCtx('products', {
+      MetaFluid: 'Cars', LastFluid: '80', FluidQuality: '90%', PricePc: '110',
+      AvgPrice: '$4', MarketPrice: '$5', cnxCount: '1',
+    }, 'res="%Toy Store 3\tYellow Inc.\t900\t1\t$12\t40\t50\tCrazz\t"');
+
+    const { product } = await getBuildingGateConnections(
+      fake.ctx, X, Y, 'products', 'Gate0', 'Cars',
+    );
+
+    expect(product?.connections[0]).toEqual({
+      facilityName: 'Toy Store 3', companyName: 'Yellow Inc.', createdBy: 'Crazz',
+      price: '', overprice: '', lastValue: '900', cost: '$12', quality: '',
+      connected: true, x: 40, y: 50,
+    });
+  });
+
+  it('asks the cache for cnxCreatedBy on a product row', async () => {
+    const fake = gateCtx('products', {
+      MetaFluid: 'Cars', LastFluid: '80', FluidQuality: '90%', PricePc: '110',
+      AvgPrice: '$4', MarketPrice: '$5', cnxCount: '1',
+    }, 'res="%Toy Store 3\tYellow Inc.\t900\t1\t$12\t40\t50\tSPO_test3\t"');
+
+    await getBuildingGateConnections(fake.ctx, X, Y, 'products', 'Gate0', 'Cars');
+
+    const query = fake.sent.find(s => s.packet.member === 'GetSubObjectProps')?.packet.args?.[1];
+    expect(query).toEqual(
+      RdoValue.string(
+        'cnxFacilityName0\tcnxCompanyName0\tLastValueCnxInfo0\tConnectedCnxInfo0\t' +
+        'tCostCnxInfo0\tcnxXPos0\tcnxYPos0\tcnxCreatedBy0\t',
+      ).format(),
+    );
   });
 
   it('does not reset the object to the building root first', async () => {
@@ -2081,7 +2240,7 @@ describe('getBuildingGateConnections', () => {
     // was reduced to '' and dropped. The count and the list then disagreed with
     // nothing said. The row must survive, blank.
     const fake = gateCtx('products', { MetaFluid: 'Cars', cnxCount: '1' },
-      'res="%\t\t\t\t\t\t\t"');
+      'res="%\t\t\t\t\t\t\t\t"');
 
     const { product } = await getBuildingGateConnections(fake.ctx, X, Y, 'products', 'Gate0', 'Cars');
 
@@ -2117,13 +2276,15 @@ describe('getBuildingGateConnections', () => {
   });
 
   it('substitutes the documented defaults for every blank product column', async () => {
+    // 8 columns: only the first and last carry text ('tail' lands on index 7,
+    // createdBy) so columns 1-6 blank.
     const fake = gateCtx('products', { MetaFluid: 'Cars', cnxCount: '1' },
       `res="%head${'\t'.repeat(7)}tail"`);
 
     const { product } = await getBuildingGateConnections(fake.ctx, X, Y, 'products', 'Gate0', 'Cars');
 
     expect(product?.connections).toEqual([{
-      facilityName: 'head', companyName: '', createdBy: '', price: '', overprice: '',
+      facilityName: 'head', companyName: '', createdBy: 'tail', price: '', overprice: '',
       lastValue: '', cost: '', quality: '', connected: false, x: 0, y: 0,
     }]);
   });
@@ -2537,60 +2698,324 @@ describe('refreshBuildingProperties', () => {
 });
 
 // ===========================================================================
-// KNOWN GAPS — properties the sheet asks for that the cache never holds
+// BANK AND TV — the six values the cache never holds, read live off the block
 // ===========================================================================
 
 /**
- * Known gaps A-1 / A-3 / A-4.
+ * These six names used to be fetched through `GetPropertyList` like any other,
+ * and the Delphi StoreToCache routines never wrote them — TBankBlock writes the
+ * loan list alone (StdBlocks/Banks.pas:188-206), TBroadcaster only antenna data
+ * (StdBlocks/Broadcast.pas:431-453) — so the cacher answered `''` every time and
+ * six sliders rendered blank forever.
  *
- * These names are fetched through GetPropertyList like any other, but the
- * Delphi StoreToCache routines never write them, so the answer is always empty.
- * The tests below pin the REQUEST — the names really do go out — and the empty
- * result, so the day a fix lands (an RDO getter, or the properties added to the
- * cache) they fail.
+ * They now carry `notCached` and are read live off `CurrBlock`, which is exactly
+ * what the reference client does (Voyager/BankGeneralSheet.pas:258-273,
+ * Voyager/TVGeneralSheet.pas:269-275). The tests below pin both halves: the names
+ * no longer go to the cache, and the emitted frames carry the right form, target
+ * and argument.
  */
-describe('properties requested from a cache that never holds them', () => {
-  it('asks the cache for HoursOnAir and Comercials on a TV station', async () => {
+describe('bank and TV values read live off the block', () => {
+  /** The block id the cache answers for `CurrBlock`, distinct from every focus id. */
+  const BLOCK = '40133888';
+
+  it('reads HoursOnAir and Commercials off the block instead of the cache', async () => {
     const fake = makeDetailsCtx();
     registerTabs('9018', ['TVGeneral'], 'TV Station');
     focusReturns(fake, '40133602');
-    // TBroadcaster.StoreToCache (StdBlocks/Broadcast.pas:431-453) writes neither.
-    cacheValues(fake, { Name: 'Channel 5', Cost: '$2,000K' });
+    cacheValues(fake, { Name: 'Channel 5', CurrBlock: BLOCK });
+    rdoMembers(fake, { HoursOnAir: 'HoursOnAir="#18"', Commercials: 'Commercials="#35"' });
 
     const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9018');
 
     const asked = fake.cacher.getPropertyList.mock.calls.flatMap(([, names]) => names);
-    expect(asked).toContain('HoursOnAir');
-    expect(asked).toContain('Comercials'); // one 'm' — the published name is 'Commercials'
-    // BUG connu — A-1. The names go out on the wire and the
-    // cache answers an empty string for each, every time: the two sliders of the
-    // TV sheet are permanently blank.
+    expect(asked).not.toContain('HoursOnAir');
+    expect(asked).not.toContain('Comercials'); // one 'm' — the published name is 'Commercials'
+    expect(asked).toContain('CurrBlock');
+
+    expect(fake.sent).toHaveLength(2);
+    for (const sent of fake.sent) {
+      expect(sent.socketName).toBe('construction');
+      expect(sent.category).toBe(TimeoutCategory.NORMAL);
+      expect(sent.packet.action).toBe(RdoAction.GET);
+      expect(sent.packet.targetId).toBe(BLOCK);
+    }
+    expect(fake.sent.map(s => s.packet.member)).toEqual(['HoursOnAir', 'Commercials']);
+
     const tv = details.groups['tvGeneral'];
-    expect(tv).toContainEqual({ name: 'HoursOnAir', value: '' });
-    expect(tv).toContainEqual({ name: 'Comercials', value: '' });
-    expect(tv).toContainEqual({ name: 'Name', value: 'Channel 5' });
+    // The published `Commercials` lands under the template's read key `Comercials`
+    // (Voyager/TVGeneralSheet.pas:15, :275).
+    expect(tv.filter(p => p.name === 'HoursOnAir')).toEqual([{ name: 'HoursOnAir', value: '18' }]);
+    expect(tv.filter(p => p.name === 'Comercials')).toEqual([{ name: 'Comercials', value: '35' }]);
+    expect(tv.filter(p => p.name === 'Name')).toEqual([{ name: 'Name', value: 'Channel 5' }]);
   });
 
-  it('asks the cache for EstLoan, Interest, Term and BudgetPerc on a bank', async () => {
+  it('reads EstLoan, BudgetPerc, Interest and Term off the block instead of the cache', async () => {
     const fake = makeDetailsCtx();
     registerTabs('9019', ['BankGeneral'], 'Bank');
     focusReturns(fake, '40133602');
-    // TBank published properties (StdBlocks/Banks.pas:39-41) are absent from
-    // StoreToCache (Banks.pas:188-206); EstLoan has no cache entry at all and
-    // comes from RDOEstimateLoan, which is not implemented.
-    cacheValues(fake, { Name: 'First Bank', Creator: 'SPO_test3' });
+    cacheValues(fake, { Name: 'First Bank', CurrBlock: BLOCK });
+    rdoMembers(fake, {
+      RDOEstimateLoan: 'res="%$5,000,000"',
+      BudgetPerc: 'BudgetPerc="#75"',
+      Interest: 'Interest="#12"',
+      Term: 'Term="#5"',
+    });
 
     const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9019');
 
     const asked = fake.cacher.getPropertyList.mock.calls.flatMap(([, names]) => names);
-    expect(asked).toEqual(expect.arrayContaining(['EstLoan', 'Interest', 'Term', 'BudgetPerc']));
-    // BUG connu — A-3 / A-4. The four values come back empty
-    // for every bank, so the loan sheet renders four blank sliders.
-    const bank = details.groups['bankGeneral'];
     for (const name of ['EstLoan', 'Interest', 'Term', 'BudgetPerc']) {
-      expect(bank).toContainEqual({ name, value: '' });
+      expect(asked).not.toContain(name);
     }
+
+    expect(fake.sent).toHaveLength(4);
+    expect(fake.sent.map(s => s.packet.member))
+      .toEqual(['RDOEstimateLoan', 'BudgetPerc', 'Interest', 'Term']);
+
+    const [estLoan, ...gets] = fake.sent;
+    expect(estLoan.packet.action).toBe(RdoAction.CALL);
+    expect(estLoan.packet.targetId).toBe(BLOCK);
+    expect(RdoProtocol.format(estLoan.packet as RdoPacket))
+      .toContain(`call RDOEstimateLoan "^" ${RdoValue.int(FAKE_CONTEXT_IDS.tycoonProxyId).format()}`);
+    for (const g of gets) {
+      expect(g.packet.action).toBe(RdoAction.GET);
+      expect(g.packet.targetId).toBe(BLOCK);
+    }
+
+    const bank = details.groups['bankGeneral'];
+    // FormatMoney punctuation stripped (Utils/Misc/MathUtils.pas:87-109).
+    expect(bank).toContainEqual({ name: 'EstLoan', value: '5000000' });
+    expect(bank).toContainEqual({ name: 'BudgetPerc', value: '75' });
+    expect(bank).toContainEqual({ name: 'Interest', value: '12' });
+    expect(bank).toContainEqual({ name: 'Term', value: '5' });
     expect(bank).toContainEqual({ name: 'Name', value: 'First Bank' });
+  });
+
+  it('sends the InitClient proxy id to RDOEstimateLoan, never the persistent tycoon id', async () => {
+    // The server pointer-casts the argument, `TMoneyDealer(ClientId)`
+    // (StdBlocks/Banks.pas:149); the persistent TTycoon.Id would dereference nothing.
+    const fake = makeDetailsCtx();
+    registerTabs('9020', ['BankGeneral'], 'Bank');
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { CurrBlock: BLOCK });
+    rdoMembers(fake, { RDOEstimateLoan: 'res="%$0"' });
+
+    await getBuildingBasicDetails(fake.ctx, X, Y, '9020');
+
+    const args = fake.sent[0].packet.args;
+    expect(args).toEqual([RdoValue.int(FAKE_CONTEXT_IDS.tycoonProxyId).format()]);
+    expect(args![0]).not.toBe(RdoValue.int(parseInt(FAKE_CONTEXT_IDS.tycoonId, 10)).format());
+  });
+
+  it('normalises the FormatMoney answer: $0 and a negative loan', async () => {
+    for (const [answer, expected] of [['$0', '0'], ['-$1,234', '-1234']] as const) {
+      const fake = makeDetailsCtx();
+      registerTabs('9021', ['BankGeneral'], 'Bank');
+      focusReturns(fake, '40133602');
+      cacheValues(fake, { CurrBlock: BLOCK });
+      rdoMembers(fake, { RDOEstimateLoan: `res="%${answer}"` });
+
+      const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9021');
+
+      expect(details.groups['bankGeneral']).toContainEqual({ name: 'EstLoan', value: expected });
+    }
+  });
+
+  it('skips RDOEstimateLoan with no proxy id, and still issues the three gets', async () => {
+    const fake = makeDetailsCtx({ fTycoonProxyId: null });
+    registerTabs('9022', ['BankGeneral'], 'Bank');
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { CurrBlock: BLOCK });
+    rdoMembers(fake, { BudgetPerc: 'BudgetPerc="#75"', Interest: 'Interest="#12"', Term: 'Term="#5"' });
+
+    const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9022');
+
+    expect(fake.sent.map(s => s.packet.member)).toEqual(['BudgetPerc', 'Interest', 'Term']);
+    expect(details.groups['bankGeneral']).toContainEqual({ name: 'Interest', value: '12' });
+    expect(details.groups['bankGeneral'].some(p => p.name === 'EstLoan')).toBe(false);
+  });
+
+  it('a rejected RDOEstimateLoan leaves the three gets running', async () => {
+    const fake = makeDetailsCtx();
+    registerTabs('9023', ['BankGeneral'], 'Bank');
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { Name: 'First Bank', CurrBlock: BLOCK });
+    rdoMembers(fake, {
+      RDOEstimateLoan: new Error('Request timeout: RDOEstimateLoan'),
+      BudgetPerc: 'BudgetPerc="#75"',
+      Interest: 'Interest="#12"',
+      Term: 'Term="#5"',
+    });
+
+    const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9023');
+
+    const bank = details.groups['bankGeneral'];
+    expect(bank.some(p => p.name === 'EstLoan')).toBe(false);
+    expect(bank).toContainEqual({ name: 'Term', value: '5' });
+  });
+
+  it('a rejected get is swallowed and the sheet still renders', async () => {
+    const fake = makeDetailsCtx();
+    registerTabs('9024', ['BankGeneral'], 'Bank');
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { Name: 'First Bank', CurrBlock: BLOCK });
+    rdoMembers(fake, {
+      RDOEstimateLoan: 'res="%$5,000,000"',
+      BudgetPerc: new Error('Request timeout: BudgetPerc'),
+    });
+
+    const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9024');
+
+    const bank = details.groups['bankGeneral'];
+    expect(bank).toContainEqual({ name: 'EstLoan', value: '5000000' });
+    expect(bank).toContainEqual({ name: 'Name', value: 'First Bank' });
+    expect(bank.some(p => p.name === 'Interest')).toBe(false);
+  });
+
+  it('a rejected TV read is swallowed and the sheet still renders', async () => {
+    const fake = makeDetailsCtx();
+    registerTabs('9031', ['TVGeneral'], 'TV Station');
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { Name: 'Channel 5', CurrBlock: BLOCK });
+    rdoMembers(fake, { HoursOnAir: new Error('Request timeout: HoursOnAir') });
+
+    const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9031');
+
+    const tv = details.groups['tvGeneral'];
+    expect(tv.some(p => p.name === 'HoursOnAir')).toBe(false);
+    expect(tv.some(p => p.name === 'Comercials')).toBe(false);
+    expect(tv).toContainEqual({ name: 'Name', value: 'Channel 5' });
+  });
+
+  it('an empty answer pushes no entry', async () => {
+    const fake = makeDetailsCtx();
+    registerTabs('9025', ['TVGeneral'], 'TV Station');
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { Name: 'Channel 5', CurrBlock: BLOCK });
+    rdoMembers(fake, { HoursOnAir: '', Commercials: 'Commercials="#35"' });
+
+    const details = await getBuildingBasicDetails(fake.ctx, X, Y, '9025');
+
+    const tv = details.groups['tvGeneral'];
+    expect(tv.some(p => p.name === 'HoursOnAir')).toBe(false);
+    expect(tv).toContainEqual({ name: 'Comercials', value: '35' });
+  });
+
+  it('sends nothing when the cache has no CurrBlock, for either building', async () => {
+    for (const [visualClass, handler, name] of [
+      ['9026', 'BankGeneral', 'Bank'],
+      ['9027', 'TVGeneral', 'TV Station'],
+    ] as const) {
+      const fake = makeDetailsCtx();
+      registerTabs(visualClass, [handler], name);
+      focusReturns(fake, '40133602');
+      cacheValues(fake, { Name: name });
+      rdoMembers(fake, {});
+
+      await getBuildingBasicDetails(fake.ctx, X, Y, visualClass);
+
+      expect(fake.sent).toHaveLength(0);
+    }
+  });
+
+  it('connects the construction socket when the session has none', async () => {
+    for (const [visualClass, handler, name] of [
+      ['9028', 'BankGeneral', 'Bank'],
+      ['9029', 'TVGeneral', 'TV Station'],
+    ] as const) {
+      const fake = makeDetailsCtx({ sockets: ['map'] });
+      registerTabs(visualClass, [handler], name);
+      focusReturns(fake, '40133602');
+      cacheValues(fake, { CurrBlock: BLOCK });
+      rdoMembers(fake, {});
+
+      await getBuildingBasicDetails(fake.ctx, X, Y, visualClass);
+
+      expect(fake.ctx.connectConstructionService).toHaveBeenCalled();
+    }
+  });
+
+  it('re-reads the sliders on a refresh, so a moved slider shows the server value', async () => {
+    const fake = makeDetailsCtx();
+    registerTabs('9030', ['TVGeneral'], 'TV Station');
+    const inspector = makeInspector({ tempObjectId: '900500' });
+    setActiveInspectorForTest(fake.ctx, inspector);
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { Name: 'Channel 5', CurrBlock: BLOCK });
+    rdoMembers(fake, { HoursOnAir: 'HoursOnAir="#7"', Commercials: 'Commercials="#35"' });
+
+    const details = await refreshBuildingProperties(fake.ctx, X, Y, '9030');
+
+    expect(details.groups['tvGeneral']).toContainEqual({ name: 'HoursOnAir', value: '7' });
+  });
+});
+
+// ===========================================================================
+// getBuildingServiceFigures — the live Offer / Demand pair of one service
+// ===========================================================================
+
+describe('getBuildingServiceFigures', () => {
+  /** A fake whose `getCacherPropertyListAt` answers a CurrBlock, as the map service does. */
+  function serviceCtx(currBlock: string, sockets: string[] = ['construction']): FakeSessionCtx {
+    const fake = makeSessionCtx({ sockets });
+    (fake.ctx.getCacherPropertyListAt as jest.MockedFunction<SessionContext['getCacherPropertyListAt']>)
+      .mockResolvedValue([currBlock]);
+    return fake;
+  }
+
+  it('reads both figures off the block on the construction socket', async () => {
+    const fake = serviceCtx('40133600');
+    rdoMembers(fake, { RDOGetDemand: 'res="#37"', RDOGetSupply: 'res="#64"' });
+
+    const figures = await getBuildingServiceFigures(fake.ctx, X, Y, 1);
+
+    expect(figures).toEqual({ demand: '37', supply: '64' });
+    expect(fake.sent.map(s => s.socketName)).toEqual(['construction', 'construction']);
+    expect(fake.sent.map(s => s.category)).toEqual([TimeoutCategory.NORMAL, TimeoutCategory.NORMAL]);
+  });
+
+  it('sends the service index as the single argument of each call', async () => {
+    const fake = serviceCtx('40133600');
+    rdoMembers(fake, { RDOGetDemand: 'res="#37"', RDOGetSupply: 'res="#64"' });
+
+    await getBuildingServiceFigures(fake.ctx, X, Y, 2);
+
+    expect(fake.sent.map(s => s.packet.member)).toEqual(['RDOGetDemand', 'RDOGetSupply']);
+    for (const s of fake.sent) {
+      expect(s.packet.verb).toBe(RdoVerb.SEL);
+      expect(s.packet.action).toBe(RdoAction.CALL);
+      expect(s.packet.targetId).toBe('40133600');
+      expect(s.packet.args).toEqual([RdoValue.int(2).format()]);
+    }
+  });
+
+  it('refuses a tile with no building rather than calling on an empty id', async () => {
+    const fake = serviceCtx('');
+
+    await expect(getBuildingServiceFigures(fake.ctx, X, Y, 0))
+      .rejects.toThrow(`No building found at (${X}, ${Y})`);
+    expect(fake.sent).toHaveLength(0);
+  });
+
+  it('opens the construction connection only when there is none', async () => {
+    const open = serviceCtx('40133600');
+    rdoMembers(open, { RDOGetDemand: 'res="#1"', RDOGetSupply: 'res="#2"' });
+    await getBuildingServiceFigures(open.ctx, X, Y, 0);
+    expect(open.ctx.connectConstructionService).not.toHaveBeenCalled();
+
+    const closed = serviceCtx('40133600', []);
+    rdoMembers(closed, { RDOGetDemand: 'res="#1"', RDOGetSupply: 'res="#2"' });
+    await getBuildingServiceFigures(closed.ctx, X, Y, 0);
+    expect(closed.ctx.connectConstructionService).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers empty strings when the block says nothing, rather than inventing a 0', async () => {
+    // A blank figure and a figure of 0 are different claims: the client shows
+    // the cached column until a real answer arrives.
+    const fake = serviceCtx('40133600');
+    rdoMembers(fake, { RDOGetDemand: '', RDOGetSupply: '' });
+
+    expect(await getBuildingServiceFigures(fake.ctx, X, Y, 0)).toEqual({ demand: '', supply: '' });
   });
 });
 

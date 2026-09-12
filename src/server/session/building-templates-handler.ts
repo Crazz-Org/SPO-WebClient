@@ -21,6 +21,7 @@ import { deriveResidenceClass } from './session-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
 import { withLangId } from '../../shared/language';
 import { parseResultCode } from '../rdo-helpers';
+import { VISITOR_COMPANY_ID } from '../../shared/visitor-visa';
 
 // ===========================================================================
 // SHARED — HTTP oracle
@@ -614,11 +615,11 @@ export async function placeBuilding(
   facilityClass: string,
   x: number,
   y: number
-): Promise<{ success: boolean; buildingId: string | null }> {
+): Promise<{ success: boolean; buildingId: string | null; errorCode?: number }> {
   if (!ctx.worldContextId) {
     throw new Error('Not logged into world - cannot place building');
   }
-  if (!ctx.currentCompany) {
+  if (!ctx.currentCompany || ctx.currentCompany.id === VISITOR_COMPANY_ID) {
     throw new Error('No company selected - cannot place building');
   }
 
@@ -653,7 +654,9 @@ export async function placeBuilding(
       return { success: true, buildingId: null };
     } else {
       ctx.log.warn(`[BuildConstruction] Building placement failed. Result code: ${resultCode}`);
-      return { success: false, buildingId: null };
+      return resultCode >= 0
+        ? { success: false, buildingId: null, errorCode: resultCode }
+        : { success: false, buildingId: null };
     }
   } catch (e: unknown) {
     ctx.log.error('[BuildConstruction] Failed to place building:', e);

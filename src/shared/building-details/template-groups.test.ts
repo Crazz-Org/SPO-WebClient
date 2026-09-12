@@ -7,7 +7,8 @@
 
 import { describe, it, expect } from '@jest/globals';
 import { RDO_MEMBERS, isCataloguedRdoMember } from '../rdo-members';
-import { PropertyType } from './property-definitions';
+import { PropertyType, type BuildingTemplate } from './property-definitions';
+import { HIDDEN_PROPERTY_NAMES } from './hidden-properties';
 import {
   HANDLER_TO_GROUP,
   GROUP_BY_ID,
@@ -177,8 +178,40 @@ describe('General handler RDO properties', () => {
     expect(maintProp!.editable).toBe(true);
   });
 
-  it('ResGeneral should have 20 properties (PopulatedBlock stats + investment sliders + repair control + stop toggle + demolish)', () => {
-    expect(RES_GENERAL_GROUP.properties).toHaveLength(20);
+  it('ResGeneral should have 26 properties (PopulatedBlock stats + effective crime/pollution/efficiency + investment sliders + repair control + stop toggle + demolish + kind/cluster/town)', () => {
+    expect(RES_GENERAL_GROUP.properties).toHaveLength(26);
+  });
+
+  it('ResGeneral should show effective crime, effective pollution and efficiency beside the raw figures', () => {
+    // PopulatedBlock.pas:931-933 — ActualCrime/ActualPollution/Efficiency are only written
+    // for a TMetaPopulatedBlock, so hideEmpty drops the row instead of printing 0%.
+    const effectiveNames = ['ActualCrime', 'ActualPollution', 'Efficiency'];
+    const rdoNames = RES_GENERAL_GROUP.properties.map(p => p.rdoName);
+    for (const name of effectiveNames) {
+      expect(rdoNames).toContain(name);
+      const prop = RES_GENERAL_GROUP.properties.find(p => p.rdoName === name)!;
+      expect(prop.type).toBe(PropertyType.PERCENTAGE);
+      expect(prop.hideEmpty).toBe(true);
+      expect(prop.editable).toBeUndefined();
+    }
+
+    const order = RES_GENERAL_GROUP.properties.map(p => p.rdoName);
+    expect(order.indexOf('ActualCrime')).toBe(order.indexOf('Crime') + 1);
+    expect(order.indexOf('ActualPollution')).toBe(order.indexOf('Pollution') + 1);
+    expect(order.indexOf('Efficiency')).toBe(order.indexOf('ActualPollution') + 1);
+
+    for (const name of effectiveNames) {
+      expect(RES_GENERAL_GROUP.rdoCommands![name]).toBeUndefined();
+    }
+  });
+
+  it('ResGeneral requests the effective crime/pollution/efficiency names on the wire', () => {
+    clearInspectorTabsCache();
+    registerInspectorTabs('test583_ResGeneral', [{ tabName: 'General', tabHandler: 'ResGeneral' }]);
+    const collected = collectTemplatePropertyNamesStructured(getTemplateForVisualClass('test583_ResGeneral'));
+    expect(collected.regularProperties).toContain('ActualCrime');
+    expect(collected.regularProperties).toContain('ActualPollution');
+    expect(collected.regularProperties).toContain('Efficiency');
   });
 
   it('ResGeneral should have residential stats from PopulatedBlock.StoreToCache', () => {
@@ -239,6 +272,43 @@ describe('General handler RDO properties', () => {
     expect(comercials!.type).toBe(PropertyType.SLIDER);
   });
 
+  it('BankGeneral bounds Interest 0-50 and Term 1-100, as Voyager does', () => {
+    // BankGeneralSheet.dfm: peInterest MinPerc 0 / MaxPerc 50, peTerm 1 / 100.
+    const interest = BANK_GENERAL_GROUP.properties.find(p => p.rdoName === 'Interest')!;
+    expect([interest.min, interest.max]).toEqual([0, 50]);
+    const term = BANK_GENERAL_GROUP.properties.find(p => p.rdoName === 'Term')!;
+    expect([term.min, term.max]).toEqual([1, 100]);
+  });
+
+  it('TVGeneral bounds HoursOnAir 0-24 in hours, not as a percentage', () => {
+    // TVGeneralSheet.dfm peHoursOnAir 0..24 — a count of hours in a day.
+    const hours = TV_GENERAL_GROUP.properties.find(p => p.rdoName === 'HoursOnAir')!;
+    expect([hours.min, hours.max]).toEqual([0, 24]);
+    expect(hours.step).toBe(1); // PropertyGroup defaults a missing step to 5
+    expect(hours.unit).toBeDefined();
+    expect(hours.unit).not.toBe('%');
+  });
+
+  it('the six values StoreToCache never writes are marked notCached', () => {
+    // TBankBlock.StoreToCache (StdBlocks/Banks.pas:188-206) and
+    // TBroadcaster.StoreToCache (StdBlocks/Broadcast.pas:431-453) hold none of them.
+    for (const name of ['EstLoan', 'Interest', 'Term', 'BudgetPerc']) {
+      expect(BANK_GENERAL_GROUP.properties.find(p => p.rdoName === name)!.notCached).toBe(true);
+    }
+    for (const name of ['HoursOnAir', 'Comercials']) {
+      expect(TV_GENERAL_GROUP.properties.find(p => p.rdoName === name)!.notCached).toBe(true);
+    }
+  });
+
+  it('both groups request the hidden CurrBlock the live reads bind to', () => {
+    for (const group of [BANK_GENERAL_GROUP, TV_GENERAL_GROUP]) {
+      const block = group.properties.find(p => p.rdoName === 'CurrBlock');
+      expect(block).toBeDefined();
+      expect(block!.notCached).toBeUndefined(); // it IS in the cache — it is what we read
+      expect(HIDDEN_PROPERTY_NAMES.has('CurrBlock')).toBe(true);
+    }
+  });
+
   it('capitolGeneral should have coverage TABLE', () => {
     const tableProp = CAPITOL_GENERAL_GROUP.properties.find(p => p.type === PropertyType.TABLE);
     expect(tableProp).toBeDefined();
@@ -272,12 +342,34 @@ describe('General handler RDO properties', () => {
     const cardProp = SRV_GENERAL_GROUP.properties.find(p => p.type === PropertyType.SERVICE_CARDS);
     expect(cardProp).toBeDefined();
     expect(cardProp!.countProperty).toBe('ServiceCount');
-    expect(cardProp!.columns).toHaveLength(6);
+    expect(cardProp!.columns).toHaveLength(7);
 
     const priceCol = cardProp!.columns!.find(c => c.rdoSuffix === 'srvPrices');
     expect(priceCol).toBeDefined();
     expect(priceCol!.editable).toBe(true);
     expect(priceCol!.type).toBe(PropertyType.SLIDER);
+  });
+
+  it('SrvGeneral declares the srvSales column, unsuffixed, expanding to srvSales0', () => {
+    // Services.asp:57 (mvcProperty=Sales); ServiceBlock.pas:1735 WriteInteger('srvSales'+i)
+    const cardProp = SRV_GENERAL_GROUP.properties.find(p => p.type === PropertyType.SERVICE_CARDS);
+    const salesCol = cardProp!.columns!.find(c => c.rdoSuffix === 'srvSales');
+    expect(salesCol).toBeDefined();
+    expect(salesCol!.label).toBe('Sales');
+    expect(salesCol!.type).toBe(PropertyType.PERCENTAGE);
+    expect(salesCol!.indexSuffix).toBeUndefined();
+    expect(salesCol!.editable).toBeFalsy();
+    // Sits beside Offer and Demand, before the price columns
+    const order = cardProp!.columns!.map(c => c.rdoSuffix);
+    expect(order.indexOf('srvSales')).toBe(order.indexOf('srvDemands') + 1);
+
+    // Property-name expansion for index 0 is exactly `srvSales0` — no language suffix
+    const template = { id: 't', name: 't', groups: [SRV_GENERAL_GROUP] } as unknown as BuildingTemplate;
+    const collected = collectTemplatePropertyNamesStructured(template);
+    const info = collected.indexedByCount.get('ServiceCount')!.find(i => i.rdoName === 'srvNames')!;
+    const col = info.columns!.find(c => c.rdoSuffix === 'srvSales')!;
+    const suffix = col.indexSuffix !== undefined ? col.indexSuffix : (info.indexSuffix ?? '');
+    expect(`${col.rdoSuffix}0${col.columnSuffix ?? ''}${suffix}`).toBe('srvSales0');
   });
 });
 
@@ -596,17 +688,17 @@ describe('registerInspectorTabs integration', () => {
     expect(template.groups[1].handlerName).toBe('Supplies');
   });
 
-  it('should use canonical group name regardless of raw CLASSES.BIN tabName', () => {
-    // Building inspector tab name from CLASSES.BIN is 'SERVICES' (all-caps raw value),
-    // but the canonical PropertyGroup name for the Supplies handler is 'Supplies'.
-    // registerInspectorTabs must use baseGroup.name, not the raw tabName.
+  it('should show the raw CLASSES.BIN tabName as the tab label', () => {
+    // Building inspector tab name from CLASSES.BIN is 'SERVICES' (all-caps raw value).
+    // registerInspectorTabs must show that raw tabName, as Voyager does, not the
+    // canonical PropertyGroup name for the Supplies handler ('Supplies').
     registerInspectorTabs('testHQ', [
       { tabName: 'SERVICES', tabHandler: 'Supplies' },
     ]);
     const template = getTemplateForVisualClass('testHQ');
     const suppliesGroup = template.groups.find(g => g.handlerName === 'Supplies');
     expect(suppliesGroup).toBeDefined();
-    expect(suppliesGroup!.name).toBe('Supplies');  // canonical, not 'SERVICES'
+    expect(suppliesGroup!.name).toBe('SERVICES');  // raw CLASSES.BIN value, not 'Supplies'
   });
 
   it('should handle duplicate group IDs with handler suffix', () => {
@@ -1055,5 +1147,55 @@ describe('civic templates request the SecurityId the gate needs', () => {
     expect(prop).toBeDefined();
     // It is an authorisation input, not a figure to show the player.
     expect(prop!.hideEmpty).toBe(true);
+  });
+});
+
+/**
+ * GeneralInfo.inc:9,14,19 — every ordinary facility shows its kind, cluster and
+ * town. The kind is a multi-string on the cache: StoreMultiStringToCache appends
+ * the language index (Languages.pas:248) and the bare name is commented out
+ * (KernelCache.pas:419-420), so the request must be MetaFacilityName0.
+ */
+describe('ordinary-facility general groups declare kind, cluster and town', () => {
+  const ORDINARY_GENERAL_GROUPS = [
+    ['IndGeneral', IND_GENERAL_GROUP],
+    ['SrvGeneral', SRV_GENERAL_GROUP],
+    ['ResGeneral', RES_GENERAL_GROUP],
+    ['HqGeneral', HQ_GENERAL_GROUP],
+    ['BankGeneral', BANK_GENERAL_GROUP],
+    ['WHGeneral', WH_GENERAL_GROUP],
+    ['TVGeneral', TV_GENERAL_GROUP],
+  ] as const;
+
+  it.each(ORDINARY_GENERAL_GROUPS)('%s declares the three GeneralInfo.inc rows', (_id, group) => {
+    const rdoNames = group.properties.map(p => p.rdoName);
+    expect(rdoNames).toContain('MetaFacilityName0');
+    expect(rdoNames).toContain('Cluster');
+    expect(rdoNames).toContain('Town');
+  });
+
+  it.each(ORDINARY_GENERAL_GROUPS)('%s requests the kind as MetaFacilityName0, never bare', (_id, group) => {
+    const rdoNames = group.properties.map(p => p.rdoName);
+    expect(rdoNames).not.toContain('MetaFacilityName');
+    const kind = group.properties.find(p => p.rdoName === 'MetaFacilityName0')!;
+    expect(kind.type).toBe(PropertyType.TEXT);
+    // An empty kind renders no row rather than an empty one.
+    expect(kind.hideEmpty).toBe(true);
+  });
+
+  it.each(ORDINARY_GENERAL_GROUPS)('%s puts the three rows on the wire as regular reads', (id, _group) => {
+    clearInspectorTabsCache();
+    registerInspectorTabs(`test580_${id}`, [{ tabName: 'General', tabHandler: id }]);
+    const collected = collectTemplatePropertyNamesStructured(getTemplateForVisualClass(`test580_${id}`));
+    expect(collected.regularProperties).toContain('MetaFacilityName0');
+    expect(collected.regularProperties).toContain('Cluster');
+    expect(collected.regularProperties).toContain('Town');
+    expect(collected.regularProperties).not.toContain('MetaFacilityName');
+  });
+
+  it('none of the three is hidden at render time', () => {
+    for (const name of ['MetaFacilityName0', 'Cluster', 'Town']) {
+      expect(HIDDEN_PROPERTY_NAMES.has(name)).toBe(false);
+    }
   });
 });

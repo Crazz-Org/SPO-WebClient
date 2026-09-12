@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `worker-counts`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `worker-counts`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -108,6 +108,55 @@ just other people's names, so the two frames are fixed here. Both are built by t
 (`rdoCall`); only `idof` is written out, because it has no fire-and-forget form. Its test
 drives the real `searchPeople` and matches each emitted frame back against the exchange.
 
+`trade-settings` is every argument the two facility trade controls can send: `RDOSetRole` with
+2, 5 or 6 and `RDOSetTradeLevel` with 0, 2 or 3 — one exchange per value, six in all. Both are
+`procedure`s with no server-side range check (`StdBlocks/Warehouses.pas:527`,
+`Kernel/Kernel.pas:6408`), so the legal set is enforced by the client alone, and `1`
+(`tlvPupil`) is provably absent. Their responses are **empty** for the usual reason: a procedure
+answers nothing, so the frame is the only evidence there is. The values come from
+`shared/building-details/trade-settings.ts`, the same lists the controls build their options
+from. Its test drives the real `setBuildingProperty` and matches each emitted frame back against
+the exchange it must be.
+
+`gate-map` is a factory with `GateMap = '101'` over three input names: two supplies are listed,
+and the trap — the disabled middle gate's `SetPath` answers exactly like the two enabled ones,
+so a gateway that (re-)applied the old warehouse-only filter would open it and get an answer for
+its trouble. This encodes the Voyager finger-strip rule (`Voyager/SupplySheetForm.pas:382`,
+`Voyager/ProdSheetForm.pas:324`): a gate is listed unless the map has an explicit `'0'` at its
+position. Its test drives the real `getBuildingTabData` and `getBuildingGateConnections` and
+asserts on `RdoMock.getConsumedIds()` that the middle gate's `SetPath` and header exchanges were
+never consumed.
+
+`product-owner` is a factory with one output gate and one customer whose `GetSubObjectProps`
+query carries `cnxCreatedBy0` as an eighth name: the server writes it for an output exactly as
+it does for an input (`Kernel/KernelCache.pas:712`), though the reference client's product sheet
+never asked (`Voyager/ProdSheetForm.pas:407-413`). It is appended last so the seven Voyager
+positions still decode unchanged. Its test drives the real `getBuildingTabData` and
+`getBuildingGateConnections` and asserts the full decoded connection, owner included.
+
+`service-figures` is the live Offer / Demand pair of one selected service: two 1-argument
+`function` reads on the block, `RDOGetDemand(index)` and `RDOGetSupply(index)`
+(`StdBlocks/ServiceBlock.pas:309-310`), which the reference client polls for the selected finger
+alone (`Voyager/SrvGeneralSheetForm.pas:411-413`). Its answers are chosen to **disagree** with
+the cached `srvSupplies0` / `srvDemands0` columns `building-details` serves — the block says
+64 / 37 where the cache says 5 / 12 — because a client that still drew the cached columns for
+the selected card would otherwise render plausible numbers and pass. The index travels as the
+single `#`-prefixed argument, so a frame built for another service matches nothing.
+
+`bank-tv-live-reads` is the six bank and TV inspector values the object cache never holds:
+`TBankBlock.StoreToCache` (`StdBlocks/Banks.pas:188-206`) writes the loan list alone and
+`TBroadcaster.StoreToCache` (`StdBlocks/Broadcast.pas:431-453`) only antenna data, so Estimated
+Loan, Interest, Term, Budget, Hours On Air and Commercials came back empty every time. The
+reference client never asked the cache for them — it binds to `CurrBlock` and reads live
+(`Voyager/BankGeneralSheet.pas:258-273`, `Voyager/TVGeneralSheet.pas:269-275`), and so the
+scenario answers one `RDOEstimateLoan` call plus five property `get`s. Two things it pins that
+nothing else can catch: `RDOEstimateLoan` answers a **FormatMoney string** (`$5,000,000`,
+`Utils/Misc/MathUtils.pas:87-109`) the gateway must strip to digits, and its single argument is
+the **InitClient proxy id**, which the server pointer-casts — `TMoneyDealer(ClientId)`
+(`Banks.pas:149`) — so the persistent `TTycoon.Id` would dereference nothing with no error to
+show for it. The `building-details` cache fixture serves a `CurrBlock` pointing at these blocks
+and none of the six values, matching what StoreToCache actually writes.
+
 `worker-counts` is the Workforce tab's live jobs-filled read — one `RDOGetWorkers` per class
 whose cached maximum is above zero, the way the reference client polled it
 (`Voyager/WorkforceSheet.pas:365-377`). It fixes three things nothing else can: the separator
@@ -116,6 +165,12 @@ frame carries `"^"` and a reply comes back — a `"*"` would be an arbitrary mem
 error to show for it), the **bind target** (the building's block, never the cacher temp object
 the inspector holds), and the call count (one exchange per kind, so a gateway that asked for a
 class with no jobs would leave one unconsumed). Its test drives the real `readWorkerCounts`.
+
+`building-details` also carries the class picture: each fixture's `imagePath` is the class's
+`[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under
+`/cache/BuildingImages/`. `MOCK_UNKNOWN_CLASS` (`visualClass '999999'`) is the one class the
+cache does not hold a texture for, and its response carries no `iconUrl` key at all. Its test
+drives the real `handleBuildingDetails` and matches the emitted frame to the canned response.
 
 ### Scenario Structure
 

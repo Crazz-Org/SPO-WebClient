@@ -12,6 +12,7 @@ import { Map, MessageSquare, Hammer, Landmark, Mail, MoreHorizontal } from 'luci
 import { useUiStore, type MobileTab } from '../../store/ui-store';
 import { useChatStore } from '../../store/chat-store';
 import { useMailStore } from '../../store/mail-store';
+import { useGameStore } from '../../store/game-store';
 import { Badge } from '../common';
 import styles from './BottomNav.module.css';
 
@@ -35,6 +36,8 @@ export function BottomNav() {
   const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
   const unreadChat = useChatStore((s) => s.unreadChatCount);
   const unreadMail = useMailStore((s) => s.unreadCount);
+  const isVisitor = useGameStore((s) => s.isVisitor);
+  const tiles = TILES.filter((t) => !isVisitor || t.id !== 'build');
 
   const isActive = (id: TileId): boolean => {
     if (id === 'map') return topKind === 'map';
@@ -70,7 +73,7 @@ export function BottomNav() {
 
   return (
     <nav className={styles.nav} role="tablist" aria-label="Game actions">
-      {TILES.map(({ id, label, icon: Icon }) => {
+      {tiles.map(({ id, label, icon: Icon }) => {
         const badge = getBadge(id);
         const active = isActive(id);
         return (

@@ -195,6 +195,8 @@ export type {
   WsRespBuildingTabData,
   WsReqBuildingGateConnections,
   WsRespBuildingGateConnections,
+  WsReqBuildingServiceFigures,
+  WsRespBuildingServiceFigures,
   WsReqBuildingRefreshProperties,
   WsRespBuildingRefreshProperties,
   WsReqBuildingSetProperty,

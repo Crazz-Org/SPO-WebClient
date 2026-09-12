@@ -187,6 +187,25 @@ describe('company-list scenario', () => {
     expect(logonNoAccess.body).toContain('01/01/2020');
     expect(logonNoAccess.body).not.toContain('companyId=');
   });
+
+  it('noCompanies variant has 4 exchanges, redirects chooseCompany to createCompany.asp, and no companyId', () => {
+    const { http, ws } = createCompanyListScenario(undefined, { logonResult: 'noCompanies' });
+    expect(http.exchanges).toHaveLength(4);
+    const chooseCompany = http.exchanges[2];
+    expect(chooseCompany.urlPattern).toContain('chooseCompany.asp');
+    expect(chooseCompany.headers?.Location).toContain('createCompany.asp?RenewVisitorVisa=YES');
+    const createCompany = http.exchanges[3];
+    expect(createCompany.urlPattern).toContain('createCompany.asp');
+    expect(createCompany.body).not.toContain('companyId=');
+    const wsResponse = ws.exchanges[0].responses[0] as unknown as {
+      companyCount: number;
+      companies: unknown[];
+      loginPage: { kind: string; firstVisit: boolean };
+    };
+    expect(wsResponse.companyCount).toBe(0);
+    expect(wsResponse.companies).toEqual([]);
+    expect(wsResponse.loginPage).toEqual({ kind: 'visa', firstVisit: false });
+  });
 });
 
 // =============================================================================
@@ -701,13 +720,18 @@ describe('world-login scenario', () => {
 });
 
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 17 entries', () => {
+  it('SCENARIO_NAMES has 22 entries', () => {
     // 14, not 13: the `world-login` scenario was added with the CanJoinWorldEx
     // admission check (Interface Server/InterfaceServer.pas:441).
     // 15: `abandon-role`, issue 547.
     // 16: `people-search`, issue 527.
-    // 17: `worker-counts`, issue 552.
-    expect(SCENARIO_NAMES).toHaveLength(17);
+    // 17: `trade-settings`, issue 551.
+    // 18: `gate-map`, issue 558.
+    // 19: `service-figures`, issue 574.
+    // 20: `bank-tv-live-reads`, issue 570.
+    // 21: `product-owner`, issue 581.
+    // 22: `worker-counts`, issue 552.
+    expect(SCENARIO_NAMES).toHaveLength(22);
   });
 
   it('loadScenario returns bundle for each name', () => {

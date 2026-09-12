@@ -3,10 +3,12 @@
  *
  * Extracted from PropertyGroup.tsx. Renders the "Supplies" special tab:
  * supply cards with connection tables, max price/min quality sliders,
- * hire/modify/fire actions, and overpayment popover.
+ * sort-by-price / sort-by-quality headers, hire/modify/fire actions, and
+ * overpayment popover.
  */
 
 import { memo, useState, useCallback, useRef } from 'react';
+import { Crosshair } from 'lucide-react';
 import type { BuildingSupplyData, BuildingConnectionData } from '@/shared/types';
 import { useClient } from '../../context';
 import { useUiStore } from '../../store/ui-store';
@@ -14,6 +16,11 @@ import { useGateConnections } from './useGateConnections';
 import { connectionPendingKey } from '../../handlers/connection-pending-key';
 import { SaveIndicator } from './SaveIndicator';
 import styles from './PropertyGroup.module.css';
+
+/** A connection the server never positioned reads back as 0,0 — there is nothing to centre on. */
+function hasPosition(conn: BuildingConnectionData): boolean {
+  return conn.x !== 0 || conn.y !== 0;
+}
 
 /**
  * Disconnecting is destructive and used to fire at once (Fire button, Delete key). It now goes
@@ -140,6 +147,41 @@ function toPercent(value: string | undefined, fallback: number): number {
   return isNaN(parsed) ? fallback : parsed;
 }
 
+/**
+ * One of the two supplier columns the server can sort by (Price = mode 0,
+ * Quality = mode 1, Voyager/SupplySheetForm.pas:1189-1206). When the gate is
+ * not sortable the cell is the plain text it has always been — no button, no
+ * `aria-sort` — so nothing offers a click the server would refuse.
+ */
+function SortHeader({
+  label,
+  mode,
+  sortable,
+  active,
+  onSort,
+}: {
+  label: string;
+  mode: 0 | 1;
+  sortable: boolean;
+  active: boolean;
+  onSort: (mode: 0 | 1) => void;
+}) {
+  if (!sortable) {
+    return <th style={{ width: 60 }}>{label}</th>;
+  }
+  return (
+    <th style={{ width: 60 }} aria-sort={active ? 'ascending' : undefined}>
+      <button
+        type="button"
+        className={`${styles.supplySortHeader}${active ? ` ${styles.supplySortActive}` : ''}`}
+        onClick={() => onSort(mode)}
+      >
+        {label}
+      </button>
+    </th>
+  );
+}
+
 const SupplyCard = memo(function SupplyCard({
   supply,
   canEdit,
@@ -187,11 +229,31 @@ const SupplyCard = memo(function SupplyCard({
     if (supply.minK !== undefined) setLocalMinK(toPercent(supply.minK, 0));
   }
 
+  // Which of the two sortable columns is the active one. Same "seen / local"
+  // shape as the sliders above: the mark has to move on the click, before the
+  // server has re-read the gate, and still follow a value the server sends that
+  // this card has not shown yet. Voyager/SupplySheetForm.pas:1006 seeds it the
+  // same way — SortMode = '1' means the Quality column carries the mark, and
+  // anything else means the Price column does.
+  const [seenSortMode, setSeenSortMode] = useState(supply.sortMode);
+  const [localSortMode, setLocalSortMode] = useState<0 | 1>(supply.sortMode === '1' ? 1 : 0);
+
+  if (supply.sortMode !== seenSortMode) {
+    setSeenSortMode(supply.sortMode);
+    if (supply.sortMode !== undefined) setLocalSortMode(supply.sortMode === '1' ? 1 : 0);
+  }
+
   // Every mutation below addresses the gate by its fluid id, and that id is a
   // header property — unknown until this gate has been opened and read. The
   // controls that use it are rendered only once it is known; the guards are the
   // second line.
   const fluidId = supply.metaFluid;
+
+  // Voyager/SupplySheetForm.pas:1005 shows the sort mark only when QPSorted = '1';
+  // :1187 accepts a column click only for the owner, with a fluid id, and with
+  // that mark. A gate the server does not sort by quality/price ratio has no
+  // sort to change, so the headers stay the plain text they were.
+  const sortable = canEdit && supply.qpSorted === '1' && !!fluidId;
 
   const handleMaxPriceChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value, 10);
@@ -217,6 +279,17 @@ const SupplyCard = memo(function SupplyCard({
     }, 300);
   }, [client, buildingX, buildingY, fluidId]);
 
+  // One click is one write — no debounce (Voyager forks the call straight from
+  // the column click, :1197 / :1204) and no refresh: the re-sorted supplier
+  // order arrives with the next gate read, like every other gate property.
+  const handleSortMode = (mode: 0 | 1) => {
+    if (!sortable || !fluidId) return;
+    setLocalSortMode(mode);
+    client.onSetBuildingProperty(buildingX, buildingY, 'RDOSetInputSortMode', String(mode), {
+      fluidId,
+    });
+  };
+
   const handleHire = () => {
     if (!fluidId) return;
     client.onSearchConnections(buildingX, buildingY, fluidId, supply.name, 'input');
@@ -238,6 +311,11 @@ const SupplyCard = memo(function SupplyCard({
 
   const handleRowClick = (idx: number) => {
     setSelectedIdx(selectedIdx === idx ? null : idx);
+  };
+
+  const handleNavigate = (conn: BuildingConnectionData) => {
+    if (!hasPosition(conn)) return;
+    client.onNavigateToBuilding(conn.x, conn.y);
   };
 
   const handleRowContextMenu = (e: React.MouseEvent, idx: number) => {
@@ -280,8 +358,8 @@ const SupplyCard = memo(function SupplyCard({
                 type="range"
                 className={styles.slider}
                 min={0}
-                max={500}
-                step={10}
+                max={400}
+                step={1}
                 value={localMaxPrice}
                 onChange={handleMaxPriceChange}
               />
@@ -324,8 +402,16 @@ const SupplyCard = memo(function SupplyCard({
               className={styles.supplyTable}
               tabIndex={0}
               onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
                 if (e.key === 'Delete' && canEdit && selectedIdx !== null) {
                   handleFire();
+                }
+                if (e.key === 'Insert' && canEdit) {
+                  handleHire();
+                }
+                if (e.key === 'Enter' && selectedIdx !== null) {
+                  const conn = supply.connections[selectedIdx];
+                  if (conn) handleNavigate(conn);
                 }
               }}
             >
@@ -334,11 +420,24 @@ const SupplyCard = memo(function SupplyCard({
                   <th style={{ width: 24 }}></th>
                   <th>Facility</th>
                   <th style={{ width: 80 }}>Owner</th>
-                  <th style={{ width: 60 }}>Price</th>
+                  <SortHeader
+                    label="Price"
+                    mode={0}
+                    sortable={sortable}
+                    active={localSortMode === 0}
+                    onSort={handleSortMode}
+                  />
                   <th style={{ width: 60 }}>Overpaid</th>
                   <th style={{ width: 80 }}>Last</th>
-                  <th style={{ width: 60 }}>Quality</th>
+                  <SortHeader
+                    label="Quality"
+                    mode={1}
+                    sortable={sortable}
+                    active={localSortMode === 1}
+                    onSort={handleSortMode}
+                  />
                   <th style={{ width: 60 }}>T.Cost</th>
+                  <th style={{ width: 24 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -347,7 +446,9 @@ const SupplyCard = memo(function SupplyCard({
                     key={`${j}:${conn.x},${conn.y}`}
                     className={`${styles.supplyTableRow}${selectedIdx === j ? ` ${styles.supplyTableRowSelected}` : ''}`}
                     onClick={() => handleRowClick(j)}
+                    onDoubleClick={() => handleNavigate(conn)}
                     onContextMenu={(e) => canEdit && handleRowContextMenu(e, j)}
+                    title={conn.companyName || undefined}
                   >
                     <td>
                       {conn.connected && <span className={styles.supplyConnectedIcon}>&#10003;</span>}
@@ -357,12 +458,25 @@ const SupplyCard = memo(function SupplyCard({
                         <span className={styles.unnamedConnection}>no data</span>
                       )}
                     </td>
-                    <td>{conn.companyName}</td>
+                    <td>{conn.createdBy}</td>
                     <td>${conn.price}</td>
                     <td>{conn.overprice}%</td>
                     <td>{conn.lastValue}</td>
                     <td>{conn.quality}</td>
                     <td>{conn.cost}</td>
+                    <td>
+                      {hasPosition(conn) && (
+                        <button
+                          type="button"
+                          className={styles.tableActionBtn}
+                          aria-label={`View ${conn.facilityName || 'facility'} on map`}
+                          title="View on map"
+                          onClick={(e) => { e.stopPropagation(); handleNavigate(conn); }}
+                        >
+                          <Crosshair size={12} />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

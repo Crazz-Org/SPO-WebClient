@@ -183,6 +183,9 @@ describe('INSPECT hidden properties', () => {
    * `Creator` states the owner, which the header already names; the rest carry
    * nothing a player reads. They stay in the response — `SecurityId` decides
    * `canGovern` — and are dropped at render.
+   *
+   * `TradeLevel` was one of them until issue 551 and is not any more: it is a
+   * setting the owner changes, and the sheet now carries a control for it.
    */
   it('keeps the hidden names out of an open section', () => {
     showInspector({
@@ -191,7 +194,6 @@ describe('INSPECT hidden properties', () => {
           { name: 'Creator', value: 'SPO_test3' },
           { name: 'SecurityId', value: '-296197588--295583672--' },
           { name: 'Trouble', value: '3' },
-          { name: 'TradeLevel', value: '1' },
           { name: 'ROI', value: '14%' },
         ],
       },
@@ -201,7 +203,6 @@ describe('INSPECT hidden properties', () => {
     const drawer = screen.getByLabelText('GENERAL');
     expect(drawer.textContent).not.toContain('-296197588');
     expect(drawer.textContent).not.toContain('Trouble');
-    expect(drawer.textContent).not.toContain('Trade Level');
   });
 
   /**
@@ -241,5 +242,59 @@ describe('INSPECT hidden properties', () => {
     expect(drawer.textContent).toContain('Upgrade Cost');
     // The raw value never prints
     expect(drawer.textContent).not.toContain('UpgradeActions');
+  });
+});
+
+/**
+ * Seeds through `setDetails` without forcing `currentTab` afterwards, unlike
+ * `showInspector` — these tests need to see what `setDetails` itself decided
+ * for `currentTab` (the remembered-section restore), not a value pinned on
+ * top of it.
+ */
+function showInspectorHonouringRemembered(over: Partial<BuildingDetailsResponse> = {}): void {
+  useGameStore.setState({ status: 'connected' });
+  useBuildingStore.getState().setFocus(focus);
+  useBuildingStore.getState().setDetails({ ...details, ...over });
+  useBuildingStore.setState({ isLoading: false });
+}
+
+describe('INSPECT remembered section', () => {
+  beforeEach(resetStores);
+
+  it('opens on the menu for a facility whose template lacks the remembered section', () => {
+    useBuildingStore.getState().setCurrentTab('workforce');
+    useBuildingStore.getState().clearDetails();
+
+    const generalOnly: BuildingDetailsTab[] = [
+      { id: 'indGeneral', name: 'GENERAL', order: 0, icon: 'G', handlerName: 'IndGeneral' },
+    ];
+    showInspectorHonouringRemembered({ x: 400, y: 500, tabs: generalOnly });
+    renderWithProviders(<BuildingInspector />);
+
+    expect(screen.queryByLabelText('WORKFORCE')).toBeNull();
+    const generalButton = screen.getByText('GENERAL').closest('button')!;
+    expect(generalButton.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('opens directly on the remembered section for a facility that has it', () => {
+    useBuildingStore.getState().setCurrentTab('workforce');
+    useBuildingStore.getState().clearDetails();
+
+    showInspectorHonouringRemembered({ x: 400, y: 500 });
+    renderWithProviders(<BuildingInspector />);
+
+    expect(screen.getByLabelText('WORKFORCE')).toBeTruthy();
+    const workforceButton = screen.getByLabelText('Facility sections').querySelector('button[aria-current="true"]')!;
+    expect(workforceButton.textContent).toContain('WORKFORCE');
+  });
+
+  it('reopening the inspector later still honours the remembered section', () => {
+    useBuildingStore.getState().setCurrentTab('workforce');
+    useBuildingStore.getState().clearFocus();
+
+    showInspectorHonouringRemembered({ x: 400, y: 500 });
+    renderWithProviders(<BuildingInspector />);
+
+    expect(screen.getByLabelText('WORKFORCE')).toBeTruthy();
   });
 });
