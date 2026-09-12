@@ -12,9 +12,20 @@ import type {
   WsRespSearchMenuRankingDetail,
   WsRespSearchMenuBanks,
   WsRespSearchMenuNewspapers,
+  PeopleSearchMode,
 } from '@/shared/types';
 
 export type SearchPage = 'home' | 'towns' | 'people' | 'rankings' | 'ranking-detail' | 'banks' | 'tycoon-profile' | 'media';
+
+/**
+ * The people search currently on screen. It lives in the store rather than in
+ * `PeoplePage` because `SearchPanel` unmounts the page component while
+ * `isLoading` is true, which would wipe component state on every search.
+ */
+export interface PeopleQuery {
+  mode: PeopleSearchMode;
+  term: string;
+}
 
 interface SearchState {
   // Navigation
@@ -26,6 +37,8 @@ interface SearchState {
   homeData: WsRespSearchMenuHome | null;
   townsData: WsRespSearchMenuTowns | null;
   peopleData: WsRespSearchMenuPeopleSearch | null;
+  /** What the visible `peopleData` was asked for — `null` before any search. */
+  peopleQuery: PeopleQuery | null;
   rankingsData: WsRespSearchMenuRankings | null;
   rankingDetailData: WsRespSearchMenuRankingDetail | null;
   tycoonProfileData: WsRespSearchMenuTycoonProfile | null;
@@ -39,6 +52,7 @@ interface SearchState {
   setHomeData: (data: WsRespSearchMenuHome) => void;
   setTownsData: (data: WsRespSearchMenuTowns) => void;
   setPeopleData: (data: WsRespSearchMenuPeopleSearch) => void;
+  setPeopleQuery: (query: PeopleQuery) => void;
   setRankingsData: (data: WsRespSearchMenuRankings) => void;
   setRankingDetailData: (data: WsRespSearchMenuRankingDetail) => void;
   clearRankingDetail: () => void;
@@ -56,6 +70,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   homeData: null,
   townsData: null,
   peopleData: null,
+  peopleQuery: null,
   rankingsData: null,
   rankingDetailData: null,
   tycoonProfileData: null,
@@ -83,6 +98,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   setHomeData: (data) => set({ homeData: data, isLoading: false }),
   setTownsData: (data) => set({ townsData: data, isLoading: false }),
   setPeopleData: (data) => set({ peopleData: data, isLoading: false }),
+  setPeopleQuery: (query) => set({ peopleQuery: query }),
   setRankingsData: (data) => set({ rankingsData: data, isLoading: false }),
   setRankingDetailData: (data) => set({ rankingDetailData: data, isLoading: false }),
   clearRankingDetail: () => set({ rankingDetailData: null }),
@@ -98,6 +114,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       homeData: null,
       townsData: null,
       peopleData: null,
+      peopleQuery: null,
       rankingsData: null,
       rankingDetailData: null,
       tycoonProfileData: null,

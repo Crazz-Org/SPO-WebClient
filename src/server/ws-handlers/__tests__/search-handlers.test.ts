@@ -46,13 +46,21 @@ describe('handleSearchMenuPeopleSearch', () => {
 
     await handleSearchMenuPeopleSearch(ctx, request());
 
-    expect(searchPeople).toHaveBeenCalledWith('mayor');
+    expect(searchPeople).toHaveBeenCalledWith('mayor', 'contains');
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
       type: WsMessageType.RESP_SEARCH_MENU_PEOPLE_SEARCH,
       wsRequestId: '123',
       results: ['Tycoon1', 'Tycoon2'],
     });
+  });
+
+  it('forwards the prefix mode of an A-Z index request', async () => {
+    const { ctx, searchPeople } = createCtx(['Crazz']);
+
+    await handleSearchMenuPeopleSearch(ctx, request({ searchStr: 'C', mode: 'prefix' }));
+
+    expect(searchPeople).toHaveBeenCalledWith('C', 'prefix');
   });
 });
 

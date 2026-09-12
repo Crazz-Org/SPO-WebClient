@@ -15,6 +15,7 @@ function resetStore() {
     homeData: null,
     townsData: null,
     peopleData: null,
+    peopleQuery: null,
     rankingsData: null,
     rankingDetailData: null,
     tycoonProfileData: null,
@@ -109,6 +110,22 @@ describe('Search Store — people search', () => {
     const state = useSearchStore.getState();
     expect(state.peopleData?.results).toEqual(['Alice', 'Bob', 'SPO_test3']);
     expect(state.isLoading).toBe(false);
+  });
+
+  it('setPeopleQuery stores what the visible results were asked for', () => {
+    useSearchStore.getState().setPeopleQuery({ mode: 'prefix', term: 'C' });
+    expect(useSearchStore.getState().peopleQuery).toEqual({ mode: 'prefix', term: 'C' });
+
+    useSearchStore.getState().setPeopleQuery({ mode: 'contains', term: 'Crazz' });
+    expect(useSearchStore.getState().peopleQuery).toEqual({ mode: 'contains', term: 'Crazz' });
+  });
+
+  it('reset clears the people query', () => {
+    useSearchStore.getState().setPeopleQuery({ mode: 'prefix', term: 'Q' });
+
+    useSearchStore.getState().reset();
+
+    expect(useSearchStore.getState().peopleQuery).toBeNull();
   });
 });
 

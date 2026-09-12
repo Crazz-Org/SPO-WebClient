@@ -10,6 +10,7 @@ import {
   RDO_PORTS,
   SessionPhase,
   WorldInfo,
+  PeopleSearchMode,
   WsMessageType,
   CompanyInfo,
   MapData,
@@ -620,8 +621,8 @@ export class StarpeaceSession extends EventEmitter {
    * The RDO people search. Active RDO implementation: REQ_SEARCH_MENU_PEOPLE_SEARCH is
    * served by this method (#118).
    */
-  public async searchPeople(searchStr: string): Promise<string[]> {
-    return loginHandler.searchPeople(this, searchStr);
+  public async searchPeople(searchStr: string, mode: PeopleSearchMode = 'contains'): Promise<string[]> {
+    return loginHandler.searchPeople(this, searchStr, mode);
   }
 
 public async loginWorld(username: string, pass: string, world: WorldInfo): Promise<{

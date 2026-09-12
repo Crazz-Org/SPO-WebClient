@@ -183,6 +183,37 @@
   cursor: not-allowed;
 }
 
+/* A-Z index (people page) */
+.letterIndex {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+}
+
+.letterBtn {
+  min-width: 32px;
+  min-height: 32px;
+  background: var(--surface-primary);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default);
+}
+
+.letterBtn:hover {
+  background: var(--accent-gold-subtle);
+}
+
+.letterBtnActive {
+  background: var(--accent-gold);
+  border-color: var(--accent-gold);
+  color: var(--surface-primary);
+}
+
 /* Profile card */
 .profileCard {
   padding: var(--space-4) !important;

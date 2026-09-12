@@ -8,7 +8,7 @@
 
 import * as net from 'net';
 import { fetchWithTimeout } from '../fetch-with-timeout';
-import type { RdoPacket, WorldInfo, CompanyInfo } from '../../shared/types';
+import type { RdoPacket, WorldInfo, CompanyInfo, PeopleSearchMode } from '../../shared/types';
 import { SessionPhase, DIRECTORY_QUERY } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall, rdoGet, rdoSet, rdoIdOf } from '../../shared/rdo-frame';
@@ -280,9 +280,25 @@ function isTrueAnswer(value: string): boolean {
  * Mirrors `SearchUsers` (DirectoryServer.wsc:830-880): one session, one bucket
  * per letter of `Root/Users/<Letter>`, single-character searches narrowed to
  * their own bucket. Opens an ephemeral directory session and closes it.
+ *
+ * `mode` distinguishes the two paths the People page offers:
+ *  - `'contains'` — the typed path. Pattern `*term*` across all 26 buckets
+ *    (a single typed letter still narrows, as it always has).
+ *  - `'prefix'` — the A-Z index. `searchStr` must be exactly one ASCII letter;
+ *    anything else answers `[]` without opening a socket. It lands on the
+ *    one-bucket, bare-`*` form the reference client emitted for a letter
+ *    (`DirectoryServer.wsc:841-847`), which the server turns into
+ *    `Entry LIKE 'Root/Users/<Letter>/%'` (`DirectoryManager.pas:1001-1017`).
  */
-export async function searchPeople(ctx: LoginContext, searchStr: string): Promise<string[]> {
+export async function searchPeople(
+  ctx: LoginContext,
+  searchStr: string,
+  mode: PeopleSearchMode = 'contains',
+): Promise<string[]> {
   if (!searchStr.trim()) return [];
+  // A prefix request is only ever one letter — reject anything else before a
+  // socket is opened, so a malformed index request costs no RDO traffic.
+  if (mode === 'prefix' && !/^[A-Za-z]$/.test(searchStr)) return [];
 
   const socket = await ctx.createSocket('directory_search', config.rdo.directoryHost, config.rdo.ports.directory);
   try {

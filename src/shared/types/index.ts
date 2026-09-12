@@ -203,6 +203,7 @@ export type {
   WsReqSearchMenuTycoonProfile,
   WsRespSearchMenuTycoonProfile,
   WsReqSearchMenuPeopleSearch,
+  PeopleSearchMode,
   WsRespSearchMenuPeopleSearch,
   WsReqSearchMenuRankings,
   WsRespSearchMenuRankings,

@@ -406,6 +406,39 @@ describe('searchPeople', () => {
     expect(names).toEqual(['Crazz']);
   });
 
+  it('a prefix request lands on one bucket with the bare "*" pattern (DirectoryServer.wsc:841-847)', async () => {
+    const fake = makeLoginCtx();
+    fake.respond((packet) => {
+      const plumbing = directoryPlumbing(packet);
+      if (plumbing) return plumbing;
+      if (packet.member === 'RDOSetCurrentKey') return 'res="#-1"';
+      if (packet.member === 'RDOSearchKey') return 'res="%Count=1\r\nKey0=crazz\r\nAlias0=Crazz"';
+      return 'res="%"';
+    });
+
+    const names = await searchPeople(fake.ctx, 'c', 'prefix');
+
+    const setKeys = fake.sent.filter(s => s.packet.member === 'RDOSetCurrentKey');
+    expect(setKeys).toHaveLength(1);
+    expect(setKeys[0].packet.args).toEqual(['"%Root/Users/C"']);
+
+    const searches = fake.sent.filter(s => s.packet.member === 'RDOSearchKey');
+    expect(searches).toHaveLength(1);
+    expect(searches[0].packet.args).toEqual(['"%*"', '"%Alias\r\n"']);
+
+    expect(names).toEqual(['Crazz']);
+  });
+
+  it('a prefix request that is not one letter answers [] without opening a socket', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(() => 'res="%"');
+
+    await expect(searchPeople(fake.ctx, 'Cr', 'prefix')).resolves.toEqual([]);
+    await expect(searchPeople(fake.ctx, '1', 'prefix')).resolves.toEqual([]);
+
+    expect(fake.sent).toHaveLength(0);
+  });
+
   it('skips a bucket whose RDOSetCurrentKey answers false — no RDOSearchKey follows it', async () => {
     const fake = makeLoginCtx();
     fake.respond((packet) => {

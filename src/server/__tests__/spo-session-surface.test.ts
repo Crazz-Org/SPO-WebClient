@@ -127,8 +127,8 @@ const DELEGATIONS: readonly Delegation[] = [
   {
     method: 'searchPeople',
     install: () => jest.spyOn(loginHandler, 'searchPeople'),
-    call: s => s.searchPeople('mayor'),
-    forwarded: ['mayor'],
+    call: s => s.searchPeople('mayor', 'contains'),
+    forwarded: ['mayor', 'contains'],
     result: ['Mayor of Kalisz'],
   },
   {
