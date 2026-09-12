@@ -255,6 +255,10 @@ export async function getBuildingBasicDetails(
     // Enrich upgrade tab — AcceptCloning is not a cached property
     await enrichUpgradeTab(ctx, groups, allValues);
 
+    // Enrich bank / TV tabs — six values StoreToCache never writes
+    await enrichBankTab(ctx, groups, allValues);
+    await enrichTvTab(ctx, groups, allValues);
+
     // Determine which special tabs exist
     const hasSupplies = template.groups.some(g => g.special === 'supplies');
     const hasProducts = template.groups.some(g => g.special === 'products');
@@ -381,6 +385,8 @@ export async function getBuildingTabData(
       );
       await enrichVotesTab(ctx, groups, allValues);
       await enrichUpgradeTab(ctx, groups, allValues);
+      await enrichBankTab(ctx, groups, allValues);
+      await enrichTvTab(ctx, groups, allValues);
       return { groups };
     }
 
@@ -502,6 +508,10 @@ export async function refreshBuildingProperties(
 
     // Enrich upgrade tab — AcceptCloning is not a cached property
     await enrichUpgradeTab(ctx, groups, allValues);
+
+    // Enrich bank / TV tabs — this is what re-reads a slider after the user moved it
+    await enrichBankTab(ctx, groups, allValues);
+    await enrichTvTab(ctx, groups, allValues);
 
     // Update GateMap in the inspector (may have changed via RDOSelectWare)
     inspector.gateMap = allValues.get('GateMap') || inspector.gateMap;
@@ -848,6 +858,139 @@ async function enrichUpgradeTab(
     }
   } catch (e: unknown) {
     ctx.log.debug(`[BuildingDetails] AcceptCloning enrichment failed: ${toErrorMessage(e)}`);
+  }
+}
+
+/**
+ * Enrich the bank tab with the four values the object cache never holds.
+ *
+ * TBankBlock.StoreToCache (StdBlocks/Banks.pas:188-206) writes the loan list
+ * only — `LoanCount`, `Debtor{i}`, `Interest{i}`, `Amount{i}`, `Slice{i}`,
+ * `Term{i}` — and even the bank's own budget write is commented out at :193.
+ * The cacher answers an empty string for a name it does not hold
+ * (spo_session.ts:1416-1417), so Estimated Loan and the three sliders were blank
+ * for every bank, always.
+ *
+ * Voyager has exactly the same split and solves it the same way: bind to
+ * `CurrBlock` and read live (Voyager/BankGeneralSheet.pas:258-273) —
+ * `RDOEstimateLoan(getTycoonId)` inside its own try/except (:260-265), then
+ * `BudgetPerc`, `Interest`, `Term` (:266-268).
+ *
+ * Read only — no ownership gate. The owner/visitor split at BankGeneralSheet.pas
+ * :156,:160 only enables controls, so a visitor sees the Estimated Loan too.
+ */
+async function enrichBankTab(
+  ctx: SessionContext,
+  groups: { [groupId: string]: BuildingPropertyValue[] },
+  allValues: Map<string, string>,
+): Promise<void> {
+  if (!groups['bankGeneral']) return;
+
+  const currBlock = allValues.get('CurrBlock');
+  if (!currBlock) return;
+
+  if (!ctx.getSocket('construction')) {
+    await ctx.connectConstructionService();
+  }
+
+  // Estimated loan — its own try, because Voyager wraps only this call and lets
+  // the three property reads run regardless (BankGeneralSheet.pas:260-265).
+  // The argument is the InitClient proxy id (ServerCnxHandler.pas:514-516), not
+  // the persistent tycoon id: the server pointer-casts it, `TMoneyDealer(ClientId)`
+  // (Banks.pas:149).
+  if (ctx.fTycoonProxyId !== null) {
+    try {
+      const packet = await ctx.sendRdoRequest('construction', rdoCall(
+        'RDOEstimateLoan', currBlock, RdoValue.int(ctx.fTycoonProxyId),
+      ).packet, undefined, TimeoutCategory.NORMAL);
+      // The answer is a FormatMoney string — "$5,000,000", "$0", "-$1,234"
+      // (Utils/Misc/MathUtils.pas:87-109). Strip the currency punctuation so the
+      // client's CURRENCY formatter reads a number.
+      const estLoan = parsePropertyResponseHelper(packet.payload || '', 'res').replace(/[$,]/g, '');
+      if (estLoan !== '') {
+        groups['bankGeneral'].push({ name: 'EstLoan', value: estLoan });
+      }
+    } catch (e: unknown) {
+      ctx.log.debug(`[BuildingDetails] EstLoan enrichment failed: ${toErrorMessage(e)}`);
+    }
+  }
+
+  // BudgetPerc / Interest / Term — three live gets on the block, in Voyager's
+  // own order (BankGeneralSheet.pas:266-268).
+  try {
+    const budget = await ctx.sendRdoRequest('construction', rdoGet(
+      'BudgetPerc', currBlock,
+    ).packet, undefined, TimeoutCategory.NORMAL);
+    pushIfPresent(groups['bankGeneral'], 'BudgetPerc', budget.payload || '', 'BudgetPerc');
+
+    const interest = await ctx.sendRdoRequest('construction', rdoGet(
+      'Interest', currBlock,
+    ).packet, undefined, TimeoutCategory.NORMAL);
+    pushIfPresent(groups['bankGeneral'], 'Interest', interest.payload || '', 'Interest');
+
+    const term = await ctx.sendRdoRequest('construction', rdoGet(
+      'Term', currBlock,
+    ).packet, undefined, TimeoutCategory.NORMAL);
+    pushIfPresent(groups['bankGeneral'], 'Term', term.payload || '', 'Term');
+  } catch (e: unknown) {
+    ctx.log.debug(`[BuildingDetails] Bank enrichment failed: ${toErrorMessage(e)}`);
+  }
+}
+
+/**
+ * Enrich the TV tab with Hours On Air and Commercials.
+ *
+ * TBroadcaster.StoreToCache (StdBlocks/Broadcast.pas:431-453) writes antenna
+ * data only, so both sliders read empty from the cache. Voyager binds to
+ * `CurrBlock` and reads the two published properties live
+ * (Voyager/TVGeneralSheet.pas:269-275), storing them under `tidHoursOnAir` and
+ * `tidComercials` (:15) — which is why the value read from the published
+ * `Commercials` (two m, StdBlocks/Broadcast.pas:53) lands under the template's
+ * `Comercials` key (one m).
+ */
+async function enrichTvTab(
+  ctx: SessionContext,
+  groups: { [groupId: string]: BuildingPropertyValue[] },
+  allValues: Map<string, string>,
+): Promise<void> {
+  if (!groups['tvGeneral']) return;
+
+  const currBlock = allValues.get('CurrBlock');
+  if (!currBlock) return;
+
+  try {
+    if (!ctx.getSocket('construction')) {
+      await ctx.connectConstructionService();
+    }
+    const hours = await ctx.sendRdoRequest('construction', rdoGet(
+      'HoursOnAir', currBlock,
+    ).packet, undefined, TimeoutCategory.NORMAL);
+    pushIfPresent(groups['tvGeneral'], 'HoursOnAir', hours.payload || '', 'HoursOnAir');
+
+    const commercials = await ctx.sendRdoRequest('construction', rdoGet(
+      'Commercials', currBlock,
+    ).packet, undefined, TimeoutCategory.NORMAL);
+    pushIfPresent(groups['tvGeneral'], 'Comercials', commercials.payload || '', 'Commercials');
+  } catch (e: unknown) {
+    ctx.log.debug(`[BuildingDetails] TV enrichment failed: ${toErrorMessage(e)}`);
+  }
+}
+
+/**
+ * Push a parsed property answer into a group, unless it came back empty.
+ *
+ * `name` is the template's key and `member` the name on the wire — the two
+ * differ for the TV sheet's Commercials/Comercials pair (TVGeneralSheet.pas:15).
+ */
+function pushIfPresent(
+  group: BuildingPropertyValue[],
+  name: string,
+  payload: string,
+  member: string,
+): void {
+  const value = parsePropertyResponseHelper(payload, member);
+  if (value !== '') {
+    group.push({ name, value });
   }
 }
 

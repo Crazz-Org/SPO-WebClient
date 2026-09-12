@@ -91,6 +91,10 @@ export const RDO_MEMBERS = {
   AddHeaders:                { kind: 'procedure', arity: 1 },                // src/server/session/mail-handler.ts:131,224
   AddLine:                   { kind: 'procedure', arity: 1 },                // src/server/session/mail-handler.ts:137
   BreakCircuitAt:            { kind: 'function',  arity: 4 },                // src/server/session/road-handler.ts:333
+  // Read-only here: the bank budget slider writes through RDOSetLoanPerc
+  // (StdBlocks/Banks.pas:47), never `set BudgetPerc`. Voyager reads it live off
+  // the block (Voyager/BankGeneralSheet.pas:266).
+  BudgetPerc:                { kind: 'accessor',  access: ['get'] },         // StdBlocks/Banks.pas:39; src/server/session/building-details-handler.ts (enrichBankTab)
   CanJoinWorldEx:            { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:441; src/server/session/login-handler.ts (checkWorldAdmission)
   CheckNewMail:              { kind: 'function',  arity: 2 },                // src/server/session/mail-handler.ts:416
   ClientAware:               { kind: 'procedure', arity: 0 },                // src/server/session/login-handler.ts:587
@@ -98,9 +102,11 @@ export const RDO_MEMBERS = {
   CloneFacility:             { kind: 'procedure', arity: 5 },                // src/server/spo_session.ts:1361
   CloseMessage:              { kind: 'procedure', arity: 1 },                // src/server/session/mail-handler.ts:163
   CloseObject:               { kind: 'procedure', arity: 1 },                // src/server/spo_session.ts:1504
-  // Two m. The inspector reads this value under the cache key `Comercials`
-  // (one m, TVGeneralSheet.pas:15); only the write uses the published name.
-  Commercials:               { kind: 'accessor',  access: ['set'] },         // building-property-handler.ts:188 <- template-groups.ts:321
+  // Two m. The inspector stores this value under the cache key `Comercials`
+  // (one m, TVGeneralSheet.pas:15), but both the live read and the write use the
+  // published name — `cmm := MSProxy.Commercials` (TVGeneralSheet.pas:274) and
+  // `Proxy.Commercials := …` (:322).
+  Commercials:               { kind: 'accessor',  access: ['get', 'set'] },  // StdBlocks/Broadcast.pas:53; building-details-handler.ts (enrichTvTab), building-property-handler.ts:188
   ConnectFacilities:         { kind: 'function',  arity: 2 },                // src/server/spo_session.ts:795
   CreateCircuitSeg:          { kind: 'function',  arity: 7 },                // src/server/session/road-handler.ts:192
   CreateObject:              { kind: 'function',  arity: 1 },                // src/server/spo_session.ts:1414
@@ -125,8 +131,8 @@ export const RDO_MEMBERS = {
   GetSurface:                { kind: 'function',  arity: 5 },                // src/server/session/zone-surface-handler.ts:85
   GetTycoonCookie:           { kind: 'function',  arity: 2 },                // src/server/session/login-handler.ts:558
   GetUserList:               { kind: 'function',  arity: 0 },                // src/server/session/chat-handler.ts:77
-  HoursOnAir:                { kind: 'accessor',  access: ['set'] },         // building-property-handler.ts:188 <- template-groups.ts:313
-  Interest:                  { kind: 'accessor',  access: ['set'] },         // building-property-handler.ts:188 <- template-groups.ts:253
+  HoursOnAir:                { kind: 'accessor',  access: ['get', 'set'] },  // StdBlocks/Broadcast.pas:51; building-details-handler.ts (enrichTvTab), building-property-handler.ts:188
+  Interest:                  { kind: 'accessor',  access: ['get', 'set'] },  // StdBlocks/Banks.pas:40; building-details-handler.ts (enrichBankTab), building-property-handler.ts:188
   JoinChannel:               { kind: 'function',  arity: 2 },                // src/server/session/chat-handler.ts:137
   KeepAlive:                 { kind: 'procedure', arity: 0 },                // src/server/spo_session.ts:2026
   Logoff:                    { kind: 'accessor',  access: ['get'] },         // src/server/spo_session.ts:2895
@@ -163,6 +169,7 @@ export const RDO_MEMBERS = {
   RDODisconnectOutput:       { kind: 'procedure', arity: 2 },                // src/server/session/building-property-handler.ts:194,223
   RDODowngrade:              { kind: 'procedure', arity: 0 },                // src/server/session/building-management-handler.ts:169
   RDOEndSession:             { kind: 'procedure', arity: 0 },                // DServer/DirectoryServer.pas:31; src/server/session/login-handler.ts:215
+  RDOEstimateLoan:           { kind: 'function',  arity: 1 },                // StdBlocks/Banks.pas:45; src/server/session/building-details-handler.ts (enrichBankTab)
   RDOFavoritesDelItem:       { kind: 'function',  arity: 1 },                // src/server/session/favorites-handler.ts
   RDOFavoritesGetSubItems:   { kind: 'function',  arity: 1 },                // src/server/session/politics-handler.ts:369
   RDOFavoritesMoveItem:      { kind: 'function',  arity: 2 },                // Interface Server/InterfaceServer.pas:202; src/server/session/favorites-handler.ts
@@ -228,7 +235,7 @@ export const RDO_MEMBERS = {
   SetViewedArea:             { kind: 'procedure', arity: 4 },                // src/server/spo_session.ts:1336
   Stopped:                   { kind: 'accessor',  access: ['set'] },         // building-property-handler.ts:188 <- template-groups.ts:55
   SwitchFocusEx:             { kind: 'function',  arity: 3 },                // src/server/spo_session.ts:691
-  Term:                      { kind: 'accessor',  access: ['set'] },         // building-property-handler.ts:188 <- template-groups.ts:254
+  Term:                      { kind: 'accessor',  access: ['get', 'set'] },  // StdBlocks/Banks.pas:41; building-details-handler.ts (enrichBankTab), building-property-handler.ts:188
   TycoonId:                  { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts:414
   UnfocusObject:             { kind: 'procedure', arity: 1 },                // src/server/spo_session.ts:734
   WipeCircuit:               { kind: 'function',  arity: 6 },                // src/server/session/road-handler.ts:405

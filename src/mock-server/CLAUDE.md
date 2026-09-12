@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `service-figures`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `service-figures`, `bank-tv-live-reads`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -135,6 +135,20 @@ the cached `srvSupplies0` / `srvDemands0` columns `building-details` serves — 
 64 / 37 where the cache says 5 / 12 — because a client that still drew the cached columns for
 the selected card would otherwise render plausible numbers and pass. The index travels as the
 single `#`-prefixed argument, so a frame built for another service matches nothing.
+
+`bank-tv-live-reads` is the six bank and TV inspector values the object cache never holds:
+`TBankBlock.StoreToCache` (`StdBlocks/Banks.pas:188-206`) writes the loan list alone and
+`TBroadcaster.StoreToCache` (`StdBlocks/Broadcast.pas:431-453`) only antenna data, so Estimated
+Loan, Interest, Term, Budget, Hours On Air and Commercials came back empty every time. The
+reference client never asked the cache for them — it binds to `CurrBlock` and reads live
+(`Voyager/BankGeneralSheet.pas:258-273`, `Voyager/TVGeneralSheet.pas:269-275`), and so the
+scenario answers one `RDOEstimateLoan` call plus five property `get`s. Two things it pins that
+nothing else can catch: `RDOEstimateLoan` answers a **FormatMoney string** (`$5,000,000`,
+`Utils/Misc/MathUtils.pas:87-109`) the gateway must strip to digits, and its single argument is
+the **InitClient proxy id**, which the server pointer-casts — `TMoneyDealer(ClientId)`
+(`Banks.pas:149`) — so the persistent `TTycoon.Id` would dereference nothing with no error to
+show for it. The `building-details` cache fixture serves a `CurrBlock` pointing at these blocks
+and none of the six values, matching what StoreToCache actually writes.
 
 ### Scenario Structure
 

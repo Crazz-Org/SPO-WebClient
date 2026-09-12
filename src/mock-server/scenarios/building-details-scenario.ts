@@ -20,6 +20,7 @@ import type { WsCaptureScenario } from '../types/mock-types';
 import type { RdoScenario } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
+import { BANK_LIVE_READS_BLOCK, TV_LIVE_READS_BLOCK } from './bank-tv-live-reads-scenario';
 
 // =============================================================================
 // MOCK BUILDING DEFINITIONS
@@ -260,10 +261,10 @@ const MOCK_BANK: MockBuilding = {
       { name: 'Name', value: 'Central Bank' },
       { name: 'Creator', value: 'Yellow Inc.' },
       { name: 'Trouble', value: '0' },
-      { name: 'EstLoan', value: '5000000' },
-      { name: 'Interest', value: '12' },
-      { name: 'Term', value: '5' },
-      { name: 'BudgetPerc', value: '75' },
+      // The four bank values are NOT here: TBankBlock.StoreToCache
+      // (StdBlocks/Banks.pas:188-206) never writes them. They come from the live
+      // reads `bank-tv-live-reads` answers, bound to this block id.
+      { name: 'CurrBlock', value: BANK_LIVE_READS_BLOCK },
     ],
     'bankLoans': [
       { name: 'LoanCount', value: '3' },
@@ -307,8 +308,10 @@ const MOCK_TV_STATION: MockBuilding = {
       { name: 'ROI', value: '5' },
       { name: 'Years', value: '2' },
       { name: 'Trouble', value: '0' },
-      { name: 'HoursOnAir', value: '80' },
-      { name: 'Comercials', value: '30' },
+      // Neither slider is here: TBroadcaster.StoreToCache
+      // (StdBlocks/Broadcast.pas:431-453) writes antenna data only. They come from
+      // the live reads `bank-tv-live-reads` answers, bound to this block id.
+      { name: 'CurrBlock', value: TV_LIVE_READS_BLOCK },
     ],
     'antennas': [
       { name: 'antCount', value: '3' },
