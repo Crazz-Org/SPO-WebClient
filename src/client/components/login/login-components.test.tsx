@@ -82,6 +82,32 @@ describe('WorldStage', () => {
     renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} isLoading={false} />);
     expect(screen.getByText('Offline World')).toBeTruthy();
   });
+
+  // General/Date comes back from the directory as a bare year (login-handler.ts:1001).
+  it('shows the in-game year on an online world that carries a date', () => {
+    const dated: WorldInfo[] = [
+      { name: 'Dated', url: '', ip: '127.0.0.1', port: 1234, running3: true, online: 1, players: 1, population: 10, date: '2232' },
+    ];
+    renderWithProviders(<WorldStage worlds={dated} onSelect={() => {}} isLoading={false} />);
+    expect(screen.getByText('Year')).toBeTruthy();
+    expect(screen.getByText('2232')).toBeTruthy();
+  });
+
+  it('shows no year tile on an online world whose record has no date', () => {
+    const undated: WorldInfo[] = [worlds[0]];
+    renderWithProviders(<WorldStage worlds={undated} onSelect={() => {}} isLoading={false} />);
+    expect(screen.queryByText('Year')).toBeNull();
+  });
+
+  it('leaves an offline card unchanged even when its record carries a date', () => {
+    const offlineDated: WorldInfo[] = [
+      { name: 'Offline Dated', url: '', ip: '127.0.0.1', port: 1234, running3: false, online: 0, players: 0, population: 0, date: '2232' },
+    ];
+    renderWithProviders(<WorldStage worlds={offlineDated} onSelect={() => {}} isLoading={false} />);
+    expect(screen.getByText('Server unavailable')).toBeTruthy();
+    expect(screen.queryByText('Year')).toBeNull();
+    expect(screen.queryByText('2232')).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
