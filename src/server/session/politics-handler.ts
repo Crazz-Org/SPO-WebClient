@@ -1146,7 +1146,7 @@ export async function searchConnections(
   ctx: SessionContext,
   buildingX: number, buildingY: number,
   fluidId: string, direction: 'input' | 'output',
-  filters?: { company?: string; town?: string; maxResults?: number; roles?: number }
+  filters?: { company?: string; town?: string; maxResults?: number; roles?: number; sortMode?: number }
 ): Promise<ConnectionSearchResult[]> {
   const worldName = ctx.currentWorldInfo?.name || '';
   if (!worldName) {
@@ -1178,7 +1178,10 @@ export async function searchConnections(
       RdoValue.int(filters?.maxResults || 20),   // Count
       RdoValue.int(buildingX),                   // X
       RdoValue.int(buildingY),                   // Y
-      RdoValue.int(1),                           // SortMode (1=quality)
+      // SortMode: 1 = smPrice (delivered cost), 2 = smQuality — Cache/FluidLinks.pas:9-11.
+      // 1 is what Voyager emits (ObjectInspectorHandleViewer.pas:878). Anything else the
+      // WS layer sends collapses to 1; FindClients ignores the value (Cache/InputSearch.pas:90-96).
+      RdoValue.int(filters?.sortMode === 2 ? 2 : 1),   // SortMode
       // Role bitmask — TFacilityRole bits (WHGeneralSheet.pas:155), built by
       // `rolesToMask` (shared/connection-roles.ts). `??`, not `||`: a mask of 0
       // is "no box ticked", which is what Voyager's `byte([])` puts on the wire.

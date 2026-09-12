@@ -1154,7 +1154,7 @@ export function searchConnections(
   buildingY: number,
   fluidId: string,
   direction: 'input' | 'output',
-  filters?: { company?: string; town?: string; maxResults?: number; roles?: number }
+  filters?: { company?: string; town?: string; maxResults?: number; roles?: number; sortMode?: number }
 ): void {
   const req: WsReqSearchConnections = {
     type: WsMessageType.REQ_SEARCH_CONNECTIONS,
