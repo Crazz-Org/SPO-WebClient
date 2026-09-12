@@ -240,3 +240,9 @@
   outline: 2px solid var(--accent-gold);
   outline-offset: 2px;
 }
+
+/* Staged entrance (issue 549): the wordmark lands first, then the tagline, then the card.
+   The class is removed on skip or completion, which snaps every block to its settled state. */
+.stage.intro .logo     { animation: stageEnter 500ms var(--ease-out) both; }
+.stage.intro .tagline  { animation: stageEnter 500ms var(--ease-out) 300ms both; }
+.stage.intro .authCard { animation: stageEnter 600ms var(--ease-out) 700ms both; }

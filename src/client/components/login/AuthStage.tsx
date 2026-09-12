@@ -1,11 +1,12 @@
 /**
  * AuthStage — Full-screen centered authentication card.
  *
- * Stage A of the cinematic login flow.
+ * Stage A of the cinematic login flow. Plays a short staged entrance once per app load,
+ * skippable by a click, key press or focus event, before settling on the form below.
  * Glassmorphed card with username/password + gold "Enter the World" button.
  */
 
-import { useState, useCallback, useEffect, type KeyboardEvent } from 'react';
+import { useState, useCallback, useEffect, useRef, type KeyboardEvent } from 'react';
 import { GlassCard } from '../common';
 import { showToast } from '../common/Toast';
 import { APP_VERSION, BUILD_DATE } from '../../version';
@@ -23,6 +24,25 @@ interface AuthStageProps {
   resumeTarget?: RememberedSession | null;
   onResume?: (password: string) => void;
   onForgetSession?: () => void;
+}
+
+/** Matches the CSS stagger total in AuthStage.module.css (`.intro`), plus a small margin. */
+const INTRO_TOTAL_MS = 1400;
+
+/** Module scope survives the sign-out and error remounts a store `reset()` would wipe. */
+let introPlayed = false;
+
+/** Test-only: lets a fresh test start from "intro not yet played". */
+export function resetLoginIntro(): void {
+  introPlayed = false;
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
 }
 
 /**
@@ -59,6 +79,39 @@ export function AuthStage({
   const client = useClient();
   // The language must be picked before the login is sent — it travels with it.
   const languageId = normalizeLanguageId(useGameStore((s) => s.settings.languageId));
+
+  const [introPlaying, setIntroPlaying] = useState(() => {
+    if (introPlayed || prefersReducedMotion()) return false;
+    introPlayed = true;
+    return true;
+  });
+  const usernameRef = useRef<HTMLInputElement>(null);
+  const programmaticFocusRef = useRef(false);
+
+  const skipIntro = useCallback(() => {
+    setIntroPlaying(false);
+    usernameRef.current?.focus();
+  }, []);
+
+  // The field is focused from the first frame in every path (intro, skipped, reduced-motion);
+  // the guard keeps this self-inflicted focus from being counted as a skip.
+  useEffect(() => {
+    programmaticFocusRef.current = true;
+    usernameRef.current?.focus();
+    programmaticFocusRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    if (!introPlaying) return;
+    window.addEventListener('pointerdown', skipIntro);
+    window.addEventListener('keydown', skipIntro);
+    const timer = setTimeout(() => setIntroPlaying(false), INTRO_TOTAL_MS);
+    return () => {
+      window.removeEventListener('pointerdown', skipIntro);
+      window.removeEventListener('keydown', skipIntro);
+      clearTimeout(timer);
+    };
+  }, [introPlaying, skipIntro]);
 
   const handleLanguageChange = useCallback(
     (value: string) => {
@@ -117,7 +170,13 @@ export function AuthStage({
   );
 
   return (
-    <div className={styles.stage}>
+    <div
+      className={`${styles.stage}${introPlaying ? ` ${styles.intro}` : ''}`}
+      data-intro={introPlaying ? 'playing' : 'done'}
+      onFocusCapture={() => {
+        if (!programmaticFocusRef.current && introPlaying) skipIntro();
+      }}
+    >
       <h1 className={styles.logo}>STARPEACE ONLINE</h1>
       <p className={styles.tagline}>Build your empire. Shape the world.</p>
 
@@ -135,13 +194,13 @@ export function AuthStage({
           <>
             <div className={styles.fieldGroup}>
               <input
+                ref={usernameRef}
                 type="text"
                 className={styles.input}
                 placeholder="Username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 onKeyDown={handleKeyDown}
-                autoFocus
                 autoComplete="username"
               />
               <input
