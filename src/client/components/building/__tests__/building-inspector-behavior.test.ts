@@ -616,15 +616,16 @@ describe('Demolish button (ACTION_BUTTON — all General handlers)', () => {
 // Full per-handler tests added in Batch 4 above — core logic tests here
 // ---------------------------------------------------------------------------
 
-describe('Connect button (ACTION_BUTTON — IndGeneral, SrvGeneral, WHGeneral)', () => {
+describe('Connect button (ACTION_BUTTON — IndGeneral, SrvGeneral, WHGeneral, HqGeneral, TVGeneral)', () => {
   const connectGroups = [
     { name: 'IndGeneral', group: IND_GENERAL_GROUP },
     { name: 'SrvGeneral', group: SRV_GENERAL_GROUP },
     { name: 'WHGeneral', group: WH_GENERAL_GROUP },
   ];
+  const mapConnectGroups = [...connectGroups, { name: 'HqGeneral', group: HQ_GENERAL_GROUP }, { name: 'TVGeneral', group: TV_GENERAL_GROUP }];
 
-  it('all 3 General groups have a connect ACTION_BUTTON', () => {
-    for (const { name, group } of connectGroups) {
+  it('all 5 General groups have a connect ACTION_BUTTON', () => {
+    for (const { name, group } of mapConnectGroups) {
       const prop = group.properties.find(p => p.actionId === 'connectMap');
       expect(prop).toBeDefined();
       expect(prop!.type).toBe(PropertyType.ACTION_BUTTON);
@@ -641,7 +642,7 @@ describe('Connect button (ACTION_BUTTON — IndGeneral, SrvGeneral, WHGeneral)',
   });
 
   it('connect button appears before demolish button in property list', () => {
-    for (const { group } of connectGroups) {
+    for (const { group } of mapConnectGroups) {
       const connectIdx = group.properties.findIndex(p => p.actionId === 'connectMap');
       const demolishIdx = group.properties.findIndex(p => p.actionId === 'demolish');
       expect(connectIdx).toBeGreaterThan(-1);
