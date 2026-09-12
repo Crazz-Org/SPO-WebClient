@@ -229,6 +229,9 @@ const ProductCard = memo(function ProductCard({
                 if (e.key === 'Delete' && canEdit && selectedIdx !== null) {
                   handleFire();
                 }
+                if (e.key === 'Insert' && canEdit) {
+                  handleHire();
+                }
                 if (e.key === 'Enter' && selectedIdx !== null) {
                   const conn = product.connections[selectedIdx];
                   if (conn) handleNavigate(conn);

@@ -406,6 +406,9 @@ const SupplyCard = memo(function SupplyCard({
                 if (e.key === 'Delete' && canEdit && selectedIdx !== null) {
                   handleFire();
                 }
+                if (e.key === 'Insert' && canEdit) {
+                  handleHire();
+                }
                 if (e.key === 'Enter' && selectedIdx !== null) {
                   const conn = supply.connections[selectedIdx];
                   if (conn) handleNavigate(conn);
