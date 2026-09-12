@@ -150,6 +150,7 @@ describe('CompanyStage', () => {
     onCreate: () => {},
     onBack: () => {},
     isLoading: false,
+    username: 'SPO_test3',
   };
 
   it('renders company selection title', () => {
@@ -252,6 +253,29 @@ describe('CompanyStage', () => {
     expect(screen.getByText('Select a Company')).toBeTruthy();
     expect(screen.getByText('TestCo')).toBeTruthy();
     expect(screen.queryByText('Create New Company')).toBeNull();
+  });
+
+  it.each(['Mayor of Helartia', 'President of Shamba'])(
+    'offers company creation to a %s',
+    (username) => {
+      renderWithProviders(<CompanyStage {...defaultProps} username={username} />);
+      expect(screen.getByText('Create New Company')).toBeTruthy();
+    },
+  );
+
+  // chooseCompany.asp:23 — `InStr(UCASE(UserName), "MINISTER OF ") = 1`.
+  it('withholds company creation from a minister account', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} username="Minister of Health" companies={[]} />,
+    );
+    expect(screen.queryByText('Create New Company')).toBeNull();
+    expect(screen.queryByText(/Create your first company/)).toBeNull();
+  });
+
+  it('withholds company creation from a minister account case-insensitively', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} username="minister of health" />);
+    expect(screen.queryByText('Create New Company')).toBeNull();
+    expect(screen.getByText('TestCo')).toBeTruthy();
   });
 });
 
