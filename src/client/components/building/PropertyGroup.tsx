@@ -28,7 +28,7 @@ import { RevenueGraph } from './RevenueGraph';
 import { SuppliesPanel } from './SuppliesGroup';
 import { ProductsPanel } from './ProductsGroup';
 import { CompInputsPanel } from './InputsGroup';
-import { resolveRdoCommand, computePendingKey, getColorClass, buildSalaryParams, isFilmActionOffered } from './property-utils';
+import { resolveRdoCommand, computePendingKey, getColorClass, buildSalaryParams, isFilmActionOffered, splitParagraphs } from './property-utils';
 import { SliderInput, TextInput } from './PropertyInputs';
 import { RatioValue, BooleanValue, StopToggle } from './PropertyDisplays';
 import { DataTable, ServiceCardList, ProductSummaryCards } from './PropertyTables';
@@ -595,6 +595,33 @@ function DefinedProperties({
         );
       }
       continue;
+    }
+
+    // Mausoleum epitaph — the server stores paragraphs `|`-separated
+    // (MausoleumSheet.pas:76, :78-107). One paragraph falls through to the
+    // ordinary text row so it renders exactly as before; zero renders an
+    // empty value cell, never a blank paragraph.
+    if (def.rdoName === 'WordsOfWisdom') {
+      const words = valueMap.get(def.rdoName);
+      if (words === undefined) continue;
+      const paragraphs = splitParagraphs(words);
+      if (paragraphs.length !== 1) {
+        rendered.add(def.rdoName);
+        elements.push(
+          <div key={def.rdoName} className={`${styles.row} ${styles.rowStacked}`}>
+            <span className={styles.name} title={def.tooltip}>{def.displayName}</span>
+            {paragraphs.length > 0 ? (
+              <div className={styles.paragraphs} data-testid="words-of-wisdom">
+                {paragraphs.map((p, i) => <p key={i}>{p}</p>)}
+              </div>
+            ) : (
+              <span className={styles.value} data-testid="words-of-wisdom" />
+            )}
+          </div>,
+        );
+        continue;
+      }
+      // exactly one paragraph: fall through to the regular row below
     }
 
     // Regular property
