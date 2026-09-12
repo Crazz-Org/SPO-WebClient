@@ -93,6 +93,59 @@ describe('InspectorHeader rendering', () => {
   });
 });
 
+describe('InspectorHeader facility image', () => {
+  it('renders no img when there is no iconUrl', () => {
+    const { container } = renderWithProviders(<InspectorHeader buildingName="Farm" />);
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  it('is hidden until load, then shown', () => {
+    const { container } = renderWithProviders(
+      <InspectorHeader buildingName="Farm" iconUrl="/cache/BuildingImages/A.gif" />,
+    );
+
+    const img = container.querySelector('img') as HTMLImageElement;
+    expect(img).toBeTruthy();
+    expect(img.getAttribute('src')).toBe('/cache/BuildingImages/A.gif');
+    expect(img.getAttribute('alt')).toBe('');
+    expect(img.className).not.toContain('icon ');
+    expect(img.className.includes('iconPending') || !img.className.includes('icon')).toBe(true);
+
+    fireEvent.load(img);
+    expect(img.className).toContain('icon');
+    expect(img.className).not.toContain('iconPending');
+  });
+
+  it('unmounts the img on a failed load, without touching the rest of the header', () => {
+    const { container } = renderWithProviders(
+      <InspectorHeader buildingName="Farm" level={2} iconUrl="/cache/BuildingImages/A.gif" />,
+    );
+
+    const img = container.querySelector('img') as HTMLImageElement;
+    fireEvent.error(img);
+
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.getByText('Farm')).toBeTruthy();
+    expect(screen.getByText('Lvl 2')).toBeTruthy();
+  });
+
+  it('resets the load state when a rerender brings a different iconUrl', () => {
+    const { container, rerender } = renderWithProviders(
+      <InspectorHeader buildingName="Farm" iconUrl="/cache/BuildingImages/A.gif" />,
+    );
+
+    const first = container.querySelector('img') as HTMLImageElement;
+    fireEvent.error(first);
+    expect(container.querySelector('img')).toBeNull();
+
+    rerender(<InspectorHeader buildingName="Farm" iconUrl="/cache/BuildingImages/B.gif" />);
+
+    const second = container.querySelector('img') as HTMLImageElement;
+    expect(second).toBeTruthy();
+    expect(second.getAttribute('src')).toBe('/cache/BuildingImages/B.gif');
+  });
+});
+
 describe('InspectorMenu interaction', () => {
   const tabs: BuildingDetailsTab[] = [
     { id: 'a', name: 'ALPHA', order: 1, icon: '', handlerName: 'A' },

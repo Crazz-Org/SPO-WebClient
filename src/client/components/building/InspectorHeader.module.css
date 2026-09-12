@@ -13,6 +13,17 @@
   min-width: 0;
 }
 
+.icon {
+  flex-shrink: 0;
+  max-width: 64px;
+  max-height: 32px;
+  object-fit: contain;
+}
+
+.iconPending {
+  display: none;
+}
+
 .name {
   margin: 0;
   min-width: 0;
