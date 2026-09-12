@@ -30,6 +30,7 @@ import {
   WsReqCloneFacility,
   WsRespCloneFacility,
   WsReqSearchConnections,
+  WsReqConnectionReachability,
   WsReqPoliticsVote,
   WsRespPoliticsVote,
   BuildingDetailsResponse,
@@ -1238,6 +1239,28 @@ export function searchConnections(
     fluidId,
     direction,
     filters,
+  };
+  ctx.rawSend(req);
+}
+
+/**
+ * Ask the gateway which of the results already on screen share a road circuit
+ * with the searching building — the enrichment the ASP pages did through
+ * `NearCircuits`/`Intercept` (issue #584). Sent only after the list itself is
+ * on screen, so the enrichment never blocks the results from rendering.
+ */
+export function requestConnectionReachability(
+  ctx: ClientHandlerContext,
+  picker: { buildingX: number; buildingY: number; fluidId: string; direction: 'input' | 'output'; results: Array<{ x: number; y: number }> },
+): void {
+  if (picker.results.length === 0) return;
+  const req: WsReqConnectionReachability = {
+    type: WsMessageType.REQ_CONNECTION_REACHABILITY,
+    buildingX: picker.buildingX,
+    buildingY: picker.buildingY,
+    fluidId: picker.fluidId,
+    direction: picker.direction,
+    candidates: picker.results.map(r => ({ x: r.x, y: r.y })),
   };
   ctx.rawSend(req);
 }

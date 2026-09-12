@@ -24,13 +24,14 @@ import {
   WsRespCapitolCoords,
   WsRespGetProfile,
   WsRespSearchConnections,
+  WsRespConnectionReachability,
   WsRespClusterInfo,
   WsRespClusterFacilities,
   WsRespResearchInventory,
   WsRespResearchDetails,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
-import { requestBuildingRefreshProperties } from './building-action-handler';
+import { requestBuildingRefreshProperties, requestConnectionReachability } from './building-action-handler';
 import { migrateLocalBookmarks } from './favorites-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useGameStore, delphiTDateTimeToJsDate } from '../store/game-store';
@@ -394,6 +395,23 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
         useProfileStore.getState().setSupplierSearchResults(searchResp.results);
       } else {
         ClientBridge.updateConnectionResults(searchResp.results);
+        const picker = useBuildingStore.getState().connectionPicker;
+        if (picker) requestConnectionReachability(ctx, picker);
+      }
+      break;
+    }
+
+    case WsMessageType.RESP_CONNECTION_REACHABILITY: {
+      const reachResp = msg as WsRespConnectionReachability;
+      const picker = useBuildingStore.getState().connectionPicker;
+      if (
+        picker &&
+        picker.buildingX === reachResp.buildingX &&
+        picker.buildingY === reachResp.buildingY &&
+        picker.fluidId === reachResp.fluidId &&
+        picker.direction === reachResp.direction
+      ) {
+        useBuildingStore.getState().mergeConnectionReachability(reachResp.entries);
       }
       break;
     }

@@ -4,6 +4,7 @@
  */
 
 import type { RoadTileFacts } from '../road-cost';
+import type { RoadReachability } from '../road-circuits';
 import type {
   WorldInfo,
   CompanyInfo,
@@ -289,6 +290,8 @@ export enum WsMessageType {
   // Connection Search
   REQ_SEARCH_CONNECTIONS = 'REQ_SEARCH_CONNECTIONS',
   RESP_SEARCH_CONNECTIONS = 'RESP_SEARCH_CONNECTIONS',
+  REQ_CONNECTION_REACHABILITY = 'REQ_CONNECTION_REACHABILITY',
+  RESP_CONNECTION_REACHABILITY = 'RESP_CONNECTION_REACHABILITY',
 
   // Company Creation
   REQ_CREATE_COMPANY = 'REQ_CREATE_COMPANY',
@@ -1730,6 +1733,30 @@ export interface WsRespSearchConnections extends WsMessage {
   results: ConnectionSearchResult[];
   fluidId: string;
   direction: 'input' | 'output';
+}
+
+export interface WsReqConnectionReachability extends WsMessage {
+  type: WsMessageType.REQ_CONNECTION_REACHABILITY;
+  buildingX: number;
+  buildingY: number;
+  fluidId: string;
+  direction: 'input' | 'output';
+  candidates: Array<{ x: number; y: number }>;
+}
+
+export interface ConnectionReachabilityEntry {
+  x: number;
+  y: number;
+  reachability: RoadReachability;
+}
+
+export interface WsRespConnectionReachability extends WsMessage {
+  type: WsMessageType.RESP_CONNECTION_REACHABILITY;
+  buildingX: number;
+  buildingY: number;
+  fluidId: string;
+  direction: 'input' | 'output';
+  entries: ConnectionReachabilityEntry[];
 }
 
 // =============================================================================

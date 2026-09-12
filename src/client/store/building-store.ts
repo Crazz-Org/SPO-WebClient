@@ -9,10 +9,17 @@ import type {
   BuildingSupplyData,
   BuildingProductData,
   ConnectionSearchResult,
+  ConnectionReachabilityEntry,
   ResearchCategoryData,
   ResearchInventionDetails,
 } from '@/shared/types';
+import type { RoadReachability } from '@/shared/road-circuits';
 import { registerInspectorTabs, isGateTab } from '@/shared/building-details';
+
+/** `${x},${y}` — the key `connectionPicker.reachability` is indexed by. */
+export function reachabilityKey(x: number, y: number): string {
+  return `${x},${y}`;
+}
 
 interface ResearchState {
   /** Cached inventory per category tab (key = categoryIndex 0..4). */
@@ -177,6 +184,7 @@ interface BuildingState {
     buildingY: number;
     results: ConnectionSearchResult[];
     isSearching: boolean;
+    reachability: Record<string, RoadReachability>;
   } | null;
 
   // Research state
@@ -198,6 +206,7 @@ interface BuildingState {
   setConnectionPicker: (data: { fluidName: string; fluidId: string; direction: 'input' | 'output'; buildingX: number; buildingY: number }) => void;
   setConnectionResults: (results: ConnectionSearchResult[]) => void;
   setConnectionSearching: (searching: boolean) => void;
+  mergeConnectionReachability: (entries: ConnectionReachabilityEntry[]) => void;
   clearConnectionPicker: () => void;
 
   // Lazy tab loading actions
@@ -672,12 +681,12 @@ export const useBuildingStore = create<BuildingState>((set) => ({
   connectionPicker: null,
 
   setConnectionPicker: (data) =>
-    set({ connectionPicker: { ...data, results: [], isSearching: false } }),
+    set({ connectionPicker: { ...data, results: [], isSearching: false, reachability: {} } }),
 
   setConnectionResults: (results) =>
     set((state) => ({
       connectionPicker: state.connectionPicker
-        ? { ...state.connectionPicker, results, isSearching: false }
+        ? { ...state.connectionPicker, results, isSearching: false, reachability: {} }
         : null,
     })),
 
@@ -687,6 +696,16 @@ export const useBuildingStore = create<BuildingState>((set) => ({
         ? { ...state.connectionPicker, isSearching: searching }
         : null,
     })),
+
+  mergeConnectionReachability: (entries) =>
+    set((state) => {
+      if (!state.connectionPicker) return {};
+      const reachability = { ...state.connectionPicker.reachability };
+      for (const entry of entries) {
+        reachability[reachabilityKey(entry.x, entry.y)] = entry.reachability;
+      }
+      return { connectionPicker: { ...state.connectionPicker, reachability } };
+    }),
 
   clearConnectionPicker: () => set({ connectionPicker: null }),
 

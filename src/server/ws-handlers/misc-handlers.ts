@@ -11,6 +11,8 @@ import {
   type WsRespClusterFacilities,
   type WsReqSearchConnections,
   type WsRespSearchConnections,
+  type WsReqConnectionReachability,
+  type WsRespConnectionReachability,
   type WsRespEmpireFacilities,
   type WsReqFavoriteAdd,
   type WsRespFavoriteAdd,
@@ -116,6 +118,27 @@ export const handleSearchConnections: WsHandler = async (ctx: WsHandlerContext, 
     direction: req.direction,
   };
   sendResponse(ctx.ws, response);
+};
+
+export const handleConnectionReachability: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_Unknown, async () => {
+    const req = msg as WsReqConnectionReachability;
+    await ctx.session.resolveConnectionReachability(
+      req.buildingX, req.buildingY, req.candidates,
+      entries => {
+        const response: WsRespConnectionReachability = {
+          type: WsMessageType.RESP_CONNECTION_REACHABILITY,
+          wsRequestId: msg.wsRequestId,
+          buildingX: req.buildingX,
+          buildingY: req.buildingY,
+          fluidId: req.fluidId,
+          direction: req.direction,
+          entries,
+        };
+        sendResponse(ctx.ws, response);
+      },
+    );
+  });
 };
 
 export const handleEmpireFacilities: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {

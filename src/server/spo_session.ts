@@ -41,6 +41,7 @@ import {
   NewspaperIssueList,
   PoliticalRoleInfo,
   ConnectionSearchResult,
+  ConnectionReachabilityEntry,
   FavoritesItem,
   ResearchCategoryData,
   ResearchInventionDetails,
@@ -1253,6 +1254,10 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
 
   public async searchConnections(buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters?: { company?: string; town?: string; maxResults?: number; roles?: number; sortMode?: number }): Promise<ConnectionSearchResult[]> {
     return politicsHandler.searchConnections(this, buildingX, buildingY, fluidId, direction, filters);
+  }
+
+  public async resolveConnectionReachability(buildingX: number, buildingY: number, candidates: ReadonlyArray<{ x: number; y: number }>, onBatch?: (entries: ConnectionReachabilityEntry[]) => void): Promise<ConnectionReachabilityEntry[]> {
+    return politicsHandler.resolveConnectionReachability(this, buildingX, buildingY, candidates, onBatch);
   }
 
 public async loadMapArea(x?: number, y?: number, w: number = 64, h: number = 64): Promise<MapData> {

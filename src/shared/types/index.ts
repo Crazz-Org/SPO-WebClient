@@ -316,6 +316,8 @@ export type {
   // Connection Search
   WsReqSearchConnections,
   WsRespSearchConnections,
+  WsReqConnectionReachability,
+  WsRespConnectionReachability,
   // Company Creation
   WsReqCreateCompany,
   WsRespCreateCompany,
@@ -359,4 +361,4 @@ export type {
   WsRespCloneFacility,
 } from './message-types';
 
-export type { ConnectionSearchResult, FavoritesItem, ResearchCategoryData, ResearchInventionItem, ResearchInventionDetails } from './message-types';
+export type { ConnectionSearchResult, ConnectionReachabilityEntry, FavoritesItem, ResearchCategoryData, ResearchInventionItem, ResearchInventionDetails } from './message-types';
