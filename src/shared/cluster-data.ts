@@ -45,3 +45,26 @@ export function companyNameProblem(name: string): string | null {
   if (name.includes('..')) return 'Company name cannot contain ".."';
   return null;
 }
+
+/**
+ * Refusal sentence shown in place of the name field when the Magna seal is locked —
+ * verbatim from `~/SPO-ASP/Five/0/language/NewLogon.lng:86`, shown by
+ * `NewLogon/entername.asp:123-127` when `CanBuildAdvanced = 0`.
+ */
+export const MAGNA_REFUSAL =
+  'Sorry, you need to achieve the level Paradigm or to have at least 100 Nobility Points to have access to the Magna Seal.';
+
+/**
+ * Mirrors `TTycoon.GetCanBuildAdvanced` (`Kernel/Kernel.pas:13155`):
+ * `(tier >= 4) or ((tier >= WL.MinLevelToBuildAdvanced) and (GetNobPoints >= 100))`.
+ * The world's `MinLevelToBuildAdvanced` term is not known to the client; this uses the
+ * two-clause form the reference client's own sentence states — Paradigm (tier 4) or 100
+ * nobility. An unknown profile (both undefined) is refused, matching the ASP's
+ * `CanBuildAdvanced = 0` fallback when `SetPath` fails.
+ */
+export function canBuildAdvanced(
+  levelTier: number | undefined,
+  nobPoints: number | undefined,
+): boolean {
+  return (levelTier ?? 0) >= 4 || (nobPoints ?? 0) >= 100;
+}

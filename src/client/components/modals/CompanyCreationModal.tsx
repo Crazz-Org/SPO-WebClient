@@ -9,11 +9,14 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
+import { useProfileStore } from '../../store/profile-store';
 import { useClient } from '../../context';
 import {
   CLUSTER_DISPLAY_NAMES,
   MAX_COMPANY_NAME_LENGTH,
   companyNameProblem,
+  MAGNA_REFUSAL,
+  canBuildAdvanced,
 } from '@/shared/cluster-data';
 import type { ClusterId } from '@/shared/cluster-data';
 import type { ClusterCategory } from '@/shared/types';
@@ -28,6 +31,11 @@ export function CompanyCreationModal() {
   const clusterInfoLoading = useGameStore((s) => s.clusterInfoLoading);
   const facilities = useGameStore((s) => s.clusterFacilities);
   const facilitiesLoading = useGameStore((s) => s.clusterFacilitiesLoading);
+  // RESP_GET_PROFILE (event-handler.ts:412-433) is the only writer of this slice; unlike
+  // tycoonStats it is never rebuilt by the periodic EVENT_TYCOON_UPDATE push
+  // (event-handler.ts:189-205), which carries no level/nobility fields of its own.
+  const profile = useProfileStore((s) => s.profile);
+  const magnaLocked = !canBuildAdvanced(profile?.levelTier, profile?.nobPoints);
 
   const [selectedCluster, setSelectedCluster] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<ClusterCategory | null>(null);
@@ -88,6 +96,7 @@ export function CompanyCreationModal() {
 
   const handleSubmit = useCallback(async () => {
     if (loading) return;
+    if (selectedCluster === 'Magna' && magnaLocked) return;
 
     const trimmed = name.trim();
     const problem = companyNameProblem(trimmed);
@@ -114,7 +123,7 @@ export function CompanyCreationModal() {
     } finally {
       setLoading(false);
     }
-  }, [name, selectedCluster, loading, closeModal, client]);
+  }, [name, selectedCluster, loading, magnaLocked, closeModal, client]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -145,15 +154,20 @@ export function CompanyCreationModal() {
 
         {/* Cluster tabs */}
         <div className={styles.clusterTabs}>
-          {clusters.map((id) => (
-            <button
-              key={id}
-              className={`${styles.clusterTab} ${id === selectedCluster ? styles.clusterTabActive : ''}`}
-              onClick={() => handleClusterTabClick(id)}
-            >
-              {CLUSTER_DISPLAY_NAMES[id as ClusterId] ?? id}
-            </button>
-          ))}
+          {clusters.map((id) => {
+            const locked = id === 'Magna' && magnaLocked;
+            return (
+              <button
+                key={id}
+                className={`${styles.clusterTab} ${id === selectedCluster ? styles.clusterTabActive : ''} ${locked ? styles.clusterTabLocked : ''}`}
+                onClick={() => handleClusterTabClick(id)}
+                aria-disabled={locked || undefined}
+                title={locked ? MAGNA_REFUSAL : undefined}
+              >
+                {CLUSTER_DISPLAY_NAMES[id as ClusterId] ?? id}
+              </button>
+            );
+          })}
         </div>
 
         {/* Two-column body */}
@@ -239,23 +253,29 @@ export function CompanyCreationModal() {
         <div className={styles.bottomSection}>
           {error && <div className={styles.error} style={{ margin: '0 var(--space-5)' }}>{error}</div>}
           <div className={styles.bottomBar}>
-            <input
-              ref={inputRef}
-              className={styles.nameInput}
-              type="text"
-              maxLength={MAX_COMPANY_NAME_LENGTH}
-              placeholder="Enter company name..."
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={loading}
-            />
-            <button
-              className={styles.submitBtn}
-              onClick={handleSubmit}
-              disabled={loading || !selectedCluster}
-            >
-              {loading ? 'Creating...' : 'Create Company'}
-            </button>
+            {selectedCluster === 'Magna' && magnaLocked ? (
+              <div className={styles.refusal} role="status">{MAGNA_REFUSAL}</div>
+            ) : (
+              <>
+                <input
+                  ref={inputRef}
+                  className={styles.nameInput}
+                  type="text"
+                  maxLength={MAX_COMPANY_NAME_LENGTH}
+                  placeholder="Enter company name..."
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  disabled={loading}
+                />
+                <button
+                  className={styles.submitBtn}
+                  onClick={handleSubmit}
+                  disabled={loading || !selectedCluster}
+                >
+                  {loading ? 'Creating...' : 'Create Company'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

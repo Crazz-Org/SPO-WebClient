@@ -8,6 +8,8 @@ import {
   CLUSTER_DISPLAY_NAMES,
   MAX_COMPANY_NAME_LENGTH,
   companyNameProblem,
+  MAGNA_REFUSAL,
+  canBuildAdvanced,
 } from './cluster-data';
 import type { ClusterId } from './cluster-data';
 
@@ -113,6 +115,24 @@ describe('cluster-data', () => {
 
     it('names ".." as the reason, not the character list', () => {
       expect(companyNameProblem('My..Corp')).toBe('Company name cannot contain ".."');
+    });
+  });
+
+  describe('canBuildAdvanced', () => {
+    it.each<[number | undefined, number | undefined, boolean]>([
+      [4, 0, true],
+      [2, 100, true],
+      [2, 0, false],
+      [undefined, undefined, false],
+      [6, 0, true],
+      [0, 99, false],
+    ])('canBuildAdvanced(%p, %p) === %p', (levelTier, nobPoints, expected) => {
+      expect(canBuildAdvanced(levelTier, nobPoints)).toBe(expected);
+    });
+
+    it('names Paradigm and 100 Nobility Points in the refusal sentence', () => {
+      expect(MAGNA_REFUSAL).toContain('Paradigm');
+      expect(MAGNA_REFUSAL).toContain('100 Nobility Points');
     });
   });
 });
