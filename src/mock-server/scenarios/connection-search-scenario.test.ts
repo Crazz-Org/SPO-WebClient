@@ -14,7 +14,6 @@ import { rdoCall } from '@/shared/rdo-frame';
 import { RdoProtocol } from '@/server/rdo';
 import { RDO_MEMBERS } from '@/shared/rdo-members';
 import { RdoValue } from '@/shared/rdo-types';
-import { cleanPayload } from '@/server/rdo-helpers';
 import {
   ALL_CONNECTION_ROLES, rolesToMask, type ConnectionRoleFlags,
 } from '@/shared/connection-roles';
@@ -175,9 +174,12 @@ describe('connection-search scenario — the Role argument on the wire', () => {
 describe('connection-search scenario — the road flag', () => {
   /**
    * Wire `searchConnections` and `resolveRoadReachability` to a single
-   * `RdoMock`, the same pattern as `gate-map-scenario.test.ts:71-92`:
-   * `sendRdoRequest` ("^", captured by `fake.respond`) and the cacher pool
-   * (mocked directly, since the fake never wires it back onto the wire).
+   * `RdoMock`, the same pattern as `gate-map-scenario.test.ts:71-92`. Both the
+   * search and the sweep's `SetObject` travel the `"^"` channel, so the mock
+   * answers them through `fake.respond` — including the `res="#0"` of the row
+   * the cache cannot load, which is the answer the sweep has to read. Only
+   * `GetPropertyList` is mocked on the cacher pool, since the fake never wires
+   * that helper back onto the wire.
    */
   function makeReachabilityCtx() {
     const fake = makeSessionCtx({
@@ -194,13 +196,15 @@ describe('connection-search scenario — the road flag', () => {
       return r ? (RdoProtocol.parse(r.response).payload ?? '') : '';
     });
 
-    fake.cacher.setObject.mockImplementation(async (id: string, x: number, y: number) => {
-      const frame = rdoCall('SetObject', id, RdoValue.int(x), RdoValue.int(y)).toFrame();
-      const r = mock.match(frame);
-      if (!r) throw new Error(`no SetObject exchange for (${x}, ${y})`);
-      const payload = cleanPayload(RdoProtocol.parse(r.response).payload ?? '');
-      if (payload === '0') throw new Error(`SetObject returned false for (${x}, ${y})`);
-    });
+    /** The position the last `SetObject` frame addressed — what the cache holds now. */
+    const loadedPosition = (): { x: number; y: number } => {
+      const sets = fake.sent.filter(s => s.packet.member === 'SetObject');
+      const args = sets[sets.length - 1].packet.args ?? [];
+      return {
+        x: parseInt((args[0] ?? '').replace(/[^\d-]/g, ''), 10),
+        y: parseInt((args[1] ?? '').replace(/[^\d-]/g, ''), 10),
+      };
+    };
 
     fake.cacher.getPropertyList.mockImplementation(async (id: string, names: string[]) => {
       const frame = rdoCall('GetPropertyList', id, RdoValue.string(names.join('\t') + '\t')).toFrame();
@@ -209,13 +213,14 @@ describe('connection-search scenario — the road flag', () => {
       // The scenario fixes the query SHAPE with one exchange; the VALUE
       // depends on which position the last SetObject loaded, exactly as the
       // real cache server would answer about whatever object is loaded.
-      const [, x, y] = fake.cacher.setObject.mock.calls[fake.cacher.setObject.mock.calls.length - 1];
+      const { x, y } = loadedPosition();
       if (x === CONNECTION_SEARCH_QUERY.x && y === CONNECTION_SEARCH_QUERY.y) {
         return [BUILDING_NEAR_CIRCUITS];
       }
       const row = CONNECTION_SEARCH_ROWS.find(r2 => r2.x === x && r2.y === y);
-      if (!row || row.circuits === null) throw new Error(`no cache answer for (${x}, ${y})`);
-      return [row.circuits];
+      // An unloaded object answers '' for every property
+      // (Cache Server/CachedObjectWrap.pas:209-235) — never an exception.
+      return [row?.circuits ?? ''];
     });
 
     return { fake, mock };
@@ -253,30 +258,35 @@ describe('connection-search scenario — the road flag', () => {
     }
   });
 
-  it('a run whose building answer is empty resolves every readable candidate false, never null', async () => {
+  it('the row the cache cannot load is null on the SetObject answer alone, not on a failed read', async () => {
     const { fake } = makeReachabilityCtx();
     const q = CONNECTION_SEARCH_QUERY;
-    // Override only the building's NearCircuits answer; the three readable
-    // candidates (row 4's SetObject still fails and stays null regardless).
-    fake.cacher.getPropertyList.mockImplementation(async (id: string, names: string[]) => {
-      const [, x, y] = fake.cacher.setObject.mock.calls[fake.cacher.setObject.mock.calls.length - 1];
-      if (x === q.x && y === q.y) return [''];
-      const frame = rdoCall('GetPropertyList', id, RdoValue.string(names.join('\t') + '\t')).toFrame();
-      const mock = new RdoMock();
-      mock.addScenario(rdo);
-      const r = mock.match(frame);
-      const row = CONNECTION_SEARCH_ROWS.find(r2 => r2.x === x && r2.y === y);
-      if (!r || !row || row.circuits === null) throw new Error(`no cache answer for (${x}, ${y})`);
-      return [row.circuits];
-    });
+    const unloadable = CONNECTION_SEARCH_ROWS.find(r => r.circuits === null)!;
 
-    const readableRows = CONNECTION_SEARCH_ROWS.filter(r => r.circuits !== null);
+    // The cache answers a property list for every position, as the real one
+    // does — '' on a released object. Only `res="#0"` on that row's SetObject
+    // (cs-rdo-setobject-131-298) can tell "nothing here" from "no circuits".
+    const entries = await resolveRoadReachability(fake.ctx, q.x, q.y, [{ x: unloadable.x, y: unloadable.y }]);
+
+    expect(entries).toEqual([{ x: unloadable.x, y: unloadable.y, connected: null }]);
+    // The unloaded object is never read.
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledTimes(1); // the building only
+  });
+
+  it('a run whose building answer is empty resolves every loadable candidate false, never null', async () => {
+    const { fake } = makeReachabilityCtx();
+    const q = CONNECTION_SEARCH_QUERY;
+    // The building is a facility the cache holds with no circuits at all:
+    // Intercept is false against anything (FluidLinks.pas:121).
+    fake.cacher.getPropertyList.mockResolvedValue(['']);
+
+    const loadableRows = CONNECTION_SEARCH_ROWS.filter(r => r.circuits !== null);
     const entries = await resolveRoadReachability(
       fake.ctx, q.x, q.y,
-      readableRows.map(({ x, y }) => ({ x, y })),
+      loadableRows.map(({ x, y }) => ({ x, y })),
     );
 
-    expect(entries.map(e => e.connected)).toEqual(readableRows.map(() => false));
+    expect(entries.map(e => e.connected)).toEqual(loadableRows.map(() => false));
   });
 
   it('the consumed ids include the search and every reachability exchange', async () => {

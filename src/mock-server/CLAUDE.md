@@ -101,6 +101,10 @@ emitted frame back against the exchange. It also carries the road-reachability s
 the building's and each candidate's `NearCircuits` is read through `SetObject` +
 `GetPropertyList` on one temp object, and one of the four supplier rows answers with an
 empty circuit string, which `Intercept` treats as not connected (`Cache/FluidLinks.pas:121`).
+A fourth row answers `res="#0"` to its `SetObject` — nothing loaded there
+(`Cache Server/CachedObjectWrap.pas:127-139`) — and the cache would then answer `''` for every
+property of the released object (`:209-235`), so that row is the one thing separating
+"unknown" from a false "not connected": the sweep has to read the boolean, not the property.
 
 `people-search` is the pair of patterns the directory's People page puts in the first argument
 of `RDOSearchKey`. The A-Z index sends the bare `*` inside one `Root/Users/<Letter>` bucket —
