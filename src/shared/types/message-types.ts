@@ -397,6 +397,11 @@ export interface WsRespConnectSuccess extends WsMessage {
   worlds: WorldInfo[];
 }
 
+/** Where logonComplete.asp sent the login when it was not the company list (logonComplete.asp:182-186). */
+export type LoginPageOutcome =
+  | { kind: 'denied'; expiresOn: string }   // logonNoAccess.asp — PA query value, e.g. "01/01/2020"
+  | { kind: 'error'; errorCode: string };   // logonError.asp — ErrorCode query value, or the mismatch tag
+
 export interface WsRespLoginSuccess extends WsMessage {
   type: WsMessageType.RESP_LOGIN_SUCCESS;
   tycoonId: string;
@@ -406,6 +411,7 @@ export interface WsRespLoginSuccess extends WsMessage {
   worldXSize?: number;
   worldYSize?: number;
   worldSeason?: number;  // 0=Winter, 1=Spring, 2=Summer, 3=Autumn
+  loginPage?: LoginPageOutcome;
 }
 
 export interface WsRespRdoResult extends WsMessage {

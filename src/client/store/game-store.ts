@@ -4,7 +4,7 @@
  */
 
 import { create } from 'zustand';
-import type { CompanyInfo, WorldInfo, ClusterInfo, ClusterFacilityPreview } from '@/shared/types';
+import type { CompanyInfo, WorldInfo, ClusterInfo, ClusterFacilityPreview, LoginPageOutcome } from '@/shared/types';
 import { SurfaceType } from '@/shared/types/domain-types';
 
 /* ---- Utilities ---- */
@@ -133,6 +133,8 @@ interface GameState {
   loginStage: 'auth' | 'zones' | 'worlds' | 'companies';
   loginLoading: boolean;
   authError: { code: number; message: string } | null;
+  /** Set when logonComplete.asp redirected to logonNoAccess.asp / logonError.asp instead of the company list. */
+  loginPage: LoginPageOutcome | null;
 
   // Server switch overlay (browse regions/worlds while in-game)
   serverSwitchMode: boolean;
@@ -181,6 +183,7 @@ interface GameState {
   setLoginStage: (stage: 'auth' | 'zones' | 'worlds' | 'companies') => void;
   setLoginLoading: (loading: boolean) => void;
   setAuthError: (error: { code: number; message: string } | null) => void;
+  setLoginPage: (page: LoginPageOutcome | null) => void;
   setCompanyCreationClusters: (clusters: string[]) => void;
   setClusterInfo: (info: ClusterInfo | null) => void;
   setClusterInfoLoading: (loading: boolean) => void;
@@ -225,6 +228,7 @@ export const useGameStore = create<GameState>((set) => ({
   loginStage: 'auth',
   loginLoading: false,
   authError: null,
+  loginPage: null,
   serverSwitchMode: false,
   serverSwitchOriginWorld: '',
   companyCreationClusters: [],
@@ -267,10 +271,11 @@ export const useGameStore = create<GameState>((set) => ({
   setActiveOverlay: (overlay) => set({ activeOverlay: overlay }),
 
   setLoginWorlds: (worlds) => set({ loginWorlds: worlds, loginStage: 'worlds', loginLoading: false }),
-  setLoginCompanies: (companies) => set({ companies, loginStage: 'companies', loginLoading: false }),
+  setLoginCompanies: (companies) => set({ companies, loginStage: 'companies', loginLoading: false, loginPage: null }),
   setLoginStage: (stage) => set({ loginStage: stage }),
   setLoginLoading: (loading) => set({ loginLoading: loading }),
   setAuthError: (error) => set({ authError: error }),
+  setLoginPage: (page) => set({ loginPage: page, companies: [], loginStage: 'companies', loginLoading: false }),
 
   setCompanyCreationClusters: (clusters) => set({ companyCreationClusters: clusters }),
   setClusterInfo: (info) => set({ clusterInfo: info, clusterInfoLoading: false }),
@@ -340,6 +345,7 @@ export const useGameStore = create<GameState>((set) => ({
       loginStage: 'auth',
       loginLoading: false,
       authError: null,
+      loginPage: null,
       serverSwitchMode: false,
       serverSwitchOriginWorld: '',
       companyCreationClusters: [],

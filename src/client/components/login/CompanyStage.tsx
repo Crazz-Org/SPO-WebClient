@@ -8,8 +8,11 @@
 import { useMemo } from 'react';
 import { GlassCard } from '../common';
 import { Plus, ArrowLeft } from 'lucide-react';
-import type { CompanyInfo } from '@/shared/types';
+import type { CompanyInfo, LoginPageOutcome } from '@/shared/types';
 import styles from './CompanyStage.module.css';
+
+/** LogonNoAccess.asp:97-100 — the `01/01/2008` PA value is the sentinel for "never had access", not an expiry date. */
+const NO_ACCESS_SENTINEL = '01/01/2008';
 
 interface CompanyStageProps {
   companies: CompanyInfo[];
@@ -18,6 +21,7 @@ interface CompanyStageProps {
   onCreate: () => void;
   onBack: () => void;
   isLoading: boolean;
+  loginPage?: LoginPageOutcome | null;
 }
 
 export function CompanyStage({
@@ -27,6 +31,7 @@ export function CompanyStage({
   onCreate,
   onBack,
   isLoading,
+  loginPage,
 }: CompanyStageProps) {
   // Group companies: player-owned vs political offices
   const { owned, political } = useMemo(() => {
@@ -43,6 +48,48 @@ export function CompanyStage({
     }
     return { owned: ownedList, political: politicalList };
   }, [companies]);
+
+  if (loginPage?.kind === 'denied') {
+    const isSentinel = !loginPage.expiresOn || loginPage.expiresOn === NO_ACCESS_SENTINEL;
+    return (
+      <div className={styles.stage}>
+        <button className={styles.backLink} onClick={onBack}>
+          <ArrowLeft size={14} />
+          <span>Back to worlds</span>
+        </button>
+
+        <div className={styles.header}>
+          <h2 className={styles.title}>Access Denied</h2>
+          <span className={styles.worldTag}>{worldName}</span>
+        </div>
+
+        <p className={styles.denialMessage}>
+          {isSentinel
+            ? `A special travel pass (subscription or invitation) is required to enter ${worldName}.`
+            : `Your portal travel privileges to ${worldName} expired on ${loginPage.expiresOn}.`}
+        </p>
+      </div>
+    );
+  }
+
+  if (loginPage?.kind === 'error') {
+    return (
+      <div className={styles.stage}>
+        <button className={styles.backLink} onClick={onBack}>
+          <ArrowLeft size={14} />
+          <span>Back to worlds</span>
+        </button>
+
+        <div className={styles.header}>
+          <h2 className={styles.title}>Could not enter {worldName}</h2>
+        </div>
+
+        <p className={styles.denialMessage}>
+          The portal rejected the request ({loginPage.errorCode}).
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.stage}>

@@ -94,6 +94,7 @@ export const handleLoginWorld: WsHandler = async (ctx: WsHandlerContext, msg: Ws
     worldXSize: result.worldXSize ?? undefined,
     worldYSize: result.worldYSize ?? undefined,
     worldSeason: result.worldSeason ?? undefined,
+    ...(result.loginPage ? { loginPage: result.loginPage } : {}),
   };
   sendResponse(ctx.ws, response);
 };

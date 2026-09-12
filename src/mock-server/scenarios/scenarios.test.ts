@@ -171,6 +171,17 @@ describe('company-list scenario', () => {
     expect(chooseCompany.body).toContain('Red Corp.');
     expect(chooseCompany.body).not.toContain('Yellow Inc.');
   });
+
+  it('noAccess variant has 6 exchanges, redirects to logonNoAccess.asp, and no companyId', () => {
+    const { http } = createCompanyListScenario(undefined, { logonResult: 'noAccess', expiresOn: '01/01/2020' });
+    expect(http.exchanges).toHaveLength(3);
+    const logonComplete = http.exchanges[1];
+    expect(logonComplete.headers?.Location).toContain('logonNoAccess.asp?PA=01/01/2020');
+    const logonNoAccess = http.exchanges[2];
+    expect(logonNoAccess.urlPattern).toContain('logonNoAccess.asp');
+    expect(logonNoAccess.body).toContain('01/01/2020');
+    expect(logonNoAccess.body).not.toContain('companyId=');
+  });
 });
 
 // =============================================================================

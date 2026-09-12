@@ -8,7 +8,7 @@
 
 import * as net from 'net';
 import { fetchWithTimeout } from '../fetch-with-timeout';
-import type { RdoPacket, WorldInfo, CompanyInfo } from '../../shared/types';
+import type { RdoPacket, WorldInfo, CompanyInfo, LoginPageOutcome } from '../../shared/types';
 import { SessionPhase, DIRECTORY_QUERY } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall, rdoGet, rdoSet, rdoIdOf } from '../../shared/rdo-frame';
@@ -347,19 +347,22 @@ export async function searchPeople(ctx: LoginContext, searchStr: string): Promis
 
 // ── World Login ─────────────────────────────────────────────────────────────
 
-export async function loginWorld(
-  ctx: LoginContext,
-  username: string,
-  pass: string,
-  world: WorldInfo,
-): Promise<{
+export interface LoginWorldResult {
   contextId: string;
   tycoonId: string;
   companies: CompanyInfo[];
   worldXSize: number | null;
   worldYSize: number | null;
   worldSeason: number | null;
-}> {
+  loginPage?: LoginPageOutcome;
+}
+
+export async function loginWorld(
+  ctx: LoginContext,
+  username: string,
+  pass: string,
+  world: WorldInfo,
+): Promise<LoginWorldResult> {
   ctx.setPhase(SessionPhase.WORLD_CONNECTING);
   ctx.setCurrentWorldInfo(world);
 
@@ -480,7 +483,24 @@ export async function loginWorld(
   ctx.log.debug(`[Session] Company Count: ${companyCount}`);
 
   // 10. Fetch companies via HTTP for UI
-  const { companies } = await fetchCompaniesViaHttp(ctx, world.ip, username);
+  const httpResult = await fetchCompaniesViaHttp(ctx, world.ip, username);
+
+  let companies: CompanyInfo[] = [];
+  let loginPage: LoginPageOutcome | undefined;
+
+  if (httpResult.kind === 'companies') {
+    companies = httpResult.companies;
+    if (companyCount > 0 && companies.length === 0) {
+      ctx.log.error(`[Session] GetCompanyCount says ${companyCount} but chooseCompany.asp listed none — company scrape failed`);
+      loginPage = { kind: 'error', errorCode: 'COMPANY_LIST_MISMATCH' };
+    }
+  } else if (httpResult.kind === 'denied') {
+    loginPage = { kind: 'denied', expiresOn: httpResult.expiresOn };
+  } else if (httpResult.kind === 'error') {
+    loginPage = { kind: 'error', errorCode: httpResult.errorCode };
+  }
+  // 'unreachable': companies stays [], loginPage stays undefined — as today.
+
   ctx.setAvailableCompanies(companies);
 
   ctx.log.info('Login phase complete. Waiting for company selection...');
@@ -491,6 +511,7 @@ export async function loginWorld(
     worldXSize: ctx.currentWorldInfo?.mapSizeX ?? null,
     worldYSize: ctx.currentWorldInfo?.mapSizeY ?? null,
     worldSeason: null, // worldSeason is set during fetchWorldProperties
+    loginPage,
   };
 }
 
@@ -810,6 +831,12 @@ async function fetchWorldProperties(ctx: LoginContext, interfaceServerId: string
   }
 }
 
+type FetchCompaniesResult =
+  | { kind: 'companies'; companies: CompanyInfo[]; realContextId: string | null }
+  | { kind: 'denied'; expiresOn: string }
+  | { kind: 'error'; errorCode: string }
+  | { kind: 'unreachable' };
+
 /**
  * Fetch companies via HTTP (ASP endpoint)
  */
@@ -817,7 +844,7 @@ async function fetchCompaniesViaHttp(
   ctx: LoginContext,
   worldIp: string,
   username: string,
-): Promise<{ companies: CompanyInfo[]; realContextId: string | null }> {
+): Promise<FetchCompaniesResult> {
   const params = new URLSearchParams({
     frame_Id: 'LogonView',
     frame_Class: 'HTMLView',
@@ -843,6 +870,21 @@ async function fetchCompaniesViaHttp(
     const response = await fetchWithTimeout(url, { redirect: 'follow' });
     const text = await response.text();
     const finalUrl = response.url;
+    const finalUrlLower = finalUrl.toLowerCase();
+
+    if (finalUrlLower.includes('/logonnoaccess.asp')) {
+      const paMatch = /[?&]PA=([^&]*)/i.exec(finalUrl);
+      const expiresOn = paMatch ? decodeURIComponent(paMatch[1]) : '';
+      ctx.log.warn(`[HTTP] Login denied by logonNoAccess.asp — access expired on ${expiresOn}`);
+      return { kind: 'denied', expiresOn };
+    }
+
+    if (finalUrlLower.includes('/logonerror.asp')) {
+      const errorMatch = /[?&]ErrorCode=([^&]*)/i.exec(finalUrl);
+      const errorCode = errorMatch ? decodeURIComponent(errorMatch[1]) : 'UNKNOWN';
+      ctx.log.warn(`[HTTP] Login rejected by logonError.asp — ${errorCode}`);
+      return { kind: 'error', errorCode };
+    }
 
     // Extract ClientViewId (priority: URL > body)
     let realId: string | null = null;
@@ -875,10 +917,10 @@ async function fetchCompaniesViaHttp(
     }
 
     ctx.log.debug(`[HTTP] Found ${companies.length} companies, realContextId: ${realId}`);
-    return { companies, realContextId: realId };
+    return { kind: 'companies', companies, realContextId: realId };
   } catch (e: unknown) {
     ctx.log.error('[HTTP] Failed to fetch companies:', e);
-    return { companies: [], realContextId: null };
+    return { kind: 'unreachable' };
   }
 }
 

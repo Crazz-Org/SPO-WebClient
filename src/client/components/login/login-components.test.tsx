@@ -130,6 +130,35 @@ describe('CompanyStage', () => {
     renderWithProviders(<CompanyStage {...defaultProps} />);
     expect(screen.getByText('Back to worlds')).toBeTruthy();
   });
+
+  it('renders a denial with the expiry date and no "Create New Company" card', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} loginPage={{ kind: 'denied', expiresOn: '01/01/2020' }} />,
+    );
+    expect(screen.getByText('Access Denied')).toBeTruthy();
+    expect(screen.getByText(/expired on 01\/01\/2020/)).toBeTruthy();
+    expect(screen.queryByText('Create New Company')).toBeNull();
+  });
+
+  it('renders the travel-pass sentence for the 01/01/2008 sentinel', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} loginPage={{ kind: 'denied', expiresOn: '01/01/2008' }} />,
+    );
+    expect(screen.getByText(/special travel pass/)).toBeTruthy();
+  });
+
+  it('renders the error code for a logonError.asp outcome', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} loginPage={{ kind: 'error', errorCode: 'ERROR_FIVEISDOWN' }} />,
+    );
+    expect(screen.getByText(/ERROR_FIVEISDOWN/)).toBeTruthy();
+    expect(screen.queryByText('Create New Company')).toBeNull();
+  });
+
+  it('shows the welcome message when companies is empty and no loginPage is set', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} companies={[]} />);
+    expect(screen.getByText(/Create your first company/)).toBeTruthy();
+  });
 });
 
 // ---------------------------------------------------------------------------

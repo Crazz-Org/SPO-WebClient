@@ -624,14 +624,7 @@ export class StarpeaceSession extends EventEmitter {
     return loginHandler.searchPeople(this, searchStr);
   }
 
-public async loginWorld(username: string, pass: string, world: WorldInfo): Promise<{
-  contextId: string;
-  tycoonId: string;
-  companies: CompanyInfo[];
-  worldXSize: number | null;
-  worldYSize: number | null;
-  worldSeason: number | null;
-}> {
+public async loginWorld(username: string, pass: string, world: WorldInfo): Promise<loginHandler.LoginWorldResult> {
   return loginHandler.loginWorld(this, username, pass, world);
 }
 

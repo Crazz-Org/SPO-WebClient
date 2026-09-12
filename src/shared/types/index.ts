@@ -138,6 +138,7 @@ export type {
   WsRespAuthSuccess,
   WsRespConnectSuccess,
   WsRespLoginSuccess,
+  LoginPageOutcome,
   WsRespRdoResult,
   WsRespMapData,
   // Event payloads

@@ -774,6 +774,69 @@ describe('loginWorld', () => {
     expect(fake.log.debug).toHaveBeenCalledWith('[Session] Company Count: 0');
   });
 
+  it('reports a denial when the ASP redirect chain lands on logonNoAccess.asp', async () => {
+    fetchMock.mockResolvedValue({
+      url: 'http://1.2.3.4/Five/0/Visual/Voyager/NewLogon/logonNoAccess.asp?PA=01%2F01%2F2020&Logon=FALSE&ErrorCode=ERROR_REQUESTDENIED',
+      text: async () => '<html>Your portal travel privileges expired</html>',
+    });
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toEqual({ kind: 'denied', expiresOn: '01/01/2020' });
+    expect(result.companies).toEqual([]);
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[HTTP] Login denied by logonNoAccess.asp — access expired on 01/01/2020',
+    );
+  });
+
+  it('reports an error when the ASP redirect chain lands on logonError.asp', async () => {
+    fetchMock.mockResolvedValue({
+      url: 'http://1.2.3.4/Five/0/Visual/Voyager/NewLogon/logonError.asp?ErrorCode=ERROR_FIVEISDOWN&Logon=FALSE',
+      text: async () => '<html>Could not access the portal to this Planet!</html>',
+    });
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toEqual({ kind: 'error', errorCode: 'ERROR_FIVEISDOWN' });
+    expect(result.companies).toEqual([]);
+  });
+
+  it('shows the welcome (no loginPage) for a genuine newcomer: page reached, zero cells, count 0', async () => {
+    fetchMock.mockResolvedValue({
+      url: 'http://1.2.3.4/chooseCompany.asp',
+      text: async () => '<html><body>no companies here</body></html>',
+    });
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder({ GetCompanyCount: '#0' }));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toBeUndefined();
+    expect(result.companies).toEqual([]);
+    expect(fake.log.error).not.toHaveBeenCalled();
+  });
+
+  it('logs an error and reports COMPANY_LIST_MISMATCH when GetCompanyCount > 0 but the scrape is empty', async () => {
+    fetchMock.mockResolvedValue({
+      url: 'http://1.2.3.4/chooseCompany.asp',
+      text: async () => '<html><body>no companies here</body></html>',
+    });
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder()); // default GetCompanyCount: '#2'
+
+    const result = await runLoginWorld(fake);
+
+    expect(fake.log.error).toHaveBeenCalledWith(
+      '[Session] GetCompanyCount says 2 but chooseCompany.asp listed none — company scrape failed',
+    );
+    expect(result.loginPage).toEqual({ kind: 'error', errorCode: 'COMPANY_LIST_MISMATCH' });
+    expect(result.companies).toEqual([]);
+  });
+
   it('gives up after 15 s when the InitClient push never arrives', async () => {
     jest.useFakeTimers();
     try {
