@@ -150,6 +150,12 @@ the **InitClient proxy id**, which the server pointer-casts — `TMoneyDealer(Cl
 show for it. The `building-details` cache fixture serves a `CurrBlock` pointing at these blocks
 and none of the six values, matching what StoreToCache actually writes.
 
+`building-details` also carries the class picture: each fixture's `imagePath` is the class's
+`[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under
+`/cache/BuildingImages/`. `MOCK_UNKNOWN_CLASS` (`visualClass '999999'`) is the one class the
+cache does not hold a texture for, and its response carries no `iconUrl` key at all. Its test
+drives the real `handleBuildingDetails` and matches the emitted frame to the canned response.
+
 ### Scenario Structure
 
 Each `RdoScenario` has a `name`, `description`, and array of `RdoExchange` objects:

@@ -752,6 +752,36 @@ describe('Building Store — Lazy tab data preservation', () => {
     expect(useBuildingStore.getState().details!.warehouseWares).toBe(mockWarehouseWares);
   });
 
+  it('setDetails carries forward iconUrl when a refresh omits it', () => {
+    const details = { ...makeBuildingDetails(100, 200), iconUrl: '/cache/BuildingImages/A.gif' };
+    useBuildingStore.getState().setDetails(details);
+
+    const refreshed = makeBuildingDetails(100, 200);
+    useBuildingStore.getState().setDetails(refreshed);
+
+    expect(useBuildingStore.getState().details!.iconUrl).toBe('/cache/BuildingImages/A.gif');
+  });
+
+  it('setDetails replaces iconUrl when a refresh carries a new one', () => {
+    const details = { ...makeBuildingDetails(100, 200), iconUrl: '/cache/BuildingImages/A.gif' };
+    useBuildingStore.getState().setDetails(details);
+
+    const refreshed = { ...makeBuildingDetails(100, 200), iconUrl: '/cache/BuildingImages/B.gif' };
+    useBuildingStore.getState().setDetails(refreshed);
+
+    expect(useBuildingStore.getState().details!.iconUrl).toBe('/cache/BuildingImages/B.gif');
+  });
+
+  it('setDetails does not carry iconUrl across a different building', () => {
+    const details = { ...makeBuildingDetails(100, 200), iconUrl: '/cache/BuildingImages/A.gif' };
+    useBuildingStore.getState().setDetails(details);
+
+    const other = makeBuildingDetails(300, 400);
+    useBuildingStore.getState().setDetails(other);
+
+    expect(useBuildingStore.getState().details!.iconUrl).toBeUndefined();
+  });
+
   it('setDetails does NOT carry forward lazy fields when switching buildings', () => {
     const detailsA = makeBuildingDetails(100, 200);
     useBuildingStore.getState().setDetails(detailsA);

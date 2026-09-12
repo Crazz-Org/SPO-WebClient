@@ -160,16 +160,27 @@ export async function handleBuildCapitol(ctx: WsHandlerContext, msg: WsMessage):
   });
 }
 
+/**
+ * The class image beside the name — what every legacy home page showed first.
+ * Same lookup and same path as the map tile (game-object-texture-cache.ts:261):
+ * building GIFs are served by this gateway, never the CDN.
+ */
+function buildingIconUrl(ctx: WsHandlerContext, visualClass: string): string | undefined {
+  const texture = ctx.facilityDimensionsCache().getTextureFilename(visualClass);
+  return texture ? `/cache/BuildingImages/${encodeURIComponent(texture)}` : undefined;
+}
+
 export async function handleBuildingDetails(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
   const req = msg as WsReqBuildingDetails;
 
   await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_FacilityNotFound, async () => {
     const details = await ctx.session.getBuildingBasicDetails(req.x, req.y, req.visualClass);
+    const iconUrl = buildingIconUrl(ctx, details.visualClass);
 
     const response: WsRespBuildingDetails = {
       type: WsMessageType.RESP_BUILDING_DETAILS,
       wsRequestId: msg.wsRequestId,
-      details,
+      details: iconUrl ? { ...details, iconUrl } : details,
     };
     sendResponse(ctx.ws, response);
   });

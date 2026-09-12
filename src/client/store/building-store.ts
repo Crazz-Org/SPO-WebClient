@@ -335,6 +335,9 @@ export const useBuildingStore = create<BuildingState>((set) => ({
         products: details.products ?? state.details?.products,
         compInputs: details.compInputs ?? state.details?.compInputs,
         warehouseWares: details.warehouseWares ?? state.details?.warehouseWares,
+        // A refresh response carries no picture; the one the opening read
+        // brought stays, exactly like the lazy sections.
+        iconUrl: details.iconUrl ?? state.details?.iconUrl,
         // Sections the user already opened survive a header-only refresh. They
         // keep their values on screen while the panel re-reads them, instead of
         // blanking to a skeleton every thirty seconds.

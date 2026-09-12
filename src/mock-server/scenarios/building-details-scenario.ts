@@ -7,6 +7,9 @@
  * - Group A: General tab variants (unkGeneral, IndGeneral, SrvGeneral, etc.)
  * - Group B: Core handlers (Supplies, Products, Workforce, etc.)
  * - Group C: Specialized handlers (BankLoans, Antennas, Films, Votes, etc.)
+ *
+ * Every fixture's response carries the class image URL (`iconUrl`) except
+ * MOCK_UNKNOWN_CLASS, whose CLASSES.BIN entry has no `[MapImages] 64x32x0`.
  */
 
 import { WsMessageType } from '@/shared/types/message-types';
@@ -38,6 +41,8 @@ interface MockBuilding {
   products?: BuildingDetailsResponse['products'];
   warehouseWares?: BuildingDetailsResponse['warehouseWares'];
   moneyGraph?: number[];
+  /** The class's [MapImages] 64x32x0 file, as CLASSES.BIN holds it; absent for a class the cache does not know. */
+  imagePath?: string;
 }
 
 // -----------------------------------------------------------------------------
@@ -50,6 +55,7 @@ const MOCK_FACTORY: MockBuilding = {
   visualClass: 'PGIChemicalPlantA',
   x: 472,
   y: 392,
+  imagePath: 'MapPGIChemicalPlantA64x32x0.gif',
   tabs: [
     { id: 'indGeneral', name: 'GENERAL', icon: 'i', order: 0, handlerName: 'IndGeneral' },
     { id: 'products', name: 'PRODUCTS', icon: 'P', order: 15, handlerName: 'Products', special: 'products' },
@@ -173,6 +179,7 @@ const MOCK_STORE: MockBuilding = {
   visualClass: 'PGIDrugStore',
   x: 477,
   y: 392,
+  imagePath: 'MapPGIDrugStore64x32x0.gif',
   tabs: [
     { id: 'srvGeneral', name: 'GENERAL', icon: 'i', order: 0, handlerName: 'SrvGeneral' },
     { id: 'products', name: 'PRODUCTS', icon: 'P', order: 30, handlerName: 'Products', special: 'products' },
@@ -252,6 +259,7 @@ const MOCK_BANK: MockBuilding = {
   visualClass: 'PGIBankA',
   x: 490,
   y: 400,
+  imagePath: 'MapPGIBankA64x32x0.gif',
   tabs: [
     { id: 'bankGeneral', name: 'GENERAL', icon: 'i', order: 0, handlerName: 'BankGeneral' },
     { id: 'bankLoans', name: 'LOANS', icon: 'L', order: 10, handlerName: 'BankLoans' },
@@ -294,6 +302,7 @@ const MOCK_TV_STATION: MockBuilding = {
   visualClass: 'PGITVStationA',
   x: 500,
   y: 410,
+  imagePath: 'MapPGITVStationA64x32x0.gif',
   tabs: [
     { id: 'tvGeneral', name: 'GENERAL', icon: 'i', order: 0, handlerName: 'TVGeneral' },
     { id: 'antennas', name: 'ANTENNAS', icon: 'A', order: 10, handlerName: 'Antennas' },
@@ -376,6 +385,7 @@ const MOCK_CAPITOL: MockBuilding = {
   visualClass: 'PGICapitolA',
   x: 510,
   y: 420,
+  imagePath: 'MapPGICapitolA64x32x0.gif',
   tabs: [
     { id: 'capitolGeneral', name: 'GENERAL', icon: 'i', order: 0, handlerName: 'capitolGeneral' },
     { id: 'capitolTowns', name: 'TOWNS', icon: 'T', order: 10, handlerName: 'CapitolTowns' },
@@ -489,6 +499,7 @@ const MOCK_TOWN_HALL: MockBuilding = {
   visualClass: 'PGITownHallA',
   x: 520,
   y: 430,
+  imagePath: 'MapPGITownHallA64x32x0.gif',
   tabs: [
     { id: 'townGeneral', name: 'GENERAL', icon: 'i', order: 0, handlerName: 'townGeneral' },
     { id: 'townJobs', name: 'JOBS', icon: 'J', order: 10, handlerName: 'townJobs' },
@@ -622,6 +633,7 @@ const MOCK_RESIDENTIAL: MockBuilding = {
   visualClass: 'PGIHiResA',
   x: 530,
   y: 440,
+  imagePath: 'MapPGIHiResA64x32x0.gif',
   tabs: [
     { id: 'resGeneral', name: 'GENERAL', icon: 'i', order: 0, handlerName: 'ResGeneral' },
   ],
@@ -661,6 +673,7 @@ const MOCK_WAREHOUSE: MockBuilding = {
   visualClass: 'PGIWarehouseA',
   x: 540,
   y: 450,
+  imagePath: 'MapPGIWarehouseA64x32x0.gif',
   tabs: [
     { id: 'whGeneral', name: 'GENERAL', icon: 'i', order: 0, handlerName: 'WHGeneral' },
   ],
@@ -694,6 +707,7 @@ const MOCK_MAUSOLEUM: MockBuilding = {
   visualClass: 'PGIMausoleumA',
   x: 550,
   y: 460,
+  imagePath: 'MapPGIMausoleumA64x32x0.gif',
   tabs: [
     { id: 'mausoleum', name: 'MEMORIAL', icon: 'M', order: 0, handlerName: 'Mausoleum' },
   ],
@@ -702,6 +716,27 @@ const MOCK_MAUSOLEUM: MockBuilding = {
       { name: 'WordsOfWisdom', value: 'Build wisely, prosper greatly.' },
       { name: 'OwnerName', value: 'Founder SPO_test3' },
       { name: 'Transcended', value: '0' },
+    ],
+  },
+};
+
+// -----------------------------------------------------------------------------
+// Unknown class (no CLASSES.BIN [MapImages] 64x32x0 entry)
+// -----------------------------------------------------------------------------
+
+const MOCK_UNKNOWN_CLASS: MockBuilding = {
+  id: '130900800',
+  name: 'Unlisted Facility',
+  visualClass: '999999',
+  x: 560,
+  y: 470,
+  tabs: [
+    { id: 'unkGeneral', name: 'GENERAL', icon: 'i', order: 0, handlerName: 'unkGeneral' },
+  ],
+  groups: {
+    'unkGeneral': [
+      { name: 'Name', value: 'Unlisted Facility' },
+      { name: 'Creator', value: 'Yellow Inc.' },
     ],
   },
 };
@@ -720,6 +755,7 @@ const ALL_MOCK_BUILDINGS: MockBuilding[] = [
   MOCK_RESIDENTIAL,
   MOCK_WAREHOUSE,
   MOCK_MAUSOLEUM,
+  MOCK_UNKNOWN_CLASS,
 ];
 
 // =============================================================================
@@ -749,6 +785,7 @@ function buildDetailsResponse(
     warehouseWares: building.warehouseWares,
     moneyGraph: building.moneyGraph,
     timestamp: Date.now(),
+    ...(building.imagePath !== undefined && { iconUrl: `/cache/BuildingImages/${building.imagePath}` }),
   };
 }
 
@@ -830,5 +867,6 @@ export {
   MOCK_RESIDENTIAL,
   MOCK_WAREHOUSE,
   MOCK_MAUSOLEUM,
+  MOCK_UNKNOWN_CLASS,
 };
 export type { MockBuilding };
