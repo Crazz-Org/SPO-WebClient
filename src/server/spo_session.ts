@@ -2978,7 +2978,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return buildingTemplatesHandler.fetchBuildingFacilities(this, companyName, cluster, kind, kindName, folder, tycoonLevel);
   }
 
-  public async placeBuilding(facilityClass: string, x: number, y: number): Promise<{ success: boolean; buildingId: string | null }> {
+  public async placeBuilding(facilityClass: string, x: number, y: number): Promise<{ success: boolean; buildingId: string | null; errorCode?: number }> {
     return buildingTemplatesHandler.placeBuilding(this, facilityClass, x, y);
   }
 

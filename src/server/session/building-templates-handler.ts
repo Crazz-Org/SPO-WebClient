@@ -615,7 +615,7 @@ export async function placeBuilding(
   facilityClass: string,
   x: number,
   y: number
-): Promise<{ success: boolean; buildingId: string | null }> {
+): Promise<{ success: boolean; buildingId: string | null; errorCode?: number }> {
   if (!ctx.worldContextId) {
     throw new Error('Not logged into world - cannot place building');
   }
@@ -654,7 +654,9 @@ export async function placeBuilding(
       return { success: true, buildingId: null };
     } else {
       ctx.log.warn(`[BuildConstruction] Building placement failed. Result code: ${resultCode}`);
-      return { success: false, buildingId: null };
+      return resultCode >= 0
+        ? { success: false, buildingId: null, errorCode: resultCode }
+        : { success: false, buildingId: null };
     }
   } catch (e: unknown) {
     ctx.log.error('[BuildConstruction] Failed to place building:', e);
