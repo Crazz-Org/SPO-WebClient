@@ -25,23 +25,67 @@ describe('SupplierSearchModal (rendered)', () => {
     useProfileStore.getState().clearSupplierSearch();
   });
 
-  it('searches suppliers with Role 54 when every box is ticked', () => {
+  it('opens on Role 22 — producers + importers + distributers, TycoonSuppliesSearch.asp:29', () => {
     open();
     const onConnectionSearch = jest.fn();
     renderWithProviders(<SupplierSearchModal />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
     fireEvent.click(screen.getByRole('button', { name: /Search/ }));
-    // rolProducer(2) | rolDistributer(4) | rolImporter(16) | rolCompExport(32)
-    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 54 });
+    // rolProducer(2) | rolDistributer(4) | rolImporter(16)
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 22 });
     expect(onConnectionSearch.mock.calls[0][3]).toBe('input');
   });
 
-  it('unticking Export Warehouses drops rolCompExport, leaving 22', () => {
+  it('ticking Export Warehouses adds rolCompExport, giving 54', () => {
     open();
     const onConnectionSearch = jest.fn();
     renderWithProviders(<SupplierSearchModal />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
     fireEvent.click(screen.getByLabelText('Export Warehouses'));
     fireEvent.click(screen.getByRole('button', { name: /Search/ }));
-    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 22 });
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 54 });
+  });
+
+  it('Warehouses only disables the role boxes and searches rolDistributer alone', () => {
+    open();
+    const onConnectionSearch = jest.fn();
+    renderWithProviders(<SupplierSearchModal />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });
+    const boxes = ['Factories', 'Warehouses', 'Trade Centers', 'Export Warehouses'];
+
+    fireEvent.click(screen.getByLabelText('Warehouses only'));
+    for (const name of boxes) {
+      expect((screen.getByLabelText(name) as HTMLInputElement).disabled).toBe(true);
+    }
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    expect(onConnectionSearch.mock.calls[0][4]).toMatchObject({ roles: 4 });
+
+    fireEvent.click(screen.getByLabelText('Warehouses only'));
+    for (const name of boxes) {
+      expect((screen.getByLabelText(name) as HTMLInputElement).disabled).toBe(false);
+    }
+  });
+
+  it('Trade Center rows never reach the list', () => {
+    open();
+    const onProfileAutoConnectionAction = jest.fn();
+    renderWithProviders(<SupplierSearchModal />, {
+      clientCallbacks: createSpiedCallbacks({ onProfileAutoConnectionAction }),
+    });
+    act(() => {
+      useProfileStore.getState().setSupplierSearchResults([
+        { facilityName: 'Plant A', companyName: 'A', x: 101, y: 100 },
+        { facilityName: 'Trade Center', companyName: 'B', x: 102, y: 100 },
+        { facilityName: 'Warehouse C', companyName: 'C', x: 103, y: 100 },
+        { facilityName: 'Trade Center', companyName: 'D', x: 104, y: 100 },
+        { facilityName: 'Plant E', companyName: 'E', x: 105, y: 100 },
+      ]);
+    });
+    expect(screen.getAllByRole('checkbox', { name: /^Select / })).toHaveLength(3);
+    expect(screen.queryByText('Trade Center')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+    fireEvent.click(screen.getByRole('button', { name: /Add Selected/ }));
+    expect(onProfileAutoConnectionAction.mock.calls.map((c) => c[2])).toEqual([
+      '101,100,', '103,100,', '105,100,',
+    ]);
   });
 
   it('shows the town of a result, as the connection picker does', () => {

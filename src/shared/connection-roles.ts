@@ -51,7 +51,7 @@ export interface ConnectionRoleFlags {
   compImporter: boolean;
 }
 
-/** Every box ticked — how both dialogs open. */
+/** Every box ticked — how the connection picker opens. */
 export const ALL_CONNECTION_ROLES: ConnectionRoleFlags = {
   producer: true,
   distributer: true,
