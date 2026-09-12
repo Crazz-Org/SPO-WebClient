@@ -63,6 +63,7 @@ export type {
   SearchMenuCategory,
   TownInfo,
   NewspaperListing,
+  BankInfo,
   TycoonProfile,
   RankingCategory,
   RankingEntry,

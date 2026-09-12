@@ -14,7 +14,7 @@ import { useSearchStore } from '../../store/search-store';
 import { useClient } from '../../context';
 import { GlassCard, Skeleton, ErrorBoundary } from '../common';
 import type {
-  TownInfo, RankingCategory, RankingEntry, SearchMenuCategory,
+  TownInfo, BankInfo, RankingCategory, RankingEntry, SearchMenuCategory,
 } from '@/shared/types';
 import { TycoonProfileView } from './TycoonProfileView';
 import { TycoonFullProfileView } from './TycoonFullProfileView';
@@ -323,6 +323,7 @@ function RankingsPage() {
 
 function BanksPage() {
   const banks = useSearchStore((s) => s.banksData?.banks) ?? [];
+  const client = useClient();
 
   if (banks.length === 0) {
     return <div className={styles.emptyState}>No banks found.</div>;
@@ -330,17 +331,22 @@ function BanksPage() {
 
   return (
     <div className={styles.listContainer}>
-      {banks.map((bank, idx) => {
-        const b = bank as Record<string, unknown>;
-        return (
-          <GlassCard key={String(b.name ?? idx)} className={styles.listItem} light>
-            <div className={styles.listItemHeader}>
-              <Landmark size={16} className={styles.listItemIcon} />
-              <span className={styles.listItemTitle}>{String(b.name ?? `Bank ${idx + 1}`)}</span>
-            </div>
-          </GlassCard>
-        );
-      })}
+      {banks.map((bank: BankInfo) => (
+        <GlassCard
+          key={bank.name}
+          className={styles.listItem}
+          light
+          onClick={() => client.onNavigateToBuilding(bank.x, bank.y)}
+        >
+          <div className={styles.listItemHeader}>
+            <Landmark size={16} className={styles.listItemIcon} />
+            <span className={styles.listItemTitle}>{bank.name}</span>
+          </div>
+          <div className={styles.listItemDetails}>
+            <span>Company: {bank.company}</span>
+          </div>
+        </GlassCard>
+      ))}
     </div>
   );
 }

@@ -11,6 +11,7 @@ import type {
   SearchMenuCategory,
   TownInfo,
   NewspaperListing,
+  BankInfo,
   TycoonProfile,
   RankingCategory,
   RankingEntry,
@@ -283,6 +284,37 @@ export function parseNewspapersPage(html: string): NewspaperListing[] {
   });
 
   return papers;
+}
+
+/**
+ * Parse Banks.asp — one facility per BrowseFacFolder.inc:15-52 row pair: the tr[dirhref]
+ * row carries name (.listItem) and company (.itemInfo, ShowCompany = true at Banks.asp:40);
+ * the following tr carries the "Show in map" link with x/y (BrowseFacFolder.inc:46).
+ */
+export function parseBanksPage(html: string): BankInfo[] {
+  const $ = cheerio.load(html);
+  const banks: BankInfo[] = [];
+
+  $('tr[dirhref]').each((_, el) => {
+    const $row = $(el);
+    const name = $row.find('.listItem').text().replace(/\u00A0/g, ' ').trim();
+
+    if (!name) return;
+
+    const company = $row.find('.itemInfo').first().text().replace(/\u00A0/g, ' ').trim();
+    const mapLink = $row.next().find('a[href*="frame_Action=SELECT"]').attr('href');
+    const xMatch = mapLink?.match(/[&?]x=(\d+)/);
+    const yMatch = mapLink?.match(/[&?]y=(\d+)/);
+
+    banks.push({
+      name,
+      company,
+      x: xMatch ? parseInt(xMatch[1], 10) : 0,
+      y: yMatch ? parseInt(yMatch[1], 10) : 0,
+    });
+  });
+
+  return banks;
 }
 
 /**

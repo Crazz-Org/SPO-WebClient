@@ -7,6 +7,7 @@ import {
   parseTycoonProfile,
   parseNewspapersPage,
   parseTownsPage,
+  parseBanksPage,
   parseRankingDetail,
   parseTownPage,
   parseFolderPage,
@@ -345,6 +346,92 @@ describe('parseNewspapersPage', () => {
     </body></html>`;
 
     expect(parseNewspapersPage(html)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Banks.asp — BrowseFolder.inc calls RenderItem (BrowseFacFolder.inc:15-52) once
+// per folder entry, so one bank is a pair of <tr>s: the dirHref row (icon, name,
+// company — Banks.asp:40 sets ShowCompany = true) then a row holding the
+// "Show in map" anchor, emitted because getBanks sends RIWS= empty.
+// ---------------------------------------------------------------------------
+
+/** Reproduce one RenderItem row pair (BrowseFacFolder.inc:15-52). */
+function bankRows(
+  { id, name, company, x, y }: { id: number; name: string; company: string; x: number; y: number },
+): string {
+  return `
+    <tr onMouseOver="onItemMouseOver()" onMouseOut="onItemMouseOut()" onClick="onItemMouseClick()"
+        dirHref="OpenFacility.asp?Path=\\Banks&WorldName=Shamba&Name=${name}&RIWS=" textId="text_${id}">
+      <td align="center" valign="top">
+        <img width="30" src="/five/icons/Bank64.gif">
+      </td>
+      <td style="padding-left: 7px" valign="top">
+        <div id=text_${id} class=listItem>
+          ${name}
+        </div>
+        <div class=itemInfo>
+          ${company}
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td></td>
+      <td width="*" style="padding-left: 7px" valign="top">
+        <div class=itemInfo style="margin-bottom: 10px">
+          <a href="http://local.asp?frame_Id=MapIsoView&frame_Action=SELECT&x=${x}&y=${y}">
+            Show in map
+          </a>
+        </div>
+      </td>
+    </tr>`;
+}
+
+/** Wrap rows in the Banks.asp body (Banks.asp:24-45). */
+function banksPage(rows: string): string {
+  return `<html><body style="margin-left: 12px">
+    <div class=header2>Shamba</div>
+    <div style="padding-left: 2px">
+      <table><tr><td><div class=MainAnchor>Banks</div></td></tr></table>
+    </div>
+    <table cellspacing="0" style="padding-left: 2px; margin-top: 12px">${rows}</table>
+  </body></html>`;
+}
+
+describe('parseBanksPage', () => {
+  it('extracts name, owning company and map coordinates for each bank, in page order', () => {
+    const html = banksPage(
+      bankRows({ id: 101, name: 'Helartia Central Bank', company: 'Moneyworks Inc', x: 220, y: 41 })
+      + bankRows({ id: 102, name: 'Shamba Savings', company: 'Crazz Holdings', x: 87, y: 133 }),
+    );
+
+    expect(parseBanksPage(html)).toEqual([
+      { name: 'Helartia Central Bank', company: 'Moneyworks Inc', x: 220, y: 41 },
+      { name: 'Shamba Savings', company: 'Crazz Holdings', x: 87, y: 133 },
+    ]);
+  });
+
+  it('returns [] when the \\Banks folder holds no entries', () => {
+    expect(parseBanksPage(banksPage(''))).toEqual([]);
+  });
+
+  it('skips a row whose .listItem carries no name', () => {
+    const html = banksPage(`
+      <tr dirHref="OpenFacility.asp?Path=\\Banks&Name=&RIWS=">
+        <td><div class=listItem>\u00A0</div><div class=itemInfo>Ghost Corp</div></td>
+      </tr>`);
+
+    expect(parseBanksPage(html)).toEqual([]);
+  });
+
+  it('falls back to 0,0 when the follow-up row carries no "Show in map" link (RIWS non-empty)', () => {
+    const html = banksPage(`
+      <tr dirHref="OpenFacility.asp?Path=\\Banks&Name=Offshore&RIWS=1">
+        <td><div class=listItem>Offshore\u00A0</div><div class=itemInfo>Hidden Ltd</div></td>
+      </tr>
+      <tr><td></td><td width="*"></td></tr>`);
+
+    expect(parseBanksPage(html)).toEqual([{ name: 'Offshore', company: 'Hidden Ltd', x: 0, y: 0 }]);
   });
 });
 

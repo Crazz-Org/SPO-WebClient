@@ -23,6 +23,7 @@ import type {
   SearchMenuCategory,
   TownInfo,
   NewspaperListing,
+  BankInfo,
   TycoonProfile,
   TycoonProfileFull,
   RankingCategory,
@@ -1041,7 +1042,7 @@ export interface WsReqSearchMenuBanks extends WsMessage {
 
 export interface WsRespSearchMenuBanks extends WsMessage {
   type: WsMessageType.RESP_SEARCH_MENU_BANKS;
-  banks: unknown[];
+  banks: BankInfo[];
 }
 
 export interface WsReqSearchMenuNewspapers extends WsMessage {
