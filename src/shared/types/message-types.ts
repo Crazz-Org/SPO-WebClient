@@ -148,6 +148,8 @@ export enum WsMessageType {
   RESP_BUILDING_REFRESH_PROPERTIES = 'RESP_BUILDING_REFRESH_PROPERTIES',
   REQ_BUILDING_SET_PROPERTY = 'REQ_BUILDING_SET_PROPERTY',
   RESP_BUILDING_SET_PROPERTY = 'RESP_BUILDING_SET_PROPERTY',
+  REQ_BUILDING_SERVICE_FIGURES = 'REQ_BUILDING_SERVICE_FIGURES',
+  RESP_BUILDING_SERVICE_FIGURES = 'RESP_BUILDING_SERVICE_FIGURES',
 
 
   // Building Upgrades
@@ -816,6 +818,35 @@ export interface WsRespBuildingGateConnections extends WsMessage {
   path: string;
   supply?: BuildingSupplyData;
   product?: BuildingProductData;
+}
+
+/**
+ * The two live figures of ONE service on a service building's General tab.
+ *
+ * The cached `srvSupplies{i}` / `srvDemands{i}` columns only move with the
+ * whole-tab refresh; the reference client polls the block directly instead, on
+ * its own `tRefresh` timer, and for the selected finger alone —
+ * `Proxy.BindTo(fCurrBlock); Proxy.RDOGetDemand(CurrentFinger)` then
+ * `RDOGetSupply(CurrentFinger)` (Voyager/SrvGeneralSheetForm.pas:411-413).
+ * That is why this message carries one index rather than the whole list: a
+ * studio with ten services costs one round-trip pair per tick, not ten.
+ */
+export interface WsReqBuildingServiceFigures extends WsMessage {
+  type: WsMessageType.REQ_BUILDING_SERVICE_FIGURES;
+  x: number;
+  y: number;
+  /** Index of the selected service — the `index` argument of RDOGetDemand / RDOGetSupply. */
+  serviceIndex: number;
+}
+
+/** Wire values as answered (`res="#37"` → `'37'`); empty string when the block answered nothing. */
+export interface WsRespBuildingServiceFigures extends WsMessage {
+  type: WsMessageType.RESP_BUILDING_SERVICE_FIGURES;
+  x: number;
+  y: number;
+  serviceIndex: number;
+  supply: string;
+  demand: string;
 }
 
 /** Lightweight property refresh — reuses existing Delphi temp object. */

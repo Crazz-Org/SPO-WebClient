@@ -20,6 +20,7 @@ import {
   formatNumber,
 } from '@/shared/building-details';
 import { computePendingKey } from './property-utils';
+import { useServiceFigures } from './useServiceFigures';
 import { SliderInput, CurrencyInput } from './PropertyInputs';
 import styles from './PropertyGroup.module.css';
 
@@ -224,22 +225,43 @@ function TableCellValue({
 // SERVICE CARD LIST (PropertyType.SERVICE_CARDS)
 // =============================================================================
 
+/**
+ * The Offer and Demand figures of the SELECTED card come off the block, live
+ * (`useServiceFigures`); every other card keeps the cached `srvSupplies{i}` /
+ * `srvDemands{i}` column, which is all the whole-tab refresh ever gave it.
+ *
+ * The hook is called ONCE, above the map, and that is the point: the reference
+ * client polled `CurrentFinger` alone (Voyager/SrvGeneralSheetForm.pas:411-413),
+ * so a studio with ten services must cost one round-trip pair per tick, not ten.
+ * One card list, one timer — there is no per-card path that could drift.
+ */
 export function ServiceCardList({
   def,
   rowCount,
   valueMap,
   canEdit,
+  buildingX,
+  buildingY,
   onPropertyChange,
 }: {
   def: PropertyDefinition;
   rowCount: number;
   valueMap: Map<string, string>;
   canEdit: boolean;
+  buildingX: number;
+  buildingY: number;
   onPropertyChange: (name: string, value: number) => void;
 }) {
   const propSuffix = def.indexSuffix || '';
   const cols = def.columns!;
   const colByPrefix = new Map(cols.map((c) => [c.rdoSuffix, c]));
+
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  // A refresh that shrinks ServiceCount must not leave the selection off the
+  // end — the poll would then ask for an index the block answers 0 for
+  // (StdBlocks/ServiceBlock.pas:1609).
+  const selected = Math.min(selectedIndex, rowCount - 1);
+  const live = useServiceFigures(buildingX, buildingY, selected);
 
   const getVal = (suffix: string, i: number) => {
     const col = colByPrefix.get(suffix);
@@ -254,13 +276,16 @@ export function ServiceCardList({
         const price = parseFloat(getVal('srvPrices', i)) || 0;
         const marketPrice = parseFloat(getVal('srvMarketPrices', i)) || 0;
         const dollarPrice = marketPrice > 0 ? (price / 100) * marketPrice : 0;
+        const isSelected = i === selected;
 
         return (
           <ProductSaleCard
             key={i}
             name={getVal('srvNames', i) || `Service ${i + 1}`}
-            supply={parseFloat(getVal('srvSupplies', i)) || 0}
-            demand={parseFloat(getVal('srvDemands', i)) || 0}
+            supply={isSelected && live ? live.supply : parseFloat(getVal('srvSupplies', i)) || 0}
+            demand={isSelected && live ? live.demand : parseFloat(getVal('srvDemands', i)) || 0}
+            selected={isSelected}
+            onSelect={() => setSelectedIndex(i)}
             pricePc={price}
             avgPricePc={parseFloat(getVal('srvAvgPrices', i)) || 0}
             dollarPrice={dollarPrice}
@@ -336,6 +361,8 @@ function ProductSaleCard({
   name,
   supply,
   demand,
+  selected,
+  onSelect,
   pricePc,
   avgPricePc,
   dollarPrice,
@@ -349,6 +376,9 @@ function ProductSaleCard({
   name: string;
   supply?: number;
   demand?: number;
+  /** Set only where the card is one of a selectable list (the service cards). */
+  selected?: boolean;
+  onSelect?: () => void;
   pricePc: number;
   avgPricePc: number;
   dollarPrice: number;
@@ -369,9 +399,24 @@ function ProductSaleCard({
           : styles.pscSupplyBad;
 
   return (
-    <div className={styles.pscCard}>
+    <div className={`${styles.pscCard}${selected ? ` ${styles.pscCardSelected}` : ''}`}>
       <div className={styles.pscHeader}>
-        <span className={styles.pscName}>{name}</span>
+        {/* A button rather than a styled span: choosing which service is polled
+            has to be reachable by keyboard, and `aria-pressed` is what tells a
+            screen reader which one is currently selected. Cards with no
+            selection (the Products tab) keep the plain label. */}
+        {onSelect ? (
+          <button
+            type="button"
+            className={styles.pscSelect}
+            aria-pressed={!!selected}
+            onClick={onSelect}
+          >
+            {name}
+          </button>
+        ) : (
+          <span className={styles.pscName}>{name}</span>
+        )}
         {supply !== undefined && (
           <span className={`${styles.pscSupply} ${supplyColor}`}>
             Supply {supply}%

@@ -17,6 +17,8 @@ import {
   type WsRespBuildingTabData,
   type WsReqBuildingGateConnections,
   type WsRespBuildingGateConnections,
+  type WsReqBuildingServiceFigures,
+  type WsRespBuildingServiceFigures,
   type WsReqBuildingRefreshProperties,
   type WsRespBuildingRefreshProperties,
   type WsReqBuildingSetProperty,
@@ -207,6 +209,38 @@ export async function handleBuildingGateConnections(ctx: WsHandlerContext, msg: 
       tabId: req.tabId,
       path: req.path,
       ...gate,
+    };
+    sendResponse(ctx.ws, response);
+  });
+}
+
+/**
+ * The live Offer / Demand pair of one service, polled while the General tab is open.
+ *
+ * `serviceIndex` becomes the single integer argument of RDOGetDemand /
+ * RDOGetSupply. `RdoValue.int` throws on a non-integer (rdo-types.ts:208), so
+ * the check belongs here: a malformed index is answered as a bad request rather
+ * than reaching the session and surfacing as a facility error.
+ */
+export async function handleBuildingServiceFigures(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
+  const req = msg as WsReqBuildingServiceFigures;
+
+  if (!Number.isInteger(req.serviceIndex) || req.serviceIndex < 0) {
+    sendError(ctx.ws, msg.wsRequestId, 'serviceIndex must be a non-negative integer', ErrorCodes.ERROR_InvalidParameter);
+    return;
+  }
+
+  await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_FacilityNotFound, async () => {
+    const figures = await ctx.session.getBuildingServiceFigures(req.x, req.y, req.serviceIndex);
+
+    const response: WsRespBuildingServiceFigures = {
+      type: WsMessageType.RESP_BUILDING_SERVICE_FIGURES,
+      wsRequestId: msg.wsRequestId,
+      x: req.x,
+      y: req.y,
+      serviceIndex: req.serviceIndex,
+      supply: figures.supply,
+      demand: figures.demand,
     };
     sendResponse(ctx.ws, response);
   });

@@ -1455,3 +1455,43 @@ async function fetchSubObjectProperties(
     return [];
   }
 }
+
+/**
+ * The two live figures the service sheet polls for the selected service.
+ *
+ * Voyager/SrvGeneralSheetForm.pas:410-413 — BindTo(fCurrBlock), RDOGetDemand(finger),
+ * RDOGetSupply(finger); both are 1-arg published functions on TServiceBlock
+ * (StdBlocks/ServiceBlock.pas:309-310). RDOGetDemand feeds the "Local Demand"
+ * caption and RDOGetSupply the "Supply" one (:436-437) — the Pascal's two local
+ * variable names are swapped against what they hold, the captions are not.
+ *
+ * Only the selected index is asked for, as the reference client does: the whole
+ * point of the poll is that it costs one round-trip pair per tick whatever the
+ * service count. The result strings travel unparsed; the client parses.
+ */
+export async function getBuildingServiceFigures(
+  ctx: SessionContext,
+  x: number,
+  y: number,
+  serviceIndex: number,
+): Promise<{ supply: string; demand: string }> {
+  await ctx.connectMapService();
+  const [currBlock] = await ctx.getCacherPropertyListAt(x, y, ['CurrBlock']);
+  if (!currBlock) throw new Error(`No building found at (${x}, ${y})`);
+
+  if (!ctx.getSocket('construction')) {
+    await ctx.connectConstructionService();
+  }
+
+  const demandPacket = await ctx.sendRdoRequest('construction', rdoCall(
+    'RDOGetDemand', currBlock, RdoValue.int(serviceIndex),
+  ).packet, undefined, TimeoutCategory.NORMAL);
+  const supplyPacket = await ctx.sendRdoRequest('construction', rdoCall(
+    'RDOGetSupply', currBlock, RdoValue.int(serviceIndex),
+  ).packet, undefined, TimeoutCategory.NORMAL);
+
+  return {
+    demand: parsePropertyResponseHelper(demandPacket.payload || '', 'res'),
+    supply: parsePropertyResponseHelper(supplyPacket.payload || '', 'res'),
+  };
+}

@@ -3014,6 +3014,18 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return buildingDetailsHandler.getBuildingGateConnections(this, x, y, tabId, path, name, visualClass);
   }
 
+  /**
+   * The live Offer / Demand pair of ONE service, read off the block rather than
+   * the cached columns. Polled by the General tab while it is open.
+   */
+  public async getBuildingServiceFigures(
+    x: number,
+    y: number,
+    serviceIndex: number,
+  ): Promise<{ supply: string; demand: string }> {
+    return buildingDetailsHandler.getBuildingServiceFigures(this, x, y, serviceIndex);
+  }
+
   public async refreshBuildingProperties(x: number, y: number, visualClass: string, activeTabId?: string): Promise<BuildingDetailsResponse> {
     return buildingDetailsHandler.refreshBuildingProperties(this, x, y, visualClass, activeTabId);
   }

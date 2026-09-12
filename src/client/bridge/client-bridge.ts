@@ -207,6 +207,15 @@ export interface ClientCallbacks {
     name: string,
     visualClass: string,
   ) => void;
+  /**
+   * The live Offer / Demand pair of ONE service, read off the block. Polled by
+   * the General tab for the selected service only. See requestServiceFigures.
+   */
+  onRequestServiceFigures: (
+    x: number,
+    y: number,
+    serviceIndex: number,
+  ) => Promise<{ supply: string; demand: string } | null>;
   onRenameBuilding: (x: number, y: number, newName: string) => void;
   onDeleteBuilding: (x: number, y: number) => void;
   onNavigateToBuilding: (x: number, y: number) => void;

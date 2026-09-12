@@ -15,6 +15,8 @@ import {
   WsRespBuildingTabData,
   WsReqBuildingGateConnections,
   WsRespBuildingGateConnections,
+  WsReqBuildingServiceFigures,
+  WsRespBuildingServiceFigures,
   WsReqBuildingRefreshProperties,
   WsRespBuildingRefreshProperties,
   WsReqBuildingSetProperty,
@@ -262,6 +264,43 @@ export async function requestGateConnections(
     ClientBridge.log('Error', `Failed to get gate ${tabId} '${path}': ${toErrorMessage(err)}`);
     // Mark as error (not idle) to prevent a useEffect retry loop.
     useBuildingStore.getState().setGateError(tabId, path);
+  }
+}
+
+// ── Service Figures (live, one service at a time) ───────────────────────────
+
+/**
+ * Read the live Offer / Demand pair of one service off the block.
+ *
+ * The General tab's cached `srvSupplies{i}` / `srvDemands{i}` columns only move
+ * with the 30-second whole-tab refresh. The reference client polls the block
+ * instead, for the selected finger alone (Voyager/SrvGeneralSheetForm.pas:411-413),
+ * which is what this is: one request per tick, whatever the service count.
+ *
+ * The answer is returned rather than written to a store on purpose — the
+ * figures live in the card list's own state, so they disappear with the tab.
+ */
+export async function requestServiceFigures(
+  ctx: ClientHandlerContext,
+  x: number,
+  y: number,
+  serviceIndex: number,
+): Promise<{ supply: string; demand: string } | null> {
+  if (useGameStore.getState().status !== 'connected') return null;
+
+  try {
+    const req: WsReqBuildingServiceFigures = {
+      type: WsMessageType.REQ_BUILDING_SERVICE_FIGURES,
+      x,
+      y,
+      serviceIndex,
+    };
+
+    const response = await ctx.sendRequest(req) as WsRespBuildingServiceFigures;
+    return { supply: response.supply, demand: response.demand };
+  } catch (err: unknown) {
+    ClientBridge.log('Error', `Failed to read service ${serviceIndex} figures at (${x},${y}): ${toErrorMessage(err)}`);
+    return null;
   }
 }
 

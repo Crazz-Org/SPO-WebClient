@@ -550,6 +550,30 @@
   min-width: 0;
 }
 
+/* The service card whose figures are being polled live. */
+.pscCardSelected {
+  border-color: var(--accent-gold);
+}
+
+/* A reset: the selector is a <button> for keyboard and screen-reader reasons,
+   and must read exactly as .pscName did. */
+.pscSelect {
+  all: unset;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pscSelect:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
 .pscSupply {
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
