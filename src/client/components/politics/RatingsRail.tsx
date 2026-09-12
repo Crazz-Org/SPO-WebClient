@@ -82,7 +82,7 @@ const RAIL_LABELS: Record<RatingRail, string> = {
  * unreachable anyway (see the module note); the wider range is the one the
  * server has always accepted.
  */
-const RATING_CHOICES = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0];
+export const RATING_CHOICES = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0];
 
 /** `mayorpub.asp:182-186` — five levels, labels from `ePolitics.lng:7-11`. */
 const PUBLICITY_CHOICES: Array<{ value: number; label: string }> = [

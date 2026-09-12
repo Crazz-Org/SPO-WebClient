@@ -19,6 +19,7 @@ import { useProfileStore, type ProfileTab, type CompanyProfitLossView } from '..
 import { useGameStore } from '../../store/game-store';
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
+import { isMinisterAccount } from '../../minister-account';
 import type {
   AutoConnectionActionType,
   CurriculumActionType,
@@ -725,6 +726,8 @@ function CompaniesTab() {
   const client = useClient();
   const currentCompanyName = useGameStore((s) => s.companyName);
   const isSwitchingCompany = useGameStore((s) => s.isSwitchingCompany);
+  const username = useGameStore((s) => s.username);
+  const isMinister = isMinisterAccount(username);
 
   if (!data) return <EmptyState message="No companies data" />;
   if (data.cacheUnavailable) return <ProfileUnavailable />;
@@ -749,7 +752,8 @@ function CompaniesTab() {
   return (
     <div className={styles.tabBody}>
       <p className={styles.companyInstructions}>
-        You have registered the following companies in {data.worldName || 'this world'}. Choose one or create a new one.
+        You have registered the following companies in {data.worldName || 'this world'}.{' '}
+        {isMinister ? 'Choose one.' : 'Choose one or create a new one.'}
       </p>
       {isSwitchingCompany && (
         <div className={styles.switchingBanner}>
@@ -791,10 +795,12 @@ function CompaniesTab() {
           </div>
         );
       })}
-      <button className={styles.createCompanyBtn} onClick={handleCreate} disabled={isSwitchingCompany}>
-        <Plus size={14} />
-        Create New Company
-      </button>
+      {!isMinister && (
+        <button className={styles.createCompanyBtn} onClick={handleCreate} disabled={isSwitchingCompany}>
+          <Plus size={14} />
+          Create New Company
+        </button>
+      )}
       {data.companies.length === 0 && <EmptyState message="No companies" />}
     </div>
   );

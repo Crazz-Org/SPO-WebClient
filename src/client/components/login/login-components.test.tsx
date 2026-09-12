@@ -56,6 +56,12 @@ describe('ZoneStage', () => {
     renderWithProviders(<ZoneStage onSelect={() => {}} isLoading={false} />);
     expect(screen.getByText('BETA')).toBeTruthy();
   });
+
+  it('shows a deadline gauge while loading', () => {
+    const { unmount } = renderWithProviders(<ZoneStage onSelect={() => {}} isLoading />);
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+    unmount();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -96,6 +102,61 @@ describe('WorldStage', () => {
     renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} isLoading={false} />);
     expect(screen.queryByText(/reached the number of worlds your nobility allows/)).toBeNull();
   });
+
+  // General/Date comes back from the directory as a bare year (login-handler.ts:1001).
+  it('shows the in-game year on an online world that carries a date', () => {
+    const dated: WorldInfo[] = [
+      { name: 'Dated', url: '', ip: '127.0.0.1', port: 1234, running3: true, online: 1, players: 1, population: 10, date: '2232' },
+    ];
+    renderWithProviders(<WorldStage worlds={dated} onSelect={() => {}} isLoading={false} />);
+    expect(screen.getByText('Year')).toBeTruthy();
+    expect(screen.getByText('2232')).toBeTruthy();
+  });
+
+  it('shows no year tile on an online world whose record has no date', () => {
+    const undated: WorldInfo[] = [worlds[0]];
+    renderWithProviders(<WorldStage worlds={undated} onSelect={() => {}} isLoading={false} />);
+    expect(screen.queryByText('Year')).toBeNull();
+  });
+
+  it('leaves an offline card unchanged even when its record carries a date', () => {
+    const offlineDated: WorldInfo[] = [
+      { name: 'Offline Dated', url: '', ip: '127.0.0.1', port: 1234, running3: false, online: 0, players: 0, population: 0, date: '2232' },
+    ];
+    renderWithProviders(<WorldStage worlds={offlineDated} onSelect={() => {}} isLoading={false} />);
+    expect(screen.getByText('Server unavailable')).toBeTruthy();
+    expect(screen.queryByText('Year')).toBeNull();
+    expect(screen.queryByText('2232')).toBeNull();
+  });
+
+  it('shows the servers-down message and a retry control when no world came back', () => {
+    const onRetry = jest.fn();
+    renderWithProviders(<WorldStage worlds={[]} onSelect={() => {}} onRetry={onRetry} isLoading={false} />);
+    expect(screen.getByText(/servers are down/i)).toBeTruthy();
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    expect(retryButton).toBeTruthy();
+    fireEvent.click(retryButton);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not show the servers-down message when a world is listed', () => {
+    const onRetry = jest.fn();
+    renderWithProviders(<WorldStage worlds={[worlds[0]]} onSelect={() => {}} onRetry={onRetry} isLoading={false} />);
+    expect(screen.queryByText(/servers are down/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('hides the retry control when no retry handler is given', () => {
+    renderWithProviders(<WorldStage worlds={[]} onSelect={() => {}} isLoading={false} />);
+    expect(screen.getByText(/servers are down/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('shows a deadline gauge while loading', () => {
+    const { unmount } = renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} isLoading />);
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+    unmount();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -115,6 +176,7 @@ describe('CompanyStage', () => {
     onCreate: () => {},
     onBack: () => {},
     isLoading: false,
+    username: 'SPO_test3',
   };
 
   it('renders company selection title', () => {
@@ -231,6 +293,23 @@ describe('CompanyStage', () => {
     expect(screen.queryByText(/Create your first company/)).toBeNull();
   });
 
+  it.each(['Mayor of Helartia', 'President of Shamba'])(
+    'offers company creation to a %s',
+    (username) => {
+      renderWithProviders(<CompanyStage {...defaultProps} username={username} />);
+      expect(screen.getByText('Create New Company')).toBeTruthy();
+    },
+  );
+
+  // chooseCompany.asp:23 — `InStr(UCASE(UserName), "MINISTER OF ") = 1`.
+  it('withholds company creation from a minister account', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} username="Minister of Health" companies={[]} />,
+    );
+    expect(screen.queryByText('Create New Company')).toBeNull();
+    expect(screen.queryByText(/Create your first company/)).toBeNull();
+  });
+
   it('enters as a visitor when that card is clicked', () => {
     const onVisit = jest.fn();
     renderWithProviders(
@@ -277,6 +356,18 @@ describe('CompanyStage', () => {
     expect(screen.getByText('Create New Company')).toBeTruthy();
     expect(screen.queryByText('World Limit Reached')).toBeNull();
     expect(screen.queryByText('Enter as a visitor')).toBeNull();
+  });
+
+  it('withholds company creation from a minister account case-insensitively', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} username="minister of health" />);
+    expect(screen.queryByText('Create New Company')).toBeNull();
+    expect(screen.getByText('TestCo')).toBeTruthy();
+  });
+
+  it('shows a deadline gauge while loading', () => {
+    const { unmount } = renderWithProviders(<CompanyStage {...defaultProps} isLoading />);
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+    unmount();
   });
 });
 

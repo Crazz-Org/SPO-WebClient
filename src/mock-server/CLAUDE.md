@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `tycoon-profile`, `abandon-role`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -50,9 +50,13 @@ nobility allows (`DServer/DirectoryServer.pas:116`, body `:1217-1234`;
 `get RDOOpenSession` hands back, so a frame sent against the server id would reach a member
 that is not there.
 
-`newspaper` is the daily paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
-renders, and one `home.asp` per kept issue. HTTP only — the paper is reachable through the
-ASP pages alone. Its bar serves the cells in an order that is **not** the answer order, so
+`newspaper` is the town paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
+renders, and one `home.asp` per kept issue. It also carries the **rated post**, which is two
+protocols that must agree — the RDO half is two `RDOSetRatingFrom` exchanges with an **empty
+response** (a `procedure` answers nothing), and the HTTP half is the `POST boardmsg.asp` the
+column is published with and the `GET boardlist.asp` the page reloads beside it; the report
+the posted body ends with may only name ratings whose frame went out first
+(`boardmsg.asp:96-146`). Its bar serves the cells in an order that is **not** the answer order, so
 the sort the gateway derives from the folder id (`News.pas:956-961`) has something to prove;
 `createNewspaperScenario(vars, { issues: [] })` is the paper that has printed nothing yet.
 It also serves the directory's `New Directory/Newspapers.asp` listing (`{ papers: [] }` is
@@ -67,6 +71,14 @@ renders for any viewer. A fixture serving one page could not catch a gateway tha
 the viewer's own name — two pages keyed on the parameter can. It also serves the avatar card
 `New Directory/RenderTycoon.asp` and a trailing 404, so an unserved tycoon fails loudly.
 HTTP only — the page is reachable through ASP alone.
+
+`abandon-role` proves the read-before-resign order the reference client requires
+(`rdoAbandonRole.asp:22-27`): the player's own company list must be fetched from
+`NewLogon/logonComplete.asp` before the two-step resignation (`NewTycoon/abandonRole.asp`
+then `NewTycoon/rdoAbandonRole.asp`) runs, so the gateway can switch back to that company once
+the role is gone. It also serves the post-abandon `NewTycoon/TycoonCurriculum.asp` oracle
+(`command="abandon"` vs `command="reset"`) and a trailing 404. HTTP only — every leg is an
+ASP page.
 
 `civic-mutations` is the write half of the Politics surface — one RDO exchange per
 civic `procedure` the gateway emits (built by `rdoCall`, so it cannot drift), the two

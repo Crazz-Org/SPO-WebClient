@@ -15,9 +15,12 @@ import {
   createSpiedCallbacks,
 } from '../../__tests__/setup/render-helpers';
 import { useNewspaperStore } from '../../store/newspaper-store';
+import { usePoliticsStore } from '../../store/politics-store';
 import { useUiStore } from '../../store/ui-store';
 import { NewspaperModal } from './NewspaperModal';
-import type { NewspaperBoard, NewspaperIssue, NewspaperIssueRef } from '@/shared/types';
+import type {
+  NewspaperBoard, NewspaperIssue, NewspaperIssueRef, PoliticsData,
+} from '@/shared/types';
 
 const CONTEXT = {
   paperName: 'Helartia Herald',
@@ -69,6 +72,7 @@ function openWith(
 beforeEach(() => {
   resetStores();
   useNewspaperStore.getState().reset();
+  usePoliticsStore.getState().reset();
 });
 
 describe('NewspaperModal', () => {
@@ -268,7 +272,9 @@ describe('NewspaperModal', () => {
     fireEvent.change(screen.getByLabelText('Column'), { target: { value: 'We need more' } });
     fireEvent.click(screen.getByText('Post Column'));
     // No reply path — `boardmsg.asp:90` then posts at the root.
-    expect(spy).toHaveBeenCalledWith('Roads', 'We need more', undefined);
+    // The fourth argument is the ratings block, absent here — `undefined` is
+    // the plain column the handler posted before the block existed.
+    expect(spy).toHaveBeenCalledWith('Roads', 'We need more', undefined, undefined);
   });
 
   it('posts a reply under the open column', () => {
@@ -281,7 +287,7 @@ describe('NewspaperModal', () => {
     fireEvent.click(screen.getByText('Reply to this column'));
     fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Agreed' } });
     fireEvent.click(screen.getByText('Post Reply'));
-    expect(spy).toHaveBeenCalledWith('Agreed', '', 'm1.five');
+    expect(spy).toHaveBeenCalledWith('Agreed', '', 'm1.five', undefined);
   });
 
   // `boardmsg.asp:94` drops a subject-less post silently.
@@ -330,6 +336,200 @@ describe('NewspaperModal', () => {
     renderWithProviders(<NewspaperModal />);
     fireEvent.click(screen.getByLabelText('Close'));
     expect(useUiStore.getState().modal).toBeNull();
+  });
+});
+
+// =============================================================================
+// The ratings a column carries — `boardmsg.asp:306-382`
+// =============================================================================
+
+const POLITICS: PoliticsData = {
+  townName: 'Helartia',
+  isCapitol: false,
+  hasRuler: true,
+  yearsToElections: 2,
+  mayorName: 'Rio',
+  mayorPrestige: 240,
+  mayorRating: 55,
+  tycoonsRating: 48,
+  ifelRating: 61,
+  mandateNo: 1,
+  rulerPhotoUrl: '',
+  isRuler: false,
+  popularRatings: [{ name: 'Housing', value: 55 }],
+  ifelRatings: [{ name: 'Economy', value: 61 }],
+  tycoonsRatings: [
+    { name: 'Taxation', value: 75, id: '41123456' },
+    { name: 'Public Works', value: 30, id: '41123457' },
+    // No cache id — no `RatingId` to send, so no control, as on the Politics tab.
+    { name: 'Roads', value: 30 },
+  ],
+  publicity: [],
+  publicityAds: '',
+  campaignCount: 0,
+  campaigns: [],
+  campaignState: 'ruler',
+  campaignMessage: '',
+  canLaunchCampaign: false,
+  prestigeThreshold: 200,
+  projects: [],
+  promise: '',
+  townHallId: 130500777,
+};
+
+/**
+ * The politics store as it stands once a building's data has landed.
+ * `loadedFor` is what `setData` stamps it with (`politics-store.ts:109`) — the
+ * building the data on hand actually describes.
+ */
+function withPolitics(
+  over: Partial<PoliticsData> = {},
+  loadedFor = `${CONTEXT.buildingX}:${CONTEXT.buildingY}`,
+): void {
+  usePoliticsStore.setState({
+    data: { ...POLITICS, ...over },
+    loadState: 'loaded',
+    loadedFor,
+  });
+}
+
+describe('NewspaperModal — the ratings a column carries', () => {
+  function openComposer(): void {
+    fireEvent.click(screen.getByText('Post a column'));
+  }
+
+  it('offers one control per ratable criterion', () => {
+    openWith(INDEX);
+    withPolitics();
+    renderWithProviders(<NewspaperModal />);
+    openComposer();
+
+    expect(screen.getByLabelText('Rate Taxation')).toBeTruthy();
+    expect(screen.getByLabelText('Rate Public Works')).toBeTruthy();
+    // A criterion the page could not name an id for has nothing to send.
+    expect(screen.queryByLabelText('Rate Roads')).toBeNull();
+  });
+
+  it('posts the chosen ratings with the column', () => {
+    const spy = jest.fn();
+    openWith(INDEX);
+    withPolitics();
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onPostNewspaperColumn: spy }) },
+    );
+    openComposer();
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Roads' } });
+    fireEvent.change(screen.getByLabelText('Column'), { target: { value: 'We need more' } });
+    fireEvent.change(screen.getByLabelText('Rate Taxation'), { target: { value: '80' } });
+    fireEvent.change(screen.getByLabelText('Rate Public Works'), { target: { value: '40' } });
+    fireEvent.click(screen.getByText('Post Column'));
+
+    expect(spy).toHaveBeenCalledWith('Roads', 'We need more', undefined, [
+      { id: '41123456', name: 'Taxation', value: 80 },
+      { id: '41123457', name: 'Public Works', value: 40 },
+    ]);
+  });
+
+  // The `-` placeholder of `:338` is "no change": an untouched block posts
+  // exactly what it posted before the block existed.
+  it('a block left untouched posts the plain column', () => {
+    const spy = jest.fn();
+    openWith(INDEX);
+    withPolitics();
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onPostNewspaperColumn: spy }) },
+    );
+    openComposer();
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Roads' } });
+    fireEvent.click(screen.getByText('Post Column'));
+
+    expect(spy).toHaveBeenCalledWith('Roads', '', undefined, undefined);
+  });
+
+  it('drops a criterion put back on the placeholder', () => {
+    const spy = jest.fn();
+    openWith(INDEX);
+    withPolitics();
+    renderWithProviders(
+      <NewspaperModal />,
+      { clientCallbacks: createSpiedCallbacks({ onPostNewspaperColumn: spy }) },
+    );
+    openComposer();
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Roads' } });
+    fireEvent.change(screen.getByLabelText('Rate Taxation'), { target: { value: '80' } });
+    fireEvent.change(screen.getByLabelText('Rate Taxation'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('Post Column'));
+
+    expect(spy).toHaveBeenCalledWith('Roads', '', undefined, undefined);
+  });
+
+  // `boardmsg.asp:283-285` — the incumbent never sees the block; the same guard
+  // `RatingsRail.tsx:185-186` applies on the Politics tab.
+  it('is hidden for the incumbent', () => {
+    openWith(INDEX);
+    withPolitics({ isRuler: true });
+    renderWithProviders(<NewspaperModal />);
+    openComposer();
+    expect(screen.queryByLabelText('Rate Taxation')).toBeNull();
+  });
+
+  it('is hidden when the politics data on hand describes another building', () => {
+    openWith(INDEX);
+    withPolitics({}, '1:1');
+    renderWithProviders(<NewspaperModal />);
+    openComposer();
+    expect(screen.queryByLabelText('Rate Taxation')).toBeNull();
+  });
+
+  it('is hidden when nothing has been read for this building yet', () => {
+    openWith(INDEX);
+    renderWithProviders(<NewspaperModal />);
+    openComposer();
+    expect(screen.queryByLabelText('Rate Taxation')).toBeNull();
+  });
+
+  // `boardmsg.asp:11-16` sets no `TownPath` on the Capitol branch, so the page
+  // iterates no rating there.
+  it('is hidden on a Capitol board', () => {
+    useUiStore.getState().openModal('newspaper');
+    useNewspaperStore.setState({
+      context: { ...CONTEXT, isCapitol: true },
+      view: 'board', board: INDEX, loadState: 'loaded', isPosting: false, requestedPath: '',
+    });
+    withPolitics();
+    renderWithProviders(<NewspaperModal />);
+    openComposer();
+    expect(screen.queryByLabelText('Rate Taxation')).toBeNull();
+  });
+
+  // A published column closes the composer and empties it — the ratings with
+  // it, so the next column does not re-send what this one already sent.
+  it('a published column clears the chosen ratings', () => {
+    openWith(INDEX);
+    withPolitics();
+    renderWithProviders(<NewspaperModal />);
+    openComposer();
+    fireEvent.change(screen.getByLabelText('Rate Taxation'), { target: { value: '80' } });
+    // The subject the board already carries: the publish oracle has landed.
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'VERY NICE GUY' } });
+
+    expect(screen.queryByLabelText('Rate Taxation')).toBeNull();
+    openComposer();
+    expect((screen.getByLabelText('Rate Taxation') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('Reset Form clears the chosen ratings', () => {
+    openWith(INDEX);
+    withPolitics();
+    renderWithProviders(<NewspaperModal />);
+    openComposer();
+    const select = screen.getByLabelText('Rate Taxation') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: '80' } });
+    expect(select.value).toBe('80');
+    fireEvent.click(screen.getByText('Reset Form'));
+    expect((screen.getByLabelText('Rate Taxation') as HTMLSelectElement).value).toBe('');
   });
 });
 

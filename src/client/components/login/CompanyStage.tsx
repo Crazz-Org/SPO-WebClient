@@ -9,6 +9,9 @@ import { useMemo } from 'react';
 import { GlassCard } from '../common';
 import { Plus, ArrowLeft, Eye } from 'lucide-react';
 import type { CompanyInfo, LoginPageOutcome, WorldAdmission } from '@/shared/types';
+import { isMinisterAccount } from '../../minister-account';
+import { TimeoutCategory } from '@/shared/timeout-categories';
+import { ConnectingGauge } from './ConnectingGauge';
 import styles from './CompanyStage.module.css';
 
 /** LogonNoAccess.asp:97-100 — the `01/01/2008` PA value is the sentinel for "never had access", not an expiry date. */
@@ -31,6 +34,8 @@ interface CompanyStageProps {
   atWorldLimit?: boolean;
   /** Enter with no company, the Visitor visa of chooseVisa.asp:108-127. */
   onVisit?: () => void;
+  /** chooseCompany.asp:23 — a minister account is never offered company creation. */
+  username: string;
 }
 
 export function CompanyStage({
@@ -44,7 +49,9 @@ export function CompanyStage({
   admission,
   atWorldLimit,
   onVisit,
+  username,
 }: CompanyStageProps) {
+  const isMinister = isMinisterAccount(username);
   // Group companies: player-owned vs political offices
   const { owned, political } = useMemo(() => {
     const ownedList: CompanyInfo[] = [];
@@ -163,7 +170,7 @@ export function CompanyStage({
         </>
       )}
 
-      {!worldLimitBlocks && !admission && companies.length === 0 && (
+      {!worldLimitBlocks && !admission && !isMinister && companies.length === 0 && (
         <p className={styles.emptyMessage}>
           Welcome to {worldName}! Create your first company to start building your empire.
         </p>
@@ -216,8 +223,10 @@ export function CompanyStage({
         </section>
       )}
 
-      {/* Create new company — withheld when the server already said NewCompany would fail. */}
-      {!worldLimitBlocks && !admission && (
+      {/* Create new company — withheld when the server already said NewCompany would fail,
+          when the account is at its world limit, or when the account is a minister
+          (chooseCompany.asp:23, :233). */}
+      {!worldLimitBlocks && !admission && !isMinister && (
         <div className={styles.grid}>
           <GlassCard className={styles.createCard} onClick={() => !isLoading && onCreate()}>
             <Plus size={24} className={styles.createIcon} />
@@ -229,8 +238,7 @@ export function CompanyStage({
       {isLoading && (
         <div className={styles.overlay}>
           <div className={styles.overlayContent}>
-            <div className={styles.spinner} />
-            <span className={styles.overlayText}>Entering world...</span>
+            <ConnectingGauge label="Entering world..." category={TimeoutCategory.NORMAL} />
           </div>
         </div>
       )}

@@ -7,18 +7,21 @@
 
 import { GlassCard } from '../common';
 import type { WorldInfo } from '@/shared/types';
+import { TimeoutCategory } from '@/shared/timeout-categories';
+import { ConnectingGauge } from './ConnectingGauge';
 import styles from './WorldStage.module.css';
 
 interface WorldStageProps {
   worlds: WorldInfo[];
   onSelect: (worldName: string) => void;
   onBack?: () => void;
+  onRetry?: () => void;
   isLoading: boolean;
   /** RDOCanJoinNewWorld said this account already holds as many worlds as its nobility allows. */
   atWorldLimit?: boolean;
 }
 
-export function WorldStage({ worlds, onSelect, onBack, isLoading, atWorldLimit }: WorldStageProps) {
+export function WorldStage({ worlds, onSelect, onBack, onRetry, isLoading, atWorldLimit }: WorldStageProps) {
   const available = worlds.filter((w) => w.running3 !== false);
   const offline = worlds.filter((w) => w.running3 === false);
 
@@ -36,6 +39,16 @@ export function WorldStage({ worlds, onSelect, onBack, isLoading, atWorldLimit }
         </p>
       )}
 
+      {worlds.length === 0 ? (
+        <div className={styles.emptyState}>
+          <p>The servers are down. No world in this region is reachable right now.</p>
+          {onRetry && (
+            <button className={styles.retryBtn} onClick={onRetry} disabled={isLoading}>
+              Retry
+            </button>
+          )}
+        </div>
+      ) : (
       <div className={styles.grid}>
         {available.map((world) => (
           <GlassCard
@@ -68,6 +81,12 @@ export function WorldStage({ worlds, onSelect, onBack, isLoading, atWorldLimit }
                   <span className={styles.statLabel}>Tycoons</span>
                 </div>
               )}
+              {world.date && (
+                <div className={styles.statItem}>
+                  <span className={styles.statValue}>{world.date}</span>
+                  <span className={styles.statLabel}>Year</span>
+                </div>
+              )}
             </div>
           </GlassCard>
         ))}
@@ -86,12 +105,12 @@ export function WorldStage({ worlds, onSelect, onBack, isLoading, atWorldLimit }
           </GlassCard>
         ))}
       </div>
+      )}
 
       {isLoading && (
         <div className={styles.overlay}>
           <div className={styles.overlayContent}>
-            <div className={styles.spinner} />
-            <span className={styles.overlayText}>Connecting to world...</span>
+            <ConnectingGauge label="Connecting to world..." category={TimeoutCategory.NORMAL} />
           </div>
         </div>
       )}

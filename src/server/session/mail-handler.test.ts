@@ -47,6 +47,7 @@ import type { RdoPacket, WorldInfo } from '../../shared/types';
 import { RdoValue, RdoCommand } from '../../shared/rdo-types';
 import { RdoVerb, RdoAction } from '../../shared/types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
+import { DEFAULT_LANGUAGE_ID, withLangId } from '../../shared/language';
 
 const mockFetch = fetch as unknown as jest.MockedFunction<
   (url: string, init?: unknown) => Promise<Response>
@@ -657,7 +658,7 @@ describe('readMailMessage', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://158.69.153.134/five/0/visual/voyager/mail/MessageBody.asp?WorldName=Shamba&Account=SPO_test3%40shamba.net&Folder=Inbox&MsgId=MSG-77');
+    expect(url).toBe(withLangId('http://158.69.153.134/five/0/visual/voyager/mail/MessageBody.asp?WorldName=Shamba&Account=SPO_test3%40shamba.net&Folder=Inbox&MsgId=MSG-77', DEFAULT_LANGUAGE_ID));
     expect(init).toEqual(expect.objectContaining({ redirect: 'follow' }));
     expect((init as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
     expect(membersOf(fake.sent)).toEqual(['OpenMessage', 'GetHeaders', 'GetLines', 'GetAttachmentCount', 'CloseMessage']);
@@ -753,7 +754,7 @@ describe('readMailMessage — system mail page', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(2);
     const [firstUrl, firstInit] = mockFetch.mock.calls[0];
-    expect(firstUrl).toBe(ALERT_URL);
+    expect(firstUrl).toBe(withLangId(ALERT_URL, DEFAULT_LANGUAGE_ID));
     expect(firstInit).toEqual(expect.objectContaining({ redirect: 'follow' }));
     expect((firstInit as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
     const [secondUrl] = mockFetch.mock.calls[1];
@@ -769,7 +770,7 @@ describe('readMailMessage — system mail page', () => {
     const msg = await readMailMessage(fake.ctx, 'Sent', 'MSG-77');
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch.mock.calls[0][0]).toBe(ALERT_URL);
+    expect(mockFetch.mock.calls[0][0]).toBe(withLangId(ALERT_URL, DEFAULT_LANGUAGE_ID));
     expect(msg.htmlBody).toBe('<html>zoned out</html>');
   });
 
@@ -964,7 +965,7 @@ describe('getMailFolder', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe('http://158.69.153.134/five/0/visual/voyager/mail/MessageList.asp?Folder=Inbox&WorldName=Shamba&Account=SPO%20test3%40shamba.net&MsgId=&Action=');
+    expect(url).toBe(withLangId('http://158.69.153.134/five/0/visual/voyager/mail/MessageList.asp?Folder=Inbox&WorldName=Shamba&Account=SPO%20test3%40shamba.net&MsgId=&Action=', DEFAULT_LANGUAGE_ID));
     expect(init).toEqual(expect.objectContaining({ redirect: 'follow' }));
     expect((init as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
   });

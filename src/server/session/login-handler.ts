@@ -8,6 +8,7 @@
 
 import * as net from 'net';
 import { fetchWithTimeout } from '../fetch-with-timeout';
+import { withLangId } from '../../shared/language';
 import type { RdoPacket, WorldInfo, CompanyInfo, LoginPageOutcome, WorldAdmission } from '../../shared/types';
 import { SessionPhase, DIRECTORY_QUERY } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
@@ -15,6 +16,7 @@ import { rdoCall, rdoGet, rdoSet, rdoIdOf } from '../../shared/rdo-frame';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { config } from '../../shared/config';
 import { AuthError } from '../../shared/auth-error';
+import { accountStatusRefusal, parseAccountStatus, ACCOUNT_Unexisting } from '../../shared/account-status';
 import { DIR_NOERROR, DIR_NOERROR_StillTrial } from '../../shared/directory-error-codes';
 import { toErrorMessage } from '../../shared/error-utils';
 import {
@@ -64,6 +66,8 @@ export interface LoginContext {
   readonly cachedPassword: string | null;
   readonly rdoCnntId: string | null;
   readonly currentCompany: CompanyInfo | null;
+  /** The session language — the SetLanguage argument and the `LangId` on every ASP fetch. */
+  readonly languageId: string;
 
   // ── Phase management ──
   getPhase(): SessionPhase;
@@ -93,6 +97,8 @@ export interface LoginContext {
   setCurrentCompany(value: CompanyInfo | null): void;
   setLastPlayerX(value: number): void;
   setLastPlayerY(value: number): void;
+  /** The world's AccountStatus answer (ACCOUNT_*), kept so the login flow can act on a first-time player. */
+  setAccountStatus(value: number | null): void;
 
   // ── Collections ──
   getAvailableWorlds(): Map<string, WorldInfo>;
@@ -405,7 +411,26 @@ export async function loginWorld(
     RdoValue.string(pass),
   ).packet, undefined, TimeoutCategory.FAST);
   const statusPayload = parsePropertyResponseHelper(statusPacket.payload!, 'res');
-  ctx.log.debug(`[Session] AccountStatus: ${statusPayload}`);
+  const accountStatus = parseAccountStatus(statusPayload);
+  if (accountStatus === null) {
+    // The live server has only ever answered an integer here. Aborting on an
+    // unreadable answer would regress every login for nothing — the same rule
+    // checkWorldAdmission follows just above.
+    ctx.log.warn(`[Session] AccountStatus answer is not an integer: ${statusPayload}`);
+    ctx.setAccountStatus(null);
+  } else {
+    ctx.setAccountStatus(accountStatus);
+    ctx.log.debug(`[Session] AccountStatus: ${accountStatus}`);
+    if (accountStatus === ACCOUNT_Unexisting) {
+      ctx.log.info('[Session] AccountStatus: first-time player in this world');
+    }
+    // The reference client branched here, before Logon (ServerCnxHandler.pas:2763-2846).
+    const refusal = accountStatusRefusal(accountStatus);
+    if (refusal) {
+      ctx.log.warn(`[Session] AccountStatus refused: ${refusal.message}`);
+      throw refusal;
+    }
+  }
 
   // 4. Authenticate (call Logon)
   const logonPacket = await ctx.sendRdoRequest('world', rdoCall(
@@ -420,7 +445,10 @@ export async function loginWorld(
   }
 
   if (!contextId || contextId === '0' || contextId.startsWith('error')) {
-    throw new Error(`Login failed: ${logonPacket.payload}`);
+    // The payload stays in the gateway log, where redactSensitiveRdoFrame governs
+    // what is printed; the error the player sees carries no RDO text.
+    ctx.log.error(`[Session] Logon refused: ${logonPacket.payload}`);
+    throw new Error('Login failed: the world refused the logon');
   }
 
   ctx.setWorldContextId(contextId);
@@ -481,9 +509,9 @@ export async function loginWorld(
   // 8. SetLanguage - CLIENT sends this as PUSH command (no RID)
   const socket = ctx.getSocket('world');
   if (socket) {
-    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string('0')).toFrame();
+    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string(ctx.languageId)).toFrame();
     writeRdoFrame(socket, setLangCmd);
-    ctx.log.debug(`[Session] Sent SetLanguage push command`);
+    ctx.log.debug(`[Session] Sent SetLanguage push command (LangId=${ctx.languageId})`);
   }
 
   // 9. GetCompanyCount
@@ -922,7 +950,7 @@ type FetchCompaniesResult =
 /**
  * Fetch companies via HTTP (ASP endpoint)
  */
-async function fetchCompaniesViaHttp(
+export async function fetchCompaniesViaHttp(
   ctx: LoginContext,
   worldIp: string,
   username: string,
@@ -942,14 +970,13 @@ async function fetchCompaniesViaHttp(
     DSPort: String(config.rdo.ports.directory),
     ISAddr: worldIp,
     ISPort: '8000',
-    LangId: '0',
   });
 
   const url = `http://${worldIp}/Five/0/Visual/Voyager/NewLogon/logonComplete.asp?${params.toString().replace(/\+/g, '%20')}`;
   ctx.log.debug(`[HTTP] Fetching companies from ${url}`);
 
   try {
-    const response = await fetchWithTimeout(url, { redirect: 'follow' });
+    const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     const text = await response.text();
     const finalUrl = response.url;
     const finalUrlLower = finalUrl.toLowerCase();
@@ -1027,7 +1054,7 @@ function parseDirectoryResult(ctx: LoginContext, payload: string): WorldInfo[] {
   if (!countStr) {
     ctx.log.warn('[Session] Directory Parse Error: "count" key not found in response.');
     ctx.log.warn('[Session] First 5 keys:', Array.from(data.keys()).slice(0, 5));
-    return [];
+    throw new Error('Directory answer could not be parsed: no "Count" key');
   }
 
   const count = parseInt(countStr, 10);
@@ -1224,7 +1251,7 @@ async function fullWorldRelogin(ctx: LoginContext): Promise<void> {
 
   const socket = ctx.getSocket('world');
   if (socket) {
-    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string('0')).toFrame();
+    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string(ctx.languageId)).toFrame();
     writeRdoFrame(socket, setLangCmd);
   }
 

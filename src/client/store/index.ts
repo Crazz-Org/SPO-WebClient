@@ -3,7 +3,7 @@
  */
 
 export { useGameStore } from './game-store';
-export type { TycoonStats, ConnectionStatus, DisconnectReason, GameSettings } from './game-store';
+export type { TycoonStats, ConnectionStatus, DisconnectReason, GameSettings, RememberedSession } from './game-store';
 
 export { useUiStore } from './ui-store';
 export type { RightPanelType, LeftPanelType, ModalType, MobileTab } from './ui-store';

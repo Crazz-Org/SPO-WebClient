@@ -3,6 +3,7 @@
  */
 
 import { useGameStore, delphiTDateTimeToJsDate } from './game-store';
+import { REMEMBERED_SESSION_KEY, type RememberedSession } from './remembered-session';
 
 describe('game-store login flow state', () => {
   beforeEach(() => {
@@ -390,6 +391,81 @@ describe('game-store company switching state', () => {
     useGameStore.getState().setSwitchingCompany(true);
     useGameStore.getState().reset();
     expect(useGameStore.getState().isSwitchingCompany).toBe(false);
+  });
+});
+
+describe('game-store rememberedSession slice', () => {
+  const RECORD: RememberedSession = {
+    username: 'SPO_test3',
+    zonePath: 'Root/Areas/Asia/Worlds',
+    worldName: 'Shamba',
+    companyId: '28',
+    companyName: 'Yellow Inc.',
+    ownerRole: 'SPO_test3',
+  };
+
+  const memoryStore = new Map<string, string>();
+  function installStorage() {
+    (globalThis as unknown as { localStorage: unknown }).localStorage = {
+      getItem: (k: string) => memoryStore.get(k) ?? null,
+      setItem: (k: string, v: string) => { memoryStore.set(k, v); },
+      removeItem: (k: string) => { memoryStore.delete(k); },
+    };
+  }
+
+  beforeEach(() => {
+    memoryStore.clear();
+    installStorage();
+    useGameStore.getState().reset();
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: unknown }).localStorage; });
+
+  it('loads the remembered record from localStorage at module init', () => {
+    memoryStore.set(REMEMBERED_SESSION_KEY, JSON.stringify(RECORD));
+    jest.isolateModules(() => {
+      const fresh = require('./game-store') as typeof import('./game-store');
+      expect(fresh.useGameStore.getState().rememberedSession).toEqual(RECORD);
+    });
+  });
+
+  it('yields null on a fresh browser', () => {
+    jest.isolateModules(() => {
+      const fresh = require('./game-store') as typeof import('./game-store');
+      expect(fresh.useGameStore.getState().rememberedSession).toBeNull();
+    });
+  });
+
+  it('rememberSession writes the key and the state', () => {
+    useGameStore.getState().rememberSession(RECORD);
+
+    expect(useGameStore.getState().rememberedSession).toEqual(RECORD);
+    expect(JSON.parse(memoryStore.get(REMEMBERED_SESSION_KEY)!)).toEqual(RECORD);
+  });
+
+  it('forgetRememberedSession removes both', () => {
+    useGameStore.getState().rememberSession(RECORD);
+    useGameStore.getState().forgetRememberedSession();
+
+    expect(useGameStore.getState().rememberedSession).toBeNull();
+    expect(memoryStore.has(REMEMBERED_SESSION_KEY)).toBe(false);
+  });
+
+  it('setResumeTarget stores and clears the target', () => {
+    useGameStore.getState().setResumeTarget(RECORD);
+    expect(useGameStore.getState().resumeTarget).toEqual(RECORD);
+
+    useGameStore.getState().setResumeTarget(null);
+    expect(useGameStore.getState().resumeTarget).toBeNull();
+  });
+
+  it('reset clears resumeTarget but keeps rememberedSession', () => {
+    useGameStore.getState().rememberSession(RECORD);
+    useGameStore.getState().setResumeTarget(RECORD);
+
+    useGameStore.getState().reset();
+
+    expect(useGameStore.getState().resumeTarget).toBeNull();
+    expect(useGameStore.getState().rememberedSession).toEqual(RECORD);
   });
 });
 

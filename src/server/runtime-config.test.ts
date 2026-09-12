@@ -58,18 +58,31 @@ describe('buildRuntimeConfigScript', () => {
     expect(buildRuntimeConfigScript({ cdnUrl: '' })).not.toContain('__SPO_BUG_REPORT__');
   });
 
+  it('carries the registration url, JSON-quoted', () => {
+    expect(buildRuntimeConfigScript({ cdnUrl: '', registerUrl: 'https://example.org/signup' }))
+      .toContain('window.__SPO_REGISTER_URL__="https://example.org/signup";');
+  });
+
+  it('treats an empty registration url as none — the default is no action, not the legacy SEGA page', () => {
+    expect(buildRuntimeConfigScript({ cdnUrl: '', registerUrl: '' }))
+      .not.toContain('__SPO_REGISTER_URL__');
+    expect(buildRuntimeConfigScript({ cdnUrl: '' })).not.toContain('__SPO_REGISTER_URL__');
+  });
+
   it('emits every override together, in a fixed order', () => {
     const body = buildRuntimeConfigScript({
       cdnUrl: '',
       singleUserMode: true,
       forceWorld: 'planitia',
       bugReport: true,
+      registerUrl: 'https://example.org/signup',
     });
     expect(body.split('\n')).toEqual([
       'window.__SPO_CDN_URL__="";',
       'window.__SPO_SINGLE_USER__=true;',
       'window.__SPO_FORCE_WORLD__="planitia";',
       'window.__SPO_BUG_REPORT__=true;',
+      'window.__SPO_REGISTER_URL__="https://example.org/signup";',
     ]);
   });
 
