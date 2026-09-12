@@ -1,12 +1,13 @@
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { screen } from '@testing-library/react';
-import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
+import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useSearchStore } from '../../store/search-store';
 import { SearchPanel } from './SearchPanel';
 import { WsMessageType } from '@/shared/types';
 import type { TownInfo, RankingEntry } from '@/shared/types';
 // Separate statement on purpose: the import header above is a frozen span for this change.
 import { fireEvent } from '@testing-library/react';
+import type { SearchMenuCategory } from '@/shared/types';
 
 const TOWN_BASE: TownInfo = {
   name: 'Helartia',
@@ -208,11 +209,197 @@ describe('SearchPanel — ranking detail', () => {
   });
 });
 
+describe('SearchPanel — towns page opens the town directory (#526)', () => {
+  beforeEach(() => {
+    resetStores();
+    useSearchStore.getState().reset();
+  });
+
+  const HELARTIA: TownInfo = {
+    ...TOWN_BASE,
+    x: 120,
+    y: 340,
+    path: 'Towns\\Helartia.five',
+    classId: '1234',
+  };
+
+  it('opens the town page rather than jumping the map', () => {
+    showTowns([HELARTIA]);
+    const onSearchMenuDirectory = jest.fn();
+    const onNavigateToBuilding = jest.fn();
+    const { container } = renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({
+        onSearchMenuDirectory: onSearchMenuDirectory as never,
+        onNavigateToBuilding: onNavigateToBuilding as never,
+      }),
+    });
+
+    fireEvent.click(container.querySelector('.listItemTitle')!);
+
+    const expected = { kind: 'town', path: 'Towns\\Helartia.five', classId: '1234' };
+    expect(onSearchMenuDirectory).toHaveBeenCalledWith(expected);
+    expect(onNavigateToBuilding).not.toHaveBeenCalled();
+    expect(useSearchStore.getState().currentPage).toBe('directory');
+    expect(useSearchStore.getState().directoryStack).toEqual([{ ref: expected, page: null }]);
+  });
+
+  it('still jumps the map from the row action, without opening the town', () => {
+    showTowns([HELARTIA]);
+    const onSearchMenuDirectory = jest.fn();
+    const onNavigateToBuilding = jest.fn();
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({
+        onSearchMenuDirectory: onSearchMenuDirectory as never,
+        onNavigateToBuilding: onNavigateToBuilding as never,
+      }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show on map' }));
+
+    expect(onNavigateToBuilding).toHaveBeenCalledWith(120, 340);
+    expect(onSearchMenuDirectory).not.toHaveBeenCalled();
+    expect(useSearchStore.getState().currentPage).toBe('towns');
+  });
+
+  it('walks the directory descent one level at a time on Back, then leaves it', () => {
+    showTowns([HELARTIA]);
+    useSearchStore.getState().pushDirectory({ kind: 'town', path: 'Towns\\Helartia.five', classId: '1234' });
+    useSearchStore.getState().pushDirectory({ kind: 'town-facilities', town: 'Helartia' });
+    useSearchStore.setState({ isLoading: false });
+
+    renderWithProviders(<SearchPanel />);
+    fireEvent.click(screen.getByText('← Back'));
+
+    expect(useSearchStore.getState().currentPage).toBe('directory');
+    expect(useSearchStore.getState().directoryStack).toHaveLength(1);
+
+    fireEvent.click(screen.getByText('← Back'));
+
+    expect(useSearchStore.getState().currentPage).toBe('towns');
+  });
+});
+
+function showHome(categories: SearchMenuCategory[]): void {
+  useSearchStore.setState({
+    currentPage: 'home',
+    isLoading: false,
+    homeData: { type: WsMessageType.RESP_SEARCH_MENU_HOME, categories },
+  });
+}
+
+const HOME_TILES: SearchMenuCategory[] = [
+  { id: 'capitol', label: 'Capitol', enabled: false },
+  { id: 'Towns', label: 'Towns', enabled: true },
+  { id: 'RenderTycoon', label: 'You', enabled: true },
+  { id: 'Tycoons', label: 'Tycoons', enabled: true },
+  { id: 'Rankings', label: 'Rankings', enabled: true },
+  { id: 'Newspapers', label: 'Media', enabled: true },
+];
+
+describe('SearchPanel — home grid (#522)', () => {
+  beforeEach(() => {
+    resetStores();
+    useSearchStore.getState().reset();
+  });
+
+  it('builds six tiles from the fixture', () => {
+    showHome(HOME_TILES);
+    const { container } = renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({}),
+    });
+
+    expect(container.querySelectorAll('.categoryCard')).toHaveLength(6);
+    expect(screen.getByText('Capitol')).toBeTruthy();
+    expect(screen.getByText('You')).toBeTruthy();
+  });
+
+  it('renders a disabled Capitol tile dimmed and inert', () => {
+    showHome(HOME_TILES);
+    const onNavigateToBuilding = jest.fn();
+    const navigateSpy = jest.spyOn(useSearchStore.getState(), 'navigateTo');
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({
+        onNavigateToBuilding: onNavigateToBuilding as never,
+      }),
+    });
+
+    const capitolCard = screen.getByText('Capitol').closest('.categoryCard')!;
+    expect(capitolCard.className).toContain('categoryCardDisabled');
+    expect(capitolCard.getAttribute('role')).toBeNull();
+
+    fireEvent.click(capitolCard);
+
+    expect(onNavigateToBuilding).not.toHaveBeenCalled();
+    expect(navigateSpy).not.toHaveBeenCalled();
+    expect(useSearchStore.getState().currentPage).toBe('home');
+  });
+
+  it('an enabled Capitol tile jumps the map with its parsed coordinates', () => {
+    showHome([{ id: 'local', label: 'Capitol', enabled: true, x: 220, y: 41 }]);
+    const onNavigateToBuilding = jest.fn();
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({
+        onNavigateToBuilding: onNavigateToBuilding as never,
+      }),
+    });
+
+    fireEvent.click(screen.getByText('Capitol'));
+
+    expect(onNavigateToBuilding).toHaveBeenCalledWith(220, 41);
+    expect(useSearchStore.getState().currentPage).toBe('home');
+  });
+
+  it('the You tile opens the player\'s own card', () => {
+    showHome(HOME_TILES);
+    const onSearchMenuTycoonProfile = jest.fn();
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({
+        onSearchMenuTycoonProfile: onSearchMenuTycoonProfile as never,
+      }),
+    });
+
+    fireEvent.click(screen.getByText('You'));
+
+    expect(useSearchStore.getState().currentPage).toBe('tycoon-profile');
+    expect(onSearchMenuTycoonProfile).toHaveBeenCalledWith('YOU');
+  });
+
+  it('a page tile navigates to its drill-down page', () => {
+    showHome(HOME_TILES);
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({}),
+    });
+
+    fireEvent.click(screen.getByText('Towns'));
+
+    expect(useSearchStore.getState().currentPage).toBe('towns');
+  });
+
+  it('dims a tile id the client does not know', () => {
+    showHome([{ id: 'Weather', label: 'Weather', enabled: true }]);
+    renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({}),
+    });
+
+    const card = screen.getByText('Weather').closest('.categoryCard')!;
+    expect(card.className).toContain('categoryCardDisabled');
+    expect(card.getAttribute('role')).toBeNull();
+  });
+
+  it('does not draw the grid before the reply arrives', () => {
+    useSearchStore.setState({ currentPage: 'home', isLoading: false, homeData: null });
+    const { container } = renderWithProviders(<SearchPanel />, {
+      clientCallbacks: createSpiedCallbacks({}),
+    });
+
+    expect(container.querySelectorAll('.categoryCard')).toHaveLength(0);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // People page — the A-Z index beside the typed search
 // ---------------------------------------------------------------------------
 
-import { createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import type { PeopleQuery } from '../../store/search-store';
 
 function showPeople(results: string[], peopleQuery: PeopleQuery | null = null): void {

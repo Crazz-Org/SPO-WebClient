@@ -35,6 +35,7 @@ import {
   PolicyData,
   PoliticsData,
   NewspaperBoard,
+  NewspaperRatingEntry,
   NewspaperIssue,
   NewspaperIssueList,
   PoliticalRoleInfo,
@@ -56,6 +57,7 @@ import { config } from '../shared/config';
 import { createLogger, generateSessionId } from '../shared/logger';
 import { toProxyUrl, isProxyUrl } from '../shared/proxy-utils';
 import { toErrorMessage } from '../shared/error-utils';
+import { DEFAULT_LANGUAGE_ID, normalizeLanguageId, withLangId, type LanguageId } from '../shared/language';
 import {
   cleanPayload as cleanPayloadHelper,
   splitMultilinePayload as splitMultilinePayloadHelper,
@@ -90,6 +92,8 @@ import * as buildingPropertyHandler from './session/building-property-handler';
 import * as researchHandler from './session/research-handler';
 import { dispatchPush } from './session/push-dispatcher';
 import * as loginHandler from './session/login-handler';
+import * as abandonRoleHandler from './session/abandon-role-handler';
+import type { AbandonRoleResult } from './session/abandon-role-handler';
 import { canBufferRequest, isConnectionBoundMember } from './session/request-routing';
 import { requireDaParams } from './session/asp-da-params';
 import { classifyRdoError, ErrorRecovery } from './session/rdo-error-classifier';
@@ -288,6 +292,10 @@ export class StarpeaceSession extends EventEmitter {
   public get cachedPassword(): string | null { return this._cachedPassword; }
   private cachedZonePath: string = 'Root/Areas/Asia/Worlds';
 
+  // The language the player picked — sent to the world with SetLanguage and carried as LangId
+  // on every ASP fetch. Survives a world switch; the next REQ_LOGIN_WORLD overwrites it.
+  public languageId: LanguageId = DEFAULT_LANGUAGE_ID;
+
   // Active login identity — differs from cachedUsername during role-based company switches
   // (e.g., "President of Shamba" vs original tycoon "SPO_test3")
   public activeUsername: string | null = null;
@@ -298,6 +306,8 @@ export class StarpeaceSession extends EventEmitter {
 
   // Additional world properties
   public mailAccount: string | null = null;
+  /** ACCOUNT_* answer of the last AccountStatus (Protocol.pas:82-86); null until asked. */
+  public accountStatus: number | null = null;
   public interfaceServerId: string | null = null;
   private mailAddr: string | null = null;
   private mailPort: number | null = null;
@@ -496,6 +506,7 @@ export class StarpeaceSession extends EventEmitter {
   public setDaPort(value: number | null): void { this.daPort = value; }
   public setDaAddr(value: string | null): void { this.daAddr = value; }
   public setMailAccount(value: string | null): void { this.mailAccount = value; }
+  public setAccountStatus(value: number | null): void { this.accountStatus = value; }
   public setMailAddr(value: string | null): void { this.mailAddr = value; }
   public setMailPort(value: number | null): void { this.mailPort = value; }
   public setWorldXSize(value: number | null): void { this.worldXSize = value; }
@@ -509,6 +520,7 @@ export class StarpeaceSession extends EventEmitter {
     }
   }
   public setCachedPassword(value: string | null): void { this._cachedPassword = value; }
+  public setLanguageId(value: string | undefined): void { this.languageId = normalizeLanguageId(value); }
   public setCachedZonePath(value: string): void { this.cachedZonePath = value; }
   public setActiveUsername(value: string | null): void { this.activeUsername = value; }
   public setCorrelationId(corrId: string | null): void { this.log.setField('corrId', corrId); }
@@ -625,14 +637,7 @@ export class StarpeaceSession extends EventEmitter {
     return loginHandler.searchPeople(this, searchStr, mode);
   }
 
-public async loginWorld(username: string, pass: string, world: WorldInfo): Promise<{
-  contextId: string;
-  tycoonId: string;
-  companies: CompanyInfo[];
-  worldXSize: number | null;
-  worldYSize: number | null;
-  worldSeason: number | null;
-}> {
+public async loginWorld(username: string, pass: string, world: WorldInfo): Promise<loginHandler.LoginWorldResult> {
   return loginHandler.loginWorld(this, username, pass, world);
 }
 
@@ -948,7 +953,7 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
   public async fetchAspPage(aspPath: string, extraParams?: Record<string, string>): Promise<string> {
     const url = this.buildAspUrl(aspPath, extraParams);
     this.log.debug(`[ASP] Fetching ${aspPath}`);
-    const response = await fetchWithTimeout(url, { redirect: 'follow' });
+    const response = await fetchWithTimeout(withLangId(url, this.languageId), { redirect: 'follow' });
     if (!response.ok) {
       throw new Error(`ASP request failed: ${response.status} ${response.statusText}`);
     }
@@ -1103,6 +1108,11 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
     return profileFinanceHandler.fetchCurriculumData(this);
   }
 
+  /** Another tycoon's curriculum page — what "Show Profile" opens (RenderTycoon.asp:119-124). */
+  public async fetchTycoonFullProfile(tycoonName: string): Promise<CurriculumData> {
+    return profileFinanceHandler.fetchCurriculumData(this, tycoonName);
+  }
+
   public async fetchBankAccount(): Promise<BankAccountData> {
     return profileFinanceHandler.fetchBankAccount(this);
   }
@@ -1142,6 +1152,17 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
 
   public async executeCurriculumAction(action: string, value?: boolean): Promise<{ success: boolean; message?: string }> {
     return autoConnectionHandler.executeCurriculumAction(this, action, value);
+  }
+
+  public async readPersonalCompanies(): Promise<CompanyInfo[]> {
+    const ip = this.currentWorldInfo?.ip;
+    if (!ip || !this.cachedUsername) return [];
+    const r = await loginHandler.fetchCompaniesViaHttp(this, ip, this.cachedUsername);
+    return r.kind === 'companies' ? r.companies : [];
+  }
+
+  public async abandonRole(): Promise<AbandonRoleResult> {
+    return abandonRoleHandler.abandonRole(this);
   }
 
   // -- FAVORITES (facade -> favorites-handler) ------------------------------
@@ -1191,8 +1212,8 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
     return newspaperHandler.getNewspaperBoard(this, target, path);
   }
 
-  public async postNewspaperColumn(target: NewspaperTarget, subject: string, body: string, replyToPath?: string): Promise<{ success: boolean; message: string; board: NewspaperBoard | null }> {
-    return newspaperHandler.postNewspaperColumn(this, target, subject, body, replyToPath);
+  public async postNewspaperColumn(target: NewspaperTarget, subject: string, body: string, replyToPath?: string, ratings?: NewspaperRatingEntry[]): Promise<{ success: boolean; message: string; board: NewspaperBoard | null }> {
+    return newspaperHandler.postNewspaperColumn(this, target, subject, body, replyToPath, ratings);
   }
 
   public async getNewspaperIssues(target: NewspaperTarget): Promise<NewspaperIssueList> {
@@ -1215,7 +1236,7 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
     return politicsHandler.politicsCancelCampaign(this, buildingX, buildingY, townName);
   }
 
-  public async searchConnections(buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters?: { company?: string; town?: string; maxResults?: number; roles?: number }): Promise<ConnectionSearchResult[]> {
+  public async searchConnections(buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters?: { company?: string; town?: string; maxResults?: number; roles?: number; sortMode?: number }): Promise<ConnectionSearchResult[]> {
     return politicsHandler.searchConnections(this, buildingX, buildingY, fluidId, direction, filters);
   }
 
@@ -2736,6 +2757,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.interfaceServerId = null;
     this.interfaceEventsId = null;
     this.mailAccount = null;
+    this.accountStatus = null;
     this.mailAddr = null;
     this.mailPort = null;
     this.mailServerId = null;

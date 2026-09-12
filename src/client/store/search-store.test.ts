@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import { useSearchStore } from './search-store';
 import { WsMessageType } from '@/shared/types';
-import type { WsRespSearchMenuTycoonProfile, WsRespSearchMenuPeopleSearch, WsRespSearchMenuNewspapers } from '@/shared/types';
+import type { WsRespSearchMenuTycoonProfile, WsRespSearchMenuPeopleSearch, WsRespSearchMenuNewspapers, DirectoryRef, DirectoryPage } from '@/shared/types';
 
 function resetStore() {
   useSearchStore.setState({
@@ -21,6 +21,7 @@ function resetStore() {
     tycoonProfileData: null,
     banksData: null,
     newspapersData: null,
+    directoryStack: [],
   });
 }
 
@@ -160,5 +161,130 @@ describe('Search Store — media (newspaper directory)', () => {
     useSearchStore.getState().reset();
 
     expect(useSearchStore.getState().newspapersData).toBeNull();
+  });
+});
+
+describe('Search Store — directory descent', () => {
+  beforeEach(resetStore);
+
+  const townRef: DirectoryRef = { kind: 'town', path: 'Towns\\Helartia.five', classId: '1234' };
+  const facilitiesRef: DirectoryRef = { kind: 'town-facilities', town: 'Helartia' };
+  const folderPage: DirectoryPage = { kind: 'folder', items: ['Residentials'], ownedBy: null };
+
+  it('pushDirectory from towns switches page, stacks the ref and starts loading', () => {
+    useSearchStore.getState().navigateTo('towns');
+    useSearchStore.getState().setLoading(false);
+
+    useSearchStore.getState().pushDirectory(townRef);
+
+    const state = useSearchStore.getState();
+    expect(state.currentPage).toBe('directory');
+    expect(state.pageHistory).toEqual(['home', 'towns']);
+    expect(state.directoryStack).toEqual([{ ref: townRef, page: null }]);
+    expect(state.isLoading).toBe(true);
+  });
+
+  it('spends one history slot on the whole descent, however deep it goes', () => {
+    useSearchStore.getState().navigateTo('towns');
+    useSearchStore.getState().pushDirectory(townRef);
+    useSearchStore.getState().pushDirectory(facilitiesRef);
+
+    const state = useSearchStore.getState();
+    expect(state.pageHistory).toEqual(['home', 'towns']);
+    expect(state.directoryStack.map((e) => e.ref)).toEqual([townRef, facilitiesRef]);
+  });
+
+  it('setDirectoryPage fills the top entry and clears loading', () => {
+    useSearchStore.getState().pushDirectory(facilitiesRef);
+
+    useSearchStore.getState().setDirectoryPage(facilitiesRef, folderPage);
+
+    const state = useSearchStore.getState();
+    expect(state.directoryStack).toEqual([{ ref: facilitiesRef, page: folderPage }]);
+    expect(state.isLoading).toBe(false);
+  });
+
+  it('drops a reply for a level the user already left', () => {
+    useSearchStore.getState().pushDirectory(townRef);
+    useSearchStore.getState().pushDirectory(facilitiesRef);
+
+    useSearchStore.getState().setDirectoryPage(townRef, { kind: 'town', town: {
+      name: 'Helartia', iconUrl: '', inhabitants: 0, qualityOfLife: 0, unemploymentPercent: 0, x: 0, y: 0,
+    } });
+
+    const state = useSearchStore.getState();
+    expect(state.directoryStack.every((e) => e.page === null)).toBe(true);
+    expect(state.isLoading).toBe(false);
+  });
+
+  it('drops a reply that arrives with the stack already emptied', () => {
+    useSearchStore.getState().setLoading(true);
+
+    useSearchStore.getState().setDirectoryPage(facilitiesRef, folderPage);
+
+    expect(useSearchStore.getState().directoryStack).toEqual([]);
+    expect(useSearchStore.getState().isLoading).toBe(false);
+  });
+
+  it('goBack pops the descent before it leaves the directory', () => {
+    useSearchStore.getState().navigateTo('towns');
+    useSearchStore.getState().pushDirectory(townRef);
+    useSearchStore.getState().pushDirectory(facilitiesRef);
+
+    useSearchStore.getState().goBack();
+
+    expect(useSearchStore.getState().currentPage).toBe('directory');
+    expect(useSearchStore.getState().directoryStack.map((e) => e.ref)).toEqual([townRef]);
+
+    useSearchStore.getState().goBack();
+
+    expect(useSearchStore.getState().currentPage).toBe('towns');
+    expect(useSearchStore.getState().directoryStack).toEqual([]);
+  });
+
+  it('reset empties the descent', () => {
+    useSearchStore.getState().pushDirectory(townRef);
+    expect(useSearchStore.getState().directoryStack).toHaveLength(1);
+
+    useSearchStore.getState().reset();
+
+    expect(useSearchStore.getState().directoryStack).toEqual([]);
+    expect(useSearchStore.getState().currentPage).toBe('home');
+  });
+});
+
+/**
+ * The full profile of another tycoon (#528) — its own slot, deliberately
+ * separate from `tycoonProfileData` (the directory card) and from the profile
+ * store (the logged-in player's own panel).
+ */
+describe('search store — tycoon full profile', () => {
+  beforeEach(() => {
+    useSearchStore.getState().reset();
+  });
+
+  const reply = {
+    type: 'RESP_SEARCH_MENU_TYCOON_FULL_PROFILE',
+    tycoonName: 'Rival',
+    data: { tycoonName: 'Rival', canUpgrade: false },
+  } as never;
+
+  it('stores the reply and stops the loading spinner', () => {
+    useSearchStore.getState().navigateTo('tycoon-full-profile');
+    expect(useSearchStore.getState().isLoading).toBe(true);
+
+    useSearchStore.getState().setTycoonFullProfileData(reply);
+
+    expect(useSearchStore.getState().tycoonFullProfileData).toBe(reply);
+    expect(useSearchStore.getState().isLoading).toBe(false);
+    expect(useSearchStore.getState().currentPage).toBe('tycoon-full-profile');
+  });
+
+  it('reset clears it, so the next card does not show the previous tycoon', () => {
+    useSearchStore.getState().setTycoonFullProfileData(reply);
+
+    useSearchStore.getState().reset();
+
+    expect(useSearchStore.getState().tycoonFullProfileData).toBeNull();
   });
 });

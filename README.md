@@ -116,6 +116,7 @@ npm run release:preview    # Preview the notes the next merge to main will publi
 | `PORT` | `8080` | HTTP/WebSocket server port |
 | `RDO_DIR_HOST` | `www.starpeaceonline.com` | RDO directory server hostname |
 | `CHUNK_CDN_URL` | — | CDN URL for static terrain assets (e.g., `https://spo.zz.works`) |
+| `SPO_REGISTER_URL` | — | Registration page linked as "Create an account" on the sign-in screen; unset shows no link |
 | `LOG_LEVEL` | `info` | Logging verbosity (`debug`, `info`, `warn`, `error`) |
 | `NODE_ENV` | — | Set to `production` to disable colorized logs |
 

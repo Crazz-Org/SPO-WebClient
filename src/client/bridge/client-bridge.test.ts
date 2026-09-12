@@ -48,6 +48,42 @@ describe('ClientBridge login flow (replaces window.__spoLoginHandlers)', () => {
     expect(state.loginLoading).toBe(false);
   });
 
+  it('showLoginPage should write loginPage, empty companies, and move to companies stage', () => {
+    ClientBridge.showCompanies([{ id: '1', name: 'TestCorp', cluster: 'General' }] as never[]);
+
+    ClientBridge.showLoginPage({ kind: 'denied', expiresOn: '01/01/2020' });
+
+    const state = useGameStore.getState();
+    expect(state.loginPage).toEqual({ kind: 'denied', expiresOn: '01/01/2020' });
+    expect(state.companies).toEqual([]);
+    expect(state.loginStage).toBe('companies');
+    expect(state.loginLoading).toBe(false);
+  });
+
+  it('showCompanies afterwards clears loginPage', () => {
+    ClientBridge.showLoginPage({ kind: 'error', errorCode: 'ERROR_FIVEISDOWN' });
+
+    const companies = [{ id: '1', name: 'TestCorp', cluster: 'General' }];
+    ClientBridge.showCompanies(companies as never[]);
+
+    const state = useGameStore.getState();
+    expect(state.loginPage).toBeNull();
+    expect(state.companies).toEqual(companies);
+  });
+
+  it('showCompanies forwards the admission answer to the store', () => {
+    const companies = [{ id: '1', name: 'TestCorp', cluster: 'General' }];
+    ClientBridge.showCompanies(companies as never[], { kind: 'nobility', shortfall: 2 });
+
+    expect(useGameStore.getState().loginAdmission).toEqual({ kind: 'nobility', shortfall: 2 });
+  });
+
+  it('showCompanies without an admission answer leaves loginAdmission null', () => {
+    ClientBridge.showCompanies([{ id: '1', name: 'TestCorp' }] as never[]);
+
+    expect(useGameStore.getState().loginAdmission).toBeNull();
+  });
+
   it('setLoginLoading should update game-store loading', () => {
     ClientBridge.setLoginLoading(true);
     expect(useGameStore.getState().loginLoading).toBe(true);
@@ -480,5 +516,45 @@ describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_NEWSPAPERS 
     } as unknown as WsMessage);
 
     expect(useSearchStore.getState().newspapersData?.newspapers).toEqual(newspapers);
+  });
+});
+
+describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_DIRECTORY (#526)', () => {
+  beforeEach(() => {
+    useSearchStore.getState().reset();
+  });
+
+  it('fills the level that asked for it', () => {
+    const ref = { kind: 'town-facilities', town: 'Helartia' } as const;
+    const page = { kind: 'folder', items: ['Residentials'], ownedBy: null } as const;
+    useSearchStore.getState().pushDirectory(ref);
+
+    ClientBridge.handleSearchMenuResponse({
+      type: WsMessageType.RESP_SEARCH_MENU_DIRECTORY,
+      ref,
+      page,
+    } as unknown as WsMessage);
+
+    expect(useSearchStore.getState().directoryStack).toEqual([{ ref, page }]);
+    expect(useSearchStore.getState().isLoading).toBe(false);
+  });
+});
+
+describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_TYCOON_FULL_PROFILE (#528)', () => {
+  beforeEach(() => {
+    useSearchStore.getState().reset();
+  });
+
+  it('lands in the search store, never in the logged-in player\'s profile', () => {
+    const reply = {
+      type: WsMessageType.RESP_SEARCH_MENU_TYCOON_FULL_PROFILE,
+      tycoonName: 'Rival',
+      data: { tycoonName: 'Rival', canUpgrade: false },
+    } as unknown as WsMessage;
+
+    ClientBridge.handleSearchMenuResponse(reply);
+
+    expect(useSearchStore.getState().tycoonFullProfileData).toEqual(reply);
+    expect(useSearchStore.getState().isLoading).toBe(false);
   });
 });

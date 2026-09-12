@@ -23,6 +23,7 @@ import type { RdoPacket, WorldInfo } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { RdoVerb, RdoAction } from '../../shared/types';
+import { DEFAULT_LANGUAGE_ID, withLangId } from '../../shared/language';
 
 // =============================================================================
 // placeBuilding / placeCapitol — M-A regression
@@ -364,9 +365,10 @@ describe('fetchClusterInfo', () => {
 
     await fetchClusterInfo(fake.ctx, 'Magna Corp');
 
-    expect(fetchedUrl()).toBe(
-      'http://158.69.153.134/Five/0/Visual/Voyager/NewLogon/info.asp?ClusterName=Magna%20Corp'
-    );
+    expect(fetchedUrl()).toBe(withLangId(
+      'http://158.69.153.134/Five/0/Visual/Voyager/NewLogon/info.asp?ClusterName=Magna%20Corp',
+      DEFAULT_LANGUAGE_ID,
+    ));
     expect(mockFetch.mock.calls[0][1]).toEqual(expect.objectContaining({ redirect: 'follow' }));
     expect((mockFetch.mock.calls[0][1] as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
   });
@@ -1381,11 +1383,11 @@ describe('fetchBuildingFacilities', () => {
     );
 
     // Captured verbatim on the live wire.
-    expect(fetchedUrl()).toBe(
+    expect(fetchedUrl()).toBe(withLangId(
       'http://158.69.153.134/five/0/visual/voyager/Build/FacilityList.asp?' +
       'Company=Yellow%20Inc.&WorldName=Shamba&Cluster=PGI&Kind=PGIDirectionFacilities' +
-      '&KindName=Headquarters&Folder=00000024.PGIDirectionFacilities.five&TycoonLevel=0'
-    );
+      '&KindName=Headquarters&Folder=00000024.PGIDirectionFacilities.five&TycoonLevel=0', DEFAULT_LANGUAGE_ID
+    ));
   });
 
   it('parses the captured Headquarters page into one facility', async () => {

@@ -8,13 +8,23 @@
 
 import * as net from 'net';
 import { fetchWithTimeout } from '../fetch-with-timeout';
-import type { RdoPacket, WorldInfo, CompanyInfo, PeopleSearchMode } from '../../shared/types';
+import { withLangId } from '../../shared/language';
+import type {
+  RdoPacket,
+  WorldInfo,
+  CompanyInfo,
+  LoginPageOutcome,
+  WorldAdmission,
+  PeopleSearchMode,
+} from '../../shared/types';
 import { SessionPhase, DIRECTORY_QUERY } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall, rdoGet, rdoSet, rdoIdOf } from '../../shared/rdo-frame';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { config } from '../../shared/config';
 import { AuthError } from '../../shared/auth-error';
+import { accountStatusRefusal, parseAccountStatus, ACCOUNT_Unexisting } from '../../shared/account-status';
+import { DIR_NOERROR, DIR_NOERROR_StillTrial } from '../../shared/directory-error-codes';
 import { toErrorMessage } from '../../shared/error-utils';
 import {
   parsePropertyResponse as parsePropertyResponseHelper,
@@ -63,6 +73,8 @@ export interface LoginContext {
   readonly cachedPassword: string | null;
   readonly rdoCnntId: string | null;
   readonly currentCompany: CompanyInfo | null;
+  /** The session language — the SetLanguage argument and the `LangId` on every ASP fetch. */
+  readonly languageId: string;
 
   // ── Phase management ──
   getPhase(): SessionPhase;
@@ -91,6 +103,8 @@ export interface LoginContext {
   setCurrentCompany(value: CompanyInfo | null): void;
   setLastPlayerX(value: number): void;
   setLastPlayerY(value: number): void;
+  /** The world's AccountStatus answer (ACCOUNT_*), kept so the login flow can act on a first-time player. */
+  setAccountStatus(value: number | null): void;
 
   // ── Collections ──
   getAvailableWorlds(): Map<string, WorldInfo>;
@@ -206,7 +220,9 @@ async function performDirectoryAuth(ctx: LoginContext, username: string, pass: s
     ).packet);
     const res = parsePropertyResponseHelper(logonPacket.payload || '', 'res');
     const authCode = parseInt(res, 10);
-    if (authCode !== 0) throw new AuthError(authCode);
+    // Voyager treats DIR_NOERROR and DIR_NOERROR_StillTrial (-1) alike
+    // (LogonHandlerViewer.pas:548-565). NaN from a bodiless answer still refuses.
+    if (authCode !== DIR_NOERROR && authCode !== DIR_NOERROR_StillTrial) throw new AuthError(authCode);
 
     // 3. End Session & Close — fire-and-forget without RID: ACCEPTED DIVERGENCE
     // (audit 2026-07-02, P2 — the captured legacy client sends this WITH a RID and
@@ -360,19 +376,23 @@ export async function searchPeople(
 
 // ── World Login ─────────────────────────────────────────────────────────────
 
-export async function loginWorld(
-  ctx: LoginContext,
-  username: string,
-  pass: string,
-  world: WorldInfo,
-): Promise<{
+export interface LoginWorldResult {
   contextId: string;
   tycoonId: string;
   companies: CompanyInfo[];
   worldXSize: number | null;
   worldYSize: number | null;
   worldSeason: number | null;
-}> {
+  loginPage?: LoginPageOutcome;
+  admission?: WorldAdmission;
+}
+
+export async function loginWorld(
+  ctx: LoginContext,
+  username: string,
+  pass: string,
+  world: WorldInfo,
+): Promise<LoginWorldResult> {
   ctx.setPhase(SessionPhase.WORLD_CONNECTING);
   ctx.setCurrentWorldInfo(world);
 
@@ -398,6 +418,9 @@ export async function loginWorld(
   // 2. Retrieve World Properties (10 properties)
   await fetchWorldProperties(ctx, interfaceServerId);
 
+  // 2b. Admission — may this player found a company here? (logonComplete.asp:143-144)
+  const admission = await checkWorldAdmission(ctx, interfaceServerId, username);
+
   // 3. Check AccountStatus
   const statusPacket = await ctx.sendRdoRequest('world', rdoCall(
     'AccountStatus', interfaceServerId,
@@ -405,7 +428,26 @@ export async function loginWorld(
     RdoValue.string(pass),
   ).packet, undefined, TimeoutCategory.FAST);
   const statusPayload = parsePropertyResponseHelper(statusPacket.payload!, 'res');
-  ctx.log.debug(`[Session] AccountStatus: ${statusPayload}`);
+  const accountStatus = parseAccountStatus(statusPayload);
+  if (accountStatus === null) {
+    // The live server has only ever answered an integer here. Aborting on an
+    // unreadable answer would regress every login for nothing — the same rule
+    // checkWorldAdmission follows just above.
+    ctx.log.warn(`[Session] AccountStatus answer is not an integer: ${statusPayload}`);
+    ctx.setAccountStatus(null);
+  } else {
+    ctx.setAccountStatus(accountStatus);
+    ctx.log.debug(`[Session] AccountStatus: ${accountStatus}`);
+    if (accountStatus === ACCOUNT_Unexisting) {
+      ctx.log.info('[Session] AccountStatus: first-time player in this world');
+    }
+    // The reference client branched here, before Logon (ServerCnxHandler.pas:2763-2846).
+    const refusal = accountStatusRefusal(accountStatus);
+    if (refusal) {
+      ctx.log.warn(`[Session] AccountStatus refused: ${refusal.message}`);
+      throw refusal;
+    }
+  }
 
   // 4. Authenticate (call Logon)
   const logonPacket = await ctx.sendRdoRequest('world', rdoCall(
@@ -420,7 +462,10 @@ export async function loginWorld(
   }
 
   if (!contextId || contextId === '0' || contextId.startsWith('error')) {
-    throw new Error(`Login failed: ${logonPacket.payload}`);
+    // The payload stays in the gateway log, where redactSensitiveRdoFrame governs
+    // what is printed; the error the player sees carries no RDO text.
+    ctx.log.error(`[Session] Logon refused: ${logonPacket.payload}`);
+    throw new Error('Login failed: the world refused the logon');
   }
 
   ctx.setWorldContextId(contextId);
@@ -481,9 +526,9 @@ export async function loginWorld(
   // 8. SetLanguage - CLIENT sends this as PUSH command (no RID)
   const socket = ctx.getSocket('world');
   if (socket) {
-    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string('0')).toFrame();
+    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string(ctx.languageId)).toFrame();
     writeRdoFrame(socket, setLangCmd);
-    ctx.log.debug(`[Session] Sent SetLanguage push command`);
+    ctx.log.debug(`[Session] Sent SetLanguage push command (LangId=${ctx.languageId})`);
   }
 
   // 9. GetCompanyCount
@@ -493,7 +538,24 @@ export async function loginWorld(
   ctx.log.debug(`[Session] Company Count: ${companyCount}`);
 
   // 10. Fetch companies via HTTP for UI
-  const { companies } = await fetchCompaniesViaHttp(ctx, world.ip, username);
+  const httpResult = await fetchCompaniesViaHttp(ctx, world.ip, username);
+
+  let companies: CompanyInfo[] = [];
+  let loginPage: LoginPageOutcome | undefined;
+
+  if (httpResult.kind === 'companies') {
+    companies = httpResult.companies;
+    if (companyCount > 0 && companies.length === 0) {
+      ctx.log.error(`[Session] GetCompanyCount says ${companyCount} but chooseCompany.asp listed none — company scrape failed`);
+      loginPage = { kind: 'error', errorCode: 'COMPANY_LIST_MISMATCH' };
+    }
+  } else if (httpResult.kind === 'denied') {
+    loginPage = { kind: 'denied', expiresOn: httpResult.expiresOn };
+  } else if (httpResult.kind === 'error') {
+    loginPage = { kind: 'error', errorCode: httpResult.errorCode };
+  }
+  // 'unreachable': companies stays [], loginPage stays undefined — as today.
+
   ctx.setAvailableCompanies(companies);
 
   ctx.log.info('Login phase complete. Waiting for company selection...');
@@ -504,6 +566,8 @@ export async function loginWorld(
     worldXSize: ctx.currentWorldInfo?.mapSizeX ?? null,
     worldYSize: ctx.currentWorldInfo?.mapSizeY ?? null,
     worldSeason: null, // worldSeason is set during fetchWorldProperties
+    loginPage,
+    admission,
   };
 }
 
@@ -656,11 +720,13 @@ export async function createCompany(
       // Error: numeric error code as string
       const errorCode = parseInt(resultStr, 10);
       if (!isNaN(errorCode)) {
+        // TWorld.RDONewCompany, Kernel/World.pas:4110-4184; values Protocol/Protocol.pas:30-43.
         const errorMessages: Record<number, string> = {
-          6: 'Unknown cluster',
-          11: 'Company name already taken',
-          28: 'Zone tier mismatch',
-          33: 'Maximum number of companies reached',
+          1: 'Server error while creating the company',                               // :4179 ERROR_Unknown
+          6: 'Unknown cluster',                                                        // :4172
+          7: 'Your tycoon level is too low for this seal, or you already own 26 companies', // :4146/:4170, MaxCompaniesAllowed World.pas:31
+          11: 'Company name already taken',                                            // :4174
+          14: 'That name is invalid or longer than 50 characters',                     // :4133/:4181 (also :4168)
         };
         const msg = errorMessages[errorCode] || `Failed with error code ${errorCode}`;
         ctx.log.warn(`[Session] Company creation failed: ${msg}`);
@@ -824,13 +890,54 @@ async function fetchWorldProperties(ctx: LoginContext, interfaceServerId: string
 }
 
 /**
+ * Ask the Interface Server whether this player may found a company here —
+ * `CanJoinWorldEx` (Interface Server/InterfaceServer.pas:441, :3471-3486), the call
+ * logonComplete.asp:143-144 makes against `InterfaceServer` before the company page.
+ * `-1` is a full world, a positive number is the nobility shortfall, `0` is "go ahead".
+ * Anything else — timeout, an error reply from a server without the member, an
+ * unparsable answer — returns undefined and the login proceeds exactly as before.
+ */
+async function checkWorldAdmission(
+  ctx: LoginContext, interfaceServerId: string, username: string,
+): Promise<WorldAdmission | undefined> {
+  try {
+    const packet = await ctx.sendRdoRequest('world', rdoCall(
+      'CanJoinWorldEx', interfaceServerId,
+      RdoValue.string(username),
+    ).packet, undefined, TimeoutCategory.FAST);
+    // An error reply normally rejects (config.rdo.errorContract defaults to
+    // reject-except-stale), but in `observe` mode it arrives as a success packet
+    // carrying errorCode — both paths degrade to today's flow.
+    if (packet.errorCode && packet.errorCode > 0) {
+      ctx.log.warn(`[Session] CanJoinWorldEx answered ${packet.errorName ?? 'error'} ${packet.errorCode} — proceeding without the admission check`);
+      return undefined;
+    }
+    const raw = parsePropertyResponseHelper(packet.payload ?? '', 'res');
+    const code = parseInt(raw, 10);
+    ctx.log.debug(`[Session] CanJoinWorldEx: ${raw}`);
+    if (code === -1) return { kind: 'full' };
+    if (code > 0) return { kind: 'nobility', shortfall: code };
+    return undefined;              // 0 (admitted) or NaN (unreadable): today's flow
+  } catch (err: unknown) {
+    ctx.log.warn(`[Session] CanJoinWorldEx failed — proceeding without the admission check: ${toErrorMessage(err)}`);
+    return undefined;
+  }
+}
+
+type FetchCompaniesResult =
+  | { kind: 'companies'; companies: CompanyInfo[]; realContextId: string | null }
+  | { kind: 'denied'; expiresOn: string }
+  | { kind: 'error'; errorCode: string }
+  | { kind: 'unreachable' };
+
+/**
  * Fetch companies via HTTP (ASP endpoint)
  */
-async function fetchCompaniesViaHttp(
+export async function fetchCompaniesViaHttp(
   ctx: LoginContext,
   worldIp: string,
   username: string,
-): Promise<{ companies: CompanyInfo[]; realContextId: string | null }> {
+): Promise<FetchCompaniesResult> {
   const params = new URLSearchParams({
     frame_Id: 'LogonView',
     frame_Class: 'HTMLView',
@@ -846,16 +953,30 @@ async function fetchCompaniesViaHttp(
     DSPort: String(config.rdo.ports.directory),
     ISAddr: worldIp,
     ISPort: '8000',
-    LangId: '0',
   });
 
   const url = `http://${worldIp}/Five/0/Visual/Voyager/NewLogon/logonComplete.asp?${params.toString().replace(/\+/g, '%20')}`;
   ctx.log.debug(`[HTTP] Fetching companies from ${url}`);
 
   try {
-    const response = await fetchWithTimeout(url, { redirect: 'follow' });
+    const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     const text = await response.text();
     const finalUrl = response.url;
+    const finalUrlLower = finalUrl.toLowerCase();
+
+    if (finalUrlLower.includes('/logonnoaccess.asp')) {
+      const paMatch = /[?&]PA=([^&]*)/i.exec(finalUrl);
+      const expiresOn = paMatch ? decodeURIComponent(paMatch[1]) : '';
+      ctx.log.warn(`[HTTP] Login denied by logonNoAccess.asp — access expired on ${expiresOn}`);
+      return { kind: 'denied', expiresOn };
+    }
+
+    if (finalUrlLower.includes('/logonerror.asp')) {
+      const errorMatch = /[?&]ErrorCode=([^&]*)/i.exec(finalUrl);
+      const errorCode = errorMatch ? decodeURIComponent(errorMatch[1]) : 'UNKNOWN';
+      ctx.log.warn(`[HTTP] Login rejected by logonError.asp — ${errorCode}`);
+      return { kind: 'error', errorCode };
+    }
 
     // Extract ClientViewId (priority: URL > body)
     let realId: string | null = null;
@@ -888,10 +1009,10 @@ async function fetchCompaniesViaHttp(
     }
 
     ctx.log.debug(`[HTTP] Found ${companies.length} companies, realContextId: ${realId}`);
-    return { companies, realContextId: realId };
+    return { kind: 'companies', companies, realContextId: realId };
   } catch (e: unknown) {
     ctx.log.error('[HTTP] Failed to fetch companies:', e);
-    return { companies: [], realContextId: null };
+    return { kind: 'unreachable' };
   }
 }
 
@@ -916,7 +1037,7 @@ function parseDirectoryResult(ctx: LoginContext, payload: string): WorldInfo[] {
   if (!countStr) {
     ctx.log.warn('[Session] Directory Parse Error: "count" key not found in response.');
     ctx.log.warn('[Session] First 5 keys:', Array.from(data.keys()).slice(0, 5));
-    return [];
+    throw new Error('Directory answer could not be parsed: no "Count" key');
   }
 
   const count = parseInt(countStr, 10);
@@ -1113,7 +1234,7 @@ async function fullWorldRelogin(ctx: LoginContext): Promise<void> {
 
   const socket = ctx.getSocket('world');
   if (socket) {
-    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string('0')).toFrame();
+    const setLangCmd = rdoCall('SetLanguage', contextId, RdoValue.string(ctx.languageId)).toFrame();
     writeRdoFrame(socket, setLangCmd);
   }
 

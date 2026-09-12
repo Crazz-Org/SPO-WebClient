@@ -93,26 +93,6 @@
   gap: var(--space-3);
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 2px solid var(--glass-border);
-  border-top-color: var(--accent-gold);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-.overlayText {
-  font-size: var(--text-sm);
-  color: var(--accent-gold);
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
 /* Mobile */
 @media (max-width: 767px) {
   .stage {

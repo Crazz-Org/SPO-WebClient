@@ -24,6 +24,7 @@ function createMockSession(overrides: Record<string, unknown> = {}) {
     isWorldConnected: jest.fn<() => boolean>().mockReturnValue(false),
     getWorldInfo: jest.fn<() => unknown>().mockReturnValue({ name: 'planitia', ip: '1.2.3.4', port: 8000 }),
     loginWorld: jest.fn<() => Promise<unknown>>(),
+    setLanguageId: jest.fn<(value?: string) => void>(),
     cleanupWorldSession: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
     getPhase: jest.fn<() => SessionPhase>(() => (overrides.phase as SessionPhase) ?? SessionPhase.DIRECTORY_CONNECTED),
     log: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
@@ -119,5 +120,38 @@ describe('handleLoginWorld: failure recovery', () => {
 
     // First call: server switch cleanup. No second call (success path).
     expect(session.cleanupWorldSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards the admission answer to the browser when loginWorld reports one', async () => {
+    session.loginWorld.mockResolvedValue({
+      contextId: '100',
+      tycoonId: '36',
+      companies: [],
+      worldXSize: null,
+      worldYSize: null,
+      worldSeason: null,
+      admission: { kind: 'nobility', shortfall: 2 },
+    });
+
+    await handleLoginWorld(ctx, loginWorldMsg());
+
+    const sent = JSON.parse((ctx.ws.send as jest.Mock).mock.calls[0][0] as string);
+    expect(sent.admission).toEqual({ kind: 'nobility', shortfall: 2 });
+  });
+
+  it('leaves the admission key absent when loginWorld reports none', async () => {
+    session.loginWorld.mockResolvedValue({
+      contextId: '100',
+      tycoonId: '36',
+      companies: [],
+      worldXSize: null,
+      worldYSize: null,
+      worldSeason: null,
+    });
+
+    await handleLoginWorld(ctx, loginWorldMsg());
+
+    const sent = JSON.parse((ctx.ws.send as jest.Mock).mock.calls[0][0] as string);
+    expect(sent).not.toHaveProperty('admission');
   });
 });

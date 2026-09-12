@@ -24,6 +24,7 @@ import { writeRdoFrame } from '../rdo-helpers';
 import { splitMultilinePayload as splitMultilinePayloadHelper, isTrueOrdinal } from '../rdo-helpers';
 import { toErrorMessage } from '../../shared/error-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
+import { withLangId } from '../../shared/language';
 import { redactUrlCredentials } from '../url-redact';
 import { requireDaParams } from './asp-da-params';
 
@@ -249,7 +250,7 @@ async function fetchPoliticsPage(
   ctx: SessionContext, url: string, label: string
 ): Promise<string> {
   ctx.log.debug(`[Politics] Fetching ${label} from ${redactUrlCredentials(url)}`);
-  const resp = await fetchWithTimeout(url, { redirect: 'follow' });
+  const resp = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
   if (!resp.ok) {
     ctx.log.warn(`[Politics] ${label} page answered HTTP ${resp.status} — ${redactUrlCredentials(url)}`);
     return '';
@@ -1090,7 +1091,7 @@ export async function politicsLaunchCampaign(
     const queryParams = buildCampaignParams(ctx, 'Launch', buildingX, buildingY, townName);
     const url = `http://${worldIp}/Five/0/Visual/Voyager/Politics/tycooncampaign.asp?${queryParams.toString().replace(/\+/g, '%20')}`;
     ctx.log.debug(`[Politics] Launching campaign via ASP: ${redactUrlCredentials(url)}`);
-    const resp = await fetchWithTimeout(url, { redirect: 'follow' });
+    const resp = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     const html = await resp.text();
     // `resp.ok` catches the absent page and the IIS fault, nothing more: the 298
     // Voyager pages carry no `Response.Status`, so a refused launch and a wrong
@@ -1122,7 +1123,7 @@ export async function politicsCancelCampaign(
     const queryParams = buildCampaignParams(ctx, 'Cancel', buildingX, buildingY, townName);
     const url = `http://${worldIp}/Five/0/Visual/Voyager/Politics/tycooncampaign.asp?${queryParams.toString().replace(/\+/g, '%20')}`;
     ctx.log.debug(`[Politics] Cancelling campaign via ASP: ${redactUrlCredentials(url)}`);
-    const resp = await fetchWithTimeout(url, { redirect: 'follow' });
+    const resp = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' });
     const html = await resp.text();
     // Same reasoning as politicsLaunchCampaign above.
     if (!resp.ok) {
@@ -1146,7 +1147,7 @@ export async function searchConnections(
   ctx: SessionContext,
   buildingX: number, buildingY: number,
   fluidId: string, direction: 'input' | 'output',
-  filters?: { company?: string; town?: string; maxResults?: number; roles?: number }
+  filters?: { company?: string; town?: string; maxResults?: number; roles?: number; sortMode?: number }
 ): Promise<ConnectionSearchResult[]> {
   const worldName = ctx.currentWorldInfo?.name || '';
   if (!worldName) {
@@ -1178,7 +1179,10 @@ export async function searchConnections(
       RdoValue.int(filters?.maxResults || 20),   // Count
       RdoValue.int(buildingX),                   // X
       RdoValue.int(buildingY),                   // Y
-      RdoValue.int(1),                           // SortMode (1=quality)
+      // SortMode: 1 = smPrice (delivered cost), 2 = smQuality — Cache/FluidLinks.pas:9-11.
+      // 1 is what Voyager emits (ObjectInspectorHandleViewer.pas:878). Anything else the
+      // WS layer sends collapses to 1; FindClients ignores the value (Cache/InputSearch.pas:90-96).
+      RdoValue.int(filters?.sortMode === 2 ? 2 : 1),   // SortMode
       // Role bitmask — TFacilityRole bits (WHGeneralSheet.pas:155), built by
       // `rolesToMask` (shared/connection-roles.ts). `??`, not `||`: a mask of 0
       // is "no box ticked", which is what Voyager's `byte([])` puts on the wire.

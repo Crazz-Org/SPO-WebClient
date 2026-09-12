@@ -265,3 +265,27 @@ describe('the town paper', () => {
       .toContain('newspaper-read');
   });
 });
+
+describe('route — the directory tree (#526)', () => {
+  it('routes the parser and the service to the one flow that walks the tree', () => {
+    const d = route(['src/server/search-menu-service.ts', 'src/server/search-menu-parser.ts']);
+    expect(d.required).toEqual([SPINE_FLOW, 'directory-browse']);
+  });
+
+  it('routes the directory page, its ref helper and the search store the same way', () => {
+    const d = route([
+      'src/client/components/search/DirectoryPage.tsx',
+      'src/client/components/search/directory-refs.ts',
+      'src/client/store/search-store.ts',
+    ]);
+    expect(d.required).toEqual([SPINE_FLOW, 'directory-browse']);
+  });
+
+  it('leaves the search WS handler routing as it was', () => {
+    const d = route(['src/server/ws-handlers/search-handlers.ts']);
+    expect(d.required).toEqual(expect.arrayContaining([
+      SPINE_FLOW, 'people-search', 'building-details', 'politics-read',
+    ]));
+    expect(d.required).not.toContain('directory-browse');
+  });
+});

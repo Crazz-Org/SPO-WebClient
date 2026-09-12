@@ -8,14 +8,23 @@ import type {
   WsRespSearchMenuTowns,
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuTycoonProfile,
+  WsRespSearchMenuTycoonFullProfile,
   WsRespSearchMenuRankings,
   WsRespSearchMenuRankingDetail,
   WsRespSearchMenuBanks,
   WsRespSearchMenuNewspapers,
+  DirectoryRef,
+  DirectoryPage,
   PeopleSearchMode,
 } from '@/shared/types';
 
-export type SearchPage = 'home' | 'towns' | 'people' | 'rankings' | 'ranking-detail' | 'banks' | 'tycoon-profile' | 'media';
+export type SearchPage = 'home' | 'towns' | 'people' | 'rankings' | 'ranking-detail' | 'banks' | 'tycoon-profile' | 'tycoon-full-profile' | 'media' | 'directory';
+
+/** One level of the directory descent. `page` is null until the gateway answers. */
+export interface DirectoryEntry {
+  ref: DirectoryRef;
+  page: DirectoryPage | null;
+}
 
 /**
  * The people search currently on screen. It lives in the store rather than in
@@ -42,8 +51,16 @@ interface SearchState {
   rankingsData: WsRespSearchMenuRankings | null;
   rankingDetailData: WsRespSearchMenuRankingDetail | null;
   tycoonProfileData: WsRespSearchMenuTycoonProfile | null;
+  /** The full curriculum page of whichever tycoon "Show Profile" was used on. */
+  tycoonFullProfileData: WsRespSearchMenuTycoonFullProfile | null;
   banksData: WsRespSearchMenuBanks | null;
   newspapersData: WsRespSearchMenuNewspapers | null;
+
+  /**
+   * The directory descent, deepest last. The whole descent is one entry of `pageHistory`,
+   * so `goBack` walks the stack before it leaves the directory.
+   */
+  directoryStack: DirectoryEntry[];
 
   // Actions
   navigateTo: (page: SearchPage) => void;
@@ -57,8 +74,11 @@ interface SearchState {
   setRankingDetailData: (data: WsRespSearchMenuRankingDetail) => void;
   clearRankingDetail: () => void;
   setTycoonProfileData: (data: WsRespSearchMenuTycoonProfile) => void;
+  setTycoonFullProfileData: (data: WsRespSearchMenuTycoonFullProfile) => void;
   setBanksData: (data: WsRespSearchMenuBanks) => void;
   setNewspapersData: (data: WsRespSearchMenuNewspapers) => void;
+  pushDirectory: (ref: DirectoryRef) => void;
+  setDirectoryPage: (ref: DirectoryRef, page: DirectoryPage) => void;
   reset: () => void;
 }
 
@@ -74,8 +94,10 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   rankingsData: null,
   rankingDetailData: null,
   tycoonProfileData: null,
+  tycoonFullProfileData: null,
   banksData: null,
   newspapersData: null,
+  directoryStack: [],
 
   navigateTo: (page) =>
     set((state) => ({
@@ -85,12 +107,21 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     })),
 
   goBack: () => {
-    const history = get().pageHistory;
+    const { pageHistory: history, currentPage, directoryStack } = get();
+
+    // Inside the directory, Back walks the descent first — the parent's page is still
+    // held, so stepping up costs no round-trip.
+    if (currentPage === 'directory' && directoryStack.length > 1) {
+      set({ directoryStack: directoryStack.slice(0, -1), isLoading: false });
+      return;
+    }
+
     if (history.length === 0) return;
     const previous = history[history.length - 1];
     set({
       currentPage: previous,
       pageHistory: history.slice(0, -1),
+      directoryStack: [],
     });
   },
 
@@ -103,8 +134,35 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   setRankingDetailData: (data) => set({ rankingDetailData: data, isLoading: false }),
   clearRankingDetail: () => set({ rankingDetailData: null }),
   setTycoonProfileData: (data) => set({ tycoonProfileData: data, isLoading: false }),
+  setTycoonFullProfileData: (data) => set({ tycoonFullProfileData: data, isLoading: false }),
   setBanksData: (data) => set({ banksData: data, isLoading: false }),
   setNewspapersData: (data) => set({ newspapersData: data, isLoading: false }),
+
+  pushDirectory: (ref) =>
+    set((state) => ({
+      currentPage: 'directory',
+      // The whole descent occupies one history slot: only the step that entered the
+      // directory is remembered, the levels below it live on directoryStack.
+      pageHistory: state.currentPage === 'directory'
+        ? state.pageHistory
+        : [...state.pageHistory, state.currentPage],
+      directoryStack: [...state.directoryStack, { ref, page: null }],
+      isLoading: true,
+    })),
+
+  setDirectoryPage: (ref, page) =>
+    set((state) => {
+      const top = state.directoryStack[state.directoryStack.length - 1];
+      // The reply echoes the ref this client built, so a JSON round-trip preserves key
+      // order. A reply for a level the user already left is dropped.
+      if (!top || JSON.stringify(top.ref) !== JSON.stringify(ref)) {
+        return { isLoading: false };
+      }
+      return {
+        directoryStack: [...state.directoryStack.slice(0, -1), { ref: top.ref, page }],
+        isLoading: false,
+      };
+    }),
 
   reset: () =>
     set({
@@ -118,7 +176,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       rankingsData: null,
       rankingDetailData: null,
       tycoonProfileData: null,
+      tycoonFullProfileData: null,
       banksData: null,
       newspapersData: null,
+      directoryStack: [],
     }),
 }));

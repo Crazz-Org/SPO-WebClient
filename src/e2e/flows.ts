@@ -24,7 +24,9 @@ import type {
   WsRespNewspaperIssues,
   WsRespPoliticsData,
   WsRespSearchMenuPeopleSearch,
+  WsRespSearchMenuDirectory,
 } from '../shared/types/message-types';
+import type { DirectoryRef, DirectoryPage } from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
@@ -780,6 +782,93 @@ const zoningAlertRead: Flow = {
   },
 };
 
+/** One page of the directory tree, by ref — the gateway rebuilds the legacy URL itself. */
+async function readDirectory(session: LiveSession, ref: DirectoryRef): Promise<DirectoryPage> {
+  const response = await session.driver.request<WsRespSearchMenuDirectory>(
+    { type: WsMessageType.REQ_SEARCH_MENU_DIRECTORY, ref },
+    WsMessageType.RESP_SEARCH_MENU_DIRECTORY,
+  );
+  return response.page;
+}
+
+/**
+ * The directory descent below the town list: town page -> Facilities -> a kind -> a
+ * facility card. Read-only, so no Survival-log probe (doc/E2E-POLICY.md §5 scopes the probe
+ * to mutations).
+ *
+ * An empty kind list or an empty facility list fails here rather than being excused as an
+ * environment quirk: Helartia is the primary account's own town and has facilities by
+ * construction.
+ */
+const directoryBrowse: Flow = {
+  name: 'directory-browse',
+  what: 'town list -> town page -> Facilities -> first kind -> first facility card',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      assertions.check(
+        'the town list carries the cache path — RenderTown.inc:6',
+        town.path !== '',
+        town.path || '(empty)',
+      );
+      if (town.path === '') return report('directory-browse', assertions, [], session);
+
+      const townPage = await readDirectory(session, {
+        kind: 'town', path: town.path, classId: town.classId,
+      });
+      assertions.check(
+        'the town page names the town, not Unknown Town',
+        townPage.kind === 'town' && townPage.town.name === GOVERNED_TOWN,
+        townPage.kind === 'town' ? townPage.town.name : townPage.kind,
+      );
+      if (townPage.kind !== 'town' || townPage.town.name !== GOVERNED_TOWN) {
+        return report('directory-browse', assertions, [], session);
+      }
+
+      const facilities = await readDirectory(session, { kind: 'town-facilities', town: town.name });
+      const kinds = facilities.kind === 'folder' ? facilities.items : [];
+      assertions.check('the town lists at least one facility kind', kinds.length > 0, `${kinds.length} kinds`);
+      if (kinds.length === 0) return report('directory-browse', assertions, [], session);
+
+      const folder = await readDirectory(session, {
+        kind: 'town-facility-kind', town: town.name, facKind: kinds[0],
+      });
+      const rows = folder.kind === 'facility-list' ? folder.facilities : [];
+      assertions.check(`"${kinds[0]}" lists at least one facility`, rows.length > 0, `${rows.length} rows`);
+      assertions.check(
+        'every row names the owning company — BrowseTownFacFolder.asp:53 ShowCompany = true',
+        rows.length > 0 && rows.every(r => r.company !== null),
+        rows.filter(r => r.company === null).length + ' rows without a company',
+      );
+      if (rows.length === 0) return report('directory-browse', assertions, [], session);
+
+      const card = await readDirectory(session, {
+        kind: 'facility', path: rows[0].path, name: rows[0].itemName,
+      });
+      const facility = card.kind === 'facility' ? card.facility : null;
+      assertions.check('the facility card resolved', facility !== null, rows[0].name);
+      if (facility) {
+        assertions.check('the card names the facility', facility.name !== '', facility.name);
+        assertions.check('the card names its company', facility.company !== '', facility.company);
+        assertions.check('the card carries a net profit', facility.netProfitText !== '', facility.netProfitText);
+        assertions.check(
+          'ROI is one of the three legacy forms — OpenFacility.asp:64-72',
+          /^(Already\.|.+ years\.|Never\.)$/.test(facility.roiText),
+          facility.roiText || '(empty)',
+        );
+      }
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('directory-browse', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   politicsRead,
@@ -792,6 +881,7 @@ export const FLOWS: Flow[] = [
   peopleSearch,
   newspaperRead,
   zoningAlertRead,
+  directoryBrowse,
 ];
 
 export function flowByName(name: string): Flow {

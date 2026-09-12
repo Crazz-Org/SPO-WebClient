@@ -1,6 +1,7 @@
 import { AuthError } from '../../shared/auth-error';
+import { AccountStatusError } from '../../shared/account-status';
 import * as ErrorCodes from '../../shared/error-codes';
-import { getErrorMessage } from '../../shared/error-codes';
+import { getDirectoryErrorMessage } from '../../shared/directory-error-codes';
 import { toErrorMessage } from '../../shared/error-utils';
 import {
   WsMessageType,
@@ -35,7 +36,9 @@ export const handleAuthCheck: WsHandler = async (ctx: WsHandlerContext, msg: WsM
     sendResponse(ctx.ws, response);
   } catch (err: unknown) {
     if (err instanceof AuthError) {
-      sendError(ctx.ws, msg.wsRequestId, getErrorMessage(err.authCode), err.authCode);
+      // `authCode` comes from RDOLogonUser: it is a DIR_* code
+      // (DirectoryServerProtocol.pas:9-20), not an ERROR_* one.
+      sendError(ctx.ws, msg.wsRequestId, getDirectoryErrorMessage(err.authCode), err.authCode);
     } else {
       throw err;
     }
@@ -74,12 +77,22 @@ export const handleLoginWorld: WsHandler = async (ctx: WsHandlerContext, msg: Ws
     return;
   }
 
+  // The language the player picked travels with the login and stays on the session: it is the
+  // SetLanguage argument and the `LangId` on every ASP fetch, including after a reconnection.
+  ctx.session.setLanguageId(req.languageId);
+
   let result;
   try {
     result = await ctx.session.loginWorld(req.username, req.password, worldInfo);
   } catch (err: unknown) {
     // Reset session phase so the client can retry REQ_LOGIN_WORLD
     try { await ctx.session.cleanupWorldSession(); } catch { /* best-effort */ }
+    if (err instanceof AccountStatusError) {
+      // A world-side refusal (InterfaceServer.pas:3131-3168). Rendered here because the
+      // router (server.ts:1221-1229) would otherwise mask it as "Internal server error".
+      sendError(ctx.ws, msg.wsRequestId, err.message, err.code);
+      return;
+    }
     throw err;
   }
   const response: WsRespLoginSuccess = {
@@ -92,6 +105,8 @@ export const handleLoginWorld: WsHandler = async (ctx: WsHandlerContext, msg: Ws
     worldXSize: result.worldXSize ?? undefined,
     worldYSize: result.worldYSize ?? undefined,
     worldSeason: result.worldSeason ?? undefined,
+    ...(result.loginPage ? { loginPage: result.loginPage } : {}),
+    ...(result.admission ? { admission: result.admission } : {}),
   };
   sendResponse(ctx.ws, response);
 };

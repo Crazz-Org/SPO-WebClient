@@ -11,8 +11,9 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import type { WebSocket } from 'ws';
 import { WsMessageType, type WsMessage } from '../../../shared/types';
-import { handleNewspaperIssues, handleNewspaperIssue } from '../newspaper-handlers';
+import { handleNewspaperIssues, handleNewspaperIssue, handleNewspaperPost } from '../newspaper-handlers';
 import type { NewspaperTarget } from '../../session/newspaper-handler';
+import type { NewspaperRatingEntry } from '../../../shared/types';
 import type { WsHandlerContext } from '../types';
 
 const TARGET: NewspaperTarget = {
@@ -34,6 +35,8 @@ const ISSUE = {
   error: '',
 };
 
+const POSTED = { success: true, message: 'Column published', board: null };
+
 function createCtx() {
   const sent: Array<Record<string, unknown>> = [];
   const ws = {
@@ -44,13 +47,17 @@ function createCtx() {
 
   const getNewspaperIssues = jest.fn(async (_target: NewspaperTarget) => LIST);
   const getNewspaperIssue = jest.fn(async (_target: NewspaperTarget, _folder: string) => ISSUE);
+  const postNewspaperColumn = jest.fn(async (
+    _target: NewspaperTarget, _subject: string, _body: string,
+    _replyToPath?: string, _ratings?: NewspaperRatingEntry[],
+  ) => POSTED);
 
   const ctx = {
     ws,
-    session: { getNewspaperIssues, getNewspaperIssue },
+    session: { getNewspaperIssues, getNewspaperIssue, postNewspaperColumn },
   } as unknown as WsHandlerContext;
 
-  return { ctx, sent, getNewspaperIssues, getNewspaperIssue };
+  return { ctx, sent, getNewspaperIssues, getNewspaperIssue, postNewspaperColumn };
 }
 
 describe('handleNewspaperIssues', () => {
@@ -91,5 +98,52 @@ describe('handleNewspaperIssue', () => {
       wsRequestId: '43',
       issue: ISSUE,
     }]);
+  });
+});
+
+describe('handleNewspaperPost', () => {
+  // The ratings are not part of the target either: the target names the paper,
+  // the ratings are what the column carries (`boardmsg.asp:96-143`).
+  it('passes the ratings block behind the reply path and echoes the result back', async () => {
+    const { ctx, sent, postNewspaperColumn } = createCtx();
+    const ratings = [
+      { id: '41123456', name: 'Taxation', value: 80 },
+      { id: '41123457', name: 'Public Works', value: 40 },
+    ];
+
+    await handleNewspaperPost(ctx, {
+      type: WsMessageType.REQ_NEWSPAPER_POST,
+      wsRequestId: '44',
+      ...TARGET,
+      subject: 'Taxes are too high',
+      body: 'Lower them.',
+      replyToPath: 'm1.five',
+      ratings,
+    } as unknown as WsMessage);
+
+    expect(postNewspaperColumn).toHaveBeenCalledWith(
+      TARGET, 'Taxes are too high', 'Lower them.', 'm1.five', ratings,
+    );
+    expect(sent).toEqual([{
+      type: WsMessageType.RESP_NEWSPAPER_POST,
+      wsRequestId: '44',
+      success: true,
+      message: 'Column published',
+      board: null,
+    }]);
+  });
+
+  it('a plain column carries no ratings', async () => {
+    const { ctx, postNewspaperColumn } = createCtx();
+
+    await handleNewspaperPost(ctx, {
+      type: WsMessageType.REQ_NEWSPAPER_POST,
+      wsRequestId: '45',
+      ...TARGET,
+      subject: 'S',
+      body: 'B',
+    } as unknown as WsMessage);
+
+    expect(postNewspaperColumn).toHaveBeenCalledWith(TARGET, 'S', 'B', undefined, undefined);
   });
 });

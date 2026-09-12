@@ -24,6 +24,8 @@ import {
 import type {
   WorldInfo,
   CompanyInfo,
+  LoginPageOutcome,
+  WorldAdmission,
   BuildingFocusInfo,
   BuildingDetailsResponse,
   TycoonProfileFull,
@@ -38,6 +40,7 @@ import type {
   BankActionType,
   AutoConnectionActionType,
   CurriculumActionType,
+  NewspaperRatingEntry,
 } from '@/shared/types';
 import { CLUSTER_IDS } from '@/shared/cluster-data';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
@@ -66,10 +69,13 @@ import {
   type WsRespSearchMenuTowns,
   type WsRespSearchMenuPeopleSearch,
   type WsRespSearchMenuTycoonProfile,
+  type WsRespSearchMenuTycoonFullProfile,
   type WsRespSearchMenuRankings,
   type WsRespSearchMenuRankingDetail,
   type WsRespSearchMenuBanks,
   type WsRespSearchMenuNewspapers,
+  type WsRespSearchMenuDirectory,
+  type DirectoryRef,
   type WsRespPoliticsData,
   type WsRespNewspaperBoard,
   type WsRespNewspaperPost,
@@ -203,7 +209,7 @@ export interface ClientCallbacks {
   onBuildingAction: (actionId: string, rowData?: Record<string, string>) => void;
   onCloneFacility: (x: number, y: number, options: number) => void;
   onSearchConnections: (x: number, y: number, fluidId: string, fluidName: string, direction: 'input' | 'output') => void;
-  onConnectionSearch: (buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters: { company?: string; town?: string; maxResults?: number; roles?: number }) => void;
+  onConnectionSearch: (buildingX: number, buildingY: number, fluidId: string, direction: 'input' | 'output', filters: { company?: string; town?: string; maxResults?: number; roles?: number; sortMode?: number }) => void;
 
   // Research / Inventions
   onResearchLoadInventory: (buildingX: number, buildingY: number, categoryIndex: number) => void;
@@ -226,10 +232,12 @@ export interface ClientCallbacks {
   onSearchMenuTowns: () => void;
   onSearchMenuPeopleSearch: (searchStr: string, mode?: PeopleSearchMode) => void;
   onSearchMenuTycoonProfile: (tycoonName: string) => void;
+  onSearchMenuTycoonFullProfile: (tycoonName: string) => void;
   onSearchMenuRankings: () => void;
   onSearchMenuRankingDetail: (rankingPath: string) => void;
   onSearchMenuBanks: () => void;
   onSearchMenuNewspapers: () => void;
+  onSearchMenuDirectory: (ref: DirectoryRef) => void;
 
   // Profile tabs
   onProfileCurriculum: () => void;
@@ -258,7 +266,9 @@ export interface ClientCallbacks {
 
   // Newspaper
   onRequestNewspaperBoard: (path?: string) => void;
-  onPostNewspaperColumn: (subject: string, body: string, replyToPath?: string) => void;
+  onPostNewspaperColumn: (
+    subject: string, body: string, replyToPath?: string, ratings?: NewspaperRatingEntry[],
+  ) => void;
   onRequestNewspaperIssues: () => void;
   onRequestNewspaperIssue: (folder: string) => void;
 
@@ -400,8 +410,12 @@ export const ClientBridge = {
     useGameStore.getState().setLoginWorlds(worlds);
   },
 
-  showCompanies(companies: CompanyInfo[]): void {
-    useGameStore.getState().setLoginCompanies(companies);
+  showCompanies(companies: CompanyInfo[], admission?: WorldAdmission): void {
+    useGameStore.getState().setLoginCompanies(companies, admission);
+  },
+
+  showLoginPage(page: LoginPageOutcome): void {
+    useGameStore.getState().setLoginPage(page);
   },
 
   setLoginLoading(loading: boolean): void {
@@ -760,6 +774,9 @@ export const ClientBridge = {
       case WsMessageType.RESP_SEARCH_MENU_TYCOON_PROFILE:
         search.setTycoonProfileData(msg as WsRespSearchMenuTycoonProfile);
         break;
+      case WsMessageType.RESP_SEARCH_MENU_TYCOON_FULL_PROFILE:
+        search.setTycoonFullProfileData(msg as WsRespSearchMenuTycoonFullProfile);
+        break;
       case WsMessageType.RESP_SEARCH_MENU_RANKINGS:
         search.setRankingsData(msg as WsRespSearchMenuRankings);
         break;
@@ -772,6 +789,11 @@ export const ClientBridge = {
       case WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS:
         search.setNewspapersData(msg as WsRespSearchMenuNewspapers);
         break;
+      case WsMessageType.RESP_SEARCH_MENU_DIRECTORY: {
+        const directory = msg as WsRespSearchMenuDirectory;
+        search.setDirectoryPage(directory.ref, directory.page);
+        break;
+      }
     }
   },
 

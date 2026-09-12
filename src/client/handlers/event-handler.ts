@@ -309,10 +309,12 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     case WsMessageType.RESP_SEARCH_MENU_TOWNS:
     case WsMessageType.RESP_SEARCH_MENU_PEOPLE_SEARCH:
     case WsMessageType.RESP_SEARCH_MENU_TYCOON_PROFILE:
+    case WsMessageType.RESP_SEARCH_MENU_TYCOON_FULL_PROFILE:
     case WsMessageType.RESP_SEARCH_MENU_RANKINGS:
     case WsMessageType.RESP_SEARCH_MENU_RANKING_DETAIL:
     case WsMessageType.RESP_SEARCH_MENU_BANKS:
     case WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS:
+    case WsMessageType.RESP_SEARCH_MENU_DIRECTORY:
       ClientBridge.handleSearchMenuResponse(msg);
       break;
 
