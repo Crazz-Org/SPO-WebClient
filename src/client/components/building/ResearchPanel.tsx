@@ -98,11 +98,22 @@ export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
   }, [tabLabels, research?.inventoryByCategory]);
 
   // Merge + group items for current category
-  const groups = useMemo(() => {
-    if (!inventory) return null;
-    const merged = mergeAndSortInventions(inventory);
-    return groupInventionsByParent(merged);
-  }, [inventory]);
+  const merged = useMemo(
+    () => (inventory ? mergeAndSortInventions(inventory) : null),
+    [inventory],
+  );
+
+  const groups = useMemo(
+    () => (merged ? groupInventionsByParent(merged) : null),
+    [merged],
+  );
+
+  // The name the clicked row showed — already in memory from the inventory
+  // response (enriched server-side from research.0.dat). No extra request.
+  const selectedName = useMemo(
+    () => merged?.find((i) => i.inventionId === selectedId)?.name ?? null,
+    [merged, selectedId],
+  );
 
   return (
     <div className={styles.panel}>
@@ -144,6 +155,7 @@ export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
       {selectedId && (
         <DetailPanel
           inventionId={selectedId}
+          inventionName={selectedName}
           details={details}
           isLoading={isLoadingDetails}
         />
@@ -319,10 +331,12 @@ function InventionRow({
 
 function DetailPanel({
   inventionId,
+  inventionName,
   details,
   isLoading,
 }: {
   inventionId: string;
+  inventionName: string | null;
   details: ResearchInventionDetails | null;
   isLoading: boolean;
 }) {
@@ -342,7 +356,7 @@ function DetailPanel({
 
   return (
     <div className={styles.detailPanel}>
-      <div className={styles.detailHeader}>{details.inventionId}</div>
+      <div className={styles.detailHeader}>{inventionName || inventionId}</div>
       {details.properties && (
         <div className={styles.detailProperties}>{details.properties}</div>
       )}
