@@ -26,6 +26,12 @@ export interface MinimapRendererAPI {
   getAllBuildings?(): MapBuilding[];
   /** False when the block holding tile (x, y) was never loaded by this player (optional — the docked minimap does not fog). */
   isTileExplored?(x: number, y: number): boolean;
+  /** Every road tile loaded so far (optional — the docked minimap does not draw it). */
+  getRoadTileCoords?(): Array<{ x: number; y: number }>;
+  /** Every concrete tile loaded so far (optional — the docked minimap does not draw it). */
+  getConcreteTileCoords?(): Array<{ x: number; y: number }>;
+  /** The currently selected building, or null (optional — the docked minimap has no selection marker). */
+  getSelectedBuilding?(): MapBuilding | null;
 }
 
 /** Max colormap resolution (tiles per side). */

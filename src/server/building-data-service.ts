@@ -40,6 +40,8 @@ export interface FacilityDimensions {
   constructionTextureFilename?: string;
   animated?: boolean;
   animArea?: { left: number; top: number; right: number; bottom: number };
+  /** `[General] Zone` (`MapTypes.pas:157`) — the minimap's class colour, `Map.pas:7566-7576`. */
+  zoneType?: number;
   /**
    * The class's ambience entry — `Sounds[0]` of the `[Sounds]` section, the entry Voyager's
    * TStaticBuildingSoundTarget voices (Map.pas:8389). Absent for a silent or
@@ -255,6 +257,7 @@ export class BuildingDataService implements Service {
       constructionTextureFilename: building.constructionTextureFilename,
       animated: building.animated,
       animArea: building.animArea,
+      zoneType: building.zoneType,
       sound: BuildingDataService.projectAmbience(building.soundData),
     };
   }

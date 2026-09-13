@@ -303,6 +303,8 @@ export interface FacilityDimensions {
   constructionTextureFilename?: string;  // Construction state texture filename
   animated?: boolean;         // Whether sprite has animation frames (from CLASSES.BIN)
   animArea?: { left: number; top: number; right: number; bottom: number };  // Animation sub-region
+  /** `[General] Zone` (`MapTypes.pas:157`) — the minimap's class colour, `Map.pas:7566-7576`. */
+  zoneType?: number;
   /**
    * The class's ambience entry — `Sounds[0]` of the CLASSES.BIN `[Sounds]` section, the
    * entry Voyager's TStaticBuildingSoundTarget voices (Map.pas:8389). Absent when the

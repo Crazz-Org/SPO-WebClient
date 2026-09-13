@@ -424,3 +424,36 @@ describe('getFacility() — ambience projection', () => {
     expect(facility!.sound).toBeUndefined();
   });
 });
+
+/**
+ * The `[General] Zone` projection — the minimap's class colour (issue #601). Seeded straight
+ * into the cache, same as the ambience block above, so the check does not depend on
+ * CLASSES.BIN being present.
+ */
+describe('getFacility() — zone projection', () => {
+  function serviceWithZone(zoneType: number | undefined): BuildingDataService {
+    const service = new BuildingDataService();
+    const cache = (service as unknown as { cacheByVisualClass: Map<string, BuildingData> })
+      .cacheByVisualClass;
+    cache.set('700', {
+      visualClass: '700',
+      name: 'Farm',
+      xsize: 2,
+      ysize: 2,
+      textureFilename: 'MapFarm.gif',
+      baseVisualClass: '700',
+      visualStages: 0,
+      constructionTextureFilename: 'Construction128.gif',
+      zoneType,
+    });
+    return service;
+  }
+
+  it('carries the zone type through to FacilityDimensions', () => {
+    expect(serviceWithZone(6).getFacility('700')!.zoneType).toBe(6);
+  });
+
+  it('leaves zoneType undefined when the class has none', () => {
+    expect(serviceWithZone(undefined).getFacility('700')!.zoneType).toBeUndefined();
+  });
+});
