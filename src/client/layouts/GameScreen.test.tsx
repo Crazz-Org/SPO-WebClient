@@ -8,6 +8,7 @@ import { GameScreen } from './GameScreen';
 jest.mock('../components/hud', () => ({
   StatusPill: () => <header>PILL</header>,
   CommandBar: () => <nav>COMMANDBAR</nav>,
+  ContextStatusStrip: () => <div>CONTEXTSTATUS</div>,
   RightRail: () => <nav>RIGHTRAIL</nav>,
   VersionBadge: () => null,
 }));
@@ -31,6 +32,7 @@ describe('GameScreen', () => {
     renderWithProviders(<GameScreen />);
     expect(screen.getByText('SHEET')).toBeTruthy();
     expect(screen.getByText('COMMANDBAR')).toBeTruthy();
+    expect(screen.getByText('CONTEXTSTATUS')).toBeTruthy();
     expect(screen.getByText('PILL')).toBeTruthy();
     // The chase badge is mounted on the root screen, so it is reachable on
     // desktop and mobile alike without touching MobileShell.

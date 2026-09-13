@@ -13,3 +13,4 @@ export * as roadHandler from './road-handler';
 export * as zoneHandler from './zone-handler';
 export * as buildMenuHandler from './build-menu-handler';
 export * as mapHandler from './map-handler';
+export * as contextStatusHandler from './context-status-handler';

@@ -190,6 +190,9 @@ export type {
   WsRespBuildingPlaced,
   WsRespSurfaceData,
   WsRespAllFacilityDimensions,
+  // Context status — the town sentence under the camera
+  WsReqContextStatus,
+  WsRespContextStatus,
   // Building details messages
   WsReqBuildingDetails,
   WsRespBuildingDetails,

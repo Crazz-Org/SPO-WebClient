@@ -12,7 +12,7 @@ import type { WsHandler } from './types';
 import { handleAuthCheck, handleConnectDirectory, handleLoginWorld, handleSelectCompany, handleSwitchCompany, handleLogout } from './auth-handlers';
 
 // Map & camera
-import { handleMapLoad, handleUpdateCamera, handleGetSurface, handleGetAllFacilityDimensions } from './map-handlers';
+import { handleMapLoad, handleUpdateCamera, handleGetSurface, handleContextStatus, handleGetAllFacilityDimensions } from './map-handlers';
 
 // Chat
 import { handleChatGetUsers, handleChatGetChannels, handleChatGetChannelInfo, handleChatJoinChannel, handleChatSendMessage, handleChatTypingStatus, handleChatChase, handleChatStopChase, handleGmChatSend } from './chat-handlers';
@@ -57,6 +57,7 @@ export const wsHandlerRegistry: Partial<Record<WsMessageType, WsHandler>> = {
   [WsMessageType.REQ_MAP_LOAD]: handleMapLoad,
   [WsMessageType.REQ_UPDATE_CAMERA]: handleUpdateCamera,
   [WsMessageType.REQ_GET_SURFACE]: handleGetSurface,
+  [WsMessageType.REQ_CONTEXT_STATUS]: handleContextStatus,
   [WsMessageType.REQ_GET_ALL_FACILITY_DIMENSIONS]: handleGetAllFacilityDimensions,
 
   // Chat
