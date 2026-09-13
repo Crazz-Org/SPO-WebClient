@@ -67,6 +67,15 @@ describe('SettingsDialog', () => {
     fireEvent.click(sw);
     expect((screen.getByRole('switch', { name: 'Aircraft animations' }) as HTMLInputElement).checked).toBe(false);
   });
+
+  it("offers a Fade other players' buildings switch, checked by default, that flips on click", () => {
+    useUiStore.getState().openModal('settings');
+    renderWithProviders(<SettingsDialog />);
+    const sw = screen.getByRole('switch', { name: "Fade other players' buildings" }) as HTMLInputElement;
+    expect(sw.checked).toBe(true);
+    fireEvent.click(sw);
+    expect((screen.getByRole('switch', { name: "Fade other players' buildings" }) as HTMLInputElement).checked).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

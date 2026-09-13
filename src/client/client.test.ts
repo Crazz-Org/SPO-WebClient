@@ -7,9 +7,27 @@
  * with a fake `this` covering only the fields this method reads.
  */
 
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { StarpeaceClient } from './client';
 import { useUiStore } from './store/ui-store';
+import { useGameStore } from './store/game-store';
+
+const mockOwnTycoonRenderer = { setOwnTycoonId: jest.fn() };
+
+jest.mock('./ui/map-navigation-ui', () => ({
+  MapNavigationUI: jest.fn().mockImplementation(() => ({
+    init: jest.fn(() => Promise.resolve()),
+    getRenderer: () => mockOwnTycoonRenderer,
+    destroy: jest.fn(),
+  })),
+}));
+
+jest.mock('./ui/minimap-ui', () => ({
+  MinimapUI: jest.fn().mockImplementation(() => ({
+    setRenderer: jest.fn(),
+    destroy: jest.fn(),
+  })),
+}));
 
 const proto = StarpeaceClient.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
 
@@ -62,5 +80,60 @@ describe('setupGameUICallbacks — map context menu', () => {
     onMapContextMenu(120, 80);
 
     expect(useUiStore.getState().mapContextMenu).toBeNull();
+  });
+});
+
+describe('applySettings — renderer wiring', () => {
+  function makeRenderer() {
+    return {
+      setHideVegetationOnMove: jest.fn(),
+      setDebugMode: jest.fn(),
+      setVehicleAnimationsEnabled: jest.fn(),
+      setAircraftAnimationsEnabled: jest.fn(),
+      setGlassForeignBuildings: jest.fn(),
+    };
+  }
+
+  it.each([true, false])('wires glassForeignBuildings = %s to the renderer and persists it', (glassForeignBuildings) => {
+    const renderer = makeRenderer();
+    const mapNavigationUI = { getRenderer: () => renderer };
+    const fake = {
+      mapNavigationUI,
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      minimapUI: null,
+    };
+    const settings = { ...useGameStore.getState().settings, glassForeignBuildings };
+
+    (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
+
+    expect(renderer.setGlassForeignBuildings).toHaveBeenCalledWith(glassForeignBuildings);
+  });
+});
+
+describe('switchToGameView — own tycoon id wiring', () => {
+  afterEach(() => {
+    jest.clearAllTimers();
+  });
+
+  it("passes the game store's tycoonId to the freshly built renderer", async () => {
+    jest.useFakeTimers();
+    useGameStore.getState().setCredentials('SPO_test3', '7');
+
+    const fake = {
+      uiGamePanel: { style: {} },
+      mapNavigationUI: null,
+      minimapUI: null,
+      currentWorldName: 'planitia',
+      storedUsername: 'SPO_test3',
+      viewportHeartbeatTimer: undefined,
+      setupGameUICallbacks: jest.fn(),
+      sendCameraPositionNow: jest.fn(),
+      applySettings: jest.fn(),
+    };
+
+    await (proto.switchToGameView as (this: typeof fake) => Promise<void>).call(fake);
+
+    expect(mockOwnTycoonRenderer.setOwnTycoonId).toHaveBeenCalledWith('7');
+    jest.useRealTimers();
   });
 });

@@ -102,6 +102,11 @@ export function SettingsDialog() {
               onChange={(v) => handleSettingChange({ aircraftAnimations: v })}
             />
             <ToggleRow
+              label="Fade other players' buildings"
+              checked={settings.glassForeignBuildings}
+              onChange={(v) => handleSettingChange({ glassForeignBuildings: v })}
+            />
+            <ToggleRow
               label="Debug overlay"
               checked={settings.isDebugOverlay}
               onChange={(v) => handleSettingChange({ isDebugOverlay: v })}
