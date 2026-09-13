@@ -64,6 +64,8 @@ export interface MapLoadingState {
 export interface GameSettings {
   isVegetationHiddenOnMove: boolean;
   vehicleAnimations: boolean;
+  /** Legacy 'ShowPlanes', default on — OptionsHandlerViewer.pas:512. */
+  aircraftAnimations: boolean;
   isSoundEnabled: boolean;
   soundVolume: number;
   isDebugOverlay: boolean;
@@ -75,6 +77,7 @@ export interface GameSettings {
 const DEFAULT_SETTINGS: GameSettings = {
   isVegetationHiddenOnMove: false,
   vehicleAnimations: true,
+  aircraftAnimations: true,
   isSoundEnabled: true,
   soundVolume: 0.5,
   isDebugOverlay: false,

@@ -58,6 +58,15 @@ describe('SettingsDialog', () => {
     fireEvent.click(sw);
     expect((screen.getByRole('switch', { name: 'Vehicle animations' }) as HTMLInputElement).checked).toBe(!before);
   });
+
+  it('offers an Aircraft animations switch, checked by default, that flips on click', () => {
+    useUiStore.getState().openModal('settings');
+    renderWithProviders(<SettingsDialog />);
+    const sw = screen.getByRole('switch', { name: 'Aircraft animations' }) as HTMLInputElement;
+    expect(sw.checked).toBe(true);
+    fireEvent.click(sw);
+    expect((screen.getByRole('switch', { name: 'Aircraft animations' }) as HTMLInputElement).checked).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
