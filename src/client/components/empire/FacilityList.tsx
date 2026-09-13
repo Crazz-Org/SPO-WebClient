@@ -15,12 +15,13 @@
  * distinction, the client moves links only.
  */
 
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState, type KeyboardEvent } from 'react';
 import { useUiStore } from '../../store/ui-store';
 import { useBuildingStore } from '../../store/building-store';
 import { useMapStore } from '../../store/map-store';
 import { useEmpireStore } from '../../store/empire-store';
 import { useClient } from '../../context';
+import { isTextInput } from '../../hooks/useKeyboardShortcuts';
 import type { FavoritesItem } from '@/shared/types';
 import { flattenFolders } from '@/shared/favorites-tree';
 import { classifyFacilities } from './facility-status';
@@ -52,6 +53,8 @@ interface FacilityRowProps {
   hasFolders: boolean;
   /** Every folder the item can move into — the folder it already sits in is excluded. */
   folderOptions: { path: string; label: string }[];
+  selected: boolean;
+  onToggleSelect: (item: FavoritesItem) => void;
   onClick: (facility: FavoritesItem) => void;
   onRename: (facility: FavoritesItem, name: string) => void;
   onRemove: (facility: FavoritesItem) => void;
@@ -65,7 +68,8 @@ const DOT_CLASS: Record<FacilityState, string> = {
 };
 
 const FacilityRow = memo(function FacilityRow({
-  facility, state, parentName, hasFolders, folderOptions, onClick, onRename, onRemove, onMove,
+  facility, state, parentName, hasFolders, folderOptions, selected, onToggleSelect,
+  onClick, onRename, onRemove, onMove,
 }: FacilityRowProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(facility.name);
@@ -107,6 +111,13 @@ const FacilityRow = memo(function FacilityRow({
 
   return (
     <div className={styles.row}>
+      <input
+        type="checkbox"
+        className={styles.rowCheckbox}
+        checked={selected}
+        aria-label={`Select ${facility.name}`}
+        onChange={() => onToggleSelect(facility)}
+      />
       <button
         className={styles.rowMain}
         onClick={() => onClick(facility)}
@@ -167,11 +178,15 @@ const FacilityRow = memo(function FacilityRow({
 interface FolderRowProps {
   folder: FavoritesItem;
   depth: number;
+  selected: boolean;
+  onToggleSelect: (item: FavoritesItem) => void;
   onRename: (folder: FavoritesItem, name: string) => void;
   onRemove: (folder: FavoritesItem) => void;
 }
 
-const FolderRow = memo(function FolderRow({ folder, depth, onRename, onRemove }: FolderRowProps) {
+const FolderRow = memo(function FolderRow({
+  folder, depth, selected, onToggleSelect, onRename, onRemove,
+}: FolderRowProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(folder.name);
   const count = folder.children?.length ?? 0;
@@ -223,6 +238,13 @@ const FolderRow = memo(function FolderRow({ folder, depth, onRename, onRemove }:
 
   return (
     <div className={styles.row} style={{ paddingLeft: depth * 16 }}>
+      <input
+        type="checkbox"
+        className={styles.rowCheckbox}
+        checked={selected}
+        aria-label={`Select ${folder.name}`}
+        onChange={() => onToggleSelect(folder)}
+      />
       <div className={styles.rowLeft}>
         <span className={styles.name}>📁 {folder.name}</span>
         <span className={styles.category}>{count} item{count === 1 ? '' : 's'}</span>
@@ -258,6 +280,7 @@ export function FacilityList({ facilities }: FacilityListProps) {
   const source = useMapStore((s) => s.source);
   const tree = useEmpireStore((s) => s.tree);
   const client = useClient();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const folders = useMemo(() => flattenFolders(tree), [tree]);
   const folderNameByPath = useMemo(
@@ -296,6 +319,53 @@ export function FacilityList({ facilities }: FacilityListProps) {
     client.onRemoveFavorite(folder.path, folder.name);
   }, [client]);
 
+  const handleToggleSelect = useCallback((item: FavoritesItem) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(item.path)) next.delete(item.path);
+      else next.add(item.path);
+      return next;
+    });
+  }, []);
+
+  // Deriving the selection from the current tree/facilities means a path the
+  // refetch no longer returns silently drops out — no stale entry is ever re-sent.
+  const visibleSelection = useMemo(() => {
+    const all = [...facilities, ...folders.map(({ folder }) => folder)];
+    return all.filter((item) => selected.has(item.path)).map(({ path, name }) => ({ path, name }));
+  }, [facilities, folders, selected]);
+
+  const anySelectedIsFolder = useMemo(
+    () => folders.some(({ folder }) => selected.has(folder.path)),
+    [folders, selected],
+  );
+
+  const requestRemoveSelected = useCallback(() => {
+    const items = visibleSelection;
+    if (items.length === 0) return;
+    useUiStore.getState().requestConfirm(
+      'Remove from list',
+      `Remove ${items.length} item${items.length === 1 ? '' : 's'} from your list?` +
+        (anySelectedIsFolder ? ' A folder goes with everything inside it.' : ''),
+      () => { client.onRemoveFavorites(items); setSelected(new Set()); },
+    );
+  }, [visibleSelection, anySelectedIsFolder, client]);
+
+  const handleListKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    const isCheckbox = e.target instanceof HTMLInputElement && e.target.type === 'checkbox';
+    if (isTextInput(e.target) && !isCheckbox) return;
+
+    if (e.key === 'Delete' && selected.size > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      requestRemoveSelected();
+    } else if (e.key === 'Escape' && selected.size > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      setSelected(new Set());
+    }
+  }, [selected, requestRemoveSelected]);
+
   const handleNewFolder = useCallback(() => {
     useUiStore.getState().requestPrompt('New folder', 'Name:', (name) => {
       const trimmed = name.trim();
@@ -322,6 +392,8 @@ export function FacilityList({ facilities }: FacilityListProps) {
       parentName={folderNameByPath.get(parentPathOf(f.path))}
       hasFolders={folders.length > 0}
       folderOptions={folderOptionsFor(f)}
+      selected={selected.has(f.path)}
+      onToggleSelect={handleToggleSelect}
       onClick={handleClick}
       onRename={handleRename}
       onRemove={handleRemove}
@@ -332,8 +404,25 @@ export function FacilityList({ facilities }: FacilityListProps) {
   const isEmpty = facilities.length === 0 && folders.length === 0;
 
   return (
-    <div className={styles.list}>
+    <div className={styles.list} tabIndex={-1} onKeyDown={handleListKeyDown}>
       <div className={styles.listHead}>
+        {visibleSelection.length > 0 && (
+          <div className={styles.selectBar}>
+            <span className={styles.selectCount}>{visibleSelection.length} selected</span>
+            <button
+              className={styles.batchRemove}
+              onClick={requestRemoveSelected}
+            >
+              Remove selected ({visibleSelection.length})
+            </button>
+            <button
+              className={styles.newFolderButton}
+              onClick={() => setSelected(new Set())}
+            >
+              Clear selection
+            </button>
+          </div>
+        )}
         <button
           className={styles.newFolderButton}
           aria-label="New folder"
@@ -357,6 +446,8 @@ export function FacilityList({ facilities }: FacilityListProps) {
                   key={folder.id}
                   folder={folder}
                   depth={depth}
+                  selected={selected.has(folder.path)}
+                  onToggleSelect={handleToggleSelect}
                   onRename={handleFolderRename}
                   onRemove={handleFolderRemove}
                 />
