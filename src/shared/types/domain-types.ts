@@ -295,6 +295,7 @@ export interface FacilityDimensions {
   visualClass: string;        // Visual class identifier (matches ObjectsInArea response)
   name: string;               // Building name
   facid: string;              // Internal FacID
+  facId?: number;             // Numeric kind id from CLASSES.BIN [General] FacId — 0/absent = no kind
   xsize: number;              // Building width in tiles
   ysize: number;              // Building height in tiles
   level: number;              // Building level/tier
@@ -303,6 +304,12 @@ export interface FacilityDimensions {
   constructionTextureFilename?: string;  // Construction state texture filename
   animated?: boolean;         // Whether sprite has animation frames (from CLASSES.BIN)
   animArea?: { left: number; top: number; right: number; bottom: number };  // Animation sub-region
+}
+
+/** One facility kind the loaded world contains — the unit of the hide/show filter. */
+export interface FacilityKind {
+  facId: number;
+  label: string;
 }
 
 export interface ZoneOverlayState {

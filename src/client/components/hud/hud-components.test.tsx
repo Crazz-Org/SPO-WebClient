@@ -2,9 +2,9 @@
  * Smoke tests for HUD components (LeftRail, RightRail, InfoWidget, OverlayMenu).
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
-import { screen } from '@testing-library/react';
-import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { screen, fireEvent } from '@testing-library/react';
+import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useGameStore } from '../../store/game-store';
 import { LeftRail } from './LeftRail';
 import { RightRail } from './RightRail';
@@ -224,7 +224,13 @@ describe('InfoWidget', () => {
 });
 
 describe('OverlayMenu', () => {
-  beforeEach(resetStores);
+  beforeEach(() => {
+    resetStores();
+    useGameStore.setState({
+      facilityKinds: [],
+      settings: { ...useGameStore.getState().settings, hiddenFacIds: [] },
+    });
+  });
 
   it('renders overlay menu with categories', () => {
     renderWithProviders(<OverlayMenu />);
@@ -235,5 +241,64 @@ describe('OverlayMenu', () => {
     renderWithProviders(<OverlayMenu />);
     expect(screen.getByText('Special')).toBeTruthy();
     expect(screen.getByText('Environment')).toBeTruthy();
+  });
+
+  it('clicking a non-Zones overlay item selects it', () => {
+    const onSetOverlay = jest.fn();
+    renderWithProviders(<OverlayMenu />, { clientCallbacks: createSpiedCallbacks({ onSetOverlay }) });
+
+    // OVERLAY_LIST[0] is City Zones (handleToggleCityZones); [1] is Towns (handleSelect).
+    fireEvent.click(screen.getAllByRole('menuitem')[1]);
+
+    expect(onSetOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no facility kinds section when the world has published none', () => {
+    renderWithProviders(<OverlayMenu />);
+    expect(screen.queryByLabelText('Facility kinds')).toBeNull();
+  });
+
+  it('renders a checked checkbox per published kind', () => {
+    useGameStore.setState({ facilityKinds: [{ facId: 10, label: 'Headquarters' }, { facId: 46, label: 'Farm' }] });
+    renderWithProviders(<OverlayMenu />);
+    expect(screen.getByLabelText('Facility kinds')).toBeTruthy();
+    expect((screen.getByLabelText('Headquarters') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Farm') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('unchecking a kind calls onSettingsChange with it hidden and updates the store', () => {
+    useGameStore.setState({ facilityKinds: [{ facId: 10, label: 'Headquarters' }, { facId: 46, label: 'Farm' }] });
+    const onSettingsChange = jest.fn();
+    renderWithProviders(<OverlayMenu />, { clientCallbacks: createSpiedCallbacks({ onSettingsChange }) });
+
+    fireEvent.click(screen.getByLabelText('Farm'));
+
+    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ hiddenFacIds: [46] }));
+    expect(useGameStore.getState().settings.hiddenFacIds).toEqual([46]);
+  });
+
+  it('Hide all hides every published kind, Show all clears the hidden set', () => {
+    useGameStore.setState({ facilityKinds: [{ facId: 10, label: 'Headquarters' }, { facId: 46, label: 'Farm' }] });
+    renderWithProviders(<OverlayMenu />);
+
+    fireEvent.click(screen.getByText('Hide all'));
+    expect(useGameStore.getState().settings.hiddenFacIds).toEqual([10, 46]);
+
+    fireEvent.click(screen.getByText('Show all'));
+    expect(useGameStore.getState().settings.hiddenFacIds).toEqual([]);
+  });
+
+  it('renders an already-hidden kind unchecked and re-shows it on click', () => {
+    useGameStore.setState({
+      facilityKinds: [{ facId: 10, label: 'Headquarters' }],
+      settings: { ...useGameStore.getState().settings, hiddenFacIds: [10] },
+    });
+    renderWithProviders(<OverlayMenu />);
+
+    const checkbox = screen.getByLabelText('Headquarters') as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    fireEvent.click(checkbox);
+    expect(useGameStore.getState().settings.hiddenFacIds).toEqual([]);
   });
 });

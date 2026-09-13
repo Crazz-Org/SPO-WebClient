@@ -38,7 +38,10 @@ describe('setupGameUICallbacks — map context menu', () => {
 
   it('reads the tile anchor from the renderer and opens the ui-store menu', () => {
     const anchor = { tileX: 3, tileY: 4, layer: 'building' as const, visualClass: '100' };
-    const renderer = { getCanvasAnchorAt: jest.fn((_clientX: number, _clientY: number) => anchor) };
+    const renderer = {
+      getCanvasAnchorAt: jest.fn((_clientX: number, _clientY: number) => anchor),
+      setFacilityKindsChangedCallback: jest.fn(),
+    };
     const mapNavigationUI = {
       setOnLoadZone: jest.fn(),
       setOnViewportChanged: jest.fn(),
@@ -91,6 +94,7 @@ describe('applySettings — renderer wiring', () => {
       setVehicleAnimationsEnabled: jest.fn(),
       setAircraftAnimationsEnabled: jest.fn(),
       setGlassForeignBuildings: jest.fn(),
+      setHiddenFacIds: jest.fn(),
     };
   }
 
@@ -107,6 +111,21 @@ describe('applySettings — renderer wiring', () => {
     (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
 
     expect(renderer.setGlassForeignBuildings).toHaveBeenCalledWith(glassForeignBuildings);
+  });
+
+  it('wires hiddenFacIds to the renderer', () => {
+    const renderer = makeRenderer();
+    const mapNavigationUI = { getRenderer: () => renderer };
+    const fake = {
+      mapNavigationUI,
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      minimapUI: null,
+    };
+    const settings = { ...useGameStore.getState().settings, hiddenFacIds: [10, 46] };
+
+    (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
+
+    expect(renderer.setHiddenFacIds).toHaveBeenCalledWith([10, 46]);
   });
 });
 

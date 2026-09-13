@@ -43,6 +43,7 @@ import type {
   AutoConnectionActionType,
   CurriculumActionType,
   NewspaperRatingEntry,
+  FacilityKind,
 } from '@/shared/types';
 import { CLUSTER_IDS } from '@/shared/cluster-data';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
@@ -390,6 +391,11 @@ export const ClientBridge = {
 
   setActiveOverlay(overlay: SurfaceType | null): void {
     useGameStore.getState().setActiveOverlay(overlay);
+  },
+
+  /** The facility kinds the loaded world contains, published by the renderer once dimensions are known. */
+  setFacilityKinds(kinds: FacilityKind[]): void {
+    useGameStore.getState().setFacilityKinds(kinds);
   },
 
   // ---- Connection state ----

@@ -51,6 +51,7 @@ export type {
   BuildingInfo,
   SurfaceData,
   FacilityDimensions,
+  FacilityKind,
   ZoneOverlayState,
   BuildingPropertyValue,
   BuildingConnectionData,

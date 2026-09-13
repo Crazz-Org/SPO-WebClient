@@ -35,9 +35,11 @@ import {
   MapSegment,
   SurfaceData,
   FacilityDimensions,
+  FacilityKind,
   RoadDrawingState,
   ZONE_TYPES,
 } from '../../shared/types';
+import { collectFacilityKinds } from './facility-kinds';
 import {
   RoadsRendering,
   RoadBlockClassManager,
@@ -433,6 +435,7 @@ export class IsometricMapRenderer {
   private onPlacementValidityChange: ((valid: boolean) => void) | null = null;
   private prevPlacementInvalid: boolean = false;
   private onFetchFacilityDimensions: ((visualClass: string) => Promise<FacilityDimensions | null>) | null = null;
+  private onFacilityKindsChanged: ((kinds: FacilityKind[]) => void) | null = null;
   private onRoadSegmentComplete: ((x1: number, y1: number, x2: number, y2: number) => void) | null = null;
   private onCancelRoadDrawing: (() => void) | null = null;
   private onRoadDemolishClick: ((x: number, y: number) => void) | null = null;
@@ -548,6 +551,10 @@ export class IsometricMapRenderer {
   private glassForeignBuildings: boolean = true;
   /** The player's own tycoon id, 0 until login supplies one — 0 glasses nothing. */
   private ownTycoonId: number = 0;
+  /** Legacy fHiddenFacilities (Map.pas:547, tested at :5478): kinds whose buildings are not drawn. */
+  private hiddenFacIds: Set<number> = new Set();
+  /** Fingerprint of the last kinds list published, so the store is only written when it changes. */
+  private lastFacilityKindsKey: string = '';
   private animationLoopRunning: boolean = false;
   private hasAnimatedBuildings: boolean = false;
   private lastRenderTime: number = 0;
@@ -1585,7 +1592,19 @@ export class IsometricMapRenderer {
     // Preload building textures for all unique visual classes
     this.preloadBuildingTextures(buildings);
 
+    this.publishFacilityKinds();
+
     this.requestRender();
+  }
+
+  /** Derive the kinds the loaded world contains from allBuildings × the dimensions cache; publish only on change. */
+  private publishFacilityKinds(): void {
+    if (!this.onFacilityKindsChanged) return;
+    const kinds = collectFacilityKinds(this.allBuildings, (vc) => this.facilityDimensionsCache.get(vc));
+    const key = kinds.map((k) => `${k.facId}:${k.label}`).join('|');
+    if (key === this.lastFacilityKindsKey) return;
+    this.lastFacilityKindsKey = key;
+    this.onFacilityKindsChanged(kinds);
   }
 
   /**
@@ -3331,6 +3350,7 @@ export class IsometricMapRenderer {
     const margin = 10; // Generous margin for large buildings
     const visibleBuildings = this.allBuildings.filter(b => {
       const dims = this.facilityDimensionsCache.get(b.visualClass);
+      if (dims?.facId && this.hiddenFacIds.has(dims.facId)) return false; // hidden kind — legacy IsHidden, Map.pas:5478
       const bw = dims?.xsize || 1;
       const bh = dims?.ysize || 1;
       return b.x + bw > bounds.minJ - margin && b.x < bounds.maxJ + margin &&
@@ -5112,6 +5132,16 @@ export class IsometricMapRenderer {
   public setOwnTycoonId(tycoonId: string | undefined): void {
     this.ownTycoonId = parseInt(tycoonId || '0', 10) || 0;
     this.requestRender();
+  }
+
+  /** The persisted hidden-kind ids; anything that is not an array (a corrupt localStorage value) hides nothing. */
+  public setHiddenFacIds(facIds: number[]): void {
+    this.hiddenFacIds = new Set(Array.isArray(facIds) ? facIds : []);
+    this.requestRender();
+  }
+
+  public setFacilityKindsChangedCallback(callback: (kinds: FacilityKind[]) => void): void {
+    this.onFacilityKindsChanged = callback;
   }
 
   // =========================================================================

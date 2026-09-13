@@ -58,3 +58,30 @@
   background: var(--info);
   flex-shrink: 0;
 }
+
+.kinds {
+  padding: var(--space-2);
+}
+
+.kindActions {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-1);
+}
+
+.kindAction {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 0;
+}
+
+.kindAction:hover {
+  color: var(--text-primary);
+}
+
+.kindRow {
+  padding: var(--space-1) var(--space-2);
+}

@@ -847,6 +847,7 @@ export class StarpeaceClient implements ClientHandlerContext {
         renderer.setVehicleAnimationsEnabled(settings.vehicleAnimations);
         renderer.setAircraftAnimationsEnabled(settings.aircraftAnimations);
         renderer.setGlassForeignBuildings(settings.glassForeignBuildings);
+        renderer.setHiddenFacIds(settings.hiddenFacIds);
       }
     }
     this.soundManager.setEnabled(settings.isSoundEnabled);
@@ -901,6 +902,7 @@ export class StarpeaceClient implements ClientHandlerContext {
         setWorldToScreenCenteredFn((worldX, worldY, xsize, ysize) =>
           renderer.worldToScreenCentered(worldX, worldY, xsize, ysize)
         );
+        renderer.setFacilityKindsChangedCallback((kinds) => ClientBridge.setFacilityKinds(kinds));
       }
 
       this.mapNavigationUI.setOnFetchFacilityDimensions(async (visualClass) => {

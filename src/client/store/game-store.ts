@@ -4,7 +4,7 @@
  */
 
 import { create } from 'zustand';
-import type { CompanyInfo, WorldInfo, ClusterInfo, ClusterFacilityPreview, LoginPageOutcome, WorldAdmission } from '@/shared/types';
+import type { CompanyInfo, WorldInfo, ClusterInfo, ClusterFacilityPreview, LoginPageOutcome, WorldAdmission, FacilityKind } from '@/shared/types';
 import { SurfaceType } from '@/shared/types/domain-types';
 import { VISITOR_COMPANY_ID } from '@/shared/visitor-visa';
 import { loadRememberedSession, saveRememberedSession, clearRememberedSession, type RememberedSession } from './remembered-session';
@@ -74,6 +74,8 @@ export interface GameSettings {
   minimapSize: MinimapSize;
   /** The language sent to the world on login — one of the six ids in `shared/language.ts`. */
   languageId: string;
+  /** Facility kinds (CLASSES.BIN FacId) whose buildings the map does not draw — legacy fHiddenFacilities, Map.pas:547. Persisted as an array. */
+  hiddenFacIds: number[];
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
@@ -86,6 +88,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   isDebugOverlay: false,
   minimapSize: 'medium',
   languageId: DEFAULT_LANGUAGE_ID,
+  hiddenFacIds: [],
 };
 
 /* ---- Store ---- */
@@ -143,6 +146,8 @@ interface GameState {
   /** What a map mode (placement, zone painting) hid to show Zones — null outside a mode or when Zones was already on (T8). */
   overlayBeforeMode: { type: 'zones' | 'overlay' | 'none'; overlay?: SurfaceType } | null;
   activeOverlay: SurfaceType | null;
+  /** The facility kinds the loaded world contains, published by the renderer once dimensions are known. */
+  facilityKinds: FacilityKind[];
 
   // Login flow
   loginWorlds: WorldInfo[];
@@ -202,6 +207,7 @@ interface GameState {
   setCityZonesEnabled: (enabled: boolean) => void;
   setOverlayBeforeMode: (v: { type: 'zones' | 'overlay' | 'none'; overlay?: SurfaceType } | null) => void;
   setActiveOverlay: (overlay: SurfaceType | null) => void;
+  setFacilityKinds: (kinds: FacilityKind[]) => void;
   setLoginWorlds: (worlds: WorldInfo[], atWorldLimit?: boolean) => void;
   setLoginCompanies: (companies: CompanyInfo[], admission?: WorldAdmission | null) => void;
   setLoginStage: (stage: 'auth' | 'zones' | 'worlds' | 'companies') => void;
@@ -252,6 +258,7 @@ export const useGameStore = create<GameState>((set) => ({
   isCityZonesEnabled: false,
   overlayBeforeMode: null,
   activeOverlay: null,
+  facilityKinds: [],
   loginWorlds: [],
   loginStage: 'auth',
   loginLoading: false,
@@ -301,6 +308,7 @@ export const useGameStore = create<GameState>((set) => ({
   setCityZonesEnabled: (enabled) => set({ isCityZonesEnabled: enabled }),
   setOverlayBeforeMode: (v) => set({ overlayBeforeMode: v }),
   setActiveOverlay: (overlay) => set({ activeOverlay: overlay }),
+  setFacilityKinds: (kinds) => set({ facilityKinds: kinds }),
 
   setLoginWorlds: (worlds, atWorldLimit) => set({ loginWorlds: worlds, loginStage: 'worlds', loginLoading: false, loginAtWorldLimit: atWorldLimit ?? false }),
   setLoginCompanies: (companies, admission) => set({ companies, loginStage: 'companies', loginLoading: false, loginPage: null, loginAdmission: admission ?? null }),
@@ -377,6 +385,7 @@ export const useGameStore = create<GameState>((set) => ({
       ownerRole: '',
       isCityZonesEnabled: false,
   overlayBeforeMode: null,
+      facilityKinds: [],
       loginWorlds: [],
       loginStage: 'auth',
       loginLoading: false,

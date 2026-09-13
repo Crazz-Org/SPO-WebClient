@@ -31,6 +31,7 @@ export interface FacilityDimensions {
   visualClass: string;
   name: string;
   facid: string;
+  facId?: number;
   xsize: number;
   ysize: number;
   level: number;
@@ -234,6 +235,7 @@ export class BuildingDataService implements Service {
       visualClass: building.visualClass,
       name: building.name,
       facid: building.category || '',
+      facId: building.facId,
       xsize: building.xsize,
       ysize: building.ysize,
       level: building.visualStages,

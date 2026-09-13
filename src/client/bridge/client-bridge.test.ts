@@ -169,6 +169,11 @@ describe('ClientBridge existing methods', () => {
     expect(useBuildingStore.getState().rememberedSection).toBeNull();
   });
 
+  it('setFacilityKinds should publish the kinds to the store', () => {
+    ClientBridge.setFacilityKinds([{ facId: 10, label: 'Headquarters' }]);
+    expect(useGameStore.getState().facilityKinds).toEqual([{ facId: 10, label: 'Headquarters' }]);
+  });
+
   it('setCredentials should set username', () => {
     ClientBridge.setCredentials('testUser');
     expect(useGameStore.getState().username).toBe('testUser');
