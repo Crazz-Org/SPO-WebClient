@@ -78,6 +78,15 @@ describe('SettingsDialog', () => {
     expect((screen.getByRole('switch', { name: "Fade other players' buildings" }) as HTMLInputElement).checked).toBe(false);
   });
 
+  it('offers a Signal losing facilities switch, unchecked by default, that flips on click', () => {
+    useUiStore.getState().openModal('settings');
+    renderWithProviders(<SettingsDialog />);
+    const sw = screen.getByRole('switch', { name: 'Signal losing facilities' }) as HTMLInputElement;
+    expect(sw.checked).toBe(false);
+    fireEvent.click(sw);
+    expect((screen.getByRole('switch', { name: 'Signal losing facilities' }) as HTMLInputElement).checked).toBe(true);
+  });
+
   it('offers separate Effects volume and Music volume sliders, both defaulting to 50%', () => {
     useUiStore.getState().openModal('settings');
     renderWithProviders(<SettingsDialog />);

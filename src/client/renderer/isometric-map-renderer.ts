@@ -72,6 +72,8 @@ import { validatePlacementZones } from './placement-validation';
 
 /** Alpha of a building owned by another tycoon when glassing is on — Voyager's cAlpha blend [INFERRED ≈ 50 %]. */
 const FOREIGN_BUILDING_ALPHA = 0.5;
+/** Red laid over a losing building's own pixels — legacy pfReddenPalette (Lander.pas:294-295), cLoosingColor = clRed (Map.pas:364); strength [INFERRED]. */
+const LOSING_TINT = 'rgba(255, 0, 0, 0.45)';
 
 interface CachedZone {
   x: number;
@@ -548,6 +550,10 @@ export class IsometricMapRenderer {
   private glassForeignBuildings: boolean = true;
   /** The player's own tycoon id, 0 until login supplies one — 0 glasses nothing. */
   private ownTycoonId: number = 0;
+  /** Legacy 'Signal losing facilities' (Map.pas:1323-1324): shade my own alerting buildings red. */
+  private signalLosingFacilities: boolean = false;
+  /** Scratch canvas the red shade is composed on; created on first use, never while the option is off. */
+  private losingScratch: HTMLCanvasElement | null = null;
   private animationLoopRunning: boolean = false;
   private hasAnimatedBuildings: boolean = false;
   private lastRenderTime: number = 0;
@@ -3318,6 +3324,31 @@ export class IsometricMapRenderer {
   }
 
   /**
+   * The sprite with its own pixels shaded red — legacy loReddened (Map.pas:1323-1324 →
+   * Lander.pas:294-295). Composed on a scratch canvas: 'source-atop' keeps the fill inside
+   * the sprite's alpha, so the terrain under the bounding box is untouched. Returns the
+   * untinted texture if no 2D context can be had.
+   */
+  private reddenTexture(texture: ImageBitmap): CanvasImageSource {
+    if (!this.losingScratch) this.losingScratch = document.createElement('canvas');
+    const scratch = this.losingScratch;
+    const sctx = scratch.getContext('2d');
+    if (!sctx) return texture;
+    if (scratch.width !== texture.width || scratch.height !== texture.height) {
+      scratch.width = texture.width;
+      scratch.height = texture.height;
+    }
+    sctx.globalCompositeOperation = 'source-over';
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    sctx.drawImage(texture, 0, 0);
+    sctx.globalCompositeOperation = 'source-atop';
+    sctx.fillStyle = LOSING_TINT;
+    sctx.fillRect(0, 0, scratch.width, scratch.height);
+    sctx.globalCompositeOperation = 'source-over';
+    return scratch;
+  }
+
+  /**
    * Draw buildings as isometric tiles with textures
    * Uses Painter's algorithm: sort by depth (y + x) so buildings closer to viewer are drawn last
    */
@@ -3411,6 +3442,9 @@ export class IsometricMapRenderer {
 
         const glassed = this.glassForeignBuildings && this.ownTycoonId !== 0 && building.tycoonId !== this.ownTycoonId;
         ctx.globalAlpha = glassed ? FOREIGN_BUILDING_ALPHA : 1;
+        // Legacy Map.pas:1323-1324 — only MY alerting buildings, only when the option is on.
+        const reddened = this.signalLosingFacilities && building.alert && this.ownTycoonId !== 0 && building.tycoonId === this.ownTycoonId;
+        const sprite: CanvasImageSource = reddened ? this.reddenTexture(texture) : texture;
 
         if (isUpgrading && effect) {
           const t = Math.min(1, (performance.now() - effect.startTime) / 450);
@@ -3421,7 +3455,7 @@ export class IsometricMapRenderer {
           ctx.save();
           ctx.translate(cx, cy);
           ctx.scale(scaleBoost, scaleBoost);
-          ctx.drawImage(texture, -scaledWidth / 2, -scaledHeight / 2, scaledWidth, scaledHeight);
+          ctx.drawImage(sprite, -scaledWidth / 2, -scaledHeight / 2, scaledWidth, scaledHeight);
           // White flash overlay fading from 0.75 → 0
           ctx.globalAlpha = 0.75 * Math.max(0, 1 - t * 2.5);
           ctx.fillStyle = '#FFFFFF';
@@ -3429,7 +3463,7 @@ export class IsometricMapRenderer {
           ctx.restore();
         } else {
           // Draw texture scaled to match current zoom level
-          ctx.drawImage(texture, drawX, drawY, scaledWidth, scaledHeight);
+          ctx.drawImage(sprite, drawX, drawY, scaledWidth, scaledHeight);
         }
         ctx.globalAlpha = 1;
 
@@ -5105,6 +5139,11 @@ export class IsometricMapRenderer {
 
   public setGlassForeignBuildings(enabled: boolean): void {
     this.glassForeignBuildings = enabled;
+    this.requestRender();
+  }
+
+  public setSignalLosingFacilities(enabled: boolean): void {
+    this.signalLosingFacilities = enabled;
     this.requestRender();
   }
 

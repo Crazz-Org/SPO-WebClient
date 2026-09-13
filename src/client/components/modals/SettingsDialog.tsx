@@ -107,6 +107,11 @@ export function SettingsDialog() {
               onChange={(v) => handleSettingChange({ glassForeignBuildings: v })}
             />
             <ToggleRow
+              label="Signal losing facilities"
+              checked={settings.signalLosingFacilities}
+              onChange={(v) => handleSettingChange({ signalLosingFacilities: v })}
+            />
+            <ToggleRow
               label="Debug overlay"
               checked={settings.isDebugOverlay}
               onChange={(v) => handleSettingChange({ isDebugOverlay: v })}
