@@ -814,6 +814,7 @@ export class StarpeaceClient implements ClientHandlerContext {
     const renderer = this.mapNavigationUI.getRenderer();
     if (renderer) {
       this.minimapUI.setRenderer(renderer);
+      renderer.setOwnTycoonId(useGameStore.getState().tycoonId);
     }
     // The Map surface reads the same renderer through the same contract (Carte lot).
     useMapStore.getState().setSource(renderer ?? null);
@@ -845,6 +846,7 @@ export class StarpeaceClient implements ClientHandlerContext {
         renderer.setDebugMode(settings.isDebugOverlay);
         renderer.setVehicleAnimationsEnabled(settings.vehicleAnimations);
         renderer.setAircraftAnimationsEnabled(settings.aircraftAnimations);
+        renderer.setGlassForeignBuildings(settings.glassForeignBuildings);
       }
     }
     this.soundManager.setEnabled(settings.isSoundEnabled);

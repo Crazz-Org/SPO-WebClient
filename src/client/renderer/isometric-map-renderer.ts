@@ -70,6 +70,9 @@ import { VehicleAnimationSystem } from './vehicle-animation-system';
 import { AircraftAnimationSystem } from './aircraft-animation-system';
 import { validatePlacementZones } from './placement-validation';
 
+/** Alpha of a building owned by another tycoon when glassing is on — Voyager's cAlpha blend [INFERRED ≈ 50 %]. */
+const FOREIGN_BUILDING_ALPHA = 0.5;
+
 interface CachedZone {
   x: number;
   y: number;
@@ -541,6 +544,10 @@ export class IsometricMapRenderer {
   private vehicleSystem: VehicleAnimationSystem | null = null;
   private vehicleSystemReady: boolean = false;
   private aircraftSystem: AircraftAnimationSystem = new AircraftAnimationSystem();
+  /** Legacy 'UseTransparency' (Map.pas:1415-1416): draw buildings of other tycoons translucent. */
+  private glassForeignBuildings: boolean = true;
+  /** The player's own tycoon id, 0 until login supplies one — 0 glasses nothing. */
+  private ownTycoonId: number = 0;
   private animationLoopRunning: boolean = false;
   private hasAnimatedBuildings: boolean = false;
   private lastRenderTime: number = 0;
@@ -3402,6 +3409,9 @@ export class IsometricMapRenderer {
         const effect = this.buildingEffects.get(effectKey);
         const isUpgrading = effect?.type === 'upgrade';
 
+        const glassed = this.glassForeignBuildings && this.ownTycoonId !== 0 && building.tycoonId !== this.ownTycoonId;
+        ctx.globalAlpha = glassed ? FOREIGN_BUILDING_ALPHA : 1;
+
         if (isUpgrading && effect) {
           const t = Math.min(1, (performance.now() - effect.startTime) / 450);
           // Scale: 1.0 → 1.08 → 1.0 using a sine arc peaking at t=0.4
@@ -3421,6 +3431,7 @@ export class IsometricMapRenderer {
           // Draw texture scaled to match current zoom level
           ctx.drawImage(texture, drawX, drawY, scaledWidth, scaledHeight);
         }
+        ctx.globalAlpha = 1;
 
         // Draw hover/selection effect ON TOP of texture (visible for tall buildings)
         const isSelected = this.selectedBuilding === building;
@@ -5089,6 +5100,17 @@ export class IsometricMapRenderer {
 
   public setAircraftAnimationsEnabled(enabled: boolean): void {
     this.aircraftSystem.setEnabled(enabled);
+    this.requestRender();
+  }
+
+  public setGlassForeignBuildings(enabled: boolean): void {
+    this.glassForeignBuildings = enabled;
+    this.requestRender();
+  }
+
+  /** The game store's decimal tycoon id; '' / undefined / unparsable means "unknown" and glasses nothing. */
+  public setOwnTycoonId(tycoonId: string | undefined): void {
+    this.ownTycoonId = parseInt(tycoonId || '0', 10) || 0;
     this.requestRender();
   }
 

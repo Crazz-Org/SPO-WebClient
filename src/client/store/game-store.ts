@@ -66,6 +66,8 @@ export interface GameSettings {
   vehicleAnimations: boolean;
   /** Legacy 'ShowPlanes', default on — OptionsHandlerViewer.pas:512. */
   aircraftAnimations: boolean;
+  /** Legacy 'UseTransparency', default on — OptionsHandlerViewer.pas:509, MapIsoHandler.pas:366. */
+  glassForeignBuildings: boolean;
   isSoundEnabled: boolean;
   soundVolume: number;
   isDebugOverlay: boolean;
@@ -78,6 +80,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   isVegetationHiddenOnMove: false,
   vehicleAnimations: true,
   aircraftAnimations: true,
+  glassForeignBuildings: true,
   isSoundEnabled: true,
   soundVolume: 0.5,
   isDebugOverlay: false,
