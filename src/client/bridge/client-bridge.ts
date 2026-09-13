@@ -181,6 +181,10 @@ export interface ClientCallbacks {
   onJoinChannel: (channelName: string) => void;
   onChatTypingChange: (isTyping: boolean) => void;
   onGetChannelInfo: (channelName: string) => void;
+  /** Start following another player's camera (Delphi Chase). */
+  onChaseUser: (userName: string) => void;
+  /** Stop following (Delphi StopChase). */
+  onStopChase: () => void;
 
   // Build menu
   onRequestBuildingCategories: () => void;
@@ -673,6 +677,10 @@ export const ClientBridge = {
 
   setChannelInfo(channel: string, info: string): void {
     useChatStore.getState().setChannelInfo(channel, info);
+  },
+
+  setChasedUser(name: string | null): void {
+    useChatStore.getState().setChasedUser(name);
   },
 
   // ---- Mail ----

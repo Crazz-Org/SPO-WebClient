@@ -233,6 +233,13 @@ describe('ClientBridge chat (GetChannelInfo)', () => {
     ClientBridge.setChannelInfo('Lobby', 'Lobby (Creator: Admin). 5 users.');
     expect(useChatStore.getState().channelInfo['Lobby']).toBe('Lobby (Creator: Admin). 5 users.');
   });
+
+  it('setChasedUser records and clears the followed player', () => {
+    ClientBridge.setChasedUser('Mayor of Podan');
+    expect(useChatStore.getState().chasedUser).toBe('Mayor of Podan');
+    ClientBridge.setChasedUser(null);
+    expect(useChatStore.getState().chasedUser).toBeNull();
+  });
 });
 
 describe('ClientBridge building overlay (stale data prevention)', () => {

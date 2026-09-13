@@ -6,6 +6,7 @@ import {
   type WsReqChatJoinChannel,
   type WsReqChatSendMessage,
   type WsReqChatTypingStatus,
+  type WsReqChatChase,
   type WsReqGmChatSend,
   type WsRespChatChannelInfo,
   type WsRespChatChannelList,
@@ -75,6 +76,27 @@ export const handleChatTypingStatus: WsHandler = async (ctx: WsHandlerContext, m
   const req = msg as WsReqChatTypingStatus;
   await ctx.session.setChatTypingStatus(req.isTyping);
   // No response needed for typing status
+};
+
+export const handleChatChase: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  const req = msg as WsReqChatChase;
+  console.log(`[Gateway] Chasing user: ${req.userName}`);
+  await ctx.session.chaseUser(req.userName);
+  const response: WsRespChatSuccess = {
+    type: WsMessageType.RESP_CHAT_SUCCESS,
+    wsRequestId: msg.wsRequestId,
+  };
+  sendResponse(ctx.ws, response);
+};
+
+export const handleChatStopChase: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  console.log('[Gateway] Stopping chase');
+  await ctx.session.stopChase();
+  const response: WsRespChatSuccess = {
+    type: WsMessageType.RESP_CHAT_SUCCESS,
+    wsRequestId: msg.wsRequestId,
+  };
+  sendResponse(ctx.ws, response);
 };
 
 export const handleGmChatSend: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {

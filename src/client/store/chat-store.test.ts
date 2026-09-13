@@ -21,6 +21,7 @@ function resetStore() {
     isExpanded: true,
     activeTab: 'chat' as ChatTab,
     channelInfo: {},
+    chasedUser: null,
   });
 }
 
@@ -134,6 +135,21 @@ describe('Chat Store — Messages', () => {
     const { messages } = useChatStore.getState();
     expect(messages['Lobby']).toHaveLength(1);
     expect(messages['Lobby'][0].text).toBe('Hello');
+  });
+});
+
+describe('Chat Store — Chased user', () => {
+  beforeEach(resetStore);
+
+  it('starts with nobody followed', () => {
+    expect(useChatStore.getState().chasedUser).toBeNull();
+  });
+
+  it('setChasedUser records a name and clears it again', () => {
+    useChatStore.getState().setChasedUser('Mayor of Podan');
+    expect(useChatStore.getState().chasedUser).toBe('Mayor of Podan');
+    useChatStore.getState().setChasedUser(null);
+    expect(useChatStore.getState().chasedUser).toBeNull();
   });
 });
 

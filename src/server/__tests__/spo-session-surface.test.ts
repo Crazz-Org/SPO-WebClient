@@ -534,6 +534,20 @@ const DELEGATIONS: readonly Delegation[] = [
     result: undefined,
   },
   {
+    method: 'chaseUser',
+    install: () => jest.spyOn(chatHandler, 'chaseUser'),
+    call: s => s.chaseUser('Mayor of Podan'),
+    forwarded: ['Mayor of Podan'],
+    result: undefined,
+  },
+  {
+    method: 'stopChase',
+    install: () => jest.spyOn(chatHandler, 'stopChase'),
+    call: s => s.stopChase(),
+    forwarded: [],
+    result: undefined,
+  },
+  {
     method: 'getCurrentChannel',
     install: () => jest.spyOn(chatHandler, 'getCurrentChannel'),
     call: s => s.getCurrentChannel(),
@@ -688,7 +702,8 @@ describe('StarpeaceSession — handler delegation', () => {
     // not to the table, the count stops matching and this row says so.
     // 74: `readWorkerCounts`, issue 552 — main added one of its own while this
     // branch was parked, so the union is 74, not the 73 either side alone saw.
-    expect(DELEGATIONS).toHaveLength(74);
+    // 76: `chaseUser` and `stopChase`, issue 591.
+    expect(DELEGATIONS).toHaveLength(76);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 

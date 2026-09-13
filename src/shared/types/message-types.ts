@@ -97,6 +97,8 @@ export enum WsMessageType {
   REQ_CHAT_JOIN_CHANNEL = 'REQ_CHAT_JOIN_CHANNEL',
   REQ_CHAT_SEND_MESSAGE = 'REQ_CHAT_SEND_MESSAGE',
   REQ_CHAT_TYPING_STATUS = 'REQ_CHAT_TYPING_STATUS',
+  REQ_CHAT_CHASE = 'REQ_CHAT_CHASE',
+  REQ_CHAT_STOP_CHASE = 'REQ_CHAT_STOP_CHASE',
 
   RESP_CHAT_USER_LIST = 'RESP_CHAT_USER_LIST',
   RESP_CHAT_CHANNEL_LIST = 'RESP_CHAT_CHANNEL_LIST',
@@ -556,6 +558,17 @@ export interface WsReqChatSendMessage extends WsMessage {
 export interface WsReqChatTypingStatus extends WsMessage {
   type: WsMessageType.REQ_CHAT_TYPING_STATUS;
   isTyping: boolean;
+}
+
+/** Start following another player's camera. Mirrors Delphi Chase (InterfaceServer.pas:189). */
+export interface WsReqChatChase extends WsMessage {
+  type: WsMessageType.REQ_CHAT_CHASE;
+  userName: string;
+}
+
+/** Stop following. Mirrors Delphi StopChase (InterfaceServer.pas:190). */
+export interface WsReqChatStopChase extends WsMessage {
+  type: WsMessageType.REQ_CHAT_STOP_CHASE;
 }
 
 export interface WsRespChatUserList extends WsMessage {

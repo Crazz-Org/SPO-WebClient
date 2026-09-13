@@ -2650,6 +2650,14 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return chatHandler.setChatTypingStatus(this, isTyping);
   }
 
+  public async chaseUser(userName: string): Promise<void> {
+    return chatHandler.chaseUser(this, userName);
+  }
+
+  public async stopChase(): Promise<void> {
+    return chatHandler.stopChase(this);
+  }
+
   public getCurrentChannel(): string {
     return chatHandler.getCurrentChannel(this);
   }

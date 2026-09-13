@@ -162,6 +162,8 @@ export type {
   WsReqChatJoinChannel,
   WsReqChatSendMessage,
   WsReqChatTypingStatus,
+  WsReqChatChase,
+  WsReqChatStopChase,
   WsRespChatUserList,
   WsRespChatChannelList,
   WsRespChatChannelInfo,

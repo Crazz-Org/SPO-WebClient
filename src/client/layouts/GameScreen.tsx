@@ -15,7 +15,7 @@
 import { lazy, Suspense } from 'react';
 import { useUiStore } from '../store';
 import { StatusPill, CommandBar, RightRail, VersionBadge } from '../components/hud';
-import { ChatStrip } from '../components/chat';
+import { ChatStrip, ChaseBadge } from '../components/chat';
 import { StatusOverlay } from '../components/building';
 import { MapContextMenu } from '../components/map/MapContextMenu';
 import { ServerSwitchOverlay, ZoneTypePicker } from '../components/modals';
@@ -59,6 +59,9 @@ export function GameScreen() {
 
       {/* StatusPill — top, the player's state in one line */}
       <StatusPill />
+
+      {/* ChaseBadge — top-right, shown only while following another player's camera */}
+      <ChaseBadge />
 
       {/* CommandBar — bottom: search / mode bar + six tiles */}
       <CommandBar />

@@ -29,6 +29,7 @@ import {
   WsRespClusterFacilities,
   WsRespResearchInventory,
   WsRespResearchDetails,
+  WsEventMoveTo,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
 import { requestBuildingRefreshProperties, requestConnectionReachability } from './building-action-handler';
@@ -38,6 +39,7 @@ import { useGameStore, delphiTDateTimeToJsDate } from '../store/game-store';
 import { useUiStore } from '../store/ui-store';
 import { useBuildingStore } from '../store/building-store';
 import { useProfileStore } from '../store/profile-store';
+import { useChatStore } from '../store/chat-store';
 import { getFacilityDimensionsCache } from '../facility-dimensions-cache';
 import type { ClientHandlerContext } from './client-context';
 
@@ -90,6 +92,27 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
         ClientBridge.addChatUser(userChange.user);
       } else {
         ClientBridge.removeChatUser(userChange.user.name);
+        // Server-side abort: the player we follow left the world, so the chase
+        // is over whether or not we asked (ServerCnxHandler.pas:3029-3039).
+        if (useChatStore.getState().chasedUser === userChange.user.name) {
+          ClientBridge.setChasedUser(null);
+          ClientBridge.log('Chat', `No longer following ${userChange.user.name} — they left`);
+        }
+      }
+      break;
+    }
+
+    // The followed player's camera moved: the Interface Server pushes MoveTo to
+    // every chaser on each SetViewedArea (InterfaceServer.pas:707-716, :742).
+    case WsMessageType.EVENT_MOVE_TO: {
+      const moveTo = msg as WsEventMoveTo;
+      if (Number.isFinite(moveTo.x) && Number.isFinite(moveTo.y)) {
+        ClientBridge.log('Map', `Following camera to (${moveTo.x}, ${moveTo.y})`);
+        ctx.getRenderer()?.centerOn(moveTo.x, moveTo.y);
+      } else {
+        // The dispatcher forwards what it read rather than guessing; an
+        // unreadable coordinate must not move the camera anywhere.
+        ClientBridge.log('Map', `Ignoring MoveTo with unreadable coordinates (${moveTo.x}, ${moveTo.y})`);
       }
       break;
     }

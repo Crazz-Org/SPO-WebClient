@@ -96,6 +96,7 @@ export const RDO_MEMBERS = {
   // the block (Voyager/BankGeneralSheet.pas:266).
   BudgetPerc:                { kind: 'accessor',  access: ['get'] },         // StdBlocks/Banks.pas:39; src/server/session/building-details-handler.ts (enrichBankTab)
   CanJoinWorldEx:            { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:441; src/server/session/login-handler.ts (checkWorldAdmission)
+  Chase:                     { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:189; src/server/session/chat-handler.ts (chaseUser)
   CheckNewMail:              { kind: 'function',  arity: 2 },                // src/server/session/mail-handler.ts:416
   ClientAware:               { kind: 'procedure', arity: 0 },                // src/server/session/login-handler.ts:587
   ClientNotAware:            { kind: 'procedure', arity: 0 },                // src/server/spo_session.ts:2890
@@ -234,6 +235,7 @@ export const RDO_MEMBERS = {
   SetPath:                   { kind: 'function',  arity: 1 },                // src/server/session/building-details-handler.ts:1234
   SetTycoonCookie:           { kind: 'procedure', arity: 3 },                // src/server/spo_session.ts:2719
   SetViewedArea:             { kind: 'procedure', arity: 4 },                // src/server/spo_session.ts:1336
+  StopChase:                 { kind: 'function',  arity: 0 },                // Interface Server/InterfaceServer.pas:190; src/server/session/chat-handler.ts (stopChase)
   Stopped:                   { kind: 'accessor',  access: ['set'] },         // building-property-handler.ts:188 <- template-groups.ts:55
   SwitchFocusEx:             { kind: 'function',  arity: 3 },                // src/server/spo_session.ts:691
   Term:                      { kind: 'accessor',  access: ['get', 'set'] },  // StdBlocks/Banks.pas:41; building-details-handler.ts (enrichBankTab), building-property-handler.ts:188
