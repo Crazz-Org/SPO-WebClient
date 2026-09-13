@@ -40,6 +40,7 @@ import { useUiStore } from '../store/ui-store';
 import { useBuildingStore } from '../store/building-store';
 import { useProfileStore } from '../store/profile-store';
 import { useChatStore } from '../store/chat-store';
+import { useMapStore } from '../store/map-store';
 import { getFacilityDimensionsCache } from '../facility-dimensions-cache';
 import type { ClientHandlerContext } from './client-context';
 
@@ -104,11 +105,13 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
 
     // The followed player's camera moved: the Interface Server pushes MoveTo to
     // every chaser on each SetViewedArea (InterfaceServer.pas:707-716, :742).
+    // A server-driven jump is a jump like any other, so Back / Next must see it.
     case WsMessageType.EVENT_MOVE_TO: {
       const moveTo = msg as WsEventMoveTo;
       if (Number.isFinite(moveTo.x) && Number.isFinite(moveTo.y)) {
         ClientBridge.log('Map', `Following camera to (${moveTo.x}, ${moveTo.y})`);
         ctx.getRenderer()?.centerOn(moveTo.x, moveTo.y);
+        useMapStore.getState().recordPosition(moveTo.x, moveTo.y);
       } else {
         // The dispatcher forwards what it read rather than guessing; an
         // unreadable coordinate must not move the camera anywhere.
