@@ -29,6 +29,7 @@ import { useNewspaperStore } from './store/newspaper-store';
 import { usePoliticsStore } from './store/politics-store';
 import { SoundManager } from './audio/sound-manager';
 import { MusicPlayer } from './audio/music-player';
+import { MapAmbience } from './audio/map-ambience';
 import type { ClientHandlerContext } from './handlers/client-context';
 import type { RememberedSession } from './store/remembered-session';
 import { ExploredBlocks } from './store/explored-blocks';
@@ -240,6 +241,7 @@ export class StarpeaceClient implements ClientHandlerContext {
   // Audio
   public soundManager: SoundManager;
   public musicPlayer: MusicPlayer;
+  public mapAmbience: MapAmbience;
 
   private cameraUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -269,6 +271,10 @@ export class StarpeaceClient implements ClientHandlerContext {
     };
     this.soundManager = new SoundManager();
     this.musicPlayer = new MusicPlayer();
+    this.mapAmbience = new MapAmbience(
+      this.soundManager,
+      () => this.mapNavigationUI?.getRenderer()?.getAmbienceSnapshot() ?? null
+    );
     // The login screen needs the persisted settings — the language picker reads one of them —
     // and the game-view init (:797) only loads them after login. Idempotent, so both stand.
     ClientBridge.loadPersistedSettings();
@@ -842,6 +848,7 @@ export class StarpeaceClient implements ClientHandlerContext {
     const initAudio = () => {
       this.soundManager.initOnInteraction();
       this.musicPlayer.initOnInteraction();
+      this.mapAmbience.initOnInteraction();
       document.removeEventListener('click', initAudio);
       document.removeEventListener('keydown', initAudio);
     };
@@ -865,6 +872,9 @@ export class StarpeaceClient implements ClientHandlerContext {
     this.soundManager.setVolume(settings.soundVolume);
     this.musicPlayer.setEnabled(settings.isSoundEnabled);
     this.musicPlayer.setVolume(settings.musicVolume);
+    // Off stops every building voice; on re-arms the mixer and the next tick re-voices from
+    // the live view — no reload.
+    this.mapAmbience.setEnabled(settings.isSoundEnabled);
     if (this.minimapUI) {
       this.minimapUI.setSize(settings.minimapSize, settings.minimapPixelSize);
       this.minimapUI.setZoom(settings.minimapZoom);
@@ -885,6 +895,8 @@ export class StarpeaceClient implements ClientHandlerContext {
       });
 
       this.mapNavigationUI.setOnBuildingClick((x, y, visualClass) => {
+        // select.wav on a selection — MapIsoHandler.pas:736.
+        this.soundManager.play('ui-select');
         if (this.currentBuildingToPlace) {
           buildMenuHandler.placeBuilding(this, x, y);
         } else {
@@ -893,6 +905,8 @@ export class StarpeaceClient implements ClientHandlerContext {
       });
 
       this.mapNavigationUI.setOnEmptyMapClick(() => {
+        // click.wav on a map click — MapIsoHandler.pas:897.
+        this.soundManager.play('ui-click');
         // When building inspector is open, only clear the gold highlight — keep panel open
         if (useUiStore.getState().rightPanel === 'building') {
           // Optional chaining: the outer null-check doesn't narrow inside this callback

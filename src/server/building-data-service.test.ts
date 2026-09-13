@@ -7,6 +7,8 @@ import { describe, it, expect, beforeAll } from '@jest/globals';
 import * as fs from 'fs';
 import * as path from 'path';
 import { BuildingDataService } from './building-data-service';
+import { SOUND_SET_KIND } from './classes-bin-parser';
+import type { BuildingData } from '../shared/types/building-data';
 
 // Mock logger to prevent console spam during tests
 jest.mock('../shared/logger', () => ({
@@ -336,5 +338,89 @@ const binExists = fs.existsSync(CLASSES_BIN_PATH);
       const ids = buildings.map(b => parseInt(b.visualClass, 10)).sort((a, b) => a - b);
       expect(ids[ids.length - 1]).toBe(8542);
     });
+  });
+});
+
+/**
+ * The ambience projection — the `[Sounds]` entry getFacility() puts on the wire.
+ * Seeded straight into the cache so the check does not depend on CLASSES.BIN being present.
+ */
+describe('getFacility() — ambience projection', () => {
+  const ENTRY = {
+    waveFile: 'farm.wav',
+    attenuation: 0.5,
+    priority: 3,
+    looped: true,
+    probability: 0.25,
+    period: 4000,
+  };
+
+  function serviceWith(soundData: BuildingData['soundData']): BuildingDataService {
+    const service = new BuildingDataService();
+    const cache = (service as unknown as { cacheByVisualClass: Map<string, BuildingData> })
+      .cacheByVisualClass;
+    cache.set('700', {
+      visualClass: '700',
+      name: 'Farm',
+      xsize: 2,
+      ysize: 2,
+      textureFilename: 'MapFarm.gif',
+      baseVisualClass: '700',
+      visualStages: 0,
+      constructionTextureFilename: 'Construction128.gif',
+      soundData,
+    });
+    return service;
+  }
+
+  it('projects a stochastic entry, renaming period to periodMs', () => {
+    const facility = serviceWith({ kind: SOUND_SET_KIND.STOCHASTIC, sounds: [ENTRY] })
+      .getFacility('700');
+
+    expect(facility!.sound).toEqual({
+      waveFile: 'farm.wav',
+      attenuation: 0.5,
+      priority: 3,
+      looped: true,
+      probability: 0.25,
+      periodMs: 4000,
+    });
+  });
+
+  it('projects only the first entry — the one Voyager voices', () => {
+    const facility = serviceWith({
+      kind: SOUND_SET_KIND.STOCHASTIC,
+      sounds: [ENTRY, { ...ENTRY, waveFile: 'mine.wav' }],
+    }).getFacility('700');
+
+    expect(facility!.sound!.waveFile).toBe('farm.wav');
+  });
+
+  it('omits the entry for a class with no sound set', () => {
+    expect(serviceWith(undefined).getFacility('700')!.sound).toBeUndefined();
+  });
+
+  it('omits the entry for a NONE sound set', () => {
+    const facility = serviceWith({ kind: SOUND_SET_KIND.NONE, sounds: [ENTRY] }).getFacility('700');
+    expect(facility!.sound).toBeUndefined();
+  });
+
+  it('omits the entry for an animation-driven sound set', () => {
+    const facility = serviceWith({ kind: SOUND_SET_KIND.ANIM_DRIVEN, sounds: [ENTRY] })
+      .getFacility('700');
+    expect(facility!.sound).toBeUndefined();
+  });
+
+  it('omits the entry when the set is stochastic but empty', () => {
+    const facility = serviceWith({ kind: SOUND_SET_KIND.STOCHASTIC, sounds: [] }).getFacility('700');
+    expect(facility!.sound).toBeUndefined();
+  });
+
+  it('omits the entry when the wave filename is blank', () => {
+    const facility = serviceWith({
+      kind: SOUND_SET_KIND.STOCHASTIC,
+      sounds: [{ ...ENTRY, waveFile: '' }],
+    }).getFacility('700');
+    expect(facility!.sound).toBeUndefined();
   });
 });
