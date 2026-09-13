@@ -142,6 +142,7 @@ describe('applySettings — renderer wiring', () => {
       mapNavigationUI,
       soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
       musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
       minimapUI: null,
     };
     const settings = { ...useGameStore.getState().settings, hiddenFacIds: [40, 75] };
