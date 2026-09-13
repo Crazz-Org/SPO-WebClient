@@ -68,6 +68,7 @@ import {
 import { CarClassManager } from './car-class-system';
 import { VehicleAnimationSystem } from './vehicle-animation-system';
 import { AircraftAnimationSystem } from './aircraft-animation-system';
+import { MapSoundMixer, SoundSource, SOUND_TICK_MS, tileDistance } from '../audio/map-sound-mixer';
 import { validatePlacementZones } from './placement-validation';
 
 interface CachedZone {
@@ -541,6 +542,9 @@ export class IsometricMapRenderer {
   private vehicleSystem: VehicleAnimationSystem | null = null;
   private vehicleSystemReady: boolean = false;
   private aircraftSystem: AircraftAnimationSystem = new AircraftAnimationSystem();
+  // Map ambience — the renderer only publishes the scene; the mixer owns its own tick
+  private mapSoundMixer: MapSoundMixer | null = null;
+  private lastMapSoundSceneTime: number = 0;
   private animationLoopRunning: boolean = false;
   private hasAnimatedBuildings: boolean = false;
   private lastRenderTime: number = 0;
@@ -1175,6 +1179,51 @@ export class IsometricMapRenderer {
       this.canvas.height
     );
     if (this.aircraftSystem.isActive()) this.startAnimationLoop();
+  }
+
+  /**
+   * Publish the sound scene: every visible building whose class carries a stochastic
+   * [Sounds] entry, with its canvas x and its distance from the camera cell. The mixer
+   * reconciles on its own SOUND_TICK_MS interval, so a finer scene is wasted work.
+   *
+   * No zoom gate — Voyager registered targets at every zoom and let the zoom term of the
+   * volume curve speak (Map.pas:8405-8409).
+   */
+  private updateMapSounds(bounds: TileBounds): void {
+    if (!this.mapSoundMixer) return;
+
+    const now = performance.now();
+    if (now - this.lastMapSoundSceneTime < SOUND_TICK_MS) return;
+    this.lastMapSoundSceneTime = now;
+
+    const camera = this.terrainRenderer.getCameraPosition();
+    const margin = 10; // same generous margin drawBuildings uses for large buildings
+    const sources: SoundSource[] = [];
+    for (const b of this.allBuildings) {
+      const dims = this.facilityDimensionsCache.get(b.visualClass);
+      const sound = dims?.sound;
+      if (!sound) continue;
+      const bw = dims?.xsize || 1;
+      const bh = dims?.ysize || 1;
+      const visible = b.x + bw > bounds.minJ - margin && b.x < bounds.maxJ + margin &&
+                      b.y + bh > bounds.minI - margin && b.y < bounds.maxI + margin;
+      if (!visible) continue;
+
+      const centreI = b.y + Math.floor(bh / 2);
+      const centreJ = b.x + Math.floor(bw / 2);
+      sources.push({
+        key: `${b.x},${b.y}`,
+        sound,
+        screenX: this.terrainRenderer.mapToScreen(centreI, centreJ).x,
+        distTiles: tileDistance(camera.i, camera.j, { x: b.x, y: b.y, xsize: bw, ysize: bh }),
+      });
+    }
+
+    this.mapSoundMixer.setScene({
+      sources,
+      zoomLevel: this.terrainRenderer.getZoomLevel(),
+      screenWidth: this.canvas.width,
+    });
   }
 
   // =========================================================================
@@ -2563,6 +2612,7 @@ export class IsometricMapRenderer {
     this.drawVehicles(bounds, deltaTime, occupiedTiles);
     this.drawZoneOverlay(bounds);
     this.drawAircraft(bounds, deltaTime);
+    this.updateMapSounds(bounds);
     this.drawPlacementPreview();
     this.drawRoadDrawingPreview();
     this.drawRoadDemolishPreview();
@@ -5092,6 +5142,11 @@ export class IsometricMapRenderer {
     this.requestRender();
   }
 
+  /** Attach the map sound mixer the render loop publishes its scene to (null detaches it). */
+  public setMapSoundMixer(mixer: MapSoundMixer | null): void {
+    this.mapSoundMixer = mixer;
+  }
+
   // =========================================================================
   // MOUSE CONTROLS
   // =========================================================================
@@ -5590,6 +5645,11 @@ export class IsometricMapRenderer {
     this.facilityDimensionsCache.clear();
     this.selectedBuilding = null;
     this.hoveredBuilding = null;
+
+    // Empty the sound scene so the mixer culls every voice on its next tick; the interval
+    // itself belongs to the client, not to the renderer.
+    this.mapSoundMixer?.setScene({ sources: [], zoomLevel: 0, screenWidth: 0 });
+    this.mapSoundMixer = null;
 
     // Clear zone request manager
     if (this.zoneRequestManager) {

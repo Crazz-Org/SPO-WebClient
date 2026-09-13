@@ -28,6 +28,7 @@ import { useMailStore } from './store/mail-store';
 import { useNewspaperStore } from './store/newspaper-store';
 import { usePoliticsStore } from './store/politics-store';
 import { SoundManager } from './audio/sound-manager';
+import { MapSoundMixer } from './audio/map-sound-mixer';
 import type { ClientHandlerContext } from './handlers/client-context';
 import type { RememberedSession } from './store/remembered-session';
 
@@ -237,6 +238,7 @@ export class StarpeaceClient implements ClientHandlerContext {
 
   // Audio
   public soundManager: SoundManager;
+  public mapSoundMixer: MapSoundMixer;
 
   private cameraUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -265,6 +267,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       };
     };
     this.soundManager = new SoundManager();
+    this.mapSoundMixer = new MapSoundMixer(this.soundManager);
     // The login screen needs the persisted settings — the language picker reads one of them —
     // and the game-view init (:797) only loads them after login. Idempotent, so both stand.
     ClientBridge.loadPersistedSettings();
@@ -814,6 +817,8 @@ export class StarpeaceClient implements ClientHandlerContext {
     const renderer = this.mapNavigationUI.getRenderer();
     if (renderer) {
       this.minimapUI.setRenderer(renderer);
+      renderer.setMapSoundMixer(this.mapSoundMixer);
+      this.mapSoundMixer.start();
     }
     // The Map surface reads the same renderer through the same contract (Carte lot).
     useMapStore.getState().setSource(renderer ?? null);
@@ -849,6 +854,10 @@ export class StarpeaceClient implements ClientHandlerContext {
     }
     this.soundManager.setEnabled(settings.isSoundEnabled);
     this.soundManager.setVolume(settings.soundVolume);
+    // Off silences every ambient voice at once; on lets the next mixer tick rebuild them
+    // from the cached buffers — no reload. The volume slider needs nothing here: every
+    // voice chain ends in the sound manager's master gain.
+    this.mapSoundMixer.setEnabled(settings.isSoundEnabled);
     if (this.minimapUI) {
       this.minimapUI.setSize(settings.minimapSize);
     }
@@ -869,13 +878,19 @@ export class StarpeaceClient implements ClientHandlerContext {
 
       this.mapNavigationUI.setOnBuildingClick((x, y, visualClass) => {
         if (this.currentBuildingToPlace) {
+          // Tool click on the map (MapIsoHandler.pas:950)
+          this.soundManager.play('ui-click');
           buildMenuHandler.placeBuilding(this, x, y);
         } else {
+          // Building selection (MapIsoHandler.pas:736)
+          this.soundManager.play('ui-select');
           buildingFocusHandler.handleMapClick(this, x, y, visualClass);
         }
       });
 
       this.mapNavigationUI.setOnEmptyMapClick(() => {
+        // Click on bare ground (MapIsoHandler.pas:897)
+        this.soundManager.play('ui-click');
         // When building inspector is open, only clear the gold highlight — keep panel open
         if (useUiStore.getState().rightPanel === 'building') {
           // Optional chaining: the outer null-check doesn't narrow inside this callback

@@ -6,7 +6,8 @@
 import { describe, it, expect, beforeAll } from '@jest/globals';
 import * as fs from 'fs';
 import * as path from 'path';
-import { BuildingDataService } from './building-data-service';
+import { BuildingDataService, stochasticAmbientSound } from './building-data-service';
+import { SOUND_SET_KIND } from './classes-bin-parser';
 
 // Mock logger to prevent console spam during tests
 jest.mock('../shared/logger', () => ({
@@ -20,6 +21,43 @@ jest.mock('../shared/logger', () => ({
 
 const CLASSES_BIN_PATH = path.join(__dirname, '../../cache/BuildingClasses/CLASSES.BIN');
 const binExists = fs.existsSync(CLASSES_BIN_PATH);
+
+/**
+ * The static-building sound target — pure, so it needs no CLASSES.BIN and runs everywhere.
+ */
+describe('stochasticAmbientSound', () => {
+  const entry = {
+    waveFile: 'mine.wav', attenuation: 0.8, priority: 2, looped: true, probability: 0.5, period: 10000,
+  };
+
+  it('maps entry 0 of a stochastic sound set', () => {
+    expect(stochasticAmbientSound({ kind: SOUND_SET_KIND.STOCHASTIC, sounds: [entry] })).toEqual(entry);
+  });
+
+  it('takes entry 0 only, whatever else the set holds', () => {
+    const second = { ...entry, waveFile: 'dogs.wav' };
+    const result = stochasticAmbientSound({ kind: SOUND_SET_KIND.STOCHASTIC, sounds: [entry, second] });
+    expect(result?.waveFile).toBe('mine.wav');
+  });
+
+  it('gives no target to an anim-driven sound set (Map.pas:5419-5431)', () => {
+    expect(stochasticAmbientSound({ kind: SOUND_SET_KIND.ANIM_DRIVEN, sounds: [entry] })).toBeUndefined();
+  });
+
+  it('gives no target when the set is empty', () => {
+    expect(stochasticAmbientSound({ kind: SOUND_SET_KIND.STOCHASTIC, sounds: [] })).toBeUndefined();
+  });
+
+  it('gives no target when the wave name is blank', () => {
+    expect(
+      stochasticAmbientSound({ kind: SOUND_SET_KIND.STOCHASTIC, sounds: [{ ...entry, waveFile: '' }] })
+    ).toBeUndefined();
+  });
+
+  it('gives no target for a class with no [Sounds] section at all', () => {
+    expect(stochasticAmbientSound(undefined)).toBeUndefined();
+  });
+});
 
 // Skip all tests if CLASSES.BIN doesn't exist
 (binExists ? describe : describe.skip)('BuildingDataService', () => {

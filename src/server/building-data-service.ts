@@ -17,7 +17,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createLogger } from '../shared/logger';
 import { BuildingData, getConstructionTexture } from '../shared/types/building-data';
-import { parseClassesBin } from './classes-bin-parser';
+import { parseClassesBin, SOUND_SET_KIND } from './classes-bin-parser';
+import type { FacilityAmbientSound } from '../shared/types/domain-types';
 import { registerInspectorTabs } from '../shared/building-details/property-templates';
 import type { Service } from './service-registry';
 import { getCacheDir } from './paths';
@@ -40,6 +41,27 @@ export interface FacilityDimensions {
   constructionTextureFilename?: string;
   animated?: boolean;
   animArea?: { left: number; top: number; right: number; bottom: number };
+  sound?: FacilityAmbientSound;
+}
+
+/**
+ * The static-building sound target Voyager attaches to a building: only ssStochastic
+ * classes get one, and it is always Sounds[0] (Map.pas:5419-5431, :8389).
+ */
+export function stochasticAmbientSound(
+  soundData: BuildingData['soundData']
+): FacilityAmbientSound | undefined {
+  if (!soundData || soundData.kind !== SOUND_SET_KIND.STOCHASTIC) return undefined;
+  const first = soundData.sounds[0];
+  if (!first || !first.waveFile) return undefined;
+  return {
+    waveFile: first.waveFile,
+    attenuation: first.attenuation,
+    priority: first.priority,
+    looped: first.looped,
+    probability: first.probability,
+    period: first.period,
+  };
 }
 
 /**
@@ -242,6 +264,7 @@ export class BuildingDataService implements Service {
       constructionTextureFilename: building.constructionTextureFilename,
       animated: building.animated,
       animArea: building.animArea,
+      sound: stochasticAmbientSound(building.soundData),
     };
   }
 

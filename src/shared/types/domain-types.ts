@@ -291,6 +291,19 @@ export interface SurfaceData {
   rows: number[][];           // 2D array of zone values
 }
 
+/**
+ * Ambient sound of a stochastic sound class — one [Sounds] entry of CLASSES.BIN.
+ * Field defaults follow the legacy descriptor parser (LocalCacheManager.pas:917-960).
+ */
+export interface FacilityAmbientSound {
+  waveFile: string;     // bare filename under cache/Sound/, e.g. 'mine.wav'
+  attenuation: number;  // aten=, default 1 (LocalCacheManager.pas:921-928)
+  priority: number;     // prio=, lower wins (SoundMixer.pas:72)
+  looped: boolean;      // loop=1
+  probability: number;  // prob=, default 1
+  period: number;       // per=, ms, default 0
+}
+
 export interface FacilityDimensions {
   visualClass: string;        // Visual class identifier (matches ObjectsInArea response)
   name: string;               // Building name
@@ -303,6 +316,8 @@ export interface FacilityDimensions {
   constructionTextureFilename?: string;  // Construction state texture filename
   animated?: boolean;         // Whether sprite has animation frames (from CLASSES.BIN)
   animArea?: { left: number; top: number; right: number; bottom: number };  // Animation sub-region
+  /** Ambient sound of a stochastic sound class — entry 0 of [Sounds] (Map.pas:5425, :8389). */
+  sound?: FacilityAmbientSound;
 }
 
 export interface ZoneOverlayState {
