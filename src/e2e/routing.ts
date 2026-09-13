@@ -149,6 +149,13 @@ export const ROUTES: RouteRule[] = [
     why: 'mail path',
   },
   {
+    // Before the broad src/ rule below: the map surface's Town Hall button and the
+    // shared metric it uses are exercised by this flow and by nothing else.
+    test: /^src\/client\/components\/map\/MapSurface\.tsx$|^src\/shared\/nearest-town\.ts$/,
+    flows: ['nearest-town-hall'],
+    why: 'the nearest-town-hall jump — the one flow that drives it',
+  },
+  {
     test: /^src\/client\/|^src\/shared\/|^src\/server\//,
     flows: ['building-details'],
     why: 'code reached through the gateway contract',

@@ -266,6 +266,20 @@ describe('the town paper', () => {
   });
 });
 
+describe('route — nearest town hall (#592)', () => {
+  it('routes the map surface and the shared metric to the one flow that drives it', () => {
+    expect(route(['src/client/components/map/MapSurface.tsx']).required)
+      .toEqual([SPINE_FLOW, 'nearest-town-hall']);
+    expect(route(['src/shared/nearest-town.ts']).required)
+      .toEqual([SPINE_FLOW, 'nearest-town-hall']);
+  });
+
+  it('does not swallow the rest of the map folder', () => {
+    expect(route(['src/client/components/map/MapContextMenu.tsx']).required)
+      .toEqual([SPINE_FLOW, 'building-details']);
+  });
+});
+
 describe('route — the directory tree (#526)', () => {
   it('routes the parser and the service to the one flow that walks the tree', () => {
     const d = route(['src/server/search-menu-service.ts', 'src/server/search-menu-parser.ts']);

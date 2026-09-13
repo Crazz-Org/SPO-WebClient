@@ -17,7 +17,7 @@ plus proche, favoris de position.
 | Clic = sauter | `source.centerOn(x, y)` + entrée d'historique | — |
 | Zoom | molette (autour du curseur) et boutons, 1–8 × ; glisser = déplacer quand zoomé ; Reset | local |
 | Back / Next | `store/map-store.ts` : 100 positions (Voyager), seuil 8 tuiles, nourri par `hooks/useCameraHistory` (1 s) et par chaque saut | caméra |
-| Nearest Town Hall | villes de la page annuaire (déjà lue par Recherche / Government), distance de Chebyshev à la caméra | `search-store.townsData` |
+| Nearest Town Hall | utilisable avant même le chargement de l'annuaire (le clic demande la liste s'il le faut) ; distance de Manhattan à la caméra sur les villes de l'annuaire, approximation locale de `TWorld.NearestTown` (`Kernel/World.pas:5905-5933`) ; arrivée via `onNavigateToBuilding` (le `MoveAndSelect` du client — centre et sélectionne) | `@/shared/nearest-town`, `search-store.townsData` |
 | Légende + coordonnées | « Mine / Losing money / Others » ; tuile survolée ou centre de la vue | — |
 
 Le losange ancré reste disponible (menu **Plus › Docked minimap**). `MinimapRendererAPI` est le
