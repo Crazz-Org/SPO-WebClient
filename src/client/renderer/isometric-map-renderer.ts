@@ -1976,6 +1976,33 @@ export class IsometricMapRenderer {
     return this.allSegments;
   }
 
+  /** `"x,y"` -> `{ x, y }` — the one place either tile-key set is decoded (for minimap layers). */
+  private static decodeTileKey(key: string): { x: number; y: number } {
+    const [x, y] = key.split(',').map(Number);
+    return { x, y };
+  }
+
+  /**
+   * Every road tile the renderer knows about (for minimap rendering).
+   */
+  public getRoadTileCoords(): Array<{ x: number; y: number }> {
+    return Array.from(this.roadTilesMap.keys(), IsometricMapRenderer.decodeTileKey);
+  }
+
+  /**
+   * Every concrete tile the renderer knows about (for minimap rendering).
+   */
+  public getConcreteTileCoords(): Array<{ x: number; y: number }> {
+    return Array.from(this.concreteTilesSet, IsometricMapRenderer.decodeTileKey);
+  }
+
+  /**
+   * The currently selected building, or null (for the minimap's selection marker).
+   */
+  public getSelectedBuilding(): MapBuilding | null {
+    return this.selectedBuilding;
+  }
+
   /**
    * Get map dimensions in tiles (for minimap scaling)
    */

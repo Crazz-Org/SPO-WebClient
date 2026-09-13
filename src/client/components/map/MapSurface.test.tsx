@@ -6,8 +6,9 @@ import { useEmpireStore } from '../../store/empire-store';
 import { useGameStore } from '../../store/game-store';
 import { useSearchStore } from '../../store/search-store';
 import { useUiStore } from '../../store/ui-store';
-import { MapSurface, buildingColor } from './MapSurface';
+import { MapSurface } from './MapSurface';
 import { nearestTown } from '@/shared/nearest-town';
+import { getFacilityDimensionsCache } from '../../facility-dimensions-cache';
 import type { MinimapRendererAPI } from '../../ui/minimap-colormap';
 import type { TownInfo } from '@/shared/types';
 
@@ -24,12 +25,18 @@ class FakePointerEvent extends MouseEvent {
 (globalThis as unknown as { PointerEvent: unknown }).PointerEvent = FakePointerEvent;
 
 function fakeCtx() {
-  return {
+  const paints: string[] = [];
+  const strokes: string[] = [];
+  const ctx = {
     createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
     putImageData: jest.fn(), drawImage: jest.fn(), getImageData: jest.fn(() => ({ data: new Uint8ClampedArray(0) })),
-    fillRect: jest.fn(), strokeRect: jest.fn(), save: jest.fn(), restore: jest.fn(), translate: jest.fn(), rotate: jest.fn(), scale: jest.fn(),
+    fillRect: jest.fn(() => { paints.push(ctx.fillStyle); }),
+    strokeRect: jest.fn(() => { strokes.push(ctx.strokeStyle); }),
+    save: jest.fn(), restore: jest.fn(), translate: jest.fn(), rotate: jest.fn(), scale: jest.fn(),
     fillStyle: '', strokeStyle: '', lineWidth: 1, imageSmoothingEnabled: true,
+    paints, strokes,
   };
+  return ctx;
 }
 
 function fakeSource(): MinimapRendererAPI & { centerOn: jest.Mock; camera: { x: number; y: number } } {
@@ -79,12 +86,10 @@ describe('MapSurface', () => {
   afterEach(() => {
     HTMLCanvasElement.prototype.getContext = origGetContext;
     HTMLCanvasElement.prototype.getBoundingClientRect = origRect;
+    getFacilityDimensionsCache().clear();
   });
 
-  it('colours buildings: losing money red first, mine gold, others muted; nearest town by Manhattan distance', () => {
-    expect(buildingColor({ alert: true, tycoonId: 37 } as never, 37)).toBe('#ef4444');
-    expect(buildingColor({ alert: false, tycoonId: 37 } as never, 37)).toBe('#f59e0b');
-    expect(buildingColor({ alert: false, tycoonId: 2 } as never, 37)).toBe('rgba(226,232,240,0.75)');
+  it('finds the nearest town by Manhattan distance', () => {
     expect(nearestTown(TOWN_LIST, 12, 12)?.name).toBe('Helartia');
     expect(nearestTown(TOWN_LIST, 39, 2)?.name).toBe('Faraway');
     expect(nearestTown(undefined, 0, 0)).toBeNull();
@@ -132,6 +137,22 @@ describe('MapSurface', () => {
     const foggedCount = ctx.fillRect.mock.calls.length;
 
     expect(foggedCount).toBe(plainCount + 1);
+  });
+
+  it('paints roads, concrete, the zone colour and the selection marker from the new layers', () => {
+    getFacilityDimensionsCache().initialize({ '1': { visualClass: '1', name: 'Farm', facid: '', xsize: 1, ysize: 1, level: 0, zoneType: 6 } });
+    const src = {
+      ...fakeSource(),
+      getRoadTileCoords: () => [{ x: 1, y: 1 }],
+      getConcreteTileCoords: () => [{ x: 2, y: 2 }],
+      getSelectedBuilding: () => ({ visualClass: '99', tycoonId: 37, options: 0, x: 10, y: 10, level: 0, alert: false, attack: 0 }),
+    };
+    useMapStore.getState().setSource(src as never);
+    renderWithProviders(<MapSurface />);
+    expect(ctx.paints).toContain('#3f3f3f'); // road
+    expect(ctx.paints).toContain('#5f5f5f'); // concrete
+    expect(ctx.paints).toContain('#D7D988'); // mine, zoneType 6 (Industrial), undimmed
+    expect(ctx.strokes).toContain('#ffffff'); // selection marker stroke
   });
 
   it('Back / Next walk the history and move the camera; Nearest Town Hall arrives through the selecting path', () => {
