@@ -65,6 +65,9 @@ export interface LoginContext {
   // ── Event Emission ──
   emit(event: string, ...args: unknown[]): boolean;
 
+  /** Rewrite a remote asset URL to the gateway's image proxy (spo_session.ts:209). */
+  convertToProxyUrl(remoteUrl: string): string;
+
   // ── Read-only state ──
   readonly worldContextId: string | null;
   readonly tycoonId: string | null;
@@ -77,6 +80,8 @@ export interface LoginContext {
   readonly currentCompany: CompanyInfo | null;
   /** The session language — the SetLanguage argument and the `LangId` on every ASP fetch. */
   readonly languageId: string;
+  /** What the account's `PaidPlanets` directory key said, read once during directory auth. */
+  readonly planetAccess: PlanetAccess | null;
 
   // ── Phase management ──
   getPhase(): SessionPhase;
@@ -108,6 +113,8 @@ export interface LoginContext {
   setLastPlayerY(value: number): void;
   /** The world's AccountStatus answer (ACCOUNT_*), kept so the login flow can act on a first-time player. */
   setAccountStatus(value: number | null): void;
+  /** The account-level planet-access verdict, stored by the directory auth phase. */
+  setPlanetAccess(value: PlanetAccess | null): void;
 
   // ── Collections ──
   getAvailableWorlds(): Map<string, WorldInfo>;
@@ -139,6 +146,97 @@ export interface LoginContext {
   // ── State reset (for switchCompany) ──
   clearAspActionCache(): void;
   clearBuildingFocus(): void;
+}
+
+// ── Planet access (logonComplete.asp:25-67) ─────────────────────────────────
+
+/**
+ * The subscription gate `logonComplete.asp` carried, read over RDO instead.
+ *
+ * `expiresOn` is the `PaidPlanets` string exactly as the directory holds it —
+ * the same value the ASP put in the `PA=` query and the denial card prints.
+ */
+export interface PlanetAccess {
+  granted: boolean;
+  expiresOn: string;
+}
+
+/** logonComplete.asp:59-61 — an empty PaidPlanets reads as "never had access". */
+const NO_PLANET_ACCESS_SENTINEL = '01/01/2008';
+
+/**
+ * Parse the US-locale `MM/DD/YYYY` VBScript's `DateValue` read on the IIS box.
+ * Returns null for anything that is not one — the caller then fails open.
+ */
+function parsePaidPlanetsDate(value: string): Date | null {
+  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value.trim());
+  if (!match) return null;
+  const month = parseInt(match[1], 10);
+  const day = parseInt(match[2], 10);
+  const year = parseInt(match[3], 10);
+  const date = new Date(year, month - 1, day);
+  // Rejects 13/01/2020 and 02/31/2020 — Date would roll them over silently.
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+  return date;
+}
+
+/**
+ * Read the account's `PaidPlanets` expiry off its directory key, on the session
+ * that has just logged the user on — the order logonComplete.asp:46-52 requires.
+ *
+ * FAILS OPEN, LOUDLY. An unreadable answer grants access and warns, the same
+ * rule `checkWorldAdmission` and the `AccountStatus` branch already follow: the
+ * one outcome that must not happen is locking every player out on a read error.
+ */
+async function readPlanetAccess(
+  ctx: LoginContext,
+  sessionId: string,
+  username: string,
+): Promise<PlanetAccess> {
+  const openly = (reason: string): PlanetAccess => {
+    ctx.log.warn(`[Session] Planet access unreadable (${reason}) — granting access`);
+    return { granted: true, expiresOn: '' };
+  };
+
+  try {
+    const keyPacket = await sendDirectoryRequest(ctx, 'directory_auth', rdoCall(
+      'RDOGetUserPath', sessionId,
+      RdoValue.string(username),
+    ).packet);
+    if (keyPacket.errorCode && keyPacket.errorCode > 0) {
+      return openly(`RDOGetUserPath answered ${keyPacket.errorName ?? 'error'} ${keyPacket.errorCode}`);
+    }
+    const key = parsePropertyResponseHelper(keyPacket.payload ?? '', 'res');
+    if (!key) return openly('RDOGetUserPath answered no key');
+
+    await sendDirectoryRequest(ctx, 'directory_auth', rdoCall(
+      'RDOSetCurrentKey', sessionId,
+      RdoValue.string(key),
+    ).packet);
+
+    const paidPacket = await sendDirectoryRequest(ctx, 'directory_auth', rdoCall(
+      'RDOReadString', sessionId,
+      RdoValue.string('PaidPlanets'),
+    ).packet);
+    if (paidPacket.errorCode && paidPacket.errorCode > 0) {
+      return openly(`RDOReadString answered ${paidPacket.errorName ?? 'error'} ${paidPacket.errorCode}`);
+    }
+
+    const raw = parsePropertyResponseHelper(paidPacket.payload ?? '', 'res').trim();
+    const expiresOn = raw || NO_PLANET_ACCESS_SENTINEL;
+    const expiry = parsePaidPlanetsDate(expiresOn);
+    if (!expiry) return openly(`PaidPlanets is not a date: "${expiresOn}"`);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const granted = today.getTime() <= expiry.getTime();
+    ctx.log.debug(`[Session] Planet access ${granted ? 'granted' : 'denied'} — PaidPlanets ${expiresOn}`);
+    return { granted, expiresOn };
+  } catch (err: unknown) {
+    return openly(toErrorMessage(err));
+  }
 }
 
 // ── Parse Season Value ──────────────────────────────────────────────────────
@@ -228,6 +326,12 @@ async function performDirectoryAuth(ctx: LoginContext, username: string, pass: s
     // Voyager treats DIR_NOERROR and DIR_NOERROR_StillTrial (-1) alike
     // (LogonHandlerViewer.pas:548-565). NaN from a bodiless answer still refuses.
     if (authCode !== DIR_NOERROR && authCode !== DIR_NOERROR_StillTrial) throw new AuthError(authCode);
+
+    // 2b. Planet access — the subscription gate logonComplete.asp:50-67 carried.
+    // It is account-level (`PaidPlanets` is one string), so reading it once here
+    // is what reading it per world was, and `loginWorld` turns a refusal into the
+    // same "Access Denied" card the ASP redirect used to produce.
+    ctx.setPlanetAccess(await readPlanetAccess(ctx, sessionId, username));
 
     // 3. End Session & Close — fire-and-forget without RID: ACCEPTED DIVERGENCE
     // (audit 2026-07-02, P2 — the captured legacy client sends this WITH a RID and
@@ -547,28 +651,30 @@ export async function loginWorld(
   const companyCount = parseInt(companyCountStr, 10) || 0;
   ctx.log.debug(`[Session] Company Count: ${companyCount}`);
 
-  // 10. Fetch companies via HTTP for UI
-  const httpResult = await fetchCompaniesViaHttp(ctx, world.ip, username);
-
+  // 10. The company list itself — read off the ClientView, row by row, the way
+  // chooseCompany.asp:166-170 read it. No HTTP page is fetched on this path.
   let companies: CompanyInfo[] = [];
   let loginPage: LoginPageOutcome | undefined;
 
-  if (httpResult.kind === 'companies') {
-    companies = httpResult.companies;
-    if (companyCount > 0 && companies.length === 0) {
-      ctx.log.error(`[Session] GetCompanyCount says ${companyCount} but chooseCompany.asp listed none — company scrape failed`);
+  const planetAccess = ctx.planetAccess;
+  if (planetAccess && !planetAccess.granted) {
+    // The subscription gate wins over everything, as the logonNoAccess redirect did.
+    ctx.log.warn(`[Session] Planet access denied — expired on ${planetAccess.expiresOn}`);
+    loginPage = { kind: 'denied', expiresOn: planetAccess.expiresOn };
+  } else {
+    try {
+      companies = await fetchCompaniesViaRdo(ctx, contextId, companyCount, username);
+    } catch (err: unknown) {
+      // A list that does not match GetCompanyCount is an error, never a short list.
+      ctx.log.error(`[Session] ${toErrorMessage(err)}`);
+      companies = [];
       loginPage = { kind: 'error', errorCode: 'COMPANY_LIST_MISMATCH' };
     }
-  } else if (httpResult.kind === 'denied') {
-    loginPage = { kind: 'denied', expiresOn: httpResult.expiresOn };
-  } else if (httpResult.kind === 'error') {
-    loginPage = { kind: 'error', errorCode: httpResult.errorCode };
-  }
-  // 'unreachable': companies stays [], loginPage stays undefined — as today.
 
-  if (!loginPage && companyCount === 0 && companies.length === 0) {
-    // chooseCompany.asp:38-40 — zero companies is the visa fork, not an error.
-    loginPage = { kind: 'visa', firstVisit };
+    if (!loginPage && companyCount === 0) {
+      // chooseCompany.asp:38-40 — zero companies is the visa fork, not an error.
+      loginPage = { kind: 'visa', firstVisit };
+    }
   }
 
   ctx.setAvailableCompanies(companies);
@@ -985,8 +1091,87 @@ type FetchCompaniesResult =
   | { kind: 'error'; errorCode: string }
   | { kind: 'unreachable' };
 
+/** The five 1-argument getters chooseCompany.asp:166-170 reads one row with, in its order. */
+const COMPANY_ROW_MEMBERS = [
+  'GetCompanyOwnerRole',
+  'GetCompanyName',
+  'GetCompanyId',
+  'GetCompanyCluster',
+  'GetCompanyFacilityCount',
+] as const;
+
 /**
- * Fetch companies via HTTP (ASP endpoint)
+ * Read the player's company list off the ClientView the world's `Logon` returned.
+ *
+ * One row is five sequential `function` calls carrying the row index, exactly as
+ * the reference client's loop issued them (`chooseCompany.asp:166-170`).
+ * Sequential and on the primary socket: the world pool must not carry these.
+ *
+ * The list is `companyCount` long by construction. `TWorld` answers `''` for
+ * name/cluster/ownerRole and `ERROR_Unknown` for id/facility count when the
+ * lookup fails and never bound-checks the index (`Kernel/World.pas:4025-4103`),
+ * so an unusable id or an empty name THROWS `COMPANY_LIST_MISMATCH` rather than
+ * returning a short list. A facility count that does not parse becomes 0 —
+ * `ERROR_Unknown` is indistinguishable from "1 facility" there.
+ */
+export async function fetchCompaniesViaRdo(
+  ctx: LoginContext,
+  contextId: string,
+  companyCount: number,
+  username: string,
+): Promise<CompanyInfo[]> {
+  if (!Number.isInteger(companyCount) || companyCount <= 0) {
+    // No frame at all — RdoValue.int(NaN) is not a thing that may reach the wire.
+    return [];
+  }
+
+  const companies: CompanyInfo[] = [];
+
+  for (let index = 0; index < companyCount; index++) {
+    const answers: string[] = [];
+    for (const member of COMPANY_ROW_MEMBERS) {
+      const packet = await ctx.sendRdoRequest('world', rdoCall(
+        member, contextId,
+        RdoValue.int(index),
+      ).packet, undefined, TimeoutCategory.FAST);
+      answers.push(parsePropertyResponseHelper(packet.payload ?? '', 'res'));
+    }
+    const [ownerRole, name, id, cluster, facilityCountRaw] = answers;
+
+    if (!/^\d+$/.test(id) || parseInt(id, 10) <= 0 || !name) {
+      throw new Error(`COMPANY_LIST_MISMATCH: index ${index} answered id="${id}" name="${name}"`);
+    }
+
+    const company: CompanyInfo = {
+      id,
+      name,
+      ownerRole,
+      cluster,
+      facilityCount: parseInt(facilityCountRaw, 10) || 0,
+      // chooseCompany.asp:193-197 — the role, or `Private` when it IS the account.
+      // Compared exactly, as VBScript's `<>` does.
+      status: ownerRole === username ? 'Private' : ownerRole,
+    };
+    if (cluster) {
+      company.sealUrl = ctx.convertToProxyUrl(
+        `/Five/0/Visual/Voyager/NewLogon/images/comp-${cluster.toLowerCase()}.gif`,
+      );
+    }
+    companies.push(company);
+  }
+
+  ctx.log.debug(`[Session] Read ${companies.length} companies over RDO`);
+  return companies;
+}
+
+/**
+ * Fetch companies via HTTP (ASP endpoint).
+ *
+ * NOT on the login path any more — its one caller is `readPersonalCompanies`
+ * (`spo_session.ts:1173`), the abandon-role read, which asks for a DIFFERENT
+ * user's list than the session's ClientView is bound to. The RDO getters above
+ * cannot serve that: `TClientView.GetCompanyName` forwards its own `UserName`
+ * and never a caller-supplied one (`Interface Server/InterfaceServer.pas:1220-1230`).
  */
 export async function fetchCompaniesViaHttp(
   ctx: LoginContext,

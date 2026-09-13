@@ -165,8 +165,15 @@ describe('WorldStage', () => {
 
 describe('CompanyStage', () => {
   const companies: CompanyInfo[] = [
-    { id: '1', name: 'TestCo', ownerRole: 'Owner', value: 500000 },
-    { id: '2', name: 'Shamba Gov', ownerRole: 'President of Shamba', value: 0 },
+    {
+      id: '1', name: 'TestCo', ownerRole: 'SPO_test3', value: 500000,
+      cluster: 'Mariko', facilityCount: 38, status: 'Private',
+      sealUrl: '/api/image?src=comp-mariko.gif',
+    },
+    {
+      id: '2', name: 'Shamba Gov', ownerRole: 'President of Shamba', value: 0,
+      cluster: 'PGI', facilityCount: 4, status: 'President of Shamba',
+    },
   ];
 
   const defaultProps = {
@@ -394,6 +401,61 @@ describe('CompanyStage', () => {
     renderWithProviders(<CompanyStage {...defaultProps} username="minister of health" />);
     expect(screen.queryByText('Create New Company')).toBeNull();
     expect(screen.getByText('TestCo')).toBeTruthy();
+  });
+
+  // chooseCompany.asp:185-199 — the seal, the cluster, the Private marker and the
+  // facility count are all on the face of the card, before anything is selected.
+  it('shows the seal, the cluster and the facility count of an owned company', () => {
+    const { container } = renderWithProviders(<CompanyStage {...defaultProps} />);
+    const seal = container.querySelector('img[alt="Mariko"]') as HTMLImageElement | null;
+    expect(seal).not.toBeNull();
+    expect(seal!.getAttribute('src')).toBe('/api/image?src=comp-mariko.gif');
+    expect(screen.getByText('Mariko Enterprises')).toBeTruthy();
+    expect(screen.getByText('38 Facilities')).toBeTruthy();
+  });
+
+  it('prints Private instead of a role badge when the owner role is the account', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} />);
+    expect(screen.getByText('Private')).toBeTruthy();
+    // …and the account name is not shown as somebody's job title.
+    expect(screen.queryByText('SPO_test3')).toBeNull();
+  });
+
+  it('shows the role, not Private, on a political card — with its own seal and count', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} />);
+    expect(screen.getByText('President of Shamba')).toBeTruthy();
+    expect(screen.getByText('PGI')).toBeTruthy();
+    expect(screen.getByText('4 Facilities')).toBeTruthy();
+  });
+
+  it('falls back to a glyph when the company carries no seal URL', () => {
+    const { container } = renderWithProviders(<CompanyStage {...defaultProps} />);
+    // The political card has no sealUrl: the cluster initial stands in for it.
+    expect(container.querySelectorAll('img').length).toBe(1);
+    expect(screen.getByText('P')).toBeTruthy();
+  });
+
+  it('still renders a card for a company read on a path that fills none of the new fields', () => {
+    renderWithProviders(
+      <CompanyStage {...defaultProps} companies={[{ id: '9', name: 'Bare Co', ownerRole: 'Owner' }]} />,
+    );
+    expect(screen.getByText('Bare Co')).toBeTruthy();
+    expect(screen.getByText('Owner')).toBeTruthy();
+    expect(screen.queryByText(/Facilities/)).toBeNull();
+  });
+
+  it('selects the company whose card was clicked, and nothing while loading', () => {
+    const onSelect = jest.fn();
+    const { unmount } = renderWithProviders(
+      <CompanyStage {...defaultProps} onSelect={onSelect} />,
+    );
+    fireEvent.click(screen.getByText('TestCo'));
+    expect(onSelect).toHaveBeenCalledWith('1');
+
+    unmount();
+    renderWithProviders(<CompanyStage {...defaultProps} onSelect={onSelect} isLoading />);
+    fireEvent.click(screen.getByText('Shamba Gov'));
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
   it('shows a deadline gauge while loading', () => {

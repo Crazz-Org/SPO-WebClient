@@ -28,6 +28,18 @@ export interface CompanyInfo {
   name: string;
   value?: number;
   ownerRole?: string; // Role de fonction publique (Maire, Ministre, Président) ou username du joueur
+  /** The company's cluster id — GetCompanyCluster(index), i.e. TCompany.Cluster.Id (Kernel/World.pas:4046). */
+  cluster?: string;
+  /** GetCompanyFacilityCount(index), i.e. Facilities.Count (Kernel/World.pas:4074). */
+  facilityCount?: number;
+  /**
+   * What the card prints under the name: the owner role, or the literal `Private`
+   * when the role IS the logged-in account. One field, not two — chooseCompany.asp:193-197
+   * is a single `<nobr>` with an if/else, and only one of the two ever renders.
+   */
+  status?: string;
+  /** Proxied URL of the cluster seal `images/comp-<cluster>.gif` (chooseCompany.asp:186). */
+  sealUrl?: string;
 }
 
 // =============================================================================

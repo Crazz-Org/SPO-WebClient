@@ -8,6 +8,7 @@ import {
   CLUSTER_DISPLAY_NAMES,
   MAX_COMPANY_NAME_LENGTH,
   companyNameProblem,
+  clusterDisplayName,
 } from './cluster-data';
 import type { ClusterId } from './cluster-data';
 
@@ -113,6 +114,21 @@ describe('cluster-data', () => {
 
     it('names ".." as the reason, not the character list', () => {
       expect(companyNameProblem('My..Corp')).toBe('Company name cannot contain ".."');
+    });
+  });
+
+  describe('clusterDisplayName', () => {
+    it('gives the display name of every cluster a tycoon can pick', () => {
+      for (const id of CLUSTER_IDS) {
+        expect(clusterDisplayName(id)).toBe(CLUSTER_DISPLAY_NAMES[id]);
+      }
+      expect(clusterDisplayName('Mariko')).toBe('Mariko Enterprises');
+    });
+
+    // A ministry company carries its ministry cluster, which has no display name
+    // here — printing the raw id beats printing nothing.
+    it.each([['health'], ['heavy industry'], ['']])('gives back %p unchanged', (id) => {
+      expect(clusterDisplayName(id)).toBe(id);
     });
   });
 });

@@ -41,6 +41,7 @@ jest.mock('node-fetch', () => ({
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createProtocolTestHarness,
+  buildPlanetAccessFallbacks,
   buildWorldPropertyFallbacks,
   buildLoginPushTriggers,
   ProtocolTestHarness,
@@ -121,7 +122,7 @@ describe('Protocol Validation: world connection pool', () => {
   function buildHarness(worldPool: HarnessConfig['worldPool']): ProtocolTestHarness {
     return createProtocolTestHarness({
       socketConfigs: [
-        { rdoScenarios: [authBundle.rdo] },
+        { rdoScenarios: [authBundle.rdo], fallbackResponses: buildPlanetAccessFallbacks() },
         { rdoScenarios: [worldListBundle.rdo] },
         {
           rdoScenarios: [createWorldLoginRdoScenario()],

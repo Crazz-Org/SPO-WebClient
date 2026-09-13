@@ -1,14 +1,25 @@
 /**
  * Scenario 3: Server Selection + Company List + CompanyPage.asp
- * HTTP: chooseCompany.asp → company HTML with name, id, ownerRole;
+ *
+ * RDO: the company list itself — the five 1-argument functions the reference
+ *      client read one row with on the bound ClientView
+ *      (`chooseCompany.asp:166-170`,
+ *      `Interface Server/InterfaceServer.pas:169-173`), in that order and each
+ *      carrying the row index as a single `#` integer.
+ * HTTP: chooseCompany.asp → company HTML with name, id, ownerRole (still served,
+ *       for the abandon-role read of `readPersonalCompanies`);
  *       CompanyPage.asp → one company's P&L account tree
  */
 
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage } from '@/shared/types/message-types';
 import type { ProfitLossData } from '@/shared/types';
+import { rdoCall } from '@/shared/rdo-frame';
+import type { RdoMemberName } from '@/shared/rdo-members';
+import { RdoValue } from '@/shared/rdo-types';
 import type { WsCaptureScenario } from '../types/mock-types';
 import type { HttpScenario } from '../types/http-exchange-types';
+import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
 
@@ -237,6 +248,34 @@ export const COMPANY_PAGE_TREE: ProfitLossData = {
   },
 };
 
+/** The row the RDO half answers for — index 0, the only company the fixture holds. */
+export const COMPANY_ROW_INDEX = 0;
+
+/**
+ * The five reads of one company row, built by the real emitter so the separator
+ * and the arity come from the catalogue and can never drift from it.
+ */
+function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
+  const index = RdoValue.int(COMPANY_ROW_INDEX).format();
+  const rows: ReadonlyArray<[string, RdoMemberName, string]> = [
+    ['ownerrole', 'GetCompanyOwnerRole', `%${CAPTURED_COMPANY.ownerRole}`],
+    ['name', 'GetCompanyName', `%${CAPTURED_COMPANY.name}`],
+    ['id', 'GetCompanyId', `#${CAPTURED_COMPANY.id}`],
+    ['cluster', 'GetCompanyCluster', `%${CAPTURED_COMPANY.cluster}`],
+    ['faccount', 'GetCompanyFacilityCount', `#${CAPTURED_COMPANY.facilityCount}`],
+  ];
+
+  return rows.map(([slug, member, answer], i) => ({
+    id: `cl-rdo-${slug}`,
+    request: rdoCall(member, vars.clientViewId, RdoValue.int(COMPANY_ROW_INDEX)).toFrame(),
+    response: `A${300 + i} res="${answer}"`,
+    matchKeys: {
+      verb: 'sel', targetId: vars.clientViewId, action: 'call', member,
+      argsPattern: [index],
+    },
+  }));
+}
+
 export interface CompanyListScenarioOptions {
   logonResult?: 'companies' | 'noAccess' | 'error' | 'noCompanies';
   expiresOn?: string;
@@ -251,7 +290,7 @@ export interface CompanyListScenarioOptions {
 export function createCompanyListScenario(
   overrides?: Partial<ScenarioVariables>,
   options?: CompanyListScenarioOptions,
-): { ws: WsCaptureScenario; http: HttpScenario } {
+): { ws: WsCaptureScenario; http: HttpScenario; rdo: RdoScenario } {
   const vars = mergeVariables(overrides);
   const logonResult = options?.logonResult ?? 'companies';
   const expiresOn = options?.expiresOn ?? '01/01/2020';
@@ -381,6 +420,13 @@ export function createCompanyListScenario(
     variables: {},
   };
 
+  const rdo: RdoScenario = {
+    name: 'company-list',
+    description: 'The company list read off the ClientView: five 1-argument functions per row',
+    exchanges: buildRdoExchanges(vars),
+    variables: vars as unknown as Record<string, string>,
+  };
+
   const ws: WsCaptureScenario = {
     name: 'company-list',
     description: 'Login to world and receive company list',
@@ -428,7 +474,7 @@ export function createCompanyListScenario(
     ],
   };
 
-  return { ws, http };
+  return { ws, http, rdo };
 }
 
 export { CAPTURED_COMPANY };

@@ -19,6 +19,19 @@ export const CLUSTER_DISPLAY_NAMES: Record<ClusterId, string> = {
   Magna: 'Magna Corp',
 };
 
+/**
+ * The name to print for a cluster id.
+ *
+ * A tycoon company always carries one of `CLUSTER_IDS`, but a ministry company
+ * carries its ministry cluster (`health`, `heavy industry`, …), which has no
+ * display name here — that id is printed as it stands rather than dropped.
+ */
+export function clusterDisplayName(id: string): string {
+  return (CLUSTER_IDS as readonly string[]).includes(id)
+    ? CLUSTER_DISPLAY_NAMES[id as ClusterId]
+    : id;
+}
+
 /** Server cap on a company name — Kernel/World.pas:4133. */
 export const MAX_COMPANY_NAME_LENGTH = 50;
 

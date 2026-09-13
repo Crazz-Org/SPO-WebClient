@@ -315,6 +315,12 @@ export class StarpeaceSession extends EventEmitter {
   public mailAccount: string | null = null;
   /** ACCOUNT_* answer of the last AccountStatus (Protocol.pas:82-86); null until asked. */
   public accountStatus: number | null = null;
+  /**
+   * The account's `PaidPlanets` verdict, read once during directory auth
+   * (logonComplete.asp:50-67). Account-level, not per-world, so it lives beside
+   * the credentials and is cleared with them.
+   */
+  private _planetAccess: loginHandler.PlanetAccess | null = null;
   public interfaceServerId: string | null = null;
   private mailAddr: string | null = null;
   private mailPort: number | null = null;
@@ -514,6 +520,8 @@ export class StarpeaceSession extends EventEmitter {
   public setDaAddr(value: string | null): void { this.daAddr = value; }
   public setMailAccount(value: string | null): void { this.mailAccount = value; }
   public setAccountStatus(value: number | null): void { this.accountStatus = value; }
+  public get planetAccess(): loginHandler.PlanetAccess | null { return this._planetAccess; }
+  public setPlanetAccess(value: loginHandler.PlanetAccess | null): void { this._planetAccess = value; }
   public setMailAddr(value: string | null): void { this.mailAddr = value; }
   public setMailPort(value: number | null): void { this.mailPort = value; }
   public setWorldXSize(value: number | null): void { this.worldXSize = value; }
@@ -2962,6 +2970,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     // Zero out credentials from memory
     this._cachedPassword = null;
     this.cachedUsername = null;
+    this._planetAccess = null;
 
     this.log.debug('[Session] Session destroyed successfully');
   }

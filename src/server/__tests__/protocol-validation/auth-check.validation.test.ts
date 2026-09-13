@@ -1,11 +1,12 @@
 /**
  * Protocol Validation: Auth-Only Check (checkAuth)
  *
- * Validates that StarpeaceSession.checkAuth() produces the same 5 RDO commands
+ * Validates that StarpeaceSession.checkAuth() produces the same RDO commands
  * as the auth phase of connectDirectory(), and correctly throws AuthError on failure.
  *
  * Flow under test:
- *   idof DirectoryServer → RDOOpenSession → RDOMapSegaUser → RDOLogonUser → RDOEndSession
+ *   idof DirectoryServer → RDOOpenSession → RDOMapSegaUser → RDOLogonUser
+ *   → RDOGetUserPath → RDOSetCurrentKey → RDOReadString(PaidPlanets) → RDOEndSession
  */
 
 // Must mock before any imports that use them
@@ -19,7 +20,11 @@ jest.mock('node-fetch', () => ({
 
 /// <reference path="../../__tests__/matchers/rdo-matchers.d.ts" />
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createProtocolTestHarness, ProtocolTestHarness } from './protocol-test-harness';
+import {
+  createProtocolTestHarness,
+  buildPlanetAccessFallbacks,
+  ProtocolTestHarness,
+} from './protocol-test-harness';
 import { createAuthScenario } from '../../../mock-server/scenarios/auth-scenario';
 import { AuthError } from '../../../shared/auth-error';
 import type { RdoScenario } from '../../../mock-server/types/rdo-exchange-types';
@@ -82,15 +87,36 @@ describe('Protocol Validation: checkAuth()', () => {
       jest.clearAllMocks();
       harness = createProtocolTestHarness({
         socketConfigs: [
-          { rdoScenarios: [authBundle.rdo] },
+          {
+            rdoScenarios: [authBundle.rdo],
+            // The planet-access gate ported off logonComplete.asp:50-67 reads
+            // three more members on the same session.
+            fallbackResponses: buildPlanetAccessFallbacks(),
+          },
         ],
       });
     });
 
-    it('should send exactly 5 RDO commands', async () => {
+    it('should send exactly 8 RDO commands', async () => {
       await harness.session.checkAuth('SPO_test3', 'test3');
       const commands = harness.getCapturedCommands(0);
-      expect(commands).toHaveLength(5);
+      // 5 for the credentials check, plus the 3 planet-access reads the gateway
+      // took over from logonComplete.asp:50-67 when the HTTP leg went away.
+      expect(commands).toHaveLength(8);
+    });
+
+    it('reads PaidPlanets off the account key, on the logged-on session', async () => {
+      await harness.session.checkAuth('SPO_test3', 'test3');
+      const commands = harness.getCapturedCommands(0);
+      const logonIdx = commands.findIndex(cmd => cmd.includes('RDOLogonUser'));
+      const pathIdx = commands.findIndex(cmd => cmd.includes('RDOGetUserPath'));
+      const keyIdx = commands.findIndex(cmd => cmd.includes('RDOSetCurrentKey'));
+      const readIdx = commands.findIndex(cmd => cmd.includes('RDOReadString'));
+      // logonComplete.asp:46-52 reads the key only after a successful logon.
+      expect(pathIdx).toBeGreaterThan(logonIdx);
+      expect(keyIdx).toBeGreaterThan(pathIdx);
+      expect(readIdx).toBeGreaterThan(keyIdx);
+      expect(commands[readIdx]).toContain('%PaidPlanets');
     });
 
     it('should send idof DirectoryServer as first command', async () => {

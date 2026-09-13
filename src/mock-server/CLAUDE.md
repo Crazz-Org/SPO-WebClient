@@ -30,9 +30,9 @@ Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `crea
 
 Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`.
 
-`world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
-arrives over HTTP. It exists for its second exchange: the admission question the reference client
-asked before offering company creation (`logonComplete.asp:143-152`).
+`world-login` is the world socket during `loginWorld` — RDO only. It exists for its second
+exchange: the admission question the reference client asked before offering company creation
+(`logonComplete.asp:143-152`).
 `createWorldLoginScenario(vars, { canJoin })` sets what the world answers — `-1` for a world at
 its user cap, a positive number for the nobility the player is short, `0` (the default) for
 "go ahead". That exchange pins the target to the InterfaceServer id and the argument list to a
@@ -49,6 +49,21 @@ nobility allows (`DServer/DirectoryServer.pas:116`, body `:1217-1234`;
 `DirectoryServer` id: `RDOCanJoinNewWorld` is declared on `TDirectorySession`, the object
 `get RDOOpenSession` hands back, so a frame sent against the server id would reach a member
 that is not there.
+
+`company-list` is the company list read at login, plus the ASP pages that still surround it. Its
+**RDO half** is the list itself: five one-argument `function`s on the bound `TClientView` —
+`GetCompanyOwnerRole`, `GetCompanyName`, `GetCompanyId`, `GetCompanyCluster`,
+`GetCompanyFacilityCount` (`Interface Server/InterfaceServer.pas:169-173`) — one exchange each for
+row 0, in the order `chooseCompany.asp:166-170` read them, every request built by the real emitter
+(`rdoCall`) so the separator and the arity cannot drift from the catalogue. The row index travels
+as a single `#`-prefixed integer against the ClientView id: a frame carrying a widestring index, or
+addressed to the InterfaceServer, would answer about nobody. The answers reproduce
+`CAPTURED_COMPANY` — `SPO_test3` / `Yellow Inc.` / `28` / `PGI` / `38` — and the three fields the
+old HTML scrape threw away (cluster, `Private` status, facility count) are exactly what the L1 test
+asserts the parsed `CompanyInfo` carries. Its **HTTP half** is unchanged and is no longer the login
+path: `chooseCompany.asp` still serves the abandon-role read of `readPersonalCompanies`, which asks
+for another user's list than the ClientView is bound to, and `CompanyPage.asp` serves
+`fetchCompanyProfitLoss`.
 
 `newspaper` is the town paper (`Visual/News/Newsreader.asp`): the issue bar `ShowBar.asp`
 renders, and one `home.asp` per kept issue. It also carries the **rated post**, which is two

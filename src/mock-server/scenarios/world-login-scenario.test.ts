@@ -20,6 +20,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createProtocolTestHarness,
   buildWorldPropertyFallbacks,
+  buildPlanetAccessFallbacks,
   buildLoginPushTriggers,
   ProtocolTestHarness,
 } from '@/server/__tests__/protocol-validation/protocol-test-harness';
@@ -45,7 +46,10 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
     harness = createProtocolTestHarness({
       socketConfigs: [
         // Socket 0: directory_auth
-        { rdoScenarios: [createAuthScenario(VARS).rdo] },
+        {
+          rdoScenarios: [createAuthScenario(VARS).rdo],
+          fallbackResponses: buildPlanetAccessFallbacks(),
+        },
         // Socket 1: directory_query
         { rdoScenarios: [createWorldListScenario(VARS).rdo] },
         // Socket 2: world socket
@@ -128,11 +132,11 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
     harness.assertNoViolations();
   });
 
-  // The language criterion, end to end over the wire: a session opened with a non-default
-  // language must put it on BOTH carriers — the SetLanguage frame and the ASP query. The
-  // `logonComplete.asp` exchange is gated on `LangId=2`, so a gateway that drops the id
-  // gets a 404 and no companies come back.
-  it('a session opened with language 2 emits SetLanguage %2 and asks logonComplete.asp with LangId=2', async () => {
+  // The language criterion over the wire. The ASP half of it moved off the login
+  // path with the company scrape — `fetchCompaniesViaHttp` still carries the
+  // `LangId`, and `login-handler.test.ts` holds that assertion — so what a login
+  // must still put the language on is the SetLanguage frame.
+  it('a session opened with language 2 emits SetLanguage %2', async () => {
     buildHarness(undefined, '2');
     harness.session.setLanguageId('2');
 
@@ -141,12 +145,10 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
     const setLang = harness.getSockets()[2].getCapturedWrites().find(w => w.includes('SetLanguage'));
     expect(setLang).toContain(`sel ${CONTEXT_ID} call SetLanguage "*" "%2"`);
 
+    // The list came off the ClientView, with no ASP request anywhere.
     const fetchMock = jest.requireMock('node-fetch') as { default: { mock: { calls: unknown[][] } } };
     const asked = fetchMock.default.mock.calls.map(c => String(c[0]));
-    const logonComplete = asked.find(u => u.includes('logonComplete.asp'));
-    expect(logonComplete).toContain('LangId=2');
-
-    // The gated exchange matched — the company page came back, not the 404.
+    expect(asked.some(u => u.includes('logonComplete.asp'))).toBe(false);
     expect(result.companies.length).toBeGreaterThan(0);
     harness.assertNoViolations();
   });

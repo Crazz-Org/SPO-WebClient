@@ -20,7 +20,11 @@ jest.mock('node-fetch', () => ({
 
 /// <reference path="../../__tests__/matchers/rdo-matchers.d.ts" />
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createProtocolTestHarness, ProtocolTestHarness } from './protocol-test-harness';
+import {
+  createProtocolTestHarness,
+  buildPlanetAccessFallbacks,
+  ProtocolTestHarness,
+} from './protocol-test-harness';
 import { createAuthScenario } from '../../../mock-server/scenarios/auth-scenario';
 import { createWorldListScenario } from '../../../mock-server/scenarios/world-list-scenario';
 
@@ -35,7 +39,7 @@ describe('Protocol Validation: connectDirectory()', () => {
     harness = createProtocolTestHarness({
       socketConfigs: [
         // Socket 0: directory_auth (Phase 1)
-        { rdoScenarios: [authBundle.rdo] },
+        { rdoScenarios: [authBundle.rdo], fallbackResponses: buildPlanetAccessFallbacks() },
         // Socket 1: directory_query (Phase 2)
         { rdoScenarios: [worldListBundle.rdo] },
       ],
@@ -95,11 +99,13 @@ describe('Protocol Validation: connectDirectory()', () => {
       expect(endCmd).toContain('"*"');
     });
 
-    it('should send exactly 5 commands in Phase 1', async () => {
+    it('should send exactly 8 commands in Phase 1', async () => {
       await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
 
       const phase1Commands = harness.getCapturedCommands(0);
-      expect(phase1Commands).toHaveLength(5);
+      // The 5 credentials commands plus the three planet-access reads ported off
+      // logonComplete.asp:50-67.
+      expect(phase1Commands).toHaveLength(8);
     });
 
     it('should send Phase 1 commands with sequential RIDs', async () => {
@@ -248,11 +254,13 @@ describe('Protocol Validation: connectDirectory()', () => {
   });
 
   describe('Full flow compliance', () => {
-    it('should send exactly 10 commands total (5 auth + 5 query)', async () => {
+    it('should send exactly 13 commands total (8 auth + 5 query)', async () => {
       await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
 
       const allCommands = harness.getAllCapturedCommands();
-      expect(allCommands).toHaveLength(10);
+      // The auth phase carries three more since the planet-access gate moved off
+      // logonComplete.asp:50-67: RDOGetUserPath, RDOSetCurrentKey, RDOReadString.
+      expect(allCommands).toHaveLength(13);
     });
 
     it('should use RDO call format for method invocations', async () => {
@@ -276,7 +284,7 @@ describe('Protocol Validation: connectDirectory()', () => {
       harness.cleanup();
       harness = createProtocolTestHarness({
         socketConfigs: [
-          { rdoScenarios: [customAuth.rdo] },
+          { rdoScenarios: [customAuth.rdo], fallbackResponses: buildPlanetAccessFallbacks() },
           { rdoScenarios: [customWorldList.rdo] },
         ],
       });

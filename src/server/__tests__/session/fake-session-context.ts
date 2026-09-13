@@ -38,7 +38,7 @@ import type { TimeoutCategory } from '../../../shared/timeout-categories';
 import type { AspActionUrl } from '../../asp-url-extractor';
 import type { SessionContext } from '../../session/session-context';
 import type { PushContext } from '../../session/push-dispatcher';
-import type { LoginContext } from '../../session/login-handler';
+import type { LoginContext, PlanetAccess } from '../../session/login-handler';
 
 // ── What the fake records ───────────────────────────────────────────────────
 
@@ -434,6 +434,8 @@ export interface FakeLoginState {
   initClientReceived: Promise<void> | null;
   /** Set by `loginWorld` before `RegisterEventsById`; a test calls it to stand in for the InitClient push. */
   initClientResolver: (() => void) | null;
+  /** What the directory answered for `PaidPlanets`; null = never read. */
+  planetAccess: PlanetAccess | null;
 }
 
 /** Mock handles on the LoginContext members that are pure side effects. */
@@ -526,6 +528,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     waitingForInitClient: false,
     initClientReceived: null,
     initClientResolver: null,
+    planetAccess: null,
     ...stateOverrides,
   };
 
@@ -578,6 +581,10 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
 
     emit: jest.fn(() => true),
 
+    // Deliberately NOT the identity, as in `makeSessionCtx`: a handler that
+    // forgets to proxy a URL must not produce the same string as one that does.
+    convertToProxyUrl: jest.fn((remoteUrl: string) => `proxy:${remoteUrl}`),
+
     // ── Read-only state, backed by `state` ───────────────────────────────
     get worldContextId() { return state.worldContextId; },
     get tycoonId() { return state.tycoonId; },
@@ -589,6 +596,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     get languageId() { return state.languageId; },
     get rdoCnntId() { return state.rdoCnntId; },
     get currentCompany() { return state.currentCompany; },
+    get planetAccess() { return state.planetAccess; },
 
     getPhase: jest.fn(() => state.phase),
     setPhase: jest.fn((value: SessionPhase) => { state.phase = value; }),
@@ -617,6 +625,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
     setLastPlayerX: jest.fn((value: number) => { state.lastPlayerX = value; }),
     setLastPlayerY: jest.fn((value: number) => { state.lastPlayerY = value; }),
     setAccountStatus: jest.fn((value: number | null) => { state.accountStatus = value; }),
+    setPlanetAccess: jest.fn((value: PlanetAccess | null) => { state.planetAccess = value; }),
 
     getAvailableWorlds: jest.fn(() => state.availableWorlds),
     setAvailableWorlds: jest.fn((worlds: Map<string, WorldInfo>) => { state.availableWorlds = worlds; }),

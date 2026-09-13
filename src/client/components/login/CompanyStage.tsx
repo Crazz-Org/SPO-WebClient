@@ -10,6 +10,7 @@ import { GlassCard } from '../common';
 import { Plus, ArrowLeft, Eye } from 'lucide-react';
 import type { CompanyInfo, LoginPageOutcome, WorldAdmission } from '@/shared/types';
 import { VISITOR_COMPANY_ID } from '@/shared/visitor-visa';
+import { clusterDisplayName } from '@/shared/cluster-data';
 import { isMinisterAccount } from '../../minister-account';
 import { TimeoutCategory } from '@/shared/timeout-categories';
 import { ConnectingGauge } from './ConnectingGauge';
@@ -17,6 +18,63 @@ import styles from './CompanyStage.module.css';
 
 /** LogonNoAccess.asp:97-100 — the `01/01/2008` PA value is the sentinel for "never had access", not an expiry date. */
 const NO_ACCESS_SENTINEL = '01/01/2008';
+
+interface CompanyCardProps {
+  company: CompanyInfo;
+  isLoading: boolean;
+  onSelect: (companyId: string) => void;
+  /** Extra badge modifier for the political grid. */
+  badgeClassName?: string;
+}
+
+/**
+ * One company, as chooseCompany.asp:185-199 drew it: the cluster seal, the name,
+ * the cluster, either the owner role or `Private`, and the facility count.
+ * Everything is on the face of the card — a company can be read before it is entered.
+ */
+function CompanyCard({ company, isLoading, onSelect, badgeClassName }: CompanyCardProps) {
+  // chooseCompany.asp:193-197 is one `<nobr>`: the role, or `Private` when the
+  // role IS the account. `status` carries whichever of the two the gateway chose;
+  // a list read on a path that does not fill it still shows the raw role.
+  const status = company.status ?? company.ownerRole;
+  const isPrivate = status === 'Private';
+  const cluster = company.cluster ? clusterDisplayName(company.cluster) : null;
+  // The proxy answers a transparent 1x1 when it cannot serve the gif, so the
+  // glyph below simply shows through — no onError handler needed.
+  const glyph = (company.cluster || company.name).charAt(0).toUpperCase();
+
+  return (
+    <GlassCard
+      className={styles.companyCard}
+      onClick={() => !isLoading && onSelect(company.id)}
+    >
+      <div className={styles.seal}>
+        <span className={styles.sealFallback}>{glyph}</span>
+        {company.sealUrl && (
+          <img className={styles.sealImg} src={company.sealUrl} alt={company.cluster ?? ''} />
+        )}
+      </div>
+      <div className={styles.companyName}>{company.name}</div>
+      {cluster && <span className={styles.clusterTag}>{cluster}</span>}
+      {status && (
+        <span
+          className={`${styles.roleBadge}${badgeClassName ? ` ${badgeClassName}` : ''}${isPrivate ? ` ${styles.privateBadge}` : ''}`}
+        >
+          {status}
+        </span>
+      )}
+      {company.facilityCount != null && (
+        // NewLogon.lng:9 — strNFacilities="%1 Facilities".
+        <span className={styles.facilityCount}>{company.facilityCount} Facilities</span>
+      )}
+      {company.value != null && (
+        <span className={styles.companyValue}>
+          ${company.value.toLocaleString()}
+        </span>
+      )}
+    </GlassCard>
+  );
+}
 
 interface CompanyStageProps {
   companies: CompanyInfo[];
@@ -233,21 +291,12 @@ export function CompanyStage({
           <h3 className={styles.sectionTitle}>Your Companies</h3>
           <div className={styles.grid}>
             {owned.map((company) => (
-              <GlassCard
+              <CompanyCard
                 key={company.id}
-                className={styles.companyCard}
-                onClick={() => !isLoading && onSelect(company.id)}
-              >
-                <div className={styles.companyName}>{company.name}</div>
-                {company.ownerRole && (
-                  <span className={styles.roleBadge}>{company.ownerRole}</span>
-                )}
-                {company.value != null && (
-                  <span className={styles.companyValue}>
-                    ${company.value.toLocaleString()}
-                  </span>
-                )}
-              </GlassCard>
+                company={company}
+                isLoading={isLoading}
+                onSelect={onSelect}
+              />
             ))}
           </div>
         </section>
@@ -259,16 +308,13 @@ export function CompanyStage({
           <h3 className={styles.sectionTitle}>Political Offices</h3>
           <div className={styles.grid}>
             {political.map((company) => (
-              <GlassCard
+              <CompanyCard
                 key={company.id}
-                className={styles.companyCard}
-                onClick={() => !isLoading && onSelect(company.id)}
-              >
-                <div className={styles.companyName}>{company.name}</div>
-                <span className={`${styles.roleBadge} ${styles.politicalBadge}`}>
-                  {company.ownerRole}
-                </span>
-              </GlassCard>
+                company={company}
+                isLoading={isLoading}
+                onSelect={onSelect}
+                badgeClassName={styles.politicalBadge}
+              />
             ))}
           </div>
         </section>

@@ -31,6 +31,7 @@ jest.mock('node-fetch', () => ({
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createProtocolTestHarness,
+  buildPlanetAccessFallbacks,
   buildWorldPropertyFallbacks,
   buildLoginPushTriggers,
   ProtocolTestHarness,
@@ -124,7 +125,7 @@ describe('Protocol Validation: loginWorld()', () => {
     harness = createProtocolTestHarness({
       socketConfigs: [
         // Socket 0: directory_auth (Phase 1 of connectDirectory)
-        { rdoScenarios: [authBundle.rdo] },
+        { rdoScenarios: [authBundle.rdo], fallbackResponses: buildPlanetAccessFallbacks() },
         // Socket 1: directory_query (Phase 2 of connectDirectory)
         { rdoScenarios: [worldListBundle.rdo] },
         // Socket 2: world socket (loginWorld)
@@ -484,21 +485,44 @@ describe('Protocol Validation: loginWorld()', () => {
       expect(result.tycoonId).toBe(TYCOON_ID);
     });
 
-    it('should return a companies array from HTTP response', async () => {
+    it('should return a companies array read over RDO', async () => {
       const result = await runFullLoginFlow();
 
       expect(result.companies).toBeDefined();
       expect(Array.isArray(result.companies)).toBe(true);
     });
 
-    it('should parse company data from chooseCompany.asp HTML', async () => {
+    // Deliberate behaviour change: the list used to be scraped out of
+    // chooseCompany.asp. It is now read off the ClientView with the five
+    // 1-argument functions the page itself used (`chooseCompany.asp:166-170`).
+    it('should read one company row with five CALL frames after GetCompanyCount', async () => {
       const result = await runFullLoginFlow();
 
-      // Company list scenario provides "Yellow Inc." with id "28"
-      expect(result.companies.length).toBeGreaterThan(0);
-      const company = result.companies[0];
-      expect(company.id).toBe('28');
-      expect(company.name).toBe('Yellow Inc.');
+      const worldCmds = getWorldCommands();
+      const countIdx = worldCmds.findIndex(cmd => cmd.includes('get GetCompanyCount'));
+      const members = [
+        'GetCompanyOwnerRole', 'GetCompanyName', 'GetCompanyId',
+        'GetCompanyCluster', 'GetCompanyFacilityCount',
+      ];
+      const indices = members.map(m => worldCmds.findIndex(cmd => cmd.includes(`call ${m}`)));
+      for (const [i, idx] of indices.entries()) {
+        expect(idx).toBeGreaterThan(countIdx);
+        // The row index travels as a single `#` integer, against the ClientView.
+        expect(worldCmds[idx]).toContain(`sel ${CONTEXT_ID} call ${members[i]} "^" "#0"`);
+      }
+      // …in the page's own order.
+      expect([...indices].sort((a, b) => a - b)).toEqual(indices);
+
+      expect(result.companies).toHaveLength(1);
+      expect(result.companies[0]).toMatchObject({ id: '28', name: 'Yellow Inc.' });
+    });
+
+    it('should not fetch logonComplete.asp on the login path', async () => {
+      await runFullLoginFlow();
+
+      const fetchMock = (jest.requireMock('node-fetch') as { default: jest.Mock }).default;
+      const asked = (fetchMock.mock.calls as unknown[][]).map(c => String(c[0]));
+      expect(asked.some(u => u.includes('logonComplete.asp'))).toBe(false);
     });
   });
 
@@ -593,35 +617,51 @@ describe('Protocol Validation: loginWorld()', () => {
   });
 });
 
-describe('Protocol Validation: loginWorld() — logonComplete.asp exits', () => {
+describe('Protocol Validation: loginWorld() — the refusal exits', () => {
   let harness: ProtocolTestHarness;
 
   const authBundle = createAuthScenario({ username: 'SPO_test3', password: 'test3' });
   const worldListBundle = createWorldListScenario({ username: 'SPO_test3', password: 'test3' });
   const worldLoginRdo = createWorldLoginRdoScenario();
 
-  function buildHarness(options: { logonResult: 'noAccess' | 'error'; expiresOn?: string; errorCode?: string }): ProtocolTestHarness {
+  /**
+   * `paidPlanets` drives the ported subscription gate (logonComplete.asp:50-67);
+   * `companyRowOverrides` replaces individual answers of the company row, which
+   * is how a list that cannot match GetCompanyCount is produced.
+   */
+  function buildHarness(options: {
+    paidPlanets?: string;
+    companyRowOverrides?: Array<{ member: string; payload: string }>;
+  } = {}): ProtocolTestHarness {
     const companyBundle = createCompanyListScenario({
       username: 'SPO_test3',
       password: 'test3',
       worldName: 'Shamba',
       worldIp: '142.44.158.91',
       worldPort: 8000,
-    }, options);
+    });
 
     return createProtocolTestHarness({
       socketConfigs: [
-        { rdoScenarios: [authBundle.rdo] },
+        {
+          rdoScenarios: [authBundle.rdo],
+          fallbackResponses: buildPlanetAccessFallbacks(options.paidPlanets),
+        },
         { rdoScenarios: [worldListBundle.rdo] },
         {
           rdoScenarios: [worldLoginRdo],
-          fallbackResponses: buildWorldPropertyFallbacks({
-            worldName: 'Shamba',
-            worldIp: '142.44.158.91',
-            worldPort: '8000',
-            mailAddr: '142.44.158.91',
-            mailPort: '1234',
-          }),
+          // First match wins, so an override placed ahead of the defaults
+          // replaces that one answer of the row.
+          fallbackResponses: [
+            ...(options.companyRowOverrides ?? []),
+            ...buildWorldPropertyFallbacks({
+              worldName: 'Shamba',
+              worldIp: '142.44.158.91',
+              worldPort: '8000',
+              mailAddr: '142.44.158.91',
+              mailPort: '1234',
+            }),
+          ],
           pushTriggers: buildLoginPushTriggers(CONTEXT_ID),
         },
       ],
@@ -629,36 +669,48 @@ describe('Protocol Validation: loginWorld() — logonComplete.asp exits', () => 
     });
   }
 
+  async function login(): Promise<Awaited<ReturnType<ProtocolTestHarness['session']['loginWorld']>>> {
+    const worlds = await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
+    const shamba = worlds.find(w => w.name === 'shamba');
+    expect(shamba).toBeDefined();
+    return harness.session.loginWorld('SPO_test3', 'test3', shamba!);
+  }
+
   afterEach(() => {
     harness.assertNoViolations();
     harness.cleanup();
   });
 
-  it('reports a denial when logonComplete.asp redirects to logonNoAccess.asp', async () => {
-    harness = buildHarness({ logonResult: 'noAccess', expiresOn: '01/01/2020' });
+  // The gate the HTTP redirect used to carry: a lapsed PaidPlanets date is the
+  // sole producer of `denied`, and it must still refuse over RDO.
+  it('reports a denial when the account PaidPlanets date has passed', async () => {
+    harness = buildHarness({ paidPlanets: '01/01/2020' });
 
-    const worlds = await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
-    const shamba = worlds.find(w => w.name === 'shamba');
-    expect(shamba).toBeDefined();
-    const result = await harness.session.loginWorld('SPO_test3', 'test3', shamba!);
+    const result = await login();
 
     expect(result.loginPage).toEqual({ kind: 'denied', expiresOn: '01/01/2020' });
     expect(result.companies).toEqual([]);
     expect(harness.session.getAvailableCompanies()).toEqual([]);
-    // The noAccess scenario does not register a chooseCompany.asp exchange at all —
-    // if the gateway had fetched it, the HttpMock would fail to match and the fetch
-    // would reject, turning this result into 'unreachable' instead of 'denied'.
   });
 
-  it('reports an error when logonComplete.asp redirects to logonError.asp', async () => {
-    harness = buildHarness({ logonResult: 'error', errorCode: 'ERROR_CANNOTCREATECLIENTVIEW' });
+  it('lets a paid-up account through to its company list', async () => {
+    harness = buildHarness({ paidPlanets: '01/01/2030' });
 
-    const worlds = await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
-    const shamba = worlds.find(w => w.name === 'shamba');
-    expect(shamba).toBeDefined();
-    const result = await harness.session.loginWorld('SPO_test3', 'test3', shamba!);
+    const result = await login();
 
-    expect(result.loginPage).toEqual({ kind: 'error', errorCode: 'ERROR_CANNOTCREATECLIENTVIEW' });
+    expect(result.loginPage).toBeUndefined();
+    expect(result.companies).toHaveLength(1);
+  });
+
+  // A row the world cannot answer is an error, never a short list.
+  it('reports COMPANY_LIST_MISMATCH when a row answers an unusable id', async () => {
+    harness = buildHarness({
+      companyRowOverrides: [{ member: 'GetCompanyId', payload: 'res="#0"' }],
+    });
+
+    const result = await login();
+
+    expect(result.loginPage).toEqual({ kind: 'error', errorCode: 'COMPANY_LIST_MISMATCH' });
     expect(result.companies).toEqual([]);
     expect(harness.session.getAvailableCompanies()).toEqual([]);
   });

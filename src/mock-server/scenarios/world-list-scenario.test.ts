@@ -20,6 +20,7 @@ jest.mock('node-fetch', () => ({
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createProtocolTestHarness,
+  buildPlanetAccessFallbacks,
   ProtocolTestHarness,
 } from '@/server/__tests__/protocol-validation/protocol-test-harness';
 import { mergeVariables } from './scenario-variables';
@@ -39,7 +40,10 @@ describe('L1: world-list scenario driven through connectDirectory()', () => {
     harness = createProtocolTestHarness({
       socketConfigs: [
         // Socket 0: directory_auth
-        { rdoScenarios: [createAuthScenario(VARS).rdo] },
+        {
+          rdoScenarios: [createAuthScenario(VARS).rdo],
+          fallbackResponses: buildPlanetAccessFallbacks(),
+        },
         // Socket 1: directory_query
         {
           rdoScenarios: [

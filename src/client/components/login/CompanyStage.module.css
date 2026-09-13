@@ -114,6 +114,37 @@
   box-shadow: 0 4px 20px rgba(212, 168, 83, 0.15);
 }
 
+/* Cluster seal — chooseCompany.asp:186 draws images/comp-<cluster>.gif.
+   The glyph is the fallback: the image proxy answers a transparent 1x1 when it
+   cannot serve the gif, and the letter simply shows through. */
+.seal {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--accent-gold-subtle);
+  align-self: flex-start;
+}
+
+.sealFallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: var(--text-lg);
+  font-weight: var(--font-bold);
+  color: var(--accent-gold);
+}
+
+.sealImg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .companyName {
   font-size: var(--text-base);
   font-weight: var(--font-bold);
@@ -133,6 +164,24 @@
 .politicalBadge {
   color: var(--primary);
   background: rgba(16, 185, 129, 0.1);
+}
+
+/* `Private` is a marker, not somebody's job title — chooseCompany.asp:196. */
+.privateBadge {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.clusterTag {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.facilityCount {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .visaHint {

@@ -122,7 +122,15 @@ export const RDO_MEMBERS = {
   GetAttachmentCount:        { kind: 'function',  arity: 1 },                // src/server/session/mail-handler.ts:326
   GetChannelInfo:            { kind: 'function',  arity: 1 },                // src/server/session/chat-handler.ts:112
   GetChannelList:            { kind: 'function',  arity: 1 },                // src/server/session/chat-handler.ts:94
+  // The five company getters the reference client read one row with
+  // (`chooseCompany.asp:166-170`), each a 1-argument published FUNCTION on
+  // TClientView declared in one block beside the arity-0 GetCompanyCount below.
+  GetCompanyCluster:         { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:171; src/server/session/login-handler.ts (fetchCompaniesViaRdo)
   GetCompanyCount:           { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts:478
+  GetCompanyFacilityCount:   { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:173; src/server/session/login-handler.ts (fetchCompaniesViaRdo)
+  GetCompanyId:              { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:172; src/server/session/login-handler.ts (fetchCompaniesViaRdo)
+  GetCompanyName:            { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:170; src/server/session/login-handler.ts (fetchCompaniesViaRdo)
+  GetCompanyOwnerRole:       { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:169; src/server/session/login-handler.ts (fetchCompaniesViaRdo)
   GetHeaders:                { kind: 'function',  arity: 1 },                // src/server/session/mail-handler.ts:306
   GetInputNames:             { kind: 'function',  arity: 2 },                // src/server/session/building-details-handler.ts:983
   GetLines:                  { kind: 'function',  arity: 1 },                // src/server/session/mail-handler.ts:316
@@ -180,6 +188,7 @@ export const RDO_MEMBERS = {
   RDOGetInvDescEx:           { kind: 'function',  arity: 2 },                // src/server/session/research-handler.ts:131
   RDOGetInvPropsByLang:      { kind: 'function',  arity: 2 },                // src/server/session/research-handler.ts:120
   RDOGetSupply:              { kind: 'function',  arity: 1 },                // StdBlocks/ServiceBlock.pas:310; src/server/session/building-details-handler.ts (getBuildingServiceFigures)
+  RDOGetUserPath:            { kind: 'function',  arity: 1 },                // DServer/DirectoryServer.pas:114; src/server/session/login-handler.ts (readPlanetAccess)
   RDOGetWorkers:             { kind: 'function',  arity: 1 },                // Kernel/WorkCenterBlock.pas:139; src/server/session/building-details-handler.ts (readWorkerCounts)
   RDOLaunchMovie:            { kind: 'procedure', arity: 4 },                // src/server/session/building-property-handler.ts:194,223
   RDOLogonClient:            { kind: 'procedure', arity: 2 },                // Kernel/World.pas:412; src/server/spo_session.ts:997
@@ -191,6 +200,7 @@ export const RDO_MEMBERS = {
   RDOOpenSession:            { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts:194
   RDOQueryKey:               { kind: 'function',  arity: 2 },                // src/server/session/login-handler.ts:243
   RDOQueueResearch:          { kind: 'procedure', arity: 2 },                // src/server/session/building-property-handler.ts:194,223
+  RDOReadString:             { kind: 'function',  arity: 1 },                // DServer/DirectoryServer.pas:63; src/server/session/login-handler.ts (readPlanetAccess)
   RDOReleaseMovie:           { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
   RdoRepair:                 { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
   RDOSearchKey:              { kind: 'function',  arity: 2 },                // DServer/DirectoryServer.pas:84; src/server/session/login-handler.ts:324

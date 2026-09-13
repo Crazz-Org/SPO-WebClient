@@ -20,6 +20,7 @@ jest.mock('node-fetch', () => ({
 import { describe, it, expect, afterEach } from '@jest/globals';
 import {
   createProtocolTestHarness,
+  buildPlanetAccessFallbacks,
   buildWorldPropertyFallbacks,
   buildLoginPushTriggers,
   ProtocolTestHarness,
@@ -98,7 +99,7 @@ describe('Protocol Validation: visitor visa login', () => {
 
     return createProtocolTestHarness({
       socketConfigs: [
-        { rdoScenarios: [authBundle.rdo] },
+        { rdoScenarios: [authBundle.rdo], fallbackResponses: buildPlanetAccessFallbacks() },
         { rdoScenarios: [worldListBundle.rdo] },
         {
           rdoScenarios: [worldLoginRdo(accountStatusPayload), selectCompanyBundle.rdo],

@@ -18,6 +18,7 @@ import type { WebSocket } from 'ws';
 import {
   createProtocolTestHarness,
   buildWorldPropertyFallbacks,
+  buildPlanetAccessFallbacks,
   buildLoginPushTriggers,
   ProtocolTestHarness,
 } from '@/server/__tests__/protocol-validation/protocol-test-harness';
@@ -41,8 +42,8 @@ const VARS = { username: 'SPO_test3', password: 'test3' } as const;
 function buildHarness(): ProtocolTestHarness {
   return createProtocolTestHarness({
     socketConfigs: [
-      { rdoScenarios: [createAuthScenario(VARS).rdo] },
-      { rdoScenarios: [createAuthScenario(VARS).rdo] },
+      { rdoScenarios: [createAuthScenario(VARS).rdo], fallbackResponses: buildPlanetAccessFallbacks() },
+      { rdoScenarios: [createAuthScenario(VARS).rdo], fallbackResponses: buildPlanetAccessFallbacks() },
       { rdoScenarios: [createWorldListScenario(VARS).rdo] },
       {
         rdoScenarios: [createWorldLoginScenario(VARS).rdo, createSelectCompanyScenario(VARS).rdo],

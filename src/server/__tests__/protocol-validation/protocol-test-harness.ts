@@ -368,6 +368,27 @@ export function buildWorldPropertyFallbacks(vars: {
     { member: 'TycoonId', payload: `TycoonId="#22"` },
     { member: 'RDOCnntId', payload: `RDOCnntId="#12345678"` },
     { member: 'GetCompanyCount', payload: `GetCompanyCount="#1"` },
+    // The company row itself — five 1-argument calls (chooseCompany.asp:166-170).
+    // A fallback matches on the member name alone, so a `call` frame is served
+    // here exactly as a property `get` is.
+    { member: 'GetCompanyOwnerRole', payload: `res="%SPO_test3"` },
+    { member: 'GetCompanyName', payload: `res="%Yellow Inc."` },
+    { member: 'GetCompanyId', payload: `res="#28"` },
+    { member: 'GetCompanyCluster', payload: `res="%PGI"` },
+    { member: 'GetCompanyFacilityCount', payload: `res="#38"` },
+  ];
+}
+
+/**
+ * Fallbacks for the planet-access reads `performDirectoryAuth` makes on the
+ * directory session (logonComplete.asp:50-67). Without them the three frames go
+ * unanswered and the gate falls open on a timeout instead of on an answer.
+ */
+export function buildPlanetAccessFallbacks(paidPlanets = '01/01/2030'): FallbackResponse[] {
+  return [
+    { member: 'RDOGetUserPath', payload: `res="%Root/Users/S/SPO_test3"` },
+    { member: 'RDOSetCurrentKey', payload: `res="#0"` },
+    { member: 'RDOReadString', payload: `res="%${paidPlanets}"` },
   ];
 }
 
