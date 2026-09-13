@@ -141,7 +141,7 @@
   font-size: var(--text-sm);
   color: var(--text-primary);
   flex-shrink: 0;
-  min-width: 60px;
+  min-width: 110px;
 }
 
 .slider {

@@ -127,10 +127,11 @@ export function SettingsDialog() {
               onChange={(v) => handleSettingChange({ isSoundEnabled: v })}
             />
             <div className={styles.sliderRow}>
-              <span className={styles.sliderLabel}>Volume</span>
+              <span className={styles.sliderLabel}>Effects volume</span>
               <input
                 type="range"
                 className={styles.slider}
+                aria-label="Effects volume"
                 min="0"
                 max="1"
                 step="0.05"
@@ -139,6 +140,22 @@ export function SettingsDialog() {
               />
               <span className={styles.sliderValue}>
                 {Math.round(settings.soundVolume * 100)}%
+              </span>
+            </div>
+            <div className={styles.sliderRow}>
+              <span className={styles.sliderLabel}>Music volume</span>
+              <input
+                type="range"
+                className={styles.slider}
+                aria-label="Music volume"
+                min="0"
+                max="1"
+                step="0.05"
+                value={settings.musicVolume}
+                onChange={(e) => handleSettingChange({ musicVolume: parseFloat(e.target.value) })}
+              />
+              <span className={styles.sliderValue}>
+                {Math.round(settings.musicVolume * 100)}%
               </span>
             </div>
           </section>

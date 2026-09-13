@@ -5,10 +5,11 @@
  * Tests verify they render nothing when inactive, and mount without crashing when active.
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react';
-import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
+import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
+import { useGameStore } from '../../store/game-store';
 import { BuildMenu } from './BuildMenu';
 import { SettingsDialog } from './SettingsDialog';
 import { ZoneTypePicker } from './ZoneTypePicker';
@@ -75,6 +76,49 @@ describe('SettingsDialog', () => {
     expect(sw.checked).toBe(true);
     fireEvent.click(sw);
     expect((screen.getByRole('switch', { name: "Fade other players' buildings" }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('offers separate Effects volume and Music volume sliders, both defaulting to 50%', () => {
+    useUiStore.getState().openModal('settings');
+    renderWithProviders(<SettingsDialog />);
+    const effects = screen.getByLabelText('Effects volume') as HTMLInputElement;
+    const music = screen.getByLabelText('Music volume') as HTMLInputElement;
+    expect(effects.value).toBe('0.5');
+    expect(music.value).toBe('0.5');
+  });
+
+  it('changing the music slider updates musicVolume only, and forwards the merged settings', () => {
+    useUiStore.getState().openModal('settings');
+    useGameStore.getState().updateSettings({ musicVolume: 0.5, soundVolume: 0.5 });
+    const onSettingsChange = jest.fn();
+    renderWithProviders(<SettingsDialog />, {
+      clientCallbacks: createSpiedCallbacks({ onSettingsChange }),
+    });
+
+    fireEvent.change(screen.getByLabelText('Music volume'), { target: { value: '0.2' } });
+
+    expect(useGameStore.getState().settings.musicVolume).toBe(0.2);
+    expect(useGameStore.getState().settings.soundVolume).toBe(0.5);
+    expect(onSettingsChange).toHaveBeenCalledWith(
+      expect.objectContaining({ musicVolume: 0.2, soundVolume: 0.5 }),
+    );
+  });
+
+  it('changing the effects slider updates soundVolume only, and forwards the merged settings', () => {
+    useUiStore.getState().openModal('settings');
+    useGameStore.getState().updateSettings({ musicVolume: 0.5, soundVolume: 0.5 });
+    const onSettingsChange = jest.fn();
+    renderWithProviders(<SettingsDialog />, {
+      clientCallbacks: createSpiedCallbacks({ onSettingsChange }),
+    });
+
+    fireEvent.change(screen.getByLabelText('Effects volume'), { target: { value: '0.2' } });
+
+    expect(useGameStore.getState().settings.soundVolume).toBe(0.2);
+    expect(useGameStore.getState().settings.musicVolume).toBe(0.5);
+    expect(onSettingsChange).toHaveBeenCalledWith(
+      expect.objectContaining({ soundVolume: 0.2, musicVolume: 0.5 }),
+    );
   });
 });
 

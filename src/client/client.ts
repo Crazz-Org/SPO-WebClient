@@ -28,6 +28,7 @@ import { useMailStore } from './store/mail-store';
 import { useNewspaperStore } from './store/newspaper-store';
 import { usePoliticsStore } from './store/politics-store';
 import { SoundManager } from './audio/sound-manager';
+import { MusicPlayer } from './audio/music-player';
 import type { ClientHandlerContext } from './handlers/client-context';
 import type { RememberedSession } from './store/remembered-session';
 
@@ -237,6 +238,7 @@ export class StarpeaceClient implements ClientHandlerContext {
 
   // Audio
   public soundManager: SoundManager;
+  public musicPlayer: MusicPlayer;
 
   private cameraUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -265,9 +267,11 @@ export class StarpeaceClient implements ClientHandlerContext {
       };
     };
     this.soundManager = new SoundManager();
+    this.musicPlayer = new MusicPlayer();
     // The login screen needs the persisted settings — the language picker reads one of them —
     // and the game-view init (:797) only loads them after login. Idempotent, so both stand.
     ClientBridge.loadPersistedSettings();
+    this.applySettings(ClientBridge.getSettings());
     const callbacks: Partial<ClientCallbacks> = {
       onBuildRoad: () => roadHandler.toggleRoadBuildingMode(this),
       onDemolishRoad: () => roadHandler.toggleRoadDemolishMode(this),
@@ -831,6 +835,7 @@ export class StarpeaceClient implements ClientHandlerContext {
   private setupAudio(): void {
     const initAudio = () => {
       this.soundManager.initOnInteraction();
+      this.musicPlayer.initOnInteraction();
       document.removeEventListener('click', initAudio);
       document.removeEventListener('keydown', initAudio);
     };
@@ -851,6 +856,8 @@ export class StarpeaceClient implements ClientHandlerContext {
     }
     this.soundManager.setEnabled(settings.isSoundEnabled);
     this.soundManager.setVolume(settings.soundVolume);
+    this.musicPlayer.setEnabled(settings.isSoundEnabled);
+    this.musicPlayer.setVolume(settings.musicVolume);
     if (this.minimapUI) {
       this.minimapUI.setSize(settings.minimapSize);
     }

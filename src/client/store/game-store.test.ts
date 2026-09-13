@@ -610,3 +610,25 @@ describe('game-store mapLoading slice', () => {
     expect(mapLoading.progress).toBe(0.9); // preserved
   });
 });
+
+describe('game-store settings — two volumes', () => {
+  beforeEach(() => {
+    useGameStore.getState().reset();
+  });
+
+  it('defaults musicVolume and soundVolume to 0.5, independently', () => {
+    const { settings } = useGameStore.getState();
+    expect(settings.musicVolume).toBe(0.5);
+    expect(settings.soundVolume).toBe(0.5);
+  });
+
+  it('updateSettings writes each volume without touching the other', () => {
+    useGameStore.getState().updateSettings({ musicVolume: 0.2 });
+    expect(useGameStore.getState().settings.musicVolume).toBe(0.2);
+    expect(useGameStore.getState().settings.soundVolume).toBe(0.5);
+
+    useGameStore.getState().updateSettings({ soundVolume: 0.9 });
+    expect(useGameStore.getState().settings.soundVolume).toBe(0.9);
+    expect(useGameStore.getState().settings.musicVolume).toBe(0.2);
+  });
+});

@@ -100,6 +100,7 @@ describe('applySettings — renderer wiring', () => {
     const fake = {
       mapNavigationUI,
       soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
       minimapUI: null,
     };
     const settings = { ...useGameStore.getState().settings, glassForeignBuildings };
@@ -107,6 +108,39 @@ describe('applySettings — renderer wiring', () => {
     (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
 
     expect(renderer.setGlassForeignBuildings).toHaveBeenCalledWith(glassForeignBuildings);
+  });
+
+  it.each([
+    [0, 0.7],
+    [0.7, 0],
+  ])('applies soundVolume = %s and musicVolume = %s to their own players', (soundVolume, musicVolume) => {
+    const fake = {
+      mapNavigationUI: null,
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      minimapUI: null,
+    };
+    const settings = { ...useGameStore.getState().settings, soundVolume, musicVolume };
+
+    (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
+
+    expect(fake.soundManager.setVolume).toHaveBeenCalledWith(soundVolume);
+    expect(fake.musicPlayer.setVolume).toHaveBeenCalledWith(musicVolume);
+  });
+
+  it('disables both players when isSoundEnabled is false', () => {
+    const fake = {
+      mapNavigationUI: null,
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      minimapUI: null,
+    };
+    const settings = { ...useGameStore.getState().settings, isSoundEnabled: false };
+
+    (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
+
+    expect(fake.soundManager.setEnabled).toHaveBeenCalledWith(false);
+    expect(fake.musicPlayer.setEnabled).toHaveBeenCalledWith(false);
   });
 });
 
