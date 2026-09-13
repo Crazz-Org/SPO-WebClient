@@ -70,6 +70,8 @@ export interface GameSettings {
   glassForeignBuildings: boolean;
   isSoundEnabled: boolean;
   soundVolume: number;
+  /** Legacy 'MusicVolume', default 50 — OptionsHandlerViewer.pas:519. Independent of soundVolume. */
+  musicVolume: number;
   isDebugOverlay: boolean;
   minimapSize: MinimapSize;
   /** The language sent to the world on login — one of the six ids in `shared/language.ts`. */
@@ -83,6 +85,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   glassForeignBuildings: true,
   isSoundEnabled: true,
   soundVolume: 0.5,
+  musicVolume: 0.5,
   isDebugOverlay: false,
   minimapSize: 'medium',
   languageId: DEFAULT_LANGUAGE_ID,
