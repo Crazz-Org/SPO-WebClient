@@ -299,6 +299,8 @@ export interface ClientCallbacks {
   onRequestFacilities: () => void;
   onAddFavorite: (name: string, x: number, y: number) => void;
   onRemoveFavorite: (path: string, name: string) => void;
+  /** Remove several favourites in one action — one delete per item, failures reported per item. */
+  onRemoveFavorites: (items: { path: string; name: string }[]) => void;
   onRenameFavorite: (path: string, name: string) => void;
   onCreateFavoriteFolder: (parentPath: string, name: string) => void;
   onMoveFavorite: (path: string, destPath: string, name: string) => void;
