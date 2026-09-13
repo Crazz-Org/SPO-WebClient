@@ -134,6 +134,10 @@ export enum WsMessageType {
   REQ_GET_SURFACE = 'REQ_GET_SURFACE',
   REQ_GET_ALL_FACILITY_DIMENSIONS = 'REQ_GET_ALL_FACILITY_DIMENSIONS',
 
+  // The town sentence under the camera (ContextStatusText)
+  REQ_CONTEXT_STATUS = 'REQ_CONTEXT_STATUS',
+  RESP_CONTEXT_STATUS = 'RESP_CONTEXT_STATUS',
+
   RESP_BUILDING_CATEGORIES = 'RESP_BUILDING_CATEGORIES',
   RESP_BUILDING_FACILITIES = 'RESP_BUILDING_FACILITIES',
   RESP_BUILDING_PLACED = 'RESP_BUILDING_PLACED',
@@ -713,6 +717,21 @@ export interface WsReqGetSurface extends WsMessage {
 
 export interface WsReqGetAllFacilityDimensions extends WsMessage {
   type: WsMessageType.REQ_GET_ALL_FACILITY_DIMENSIONS;
+}
+
+// ── Context status — the town sentence under the camera ─────────────────────
+
+export interface WsReqContextStatus extends WsMessage {
+  type: WsMessageType.REQ_CONTEXT_STATUS;
+  /** World tile coordinates of the camera centre, x first (`ServerCnxHandler.pas:1444`). */
+  x: number;
+  y: number;
+}
+
+export interface WsRespContextStatus extends WsMessage {
+  type: WsMessageType.RESP_CONTEXT_STATUS;
+  /** The server's sentence, or '' when there is no town under (x, y) (`World.pas:4243`). */
+  text: string;
 }
 
 export interface WsRespBuildingCategories extends WsMessage {

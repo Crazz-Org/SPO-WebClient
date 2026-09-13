@@ -1,0 +1,30 @@
+/* ContextStatusStrip — the town sentence under the camera, a slim strip above CommandBar */
+
+.strip {
+  position: fixed;
+  /* CommandBar sits at bottom: var(--space-4) and is ~110px tall; stay clear of it. */
+  bottom: calc(var(--space-4) + 118px);
+  left: var(--space-4);
+  right: var(--space-4);
+  max-width: 904px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--space-4);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: var(--z-hud);
+}

@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -230,6 +230,18 @@ refused", never "N tiles were painted". `createDefineZoneScenario(vars,
 the real gateway `handleDefineZone` and the real browser `zone-handler`
 end to end, and asserts an `ERROR_Unknown` reply reaches the player as an
 error notification, never a success toast.
+
+`context-status` is `ContextStatusText`, a 2-argument `"^"` FUNCTION on
+`TClientView` (`Interface Server/InterfaceServer.pas:149`) forwarding to
+`TWorld.RDOContextStatusText( ToTycoon, x, y )` (`Kernel/World.pas:4233`) — the
+tycoon id is injected server-side, so the client sends only `(x, y)`, x first,
+as Voyager does (`ServerCnxHandler.pas:1444`). Its two exchanges are the two
+answers that matter: a sentence for a tile inside a town, and `res="%"` for a
+tile with none (`World.pas:4243`), which is a normal answer and not an error.
+`createContextStatusScenario(vars, { text })` sets the sentence the first
+exchange carries. Its test drives the real gateway `handleContextStatus` and the
+real browser handler, then renders `ContextStatusStrip` and asserts a camera
+move produces the second ask and that the empty answer hides the strip.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under
