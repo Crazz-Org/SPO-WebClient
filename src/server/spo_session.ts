@@ -2967,7 +2967,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
   }
 
   // -- ZONE/SURFACE (facade -> zone-surface-handler) -----------------------
-  public async defineZone(zoneId: number, x1: number, y1: number, x2: number, y2: number): Promise<{ success: boolean; message?: string }> {
+  public async defineZone(zoneId: number, x1: number, y1: number, x2: number, y2: number): Promise<{ success: boolean; message?: string; errorCode?: number }> {
     return zoneSurfaceHandler.defineZone(this, zoneId, x1, y1, x2, y2);
   }
 

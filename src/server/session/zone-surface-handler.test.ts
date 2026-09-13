@@ -48,7 +48,7 @@ describe('defineZone', () => {
         RdoValue.int(40).format(),
       ],
     });
-    expect(result).toEqual({ success: true, message: 'res="#0"' });
+    expect(result).toEqual({ success: true });
   });
 
   it('normalises inverted corners so (x1,y1) is always the min and (x2,y2) the max', async () => {
@@ -67,11 +67,49 @@ describe('defineZone', () => {
     ]);
   });
 
-  it('reports an empty message when the server payload is empty', async () => {
+  it('treats an empty payload (no result code) as a refusal', async () => {
     const fake = makeSessionCtx();
     // default responder: empty payload
     const result = await defineZone(fake.ctx, 1, 0, 0, 1, 1);
-    expect(result).toEqual({ success: true, message: '' });
+    expect(result).toEqual({
+      success: false,
+      message: 'Zone definition failed — the server sent no result code',
+      errorCode: -1,
+    });
+  });
+
+  it('refuses with res="#1" (ERROR_Unknown), naming the code', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#1"');
+
+    const result = await defineZone(fake.ctx, 1, 0, 0, 1, 1);
+
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe(1);
+    expect(result.message).toMatch(/code 1/);
+    expect(result.message).toMatch(/unknown/i);
+    expect(fake.log.warn).toHaveBeenCalled();
+  });
+
+  it('accepts with res="#0" (NOERROR)', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+
+    const result = await defineZone(fake.ctx, 1, 0, 0, 1, 1);
+
+    expect(result).toEqual({ success: true });
+  });
+
+  it('names an uncommon code via getErrorMessage, e.g. res="#15" (ERROR_AccessDenied)', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#15"');
+
+    const result = await defineZone(fake.ctx, 1, 0, 0, 1, 1);
+
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe(15);
+    expect(result.message).toMatch(/access denied/i);
+    expect(result.message).toMatch(/code 15/);
   });
 
   it('refuses without a world context and emits nothing', async () => {

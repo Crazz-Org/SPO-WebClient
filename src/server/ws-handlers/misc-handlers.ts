@@ -45,6 +45,7 @@ export const handleDefineZone: WsHandler = async (ctx: WsHandlerContext, msg: Ws
       wsRequestId: msg.wsRequestId,
       success: result.success,
       message: result.message,
+      errorCode: result.errorCode,
     };
     sendResponse(ctx.ws, response);
   });
