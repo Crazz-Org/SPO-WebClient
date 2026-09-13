@@ -58,6 +58,22 @@ describe('SettingsDialog', () => {
     fireEvent.click(sw);
     expect((screen.getByRole('switch', { name: 'Vehicle animations' }) as HTMLInputElement).checked).toBe(!before);
   });
+
+  it('offers Building animations and Transparent overlays switches, both default checked, both flip on click', () => {
+    useUiStore.getState().openModal('settings');
+    renderWithProviders(<SettingsDialog />);
+
+    const buildingAnimations = screen.getByRole('switch', { name: 'Building animations' }) as HTMLInputElement;
+    const transparentOverlays = screen.getByRole('switch', { name: 'Transparent overlays' }) as HTMLInputElement;
+    expect(buildingAnimations.checked).toBe(true);
+    expect(transparentOverlays.checked).toBe(true);
+
+    fireEvent.click(buildingAnimations);
+    fireEvent.click(transparentOverlays);
+
+    expect((screen.getByRole('switch', { name: 'Building animations' }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole('switch', { name: 'Transparent overlays' }) as HTMLInputElement).checked).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

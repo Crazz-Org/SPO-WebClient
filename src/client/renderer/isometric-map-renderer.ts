@@ -541,6 +541,8 @@ export class IsometricMapRenderer {
   private vehicleSystemReady: boolean = false;
   private animationLoopRunning: boolean = false;
   private hasAnimatedBuildings: boolean = false;
+  private buildingAnimationsEnabled: boolean = true;
+  private transparentOverlays: boolean = true;
   private lastRenderTime: number = 0;
   private lastPulseRenderTime: number = 0;
   private lastPlacementRenderTime: number = 0;
@@ -3286,6 +3288,21 @@ export class IsometricMapRenderer {
     }
   }
 
+  private pickBuildingTexture(textureFilename: string): ImageBitmap | null {
+    const texture = this.gameObjectTextureCache.getTextureSync('BuildingImages', textureFilename);
+    if (!texture) {
+      return null;
+    }
+    if (this.buildingAnimationsEnabled) {
+      const animatedTexture = this.gameObjectTextureCache.getAnimatedTexture('BuildingImages', textureFilename);
+      if (animatedTexture) {
+        this.hasAnimatedBuildings = true;
+        return this.gameObjectTextureCache.getAnimatedFrame(animatedTexture, performance.now());
+      }
+    }
+    return texture;
+  }
+
   /**
    * Draw buildings as isometric tiles with textures
    * Uses Painter's algorithm: sort by depth (y + x) so buildings closer to viewer are drawn last
@@ -3323,14 +3340,7 @@ export class IsometricMapRenderer {
 
       // Try to get building texture
       const textureFilename = GameObjectTextureCache.getBuildingTextureFilename(building.visualClass);
-      let texture = this.gameObjectTextureCache.getTextureSync('BuildingImages', textureFilename);
-
-      // Check for animated texture and pick current frame
-      const animatedTexture = this.gameObjectTextureCache.getAnimatedTexture('BuildingImages', textureFilename);
-      if (animatedTexture && texture) {
-        texture = this.gameObjectTextureCache.getAnimatedFrame(animatedTexture, performance.now());
-        this.hasAnimatedBuildings = true;
-      }
+      const texture = this.pickBuildingTexture(textureFilename);
 
       if (texture) {
         // Calculate zoom scale factor
@@ -3836,11 +3846,18 @@ export class IsometricMapRenderer {
           ctx.lineTo(screenPos.x + halfWidth, screenPos.y + halfHeight);
           ctx.closePath();
 
-          ctx.fillStyle = color;
+          ctx.fillStyle = this.overlayFillColor(color);
           ctx.fill();
         }
       }
     }
+  }
+
+  private overlayFillColor(color: string): string {
+    if (this.transparentOverlays) {
+      return color;
+    }
+    return color.replace(/,\s*[\d.]+\s*\)$/, ',1)');
   }
 
   /**
@@ -5061,6 +5078,16 @@ export class IsometricMapRenderer {
         this.requestRender();
       }
     }
+  }
+
+  public setBuildingAnimationsEnabled(enabled: boolean): void {
+    this.buildingAnimationsEnabled = enabled;
+    this.requestRender();
+  }
+
+  public setTransparentOverlays(enabled: boolean): void {
+    this.transparentOverlays = enabled;
+    this.requestRender();
   }
 
   // =========================================================================

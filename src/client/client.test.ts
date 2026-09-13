@@ -7,9 +7,10 @@
  * with a fake `this` covering only the fields this method reads.
  */
 
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { StarpeaceClient } from './client';
 import { useUiStore } from './store/ui-store';
+import type { GameSettings } from './store/game-store';
 
 const proto = StarpeaceClient.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
 
@@ -62,5 +63,85 @@ describe('setupGameUICallbacks — map context menu', () => {
     onMapContextMenu(120, 80);
 
     expect(useUiStore.getState().mapContextMenu).toBeNull();
+  });
+});
+
+describe('applySettings', () => {
+  const memoryStore = new Map<string, string>();
+  function installStorage() {
+    (globalThis as unknown as { localStorage: unknown }).localStorage = {
+      getItem: (k: string) => memoryStore.get(k) ?? null,
+      setItem: (k: string, v: string) => { memoryStore.set(k, v); },
+      removeItem: (k: string) => { memoryStore.delete(k); },
+    };
+  }
+
+  beforeEach(() => {
+    memoryStore.clear();
+    installStorage();
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: unknown }).localStorage; });
+
+  const baseSettings: GameSettings = {
+    isVegetationHiddenOnMove: false,
+    vehicleAnimations: true,
+    buildingAnimations: true,
+    transparentOverlays: true,
+    isSoundEnabled: true,
+    soundVolume: 0.5,
+    isDebugOverlay: false,
+    minimapSize: 'medium',
+    languageId: 'en',
+  };
+
+  function makeFake() {
+    const renderer = {
+      setHideVegetationOnMove: jest.fn(),
+      setDebugMode: jest.fn(),
+      setVehicleAnimationsEnabled: jest.fn(),
+      setBuildingAnimationsEnabled: jest.fn(),
+      setTransparentOverlays: jest.fn(),
+    };
+    const fake = {
+      mapNavigationUI: { getRenderer: () => renderer },
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      minimapUI: { setSize: jest.fn() },
+    };
+    return { fake, renderer };
+  }
+
+  it('forwards buildingAnimations and transparentOverlays to the renderer when both are off', () => {
+    const { fake, renderer } = makeFake();
+    const settings: GameSettings = { ...baseSettings, buildingAnimations: false, transparentOverlays: false };
+
+    proto.applySettings.call(fake, settings);
+
+    expect(renderer.setBuildingAnimationsEnabled).toHaveBeenCalledWith(false);
+    expect(renderer.setTransparentOverlays).toHaveBeenCalledWith(false);
+  });
+
+  it('forwards both flags when on, and persists both through spo_settings', () => {
+    const { fake, renderer } = makeFake();
+    const settings: GameSettings = { ...baseSettings, buildingAnimations: true, transparentOverlays: true };
+
+    proto.applySettings.call(fake, settings);
+
+    expect(renderer.setBuildingAnimationsEnabled).toHaveBeenCalledWith(true);
+    expect(renderer.setTransparentOverlays).toHaveBeenCalledWith(true);
+
+    const stored = JSON.parse(memoryStore.get('spo_settings') ?? '{}') as Partial<GameSettings>;
+    expect(stored.buildingAnimations).toBe(true);
+    expect(stored.transparentOverlays).toBe(true);
+  });
+
+  it('persists both flags when off', () => {
+    const { fake } = makeFake();
+    const settings: GameSettings = { ...baseSettings, buildingAnimations: false, transparentOverlays: false };
+
+    proto.applySettings.call(fake, settings);
+
+    const stored = JSON.parse(memoryStore.get('spo_settings') ?? '{}') as Partial<GameSettings>;
+    expect(stored.buildingAnimations).toBe(false);
+    expect(stored.transparentOverlays).toBe(false);
   });
 });

@@ -3,7 +3,7 @@
  */
 
 import { ClientBridge } from './client-bridge';
-import { useGameStore } from '../store/game-store';
+import { useGameStore, type GameSettings } from '../store/game-store';
 import { useUiStore } from '../store/ui-store';
 import { useBuildingStore } from '../store/building-store';
 import { useLogStore } from '../store/log-store';
@@ -604,5 +604,51 @@ describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_TYCOON_FULL
 
     expect(useSearchStore.getState().tycoonFullProfileData).toEqual(reply);
     expect(useSearchStore.getState().isLoading).toBe(false);
+  });
+});
+
+describe('settings persistence', () => {
+  const memoryStore = new Map<string, string>();
+  function installStorage() {
+    (globalThis as unknown as { localStorage: unknown }).localStorage = {
+      getItem: (k: string) => memoryStore.get(k) ?? null,
+      setItem: (k: string, v: string) => { memoryStore.set(k, v); },
+      removeItem: (k: string) => { memoryStore.delete(k); },
+    };
+  }
+
+  beforeEach(() => {
+    memoryStore.clear();
+    installStorage();
+    useGameStore.getState().reset();
+    // `reset()` does not touch `settings` — restore the defaults explicitly so a
+    // preceding test's persisted flags cannot leak into this describe's assertions.
+    useGameStore.getState().updateSettings({ buildingAnimations: true, transparentOverlays: true });
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: unknown }).localStorage; });
+
+  it('round-trips buildingAnimations and transparentOverlays through persistSettings/loadPersistedSettings', () => {
+    const settings: GameSettings = {
+      ...useGameStore.getState().settings,
+      buildingAnimations: false,
+      transparentOverlays: false,
+    };
+
+    ClientBridge.persistSettings(settings);
+    useGameStore.getState().updateSettings({ buildingAnimations: true, transparentOverlays: true });
+    ClientBridge.loadPersistedSettings();
+
+    expect(ClientBridge.getSettings().buildingAnimations).toBe(false);
+    expect(ClientBridge.getSettings().transparentOverlays).toBe(false);
+  });
+
+  it('a stored blob without the two keys loads with both defaulting true', () => {
+    const { buildingAnimations: _b, transparentOverlays: _t, ...withoutNewKeys } = useGameStore.getState().settings;
+    memoryStore.set('spo_settings', JSON.stringify(withoutNewKeys));
+
+    ClientBridge.loadPersistedSettings();
+
+    expect(ClientBridge.getSettings().buildingAnimations).toBe(true);
+    expect(ClientBridge.getSettings().transparentOverlays).toBe(true);
   });
 });

@@ -64,6 +64,8 @@ export interface MapLoadingState {
 export interface GameSettings {
   isVegetationHiddenOnMove: boolean;
   vehicleAnimations: boolean;
+  buildingAnimations: boolean;
+  transparentOverlays: boolean;
   isSoundEnabled: boolean;
   soundVolume: number;
   isDebugOverlay: boolean;
@@ -75,6 +77,8 @@ export interface GameSettings {
 const DEFAULT_SETTINGS: GameSettings = {
   isVegetationHiddenOnMove: false,
   vehicleAnimations: true,
+  buildingAnimations: true,
+  transparentOverlays: true,
   isSoundEnabled: true,
   soundVolume: 0.5,
   isDebugOverlay: false,
