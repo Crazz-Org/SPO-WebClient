@@ -67,6 +67,7 @@ import {
 // The painter's algorithm (i+j) sort is NORTH-only; we use screenY-based sort instead
 import { CarClassManager } from './car-class-system';
 import { VehicleAnimationSystem } from './vehicle-animation-system';
+import { AircraftAnimationSystem } from './aircraft-animation-system';
 import { validatePlacementZones } from './placement-validation';
 
 interface CachedZone {
@@ -539,6 +540,7 @@ export class IsometricMapRenderer {
   private carClassManager: CarClassManager = new CarClassManager();
   private vehicleSystem: VehicleAnimationSystem | null = null;
   private vehicleSystemReady: boolean = false;
+  private aircraftSystem: AircraftAnimationSystem = new AircraftAnimationSystem();
   private animationLoopRunning: boolean = false;
   private hasAnimatedBuildings: boolean = false;
   private lastRenderTime: number = 0;
@@ -895,6 +897,9 @@ export class IsometricMapRenderer {
           this.vehicleSystem.clear();
           this.animationLoopRunning = false;
         }
+        if (current >= 2 && newZoom < 2) {
+          this.aircraftSystem.clear();
+        }
         if (current < 2 && newZoom >= 2) {
           this.startAnimationLoop();
         }
@@ -1102,7 +1107,7 @@ export class IsometricMapRenderer {
 
       const zoom = this.terrainRenderer.getZoomLevel();
       // Only animate at Z2 and Z3, throttled to 30fps (33ms between frames)
-      if (zoom >= 2 && this.vehicleSystemReady && this.vehicleSystem) {
+      if (zoom >= 2 && ((this.vehicleSystemReady && this.vehicleSystem) || this.aircraftSystem.isActive())) {
         const now = performance.now();
         if (now - this.lastVehicleFrameTime >= 33) {
           this.lastVehicleFrameTime = now;
@@ -1155,6 +1160,21 @@ export class IsometricMapRenderer {
     if (this.vehicleSystem.isActive() || this.vehicleSystem.getVehicleCount() === 0) {
       this.startAnimationLoop();
     }
+  }
+
+  /** Draw aircraft above buildings and zones (sky layer). Active only at Z2 and Z3, like vehicles. */
+  private drawAircraft(bounds: TileBounds, deltaTime: number): void {
+    const zoom = this.terrainRenderer.getZoomLevel();
+    if (zoom < 2) return;
+    this.aircraftSystem.update(deltaTime, bounds);
+    this.aircraftSystem.render(
+      this.ctx,
+      (i: number, j: number) => this.terrainRenderer.mapToScreen(i, j),
+      ZOOM_LEVELS[zoom],
+      this.canvas.width,
+      this.canvas.height
+    );
+    if (this.aircraftSystem.isActive()) this.startAnimationLoop();
   }
 
   // =========================================================================
@@ -1901,6 +1921,9 @@ export class IsometricMapRenderer {
       this.vehicleSystem.clear();
       this.animationLoopRunning = false;
     }
+    if (previousZoom >= 2 && level < 2) {
+      this.aircraftSystem.clear();
+    }
     // Start animation loop when zooming into Z2/Z3 range
     if (previousZoom < 2 && level >= 2) {
       this.startAnimationLoop();
@@ -2539,6 +2562,7 @@ export class IsometricMapRenderer {
     this.drawBuildings(bounds);
     this.drawVehicles(bounds, deltaTime, occupiedTiles);
     this.drawZoneOverlay(bounds);
+    this.drawAircraft(bounds, deltaTime);
     this.drawPlacementPreview();
     this.drawRoadDrawingPreview();
     this.drawRoadDemolishPreview();
@@ -5061,6 +5085,11 @@ export class IsometricMapRenderer {
         this.requestRender();
       }
     }
+  }
+
+  public setAircraftAnimationsEnabled(enabled: boolean): void {
+    this.aircraftSystem.setEnabled(enabled);
+    this.requestRender();
   }
 
   // =========================================================================

@@ -97,6 +97,11 @@ export function SettingsDialog() {
               onChange={(v) => handleSettingChange({ vehicleAnimations: v })}
             />
             <ToggleRow
+              label="Aircraft animations"
+              checked={settings.aircraftAnimations}
+              onChange={(v) => handleSettingChange({ aircraftAnimations: v })}
+            />
+            <ToggleRow
               label="Debug overlay"
               checked={settings.isDebugOverlay}
               onChange={(v) => handleSettingChange({ isDebugOverlay: v })}

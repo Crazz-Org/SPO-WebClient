@@ -844,6 +844,7 @@ export class StarpeaceClient implements ClientHandlerContext {
         renderer.setHideVegetationOnMove(settings.isVegetationHiddenOnMove);
         renderer.setDebugMode(settings.isDebugOverlay);
         renderer.setVehicleAnimationsEnabled(settings.vehicleAnimations);
+        renderer.setAircraftAnimationsEnabled(settings.aircraftAnimations);
       }
     }
     this.soundManager.setEnabled(settings.isSoundEnabled);
