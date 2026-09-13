@@ -7,8 +7,11 @@
  *    (`MapBuilding.alert`, the server's own bit — Voyager's `cLoosingColor`, `Map.pas:3512-3626`),
  *  - the rectangle of what the iso view shows.
  * Click = jump there. Wheel = zoom around the cursor (1× … 8×), drag = pan when zoomed.
- * Toolbar: Back / Next through the camera history (`map-store`), nearest Town Hall from the
- * towns page Search / Government already hold (`search-store`), reset zoom.
+ * Toolbar: Back / Next through the camera history (`map-store`); nearest Town Hall, usable
+ * before the towns page has loaded — a click with no list asks for it (`onSearchMenuTowns`)
+ * and jumps once it lands, through the selecting path (`onNavigateToBuilding`, the client's
+ * `MoveAndSelect`), never a plain pan. Metric: Manhattan distance over the directory's town
+ * list, a local approximation of the server's own answer (`@/shared/nearest-town`); reset zoom.
  * Bookmarks (N4, OB-33): the places the player keeps, in the server's own Favorites tree —
  * the same list the Empire panel shows, so a place kept here is there on any browser.
  * Add the current view, go, rename, delete; the writes go through `RDOFavoritesNewItem` /
@@ -38,28 +41,13 @@ import {
   type TerrainColormap,
 } from '../../ui/minimap-colormap';
 import type { MapBuilding, TownInfo } from '@/shared/types';
+import { nearestTown } from '@/shared/nearest-town';
 import styles from './MapSurface.module.css';
 
 export const ZOOM_MIN = 1;
 export const ZOOM_MAX = 8;
 const REDRAW_MS = 1000;
 const COS45 = Math.SQRT2 / 2;
-
-/** Chebyshev distance, the same notion the history uses. */
-function dist(ax: number, ay: number, bx: number, by: number): number {
-  return Math.max(Math.abs(ax - bx), Math.abs(ay - by));
-}
-
-/** The town whose hall is closest to (x, y), or null without towns. */
-export function nearestTown(towns: TownInfo[] | undefined, x: number, y: number): TownInfo | null {
-  let best: TownInfo | null = null;
-  let bestD = Infinity;
-  for (const t of towns ?? []) {
-    const d = dist(t.x, t.y, x, y);
-    if (d < bestD) { best = t; bestD = d; }
-  }
-  return best;
-}
 
 /** Colour of a building dot: the player's in gold, losing money in red, others muted. */
 export function buildingColor(b: MapBuilding, myTycoonId: number): string {
@@ -96,6 +84,7 @@ export function MapSurface() {
   const drag = useRef<{ startX: number; startY: number; panX: number; panY: number; moved: boolean } | null>(null);
   const colormapRef = useRef<{ key: string; cm: TerrainColormap; atlas: Map<number, RGB> | null } | null>(null);
   const [, setTick] = useState(0);
+  const [townHallPending, setTownHallPending] = useState(false);
 
   // Towns: one directory read, once per session, shared with Search / Government.
   useEffect(() => {
@@ -201,6 +190,24 @@ export function MapSurface() {
     recordPosition(x, y);
   }, [source, recordPosition]);
 
+  // The Town Hall button's arrival path — selecting, like Voyager's `MoveAndSelect`, not a
+  // plain pan: `onNavigateToBuilding` centres the renderer itself and opens the inspector
+  // (`client.ts:346` -> `building-focus-handler.ts:205-217`).
+  const goToTownHall = useCallback((t: TownInfo) => {
+    client.onNavigateToBuilding(t.x, t.y);
+    recordPosition(t.x, t.y);
+  }, [client, recordPosition]);
+
+  // A click with no towns loaded yet asks for the directory page, then jumps once it lands.
+  useEffect(() => {
+    if (!townHallPending || !towns) return;
+    setTownHallPending(false);
+    const camera = source?.getCameraPosition();
+    if (!camera) return;
+    const t = nearestTown(towns, camera.x, camera.y);
+    if (t) goToTownHall(t);
+  }, [townHallPending, towns, source, goToTownHall]);
+
   const tileAt = useCallback((e: { clientX: number; clientY: number }): { x: number; y: number } | null => {
     const canvas = canvasRef.current;
     if (!canvas || !source || !colormapRef.current) return null;
@@ -277,9 +284,13 @@ export function MapSurface() {
           size="sm"
           variant="secondary"
           iconLeft={<Landmark size={14} />}
-          disabled={!nearest}
-          onClick={() => { if (nearest) jumpTo(nearest.x, nearest.y); }}
-          title={nearest ? `Town Hall of ${nearest.name}` : 'Towns not loaded yet'}
+          disabled={!camera}
+          onClick={() => {
+            if (nearest) { goToTownHall(nearest); return; }
+            setTownHallPending(true);
+            client.onSearchMenuTowns();
+          }}
+          title={nearest ? `Town Hall of ${nearest.name}` : 'Nearest Town Hall — asks for the town list first'}
         >
           Nearest Town Hall
         </Button>

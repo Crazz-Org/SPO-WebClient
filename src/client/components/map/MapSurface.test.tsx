@@ -6,7 +6,8 @@ import { useEmpireStore } from '../../store/empire-store';
 import { useGameStore } from '../../store/game-store';
 import { useSearchStore } from '../../store/search-store';
 import { useUiStore } from '../../store/ui-store';
-import { MapSurface, buildingColor, nearestTown } from './MapSurface';
+import { MapSurface, buildingColor } from './MapSurface';
+import { nearestTown } from '@/shared/nearest-town';
 import type { MinimapRendererAPI } from '../../ui/minimap-colormap';
 import type { TownInfo } from '@/shared/types';
 
@@ -80,7 +81,7 @@ describe('MapSurface', () => {
     HTMLCanvasElement.prototype.getBoundingClientRect = origRect;
   });
 
-  it('colours buildings: losing money red first, mine gold, others muted; nearest town by Chebyshev distance', () => {
+  it('colours buildings: losing money red first, mine gold, others muted; nearest town by Manhattan distance', () => {
     expect(buildingColor({ alert: true, tycoonId: 37 } as never, 37)).toBe('#ef4444');
     expect(buildingColor({ alert: false, tycoonId: 37 } as never, 37)).toBe('#f59e0b');
     expect(buildingColor({ alert: false, tycoonId: 2 } as never, 37)).toBe('rgba(226,232,240,0.75)');
@@ -117,13 +118,14 @@ describe('MapSurface', () => {
     expect(src.centerOn).toHaveBeenCalledTimes(1);
   });
 
-  it('Back / Next walk the history and move the camera; Nearest Town Hall jumps to the closest hall', () => {
+  it('Back / Next walk the history and move the camera; Nearest Town Hall arrives through the selecting path', () => {
     const src = fakeSource();
     useMapStore.getState().setSource(src);
     useMapStore.getState().recordPosition(0, 0);
     useMapStore.getState().recordPosition(30, 30);
     useSearchStore.setState({ townsData: TOWNS });
-    renderWithProviders(<MapSurface />);
+    const onNavigateToBuilding = jest.fn();
+    renderWithProviders(<MapSurface />, { clientCallbacks: createSpiedCallbacks({ onNavigateToBuilding }) });
     const back = screen.getByRole('button', { name: /Back/ }) as HTMLButtonElement;
     const next = screen.getByRole('button', { name: /Next/ }) as HTMLButtonElement;
     expect(next.disabled).toBe(true);
@@ -133,7 +135,44 @@ describe('MapSurface', () => {
     fireEvent.click(screen.getByRole('button', { name: /Next/ }));
     expect(src.centerOn).toHaveBeenLastCalledWith(30, 30);
     fireEvent.click(screen.getByRole('button', { name: /Nearest Town Hall/ }));
-    expect(src.centerOn).toHaveBeenLastCalledWith(10, 10);
+    expect(onNavigateToBuilding).toHaveBeenCalledWith(10, 10);
+    expect(src.centerOn).toHaveBeenLastCalledWith(30, 30);
+  });
+
+  it('the Nearest Town Hall button is usable before the towns page has loaded', () => {
+    const src = fakeSource();
+    useMapStore.getState().setSource(src);
+    const onSearchMenuTowns = jest.fn();
+    const onNavigateToBuilding = jest.fn();
+    renderWithProviders(<MapSurface />, { clientCallbacks: createSpiedCallbacks({ onSearchMenuTowns, onNavigateToBuilding }) });
+    const button = screen.getByRole('button', { name: /Nearest Town Hall/ }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+
+    fireEvent.click(button);
+    // Once on mount (towns unloaded), once from the click.
+    expect(onSearchMenuTowns).toHaveBeenCalledTimes(2);
+    expect(onNavigateToBuilding).not.toHaveBeenCalled();
+
+    act(() => useSearchStore.setState({ townsData: TOWNS }));
+    expect(onNavigateToBuilding).toHaveBeenCalledTimes(1);
+    expect(onNavigateToBuilding).toHaveBeenCalledWith(10, 10);
+    expect(src.centerOn).not.toHaveBeenCalled();
+    expect(useMapStore.getState().history).toHaveLength(1);
+
+    fireEvent.click(button);
+    expect(onSearchMenuTowns).toHaveBeenCalledTimes(2);
+    expect(onNavigateToBuilding).toHaveBeenCalledTimes(2);
+  });
+
+  it('an empty town list arriving while pending clears the wait and navigates nowhere', () => {
+    const src = fakeSource();
+    useMapStore.getState().setSource(src);
+    const onNavigateToBuilding = jest.fn();
+    renderWithProviders(<MapSurface />, { clientCallbacks: createSpiedCallbacks({ onNavigateToBuilding }) });
+    fireEvent.click(screen.getByRole('button', { name: /Nearest Town Hall/ }));
+    act(() => useSearchStore.setState({ townsData: { towns: [] } as never }));
+    expect(onNavigateToBuilding).not.toHaveBeenCalled();
+    expect(src.centerOn).not.toHaveBeenCalled();
   });
 
   it('zooms with the wheel and the buttons (1× … 8×), pans by dragging when zoomed, resets', () => {

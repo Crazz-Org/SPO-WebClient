@@ -7,6 +7,7 @@
  */
 
 import { WsMessageType } from '../shared/types/message-types';
+import { nearestTown } from '../shared/nearest-town';
 import type {
   WsRespBuildingFocus,
   WsRespEmpireFacilities,
@@ -36,6 +37,7 @@ import { findCurrentSurvivalLog, openLogWindow } from './live-log';
 import { runProbe, probeFailure, type ProbeResult, type ProbeSpec } from './probe';
 import {
   findTown,
+  listTowns,
   resolveVisualClass,
   login,
   logoff,
@@ -782,6 +784,60 @@ const zoningAlertRead: Flow = {
   },
 };
 
+/**
+ * The map surface's "Nearest Town Hall" jump, end to end: the local Manhattan approximation
+ * (`@/shared/nearest-town`) picks a town, then the arrival goes through the same
+ * `REQ_BUILDING_FOCUS` the client's selecting path (`onNavigateToBuilding`) sends.
+ *
+ * Standing on the governed town's own hall makes the expected answer known without a second
+ * town in the fixture: the local metric must pick that town over any other on the list.
+ */
+const nearestTownHall: Flow = {
+  name: 'nearest-town-hall',
+  what: 'town list -> local Manhattan pick -> REQ_BUILDING_FOCUS -> inspector opens on the hall',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const towns = await listTowns(session);
+      const here = towns.find(t => t.name === GOVERNED_TOWN);
+      assertions.check('the governed town is still listed', here !== undefined);
+      if (!here) return report('nearest-town-hall', assertions, [], session);
+
+      const target = nearestTown(towns, here.x, here.y);
+      assertions.check(
+        'the local metric picks the town whose hall we stand on',
+        target?.name === GOVERNED_TOWN,
+        target?.name,
+      );
+
+      const focus = await session.driver.request<WsRespBuildingFocus>(
+        { type: WsMessageType.REQ_BUILDING_FOCUS, x: here.x, y: here.y },
+        WsMessageType.RESP_BUILDING_FOCUS,
+      );
+      assertions.check('the focus opened on a building', focus.building.buildingName !== '' && focus.building.buildingId !== '');
+
+      const visualClass = await resolveVisualClass(session, here.x, here.y);
+      const details = await readBuildingDetails(session, here.x, here.y, visualClass);
+      assertions.check(
+        'the inspector resolved the Town Hall template at the arrival tile',
+        details.tabs.some(t => t.id === 'townTaxes'),
+      );
+
+      await session.driver.request(
+        { type: WsMessageType.REQ_BUILDING_UNFOCUS },
+        WsMessageType.RESP_CHAT_SUCCESS,
+      );
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+
+      return report('nearest-town-hall', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 /** One page of the directory tree, by ref — the gateway rebuilds the legacy URL itself. */
 async function readDirectory(session: LiveSession, ref: DirectoryRef): Promise<DirectoryPage> {
   const response = await session.driver.request<WsRespSearchMenuDirectory>(
@@ -881,6 +937,7 @@ export const FLOWS: Flow[] = [
   peopleSearch,
   newspaperRead,
   zoningAlertRead,
+  nearestTownHall,
   directoryBrowse,
 ];
 

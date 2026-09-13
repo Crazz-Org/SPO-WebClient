@@ -987,6 +987,89 @@ describe('zoning-alert-read', () => {
   });
 });
 
+describe('nearest-town-hall', () => {
+  const HELARTIA = { name: 'Helartia', iconUrl: '', mayor: null, population: 1, unemploymentPercent: 0, qualityOfLife: 0, x: 10, y: 10, path: '', classId: '' };
+  const FARAWAY = { name: 'Faraway', iconUrl: '', mayor: null, population: 1, unemploymentPercent: 0, qualityOfLife: 0, x: 40, y: 0, path: '', classId: '' };
+
+  function arrange(over: {
+    towns?: typeof HELARTIA[];
+    focusBuilding?: { buildingId: string; buildingName: string };
+    tabs?: { id: string }[];
+  } = {}) {
+    const {
+      towns = [HELARTIA, FARAWAY],
+      focusBuilding = { buildingId: '1', buildingName: 'Helartia Town Hall' },
+      tabs = [{ id: 'townTaxes' }],
+    } = over;
+
+    const requests: WsMessage[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(
+      stubSession(msg => {
+        requests.push(msg);
+        switch (msg.type) {
+          case WsMessageType.REQ_SEARCH_MENU_TOWNS:
+            return { type: WsMessageType.RESP_SEARCH_MENU_TOWNS, towns };
+          case WsMessageType.REQ_MAP_LOAD:
+            return { type: WsMessageType.RESP_MAP_DATA, data: { buildings: [{ x: HELARTIA.x, y: HELARTIA.y, visualClass: '5' }] } };
+          case WsMessageType.REQ_BUILDING_FOCUS:
+            return { type: WsMessageType.RESP_BUILDING_FOCUS, building: focusBuilding };
+          case WsMessageType.REQ_BUILDING_DETAILS:
+            return { type: WsMessageType.RESP_BUILDING_DETAILS, details: { tabs } };
+          case WsMessageType.REQ_BUILDING_UNFOCUS:
+            return { type: WsMessageType.RESP_CHAT_SUCCESS };
+          default:
+            return undefined;
+        }
+      }),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    return requests;
+  }
+
+  it('is read-only', () => {
+    expect(flowByName('nearest-town-hall').mutates).toBe(false);
+  });
+
+  it('picks the governed town, focuses its hall and reads the taxes tab', async () => {
+    const requests = arrange();
+
+    const result = await flowByName('nearest-town-hall').run(ctx);
+
+    expect(result.status).toBe('PASS');
+    expect(requests).toContainEqual(
+      expect.objectContaining({ type: WsMessageType.REQ_BUILDING_FOCUS, x: HELARTIA.x, y: HELARTIA.y }),
+    );
+    expect(requests.some(m => m.type === WsMessageType.REQ_BUILDING_UNFOCUS)).toBe(true);
+  });
+
+  it('FAILs when the governed town is missing from the list', async () => {
+    arrange({ towns: [FARAWAY] });
+
+    const result = await flowByName('nearest-town-hall').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/still listed/);
+  });
+
+  it('FAILs when the focus reply has an empty buildingName', async () => {
+    arrange({ focusBuilding: { buildingId: '', buildingName: '' } });
+
+    const result = await flowByName('nearest-town-hall').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/focus opened/);
+  });
+
+  it('FAILs when the tabs lack townTaxes', async () => {
+    arrange({ tabs: [{ id: 'general' }] });
+
+    const result = await flowByName('nearest-town-hall').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/Town Hall template/);
+  });
+});
+
 describe('directory-browse', () => {
   const TOWN = {
     name: 'Helartia',
