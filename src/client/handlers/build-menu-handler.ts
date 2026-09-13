@@ -25,6 +25,7 @@ import { useUiStore } from '../store/ui-store';
 import { useGameStore } from '../store/game-store';
 import { getFacilityDimensionsCache } from '../facility-dimensions-cache';
 import { registerCivicVisualClass } from '../../shared/building-details/civic-buildings';
+import { deriveFacilityKinds } from '../../shared/facility-kinds';
 import type { ClientHandlerContext } from './client-context';
 import { enterZonesOverlayForMode, leaveZonesOverlayAfterMode } from './overlay-mode';
 import { setupEscapeHandler } from './handler-utils';
@@ -220,6 +221,7 @@ export async function preloadFacilityDimensions(ctx: ClientHandlerContext): Prom
 
     const cache = getFacilityDimensionsCache();
     cache.initialize(response.dimensions);
+    useUiStore.getState().setFacilityKinds(deriveFacilityKinds(response.dimensions));
 
     if (response.civicVisualClassIds) {
       for (const id of response.civicVisualClassIds) {

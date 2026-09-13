@@ -5,6 +5,7 @@
 
 import { create } from 'zustand';
 import type { BuildingCategory, BuildingInfo } from '@/shared/types';
+import type { FacilityKind } from '@/shared/facility-kinds';
 import { ALL_CONNECTION_ROLES, type ConnectionRoleFlags } from '@/shared/connection-roles';
 import { useBuildingStore } from './building-store';
 import { useGameStore } from './game-store';
@@ -113,6 +114,9 @@ interface UiState {
   buildMenuFacilities: BuildingInfo[];
   capitolIconUrl: string;
 
+  /** The facility kinds (FacIds) this world's CLASSES.BIN has — the hide-a-kind roster. */
+  facilityKinds: FacilityKind[];
+
   // Command palette
   commandPaletteOpen: boolean;
 
@@ -180,6 +184,7 @@ interface UiState {
   setBuildMenuCategories: (cats: BuildingCategory[], capitolIconUrl?: string) => void;
   setBuildMenuFacilities: (facs: BuildingInfo[]) => void;
   clearBuildMenuData: () => void;
+  setFacilityKinds: (kinds: FacilityKind[]) => void;
 
   // Actions — Command palette
   openCommandPalette: () => void;
@@ -221,6 +226,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   buildMenuCategories: [],
   buildMenuFacilities: [],
   capitolIconUrl: '',
+  facilityKinds: [],
   commandPaletteOpen: false,
   mobileTab: 'map',
   mobileSheetSnap: 'half' as SnapPoint,
@@ -332,6 +338,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   setBuildMenuCategories: (cats, capitolIconUrl) => set({ buildMenuCategories: cats, ...(capitolIconUrl ? { capitolIconUrl } : {}) }),
   setBuildMenuFacilities: (facs) => set({ buildMenuFacilities: facs }),
   clearBuildMenuData: () => set({ buildMenuCategories: [], buildMenuFacilities: [] }),
+  setFacilityKinds: (kinds) => set({ facilityKinds: kinds }),
 
   // Command palette
   openCommandPalette: () => set({ commandPaletteOpen: true }),

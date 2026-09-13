@@ -1,0 +1,59 @@
+/* FacilityFilterMenu — hide-a-kind panel, sibling of OverlayMenu on the overlays surface */
+
+.section {
+  padding: var(--space-2);
+  border-top: 1px solid var(--surface-divider);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-2) var(--space-1);
+}
+
+.title {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  user-select: none;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.actionBtn {
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: opacity var(--duration-fast);
+}
+
+.actionBtn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.actionBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.loading {
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+}

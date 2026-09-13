@@ -2,14 +2,16 @@
  * Smoke tests for HUD components (LeftRail, RightRail, InfoWidget, OverlayMenu).
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
-import { screen } from '@testing-library/react';
-import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { screen, fireEvent } from '@testing-library/react';
+import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useGameStore } from '../../store/game-store';
+import { useUiStore } from '../../store/ui-store';
 import { LeftRail } from './LeftRail';
 import { RightRail } from './RightRail';
 import { InfoWidget } from './InfoWidget';
 import { OverlayMenu } from './OverlayMenu';
+import { FacilityFilterMenu } from './FacilityFilterMenu';
 
 describe('LeftRail', () => {
   beforeEach(resetStores);
@@ -235,5 +237,66 @@ describe('OverlayMenu', () => {
     renderWithProviders(<OverlayMenu />);
     expect(screen.getByText('Special')).toBeTruthy();
     expect(screen.getByText('Environment')).toBeTruthy();
+  });
+});
+
+describe('FacilityFilterMenu', () => {
+  beforeEach(() => {
+    resetStores();
+    useUiStore.setState({ facilityKinds: [] });
+    useGameStore.getState().updateSettings({ hiddenFacIds: [] });
+  });
+
+  const kinds = [
+    { facId: 40, label: 'Farm' },
+    { facId: 75, label: 'Supermarket' },
+  ];
+
+  it('renders a "Loading facility kinds…" line when the world roster has not landed yet', () => {
+    renderWithProviders(<FacilityFilterMenu />);
+    expect(screen.getByText('Loading facility kinds…')).toBeTruthy();
+  });
+
+  it('renders one row per kind once the roster lands', () => {
+    useUiStore.setState({ facilityKinds: kinds });
+    renderWithProviders(<FacilityFilterMenu />);
+    expect(screen.getByText('Farm')).toBeTruthy();
+    expect(screen.getByText('Supermarket')).toBeTruthy();
+  });
+
+  it('Hide all commits the full id list in one onSettingsChange call', () => {
+    useUiStore.setState({ facilityKinds: kinds });
+    const onSettingsChange = jest.fn();
+    renderWithProviders(<FacilityFilterMenu />, { clientCallbacks: createSpiedCallbacks({ onSettingsChange }) });
+
+    fireEvent.click(screen.getByText('Hide all'));
+
+    expect(onSettingsChange).toHaveBeenCalledTimes(1);
+    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ hiddenFacIds: [40, 75] }));
+    expect(useGameStore.getState().settings.hiddenFacIds).toEqual([40, 75]);
+  });
+
+  it('Show all commits an empty list in one onSettingsChange call', () => {
+    useUiStore.setState({ facilityKinds: kinds });
+    useGameStore.getState().updateSettings({ hiddenFacIds: [40, 75] });
+    const onSettingsChange = jest.fn();
+    renderWithProviders(<FacilityFilterMenu />, { clientCallbacks: createSpiedCallbacks({ onSettingsChange }) });
+
+    fireEvent.click(screen.getByText('Show all'));
+
+    expect(onSettingsChange).toHaveBeenCalledTimes(1);
+    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ hiddenFacIds: [] }));
+    expect(useGameStore.getState().settings.hiddenFacIds).toEqual([]);
+  });
+
+  it('unchecking one row hides only that kind, leaving the other visible', () => {
+    useUiStore.setState({ facilityKinds: kinds });
+    const onSettingsChange = jest.fn();
+    renderWithProviders(<FacilityFilterMenu />, { clientCallbacks: createSpiedCallbacks({ onSettingsChange }) });
+
+    fireEvent.click(screen.getByLabelText('Farm'));
+
+    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ hiddenFacIds: [40] }));
+    expect(useGameStore.getState().settings.hiddenFacIds).toEqual([40]);
   });
 });
