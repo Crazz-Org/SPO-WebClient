@@ -76,6 +76,10 @@ export interface GameSettings {
   musicVolume: number;
   isDebugOverlay: boolean;
   minimapSize: MinimapSize;
+  /** Docked minimap magnification, 1..8 — MapIsoHandler.pas:384. */
+  minimapZoom: number;
+  /** A dragged docked-minimap pixel side; `null` follows the preset — MapIsoHandler.pas:372-382. */
+  minimapPixelSize: number | null;
   /** The language sent to the world on login — one of the six ids in `shared/language.ts`. */
   languageId: string;
 }
@@ -91,6 +95,8 @@ const DEFAULT_SETTINGS: GameSettings = {
   musicVolume: 0.5,
   isDebugOverlay: false,
   minimapSize: 'medium',
+  minimapZoom: 1,
+  minimapPixelSize: null,
   languageId: DEFAULT_LANGUAGE_ID,
 };
 

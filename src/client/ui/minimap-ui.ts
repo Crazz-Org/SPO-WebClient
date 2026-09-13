@@ -19,11 +19,13 @@
  *                      fullscreen overlay opened from MinimapToggleButton, and
  *                      it closes itself as soon as any menu opens.
  *
- * Size is controlled via Settings (Small / Medium / Large preset).
+ * Size is controlled via Settings (Small / Medium / Large preset), or by dragging the
+ * diamond's bottom-right edge; the mouse wheel zooms the docked view in/out. Both gestures
+ * are desktop-docked only — ignored on mobile and in the fullscreen overlay.
  */
 
 import { useUiStore } from '../store/ui-store';
-import type { MinimapSize } from '../store/game-store';
+import type { GameSettings, MinimapSize } from '../store/game-store';
 import { buildTerrainColormap, sampleAtlasColors, type MinimapRendererAPI, type RGB } from './minimap-colormap';
 
 // ---------------------------------------------------------------------------
@@ -51,6 +53,12 @@ const MAX_SIZE      = 500;  // px — maximum size
  */
 const MOBILE_BP     = 1024;
 const UPDATE_MS     = 500;  // ms — render interval
+
+const ZOOM_MIN         = 1;     // matches the Map surface's own range — MapSurface.tsx:48-49
+const ZOOM_MAX         = 8;
+const ZOOM_IN_FACTOR   = 1.25;  // one wheel notch, same factors as the Map surface
+const ZOOM_OUT_FACTOR  = 0.8;
+const RESIZE_GRIP       = 14;   // px — width of the draggable band along the bottom-right edge
 
 /** Fullscreen scrim stacking level — above the mobile sheet, below any modal. */
 const FULLSCREEN_Z  = 'calc(var(--z-modal) - 1)';
@@ -108,6 +116,20 @@ export class MinimapUI {
   private atlasColorMap: Map<number, RGB> | null = null;
   private atlasColorKey = '';
 
+  /** Docked-view magnification, 1..8 around the current camera view. */
+  private zoom = 1;
+
+  /** In-progress bottom-right-edge drag, or `null` when idle. */
+  private resizeDrag: {
+    startX: number;
+    startY: number;
+    startSize: number;
+    onMove: (e: MouseEvent) => void;
+    onUp: () => void;
+  } | null = null;
+
+  constructor(private readonly onSettingsChange: ((partial: Partial<GameSettings>) => void) | null = null) {}
+
   // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
@@ -150,12 +172,39 @@ export class MinimapUI {
     return this.visible;
   }
 
-  /** Apply a size preset from Settings. Mobile has no docked minimap to size. */
-  public setSize(preset: MinimapSize): void {
-    const px = SIZE_MAP[preset] ?? SIZE_MAP.medium;
+  /**
+   * Apply a size preset from Settings, or a dragged pixel size when `customPx` is given.
+   * Mobile has no docked minimap to size.
+   */
+  public setSize(preset: MinimapSize, customPx: number | null = null): void {
+    const px = customPx ?? SIZE_MAP[preset] ?? SIZE_MAP.medium;
     this.desktopSize = px;
     if (this.isMobile()) return;
     this.applySize(px);
+  }
+
+  /** Set the docked-view zoom directly, clamped to `[ZOOM_MIN, ZOOM_MAX]`. Never fires the callback. */
+  public setZoom(z: number): void {
+    const safe = Number.isFinite(z) ? z : 1;
+    this.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, safe));
+    if (!this.isMobile() && !this.fullscreen && this.visible) this.render();
+  }
+
+  /** Zoom by a wheel-notch factor and report the result. No-op on mobile or in fullscreen. */
+  public zoomBy(factor: number): void {
+    if (this.isMobile() || this.fullscreen) return;
+    this.setZoom(this.zoom * factor);
+    this.onSettingsChange?.({ minimapZoom: this.zoom });
+  }
+
+  /** Largest side the docked diamond may take without covering the map viewport. */
+  private maxDockedSize(): number {
+    let max = MAX_SIZE;
+    if (typeof window !== 'undefined') {
+      if (window.innerWidth > 0)  max = Math.min(max, window.innerWidth - 2 * DESKTOP_PAD);
+      if (window.innerHeight > 0) max = Math.min(max, window.innerHeight - 2 * DESKTOP_PAD);
+    }
+    return Math.max(MIN_SIZE, max);
   }
 
   public destroy(): void {
@@ -164,6 +213,11 @@ export class MinimapUI {
     this.stopUpdating();
     if (this.unsubPanel) { this.unsubPanel(); this.unsubPanel = null; }
     if (this.unsubFullscreen) { this.unsubFullscreen(); this.unsubFullscreen = null; }
+    if (this.resizeDrag) {
+      document.removeEventListener('mousemove', this.resizeDrag.onMove);
+      document.removeEventListener('mouseup', this.resizeDrag.onUp);
+      this.resizeDrag = null;
+    }
     this.detachViewportListener();
     this.mobileLayout = null;
     if (this.wrapper?.parentElement) {
@@ -454,12 +508,28 @@ export class MinimapUI {
   private attachInteractionListeners(): void {
     if (!this.container) return;
 
-    // ── Mouse: click → navigate ─────────────────────────────────────────────
+    // ── Mouse: click → navigate, or drag the bottom-right edge → resize ────
     this.container.onmousedown = (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (!this.isMobile() && !this.fullscreen && this.isOnResizeGrip(e.offsetX, e.offsetY)) {
+        this.startResize(e.clientX, e.clientY);
+        return;
+      }
       this.handleClick(e.offsetX, e.offsetY);
     };
+
+    this.container.addEventListener('mousemove', (e: MouseEvent) => {
+      if (!this.container || this.isMobile() || this.fullscreen) return;
+      this.container.style.cursor = this.isOnResizeGrip(e.offsetX, e.offsetY) ? 'nwse-resize' : 'crosshair';
+    });
+
+    // ── Wheel: zoom the docked view in/out ──────────────────────────────────
+    this.container.addEventListener('wheel', (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.zoomBy(e.deltaY < 0 ? ZOOM_IN_FACTOR : ZOOM_OUT_FACTOR);
+    }, { passive: false });
 
     // ── Touch: tap → navigate ───────────────────────────────────────────────
     this.container.addEventListener('touchend', (e: TouchEvent) => {
@@ -474,12 +544,37 @@ export class MinimapUI {
     }, { passive: false });
   }
 
+  /** True inside the `RESIZE_GRIP`-wide band along the diamond's bottom-right edge. */
+  private isOnResizeGrip(x: number, y: number): boolean {
+    const s = this.currentSize;
+    const d = (1.5 * s - (x + y)) / Math.SQRT2;
+    return x >= s / 2 && y >= s / 2 && d >= 0 && d <= RESIZE_GRIP;
+  }
+
+  /** Begin a bottom-right-edge drag; live-resizes until `mouseup`. */
+  private startResize(clientX: number, clientY: number): void {
+    const startSize = this.currentSize;
+    const onMove = (e: MouseEvent): void => {
+      this.applySize(startSize + ((e.clientX - clientX) + (e.clientY - clientY)) / 2);
+    };
+    const onUp = (): void => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      this.desktopSize = this.currentSize;
+      this.resizeDrag = null;
+      this.onSettingsChange?.({ minimapPixelSize: this.currentSize });
+    };
+    this.resizeDrag = { startX: clientX, startY: clientY, startSize, onMove, onUp };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
   // ---------------------------------------------------------------------------
   // Size helpers
   // ---------------------------------------------------------------------------
 
   private applySize(newSize: number): void {
-    const clamped = Math.max(MIN_SIZE, Math.min(MAX_SIZE, newSize));
+    const clamped = Math.max(MIN_SIZE, Math.min(this.maxDockedSize(), newSize));
     this.currentSize = clamped;
     if (this.wrapper) {
       this.wrapper.style.width  = `${clamped}px`;
@@ -558,6 +653,25 @@ export class MinimapUI {
     return (this.currentSize - 2 * padPx) / diagonal;
   }
 
+  /**
+   * Terrain-canvas point the zoomed view centers on — the middle of the visible tile
+   * bounds, mapped with the same axis swap/flip `drawViewportInGrid` uses. `{0,0}` at
+   * zoom 1 (or with no terrain/zero map dims), so the unzoomed view is untouched.
+   */
+  private viewFocus(zoom: number): { x: number; y: number } {
+    if (zoom === 1 || !this.terrainCanvas || !this.renderer) return { x: 0, y: 0 };
+    const dims = this.renderer.getMapDimensions();
+    if (dims.width === 0 || dims.height === 0) return { x: 0, y: 0 };
+
+    const bounds = this.renderer.getVisibleTileBounds();
+    const tW = this.terrainCanvas.width;
+    const tH = this.terrainCanvas.height;
+
+    const x = (dims.height - (bounds.minI + bounds.maxI) / 2) * (tW / dims.height) - tW / 2;
+    const y = (dims.width  - (bounds.minJ + bounds.maxJ) / 2) * (tH / dims.width)  - tH / 2;
+    return { x, y };
+  }
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -581,13 +695,16 @@ export class MinimapUI {
     if (this.terrainCanvas) {
       const tW = this.terrainCanvas.width;
       const tH = this.terrainCanvas.height;
-      const scale = this.getTerrainScale();
+      const zoom = this.fullscreen ? 1 : this.zoom;
+      const scale = this.getTerrainScale() * zoom;
+      const focus = this.viewFocus(zoom);
 
       // Draw terrain rotated 45° so the grid diamond aligns with the clip-path diamond
       ctx.save();
       ctx.translate(s / 2, s / 2);
       ctx.rotate(Math.PI / 4);
       ctx.scale(scale, scale);
+      ctx.translate(-focus.x, -focus.y);
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(this.terrainCanvas, -tW / 2, -tH / 2);
 
@@ -680,6 +797,18 @@ export class MinimapUI {
     ctx.lineWidth   = 2;
     ctx.stroke();
 
+    // Grip mark — short brighter segment centered on the bottom-right edge midpoint,
+    // where isOnResizeGrip() accepts a drag.
+    const gripMidX = (cx + (s - 1)) / 2;
+    const gripMidY = (cy + (s - 1)) / 2;
+    const gripHalf = 6;
+    ctx.beginPath();
+    ctx.moveTo(gripMidX - gripHalf, gripMidY + gripHalf);
+    ctx.lineTo(gripMidX + gripHalf, gripMidY - gripHalf);
+    ctx.strokeStyle = 'rgba(226,232,240,0.9)';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+
     ctx.restore();
   }
 
@@ -703,7 +832,9 @@ export class MinimapUI {
     if (dims.width === 0 || dims.height === 0) return;
     const tW = this.terrainCanvas.width;
     const tH = this.terrainCanvas.height;
-    const scale = this.getTerrainScale();
+    const zoom = this.fullscreen ? 1 : this.zoom;
+    const scale = this.getTerrainScale() * zoom;
+    const focus = this.viewFocus(zoom);
 
     // Reverse transform: minimap pixel → terrain grid coordinate
     // 1. Undo translate (center of canvas)
@@ -715,8 +846,8 @@ export class MinimapUI {
     const ry = -dx * COS45 + dy * COS45;
 
     // 3. Undo scale + centering offset
-    const terrainX = rx / scale + tW / 2;
-    const terrainY = ry / scale + tH / 2;
+    const terrainX = rx / scale + focus.x + tW / 2;
+    const terrainY = ry / scale + focus.y + tH / 2;
 
     // 4. Scale from colormap coords to tile coords (axes are swapped+flipped)
     // Colormap x → i (flipped): tileI = maxI - (terrainX / tW) * maxI = maxI * (1 - terrainX/tW)
