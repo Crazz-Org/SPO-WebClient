@@ -333,6 +333,10 @@ export async function handleBuildingSetProperty(ctx: WsHandlerContext, msg: WsMe
       // value. The two used to be conflated, and `newValue` echoed the request
       // when the read-back was empty — so a discarded mutation was invisible.
       confirmed: result.confirmed,
+      // Set only by RDOAskLoan, the one member here that answers with more than
+      // "it went out": four ordinals the player must be able to tell apart
+      // (StdBlocks/Banks.pas:46).
+      loanResult: result.loanResult,
     };
     sendResponse(ctx.ws, response);
   });

@@ -154,6 +154,10 @@ export const RDO_MEMBERS = {
   PickEvent:                 { kind: 'function',  arity: 1 },                // src/server/session/login-handler.ts:547
   Post:                      { kind: 'function',  arity: 2 },                // src/server/session/mail-handler.ts:148
   RDOAcceptCloning:          { kind: 'accessor',  access: ['get', 'set'] },  // src/server/session/building-management-handler.ts:114
+  // The BANK BLOCK's loan request, not the tycoon's own: `TTycoon.RDOAskLoan`
+  // (Kernel/Kernel.pas:2522) is a different 1-argument member reached through
+  // TycoonBankAccount.asp and never through this emitter.
+  RDOAskLoan:                { kind: 'function',  arity: 2 },                // StdBlocks/Banks.pas:46; src/server/session/building-property-handler.ts (askBankLoan branch)
   RDOAutoProduce:            { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
   RDOBanMinister:            { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
   RDOCacncelTransc:          { kind: 'procedure', arity: 0 },                // src/server/session/building-property-handler.ts:194,223

@@ -30,6 +30,7 @@ import { createGateMapScenario } from './gate-map-scenario';
 import { createProductOwnerScenario } from './product-owner-scenario';
 import { createServiceFiguresScenario } from './service-figures-scenario';
 import { createBankTvLiveReadsScenario } from './bank-tv-live-reads-scenario';
+import { createBankLoanScenario } from './bank-loan-scenario';
 import { createAutoBuyScenario } from './auto-buy-scenario';
 import { createDisconnectConnectionsScenario } from './disconnect-connections-scenario';
 import { createWorkerCountsScenario } from './worker-counts-scenario';
@@ -59,6 +60,7 @@ export type ScenarioName =
   | 'product-owner'
   | 'service-figures'
   | 'bank-tv-live-reads'
+  | 'bank-loan'
   | 'auto-buy'
   | 'disconnect-connections'
   | 'worker-counts'
@@ -88,6 +90,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'product-owner',
   'service-figures',
   'bank-tv-live-reads',
+  'bank-loan',
   'auto-buy',
   'disconnect-connections',
   'worker-counts',
@@ -128,6 +131,7 @@ const SCENARIO_FACTORIES: Record<
   'product-owner': (o) => createProductOwnerScenario(o),
   'service-figures': (o) => createServiceFiguresScenario(o),
   'bank-tv-live-reads': (o) => createBankTvLiveReadsScenario(o),
+  'bank-loan': (o) => createBankLoanScenario(o),
   'auto-buy': (o) => createAutoBuyScenario(o),
   'disconnect-connections': (o) => createDisconnectConnectionsScenario(o),
   'worker-counts': (o) => createWorkerCountsScenario(o),

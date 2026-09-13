@@ -91,6 +91,7 @@ import * as zoneSurfaceHandler from './session/zone-surface-handler';
 import * as buildingTemplatesHandler from './session/building-templates-handler';
 import * as buildingDetailsHandler from './session/building-details-handler';
 import * as buildingPropertyHandler from './session/building-property-handler';
+import type { BankLoanOutcome } from '../shared/building-details/bank-loan';
 import * as researchHandler from './session/research-handler';
 import { dispatchPush } from './session/push-dispatcher';
 import * as loginHandler from './session/login-handler';
@@ -3059,7 +3060,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
   }
 
   // -- BUILDING PROPERTY (facade -> building-property-handler) --------------
-  public async setBuildingProperty(x: number, y: number, propertyName: string, value: string, additionalParams?: Record<string, string>): Promise<{ success: boolean; newValue: string; confirmed?: boolean }> {
+  public async setBuildingProperty(x: number, y: number, propertyName: string, value: string, additionalParams?: Record<string, string>): Promise<{ success: boolean; newValue: string; confirmed?: boolean; loanResult?: BankLoanOutcome }> {
     return buildingPropertyHandler.setBuildingProperty(this, x, y, propertyName, value, additionalParams);
   }
 

@@ -38,6 +38,7 @@ import {
   WsRespBuildingWorkerCounts,
   WorkerCount,
 } from '../../shared/types';
+import type { BankLoanOutcome } from '../../shared/building-details/bank-loan';
 import { toErrorMessage } from '../../shared/error-utils';
 import { showToast, dismissToast } from '../components/common/Toast';
 import { ClientBridge } from '../bridge/client-bridge';
@@ -444,6 +445,50 @@ async function setBuildingPropertyImpl(
     ClientBridge.failPendingUpdate(pendingKey, value, toErrorMessage(err));
     ClientBridge.log('Error', `Failed to set property: ${toErrorMessage(err)}`);
     return false;
+  }
+}
+
+// ── Ask for a loan ──────────────────────────────────────────────────────────
+
+/**
+ * Ask another tycoon's bank for a loan and return the bank's own verdict.
+ *
+ * A sibling of `setBuildingPropertyImpl`, not a branch inside it, and
+ * deliberately outside all three pieces of its machinery:
+ * - no `setPendingUpdate`/`confirmPendingUpdate` — there is no property being
+ *   optimistically written, so there is nothing for the SaveIndicator to watch;
+ * - no `inFlightSetProperty` dedup — its key is
+ *   `x,y:propertyName:additionalParams`, which is identical for two loan
+ *   requests the player legitimately makes in a row, and the second would be
+ *   silently answered with the first one's verdict.
+ *
+ * A thrown request is `'error'`, which is what Voyager does with the same
+ * failure (`except Answ := brqError`, Voyager/BankGeneralSheet.pas:442-444).
+ */
+export async function askBankLoan(
+  ctx: ClientHandlerContext,
+  x: number,
+  y: number,
+  amount: string
+): Promise<BankLoanOutcome> {
+  ClientBridge.log('Building', `Asking the bank at (${x}, ${y}) for ${amount}`);
+
+  try {
+    const req: WsReqBuildingSetProperty = {
+      type: WsMessageType.REQ_BUILDING_SET_PROPERTY,
+      x,
+      y,
+      propertyName: 'RDOAskLoan',
+      value: amount,
+    };
+
+    const response = await ctx.sendRequest(req) as WsRespBuildingSetProperty;
+    const verdict = response.loanResult ?? 'error';
+    ClientBridge.log('Building', `Bank at (${x}, ${y}) answered: ${verdict}`);
+    return verdict;
+  } catch (err: unknown) {
+    ClientBridge.log('Error', `Loan request failed: ${toErrorMessage(err)}`);
+    return 'error';
   }
 }
 

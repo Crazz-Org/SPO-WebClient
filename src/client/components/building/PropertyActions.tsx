@@ -14,7 +14,8 @@
 import { useState, useCallback } from 'react';
 import type { BuildingPropertyValue, WarehouseWareData } from '@/shared/types';
 import type { PropertyDefinition } from '@/shared/building-details';
-import { formatCurrency } from '@/shared/building-details';
+import { formatCurrency, BANK_LOAN_VERDICTS } from '@/shared/building-details';
+import type { BankLoanOutcome } from '@/shared/building-details';
 import { parseCloneMenu, parseCurrencyInput, parseFilmMonths, FILM_MONTHS_MIN, FILM_MONTHS_MAX } from './property-utils';
 import { useBuildingStore } from '../../store/building-store';
 import { useUiStore } from '../../store/ui-store';
@@ -401,6 +402,117 @@ export function FilmLaunchForm({
       <div className={styles.actionBtnContainer}>
         <button className={styles.actionBtn} onClick={handleLaunch}>
           Launch
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// BANK LOAN REQUEST (PropertyType.LOAN_REQUEST — BankGeneralSheet.pas:156,160)
+// =============================================================================
+
+/**
+ * Ask another tycoon's bank for a loan.
+ *
+ * **Inverted on purpose.** This is the one control Voyager offered on the bank
+ * sheet to a player who does NOT govern the bank, and hid from the one who does:
+ * `fbRequest.Enabled := not fOwnsFacility` and `eBorrow.Enabled := not
+ * fOwnsFacility` (Voyager/BankGeneralSheet.pas:156,160), with the click handler
+ * repeating the test (`not fHandler.fOwnsFacility`, :426). You do not borrow
+ * from yourself; the governor gets the interest, term and budget controls
+ * instead.
+ *
+ * `canGovern` is the right question and `isOwner` is not: this sheet's
+ * `fOwnsFacility` is `GrantAccess(getSecurityId, SecurityId)` (:134), which is
+ * exactly what the gateway computes into `canGovern`.
+ *
+ * The verdict is rendered inline, one distinct sentence per outcome, and is
+ * cleared the moment the player touches the amount box again — `eBorrowEnter`
+ * and `eBorrowKeyDown` both do `LoanResult.Visible := false` (:472-480).
+ */
+export function BankLoanRequest({
+  canGovern,
+  estLoan,
+  buildingX,
+  buildingY,
+}: {
+  canGovern: boolean;
+  estLoan: string;
+  buildingX: number;
+  buildingY: number;
+}) {
+  const client = useClient();
+  const [amount, setAmount] = useState(estLoan);
+  const [verdict, setVerdict] = useState<BankLoanOutcome | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  // Clears the previous answer, the way both of Voyager's handlers on this box
+  // do (:472-480). Kept as one function so typing and focusing cannot diverge.
+  const clearVerdict = useCallback(() => {
+    setVerdict(null);
+    setError(null);
+  }, []);
+
+  const handleRequest = useCallback(() => {
+    const parsed = parseCurrencyInput(amount);
+    if (parsed === null) {
+      setError('Enter an amount like $1,000,000');
+      setVerdict(null);
+      return;
+    }
+    setError(null);
+    setVerdict(null);
+    setPending(true);
+    void (async () => {
+      try {
+        const answer = await client.onAskBankLoan(buildingX, buildingY, amount);
+        // Anything that is not one of the four outcomes — a stubbed callback
+        // answering `undefined` — reads as the error Voyager would have shown.
+        setVerdict(answer ?? 'error');
+      } catch {
+        // `except Answ := brqError` (BankGeneralSheet.pas:442-444). The handler
+        // already swallows and logs the transport failure; this covers the
+        // callback itself being unavailable.
+        setVerdict('error');
+      } finally {
+        setPending(false);
+      }
+    })();
+  }, [amount, client, buildingX, buildingY]);
+
+  if (canGovern) return null;
+
+  const shown = verdict !== null ? BANK_LOAN_VERDICTS[verdict] : null;
+
+  return (
+    <div className={styles.upgradeContainer}>
+      <div className={styles.upgradeRow}>
+        <span className={styles.upgradeLabel}>Amount</span>
+        <input
+          type="text"
+          className={styles.textInput}
+          aria-label="Loan amount"
+          value={amount}
+          onChange={(e) => { setAmount(e.target.value); clearVerdict(); }}
+          onFocus={clearVerdict}
+        />
+      </div>
+      {error && <div role="alert" className={styles.filmFormError}>{error}</div>}
+      {shown && (
+        <div
+          role="status"
+          data-testid="loan-verdict"
+          data-outcome={verdict}
+          className={shown.tone === 'positive' ? styles.loanVerdictOk : styles.loanVerdictBad}
+        >
+          {shown.message}
+        </div>
+      )}
+      <div className={styles.actionBtnContainer}>
+        <button className={styles.actionBtn} onClick={handleRequest} disabled={pending}>
+          {pending ? 'Requesting…' : 'Request'}
         </button>
       </div>
     </div>

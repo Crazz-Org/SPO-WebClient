@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `bank-loan`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -171,6 +171,23 @@ the **InitClient proxy id**, which the server pointer-casts — `TMoneyDealer(Cl
 (`Banks.pas:149`) — so the persistent `TTycoon.Id` would dereference nothing with no error to
 show for it. The `building-details` cache fixture serves a `CurrBlock` pointing at these blocks
 and none of the six values, matching what StoreToCache actually writes.
+
+`bank-loan` is the loan request a player makes in **another tycoon's** bank, and the four answers
+it can get. `TBankBlock.RDOAskLoan( ClientId : integer; Amount : widestring ) : olevariant`
+(`StdBlocks/Banks.pas:46`) is the only member on the inspector's write path called for its
+**result** rather than its effect, and it is the only place in the fixtures where three things are
+pinned at once. It is a **function**, so every frame carries `"^"` — `"*"` on a function is an
+arbitrary memory write with nothing to show for it, which is why the name is deliberately absent
+from `KNOWN_RDO_COMMANDS`. Its first argument is the **security id**, i.e. the InitClient proxy id
+(`Voyager/URLHandlers/ServerCnxHandler.pas:2524-2527`, `:514-516`), which the server pointer-casts
+— `TMoneyDealer(ClientId)` (`Banks.pas:165`) — so the persistent `TTycoon.Id` would dereference
+nothing; its second travels as a `%` **string** with `$` and `,` already stripped
+(`Voyager/BankGeneralSheet.pas:435-436`), because the server `StrToFloat`s it. And the fourth
+ordinal, `3` (`brqError`), **can only be manufactured client-side**: the server enum has three
+values (`Kernel/Kernel.pas:1750`) and `RDOAskLoan` folds every failure, exceptions included, into
+`brqRejected` (`Banks.pas:166,169`) — so this fixture is the only place `3` can be exercised at
+all. The four exchanges use four different amounts on purpose: `RdoMock`'s first match tier is
+argument-sensitive, and one amount per ordinal is what makes the four distinguishable.
 
 `auto-buy` is the automatic-buying flag of an input gate, and it fixes two things a reply could
 never catch. The gate header is read with **ten** names, in the reference client's order

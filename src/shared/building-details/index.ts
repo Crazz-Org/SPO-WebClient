@@ -9,3 +9,4 @@ export * from './property-definitions';
 export * from './template-groups';
 export * from './property-templates';
 export * from './hidden-properties';
+export * from './bank-loan';

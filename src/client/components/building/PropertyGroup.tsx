@@ -33,7 +33,7 @@ import { SliderInput, TextInput } from './PropertyInputs';
 import { RatioValue, BooleanValue, StopToggle } from './PropertyDisplays';
 import { DataTable, ServiceCardList, ProductSummaryCards } from './PropertyTables';
 import { WorkforceTable } from './WorkforceTable';
-import { UpgradeActions, RepairControl, TradeConnectButtons, ActionButton, CloneSettings, WarehouseWares, FilmLaunchForm } from './PropertyActions';
+import { UpgradeActions, RepairControl, TradeConnectButtons, ActionButton, CloneSettings, WarehouseWares, FilmLaunchForm, BankLoanRequest } from './PropertyActions';
 import { TradeModeControl, TradeLevelControl } from './TradeControls';
 import { EpitaphEditor, CancelTranscendence } from './MausoleumControls';
 import styles from './PropertyGroup.module.css';
@@ -453,6 +453,26 @@ function DefinedProperties({
         <CloneSettings
           key="clone-settings"
           cloneMenuValue={cloneMenuValue}
+          buildingX={buildingX}
+          buildingY={buildingY}
+        />,
+      );
+      rendered.add(def.rdoName);
+      continue;
+    }
+
+    // Bank loan request — inverted: offered only to a player who does NOT
+    // govern the bank (BankGeneralSheet.pas:156,160). `canGovern`, not
+    // `isOwner`: this sheet's `fOwnsFacility` is `GrantAccess(getSecurityId,
+    // SecurityId)` (:134), which is what the gateway computes into `canGovern`
+    // (building-details-handler.ts:314). Not folded into `canEdit`, which mixes
+    // in company ownership and the civic special cases.
+    if (def.type === PropertyType.LOAN_REQUEST) {
+      elements.push(
+        <BankLoanRequest
+          key="bank-loan-request"
+          canGovern={details?.canGovern ?? false}
+          estLoan={valueMap.get('EstLoan') ?? ''}
           buildingX={buildingX}
           buildingY={buildingY}
         />,

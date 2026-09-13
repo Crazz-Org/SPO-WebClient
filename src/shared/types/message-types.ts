@@ -3,6 +3,7 @@
  * Contains all request/response types for Gateway <-> Browser communication
  */
 
+import type { BankLoanOutcome } from '../building-details/bank-loan';
 import type { RoadTileFacts } from '../road-cost';
 import type { RoadReachability } from '../road-circuits';
 import type {
@@ -946,6 +947,12 @@ export interface WsRespBuildingSetProperty extends WsMessage {
    * the write with no cache in the loop.
    */
   confirmed?: boolean;
+  /**
+   * Set only by `RDOAskLoan`: the four-valued answer of `StdBlocks/Banks.pas:46`,
+   * which `success`/`confirmed` cannot express — a rejection and a bank with no
+   * cash are both a successful round-trip, and the player has to be told which.
+   */
+  loanResult?: BankLoanOutcome;
 }
 
 export interface WsReqBuildingUpgrade extends WsMessage {

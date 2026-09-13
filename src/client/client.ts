@@ -329,6 +329,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       // Building actions (called from React BuildingInspector)
       onSetBuildingProperty: (x, y, propertyName, value, additionalParams) =>
         buildingActionHandler.setBuildingProperty(this, x, y, propertyName, value, additionalParams),
+      onAskBankLoan: (x, y, amount) => buildingActionHandler.askBankLoan(this, x, y, amount),
       onUpgradeBuilding: (x, y, action, count) =>
         buildingActionHandler.upgradeBuildingAction(this, x, y, action as 'DOWNGRADE' | 'START_UPGRADE' | 'STOP_UPGRADE', count),
       onRefreshBuilding: (x, y) => buildingActionHandler.refreshBuildingDetails(this, x, y),

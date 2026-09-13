@@ -13,6 +13,8 @@ import type { RdoMemberName } from '../../shared/rdo-members';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { toErrorMessage } from '../../shared/error-utils';
 import { writeRdoFrame, parsePropertyResponse } from '../rdo-helpers';
+import { decodeBankLoanResult, sanitiseLoanAmount } from '../../shared/building-details/bank-loan';
+import type { BankLoanOutcome } from '../../shared/building-details/bank-loan';
 import { serialiseConstruction } from './construction-lock';
 
 /**
@@ -92,7 +94,7 @@ export function setBuildingProperty(
   propertyName: string,
   value: string,
   additionalParams?: Record<string, string>
-): Promise<{ success: boolean; newValue: string; confirmed?: boolean }> {
+): Promise<{ success: boolean; newValue: string; confirmed?: boolean; loanResult?: BankLoanOutcome }> {
   return serialiseConstruction(ctx, () => setBuildingPropertyImpl(ctx, x, y, propertyName, value, additionalParams));
 }
 
@@ -103,7 +105,7 @@ async function setBuildingPropertyImpl(
   propertyName: string,
   value: string,
   additionalParams?: Record<string, string>
-): Promise<{ success: boolean; newValue: string; confirmed?: boolean }> {
+): Promise<{ success: boolean; newValue: string; confirmed?: boolean; loanResult?: BankLoanOutcome }> {
   ctx.log.debug(`[BuildingDetails] Setting ${propertyName}=${value} at (${x}, ${y})`);
 
   try {
@@ -249,6 +251,28 @@ async function setBuildingPropertyImpl(
       writeRdoFrame(socket, cmd);
       ctx.log.debug(`[BuildingDetails] Sent: ${cmd}`);
     };
+
+    // The one member here that ANSWERS. `RDOAskLoan` is a `function`
+    // (StdBlocks/Banks.pas:46), so its frame carries "^" and a QueryId — derived
+    // from the catalogue by `rdoCall`, never written here — and the reply is the
+    // whole point: the four-valued verdict. It is deliberately NOT in
+    // KNOWN_RDO_COMMANDS, for the same reason RDOVoteOf is not (see :42-46):
+    // every name on that list goes out with "*", which on a function is the
+    // arbitrary-write form.
+    //
+    // Bound to CurrBlock, the way Voyager binds it (BankGeneralSheet.pas:434).
+    // No read-back: there is no witness property, and the reply already says
+    // what happened.
+    if (propertyName === 'RDOAskLoan') {
+      assertCallable(propertyName);
+      const packet = await ctx.sendRdoRequest('construction', rdoCall(
+        propertyName, currBlock, ...rdoArgs,
+      ).packet, undefined, TimeoutCategory.NORMAL);
+      const raw = parsePropertyResponse(packet.payload || '', 'res');
+      const loanResult = decodeBankLoanResult(raw);
+      ctx.log.debug(`[BuildingDetails] RDOAskLoan answered "${raw}" -> ${loanResult}`);
+      return { success: true, newValue: raw, loanResult };
+    }
 
     if (propertyName === 'property' && additionalParams?.propertyName) {
       // Direct property set: use SET verb.
@@ -803,6 +827,27 @@ function buildRdoCommandArgs(
       // Args: perc (integer: 0-100)
       // Voyager: AdvSheetForm.pas — Proxy.RDOSetInputFluidPerc(perc)
       args.push(RdoValue.int(parseInt(value, 10)));
+      break;
+    }
+
+    case 'RDOAskLoan': {
+      // Args: the client's security id (integer), the sanitised amount (string).
+      // `function RDOAskLoan( ClientId : integer; Amount : widestring )`,
+      // StdBlocks/Banks.pas:46. Voyager: `Proxy.RDOAskLoan(StrToInt(SecId), Amount)`
+      // (BankGeneralSheet.pas:439), the amount stripped of ',' and '$' at :435-436.
+      //
+      // The security id is `getClientView.getSecurityId` = `IntToStr(integer(fTycoonId))`
+      // (ServerCnxHandler.pas:2524-2527) = the InitClient proxy id (:514-516), which the
+      // server pointer-casts, `TMoneyDealer(ClientId)` (Banks.pas:165). `ctx.tycoonId`
+      // is the persistent TTycoon.Id and would dereference nothing — see :632-641.
+      const securityId = ctx.fTycoonProxyId;
+      if (securityId === null) {
+        throw new Error(
+          'RDOAskLoan requires the security id from the InitClient push, which has ' +
+          'not arrived on this session yet'
+        );
+      }
+      args.push(RdoValue.int(securityId), RdoValue.string(sanitiseLoanAmount(value)));
       break;
     }
 

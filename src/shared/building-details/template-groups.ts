@@ -291,6 +291,13 @@ export const BANK_GENERAL_GROUP: PropertyGroup = {
     // (BankGeneralSheet.pas:261-268). Slider bounds are Voyager's own percent-edit
     // ranges (BankGeneralSheet.dfm: peInterest 0..50, peTerm 1..100, peBankBudget 0..100).
     { rdoName: 'EstLoan', displayName: 'Estimated Loan', type: PropertyType.CURRENCY, notCached: true },
+    // The one control Voyager offered a NON-owner on this sheet, pre-filled with
+    // EstLoan (BankGeneralSheet.pas:161-162). The leading underscore marks a
+    // synthetic name the object cache is never asked to answer — the same
+    // convention as `_researchPanel` in HQ_INVENTIONS_GROUP. No `rdoCommands`
+    // entry: the control calls `client.onAskBankLoan` directly, so
+    // `resolveRdoCommand` is not in the path and an entry would be dead.
+    { rdoName: '_loanRequest', displayName: 'Borrow', type: PropertyType.LOAN_REQUEST },
     { rdoName: 'Interest', displayName: 'Interest Rate', type: PropertyType.SLIDER, editable: true, min: 0, max: 50, step: 1, unit: '%', notCached: true },
     { rdoName: 'Term', displayName: 'Loan Term', type: PropertyType.SLIDER, editable: true, min: 1, max: 100, step: 1, unit: 'years', notCached: true },
     { rdoName: 'BudgetPerc', displayName: 'Budget', type: PropertyType.SLIDER, editable: true, min: 0, max: 100, unit: '%', notCached: true },

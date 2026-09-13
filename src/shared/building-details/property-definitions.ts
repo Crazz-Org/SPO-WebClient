@@ -73,6 +73,14 @@ export enum PropertyType {
    * Archaeology: WHGeneralSheet.pas clbNames checklist
    */
   WARE_CHECKLIST = 'WARE_CHECKLIST',
+  /**
+   * Bank loan request: an amount box and a Request button, offered only to a
+   * player who does NOT govern the bank — the legacy inversion,
+   * `fbRequest.Enabled := not fOwnsFacility` and `eBorrow.Enabled := not
+   * fOwnsFacility` (Voyager/BankGeneralSheet.pas:156,160). Sends RDOAskLoan and
+   * renders the bank's own four-valued verdict inline.
+   */
+  LOAN_REQUEST = 'LOAN_REQUEST',
 }
 
 /**

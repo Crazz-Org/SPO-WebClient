@@ -1883,3 +1883,183 @@ describe('construction lock', () => {
     ]);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RDOAskLoan — the one member on this path that ANSWERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * `function RDOAskLoan( ClientId : integer; Amount : widestring ) : olevariant`
+ * — StdBlocks/Banks.pas:46, on `TBankBlock`.
+ *
+ * Three things make it unlike every other row of the matrix above, and each is
+ * asserted here rather than folded into the matrix (whose rows are, by its own
+ * ratchet at :574, exactly `KNOWN_RDO_COMMANDS`):
+ *
+ *   1. It is a `function`, so its frame carries `"^"`, not `"*"`. The separator
+ *      is derived from the catalogue by `rdoCall` and cannot be written at the
+ *      call site — cataloguing it as `procedure` is the only way to get this
+ *      wrong, and `"*"` on a function is an arbitrary memory write with nothing
+ *      to show for it.
+ *   2. It is deliberately absent from `KNOWN_RDO_COMMANDS`, for the same reason
+ *      `RDOVoteOf` is: every name on that list is emitted with `"*"`.
+ *   3. Its reply is the point. Four ordinals of
+ *      `TBankRequestResult = (brqApproved, brqRejected, brqNotEnoughFunds,
+ *      brqError)` (Voyager/BankGeneralSheet.pas:22), which a boolean `success`
+ *      cannot express.
+ */
+describe('RDOAskLoan', () => {
+  const LOAN_AMOUNT = '12500000';
+
+  /** A context whose construction socket answers the loan request with `ordinal`. */
+  function makeLoanCtx(ordinal: string, options: { fTycoonProxyId?: number | null } = {}): FakeSessionCtx {
+    const fake = makeConstructionCtx(options);
+    fake.respond((packet) => (
+      packet.member === 'RDOAskLoan' ? `res="#${ordinal}"` : ''
+    ));
+    return fake;
+  }
+
+  it('is not in KNOWN_RDO_COMMANDS — that list is the "*" list', () => {
+    // A function must never ride the fire-and-forget path. This is the guard
+    // that would catch someone "completing" the list for symmetry.
+    expect(KNOWN_RDO_COMMANDS.has('RDOAskLoan')).toBe(false);
+  });
+
+  it('goes out on the function path: "^", a QueryId, and never a frame', async () => {
+    const fake = makeLoanCtx('0');
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOAskLoan', LOAN_AMOUNT));
+
+    // Reaching `sent` at all IS carrying a QueryId — sendRdoRequest allocates it
+    // (spo_session.ts:2409-2429). The separator is what the handler decides, via
+    // the catalogue.
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0].packet.separator).toBe('"^"');
+    expect(fake.sent[0].packet.separator).not.toBe('"*"');
+    expect(fake.sent[0].packet.verb).toBe(RdoVerb.SEL);
+    expect(fake.sent[0].packet.action).toBe(RdoAction.CALL);
+    expect(fake.sent[0].packet.member).toBe('RDOAskLoan');
+    expect(fake.sent[0].category).toBe(TimeoutCategory.NORMAL);
+    // Nothing on the fire-and-forget channel: a "*" here is the arbitrary write.
+    expect(fake.frames.construction).toEqual([]);
+  });
+
+  it('sends the security id as an integer and the amount as a string, in that order', async () => {
+    // `Proxy.RDOAskLoan(StrToInt(SecId), Amount)` —
+    // Voyager/BankGeneralSheet.pas:439. The TYPES are the assertion, not just
+    // the order: the server pointer-casts the first (`TMoneyDealer(ClientId)`,
+    // Banks.pas:165) and `StrToFloat`s the second (:165).
+    const fake = makeLoanCtx('0');
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOAskLoan', LOAN_AMOUNT));
+
+    expect(fake.sent[0].packet.args).toEqual([
+      RdoValue.int(FAKE_CONTEXT_IDS.tycoonProxyId).format(),
+      RdoValue.string(LOAN_AMOUNT).format(),
+    ]);
+    // Spelled out, so a regression to `#` on the amount or `%` on the id is
+    // legible in the failure: the proxy id, then the amount as a wide string.
+    expect(fake.sent[0].packet.args).toEqual([
+      `"#${FAKE_CONTEXT_IDS.tycoonProxyId}"`,
+      `"%${LOAN_AMOUNT}"`,
+    ]);
+  });
+
+  it('sends the InitClient proxy id, not the persistent TTycoon.Id', async () => {
+    // `getSecurityId` is `IntToStr(integer(fTycoonId))`
+    // (ServerCnxHandler.pas:2524-2527) — the id from the InitClient push
+    // (:514-516), which is a model-server pointer. `ctx.tycoonId` is the OTHER
+    // id and would dereference nothing.
+    const fake = makeLoanCtx('0');
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOAskLoan', LOAN_AMOUNT));
+
+    expect(fake.sent[0].packet.args?.[0]).toBe(`"#${FAKE_CONTEXT_IDS.tycoonProxyId}"`);
+    expect(fake.sent[0].packet.args?.[0]).not.toBe(`"#${FAKE_CONTEXT_IDS.tycoonId}"`);
+  });
+
+  it.each([
+    ['$12,500,000', '12500000'],
+    ['12 500 000', '12500000'],
+    ['  $ 1,000 ', '1000'],
+  ])('sanitises %s to %s before it reaches the wire', async (typed, onWire) => {
+    // `KillSpaces(ReplaceChar(..., ',', ' '))`, twice over, for ',' then '$'
+    // (BankGeneralSheet.pas:435-436). Done on the gateway and not only in the
+    // browser: the value arrives from the browser, and StrToFloat raises on
+    // anything else.
+    const fake = makeLoanCtx('0');
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOAskLoan', typed));
+
+    expect(fake.sent[0].packet.args?.[1]).toBe(`"%${onWire}"`);
+  });
+
+  it('binds to CurrBlock — not the cacher temp object, not ObjectId', async () => {
+    // `Proxy.BindTo(fHandler.fCurrBlock)` — BankGeneralSheet.pas:434. The fake
+    // answers three distinct ids, so a handler that picked either other one
+    // fails here.
+    const fake = makeLoanCtx('0');
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOAskLoan', LOAN_AMOUNT));
+
+    expect(fake.sent[0].packet.targetId).toBe(CURR_BLOCK);
+    expect(fake.sent[0].packet.targetId).not.toBe(OBJECT_ID);
+    expect(fake.sent[0].packet.targetId).not.toBe(TEMP_OBJECT_ID);
+  });
+
+  it('refuses, and emits nothing, when the security id has not arrived yet', async () => {
+    // The gateway's rendering of `if SecId <> '' ... else Answ := brqError`
+    // (BankGeneralSheet.pas:438-440). Sending `#null` would have the server
+    // pointer-cast a zero.
+    const fake = makeLoanCtx('0', { fTycoonProxyId: null });
+
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOAskLoan', LOAN_AMOUNT));
+
+    expect(result).toEqual({ success: false, newValue: '' });
+    expect(fake.sent).toEqual([]);
+    expect(fake.frames.construction).toEqual([]);
+    expect(fake.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('RDOAskLoan requires the security id'),
+    );
+  });
+
+  it.each([
+    ['0', 'approved'],
+    ['1', 'rejected'],
+    ['2', 'notEnoughFunds'],
+    ['3', 'error'],
+  ])('maps ordinal %s to %s', async (ordinal, outcome) => {
+    const fake = makeLoanCtx(ordinal);
+
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOAskLoan', LOAN_AMOUNT));
+
+    expect(result.success).toBe(true);
+    expect(result.loanResult).toBe(outcome);
+    expect(result.newValue).toBe(ordinal);
+  });
+
+  it.each(['', '4', 'x'])('reads an unusable payload (%s) as error', async (ordinal) => {
+    // Voyager's own fallback on every path it cannot make sense of
+    // (BankGeneralSheet.pas:440,442,444).
+    const fake = makeLoanCtx(ordinal);
+
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOAskLoan', LOAN_AMOUNT));
+
+    expect(result.success).toBe(true);
+    expect(result.loanResult).toBe('error');
+  });
+
+  it('never reads back a witness property — the reply already said what happened', async () => {
+    // There is no property on the block that records a loan request, so a
+    // read-back could only manufacture a verdict (OB-28).
+    const fake = makeLoanCtx('0');
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOAskLoan', LOAN_AMOUNT));
+
+    const listCalls = fake.cacher.getPropertyList.mock.calls;
+    expect(listCalls).toHaveLength(1);
+    expect(listCalls[0][1]).toEqual(['CurrBlock', 'ObjectId']);
+    expect(fake.cacher.closeObject).toHaveBeenCalledTimes(fake.cacher.createObject.mock.calls.length);
+  });
+});

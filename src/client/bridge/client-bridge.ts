@@ -46,6 +46,7 @@ import type {
 } from '@/shared/types';
 import { CLUSTER_IDS } from '@/shared/cluster-data';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
+import type { BankLoanOutcome } from '@/shared/building-details/bank-loan';
 import { isCapitolBuilding } from '../components/politics/CivicTabConfig';
 import {
   WsMessageType,
@@ -198,6 +199,12 @@ export interface ClientCallbacks {
 
   // Building
   onSetBuildingProperty: (x: number, y: number, propertyName: string, value: string, additionalParams?: Record<string, string>) => void;
+  /**
+   * Ask another tycoon's bank for a loan. Resolves to the bank's own four-valued
+   * verdict (StdBlocks/Banks.pas:46) — not a boolean: rejected and
+   * not-enough-funds are both a successful round-trip and read differently.
+   */
+  onAskBankLoan: (x: number, y: number, amount: string) => Promise<BankLoanOutcome>;
   onUpgradeBuilding: (x: number, y: number, action: string, count?: number) => void;
   onRefreshBuilding: (x: number, y: number) => void;
   /** Lightweight refresh: re-read the properties of the focused building only. */

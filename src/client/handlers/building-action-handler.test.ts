@@ -576,3 +576,84 @@ describe('requestWorkerCounts', () => {
     expect(ClientBridge.log).toHaveBeenCalledWith('Error', expect.stringContaining('timeout'));
   });
 });
+
+describe('askBankLoan', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useBuildingStore.getState().clearDetails();
+  });
+
+  function loanCtx(answer: unknown, opts: { reject?: boolean } = {}): ClientHandlerContext {
+    return {
+      ...makeCtx(),
+      sendRequest: opts.reject
+        ? jest.fn().mockRejectedValue(new Error('socket gone'))
+        : jest.fn().mockResolvedValue(answer),
+    } as unknown as ClientHandlerContext;
+  }
+
+  it('asks the bank at these coordinates, on the RDOAskLoan property name', async () => {
+    const { askBankLoan } = await import('./building-action-handler');
+    const ctx = loanCtx({ success: true, loanResult: 'approved' });
+
+    await expect(askBankLoan(ctx, 706, 436, '$1,000,000')).resolves.toBe('approved');
+    expect(ctx.sendRequest).toHaveBeenCalledWith({
+      type: 'REQ_BUILDING_SET_PROPERTY',
+      x: 706,
+      y: 436,
+      propertyName: 'RDOAskLoan',
+      value: '$1,000,000',
+    });
+  });
+
+  it.each(['approved', 'rejected', 'notEnoughFunds', 'error'])(
+    'hands the %s verdict straight back',
+    async (outcome) => {
+      const { askBankLoan } = await import('./building-action-handler');
+      const ctx = loanCtx({ success: true, loanResult: outcome });
+
+      await expect(askBankLoan(ctx, 706, 436, '1000')).resolves.toBe(outcome);
+    },
+  );
+
+  it('reads a response with no verdict as error', async () => {
+    // An older gateway, or any answer that cannot say which of the four it was.
+    const { askBankLoan } = await import('./building-action-handler');
+    const ctx = loanCtx({ success: true });
+
+    await expect(askBankLoan(ctx, 706, 436, '1000')).resolves.toBe('error');
+  });
+
+  it('reads a failed request as error, and says so in the log', async () => {
+    // `except Answ := brqError` (Voyager/BankGeneralSheet.pas:442-444).
+    const { askBankLoan } = await import('./building-action-handler');
+    const ctx = loanCtx(null, { reject: true });
+
+    await expect(askBankLoan(ctx, 706, 436, '1000')).resolves.toBe('error');
+    expect(ClientBridge.log).toHaveBeenCalledWith('Error', expect.stringContaining('socket gone'));
+  });
+
+  it('never touches the optimistic-update machinery — there is no property being written', async () => {
+    // A loan request writes no property, so there is nothing for the
+    // SaveIndicator to watch; and the dedup key of setBuildingProperty would be
+    // identical for two requests the player legitimately makes in a row.
+    const { askBankLoan } = await import('./building-action-handler');
+    const ctx = loanCtx({ success: true, loanResult: 'rejected' });
+
+    await askBankLoan(ctx, 706, 436, '1000');
+
+    expect(ClientBridge.setPendingUpdate).not.toHaveBeenCalled();
+    expect(ClientBridge.confirmPendingUpdate).not.toHaveBeenCalled();
+    expect(ClientBridge.failPendingUpdate).not.toHaveBeenCalled();
+  });
+
+  it('sends both of two identical requests — no dedup swallowing the second', async () => {
+    const { askBankLoan } = await import('./building-action-handler');
+    const ctx = loanCtx({ success: true, loanResult: 'rejected' });
+
+    await askBankLoan(ctx, 706, 436, '1000');
+    await askBankLoan(ctx, 706, 436, '1000');
+
+    expect(ctx.sendRequest).toHaveBeenCalledTimes(2);
+  });
+});
