@@ -5,9 +5,9 @@
  * All UI is absolutely positioned overlays:
  * - StatusPill (z-350): top, player status in one line
  * - ContextStatusStrip (z-350): just above CommandBar, the town sentence under the camera
- * - CommandBar (z-350): bottom, search / mode bar + six tiles
+ * - CommandBar (z-350): bottom, search / mode bar + seven tiles
  * - RightRail (z-200): map controls
- * - ChatStrip (z-150): bottom-edge persistent chat
+ * - ChatStrip (z-150): bottom-edge persistent chat, hidden when the player closed it (#610)
  * - Sheet (z-400): the universal surface — one stack (inspector, mail, search, politics, profile…)
  * - Modals (z-400): build menu, settings
  * - CommandPalette (z-500)
@@ -17,6 +17,7 @@ import { lazy, Suspense } from 'react';
 import { useUiStore } from '../store';
 import { StatusPill, CommandBar, ContextStatusStrip, RightRail, VersionBadge } from '../components/hud';
 import { ChatStrip, ChaseBadge } from '../components/chat';
+import { useChatStore } from '../store/chat-store';
 import { StatusOverlay } from '../components/building';
 import { MapContextMenu } from '../components/map/MapContextMenu';
 import { ServerSwitchOverlay, ZoneTypePicker } from '../components/modals';
@@ -43,6 +44,7 @@ export function GameScreen() {
   const confirmPayload = useUiStore((s) => s.confirmPayload);
   const promptPayload = useUiStore((s) => s.promptPayload);
   const closeModal = useUiStore((s) => s.closeModal);
+  const chatVisible = useChatStore((s) => s.chatVisible);
 
   useChangelogCheck();
   useCameraHistory();
@@ -73,8 +75,8 @@ export function GameScreen() {
       {/* RightRail — map controls */}
       <RightRail />
 
-      {/* ChatStrip — bottom-edge persistent chat */}
-      <ChatStrip />
+      {/* ChatStrip — bottom-edge persistent chat, hidden when the player closed it (#610) */}
+      {chatVisible && <ChatStrip />}
 
       {/* The universal sheet — one stack of surfaces (inspector, mail, search, politics, profile…) */}
       <Sheet />

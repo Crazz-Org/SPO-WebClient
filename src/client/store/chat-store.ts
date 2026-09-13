@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import type { ChatUser } from '../../shared/types/domain-types';
+import { loadChatVisible, saveChatVisible } from './chat-visibility';
 
 export type { ChatUser };
 
@@ -28,6 +29,8 @@ interface ChatState {
   users: Record<string, ChatUser>;
   typingUsers: Set<string>;
   isExpanded: boolean;
+  /** Desktop only: false hides the ChatStrip entirely. Persisted — issue #610. */
+  chatVisible: boolean;
   activeTab: ChatTab;
   /** Unread message count for mobile chat tab badge */
   unreadChatCount: number;
@@ -50,6 +53,8 @@ interface ChatState {
   setActiveTab: (tab: ChatTab) => void;
   resetUnreadChat: () => void;
   setChasedUser: (name: string | null) => void;
+  setChatVisible: (visible: boolean) => void;
+  toggleChatVisible: () => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -59,6 +64,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   users: {},
   typingUsers: new Set(),
   isExpanded: true,
+  chatVisible: loadChatVisible(),
   activeTab: 'chat' as ChatTab,
   unreadChatCount: 0,
   channelInfo: {},
@@ -125,4 +131,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   resetUnreadChat: () => set({ unreadChatCount: 0 }),
 
   setChasedUser: (name) => set({ chasedUser: name }),
+
+  setChatVisible: (visible) => {
+    saveChatVisible(visible);
+    // Showing chat is the player reading it — the toggle's badge clears with it.
+    set(visible ? { chatVisible: true, unreadChatCount: 0 } : { chatVisible: false });
+  },
+
+  toggleChatVisible: () => get().setChatVisible(!get().chatVisible),
 }));
