@@ -303,6 +303,7 @@ export interface FacilityDimensions {
   constructionTextureFilename?: string;  // Construction state texture filename
   animated?: boolean;         // Whether sprite has animation frames (from CLASSES.BIN)
   animArea?: { left: number; top: number; right: number; bottom: number };  // Animation sub-region
+  zoneType?: number;          // Zone type (Protocol.pas:368-377), for minimap class colouring
 }
 
 export interface ZoneOverlayState {

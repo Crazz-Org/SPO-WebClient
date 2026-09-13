@@ -6,10 +6,12 @@ import { useEmpireStore } from '../../store/empire-store';
 import { useGameStore } from '../../store/game-store';
 import { useSearchStore } from '../../store/search-store';
 import { useUiStore } from '../../store/ui-store';
-import { MapSurface, buildingColor } from './MapSurface';
+import { useBuildingStore } from '../../store/building-store';
+import { MapSurface } from './MapSurface';
+import { tileColor, LOSING_RGB, ROAD_RGB, CONCRETE_RGB, ZONE_RGB } from './map-surface-layer';
 import { nearestTown } from '@/shared/nearest-town';
 import type { MinimapRendererAPI } from '../../ui/minimap-colormap';
-import type { TownInfo } from '@/shared/types';
+import type { TownInfo, BuildingFocusInfo } from '@/shared/types';
 
 const W = 40, H = 40;
 
@@ -47,6 +49,9 @@ function fakeSource(): MinimapRendererAPI & { centerOn: jest.Mock; camera: { x: 
       { visualClass: '1', tycoonId: 37, options: 0, x: 5, y: 5, level: 0, alert: false, attack: 0 },
       { visualClass: '2', tycoonId: 99, options: 1, x: 30, y: 30, level: 0, alert: true, attack: 0 },
     ],
+    getAllSegments: () => [{ x1: 10, y1: 5, x2: 13, y2: 5, unknown1: 0, unknown2: 0, unknown3: 0, unknown4: 0, unknown5: 0, unknown6: 0 }],
+    getConcreteTiles: () => new Set(['6,6']),
+    getFacilityZone: (vc: string) => (vc === '1' ? 2 : undefined),
   };
   return src as never;
 }
@@ -75,16 +80,18 @@ describe('MapSurface', () => {
     useUiStore.setState({ modal: null, promptPayload: null });
     useEmpireStore.getState().reset();
     useSearchStore.setState({ townsData: null, isLoading: false });
+    useBuildingStore.getState().clearFocus();
   });
   afterEach(() => {
     HTMLCanvasElement.prototype.getContext = origGetContext;
     HTMLCanvasElement.prototype.getBoundingClientRect = origRect;
   });
 
-  it('colours buildings: losing money red first, mine gold, others muted; nearest town by Manhattan distance', () => {
-    expect(buildingColor({ alert: true, tycoonId: 37 } as never, 37)).toBe('#ef4444');
-    expect(buildingColor({ alert: false, tycoonId: 37 } as never, 37)).toBe('#f59e0b');
-    expect(buildingColor({ alert: false, tycoonId: 2 } as never, 37)).toBe('rgba(226,232,240,0.75)');
+  it('colours tiles in the legacy priority order: own losing red, class colour, road/concrete on empty ground; nearest town by Manhattan distance', () => {
+    expect(tileColor({ building: { alert: true, tycoonId: 37 } as never, zoneType: 2 }, 37)).toEqual(LOSING_RGB);
+    expect(tileColor({ building: { alert: false, tycoonId: 37 } as never, zoneType: 2 }, 37)).toEqual(ZONE_RGB[2]);
+    expect(tileColor({ hasRoad: true }, 37)).toEqual(ROAD_RGB);
+    expect(tileColor({ hasConcrete: true }, 37)).toEqual(CONCRETE_RGB);
     expect(nearestTown(TOWN_LIST, 12, 12)?.name).toBe('Helartia');
     expect(nearestTown(TOWN_LIST, 39, 2)?.name).toBe('Faraway');
     expect(nearestTown(undefined, 0, 0)).toBeNull();
@@ -210,6 +217,51 @@ describe('MapSurface', () => {
     act(() => { jest.advanceTimersByTime(1100); });
     expect((ctx.drawImage as jest.Mock).mock.calls.length).toBeGreaterThan(before);
     jest.useRealTimers();
+  });
+
+  it('paints the data layer once per tick, not per pointer move', () => {
+    jest.useFakeTimers();
+    useMapStore.getState().setSource(fakeSource());
+    renderWithProviders(<MapSurface />);
+    const canvas = screen.getByRole('img', { name: /World map/ });
+    const puts = () => (ctx.putImageData as jest.Mock).mock.calls.length;
+    const afterMount = puts();
+    fireEvent.pointerMove(canvas, { clientX: 150, clientY: 150, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 160, clientY: 160, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 170, clientY: 170, pointerId: 1 });
+    expect(puts()).toBe(afterMount);
+    act(() => { jest.advanceTimersByTime(1100); });
+    expect(puts()).toBeGreaterThan(afterMount);
+    jest.useRealTimers();
+  });
+
+  it('marks the selected tile and follows the selection', () => {
+    useMapStore.getState().setSource(fakeSource());
+    renderWithProviders(<MapSurface />);
+    const strokes = () => (ctx.strokeRect as jest.Mock).mock.calls.length;
+    const puts = () => (ctx.putImageData as jest.Mock).mock.calls.length;
+    const beforeFocus = strokes();
+    const putsBeforeFocus = puts();
+
+    act(() => useBuildingStore.getState().setFocus({
+      buildingId: '1', buildingName: '', ownerName: '', salesInfo: '', revenue: '',
+      detailsText: '', hintsText: '', x: 5, y: 5, xsize: 1, ysize: 1, visualClass: '1',
+    } as BuildingFocusInfo));
+    const afterFocus = strokes();
+    expect(afterFocus - beforeFocus).toBe(2); // viewport rectangle + the selection ring
+    expect(puts()).toBeGreaterThan(putsBeforeFocus); // the layer key changed with the selection
+
+    act(() => useBuildingStore.getState().clearFocus());
+    expect(strokes() - afterFocus).toBe(1); // back to the viewport rectangle only
+  });
+
+  it('the legend shows the class/zone colours, not the old ownership-only ones', () => {
+    useMapStore.getState().setSource(fakeSource());
+    renderWithProviders(<MapSurface />);
+    expect(screen.getByText('Selected')).toBeTruthy();
+    expect(screen.getByText('Road')).toBeTruthy();
+    expect(screen.queryByText('Mine')).toBeNull();
+    expect(screen.queryByText('Others')).toBeNull();
   });
 
   it('bookmarks: the server list is asked for, and add / go / rename / delete go to the Favorites tree', () => {

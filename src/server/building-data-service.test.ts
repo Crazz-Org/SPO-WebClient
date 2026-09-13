@@ -161,6 +161,12 @@ const binExists = fs.existsSync(CLASSES_BIN_PATH);
       expect(facility).toBeUndefined();
     });
 
+    it('should include zoneType in FacilityDimensions', () => {
+      const facility = service.getFacility('602');
+      expect(facility).toBeDefined();
+      expect(typeof facility!.zoneType).toBe('number');
+    });
+
     it('should have required FacilityDimensions properties', () => {
       const facility = service.getFacility('602');
       expect(facility).toBeDefined();

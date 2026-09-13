@@ -40,6 +40,7 @@ export interface FacilityDimensions {
   constructionTextureFilename?: string;
   animated?: boolean;
   animArea?: { left: number; top: number; right: number; bottom: number };
+  zoneType?: number;
 }
 
 /**
@@ -242,6 +243,7 @@ export class BuildingDataService implements Service {
       constructionTextureFilename: building.constructionTextureFilename,
       animated: building.animated,
       animArea: building.animArea,
+      zoneType: building.zoneType,
     };
   }
 

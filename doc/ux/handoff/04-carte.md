@@ -12,13 +12,15 @@ plus proche, favoris de position.
 |---|---|---|
 | Surface `map` de la feuille | `components/map/MapSurface.tsx` ; `M`, tuile **Map** de la CommandBar, triangle mobile (`MinimapToggleButton`) → `toggleMapSurface` | — |
 | Terrain | colormap partagée `ui/minimap-colormap.ts` (extraite de `MinimapUI`, qui l'utilise aussi) | `getTerrainPixelData` / atlas du renderer |
-| Bâtiments | un point par bâtiment **chargé** : or = miens (`tycoonId` = le mien), rouge = déficitaire (`MapBuilding.alert`, bit du serveur), autres atténués | `renderer.getAllBuildings()` — rien n'est demandé |
+| Bâtiments | couleur par zone de la classe (table `Map.pas:6930-6950`) : couleur pleine pour les miens, atténuée (`DimColor`) pour les autres, rouge pour un mien déficitaire (`MapBuilding.alert`, bit du serveur) — ordre de priorité de Voyager, `Map.pas:3732-3778` | `renderer.getAllBuildings()` + `getFacilityZone()` — rien n'est demandé |
+| Routes / béton | visibles sur la carte, couleur fixe (`ROAD_RGB` / `CONCRETE_RGB`), le sol vide reste la couleur du terrain | `renderer.getAllSegments()` / `getConcreteTiles()` |
+| Sélection | empreinte blanche sur la tuile sélectionnée + anneau en espace écran (visible même à 1×) | `store/building-store.ts` — `focusedBuilding` |
 | Rectangle de vue | ce que la vue iso montre | `getVisibleTileBounds` |
 | Clic = sauter | `source.centerOn(x, y)` + entrée d'historique | — |
 | Zoom | molette (autour du curseur) et boutons, 1–8 × ; glisser = déplacer quand zoomé ; Reset | local |
 | Back / Next | `store/map-store.ts` : 100 positions (Voyager), seuil 8 tuiles, nourri par `hooks/useCameraHistory` (1 s) et par chaque saut | caméra |
 | Nearest Town Hall | utilisable avant même le chargement de l'annuaire (le clic demande la liste s'il le faut) ; distance de Manhattan à la caméra sur les villes de l'annuaire, approximation locale de `TWorld.NearestTown` (`Kernel/World.pas:5905-5933`) ; arrivée via `onNavigateToBuilding` (le `MoveAndSelect` du client — centre et sélectionne) | `@/shared/nearest-town`, `search-store.townsData` |
-| Légende + coordonnées | « Mine / Losing money / Others » ; tuile survolée ou centre de la vue | — |
+| Légende + coordonnées | « Residential / Industrial / Commercial / Civics / Offices / Losing money / Road / Concrete / Selected » ; tuile survolée ou centre de la vue | — |
 
 Le losange ancré reste disponible (menu **Plus › Docked minimap**). `MinimapRendererAPI` est le
 contrat commun (déplacé dans `minimap-colormap.ts`, ré-exporté par `minimap-ui.ts`).
@@ -27,8 +29,10 @@ contrat commun (déplacé dans `minimap-colormap.ts`, ré-exporté par `minimap-
 
 - Pas de **brouillard** : le client ne suit pas « ce qui a été vu » ; la carte montre le terrain
   entier et les bâtiments déjà chargés (l'inexploré est donc vide, pas gris).
-- Pas de couleur **par classe** de bâtiment (Voyager `GetBuildingColor`) : trois couleurs suffisent
-  pour la lecture visée (où sont les miens, lesquels perdent de l'argent).
+- Pas de **voie ferrée** (`cRailroadsColor`, `Map.pas:3765-3767`) : le client n'a pas de couche
+  ferroviaire.
+- Les zones 8 (civics) et 9 (offices) ont des couleurs propres `[INFERRED]` : la table Voyager
+  s'arrête à 7 (`Map.pas:6932`), et les fondre dans « commercial » aurait caché les mairies.
 - **Favoris de position** (N4, Carte-2) : section « Bookmarks » sous la carte — « Bookmark this
   place » ouvre le PromptDialog (nom, défaut = coordonnées de la vue), chaque ligne = aller
   (bouton nommé `Go to <nom> (x, y)`), renommer (Prompt), supprimer. Stockage **serveur**

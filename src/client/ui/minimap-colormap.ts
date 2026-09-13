@@ -8,7 +8,7 @@
  */
 
 import type { AtlasManifest } from '../renderer/texture-atlas-cache';
-import type { MapBuilding } from '@/shared/types';
+import type { MapBuilding, MapSegment } from '@/shared/types';
 
 /** What a colormap needs from the renderer (the docked minimap's contract, plus buildings). */
 export interface MinimapRendererAPI {
@@ -24,6 +24,12 @@ export interface MinimapRendererAPI {
   getAtlasData?(): { atlas: ImageBitmap; manifest: AtlasManifest } | null;
   /** Every building the client has loaded so far (optional — the docked minimap does not draw them). */
   getAllBuildings?(): MapBuilding[];
+  /** Every loaded road segment (optional — the docked minimap does not draw them). */
+  getAllSegments?(): MapSegment[];
+  /** Concrete tiles as "x,y" keys (optional). */
+  getConcreteTiles?(): ReadonlySet<string>;
+  /** Zone type of a building class, when known (optional). */
+  getFacilityZone?(visualClass: string): number | undefined;
 }
 
 /** Max colormap resolution (tiles per side). */
@@ -137,5 +143,14 @@ export function colormapToTile(cm: Pick<TerrainColormap, 'width' | 'height' | 'm
   return {
     x: Math.max(0, Math.min(cm.mapWidth - 1, Math.round(tileJ))),
     y: Math.max(0, Math.min(cm.mapHeight - 1, Math.round(tileI))),
+  };
+}
+
+/** Tile (x = j, y = i) → the colormap pixel that holds it (mirrors buildTerrainColormap's downsampling). */
+export function tileToColormapPixel(cm: Pick<TerrainColormap, 'width' | 'height' | 'mapWidth' | 'mapHeight'>, x: number, y: number): { px: number; py: number } {
+  const ds = Math.max(1, Math.ceil(Math.max(cm.mapWidth, cm.mapHeight) / COLORMAP_MAX));
+  return {
+    px: Math.min(cm.width - 1, Math.max(0, Math.floor((cm.mapHeight - 1 - y) / ds))),
+    py: Math.min(cm.height - 1, Math.max(0, Math.floor((cm.mapWidth - 1 - x) / ds))),
   };
 }

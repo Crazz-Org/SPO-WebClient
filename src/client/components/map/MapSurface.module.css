@@ -68,8 +68,25 @@
 
 .legend {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+}
+
+.legendNote {
+  margin-left: var(--space-2);
+  color: var(--text-muted);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+}
+
+.legendItem:first-child {
+  margin-left: 0;
 }
 
 .swatch {
@@ -77,23 +94,42 @@
   width: 10px;
   height: 10px;
   border-radius: 2px;
-  margin-left: var(--space-2);
 }
 
-.swatch:first-child {
-  margin-left: 0;
+.residential {
+  background: rgb(0, 128, 128);
 }
 
-.mine {
-  background: #f59e0b;
+.industrial {
+  background: rgb(215, 217, 136);
+}
+
+.commercial {
+  background: rgb(73, 116, 216);
+}
+
+.civics {
+  background: rgb(240, 128, 255);
+}
+
+.offices {
+  background: rgb(120, 200, 255);
 }
 
 .losing {
-  background: #ef4444;
+  background: rgb(255, 0, 0);
 }
 
-.others {
-  background: rgba(226, 232, 240, 0.75);
+.road {
+  background: rgb(63, 63, 63);
+}
+
+.concrete {
+  background: rgb(95, 95, 95);
+}
+
+.selected {
+  background: rgb(255, 255, 255);
 }
 
 .coords {

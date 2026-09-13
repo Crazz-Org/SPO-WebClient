@@ -1974,6 +1974,16 @@ export class IsometricMapRenderer {
     return this.terrainRenderer.getTerrainLoader().getDimensions();
   }
 
+  /** Concrete tiles as "x,y" keys (for minimap rendering). */
+  public getConcreteTiles(): ReadonlySet<string> {
+    return this.concreteTilesSet;
+  }
+
+  /** Zone type of a building class, when its dimensions have been fetched (for minimap rendering). */
+  public getFacilityZone(visualClass: string): number | undefined {
+    return this.facilityDimensionsCache.get(visualClass)?.zoneType;
+  }
+
   /**
    * Get current map rotation (for minimap orientation sync)
    */

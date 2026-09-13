@@ -3,8 +3,12 @@
  *
  * A data map of the world, drawn from what the client already holds — no request is made:
  *  - the terrain colormap the docked minimap uses (`ui/minimap-colormap`),
- *  - every building loaded so far: mine in gold, others muted, the ones losing money in red
- *    (`MapBuilding.alert`, the server's own bit — Voyager's `cLoosingColor`, `Map.pas:3512-3626`),
+ *  - every building loaded so far, coloured by its class's zone — own in full colour, foreign
+ *    dimmed, an own building losing money in red (`MapBuilding.alert`) — plus roads and
+ *    concrete, in Voyager's own priority order (`Map.pas:3732-3778`, `:6930-6950`,
+ *    `map-surface-layer.ts`),
+ *  - the selected tile, marked with a white footprint and a screen-space ring
+ *    (`useBuildingStore().focusedBuilding`),
  *  - the rectangle of what the iso view shows.
  * Click = jump there. Wheel = zoom around the cursor (1× … 8×), drag = pan when zoomed.
  * Toolbar: Back / Next through the camera history (`map-store`); nearest Town Hall, usable
@@ -29,6 +33,7 @@ import { useMapStore } from '../../store/map-store';
 import { useEmpireStore } from '../../store/empire-store';
 import { useGameStore } from '../../store/game-store';
 import { useSearchStore } from '../../store/search-store';
+import { useBuildingStore } from '../../store/building-store';
 import { useClient } from '../../context';
 import { Button } from '../common';
 import {
@@ -40,7 +45,8 @@ import {
   type RGB,
   type TerrainColormap,
 } from '../../ui/minimap-colormap';
-import type { MapBuilding, TownInfo } from '@/shared/types';
+import { buildDataLayer } from './map-surface-layer';
+import type { TownInfo } from '@/shared/types';
 import { nearestTown } from '@/shared/nearest-town';
 import styles from './MapSurface.module.css';
 
@@ -48,13 +54,6 @@ export const ZOOM_MIN = 1;
 export const ZOOM_MAX = 8;
 const REDRAW_MS = 1000;
 const COS45 = Math.SQRT2 / 2;
-
-/** Colour of a building dot: the player's in gold, losing money in red, others muted. */
-export function buildingColor(b: MapBuilding, myTycoonId: number): string {
-  if (b.alert) return '#ef4444';
-  if (myTycoonId && b.tycoonId === myTycoonId) return '#f59e0b';
-  return 'rgba(226,232,240,0.75)';
-}
 
 interface View {
   zoom: number;
@@ -74,6 +73,10 @@ export function MapSurface() {
   const bookmarks = useEmpireStore((s) => s.facilities);
   const tycoonIdRaw = useGameStore((s) => s.tycoonId);
   const myTycoonId = parseInt(tycoonIdRaw || '0', 10) || 0;
+  const focused = useBuildingStore((s) => s.focusedBuilding);
+  const selection = focused
+    ? { x: focused.x, y: focused.y, xsize: Math.max(1, focused.xsize), ysize: Math.max(1, focused.ysize) }
+    : null;
   const client = useClient();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -83,7 +86,8 @@ export function MapSurface() {
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
   const drag = useRef<{ startX: number; startY: number; panX: number; panY: number; moved: boolean } | null>(null);
   const colormapRef = useRef<{ key: string; cm: TerrainColormap; atlas: Map<number, RGB> | null } | null>(null);
-  const [, setTick] = useState(0);
+  const layerRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
+  const [tick, setTick] = useState(0);
   const [townHallPending, setTownHallPending] = useState(false);
 
   // Towns: one directory read, once per session, shared with Search / Government.
@@ -159,13 +163,22 @@ export function MapSurface() {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(cm.canvas, -cm.width / 2, -cm.height / 2);
 
-    // Buildings — one dot per building, in colormap space.
-    const buildings = source.getAllBuildings?.() ?? [];
-    const dot = Math.max(0.6, 1.2 / view.zoom) ;
-    for (const b of buildings) {
-      const { cx, cy } = tileToColormap(cm, b.x, b.y);
-      ctx.fillStyle = buildingColor(b, myTycoonId);
-      ctx.fillRect(cx - cm.width / 2 - dot / 2, cy - cm.height / 2 - dot / 2, dot, dot);
+    // The data layer — buildings, roads, concrete and the selection footprint — rebuilt only
+    // when what it depends on changes, not on every render (hover moves, drags, ...).
+    const key = `${colormapRef.current?.key}|${tick}|${myTycoonId}|${selection ? `${selection.x},${selection.y},${selection.xsize},${selection.ysize}` : '-'}`;
+    if (layerRef.current?.key !== key) {
+      const layer = buildDataLayer(cm, {
+        buildings: source.getAllBuildings?.() ?? [],
+        segments: source.getAllSegments?.() ?? [],
+        concreteTiles: source.getConcreteTiles?.() ?? [],
+        zoneOf: (vc) => source.getFacilityZone?.(vc),
+        myTycoonId,
+        selection,
+      });
+      layerRef.current = layer ? { key, canvas: layer } : null;
+    }
+    if (layerRef.current) {
+      ctx.drawImage(layerRef.current.canvas, -cm.width / 2, -cm.height / 2);
     }
 
     // Viewport rectangle.
@@ -180,6 +193,16 @@ export function MapSurface() {
       ctx.strokeStyle = 'rgba(245,158,11,0.9)';
       ctx.lineWidth = 1.5 / scale;
       ctx.strokeRect(x1, y1, Math.abs(b.cx - a.cx), Math.abs(b.cy - a.cy));
+    }
+
+    // The selected tile — a screen-space ring so it stays visible at 1× zoom, where the
+    // layer's own footprint pixel is a single pixel.
+    if (selection) {
+      const p = tileToColormap(cm, selection.x, selection.y);
+      const r = 3 / scale;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5 / scale;
+      ctx.strokeRect(p.cx - cm.width / 2 - r, p.cy - cm.height / 2 - r, 2 * r, 2 * r);
     }
     ctx.restore();
   });
@@ -348,9 +371,16 @@ export function MapSurface() {
 
       <div className={styles.footer}>
         <span className={styles.legend}>
-          <span className={`${styles.swatch} ${styles.mine}`} aria-hidden="true" /> Mine
-          <span className={`${styles.swatch} ${styles.losing}`} aria-hidden="true" /> Losing money
-          <span className={`${styles.swatch} ${styles.others}`} aria-hidden="true" /> Others
+          <span className={styles.legendItem}><span className={`${styles.swatch} ${styles.residential}`} aria-hidden="true" />Residential</span>
+          <span className={styles.legendItem}><span className={`${styles.swatch} ${styles.industrial}`} aria-hidden="true" />Industrial</span>
+          <span className={styles.legendItem}><span className={`${styles.swatch} ${styles.commercial}`} aria-hidden="true" />Commercial</span>
+          <span className={styles.legendItem}><span className={`${styles.swatch} ${styles.civics}`} aria-hidden="true" />Civics</span>
+          <span className={styles.legendItem}><span className={`${styles.swatch} ${styles.offices}`} aria-hidden="true" />Offices</span>
+          <span className={styles.legendItem}><span className={`${styles.swatch} ${styles.losing}`} aria-hidden="true" />Losing money</span>
+          <span className={styles.legendItem}><span className={`${styles.swatch} ${styles.road}`} aria-hidden="true" />Road</span>
+          <span className={styles.legendItem}><span className={`${styles.swatch} ${styles.concrete}`} aria-hidden="true" />Concrete</span>
+          <span className={styles.legendItem}><span className={`${styles.swatch} ${styles.selected}`} aria-hidden="true" />Selected</span>
+          <span className={styles.legendNote}>yours bright, others dimmed</span>
         </span>
         <span className={styles.coords}>
           {hover ? `(${hover.x}, ${hover.y})` : camera ? `View at (${Math.round(camera.x)}, ${Math.round(camera.y)})` : ''}
