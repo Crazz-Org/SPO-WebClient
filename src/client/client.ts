@@ -815,7 +815,10 @@ export class StarpeaceClient implements ClientHandlerContext {
       cash: '0', incomePerHour: '0', ranking: 0, buildingCount: 0, maxBuildings: 0,
     });
 
-    this.minimapUI = new MinimapUI();
+    this.minimapUI = new MinimapUI((partial) => {
+      useGameStore.getState().updateSettings(partial);
+      this.applySettings(useGameStore.getState().settings);
+    });
     const renderer = this.mapNavigationUI.getRenderer();
     if (renderer) {
       this.minimapUI.setRenderer(renderer);
@@ -863,7 +866,8 @@ export class StarpeaceClient implements ClientHandlerContext {
     this.musicPlayer.setEnabled(settings.isSoundEnabled);
     this.musicPlayer.setVolume(settings.musicVolume);
     if (this.minimapUI) {
-      this.minimapUI.setSize(settings.minimapSize);
+      this.minimapUI.setSize(settings.minimapSize, settings.minimapPixelSize);
+      this.minimapUI.setZoom(settings.minimapZoom);
     }
     ClientBridge.persistSettings(settings);
   }

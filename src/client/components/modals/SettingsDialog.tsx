@@ -119,7 +119,7 @@ export function SettingsDialog() {
             <SizeSelector
               label="Minimap size"
               value={settings.minimapSize}
-              onChange={(v) => handleSettingChange({ minimapSize: v })}
+              onChange={(v) => handleSettingChange({ minimapSize: v, minimapPixelSize: null })}
             />
           </section>
 

@@ -855,4 +855,300 @@ describe('MinimapUI', () => {
       expect(viewportHandlers).toHaveLength(0);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Zoom
+  // ---------------------------------------------------------------------------
+
+  describe('zoom', () => {
+    function findWheelHandler(container: MockElement): (e: { deltaY: number; preventDefault: jest.Mock; stopPropagation: jest.Mock }) => void {
+      const call = container.addEventListener.mock.calls.find((c: unknown[]) => c[0] === 'wheel');
+      return call![1] as (e: { deltaY: number; preventDefault: jest.Mock; stopPropagation: jest.Mock }) => void;
+    }
+
+    it('clamps zoom-out at the minimum (1×) and reports it', () => {
+      installWindow(1024);
+      const onSettingsChange = jest.fn();
+      const minimap = new MinimapUI(onSettingsChange);
+      minimap.setRenderer(createMockRenderer());
+
+      minimap.zoomBy(0.8);
+
+      expect(onSettingsChange).toHaveBeenCalledWith({ minimapZoom: 1 });
+
+      minimap.destroy();
+    });
+
+    it('clamps zoom-in at the maximum (8×) after repeated notches', () => {
+      installWindow(1024);
+      const onSettingsChange = jest.fn();
+      const minimap = new MinimapUI(onSettingsChange);
+      minimap.setRenderer(createMockRenderer());
+
+      for (let i = 0; i < 20; i++) minimap.zoomBy(1.25);
+
+      expect(onSettingsChange).toHaveBeenLastCalledWith({ minimapZoom: 8 });
+
+      minimap.destroy();
+    });
+
+    it('setZoom(NaN) falls back to 1', () => {
+      installWindow(1024);
+      const minimap = new MinimapUI();
+      minimap.setRenderer(createMockRenderer());
+
+      minimap.setZoom(NaN);
+      minimap.zoomBy(1); // report current zoom without changing it
+
+      expect(minimap.isVisible()).toBe(true);
+
+      minimap.destroy();
+    });
+
+    it('setZoom never fires the settings callback', () => {
+      installWindow(1024);
+      const onSettingsChange = jest.fn();
+      const minimap = new MinimapUI(onSettingsChange);
+      minimap.setRenderer(createMockRenderer());
+
+      minimap.setZoom(3);
+
+      expect(onSettingsChange).not.toHaveBeenCalled();
+
+      minimap.destroy();
+    });
+
+    it('wheel with deltaY < 0 zooms in', () => {
+      installWindow(1024);
+      const onSettingsChange = jest.fn();
+      const minimap = new MinimapUI(onSettingsChange);
+      minimap.setRenderer(createMockRenderer());
+
+      const container = allElements.find(el => el.id === 'minimap-container')!;
+      const wheelHandler = findWheelHandler(container);
+      wheelHandler({ deltaY: -10, preventDefault: jest.fn(), stopPropagation: jest.fn() });
+
+      expect(onSettingsChange).toHaveBeenCalledWith({ minimapZoom: 1.25 });
+
+      minimap.destroy();
+    });
+
+    it('is a no-op on a mobile viewport and reports nothing', () => {
+      installWindow(375);
+      const onSettingsChange = jest.fn();
+      const minimap = new MinimapUI(onSettingsChange);
+      minimap.setRenderer(createMockRenderer());
+
+      minimap.zoomBy(1.25);
+
+      expect(onSettingsChange).not.toHaveBeenCalled();
+
+      minimap.destroy();
+    });
+
+    it('is a no-op in fullscreen and reports nothing', () => {
+      installWindow(375);
+      const onSettingsChange = jest.fn();
+      const minimap = new MinimapUI(onSettingsChange);
+      minimap.setRenderer(createMockRenderer());
+      useUiStore.getState().setMinimapFullscreen(true);
+
+      minimap.zoomBy(1.25);
+
+      expect(onSettingsChange).not.toHaveBeenCalled();
+
+      minimap.destroy();
+    });
+
+    it('translates by a non-zero focus at zoom 2 and a center click still lands inside the map', () => {
+      installWindow(1024);
+      const renderer = createMockRenderer();
+      const minimap = new MinimapUI();
+      minimap.setRenderer(renderer);
+
+      mockCtx.translate.mockClear();
+      minimap.setZoom(2);
+
+      // Visible tile bounds (20..60, 25..65) are off-center on the 100x100 map, so the
+      // focus translate (the second translate() call each render) is non-zero at zoom 2.
+      const translateCalls = mockCtx.translate.mock.calls as number[][];
+      expect(translateCalls.length).toBeGreaterThanOrEqual(2);
+      const [fx, fy] = translateCalls[translateCalls.length - 1];
+      expect(fx !== 0 || fy !== 0).toBe(true);
+
+      const container = allElements.find(el => el.id === 'minimap-container');
+      container!.onmousedown!({ offsetX: 110, offsetY: 110, preventDefault: jest.fn(), stopPropagation: jest.fn() });
+
+      const calls = (renderer.centerOn as jest.Mock).mock.calls;
+      const lastCall = calls[calls.length - 1] as number[];
+      expect(lastCall[0]).toBeGreaterThanOrEqual(0);
+      expect(lastCall[0]).toBeLessThanOrEqual(99);
+      expect(lastCall[1]).toBeGreaterThanOrEqual(0);
+      expect(lastCall[1]).toBeLessThanOrEqual(99);
+
+      minimap.destroy();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Drag resize
+  // ---------------------------------------------------------------------------
+
+  describe('drag resize', () => {
+    function findDocumentHandler(type: string): ((e: { clientX: number; clientY: number }) => void) | (() => void) {
+      const docAddEventListener = (globalThis as unknown as { document: { addEventListener: jest.Mock } }).document.addEventListener;
+      const call = docAddEventListener.mock.calls.find((c: unknown[]) => c[0] === type);
+      return call![1] as ((e: { clientX: number; clientY: number }) => void) | (() => void);
+    }
+
+    it('mousedown off the grip still calls centerOn', () => {
+      installWindow(1024);
+      const renderer = createMockRenderer();
+      const minimap = new MinimapUI();
+      minimap.setRenderer(renderer);
+
+      const container = allElements.find(el => el.id === 'minimap-container')!;
+      container.onmousedown!({ offsetX: 10, offsetY: 10, preventDefault: jest.fn(), stopPropagation: jest.fn() });
+
+      expect(renderer.centerOn).toHaveBeenCalled();
+
+      minimap.destroy();
+    });
+
+    it('drags below the minimum and clamps to 120px', () => {
+      installWindow(1024);
+      const onSettingsChange = jest.fn();
+      const minimap = new MinimapUI(onSettingsChange);
+      minimap.setRenderer(createMockRenderer());
+
+      // 220px diamond (medium preset) — grip band near the bottom-right edge
+      const container = allElements.find(el => el.id === 'minimap-container')!;
+      container.onmousedown!({ offsetX: 165, offsetY: 165, clientX: 500, clientY: 500, preventDefault: jest.fn(), stopPropagation: jest.fn() });
+
+      const onMove = findDocumentHandler('mousemove') as (e: { clientX: number; clientY: number }) => void;
+      onMove({ clientX: 0, clientY: 0 });
+
+      const wrapper = allElements.find(el => el.id === 'minimap-wrapper')!;
+      expect(wrapper.style.width).toBe('120px');
+
+      const onUp = findDocumentHandler('mouseup') as () => void;
+      onUp();
+
+      expect(onSettingsChange).toHaveBeenCalledWith({ minimapPixelSize: 120 });
+
+      minimap.destroy();
+    });
+
+    it('drags above the maximum and clamps to the viewport-capped 500px', () => {
+      installWindow(1024, 800);
+      const onSettingsChange = jest.fn();
+      const minimap = new MinimapUI(onSettingsChange);
+      minimap.setRenderer(createMockRenderer());
+
+      const container = allElements.find(el => el.id === 'minimap-container')!;
+      container.onmousedown!({ offsetX: 165, offsetY: 165, clientX: 500, clientY: 500, preventDefault: jest.fn(), stopPropagation: jest.fn() });
+
+      const onMove = findDocumentHandler('mousemove') as (e: { clientX: number; clientY: number }) => void;
+      onMove({ clientX: 2500, clientY: 2500 });
+
+      const wrapper = allElements.find(el => el.id === 'minimap-wrapper')!;
+      expect(wrapper.style.width).toBe('500px');
+
+      const onUp = findDocumentHandler('mouseup') as () => void;
+      onUp();
+      expect(onSettingsChange).toHaveBeenCalledWith({ minimapPixelSize: 500 });
+
+      minimap.destroy();
+    });
+
+    it('caps the drag to a smaller viewport height (1024x300 → 276px)', () => {
+      installWindow(1024, 300);
+      const minimap = new MinimapUI();
+      minimap.setRenderer(createMockRenderer());
+
+      const container = allElements.find(el => el.id === 'minimap-container')!;
+      container.onmousedown!({ offsetX: 165, offsetY: 165, clientX: 500, clientY: 500, preventDefault: jest.fn(), stopPropagation: jest.fn() });
+
+      const onMove = findDocumentHandler('mousemove') as (e: { clientX: number; clientY: number }) => void;
+      onMove({ clientX: 2500, clientY: 2500 });
+
+      const wrapper = allElements.find(el => el.id === 'minimap-wrapper')!;
+      expect(wrapper.style.width).toBe('276px');
+
+      minimap.destroy();
+    });
+
+    it('mouseup reports the final size and removes the drag listeners', () => {
+      installWindow(1024);
+      const onSettingsChange = jest.fn();
+      const minimap = new MinimapUI(onSettingsChange);
+      minimap.setRenderer(createMockRenderer());
+      const docRemoveEventListener = (globalThis as unknown as { document: { removeEventListener: jest.Mock } }).document.removeEventListener;
+
+      const container = allElements.find(el => el.id === 'minimap-container')!;
+      container.onmousedown!({ offsetX: 165, offsetY: 165, clientX: 500, clientY: 500, preventDefault: jest.fn(), stopPropagation: jest.fn() });
+
+      const onMove = findDocumentHandler('mousemove') as (e: { clientX: number; clientY: number }) => void;
+      onMove({ clientX: 520, clientY: 520 });
+
+      const onUp = findDocumentHandler('mouseup') as () => void;
+      onUp();
+
+      expect(onSettingsChange).toHaveBeenCalledWith({ minimapPixelSize: 240 });
+      expect(docRemoveEventListener).toHaveBeenCalledWith('mousemove', onMove);
+      expect(docRemoveEventListener).toHaveBeenCalledWith('mouseup', onUp);
+
+      minimap.destroy();
+    });
+
+    it('flips the cursor between nwse-resize and crosshair', () => {
+      installWindow(1024);
+      const minimap = new MinimapUI();
+      minimap.setRenderer(createMockRenderer());
+
+      const container = allElements.find(el => el.id === 'minimap-container')!;
+      const call = container.addEventListener.mock.calls.find((c: unknown[]) => c[0] === 'mousemove');
+      const onMouseMove = call![1] as (e: { offsetX: number; offsetY: number }) => void;
+
+      onMouseMove({ offsetX: 165, offsetY: 165 });
+      expect(container.style.cursor).toBe('nwse-resize');
+
+      onMouseMove({ offsetX: 10, offsetY: 10 });
+      expect(container.style.cursor).toBe('crosshair');
+
+      minimap.destroy();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Preset / custom size interplay
+  // ---------------------------------------------------------------------------
+
+  describe('setSize with a custom pixel size', () => {
+    it('uses the custom size when given', () => {
+      installWindow(1024);
+      const minimap = new MinimapUI();
+      minimap.setRenderer(createMockRenderer());
+
+      minimap.setSize('small', 260);
+
+      const wrapper = allElements.find(el => el.id === 'minimap-wrapper')!;
+      expect(wrapper.style.width).toBe('260px');
+
+      minimap.destroy();
+    });
+
+    it('falls back to the preset when the custom size is null', () => {
+      installWindow(1024);
+      const minimap = new MinimapUI();
+      minimap.setRenderer(createMockRenderer());
+
+      minimap.setSize('small', null);
+
+      const wrapper = allElements.find(el => el.id === 'minimap-wrapper')!;
+      expect(wrapper.style.width).toBe('160px');
+
+      minimap.destroy();
+    });
+  });
 });

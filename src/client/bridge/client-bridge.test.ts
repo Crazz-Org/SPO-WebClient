@@ -606,3 +606,31 @@ describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_TYCOON_FULL
     expect(useSearchStore.getState().isLoading).toBe(false);
   });
 });
+
+describe('ClientBridge settings persistence — minimap zoom/size round trip', () => {
+  it('persists minimapZoom and minimapPixelSize and restores them on load', () => {
+    const store = new Map<string, string>();
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+      removeItem: (key: string) => { store.delete(key); },
+      clear: () => { store.clear(); },
+      key: () => null,
+      length: 0,
+    };
+
+    try {
+      const settings = { ...useGameStore.getState().settings, minimapZoom: 2.5, minimapPixelSize: 260 };
+      ClientBridge.persistSettings(settings);
+
+      useGameStore.getState().updateSettings({ minimapZoom: 1, minimapPixelSize: null });
+
+      ClientBridge.loadPersistedSettings();
+
+      expect(useGameStore.getState().settings.minimapZoom).toBe(2.5);
+      expect(useGameStore.getState().settings.minimapPixelSize).toBe(260);
+    } finally {
+      delete (globalThis as unknown as { localStorage?: Storage }).localStorage;
+    }
+  });
+});

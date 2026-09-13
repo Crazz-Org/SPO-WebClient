@@ -145,6 +145,21 @@ describe('applySettings — renderer wiring', () => {
     expect(fake.musicPlayer.setVolume).toHaveBeenCalledWith(musicVolume);
   });
 
+  it('wires minimapSize/minimapPixelSize and minimapZoom to the docked minimap', () => {
+    const fake = {
+      mapNavigationUI: null,
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      minimapUI: { setSize: jest.fn(), setZoom: jest.fn() },
+    };
+    const settings = { ...useGameStore.getState().settings, minimapSize: 'large' as const, minimapPixelSize: 260, minimapZoom: 3 };
+
+    (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
+
+    expect(fake.minimapUI.setSize).toHaveBeenCalledWith('large', 260);
+    expect(fake.minimapUI.setZoom).toHaveBeenCalledWith(3);
+  });
+
   it('disables both players when isSoundEnabled is false', () => {
     const fake = {
       mapNavigationUI: null,
