@@ -33,6 +33,7 @@ import { chaseUser as clientChaseUser, stopChase as clientStopChase } from '@/cl
 import { dispatchEvent } from '@/client/handlers/event-handler';
 import { ClientBridge } from '@/client/bridge/client-bridge';
 import { useChatStore } from '@/client/store/chat-store';
+import { useMapStore } from '@/client/store/map-store';
 import type { ClientHandlerContext } from '@/client/handlers/client-context';
 import type { IsometricMapRenderer } from '@/client/renderer/isometric-map-renderer';
 import { WsMessageType } from '@/shared/types';
@@ -90,6 +91,7 @@ function makeClientDriver(reject?: Error) {
 beforeEach(() => {
   jest.clearAllMocks();
   useChatStore.setState({ chasedUser: null });
+  useMapStore.getState().reset();
 });
 
 // ===========================================================================
@@ -157,6 +159,9 @@ describe('chase scenario — start, mirror, stop', () => {
     dispatchEvent(ctx, moveTo!);
 
     expect(centerOn).toHaveBeenCalledWith(CHASE_MOVE_TO.x, CHASE_MOVE_TO.y);
+
+    const { history, historyIndex } = useMapStore.getState();
+    expect(history[historyIndex]).toEqual({ x: CHASE_MOVE_TO.x, y: CHASE_MOVE_TO.y });
   });
 
   it('stops the chase: the gateway emits StopChase, the browser clears the badge', async () => {
