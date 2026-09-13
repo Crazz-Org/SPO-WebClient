@@ -118,6 +118,22 @@ describe('MapSurface', () => {
     expect(src.centerOn).toHaveBeenCalledTimes(1);
   });
 
+  it('draws exactly one extra fillRect for fog when the source offers isTileExplored', () => {
+    const plain = fakeSource();
+    useMapStore.getState().setSource(plain);
+    const { unmount } = renderWithProviders(<MapSurface />);
+    const plainCount = ctx.fillRect.mock.calls.length;
+    unmount();
+
+    ctx.fillRect.mockClear();
+    const fogged = { ...fakeSource(), isTileExplored: (x: number, y: number) => !(x === 0 && y === 0) };
+    useMapStore.getState().setSource(fogged as never);
+    renderWithProviders(<MapSurface />);
+    const foggedCount = ctx.fillRect.mock.calls.length;
+
+    expect(foggedCount).toBe(plainCount + 1);
+  });
+
   it('Back / Next walk the history and move the camera; Nearest Town Hall arrives through the selecting path', () => {
     const src = fakeSource();
     useMapStore.getState().setSource(src);

@@ -12,7 +12,7 @@ import { StarpeaceClient } from './client';
 import { useUiStore } from './store/ui-store';
 import { useGameStore } from './store/game-store';
 
-const mockOwnTycoonRenderer = { setOwnTycoonId: jest.fn() };
+const mockOwnTycoonRenderer = { setOwnTycoonId: jest.fn(), setExploredBlocks: jest.fn() };
 
 jest.mock('./ui/map-navigation-ui', () => ({
   MapNavigationUI: jest.fn().mockImplementation(() => ({
@@ -185,6 +185,38 @@ describe('switchToGameView — own tycoon id wiring', () => {
     await (proto.switchToGameView as (this: typeof fake) => Promise<void>).call(fake);
 
     expect(mockOwnTycoonRenderer.setOwnTycoonId).toHaveBeenCalledWith('7');
+    jest.useRealTimers();
+  });
+});
+
+describe('switchToGameView — explored-blocks wiring', () => {
+  afterEach(() => {
+    jest.clearAllTimers();
+  });
+
+  it("loads the seen-set for the game store's world and player, and attaches it to the renderer", async () => {
+    jest.useFakeTimers();
+    useGameStore.setState({ worldName: 'planitia' });
+    useGameStore.getState().setCredentials('SPO_test3', '7');
+    mockOwnTycoonRenderer.setExploredBlocks.mockClear();
+
+    const fake = {
+      uiGamePanel: { style: {} },
+      mapNavigationUI: null,
+      minimapUI: null,
+      currentWorldName: 'planitia',
+      storedUsername: 'SPO_test3',
+      viewportHeartbeatTimer: undefined,
+      setupGameUICallbacks: jest.fn(),
+      sendCameraPositionNow: jest.fn(),
+      applySettings: jest.fn(),
+    };
+
+    await (proto.switchToGameView as (this: typeof fake) => Promise<void>).call(fake);
+
+    expect(mockOwnTycoonRenderer.setExploredBlocks).toHaveBeenCalledTimes(1);
+    const attached = mockOwnTycoonRenderer.setExploredBlocks.mock.calls[0][0] as { has: (x: number, y: number) => boolean };
+    expect(typeof attached.has).toBe('function');
     jest.useRealTimers();
   });
 });

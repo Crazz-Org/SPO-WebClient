@@ -29,7 +29,7 @@ import styles from './MyComponent.module.css';
 
 Custom 2D isometric engine in `renderer/`. The main file is `isometric-map-renderer.ts` (~195KB monolith).
 
-Render layers (back to front): terrain base -> vegetation -> concrete -> roads -> buildings -> zone overlay -> placement preview -> road preview -> UI overlays.
+Render layers (back to front): terrain base -> vegetation -> concrete -> roads -> buildings -> zone overlay -> fog -> placement preview -> road preview -> UI overlays.
 
 Uses chunk caching and texture atlases. No Three.js. Performance-critical code -- profile before optimizing.
 
