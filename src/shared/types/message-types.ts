@@ -1999,6 +1999,7 @@ export interface WsRespDefineZone extends WsMessage {
   type: WsMessageType.RESP_DEFINE_ZONE;
   success: boolean;
   message?: string;
+  errorCode?: number;
 }
 
 // =============================================================================

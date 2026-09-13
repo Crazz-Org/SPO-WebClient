@@ -6,7 +6,8 @@
 jest.mock('../bridge/client-bridge', () => ({ ClientBridge: { log: jest.fn() } }));
 jest.mock('./handler-utils', () => ({ setupEscapeHandler: jest.fn() }));
 
-import { SurfaceType } from '@/shared/types';
+import { SurfaceType, WsMessageType } from '@/shared/types';
+import type { WsRespDefineZone } from '@/shared/types';
 import { toggleZonePaintingMode, cancelZonePaintingMode } from './zone-handler';
 import { useGameStore } from '../store/game-store';
 import type { ClientHandlerContext } from './client-context';
@@ -31,6 +32,8 @@ function makeCtx(zones: boolean, overlay: SurfaceType | null) {
     cancelRoadBuildingMode: jest.fn(),
     cancelRoadDemolishMode: jest.fn(),
     cancelBuildingPlacement: jest.fn(),
+    sendRequest: jest.fn(),
+    showNotification: jest.fn(),
   } as unknown as ClientHandlerContext;
   return { ctx, renderer };
 }
@@ -73,5 +76,48 @@ describe('zone painting and the overlay', () => {
     expect(ctx.cancelBuildingPlacement).toHaveBeenCalled();
     toggleZonePaintingMode(ctx, 3);
     expect(ctx.isZonePaintingMode).toBe(false);
+  });
+});
+
+describe('defineZoneArea — reached through the renderer callback', () => {
+  function reachCallback(ctx: ClientHandlerContext, renderer: { setZoneAreaCompleteCallback: jest.Mock }) {
+    toggleZonePaintingMode(ctx, 2);
+    return renderer.setZoneAreaCompleteCallback.mock.calls[0][0] as (x1: number, y1: number, x2: number, y2: number) => Promise<void>;
+  }
+
+  it('a refusal shows an error notification and does not reopen the Zones overlay', async () => {
+    const { ctx, renderer } = makeCtx(false, null);
+    const complete = reachCallback(ctx, renderer);
+    const response: WsRespDefineZone = {
+      type: WsMessageType.RESP_DEFINE_ZONE,
+      wsRequestId: 'req-1',
+      success: false,
+      message: 'Zone refused by the server: Unknown error (code 1)',
+      errorCode: 1,
+    };
+    (ctx.sendRequest as jest.Mock).mockResolvedValue(response);
+    (ctx.toggleZoneOverlay as jest.Mock).mockClear();
+
+    await complete(0, 0, 2, 2);
+
+    expect(ctx.showNotification).toHaveBeenCalledTimes(1);
+    expect(ctx.showNotification).toHaveBeenCalledWith(response.message, 'error');
+    expect(ctx.toggleZoneOverlay).not.toHaveBeenCalled();
+  });
+
+  it('acceptance shows a toast naming the requested tile count, not tiles applied', async () => {
+    const { ctx, renderer } = makeCtx(false, null);
+    const complete = reachCallback(ctx, renderer);
+    const response: WsRespDefineZone = {
+      type: WsMessageType.RESP_DEFINE_ZONE,
+      wsRequestId: 'req-1',
+      success: true,
+    };
+    (ctx.sendRequest as jest.Mock).mockResolvedValue(response);
+
+    await complete(0, 0, 2, 2);
+
+    expect(ctx.showNotification).toHaveBeenCalledWith('Zone requested: 9 tiles', 'success');
+    expect(ctx.showNotification).not.toHaveBeenCalledWith(expect.anything(), 'error');
   });
 });

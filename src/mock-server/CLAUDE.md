@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -218,6 +218,18 @@ which is where the reference client clears its own `fChasedUser`
 (`Voyager.1/URLHandlers/ServerCnxHandler.pas:3029-3039`). Its test runs one ordered flow through
 both real halves — the gateway's `chaseUser`/`stopChase` against the mock, then the real push
 dispatcher into the real browser `dispatchEvent` — and asserts the camera actually moved.
+
+`define-zone` is `RDODefineZone`, a 6-argument `"^"` FUNCTION on `TWorld`
+(`Kernel/World.pas:4502`, declared `:392`) answering `NOERROR` (`:4568`) or
+`ERROR_Unknown` (`:4581`, `:4583`) — nothing between the two. Per-tile
+refusals inside an accepted call are silent by design (`:4544-4546`): the
+zoning loop skips a tile whose reachability/ownership guard fails and still
+answers `NOERROR`, so the reply can only say "the call was accepted or
+refused", never "N tiles were painted". `createDefineZoneScenario(vars,
+{ result })` sets the code the reply carries, `0` by default. Its test drives
+the real gateway `handleDefineZone` and the real browser `zone-handler`
+end to end, and asserts an `ERROR_Unknown` reply reaches the player as an
+error notification, never a success toast.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under

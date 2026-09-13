@@ -10,6 +10,8 @@ import type { SurfaceData, SurfaceType } from '../../shared/types';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
 import { TimeoutCategory } from '../../shared/timeout-categories';
+import { parseResultCode } from '../rdo-helpers';
+import { NOERROR, getErrorMessage } from '../../shared/error-codes';
 
 // =========================================================================
 // PUBLIC — defineZone
@@ -22,7 +24,7 @@ export async function defineZone(
   y1: number,
   x2: number,
   y2: number
-): Promise<{ success: boolean; message?: string }> {
+): Promise<{ success: boolean; message?: string; errorCode?: number }> {
   if (!ctx.worldContextId) {
     throw new Error('Not logged into world - cannot define zone');
   }
@@ -48,10 +50,16 @@ export async function defineZone(
     RdoValue.int(ny2),
   ).packet, undefined, TimeoutCategory.SLOW);
 
-  const result = packet.payload || '';
-  ctx.log.debug(`[Zone] DefineZone response: ${result}`);
+  const code = parseResultCode(packet.payload);
+  ctx.log.debug(`[Zone] DefineZone answered ${code}`);
 
-  return { success: true, message: result };
+  if (code === NOERROR) return { success: true };
+
+  const message = code === -1
+    ? 'Zone definition failed — the server sent no result code'
+    : `Zone refused by the server: ${getErrorMessage(code)} (code ${code})`;
+  ctx.log.warn(`[Zone] DefineZone refused: ${message}`);
+  return { success: false, message, errorCode: code };
 }
 
 // =========================================================================
