@@ -10,9 +10,10 @@
  * 4. Roads
  * 5. Buildings
  * 6. Zone overlay (colored zones)
- * 7. Placement preview
- * 8. Road drawing preview
- * 9. UI overlays
+ * 7. Fog (blocks never loaded, darkened)
+ * 8. Placement preview
+ * 9. Road drawing preview
+ * 10. UI overlays
  */
 
 import { priceRoadPath, roadPathTiles, type RoadTileFacts } from '../../shared/road-cost';
@@ -69,11 +70,14 @@ import { CarClassManager } from './car-class-system';
 import { VehicleAnimationSystem } from './vehicle-animation-system';
 import { AircraftAnimationSystem } from './aircraft-animation-system';
 import { validatePlacementZones } from './placement-validation';
+import { ExploredBlocks, BLOCK_SIZE } from '../store/explored-blocks';
 
 /** Alpha of a building owned by another tycoon when glassing is on — Voyager's cAlpha blend [INFERRED ≈ 50 %]. */
 const FOREIGN_BUILDING_ALPHA = 0.5;
 /** Red laid over a losing building's own pixels — legacy pfReddenPalette (Lander.pas:294-295), cLoosingColor = clRed (Map.pas:364); strength [INFERRED]. */
 const LOSING_TINT = 'rgba(255, 0, 0, 0.45)';
+/** Black laid over a block never loaded — Voyager halves the RGB (Map.pas:3777); reads the same over the iso tiles. */
+const FOG_TINT = 'rgba(0, 0, 0, 0.55)';
 
 interface CachedZone {
   x: number;
@@ -554,6 +558,8 @@ export class IsometricMapRenderer {
   private signalLosingFacilities: boolean = false;
   /** Scratch canvas the red shade is composed on; created on first use, never while the option is off. */
   private losingScratch: HTMLCanvasElement | null = null;
+  /** Blocks this player has loaded in this world; null = fog off (no set attached). */
+  private exploredBlocks: ExploredBlocks | null = null;
   private animationLoopRunning: boolean = false;
   private hasAnimatedBuildings: boolean = false;
   private lastRenderTime: number = 0;
@@ -1242,6 +1248,8 @@ export class IsometricMapRenderer {
     if (this.zoneRequestManager) {
       this.zoneRequestManager.markZoneLoaded(alignedX, alignedY);
     }
+
+    this.exploredBlocks?.mark(alignedX, alignedY);
 
     // Rebuild aggregated lists
     this.rebuildAggregatedData();
@@ -2576,6 +2584,7 @@ export class IsometricMapRenderer {
     this.drawVehicles(bounds, deltaTime, occupiedTiles);
     this.drawZoneOverlay(bounds);
     this.drawAircraft(bounds, deltaTime);
+    this.drawFog(bounds);
     this.drawPlacementPreview();
     this.drawRoadDrawingPreview();
     this.drawRoadDemolishPreview();
@@ -3913,6 +3922,40 @@ export class IsometricMapRenderer {
   }
 
   /**
+   * Darken every 64-tile block this player has never loaded — the fog-of-war layer.
+   * One polygon per unexplored block intersecting bounds, not per tile.
+   */
+  private drawFog(bounds: TileBounds): void {
+    if (!this.exploredBlocks) return;
+    const dims = this.getMapDimensions();
+    const ctx = this.ctx;
+    ctx.fillStyle = FOG_TINT;
+    const b0x = Math.max(0, Math.floor(bounds.minJ / BLOCK_SIZE) * BLOCK_SIZE);
+    const b0y = Math.max(0, Math.floor(bounds.minI / BLOCK_SIZE) * BLOCK_SIZE);
+    for (let by = b0y; by <= bounds.maxI && by < dims.height; by += BLOCK_SIZE) {
+      for (let bx = b0x; bx <= bounds.maxJ && bx < dims.width; bx += BLOCK_SIZE) {
+        if (this.exploredBlocks.has(bx, by)) continue;
+        const x2 = Math.min(bx + BLOCK_SIZE, dims.width);
+        const y2 = Math.min(by + BLOCK_SIZE, dims.height);
+        // (i, j) order, as drawZoneOverlay: mapToScreen(i, j) is the top vertex of tile (i, j),
+        // and the top vertex of (i, j+1) is (i, j)'s right vertex, so the four corner tiles'
+        // top vertices bound the block exactly under any rotation (the mapping is affine).
+        const p0 = this.terrainRenderer.mapToScreen(by, bx);
+        const p1 = this.terrainRenderer.mapToScreen(by, x2);
+        const p2 = this.terrainRenderer.mapToScreen(y2, x2);
+        const p3 = this.terrainRenderer.mapToScreen(y2, bx);
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  /**
    * Convert a heatmap value to an RGBA color string.
    * Negative values → blue/green (good), positive → red (bad), zero → transparent.
    * Matches the general Delphi color scale pattern: negative=cool, positive=warm.
@@ -5151,6 +5194,17 @@ export class IsometricMapRenderer {
   public setOwnTycoonId(tycoonId: string | undefined): void {
     this.ownTycoonId = parseInt(tycoonId || '0', 10) || 0;
     this.requestRender();
+  }
+
+  /** Attach the seen-set for the current world + player (null detaches → no fog). */
+  public setExploredBlocks(blocks: ExploredBlocks | null): void {
+    this.exploredBlocks = blocks;
+    this.requestRender();
+  }
+
+  /** True when the block holding tile (x, y) has been loaded, or when no set is attached. */
+  public isTileExplored(x: number, y: number): boolean {
+    return !this.exploredBlocks || this.exploredBlocks.has(x, y);
   }
 
   // =========================================================================

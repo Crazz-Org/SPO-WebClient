@@ -42,12 +42,14 @@ import {
 } from '../../ui/minimap-colormap';
 import type { MapBuilding, TownInfo } from '@/shared/types';
 import { nearestTown } from '@/shared/nearest-town';
+import { BLOCK_SIZE } from '../../store/explored-blocks';
 import styles from './MapSurface.module.css';
 
 export const ZOOM_MIN = 1;
 export const ZOOM_MAX = 8;
 const REDRAW_MS = 1000;
 const COS45 = Math.SQRT2 / 2;
+const FOG = 'rgba(0,0,0,0.5)';
 
 /** Colour of a building dot: the player's in gold, losing money in red, others muted. */
 export function buildingColor(b: MapBuilding, myTycoonId: number): string {
@@ -158,6 +160,24 @@ export function MapSurface() {
     ctx.scale(scale, scale);
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(cm.canvas, -cm.width / 2, -cm.height / 2);
+
+    // Fog — one rectangle per 64-tile block this player has never loaded.
+    if (source.isTileExplored && dims.width > 0) {
+      ctx.fillStyle = FOG;
+      for (let by = 0; by < dims.height; by += BLOCK_SIZE) {
+        for (let bx = 0; bx < dims.width; bx += BLOCK_SIZE) {
+          if (source.isTileExplored(bx, by)) continue;
+          const a = tileToColormap(cm, bx, by);
+          const b = tileToColormap(cm, Math.min(bx + BLOCK_SIZE, dims.width), Math.min(by + BLOCK_SIZE, dims.height));
+          ctx.fillRect(
+            Math.min(a.cx, b.cx) - cm.width / 2,
+            Math.min(a.cy, b.cy) - cm.height / 2,
+            Math.abs(b.cx - a.cx),
+            Math.abs(b.cy - a.cy)
+          );
+        }
+      }
+    }
 
     // Buildings — one dot per building, in colormap space.
     const buildings = source.getAllBuildings?.() ?? [];

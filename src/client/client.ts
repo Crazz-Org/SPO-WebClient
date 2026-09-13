@@ -31,6 +31,7 @@ import { SoundManager } from './audio/sound-manager';
 import { MusicPlayer } from './audio/music-player';
 import type { ClientHandlerContext } from './handlers/client-context';
 import type { RememberedSession } from './store/remembered-session';
+import { ExploredBlocks } from './store/explored-blocks';
 
 // Handler modules
 import { dispatchEvent } from './handlers/event-handler';
@@ -819,6 +820,8 @@ export class StarpeaceClient implements ClientHandlerContext {
     if (renderer) {
       this.minimapUI.setRenderer(renderer);
       renderer.setOwnTycoonId(useGameStore.getState().tycoonId);
+      const { worldName, username } = useGameStore.getState();
+      renderer.setExploredBlocks(ExploredBlocks.load(worldName, username));
     }
     // The Map surface reads the same renderer through the same contract (Carte lot).
     useMapStore.getState().setSource(renderer ?? null);

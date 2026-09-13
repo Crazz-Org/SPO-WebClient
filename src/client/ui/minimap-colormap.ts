@@ -24,6 +24,8 @@ export interface MinimapRendererAPI {
   getAtlasData?(): { atlas: ImageBitmap; manifest: AtlasManifest } | null;
   /** Every building the client has loaded so far (optional — the docked minimap does not draw them). */
   getAllBuildings?(): MapBuilding[];
+  /** False when the block holding tile (x, y) was never loaded by this player (optional — the docked minimap does not fog). */
+  isTileExplored?(x: number, y: number): boolean;
 }
 
 /** Max colormap resolution (tiles per side). */
