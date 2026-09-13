@@ -7,16 +7,23 @@
 
 import { X } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
+import { useGameStore } from '../../store/game-store';
+import { usePoliticsStore } from '../../store/politics-store';
 import { useClient } from '../../context';
 import { ZONE_TYPES } from '@/shared/types';
+import { officeLabel } from './office-label';
 import styles from './ZoneTypePicker.module.css';
 
 export function ZoneTypePicker() {
   const modal = useUiStore((s) => s.modal);
   const closeModal = useUiStore((s) => s.closeModal);
   const client = useClient();
+  const username = useGameStore((s) => s.username);
+  const politicalRoles = usePoliticsStore((s) => s.politicalRoles);
 
   if (modal !== 'zonePicker') return null;
+
+  const office = officeLabel(username ? politicalRoles.get(username.toLowerCase()) : undefined);
 
   const handleSelect = (zoneId: number) => {
     closeModal();
@@ -32,7 +39,10 @@ export function ZoneTypePicker() {
       <div className={styles.backdrop} onClick={handleBackdropClick} />
       <div className={styles.modal} role="dialog" aria-label="Zone Type Picker">
         <div className={styles.header}>
-          <span className={styles.title}>Select Zone Type</span>
+          <div className={styles.headerText}>
+            <span className={styles.title}>Select Zone Type</span>
+            {office && <span className={styles.office}>{office}</span>}
+          </div>
           <button className={styles.closeBtn} onClick={closeModal} aria-label="Close">
             <X size={16} />
           </button>
