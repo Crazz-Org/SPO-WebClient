@@ -60,6 +60,18 @@ describe('StarpeaceClient callback wiring', () => {
     expect(chatHandler.requestChannelInfo).toHaveBeenCalledWith(client, 'Trade');
   });
 
+  it('onChaseUser forwards to chatHandler.chaseUser with the client and the followed name', () => {
+    client.callbacks.onChaseUser('Mayor of Podan');
+
+    expect(chatHandler.chaseUser).toHaveBeenCalledWith(client, 'Mayor of Podan');
+  });
+
+  it('onStopChase forwards to chatHandler.stopChase with the client alone', () => {
+    client.callbacks.onStopChase();
+
+    expect(chatHandler.stopChase).toHaveBeenCalledWith(client);
+  });
+
   it('onProfileCompanyProfitLoss sends REQ_PROFILE_COMPANY_PROFITLOSS with the company name and cluster', () => {
     const sendSpy = jest.spyOn(client, 'sendMessage' as any);
 

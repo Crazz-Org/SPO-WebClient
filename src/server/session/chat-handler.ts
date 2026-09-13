@@ -181,6 +181,64 @@ export async function setChatTypingStatus(ctx: SessionContext, isTyping: boolean
 }
 
 /**
+ * Start following another player's camera.
+ *
+ * `function Chase( UserName : widestring ) : OleVariant` — InterfaceServer.pas:189.
+ * A function: "^" and a QueryId are derived from the catalogue, and the server
+ * answers `res="#<code>"`. The body (InterfaceServer.pas:1579-1607) looks the
+ * target up by name, refuses self / an unknown name / a user already chasing
+ * us with ERROR_InvalidUserName = 12 (Protocol.pas:41), otherwise inserts us
+ * into the target's chaser list and immediately pushes a MoveTo onto their
+ * viewport centre. NOERROR = 0 (Protocol.pas:29).
+ */
+export async function chaseUser(ctx: SessionContext, userName: string): Promise<void> {
+  if (!ctx.worldContextId) throw new Error('Not logged into world');
+
+  ctx.log.debug(`[Chat] Chasing user: ${userName}`);
+
+  const packet = await ctx.sendRdoRequest('world', rdoCall(
+    'Chase', ctx.worldContextId, RdoValue.string(userName),
+  ).packet, undefined, TimeoutCategory.NORMAL);
+
+  const result = parsePropertyResponseHelper(packet.payload || '', 'res');
+  if (result === '0') {
+    ctx.log.debug(`[Chat] Now chasing: ${userName}`);
+    return;
+  }
+  if (result === '12') {
+    throw new Error(`Cannot follow ${userName}: unknown, offline, or already following you`);
+  }
+  throw new Error(`Chase failed: ${result}`);
+}
+
+/**
+ * Stop following.
+ *
+ * `function StopChase : OleVariant` — InterfaceServer.pas:190. A 0-arg
+ * function, the same emitted form as GetUserList above. The body
+ * (InterfaceServer.pas:1610-1632) removes us from the target's chaser list and
+ * answers ERROR_Unknown = 1 (Protocol.pas:30) when we were not chasing anyone.
+ * That is not a failure for us: the reference client clears its own chase
+ * state in a `finally`, regardless of the answer
+ * (Voyager.1/URLHandlers/ServerCnxHandler.pas:1916-1919), so we resolve either
+ * way and only log the non-zero code.
+ */
+export async function stopChase(ctx: SessionContext): Promise<void> {
+  if (!ctx.worldContextId) throw new Error('Not logged into world');
+
+  ctx.log.debug('[Chat] Stopping chase...');
+
+  const packet = await ctx.sendRdoRequest('world', rdoCall(
+    'StopChase', ctx.worldContextId,
+  ).packet, undefined, TimeoutCategory.NORMAL);
+
+  const result = parsePropertyResponseHelper(packet.payload || '', 'res');
+  if (result !== '0') {
+    ctx.log.debug(`[Chat] StopChase returned ${result} (was not chasing) — clearing anyway`);
+  }
+}
+
+/**
  * Get current channel name.
  *
  * NOTE: Requires `readonly currentChannel: string | null` on SessionContext.

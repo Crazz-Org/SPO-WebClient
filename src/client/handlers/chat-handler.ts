@@ -15,7 +15,9 @@ import {
   WsReqChatGetChannelInfo,
   WsRespChatChannelInfo,
   WsReqChatJoinChannel,
-  WsReqChatTypingStatus
+  WsReqChatTypingStatus,
+  WsReqChatChase,
+  WsReqChatStopChase
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
 import { ClientBridge } from '../bridge/client-bridge';
@@ -140,5 +142,50 @@ export async function joinChannel(ctx: ClientHandlerContext, channelName: string
     ClientBridge.log('Error', `Failed to join channel: ${toErrorMessage(err)}`);
   } finally {
     ctx.isJoiningChannel = false;
+  }
+}
+
+/**
+ * Start following another player's camera.
+ *
+ * The gateway turns this into `Chase( UserName )` on the Interface Server
+ * (InterfaceServer.pas:189) and rejects when the server refuses. Only a server
+ * that accepted puts the badge up — Voyager likewise only remembers
+ * `fChasedUser` on NOERROR (ServerCnxHandler.pas:1873-1897).
+ */
+export async function chaseUser(ctx: ClientHandlerContext, userName: string): Promise<void> {
+  try {
+    const req: WsReqChatChase = {
+      type: WsMessageType.REQ_CHAT_CHASE,
+      userName,
+    };
+    await ctx.sendRequest(req);
+    ClientBridge.setChasedUser(userName);
+    ClientBridge.log('Chat', `Now following ${userName}`);
+  } catch (err: unknown) {
+    ClientBridge.log('Error', `Failed to follow ${userName}: ${toErrorMessage(err)}`);
+    ctx.showNotification(`Cannot follow ${userName}`, 'error');
+  }
+}
+
+/**
+ * Stop following.
+ *
+ * The badge is cleared in a `finally`, regardless of the server's answer —
+ * Voyager raises `evnUserChaseAborted` the same way
+ * (ServerCnxHandler.pas:1900-1921). A failed stop must never leave the player
+ * stuck with a badge they cannot dismiss.
+ */
+export async function stopChase(ctx: ClientHandlerContext): Promise<void> {
+  try {
+    const req: WsReqChatStopChase = {
+      type: WsMessageType.REQ_CHAT_STOP_CHASE,
+    };
+    await ctx.sendRequest(req);
+    ClientBridge.log('Chat', 'Stopped following');
+  } catch (err: unknown) {
+    ClientBridge.log('Error', `Failed to stop following: ${toErrorMessage(err)}`);
+  } finally {
+    ClientBridge.setChasedUser(null);
   }
 }

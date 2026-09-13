@@ -11,7 +11,10 @@ jest.mock('../components/hud', () => ({
   RightRail: () => <nav>RIGHTRAIL</nav>,
   VersionBadge: () => null,
 }));
-jest.mock('../components/chat', () => ({ ChatStrip: () => <div>CHAT</div> }));
+jest.mock('../components/chat', () => ({
+  ChatStrip: () => <div>CHAT</div>,
+  ChaseBadge: () => <div>CHASEBADGE</div>,
+}));
 jest.mock('../components/building', () => ({ StatusOverlay: () => null }));
 jest.mock('../components/modals', () => ({ ServerSwitchOverlay: () => null, ZoneTypePicker: () => null }));
 jest.mock('../components/mobile', () => ({ MobileShell: () => null }));
@@ -29,6 +32,9 @@ describe('GameScreen', () => {
     expect(screen.getByText('SHEET')).toBeTruthy();
     expect(screen.getByText('COMMANDBAR')).toBeTruthy();
     expect(screen.getByText('PILL')).toBeTruthy();
+    // The chase badge is mounted on the root screen, so it is reachable on
+    // desktop and mobile alike without touching MobileShell.
+    expect(screen.getByText('CHASEBADGE')).toBeTruthy();
   });
 
   it('renders the confirm dialog from the store with its options', () => {

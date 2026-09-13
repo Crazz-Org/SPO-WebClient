@@ -7,8 +7,9 @@
  */
 
 import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react';
-import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye } from 'lucide-react';
 import { useChatStore } from '../../store/chat-store';
+import { useGameStore } from '../../store/game-store';
 import { useClient } from '../../context';
 import { NobilityBadge } from './NobilityBadge';
 import styles from './ChatStrip.module.css';
@@ -54,6 +55,8 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
   const isExpanded = useChatStore((s) => s.isExpanded);
   const toggleExpanded = useChatStore((s) => s.toggleExpanded);
   const setCurrentChannel = useChatStore((s) => s.setCurrentChannel);
+  const chasedUser = useChatStore((s) => s.chasedUser);
+  const username = useGameStore((s) => s.username);
 
   const client = useClient();
   const [input, setInput] = useState('');
@@ -242,10 +245,27 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
             <div className={styles.userList}>
               {userList.length > 0 ? (
                 userList.map((user) => (
-                  <div key={user.id} className={styles.userRow}>
+                  <div
+                    key={user.id}
+                    className={`${styles.userRow} ${chasedUser === user.name ? styles.userRowFollowed : ''}`}
+                    aria-current={chasedUser === user.name ? 'true' : undefined}
+                  >
                     <span className={`${styles.statusDot} ${user.status === 1 ? styles.statusDotTyping : ''}`} />
                     <NobilityBadge nobilityTier={user.nobilityTier} modifiers={user.modifiers} size="sm" />
                     <span className={styles.userName}>{user.name}</span>
+                    {/* Follow this player's camera — Voyager offered the same item on
+                        every name but the player's own (ChatListHandlerViewer.pas:123-126). */}
+                    {user.name !== username && (
+                      <button
+                        type="button"
+                        className={styles.followBtn}
+                        aria-label={`Follow ${user.name}`}
+                        title="Follow this player's camera"
+                        onClick={() => client.onChaseUser(user.name)}
+                      >
+                        <Eye size={11} />
+                      </button>
+                    )}
                   </div>
                 ))
               ) : (

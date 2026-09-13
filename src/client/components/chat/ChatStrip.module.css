@@ -366,6 +366,48 @@
   background: var(--bg-tertiary);
 }
 
+/* Follow button — ghost, revealed on row hover or keyboard focus. Touch has no
+   hover, so it stays visible there. */
+.followBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+.userRow:hover .followBtn,
+.followBtn:focus-visible {
+  opacity: 1;
+}
+
+.followBtn:hover {
+  color: var(--text-primary);
+}
+
+@media (hover: none) {
+  .followBtn {
+    opacity: 1;
+  }
+}
+
+.userRowFollowed {
+  background: var(--bg-tertiary);
+}
+
+.userRowFollowed .followBtn {
+  opacity: 1;
+  color: var(--accent-gold);
+}
+
 .statusDot {
   width: 6px;
   height: 6px;

@@ -33,6 +33,8 @@ interface ChatState {
   unreadChatCount: number;
   /** Channel name -> description returned by GetChannelInfo (creator, member count, password status). */
   channelInfo: Record<string, string>;
+  /** Name of the player whose camera we are following, or null. Delphi's fChasedUser. */
+  chasedUser: string | null;
 
   // Actions
   setCurrentChannel: (channel: string) => void;
@@ -47,6 +49,7 @@ interface ChatState {
   toggleExpanded: () => void;
   setActiveTab: (tab: ChatTab) => void;
   resetUnreadChat: () => void;
+  setChasedUser: (name: string | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -59,6 +62,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeTab: 'chat' as ChatTab,
   unreadChatCount: 0,
   channelInfo: {},
+  chasedUser: null,
 
   setCurrentChannel: (channel) => set({ currentChannel: channel }),
 
@@ -119,4 +123,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
 
   resetUnreadChat: () => set({ unreadChatCount: 0 }),
+
+  setChasedUser: (name) => set({ chasedUser: name }),
 }));

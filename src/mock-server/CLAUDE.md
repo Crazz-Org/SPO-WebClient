@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -202,6 +202,22 @@ frame carries `"^"` and a reply comes back — a `"*"` would be an arbitrary mem
 error to show for it), the **bind target** (the building's block, never the cacher temp object
 the inspector holds), and the call count (one exchange per kind, so a gateway that asked for a
 class with no jobs would leave one unconsumed). Its test drives the real `readWorkerCounts`.
+
+`chase` is following another player's camera: two published FUNCTIONS on `TClientView`,
+`Chase( UserName )` (`Interface Server/InterfaceServer.pas:189`, body `:1579-1607`) and the
+0-argument `StopChase` (`:190`, body `:1610-1632`), so both frames carry `"^"` and a QueryId and
+both are answered `res="#<code>"` — `0` is NOERROR, `12` is `ERROR_InvalidUserName` for self, an
+unknown name or a user already chasing us, `1` is `ERROR_Unknown` for "was not chasing"
+(`Protocol/Protocol.pas:29,30,41`). `createChaseScenario(vars, { chaseResult: 12 })` is the
+refusal. What it pins that no reply could: **the mirroring is the push, not the answer** — every
+`SetViewedArea` of the followed player pushes `MoveTo` to each chaser (`:707-716`, `:742`), and
+the accepted `Chase` sends the first one straight away (`:1592`), so `chase-start` carries that
+push and a client that only read the reply would follow nothing. And the **abort has no frame at
+all**: when the followed player leaves, the only notice is the ordinary `NotifyUserListChange`,
+which is where the reference client clears its own `fChasedUser`
+(`Voyager.1/URLHandlers/ServerCnxHandler.pas:3029-3039`). Its test runs one ordered flow through
+both real halves — the gateway's `chaseUser`/`stopChase` against the mock, then the real push
+dispatcher into the real browser `dispatchEvent` — and asserts the camera actually moved.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under

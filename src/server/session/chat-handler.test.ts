@@ -28,8 +28,11 @@ import {
   joinChatChannel,
   sendChatMessage,
   setChatTypingStatus,
+  chaseUser,
+  stopChase,
   getCurrentChannel,
 } from './chat-handler';
+import { RDO_MEMBERS } from '../../shared/rdo-members';
 import { makeSessionCtx, FAKE_CONTEXT_IDS } from '../__tests__/session/fake-session-context';
 import type { SessionContext } from './session-context';
 import { RdoValue, RdoCommand } from '../../shared/rdo-types';
@@ -361,6 +364,113 @@ describe('setChatTypingStatus', () => {
     const fake = makeSessionCtx({ worldContextId: null, sockets: ['world'] });
     await expect(setChatTypingStatus(fake.ctx, true)).rejects.toThrow('Not logged into world');
     expect(fake.frames.world).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// chaseUser / stopChase — Chase + StopChase, InterfaceServer.pas:189-190
+//
+// Both are published FUNCTIONS, so the catalogue derives `"^"` and a QueryId.
+// These tests are the L0 unit the card asks for: the emitted member name, the
+// separator, and an argument count that equals the catalogued arity.
+// ===========================================================================
+
+const CHASED = 'Mayor of Podan';
+
+describe('chaseUser', () => {
+  it('calls Chase on the world context with "^" and one OLEString argument', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+
+    await chaseUser(fake.ctx, CHASED);
+
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0].socketName).toBe('world');
+    expect(fake.sent[0].category).toBe(TimeoutCategory.NORMAL);
+    expect(fake.sent[0].packet).toEqual({
+      verb: RdoVerb.SEL,
+      targetId: WORLD,
+      action: RdoAction.CALL,
+      member: 'Chase',
+      separator: '"^"',
+      args: [RdoValue.string(CHASED).format()],
+    });
+  });
+
+  it('emits exactly the catalogued arity for a `function` member', () => {
+    expect(RDO_MEMBERS.Chase).toEqual({ kind: 'function', arity: 1 });
+  });
+
+  it('sends as many arguments as the catalogue declares', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+    await chaseUser(fake.ctx, CHASED);
+    expect(fake.sent[0].packet.args).toHaveLength(RDO_MEMBERS.Chase.arity);
+  });
+
+  it('rejects with the invalid-name message on ERROR_InvalidUserName (12)', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#12"');
+    await expect(chaseUser(fake.ctx, CHASED)).rejects.toThrow(
+      `Cannot follow ${CHASED}: unknown, offline, or already following you`,
+    );
+  });
+
+  it('rejects with the raw code on any other error', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#1"');
+    await expect(chaseUser(fake.ctx, CHASED)).rejects.toThrow('Chase failed: 1');
+  });
+
+  it('refuses without a world context', async () => {
+    const fake = makeSessionCtx({ worldContextId: null });
+    await expect(chaseUser(fake.ctx, CHASED)).rejects.toThrow('Not logged into world');
+    expect(fake.sent).toHaveLength(0);
+  });
+});
+
+describe('stopChase', () => {
+  it('calls StopChase on the world context with "^" and no arguments', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+
+    await stopChase(fake.ctx);
+
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0].socketName).toBe('world');
+    expect(fake.sent[0].category).toBe(TimeoutCategory.NORMAL);
+    expect(fake.sent[0].packet).toEqual({
+      verb: RdoVerb.SEL,
+      targetId: WORLD,
+      action: RdoAction.CALL,
+      member: 'StopChase',
+      separator: '"^"',
+      args: [],
+    });
+  });
+
+  it('emits exactly the catalogued arity for a 0-arg `function` member', async () => {
+    expect(RDO_MEMBERS.StopChase).toEqual({ kind: 'function', arity: 0 });
+
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+    await stopChase(fake.ctx);
+    expect(fake.sent[0].packet.args).toHaveLength(RDO_MEMBERS.StopChase.arity);
+  });
+
+  it('resolves anyway on ERROR_Unknown (1) — "was not chasing" is not a failure', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#1"');
+    await expect(stopChase(fake.ctx)).resolves.toBeUndefined();
+    expect(fake.ctx.log.debug).toHaveBeenCalledWith(
+      expect.stringContaining('StopChase returned 1'),
+    );
+  });
+
+  it('refuses without a world context', async () => {
+    const fake = makeSessionCtx({ worldContextId: null });
+    await expect(stopChase(fake.ctx)).rejects.toThrow('Not logged into world');
+    expect(fake.sent).toHaveLength(0);
   });
 });
 
