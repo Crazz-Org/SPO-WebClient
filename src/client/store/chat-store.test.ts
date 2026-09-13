@@ -2,9 +2,20 @@
  * Tests for chat-store: user list incremental updates.
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { useChatStore } from './chat-store';
 import type { ChatUser, ChatTab } from './chat-store';
+import { CHAT_VISIBLE_KEY } from './chat-visibility';
+
+const storageMap = new Map<string, string>();
+
+function installStorage() {
+  (globalThis as unknown as { localStorage: unknown }).localStorage = {
+    getItem: (k: string) => storageMap.get(k) ?? null,
+    setItem: (k: string, v: string) => { storageMap.set(k, v); },
+    removeItem: (k: string) => { storageMap.delete(k); },
+  };
+}
 
 /** Shorthand: create a ChatUser with default nobility fields. */
 function user(name: string, id: string, status = 0): ChatUser {
@@ -19,7 +30,9 @@ function resetStore() {
     users: {},
     typingUsers: new Set(),
     isExpanded: true,
+    chatVisible: true,
     activeTab: 'chat' as ChatTab,
+    unreadChatCount: 0,
     channelInfo: {},
     chasedUser: null,
   });
@@ -161,5 +174,45 @@ describe('Chat Store — Typing', () => {
     expect(useChatStore.getState().typingUsers.has('Alice')).toBe(true);
     useChatStore.getState().setUserTyping('Alice', false);
     expect(useChatStore.getState().typingUsers.has('Alice')).toBe(false);
+  });
+});
+
+describe('Chat Store — chatVisible (#610)', () => {
+  beforeEach(() => {
+    storageMap.clear();
+    installStorage();
+    resetStore();
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: unknown }).localStorage; });
+
+  it('toggleChatVisible flips the flag and persists it', () => {
+    useChatStore.getState().toggleChatVisible();
+    expect(useChatStore.getState().chatVisible).toBe(false);
+    expect(storageMap.get(CHAT_VISIBLE_KEY)).toBe('false');
+    useChatStore.getState().toggleChatVisible();
+    expect(useChatStore.getState().chatVisible).toBe(true);
+    expect(storageMap.get(CHAT_VISIBLE_KEY)).toBe('true');
+  });
+
+  it('setChatVisible(true) zeroes unreadChatCount; setChatVisible(false) leaves it alone', () => {
+    useChatStore.setState({ unreadChatCount: 5 });
+    useChatStore.getState().setChatVisible(false);
+    expect(useChatStore.getState().unreadChatCount).toBe(5);
+    useChatStore.getState().setChatVisible(true);
+    expect(useChatStore.getState().unreadChatCount).toBe(0);
+  });
+
+  it('addMessage keeps accumulating messages and unreadChatCount while chat is hidden', () => {
+    useChatStore.getState().setChatVisible(false);
+    useChatStore.getState().addMessage('Lobby', {
+      id: 'm1', from: 'Alice', text: 'Hello', timestamp: 1000, isSystem: false, isGM: false,
+    });
+    useChatStore.getState().addMessage('Lobby', {
+      id: 'm2', from: 'Bob', text: 'Hi', timestamp: 1001, isSystem: false, isGM: false,
+    });
+    const state = useChatStore.getState();
+    expect(state.chatVisible).toBe(false);
+    expect(state.messages['Lobby']).toHaveLength(2);
+    expect(state.unreadChatCount).toBe(2);
   });
 });

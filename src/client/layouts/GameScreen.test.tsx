@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { screen, act } from '@testing-library/react';
 import { renderWithProviders } from '../__tests__/setup/render-helpers';
 import { useUiStore } from '../store/ui-store';
+import { useChatStore } from '../store/chat-store';
 import { GameScreen } from './GameScreen';
 
 // The screen composes the HUD; stub the parts that touch the canvas or fetch on mount.
@@ -26,6 +27,7 @@ jest.mock('../components/sheet', () => ({ Sheet: () => <aside>SHEET</aside> }));
 describe('GameScreen', () => {
   beforeEach(() => {
     useUiStore.setState({ modal: null, confirmPayload: null, promptPayload: null });
+    useChatStore.setState({ chatVisible: true });
   });
 
   it('mounts the HUD and the universal sheet', () => {
@@ -54,5 +56,13 @@ describe('GameScreen', () => {
       useUiStore.getState().requestPrompt('Rename', 'New name', () => {}, { defaultValue: 'Mill' });
     });
     expect(screen.getByDisplayValue('Mill')).toBeTruthy();
+  });
+
+  it('hides the ChatStrip when chatVisible is false, and shows it when true', () => {
+    useChatStore.setState({ chatVisible: false });
+    renderWithProviders(<GameScreen />);
+    expect(screen.queryByText('CHAT')).toBeNull();
+    act(() => useChatStore.getState().setChatVisible(true));
+    expect(screen.getByText('CHAT')).toBeTruthy();
   });
 });
