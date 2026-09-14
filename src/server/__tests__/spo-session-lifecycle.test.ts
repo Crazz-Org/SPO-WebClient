@@ -22,6 +22,7 @@ import type { FallbackResponse } from './protocol-validation/mock-tcp-socket';
 import type { MockTcpSocket } from './protocol-validation/mock-tcp-socket';
 import { StarpeaceSession } from '../spo_session';
 import { RdoProtocol } from '../rdo';
+import { rdoGet } from '../../shared/rdo-frame';
 import { RdoAction, RdoVerb, SessionPhase, WsMessageType } from '../../shared/types';
 import type { RdoPacket, WorldInfo } from '../../shared/types';
 import { TimeoutCategory, IS_PROXY_TIMEOUT_MS } from '../../shared/timeout-categories';
@@ -269,6 +270,55 @@ describe('createSocket', () => {
     // on the next request — reconnecting it eagerly buys nothing.
     expect(reconnect).not.toHaveBeenCalled();
     expect(internals(harness).keepAliveInterval).toBeNull();
+  });
+
+  it('keeps the replacement socket when a superseded same-named socket closes late', async () => {
+    const first = await harness.session.createSocket('directory_auth', WORLD.ip, WORLD.port);
+    const s1 = harness.getSockets()[0];
+    // MockTcpSocket.end() fires 'close' on the next tick; the live servers deliver it
+    // after the FIN round trip — which is exactly the window this test needs open.
+    jest.spyOn(s1, 'end').mockImplementation(() => {});
+    first.end();
+    harness.session.deleteSocket('directory_auth');   // what login-handler's finally does
+
+    const second = await harness.session.createSocket('directory_auth', WORLD.ip, WORLD.port);
+    s1.emit('close');                                  // the late close of the DEAD socket
+
+    expect(harness.session.getSocket('directory_auth')).toBe(second);
+    await expect(harness.session.sendRdoRequest(
+      'directory_auth', rdoGet('ServerBusy', WORLD_OBJECT_ID).packet,
+      undefined, TimeoutCategory.DIRECTORY,
+    )).resolves.toBeDefined();
+    expect(harness.getCapturedCommands(1).length).toBeGreaterThan(0);
+  });
+
+  it('removes the map entry when the current socket closes normally', async () => {
+    await harness.session.createSocket('directory_auth', WORLD.ip, WORLD.port);
+    const socket = harness.getSockets()[0];
+
+    socket.emit('close');
+
+    expect(harness.session.getSocket('directory_auth')).toBeUndefined();
+  });
+
+  it('does not fire world auto-reconnect for a stale same-named socket, but still fires for the current one', async () => {
+    const first = await connectWorld();
+    const warn = jest.spyOn(harness.session.log, 'warn');
+    const reconnect = jest.spyOn(harness.session, 'attemptWorldReconnect').mockResolvedValue(undefined);
+
+    const second = await harness.session.createSocket('world', WORLD.ip, WORLD.port);
+    first.emit('close');
+    await flush();
+
+    expect(warn).not.toHaveBeenCalledWith('[Session] World socket lost, attempting auto-reconnect...');
+    expect(reconnect).not.toHaveBeenCalled();
+    expect(harness.session.getSocket('world')).toBe(second);
+
+    second.emit('close');
+    await flush();
+
+    expect(warn).toHaveBeenCalledWith('[Session] World socket lost, attempting auto-reconnect...');
+    expect(reconnect).toHaveBeenCalledTimes(1);
   });
 });
 
