@@ -139,12 +139,43 @@ describe('world-list scenario', () => {
 // =============================================================================
 
 describe('company-list scenario', () => {
-  it('creates scenario with HTTP and WS', () => {
-    const { ws, http } = createCompanyListScenario();
+  it('creates scenario with HTTP, WS and RDO', () => {
+    const { ws, rdo, http } = createCompanyListScenario();
     expect(ws).toBeDefined();
+    expect(rdo).toBeDefined();
     expect(http).toBeDefined();
     expect(ws.name).toBe('company-list');
+    expect(rdo.name).toBe('company-list');
     expect(http.name).toBe('company-list');
+  });
+
+  it('RDO is the five per-index getters, each asked with an integer index', () => {
+    const { rdo } = createCompanyListScenario();
+    // chooseCompany.asp:166-170, in the page's own order.
+    expect(rdo.exchanges.map(e => e.matchKeys?.member)).toEqual([
+      'GetCompanyOwnerRole',
+      'GetCompanyName',
+      'GetCompanyId',
+      'GetCompanyCluster',
+      'GetCompanyFacilityCount',
+    ]);
+    // `"%0"` would reach a different overload's register file — the index is an integer.
+    for (const exchange of rdo.exchanges) {
+      expect(exchange.matchKeys?.argsPattern).toEqual(['"#0"']);
+      expect(exchange.matchKeys?.action).toBe('call');
+      expect(exchange.request).toContain('"^" "#0"');
+    }
+  });
+
+  it('RDO answers reproduce the captured company', () => {
+    const { rdo } = createCompanyListScenario();
+    const answerOf = (member: string) =>
+      rdo.exchanges.find(e => e.matchKeys?.member === member)?.response;
+    expect(answerOf('GetCompanyOwnerRole')).toContain(`res="%${CAPTURED_COMPANY.ownerRole}"`);
+    expect(answerOf('GetCompanyName')).toContain(`res="%${CAPTURED_COMPANY.name}"`);
+    expect(answerOf('GetCompanyId')).toContain(`res="#${CAPTURED_COMPANY.id}"`);
+    expect(answerOf('GetCompanyCluster')).toContain(`res="%${CAPTURED_COMPANY.cluster}"`);
+    expect(answerOf('GetCompanyFacilityCount')).toContain(`res="#${CAPTURED_COMPANY.facilityCount}"`);
   });
 
   it('CAPTURED_COMPANY has correct name/id/ownerRole', () => {

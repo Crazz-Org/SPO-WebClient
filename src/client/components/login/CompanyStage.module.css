@@ -120,6 +120,29 @@
   color: var(--text-primary);
 }
 
+/* The cluster seal chooseCompany.asp:186 drew above the name — a legacy 40px gif,
+   so it is scaled by whole pixels rather than smoothed. */
+.seal {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  align-self: flex-start;
+  image-rendering: pixelated;
+}
+
+.clusterTag {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.facilityCount {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .roleBadge {
   display: inline-block;
   font-size: var(--text-xs);

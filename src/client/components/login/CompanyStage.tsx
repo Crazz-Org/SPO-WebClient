@@ -238,9 +238,18 @@ export function CompanyStage({
                 className={styles.companyCard}
                 onClick={() => !isLoading && onSelect(company.id)}
               >
+                {company.sealUrl && (
+                  <img className={styles.seal} src={company.sealUrl} alt="" aria-hidden="true" />
+                )}
                 <div className={styles.companyName}>{company.name}</div>
-                {company.ownerRole && (
-                  <span className={styles.roleBadge}>{company.ownerRole}</span>
+                {company.cluster && (
+                  <span className={styles.clusterTag}>{company.cluster}</span>
+                )}
+                {(company.status ?? company.ownerRole) && (
+                  <span className={styles.roleBadge}>{company.status ?? company.ownerRole}</span>
+                )}
+                {company.facilityCount != null && (
+                  <span className={styles.facilityCount}>{company.facilityCount} Facilities</span>
                 )}
                 {company.value != null && (
                   <span className={styles.companyValue}>
@@ -264,10 +273,19 @@ export function CompanyStage({
                 className={styles.companyCard}
                 onClick={() => !isLoading && onSelect(company.id)}
               >
+                {company.sealUrl && (
+                  <img className={styles.seal} src={company.sealUrl} alt="" aria-hidden="true" />
+                )}
                 <div className={styles.companyName}>{company.name}</div>
+                {company.cluster && (
+                  <span className={styles.clusterTag}>{company.cluster}</span>
+                )}
                 <span className={`${styles.roleBadge} ${styles.politicalBadge}`}>
-                  {company.ownerRole}
+                  {company.status ?? company.ownerRole}
                 </span>
+                {company.facilityCount != null && (
+                  <span className={styles.facilityCount}>{company.facilityCount} Facilities</span>
+                )}
               </GlassCard>
             ))}
           </div>

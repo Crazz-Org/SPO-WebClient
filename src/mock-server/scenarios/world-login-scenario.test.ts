@@ -41,6 +41,13 @@ const VARS = { username: 'SPO_test3', password: 'test3' } as const;
 describe('L1: world-login scenario driven through loginWorld()', () => {
   let harness: ProtocolTestHarness;
 
+  const COMPANY_VARS = {
+    ...VARS,
+    worldName: 'Shamba',
+    worldIp: '142.44.158.91',
+    worldPort: 8000,
+  } as const;
+
   function buildHarness(canJoin?: number, languageId?: string): void {
     harness = createProtocolTestHarness({
       socketConfigs: [
@@ -50,7 +57,11 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
         { rdoScenarios: [createWorldListScenario(VARS).rdo] },
         // Socket 2: world socket
         {
-          rdoScenarios: [createWorldLoginScenario(VARS, { canJoin, languageId }).rdo],
+          rdoScenarios: [
+            createWorldLoginScenario(VARS, { canJoin, languageId }).rdo,
+            // Step 10 — the five per-index company getters.
+            createCompanyListScenario(COMPANY_VARS).rdo,
+          ],
           fallbackResponses: buildWorldPropertyFallbacks({
             worldName: 'Shamba',
             worldIp: '142.44.158.91',
@@ -61,14 +72,7 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
           pushTriggers: buildLoginPushTriggers(CONTEXT_ID),
         },
       ],
-      httpScenarios: [
-        createCompanyListScenario({
-          ...VARS,
-          worldName: 'Shamba',
-          worldIp: '142.44.158.91',
-          worldPort: 8000,
-        }, languageId === undefined ? undefined : { languageId }).http,
-      ],
+      httpScenarios: [createCompanyListScenario(COMPANY_VARS).http],
     });
   }
 
@@ -128,11 +132,11 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
     harness.assertNoViolations();
   });
 
-  // The language criterion, end to end over the wire: a session opened with a non-default
-  // language must put it on BOTH carriers — the SetLanguage frame and the ASP query. The
-  // `logonComplete.asp` exchange is gated on `LangId=2`, so a gateway that drops the id
-  // gets a 404 and no companies come back.
-  it('a session opened with language 2 emits SetLanguage %2 and asks logonComplete.asp with LangId=2', async () => {
+  // The language criterion over the wire: the session language travels on the
+  // SetLanguage frame, and the scenario's exchange is gated on `"%2"`, so a
+  // gateway that dropped it would match nothing at all. The `LangId` half of this
+  // criterion moved to `login-handler.test.ts` with the ASP fetch it belongs to.
+  it('a session opened with language 2 emits SetLanguage %2', async () => {
     buildHarness(undefined, '2');
     harness.session.setLanguageId('2');
 
@@ -141,12 +145,6 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
     const setLang = harness.getSockets()[2].getCapturedWrites().find(w => w.includes('SetLanguage'));
     expect(setLang).toContain(`sel ${CONTEXT_ID} call SetLanguage "*" "%2"`);
 
-    const fetchMock = jest.requireMock('node-fetch') as { default: { mock: { calls: unknown[][] } } };
-    const asked = fetchMock.default.mock.calls.map(c => String(c[0]));
-    const logonComplete = asked.find(u => u.includes('logonComplete.asp'));
-    expect(logonComplete).toContain('LangId=2');
-
-    // The gated exchange matched — the company page came back, not the 404.
     expect(result.companies.length).toBeGreaterThan(0);
     harness.assertNoViolations();
   });
