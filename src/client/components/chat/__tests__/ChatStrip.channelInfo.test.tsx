@@ -16,7 +16,10 @@ describe('ChatStrip channel info', () => {
   beforeEach(() => {
     resetStores();
     useChatStore.setState({ channelInfo: {}, currentChannel: 'Lobby' });
-    useChatStore.getState().setChannels(['Lobby', 'Trade']);
+    useChatStore.getState().setChannels([
+      { name: 'Lobby', isProtected: false },
+      { name: 'Trade', isProtected: false },
+    ]);
   });
 
   it('fetches the new channel\'s info alongside joining it', () => {

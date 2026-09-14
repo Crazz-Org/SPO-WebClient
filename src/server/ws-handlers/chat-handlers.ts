@@ -17,6 +17,7 @@ import {
 } from '../../shared/types';
 import type { WsHandlerContext, WsHandler } from './types';
 import { sendResponse, sendError } from './ws-utils';
+import { ChannelJoinError } from '../session/chat-handler';
 
 export const handleChatGetUsers: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
   console.log('[Gateway] Getting chat user list');
@@ -55,7 +56,15 @@ export const handleChatGetChannelInfo: WsHandler = async (ctx: WsHandlerContext,
 export const handleChatJoinChannel: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
   const req = msg as WsReqChatJoinChannel;
   console.log(`[Gateway] Joining channel: ${req.channelName || 'Lobby'}`);
-  await ctx.session.joinChatChannel(req.channelName);
+  try {
+    await ctx.session.joinChatChannel(req.channelName, req.password ?? '');
+  } catch (err: unknown) {
+    if (err instanceof ChannelJoinError) {
+      sendError(ctx.ws, msg.wsRequestId, err.message, err.code);
+      return;
+    }
+    throw err;
+  }
   const response: WsRespChatSuccess = {
     type: WsMessageType.RESP_CHAT_SUCCESS,
     wsRequestId: msg.wsRequestId,
