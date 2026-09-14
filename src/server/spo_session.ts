@@ -2643,6 +2643,10 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return chatHandler.joinChatChannel(this, channelName);
   }
 
+  public async createChatChannel(channelName: string, password: string): Promise<void> {
+    return chatHandler.createChatChannel(this, channelName, password);
+  }
+
   public async sendChatMessage(message: string): Promise<void> {
     return chatHandler.sendChatMessage(this, message);
   }

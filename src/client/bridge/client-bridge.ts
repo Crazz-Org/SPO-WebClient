@@ -181,6 +181,11 @@ export interface ClientCallbacks {
   // Chat
   onSendChatMessage: (message: string) => void;
   onJoinChannel: (channelName: string) => void;
+  /**
+   * Create a named channel (Delphi CreateChannel). Returns a promise — unlike
+   * `onJoinChannel` — so the modal can await it and stay open on a refusal.
+   */
+  onCreateChannel: (channelName: string, password: string) => Promise<void>;
   onChatTypingChange: (isTyping: boolean) => void;
   /** Announce the away state (Delphi mstAFK). */
   onChatAway: () => void;
@@ -648,6 +653,16 @@ export const ClientBridge = {
 
   setChatChannels(channels: string[]): void {
     useChatStore.getState().setChannels(channels);
+  },
+
+  /** One channel appeared — the creator's own, or another player's (NotifyChannelListChange, uchInclusion). */
+  addChatChannel(channel: string): void {
+    useChatStore.getState().addChannel(channel);
+  },
+
+  /** One channel is gone (NotifyChannelListChange, uchExclusion). */
+  removeChatChannel(channel: string): void {
+    useChatStore.getState().removeChannel(channel);
   },
 
   addChatMessage(channel: string, message: {

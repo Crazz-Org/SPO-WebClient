@@ -95,6 +95,7 @@ export enum WsMessageType {
   REQ_CHAT_GET_CHANNELS = 'REQ_CHAT_GET_CHANNELS',
   REQ_CHAT_GET_CHANNEL_INFO = 'REQ_CHAT_GET_CHANNEL_INFO',
   REQ_CHAT_JOIN_CHANNEL = 'REQ_CHAT_JOIN_CHANNEL',
+  REQ_CHAT_CREATE_CHANNEL = 'REQ_CHAT_CREATE_CHANNEL',
   REQ_CHAT_SEND_MESSAGE = 'REQ_CHAT_SEND_MESSAGE',
   REQ_CHAT_TYPING_STATUS = 'REQ_CHAT_TYPING_STATUS',
   REQ_CHAT_AWAY = 'REQ_CHAT_AWAY',
@@ -558,6 +559,13 @@ export interface WsReqChatGetChannelInfo extends WsMessage {
 export interface WsReqChatJoinChannel extends WsMessage {
   type: WsMessageType.REQ_CHAT_JOIN_CHANNEL;
   channelName: string;
+}
+
+/** Create a named channel, optionally password-protected. Mirrors Delphi CreateChannel (InterfaceServer.pas:186). */
+export interface WsReqChatCreateChannel extends WsMessage {
+  type: WsMessageType.REQ_CHAT_CREATE_CHANNEL;
+  channelName: string;
+  password: string;
 }
 
 export interface WsReqChatSendMessage extends WsMessage {

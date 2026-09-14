@@ -4,6 +4,7 @@ import {
   type WsMessage,
   type WsReqChatGetChannelInfo,
   type WsReqChatJoinChannel,
+  type WsReqChatCreateChannel,
   type WsReqChatSendMessage,
   type WsReqChatTypingStatus,
   type WsReqChatChase,
@@ -55,6 +56,17 @@ export const handleChatJoinChannel: WsHandler = async (ctx: WsHandlerContext, ms
   const req = msg as WsReqChatJoinChannel;
   console.log(`[Gateway] Joining channel: ${req.channelName || 'Lobby'}`);
   await ctx.session.joinChatChannel(req.channelName);
+  const response: WsRespChatSuccess = {
+    type: WsMessageType.RESP_CHAT_SUCCESS,
+    wsRequestId: msg.wsRequestId,
+  };
+  sendResponse(ctx.ws, response);
+};
+
+export const handleChatCreateChannel: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  const req = msg as WsReqChatCreateChannel;
+  console.log(`[Gateway] Creating channel: ${req.channelName}`);
+  await ctx.session.createChatChannel(req.channelName, req.password);
   const response: WsRespChatSuccess = {
     type: WsMessageType.RESP_CHAT_SUCCESS,
     wsRequestId: msg.wsRequestId,
