@@ -255,6 +255,50 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     case WsMessageType.EVENT_SHOW_NOTIFICATION: {
       const notif = msg as WsEventShowNotification;
       ClientBridge.log('Notification', `Kind=${notif.kind}, Options=${notif.options}: ${notif.body || notif.title}`);
+
+      // Kind 0 — message box (Voyager: ShowMsgBox, VoyagerWindow.pas:528-529): a
+      // dismissible dialog, not a toast that vanishes on its own.
+      if (notif.kind === 0) {
+        useUiStore.getState().requestConfirm(
+          notif.title || 'Server notification',
+          notif.body,
+          () => {},
+          { kind: 'info', typeToConfirm: null, confirmLabel: 'OK' },
+        );
+        break;
+      }
+
+      // Kind 1 — tutorial assignment (Voyager: opened a URL frame,
+      // VoyagerWindow.pas:530-549). The card "The onboarding curriculum is gone:
+      // the server still pushes tutorial assignments and the client toasts their
+      // URL" will hand this to the tutorial trigger; until it lands, the URL is
+      // logged, never shown.
+      if (notif.kind === 1) {
+        ClientBridge.log('Notification', `Tutorial URL suppressed: ${notif.body}`);
+        if (notif.title) {
+          ctx.showNotification(notif.title, 'info');
+        }
+        break;
+      }
+
+      // Kinds 2 and 3 — chat notice (Voyager: SayThis(user, uppercase(Title) +
+      // Body), VoyagerWindow.pas:550-553).
+      if (notif.kind === 2 || notif.kind === 3) {
+        const text = `${notif.title.toUpperCase()}${notif.body}`;
+        if (text) {
+          ClientBridge.addChatMessage(useChatStore.getState().currentChannel || 'Lobby', {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            from: 'SYSTEM',
+            text,
+            timestamp: Date.now(),
+            isSystem: true,
+            isGM: false,
+          });
+        }
+        break;
+      }
+
+      // Kind 4 and anything else — unchanged.
       const displayText = notif.body || notif.title || 'Server notification';
       const variant = notif.kind === 4 ? 'success' as const : 'info' as const;
       ctx.showNotification(displayText, variant);

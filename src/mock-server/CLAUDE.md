@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `show-notification`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -242,6 +242,16 @@ tile with none (`World.pas:4243`), which is a normal answer and not an error.
 exchange carries. Its test drives the real gateway `handleContextStatus` and the
 real browser handler, then renders `ContextStatusStrip` and asserts a camera
 move produces the second ask and that the empty answer hides the strip.
+
+`show-notification` is `ShowNotification`, the Interface Server's one push for "tell the player
+something" — a 4-argument `procedure` (`Protocol/Protocol.pas:219`), so every frame here carries
+`"*"`, no QueryId and no reply. **The kind is the routing**: Voyager dispatched on it in one
+`case` (`Voyager/VoyagerWindow.pas:506-563`) rather than treating every kind as the same toast.
+A push-only scenario has no reply to prove anything with, so its four frames — one each for
+kind 0, 1, 2 and 4 — plus the browser behaviour they produce through the real dispatcher are the
+only evidence there is. Kind 4 is in the set precisely to prove the one behaviour that must
+**not** change: the toast and the build-catalogue invalidation on `Options = 1`, both carried
+through unmodified from before this scenario existed.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under
