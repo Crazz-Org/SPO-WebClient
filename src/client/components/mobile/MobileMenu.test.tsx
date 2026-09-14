@@ -1,8 +1,18 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
+import { useGameStore } from '../../store/game-store';
 import { MobileMenu } from './MobileMenu';
+
+function setSupportUrl(value: string | undefined): void {
+  const w = window as unknown as Record<string, unknown>;
+  if (value === undefined) {
+    delete w.__SPO_SUPPORT_URL__;
+  } else {
+    w.__SPO_SUPPORT_URL__ = value;
+  }
+}
 
 describe('MobileMenu', () => {
   beforeEach(() => {
@@ -55,5 +65,31 @@ describe('MobileMenu', () => {
     useUiStore.getState().confirmPayload!.onConfirm();
 
     expect(onLogout).toHaveBeenCalledTimes(1);
+  });
+
+  describe('Support', () => {
+    afterEach(() => setSupportUrl(undefined));
+
+    it('opens the configured support destination, carrying world and player, in a new tab', () => {
+      setSupportUrl('https://support.example.org/support.asp');
+      useGameStore.setState({ worldName: 'planitia', username: 'Crazz' });
+      renderWithProviders(<MobileMenu />);
+
+      const link = screen.getByRole('link', { name: /Support/ }) as HTMLAnchorElement;
+      expect(link.href).toContain('https://support.example.org/support.asp');
+      expect(link.href).toContain('WorldName=planitia');
+      expect(link.href).toContain('UserName=Crazz');
+      expect(link.target).toBe('_blank');
+      expect(link.rel).toContain('noopener');
+    });
+
+    it('falls back to the built-in default when no destination is configured', () => {
+      setSupportUrl(undefined);
+      useGameStore.setState({ worldName: 'planitia', username: 'Crazz' });
+      renderWithProviders(<MobileMenu />);
+
+      const link = screen.getByRole('link', { name: /Support/ }) as HTMLAnchorElement;
+      expect(link.href).toContain('github.com/Crazz-Org/SPO-WebClient/issues');
+    });
   });
 });

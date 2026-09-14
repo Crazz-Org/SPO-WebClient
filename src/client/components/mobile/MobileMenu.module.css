@@ -36,6 +36,7 @@
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: var(--text-sm);
+  text-decoration: none;
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-default),
     border-color var(--duration-fast) var(--ease-default);

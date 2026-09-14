@@ -20,6 +20,8 @@ export interface RuntimeConfigInput {
   bugReport?: boolean;
   /** Registration page for "Create an account" on the sign-in screen; empty renders no action. */
   registerUrl?: string;
+  /** Destination of the Support entry in Settings and the mobile menu; empty lets the client use its built-in default. */
+  supportUrl?: string;
 }
 
 export function buildRuntimeConfigScript(input: RuntimeConfigInput): string {
@@ -35,6 +37,9 @@ export function buildRuntimeConfigScript(input: RuntimeConfigInput): string {
   }
   if (input.registerUrl) {
     lines.push(`window.__SPO_REGISTER_URL__=${JSON.stringify(input.registerUrl)};`);
+  }
+  if (input.supportUrl) {
+    lines.push(`window.__SPO_SUPPORT_URL__=${JSON.stringify(input.supportUrl)};`);
   }
   return lines.join('\n');
 }

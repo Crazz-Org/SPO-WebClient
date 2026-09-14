@@ -69,6 +69,17 @@ describe('buildRuntimeConfigScript', () => {
     expect(buildRuntimeConfigScript({ cdnUrl: '' })).not.toContain('__SPO_REGISTER_URL__');
   });
 
+  it('carries the support url, JSON-quoted', () => {
+    expect(buildRuntimeConfigScript({ cdnUrl: '', supportUrl: 'https://example.org/support' }))
+      .toContain('window.__SPO_SUPPORT_URL__="https://example.org/support";');
+  });
+
+  it('treats an empty support url as none — the client falls back to its built-in default', () => {
+    expect(buildRuntimeConfigScript({ cdnUrl: '', supportUrl: '' }))
+      .not.toContain('__SPO_SUPPORT_URL__');
+    expect(buildRuntimeConfigScript({ cdnUrl: '' })).not.toContain('__SPO_SUPPORT_URL__');
+  });
+
   it('emits every override together, in a fixed order', () => {
     const body = buildRuntimeConfigScript({
       cdnUrl: '',
@@ -76,6 +87,7 @@ describe('buildRuntimeConfigScript', () => {
       forceWorld: 'planitia',
       bugReport: true,
       registerUrl: 'https://example.org/signup',
+      supportUrl: 'https://example.org/support',
     });
     expect(body.split('\n')).toEqual([
       'window.__SPO_CDN_URL__="";',
@@ -83,6 +95,7 @@ describe('buildRuntimeConfigScript', () => {
       'window.__SPO_FORCE_WORLD__="planitia";',
       'window.__SPO_BUG_REPORT__=true;',
       'window.__SPO_REGISTER_URL__="https://example.org/signup";',
+      'window.__SPO_SUPPORT_URL__="https://example.org/support";',
     ]);
   });
 

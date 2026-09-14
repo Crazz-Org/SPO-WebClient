@@ -39,6 +39,10 @@ export const config = {
      * (LogonHandlerViewer.pas:937). Server-side read; the browser gets it through
      * /spo-runtime-config.js as `window.__SPO_REGISTER_URL__`, read by AuthStage per render. */
     registerUrl: getEnv('SPO_REGISTER_URL') || '',
+    /** Where the Support entry in Settings and the mobile menu sends a stuck player. Unset lets the
+     *  client use its built-in default. Server-side read; the browser gets it through
+     *  /spo-runtime-config.js as `window.__SPO_SUPPORT_URL__`. */
+    supportUrl: getEnv('SPO_SUPPORT_URL') || '',
     reportsDir: getEnv('SPO_REPORTS_DIR') || undefined,
     /** Bearer token gating GET/POST /api/report-pull/* (see report-pull-endpoint.ts). Unset or
      * under 32 chars disables the whole surface — every route answers 404. Server-side only,
