@@ -517,6 +517,12 @@ export class StarpeaceClient implements ClientHandlerContext {
       onProfileSwitchCompany: (companyId, companyName, ownerRole) =>
         authHandler.profileSwitchCompany(this, companyId, companyName, ownerRole),
 
+      // Tutorial
+      onTutorialState: () => this.sendMessage({ type: WsMessageType.REQ_TUTORIAL_STATE }),
+      onTutorialAction: (action) => this.sendMessage({
+        type: WsMessageType.REQ_TUTORIAL_ACTION, action,
+      }),
+
       // Politics
       onRequestPoliticsData: (townName, buildingX, buildingY, isCapitol) => {
         usePoliticsStore.getState().setLoadState('loading');

@@ -18,6 +18,7 @@ import { Skeleton, SkeletonLines, ConfirmDialog, Switch, Sparkline, ErrorState }
 import { useProfileStore, type ProfileTab, type CompanyProfitLossView } from '../../store/profile-store';
 import { useGameStore } from '../../store/game-store';
 import { useUiStore } from '../../store/ui-store';
+import { useTutorialStore } from '../../store/tutorial-store';
 import { useClient } from '../../context';
 import { isMinisterAccount } from '../../minister-account';
 import type {
@@ -91,6 +92,11 @@ export function ProfilePanel() {
 
 function ProfileIdentityHeader() {
   const profile = useProfileStore((s) => s.profile);
+  // The legacy Tutorial button existed only while `ActiveTutorial <> ""`
+  // (`TycoonOptions.asp:12`, rendered `:231-252`). Reading the store is also
+  // what keeps the panel's no-round-trip-on-open contract: nothing is fetched
+  // here, the assignment is already known or it is not.
+  const hasAssignment = useTutorialStore((s) => s.assignment !== null);
   const [photoErrored, setPhotoErrored] = useState(false);
 
   if (!profile) return null;
@@ -113,6 +119,16 @@ function ProfileIdentityHeader() {
       )}
       <span className={styles.identityName}>{profile.name}</span>
       <span className={styles.identityRank}>#{profile.ranking}</span>
+      {hasAssignment && (
+        <button
+          className={styles.identityTutorialBtn}
+          onClick={() => useUiStore.getState().pushSurface({ kind: 'tutorial' })}
+          title="Open your current assignment"
+        >
+          <GraduationCap size={14} />
+          Tutorial
+        </button>
+      )}
     </header>
   );
 }

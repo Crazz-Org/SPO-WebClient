@@ -43,6 +43,7 @@ import type {
   BankActionType,
   AutoConnectionActionType,
   CurriculumActionType,
+  TutorialActionType,
   NewspaperRatingEntry,
   ChatChannel,
 } from '@/shared/types';
@@ -297,6 +298,11 @@ export interface ClientCallbacks {
   onProfilePolicySet: (tycoonName: string, status: number) => void;
   onProfileCurriculumAction: (action: CurriculumActionType, value?: boolean) => void;
   onProfileSwitchCompany: (companyId: number, companyName: string, ownerRole: string) => void;
+
+  // Tutorial — the onboarding curriculum. Both are fire-and-forget: the answer
+  // comes back through the event dispatcher, which owns the store.
+  onTutorialState: () => void;
+  onTutorialAction: (action: TutorialActionType) => void;
 
   // Politics
   onRequestPoliticsData: (townName: string, buildingX: number, buildingY: number, isCapitol: boolean) => void;

@@ -12,7 +12,7 @@
  */
 
 import { Suspense, type ReactNode } from 'react';
-import { ChevronRight, Pin, PinOff, X, Building2, Mail, Search, Landmark, User, Heart, Layers, Hammer, Map } from 'lucide-react';
+import { ChevronRight, Pin, PinOff, X, Building2, Mail, Search, Landmark, User, Heart, Layers, Hammer, Map, GraduationCap } from 'lucide-react';
 import { useUiStore, type SurfaceKind } from '../../store/ui-store';
 import { usePanel } from '../../hooks/usePanel';
 import { Chip, IconButton, ErrorBoundary } from '../common';
@@ -26,6 +26,7 @@ import { BuildMenu } from '../modals/BuildMenu';
 import { ConnectionPickerContent } from '../modals/ConnectionPickerModal';
 import { useBuildingStore } from '../../store/building-store';
 import { MapSurface } from '../map/MapSurface';
+import { TutorialPanel } from '../tutorial';
 import styles from './Sheet.module.css';
 
 export const SURFACE_TITLES: Record<SurfaceKind, string> = {
@@ -39,6 +40,8 @@ export const SURFACE_TITLES: Record<SurfaceKind, string> = {
   build: 'Build',
   supplierSearch: 'Find Suppliers',
   map: 'Map',
+  // The legacy label, verbatim (`Five/0/language/eNewTycon.lng:89`).
+  tutorial: 'Tutorial',
 };
 
 const SURFACE_ICONS: Record<SurfaceKind, ReactNode> = {
@@ -52,6 +55,7 @@ const SURFACE_ICONS: Record<SurfaceKind, ReactNode> = {
   build: <Hammer size={16} />,
   supplierSearch: <Search size={16} />,
   map: <Map size={16} />,
+  tutorial: <GraduationCap size={16} />,
 };
 
 /** Contents that draw their own header (name, status, refresh…). */
@@ -86,6 +90,8 @@ export function SurfaceContent({ kind }: { kind: SurfaceKind }) {
       return <SupplierSearchSurface />;
     case 'map':
       return <MapSurface />;
+    case 'tutorial':
+      return <TutorialPanel />;
     default:
       return null;
   }

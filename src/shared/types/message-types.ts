@@ -50,6 +50,8 @@ import type {
   NewspaperIssue,
   NewspaperIssueList,
   PoliticalRoleInfo,
+  TutorialActionType,
+  TutorialState,
   ClusterInfo,
   ClusterFacilityPreview,
   DirectoryRef,
@@ -277,6 +279,12 @@ export enum WsMessageType {
   RESP_PROFILE_POLICY_SET = 'RESP_PROFILE_POLICY_SET',
   REQ_PROFILE_CURRICULUM_ACTION = 'REQ_PROFILE_CURRICULUM_ACTION',
   RESP_PROFILE_CURRICULUM_ACTION = 'RESP_PROFILE_CURRICULUM_ACTION',
+
+  // Tutorial (the onboarding curriculum — lives on the profile page, TycoonOptions.asp:231-252)
+  REQ_TUTORIAL_STATE = 'REQ_TUTORIAL_STATE',
+  RESP_TUTORIAL_STATE = 'RESP_TUTORIAL_STATE',
+  REQ_TUTORIAL_ACTION = 'REQ_TUTORIAL_ACTION',
+  RESP_TUTORIAL_ACTION = 'RESP_TUTORIAL_ACTION',
 
   // Politics
   REQ_POLITICS_DATA = 'REQ_POLITICS_DATA',
@@ -1596,6 +1604,33 @@ export interface WsRespProfileCurriculumAction extends WsMessage {
   switchedTo?: CompanyInfo;
   /** abandonRole only: no personal company is left — the client returns to the company stage. */
   returnToCompanyStage?: boolean;
+}
+
+// =============================================================================
+// TUTORIAL — the onboarding curriculum
+// =============================================================================
+
+export interface WsReqTutorialState extends WsMessage {
+  type: WsMessageType.REQ_TUTORIAL_STATE;
+}
+
+export interface WsRespTutorialState extends WsMessage {
+  type: WsMessageType.RESP_TUTORIAL_STATE;
+  /** `null` is "this tycoon has no assignment" — not an error, and not an empty one. */
+  state: TutorialState | null;
+}
+
+export interface WsReqTutorialAction extends WsMessage {
+  type: WsMessageType.REQ_TUTORIAL_ACTION;
+  action: TutorialActionType;
+}
+
+export interface WsRespTutorialAction extends WsMessage {
+  type: WsMessageType.RESP_TUTORIAL_ACTION;
+  success: boolean;
+  message: string;
+  /** The state re-read after the action; `null` once the assignment is gone. */
+  state: TutorialState | null;
 }
 
 // =============================================================================

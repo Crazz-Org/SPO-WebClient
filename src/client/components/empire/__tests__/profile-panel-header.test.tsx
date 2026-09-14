@@ -9,8 +9,10 @@ import { describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { renderWithProviders } from '../../../__tests__/setup/render-helpers';
 import { useProfileStore } from '../../../store/profile-store';
+import { useTutorialStore } from '../../../store/tutorial-store';
+import { useUiStore } from '../../../store/ui-store';
 import { ProfilePanel } from '../ProfilePanel';
-import type { TycoonProfileFull } from '@/shared/types';
+import type { TutorialState, TycoonProfileFull } from '@/shared/types';
 
 function makeProfile(overrides: Partial<TycoonProfileFull> = {}): TycoonProfileFull {
   return {
@@ -40,6 +42,8 @@ function clickSection(label: string): void {
 describe('ProfilePanel — identity header', () => {
   beforeEach(() => {
     useProfileStore.getState().reset();
+    useTutorialStore.getState().reset();
+    useUiStore.setState({ stack: [] });
   });
 
   it('shows portrait, name and rank with no section open', () => {
@@ -87,6 +91,35 @@ describe('ProfilePanel — identity header', () => {
 
     expect(container.querySelector('img')).toBeNull();
     expect(container.querySelector('[class*="identityPhotoPlaceholder"]')).toBeTruthy();
+  });
+
+  it('offers no Tutorial button while the tycoon has no assignment', () => {
+    act(() => {
+      useProfileStore.getState().setProfile(makeProfile());
+      // Answered, and the answer is "none" — the button must still stay away.
+      useTutorialStore.getState().setAssignment(null);
+    });
+
+    renderWithProviders(<ProfilePanel />);
+
+    expect(screen.queryByRole('button', { name: /Tutorial/ })).toBeNull();
+  });
+
+  it('offers the Tutorial button once there is an assignment, and it opens the surface', () => {
+    const assignment: TutorialState = {
+      taskObjId: '130600501', kindId: 'Welcome', name: 'Tutorial Welcome',
+      stage: 0, progress: 0, goal: '', done: false, company: '', town: '',
+    };
+    act(() => {
+      useProfileStore.getState().setProfile(makeProfile());
+      useTutorialStore.getState().setAssignment(assignment);
+    });
+
+    renderWithProviders(<ProfilePanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Tutorial/ }));
+
+    expect(useUiStore.getState().stack.at(-1)?.kind).toBe('tutorial');
   });
 
   it('survives opening a section and switching sections', () => {

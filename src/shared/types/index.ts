@@ -112,6 +112,9 @@ export type {
   NewspaperIssueList,
   NewspaperIssue,
   PoliticalRoleInfo,
+  // Tutorial (the onboarding curriculum)
+  TutorialActionType,
+  TutorialState,
   // Cluster / company creation types
   ClusterInfo,
   ClusterCategory,
@@ -302,6 +305,11 @@ export type {
   WsRespProfilePolicySet,
   WsReqProfileCurriculumAction,
   WsRespProfileCurriculumAction,
+  // Tutorial
+  WsReqTutorialState,
+  WsRespTutorialState,
+  WsReqTutorialAction,
+  WsRespTutorialAction,
   // Politics
   WsReqPoliticsData,
   WsRespPoliticsData,
