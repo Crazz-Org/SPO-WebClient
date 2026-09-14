@@ -1644,11 +1644,18 @@ public createSocket(name: string, host: string, port: number): Promise<net.Socke
     });
 
     socket.on('close', () => {
-      this.log.debug(`[Session] Socket closed: ${name}`);
+      // A socket that has already been replaced under the same name (auth socket
+      // ended, a second one opened, this FIN arriving late) must clean up ONLY
+      // itself: deleting by name here would evict the live socket and make the
+      // next request throw "Socket <name> not active".
+      const isCurrent = this.sockets.get(name) === socket;
+      this.log.debug(`[Session] Socket closed: ${name}${isCurrent ? '' : ' (stale — superseded)'}`);
       // Remove listeners to prevent stale message processing from delayed packets
       socket.removeAllListeners();
+      if (!isCurrent) return;
+
       this.sockets.delete(name);
-      this.framers.delete(name);
+      if (this.framers.get(name) === framer) this.framers.delete(name);
 
       // Auto-reconnect world socket (Delphi RenewWorldProxy pattern)
       // Skipped after a graceful Logoff — the close is intentional (legacy parity:
