@@ -552,10 +552,14 @@ export class IsometricMapRenderer {
   private aircraftSystem: AircraftAnimationSystem = new AircraftAnimationSystem();
   /** Legacy 'UseTransparency' (Map.pas:1415-1416): draw buildings of other tycoons translucent. */
   private glassForeignBuildings: boolean = true;
+  /** Legacy 'AnimateBuildings' (OptionsHandlerViewer.pas:510): step multi-frame building GIFs. */
+  private buildingAnimations: boolean = true;
   /** The player's own tycoon id, 0 until login supplies one — 0 glasses nothing. */
   private ownTycoonId: number = 0;
   /** Legacy 'Signal losing facilities' (Map.pas:1323-1324): shade my own alerting buildings red. */
   private signalLosingFacilities: boolean = false;
+  /** Legacy 'TransparentOverlays' (OptionsHandlerViewer.pas:513): fill data overlays translucent. */
+  private transparentOverlays: boolean = true;
   /** Scratch canvas the red shade is composed on; created on first use, never while the option is off. */
   private losingScratch: HTMLCanvasElement | null = null;
   /** Blocks this player has loaded in this world; null = fog off (no set attached). */
@@ -3398,7 +3402,7 @@ export class IsometricMapRenderer {
 
       // Check for animated texture and pick current frame
       const animatedTexture = this.gameObjectTextureCache.getAnimatedTexture('BuildingImages', textureFilename);
-      if (animatedTexture && texture) {
+      if (animatedTexture && texture && this.buildingAnimations) {
         texture = this.gameObjectTextureCache.getAnimatedFrame(animatedTexture, performance.now());
         this.hasAnimatedBuildings = true;
       }
@@ -3914,7 +3918,7 @@ export class IsometricMapRenderer {
           ctx.lineTo(screenPos.x + halfWidth, screenPos.y + halfHeight);
           ctx.closePath();
 
-          ctx.fillStyle = color;
+          ctx.fillStyle = this.transparentOverlays ? color : IsometricMapRenderer.opaqueColor(color);
           ctx.fill();
         }
       }
@@ -3979,6 +3983,12 @@ export class IsometricMapRenderer {
       const b = Math.round(255 * t);
       return `rgba(${r},${g},${b},${alpha})`;
     }
+  }
+
+  /** Drop the alpha from an `rgba(...)` overlay colour; anything else passes through unchanged. */
+  private static opaqueColor(color: string): string {
+    const m = /^rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,[^)]*\)$/.exec(color);
+    return m ? `rgb(${m[1]}, ${m[2]}, ${m[3]})` : color;
   }
 
   // Town overlay colors — distinct colors per town ID (cycles for >12 towns)
@@ -5180,6 +5190,11 @@ export class IsometricMapRenderer {
     this.requestRender();
   }
 
+  public setBuildingAnimationsEnabled(enabled: boolean): void {
+    this.buildingAnimations = enabled;
+    this.requestRender();
+  }
+
   public setGlassForeignBuildings(enabled: boolean): void {
     this.glassForeignBuildings = enabled;
     this.requestRender();
@@ -5187,6 +5202,11 @@ export class IsometricMapRenderer {
 
   public setSignalLosingFacilities(enabled: boolean): void {
     this.signalLosingFacilities = enabled;
+    this.requestRender();
+  }
+
+  public setTransparentOverlays(enabled: boolean): void {
+    this.transparentOverlays = enabled;
     this.requestRender();
   }
 

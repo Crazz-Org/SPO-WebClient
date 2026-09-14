@@ -633,4 +633,30 @@ describe('ClientBridge settings persistence — minimap zoom/size round trip', (
       delete (globalThis as unknown as { localStorage?: Storage }).localStorage;
     }
   });
+
+  it('persists buildingAnimations and transparentOverlays and restores them on load', () => {
+    const store = new Map<string, string>();
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+      removeItem: (key: string) => { store.delete(key); },
+      clear: () => { store.clear(); },
+      key: () => null,
+      length: 0,
+    };
+
+    try {
+      const settings = { ...useGameStore.getState().settings, buildingAnimations: false, transparentOverlays: false };
+      ClientBridge.persistSettings(settings);
+
+      useGameStore.getState().updateSettings({ buildingAnimations: true, transparentOverlays: true });
+
+      ClientBridge.loadPersistedSettings();
+
+      expect(useGameStore.getState().settings.buildingAnimations).toBe(false);
+      expect(useGameStore.getState().settings.transparentOverlays).toBe(false);
+    } finally {
+      delete (globalThis as unknown as { localStorage?: Storage }).localStorage;
+    }
+  });
 });

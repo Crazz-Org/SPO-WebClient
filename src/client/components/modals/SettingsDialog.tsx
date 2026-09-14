@@ -102,6 +102,11 @@ export function SettingsDialog() {
               onChange={(v) => handleSettingChange({ aircraftAnimations: v })}
             />
             <ToggleRow
+              label="Building animations"
+              checked={settings.buildingAnimations}
+              onChange={(v) => handleSettingChange({ buildingAnimations: v })}
+            />
+            <ToggleRow
               label="Fade other players' buildings"
               checked={settings.glassForeignBuildings}
               onChange={(v) => handleSettingChange({ glassForeignBuildings: v })}
@@ -110,6 +115,11 @@ export function SettingsDialog() {
               label="Signal losing facilities"
               checked={settings.signalLosingFacilities}
               onChange={(v) => handleSettingChange({ signalLosingFacilities: v })}
+            />
+            <ToggleRow
+              label="Transparent overlays"
+              checked={settings.transparentOverlays}
+              onChange={(v) => handleSettingChange({ transparentOverlays: v })}
             />
             <ToggleRow
               label="Debug overlay"

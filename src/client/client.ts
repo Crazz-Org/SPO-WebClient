@@ -857,8 +857,10 @@ export class StarpeaceClient implements ClientHandlerContext {
         renderer.setDebugMode(settings.isDebugOverlay);
         renderer.setVehicleAnimationsEnabled(settings.vehicleAnimations);
         renderer.setAircraftAnimationsEnabled(settings.aircraftAnimations);
+        renderer.setBuildingAnimationsEnabled(settings.buildingAnimations);
         renderer.setGlassForeignBuildings(settings.glassForeignBuildings);
         renderer.setSignalLosingFacilities(settings.signalLosingFacilities);
+        renderer.setTransparentOverlays(settings.transparentOverlays);
       }
     }
     this.soundManager.setEnabled(settings.isSoundEnabled);
