@@ -259,6 +259,7 @@ export interface BuildingInfo {
   zoneRequirement: string;    // Zone type requirement
   iconPath: string;           // Building icon path
   available: boolean;         // Whether player can build this
+  requirement?: string;       // Server's own `CacheClass.Requires` sentence — locked facilities only
   residenceClass?: 'high' | 'middle' | 'low'; // Derived from zone requirement text
   xsize?: number;             // Width in tiles (from FacilityDimensions)
   ysize?: number;             // Height in tiles (from FacilityDimensions)

@@ -562,6 +562,28 @@ function parseBuildingFacilities(ctx: SessionContext, html: string): BuildingInf
     const descMatch = descRegex.exec(cellWindow(html, cellIndex, 3000));
     const description = descMatch ? descMatch[1].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
 
+    // Requirement — `FacilityList.asp:287-291`. ONLY the unavailable branch emits
+    // this SECOND `class="description"` div, holding `CacheClass.Requires(LangId)`:
+    // the server's own prerequisite sentence, already in the player's language
+    // (the LangId is the one the request carried). It has no id, and it sits
+    // AHEAD of `infoBlock_<i>` (`:292`), so the window is cut at that anchor
+    // before the search — otherwise the description div would answer here.
+    // The branch is keyed on `available`, not on the div being absent, because
+    // `:287` makes its very existence the branch.
+    let requirement = '';
+    if (!available) {
+      const reqWindow = cellWindow(html, cellIndex, 3000);
+      const infoBlockAt = reqWindow.search(
+        new RegExp(`\\bid\\s*=\\s*["']?infoBlock_${cellIndex}`, 'i')
+      );
+      const beforeInfoBlock = infoBlockAt >= 0 ? reqWindow.substring(0, infoBlockAt) : reqWindow;
+      const reqMatch = /<div[^>]*\bclass\s*=\s*["']?description["']?[^>]*>([\s\S]*?)<\/div>/i
+        .exec(beforeInfoBlock);
+      requirement = reqMatch
+        ? reqMatch[1].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+        : '';
+    }
+
     // Extract zone image src and title for residential classification
     // Try src-before-title first (standard order), then title-before-src (reversed)
     const zoneSrcFirst = /<img[^>]*src\s*=\s*["']?([^"'\s>]*zone[^"'\s>]*)["']?[^>]*title\s*=\s*["']([^"']+)["']/i.exec(cellContent);
@@ -589,6 +611,7 @@ function parseBuildingFacilities(ctx: SessionContext, html: string): BuildingInf
         zoneRequirement,
         iconPath: ctx.convertToProxyUrl(iconPath),
         available,
+        ...(requirement && { requirement }),
         ...(residenceClass && { residenceClass }),
       };
 
