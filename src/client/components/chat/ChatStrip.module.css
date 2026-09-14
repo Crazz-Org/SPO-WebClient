@@ -315,6 +315,13 @@
   word-break: break-word;
 }
 
+.roleGameMaster { color: var(--error); }
+.roleDeveloper  { color: var(--info); }
+.roleSupport    { color: var(--success); }
+.rolePublisher  { color: var(--accent-gold); }
+.roleAmbassador { color: #A78BFA; }
+.roleVeteran    { color: #B0BEC5; }
+
 /* ========================================================================= */
 /* USER SIDEBAR — expanded, right side                                       */
 /* ========================================================================= */

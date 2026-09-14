@@ -37,6 +37,7 @@ import { createChaseScenario } from './chase-scenario';
 import { createDefineZoneScenario } from './define-zone-scenario';
 import { createContextStatusScenario } from './context-status-scenario';
 import { createShowNotificationScenario } from './show-notification-scenario';
+import { createChatFlagsScenario } from './chat-flags-scenario';
 
 /** All recognized scenario names */
 export type ScenarioName =
@@ -68,7 +69,8 @@ export type ScenarioName =
   | 'chase'
   | 'define-zone'
   | 'context-status'
-  | 'show-notification';
+  | 'show-notification'
+  | 'chat-flags';
 
 /** Ordered list of all scenario names */
 export const SCENARIO_NAMES: ScenarioName[] = [
@@ -101,6 +103,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'define-zone',
   'context-status',
   'show-notification',
+  'chat-flags',
 ];
 
 /** Union result from any scenario factory */
@@ -144,6 +147,7 @@ const SCENARIO_FACTORIES: Record<
   'define-zone': (o) => createDefineZoneScenario(o),
   'context-status': (o) => createContextStatusScenario(o),
   'show-notification': (o) => createShowNotificationScenario(o),
+  'chat-flags': (o) => createChatFlagsScenario(o),
 };
 
 /**
@@ -202,7 +206,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 29 mock server scenarios',
+    description: 'Combined: all 30 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -211,7 +215,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 29 scenarios',
+    description: 'Combined: all RDO exchanges from 30 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };

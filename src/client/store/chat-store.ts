@@ -15,6 +15,8 @@ export interface ChatMessage {
   timestamp: number;
   isSystem: boolean;
   isGM: boolean;
+  nobilityTier?: string;
+  modifiers?: number;
 }
 
 const MAX_MESSAGES_PER_CHANNEL = 100;

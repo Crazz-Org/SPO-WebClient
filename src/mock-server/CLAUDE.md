@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `show-notification`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `show-notification`, `chat-flags`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -252,6 +252,19 @@ kind 0, 1, 2 and 4 — plus the browser behaviour they produce through the real 
 only evidence there is. Kind 4 is in the set precisely to prove the one behaviour that must
 **not** change: the toast and the build-catalogue invalidation on `Options = 1`, both carried
 through unmodified from before this scenario existed.
+
+`chat-flags` is `ChatMsg` carrying the packed AccDesc middle field
+(`ComposeChatUser`, `Protocol/Protocol.pas:482-492`) — a `procedure`
+push (`Protocol/Protocol.pas:206`), so both frames here carry `"*"`, no
+QueryId and no reply, the same shape as `show-notification`. Its two
+exchanges pin the one thing a reply could never prove: a speaker absent
+from the local user list (`chat-flags-stranger`, `Zorg`) still renders
+with the correct nobility tier and modifier badge because
+`DecodeCodeMSGChat` decorates from the AccDesc on the line itself, never
+from the roster (`Voyager/URLHandlers/ChatListHandlerViewer.pas:137-149`);
+and a speaker already in the user list (`chat-flags-known`, `SPO_test3`)
+with matching AccDesc renders the same badge either way, proving nothing
+regresses for a known speaker.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under

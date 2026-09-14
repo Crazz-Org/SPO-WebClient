@@ -655,6 +655,8 @@ export const ClientBridge = {
     timestamp: number;
     isSystem: boolean;
     isGM: boolean;
+    nobilityTier?: string;
+    modifiers?: number;
   }): void {
     useChatStore.getState().addMessage(channel, message);
   },
