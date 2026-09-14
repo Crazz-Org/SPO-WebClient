@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `show-notification`, `chat-flags`, `create-channel`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `world-event`, `show-notification`, `chat-flags`, `create-channel`.
 
 `world-login` is the world socket during `loginWorld` — RDO only; the company list is the
 `company-list` scenario's own RDO half, described below. It exists for its second exchange: the
@@ -262,6 +262,25 @@ tile with none (`World.pas:4243`), which is a normal answer and not an error.
 exchange carries. Its test drives the real gateway `handleContextStatus` and the
 real browser handler, then renders `ContextStatusStrip` and asserts a camera
 move produces the second ask and that the empty answer hides the strip.
+
+`world-event` is `PickEvent`, a 1-argument `"^"` FUNCTION on `TClientView`
+(`Interface Server/InterfaceServer.pas:166`) forwarding to `TWorld.RDOPickEvent`
+(`Kernel/World.pas:4840-4871`), which pops one event off the tycoon's queue and
+renders it as a CRLF-separated `Name=Value` block (`TEvent.Render`,
+`Kernel/Events.pas:99-115`) — the argument is the tycoon id, injected nowhere,
+unlike `ContextStatusText`'s world context. Its two answers, the rendered
+block and `res="%"`, travel on an **identical** frame, since `PickEvent` takes
+no argument that distinguishes them, so `RdoMock`'s first three match
+strategies (which do not skip an already-consumed exchange) would answer the
+event block twice and starve the empty answer. `createWorldEventScenario`
+therefore builds one exchange per call, keyed on its `{ event }` option
+(`undefined`/`EVENT_FIXTURE` for the block, `null` for `res="%"`), and its
+test plays the sequence itself with `mock.clearScenarios()` between the two
+asks — the same "the factory option picks the answer" convention
+`createChaseScenario(vars, { chaseResult })` uses. Its test drives the real
+gateway `handleWorldEvent`, the real browser handler and the real
+`WorldEventTicker`, and asserts the empty answer leaves the first event's
+text on screen with no error logged.
 
 `show-notification` is `ShowNotification`, the Interface Server's one push for "tell the player
 something" — a 4-argument `procedure` (`Protocol/Protocol.pas:219`), so every frame here carries

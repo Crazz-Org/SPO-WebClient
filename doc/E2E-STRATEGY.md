@@ -164,7 +164,7 @@ Result: *every* L1 and L2 run asserts sequence and phase legality as a side effe
 | G2 | Cacher KeepAlive 60s vs server 5-min TTL safety margin; idle-5-min survival | L1 fake-timer suite (5× margin invariant) + L2 `resilience` spec with accelerated mock TTL |
 | G3 | Pre-logon stale-session `Logoff` with 5s deadline before fresh `Logon` | L1: world-login extension |
 | G4 | `GetTycoonCookie` position-restore GET sequence + `ClientAware` fire-and-forget ordering | L1: post-login handshake suite |
-| G5 | `PickEvent` polling — accepted divergence D4: **assert it is NOT sent** on a cadence, only at login/company-select | L1 negative assertion (guards the divergence decision) |
+| G5 | `PickEvent` **is** now asked on a 45 s cadence by the HUD ticker (#612) — what remains to guard is the login handshake: still exactly two calls, no more | L1 `world-event` scenario (cadence) + `rdo-callsite-wire-format.test.ts` (login handshake count) |
 | G6 | Viewport-intersect filtering of `RefreshArea`/`RefreshObject` pushes | L1 push suite + L2 assertion that off-viewport pushes don't mutate state |
 | G7 | Mail push path — `ReportNewMail` drives unread count; client never polls | L1 push suite + L2 `mail` spec via `mail-send-scenario` |
 | G8 | Ordered mail compose flow NewMail→AddLine→Save/Post→CloseMessage with QueryId continuity | L1 sequence suite through the real session |
