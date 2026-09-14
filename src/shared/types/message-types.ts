@@ -129,6 +129,9 @@ export enum WsMessageType {
   // Server maintenance (mirrors Delphi fMaintDue + fMSDownCount pattern)
   EVENT_MAINTENANCE = 'EVENT_MAINTENANCE',
 
+  // Connection diagnostics — gateway-measured RDO round trip, pushed every 5 s
+  EVENT_CONNECTION_STATS = 'EVENT_CONNECTION_STATS',
+
   // Building Construction
   REQ_GET_BUILDING_CATEGORIES = 'REQ_GET_BUILDING_CATEGORIES',
   REQ_GET_BUILDING_FACILITIES = 'REQ_GET_BUILDING_FACILITIES',
@@ -701,6 +704,15 @@ export interface WsEventMaintenance extends WsMessage {
   active: boolean;
   /** Human-readable message (e.g., "Server restarting in 5 minutes") */
   message: string;
+}
+
+/** Gateway-measured RDO round-trip stats, pushed on a 5 s interval — no extra server call. */
+export interface WsEventConnectionStats extends WsMessage {
+  type: WsMessageType.EVENT_CONNECTION_STATS;
+  /** Rolling mean RDO round-trip in ms; null until the session has measured one. */
+  latencyMs: number | null;
+  /** How many round trips that mean averages. */
+  samples: number;
 }
 
 // =============================================================================

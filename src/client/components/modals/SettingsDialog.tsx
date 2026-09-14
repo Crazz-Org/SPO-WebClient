@@ -4,7 +4,7 @@
  * Toggle switches for visual/audio settings + keyboard shortcuts reference.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { useGameStore, type GameSettings, type MinimapSize } from '../../store/game-store';
 import { useUiStore } from '../../store/ui-store';
@@ -12,6 +12,7 @@ import { useClient } from '../../context';
 import { showToast } from '../common/Toast';
 import { Switch } from '../common';
 import { SHORTCUTS } from '../../hooks/useKeyboardShortcuts';
+import { connectionStats, formatByteCount } from '../../connection-stats';
 import styles from './SettingsDialog.module.css';
 
 export function SettingsDialog() {
@@ -165,6 +166,12 @@ export function SettingsDialog() {
             </div>
           </section>
 
+          {/* Connection diagnostics */}
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>Connection</h3>
+            <ConnectionSection />
+          </section>
+
           {/* Keyboard shortcuts reference */}
           <section className={styles.section}>
             <h3 className={styles.sectionTitle}>Keyboard Shortcuts</h3>
@@ -247,6 +254,42 @@ function SizeSelector({
         ))}
       </div>
     </div>
+  );
+}
+
+/** Live gateway round-trip + byte counters — re-reads the connectionStats snapshot every second. */
+function ConnectionSection() {
+  const [stats, setStats] = useState(() => connectionStats.snapshot());
+
+  useEffect(() => {
+    const id = setInterval(() => setStats(connectionStats.snapshot()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <>
+      <div className={styles.statRow}>
+        <span className={styles.statLabel}>Server round-trip</span>
+        <span
+          className={styles.statValue}
+          title={stats.latencyMs === null ? 'No measurement yet' : undefined}
+        >
+          {stats.latencyMs === null ? '—' : `${stats.latencyMs} ms`}
+        </span>
+      </div>
+      <div className={styles.statRow}>
+        <span className={styles.statLabel}>Sent</span>
+        <span className={styles.statValue}>
+          {formatByteCount(stats.bytesSent)} · {formatByteCount(stats.sentBytesPerSec)}/s
+        </span>
+      </div>
+      <div className={styles.statRow}>
+        <span className={styles.statLabel}>Received</span>
+        <span className={styles.statValue}>
+          {formatByteCount(stats.bytesReceived)} · {formatByteCount(stats.receivedBytesPerSec)}/s
+        </span>
+      </div>
+    </>
   );
 }
 

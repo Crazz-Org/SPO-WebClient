@@ -1511,6 +1511,7 @@ describe('selectCompany', () => {
     expect(fake.state.phase).toBe(SessionPhase.WORLD_CONNECTED);
     expect(fake.hooks.startServerBusyPolling).toHaveBeenCalledTimes(1);
     expect(fake.hooks.startGcSweep).toHaveBeenCalledTimes(1);
+    expect(fake.hooks.startStatsPush).toHaveBeenCalledTimes(1);
   });
 
   it('restores the camera from the cookies, and treats an unparsable one as 0', async () => {
