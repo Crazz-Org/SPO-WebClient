@@ -634,3 +634,32 @@ describe('ClientBridge settings persistence — minimap zoom/size round trip', (
     }
   });
 });
+
+describe('ClientBridge chat channel list writers', () => {
+  beforeEach(() => {
+    useChatStore.setState({ channels: [] });
+  });
+
+  it('addChatChannel inserts one channel, and ignores one already listed', () => {
+    ClientBridge.setChatChannels([{ name: 'Lobby', isProtected: false }]);
+
+    ClientBridge.addChatChannel('Traders');
+    ClientBridge.addChatChannel('Traders');
+
+    expect(useChatStore.getState().channels).toEqual([
+      { name: 'Lobby', isProtected: false },
+      { name: 'Traders', isProtected: false },
+    ]);
+  });
+
+  it('removeChatChannel drops one channel', () => {
+    ClientBridge.setChatChannels([
+      { name: 'Lobby', isProtected: false },
+      { name: 'Traders', isProtected: false },
+    ]);
+
+    ClientBridge.removeChatChannel('Traders');
+
+    expect(useChatStore.getState().channels).toEqual([{ name: 'Lobby', isProtected: false }]);
+  });
+});

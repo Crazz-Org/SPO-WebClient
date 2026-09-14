@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `show-notification`, `chat-flags`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `show-notification`, `chat-flags`, `create-channel`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -265,6 +265,28 @@ from the roster (`Voyager/URLHandlers/ChatListHandlerViewer.pas:137-149`);
 and a speaker already in the user list (`chat-flags-known`, `SPO_test3`)
 with matching AccDesc renders the same badge either way, proving nothing
 regresses for a known speaker.
+
+`create-channel` is making a chat channel: `CreateChannel( ChannelName, Password, aSessionApp,
+aSessionAppId : widestring; anUserLimit : integer )`, a published FUNCTION on `TClientView`
+(`Interface Server/InterfaceServer.pas:186`), so both frames carry `"^"` and a QueryId and both
+are answered `res="#<code>"`. Its **five arguments** are what it fixes first: the reference
+client's New Channel dialog sent the session app and its id as **empty strings, not omitted**,
+and the user limit as `100` (`Voyager.1/URLHandlers/ChatHandlerViewer.pas:221`, which forces the
+channel-session tab closed at `:219`). Drop the two empties and `anUserLimit` lands in
+`aSessionApp`'s slot and is read as a widestring — no error, no reply difference, a channel with
+a meaningless session app and a zero user limit. What no reply could prove is the second thing:
+the body (`:1512-1533`) creates the channel only when `GetChannel` returns nil and otherwise
+**falls through to `JoinChannel`**, and both branches answer `0`. `ClientCreatedChannel` is the
+only thing that broadcasts `uchInclusion` (`:4594`, fanned out at `:4049`), so the free-name
+exchange carries that push and the taken-name exchange carries none — the push asymmetry is the
+only wire evidence of which branch ran, and it lives in the fixture because no client could
+recover it (the broadcast travels on a different path with no correlation id, and nothing needs
+the distinction). `createCreateChannelScenario(vars, { takenResult })` sets what the taken name
+answers: `13` `ERROR_InvalidPassword` or `32` `ERROR_NotEnoughRoom`
+(`Protocol/Protocol.pas:42,61`), both reachable through that fall-through alone and so themselves
+proof the name was taken. Its test drives the real gateway `createChatChannel` against the mock,
+then feeds the inclusion push through the real dispatcher into the real browser `dispatchEvent`
+and asserts the channel appeared in the store.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under

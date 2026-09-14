@@ -27,13 +27,16 @@ import {
   getChatChannelInfo,
   joinChatChannel,
   ChannelJoinError,
+  createChatChannel,
   sendChatMessage,
   setChatTypingStatus,
+  setChatAwayStatus,
   chaseUser,
   stopChase,
   getCurrentChannel,
 } from './chat-handler';
 import { RDO_MEMBERS } from '../../shared/rdo-members';
+import { CHANNEL_USER_LIMIT } from '../../shared/chat-channel';
 import { makeSessionCtx, FAKE_CONTEXT_IDS } from '../__tests__/session/fake-session-context';
 import type { SessionContext } from './session-context';
 import { RdoValue, RdoCommand } from '../../shared/rdo-types';
@@ -341,6 +344,86 @@ describe('joinChatChannel', () => {
 });
 
 // ===========================================================================
+// createChatChannel — CreateChannel, the 5-argument function
+// ===========================================================================
+
+describe('createChatChannel', () => {
+  it('calls CreateChannel with the five arguments, in order, and records the channel on res="0"', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+
+    await createChatChannel(fake.ctx, 'Traders', 's3cret');
+
+    expect(fake.sent[0].socketName).toBe('world');
+    expect(fake.sent[0].category).toBe(TimeoutCategory.NORMAL);
+    expect(fake.sent[0].packet).toEqual({
+      verb: RdoVerb.SEL,
+      targetId: WORLD,
+      action: RdoAction.CALL,
+      member: 'CreateChannel',
+      args: [
+        RdoValue.string('Traders').format(),
+        RdoValue.string('s3cret').format(),
+        // aSessionApp / aSessionAppId — empty, not omitted (ChatHandlerViewer.pas:221).
+        RdoValue.string('').format(),
+        RdoValue.string('').format(),
+        RdoValue.int(CHANNEL_USER_LIMIT).format(),
+      ],
+      separator: '"^"',
+    });
+    expect(fake.ctx.setCurrentChannel).toHaveBeenCalledWith('Traders');
+  });
+
+  it('is catalogued as a 5-argument function', () => {
+    expect(RDO_MEMBERS.CreateChannel).toEqual({ kind: 'function', arity: 5 });
+  });
+
+  it('does exactly the same thing when the name was taken — the server joined instead (InterfaceServer.pas:1523)', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+
+    await expect(createChatChannel(fake.ctx, 'Podan Merchants', 's3cret')).resolves.toBeUndefined();
+
+    expect(fake.sent[0].packet.args?.[0]).toBe(RdoValue.string('Podan Merchants').format());
+    expect(fake.ctx.setCurrentChannel).toHaveBeenCalledWith('Podan Merchants');
+  });
+
+  it('names the password refusal on ERROR_InvalidPassword and does not change the channel', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#13"');
+
+    await expect(createChatChannel(fake.ctx, 'Locked', 'wrong')).rejects.toThrow(/password/);
+    expect(fake.ctx.setCurrentChannel).not.toHaveBeenCalled();
+  });
+
+  it('names the full channel on ERROR_NotEnoughRoom', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#32"');
+
+    await expect(createChatChannel(fake.ctx, 'Packed', '')).rejects.toThrow(/full/);
+    expect(fake.ctx.setCurrentChannel).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the bare code on any other result', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#1"');
+
+    await expect(createChatChannel(fake.ctx, 'X', '')).rejects.toThrow('Failed to create channel: 1');
+  });
+
+  it('treats an empty payload as a failure', async () => {
+    const fake = makeSessionCtx();
+    await expect(createChatChannel(fake.ctx, 'X', '')).rejects.toThrow('Failed to create channel: ');
+  });
+
+  it('refuses without a world context and sends nothing', async () => {
+    const fake = makeSessionCtx({ worldContextId: null });
+    await expect(createChatChannel(fake.ctx, 'X', '')).rejects.toThrow('Not logged into world');
+    expect(fake.sent).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
 // sendChatMessage — SayThis, the void member
 // ===========================================================================
 
@@ -429,6 +512,31 @@ describe('setChatTypingStatus', () => {
     const fake = makeSessionCtx({ worldContextId: null, sockets: ['world'] });
     await expect(setChatTypingStatus(fake.ctx, true)).rejects.toThrow('Not logged into world');
     expect(fake.frames.world).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// setChatAwayStatus — fire-and-forget MsgCompositionChanged #2 (`/afk`)
+// ===========================================================================
+
+describe('setChatAwayStatus', () => {
+  it('writes MsgCompositionChanged "*" #2 on the world socket, no QueryId', async () => {
+    const fake = makeSessionCtx({ sockets: ['world'] });
+
+    await setChatAwayStatus(fake.ctx);
+
+    expect(fake.sent).toHaveLength(0);
+    expect(fake.frames.world).toEqual([
+      RdoCommand.sel(WORLD).call('MsgCompositionChanged').push().args(RdoValue.int(2)).build(),
+    ]);
+    expect(fake.frames.world[0]).toMatchRdoCallFormat('MsgCompositionChanged');
+  });
+
+  it('writes nothing when the world socket is absent', async () => {
+    const fake = makeSessionCtx();
+    await expect(setChatAwayStatus(fake.ctx)).resolves.toBeUndefined();
+    expect(fake.ctx.getSocket).toHaveBeenCalledWith('world');
+    expect(fake.sent).toHaveLength(0);
   });
 });
 

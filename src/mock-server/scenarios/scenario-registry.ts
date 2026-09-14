@@ -39,6 +39,7 @@ import { createContextStatusScenario } from './context-status-scenario';
 import { createShowNotificationScenario } from './show-notification-scenario';
 import { createChatFlagsScenario } from './chat-flags-scenario';
 import { createChannelPasswordScenario } from './channel-password-scenario';
+import { createCreateChannelScenario } from './create-channel-scenario';
 
 /** All recognized scenario names */
 export type ScenarioName =
@@ -72,7 +73,8 @@ export type ScenarioName =
   | 'context-status'
   | 'show-notification'
   | 'chat-flags'
-  | 'channel-password';
+  | 'channel-password'
+  | 'create-channel';
 
 /** Ordered list of all scenario names */
 export const SCENARIO_NAMES: ScenarioName[] = [
@@ -107,6 +109,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'show-notification',
   'chat-flags',
   'channel-password',
+  'create-channel',
 ];
 
 /** Union result from any scenario factory */
@@ -152,6 +155,7 @@ const SCENARIO_FACTORIES: Record<
   'show-notification': (o) => createShowNotificationScenario(o),
   'chat-flags': (o) => createChatFlagsScenario(o),
   'channel-password': (o) => createChannelPasswordScenario(o),
+  'create-channel': (o) => createCreateChannelScenario(o),
 };
 
 /**
@@ -210,7 +214,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 31 mock server scenarios',
+    description: 'Combined: all 32 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -219,7 +223,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 31 scenarios',
+    description: 'Combined: all RDO exchanges from 32 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };

@@ -2644,12 +2644,20 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return chatHandler.joinChatChannel(this, channelName, password);
   }
 
+  public async createChatChannel(channelName: string, password: string): Promise<void> {
+    return chatHandler.createChatChannel(this, channelName, password);
+  }
+
   public async sendChatMessage(message: string): Promise<void> {
     return chatHandler.sendChatMessage(this, message);
   }
 
   public async setChatTypingStatus(isTyping: boolean): Promise<void> {
     return chatHandler.setChatTypingStatus(this, isTyping);
+  }
+
+  public async setChatAway(): Promise<void> {
+    return chatHandler.setChatAwayStatus(this);
   }
 
   public async chaseUser(userName: string): Promise<void> {

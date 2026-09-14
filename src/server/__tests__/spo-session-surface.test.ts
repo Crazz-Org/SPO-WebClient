@@ -521,6 +521,13 @@ const DELEGATIONS: readonly Delegation[] = [
     result: undefined,
   },
   {
+    method: 'createChatChannel',
+    install: () => jest.spyOn(chatHandler, 'createChatChannel'),
+    call: s => s.createChatChannel('Traders', 's3cret'),
+    forwarded: ['Traders', 's3cret'],
+    result: undefined,
+  },
+  {
     method: 'sendChatMessage',
     install: () => jest.spyOn(chatHandler, 'sendChatMessage'),
     call: s => s.sendChatMessage('Bonjour à tous'),
@@ -714,7 +721,8 @@ describe('StarpeaceSession — handler delegation', () => {
     // branch was parked, so the union is 74, not the 73 either side alone saw.
     // 76: `chaseUser` and `stopChase`, issue 591.
     // 77: `getContextStatusText`, issue 589.
-    expect(DELEGATIONS).toHaveLength(77);
+    // 78: `createChatChannel`, issue 619.
+    expect(DELEGATIONS).toHaveLength(78);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 

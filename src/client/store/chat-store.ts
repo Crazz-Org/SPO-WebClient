@@ -44,6 +44,10 @@ interface ChatState {
   // Actions
   setCurrentChannel: (channel: string) => void;
   setChannels: (channels: ChatChannel[]) => void;
+  /** Insert one channel, ignoring a name already listed. Delphi's fControl.AddChannel. */
+  addChannel: (channel: string) => void;
+  /** Drop one channel. Delphi's fControl.DelChannel. */
+  removeChannel: (channel: string) => void;
   setChannelInfo: (channel: string, info: string) => void;
   addMessage: (channel: string, message: ChatMessage) => void;
   setUsers: (users: ChatUser[]) => void;
@@ -77,6 +81,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setChannels: (channels) => set((state) => ({
     channels,
     currentChannel: state.currentChannel || (channels.length > 0 ? channels[0].name : ''),
+  })),
+
+  // A live "channel created" push carries a bare name and nothing else, so the
+  // padlock flag starts false; the next GetChannelList answer replaces the whole
+  // list and brings the real password status with it.
+  addChannel: (channel) => set((state) =>
+    !channel || state.channels.some((c) => c.name === channel)
+      ? {}
+      : { channels: [...state.channels, { name: channel, isProtected: false }] }),
+
+  // Deliberately leaves `currentChannel` alone: the server sends its own
+  // channel-change notice when it moves you, and guessing here would be a
+  // regression risk of its own.
+  removeChannel: (channel) => set((state) => ({
+    channels: state.channels.filter((c) => c.name !== channel),
   })),
 
   setChannelInfo: (channel, info) =>

@@ -96,8 +96,10 @@ export enum WsMessageType {
   REQ_CHAT_GET_CHANNELS = 'REQ_CHAT_GET_CHANNELS',
   REQ_CHAT_GET_CHANNEL_INFO = 'REQ_CHAT_GET_CHANNEL_INFO',
   REQ_CHAT_JOIN_CHANNEL = 'REQ_CHAT_JOIN_CHANNEL',
+  REQ_CHAT_CREATE_CHANNEL = 'REQ_CHAT_CREATE_CHANNEL',
   REQ_CHAT_SEND_MESSAGE = 'REQ_CHAT_SEND_MESSAGE',
   REQ_CHAT_TYPING_STATUS = 'REQ_CHAT_TYPING_STATUS',
+  REQ_CHAT_AWAY = 'REQ_CHAT_AWAY',
   REQ_CHAT_CHASE = 'REQ_CHAT_CHASE',
   REQ_CHAT_STOP_CHASE = 'REQ_CHAT_STOP_CHASE',
 
@@ -562,6 +564,13 @@ export interface WsReqChatJoinChannel extends WsMessage {
   password?: string;
 }
 
+/** Create a named channel, optionally password-protected. Mirrors Delphi CreateChannel (InterfaceServer.pas:186). */
+export interface WsReqChatCreateChannel extends WsMessage {
+  type: WsMessageType.REQ_CHAT_CREATE_CHANNEL;
+  channelName: string;
+  password: string;
+}
+
 export interface WsReqChatSendMessage extends WsMessage {
   type: WsMessageType.REQ_CHAT_SEND_MESSAGE;
   message: string;
@@ -570,6 +579,11 @@ export interface WsReqChatSendMessage extends WsMessage {
 export interface WsReqChatTypingStatus extends WsMessage {
   type: WsMessageType.REQ_CHAT_TYPING_STATUS;
   isTyping: boolean;
+}
+
+/** Announce the away state (Delphi mstAFK, composition state 2). No payload — away is one state; clearing it goes back through REQ_CHAT_TYPING_STATUS. */
+export interface WsReqChatAway extends WsMessage {
+  type: WsMessageType.REQ_CHAT_AWAY;
 }
 
 /** Start following another player's camera. Mirrors Delphi Chase (InterfaceServer.pas:189). */
