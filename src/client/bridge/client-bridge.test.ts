@@ -179,6 +179,23 @@ describe('ClientBridge existing methods', () => {
     expect(useGameStore.getState().worldName).toBe('Shamba');
   });
 
+  it('setWorld should hydrate the ignore list for (world, player) (#622)', () => {
+    const store = new Map<string, string>();
+    (globalThis as unknown as { localStorage: unknown }).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v); },
+      removeItem: (k: string) => { store.delete(k); },
+    };
+    try {
+      store.set('spo.ignored.Shamba.testUser', '["Bob"]');
+      ClientBridge.setCredentials('testUser');
+      ClientBridge.setWorld('Shamba');
+      expect(useChatStore.getState().ignored).toEqual(['Bob']);
+    } finally {
+      delete (globalThis as unknown as { localStorage?: unknown }).localStorage;
+    }
+  });
+
   it('setCompany should set companyName and companyId', () => {
     ClientBridge.setCompany('TestCorp', '42');
     const state = useGameStore.getState();

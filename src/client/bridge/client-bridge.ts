@@ -451,6 +451,8 @@ export const ClientBridge = {
 
   setWorld(worldName: string): void {
     useGameStore.getState().setWorld(worldName);
+    // The ignore list is per world and per player — load it once both are known (#622).
+    useChatStore.getState().hydrateIgnored(worldName, useGameStore.getState().username);
   },
 
   setCompany(name: string, id: string): void {

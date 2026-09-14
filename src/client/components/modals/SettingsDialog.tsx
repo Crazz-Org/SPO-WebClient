@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { useGameStore, type GameSettings, type MinimapSize } from '../../store/game-store';
+import { useChatStore } from '../../store/chat-store';
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
 import { showToast } from '../common/Toast';
@@ -23,6 +24,9 @@ export function SettingsDialog() {
 
   const client = useClient();
   const username = useGameStore((s) => s.username);
+  const ignored = useChatStore((s) => s.ignored);
+  const unignoreUser = useChatStore((s) => s.unignoreUser);
+  const clearIgnored = useChatStore((s) => s.clearIgnored);
   const [debugSending, setDebugSending] = useState(false);
 
   const handleSendDebugReport = useCallback(async () => {
@@ -169,6 +173,37 @@ export function SettingsDialog() {
           <section className={styles.section}>
             <h3 className={styles.sectionTitle}>Connection</h3>
             <ConnectionSection />
+          </section>
+
+          {/* Ignored players */}
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>Ignored Players</h3>
+            {ignored.length === 0 ? (
+              <div className={styles.ignoredEmpty}>No ignored players</div>
+            ) : (
+              <>
+                {ignored.map((name) => (
+                  <div className={styles.ignoredRow} key={name}>
+                    <span className={styles.ignoredName}>{name}</span>
+                    <button
+                      type="button"
+                      className={styles.ignoredRemove}
+                      aria-label={`Stop ignoring ${name}`}
+                      onClick={() => unignoreUser(name)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className={styles.clearIgnoredBtn}
+                  onClick={clearIgnored}
+                >
+                  Clear all
+                </button>
+              </>
+            )}
           </section>
 
           {/* Keyboard shortcuts reference */}

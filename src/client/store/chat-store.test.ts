@@ -35,7 +35,20 @@ function resetStore() {
     unreadChatCount: 0,
     channelInfo: {},
     chasedUser: null,
+    ignored: [],
+    ignoredKey: null,
   });
+}
+
+function chatMessage(from: string) {
+  return {
+    id: `${from}-1`,
+    from,
+    text: 'hi',
+    timestamp: Date.now(),
+    isSystem: false,
+    isGM: false,
+  };
 }
 
 describe('Chat Store — User list', () => {
@@ -265,5 +278,63 @@ describe('Chat Store — chatVisible (#610)', () => {
     expect(state.chatVisible).toBe(false);
     expect(state.messages['Lobby']).toHaveLength(2);
     expect(state.unreadChatCount).toBe(2);
+  });
+});
+
+describe('Chat Store — Ignored (#622)', () => {
+  beforeEach(() => {
+    storageMap.clear();
+    installStorage();
+    resetStore();
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: unknown }).localStorage; });
+
+  it('addMessage from an ignored name leaves messages and unreadChatCount unchanged', () => {
+    useChatStore.setState({ ignored: ['Bob'] });
+    useChatStore.getState().addMessage('Lobby', chatMessage('Bob'));
+    const state = useChatStore.getState();
+    expect(state.messages['Lobby'] ?? []).toHaveLength(0);
+    expect(state.unreadChatCount).toBe(0);
+  });
+
+  it('un-ignoring restores normal behaviour for subsequent messages', () => {
+    useChatStore.setState({ ignored: ['Bob'] });
+    useChatStore.getState().addMessage('Lobby', chatMessage('Bob'));
+    useChatStore.getState().unignoreUser('Bob');
+    useChatStore.getState().addMessage('Lobby', chatMessage('Bob'));
+    const state = useChatStore.getState();
+    expect(state.messages['Lobby']).toHaveLength(1);
+    expect(state.unreadChatCount).toBe(1);
+  });
+
+  it('ignoreUser is idempotent and refuses an empty name', () => {
+    useChatStore.getState().ignoreUser('Bob');
+    useChatStore.getState().ignoreUser('Bob');
+    expect(useChatStore.getState().ignored).toEqual(['Bob']);
+    useChatStore.getState().ignoreUser('');
+    expect(useChatStore.getState().ignored).toEqual(['Bob']);
+  });
+
+  it('ignoreUser and unignoreUser persist under the hydrated key', () => {
+    useChatStore.getState().hydrateIgnored('planitia', 'Alice');
+    useChatStore.getState().ignoreUser('Bob');
+    expect(storageMap.get('spo.ignored.planitia.Alice')).toBe('["Bob"]');
+    useChatStore.getState().unignoreUser('Bob');
+    expect(storageMap.get('spo.ignored.planitia.Alice')).toBe('[]');
+  });
+
+  it('clearIgnored empties the list and persists it', () => {
+    useChatStore.setState({ ignored: ['Bob', 'Carol'], ignoredKey: 'spo.ignored.planitia.Alice' });
+    useChatStore.getState().clearIgnored();
+    expect(useChatStore.getState().ignored).toEqual([]);
+    expect(storageMap.get('spo.ignored.planitia.Alice')).toBe('[]');
+  });
+
+  it('hydrateIgnored loads a pre-seeded key and replaces a previous list', () => {
+    storageMap.set('spo.ignored.planitia.Alice', '["Bob"]');
+    useChatStore.setState({ ignored: ['Carol'] });
+    useChatStore.getState().hydrateIgnored('planitia', 'Alice');
+    expect(useChatStore.getState().ignored).toEqual(['Bob']);
+    expect(useChatStore.getState().ignoredKey).toBe('spo.ignored.planitia.Alice');
   });
 });
