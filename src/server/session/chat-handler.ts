@@ -166,18 +166,32 @@ export async function sendChatMessage(ctx: SessionContext, message: string): Pro
   ).packet, undefined, TimeoutCategory.NORMAL);
 }
 
-export async function setChatTypingStatus(ctx: SessionContext, isTyping: boolean): Promise<void> {
-  if (!ctx.worldContextId) throw new Error('Not logged into world');
+/** `TMsgCompositionState = (mstIdle, mstComposing, mstAFK)` — Protocol.pas:121, a Delphi enum, so mstAFK = 2. */
+const COMPOSITION_AWAY = 2;
 
-  const status = isTyping ? 1 : 0;
+function pushCompositionState(ctx: SessionContext, state: number): void {
+  if (!ctx.worldContextId) throw new Error('Not logged into world');
 
   // Send as push command (no await needed)
   const socket = ctx.getSocket('world');
   if (socket) {
     writeRdoFrame(socket, rdoCall(
-      'MsgCompositionChanged', ctx.worldContextId!, RdoValue.int(status),
+      'MsgCompositionChanged', ctx.worldContextId!, RdoValue.int(state),
     ).toFrame());
   }
+}
+
+export async function setChatTypingStatus(ctx: SessionContext, isTyping: boolean): Promise<void> {
+  pushCompositionState(ctx, isTyping ? 1 : 0);
+}
+
+/**
+ * Announce the away state (`/afk`) — mstAFK, Protocol.pas:121. Chat-command handling
+ * (client `chat-commands.ts`) is what decides a message means "go away"; this only
+ * pushes the state the same way `setChatTypingStatus` does.
+ */
+export async function setChatAwayStatus(ctx: SessionContext): Promise<void> {
+  pushCompositionState(ctx, COMPOSITION_AWAY);
 }
 
 /**

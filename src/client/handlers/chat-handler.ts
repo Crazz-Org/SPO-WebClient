@@ -16,6 +16,7 @@ import {
   WsRespChatChannelInfo,
   WsReqChatJoinChannel,
   WsReqChatTypingStatus,
+  WsReqChatAway,
   WsReqChatChase,
   WsReqChatStopChase
 } from '../../shared/types';
@@ -70,6 +71,23 @@ export function setTypingStatus(ctx: ClientHandlerContext, isTyping: boolean): v
     isTyping,
   };
   ctx.sendMessage(req);
+}
+
+/**
+ * Announce the away state (`/afk`, composition state 2). Fire-and-forget, like
+ * `setTypingStatus`: the gateway turns this into a void `MsgCompositionChanged` push.
+ *
+ * Clearing `isTypingInChat` is the whole "typing again clears it" mechanism: away is
+ * not "composing", so the next keystroke's `setTypingStatus(ctx, true)` is a real
+ * transition rather than a no-op the dedupe swallows — which is what clears state 2
+ * server-side.
+ */
+export function setAwayStatus(ctx: ClientHandlerContext): void {
+  const req: WsReqChatAway = {
+    type: WsMessageType.REQ_CHAT_AWAY,
+  };
+  ctx.sendMessage(req);
+  ctx.isTypingInChat = false;
 }
 
 export async function requestUserList(ctx: ClientHandlerContext): Promise<void> {

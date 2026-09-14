@@ -182,6 +182,8 @@ export interface ClientCallbacks {
   onSendChatMessage: (message: string) => void;
   onJoinChannel: (channelName: string) => void;
   onChatTypingChange: (isTyping: boolean) => void;
+  /** Announce the away state (Delphi mstAFK). */
+  onChatAway: () => void;
   onGetChannelInfo: (channelName: string) => void;
   /** Start following another player's camera (Delphi Chase). */
   onChaseUser: (userName: string) => void;
