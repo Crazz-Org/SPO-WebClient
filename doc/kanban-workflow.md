@@ -82,21 +82,27 @@ this table is the description, not the source.
 | 🔨 **Implementing** | Owned, in development | Planning returned a plan. Branch, implementation, tests. | Local checks start. |
 | 🧾 **Checks & PR** | typecheck / lint / coverage, then the pull request | Implementation done. The mechanical checks run here, and the PR opens with `Closes #N`. | Checks green and the PR open → the gate is deposited. |
 | 🧪 **Gate** | `npm run gate` deposited on the bench worker | Committed, pushed, PR open, gate queued (the PR precedes the gate — the worker only fetches a pushed sha, and `ci.yml` needs an open PR to run CI on it). | Gate PASS → Validation. Gate failure loops back to Implementing (3 attempts max, then the task parks). |
-| 🔍 **Validation** | `citation-verifier` — only when the diff touches `rdo-members.ts` — verifying each new/changed catalogue entry's citation, then `change-validator` reviewing the diff against the card's criterion and the code it landed in | Gate returned PASS. | `citation-verifier` `REJECT` → back to Implementing, same as a `change-validator` `REJECT` (own budget of 3, separate from gate attempts). `citation-verifier` `DIVERGES` does not block — it flags the entry and validation proceeds to `change-validator`. `change-validator` `PASS` / `PASS WITH FINDINGS` → Merging. `change-validator` `REJECT` → back to Implementing (own budget of 3; a corrected attempt is re-committed, re-pushed and re-gated, then parked after 3). |
+| 🔍 **Validation** | `scripts/check-rdo-citation.js` mechanically verifying each new/changed catalogue entry's citation first; `citation-verifier` — only when the diff touches `rdo-members.ts` and only on the entries the parser could not cleanly verify — adjudicating those, then `change-validator` reviewing the diff against the card's criterion and the code it landed in | Gate returned PASS. | `citation-verifier` `REJECT` → back to Implementing, same as a `change-validator` `REJECT` (own budget of 3, separate from gate attempts). `citation-verifier` `DIVERGES` does not block — it flags the entry and validation proceeds to `change-validator`. `change-validator` `PASS` / `PASS WITH FINDINGS` → Merging. `change-validator` `REJECT` → back to Implementing (own budget of 3; a corrected attempt is re-committed, re-pushed and re-gated, then parked after 3). |
 | 🔀 **Merging** | The pull request is being merged | `change-validator` returned `PASS` or `PASS WITH FINDINGS`. CI + `bench/gate` statuses already green. | Merge (issue auto-closes). |
 | ✅ **Done** | Merged, released, finished | PR merged, release published, the worktree removed. Final synthetic comment posted. | Terminal. |
 | 🅿️ **Parked** | Ownership closed on failure, exhausted budget or an unhandled case | The orchestrator parked the task with a legible reason as an issue comment. `Session` deliberately stays filled, as the trace ownership law 4 asks. | **Human only**: a `retry` comment restarts the task at intake, an `abandon` comment closes it. |
 
-**`citation-verifier` runs first in Validation, and only when the diff changed
-`src/shared/rdo-members.ts`.** It checks that every `File.pas:Line` cited for a new or changed
-catalogue entry is genuine and that the entry's kind and arity match the Pascal declaration —
-directly, or via a documented divergence under one of the two RDO rules (CLAUDE.md § *RDO —
-one catalogue, one emitter*). `REJECT` (a false citation, or an unjustified kind/arity
-mismatch) blocks the merge exactly like a `change-validator` `REJECT` — back to Implementing,
-same shared budget of 3. `DIVERGES` (citation genuine, entry correct, but a real,
-rule-justified divergence from the bare declaration) does not block: it is flagged for a human
-to confirm the intent, and validation still proceeds to `change-validator`. A diff that does
-not touch `rdo-members.ts` skips `citation-verifier` entirely.
+**A new or changed catalogue entry's citation is checked mechanically first, in Validation, and
+only when the diff changed `src/shared/rdo-members.ts`.** `scripts/check-pr-rules.js` diffs the
+file, finds which entries actually changed, and runs `scripts/check-rdo-citation.js` (a
+deterministic Pascal-declaration parser) against each one's cited `File.pas:Line`. An entry the
+parser can confirm MATCHes clears with no LLM involvement at all. `citation-verifier` is invoked
+only on the entries the parser flagged — a MISMATCH, a citation it could not find, or an entry
+its own grammar could not read — to judge whether the mismatch is a real defect or a
+documented, rule-justified divergence under one of the two RDO rules (CLAUDE.md § *RDO — one
+catalogue, one emitter*); if it is ever handed the whole diff instead of a specific flagged set
+(the fallback path), it judges every new/changed entry the way it always has. `REJECT` (a false
+citation, or an unjustified kind/arity mismatch) blocks the merge exactly like a
+`change-validator` `REJECT` — back to Implementing, same shared budget of 3. `DIVERGES`
+(citation genuine, entry correct, but a real, rule-justified divergence from the bare
+declaration) does not block: it is flagged for a human to confirm the intent, and validation
+still proceeds to `change-validator`. A diff that does not touch `rdo-members.ts` skips this
+whole check entirely.
 
 ## Fields on each card
 
