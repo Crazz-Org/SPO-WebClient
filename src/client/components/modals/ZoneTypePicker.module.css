@@ -113,3 +113,9 @@
 .label {
   flex: 1;
 }
+
+.empty {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}

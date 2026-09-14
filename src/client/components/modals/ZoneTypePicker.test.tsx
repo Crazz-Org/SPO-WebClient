@@ -80,3 +80,44 @@ describe('ZoneTypePicker — office header', () => {
     expect(screen.queryByText(/Mayor|Minister|President/)).toBeNull();
   });
 });
+
+describe('ZoneTypePicker — offered zones', () => {
+  beforeEach(() => {
+    resetStores();
+    usePoliticsStore.getState().clearRoles();
+    useGameStore.setState({ username: 'spo_test3' });
+    useUiStore.getState().openModal('zonePicker');
+  });
+
+  it('a mayor sees the seven mayor zones plus Erase, and no Reserved/Residential', () => {
+    seedRole({ isMayor: true, town: 'Helartia' });
+    renderWithProviders(<ZoneTypePicker />);
+    for (const label of [
+      'High Residential', 'Mid Residential', 'Low Residential',
+      'Industrial', 'Commercial', 'Civics', 'Offices', 'Erase',
+    ]) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+    expect(screen.queryByText('Reserved')).toBeNull();
+    expect(screen.queryByText('Residential')).toBeNull();
+  });
+
+  it('a Minister of Housing sees only High/Mid/Low Residential plus Erase', () => {
+    seedRole({ isMinister: true, ministry: 'Housing' });
+    renderWithProviders(<ZoneTypePicker />);
+    expect(screen.getByText('High Residential')).toBeTruthy();
+    expect(screen.getByText('Mid Residential')).toBeTruthy();
+    expect(screen.getByText('Low Residential')).toBeTruthy();
+    expect(screen.getByText('Erase')).toBeTruthy();
+    for (const label of ['Industrial', 'Commercial', 'Civics', 'Offices', 'Reserved', 'Residential']) {
+      expect(screen.queryByText(label)).toBeNull();
+    }
+  });
+
+  it('a role with no office renders the empty note and zero zone buttons', () => {
+    seedRole({});
+    renderWithProviders(<ZoneTypePicker />);
+    expect(screen.getByText('No zones available for this office.')).toBeTruthy();
+    expect(screen.queryAllByRole('button', { name: /./ })).toHaveLength(1); // only the close button
+  });
+});
