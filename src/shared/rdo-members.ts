@@ -161,6 +161,12 @@ export const RDO_MEMBERS = {
   PickEvent:                 { kind: 'function',  arity: 1 },                // src/server/session/login-handler.ts:547
   Post:                      { kind: 'function',  arity: 2 },                // src/server/session/mail-handler.ts:148
   RDOAcceptCloning:          { kind: 'accessor',  access: ['get', 'set'] },  // src/server/session/building-management-handler.ts:114
+  // StdBlocks/Banks.pas:46 — the arity-2 form declared on TBankBlock, the one the
+  // bank sheet emits (Voyager/BankGeneralSheet.pas:439). TTycoon publishes an
+  // unrelated 1-argument RDOAskLoan (Kernel/Kernel.pas:2522) reached only over ASP
+  // (profile-finance-handler.ts); the catalogue is name-keyed and holds the block
+  // form alone, so routing the tycoon form through rdoCall throws on arity.
+  RDOAskLoan:                { kind: 'function',  arity: 2 },                // StdBlocks/Banks.pas:46; src/server/session/building-details-handler.ts (requestBankLoan)
   RDOAutoProduce:            { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
   RDOBanMinister:            { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
   RDOCacncelTransc:          { kind: 'procedure', arity: 0 },                // src/server/session/building-property-handler.ts:194,223

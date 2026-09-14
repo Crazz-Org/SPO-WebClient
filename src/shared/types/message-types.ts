@@ -167,6 +167,8 @@ export enum WsMessageType {
   RESP_BUILDING_SET_PROPERTY = 'RESP_BUILDING_SET_PROPERTY',
   REQ_BUILDING_SERVICE_FIGURES = 'REQ_BUILDING_SERVICE_FIGURES',
   RESP_BUILDING_SERVICE_FIGURES = 'RESP_BUILDING_SERVICE_FIGURES',
+  REQ_BUILDING_LOAN_REQUEST = 'REQ_BUILDING_LOAN_REQUEST',
+  RESP_BUILDING_LOAN_REQUEST = 'RESP_BUILDING_LOAN_REQUEST',
   REQ_BUILDING_WORKER_COUNTS = 'REQ_BUILDING_WORKER_COUNTS',
   RESP_BUILDING_WORKER_COUNTS = 'RESP_BUILDING_WORKER_COUNTS',
 
@@ -947,6 +949,33 @@ export interface WsRespBuildingServiceFigures extends WsMessage {
   serviceIndex: number;
   supply: string;
   demand: string;
+}
+
+/**
+ * Ask this bank block for a loan — `RDOAskLoan(proxyId, amount)`
+ * (StdBlocks/Banks.pas:46), the Request button of Voyager's borrow box
+ * (BankGeneralSheet.pas:434-439).
+ */
+export interface WsReqBuildingLoanRequest extends WsMessage {
+  type: WsMessageType.REQ_BUILDING_LOAN_REQUEST;
+  x: number;
+  y: number;
+  /** Raw text the player typed. Sanitised gateway-side, never client-side. */
+  amount: string;
+}
+
+/**
+ * The raw TBankRequestResult ordinal; -1 when no frame could be sent at all.
+ *
+ * The ordinal travels undecided on purpose: `bankLoanOutcomeOf`
+ * (shared/building-details/bank-loan.ts) stays the single place the four answers
+ * are distinguished.
+ */
+export interface WsRespBuildingLoanRequest extends WsMessage {
+  type: WsMessageType.RESP_BUILDING_LOAN_REQUEST;
+  x: number;
+  y: number;
+  result: number;
 }
 
 /** Lightweight property refresh — reuses existing Delphi temp object. */

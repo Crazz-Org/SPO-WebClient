@@ -36,6 +36,7 @@ import { WorkforceTable } from './WorkforceTable';
 import { UpgradeActions, RepairControl, TradeConnectButtons, ActionButton, CloneSettings, WarehouseWares, FilmLaunchForm } from './PropertyActions';
 import { TradeModeControl, TradeLevelControl } from './TradeControls';
 import { EpitaphEditor, CancelTranscendence } from './MausoleumControls';
+import { BankLoanRequest } from './BankLoanRequest';
 import styles from './PropertyGroup.module.css';
 
 // Re-export utility functions for backward compatibility (tests import from here)
@@ -352,6 +353,25 @@ function DefinedProperties({
         <ResearchPanel key="research" buildingX={buildingX} buildingY={buildingY} />,
       );
       rendered.add(def.rdoName);
+      continue;
+    }
+
+    // The legacy inversion (BankGeneralSheet.pas:156,:160): the borrow box and
+    // Request button are offered to a VISITOR and absent in your own bank, the
+    // exact opposite polarity of every other control on this sheet (:154-159).
+    // `rendered.add` runs BEFORE the gate so the unmatched-property fallback
+    // never prints a raw `_loanRequest` row in the owner's own bank.
+    if (def.type === PropertyType.LOAN_REQUEST) {
+      rendered.add(def.rdoName);
+      if (canEdit) continue;
+      elements.push(
+        <BankLoanRequest
+          key="bankLoan"
+          buildingX={buildingX}
+          buildingY={buildingY}
+          estimatedLoan={valueMap.get('EstLoan') ?? ''}
+        />,
+      );
       continue;
     }
 

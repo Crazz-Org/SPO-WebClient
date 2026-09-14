@@ -73,6 +73,18 @@ export enum PropertyType {
    * Archaeology: WHGeneralSheet.pas clbNames checklist
    */
   WARE_CHECKLIST = 'WARE_CHECKLIST',
+  /**
+   * Bank borrow box: an amount field plus a Request button, answering with one
+   * of the four TBankRequestResult verdicts inline.
+   *
+   * Offered to a VISITOR and absent in your own bank — the legacy inversion,
+   * `fbRequest.Enabled := not fOwnsFacility` and `eBorrow.Enabled := not
+   * fOwnsFacility` (Voyager/BankGeneralSheet.pas:156,:160), against the
+   * `:= fOwnsFacility` polarity of every other control on that sheet (:154-159).
+   * Sends: C sel <CurrBlock> call RDOAskLoan "^" #<proxyId> %<amount>
+   * Archaeology: StdBlocks/Banks.pas:46 — function, arity 2.
+   */
+  LOAN_REQUEST = 'LOAN_REQUEST',
 }
 
 /**

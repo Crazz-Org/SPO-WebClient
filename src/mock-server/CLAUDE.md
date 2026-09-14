@@ -28,7 +28,23 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `world-event`, `show-notification`, `chat-flags`, `create-channel`, `refresh-season`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `world-event`, `show-notification`, `chat-flags`, `create-channel`, `refresh-season`, `bank-loan-request`.
+
+`bank-loan-request` is the Request button of a bank's borrow box — one exchange,
+`RDOAskLoan(proxyId, amount)` on the bank block
+(`StdBlocks/Banks.pas:46`, emitted at `Voyager/BankGeneralSheet.pas:434-439`).
+`createBankLoanRequestScenario(vars, { result })` picks which `TBankRequestResult` ordinal the
+block answers, so the same fixture covers approved (`0`), rejected (`1`), not-enough-funds (`2`)
+and the client-local error sentinel (`3`).
+
+It exists for two traps. First the **name collision**: `TTycoon` publishes an unrelated
+1-argument `RDOAskLoan` (`Kernel/Kernel.pas:2522`) reached only over ASP, answering Protocol
+codes rather than ordinals — a 1-argument frame sent at the block would reach a member that is
+not on it. Second the **pointer cast**: the first argument is the InitClient proxy id
+(`Voyager/URLHandlers/ServerCnxHandler.pas:514-516`), which the server casts straight to a
+pointer, `TMoneyDealer(ClientId)` (`Banks.pas:165`) — the persistent `TTycoon.Id` would
+dereference nothing, with no error to show for it. Both the arity and that argument are pinned
+in the exchange.
 
 `world-login` is the world socket during `loginWorld` — RDO only; the company list is the
 `company-list` scenario's own RDO half, described below. It exists for its second exchange: the

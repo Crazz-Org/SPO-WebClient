@@ -17,6 +17,8 @@ import {
   WsRespBuildingGateConnections,
   WsReqBuildingServiceFigures,
   WsRespBuildingServiceFigures,
+  WsReqBuildingLoanRequest,
+  WsRespBuildingLoanRequest,
   WsReqBuildingRefreshProperties,
   WsRespBuildingRefreshProperties,
   WsReqBuildingSetProperty,
@@ -336,6 +338,42 @@ export async function requestServiceFigures(
   } catch (err: unknown) {
     ClientBridge.log('Error', `Failed to read service ${serviceIndex} figures at (${x},${y}): ${toErrorMessage(err)}`);
     return null;
+  }
+}
+
+// ── Bank loan request ───────────────────────────────────────────────────────
+
+/**
+ * Ask a bank for a loan and answer the raw TBankRequestResult ordinal.
+ *
+ * `-1` on any failure is Voyager's own `except Answ := brqError` branch
+ * (Voyager/BankGeneralSheet.pas:443-444) — the verdict is decided by
+ * `bankLoanOutcomeOf`, which folds every value outside 0..2 onto `error`.
+ * The answer is returned rather than written to a store: the verdict lives in
+ * the borrow box's own state and disappears with the tab, exactly as
+ * `LoanResult.Visible` did (:468).
+ */
+export async function requestBankLoan(
+  ctx: ClientHandlerContext,
+  x: number,
+  y: number,
+  amount: string,
+): Promise<number> {
+  if (useGameStore.getState().status !== 'connected') return -1;
+
+  try {
+    const req: WsReqBuildingLoanRequest = {
+      type: WsMessageType.REQ_BUILDING_LOAN_REQUEST,
+      x,
+      y,
+      amount,
+    };
+
+    const response = await ctx.sendRequest(req) as WsRespBuildingLoanRequest;
+    return response.result;
+  } catch (err: unknown) {
+    ClientBridge.log('Error', `Bank loan request at (${x},${y}) failed: ${toErrorMessage(err)}`);
+    return -1;
   }
 }
 
