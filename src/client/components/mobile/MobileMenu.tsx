@@ -3,18 +3,19 @@
  *
  * Grouped menu covering ALL desktop features not available via bottom tabs:
  * Communication (Mail), Exploration (Search, Command palette, Profile, My facilities, Government),
- * Map Controls (Zoom, Rotate, Overlays, Refresh), System (Settings, Server Switch, Debug).
+ * Map Controls (Zoom, Rotate, Overlays, Refresh), System (Settings, Server Switch, Debug, Logout).
  */
 
 import {
   Mail, Search, Landmark,
   ZoomIn, ZoomOut, Layers, RefreshCw, RotateCw,
-  Settings, Globe, Bug, Command, User, Heart,
+  Settings, Globe, Bug, Command, User, Heart, LogOut,
 } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useMailStore } from '../../store/mail-store';
 import { useClient } from '../../context';
 import { Badge } from '../common';
+import { confirmLogout } from '../modals/logout-confirm';
 import styles from './MobileMenu.module.css';
 
 interface MenuGroup {
@@ -84,6 +85,7 @@ export function MobileMenu() {
         { label: 'Settings', icon: Settings, action: () => doAction(() => openModal('settings')) },
         { label: 'Switch Server', icon: Globe, action: () => doAction(() => client.onSwitchServer()) },
         { label: 'Debug Overlay', icon: Bug, action: () => doAction(() => client.onToggleDebugOverlay()) },
+        { label: 'Logout', icon: LogOut, action: () => doAction(() => confirmLogout(() => client.onLogout())) },
       ],
     },
   ];

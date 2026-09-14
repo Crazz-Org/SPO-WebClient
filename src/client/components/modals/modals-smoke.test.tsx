@@ -129,6 +129,38 @@ describe('SettingsDialog', () => {
       expect.objectContaining({ soundVolume: 0.2, musicVolume: 0.5 }),
     );
   });
+
+  it('pressing Logout asks first — onLogout does not fire until the confirm callback runs', () => {
+    useUiStore.getState().openModal('settings');
+    const onLogout = jest.fn();
+    renderWithProviders(<SettingsDialog />, {
+      clientCallbacks: createSpiedCallbacks({ onLogout }),
+    });
+
+    fireEvent.click(screen.getByText('Logout'));
+
+    expect(onLogout).not.toHaveBeenCalled();
+    expect(useUiStore.getState().modal).toBe('confirm');
+    const payload = useUiStore.getState().confirmPayload;
+    expect(payload).toBeTruthy();
+
+    payload?.onConfirm();
+    expect(onLogout).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancelling the logout confirmation leaves the session untouched', () => {
+    useUiStore.getState().openModal('settings');
+    const onLogout = jest.fn();
+    renderWithProviders(<SettingsDialog />, {
+      clientCallbacks: createSpiedCallbacks({ onLogout }),
+    });
+
+    fireEvent.click(screen.getByText('Logout'));
+    useUiStore.getState().closeModal();
+
+    expect(onLogout).not.toHaveBeenCalled();
+    expect(useUiStore.getState().confirmPayload).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

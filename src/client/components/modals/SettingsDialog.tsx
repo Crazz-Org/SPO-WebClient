@@ -12,6 +12,7 @@ import { useClient } from '../../context';
 import { showToast } from '../common/Toast';
 import { Switch } from '../common';
 import { SHORTCUTS } from '../../hooks/useKeyboardShortcuts';
+import { confirmLogout } from './logout-confirm';
 import styles from './SettingsDialog.module.css';
 
 export function SettingsDialog() {
@@ -66,10 +67,7 @@ export function SettingsDialog() {
 
   if (modal !== 'settings') return null;
 
-  const handleLogout = () => {
-    closeModal();
-    client.onLogout();
-  };
+  const handleLogout = () => confirmLogout(() => client.onLogout());
 
   return (
     <>
