@@ -16,6 +16,8 @@ jest.mock('@/client/bridge/client-bridge', () => ({
     log: jest.fn(),
     addChatChannel: jest.fn(),
     removeChatChannel: jest.fn(),
+    setCurrentChannel: jest.fn(),
+    addChatMessage: jest.fn(),
   },
 }));
 
@@ -24,6 +26,7 @@ import { WsMessageType } from '@/shared/types';
 import type { WsEventChannelListChange } from '@/shared/types';
 import { dispatchEvent } from './event-handler';
 import { ClientBridge } from '@/client/bridge/client-bridge';
+import { useChatStore } from '@/client/store/chat-store';
 import type { ClientHandlerContext } from './client-context';
 
 const ctx = {} as unknown as ClientHandlerContext;
@@ -52,5 +55,42 @@ describe('EVENT_CHANNEL_LIST_CHANGE', () => {
 
     expect(ClientBridge.removeChatChannel).toHaveBeenCalledWith('Podan Merchants');
     expect(ClientBridge.addChatChannel).not.toHaveBeenCalled();
+  });
+
+  it('never removes Lobby on an exclusion, whatever the case', () => {
+    dispatchEvent(ctx, event(1, 'Lobby'));
+    dispatchEvent(ctx, event(1, 'lobby'));
+    dispatchEvent(ctx, event(1, 'LOBBY'));
+
+    expect(ClientBridge.removeChatChannel).not.toHaveBeenCalled();
+  });
+
+  it('never removes on an exclusion with an empty name', () => {
+    dispatchEvent(ctx, event(1, ''));
+
+    expect(ClientBridge.removeChatChannel).not.toHaveBeenCalled();
+  });
+
+  it('excludes a channel that is not the current one without touching the current channel', () => {
+    useChatStore.setState({ currentChannel: 'Lobby' });
+
+    dispatchEvent(ctx, event(1, 'Traders'));
+
+    expect(ClientBridge.removeChatChannel).toHaveBeenCalledWith('Traders');
+    expect(ClientBridge.setCurrentChannel).not.toHaveBeenCalled();
+    expect(ClientBridge.addChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('falls back to Lobby with a system message when the excluded channel is the current one', () => {
+    useChatStore.setState({ currentChannel: 'Traders' });
+
+    dispatchEvent(ctx, event(1, 'Traders'));
+
+    expect(ClientBridge.removeChatChannel).toHaveBeenCalledWith('Traders');
+    expect(ClientBridge.setCurrentChannel).toHaveBeenCalledWith('Lobby');
+    expect(ClientBridge.addChatMessage).toHaveBeenCalledWith(
+      'Lobby',
+      expect.objectContaining({ from: 'SYSTEM', isSystem: true }),
+    );
   });
 });

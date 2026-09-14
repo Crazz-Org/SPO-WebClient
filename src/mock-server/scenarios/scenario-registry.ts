@@ -41,6 +41,7 @@ import { createShowNotificationScenario } from './show-notification-scenario';
 import { createChatFlagsScenario } from './chat-flags-scenario';
 import { createChannelPasswordScenario } from './channel-password-scenario';
 import { createCreateChannelScenario } from './create-channel-scenario';
+import { createChannelListChangeScenario } from './channel-list-change-scenario';
 import { createRefreshSeasonScenario } from './refresh-season-scenario';
 import { createBankLoanRequestScenario } from './bank-loan-request-scenario';
 import { createStatusLampsScenario } from './status-lamps-scenario';
@@ -80,6 +81,7 @@ export type ScenarioName =
   | 'chat-flags'
   | 'channel-password'
   | 'create-channel'
+  | 'channel-list-change'
   | 'refresh-season'
   | 'bank-loan-request'
   | 'status-lamps';
@@ -119,6 +121,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'chat-flags',
   'channel-password',
   'create-channel',
+  'channel-list-change',
   'refresh-season',
   'bank-loan-request',
   'status-lamps',
@@ -169,6 +172,7 @@ const SCENARIO_FACTORIES: Record<
   'chat-flags': (o) => createChatFlagsScenario(o),
   'channel-password': (o) => createChannelPasswordScenario(o),
   'create-channel': (o) => createCreateChannelScenario(o),
+  'channel-list-change': (o) => createChannelListChangeScenario(o),
   'refresh-season': (o) => createRefreshSeasonScenario(o),
   'bank-loan-request': (o) => createBankLoanRequestScenario(o),
   'status-lamps': (o) => createStatusLampsScenario(o),
