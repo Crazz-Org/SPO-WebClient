@@ -4,6 +4,7 @@ import {
   type WsMessage,
   type WsReqChatGetChannelInfo,
   type WsReqChatJoinChannel,
+  type WsReqChatCreateChannel,
   type WsReqChatSendMessage,
   type WsReqChatTypingStatus,
   type WsReqChatChase,
@@ -62,6 +63,17 @@ export const handleChatJoinChannel: WsHandler = async (ctx: WsHandlerContext, ms
   sendResponse(ctx.ws, response);
 };
 
+export const handleChatCreateChannel: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  const req = msg as WsReqChatCreateChannel;
+  console.log(`[Gateway] Creating channel: ${req.channelName}`);
+  await ctx.session.createChatChannel(req.channelName, req.password);
+  const response: WsRespChatSuccess = {
+    type: WsMessageType.RESP_CHAT_SUCCESS,
+    wsRequestId: msg.wsRequestId,
+  };
+  sendResponse(ctx.ws, response);
+};
+
 export const handleChatSendMessage: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
   const req = msg as WsReqChatSendMessage;
   await ctx.session.sendChatMessage(req.message);
@@ -76,6 +88,11 @@ export const handleChatTypingStatus: WsHandler = async (ctx: WsHandlerContext, m
   const req = msg as WsReqChatTypingStatus;
   await ctx.session.setChatTypingStatus(req.isTyping);
   // No response needed for typing status
+};
+
+export const handleChatAway: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  await ctx.session.setChatAway();
+  // No response needed — mirrors handleChatTypingStatus
 };
 
 export const handleChatChase: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {

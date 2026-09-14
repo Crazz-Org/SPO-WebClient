@@ -68,7 +68,7 @@ function legacyView(stack: Surface[]): { rightPanel: RightPanelType | null; left
     leftPanel: LEFT_KINDS.has(top.kind) ? (top.kind as LeftPanelType) : null,
   };
 }
-export type ModalType = 'buildMenu' | 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'connectionPicker' | 'zonePicker' | 'supplierSearch' | 'buildingInspector' | 'newspaper' | 'changelog';
+export type ModalType = 'buildMenu' | 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'createChannel' | 'connectionPicker' | 'zonePicker' | 'supplierSearch' | 'buildingInspector' | 'newspaper' | 'changelog';
 export type MobileTab = 'map' | 'chat' | 'build' | 'more';
 
 /** The right-click map context menu — what tile it opened on, and what sits there. */
@@ -115,6 +115,9 @@ interface UiState {
 
   // Command palette
   commandPaletteOpen: boolean;
+
+  /** The HUD chrome (StatusPill + CommandBar) is shown; session-only, never persisted, so a reload always comes back visible (#613). */
+  hudVisible: boolean;
 
   // Mobile
   mobileTab: MobileTab;
@@ -186,6 +189,10 @@ interface UiState {
   closeCommandPalette: () => void;
   toggleCommandPalette: () => void;
 
+  // Actions — HUD visibility
+  setHudVisible: (v: boolean) => void;
+  toggleHudVisible: () => void;
+
   // Actions — Mobile
   setMobileTab: (tab: MobileTab) => void;
   setMobileSheetSnap: (snap: SnapPoint) => void;
@@ -222,6 +229,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   buildMenuFacilities: [],
   capitolIconUrl: '',
   commandPaletteOpen: false,
+  hudVisible: true,
   mobileTab: 'map',
   mobileSheetSnap: 'half' as SnapPoint,
   minimapFullscreen: false,
@@ -337,6 +345,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   openCommandPalette: () => set({ commandPaletteOpen: true }),
   closeCommandPalette: () => set({ commandPaletteOpen: false }),
   toggleCommandPalette: () => set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
+
+  // HUD visibility
+  setHudVisible: (v) => set({ hudVisible: v }),
+  toggleHudVisible: () => set((s) => ({ hudVisible: !s.hudVisible })),
 
   // Mobile
   setMobileTab: (tab) => set({ mobileTab: tab }),

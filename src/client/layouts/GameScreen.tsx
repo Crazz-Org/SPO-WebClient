@@ -9,6 +9,7 @@
  * - CommandBar (z-350): bottom, search / mode bar + seven tiles
  * - RightRail (z-200): map controls
  * - ChatStrip (z-150): bottom-edge persistent chat, hidden when the player closed it (#610)
+ * - StatusPill / CommandBar are hidden together while the HUD is collapsed (H, #613)
  * - Sheet (z-400): the universal surface — one stack (inspector, mail, search, politics, profile…)
  * - Modals (z-400): build menu, settings
  * - CommandPalette (z-500)
@@ -34,6 +35,7 @@ const BuildMenu = lazy(() => import('../components/modals/BuildMenu').then(m => 
 const BuildingInspectorModal = lazy(() => import('../components/modals/BuildingInspectorModal').then(m => ({ default: m.BuildingInspectorModal })));
 const ChangelogModal = lazy(() => import('../components/modals/ChangelogModal').then(m => ({ default: m.ChangelogModal })));
 const ConnectionPickerModal = lazy(() => import('../components/modals/ConnectionPickerModal').then(m => ({ default: m.ConnectionPickerModal })));
+const CreateChannelModal = lazy(() => import('../components/modals/CreateChannelModal').then(m => ({ default: m.CreateChannelModal })));
 const NewspaperModal = lazy(() => import('../components/modals/NewspaperModal').then(m => ({ default: m.NewspaperModal })));
 const SettingsDialog = lazy(() => import('../components/modals/SettingsDialog').then(m => ({ default: m.SettingsDialog })));
 const SupplierSearchModal = lazy(() => import('../components/modals/SupplierSearchModal').then(m => ({ default: m.SupplierSearchModal })));
@@ -46,6 +48,7 @@ export function GameScreen() {
   const promptPayload = useUiStore((s) => s.promptPayload);
   const closeModal = useUiStore((s) => s.closeModal);
   const chatVisible = useChatStore((s) => s.chatVisible);
+  const hudVisible = useUiStore((s) => s.hudVisible);
 
   useChangelogCheck();
   useCameraHistory();
@@ -61,8 +64,8 @@ export function GameScreen() {
       <MapContextMenu />
 
 
-      {/* StatusPill — top, the player's state in one line */}
-      <StatusPill />
+      {/* StatusPill — top, the player's state in one line; hidden while the HUD is collapsed (#613) */}
+      {hudVisible && <StatusPill />}
 
       {/* ChaseBadge — top-right, shown only while following another player's camera */}
       <ChaseBadge />
@@ -73,8 +76,8 @@ export function GameScreen() {
       {/* ContextStatusStrip — the server's sentence for the town under the camera */}
       <ContextStatusStrip />
 
-      {/* CommandBar — bottom: search / mode bar + six tiles */}
-      <CommandBar />
+      {/* CommandBar — bottom: search / mode bar + six tiles; hidden while the HUD is collapsed (#613) */}
+      {hudVisible && <CommandBar />}
 
       {/* RightRail — map controls */}
       <RightRail />
@@ -90,6 +93,7 @@ export function GameScreen() {
         <BuildingInspectorModal />
         <BuildMenu />
         <ConnectionPickerModal />
+        <CreateChannelModal />
         <SupplierSearchModal />
         <NewspaperModal />
         <SettingsDialog />

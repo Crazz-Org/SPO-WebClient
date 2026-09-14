@@ -26,7 +26,7 @@ describe('useKeyboardShortcuts', () => {
   let client: ClientCallbacks;
   beforeEach(() => {
     client = makeClient();
-    useUiStore.setState({ modal: null, commandPaletteOpen: false, minimapFullscreen: false });
+    useUiStore.setState({ modal: null, commandPaletteOpen: false, minimapFullscreen: false, hudVisible: true });
     useUiStore.getState().clearSurfaces();
     useGameStore.setState({ isVisitor: false });
     document.body.innerHTML = '';
@@ -125,6 +125,30 @@ describe('useKeyboardShortcuts', () => {
 
   it('the reference list names every handled key', () => {
     const keys = SHORTCUTS.map((s) => s.keys).join(' ');
-    for (const k of ['B', 'M', 'E', 'P', 'L', 'R', 'D', 'Ctrl+K', 'Esc']) expect(keys).toContain(k);
+    for (const k of ['B', 'M', 'E', 'P', 'L', 'R', 'D', 'H', 'Ctrl+K', 'Esc']) expect(keys).toContain(k);
+  });
+
+  it('H toggles hudVisible and is prevented', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    const ev = press('h');
+    expect(ev.defaultPrevented).toBe(true);
+    expect(useUiStore.getState().hudVisible).toBe(false);
+    press('h');
+    expect(useUiStore.getState().hudVisible).toBe(true);
+  });
+
+  it('H is inert while a modal owns the keyboard', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    useUiStore.setState({ modal: 'settings' });
+    press('h');
+    expect(useUiStore.getState().hudVisible).toBe(true);
+  });
+
+  it('H typed into a text field leaves the flag alone', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    press('h', { target: input });
+    expect(useUiStore.getState().hudVisible).toBe(true);
   });
 });

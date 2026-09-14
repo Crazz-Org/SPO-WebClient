@@ -6,16 +6,32 @@
  * z-150, centered at bottom of viewport.
  */
 
-import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react';
-import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye } from 'lucide-react';
+import { useState, useRef, useCallback, useEffect, useMemo, memo, Fragment } from 'react';
+import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye, Plus } from 'lucide-react';
 import { useChatStore } from '../../store/chat-store';
+import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
+import { useMapStore } from '../../store/map-store';
 import { useClient } from '../../context';
 import { NobilityBadge } from './NobilityBadge';
+import { roleClassKeyFor } from '../../chat-line-format';
+import { runChatCommand, splitChatCoordinates, type ChatCommandContext } from '../../chat-commands';
 import styles from './ChatStrip.module.css';
 
 /** How long a pause retracts the "typing..." notice, in ms. */
 const TYPING_IDLE_MS = 4000;
+
+/**
+ * Move the camera to a tile — the one owner for "go to a tile", used by both `/go`
+ * and a clicked coordinate, mirroring what the map context menu and the chase event
+ * already do (`MapContextMenu.tsx`, `handlers/event-handler.ts`).
+ */
+function goToCoordinate(x: number, y: number): void {
+  const source = useMapStore.getState().source;
+  if (!source) return; // no renderer yet — a click must not throw
+  source.centerOn(x, y);
+  useMapStore.getState().recordPosition(x, y); // a jump is a jump: Back / Next must see it
+}
 
 interface ChatMessageProps {
   id: string;
@@ -23,19 +39,45 @@ interface ChatMessageProps {
   text: string;
   isSystem?: boolean;
   isGM?: boolean;
+  nobilityTier?: string;
+  modifiers?: number;
 }
 
-const ChatMessage = memo(function ChatMessage({ from, text, isSystem, isGM }: ChatMessageProps) {
+const ChatMessage = memo(function ChatMessage({ from, text, isSystem, isGM, nobilityTier, modifiers }: ChatMessageProps) {
   const user = useChatStore((s) => s.users[from]);
+  // The message's own flags win; the user map is the fallback — the legacy
+  // order, where DecodeCodeMSGChat decorates from the line and never looks
+  // at the roster (ChatListHandlerViewer.pas:137-149).
+  const tier = nobilityTier ?? user?.nobilityTier;
+  const mods = modifiers ?? user?.modifiers;
+  const roleKey = roleClassKeyFor(mods);
   return (
     <div className={`${styles.message} ${isSystem ? styles.system : ''} ${isGM ? styles.gm : ''}`}>
       {!isSystem && (
         <>
-          {user && <NobilityBadge nobilityTier={user.nobilityTier} modifiers={user.modifiers} size="md" />}
+          {(tier !== undefined || mods !== undefined) && (
+            <NobilityBadge nobilityTier={tier ?? ''} modifiers={mods ?? 0} size="md" />
+          )}
           <span className={styles.sender}>{from}</span>
         </>
       )}
-      <span className={styles.text}>{text}</span>
+      <span className={[styles.text, roleKey ? styles[roleKey] : ''].filter(Boolean).join(' ')}>
+        {splitChatCoordinates(text).map((seg, i) =>
+          seg.kind === 'coord' ? (
+            <button
+              key={i}
+              type="button"
+              className={styles.coordLink}
+              onClick={() => goToCoordinate(seg.x, seg.y)}
+              title="Go to these coordinates"
+            >
+              {seg.text}
+            </button>
+          ) : (
+            <Fragment key={i}>{seg.text}</Fragment>
+          ),
+        )}
+      </span>
     </div>
   );
 });
@@ -123,13 +165,39 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
     announceTyping(text.length > 0);
   }, [announceTyping]);
 
+  // `/go` and `/afk` — routed here instead of to the server, per runChatCommand.
+  const commandContext: ChatCommandContext = useMemo(() => ({
+    moveTo: goToCoordinate,
+    endComposition: () => announceTyping(false),
+    setAway: () => {
+      // The idle timer must be cancelled: left running, it fires 4s later with
+      // onChatTypingChange(false) (state 0) and silently cancels the away state.
+      if (typingIdleTimer.current) {
+        clearTimeout(typingIdleTimer.current);
+        typingIdleTimer.current = null;
+      }
+      client.onChatAway();
+    },
+    tellPlayer: (message) => {
+      useChatStore.getState().addMessage(currentChannel, {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        from: 'SYSTEM',
+        text: message,
+        timestamp: Date.now(),
+        isSystem: true,
+        isGM: false,
+      });
+    },
+  }), [client, announceTyping, currentChannel]);
+
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text) return;
     setInput('');
+    if (runChatCommand(text, commandContext) === 'handled') return;
     announceTyping(false);
     client.onSendChatMessage(text);
-  }, [input, client, announceTyping]);
+  }, [input, client, announceTyping, commandContext]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -191,6 +259,17 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
                     {ch}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  className={styles.channelNew}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setChannelDropdownOpen(false);
+                    useUiStore.getState().openModal('createChannel');
+                  }}
+                >
+                  <Plus size={12} /> New Channel…
+                </button>
               </div>
             )}
           </div>
@@ -231,6 +310,8 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
                 text={msg.text}
                 isSystem={msg.isSystem}
                 isGM={msg.isGM}
+                nobilityTier={msg.nobilityTier}
+                modifiers={msg.modifiers}
               />
             ))}
             <div ref={messagesEndRef} />

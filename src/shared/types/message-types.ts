@@ -95,8 +95,10 @@ export enum WsMessageType {
   REQ_CHAT_GET_CHANNELS = 'REQ_CHAT_GET_CHANNELS',
   REQ_CHAT_GET_CHANNEL_INFO = 'REQ_CHAT_GET_CHANNEL_INFO',
   REQ_CHAT_JOIN_CHANNEL = 'REQ_CHAT_JOIN_CHANNEL',
+  REQ_CHAT_CREATE_CHANNEL = 'REQ_CHAT_CREATE_CHANNEL',
   REQ_CHAT_SEND_MESSAGE = 'REQ_CHAT_SEND_MESSAGE',
   REQ_CHAT_TYPING_STATUS = 'REQ_CHAT_TYPING_STATUS',
+  REQ_CHAT_AWAY = 'REQ_CHAT_AWAY',
   REQ_CHAT_CHASE = 'REQ_CHAT_CHASE',
   REQ_CHAT_STOP_CHASE = 'REQ_CHAT_STOP_CHASE',
 
@@ -471,6 +473,11 @@ export interface WsEventChatMsg extends WsMessage {
   from: string;
   message: string;
   isGM?: boolean;
+  /** Speaker's nobility tier, decoded from the AccDesc the server packed into `From`
+   *  (ComposeChatUser, Protocol.pas:482-492). Absent when `From` carried no AccDesc. */
+  nobilityTier?: string;
+  /** Speaker's AccMod_* bits (Protocol.pas:403-412). Absent for the same reason. */
+  modifiers?: number;
 }
 
 export interface WsEventTycoonUpdate extends WsMessage {
@@ -558,6 +565,13 @@ export interface WsReqChatJoinChannel extends WsMessage {
   channelName: string;
 }
 
+/** Create a named channel, optionally password-protected. Mirrors Delphi CreateChannel (InterfaceServer.pas:186). */
+export interface WsReqChatCreateChannel extends WsMessage {
+  type: WsMessageType.REQ_CHAT_CREATE_CHANNEL;
+  channelName: string;
+  password: string;
+}
+
 export interface WsReqChatSendMessage extends WsMessage {
   type: WsMessageType.REQ_CHAT_SEND_MESSAGE;
   message: string;
@@ -566,6 +580,11 @@ export interface WsReqChatSendMessage extends WsMessage {
 export interface WsReqChatTypingStatus extends WsMessage {
   type: WsMessageType.REQ_CHAT_TYPING_STATUS;
   isTyping: boolean;
+}
+
+/** Announce the away state (Delphi mstAFK, composition state 2). No payload — away is one state; clearing it goes back through REQ_CHAT_TYPING_STATUS. */
+export interface WsReqChatAway extends WsMessage {
+  type: WsMessageType.REQ_CHAT_AWAY;
 }
 
 /** Start following another player's camera. Mirrors Delphi Chase (InterfaceServer.pas:189). */

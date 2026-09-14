@@ -8,6 +8,8 @@
  *    cancels a chat line or an inline edit before it unstacks a surface;
  *  - the table is the single source of truth — Settings renders its list from SHORTCUTS.
  *
+ * H hides/shows the HUD chrome (StatusPill + CommandBar); the state is session-only (#613).
+ *
  * Keys the renderer binds itself (arrows pan, + / − zoom, 1–5 debug sub-overlays) are
  * listed here for the Settings page but not handled again (one owner per key).
  */
@@ -36,6 +38,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: 'Arrows', action: 'Pan the map', rendererOwned: true },
   { keys: '+ / −', action: 'Zoom', rendererOwned: true },
   { keys: 'D', action: 'Debug overlay' },
+  { keys: 'H', action: 'Hide / show the HUD' },
   { keys: 'Ctrl+K', action: 'Command palette' },
   { keys: 'Esc', action: 'Back / close' },
 ];
@@ -116,6 +119,10 @@ export function useKeyboardShortcuts(client: ClientCallbacks | null): void {
         case 'd':
           e.preventDefault();
           client?.onToggleDebugOverlay();
+          break;
+        case 'h':
+          e.preventDefault();
+          store.toggleHudVisible();
           break;
       }
     };
