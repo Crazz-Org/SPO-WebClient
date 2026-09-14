@@ -562,6 +562,26 @@ function parseBuildingFacilities(ctx: SessionContext, html: string): BuildingInf
     const descMatch = descRegex.exec(cellWindow(html, cellIndex, 3000));
     const description = descMatch ? descMatch[1].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
 
+    // Requirement sentence — `Build/FacilityList.asp:287-291`. The page emits a
+    // SECOND `class="description"` div, holding `CacheClass.Requires(LangId)`,
+    // ONLY inside `if not Available`; an available facility has no such div at
+    // all (`:292` is the description, in both branches). So this keys on
+    // `available === false` and never invents a requirement for a buildable
+    // card. Read from the cell WINDOW for the same reason the description is:
+    // `cellContent` stops at the inner `</tr>` of `:283`, ahead of both divs.
+    // Scoped to the text BEFORE `infoBlock_<i>` so the description can never be
+    // mistaken for the requirement when `Requires` is empty.
+    let requirement = '';
+    if (!available) {
+      const window = cellWindow(html, cellIndex, 3000);
+      const infoIdx = window.search(
+        new RegExp(`<div[^>]*\\bid\\s*=\\s*["']?infoBlock_${cellIndex}\\b`, 'i'),
+      );
+      const beforeInfo = infoIdx >= 0 ? window.substring(0, infoIdx) : window;
+      const reqMatch = /<div[^>]*class\s*=\s*["']?description["']?[^>]*>([\s\S]*?)<\/div>/i.exec(beforeInfo);
+      requirement = reqMatch ? reqMatch[1].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    }
+
     // Extract zone image src and title for residential classification
     // Try src-before-title first (standard order), then title-before-src (reversed)
     const zoneSrcFirst = /<img[^>]*src\s*=\s*["']?([^"'\s>]*zone[^"'\s>]*)["']?[^>]*title\s*=\s*["']([^"']+)["']/i.exec(cellContent);
@@ -590,6 +610,7 @@ function parseBuildingFacilities(ctx: SessionContext, html: string): BuildingInf
         iconPath: ctx.convertToProxyUrl(iconPath),
         available,
         ...(residenceClass && { residenceClass }),
+        ...(requirement && { requirement }),
       };
 
       ctx.log.debug(`[BuildConstruction] Parsed facility: ${facility.name} (${facility.facilityClass}) - $${facility.cost}, ${facility.area}m², available: ${facility.available}`);

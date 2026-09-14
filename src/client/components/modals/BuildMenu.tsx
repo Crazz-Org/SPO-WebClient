@@ -65,6 +65,10 @@ function FacilityCard({ facility, isExpanded, onToggleExpand, onSelect, cash }: 
   const hasDims = facility.xsize != null && facility.ysize != null && facility.xsize > 0 && facility.ysize > 0;
   const after = cash !== undefined ? cash - facility.cost : undefined;
   const unaffordable = after !== undefined && after < 0;
+  // Falls back to today's wording rather than an empty line when the server
+  // sent no `Requires` (Build/FacilityList.asp emits the div with whatever
+  // CacheClass.Requires holds, including nothing).
+  const lockedReason = facility.requirement || 'Not available yet';
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -82,7 +86,7 @@ function FacilityCard({ facility, isExpanded, onToggleExpand, onSelect, cash }: 
       tabIndex={facility.available ? 0 : -1}
       aria-expanded={isExpanded}
       aria-disabled={!facility.available}
-      title={!facility.available ? 'Not available yet' : undefined}
+      title={!facility.available ? lockedReason : undefined}
     >
       {/* Collapsed row: Icon + Name/Desc + Cost/Tiles */}
       <div className={styles.facilityRow}>
@@ -125,6 +129,10 @@ function FacilityCard({ facility, isExpanded, onToggleExpand, onSelect, cash }: 
           )}
         </div>
       </div>
+
+      {!facility.available && (
+        <p className={styles.lockedReason}>{lockedReason}</p>
+      )}
 
       {/* Expanded detail area */}
       {isExpanded && (

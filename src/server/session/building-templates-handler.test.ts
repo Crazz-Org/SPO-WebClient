@@ -1482,6 +1482,7 @@ describe('fetchBuildingFacilities', () => {
     expect(facility.available).toBe(false);
     expect(facility.description).toBe('Digs ore out of the ground.');
     expect(facility.description).not.toContain('Requires');
+    expect(facility.requirement).toBe('Requires tycoon level 3');
     expect(facility.cost).toBe(2500000);
     expect(facility.area).toBe(1200);
     // No `info=` on the page → no VisualClassId at all, and the class is only
@@ -1492,6 +1493,42 @@ describe('fetchBuildingFacilities', () => {
     expect(fake.log.warn).toHaveBeenCalledWith(
       expect.stringContaining('visual asset name, not the kernel class')
     );
+  });
+
+  // issue 603: an available facility has no `:287-291` div at all, so the
+  // parser must never invent a requirement for a buildable card.
+  it('carries no requirement for an available facility', async () => {
+    const html = buildFacilityListPage([{
+      name: 'Company Headquarters', icon: '/five/icons/MapPGIHQ1.gif', available: true,
+      facilityClass: 'PGIGeneralHeadquarterSTA', visualClassId: '602',
+      price: '$8,000K', size: '3600 m.',
+      desc: 'The nerve center of your business empire.',
+    }]);
+    mockFetch.mockResolvedValue(htmlResponse(html));
+    const fake = makeWebCtx();
+
+    const [facility] = await fetchBuildingFacilities(fake.ctx, 'C', 'PGI', 'K', 'KN', 'F', 0);
+
+    expect(facility.description).toBe('The nerve center of your business empire.');
+    expect(facility).not.toHaveProperty('requirement');
+  });
+
+  // issue 603: an unavailable facility whose `CacheClass.Requires` is empty
+  // still emits the `:287-291` div, just with nothing inside it — the parser
+  // stays honest and omits the key rather than setting it to ''.
+  it('carries no requirement key when an unavailable facility has an empty Requires', async () => {
+    const html = buildFacilityListPage([{
+      name: 'Ore Mine', icon: '/five/icons/MapPGIOreMineB.gif', available: false,
+      price: '$2,500K', size: '1200 m.',
+      desc: 'Digs ore out of the ground.',
+    }]);
+    mockFetch.mockResolvedValue(htmlResponse(html));
+    const fake = makeWebCtx();
+
+    const [facility] = await fetchBuildingFacilities(fake.ctx, 'C', 'PGI', 'K', 'KN', 'F', 0);
+
+    expect(facility.description).toBe('Digs ore out of the ground.');
+    expect(facility).not.toHaveProperty('requirement');
   });
 
   it('strips the WxHxL suffix an icon filename may carry', async () => {

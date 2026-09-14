@@ -291,6 +291,39 @@ describe('Build Menu — integration flow', () => {
     expect(useUiStore.getState().modal).toBeNull();
   });
 
+  it('shows the server requirement sentence under the Locked badge, falling back to today\'s wording when absent', () => {
+    const withRequirement: BuildingInfo[] = [
+      { ...mockFacilities[1], requirement: 'Requires tycoon level 3' },
+    ];
+
+    useUiStore.setState({
+      modal: 'buildMenu',
+      buildMenuCategories: mockCategories,
+    });
+
+    renderWithProviders(<BuildMenu />);
+    goToFacilitiesPhase(withRequirement);
+
+    expect(screen.getByText('Requires tycoon level 3')).toBeTruthy();
+    expect(screen.queryByText('Not available yet')).toBeNull();
+  });
+
+  it('falls back to "Not available yet" when a locked facility carries no requirement, and shows neither for an available one', () => {
+    useUiStore.setState({
+      modal: 'buildMenu',
+      buildMenuCategories: mockCategories,
+    });
+
+    renderWithProviders(<BuildMenu />);
+    goToFacilitiesPhase();
+
+    // Large Store (mockFacilities[1]) is unavailable with no `requirement`.
+    expect(screen.getByText('Not available yet')).toBeTruthy();
+    // Small Store (mockFacilities[0]) is available — no locked reason text.
+    const smallStoreCard = screen.getByText('Small Store').closest('[role="button"]');
+    expect(smallStoreCard?.textContent).not.toContain('Not available yet');
+  });
+
   it('close button dismisses modal', () => {
     useUiStore.setState({
       modal: 'buildMenu',

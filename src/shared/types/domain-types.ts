@@ -252,6 +252,8 @@ export interface BuildingInfo {
   residenceClass?: 'high' | 'middle' | 'low'; // Derived from zone requirement text
   xsize?: number;             // Width in tiles (from FacilityDimensions)
   ysize?: number;             // Height in tiles (from FacilityDimensions)
+  /** Server's own requirement sentence (`CacheClass.Requires`), only on a locked facility. */
+  requirement?: string;       // Build/FacilityList.asp:287-291 — absent when available
 }
 
 // =============================================================================
