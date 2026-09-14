@@ -36,6 +36,7 @@ import { createWorkerCountsScenario } from './worker-counts-scenario';
 import { createChaseScenario } from './chase-scenario';
 import { createDefineZoneScenario } from './define-zone-scenario';
 import { createContextStatusScenario } from './context-status-scenario';
+import { createWorldEventScenario } from './world-event-scenario';
 
 /** All recognized scenario names */
 export type ScenarioName =
@@ -66,7 +67,8 @@ export type ScenarioName =
   | 'worker-counts'
   | 'chase'
   | 'define-zone'
-  | 'context-status';
+  | 'context-status'
+  | 'world-event';
 
 /** Ordered list of all scenario names */
 export const SCENARIO_NAMES: ScenarioName[] = [
@@ -98,6 +100,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'chase',
   'define-zone',
   'context-status',
+  'world-event',
 ];
 
 /** Union result from any scenario factory */
@@ -140,6 +143,7 @@ const SCENARIO_FACTORIES: Record<
   'chase': (o) => createChaseScenario(o),
   'define-zone': (o) => createDefineZoneScenario(o),
   'context-status': (o) => createContextStatusScenario(o),
+  'world-event': (o) => createWorldEventScenario(o),
 };
 
 /**
@@ -198,7 +202,7 @@ export function loadAll(
 
   const ws: WsCaptureScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all 28 mock server scenarios',
+    description: 'Combined: all 29 mock server scenarios',
     capturedAt: '2026-02-18',
     serverInfo: { world: 'Shamba', zone: 'BETA', date: '2026-02-18' },
     exchanges: allWsExchanges,
@@ -207,7 +211,7 @@ export function loadAll(
 
   const rdo: RdoScenario = {
     name: 'all-scenarios',
-    description: 'Combined: all RDO exchanges from 28 scenarios',
+    description: 'Combined: all RDO exchanges from 29 scenarios',
     exchanges: allRdoExchanges,
     variables: rdoVariables,
   };

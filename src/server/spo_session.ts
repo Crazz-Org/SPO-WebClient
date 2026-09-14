@@ -46,7 +46,8 @@ import {
   ResearchCategoryData,
   ResearchInventionDetails,
   ClusterInfo,
-  ClusterFacilityPreview
+  ClusterFacilityPreview,
+  WorldEventLine
 } from '../shared/types';
 import { RdoFramer, RdoProtocol } from './rdo';
 import {
@@ -89,6 +90,7 @@ import * as buildingManagementHandler from './session/building-management-handle
 import * as roadHandler from './session/road-handler';
 import * as zoneSurfaceHandler from './session/zone-surface-handler';
 import * as contextStatusHandler from './session/context-status-handler';
+import * as worldEventsHandler from './session/world-events-handler';
 import * as buildingTemplatesHandler from './session/building-templates-handler';
 import * as buildingDetailsHandler from './session/building-details-handler';
 import * as buildingPropertyHandler from './session/building-property-handler';
@@ -2979,6 +2981,11 @@ private handlePush(socketName: string, packet: RdoPacket) {
   // -- CONTEXT STATUS (facade -> context-status-handler) --------------------
   public async getContextStatusText(x: number, y: number): Promise<string> {
     return contextStatusHandler.getContextStatusText(this, x, y);
+  }
+
+  // -- WORLD EVENTS (facade -> world-events-handler) -------------------------
+  public async pickWorldEvent(): Promise<WorldEventLine | null> {
+    return worldEventsHandler.pickWorldEvent(this);
   }
 
   // -- BUILDING TEMPLATES (facade -> building-templates-handler) ------------

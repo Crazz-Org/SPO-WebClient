@@ -31,6 +31,7 @@ import { HANDLER_TO_GROUP } from '@/shared/building-details/template-groups';
 import type { BuildingTemplate, PropertyGroup } from '@/shared/building-details/property-definitions';
 import { collectTemplatePropertyNamesStructured } from '@/shared/building-details/property-templates';
 import { loadScenario, loadAll, SCENARIO_NAMES } from './scenario-registry';
+import { createWorldEventScenario } from './world-event-scenario';
 
 // =============================================================================
 // Scenario 1: auth
@@ -719,8 +720,24 @@ describe('world-login scenario', () => {
   });
 });
 
+describe('world-event scenario', () => {
+  it('the event variant answers a rendered PickEvent block', () => {
+    const { rdo } = createWorldEventScenario();
+    expect(rdo.exchanges).toHaveLength(1);
+    expect(rdo.exchanges[0].matchKeys?.member).toBe('PickEvent');
+    expect(rdo.exchanges[0].response).toContain('Date=18/02/2026');
+  });
+
+  it('the { event: null } variant answers the backup / empty-queue "%"', () => {
+    const { rdo } = createWorldEventScenario(undefined, { event: null });
+    expect(rdo.exchanges).toHaveLength(1);
+    expect(rdo.exchanges[0].matchKeys?.member).toBe('PickEvent');
+    expect(rdo.exchanges[0].response).toBe('A700 res="%"');
+  });
+});
+
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 27 entries', () => {
+  it('SCENARIO_NAMES has 29 entries', () => {
     // 14, not 13: the `world-login` scenario was added with the CanJoinWorldEx
     // admission check (Interface Server/InterfaceServer.pas:441).
     // 15: `abandon-role`, issue 547.
@@ -737,7 +754,8 @@ describe('scenario registry', () => {
     // 26: `chase`, issue 591.
     // 27: `define-zone`, issue 586.
     // 28: `context-status`, issue 589.
-    expect(SCENARIO_NAMES).toHaveLength(28);
+    // 29: `world-event`, issue 612.
+    expect(SCENARIO_NAMES).toHaveLength(29);
   });
 
   it('loadScenario returns bundle for each name', () => {

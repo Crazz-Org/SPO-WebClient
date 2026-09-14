@@ -4,6 +4,7 @@
  * The canvas fills 100% of the viewport (managed by client.ts).
  * All UI is absolutely positioned overlays:
  * - StatusPill (z-350): top, player status in one line
+ * - WorldEventTicker (z-350): just above ContextStatusStrip, the newest world event (#612)
  * - ContextStatusStrip (z-350): just above CommandBar, the town sentence under the camera
  * - CommandBar (z-350): bottom, search / mode bar + seven tiles
  * - RightRail (z-200): map controls
@@ -15,7 +16,7 @@
 
 import { lazy, Suspense } from 'react';
 import { useUiStore } from '../store';
-import { StatusPill, CommandBar, ContextStatusStrip, RightRail, VersionBadge } from '../components/hud';
+import { StatusPill, CommandBar, ContextStatusStrip, WorldEventTicker, RightRail, VersionBadge } from '../components/hud';
 import { ChatStrip, ChaseBadge } from '../components/chat';
 import { useChatStore } from '../store/chat-store';
 import { StatusOverlay } from '../components/building';
@@ -65,6 +66,9 @@ export function GameScreen() {
 
       {/* ChaseBadge — top-right, shown only while following another player's camera */}
       <ChaseBadge />
+
+      {/* WorldEventTicker — the newest world event (PickEvent), #612 */}
+      <WorldEventTicker />
 
       {/* ContextStatusStrip — the server's sentence for the town under the camera */}
       <ContextStatusStrip />

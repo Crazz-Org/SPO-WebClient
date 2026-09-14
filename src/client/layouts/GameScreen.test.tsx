@@ -10,6 +10,7 @@ jest.mock('../components/hud', () => ({
   StatusPill: () => <header>PILL</header>,
   CommandBar: () => <nav>COMMANDBAR</nav>,
   ContextStatusStrip: () => <div>CONTEXTSTATUS</div>,
+  WorldEventTicker: () => <div>WORLDEVENT</div>,
   RightRail: () => <nav>RIGHTRAIL</nav>,
   VersionBadge: () => null,
 }));
