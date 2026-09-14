@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `refresh-season`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -230,6 +230,16 @@ refused", never "N tiles were painted". `createDefineZoneScenario(vars,
 the real gateway `handleDefineZone` and the real browser `zone-handler`
 end to end, and asserts an `ERROR_Unknown` reply reaches the player as an
 error notification, never a success toast.
+
+`refresh-season` is the world's season turning: a single `pushOnly: true` exchange carrying
+`RefreshSeason( Season )`, a `procedure` pushed to every client view when the season changes
+(`Interface Server/InterfaceServer.pas:3721-3737`) — there is no request of its own, only the
+push. What it pins is that the season arrives as a push and nothing else: a client that only
+read the season at login (`RESP_LOGIN_SUCCESS.worldSeason`) would follow nothing when the world's
+season turns mid-session. Its default `season: 0` (WINTER) is deliberate — the terrain renderer's
+own default is `SUMMER`, so a handler that silently did nothing cannot pass by coincidence. Its
+test drives the real push dispatcher into the real browser `dispatchEvent` and asserts
+`renderer.setSeason` is called with the pushed value.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under
