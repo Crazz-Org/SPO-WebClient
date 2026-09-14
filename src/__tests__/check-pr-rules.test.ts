@@ -306,12 +306,16 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
       '',
     ].join('\n');
 
-  // A correct citation: DoThing (Kernel/TestUnit.pas:5) is a real 2-arg function.
+  // A correct citation: DoThing (Kernel/TestUnit.pas:5) is a real 2-arg function. Entry keyed
+  // `DoThing`, matching the real declaration's own name -- production entries always do (the
+  // external audit measured 32/32 in the real catalogue), and the name check added in response
+  // to that audit would otherwise flag every fixture in this file as a name mismatch before it
+  // ever reaches the arity/kind check each test actually means to exercise.
   const GOOD_ONE =
-    "GoodOne:                   { kind: 'function',  arity: 2 },                // Kernel/TestUnit.pas:5";
-  // A wrong citation: same real declaration, arity claimed as 99.
+    "DoThing:                   { kind: 'function',  arity: 2 },                // Kernel/TestUnit.pas:5";
+  // A wrong citation: same real, correctly-named declaration, arity claimed as 99.
   const BAD_ARITY =
-    "BadArity:                  { kind: 'function',  arity: 99 },               // Kernel/TestUnit.pas:5";
+    "DoThing:                   { kind: 'function',  arity: 99 },               // Kernel/TestUnit.pas:5";
 
   beforeEach(() => {
     repo = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-rules-parser-test-'));
@@ -370,7 +374,7 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
     git('commit', '-qm', 'add BadArity');
     const { code, out } = run({ PR_BODY: '' });
     expect(code).toBe(1);
-    expect(out).toContain('BadArity');
+    expect(out).toContain('DoThing');
     expect(out).toContain('MISMATCH(arity)');
   });
 
@@ -380,7 +384,7 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
     git('commit', '-qm', 'add BadArity');
     const { code, out } = run({ PR_BODY: 'see SomeOther.pas:1 for context' });
     expect(code).toBe(0);
-    expect(out).toContain('BadArity');
+    expect(out).toContain('DoThing');
     expect(out).toContain('MISMATCH(arity)');
   });
 
@@ -502,6 +506,56 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
     const passing = run({ SPO_ORIGINAL_DIR: missingRoot, PR_BODY: 'cites Foo.pas:1 for context' });
     expect(passing.code).toBe(0);
     expect(passing.out).toContain('parser verification skipped');
+  });
+
+  // Two regressions closed by the external audit of 2026-09-14, both proven against the REAL
+  // gate (subprocess), not a reimplementation.
+
+  it('a citation pointing at a DIFFERENT real declaration than the entry claims to be fails, naming the mismatch', () => {
+    // The entry is keyed `DoThing` but cites `Kernel/TestUnit.pas:6`, which is `DoOther` --
+    // and it claims DoOther's OWN shape (`procedure`, arity 1). Kind matches, arity matches:
+    // the entry name is the only axis left that can tell these two declarations apart, so this
+    // fixture fails if and only if the name check is live in the real CI gate subprocess.
+    // (Measured against the pre-fix scripts: exit 0, "all parser-verified MATCH" -- the exact
+    // silent pass the external audit of 2026-09-14 demonstrated with Chase/CanJoinWorldEx on
+    // the real reference tree. A fixture that also varied kind or arity would go on passing
+    // pre-fix on MISMATCH(kind), pinning nothing about the name check.)
+    const WRONG_DECL =
+      "DoThing:                   { kind: 'procedure', arity: 1 },                // Kernel/TestUnit.pas:6";
+    fs.writeFileSync(path.join(repo, 'src/shared/rdo-members.ts'), withEntry(WRONG_DECL));
+    git('add', '-A');
+    git('commit', '-qm', 'cite DoOther while claiming to be DoThing');
+    const { code, out } = run({ PR_BODY: '' });
+    expect(code).toBe(1);
+    expect(out).not.toContain('all parser-verified MATCH');
+    expect(out).toContain('DoThing');
+    expect(out).toContain('MISMATCH(name)');
+    expect(out).toContain('`DoOther`');
+  });
+
+  it('a catalogue whose RDO_MEMBERS literal boundaries the scanner cannot locate never takes the fast path, even when every changed line individually looks fine', () => {
+    // Object.freeze({ ... }) -- catalogueBodyRange's opening regex requires "= {" immediately,
+    // so this line never matches it, openIdx stays -1, and body is null for the whole file.
+    // Before the fix, a null body silently stopped collecting `unrecognised` entirely (the
+    // `if (body && ...)` guard), so a GOOD_ONE-shaped entry here rode straight through on
+    // "everything I recognised matches" with nothing asked of the PR body.
+    fs.writeFileSync(
+      path.join(repo, 'src/shared/rdo-members.ts'),
+      [
+        'export const RDO_MEMBERS = Object.freeze({',
+        "  AccountStatus:             { kind: 'function',  arity: 2 },                // src/server/session/login-handler.ts:369",
+        `  ${GOOD_ONE}`,
+        "  Stale:                     { kind: 'function',  arity: 1 },                // Kernel/TestUnit.pas:5",
+        '});',
+        '',
+      ].join('\n'),
+    );
+    git('add', '-A');
+    git('commit', '-qm', 'add GoodOne under an unlocatable literal shape');
+    const { code, out } = run({ PR_BODY: '' });
+    expect(code).toBe(1);
+    expect(out).not.toContain('all parser-verified MATCH');
+    expect(out).toContain('could not locate the RDO_MEMBERS catalogue literal boundaries');
   });
 });
 

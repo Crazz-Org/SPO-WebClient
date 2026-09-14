@@ -175,6 +175,21 @@ function findChangedCatalogueEntries(base, touchedFiles) {
     }
     const headLines = headContent.split('\n');
     const body = catalogueBodyRange(headLines);
+    // `body === null` means the RDO_MEMBERS literal's own opening `= {` / closing `}` could not
+    // be located at HEAD -- e.g. a reformat that breaks catalogueBodyRange's regex. That is not
+    // "nothing to scope", it is "cannot safely scope anything": without known boundaries, every
+    // `if (body && ...)` check below silently stops collecting `unrecognised` for the WHOLE
+    // file, restoring exactly the silent-drop failure this function exists to close -- just
+    // triggered by a missing literal instead of an unparseable entry line. One clear marker
+    // (not one per line, to avoid drowning a real defect in noise) keeps the fast path refused
+    // until a human looks, the same posture an actually-unrecognised entry line gets.
+    if (!body) {
+      unrecognised.push({
+        file,
+        line: 0,
+        text: '(could not locate the RDO_MEMBERS catalogue literal boundaries in this file -- cannot safely scope changed lines)',
+      });
+    }
 
     for (const lineNo of Array.from(addedLines).sort((a, b) => a - b)) {
       const text = headLines[lineNo - 1];
@@ -329,9 +344,11 @@ function checkCitation(files, body, base) {
   }
 
   const describeUnrecognised = u =>
-    `${u.file}:${u.line}: \`${u.text}\` -- a changed line inside the catalogue that the entry ` +
-    `parser cannot read (entry spread over several lines? missing trailing comma? different ` +
-    `quoting?) -- NOT parser-verified`;
+    u.line === 0
+      ? `${u.file}: \`${u.text}\` -- NOT parser-verified`
+      : `${u.file}:${u.line}: \`${u.text}\` -- a changed line inside the catalogue that the entry ` +
+        `parser cannot read (entry spread over several lines? missing trailing comma? different ` +
+        `quoting?) -- NOT parser-verified`;
 
   if (entries === null || entries.length === 0) {
     const reason =
