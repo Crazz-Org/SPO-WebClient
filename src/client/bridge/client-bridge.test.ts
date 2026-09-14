@@ -169,6 +169,22 @@ describe('ClientBridge existing methods', () => {
     expect(useBuildingStore.getState().rememberedSection).toBeNull();
   });
 
+  it('setDisconnected clears a live chase — the chaser entry lives on the socket', () => {
+    useChatStore.setState({ chasedUser: 'Mayor of Podan' });
+
+    ClientBridge.setDisconnected();
+
+    expect(useChatStore.getState().chasedUser).toBeNull();
+  });
+
+  it('setReconnecting clears a live chase — the lost socket ends it too', () => {
+    useChatStore.setState({ chasedUser: 'Mayor of Podan' });
+
+    ClientBridge.setReconnecting();
+
+    expect(useChatStore.getState().chasedUser).toBeNull();
+  });
+
   it('setCredentials should set username', () => {
     ClientBridge.setCredentials('testUser');
     expect(useGameStore.getState().username).toBe('testUser');

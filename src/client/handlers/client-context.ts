@@ -76,6 +76,8 @@ export interface ClientHandlerContext {
   isJoiningChannel: boolean;
   /** Last typing state announced to the server — keeps the notice to transitions. */
   isTypingInChat: boolean;
+  /** Keeps the chase's own first `MoveTo` (pushed before the reply, InterfaceServer.pas:1592) from being gated out. */
+  isChasePending: boolean;
   isSelectingCompany: boolean;
 
   // ── Road Building State ──────────────────────────────────────────────────

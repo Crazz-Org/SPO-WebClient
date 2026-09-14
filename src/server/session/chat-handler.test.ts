@@ -34,6 +34,7 @@ import {
   chaseUser,
   stopChase,
   getCurrentChannel,
+  ChaseError,
 } from './chat-handler';
 import { RDO_MEMBERS } from '../../shared/rdo-members';
 import { CHANNEL_USER_LIMIT } from '../../shared/chat-channel';
@@ -43,7 +44,7 @@ import { RdoValue, RdoCommand } from '../../shared/rdo-types';
 import { RdoVerb, RdoAction } from '../../shared/types';
 import type { RdoPacket } from '../../shared/types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
-import { ERROR_InvalidPassword, ERROR_NotEnoughRoom } from '../../shared/error-codes';
+import { ERROR_InvalidPassword, ERROR_NotEnoughRoom, ERROR_InvalidUserName, ERROR_Unknown } from '../../shared/error-codes';
 
 const WORLD = FAKE_CONTEXT_IDS.worldContextId;
 
@@ -602,6 +603,38 @@ describe('chaseUser', () => {
     const fake = makeSessionCtx();
     fake.respond(() => 'res="#1"');
     await expect(chaseUser(fake.ctx, CHASED)).rejects.toThrow('Chase failed: 1');
+  });
+
+  it('resolves on the "0" success path', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+    await expect(chaseUser(fake.ctx, CHASED)).resolves.toBeUndefined();
+  });
+
+  it('rejects with a ChaseError carrying ERROR_InvalidUserName on "#12"', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#12"');
+    let caught: unknown;
+    try {
+      await chaseUser(fake.ctx, CHASED);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ChaseError);
+    expect((caught as ChaseError).code).toBe(ERROR_InvalidUserName);
+  });
+
+  it('rejects with a ChaseError carrying ERROR_Unknown on a non-numeric answer', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="not-a-number"');
+    let caught: unknown;
+    try {
+      await chaseUser(fake.ctx, CHASED);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ChaseError);
+    expect((caught as ChaseError).code).toBe(ERROR_Unknown);
   });
 
   it('refuses without a world context', async () => {

@@ -49,7 +49,7 @@ describe('chaseUser', () => {
     expect(showNotification).not.toHaveBeenCalled();
   });
 
-  it('leaves the badge down and notifies when the server refuses', async () => {
+  it('leaves the badge down and shows the fixed fallback when the rejection carries no gateway sentence', async () => {
     const { ctx, showNotification } = makeCtx(new Error('Cannot follow Mayor of Podan: unknown, offline, or already following you'));
 
     await expect(chaseUser(ctx, CHASED)).resolves.toBeUndefined();
@@ -57,6 +57,16 @@ describe('chaseUser', () => {
     expect(ClientBridge.setChasedUser).not.toHaveBeenCalled();
     expect(showNotification).toHaveBeenCalledWith(`Cannot follow ${CHASED}`, 'error');
     expect(ClientBridge.log).toHaveBeenCalledWith('Error', expect.stringContaining(CHASED));
+  });
+
+  it('shows the gateway\'s own sentence, mapped from ERROR_InvalidUserName, when the rejection carries one', async () => {
+    const err = Object.assign(new Error('raw code'), { serverMessage: 'Invalid username' });
+    const { ctx, showNotification } = makeCtx(err);
+
+    await expect(chaseUser(ctx, CHASED)).resolves.toBeUndefined();
+
+    expect(ClientBridge.setChasedUser).not.toHaveBeenCalled();
+    expect(showNotification).toHaveBeenCalledWith('Invalid username', 'error');
   });
 });
 

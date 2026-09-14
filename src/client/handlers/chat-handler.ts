@@ -246,6 +246,7 @@ export async function createChannel(
  * `fChasedUser` on NOERROR (ServerCnxHandler.pas:1873-1897).
  */
 export async function chaseUser(ctx: ClientHandlerContext, userName: string): Promise<void> {
+  ctx.isChasePending = true;
   try {
     const req: WsReqChatChase = {
       type: WsMessageType.REQ_CHAT_CHASE,
@@ -255,8 +256,14 @@ export async function chaseUser(ctx: ClientHandlerContext, userName: string): Pr
     ClientBridge.setChasedUser(userName);
     ClientBridge.log('Chat', `Now following ${userName}`);
   } catch (err: unknown) {
-    ClientBridge.log('Error', `Failed to follow ${userName}: ${toErrorMessage(err)}`);
-    ctx.showNotification(`Cannot follow ${userName}`, 'error');
+    // The gateway's sentence is the player-readable one; `message` has already
+    // been flattened to getErrorMessage(code) by client.ts:1090-1097 (INV-8).
+    const { serverMessage } = err as { serverMessage?: string };
+    const text = serverMessage || `Cannot follow ${userName}`;
+    ClientBridge.log('Error', `Failed to follow ${userName}: ${text}`);
+    ctx.showNotification(text, 'error');
+  } finally {
+    ctx.isChasePending = false;
   }
 }
 

@@ -439,10 +439,17 @@ export const ClientBridge = {
     // just ended.
     useBuildingStore.getState().clearFocus();
     useBuildingStore.getState().forgetSection();
+    // The chaser entry lives on the connection's TClientView, so the chase is
+    // over the moment the socket is; a badge surviving into the next session
+    // would name a follow that no longer exists. No StopChase is sent — there
+    // is nobody left to answer it, and a frame written into a closing socket
+    // can only hang the close.
+    useChatStore.getState().setChasedUser(null);
   },
 
   setReconnecting(): void {
     useGameStore.getState().setStatus('reconnecting');
+    useChatStore.getState().setChasedUser(null);
   },
 
   setCredentials(username: string, tycoonId?: string): void {

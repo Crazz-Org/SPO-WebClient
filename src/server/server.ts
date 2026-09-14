@@ -15,6 +15,7 @@ import { UpdateService } from './update-service';
 import { MapDataService } from './map-data-service';
 import { serviceRegistry, setupGracefulShutdown } from './service-registry';
 import { CacheWatcher } from './cache-watcher';
+import { pushCapitolCoords } from './capitol-coords';
 import {
   WsMessageType,
   SessionPhase,
@@ -24,7 +25,6 @@ import {
   type WsReqSelectCompany,
   type WsReqSwitchCompany,
   type WsRespError,
-  type WsRespCapitolCoords,
 } from '../shared/types';
 import { toErrorMessage } from '../shared/error-utils';
 import { wsHandlerRegistry } from './ws-handlers';
@@ -1084,22 +1084,9 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
               );
               logger.info(`SearchMenuService initialized with DAAddr: ${daAddr}:${daPort}`);
 
-              // Fetch Capitol coordinates from DirectoryMain.asp and push to client
-              searchMenuService.getHomePage().then(categories => {
-                const capitol = categories.find(c => c.label === 'Capitol' && c.enabled && c.x != null && c.y != null);
-                const coords = capitol ? { x: capitol.x!, y: capitol.y! } : null;
-                spSession.setCapitolCoords(coords);
-                const resp: WsRespCapitolCoords = {
-                  type: WsMessageType.RESP_CAPITOL_COORDS,
-                  x: coords?.x ?? 0,
-                  y: coords?.y ?? 0,
-                  hasCapitol: coords !== null,
-                };
-                ws.send(JSON.stringify(resp));
-                logger.debug(`Capitol coords: ${coords ? `${coords.x},${coords.y}` : 'none'}`);
-              }).catch((err: unknown) => {
-                logger.error(`Failed to fetch Capitol coords: ${toErrorMessage(err)}`);
-              });
+              // Fetch Capitol coordinates from DirectoryMain.asp and push to client.
+              // Answers even on a rejection — see capitol-coords.ts.
+              void pushCapitolCoords(searchMenuService, ws, spSession);
             } else {
               logger.error('Failed to initialize SearchMenuService: DAAddr or DAPort not available');
             }

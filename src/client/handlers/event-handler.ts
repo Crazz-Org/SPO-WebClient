@@ -135,6 +135,11 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     // A server-driven jump is a jump like any other, so Back / Next must see it.
     case WsMessageType.EVENT_MOVE_TO: {
       const moveTo = msg as WsEventMoveTo;
+      // MoveTo has exactly two producers on the server (InterfaceServer.pas:714,
+      // :1592): the chaser fan-out and the accepted Chase's own immediate
+      // centring. A MoveTo that arrives while we follow nobody is a frame the
+      // server wrote before our StopChase got there, and must not move the camera.
+      if (!useChatStore.getState().chasedUser && !ctx.isChasePending) break;
       if (Number.isFinite(moveTo.x) && Number.isFinite(moveTo.y)) {
         ClientBridge.log('Map', `Following camera to (${moveTo.x}, ${moveTo.y})`);
         ctx.getRenderer()?.centerOn(moveTo.x, moveTo.y);
