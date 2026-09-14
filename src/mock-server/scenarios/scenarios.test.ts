@@ -31,6 +31,7 @@ import { HANDLER_TO_GROUP } from '@/shared/building-details/template-groups';
 import type { BuildingTemplate, PropertyGroup } from '@/shared/building-details/property-definitions';
 import { collectTemplatePropertyNamesStructured } from '@/shared/building-details/property-templates';
 import { loadScenario, loadAll, SCENARIO_NAMES } from './scenario-registry';
+import { createWorldEventScenario } from './world-event-scenario';
 
 // =============================================================================
 // Scenario 1: auth
@@ -139,12 +140,43 @@ describe('world-list scenario', () => {
 // =============================================================================
 
 describe('company-list scenario', () => {
-  it('creates scenario with HTTP and WS', () => {
-    const { ws, http } = createCompanyListScenario();
+  it('creates scenario with HTTP, WS and RDO', () => {
+    const { ws, rdo, http } = createCompanyListScenario();
     expect(ws).toBeDefined();
+    expect(rdo).toBeDefined();
     expect(http).toBeDefined();
     expect(ws.name).toBe('company-list');
+    expect(rdo.name).toBe('company-list');
     expect(http.name).toBe('company-list');
+  });
+
+  it('RDO is the five per-index getters, each asked with an integer index', () => {
+    const { rdo } = createCompanyListScenario();
+    // chooseCompany.asp:166-170, in the page's own order.
+    expect(rdo.exchanges.map(e => e.matchKeys?.member)).toEqual([
+      'GetCompanyOwnerRole',
+      'GetCompanyName',
+      'GetCompanyId',
+      'GetCompanyCluster',
+      'GetCompanyFacilityCount',
+    ]);
+    // `"%0"` would reach a different overload's register file — the index is an integer.
+    for (const exchange of rdo.exchanges) {
+      expect(exchange.matchKeys?.argsPattern).toEqual(['"#0"']);
+      expect(exchange.matchKeys?.action).toBe('call');
+      expect(exchange.request).toContain('"^" "#0"');
+    }
+  });
+
+  it('RDO answers reproduce the captured company', () => {
+    const { rdo } = createCompanyListScenario();
+    const answerOf = (member: string) =>
+      rdo.exchanges.find(e => e.matchKeys?.member === member)?.response;
+    expect(answerOf('GetCompanyOwnerRole')).toContain(`res="%${CAPTURED_COMPANY.ownerRole}"`);
+    expect(answerOf('GetCompanyName')).toContain(`res="%${CAPTURED_COMPANY.name}"`);
+    expect(answerOf('GetCompanyId')).toContain(`res="#${CAPTURED_COMPANY.id}"`);
+    expect(answerOf('GetCompanyCluster')).toContain(`res="%${CAPTURED_COMPANY.cluster}"`);
+    expect(answerOf('GetCompanyFacilityCount')).toContain(`res="#${CAPTURED_COMPANY.facilityCount}"`);
   });
 
   it('CAPTURED_COMPANY has correct name/id/ownerRole', () => {
@@ -719,8 +751,24 @@ describe('world-login scenario', () => {
   });
 });
 
+describe('world-event scenario', () => {
+  it('the event variant answers a rendered PickEvent block', () => {
+    const { rdo } = createWorldEventScenario();
+    expect(rdo.exchanges).toHaveLength(1);
+    expect(rdo.exchanges[0].matchKeys?.member).toBe('PickEvent');
+    expect(rdo.exchanges[0].response).toContain('Date=18/02/2026');
+  });
+
+  it('the { event: null } variant answers the backup / empty-queue "%"', () => {
+    const { rdo } = createWorldEventScenario(undefined, { event: null });
+    expect(rdo.exchanges).toHaveLength(1);
+    expect(rdo.exchanges[0].matchKeys?.member).toBe('PickEvent');
+    expect(rdo.exchanges[0].response).toBe('A700 res="%"');
+  });
+});
+
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 31 entries', () => {
+  it('SCENARIO_NAMES has 32 entries', () => {
     // 14, not 13: the `world-login` scenario was added with the CanJoinWorldEx
     // admission check (Interface Server/InterfaceServer.pas:441).
     // 15: `abandon-role`, issue 547.
@@ -737,10 +785,11 @@ describe('scenario registry', () => {
     // 26: `chase`, issue 591.
     // 27: `define-zone`, issue 586.
     // 28: `context-status`, issue 589.
-    // 29: `show-notification`, issue 614.
-    // 30: chat-flags, issue 616.
-    // 31: create-channel, issue 619.
-    expect(SCENARIO_NAMES).toHaveLength(31);
+    // 29: `world-event`, issue 612.
+    // 30: `show-notification`, issue 614.
+    // 31: chat-flags, issue 616.
+    // 32: create-channel, issue 619.
+    expect(SCENARIO_NAMES).toHaveLength(32);
   });
 
   it('loadScenario returns bundle for each name', () => {

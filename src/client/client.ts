@@ -44,6 +44,7 @@ import * as roadHandler from './handlers/road-handler';
 import * as favoritesHandler from './handlers/favorites-handler';
 import * as zoneHandler from './handlers/zone-handler';
 import * as contextStatusHandler from './handlers/context-status-handler';
+import * as worldEventHandler from './handlers/world-event-handler';
 import * as buildMenuHandler from './handlers/build-menu-handler';
 import * as mapHandler from './handlers/map-handler';
 import { getReconnectDelay, isMaxAttempts, isSlowPhase, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
@@ -289,6 +290,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       onZoomOut: () => this.mapNavigationUI?.getRenderer()?.zoomOut(),
       onToggleMinimap: () => { this.minimapUI?.toggle(); },
       onRequestContextStatus: (x, y) => contextStatusHandler.requestContextStatusText(this, x, y),
+      onRequestWorldEvent: () => worldEventHandler.requestWorldEvent(this),
       onToggleDebugOverlay: () => {
         const renderer = this.mapNavigationUI?.getRenderer();
         if (renderer) renderer.toggleDebugMode();

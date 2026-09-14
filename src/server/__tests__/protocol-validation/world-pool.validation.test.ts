@@ -124,7 +124,7 @@ describe('Protocol Validation: world connection pool', () => {
         { rdoScenarios: [authBundle.rdo] },
         { rdoScenarios: [worldListBundle.rdo] },
         {
-          rdoScenarios: [createWorldLoginRdoScenario()],
+          rdoScenarios: [createWorldLoginRdoScenario(), companyBundle.rdo],
           fallbackResponses: worldFallbacks,
           pushTriggers: buildLoginPushTriggers(CONTEXT_ID),
         },
@@ -134,9 +134,14 @@ describe('Protocol Validation: world connection pool', () => {
     });
   }
 
-  /** Pool connections answer ordinary reads; they must never see login frames. */
+  /**
+   * Pool connections answer ordinary reads; they must never see login frames.
+   * The five company getters are ordinary reads and the pool is live by the time
+   * step 10 runs, so they are answered here as well as on the primary socket —
+   * exactly as `GetCompanyCount` already is, through `worldFallbacks`.
+   */
   const poolSocketConfig = {
-    rdoScenarios: [],
+    rdoScenarios: [companyBundle.rdo],
     fallbackResponses: worldFallbacks,
     disableStrictValidation: true,
   };

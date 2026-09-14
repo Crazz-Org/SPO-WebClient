@@ -7,6 +7,9 @@
  * source — we must extract and reuse them rather than reconstructing.
  *
  * Follows the same regex-based parsing pattern as mail-list-parser.ts.
+ *
+ * Also reads a map tile coordinate off a URL of this class (`extractMapCoords`)
+ * — the `x`/`y` a world event's URL carries (`ToolbarHandlerViewer.pas:259-262`).
  */
 
 /** A single action URL extracted from ASP HTML */
@@ -294,6 +297,27 @@ export function extractScriptNavigateUrls(html: string, baseUrl: string): AspAct
   }
 
   return results;
+}
+
+/**
+ * Read a map tile coordinate off an event URL's query string.
+ *
+ * Voyager's ticker read `GetParmValue(fURL,'x')` / `'y'` off the raw URL
+ * (`ToolbarHandlerViewer.pas:259-262`, `Voyager/URLParser.pas:49`) before it
+ * expanded the URL to absolute — so this must work on a relative href too,
+ * which rules out `new URL()`. Returns `null` for anything that does not
+ * carry both as non-negative integers. Never throws.
+ */
+export function extractMapCoords(url: string): { x: number; y: number } | null {
+  const queryIndex = url.indexOf('?');
+  if (queryIndex === -1) return null;
+
+  const params = new URLSearchParams(url.slice(queryIndex + 1));
+  const x = params.get('x');
+  const y = params.get('y');
+  if (!x || !y || !/^\d+$/.test(x) || !/^\d+$/.test(y)) return null;
+
+  return { x: Number(x), y: Number(y) };
 }
 
 /**

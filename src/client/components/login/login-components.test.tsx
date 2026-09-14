@@ -202,6 +202,65 @@ describe('CompanyStage', () => {
     expect(screen.getByText('Create New Company')).toBeTruthy();
   });
 
+  // ── The card as inspector: seal, cluster, facility count, Private marker ──
+  //    (chooseCompany.asp:186, :193-197, :198)
+
+  const inspectable: CompanyInfo[] = [
+    {
+      id: '28',
+      name: 'Yellow Inc.',
+      ownerRole: 'SPO_test3',
+      status: 'Private',
+      cluster: 'PGI',
+      facilityCount: 38,
+      sealUrl: '/proxy-image?url=seal',
+    },
+  ];
+
+  it('shows the seal, the cluster and the facility count without anything being clicked', () => {
+    const { container } = renderWithProviders(
+      <CompanyStage {...defaultProps} companies={inspectable} />,
+    );
+    const seal = container.querySelector('img');
+    expect(seal?.getAttribute('src')).toBe('/proxy-image?url=seal');
+    // Decorative: the cluster is named in text right beside it.
+    expect(seal?.getAttribute('alt')).toBe('');
+    expect(seal?.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getByText('PGI')).toBeTruthy();
+    expect(screen.getByText('38 Facilities')).toBeTruthy();
+  });
+
+  it('shows "Private" instead of a role badge when the owner role is the account', () => {
+    renderWithProviders(<CompanyStage {...defaultProps} companies={inspectable} />);
+    expect(screen.getByText('Private')).toBeTruthy();
+    expect(screen.queryByText('SPO_test3')).toBeNull();
+  });
+
+  it('shows the role name when the company is held through a role', () => {
+    renderWithProviders(
+      <CompanyStage
+        {...defaultProps}
+        companies={[{
+          id: '56', name: 'Mayor of Kalisz', ownerRole: 'Mayor of Kalisz',
+          status: 'Mayor of Kalisz', cluster: 'Housing', facilityCount: 3,
+        }]}
+      />,
+    );
+    expect(screen.getByText('Political Offices')).toBeTruthy();
+    expect(screen.getByText('Mayor of Kalisz', { selector: 'span' })).toBeTruthy();
+    expect(screen.getByText('Housing')).toBeTruthy();
+    expect(screen.getByText('3 Facilities')).toBeTruthy();
+  });
+
+  it('renders a company carrying only the old four fields exactly as before', () => {
+    const { container } = renderWithProviders(<CompanyStage {...defaultProps} />);
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.getByText('Owner')).toBeTruthy();
+    expect(screen.getByText('President of Shamba')).toBeTruthy();
+    expect(screen.getByText('$500,000')).toBeTruthy();
+    expect(screen.queryByText(/Facilities/)).toBeNull();
+  });
+
   it('calls onCreate when the create card is clicked', () => {
     const onCreate = jest.fn();
     renderWithProviders(<CompanyStage {...defaultProps} onCreate={onCreate} />);
