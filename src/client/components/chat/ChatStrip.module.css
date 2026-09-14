@@ -315,6 +315,25 @@
   word-break: break-word;
 }
 
+.coordLink {
+  font: inherit;
+  color: var(--accent-gold);
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.coordLink:hover {
+  color: var(--text-primary);
+}
+
+.coordLink:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
 .roleGameMaster { color: var(--error); }
 .roleDeveloper  { color: var(--info); }
 .roleSupport    { color: var(--success); }

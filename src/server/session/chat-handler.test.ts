@@ -28,6 +28,7 @@ import {
   joinChatChannel,
   sendChatMessage,
   setChatTypingStatus,
+  setChatAwayStatus,
   chaseUser,
   stopChase,
   getCurrentChannel,
@@ -364,6 +365,31 @@ describe('setChatTypingStatus', () => {
     const fake = makeSessionCtx({ worldContextId: null, sockets: ['world'] });
     await expect(setChatTypingStatus(fake.ctx, true)).rejects.toThrow('Not logged into world');
     expect(fake.frames.world).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// setChatAwayStatus — fire-and-forget MsgCompositionChanged #2 (`/afk`)
+// ===========================================================================
+
+describe('setChatAwayStatus', () => {
+  it('writes MsgCompositionChanged "*" #2 on the world socket, no QueryId', async () => {
+    const fake = makeSessionCtx({ sockets: ['world'] });
+
+    await setChatAwayStatus(fake.ctx);
+
+    expect(fake.sent).toHaveLength(0);
+    expect(fake.frames.world).toEqual([
+      RdoCommand.sel(WORLD).call('MsgCompositionChanged').push().args(RdoValue.int(2)).build(),
+    ]);
+    expect(fake.frames.world[0]).toMatchRdoCallFormat('MsgCompositionChanged');
+  });
+
+  it('writes nothing when the world socket is absent', async () => {
+    const fake = makeSessionCtx();
+    await expect(setChatAwayStatus(fake.ctx)).resolves.toBeUndefined();
+    expect(fake.ctx.getSocket).toHaveBeenCalledWith('world');
+    expect(fake.sent).toHaveLength(0);
   });
 });
 

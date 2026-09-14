@@ -2651,6 +2651,10 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return chatHandler.setChatTypingStatus(this, isTyping);
   }
 
+  public async setChatAway(): Promise<void> {
+    return chatHandler.setChatAwayStatus(this);
+  }
+
   public async chaseUser(userName: string): Promise<void> {
     return chatHandler.chaseUser(this, userName);
   }

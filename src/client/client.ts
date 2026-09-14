@@ -308,6 +308,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       onSendChatMessage: (message: string) => chatHandler.sendChatMessage(this, message),
       onJoinChannel: (channelName: string) => chatHandler.joinChannel(this, channelName),
       onChatTypingChange: (isTyping: boolean) => chatHandler.setTypingStatus(this, isTyping),
+      onChatAway: () => chatHandler.setAwayStatus(this),
       onGetChannelInfo: (channelName: string) => chatHandler.requestChannelInfo(this, channelName),
       onChaseUser: (userName: string) => chatHandler.chaseUser(this, userName),
       onStopChase: () => chatHandler.stopChase(this),

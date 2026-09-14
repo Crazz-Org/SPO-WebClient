@@ -78,6 +78,11 @@ export const handleChatTypingStatus: WsHandler = async (ctx: WsHandlerContext, m
   // No response needed for typing status
 };
 
+export const handleChatAway: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  await ctx.session.setChatAway();
+  // No response needed — mirrors handleChatTypingStatus
+};
+
 export const handleChatChase: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
   const req = msg as WsReqChatChase;
   console.log(`[Gateway] Chasing user: ${req.userName}`);
