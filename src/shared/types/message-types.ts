@@ -10,6 +10,7 @@ import type {
   CompanyInfo,
   MapData,
   ChatUser,
+  ChatChannel,
   BuildingFocusInfo,
   BuildingCategory,
   BuildingInfo,
@@ -557,6 +558,8 @@ export interface WsReqChatGetChannelInfo extends WsMessage {
 export interface WsReqChatJoinChannel extends WsMessage {
   type: WsMessageType.REQ_CHAT_JOIN_CHANNEL;
   channelName: string;
+  /** Sent verbatim as JoinChannel's second argument. Never stored or echoed back. */
+  password?: string;
 }
 
 export interface WsReqChatSendMessage extends WsMessage {
@@ -587,7 +590,7 @@ export interface WsRespChatUserList extends WsMessage {
 
 export interface WsRespChatChannelList extends WsMessage {
   type: WsMessageType.RESP_CHAT_CHANNEL_LIST;
-  channels: string[];
+  channels: ChatChannel[];
 }
 
 export interface WsRespChatChannelInfo extends WsMessage {

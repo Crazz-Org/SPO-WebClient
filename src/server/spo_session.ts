@@ -15,6 +15,7 @@ import {
   CompanyInfo,
   MapData,
   ChatUser,
+  ChatChannel,
   BuildingFocusInfo,
   WsEventBuildingRefresh,
   WsEventAreaRefresh,
@@ -2631,7 +2632,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return chatHandler.getChatUserList(this);
   }
 
-  public async getChatChannelList(): Promise<string[]> {
+  public async getChatChannelList(): Promise<ChatChannel[]> {
     return chatHandler.getChatChannelList(this);
   }
 
@@ -2639,8 +2640,8 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return chatHandler.getChatChannelInfo(this, channelName);
   }
 
-  public async joinChatChannel(channelName: string): Promise<void> {
-    return chatHandler.joinChatChannel(this, channelName);
+  public async joinChatChannel(channelName: string, password: string = ''): Promise<void> {
+    return chatHandler.joinChatChannel(this, channelName, password);
   }
 
   public async sendChatMessage(message: string): Promise<void> {

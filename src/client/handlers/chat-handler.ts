@@ -21,6 +21,7 @@ import {
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
 import { ClientBridge } from '../bridge/client-bridge';
+import { useChatStore } from '../store/chat-store';
 import type { ClientHandlerContext } from './client-context';
 
 export async function sendChatMessage(ctx: ClientHandlerContext, message: string): Promise<void> {
@@ -125,21 +126,29 @@ export async function requestChannelInfo(ctx: ClientHandlerContext, channelName:
   }
 }
 
-export async function joinChannel(ctx: ClientHandlerContext, channelName: string): Promise<void> {
+export async function joinChannel(ctx: ClientHandlerContext, channelName: string, password?: string): Promise<void> {
   if (ctx.isJoiningChannel) return;
 
   ctx.isJoiningChannel = true;
+  const previousChannel = useChatStore.getState().currentChannel;
 
   try {
     ClientBridge.log('Chat', `Joining channel: ${channelName || 'Lobby'}`);
     ClientBridge.setCurrentChannel(channelName);
     const req: WsReqChatJoinChannel = {
       type: WsMessageType.REQ_CHAT_JOIN_CHANNEL,
-      channelName
+      channelName,
+      ...(password ? { password } : {}),
     };
     await ctx.sendRequest(req);
   } catch (err: unknown) {
-    ClientBridge.log('Error', `Failed to join channel: ${toErrorMessage(err)}`);
+    // The gateway's sentence is the player-readable one; `message` has already
+    // been flattened to getErrorMessage(code) by client.ts:1090-1097 (INV-8).
+    const { serverMessage } = err as { serverMessage?: string };
+    const text = serverMessage || toErrorMessage(err);
+    ClientBridge.setCurrentChannel(previousChannel);
+    ClientBridge.log('Error', `Failed to join channel: ${text}`);
+    ctx.showNotification(text, 'error');
   } finally {
     ctx.isJoiningChannel = false;
   }

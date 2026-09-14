@@ -108,9 +108,13 @@ describe('Chat Store — Channels', () => {
   beforeEach(resetStore);
 
   it('setChannels sets the channel list and defaults currentChannel', () => {
-    useChatStore.getState().setChannels(['Lobby', 'Trade']);
+    const channels = [
+      { name: 'Lobby', isProtected: false },
+      { name: 'Trade', isProtected: false },
+    ];
+    useChatStore.getState().setChannels(channels);
     const state = useChatStore.getState();
-    expect(state.channels).toEqual(['Lobby', 'Trade']);
+    expect(state.channels).toEqual(channels);
     expect(state.currentChannel).toBe('Lobby');
   });
 });

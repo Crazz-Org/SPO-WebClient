@@ -720,7 +720,7 @@ describe('world-login scenario', () => {
 });
 
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 27 entries', () => {
+  it('SCENARIO_NAMES has 31 entries', () => {
     // 14, not 13: the `world-login` scenario was added with the CanJoinWorldEx
     // admission check (Interface Server/InterfaceServer.pas:441).
     // 15: `abandon-role`, issue 547.
@@ -739,7 +739,8 @@ describe('scenario registry', () => {
     // 28: `context-status`, issue 589.
     // 29: `show-notification`, issue 614.
     // 30: chat-flags, issue 616.
-    expect(SCENARIO_NAMES).toHaveLength(30);
+    // 31: channel-password, issue 618.
+    expect(SCENARIO_NAMES).toHaveLength(31);
   });
 
   it('loadScenario returns bundle for each name', () => {

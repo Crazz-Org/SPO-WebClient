@@ -158,6 +158,8 @@ export interface ChatUser {
 
 export interface ChatChannel {
   name: string;
+  /** The server listed a non-empty password for this channel (InterfaceServer.pas:3386-3388). */
+  isProtected: boolean;
   userCount?: number;
   info?: string;
 }

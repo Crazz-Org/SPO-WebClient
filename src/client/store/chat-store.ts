@@ -3,10 +3,10 @@
  */
 
 import { create } from 'zustand';
-import type { ChatUser } from '../../shared/types/domain-types';
+import type { ChatUser, ChatChannel } from '../../shared/types/domain-types';
 import { loadChatVisible, saveChatVisible } from './chat-visibility';
 
-export type { ChatUser };
+export type { ChatUser, ChatChannel };
 
 export interface ChatMessage {
   id: string;
@@ -26,7 +26,7 @@ export type ChatTab = 'chat' | 'online';
 interface ChatState {
   // State
   currentChannel: string;
-  channels: string[];
+  channels: ChatChannel[];
   messages: Record<string, ChatMessage[]>;
   users: Record<string, ChatUser>;
   typingUsers: Set<string>;
@@ -43,7 +43,7 @@ interface ChatState {
 
   // Actions
   setCurrentChannel: (channel: string) => void;
-  setChannels: (channels: string[]) => void;
+  setChannels: (channels: ChatChannel[]) => void;
   setChannelInfo: (channel: string, info: string) => void;
   addMessage: (channel: string, message: ChatMessage) => void;
   setUsers: (users: ChatUser[]) => void;
@@ -76,7 +76,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setChannels: (channels) => set((state) => ({
     channels,
-    currentChannel: state.currentChannel || (channels.length > 0 ? channels[0] : ''),
+    currentChannel: state.currentChannel || (channels.length > 0 ? channels[0].name : ''),
   })),
 
   setChannelInfo: (channel, info) =>

@@ -53,7 +53,7 @@ function makeClientDriver(): ClientHandlerContext {
 beforeEach(() => {
   useChatStore.setState({
     currentChannel: 'Lobby',
-    channels: ['Lobby'],
+    channels: [{ name: 'Lobby', isProtected: false }],
     messages: {},
     users: {},
     unreadChatCount: 0,

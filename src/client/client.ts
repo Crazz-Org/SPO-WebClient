@@ -306,7 +306,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       onCancelServerSwitch: () => authHandler.cancelServerSwitch(),
       onServerSwitchZoneSelect: (zonePath: string) => authHandler.serverSwitchZoneSelect(this, zonePath),
       onSendChatMessage: (message: string) => chatHandler.sendChatMessage(this, message),
-      onJoinChannel: (channelName: string) => chatHandler.joinChannel(this, channelName),
+      onJoinChannel: (channelName: string, password?: string) => chatHandler.joinChannel(this, channelName, password),
       onChatTypingChange: (isTyping: boolean) => chatHandler.setTypingStatus(this, isTyping),
       onGetChannelInfo: (channelName: string) => chatHandler.requestChannelInfo(this, channelName),
       onChaseUser: (userName: string) => chatHandler.chaseUser(this, userName),

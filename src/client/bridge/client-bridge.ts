@@ -43,6 +43,7 @@ import type {
   AutoConnectionActionType,
   CurriculumActionType,
   NewspaperRatingEntry,
+  ChatChannel,
 } from '@/shared/types';
 import { CLUSTER_IDS } from '@/shared/cluster-data';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
@@ -180,7 +181,7 @@ export interface ClientCallbacks {
 
   // Chat
   onSendChatMessage: (message: string) => void;
-  onJoinChannel: (channelName: string) => void;
+  onJoinChannel: (channelName: string, password?: string) => void;
   onChatTypingChange: (isTyping: boolean) => void;
   onGetChannelInfo: (channelName: string) => void;
   /** Start following another player's camera (Delphi Chase). */
@@ -644,7 +645,7 @@ export const ClientBridge = {
 
   // ---- Chat ----
 
-  setChatChannels(channels: string[]): void {
+  setChatChannels(channels: ChatChannel[]): void {
     useChatStore.getState().setChannels(channels);
   },
 

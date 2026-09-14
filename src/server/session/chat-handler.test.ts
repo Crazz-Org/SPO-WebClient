@@ -26,6 +26,7 @@ import {
   getChatChannelList,
   getChatChannelInfo,
   joinChatChannel,
+  ChannelJoinError,
   sendChatMessage,
   setChatTypingStatus,
   chaseUser,
@@ -39,6 +40,7 @@ import { RdoValue, RdoCommand } from '../../shared/rdo-types';
 import { RdoVerb, RdoAction } from '../../shared/types';
 import type { RdoPacket } from '../../shared/types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
+import { ERROR_InvalidPassword, ERROR_NotEnoughRoom } from '../../shared/error-codes';
 
 const WORLD = FAKE_CONTEXT_IDS.worldContextId;
 
@@ -140,25 +142,33 @@ describe('getChatChannelList', () => {
   it('always prepends Lobby, even to an empty list', async () => {
     const fake = makeSessionCtx();
     fake.respond(() => 'res="%"');
-    expect(await getChatChannelList(fake.ctx)).toEqual(['Lobby']);
+    expect(await getChatChannelList(fake.ctx)).toEqual([{ name: 'Lobby', isProtected: false }]);
   });
 
   it('returns only Lobby when the response packet carries no payload at all', async () => {
     const fake = makeSessionCtx();
     fake.respond((_p, i) => ({ raw: '', type: 'RESPONSE', rid: i } as RdoPacket));
-    expect(await getChatChannelList(fake.ctx)).toEqual(['Lobby']);
+    expect(await getChatChannelList(fake.ctx)).toEqual([{ name: 'Lobby', isProtected: false }]);
   });
 
-  it('keeps only the even lines (name) of the name/password pairs', async () => {
+  it('pairs name/password positionally: an open channel keeps the pairing intact for the one after it', async () => {
     const fake = makeSessionCtx();
-    fake.respond(() => 'res="%Traders\r\nsecret\r\nCafé\r\n\r\n"');
-    expect(await getChatChannelList(fake.ctx)).toEqual(['Lobby', 'Traders', 'Café']);
+    fake.respond(() => 'res="%Traders\r\n\r\nCafé\r\nsecret\r\n"');
+    expect(await getChatChannelList(fake.ctx)).toEqual([
+      { name: 'Lobby', isProtected: false },
+      { name: 'Traders', isProtected: false },
+      { name: 'Café', isProtected: true },
+    ]);
   });
 
-  it('a lone trailing name without password is still a channel', async () => {
+  it('a lone trailing name with no password line at all is still open', async () => {
     const fake = makeSessionCtx();
     fake.respond(() => 'res="%A\npw\nB"');
-    expect(await getChatChannelList(fake.ctx)).toEqual(['Lobby', 'A', 'B']);
+    expect(await getChatChannelList(fake.ctx)).toEqual([
+      { name: 'Lobby', isProtected: false },
+      { name: 'A', isProtected: true },
+      { name: 'B', isProtected: false },
+    ]);
   });
 
   it('refuses without a world context and sends nothing', async () => {
@@ -249,12 +259,67 @@ describe('joinChatChannel', () => {
     expect(fake.log.debug).toHaveBeenCalledWith('[Chat] Joining channel: Lobby');
   });
 
+  it('sends the password as the second argument when given', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+
+    await joinChatChannel(fake.ctx, 'Boardroom', 'hunter2');
+
+    expect(fake.sent[0].packet.args?.[1]).toBe(RdoValue.string('hunter2').format());
+  });
+
   it('throws with the server code and does not change the channel on a non-zero result', async () => {
     const fake = makeSessionCtx();
     fake.respond(() => 'res="#3"');
 
     await expect(joinChatChannel(fake.ctx, 'Locked')).rejects.toThrow('Failed to join channel: 3');
     expect(fake.ctx.setCurrentChannel).not.toHaveBeenCalled();
+  });
+
+  it('rejects a wrong password with a distinct, player-readable message and the server code', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => `res="#${ERROR_InvalidPassword}"`);
+
+    let caught: unknown;
+    try {
+      await joinChatChannel(fake.ctx, 'Boardroom', 'wrong');
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(ChannelJoinError);
+    expect((caught as ChannelJoinError).code).toBe(ERROR_InvalidPassword);
+    expect((caught as ChannelJoinError).message).not.toBe(`Failed to join channel: ${ERROR_InvalidPassword}`);
+    expect(fake.ctx.setCurrentChannel).not.toHaveBeenCalled();
+  });
+
+  it('rejects a full channel with a distinct, player-readable message and the server code', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => `res="#${ERROR_NotEnoughRoom}"`);
+
+    let caught: unknown;
+    try {
+      await joinChatChannel(fake.ctx, 'Trade');
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(ChannelJoinError);
+    expect((caught as ChannelJoinError).code).toBe(ERROR_NotEnoughRoom);
+    expect((caught as ChannelJoinError).message).not.toBe(`Failed to join channel: ${ERROR_NotEnoughRoom}`);
+    expect(fake.ctx.setCurrentChannel).not.toHaveBeenCalled();
+  });
+
+  it('gives the wrong-password and full-channel refusals two different messages', async () => {
+    const fake1 = makeSessionCtx();
+    fake1.respond(() => `res="#${ERROR_InvalidPassword}"`);
+    const wrongPassword = await joinChatChannel(fake1.ctx, 'Boardroom').catch((e: ChannelJoinError) => e);
+
+    const fake2 = makeSessionCtx();
+    fake2.respond(() => `res="#${ERROR_NotEnoughRoom}"`);
+    const fullChannel = await joinChatChannel(fake2.ctx, 'Trade').catch((e: ChannelJoinError) => e);
+
+    expect((wrongPassword as ChannelJoinError).message).not.toBe((fullChannel as ChannelJoinError).message);
   });
 
   it('treats an empty payload as a failure', async () => {
