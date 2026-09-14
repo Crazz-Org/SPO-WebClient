@@ -5,3 +5,4 @@ export { VersionBadge } from './VersionBadge';
 export { StatusPill } from './StatusPill';
 export { CommandBar } from './CommandBar';
 export { ContextStatusStrip } from './ContextStatusStrip';
+export { WorldEventTicker } from './WorldEventTicker';

@@ -195,6 +195,10 @@ export type {
   // Context status — the town sentence under the camera
   WsReqContextStatus,
   WsRespContextStatus,
+  // World events — the HUD ticker (PickEvent)
+  WorldEventLine,
+  WsReqWorldEvent,
+  WsRespWorldEvent,
   // Building details messages
   WsReqBuildingDetails,
   WsRespBuildingDetails,

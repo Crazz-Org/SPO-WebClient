@@ -1,6 +1,9 @@
 /**
  * Scenario 3: Server Selection + Company List + CompanyPage.asp
- * HTTP: chooseCompany.asp → company HTML with name, id, ownerRole;
+ * RDO:  the five per-index company getters the login path reads
+ *       (`chooseCompany.asp:166-170`);
+ * HTTP: chooseCompany.asp → company HTML with name, id, ownerRole (the page other
+ *       paths still fetch, `readPersonalCompanies` among them);
  *       CompanyPage.asp → one company's P&L account tree
  */
 
@@ -9,8 +12,12 @@ import type { WsMessage } from '@/shared/types/message-types';
 import type { ProfitLossData } from '@/shared/types';
 import type { WsCaptureScenario } from '../types/mock-types';
 import type { HttpScenario } from '../types/http-exchange-types';
+import type { RdoScenario } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
+import { rdoCall } from '../../shared/rdo-frame';
+import type { RdoMemberName } from '../../shared/rdo-members';
+import { RdoValue } from '../../shared/rdo-types';
 
 /** Extracted company data from chooseCompany.asp HTML */
 export interface CapturedCompanyData {
@@ -241,17 +248,12 @@ export interface CompanyListScenarioOptions {
   logonResult?: 'companies' | 'noAccess' | 'error' | 'noCompanies';
   expiresOn?: string;
   errorCode?: string;
-  /**
-   * When set, `logonComplete.asp` is served ONLY to a request carrying that `LangId` —
-   * a gateway that drops the session language gets a 404 instead of the company page.
-   */
-  languageId?: string;
 }
 
 export function createCompanyListScenario(
   overrides?: Partial<ScenarioVariables>,
   options?: CompanyListScenarioOptions,
-): { ws: WsCaptureScenario; http: HttpScenario } {
+): { ws: WsCaptureScenario; rdo: RdoScenario; http: HttpScenario } {
   const vars = mergeVariables(overrides);
   const logonResult = options?.logonResult ?? 'companies';
   const expiresOn = options?.expiresOn ?? '01/01/2020';
@@ -282,7 +284,6 @@ export function createCompanyListScenario(
       queryPatterns: {
         WorldName: vars.worldName,
         UserName: vars.username,
-        ...(options?.languageId !== undefined ? { LangId: options.languageId } : {}),
       },
       status: 302,
       contentType: 'text/html',
@@ -381,6 +382,41 @@ export function createCompanyListScenario(
     variables: {},
   };
 
+  // The five per-index reads chooseCompany.asp:165-204 made, one exchange each,
+  // for index 0 — the only index the fixture's one company has. Each request is
+  // built by the emitter, so the fixture cannot drift from the frame the gateway
+  // writes; the `"#0"` argsPattern is what makes an index sent as a widestring
+  // (`"%0"`) match nothing at all.
+  //
+  // GetCompanyCount is deliberately absent: `buildWorldPropertyFallbacks` already
+  // answers it, and `visitor-login.validation.test.ts` overrides that fallback to
+  // drive the zero-company fork. Two sources for one member would break it.
+  const rdoAnswers: ReadonlyArray<readonly [RdoMemberName, string]> = [
+    ['GetCompanyOwnerRole', `%${vars.companyOwnerRole}`],
+    ['GetCompanyName', `%${vars.companyName}`],
+    ['GetCompanyId', `#${vars.companyId}`],
+    ['GetCompanyCluster', `%${vars.companyCluster}`],
+    ['GetCompanyFacilityCount', `#${CAPTURED_COMPANY.facilityCount}`],
+  ];
+
+  const rdo: RdoScenario = {
+    name: 'company-list',
+    description: 'The five per-index company getters chooseCompany.asp:166-170 read',
+    exchanges: rdoAnswers.map(([member, answer], i) => ({
+      id: `cl-rdo-${String(i + 1).padStart(3, '0')}`,
+      request: rdoCall(member, vars.clientViewId, RdoValue.int(0)).toFrame(),
+      response: `A${i} res="${answer}"`,
+      matchKeys: {
+        verb: 'sel',
+        targetId: vars.clientViewId,
+        action: 'call',
+        member,
+        argsPattern: ['"#0"'],
+      },
+    })),
+    variables: {},
+  };
+
   const ws: WsCaptureScenario = {
     name: 'company-list',
     description: 'Login to world and receive company list',
@@ -419,6 +455,9 @@ export function createCompanyListScenario(
                     id: vars.companyId,
                     name: vars.companyName,
                     ownerRole: vars.companyOwnerRole,
+                    cluster: CAPTURED_COMPANY.cluster,
+                    status: CAPTURED_COMPANY.status,
+                    facilityCount: CAPTURED_COMPANY.facilityCount,
                   },
                 ],
               } as WsMessage,
@@ -428,7 +467,7 @@ export function createCompanyListScenario(
     ],
   };
 
-  return { ws, http };
+  return { ws, rdo, http };
 }
 
 export { CAPTURED_COMPANY };

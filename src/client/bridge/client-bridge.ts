@@ -38,6 +38,7 @@ import type {
   ConnectionSearchResult,
   ClusterInfo,
   ClusterFacilityPreview,
+  WorldEventLine,
 
   BankActionType,
   AutoConnectionActionType,
@@ -160,6 +161,8 @@ export interface ClientCallbacks {
   onToggleDebugOverlay: () => void;
   /** The server's sentence for the town at world tile (x, y), or '' when there is none. */
   onRequestContextStatus: (x: number, y: number) => Promise<string>;
+  /** The newest world event, or null when the server has none. */
+  onRequestWorldEvent: () => Promise<WorldEventLine | null>;
 
   // Bug-report capture (dev-only, armed by SPO_BUG_REPORT — see src/client/report/)
   /** What sits under a screen point on the map canvas, in tile terms. `null` if the renderer is not up. */

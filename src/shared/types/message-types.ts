@@ -140,6 +140,10 @@ export enum WsMessageType {
   REQ_CONTEXT_STATUS = 'REQ_CONTEXT_STATUS',
   RESP_CONTEXT_STATUS = 'RESP_CONTEXT_STATUS',
 
+  // The newest world event, polled by the HUD ticker (PickEvent)
+  REQ_WORLD_EVENT = 'REQ_WORLD_EVENT',
+  RESP_WORLD_EVENT = 'RESP_WORLD_EVENT',
+
   RESP_BUILDING_CATEGORIES = 'RESP_BUILDING_CATEGORIES',
   RESP_BUILDING_FACILITIES = 'RESP_BUILDING_FACILITIES',
   RESP_BUILDING_PLACED = 'RESP_BUILDING_PLACED',
@@ -751,6 +755,31 @@ export interface WsRespContextStatus extends WsMessage {
   type: WsMessageType.RESP_CONTEXT_STATUS;
   /** The server's sentence, or '' when there is no town under (x, y) (`World.pas:4243`). */
   text: string;
+}
+
+// ── World events — the HUD ticker (PickEvent) ────────────────────────────────
+
+/** One rendered world event (`TEvent.Render`, `Kernel/Events.pas:99-115`). */
+export interface WorldEventLine {
+  /** `DateToStr` as the server formatted it — displayed verbatim, never reparsed. */
+  date: string;
+  /** `evnKind_FacEvent = 1` (`Kernel/BasicEvents.pas:9`); 0 when the block carries none. */
+  kind: number;
+  /** `Text<languageId>`, falling back to `Text0`. */
+  text: string;
+  /** Map coordinates read off the event URL, present only when it carried both. */
+  x?: number;
+  y?: number;
+}
+
+export interface WsReqWorldEvent extends WsMessage {
+  type: WsMessageType.REQ_WORLD_EVENT;
+}
+
+export interface WsRespWorldEvent extends WsMessage {
+  type: WsMessageType.RESP_WORLD_EVENT;
+  /** `null` is the normal "no event / backup running" answer (`InterfaceServer.pas:1161-1163`). */
+  event: WorldEventLine | null;
 }
 
 export interface WsRespBuildingCategories extends WsMessage {

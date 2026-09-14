@@ -28,17 +28,37 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `show-notification`, `chat-flags`, `create-channel`, `refresh-season`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `world-event`, `show-notification`, `chat-flags`, `create-channel`, `refresh-season`.
 
-`world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
-arrives over HTTP. It exists for its second exchange: the admission question the reference client
-asked before offering company creation (`logonComplete.asp:143-152`).
+`world-login` is the world socket during `loginWorld` — RDO only; the company list is the
+`company-list` scenario's own RDO half, described below. It exists for its second exchange: the
+admission question the reference client asked before offering company creation
+(`logonComplete.asp:143-152`).
 `createWorldLoginScenario(vars, { canJoin })` sets what the world answers — `-1` for a world at
 its user cap, a positive number for the nobility the player is short, `0` (the default) for
 "go ahead". That exchange pins the target to the InterfaceServer id and the argument list to a
 single `%`-prefixed string, because that is the whole shape of the declaration
 (`Interface Server/InterfaceServer.pas:441`, a one-argument `function`): a second argument or a
 frame sent against the context id would answer about nobody, with no error to show for it.
+
+`company-list` is the player's company list, and it has both halves for one reason: the login
+path reads it over **RDO**, while `logonComplete.asp` / `chooseCompany.asp` stay in the HTTP half
+because other paths still fetch them (`readPersonalCompanies`, the read-before-resign list of
+`rdoAbandonRole.asp:22-27`). The RDO half is five exchanges, one per field the legacy page read
+in its own loop (`chooseCompany.asp:166-170`): `GetCompanyOwnerRole`, `GetCompanyName`,
+`GetCompanyId`, `GetCompanyCluster`, `GetCompanyFacilityCount` — each a published one-argument
+`function` on `TClientView` (`Interface Server/InterfaceServer.pas:169`-`:173`), so every frame
+carries `"^"`, a QueryId, and exactly one argument. That argument is `#`-prefixed and must stay
+so: the index lands in `EDX` as an integer (`RDOObjectServer.pas:266`), and a `"%0"` would hand
+the same register a widestring pointer — no error, just an answer about nobody.
+`GetCompanyProfit` (`:174`) is deliberately absent: the page had it commented out
+(`chooseCompany.asp:171`) and the server body computes a value then unconditionally overwrites
+it with `0` (`Kernel/World.pas:4088-4090`). `GetCompanyCount` is absent for a different reason —
+it is already answered by `buildWorldPropertyFallbacks` (`protocol-test-harness.ts:370`), and
+`visitor-login.validation.test.ts` overrides that fallback to `#0` to drive the zero-company
+fork; a second source for one member would break that override. Its test
+(`company-list-rdo.test.ts`) drives the real `loginWorld` and asserts the five frames, their
+order, the parsed `CompanyInfo`, and that no `logonComplete.asp` fetch was made.
 
 `world-list` is the directory query session: the world list itself, plus the world-limit
 question the reference client asked before offering a new world.
@@ -242,6 +262,25 @@ tile with none (`World.pas:4243`), which is a normal answer and not an error.
 exchange carries. Its test drives the real gateway `handleContextStatus` and the
 real browser handler, then renders `ContextStatusStrip` and asserts a camera
 move produces the second ask and that the empty answer hides the strip.
+
+`world-event` is `PickEvent`, a 1-argument `"^"` FUNCTION on `TClientView`
+(`Interface Server/InterfaceServer.pas:166`) forwarding to `TWorld.RDOPickEvent`
+(`Kernel/World.pas:4840-4871`), which pops one event off the tycoon's queue and
+renders it as a CRLF-separated `Name=Value` block (`TEvent.Render`,
+`Kernel/Events.pas:99-115`) — the argument is the tycoon id, injected nowhere,
+unlike `ContextStatusText`'s world context. Its two answers, the rendered
+block and `res="%"`, travel on an **identical** frame, since `PickEvent` takes
+no argument that distinguishes them, so `RdoMock`'s first three match
+strategies (which do not skip an already-consumed exchange) would answer the
+event block twice and starve the empty answer. `createWorldEventScenario`
+therefore builds one exchange per call, keyed on its `{ event }` option
+(`undefined`/`EVENT_FIXTURE` for the block, `null` for `res="%"`), and its
+test plays the sequence itself with `mock.clearScenarios()` between the two
+asks — the same "the factory option picks the answer" convention
+`createChaseScenario(vars, { chaseResult })` uses. Its test drives the real
+gateway `handleWorldEvent`, the real browser handler and the real
+`WorldEventTicker`, and asserts the empty answer leaves the first event's
+text on screen with no error logged.
 
 `show-notification` is `ShowNotification`, the Interface Server's one push for "tell the player
 something" — a 4-argument `procedure` (`Protocol/Protocol.pas:219`), so every frame here carries

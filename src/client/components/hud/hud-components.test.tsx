@@ -2,7 +2,7 @@
  * Smoke tests for HUD components (LeftRail, RightRail, InfoWidget, OverlayMenu).
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { screen } from '@testing-library/react';
 import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
 import { useGameStore } from '../../store/game-store';
@@ -194,15 +194,23 @@ describe('InfoWidget', () => {
   });
 
   it('renders "Xs ago" when lastStatsUpdate is set', () => {
-    useGameStore.setState({
-      tycoonStats: {
-        username: 'P', ranking: 1, cash: '100',
-        incomePerHour: '100', buildingCount: 1, maxBuildings: 10, failureLevel: 0,
-      },
-      lastStatsUpdate: Date.now(),
-    });
-    renderWithProviders(<InfoWidget />);
-    expect(screen.getByText('0s ago')).toBeTruthy();
+    // Fake timers freeze Date.now(), so the elapsed time is exactly 0 s however
+    // long the render actually takes — with the real clock a loaded machine
+    // renders "6s ago" and the assertion fails for no reason of its own.
+    jest.useFakeTimers();
+    try {
+      useGameStore.setState({
+        tycoonStats: {
+          username: 'P', ranking: 1, cash: '100',
+          incomePerHour: '100', buildingCount: 1, maxBuildings: 10, failureLevel: 0,
+        },
+        lastStatsUpdate: Date.now(),
+      });
+      renderWithProviders(<InfoWidget />);
+      expect(screen.getByText('0s ago')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('does not render timestamp when lastStatsUpdate is null', () => {
