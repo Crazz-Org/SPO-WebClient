@@ -1,8 +1,9 @@
 /**
  * ZoneTypePicker — Compact modal for selecting a zone type to paint.
  *
- * Shows all ZONE_TYPES as a vertical list with color swatches.
- * Click a zone type → close modal + start painting.
+ * Shows the zone types the player's office is offered (legacy
+ * `MayorOptions.asp` restriction, `zone-picker-zones.ts`) as a vertical list
+ * with color swatches. Click a zone type → close modal + start painting.
  */
 
 import { X } from 'lucide-react';
@@ -10,8 +11,8 @@ import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { usePoliticsStore } from '../../store/politics-store';
 import { useClient } from '../../context';
-import { ZONE_TYPES } from '@/shared/types';
 import { officeLabel } from './office-label';
+import { zonesForOffice } from './zone-picker-zones';
 import styles from './ZoneTypePicker.module.css';
 
 export function ZoneTypePicker() {
@@ -23,7 +24,9 @@ export function ZoneTypePicker() {
 
   if (modal !== 'zonePicker') return null;
 
-  const office = officeLabel(username ? politicalRoles.get(username.toLowerCase()) : undefined);
+  const role = username ? politicalRoles.get(username.toLowerCase()) : undefined;
+  const office = officeLabel(role);
+  const zones = zonesForOffice(role);
 
   const handleSelect = (zoneId: number) => {
     closeModal();
@@ -48,16 +51,20 @@ export function ZoneTypePicker() {
           </button>
         </div>
         <div className={styles.list}>
-          {ZONE_TYPES.map((zone) => (
-            <button
-              key={zone.id}
-              className={styles.zoneItem}
-              onClick={() => handleSelect(zone.id)}
-            >
-              <div className={styles.swatch} style={{ backgroundColor: zone.color }} />
-              <span className={styles.label}>{zone.label}</span>
-            </button>
-          ))}
+          {zones.length === 0 ? (
+            <span className={styles.empty}>No zones available for this office.</span>
+          ) : (
+            zones.map((zone) => (
+              <button
+                key={zone.id}
+                className={styles.zoneItem}
+                onClick={() => handleSelect(zone.id)}
+              >
+                <div className={styles.swatch} style={{ backgroundColor: zone.color }} />
+                <span className={styles.label}>{zone.label}</span>
+              </button>
+            ))
+          )}
         </div>
       </div>
     </>

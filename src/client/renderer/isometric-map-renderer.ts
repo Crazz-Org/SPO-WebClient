@@ -72,6 +72,7 @@ import { CarClassManager } from './car-class-system';
 import { VehicleAnimationSystem } from './vehicle-animation-system';
 import { AircraftAnimationSystem } from './aircraft-animation-system';
 import { validatePlacementZones } from './placement-validation';
+import { isZonePaintable, zonePaintableTiles, ZONE_ROAD_TOLERANCE } from './zone-paint-mask';
 import { ExploredBlocks, BLOCK_SIZE } from '../store/explored-blocks';
 import { PendingPlacementLayer, pendingPlacementKey, type PendingPlacement } from './pending-placements';
 
@@ -511,6 +512,7 @@ export class IsometricMapRenderer {
   private zonePaintingMode: boolean = false;
   private zonePaintingType: number = 2;
   private zonePaintingState = { isDrawing: false, startX: 0, startY: 0, endX: 0, endY: 0 };
+  private zonePreviewCache: { key: string; tiles: Array<{ x: number; y: number }> } | null = null;
   private onZoneAreaComplete: ((x1: number, y1: number, x2: number, y2: number) => void) | null = null;
   private onCancelZonePainting: (() => void) | null = null;
 
@@ -1551,6 +1553,20 @@ export class IsometricMapRenderer {
   }
 
   /**
+   * Check if a tile has a road within `ZONE_ROAD_TOLERANCE` tiles (Chebyshev
+   * distance) — the road half of the zoning preview mask, mirroring the
+   * server's `GetReachMatrix` tolerance (`World.pas:4527-4529`).
+   */
+  private isWithinRoadReach(x: number, y: number): boolean {
+    for (let dy = -ZONE_ROAD_TOLERANCE; dy <= ZONE_ROAD_TOLERANCE; dy++) {
+      for (let dx = -ZONE_ROAD_TOLERANCE; dx <= ZONE_ROAD_TOLERANCE; dx++) {
+        if (this.hasRoadAt(x + dx, y + dy)) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Check if a road path connects to existing roads
    * Returns true if:
    * - Any tile of the path is adjacent to an existing road, OR
@@ -2343,6 +2359,7 @@ export class IsometricMapRenderer {
       this.zonePaintingType = zoneType;
     }
     this.zonePaintingState = { isDrawing: false, startX: 0, startY: 0, endX: 0, endY: 0 };
+    this.zonePreviewCache = null;
     this.canvas.style.cursor = enabled ? 'crosshair' : 'grab';
     this.requestRender();
   }
@@ -4847,8 +4864,50 @@ export class IsometricMapRenderer {
     const fillColor = IsometricMapRenderer.ZONE_PAINTING_COLORS[this.zonePaintingType] || 'rgba(136,136,136,0.4)';
 
     if (!state.isDrawing) {
-      // Single tile hover indicator
+      // Single tile hover indicator — always outline so the cursor stays visible,
+      // but only fill when the server would actually take the zone here.
       const screenPos = this.terrainRenderer.mapToScreen(this.mouseMapI, this.mouseMapJ);
+      ctx.beginPath();
+      ctx.moveTo(screenPos.x, screenPos.y);
+      ctx.lineTo(screenPos.x - halfWidth, screenPos.y + halfHeight);
+      ctx.lineTo(screenPos.x, screenPos.y + config.tileHeight);
+      ctx.lineTo(screenPos.x + halfWidth, screenPos.y + halfHeight);
+      ctx.closePath();
+      const paintable = isZonePaintable(this.zonePaintingType, {
+        occupiedByBuilding: this.isTileOccupiedByBuilding(this.mouseMapJ, this.mouseMapI),
+        roadInReach: this.isWithinRoadReach(this.mouseMapJ, this.mouseMapI),
+      });
+      if (paintable) {
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      return;
+    }
+
+    // Fill only the tiles the server will actually zone (cached per drag rectangle/zone).
+    const minX = Math.min(state.startX, state.endX);
+    const maxX = Math.max(state.startX, state.endX);
+    const minY = Math.min(state.startY, state.endY);
+    const maxY = Math.max(state.startY, state.endY);
+
+    const key = `${this.zonePaintingType}:${minX},${minY},${maxX},${maxY}`;
+    if (!this.zonePreviewCache || this.zonePreviewCache.key !== key) {
+      const tiles = zonePaintableTiles(
+        this.zonePaintingType, minX, minY, maxX, maxY,
+        (x, y) => ({
+          occupiedByBuilding: this.isTileOccupiedByBuilding(x, y),
+          roadInReach: this.isWithinRoadReach(x, y),
+        }),
+      );
+      this.zonePreviewCache = { key, tiles };
+    }
+    const tiles = this.zonePreviewCache.tiles;
+
+    for (const tile of tiles) {
+      const screenPos = this.terrainRenderer.mapToScreen(tile.y, tile.x);
       ctx.beginPath();
       ctx.moveTo(screenPos.x, screenPos.y);
       ctx.lineTo(screenPos.x - halfWidth, screenPos.y + halfHeight);
@@ -4857,34 +4916,10 @@ export class IsometricMapRenderer {
       ctx.closePath();
       ctx.fillStyle = fillColor;
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      return;
     }
 
-    // Fill all tiles in the rectangle
-    const minX = Math.min(state.startX, state.endX);
-    const maxX = Math.max(state.startX, state.endX);
-    const minY = Math.min(state.startY, state.endY);
-    const maxY = Math.max(state.startY, state.endY);
-
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const screenPos = this.terrainRenderer.mapToScreen(y, x);
-        ctx.beginPath();
-        ctx.moveTo(screenPos.x, screenPos.y);
-        ctx.lineTo(screenPos.x - halfWidth, screenPos.y + halfHeight);
-        ctx.lineTo(screenPos.x, screenPos.y + config.tileHeight);
-        ctx.lineTo(screenPos.x + halfWidth, screenPos.y + halfHeight);
-        ctx.closePath();
-        ctx.fillStyle = fillColor;
-        ctx.fill();
-      }
-    }
-
-    // Draw tile count tooltip
-    const tileCount = (maxX - minX + 1) * (maxY - minY + 1);
+    // Draw tile count tooltip — matches the tiles actually tinted, not the raw rectangle area.
+    const tileCount = tiles.length;
     const endPos = this.terrainRenderer.mapToScreen(state.endY, state.endX);
     ctx.font = '12px monospace';
     ctx.fillStyle = '#ffffff';
