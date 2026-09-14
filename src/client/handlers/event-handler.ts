@@ -120,12 +120,34 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     // a channel someone else just made. `change` is uchInclusion = 0 /
     // uchExclusion = 1 (Protocol/Protocol.pas:120). The reference client
     // inserted into its list rather than re-fetching (ChatHandler.pas:284-287).
+    // An exclusion only fires when the last member of a non-system channel
+    // leaves (InterfaceServer.pas:4691); JoinChannel leaves before it enters
+    // (InterfaceServer.pas:1548-1549), so a player's own current channel can be
+    // excluded before they are told where they went.
     case WsMessageType.EVENT_CHANNEL_LIST_CHANGE: {
       const listChange = msg as WsEventChannelListChange;
       if (listChange.change === 0) {
         ClientBridge.addChatChannel(listChange.name);
       } else {
+        // 'Lobby' is a WebClient invention synthesised for the wire name ''
+        // (chat-handler.ts:62) — the Delphi list has no such row to lose, so a
+        // push naming it (or the empty wire name) must never remove it.
+        if (!listChange.name || listChange.name.toLowerCase() === 'lobby') {
+          ClientBridge.log('Chat', `Ignoring channel-list exclusion for the default channel ("${listChange.name}")`);
+          break;
+        }
         ClientBridge.removeChatChannel(listChange.name);
+        if (useChatStore.getState().currentChannel === listChange.name) {
+          ClientBridge.setCurrentChannel('Lobby');
+          ClientBridge.addChatMessage('Lobby', {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            from: 'SYSTEM',
+            text: `Channel "${listChange.name}" no longer exists — you are now in Lobby.`,
+            timestamp: Date.now(),
+            isSystem: true,
+            isGM: false,
+          });
+        }
       }
       break;
     }
