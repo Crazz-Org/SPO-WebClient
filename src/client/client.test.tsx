@@ -72,6 +72,18 @@ describe('StarpeaceClient callback wiring', () => {
     expect(chatHandler.stopChase).toHaveBeenCalledWith(client);
   });
 
+  it('onJoinChannel forwards to chatHandler.joinChannel with the client, channel name and password', () => {
+    client.callbacks.onJoinChannel('Boardroom', 'hunter2');
+
+    expect(chatHandler.joinChannel).toHaveBeenCalledWith(client, 'Boardroom', 'hunter2');
+  });
+
+  it('onJoinChannel forwards an undefined password unchanged when none is given', () => {
+    client.callbacks.onJoinChannel('Lobby');
+
+    expect(chatHandler.joinChannel).toHaveBeenCalledWith(client, 'Lobby', undefined);
+  });
+
   it('onProfileCompanyProfitLoss sends REQ_PROFILE_COMPANY_PROFITLOSS with the company name and cluster', () => {
     const sendSpy = jest.spyOn(client, 'sendMessage' as any);
 

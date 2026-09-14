@@ -44,6 +44,7 @@ import type {
   AutoConnectionActionType,
   CurriculumActionType,
   NewspaperRatingEntry,
+  ChatChannel,
 } from '@/shared/types';
 import { CLUSTER_IDS } from '@/shared/cluster-data';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
@@ -183,7 +184,7 @@ export interface ClientCallbacks {
 
   // Chat
   onSendChatMessage: (message: string) => void;
-  onJoinChannel: (channelName: string) => void;
+  onJoinChannel: (channelName: string, password?: string) => void;
   /**
    * Create a named channel (Delphi CreateChannel). Returns a promise — unlike
    * `onJoinChannel` — so the modal can await it and stay open on a refusal.
@@ -654,7 +655,7 @@ export const ClientBridge = {
 
   // ---- Chat ----
 
-  setChatChannels(channels: string[]): void {
+  setChatChannels(channels: ChatChannel[]): void {
     useChatStore.getState().setChannels(channels);
   },
 

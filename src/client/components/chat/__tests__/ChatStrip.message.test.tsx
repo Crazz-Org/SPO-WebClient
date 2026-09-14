@@ -55,7 +55,7 @@ beforeEach(() => {
   resetStores();
   useChatStore.setState({
     currentChannel: 'Lobby',
-    channels: ['Lobby'],
+    channels: [{ name: 'Lobby', isProtected: false }],
     messages: {},
     users: {},
     isExpanded: true,

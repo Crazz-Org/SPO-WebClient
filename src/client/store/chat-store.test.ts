@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { useChatStore } from './chat-store';
-import type { ChatUser, ChatTab } from './chat-store';
+import type { ChatUser, ChatTab, ChatChannel } from './chat-store';
 import { CHAT_VISIBLE_KEY } from './chat-visibility';
 
 const storageMap = new Map<string, string>();
@@ -107,47 +107,62 @@ describe('Chat Store — User list', () => {
 describe('Chat Store — Channels', () => {
   beforeEach(resetStore);
 
+  /** An open (password-free) channel, the shape GetChannelList yields for one. */
+  const open_ = (name: string): ChatChannel => ({ name, isProtected: false });
+
   it('setChannels sets the channel list and defaults currentChannel', () => {
-    useChatStore.getState().setChannels(['Lobby', 'Trade']);
+    const channels = [
+      { name: 'Lobby', isProtected: false },
+      { name: 'Trade', isProtected: false },
+    ];
+    useChatStore.getState().setChannels(channels);
     const state = useChatStore.getState();
-    expect(state.channels).toEqual(['Lobby', 'Trade']);
+    expect(state.channels).toEqual(channels);
     expect(state.currentChannel).toBe('Lobby');
   });
 
   it('addChannel appends one name to the list', () => {
-    useChatStore.getState().setChannels(['Lobby']);
+    useChatStore.getState().setChannels([open_('Lobby')]);
     useChatStore.getState().addChannel('Traders');
-    expect(useChatStore.getState().channels).toEqual(['Lobby', 'Traders']);
+    expect(useChatStore.getState().channels).toEqual([open_('Lobby'), open_('Traders')]);
   });
 
   it('addChannel ignores a name already listed — the creator and the broadcast both insert it', () => {
-    useChatStore.getState().setChannels(['Lobby', 'Traders']);
+    useChatStore.getState().setChannels([open_('Lobby'), open_('Traders')]);
     useChatStore.getState().addChannel('Traders');
-    expect(useChatStore.getState().channels).toEqual(['Lobby', 'Traders']);
+    expect(useChatStore.getState().channels).toEqual([open_('Lobby'), open_('Traders')]);
+  });
+
+  it('addChannel ignores a name already listed even when that one is password-protected', () => {
+    useChatStore.getState().setChannels([{ name: 'Traders', isProtected: true }]);
+    useChatStore.getState().addChannel('Traders');
+    // The padlock must survive: a bare "channel created" push carries no password
+    // status, so re-inserting it would silently unlock the entry.
+    expect(useChatStore.getState().channels).toEqual([{ name: 'Traders', isProtected: true }]);
   });
 
   it('addChannel ignores an empty name', () => {
-    useChatStore.getState().setChannels(['Lobby']);
+    useChatStore.getState().setChannels([open_('Lobby')]);
     useChatStore.getState().addChannel('');
-    expect(useChatStore.getState().channels).toEqual(['Lobby']);
+    expect(useChatStore.getState().channels).toEqual([open_('Lobby')]);
   });
 
   it('removeChannel filters the name out and leaves currentChannel alone', () => {
-    useChatStore.getState().setChannels(['Lobby', 'Traders']);
+    useChatStore.getState().setChannels([open_('Lobby'), open_('Traders')]);
     useChatStore.setState({ currentChannel: 'Traders' });
 
     useChatStore.getState().removeChannel('Traders');
 
     const state = useChatStore.getState();
-    expect(state.channels).toEqual(['Lobby']);
+    expect(state.channels).toEqual([open_('Lobby')]);
     // The server sends its own channel-change notice when it moves you.
     expect(state.currentChannel).toBe('Traders');
   });
 
   it('removeChannel on an unknown name changes nothing', () => {
-    useChatStore.getState().setChannels(['Lobby']);
+    useChatStore.getState().setChannels([open_('Lobby')]);
     useChatStore.getState().removeChannel('Nowhere');
-    expect(useChatStore.getState().channels).toEqual(['Lobby']);
+    expect(useChatStore.getState().channels).toEqual([open_('Lobby')]);
   });
 });
 

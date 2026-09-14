@@ -504,7 +504,7 @@ const DELEGATIONS: readonly Delegation[] = [
     install: () => jest.spyOn(chatHandler, 'getChatChannelList'),
     call: s => s.getChatChannelList(),
     forwarded: [],
-    result: ['Lobby'],
+    result: [{ name: 'Lobby', isProtected: false }],
   },
   {
     method: 'getChatChannelInfo',
@@ -516,8 +516,8 @@ const DELEGATIONS: readonly Delegation[] = [
   {
     method: 'joinChatChannel',
     install: () => jest.spyOn(chatHandler, 'joinChatChannel'),
-    call: s => s.joinChatChannel('Kalisz'),
-    forwarded: ['Kalisz'],
+    call: s => s.joinChatChannel('Kalisz', ''),
+    forwarded: ['Kalisz', ''],
     result: undefined,
   },
   {

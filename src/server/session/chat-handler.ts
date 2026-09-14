@@ -7,13 +7,14 @@
  */
 
 import type { SessionContext } from './session-context';
-import type { ChatUser } from '../../shared/types';
+import type { ChatUser, ChatChannel } from '../../shared/types';
 import { parseAccDesc } from '../../shared/types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
 import { CHANNEL_USER_LIMIT } from '../../shared/chat-channel';
 import { parsePropertyResponse as parsePropertyResponseHelper, writeRdoFrame } from '../rdo-helpers';
+import { ERROR_InvalidPassword, ERROR_NotEnoughRoom, ERROR_Unknown } from '../../shared/error-codes';
 
 // =========================================================================
 // PRIVATE HELPERS
@@ -49,22 +50,24 @@ function parseChatUserList(ctx: SessionContext, rawData: string): ChatUser[] {
 /**
  * Parse channel list format: "channelName\npassword\n..." (alternating name/password pairs).
  * Server returns pairs: line 0=name, line 1=password, line 2=name, line 3=password, etc.
- * Returns channel names only, with "Lobby" prepended as the default main channel.
+ * "Lobby" is prepended as the default main channel, always open.
  */
-function parseChatChannelList(ctx: SessionContext, rawData: string): string[] {
-  const lines = rawData
-    .split(/\r?\n/)
-    .map(l => l.trim())
-    .filter(l => l.length > 0);
+function parseChatChannelList(ctx: SessionContext, rawData: string): ChatChannel[] {
+  // Do NOT drop empty lines before pairing: an OPEN channel's password line is
+  // empty, and removing it shifts every following pair by one (issue 618).
+  const lines = rawData.split(/\r?\n/);
+  // The server closes the list with a trailing LineBreak — drop only that.
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
-  // Extract only channel names (even-indexed lines: 0, 2, 4, ...)
-  const channelNames: string[] = ['Lobby'];
+  const channels: ChatChannel[] = [{ name: 'Lobby', isProtected: false }];
   for (let i = 0; i < lines.length; i += 2) {
-    channelNames.push(lines[i]);
+    const name = lines[i].trim();
+    if (!name) continue;
+    channels.push({ name, isProtected: (lines[i + 1] ?? '').trim().length > 0 });
   }
 
-  ctx.log.debug(`[Chat] Parsed ${channelNames.length} channels (including Lobby)`);
-  return channelNames;
+  ctx.log.debug(`[Chat] Parsed ${channels.length} channels (including Lobby)`);
+  return channels;
 }
 
 // =========================================================================
@@ -84,7 +87,7 @@ export async function getChatUserList(ctx: SessionContext): Promise<ChatUser[]> 
   return parseChatUserList(ctx, rawUsers);
 }
 
-export async function getChatChannelList(ctx: SessionContext): Promise<string[]> {
+export async function getChatChannelList(ctx: SessionContext): Promise<ChatChannel[]> {
   if (!ctx.worldContextId) throw new Error('Not logged into world');
 
   ctx.log.debug('[Chat] Getting channel list...');
@@ -118,7 +121,31 @@ export async function getChatChannelInfo(ctx: SessionContext, channelName: strin
   return parsePropertyResponseHelper(packet.payload || '', 'res');
 }
 
-export async function joinChatChannel(ctx: SessionContext, channelName: string): Promise<void> {
+/** A JoinChannel refusal the player can act on. Carries the server's own code. */
+export class ChannelJoinError extends Error {
+  constructor(readonly code: number, message: string) {
+    super(message);
+    this.name = 'ChannelJoinError';
+  }
+}
+
+/**
+ * The two refusals a player can actually do something about
+ * (`InterfaceServer.pas:1542-1552`): a wrong password, and a channel already at
+ * its `fUserLimit`. Anything else keeps the raw code — it is a bug, not a choice.
+ */
+function channelJoinMessage(code: number, result: string, displayName: string): string {
+  switch (code) {
+    case ERROR_InvalidPassword:
+      return `Wrong password for "${displayName}".`;
+    case ERROR_NotEnoughRoom:
+      return `"${displayName}" is full — there is no room for another player right now.`;
+    default:
+      return `Failed to join channel: ${result}`;
+  }
+}
+
+export async function joinChatChannel(ctx: SessionContext, channelName: string, password: string = ''): Promise<void> {
   if (!ctx.worldContextId) throw new Error('Not logged into world');
 
   const displayName = channelName || 'Lobby';
@@ -128,12 +155,16 @@ export async function joinChatChannel(ctx: SessionContext, channelName: string):
   // formerly unquoted separator.
   const packet = await ctx.sendRdoRequest('world', rdoCall(
     'JoinChannel', ctx.worldContextId,
-    RdoValue.string(channelName), RdoValue.string(''),
+    RdoValue.string(channelName), RdoValue.string(password),
   ).packet, undefined, TimeoutCategory.NORMAL);
 
   const result = parsePropertyResponseHelper(packet.payload || '', 'res');
   if (result !== '0') {
-    throw new Error(`Failed to join channel: ${result}`);
+    const code = Number.parseInt(result, 10);
+    throw new ChannelJoinError(
+      Number.isNaN(code) ? ERROR_Unknown : code,
+      channelJoinMessage(code, result, displayName),
+    );
   }
 
   ctx.setCurrentChannel(channelName);

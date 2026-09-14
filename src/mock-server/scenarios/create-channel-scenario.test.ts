@@ -177,7 +177,7 @@ describe('create-channel scenario — a free name', () => {
 
     // Browser half: the event inserts the channel into the list.
     dispatchEvent(clientCtx, listChange!);
-    expect(useChatStore.getState().channels).toContain(FREE_CHANNEL);
+    expect(useChatStore.getState().channels.map((c) => c.name)).toContain(FREE_CHANNEL);
   });
 
   it('addresses the push at the same ClientView the calls target', () => {

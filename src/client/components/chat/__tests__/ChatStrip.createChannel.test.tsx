@@ -17,7 +17,10 @@ describe('ChatStrip — New Channel', () => {
   beforeEach(() => {
     resetStores();
     useChatStore.setState({ currentChannel: 'Lobby' });
-    useChatStore.getState().setChannels(['Lobby', 'Trade']);
+    useChatStore.getState().setChannels([
+      { name: 'Lobby', isProtected: false },
+      { name: 'Trade', isProtected: false },
+    ]);
   });
 
   it('offers "New Channel…" in the dropdown', () => {

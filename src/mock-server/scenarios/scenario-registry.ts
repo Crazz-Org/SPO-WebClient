@@ -39,6 +39,7 @@ import { createContextStatusScenario } from './context-status-scenario';
 import { createWorldEventScenario } from './world-event-scenario';
 import { createShowNotificationScenario } from './show-notification-scenario';
 import { createChatFlagsScenario } from './chat-flags-scenario';
+import { createChannelPasswordScenario } from './channel-password-scenario';
 import { createCreateChannelScenario } from './create-channel-scenario';
 
 /** All recognized scenario names */
@@ -74,6 +75,7 @@ export type ScenarioName =
   | 'world-event'
   | 'show-notification'
   | 'chat-flags'
+  | 'channel-password'
   | 'create-channel';
 
 /** Ordered list of all scenario names */
@@ -109,6 +111,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'world-event',
   'show-notification',
   'chat-flags',
+  'channel-password',
   'create-channel',
 ];
 
@@ -155,6 +158,7 @@ const SCENARIO_FACTORIES: Record<
   'world-event': (o) => createWorldEventScenario(o),
   'show-notification': (o) => createShowNotificationScenario(o),
   'chat-flags': (o) => createChatFlagsScenario(o),
+  'channel-password': (o) => createChannelPasswordScenario(o),
   'create-channel': (o) => createCreateChannelScenario(o),
 };
 
