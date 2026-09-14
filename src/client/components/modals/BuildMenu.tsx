@@ -126,6 +126,15 @@ function FacilityCard({ facility, isExpanded, onToggleExpand, onSelect, cash }: 
         </div>
       </div>
 
+      {/* Under the Locked badge: the server's own requirement sentence
+          (`FacilityList.asp:287-291`), or today's wording when the page
+          carries none. */}
+      {!facility.available && (
+        <p className={styles.lockRequirement}>
+          {facility.requirement || 'Not available yet'}
+        </p>
+      )}
+
       {/* Expanded detail area */}
       {isExpanded && (
         <div className={styles.facilityExpanded}>

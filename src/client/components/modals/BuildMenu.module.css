@@ -522,3 +522,11 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+.lockRequirement {
+  margin: 0 0 var(--space-1) 0;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--text-muted);
+}

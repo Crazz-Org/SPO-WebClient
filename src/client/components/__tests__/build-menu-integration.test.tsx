@@ -233,6 +233,34 @@ describe('Build Menu — integration flow', () => {
     expect(screen.queryByText('Place Building')).toBeNull();
   });
 
+  it('falls back to "Not available yet" when a locked facility carries no requirement', () => {
+    useUiStore.setState({
+      modal: 'buildMenu',
+      buildMenuCategories: mockCategories,
+    });
+
+    renderWithProviders(<BuildMenu />);
+    goToFacilitiesPhase();
+
+    expect(screen.getByText('Not available yet')).toBeTruthy();
+  });
+
+  it('shows the server\'s own requirement sentence under the Locked badge', () => {
+    useUiStore.setState({
+      modal: 'buildMenu',
+      buildMenuCategories: mockCategories,
+    });
+
+    renderWithProviders(<BuildMenu />);
+    goToFacilitiesPhase([
+      mockFacilities[0],
+      { ...mockFacilities[1], requirement: 'Requires tycoon level 3' },
+    ]);
+
+    expect(screen.getByText('Requires tycoon level 3')).toBeTruthy();
+    expect(screen.queryByText('Not available yet')).toBeNull();
+  });
+
   it('facility card has correct accessibility attributes', () => {
     useUiStore.setState({
       modal: 'buildMenu',

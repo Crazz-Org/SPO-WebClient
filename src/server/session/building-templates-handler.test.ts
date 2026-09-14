@@ -1461,6 +1461,7 @@ describe('fetchBuildingFacilities', () => {
     const [facility] = await fetchBuildingFacilities(fake.ctx, 'C', 'PGI', 'K', 'KN', 'F', 0);
 
     expect(facility.description).toBe('The nerve center of your business empire.');
+    expect(facility).not.toHaveProperty('requirement');
   });
 
   // B-15 + B-19 on the branch the capture cannot show. `:287-291` inserts a
@@ -1482,6 +1483,7 @@ describe('fetchBuildingFacilities', () => {
     expect(facility.available).toBe(false);
     expect(facility.description).toBe('Digs ore out of the ground.');
     expect(facility.description).not.toContain('Requires');
+    expect(facility.requirement).toBe('Requires tycoon level 3');
     expect(facility.cost).toBe(2500000);
     expect(facility.area).toBe(1200);
     // No `info=` on the page → no VisualClassId at all, and the class is only
@@ -1492,6 +1494,20 @@ describe('fetchBuildingFacilities', () => {
     expect(fake.log.warn).toHaveBeenCalledWith(
       expect.stringContaining('visual asset name, not the kernel class')
     );
+  });
+
+  it('leaves no requirement key when an unavailable facility carries an empty Requires', async () => {
+    const html = buildFacilityListPage([{
+      name: 'Ore Mine', icon: '/five/icons/MapPGIOreMineB.gif', available: false,
+      price: '$2,500K', size: '1200 m.',
+      desc: 'Digs ore out of the ground.', requires: '',
+    }]);
+    mockFetch.mockResolvedValue(htmlResponse(html));
+    const fake = makeWebCtx();
+
+    const [facility] = await fetchBuildingFacilities(fake.ctx, 'C', 'PGI', 'K', 'KN', 'F', 0);
+
+    expect(facility).not.toHaveProperty('requirement');
   });
 
   it('strips the WxHxL suffix an icon filename may carry', async () => {
