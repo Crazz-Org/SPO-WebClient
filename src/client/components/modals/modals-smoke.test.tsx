@@ -153,6 +153,34 @@ describe('SettingsDialog', () => {
     renderWithProviders(<SettingsDialog />);
     expect(screen.getByText('Sent').nextSibling?.textContent).toMatch(/^2\.0 KB/);
   });
+
+  it('Logout asks for confirmation before calling onLogout, and confirming logs out', () => {
+    useUiStore.getState().openModal('settings');
+    const onLogout = jest.fn();
+    renderWithProviders(<SettingsDialog />, { clientCallbacks: createSpiedCallbacks({ onLogout }) });
+
+    fireEvent.click(screen.getByRole('button', { name: /Logout/ }));
+
+    expect(onLogout).not.toHaveBeenCalled();
+    expect(useUiStore.getState().confirmPayload).not.toBeNull();
+    expect(useUiStore.getState().modalBeneath).toBe('settings');
+
+    useUiStore.getState().confirmPayload!.onConfirm();
+
+    expect(onLogout).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancelling the Logout confirm leaves the session untouched and returns to Settings', () => {
+    useUiStore.getState().openModal('settings');
+    const onLogout = jest.fn();
+    renderWithProviders(<SettingsDialog />, { clientCallbacks: createSpiedCallbacks({ onLogout }) });
+
+    fireEvent.click(screen.getByRole('button', { name: /Logout/ }));
+    useUiStore.getState().closeModal();
+
+    expect(onLogout).not.toHaveBeenCalled();
+    expect(useUiStore.getState().modal).toBe('settings');
+  });
 });
 
 // ---------------------------------------------------------------------------
