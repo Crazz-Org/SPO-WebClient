@@ -348,6 +348,15 @@ export function placeBuilding(ctx: ClientHandlerContext, x: number, y: number): 
 async function sendPlaceBuilding(ctx: ClientHandlerContext, building: BuildingInfo, x: number, y: number): Promise<void> {
   ClientBridge.log('Build', `Placing ${building.name} at (${x}, ${y})...`);
 
+  const renderer = ctx.getRenderer();
+  // Painted before the request goes out, so the click never looks lost while the
+  // answer is still in flight (#604). A null renderer (headless tests, pre-mount)
+  // is a silent no-op via the optional chain below.
+  const pendingKey = renderer?.addPendingPlacement(
+    x, y, ctx.currentBuildingXSize, ctx.currentBuildingYSize,
+    building.visualClassId, building.iconPath,
+  ) ?? null;
+
   try {
     const req: WsReqPlaceBuilding = {
       type: WsMessageType.REQ_PLACE_BUILDING,
@@ -356,6 +365,7 @@ async function sendPlaceBuilding(ctx: ClientHandlerContext, building: BuildingIn
     };
 
     await ctx.sendRequest(req);
+    if (pendingKey) renderer?.removePendingPlacement(pendingKey);
 
     ClientBridge.log('Build', `Successfully placed ${building.name}!`);
     showToast(`${building.name} placed.`, 'success', {
@@ -369,7 +379,6 @@ async function sendPlaceBuilding(ctx: ClientHandlerContext, building: BuildingIn
     // Keep placement mode active so the user can place the same building again.
     // Callbacks, keyboard handler, and zone overlay are already set up — just
     // reset the renderer preview so the ghost reappears on the next mouse move.
-    const renderer = ctx.getRenderer();
     if (renderer) {
       renderer.setPlacementMode(
         true,
@@ -384,6 +393,7 @@ async function sendPlaceBuilding(ctx: ClientHandlerContext, building: BuildingIn
       );
     }
   } catch (err: unknown) {
+    if (pendingKey) renderer?.removePendingPlacement(pendingKey);
     const errorMsg = toErrorMessage(err);
     ClientBridge.log('Error', `Failed to place ${building.name}: ${errorMsg}`);
     ctx.showNotification(`Failed to place building: ${errorMsg}`, 'error');

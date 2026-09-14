@@ -8,7 +8,7 @@
  * 2. Vegetation overlay — special terrain tiles (trees, decorations)
  * 3. Concrete (pavement around buildings)
  * 4. Roads
- * 5. Buildings
+ * 5. Buildings (including greyed pending-placement placeholders, #604)
  * 6. Zone overlay (colored zones)
  * 7. Fog (blocks never loaded, darkened)
  * 8. Placement preview
@@ -71,6 +71,7 @@ import { CarClassManager } from './car-class-system';
 import { VehicleAnimationSystem } from './vehicle-animation-system';
 import { AircraftAnimationSystem } from './aircraft-animation-system';
 import { validatePlacementZones } from './placement-validation';
+import { PendingPlacementLayer } from './pending-placement-layer';
 import { ExploredBlocks, BLOCK_SIZE } from '../store/explored-blocks';
 
 /** Alpha of a building owned by another tycoon when glassing is on — Voyager's cAlpha blend [INFERRED ≈ 50 %]. */
@@ -79,6 +80,8 @@ const FOREIGN_BUILDING_ALPHA = 0.5;
 const LOSING_TINT = 'rgba(255, 0, 0, 0.45)';
 /** Black laid over a block never loaded — Voyager halves the RGB (Map.pas:3777); reads the same over the iso tiles. */
 const FOG_TINT = 'rgba(0, 0, 0, 0.55)';
+/** Opacity of an optimistic pending-placement ghost, greyscaled (#604). */
+const PENDING_PLACEMENT_ALPHA = 0.45;
 
 interface CachedZone {
   x: number;
@@ -462,6 +465,9 @@ export class IsometricMapRenderer {
   // 0 = fully valid (green), 1 = fully invalid (red) — lerped each frame
   private placementColorT: number = 0;
   private placementColorTLastMs: number = 0;
+
+  // Optimistic placement placeholders (#604) — one entry per in-flight REQ_PLACE_BUILDING
+  private pendingPlacements = new PendingPlacementLayer(() => this.requestRender());
 
   // Per-building visual effects: upgrade flash/scale-pop and demolition shrink/fade
   private buildingEffects: Map<string, { type: 'upgrade' | 'demolish'; startTime: number; building: MapBuilding }> = new Map();
@@ -1375,6 +1381,12 @@ export class IsometricMapRenderer {
         this.buildingEffects.delete(key);
       }
     }
+
+    // A placeholder whose real building has landed is dropped here — the map must never hold
+    // two renderings of the same building (#604). Cheap: only runs when zones are re-aggregated.
+    // Optional chain: some test harnesses build a renderer via Object.create(prototype), which
+    // skips field initializers (world-to-screen-centered.test.ts).
+    this.pendingPlacements?.dropWhere(p => this.allBuildings.some(b => b.x === p.x && b.y === p.y));
   }
 
   /**
@@ -2183,6 +2195,19 @@ export class IsometricMapRenderer {
   // PLACEMENT MODE
   // =========================================================================
 
+  /** Paint a greyed placeholder at the target tile the moment a placement request leaves (#604). */
+  public addPendingPlacement(
+    x: number, y: number, xsize: number, ysize: number,
+    visualClass: string, fallbackIconUrl?: string,
+  ): string {
+    return this.pendingPlacements.add({ x, y, xsize, ysize, visualClass, fallbackIconUrl });
+  }
+
+  /** Take the placeholder away again once its request has settled, one way or another (#604). */
+  public removePendingPlacement(key: string): void {
+    this.pendingPlacements.remove(key);
+  }
+
   public setPlacementMode(
     enabled: boolean,
     buildingName: string = '',
@@ -2634,6 +2659,7 @@ export class IsometricMapRenderer {
 
     this.hasAnimatedBuildings = false;
     this.drawBuildings(bounds);
+    this.drawPendingPlacements();
     this.drawVehicles(bounds, deltaTime, occupiedTiles);
     this.drawZoneOverlay(bounds);
     this.drawAircraft(bounds, deltaTime);
@@ -3600,6 +3626,68 @@ export class IsometricMapRenderer {
       ctx.translate(cx, cy);
       ctx.scale(shrink, shrink);
       ctx.drawImage(texture, -scaledWidth / 2, -scaledHeight, scaledWidth, scaledHeight);
+      ctx.restore();
+    }
+  }
+
+  /**
+   * Draw a greyed placeholder for each in-flight placement request (#604).
+   * Mirrors drawBuildings' texture/anchor/cull logic exactly, minus animation and
+   * the effects passes — a pending placement never has an upgrade/demolish effect.
+   */
+  private drawPendingPlacements(): void {
+    if (this.pendingPlacements.size === 0) return;
+
+    const ctx = this.ctx;
+    const config = ZOOM_LEVELS[this.terrainRenderer.getZoomLevel()];
+    const halfWidth = config.tileWidth / 2;
+    const halfHeight = config.tileHeight / 2;
+    const rotation = this.terrainRenderer.getRotation();
+
+    for (const p of this.pendingPlacements.entries()) {
+      const textureFilename = GameObjectTextureCache.getBuildingTextureFilename(p.visualClass);
+      const texture = this.gameObjectTextureCache.getTextureSync('BuildingImages', textureFilename);
+      const drawImage = texture ?? this.loadFallbackIcon(p.fallbackIconUrl);
+
+      let anchorI: number, anchorJ: number;
+      switch (rotation) {
+        case Rotation.NORTH: anchorI = p.y;                anchorJ = p.x;                break;
+        case Rotation.EAST:  anchorI = p.y + p.ysize - 1;   anchorJ = p.x;                break;
+        case Rotation.SOUTH: anchorI = p.y + p.ysize - 1;   anchorJ = p.x + p.xsize - 1;  break;
+        case Rotation.WEST:  anchorI = p.y;                 anchorJ = p.x + p.xsize - 1;  break;
+        default:              anchorI = p.y;                anchorJ = p.x;                break;
+      }
+      const southCornerScreenPos = this.terrainRenderer.mapToScreen(anchorI, anchorJ);
+      const ghostBuilding = { x: p.x, y: p.y, visualClass: p.visualClass } as MapBuilding;
+
+      if (drawImage) {
+        const scaleFactor = config.tileWidth / 64;
+        const scaledWidth = drawImage.width * scaleFactor;
+        const scaledHeight = drawImage.height * scaleFactor;
+
+        const drawX = Math.round(southCornerScreenPos.x - scaledWidth / 2);
+        const drawY = Math.round(southCornerScreenPos.y + config.tileHeight - scaledHeight);
+
+        // Cull if completely off-screen
+        if (drawX + scaledWidth >= 0 &&
+            drawX <= this.canvas.width &&
+            drawY + scaledHeight >= 0 &&
+            drawY <= this.canvas.height) {
+          ctx.save();
+          ctx.globalAlpha = PENDING_PLACEMENT_ALPHA;
+          ctx.filter = 'grayscale(1)';
+          ctx.drawImage(drawImage, drawX, drawY, scaledWidth, scaledHeight);
+          ctx.restore();
+        }
+      }
+
+      // Stroke the footprint too, so a class with neither texture nor icon still shows something.
+      ctx.save();
+      ctx.globalAlpha = PENDING_PLACEMENT_ALPHA;
+      ctx.strokeStyle = '#9CA3AF';
+      ctx.lineWidth = 1.5;
+      ctx.lineCap = 'round';
+      this.drawExteriorTileEdges(ghostBuilding, p.xsize, p.ysize, config, halfWidth, halfHeight);
       ctx.restore();
     }
   }

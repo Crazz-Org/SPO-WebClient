@@ -117,6 +117,80 @@ describe('placeBuilding asks before spending', () => {
   });
 });
 
+describe('placeBuilding paints and clears an optimistic placeholder (#604)', () => {
+  beforeEach(() => {
+    useUiStore.setState({ modal: null, confirmPayload: null });
+    sessionStorage.setItem('spo.dialog.dontAsk.build', '1');
+  });
+
+  function makeRenderer() {
+    return {
+      addPendingPlacement: jest.fn().mockReturnValue('10,20'),
+      removePendingPlacement: jest.fn(),
+      setPlacementMode: jest.fn(),
+    };
+  }
+
+  it('adds the placeholder before the answer and removes it on success', async () => {
+    const { placeBuilding } = await import('./build-menu-handler');
+    const renderer = makeRenderer();
+    const sendRequest = jest.fn().mockResolvedValue({});
+    const ctx = {
+      ...makeCtx(),
+      currentBuildingToPlace: { name: 'Textile Mill', cost: 240000, facilityClass: 'TextileMill', visualClassId: '123', area: 1, zoneRequirement: '', iconPath: 'icon.gif' },
+      currentBuildingXSize: 2,
+      currentBuildingYSize: 2,
+      getRenderer: () => renderer,
+      sendRequest,
+      loadAlignedMapArea: jest.fn(),
+      focusBuilding: jest.fn(),
+    } as unknown as ClientHandlerContext;
+
+    await placeBuilding(ctx, 10, 20);
+
+    expect(renderer.addPendingPlacement).toHaveBeenCalledWith(10, 20, 2, 2, '123', 'icon.gif');
+    expect(renderer.removePendingPlacement).toHaveBeenCalledWith('10,20');
+    expect(renderer.removePendingPlacement.mock.invocationCallOrder[0])
+      .toBeGreaterThan(sendRequest.mock.invocationCallOrder[0]);
+  });
+
+  it('removes the placeholder when the request is rejected, leaving the map as it was', async () => {
+    const { placeBuilding } = await import('./build-menu-handler');
+    const renderer = makeRenderer();
+    const sendRequest = jest.fn().mockRejectedValue(new Error('refused'));
+    const ctx = {
+      ...makeCtx(),
+      currentBuildingToPlace: { name: 'Textile Mill', cost: 240000, facilityClass: 'TextileMill', visualClassId: '123', area: 1, zoneRequirement: '', iconPath: '' },
+      getRenderer: () => renderer,
+      sendRequest,
+      loadAlignedMapArea: jest.fn(),
+      focusBuilding: jest.fn(),
+    } as unknown as ClientHandlerContext;
+
+    await placeBuilding(ctx, 10, 20);
+
+    expect(renderer.addPendingPlacement).toHaveBeenCalledTimes(1);
+    expect(renderer.removePendingPlacement).toHaveBeenCalledWith('10,20');
+    expect(ctx.loadAlignedMapArea).not.toHaveBeenCalled();
+  });
+
+  it('a null renderer is a silent no-op, and the toast/notification still fire', async () => {
+    const { placeBuilding } = await import('./build-menu-handler');
+    const sendRequest = jest.fn().mockRejectedValue(new Error('refused'));
+    const ctx = {
+      ...makeCtx(),
+      currentBuildingToPlace: { name: 'Textile Mill', cost: 240000, facilityClass: 'TextileMill', visualClassId: '123', area: 1, zoneRequirement: '', iconPath: '' },
+      getRenderer: () => null,
+      sendRequest,
+      loadAlignedMapArea: jest.fn(),
+      focusBuilding: jest.fn(),
+    } as unknown as ClientHandlerContext;
+
+    await expect(placeBuilding(ctx, 10, 20)).resolves.toBeUndefined();
+    expect(ctx.showNotification).toHaveBeenCalledWith(expect.stringContaining('Failed to place building'), 'error');
+  });
+});
+
 describe('facilities session cache', () => {
   it('serves a category from the cache without a second request, publishing a fresh array', async () => {
     const { loadBuildingFacilitiesByKind } = await import('./build-menu-handler');
