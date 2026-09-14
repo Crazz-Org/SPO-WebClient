@@ -557,6 +557,10 @@ export class IsometricMapRenderer {
   private ownTycoonId: number = 0;
   /** Legacy 'Signal losing facilities' (Map.pas:1323-1324): shade my own alerting buildings red. */
   private signalLosingFacilities: boolean = false;
+  /** Legacy 'AnimateBuildings' (Map.pas:920, Map.pas:1396): cycle animated building frames. */
+  private buildingAnimations: boolean = true;
+  /** Legacy 'TranspOverlays' (FiveControl.pas:272, :1029): draw the data overlay translucent. */
+  private transparentOverlays: boolean = true;
   /** Scratch canvas the red shade is composed on; created on first use, never while the option is off. */
   private losingScratch: HTMLCanvasElement | null = null;
   /** Blocks this player has loaded in this world; null = fog off (no set attached). */
@@ -3478,7 +3482,7 @@ export class IsometricMapRenderer {
 
       // Check for animated texture and pick current frame
       const animatedTexture = this.gameObjectTextureCache.getAnimatedTexture('BuildingImages', textureFilename);
-      if (animatedTexture && texture) {
+      if (this.buildingAnimations && animatedTexture && texture) {
         texture = this.gameObjectTextureCache.getAnimatedFrame(animatedTexture, performance.now());
         this.hasAnimatedBuildings = true;
       }
@@ -3987,6 +3991,8 @@ export class IsometricMapRenderer {
             color = zoneColors[value] || 'rgba(136, 136, 136, 0.3)';
           }
 
+          if (!this.transparentOverlays) color = IsometricMapRenderer.opaqueColor(color);
+
           ctx.beginPath();
           ctx.moveTo(screenPos.x, screenPos.y);
           ctx.lineTo(screenPos.x - halfWidth, screenPos.y + halfHeight);
@@ -4033,6 +4039,13 @@ export class IsometricMapRenderer {
         ctx.fill();
       }
     }
+  }
+
+  /** Legacy 'TranspOverlays' off (FiveControl.pas:1029, Map.pas:7481-7484): the same overlay
+   *  color with its alpha dropped. A value that is not an `rgba()` literal is returned as is. */
+  private static opaqueColor(color: string): string {
+    const m = /^rgba\(([^)]*),[^,)]*\)$/.exec(color);
+    return m ? `rgb(${m[1]})` : color;
   }
 
   /**
@@ -5267,6 +5280,16 @@ export class IsometricMapRenderer {
 
   public setSignalLosingFacilities(enabled: boolean): void {
     this.signalLosingFacilities = enabled;
+    this.requestRender();
+  }
+
+  public setBuildingAnimationsEnabled(enabled: boolean): void {
+    this.buildingAnimations = enabled;
+    this.requestRender();
+  }
+
+  public setTransparentOverlays(enabled: boolean): void {
+    this.transparentOverlays = enabled;
     this.requestRender();
   }
 

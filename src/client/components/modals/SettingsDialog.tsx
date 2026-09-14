@@ -93,6 +93,11 @@ export function SettingsDialog() {
               onChange={(v) => handleSettingChange({ isVegetationHiddenOnMove: v })}
             />
             <ToggleRow
+              label="Building animations"
+              checked={settings.buildingAnimations}
+              onChange={(v) => handleSettingChange({ buildingAnimations: v })}
+            />
+            <ToggleRow
               label="Vehicle animations"
               checked={settings.vehicleAnimations}
               onChange={(v) => handleSettingChange({ vehicleAnimations: v })}
@@ -111,6 +116,11 @@ export function SettingsDialog() {
               label="Signal losing facilities"
               checked={settings.signalLosingFacilities}
               onChange={(v) => handleSettingChange({ signalLosingFacilities: v })}
+            />
+            <ToggleRow
+              label="Transparent overlays"
+              checked={settings.transparentOverlays}
+              onChange={(v) => handleSettingChange({ transparentOverlays: v })}
             />
             <ToggleRow
               label="Debug overlay"

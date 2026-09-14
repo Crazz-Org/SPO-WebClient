@@ -98,6 +98,8 @@ describe('applySettings — renderer wiring', () => {
       setAircraftAnimationsEnabled: jest.fn(),
       setGlassForeignBuildings: jest.fn(),
       setSignalLosingFacilities: jest.fn(),
+      setBuildingAnimationsEnabled: jest.fn(),
+      setTransparentOverlays: jest.fn(),
     };
   }
 
@@ -133,6 +135,40 @@ describe('applySettings — renderer wiring', () => {
     (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
 
     expect(renderer.setSignalLosingFacilities).toHaveBeenCalledWith(signalLosingFacilities);
+  });
+
+  it.each([true, false])('wires buildingAnimations = %s to the renderer', (buildingAnimations) => {
+    const renderer = makeRenderer();
+    const mapNavigationUI = { getRenderer: () => renderer };
+    const fake = {
+      mapNavigationUI,
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
+      minimapUI: null,
+    };
+    const settings = { ...useGameStore.getState().settings, buildingAnimations };
+
+    (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
+
+    expect(renderer.setBuildingAnimationsEnabled).toHaveBeenCalledWith(buildingAnimations);
+  });
+
+  it.each([true, false])('wires transparentOverlays = %s to the renderer', (transparentOverlays) => {
+    const renderer = makeRenderer();
+    const mapNavigationUI = { getRenderer: () => renderer };
+    const fake = {
+      mapNavigationUI,
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
+      minimapUI: null,
+    };
+    const settings = { ...useGameStore.getState().settings, transparentOverlays };
+
+    (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
+
+    expect(renderer.setTransparentOverlays).toHaveBeenCalledWith(transparentOverlays);
   });
 
   it.each([
