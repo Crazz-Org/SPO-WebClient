@@ -83,13 +83,22 @@ describe('getChatUserList', () => {
     expect(await getChatUserList(fake.ctx)).toEqual([]);
   });
 
-  it('parses one "name/accDesc/status" line through the real parseAccDesc', async () => {
+  it('parses one "name/accDesc/afk" line through the real parseAccDesc', async () => {
     const fake = makeSessionCtx();
     // accDesc 0x00010BB8 = modifiers 1 (upper word), 3000 nobility points → Earl
     fake.respond(() => 'res="%Fred/68536/1"');
 
     expect(await getChatUserList(fake.ctx)).toEqual([
-      { name: 'Fred', id: '68536', status: 1, nobilityPoints: 3000, nobilityTier: 'Earl', modifiers: 1 },
+      { name: 'Fred', id: '68536', isAway: true, nobilityPoints: 3000, nobilityTier: 'Earl', modifiers: 1 },
+    ]);
+  });
+
+  it('parses the away flag from the third field', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="%Crazz/3/1"');
+
+    expect(await getChatUserList(fake.ctx)).toEqual([
+      expect.objectContaining({ name: 'Crazz', id: '3', isAway: true }),
     ]);
   });
 
@@ -100,10 +109,10 @@ describe('getChatUserList', () => {
     const users = await getChatUserList(fake.ctx);
 
     expect(users.map(u => u.name)).toEqual(['Alice', 'Bob', 'Carol']);
-    // Bob has no accDesc nor status: defaults '0' and 0
-    expect(users[1]).toEqual({ name: 'Bob', id: '0', status: 0, nobilityPoints: 0, nobilityTier: 'Commoner', modifiers: 0 });
-    // Carol: non-numeric status → 0, 500 points → Baron
-    expect(users[2]).toEqual({ name: 'Carol', id: '500', status: 0, nobilityPoints: 500, nobilityTier: 'Baron', modifiers: 0 });
+    // Bob has no accDesc nor afk field: defaults '0' and false
+    expect(users[1]).toEqual({ name: 'Bob', id: '0', isAway: false, nobilityPoints: 0, nobilityTier: 'Commoner', modifiers: 0 });
+    // Carol: non-'1' afk field → false, 500 points → Baron
+    expect(users[2]).toEqual({ name: 'Carol', id: '500', isAway: false, nobilityPoints: 500, nobilityTier: 'Baron', modifiers: 0 });
   });
 
   it('refuses without a world context and sends nothing', async () => {

@@ -158,7 +158,14 @@ export function parseAccDesc(accDescStr: string): {
 export interface ChatUser {
   name: string;
   id: string;
-  status: number; // 0 = normal, 1 = typing
+  /**
+   * The away (AFK) flag the server packs as the third field of a user-list line —
+   * `ComposeChatUser(name, id, AFK)`, `Protocol/Protocol.pas:483-493`. It is NOT a
+   * composition state: `TClientView.MsgCompositionChanged` raises it only for `mstAFK`
+   * and clears it for `mstComposing` (`InterfaceServer.pas:1495-1502`). Live "typing"
+   * arrives separately, on `NotifyMsgCompositionState`.
+   */
+  isAway: boolean;
   nobilityPoints: number;
   nobilityTier: string;
   modifiers: number;

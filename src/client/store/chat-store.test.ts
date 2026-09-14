@@ -18,8 +18,8 @@ function installStorage() {
 }
 
 /** Shorthand: create a ChatUser with default nobility fields. */
-function user(name: string, id: string, status = 0): ChatUser {
-  return { name, id, status, nobilityPoints: 0, nobilityTier: 'Commoner', modifiers: 0 };
+function user(name: string, id: string, isAway = false): ChatUser {
+  return { name, id, isAway, nobilityPoints: 0, nobilityTier: 'Commoner', modifiers: 0 };
 }
 
 function resetStore() {
@@ -59,10 +59,10 @@ describe('Chat Store — User list', () => {
 
   it('addUser overwrites an existing user with the same name', () => {
     useChatStore.getState().setUsers([user('Alice', 'u1')]);
-    useChatStore.getState().addUser(user('Alice', 'u1', 1));
+    useChatStore.getState().addUser(user('Alice', 'u1', true));
     const { users } = useChatStore.getState();
     expect(Object.keys(users)).toHaveLength(1);
-    expect(users['Alice'].status).toBe(1);
+    expect(users['Alice'].isAway).toBe(true);
   });
 
   it('removeUser removes a user by name', () => {
@@ -89,11 +89,11 @@ describe('Chat Store — User list', () => {
     expect(users['Player1'].name).toBe('Player1');
   });
 
-  it('addUser with 2-field format (name + id, no status)', () => {
+  it('addUser with 2-field format (name + id, no afk flag)', () => {
     useChatStore.getState().addUser(user('Player1', '12345'));
     const { users } = useChatStore.getState();
     expect(users['Player1'].id).toBe('12345');
-    expect(users['Player1'].status).toBe(0);
+    expect(users['Player1'].isAway).toBe(false);
   });
 
   it('removeUser by name works when user was added with different id', () => {

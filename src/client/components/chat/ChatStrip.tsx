@@ -400,7 +400,19 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
                     className={`${styles.userRow} ${chasedUser === user.name ? styles.userRowFollowed : ''}`}
                     aria-current={chasedUser === user.name ? 'true' : undefined}
                   >
-                    <span className={`${styles.statusDot} ${user.status === 1 ? styles.statusDotTyping : ''}`} />
+                    {(() => {
+                      const isTyping = typingUsers.has(user.name);
+                      const label = user.isAway
+                        ? (isTyping ? 'away, typing' : 'away')
+                        : (isTyping ? 'typing' : 'online');
+                      return (
+                        <span
+                          className={`${styles.statusDot} ${user.isAway ? styles.statusDotAway : ''} ${isTyping ? styles.statusDotTyping : ''}`}
+                          title={label}
+                          aria-label={label}
+                        />
+                      );
+                    })()}
                     <NobilityBadge nobilityTier={user.nobilityTier} modifiers={user.modifiers} size="sm" />
                     <span className={styles.userName}>{user.name}</span>
                     {/* Follow this player's camera — Voyager offered the same item on

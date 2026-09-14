@@ -32,7 +32,7 @@ function user(overrides: Partial<ChatUser>): ChatUser {
   return {
     name: 'Someone',
     id: 'u1',
-    status: 0,
+    isAway: false,
     nobilityPoints: 0,
     nobilityTier: 'Commoner',
     modifiers: 0,

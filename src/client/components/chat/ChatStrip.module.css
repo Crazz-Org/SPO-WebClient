@@ -529,6 +529,12 @@
   animation: pulse 1.2s ease-in-out infinite;
 }
 
+/* Away (AFK): the server's third user-list field. Distinct from .statusDotTyping —
+   both classes can sit on the same dot, giving an amber dot that also pulses. */
+.statusDotAway {
+  background: var(--accent-gold);
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
