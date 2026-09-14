@@ -183,9 +183,40 @@ export async function startCapitolPlacement(ctx: ClientHandlerContext): Promise<
   setupPlacementKeyboardHandler(ctx);
 }
 
+/**
+ * Paint the greyed placeholder for a placement about to leave, and return the
+ * function that clears it. The request's own settlement — answer, refusal,
+ * timeout or disconnect — is what calls it, from a `finally`, so no placeholder
+ * can outlive its request. Returns a no-op when there is no renderer.
+ */
+function beginPendingPlacement(
+  ctx: ClientHandlerContext,
+  visualClass: string,
+  x: number,
+  y: number,
+  fallbackIconUrl?: string,
+): () => void {
+  const renderer = ctx.getRenderer();
+  if (!renderer) return () => { /* nothing to clear */ };
+  const key = renderer.addPendingPlacement({
+    x, y, visualClass,
+    xsize: ctx.currentBuildingXSize,
+    ysize: ctx.currentBuildingYSize,
+    fallbackIconUrl,
+    startedAt: Date.now(),
+  });
+  return () => { renderer.removePendingPlacement(key); };
+}
+
 async function placeCapitol(ctx: ClientHandlerContext, x: number, y: number): Promise<void> {
   ClientBridge.log('Build', `Placing Capitol at (${x}, ${y})...`);
 
+  const clearPending = beginPendingPlacement(
+    ctx,
+    ctx.currentBuildingToPlace?.visualClassId ?? '',
+    x, y,
+    ctx.currentBuildingToPlace?.iconPath,
+  );
   try {
     const req: WsReqBuildCapitol = {
       type: WsMessageType.REQ_BUILD_CAPITOL,
@@ -205,6 +236,8 @@ async function placeCapitol(ctx: ClientHandlerContext, x: number, y: number): Pr
     const errorMsg = toErrorMessage(err);
     ClientBridge.log('Error', `Failed to place Capitol: ${errorMsg}`);
     ctx.showNotification(`Failed to place Capitol: ${errorMsg}`, 'error');
+  } finally {
+    clearPending();
   }
 }
 
@@ -345,9 +378,10 @@ export function placeBuilding(ctx: ClientHandlerContext, x: number, y: number): 
   });
 }
 
-async function sendPlaceBuilding(ctx: ClientHandlerContext, building: BuildingInfo, x: number, y: number): Promise<void> {
+export async function sendPlaceBuilding(ctx: ClientHandlerContext, building: BuildingInfo, x: number, y: number): Promise<void> {
   ClientBridge.log('Build', `Placing ${building.name} at (${x}, ${y})...`);
 
+  const clearPending = beginPendingPlacement(ctx, building.visualClassId, x, y, building.iconPath);
   try {
     const req: WsReqPlaceBuilding = {
       type: WsMessageType.REQ_PLACE_BUILDING,
@@ -387,6 +421,8 @@ async function sendPlaceBuilding(ctx: ClientHandlerContext, building: BuildingIn
     const errorMsg = toErrorMessage(err);
     ClientBridge.log('Error', `Failed to place ${building.name}: ${errorMsg}`);
     ctx.showNotification(`Failed to place building: ${errorMsg}`, 'error');
+  } finally {
+    clearPending();
   }
 }
 

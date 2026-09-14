@@ -3,9 +3,10 @@
  * so the mode bar can show it, and clears it on cancel.
  */
 
-import { placeBuildingFromMenu, cancelBuildingPlacement } from './build-menu-handler';
+import { placeBuildingFromMenu, cancelBuildingPlacement, sendPlaceBuilding } from './build-menu-handler';
 import { useUiStore } from '../store/ui-store';
 import type { ClientHandlerContext } from './client-context';
+import { PendingPlacementLayer } from '../renderer/pending-placements';
 
 jest.mock('../bridge/client-bridge', () => {
   // setBuildMenuFacilities writes the store, as the real bridge does
@@ -138,5 +139,156 @@ describe('facilities session cache', () => {
     expect(second).toEqual(first);
     expect(second).not.toBe(first);
     expect(ctx.lastLoadedFacilities[0].name).toBe('Small Store');
+  });
+});
+
+describe('the pending placeholder', () => {
+  function makeFakeRenderer(layer: PendingPlacementLayer) {
+    return {
+      addPendingPlacement: (p: Parameters<PendingPlacementLayer['add']>[0]) => layer.add(p),
+      removePendingPlacement: (key: string) => layer.remove(key),
+      setPlacementMode: jest.fn(),
+    };
+  }
+
+  const building = {
+    name: 'Textile Mill', cost: 240000, facilityClass: 'TextileMill', visualClassId: '123',
+    area: 1, zoneRequirement: '', iconPath: 'icon.png', description: '', available: true,
+  };
+
+  it('paints the placeholder after the call and before the deferred settles', async () => {
+    const layer = new PendingPlacementLayer();
+    const renderer = makeFakeRenderer(layer);
+    let resolveReq!: (v: unknown) => void;
+    const sendRequest = jest.fn(() => new Promise((resolve) => { resolveReq = resolve; }));
+    const ctx = {
+      ...makeCtx(),
+      currentBuildingXSize: 2,
+      currentBuildingYSize: 2,
+      sendRequest,
+      loadAlignedMapArea: jest.fn(),
+      focusBuilding: jest.fn(),
+      getRenderer: () => renderer,
+    } as unknown as ClientHandlerContext;
+
+    const done = sendPlaceBuilding(ctx, building, 10, 20);
+    expect(layer.size).toBe(1);
+    expect(layer.list(0)[0]).toMatchObject({ x: 10, y: 20, visualClass: '123' });
+
+    resolveReq({});
+    await done;
+    expect(layer.size).toBe(0);
+    expect(ctx.loadAlignedMapArea).toHaveBeenCalledWith(10, 20, 2);
+  });
+
+  it('a refusal removes the placeholder without reloading the area', async () => {
+    const layer = new PendingPlacementLayer();
+    const renderer = makeFakeRenderer(layer);
+    const err = new Error('Zone mismatch') as Error & { code: number };
+    err.code = 28;
+    const sendRequest = jest.fn().mockRejectedValue(err);
+    const ctx = {
+      ...makeCtx(),
+      sendRequest,
+      loadAlignedMapArea: jest.fn(),
+      showNotification: jest.fn(),
+      getRenderer: () => renderer,
+    } as unknown as ClientHandlerContext;
+
+    await sendPlaceBuilding(ctx, building, 10, 20);
+    expect(layer.size).toBe(0);
+    expect(ctx.loadAlignedMapArea).not.toHaveBeenCalled();
+    expect(ctx.showNotification).toHaveBeenCalledWith(expect.stringContaining('Failed to place building'), 'error');
+  });
+
+  it('a timeout removes the placeholder', async () => {
+    const layer = new PendingPlacementLayer();
+    const renderer = makeFakeRenderer(layer);
+    const sendRequest = jest.fn().mockRejectedValue(new Error('Request Timeout'));
+    const ctx = {
+      ...makeCtx(),
+      sendRequest,
+      loadAlignedMapArea: jest.fn(),
+      showNotification: jest.fn(),
+      getRenderer: () => renderer,
+    } as unknown as ClientHandlerContext;
+
+    await sendPlaceBuilding(ctx, building, 10, 20);
+    expect(layer.size).toBe(0);
+  });
+
+  it('places normally when there is no renderer', async () => {
+    const sendRequest = jest.fn().mockResolvedValue({});
+    const ctx = {
+      ...makeCtx(),
+      sendRequest,
+      loadAlignedMapArea: jest.fn(),
+      focusBuilding: jest.fn(),
+      getRenderer: () => null,
+    } as unknown as ClientHandlerContext;
+
+    await expect(sendPlaceBuilding(ctx, building, 10, 20)).resolves.toBeUndefined();
+    expect(ctx.loadAlignedMapArea).toHaveBeenCalledWith(10, 20, 1);
+  });
+});
+
+describe('the Capitol pending placeholder', () => {
+  function makeFakeRenderer(layer: PendingPlacementLayer) {
+    return {
+      addPendingPlacement: (p: Parameters<PendingPlacementLayer['add']>[0]) => layer.add(p),
+      removePendingPlacement: (key: string) => layer.remove(key),
+      setPlacementMode: jest.fn(),
+      setPlacementConfirmCallback: jest.fn(),
+      setCancelPlacementCallback: jest.fn(),
+    };
+  }
+
+  it('paints the placeholder on confirm and clears it once the build succeeds', async () => {
+    const { startCapitolPlacement } = await import('./build-menu-handler');
+    const layer = new PendingPlacementLayer();
+    const renderer = makeFakeRenderer(layer);
+    let resolveReq!: (v: unknown) => void;
+    const sendRequest = jest.fn(() => new Promise((resolve) => { resolveReq = resolve; }));
+    const ctx = {
+      ...makeCtx(),
+      sendRequest,
+      loadAlignedMapArea: jest.fn(),
+      getRenderer: () => renderer,
+    } as unknown as ClientHandlerContext;
+
+    await startCapitolPlacement(ctx);
+    const confirm = renderer.setPlacementConfirmCallback.mock.calls[0][0] as (x: number, y: number) => void;
+
+    confirm(5, 6);
+    expect(layer.size).toBe(1);
+    expect(layer.list(0)[0]).toMatchObject({ x: 5, y: 6 });
+
+    resolveReq({});
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(layer.size).toBe(0);
+    expect(ctx.loadAlignedMapArea).toHaveBeenCalledWith(5, 6, 1);
+  });
+
+  it('a refused Capitol placement clears the placeholder without reloading', async () => {
+    const { startCapitolPlacement } = await import('./build-menu-handler');
+    const layer = new PendingPlacementLayer();
+    const renderer = makeFakeRenderer(layer);
+    const sendRequest = jest.fn().mockRejectedValue(new Error('Access denied'));
+    const ctx = {
+      ...makeCtx(),
+      sendRequest,
+      loadAlignedMapArea: jest.fn(),
+      getRenderer: () => renderer,
+    } as unknown as ClientHandlerContext;
+
+    await startCapitolPlacement(ctx);
+    const confirm = renderer.setPlacementConfirmCallback.mock.calls[0][0] as (x: number, y: number) => void;
+
+    confirm(5, 6);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(layer.size).toBe(0);
+    expect(ctx.loadAlignedMapArea).not.toHaveBeenCalled();
   });
 });
