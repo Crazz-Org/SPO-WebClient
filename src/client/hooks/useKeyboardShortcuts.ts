@@ -18,6 +18,7 @@ import { useEffect } from 'react';
 import { useUiStore } from '../store/ui-store';
 import { useGameStore } from '../store/game-store';
 import type { ClientCallbacks } from '../bridge/client-bridge';
+import { Season } from '@/shared/map-config';
 
 export interface Shortcut {
   keys: string;
@@ -39,9 +40,18 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: '+ / −', action: 'Zoom', rendererOwned: true },
   { keys: 'D', action: 'Debug overlay' },
   { keys: 'H', action: 'Hide / show the HUD' },
+  { keys: 'F1–F4', action: 'Force the season' },
   { keys: 'Ctrl+K', action: 'Command palette' },
   { keys: 'Esc', action: 'Back / close' },
 ];
+
+/** F1–F4 force the terrain suit, as Voyager's accelerators did (Voyager/VoyagerWindow.pas:784-787). */
+const SEASON_KEYS: Readonly<Record<string, Season>> = {
+  F1: Season.WINTER,
+  F2: Season.SPRING,
+  F3: Season.SUMMER,
+  F4: Season.AUTUMN,
+};
 
 export function isTextInput(target: EventTarget | null): boolean {
   if (!target || !(target instanceof HTMLElement)) return false;
@@ -80,6 +90,13 @@ export function useKeyboardShortcuts(client: ClientCallbacks | null): void {
 
       // Plain letters only while nothing modal owns the keyboard
       if (store.modal || store.commandPaletteOpen) return;
+
+      const forcedSeason = SEASON_KEYS[e.key];
+      if (forcedSeason !== undefined) {
+        e.preventDefault();   // F1 is the browser's help key
+        client?.onSetSeason(forcedSeason);
+        return;
+      }
 
       switch (e.key.toLowerCase()) {
         case 'b':

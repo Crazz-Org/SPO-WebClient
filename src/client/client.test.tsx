@@ -66,6 +66,23 @@ describe('StarpeaceClient callback wiring', () => {
     expect(chatHandler.chaseUser).toHaveBeenCalledWith(client, 'Mayor of Podan');
   });
 
+  it('onSetSeason forwards to the renderer\'s setSeason', () => {
+    const setSeason = jest.fn();
+    (client as unknown as { mapNavigationUI: unknown }).mapNavigationUI = {
+      getRenderer: () => ({ setSeason }),
+    };
+
+    client.callbacks.onSetSeason(3);
+
+    expect(setSeason).toHaveBeenCalledWith(3);
+  });
+
+  it('onSetSeason does not throw when there is no renderer yet', () => {
+    (client as unknown as { mapNavigationUI: unknown }).mapNavigationUI = null;
+
+    expect(() => client.callbacks.onSetSeason(1)).not.toThrow();
+  });
+
   it('onStopChase forwards to chatHandler.stopChase with the client alone', () => {
     client.callbacks.onStopChase();
 

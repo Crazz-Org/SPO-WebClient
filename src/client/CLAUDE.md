@@ -57,7 +57,7 @@ Modals (e.g., `CompanyCreationModal`) and research inventory tabs load on demand
 
 ## Keyboard Shortcuts
 
-Global shortcuts registered in `hooks/useKeyboardShortcuts.ts` (B, E, M, R, D, Escape, Cmd+K). Canvas-specific input in the renderer's touch handler.
+Global shortcuts registered in `hooks/useKeyboardShortcuts.ts` (B, E, M, R, D, F1–F4, Escape, Cmd+K). Canvas-specific input in the renderer's touch handler.
 
 ## Bug Reporting (dev-only)
 
