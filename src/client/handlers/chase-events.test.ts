@@ -45,7 +45,7 @@ function makeCtx() {
 }
 
 function user(name: string): ChatUser {
-  return { name, id: '0', status: 0, nobilityPoints: 0, nobilityTier: 'Citizen', modifiers: 0 } as ChatUser;
+  return { name, id: '0', isAway: false, nobilityPoints: 0, nobilityTier: 'Citizen', modifiers: 0 } as ChatUser;
 }
 
 beforeEach(() => {

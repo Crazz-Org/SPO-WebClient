@@ -21,7 +21,7 @@ import { ERROR_InvalidPassword, ERROR_NotEnoughRoom, ERROR_Unknown } from '../..
 // =========================================================================
 
 /**
- * Parse user list format: "name/id/status\n..."
+ * Parse user list format: "name/accDesc/afk\n..."
  */
 function parseChatUserList(ctx: SessionContext, rawData: string): ChatUser[] {
   const users: ChatUser[] = [];
@@ -35,7 +35,7 @@ function parseChatUserList(ctx: SessionContext, rawData: string): ChatUser[] {
       users.push({
         name: parts[0].trim(),
         id: accDescStr,
-        status: parseInt(parts[2], 10) || 0,
+        isAway: parts[2]?.trim() === '1',
         nobilityPoints,
         nobilityTier,
         modifiers,
