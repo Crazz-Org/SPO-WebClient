@@ -13,6 +13,7 @@ import {
   WsEventChatUserTyping,
   WsEventChatChannelChange,
   WsEventChatUserListChange,
+  WsEventChannelListChange,
   WsEventBuildingRefresh,
   WsEventAreaRefresh,
   WsEventTycoonUpdate,
@@ -34,6 +35,7 @@ import {
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
 import { connectionStats } from '../connection-stats';
+import { substituteEmoticons } from '../chat-line-format';
 import { requestBuildingRefreshProperties, requestConnectionReachability } from './building-action-handler';
 import { migrateLocalBookmarks } from './favorites-handler';
 import { ClientBridge } from '../bridge/client-bridge';
@@ -66,10 +68,12 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
       ClientBridge.addChatMessage(chat.channel, {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         from: chat.from,
-        text: chat.message,
+        text: substituteEmoticons(chat.message),
         timestamp: Date.now(),
         isSystem,
         isGM: chat.from === 'GM',
+        nobilityTier: chat.nobilityTier,
+        modifiers: chat.modifiers,
       });
       ClientBridge.log('Chat', `[${chat.channel}] ${chat.from}: ${chat.message}`);
       ctx.soundManager.play('chat-message');
@@ -101,6 +105,22 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
           ClientBridge.setChasedUser(null);
           ClientBridge.log('Chat', `No longer following ${userChange.user.name} — they left`);
         }
+      }
+      break;
+    }
+
+    // A channel was created or destroyed, anywhere in the world: the Interface
+    // Server fans NotifyChannelListChange out to every TClientView
+    // (InterfaceServer.pas:4049), so this is how other players' lists learn of
+    // a channel someone else just made. `change` is uchInclusion = 0 /
+    // uchExclusion = 1 (Protocol/Protocol.pas:120). The reference client
+    // inserted into its list rather than re-fetching (ChatHandler.pas:284-287).
+    case WsMessageType.EVENT_CHANNEL_LIST_CHANGE: {
+      const listChange = msg as WsEventChannelListChange;
+      if (listChange.change === 0) {
+        ClientBridge.addChatChannel(listChange.name);
+      } else {
+        ClientBridge.removeChatChannel(listChange.name);
       }
       break;
     }
