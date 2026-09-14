@@ -1,0 +1,95 @@
+{
+  "$comment": "Pins the reference Pascal tree (~/SPO-Original) that File.pas:Line citations in src/shared/rdo-members.ts point into, so a citation is permanently checkable against the exact bytes it was verified against. Only files actually cited by an in-scope (trailing-comment `.pas:Line`) catalogue entry are listed here — not the whole tree. Regenerate the citedByMembers/hash fields with `node scripts/rdo-citation-baseline.js --print-manifest` after re-deriving them by hand if the cited set ever changes; src/__tests__/rdo-reference-manifest.test.ts recomputes every hash from the real tree on disk and fails loudly if it has moved.",
+  "referenceRoot": "~/SPO-Original (resolved via $SPO_ORIGINAL_DIR, else $HOME/SPO-Original — see scripts/check-rdo-citation.js resolveReferenceRoot)",
+  "isGitRepo": true,
+  "commit": "b28df48a611b0c3783fb1abfb4114cf4eaefd790",
+  "hashAlgorithm": "git-blob-sha1",
+  "files": [
+    {
+      "path": "Interface Server/InterfaceServer.pas",
+      "gitBlobSha1": "a6a7ef1d840f6bbe68aa31bff48227c08d8fe9be",
+      "citedByMembers": [
+        "CanJoinWorldEx:441",
+        "Chase:189",
+        "ContextStatusText:149",
+        "CreateChannel:186",
+        "GetCompanyCluster:171",
+        "GetCompanyFacilityCount:173",
+        "GetCompanyId:172",
+        "GetCompanyName:170",
+        "GetCompanyOwnerRole:169",
+        "RDOFavoritesMoveItem:202",
+        "StopChase:190"
+      ]
+    },
+    {
+      "path": "StdBlocks/Banks.pas",
+      "gitBlobSha1": "7c0f86c98cc1d1118be76514c33293fd8fbb2bbd",
+      "citedByMembers": [
+        "BudgetPerc:39",
+        "Interest:40",
+        "Term:41",
+        "RDOEstimateLoan:45"
+      ]
+    },
+    {
+      "path": "StdBlocks/Broadcast.pas",
+      "gitBlobSha1": "45ba07627eb5367760f3278622f1d3512d42196a",
+      "citedByMembers": [
+        "HoursOnAir:51",
+        "Commercials:53"
+      ]
+    },
+    {
+      "path": "StdBlocks/ServiceBlock.pas",
+      "gitBlobSha1": "1157a25966dad9edccc13c0269a24718e0ef1049",
+      "citedByMembers": [
+        "RDOGetDemand:309",
+        "RDOGetSupply:310"
+      ]
+    },
+    {
+      "path": "Kernel/WorkCenterBlock.pas",
+      "gitBlobSha1": "0c7267b791983cc028201849e89e2f7ab115e640",
+      "citedByMembers": [
+        "RDOGetWorkers:139"
+      ]
+    },
+    {
+      "path": "Kernel/World.pas",
+      "gitBlobSha1": "9a4169f509a8e6c3d9e0ce7ae7ae7975fb872b8c",
+      "citedByMembers": [
+        "RDOLogonClient:412"
+      ]
+    },
+    {
+      "path": "DServer/DirectoryServer.pas",
+      "gitBlobSha1": "fb4dd14493c580b553f649d25ae36e04286f6365",
+      "citedByMembers": [
+        "RDOCanJoinNewWorld:116",
+        "RDOEndSession:31",
+        "RDOLogonUser:92",
+        "RDOSearchKey:84",
+        "RDOSetCurrentKey:36"
+      ]
+    },
+    {
+      "path": "Kernel/TownPolitics.pas",
+      "gitBlobSha1": "2245f2f2b66abe412b4bbf7f70e76e11f68d272f",
+      "citedByMembers": [
+        "RDOSetProjectData:45",
+        "RDOSetPublicity:41",
+        "RDOSetRatingFrom:40"
+      ]
+    },
+    {
+      "path": "Kernel/WorldPolitics.pas",
+      "gitBlobSha1": "dca66e62833b811dd6260c7e34758e06f705ad3e",
+      "citedByMembers": [
+        "RDOSetProjectData:260",
+        "RDOSetPublicity:257",
+        "RDOSetRatingFrom:256"
+      ]
+    }
+  ]
+}

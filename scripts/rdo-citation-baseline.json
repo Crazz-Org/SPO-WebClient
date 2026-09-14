@@ -1,0 +1,831 @@
+{
+  "generatedFrom": "src/shared/rdo-members.ts",
+  "referenceCommit": "b28df48a611b0c3783fb1abfb4114cf4eaefd790",
+  "entryCount": 29,
+  "matchCount": 28,
+  "nonMatchCount": 1,
+  "entries": [
+    {
+      "name": "BudgetPerc",
+      "catalogue": {
+        "kind": "accessor",
+        "access": [
+          "get"
+        ]
+      },
+      "citations": [
+        "StdBlocks/Banks.pas:39"
+      ],
+      "verdict": "MISMATCH(access)",
+      "match": false,
+      "perCitation": [
+        {
+          "citation": "StdBlocks/Banks.pas:39",
+          "verdict": "MISMATCH(access)",
+          "parsed": {
+            "kind": "accessor",
+            "access": [
+              "get",
+              "set"
+            ]
+          },
+          "detail": "declaration exposes [get, set], catalogue claims [get]"
+        }
+      ]
+    },
+    {
+      "name": "CanJoinWorldEx",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:441"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:441",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "Name"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "Chase",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:189"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:189",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "UserName"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "Commercials",
+      "catalogue": {
+        "kind": "accessor",
+        "access": [
+          "get",
+          "set"
+        ]
+      },
+      "citations": [
+        "StdBlocks/Broadcast.pas:53"
+      ],
+      "verdict": "MATCH(accessor, [get, set])",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "StdBlocks/Broadcast.pas:53",
+          "verdict": "MATCH(accessor, [get, set])",
+          "parsed": {
+            "kind": "accessor",
+            "access": [
+              "get",
+              "set"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "ContextStatusText",
+      "catalogue": {
+        "kind": "function",
+        "arity": 2
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:149"
+      ],
+      "verdict": "MATCH(function, 2)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:149",
+          "verdict": "MATCH(function, 2)",
+          "parsed": {
+            "kind": "function",
+            "arity": 2,
+            "params": [
+              "x",
+              "y"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "CreateChannel",
+      "catalogue": {
+        "kind": "function",
+        "arity": 5
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:186"
+      ],
+      "verdict": "MATCH(function, 5)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:186",
+          "verdict": "MATCH(function, 5)",
+          "parsed": {
+            "kind": "function",
+            "arity": 5,
+            "params": [
+              "ChannelName",
+              "Password",
+              "aSessionApp",
+              "aSessionAppId",
+              "anUserLimit"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "GetCompanyCluster",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:171"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:171",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "index"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "GetCompanyFacilityCount",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:173"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:173",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "index"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "GetCompanyId",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:172"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:172",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "index"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "GetCompanyName",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:170"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:170",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "index"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "GetCompanyOwnerRole",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:169"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:169",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "index"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "HoursOnAir",
+      "catalogue": {
+        "kind": "accessor",
+        "access": [
+          "get",
+          "set"
+        ]
+      },
+      "citations": [
+        "StdBlocks/Broadcast.pas:51"
+      ],
+      "verdict": "MATCH(accessor, [get, set])",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "StdBlocks/Broadcast.pas:51",
+          "verdict": "MATCH(accessor, [get, set])",
+          "parsed": {
+            "kind": "accessor",
+            "access": [
+              "get",
+              "set"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "Interest",
+      "catalogue": {
+        "kind": "accessor",
+        "access": [
+          "get",
+          "set"
+        ]
+      },
+      "citations": [
+        "StdBlocks/Banks.pas:40"
+      ],
+      "verdict": "MATCH(accessor, [get, set])",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "StdBlocks/Banks.pas:40",
+          "verdict": "MATCH(accessor, [get, set])",
+          "parsed": {
+            "kind": "accessor",
+            "access": [
+              "get",
+              "set"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOCanJoinNewWorld",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "DServer/DirectoryServer.pas:116"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "DServer/DirectoryServer.pas:116",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "Alias"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOEndSession",
+      "catalogue": {
+        "kind": "procedure",
+        "arity": 0
+      },
+      "citations": [
+        "DServer/DirectoryServer.pas:31"
+      ],
+      "verdict": "MATCH(procedure, 0)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "DServer/DirectoryServer.pas:31",
+          "verdict": "MATCH(procedure, 0)",
+          "parsed": {
+            "kind": "procedure",
+            "arity": 0,
+            "params": []
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOEstimateLoan",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "StdBlocks/Banks.pas:45"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "StdBlocks/Banks.pas:45",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "ClientId"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOFavoritesMoveItem",
+      "catalogue": {
+        "kind": "function",
+        "arity": 2
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:202"
+      ],
+      "verdict": "MATCH(function, 2)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:202",
+          "verdict": "MATCH(function, 2)",
+          "parsed": {
+            "kind": "function",
+            "arity": 2,
+            "params": [
+              "ItemLoc",
+              "Dest"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOGetDemand",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "StdBlocks/ServiceBlock.pas:309"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "StdBlocks/ServiceBlock.pas:309",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "index"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOGetSupply",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "StdBlocks/ServiceBlock.pas:310"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "StdBlocks/ServiceBlock.pas:310",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "index"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOGetWorkers",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "Kernel/WorkCenterBlock.pas:139"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Kernel/WorkCenterBlock.pas:139",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "kind"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOLogonClient",
+      "catalogue": {
+        "kind": "procedure",
+        "arity": 2
+      },
+      "citations": [
+        "Kernel/World.pas:412"
+      ],
+      "verdict": "MATCH(procedure, 2)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Kernel/World.pas:412",
+          "verdict": "MATCH(procedure, 2)",
+          "parsed": {
+            "kind": "procedure",
+            "arity": 2,
+            "params": [
+              "name",
+              "password"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOLogonUser",
+      "catalogue": {
+        "kind": "function",
+        "arity": 2
+      },
+      "citations": [
+        "DServer/DirectoryServer.pas:92"
+      ],
+      "verdict": "MATCH(function, 2)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "DServer/DirectoryServer.pas:92",
+          "verdict": "MATCH(function, 2)",
+          "parsed": {
+            "kind": "function",
+            "arity": 2,
+            "params": [
+              "Alias",
+              "Password"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOSearchKey",
+      "catalogue": {
+        "kind": "function",
+        "arity": 2
+      },
+      "citations": [
+        "DServer/DirectoryServer.pas:84"
+      ],
+      "verdict": "MATCH(function, 2)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "DServer/DirectoryServer.pas:84",
+          "verdict": "MATCH(function, 2)",
+          "parsed": {
+            "kind": "function",
+            "arity": 2,
+            "params": [
+              "SearchPattern",
+              "ValueNameList"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOSetCurrentKey",
+      "catalogue": {
+        "kind": "function",
+        "arity": 1
+      },
+      "citations": [
+        "DServer/DirectoryServer.pas:36"
+      ],
+      "verdict": "MATCH(function, 1)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "DServer/DirectoryServer.pas:36",
+          "verdict": "MATCH(function, 1)",
+          "parsed": {
+            "kind": "function",
+            "arity": 1,
+            "params": [
+              "FullPathKey"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOSetProjectData",
+      "catalogue": {
+        "kind": "procedure",
+        "arity": 3
+      },
+      "citations": [
+        "Kernel/TownPolitics.pas:45",
+        "Kernel/WorldPolitics.pas:260"
+      ],
+      "verdict": "MATCH(procedure, 3)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Kernel/TownPolitics.pas:45",
+          "verdict": "MATCH(procedure, 3)",
+          "parsed": {
+            "kind": "procedure",
+            "arity": 3,
+            "params": [
+              "TycoonId",
+              "ProjectId",
+              "Data"
+            ]
+          },
+          "detail": null
+        },
+        {
+          "citation": "Kernel/WorldPolitics.pas:260",
+          "verdict": "MATCH(procedure, 3)",
+          "parsed": {
+            "kind": "procedure",
+            "arity": 3,
+            "params": [
+              "TycoonId",
+              "ProjectId",
+              "Data"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOSetPublicity",
+      "catalogue": {
+        "kind": "procedure",
+        "arity": 2
+      },
+      "citations": [
+        "Kernel/TownPolitics.pas:41",
+        "Kernel/WorldPolitics.pas:257"
+      ],
+      "verdict": "MATCH(procedure, 2)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Kernel/TownPolitics.pas:41",
+          "verdict": "MATCH(procedure, 2)",
+          "parsed": {
+            "kind": "procedure",
+            "arity": 2,
+            "params": [
+              "RatingId",
+              "Value"
+            ]
+          },
+          "detail": null
+        },
+        {
+          "citation": "Kernel/WorldPolitics.pas:257",
+          "verdict": "MATCH(procedure, 2)",
+          "parsed": {
+            "kind": "procedure",
+            "arity": 2,
+            "params": [
+              "RatingId",
+              "Value"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "RDOSetRatingFrom",
+      "catalogue": {
+        "kind": "procedure",
+        "arity": 3
+      },
+      "citations": [
+        "Kernel/TownPolitics.pas:40",
+        "Kernel/WorldPolitics.pas:256"
+      ],
+      "verdict": "MATCH(procedure, 3)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Kernel/TownPolitics.pas:40",
+          "verdict": "MATCH(procedure, 3)",
+          "parsed": {
+            "kind": "procedure",
+            "arity": 3,
+            "params": [
+              "RatingId",
+              "TycoonId",
+              "Value"
+            ]
+          },
+          "detail": null
+        },
+        {
+          "citation": "Kernel/WorldPolitics.pas:256",
+          "verdict": "MATCH(procedure, 3)",
+          "parsed": {
+            "kind": "procedure",
+            "arity": 3,
+            "params": [
+              "RatingId",
+              "TycoonId",
+              "Value"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "StopChase",
+      "catalogue": {
+        "kind": "function",
+        "arity": 0
+      },
+      "citations": [
+        "Interface Server/InterfaceServer.pas:190"
+      ],
+      "verdict": "MATCH(function, 0)",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "Interface Server/InterfaceServer.pas:190",
+          "verdict": "MATCH(function, 0)",
+          "parsed": {
+            "kind": "function",
+            "arity": 0,
+            "params": []
+          },
+          "detail": null
+        }
+      ]
+    },
+    {
+      "name": "Term",
+      "catalogue": {
+        "kind": "accessor",
+        "access": [
+          "get",
+          "set"
+        ]
+      },
+      "citations": [
+        "StdBlocks/Banks.pas:41"
+      ],
+      "verdict": "MATCH(accessor, [get, set])",
+      "match": true,
+      "perCitation": [
+        {
+          "citation": "StdBlocks/Banks.pas:41",
+          "verdict": "MATCH(accessor, [get, set])",
+          "parsed": {
+            "kind": "accessor",
+            "access": [
+              "get",
+              "set"
+            ]
+          },
+          "detail": null
+        }
+      ]
+    }
+  ]
+}
