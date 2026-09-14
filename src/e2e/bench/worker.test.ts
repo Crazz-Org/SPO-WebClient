@@ -2318,19 +2318,30 @@ describe('runWithDeadline: an actual kill, not just a timer that gives up waitin
     const fakeChild = new EventEmitter() as unknown as ReturnType<typeof import('child_process').spawn>;
     (fakeChild as unknown as { pid: number }).pid = 4242;
     const killCalls: { pid: number; signal: NodeJS.Signals }[] = [];
-    const start = Date.now();
-    const code = await runWithDeadline(
-      'ignored-because-spawn-is-injected',
-      [],
-      { cwd: process.cwd(), logFile },
-      { stage: 'backstop', deadlineMs: 50, killGraceMs: 50 },
-      {
-        spawnProcess: (() => fakeChild) as unknown as typeof import('child_process').spawn,
-        kill: (pid, signal) => killCalls.push({ pid, signal }),
-      },
-    );
+    // Driven on fake timers: the backstop chain is three nested setTimeouts (deadlineMs, then
+    // killGraceMs twice) around synchronous fs calls, so advancing the clock settles it
+    // deterministically. Asserting real elapsed time here measured the machine, not the code —
+    // under a loaded parallel run the event loop starves and the wall clock reads seconds.
+    // `await` alone already proves the promise resolved without 'close' ever arriving.
+    jest.useFakeTimers();
+    let code: number;
+    try {
+      const pending = runWithDeadline(
+        'ignored-because-spawn-is-injected',
+        [],
+        { cwd: process.cwd(), logFile },
+        { stage: 'backstop', deadlineMs: 50, killGraceMs: 50 },
+        {
+          spawnProcess: (() => fakeChild) as unknown as typeof import('child_process').spawn,
+          kill: (pid, signal) => killCalls.push({ pid, signal }),
+        },
+      );
+      await jest.advanceTimersByTimeAsync(200); // > 50 + 50 + 50, the whole backstop chain
+      code = await pending;
+    } finally {
+      jest.useRealTimers();
+    }
     expect(code).toBe(DEADLINE_EXIT_CODE);
-    expect(Date.now() - start).toBeLessThan(2_000);
     // Both signals sent, to the whole GROUP (negative pid), in order.
     expect(killCalls).toEqual([
       { pid: -4242, signal: 'SIGTERM' },
