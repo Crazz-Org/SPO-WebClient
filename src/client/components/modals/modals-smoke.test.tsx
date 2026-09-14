@@ -10,6 +10,7 @@ import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
+import { connectionStats } from '../../connection-stats';
 import { BuildMenu } from './BuildMenu';
 import { SettingsDialog } from './SettingsDialog';
 import { ZoneTypePicker } from './ZoneTypePicker';
@@ -128,6 +129,29 @@ describe('SettingsDialog', () => {
     expect(onSettingsChange).toHaveBeenCalledWith(
       expect.objectContaining({ soundVolume: 0.2, musicVolume: 0.5 }),
     );
+  });
+
+  it('renders "—" for the round-trip figure when no measurement has been taken yet', () => {
+    connectionStats.reset();
+    useUiStore.getState().openModal('settings');
+    renderWithProviders(<SettingsDialog />);
+    expect(screen.getByText('—')).toBeTruthy();
+  });
+
+  it('renders the round-trip figure once the gateway has pushed a latency sample', () => {
+    connectionStats.reset();
+    connectionStats.setLatency(42, 3);
+    useUiStore.getState().openModal('settings');
+    renderWithProviders(<SettingsDialog />);
+    expect(screen.getByText('42 ms')).toBeTruthy();
+  });
+
+  it('shows a non-zero Sent figure after bytes have been recorded', () => {
+    connectionStats.reset();
+    connectionStats.recordSent(2048);
+    useUiStore.getState().openModal('settings');
+    renderWithProviders(<SettingsDialog />);
+    expect(screen.getByText('Sent').nextSibling?.textContent).toMatch(/^2\.0 KB/);
   });
 });
 

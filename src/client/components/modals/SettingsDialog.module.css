@@ -237,6 +237,23 @@
   color: var(--bg-primary);
 }
 
+.statRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) 0;
+}
+
+.statLabel {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.statValue {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
 .sizeBtnActive:hover {
   color: var(--bg-primary);
 }
