@@ -9,12 +9,14 @@
 import {
   Mail, Search, Landmark,
   ZoomIn, ZoomOut, Layers, RefreshCw, RotateCw,
-  Settings, Globe, Bug, Command, User, Heart, LogOut,
+  Settings, Globe, Bug, Command, User, Heart, LogOut, LifeBuoy,
 } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useMailStore } from '../../store/mail-store';
+import { useGameStore } from '../../store/game-store';
 import { useClient } from '../../context';
 import { Badge, confirmLogout } from '../common';
+import { buildSupportUrl, getSupportUrl } from '../../support-link';
 import styles from './MobileMenu.module.css';
 
 interface MenuGroup {
@@ -25,7 +27,8 @@ interface MenuGroup {
 interface MenuItem {
   label: string;
   icon: typeof Mail;
-  action: () => void;
+  action?: () => void;
+  href?: string;
   badge?: number;
 }
 
@@ -37,6 +40,8 @@ export function MobileMenu() {
   const openCommandPalette = useUiStore((s) => s.openCommandPalette);
   const setMobileTab = useUiStore((s) => s.setMobileTab);
   const unreadCount = useMailStore((s) => s.unreadCount);
+  const worldName = useGameStore((s) => s.worldName);
+  const username = useGameStore((s) => s.username);
   const client = useClient();
 
   /** Open a panel and stay on map so the BottomSheet shows panel content */
@@ -82,6 +87,7 @@ export function MobileMenu() {
       label: 'System',
       items: [
         { label: 'Settings', icon: Settings, action: () => doAction(() => openModal('settings')) },
+        { label: 'Support', icon: LifeBuoy, href: buildSupportUrl(getSupportUrl(), worldName, username) },
         { label: 'Switch Server', icon: Globe, action: () => doAction(() => client.onSwitchServer()) },
         { label: 'Debug Overlay', icon: Bug, action: () => doAction(() => client.onToggleDebugOverlay()) },
         { label: 'Logout', icon: LogOut, action: () => doAction(() => confirmLogout(client.onLogout)) },
@@ -94,17 +100,35 @@ export function MobileMenu() {
       {groups.map(({ label, items }) => (
         <div key={label} className={styles.group}>
           <span className={styles.groupLabel}>{label}</span>
-          {items.map(({ label: itemLabel, icon: Icon, action, badge }) => (
-            <button key={itemLabel} className={styles.item} onClick={action}>
-              <Icon size={18} className={styles.icon} />
-              <span className={styles.label}>{itemLabel}</span>
-              {badge != null && badge > 0 && (
-                <Badge variant="danger" className={styles.badge}>
-                  {badge > 9 ? '9+' : badge}
-                </Badge>
-              )}
-            </button>
-          ))}
+          {items.map(({ label: itemLabel, icon: Icon, action, href, badge }) => {
+            const children = (
+              <>
+                <Icon size={18} className={styles.icon} />
+                <span className={styles.label}>{itemLabel}</span>
+                {badge != null && badge > 0 && (
+                  <Badge variant="danger" className={styles.badge}>
+                    {badge > 9 ? '9+' : badge}
+                  </Badge>
+                )}
+              </>
+            );
+            return href ? (
+              <a
+                key={itemLabel}
+                className={styles.item}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMobileTab('map')}
+              >
+                {children}
+              </a>
+            ) : (
+              <button key={itemLabel} className={styles.item} onClick={action}>
+                {children}
+              </button>
+            );
+          })}
         </div>
       ))}
     </div>

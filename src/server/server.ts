@@ -429,6 +429,7 @@ const server = http.createServer(async (req, res) => {
       forceWorld: config.server.forceWorld,
       bugReport: config.server.bugReportMode,
       registerUrl: config.server.registerUrl,
+      supportUrl: config.server.supportUrl,
     });
     res.writeHead(200, {
       'Content-Type': 'text/javascript',
@@ -893,7 +894,7 @@ const server = http.createServer(async (req, res) => {
       // the /cdn/ proxy when CHUNK_CDN_URL is overridden, or a registration URL is configured.
       // Uses an external script (CSP-compliant) instead of inline script.
       // In Docker/default mode, config.cdn.url is the default and no injection occurs.
-      if (config.cdn.url !== 'https://spo.zz.works' || config.server.forceWorld || config.server.bugReportMode || config.server.registerUrl) {
+      if (config.cdn.url !== 'https://spo.zz.works' || config.server.forceWorld || config.server.bugReportMode || config.server.registerUrl || config.server.supportUrl) {
         const injection = `<script src="/spo-runtime-config.js"></script>`;
         html = html.replace('</head>', `${injection}</head>`);
       }

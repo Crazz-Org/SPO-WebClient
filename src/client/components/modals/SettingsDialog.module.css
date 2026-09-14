@@ -343,3 +343,28 @@
   outline: 2px solid var(--accent-gold);
   outline-offset: 2px;
 }
+
+/* Support */
+.supportLink {
+  display: block;
+  width: 100%;
+  padding: var(--space-3);
+  background: transparent;
+  border: 1px solid var(--accent-gold);
+  border-radius: var(--radius-lg);
+  color: var(--accent-gold);
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  font-family: var(--font-sans);
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+.supportLink:hover {
+  background: var(--accent-gold);
+  color: var(--bg-primary);
+}

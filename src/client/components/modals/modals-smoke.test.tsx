@@ -170,6 +170,23 @@ describe('SettingsDialog', () => {
     expect(onLogout).toHaveBeenCalledTimes(1);
   });
 
+  it('offers a Support link to the configured destination, carrying world and player, in a new tab', () => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__SPO_SUPPORT_URL__ = 'https://support.example.org/support.asp';
+    useGameStore.setState({ worldName: 'planitia', username: 'Crazz' });
+    useUiStore.getState().openModal('settings');
+    renderWithProviders(<SettingsDialog />);
+
+    const link = screen.getByRole('link', { name: 'Contact Support' }) as HTMLAnchorElement;
+    expect(link.href).toContain('https://support.example.org/support.asp');
+    expect(link.href).toContain('WorldName=planitia');
+    expect(link.href).toContain('UserName=Crazz');
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toContain('noopener');
+
+    delete w.__SPO_SUPPORT_URL__;
+  });
+
   it('cancelling the Logout confirm leaves the session untouched and returns to Settings', () => {
     useUiStore.getState().openModal('settings');
     const onLogout = jest.fn();
