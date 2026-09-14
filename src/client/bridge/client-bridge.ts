@@ -22,6 +22,7 @@ import {
   SurfaceType,
 } from '@/shared/types';
 import type { RememberedSession } from '../store/remembered-session';
+import type { Season } from '@/shared/map-config';
 import type {
   WorldInfo,
   CompanyInfo,
@@ -158,6 +159,8 @@ export interface ClientCallbacks {
   onZoomOut: () => void;
   onToggleMinimap: () => void;
   onToggleDebugOverlay: () => void;
+  /** Force the terrain texture suit, the way Voyager's F1–F4 wrote MapView.ImageSuit. */
+  onSetSeason: (season: Season) => void;
   /** The server's sentence for the town at world tile (x, y), or '' when there is none. */
   onRequestContextStatus: (x: number, y: number) => Promise<string>;
 

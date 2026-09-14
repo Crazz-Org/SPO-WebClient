@@ -612,6 +612,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       onConfirmBuildingPlacement: () => this.mapNavigationUI?.getRenderer()?.confirmCurrentPlacement(),
       onRotateCW: () => this.mapNavigationUI?.getRenderer()?.rotateCW(),
       onRotateCCW: () => this.mapNavigationUI?.getRenderer()?.rotateCCW(),
+      onSetSeason: (season) => this.mapNavigationUI?.getRenderer()?.setSeason(season),
       onConnectionPickOnMap: () => buildingActionHandler.startConnectModeFromPicker(this),
       onCancelConnectMode: () => buildingActionHandler.cancelConnectMode(this),
       onTriggerReconnect: () => this.triggerImmediateReconnect(),

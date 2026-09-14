@@ -30,8 +30,10 @@ import {
   WsRespResearchInventory,
   WsRespResearchDetails,
   WsEventMoveTo,
+  WsEventRefreshSeason,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { Season } from '../../shared/map-config';
 import { requestBuildingRefreshProperties, requestConnectionReachability } from './building-action-handler';
 import { migrateLocalBookmarks } from './favorites-handler';
 import { ClientBridge } from '../bridge/client-bridge';
@@ -116,6 +118,18 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
         // The dispatcher forwards what it read rather than guessing; an
         // unreadable coordinate must not move the camera anywhere.
         ClientBridge.log('Map', `Ignoring MoveTo with unreadable coordinates (${moveTo.x}, ${moveTo.y})`);
+      }
+      break;
+    }
+
+    case WsMessageType.EVENT_REFRESH_SEASON: {
+      const seasonEvent = msg as WsEventRefreshSeason;
+      const season = seasonEvent.season;
+      if (Number.isInteger(season) && season >= Season.WINTER && season <= Season.AUTUMN) {
+        ClientBridge.log('Map', `Season changed to ${season}`);
+        ctx.getRenderer()?.setSeason(season as Season);
+      } else {
+        ClientBridge.log('Map', `Ignoring RefreshSeason with unreadable season (${season})`);
       }
       break;
     }

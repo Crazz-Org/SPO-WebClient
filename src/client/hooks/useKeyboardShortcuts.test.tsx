@@ -19,6 +19,7 @@ function makeClient(): ClientCallbacks {
     onToggleMinimap: jest.fn(),
     onRotateCW: jest.fn(),
     onRotateCCW: jest.fn(),
+    onSetSeason: jest.fn(),
   } as unknown as ClientCallbacks;
 }
 
@@ -125,6 +126,32 @@ describe('useKeyboardShortcuts', () => {
 
   it('the reference list names every handled key', () => {
     const keys = SHORTCUTS.map((s) => s.keys).join(' ');
-    for (const k of ['B', 'M', 'E', 'P', 'L', 'R', 'D', 'Ctrl+K', 'Esc']) expect(keys).toContain(k);
+    for (const k of ['B', 'M', 'E', 'P', 'L', 'R', 'D', 'F1', 'Ctrl+K', 'Esc']) expect(keys).toContain(k);
+  });
+
+  it('F1–F4 force the season to 0/1/2/3 and repaint without a reload', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    press('F1');
+    press('F2');
+    press('F3');
+    press('F4');
+    expect(client.onSetSeason).toHaveBeenNthCalledWith(1, 0);
+    expect(client.onSetSeason).toHaveBeenNthCalledWith(2, 1);
+    expect(client.onSetSeason).toHaveBeenNthCalledWith(3, 2);
+    expect(client.onSetSeason).toHaveBeenNthCalledWith(4, 3);
+  });
+
+  it('F1–F4 are inert while a modal owns the keyboard or a text input has focus', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    useUiStore.setState({ modal: 'settings' });
+    press('F1');
+    expect(client.onSetSeason).not.toHaveBeenCalled();
+
+    useUiStore.setState({ modal: null });
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    const ev = press('F1', { target: input });
+    expect(client.onSetSeason).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false);
   });
 });

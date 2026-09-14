@@ -16,6 +16,7 @@ import { useEffect } from 'react';
 import { useUiStore } from '../store/ui-store';
 import { useGameStore } from '../store/game-store';
 import type { ClientCallbacks } from '../bridge/client-bridge';
+import { Season } from '@/shared/map-config';
 
 export interface Shortcut {
   keys: string;
@@ -36,6 +37,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: 'Arrows', action: 'Pan the map', rendererOwned: true },
   { keys: '+ / −', action: 'Zoom', rendererOwned: true },
   { keys: 'D', action: 'Debug overlay' },
+  { keys: 'F1 – F4', action: 'Force season (Winter · Spring · Summer · Autumn)' },
   { keys: 'Ctrl+K', action: 'Command palette' },
   { keys: 'Esc', action: 'Back / close' },
 ];
@@ -116,6 +118,24 @@ export function useKeyboardShortcuts(client: ClientCallbacks | null): void {
         case 'd':
           e.preventDefault();
           client?.onToggleDebugOverlay();
+          break;
+        // Force the terrain texture suit, the way Voyager's F1–F4 did
+        // (VoyagerWindow.pas:784-787 -> MapIsoHandler.pas:537-547).
+        case 'f1':
+          e.preventDefault();
+          client?.onSetSeason(Season.WINTER);
+          break;
+        case 'f2':
+          e.preventDefault();
+          client?.onSetSeason(Season.SPRING);
+          break;
+        case 'f3':
+          e.preventDefault();
+          client?.onSetSeason(Season.SUMMER);
+          break;
+        case 'f4':
+          e.preventDefault();
+          client?.onSetSeason(Season.AUTUMN);
           break;
       }
     };
