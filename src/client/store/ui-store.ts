@@ -116,6 +116,9 @@ interface UiState {
   // Command palette
   commandPaletteOpen: boolean;
 
+  /** The HUD chrome (StatusPill + CommandBar) is shown; session-only, never persisted, so a reload always comes back visible (#613). */
+  hudVisible: boolean;
+
   // Mobile
   mobileTab: MobileTab;
   mobileSheetSnap: SnapPoint;
@@ -186,6 +189,10 @@ interface UiState {
   closeCommandPalette: () => void;
   toggleCommandPalette: () => void;
 
+  // Actions — HUD visibility
+  setHudVisible: (v: boolean) => void;
+  toggleHudVisible: () => void;
+
   // Actions — Mobile
   setMobileTab: (tab: MobileTab) => void;
   setMobileSheetSnap: (snap: SnapPoint) => void;
@@ -222,6 +229,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   buildMenuFacilities: [],
   capitolIconUrl: '',
   commandPaletteOpen: false,
+  hudVisible: true,
   mobileTab: 'map',
   mobileSheetSnap: 'half' as SnapPoint,
   minimapFullscreen: false,
@@ -337,6 +345,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   openCommandPalette: () => set({ commandPaletteOpen: true }),
   closeCommandPalette: () => set({ commandPaletteOpen: false }),
   toggleCommandPalette: () => set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
+
+  // HUD visibility
+  setHudVisible: (v) => set({ hudVisible: v }),
+  toggleHudVisible: () => set((s) => ({ hudVisible: !s.hudVisible })),
 
   // Mobile
   setMobileTab: (tab) => set({ mobileTab: tab }),

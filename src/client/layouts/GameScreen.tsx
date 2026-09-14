@@ -8,6 +8,7 @@
  * - CommandBar (z-350): bottom, search / mode bar + seven tiles
  * - RightRail (z-200): map controls
  * - ChatStrip (z-150): bottom-edge persistent chat, hidden when the player closed it (#610)
+ * - StatusPill / CommandBar are hidden together while the HUD is collapsed (H, #613)
  * - Sheet (z-400): the universal surface — one stack (inspector, mail, search, politics, profile…)
  * - Modals (z-400): build menu, settings
  * - CommandPalette (z-500)
@@ -45,6 +46,7 @@ export function GameScreen() {
   const promptPayload = useUiStore((s) => s.promptPayload);
   const closeModal = useUiStore((s) => s.closeModal);
   const chatVisible = useChatStore((s) => s.chatVisible);
+  const hudVisible = useUiStore((s) => s.hudVisible);
 
   useChangelogCheck();
   useCameraHistory();
@@ -60,8 +62,8 @@ export function GameScreen() {
       <MapContextMenu />
 
 
-      {/* StatusPill — top, the player's state in one line */}
-      <StatusPill />
+      {/* StatusPill — top, the player's state in one line; hidden while the HUD is collapsed (#613) */}
+      {hudVisible && <StatusPill />}
 
       {/* ChaseBadge — top-right, shown only while following another player's camera */}
       <ChaseBadge />
@@ -69,8 +71,8 @@ export function GameScreen() {
       {/* ContextStatusStrip — the server's sentence for the town under the camera */}
       <ContextStatusStrip />
 
-      {/* CommandBar — bottom: search / mode bar + six tiles */}
-      <CommandBar />
+      {/* CommandBar — bottom: search / mode bar + six tiles; hidden while the HUD is collapsed (#613) */}
+      {hudVisible && <CommandBar />}
 
       {/* RightRail — map controls */}
       <RightRail />
