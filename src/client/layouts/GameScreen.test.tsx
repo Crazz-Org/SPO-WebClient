@@ -26,7 +26,7 @@ jest.mock('../components/sheet', () => ({ Sheet: () => <aside>SHEET</aside> }));
 
 describe('GameScreen', () => {
   beforeEach(() => {
-    useUiStore.setState({ modal: null, confirmPayload: null, promptPayload: null });
+    useUiStore.setState({ modal: null, confirmPayload: null, promptPayload: null, hudVisible: true });
     useChatStore.setState({ chatVisible: true });
   });
 
@@ -64,5 +64,34 @@ describe('GameScreen', () => {
     expect(screen.queryByText('CHAT')).toBeNull();
     act(() => useChatStore.getState().setChatVisible(true));
     expect(screen.getByText('CHAT')).toBeTruthy();
+  });
+
+  it('toggling hudVisible removes and restores the StatusPill and CommandBar, leaving other surfaces untouched', () => {
+    renderWithProviders(<GameScreen />);
+    expect(screen.getByText('PILL')).toBeTruthy();
+    expect(screen.getByText('COMMANDBAR')).toBeTruthy();
+
+    act(() => useUiStore.getState().toggleHudVisible());
+
+    expect(screen.queryByText('PILL')).toBeNull();
+    expect(screen.queryByText('COMMANDBAR')).toBeNull();
+    expect(screen.getByText('SHEET')).toBeTruthy();
+    expect(screen.getByText('CONTEXTSTATUS')).toBeTruthy();
+    expect(screen.getByText('RIGHTRAIL')).toBeTruthy();
+    expect(screen.getByText('CHAT')).toBeTruthy();
+
+    act(() => useUiStore.getState().toggleHudVisible());
+
+    expect(screen.getByText('PILL')).toBeTruthy();
+    expect(screen.getByText('COMMANDBAR')).toBeTruthy();
+  });
+
+  it('a modal opened by other means still renders while the HUD is hidden', () => {
+    useUiStore.setState({ hudVisible: false });
+    renderWithProviders(<GameScreen />);
+    act(() => {
+      useUiStore.getState().requestConfirm('Demolish Building', 'Sure?', () => {});
+    });
+    expect(screen.getByRole('dialog')).toBeTruthy();
   });
 });
