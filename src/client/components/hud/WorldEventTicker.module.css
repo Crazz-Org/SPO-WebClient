@@ -1,0 +1,51 @@
+/* WorldEventTicker — the newest world event, a slim strip above ContextStatusStrip */
+
+.ticker {
+  position: fixed;
+  /* ContextStatusStrip sits at + 118px and is ~28px tall; stay clear of it. */
+  bottom: calc(var(--space-4) + 152px);
+  left: var(--space-4);
+  right: var(--space-4);
+  max-width: 904px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--space-4);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: var(--z-hud);
+}
+
+.link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.link:hover,
+.link:focus-visible {
+  color: var(--text-primary);
+  text-decoration: underline;
+}

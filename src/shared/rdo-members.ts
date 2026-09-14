@@ -124,7 +124,12 @@ export const RDO_MEMBERS = {
   GetAttachmentCount:        { kind: 'function',  arity: 1 },                // src/server/session/mail-handler.ts:326
   GetChannelInfo:            { kind: 'function',  arity: 1 },                // src/server/session/chat-handler.ts:112
   GetChannelList:            { kind: 'function',  arity: 1 },                // src/server/session/chat-handler.ts:94
+  GetCompanyCluster:         { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:171; src/server/session/login-handler.ts (readCompanyList)
   GetCompanyCount:           { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts:478
+  GetCompanyFacilityCount:   { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:173; src/server/session/login-handler.ts (readCompanyList)
+  GetCompanyId:              { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:172; src/server/session/login-handler.ts (readCompanyList)
+  GetCompanyName:            { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:170; src/server/session/login-handler.ts (readCompanyList)
+  GetCompanyOwnerRole:       { kind: 'function',  arity: 1 },                // Interface Server/InterfaceServer.pas:169; src/server/session/login-handler.ts (readCompanyList)
   GetHeaders:                { kind: 'function',  arity: 1 },                // src/server/session/mail-handler.ts:306
   GetInputNames:             { kind: 'function',  arity: 2 },                // src/server/session/building-details-handler.ts:983
   GetLines:                  { kind: 'function',  arity: 1 },                // src/server/session/mail-handler.ts:316

@@ -36,6 +36,7 @@ import { createWorkerCountsScenario } from './worker-counts-scenario';
 import { createChaseScenario } from './chase-scenario';
 import { createDefineZoneScenario } from './define-zone-scenario';
 import { createContextStatusScenario } from './context-status-scenario';
+import { createWorldEventScenario } from './world-event-scenario';
 import { createShowNotificationScenario } from './show-notification-scenario';
 import { createChatFlagsScenario } from './chat-flags-scenario';
 import { createChannelPasswordScenario } from './channel-password-scenario';
@@ -71,6 +72,7 @@ export type ScenarioName =
   | 'chase'
   | 'define-zone'
   | 'context-status'
+  | 'world-event'
   | 'show-notification'
   | 'chat-flags'
   | 'channel-password'
@@ -106,6 +108,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'chase',
   'define-zone',
   'context-status',
+  'world-event',
   'show-notification',
   'chat-flags',
   'channel-password',
@@ -152,6 +155,7 @@ const SCENARIO_FACTORIES: Record<
   'chase': (o) => createChaseScenario(o),
   'define-zone': (o) => createDefineZoneScenario(o),
   'context-status': (o) => createContextStatusScenario(o),
+  'world-event': (o) => createWorldEventScenario(o),
   'show-notification': (o) => createShowNotificationScenario(o),
   'chat-flags': (o) => createChatFlagsScenario(o),
   'channel-password': (o) => createChannelPasswordScenario(o),

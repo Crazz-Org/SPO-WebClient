@@ -28,6 +28,7 @@ import {
   type WsRespResearchInventory,
   type WsReqResearchDetails,
   type WsRespResearchDetails,
+  type WsRespWorldEvent,
 } from '../../shared/types';
 import * as ErrorCodes from '../../shared/error-codes';
 import type { WsHandlerContext, WsHandler } from './types';
@@ -269,6 +270,22 @@ export const handleResearchInventory: WsHandler = async (ctx: WsHandlerContext, 
     };
     sendResponse(ctx.ws, response);
   });
+};
+
+/**
+ * The newest world event (`PickEvent`). No `withErrorHandler`: the session
+ * method already answers `null` instead of throwing — an absent event is the
+ * normal case (backup running, empty queue), not an error worth an error frame.
+ */
+export const handleWorldEvent: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  const event = await ctx.session.pickWorldEvent();
+
+  const response: WsRespWorldEvent = {
+    type: WsMessageType.RESP_WORLD_EVENT,
+    wsRequestId: msg.wsRequestId,
+    event,
+  };
+  sendResponse(ctx.ws, response);
 };
 
 export const handleResearchDetails: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {

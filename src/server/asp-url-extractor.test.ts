@@ -6,6 +6,7 @@ import {
   extractOnClickUrls,
   extractScriptNavigateUrls,
   extractAllActionUrls,
+  extractMapCoords,
 } from './asp-url-extractor';
 
 const BASE_URL = 'http://158.69.153.134/Five/0/Visual/Voyager/NewTycoon/TycoonPolicy.asp?Tycoon=Test&DAPort=7001';
@@ -581,6 +582,41 @@ describe('asp-url-extractor', () => {
       expect(results[0].key).toBe('TycoonBankAccount.asp');
       expect(results[0].url).toContain('Action=LOAN');
       expect(results[1].url).toContain('Action=SEND');
+    });
+  });
+
+  // ===== extractMapCoords =====
+  describe('extractMapCoords', () => {
+    it('reads x/y off an absolute URL', () => {
+      expect(extractMapCoords('http://158.69.153.134/Five/0/x.asp?x=706&y=436')).toEqual({ x: 706, y: 436 });
+    });
+
+    it('reads x/y off a relative URL', () => {
+      expect(extractMapCoords('/Five/0/Visual/Voyager/NewFacility/MsgFacility.asp?x=706&y=436')).toEqual({ x: 706, y: 436 });
+    });
+
+    it('returns null when there is no query string', () => {
+      expect(extractMapCoords('/Five/0/x.asp')).toBeNull();
+    });
+
+    it('returns null when only x is present', () => {
+      expect(extractMapCoords('/x.asp?x=706')).toBeNull();
+    });
+
+    it('returns null for a non-numeric value', () => {
+      expect(extractMapCoords('/x.asp?x=abc&y=436')).toBeNull();
+    });
+
+    it('returns null for a negative value', () => {
+      expect(extractMapCoords('/x.asp?x=-5&y=436')).toBeNull();
+    });
+
+    it('reads x/y even with extra params around them', () => {
+      expect(extractMapCoords('/x.asp?a=1&x=706&b=2&y=436&c=3')).toEqual({ x: 706, y: 436 });
+    });
+
+    it('returns null for an empty string', () => {
+      expect(extractMapCoords('')).toBeNull();
     });
   });
 });

@@ -42,7 +42,7 @@ import {
 import { handlePoliticsData, handlePoliticsVote, handlePoliticsLaunchCampaign, handlePoliticsCancelCampaign, handlePoliticsSetRating, handlePoliticsSetPublicity, handlePoliticsSetProject, handleTycoonRole } from './politics-handlers';
 
 // Miscellaneous
-import { handleDefineZone, handleCreateCompany, handleClusterInfo, handleClusterFacilities, handleSearchConnections, handleConnectionReachability, handleEmpireFacilities, handleFavoriteAdd, handleFavoriteDelete, handleFavoriteRename, handleFavoriteFolderCreate, handleFavoriteMove, handleResearchInventory, handleResearchDetails } from './misc-handlers';
+import { handleDefineZone, handleCreateCompany, handleClusterInfo, handleClusterFacilities, handleSearchConnections, handleConnectionReachability, handleEmpireFacilities, handleFavoriteAdd, handleFavoriteDelete, handleFavoriteRename, handleFavoriteFolderCreate, handleFavoriteMove, handleResearchInventory, handleResearchDetails, handleWorldEvent } from './misc-handlers';
 
 export const wsHandlerRegistry: Partial<Record<WsMessageType, WsHandler>> = {
   // Auth & session
@@ -59,6 +59,7 @@ export const wsHandlerRegistry: Partial<Record<WsMessageType, WsHandler>> = {
   [WsMessageType.REQ_GET_SURFACE]: handleGetSurface,
   [WsMessageType.REQ_CONTEXT_STATUS]: handleContextStatus,
   [WsMessageType.REQ_GET_ALL_FACILITY_DIMENSIONS]: handleGetAllFacilityDimensions,
+  [WsMessageType.REQ_WORLD_EVENT]: handleWorldEvent,
 
   // Chat
   [WsMessageType.REQ_CHAT_GET_USERS]: handleChatGetUsers,

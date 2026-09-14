@@ -28,6 +28,14 @@ export interface CompanyInfo {
   name: string;
   value?: number;
   ownerRole?: string; // Role de fonction publique (Maire, Ministre, Président) ou username du joueur
+  /** Cluster id, the seal filename chooseCompany.asp:186 interpolates (`comp-<cluster>.gif`). */
+  cluster?: string;
+  /** GetCompanyFacilityCount — the "%1 Facilities" line of chooseCompany.asp:198. */
+  facilityCount?: number;
+  /** chooseCompany.asp:193-197 — `Private` when the owner role IS the account, else the role name. */
+  status?: string;
+  /** The proxied seal picture; absent when the company carries no cluster. */
+  sealUrl?: string;
 }
 
 // =============================================================================

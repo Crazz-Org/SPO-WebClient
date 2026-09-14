@@ -34,6 +34,8 @@ import {
 } from '../rdo-helpers';
 import { RDO_PREFIX_STRIP } from '../../shared/rdo-types';
 import { VISITOR_COMPANY_ID, VISITOR_COMPANY } from '../../shared/visitor-visa';
+import { toProxyUrl } from '../../shared/proxy-utils';
+import { companySealPath } from '../../shared/company-seal';
 
 
 // ── Login Context ───────────────────────────────────────────────────────────
@@ -547,24 +549,20 @@ export async function loginWorld(
   const companyCount = parseInt(companyCountStr, 10) || 0;
   ctx.log.debug(`[Session] Company Count: ${companyCount}`);
 
-  // 10. Fetch companies via HTTP for UI
-  const httpResult = await fetchCompaniesViaHttp(ctx, world.ip, username);
+  // 10. The company list — the five per-index reads chooseCompany.asp:166-170 made,
+  //     in that order. The page itself is no longer fetched: the two fields it
+  //     displayed and the scrape dropped (cluster, facility count) are read here.
+  const companies = await readCompanyList(ctx, contextId, companyCount, username, world.ip);
 
-  let companies: CompanyInfo[] = [];
   let loginPage: LoginPageOutcome | undefined;
 
-  if (httpResult.kind === 'companies') {
-    companies = httpResult.companies;
-    if (companyCount > 0 && companies.length === 0) {
-      ctx.log.error(`[Session] GetCompanyCount says ${companyCount} but chooseCompany.asp listed none — company scrape failed`);
-      loginPage = { kind: 'error', errorCode: 'COMPANY_LIST_MISMATCH' };
-    }
-  } else if (httpResult.kind === 'denied') {
-    loginPage = { kind: 'denied', expiresOn: httpResult.expiresOn };
-  } else if (httpResult.kind === 'error') {
-    loginPage = { kind: 'error', errorCode: httpResult.errorCode };
+  // A short list is an error, never a silent truncation: the count the server
+  // gave is the number of companies the player owns, and entering the world
+  // missing one of them is worse than not entering at all.
+  if (companies.length !== companyCount) {
+    ctx.log.error(`[Session] GetCompanyCount says ${companyCount} but only ${companies.length} company/companies could be read — company list incomplete`);
+    loginPage = { kind: 'error', errorCode: 'COMPANY_LIST_MISMATCH' };
   }
-  // 'unreachable': companies stays [], loginPage stays undefined — as today.
 
   if (!loginPage && companyCount === 0 && companies.length === 0) {
     // chooseCompany.asp:38-40 — zero companies is the visa fork, not an error.
@@ -584,6 +582,95 @@ export async function loginWorld(
     loginPage,
     admission,
   };
+}
+
+/**
+ * The five per-index company getters, in the order `chooseCompany.asp:166-170`
+ * read them. Each is a published 1-argument `function` on `TClientView`
+ * (`Interface Server/InterfaceServer.pas:169-173`).
+ */
+type CompanyGetter =
+  | 'GetCompanyOwnerRole'
+  | 'GetCompanyName'
+  | 'GetCompanyId'
+  | 'GetCompanyCluster'
+  | 'GetCompanyFacilityCount';
+
+/**
+ * Read the player's company list off the world socket, one index at a time —
+ * the loop `chooseCompany.asp:165-204` ran to render the company page.
+ *
+ * A row that cannot be read ends the loop rather than failing the login; the
+ * caller compares the length against `GetCompanyCount` and reports the gap.
+ */
+export async function readCompanyList(
+  ctx: LoginContext,
+  contextId: string,
+  companyCount: number,
+  username: string,
+  worldIp: string,
+): Promise<CompanyInfo[]> {
+  const companies: CompanyInfo[] = [];
+
+  const read = async (member: CompanyGetter, index: number): Promise<string> => {
+    const packet = await ctx.sendRdoRequest(
+      'world',
+      rdoCall(member, contextId, RdoValue.int(index)).packet,
+      undefined,
+      TimeoutCategory.FAST,
+    );
+    if (packet.errorCode && packet.errorCode > 0) {
+      throw new Error(`${member}(${index}) answered ${packet.errorName ?? 'error'} ${packet.errorCode}`);
+    }
+    return parsePropertyResponseHelper(packet.payload ?? '', 'res');
+  };
+
+  for (let index = 0; index < companyCount; index++) {
+    try {
+      const ownerRole = await read('GetCompanyOwnerRole', index);
+      const name = await read('GetCompanyName', index);
+      const rawId = await read('GetCompanyId', index);
+      const cluster = await read('GetCompanyCluster', index);
+      const rawFacilityCount = await read('GetCompanyFacilityCount', index);
+
+      // The id is the row's validity test. RDOGetCompanyId answers 0 for an
+      // index that resolves to no company (Kernel/World.pas:4060, the else
+      // arm) — and 0 is also VISITOR_COMPANY_ID, which selectCompany reads as
+      // "enter the world with no company". A non-positive id is a failed row.
+      const id = parseInt(rawId, 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        ctx.log.warn(`[Session] Company at index ${index} answered id "${rawId}" — no such company, row dropped`);
+        continue;
+      }
+
+      const company: CompanyInfo = {
+        id: String(id),
+        name,
+        ownerRole,
+        // chooseCompany.asp:193-197 — "Private" where the owner role IS the
+        // account, the role name otherwise. The page compared against the
+        // server's own spelling (`Obj.GetUserName`, :37); the gateway does not
+        // read that member, so the comparison is case-insensitive here — a
+        // differently-cased sign-in would otherwise be badged with its own name.
+        status: ownerRole.toLowerCase() === username.toLowerCase() ? 'Private' : ownerRole,
+      };
+
+      if (cluster) {
+        company.cluster = cluster;
+        company.sealUrl = toProxyUrl(companySealPath(cluster), worldIp);
+      }
+
+      const facilityCount = parseInt(rawFacilityCount, 10);
+      if (Number.isInteger(facilityCount)) company.facilityCount = facilityCount;
+
+      companies.push(company);
+    } catch (err: unknown) {
+      ctx.log.error(`[Session] Company at index ${index} could not be read: ${toErrorMessage(err)}`);
+      break;
+    }
+  }
+
+  return companies;
 }
 
 // ── Company Selection ───────────────────────────────────────────────────────
