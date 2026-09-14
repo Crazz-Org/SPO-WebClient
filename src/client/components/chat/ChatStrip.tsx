@@ -7,8 +7,9 @@
  */
 
 import { useState, useRef, useCallback, useEffect, useMemo, memo, Fragment } from 'react';
-import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye, Plus } from 'lucide-react';
 import { useChatStore } from '../../store/chat-store';
+import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { useMapStore } from '../../store/map-store';
 import { useClient } from '../../context';
@@ -258,6 +259,17 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
                     {ch}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  className={styles.channelNew}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setChannelDropdownOpen(false);
+                    useUiStore.getState().openModal('createChannel');
+                  }}
+                >
+                  <Plus size={12} /> New Channel…
+                </button>
               </div>
             )}
           </div>

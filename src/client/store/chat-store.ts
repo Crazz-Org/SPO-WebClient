@@ -44,6 +44,10 @@ interface ChatState {
   // Actions
   setCurrentChannel: (channel: string) => void;
   setChannels: (channels: string[]) => void;
+  /** Insert one channel, ignoring a name already listed. Delphi's fControl.AddChannel. */
+  addChannel: (channel: string) => void;
+  /** Drop one channel. Delphi's fControl.DelChannel. */
+  removeChannel: (channel: string) => void;
   setChannelInfo: (channel: string, info: string) => void;
   addMessage: (channel: string, message: ChatMessage) => void;
   setUsers: (users: ChatUser[]) => void;
@@ -77,6 +81,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setChannels: (channels) => set((state) => ({
     channels,
     currentChannel: state.currentChannel || (channels.length > 0 ? channels[0] : ''),
+  })),
+
+  addChannel: (channel) => set((state) =>
+    !channel || state.channels.includes(channel) ? {} : { channels: [...state.channels, channel] }),
+
+  // Deliberately leaves `currentChannel` alone: the server sends its own
+  // channel-change notice when it moves you, and guessing here would be a
+  // regression risk of its own.
+  removeChannel: (channel) => set((state) => ({
+    channels: state.channels.filter((c) => c !== channel),
   })),
 
   setChannelInfo: (channel, info) =>

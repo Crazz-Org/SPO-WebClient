@@ -124,6 +124,31 @@
   color: var(--text-primary);
 }
 
+/* "New Channel…" — a sibling of the channel rows, separated from them. */
+.channelNew {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--surface-border);
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+.channelNew:hover {
+  background: var(--accent-gold-subtle);
+  color: var(--text-primary);
+}
+
 .channelOptionActive {
   color: var(--accent-gold);
   font-weight: var(--font-semibold);

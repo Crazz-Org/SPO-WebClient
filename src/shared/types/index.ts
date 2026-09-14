@@ -160,6 +160,7 @@ export type {
   WsReqChatGetChannels,
   WsReqChatGetChannelInfo,
   WsReqChatJoinChannel,
+  WsReqChatCreateChannel,
   WsReqChatSendMessage,
   WsReqChatTypingStatus,
   WsReqChatAway,

@@ -15,7 +15,7 @@ import { handleAuthCheck, handleConnectDirectory, handleLoginWorld, handleSelect
 import { handleMapLoad, handleUpdateCamera, handleGetSurface, handleContextStatus, handleGetAllFacilityDimensions } from './map-handlers';
 
 // Chat
-import { handleChatGetUsers, handleChatGetChannels, handleChatGetChannelInfo, handleChatJoinChannel, handleChatSendMessage, handleChatTypingStatus, handleChatAway, handleChatChase, handleChatStopChase, handleGmChatSend } from './chat-handlers';
+import { handleChatGetUsers, handleChatGetChannels, handleChatGetChannelInfo, handleChatJoinChannel, handleChatCreateChannel, handleChatSendMessage, handleChatTypingStatus, handleChatAway, handleChatChase, handleChatStopChase, handleGmChatSend } from './chat-handlers';
 
 // Building inspection & management
 import { handleBuildingFocus, handleBuildingUnfocus, handleGetBuildingCategories, handleGetBuildingFacilities, handlePlaceBuilding, handleBuildCapitol, handleBuildingDetails, handleBuildingTabData, handleBuildingGateConnections, handleBuildingServiceFigures, handleBuildingRefreshProperties, handleBuildingSetProperty, handleBuildingWorkerCounts, handleCloneFacility, handleBuildingUpgrade, handleRenameFacility, handleDeleteFacility, handleConnectFacilities } from './building-handlers';
@@ -65,6 +65,7 @@ export const wsHandlerRegistry: Partial<Record<WsMessageType, WsHandler>> = {
   [WsMessageType.REQ_CHAT_GET_CHANNELS]: handleChatGetChannels,
   [WsMessageType.REQ_CHAT_GET_CHANNEL_INFO]: handleChatGetChannelInfo,
   [WsMessageType.REQ_CHAT_JOIN_CHANNEL]: handleChatJoinChannel,
+  [WsMessageType.REQ_CHAT_CREATE_CHANNEL]: handleChatCreateChannel,
   [WsMessageType.REQ_CHAT_SEND_MESSAGE]: handleChatSendMessage,
   [WsMessageType.REQ_CHAT_TYPING_STATUS]: handleChatTypingStatus,
   [WsMessageType.REQ_CHAT_AWAY]: handleChatAway,

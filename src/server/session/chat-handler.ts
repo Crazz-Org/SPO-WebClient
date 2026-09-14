@@ -12,6 +12,7 @@ import { parseAccDesc } from '../../shared/types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
+import { CHANNEL_USER_LIMIT } from '../../shared/chat-channel';
 import { parsePropertyResponse as parsePropertyResponseHelper, writeRdoFrame } from '../rdo-helpers';
 
 // =========================================================================
@@ -137,6 +138,63 @@ export async function joinChatChannel(ctx: SessionContext, channelName: string):
 
   ctx.setCurrentChannel(channelName);
   ctx.log.debug(`[Chat] Successfully joined: ${displayName}`);
+}
+
+/**
+ * Create a named channel, optionally password-protected, and stand in it.
+ *
+ * `function CreateChannel( ChannelName, Password, aSessionApp, aSessionAppId :
+ * widestring; anUserLimit : integer ) : OleVariant` — InterfaceServer.pas:186.
+ * A function, so "^" and a QueryId are derived from the catalogue.
+ *
+ * The body (`:1512-1533`) looks the name up first: unknown → it creates the
+ * channel and answers NOERROR; **taken → it falls through to `JoinChannel`**.
+ * Both branches run `ClientEnteredChannel`, so a `0` reply carries exactly one
+ * guarantee — you are now in the channel you named — and this handler
+ * deliberately does not try to tell "created" from "joined": the reply cannot,
+ * and nothing downstream needs to.
+ *
+ * `13` (ERROR_InvalidPassword) and `32` (ERROR_NotEnoughRoom,
+ * `Protocol/Protocol.pas:42,61`) are reachable only through that fall-through,
+ * so reaching one is itself proof the name was already taken — hence the named
+ * messages rather than the generic code.
+ *
+ * `aSessionApp` / `aSessionAppId` go out as EMPTY strings, not omitted, and
+ * `anUserLimit` as 100: that is what the reference client's New Channel dialog
+ * sent (`Voyager.1/URLHandlers/ChatHandlerViewer.pas:221`), which forces the
+ * channel-session tab closed before calling (`:219`).
+ */
+export async function createChatChannel(
+  ctx: SessionContext,
+  channelName: string,
+  password: string,
+): Promise<void> {
+  if (!ctx.worldContextId) throw new Error('Not logged into world');
+
+  ctx.log.debug(`[Chat] Creating channel: ${channelName}`);
+
+  const packet = await ctx.sendRdoRequest('world', rdoCall(
+    'CreateChannel', ctx.worldContextId,
+    RdoValue.string(channelName),
+    RdoValue.string(password),
+    RdoValue.string(''),               // aSessionApp   — empty, not omitted: ChatHandlerViewer.pas:221
+    RdoValue.string(''),               // aSessionAppId — idem
+    RdoValue.int(CHANNEL_USER_LIMIT),  // anUserLimit = 100 — same line
+  ).packet, undefined, TimeoutCategory.NORMAL);
+
+  const result = parsePropertyResponseHelper(packet.payload || '', 'res');
+  if (result === '0') {
+    ctx.setCurrentChannel(channelName);
+    ctx.log.debug(`[Chat] Now in channel: ${channelName}`);
+    return;
+  }
+  if (result === '13') {
+    throw new Error(`Channel "${channelName}" already exists and its password does not match`);
+  }
+  if (result === '32') {
+    throw new Error(`Channel "${channelName}" already exists and is full`);
+  }
+  throw new Error(`Failed to create channel: ${result}`);
 }
 
 export async function sendChatMessage(ctx: SessionContext, message: string): Promise<void> {

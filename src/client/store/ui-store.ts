@@ -68,7 +68,7 @@ function legacyView(stack: Surface[]): { rightPanel: RightPanelType | null; left
     leftPanel: LEFT_KINDS.has(top.kind) ? (top.kind as LeftPanelType) : null,
   };
 }
-export type ModalType = 'buildMenu' | 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'connectionPicker' | 'zonePicker' | 'supplierSearch' | 'buildingInspector' | 'newspaper' | 'changelog';
+export type ModalType = 'buildMenu' | 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'createChannel' | 'connectionPicker' | 'zonePicker' | 'supplierSearch' | 'buildingInspector' | 'newspaper' | 'changelog';
 export type MobileTab = 'map' | 'chat' | 'build' | 'more';
 
 /** The right-click map context menu — what tile it opened on, and what sits there. */

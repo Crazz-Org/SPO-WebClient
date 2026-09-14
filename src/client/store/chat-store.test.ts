@@ -113,6 +113,42 @@ describe('Chat Store — Channels', () => {
     expect(state.channels).toEqual(['Lobby', 'Trade']);
     expect(state.currentChannel).toBe('Lobby');
   });
+
+  it('addChannel appends one name to the list', () => {
+    useChatStore.getState().setChannels(['Lobby']);
+    useChatStore.getState().addChannel('Traders');
+    expect(useChatStore.getState().channels).toEqual(['Lobby', 'Traders']);
+  });
+
+  it('addChannel ignores a name already listed — the creator and the broadcast both insert it', () => {
+    useChatStore.getState().setChannels(['Lobby', 'Traders']);
+    useChatStore.getState().addChannel('Traders');
+    expect(useChatStore.getState().channels).toEqual(['Lobby', 'Traders']);
+  });
+
+  it('addChannel ignores an empty name', () => {
+    useChatStore.getState().setChannels(['Lobby']);
+    useChatStore.getState().addChannel('');
+    expect(useChatStore.getState().channels).toEqual(['Lobby']);
+  });
+
+  it('removeChannel filters the name out and leaves currentChannel alone', () => {
+    useChatStore.getState().setChannels(['Lobby', 'Traders']);
+    useChatStore.setState({ currentChannel: 'Traders' });
+
+    useChatStore.getState().removeChannel('Traders');
+
+    const state = useChatStore.getState();
+    expect(state.channels).toEqual(['Lobby']);
+    // The server sends its own channel-change notice when it moves you.
+    expect(state.currentChannel).toBe('Traders');
+  });
+
+  it('removeChannel on an unknown name changes nothing', () => {
+    useChatStore.getState().setChannels(['Lobby']);
+    useChatStore.getState().removeChannel('Nowhere');
+    expect(useChatStore.getState().channels).toEqual(['Lobby']);
+  });
 });
 
 describe('Chat Store — Channel info (GetChannelInfo)', () => {
