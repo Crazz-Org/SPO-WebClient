@@ -209,6 +209,8 @@ export type {
   WsRespBuildingGateConnections,
   WsReqBuildingServiceFigures,
   WsRespBuildingServiceFigures,
+  WsReqBuildingLoanRequest,
+  WsRespBuildingLoanRequest,
   WsReqBuildingRefreshProperties,
   WsRespBuildingRefreshProperties,
   WsReqBuildingSetProperty,

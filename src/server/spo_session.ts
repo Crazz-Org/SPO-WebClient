@@ -3110,6 +3110,14 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return buildingDetailsHandler.getBuildingServiceFigures(this, x, y, serviceIndex);
   }
 
+  /**
+   * Ask this bank block for a loan. Answers the raw TBankRequestResult ordinal,
+   * -1 when no frame could be sent (StdBlocks/Banks.pas:46).
+   */
+  public async requestBankLoan(x: number, y: number, amount: string): Promise<{ result: number }> {
+    return buildingDetailsHandler.requestBankLoan(this, x, y, amount);
+  }
+
   public async refreshBuildingProperties(x: number, y: number, visualClass: string, activeTabId?: string): Promise<BuildingDetailsResponse> {
     return buildingDetailsHandler.refreshBuildingProperties(this, x, y, visualClass, activeTabId);
   }

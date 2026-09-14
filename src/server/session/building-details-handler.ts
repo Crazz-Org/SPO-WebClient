@@ -29,6 +29,7 @@ import {
   collectTemplatePropertyNamesForGroups,
   collectHeaderPropertyNames,
   isGateTab,
+  sanitiseLoanAmount,
 } from '../../shared/building-details';
 import type { CollectedPropertyNames } from '../../shared/building-details';
 import { cleanPayload as cleanPayloadHelper, parsePropertyResponse as parsePropertyResponseHelper } from '../rdo-helpers';
@@ -1736,4 +1737,58 @@ export async function getBuildingServiceFigures(
     demand: parsePropertyResponseHelper(demandPacket.payload || '', 'res'),
     supply: parsePropertyResponseHelper(supplyPacket.payload || '', 'res'),
   };
+}
+
+/**
+ * Ask a bank for a loan — the Request button of the borrow box.
+ *
+ * `TBankBlock` publishes `function RDOAskLoan( ClientId : integer; Amount :
+ * widestring ) : olevariant` (`StdBlocks/Banks.pas:46`), and the reference
+ * client binds to `CurrBlock` and sends the sanitised borrow text with the
+ * security id in front (`Voyager/BankGeneralSheet.pas:434-439`).
+ *
+ * The first argument is the **InitClient proxy id**
+ * (`Voyager/URLHandlers/ServerCnxHandler.pas:514-516`, `:2524-2527`), never the
+ * persistent tycoon id: the server pointer-casts it, `TMoneyDealer(ClientId)`
+ * (`Banks.pas:165`), so the wrong number dereferences nothing with no error to
+ * show for it. `RdoValue.int` lands it in `EDX` as a `#` ordinal;
+ * `RdoValue.string` carries the amount as the `%` OLE string `widestring` wants.
+ *
+ * The answer is a `TBankRequestResult` ordinal — but the SERVER enum is
+ * three-valued (`Kernel/Kernel.pas:1750`), 0/1/2. Ordinal 3 (`brqError`) is a
+ * client-local sentinel; `-1` here is this gateway's own "no frame could be sent
+ * at all", Voyager's `else Answ := brqError` when the security id is empty
+ * (`BankGeneralSheet.pas:438-440`).
+ *
+ * No ownership gate: the server performs none (`Banks.pas:160-171`), and the
+ * owner/visitor split lives in the sheet, which simply does not offer the
+ * control to an owner (`BankGeneralSheet.pas:156`,`:160`).
+ */
+export async function requestBankLoan(
+  ctx: SessionContext,
+  x: number,
+  y: number,
+  amount: string,
+): Promise<{ result: number }> {
+  await ctx.connectMapService();
+  const [currBlock] = await ctx.getCacherPropertyListAt(x, y, ['CurrBlock']);
+  if (!currBlock) throw new Error(`No building found at (${x}, ${y})`);
+
+  // Voyager's `if SecId <> '' then … else Answ := brqError`
+  // (BankGeneralSheet.pas:438-440): no proxy id, no frame.
+  if (ctx.fTycoonProxyId === null) return { result: -1 };
+
+  if (!ctx.getSocket('construction')) {
+    await ctx.connectConstructionService();
+  }
+
+  const packet = await ctx.sendRdoRequest('construction', rdoCall(
+    'RDOAskLoan', currBlock,
+    RdoValue.int(ctx.fTycoonProxyId),
+    RdoValue.string(sanitiseLoanAmount(amount)),
+  ).packet, undefined, TimeoutCategory.NORMAL);
+
+  const raw = parsePropertyResponseHelper(packet.payload || '', 'res');
+  const parsed = Number.parseInt(raw, 10);
+  return { result: Number.isNaN(parsed) ? -1 : parsed };
 }

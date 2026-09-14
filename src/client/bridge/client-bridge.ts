@@ -236,6 +236,8 @@ export interface ClientCallbacks {
     y: number,
     serviceIndex: number,
   ) => Promise<{ supply: string; demand: string } | null>;
+  /** Ask this bank for a loan. Resolves to the raw TBankRequestResult ordinal, -1 on failure. */
+  onRequestBankLoan: (x: number, y: number, amount: string) => Promise<number>;
   onRenameBuilding: (x: number, y: number, newName: string) => void;
   onDeleteBuilding: (x: number, y: number) => void;
   onNavigateToBuilding: (x: number, y: number) => void;

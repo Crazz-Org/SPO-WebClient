@@ -2051,3 +2051,52 @@
   gap: var(--space-2);
   margin-top: var(--space-1);
 }
+
+/* Bank borrow box — visitor only (BankGeneralSheet.pas:156,:160), issue 571 */
+.loanRequest {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.loanRequestRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.loanRequestLabel {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.loanRequestInput {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--surface-border-active);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  padding: var(--space-1) var(--space-2);
+}
+.loanRequestInput:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+.loanVerdict {
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-2);
+}
+.loanVerdictSuccess {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.loanVerdictWarning {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+.loanVerdictError {
+  background: var(--error-bg);
+  color: var(--error);
+}

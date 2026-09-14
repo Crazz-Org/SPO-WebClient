@@ -294,6 +294,12 @@ export const BANK_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'Interest', displayName: 'Interest Rate', type: PropertyType.SLIDER, editable: true, min: 0, max: 50, step: 1, unit: '%', notCached: true },
     { rdoName: 'Term', displayName: 'Loan Term', type: PropertyType.SLIDER, editable: true, min: 1, max: 100, step: 1, unit: 'years', notCached: true },
     { rdoName: 'BudgetPerc', displayName: 'Budget', type: PropertyType.SLIDER, editable: true, min: 0, max: 100, unit: '%', notCached: true },
+    // The borrow box — a marker row, not a cached value. `notCached: true` keeps
+    // `collectGroupPropertyNamesStructured` (property-templates.ts:271) from ever
+    // asking the object cache for `_loanRequest`. Deliberately NOT in
+    // `rdoCommands`: the request is a "^" function call on the block with its own
+    // WS message, not a `setBuildingProperty` write.
+    { rdoName: '_loanRequest', displayName: 'Borrow', type: PropertyType.LOAN_REQUEST, notCached: true },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
     { rdoName: 'demolish', displayName: 'Demolish', type: PropertyType.ACTION_BUTTON, actionId: 'demolish', buttonLabel: 'Demolish' },
   ],

@@ -19,6 +19,8 @@ import {
   type WsRespBuildingGateConnections,
   type WsReqBuildingServiceFigures,
   type WsRespBuildingServiceFigures,
+  type WsReqBuildingLoanRequest,
+  type WsRespBuildingLoanRequest,
   type WsReqBuildingRefreshProperties,
   type WsRespBuildingRefreshProperties,
   type WsReqBuildingSetProperty,
@@ -39,6 +41,7 @@ import {
 import * as ErrorCodes from '../../shared/error-codes';
 import { assertValidRdoIdentifier } from '../../shared/rdo-types';
 import type { WsHandlerContext } from './types';
+import { sanitiseLoanAmount, isValidLoanAmount } from '../../shared/building-details';
 import { sendResponse, sendError, withErrorHandler } from './ws-utils';
 
 export async function handleBuildingFocus(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
@@ -255,6 +258,39 @@ export async function handleBuildingServiceFigures(ctx: WsHandlerContext, msg: W
       serviceIndex: req.serviceIndex,
       supply: figures.supply,
       demand: figures.demand,
+    };
+    sendResponse(ctx.ws, response);
+  });
+}
+
+/**
+ * The bank borrow box's Request button — `RDOAskLoan(proxyId, amount)`.
+ *
+ * The amount is sanitised the way Voyager sanitises it
+ * (BankGeneralSheet.pas:435-436) and then checked here: a box holding nothing,
+ * a minus sign or letters never becomes a frame, because the server's
+ * `StrToFloat` would simply raise and collapse it into the generic
+ * `brqRejected` (Banks.pas:169) — a bad request answered as a bad request
+ * instead. `Kernel/Kernel.pas:8911` refuses `Amount <= 0` outright.
+ */
+export async function handleBuildingLoanRequest(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
+  const req = msg as WsReqBuildingLoanRequest;
+
+  const sanitised = sanitiseLoanAmount(req.amount ?? '');
+  if (!isValidLoanAmount(sanitised)) {
+    sendError(ctx.ws, msg.wsRequestId, 'amount must be a positive number', ErrorCodes.ERROR_InvalidParameter);
+    return;
+  }
+
+  await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_FacilityNotFound, async () => {
+    const { result } = await ctx.session.requestBankLoan(req.x, req.y, req.amount);
+
+    const response: WsRespBuildingLoanRequest = {
+      type: WsMessageType.RESP_BUILDING_LOAN_REQUEST,
+      wsRequestId: msg.wsRequestId,
+      x: req.x,
+      y: req.y,
+      result,
     };
     sendResponse(ctx.ws, response);
   });
