@@ -49,7 +49,8 @@ import {
   ClusterInfo,
   ClusterFacilityPreview,
   WsEventConnectionStats,
-  WorldEventLine
+  WorldEventLine,
+  WsEventModelStatusChanged,
 } from '../shared/types';
 import { RdoFramer, RdoProtocol } from './rdo';
 import {
@@ -1963,6 +1964,21 @@ public createSocket(name: string, host: string, port: number): Promise<net.Socke
         // Wordbool true arrives as "#-1" on the wire: any non-zero
         // ordinal means busy (audit V1 — "== '1'" misread the canonical "#-1").
         this.isServerBusy = isTrueOrdinal(busyValue);
+
+        if (wasBusy !== this.isServerBusy) {
+          // Report the poll's finding to the browser on the SAME event the
+          // ModelStatusChanged push uses (push-dispatcher.ts:354-357), with the
+          // same status encoding — the browser has one case to write, not two.
+          // This is what makes the backup lamp survive a world reconnect:
+          // attemptWorldReconnect restarts this poll (line 1862), and the first
+          // poll after it reports any state change that happened while the
+          // socket was down.
+          const statusEvent: WsEventModelStatusChanged = {
+            type: WsMessageType.EVENT_MODEL_STATUS_CHANGED,
+            status: this.isServerBusy ? 0 : 1,
+          };
+          this.emit('ws_event', statusEvent);
+        }
 
         if (wasBusy && !this.isServerBusy) {
           this.log.debug('[ServerBusy] Server now available - resuming requests');

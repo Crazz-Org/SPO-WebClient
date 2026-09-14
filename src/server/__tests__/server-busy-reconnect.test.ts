@@ -23,7 +23,8 @@ jest.mock('node-fetch', () => ({
 }));
 
 import { createProtocolTestHarness, ProtocolTestHarness } from './protocol-validation/protocol-test-harness';
-import { SessionPhase } from '../../shared/types';
+import { SessionPhase, WsMessageType } from '../../shared/types';
+import type { WsMessage } from '../../shared/types';
 import type { MockTcpSocket } from './protocol-validation/mock-tcp-socket';
 
 const WORLD_CONTEXT_ID = '8161308';
@@ -134,6 +135,38 @@ describe('ServerBusy polling (real session) — stop@4, no reconnect', () => {
     // Cumulative metric never resets
     expect(internals().rdoMetrics.totalServerBusyPollFailures).toBeGreaterThanOrEqual(failuresSoFar);
     expect(reconnectSpy).not.toHaveBeenCalled();
+  });
+
+  it('a poll that flips the busy flag emits one EVENT_MODEL_STATUS_CHANGED with the matching status', async () => {
+    const emitSpy = jest.spyOn(harness.session, 'emit');
+    worldSocket.addFallbackResponse({ member: 'ServerBusy', payload: 'ServerBusy="#-1"' });
+    harness.session.startServerBusyPolling();
+
+    await advanceUntil(() => internals().isServerBusy === true);
+
+    const events = emitSpy.mock.calls
+      .filter(([channel]) => channel === 'ws_event')
+      .map(([, event]) => event as WsMessage)
+      .filter((event) => event.type === WsMessageType.EVENT_MODEL_STATUS_CHANGED);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: WsMessageType.EVENT_MODEL_STATUS_CHANGED, status: 0 });
+  });
+
+  it('a poll whose answer does not change the flag emits nothing', async () => {
+    worldSocket.addFallbackResponse({ member: 'ServerBusy', payload: 'ServerBusy="#0"' });
+    harness.session.startServerBusyPolling();
+    await advanceUntil(() => internals().consecutivePollFailures === 0 && internals().isServerBusy === false);
+
+    const emitSpy = jest.spyOn(harness.session, 'emit');
+    // One more full poll cycle with the same unchanged answer.
+    await jest.advanceTimersByTimeAsync(60_000);
+    await new Promise(resolve => setImmediate(resolve));
+
+    const events = emitSpy.mock.calls
+      .filter(([channel]) => channel === 'ws_event')
+      .map(([, event]) => event as WsMessage)
+      .filter((event) => event.type === WsMessageType.EVENT_MODEL_STATUS_CHANGED);
+    expect(events).toHaveLength(0);
   });
 
   it('polling can restart after a stop (startServerBusyPolling after reconnect)', async () => {

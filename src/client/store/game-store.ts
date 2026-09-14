@@ -123,6 +123,10 @@ interface GameState {
   /** True when `companyId` is the visitor visa's company id (chooseVisa.asp — `SetCompany&Id=0`). */
   isVisitor: boolean;
   reconnectAttempt: number;
+  /** Names of players whose viewport overlaps this one's (NotifyCompanionship). */
+  watchers: string[];
+  /** True while the model server reports it is writing a backup (ServerBusy / ModelStatusChanged). */
+  serverBusy: boolean;
 
   // World data
   companies: CompanyInfo[];
@@ -201,6 +205,8 @@ interface GameState {
   setReconnectAttempt: (attempt: number) => void;
   setCredentials: (username: string, tycoonId?: string) => void;
   setWorld: (worldName: string) => void;
+  setWatchers: (names: string[]) => void;
+  setServerBusy: (busy: boolean) => void;
   setCompany: (name: string, id: string) => void;
   setCompanies: (companies: CompanyInfo[]) => void;
   setSwitchingCompany: (switching: boolean) => void;
@@ -249,6 +255,8 @@ export const useGameStore = create<GameState>((set) => ({
   companyId: '',
   isVisitor: false,
   reconnectAttempt: 0,
+  watchers: [],
+  serverBusy: false,
   companies: [],
   tycoonStats: null,
   lastStatsUpdate: null,
@@ -291,6 +299,8 @@ export const useGameStore = create<GameState>((set) => ({
   setCredentials: (username, tycoonId) =>
     set(tycoonId === undefined ? { username } : { username, tycoonId }),
   setWorld: (worldName) => set({ worldName }),
+  setWatchers: (watchers) => set({ watchers }),
+  setServerBusy: (serverBusy) => set({ serverBusy }),
   setCompany: (name, id) => set({ companyName: name, companyId: id, isVisitor: id === VISITOR_COMPANY_ID }),
   setCompanies: (companies) => set({ companies }),
   setSwitchingCompany: (switching) => set({ isSwitchingCompany: switching }),
@@ -375,6 +385,8 @@ export const useGameStore = create<GameState>((set) => ({
       companyId: '',
       isVisitor: false,
       reconnectAttempt: 0,
+      watchers: [],
+      serverBusy: false,
       companies: [],
       tycoonStats: null,
       lastStatsUpdate: null,

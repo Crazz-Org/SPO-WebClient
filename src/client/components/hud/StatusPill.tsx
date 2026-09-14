@@ -73,6 +73,8 @@ export function StatusPill() {
   const ownerRole = useGameStore((s) => s.ownerRole);
   const cashHistory = useGameStore((s) => s.cashHistory);
   const lastStatsUpdate = useGameStore((s) => s.lastStatsUpdate);
+  const watchers = useGameStore((s) => s.watchers);
+  const serverBusy = useGameStore((s) => s.serverBusy);
   const surfaceOpen = useUiStore((s) => s.stack.length > 0 && !s.connectMode.active);
 
   // Tick every second to keep the "Xs ago" label fresh
@@ -150,6 +152,34 @@ export function StatusPill() {
           {companyName && <span className={styles.company}>· {companyName}</span>}
           <span className={styles.facilities}>
             · {tycoonStats.buildingCount}/{tycoonStats.maxBuildings}
+          </span>
+        </>
+      )}
+
+      {watchers.length > 0 && (
+        <>
+          <Divider />
+          <span
+            className={styles.watchers}
+            aria-label={`Watching your area: ${watchers.join(', ')}`}
+            title={`Watching your area: ${watchers.join(', ')}`}
+          >
+            <span className={styles.watchersDot} aria-hidden="true" />
+            {watchers.length}
+          </span>
+        </>
+      )}
+
+      {serverBusy && (
+        <>
+          <Divider />
+          <span
+            className={styles.backup}
+            aria-label="Backup in progress — the world is saving; some actions may be slower"
+            title="Backup in progress — the world is saving; some actions may be slower"
+          >
+            <span className={styles.backupDot} aria-hidden="true" />
+            Backup
           </span>
         </>
       )}

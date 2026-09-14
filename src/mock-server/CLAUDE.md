@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `world-event`, `show-notification`, `chat-flags`, `create-channel`, `refresh-season`, `bank-loan-request`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `world-event`, `show-notification`, `chat-flags`, `create-channel`, `refresh-season`, `bank-loan-request`, `status-lamps`.
 
 `bank-loan-request` is the Request button of a bank's borrow box — one exchange,
 `RDOAskLoan(proxyId, amount)` on the bank block
@@ -358,6 +358,17 @@ test drives the real push dispatcher into the real browser `dispatchEvent` and a
 `/cache/BuildingImages/`. `MOCK_UNKNOWN_CLASS` (`visualClass '999999'`) is the one class the
 cache does not hold a texture for, and its response carries no `iconUrl` key at all. Its test
 drives the real `handleBuildingDetails` and matches the emitted frame to the canned response.
+
+`status-lamps` is the two desktop status-pill indicators: `NotifyCompanionship`, the watching
+players list, and `ModelStatusChanged`, the model server's backup state — both pushed
+`procedure`s, so every frame carries `"*"`, no QueryId and no reply. It pins that the
+companions list is CRLF-separated (`Interface Server/InterfaceServer.pas:2359-2361`) and that
+an empty string means nobody's viewport intersects this player's — the "extinguish" case. The
+backup state has two sources collapsed onto one browser event (`EVENT_MODEL_STATUS_CHANGED`):
+the push itself, a production dead letter (`TClientView.ModelStatusChanged` is an empty stub),
+and the polled `ServerBusy` boolean, which is what actually drives the lamp on the live wire.
+Its test drives the real push dispatcher into the real browser `dispatchEvent` and asserts the
+four resulting UI states on a rendered `StatusPill`.
 
 ### Scenario Structure
 

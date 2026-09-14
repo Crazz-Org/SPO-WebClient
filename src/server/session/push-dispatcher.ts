@@ -25,6 +25,7 @@ import {
   type WsEventRefreshSeason,
   type WsEventMoveTo,
   type WsEventChannelListChange,
+  type WsEventCompanionship,
 } from '../../shared/types';
 import { RdoParser, RDO_PREFIX_STRIP } from '../../shared/rdo-types';
 
@@ -402,7 +403,25 @@ export function dispatchPush(ctx: PushContext, _socketName: string, packet: RdoP
     return;
   }
 
-  // 15. Generic push fallback (for unhandled events)
+  // 15. NotifyCompanionship — who else is looking at this player's part of the map.
+  //     `procedure NotifyCompanionship( Names : widestring )`
+  //     (`Protocol/Protocol.pas:211`). The server builds the payload by
+  //     concatenating usernames with #13#10
+  //     (`Interface Server/InterfaceServer.pas:2359-2361`) and sends an empty
+  //     string when nobody's viewport intersects this player's (`:2353-2361`).
+  if (packet.member === 'NotifyCompanionship') {
+    const raw = packet.args?.[0] ? RdoParser.getValue(packet.args[0]) : '';
+    const names = raw.split(/\r\n|\r|\n/).map(n => n.trim()).filter(Boolean);
+    ctx.log.debug(`[Push] NotifyCompanionship: ${names.length} watcher(s)`);
+    const companionshipEvent: WsEventCompanionship = {
+      type: WsMessageType.EVENT_COMPANIONSHIP,
+      names,
+    };
+    ctx.emit('ws_event', companionshipEvent);
+    return;
+  }
+
+  // 16. Generic push fallback (for unhandled events)
   const event: WsEventRdoPush = {
     type: WsMessageType.EVENT_RDO_PUSH,
     rawPacket: packet.raw,

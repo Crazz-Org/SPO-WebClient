@@ -33,6 +33,8 @@ import {
   WsEventMoveTo,
   WsEventRefreshSeason,
   WsEventConnectionStats,
+  WsEventCompanionship,
+  WsEventModelStatusChanged,
 } from '../../shared/types';
 import { Season } from '../../shared/map-config';
 import { toErrorMessage } from '../../shared/error-utils';
@@ -48,6 +50,7 @@ import { useProfileStore } from '../store/profile-store';
 import { useChatStore } from '../store/chat-store';
 import { useMapStore } from '../store/map-store';
 import { getFacilityDimensionsCache } from '../facility-dimensions-cache';
+import { hasSeenBackupNotice, markBackupNoticeSeen } from '../store/backup-notice';
 import type { ClientHandlerContext } from './client-context';
 
 // ── Refresh Throttle (R2 + R3) ────────────────────────────────────────────────
@@ -359,6 +362,36 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     case WsMessageType.EVENT_WORLD_RECONNECTED: {
       ClientBridge.log('Session', 'World socket reconnected');
       ctx.showNotification('Connection restored', 'success');
+      break;
+    }
+
+    // Who else is looking at this player's part of the map (Delphi
+    // NotifyCompanionship push, push-dispatcher.ts:353-360).
+    case WsMessageType.EVENT_COMPANIONSHIP: {
+      const companionship = msg as WsEventCompanionship;
+      useGameStore.getState().setWatchers(companionship.names);
+      break;
+    }
+
+    case WsMessageType.EVENT_MODEL_STATUS_CHANGED: {
+      // The gateway's own encoding, from both sources: the ModelStatusChanged
+      // push (push-dispatcher.ts:351) and the ServerBusy poll. 0 = busy.
+      const busy = (msg as WsEventModelStatusChanged).status === 0;
+      useGameStore.getState().setServerBusy(busy);
+      if (busy) {
+        const player = useGameStore.getState().username;
+        if (!hasSeenBackupNotice(player)) {
+          markBackupNoticeSeen(player);
+          useUiStore.getState().requestConfirm(
+            'The world is saving',
+            'Starpeace is writing a backup of the world. The game keeps running, but ' +
+            'some actions may take a few seconds longer until it finishes. The lamp in ' +
+            'your status bar goes out when it is done.',
+            () => {},
+            { kind: 'info', typeToConfirm: null, confirmLabel: 'OK' },
+          );
+        }
+      }
       break;
     }
 
