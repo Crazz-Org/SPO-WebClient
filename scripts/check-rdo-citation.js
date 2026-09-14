@@ -382,17 +382,34 @@ function describeCitation(file, line, root = resolveReferenceRoot()) {
 
 /**
  * Compares a found declaration against a catalogue's claim.
- * `claim` is `{ kind: 'function'|'procedure', arity: number }` or
- * `{ kind: 'accessor', access: ('get'|'set')[] }`.
+ * `claim` is `{ name?: string, kind: 'function'|'procedure', arity: number }` or
+ * `{ name?: string, kind: 'accessor', access: ('get'|'set')[] }`.
  *
- * Verdicts: `MATCH(kind, arity)` / `MISMATCH(kind)` / `MISMATCH(arity)` / `CITATION_NOT_FOUND`
- * per the CLI contract, plus `MISMATCH(access)` — the accessor-shaped sibling of
- * `MISMATCH(arity)` that citation-verifier.md's own arity algorithm has no routine-shaped
- * equivalent for, needed because an `accessor` catalogue entry is compared on `access`
- * (`get`/`set`), not on a parameter count.
+ * Verdicts: `MATCH(kind, arity)` / `MISMATCH(name)` / `MISMATCH(kind)` / `MISMATCH(arity)` /
+ * `CITATION_NOT_FOUND` per the CLI contract, plus `MISMATCH(access)` — the accessor-shaped
+ * sibling of `MISMATCH(arity)` that citation-verifier.md's own arity algorithm has no
+ * routine-shaped equivalent for, needed because an `accessor` catalogue entry is compared on
+ * `access` (`get`/`set`), not on a parameter count.
+ *
+ * `MISMATCH(name)` exists because kind+arity alone cannot tell "the right declaration" from "a
+ * different declaration that happens to share a kind and an arity" — a citation pointing at the
+ * WRONG Pascal routine, with a coincidentally matching shape, used to read as a clean MATCH.
+ * Compared case-insensitively (Object Pascal identifiers are case-insensitive), and only when
+ * `claim.name` is actually supplied — the standalone `check`/`describe` CLI modes have no name
+ * argument and must keep working name-less; `verifyEntry`, the shape check-pr-rules.js's CI gate
+ * actually calls, always supplies it.
  */
 function compareClaim(found, claim) {
   if (!found) return { verdict: 'CITATION_NOT_FOUND', ok: false };
+
+  if (claim.name && found.name && found.name.toLowerCase() !== claim.name.toLowerCase()) {
+    return {
+      verdict: 'MISMATCH(name)',
+      ok: false,
+      found,
+      detail: `declaration at this line is \`${found.name}\`, not \`${claim.name}\` -- this citation does not point at ${claim.name}'s own declaration`,
+    };
+  }
 
   if (found.kind !== claim.kind) {
     return {
@@ -448,7 +465,9 @@ function verifyCitation(file, line, claim, root = resolveReferenceRoot()) {
  */
 function verifyEntry(entry, root = resolveReferenceRoot()) {
   const claim =
-    entry.kind === 'accessor' ? { kind: 'accessor', access: entry.access || [] } : { kind: entry.kind, arity: entry.arity };
+    entry.kind === 'accessor'
+      ? { name: entry.name, kind: 'accessor', access: entry.access || [] }
+      : { name: entry.name, kind: entry.kind, arity: entry.arity };
 
   const perCitation = (entry.citations || []).map(({ file, line }) => {
     const { found, declaration } = describeCitation(file, line, root);

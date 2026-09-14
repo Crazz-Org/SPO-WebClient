@@ -384,6 +384,49 @@ describeIfAvailable('verifyCitation / verifyEntry against real rdo-members.ts ci
     expect(result.found!.access).toEqual(['get', 'set']);
   });
 
+  it('reports MISMATCH(name) when a citation points at the wrong declaration entirely, even with a matching kind and arity', () => {
+    // The real defect the external audit found: Chase (InterfaceServer.pas:189) and
+    // CanJoinWorldEx (InterfaceServer.pas:441) are both `function`, arity 1 -- kind+arity alone
+    // cannot tell "the cited declaration" from "a different declaration with the same shape".
+    // Citing Chase's line while claiming to be CanJoinWorldEx used to read as a clean MATCH.
+    const result = checker.verifyEntry(
+      {
+        name: 'CanJoinWorldEx',
+        kind: 'function',
+        arity: 1,
+        citations: [{ file: 'Interface Server/InterfaceServer.pas', line: 189 }], // Chase's own line, not CanJoinWorldEx's
+      },
+      SPO_ORIGINAL_ROOT,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.overallVerdict).toBe('MISMATCH(name)');
+    expect(result.perCitation[0]!.detail).toMatch(/Chase.*not.*CanJoinWorldEx/);
+  });
+
+  it('a citation pointing at its OWN correctly-named declaration still MATCHes (the name check has no false positive on a real entry)', () => {
+    const result = checker.verifyEntry(
+      {
+        name: 'CanJoinWorldEx',
+        kind: 'function',
+        arity: 1,
+        citations: [{ file: 'Interface Server/InterfaceServer.pas', line: 441 }],
+      },
+      SPO_ORIGINAL_ROOT,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.overallVerdict).toBe('MATCH(function, 1)');
+  });
+
+  it('verifyCitation (the name-less, lower-level CLI path) still MATCHes without a name claim -- the name check is opt-in via `claim.name`, never required', () => {
+    const result = checker.verifyCitation(
+      'Interface Server/InterfaceServer.pas',
+      189, // Chase's own line, no name claimed at all
+      { kind: 'function', arity: 1 },
+      SPO_ORIGINAL_ROOT,
+    );
+    expect(result.verdict).toBe('MATCH(function, 1)');
+  });
+
   it('verifyEntry reports an uncited entry as NO_CITATION rather than throwing or passing', () => {
     // An entry with no citation is the very thing check-pr-rules.js rejects; it must never
     // reach a CI caller as a MATCH, and must not blow up as a TypeError either.

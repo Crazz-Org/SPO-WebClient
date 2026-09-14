@@ -21,9 +21,24 @@ worth catching before the slower semantic pass.
 
 ## What you receive
 
-The diff to `rdo-members.ts` (or the full file plus the diff hunk) and, for each new or changed
-entry, the citation the PR body or commit gives for it. Nothing else — no chat history, no
+`scripts/check-pr-rules.js` runs `scripts/check-rdo-citation.js` — a deterministic parser — over
+every new or changed catalogue entry it can read, before you are ever invoked, and prints a
+verdict for each. An entry the parser cleanly `MATCH`es needs nothing from you, and you do not
+re-verify one. What you should be handed are the SPECIFIC entries the gate flagged — a
+`MISMATCH(kind)` / `MISMATCH(arity)` / `MISMATCH(access)` / `CITATION_NOT_FOUND` /
+`PARSER_ERROR` verdict; an entry with no `.pas:Line` citation at all (which the parser cannot
+judge either way, since Rule 2's TS-reference-only shape is legitimate); or a changed line
+inside the catalogue literal whose shape the gate's entry grammar could not read at all — plus,
+for each, the citation the PR body or commit gives it. Nothing else — no chat history, no
 rationale beyond what the payload states.
+
+Two things not to assume away. That narrowing is a convention of whoever builds your payload
+(`doc/kanban-workflow.md` § *Validation*, which still describes you as verifying every new or
+changed entry), **not** something the gate enforces — so if you are handed the whole diff,
+judge the whole diff rather than assuming someone already filtered it. And when the gate could
+not run the parser at all (the `~/SPO-Original` reference tree unavailable, or the diff itself
+unparseable) there is no per-entry verdict to narrow anything by: the payload falls back to
+whatever changed in `rdo-members.ts`, same as before the parser existed.
 
 ## What you never do
 
@@ -72,6 +87,21 @@ does not block, but is routed for human review rather than silently passed.
    to the benefit of the doubt.
 
 ## Parameter counting
+
+**This section is the normative spec.** `scripts/check-rdo-citation.js` implements the five
+mechanical bullets below — the top-level `;` split, the names before the final `:`, the
+modifiers, the nesting depth, the default value — and its own header comment says it mirrors
+them verbatim. The two must never be allowed to drift apart: if this counting rule changes, the
+script changes in the same commit, and vice versa. The sixth bullet (the target/self id) is
+deliberately NOT in the script — it is a judgement call against a neighbouring entry, and the
+script only ever reports what the Pascal declaration literally says. Do not "fix" it to subtract
+one.
+
+The drift is not symmetric, and that is the trap. Changing the SCRIPT alone fails
+`src/__tests__/check-rdo-citation.test.ts`, which hard-codes this section's three worked
+examples verbatim. Changing THIS SECTION alone fails nothing and is caught by nothing: the fast,
+zero-LLM parser gate and your own manual reading would start disagreeing about the same entries,
+in silence.
 
 Delphi parameter lists are not comma-separated names — they group names by shared type, carry
 modifiers that are not parameters, and can nest.

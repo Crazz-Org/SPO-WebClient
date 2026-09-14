@@ -33,6 +33,16 @@
  * src/e2e/bench/worker.ts (B4.2), doc/bench-worker.md (likely B4.2). Reading is allowed and
  * expected; writing is not — a divergence found in one of these is reported in the action's
  * write-up for a one-minute follow-up fix, never patched here.
+ *
+ * SPO-Pipeline's file has grown layers beyond the `contains`-based pins this file copied — an
+ * existence ratchet, a content-anchor check, exact-line pinning for dated documents — that were
+ * DELIBERATELY NOT PORTED here. This repo's citation-verification needs are met by a different
+ * mechanism instead: the RDO-specific deterministic parser (`scripts/check-rdo-citation.js`,
+ * wired into `scripts/check-pr-rules.js`'s `checkCitation` gate), which verifies a `File.pas:Line`
+ * citation against the real Pascal declaration it points at — a different, more safety-critical
+ * citation class (one that gates a live game server) than the general doc-constant
+ * cross-references this sweep checks. Before porting Pipeline's heavier machinery here, re-derive
+ * whether it is actually missing something the parser does not already cover.
  */
 
 import * as fs from 'fs';
