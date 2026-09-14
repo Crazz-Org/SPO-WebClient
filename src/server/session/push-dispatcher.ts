@@ -25,6 +25,8 @@ import {
   type WsEventRefreshSeason,
   type WsEventMoveTo,
   type WsEventChannelListChange,
+  type WsEventCompanionship,
+  MODEL_STATUS_BUSY,
 } from '../../shared/types';
 import { RdoParser, RDO_PREFIX_STRIP } from '../../shared/rdo-types';
 
@@ -344,7 +346,7 @@ export function dispatchPush(ctx: PushContext, _socketName: string, packet: RdoP
   //     mstBusy=0, mstNotBusy=1, mstError=2
   if (packet.member === 'ModelStatusChanged') {
     const status = packet.args?.[0] ? RdoParser.asInt(packet.args[0]) : 1;
-    const busy = status === 0; // mstBusy = 0
+    const busy = status === MODEL_STATUS_BUSY; // mstBusy = 0
     ctx.log.debug(`[Push] ModelStatusChanged: status=${status} (busy=${busy})`);
     ctx.setServerBusyFromPush(busy);
     const statusEvent: WsEventModelStatusChanged = {
@@ -398,7 +400,23 @@ export function dispatchPush(ctx: PushContext, _socketName: string, packet: RdoP
     return;
   }
 
-  // 15. Generic push fallback (for unhandled events)
+  // 15. NotifyCompanionship — who else is looking at the same part of the map
+  if (packet.member === 'NotifyCompanionship') {
+    const raw = packet.args?.[0] ? RdoParser.getValue(packet.args[0]) : '';
+    const names = raw
+      .split(/\r\n|\r|\n/)
+      .map((n) => n.trim())
+      .filter((n) => n.length > 0);
+    ctx.log.debug(`[Push] NotifyCompanionship: ${names.length} name(s)`);
+    const companionEvent: WsEventCompanionship = {
+      type: WsMessageType.EVENT_COMPANIONSHIP,
+      names,
+    };
+    ctx.emit('ws_event', companionEvent);
+    return;
+  }
+
+  // 16. Generic push fallback (for unhandled events)
   const event: WsEventRdoPush = {
     type: WsMessageType.EVENT_RDO_PUSH,
     rawPacket: packet.raw,

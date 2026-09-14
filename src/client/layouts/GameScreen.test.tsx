@@ -7,6 +7,7 @@ import { GameScreen } from './GameScreen';
 // The screen composes the HUD; stub the parts that touch the canvas or fetch on mount.
 jest.mock('../components/hud', () => ({
   StatusPill: () => <header>PILL</header>,
+  BackupNotice: () => null,
   CommandBar: () => <nav>COMMANDBAR</nav>,
   ContextStatusStrip: () => <div>CONTEXTSTATUS</div>,
   RightRail: () => <nav>RIGHTRAIL</nav>,

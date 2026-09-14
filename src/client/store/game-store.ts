@@ -139,6 +139,11 @@ interface GameState {
   // Game date (from server RefreshDate push)
   gameDate: Date | null;
 
+  /** Players currently looking at part of the same map area (NotifyCompanionship push). */
+  watchers: string[];
+  /** True while the world server is writing a backup (ModelStatusChanged status 0). */
+  serverBusy: boolean;
+
   // Company switching
   isSwitchingCompany: boolean;
 
@@ -206,6 +211,8 @@ interface GameState {
   setSwitchingCompany: (switching: boolean) => void;
   setTycoonStats: (stats: TycoonStats) => void;
   setGameDate: (date: Date) => void;
+  setWatchers: (names: string[]) => void;
+  setServerBusy: (busy: boolean) => void;
   setRoadBuildingMode: (active: boolean) => void;
   setRoadDemolishMode: (active: boolean) => void;
   setZonePaintingMode: (active: boolean) => void;
@@ -254,6 +261,8 @@ export const useGameStore = create<GameState>((set) => ({
   lastStatsUpdate: null,
   cashHistory: [],
   gameDate: null,
+  watchers: [],
+  serverBusy: false,
   isSwitchingCompany: false,
   isRoadBuildingMode: false,
   isRoadDemolishMode: false,
@@ -304,6 +313,8 @@ export const useGameStore = create<GameState>((set) => ({
     return { tycoonStats: stats, lastStatsUpdate: Date.now(), cashHistory: next };
   }),
   setGameDate: (date) => set({ gameDate: date }),
+  setWatchers: (names) => set({ watchers: names }),
+  setServerBusy: (busy) => set({ serverBusy: busy }),
 
   setRoadBuildingMode: (active) => set({ isRoadBuildingMode: active }),
   setRoadDemolishMode: (active) => set({ isRoadDemolishMode: active }),
@@ -380,6 +391,8 @@ export const useGameStore = create<GameState>((set) => ({
       lastStatsUpdate: null,
       cashHistory: [],
       gameDate: null,
+      watchers: [],
+      serverBusy: false,
       isSwitchingCompany: false,
       isRoadBuildingMode: false,
       isRoadDemolishMode: false,

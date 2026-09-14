@@ -89,6 +89,7 @@ export enum WsMessageType {
   EVENT_REFRESH_SEASON = 'EVENT_REFRESH_SEASON',
   EVENT_MOVE_TO = 'EVENT_MOVE_TO',
   EVENT_CHANNEL_LIST_CHANGE = 'EVENT_CHANNEL_LIST_CHANGE',
+  EVENT_COMPANIONSHIP = 'EVENT_COMPANIONSHIP',
 
   // Chat functionality
   REQ_CHAT_GET_USERS = 'REQ_CHAT_GET_USERS',
@@ -497,11 +498,22 @@ export interface WsEventTycoonRetired extends WsMessage {
   failureLevel: number;
 }
 
+/** The two model-status values this gateway acts on (push-dispatcher.ts:343-347). */
+export const MODEL_STATUS_BUSY = 0;
+export const MODEL_STATUS_NOT_BUSY = 1;
+
 /** Server model status changed (busy/available/error). Mirrors Delphi ModelStatusChanged push. */
 export interface WsEventModelStatusChanged extends WsMessage {
   type: WsMessageType.EVENT_MODEL_STATUS_CHANGED;
   /** 0=busy (mstBusy), 1=not busy (mstNotBusy), 2=error (mstError) */
   status: number;
+}
+
+/** Who else is looking at the same part of the map (Protocol.pas:171-173, :211). */
+export interface WsEventCompanionship extends WsMessage {
+  type: WsMessageType.EVENT_COMPANIONSHIP;
+  /** Usernames, already split out of the server's #13#10 list. Empty = nobody. */
+  names: string[];
 }
 
 /** Season changed — affects terrain textures. Mirrors Delphi RefreshSeason push. */

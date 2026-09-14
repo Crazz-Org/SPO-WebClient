@@ -46,7 +46,9 @@ import {
   ResearchCategoryData,
   ResearchInventionDetails,
   ClusterInfo,
-  ClusterFacilityPreview
+  ClusterFacilityPreview,
+  MODEL_STATUS_BUSY,
+  MODEL_STATUS_NOT_BUSY
 } from '../shared/types';
 import { RdoFramer, RdoProtocol } from './rdo';
 import {
@@ -1850,6 +1852,12 @@ public createSocket(name: string, host: string, port: number): Promise<net.Socke
         this.rdoMetrics.totalReconnectSuccesses++;
         this.rdoMetrics.lastReconnectAt = Date.now();
 
+        // 7b. Re-poll ServerBusy immediately — the lamp must be right within a
+        // second, not the ~50s cadence, and pollServerBusyOnce refuses to run
+        // while the phase is still RECONNECTING, which is why this sits after
+        // the phase assignment above rather than beside startServerBusyPolling().
+        void this.pollServerBusyOnce();
+
         // 8. Notify client
         this.emit('worldReconnected');
         this.log.info('[Reconnect] World socket reconnected successfully');
@@ -1912,70 +1920,81 @@ public createSocket(name: string, host: string, port: number): Promise<net.Socke
 
     this.log.debug(`[ServerBusy] Starting ${this.SERVER_BUSY_CHECK_INTERVAL_MS / 1000}-second polling...`);
 
-    this.serverBusyCheckInterval = setInterval(async () => {
-      if (!this.worldContextId || this.phase === SessionPhase.WORLD_CONNECTING || this.phase === SessionPhase.RECONNECTING || this.isClosing) {
-        return; // Skip during login, reconnection, or teardown
-      }
-      if (this.isPolling) return; // Previous poll still in-flight
-      this.isPolling = true;
-
-      try {
-        // O-L5 CLOSED: this used to hand-roll rid allocation, frame write,
-        // pendingRequests entry and timer — a second implementation of
-        // sendRdoRequest that drifted from the real one (no assertNotVoidPush,
-        // no errorCode contract, no metrics, logged `RDO>*` instead of `RDO>>`).
-        //
-        // It duplicated the primitive for exactly two reasons, now both
-        // expressed as options: it must send while `isServerBusy` (it is the
-        // call that clears the flag), and it must stay on the primary socket.
-        // The legacy deadline is unchanged: the ServerBusy read is a blocking
-        // property GET under ISProxyTimeOut = 180 s
-        // (ServerCnxHandler.pas:3596-3611) — a busy-but-alive server must not be
-        // counted as failed after 1 s.
-        const response = await this.sendRdoRequest(
-          'world',
-          rdoGet('ServerBusy', this.worldContextId).packet,
-          IS_PROXY_TIMEOUT_MS,
-          TimeoutCategory.NORMAL,
-          { bypassBusyGate: true, forcePrimarySocket: true },
-        );
-
-        this.consecutivePollFailures = 0;
-        const busyValue = parsePropertyResponseHelper(response.payload!, 'ServerBusy');
-        const wasBusy = this.isServerBusy;
-        // Wordbool true arrives as "#-1" on the wire: any non-zero
-        // ordinal means busy (audit V1 — "== '1'" misread the canonical "#-1").
-        this.isServerBusy = isTrueOrdinal(busyValue);
-
-        if (wasBusy && !this.isServerBusy) {
-          this.log.debug('[ServerBusy] Server now available - resuming requests');
-          this.processBufferedRequests();
-        } else if (!wasBusy && this.isServerBusy) {
-          this.log.debug('[ServerBusy] Server now busy - pausing new requests');
-        }
-      } catch (e: unknown) {
-        this.consecutivePollFailures++;
-        this.rdoMetrics.totalServerBusyPollFailures++;
-        this.log.warn(
-          `[ServerBusy] Poll failed (${this.consecutivePollFailures}/${StarpeaceSession.MAX_CONSECUTIVE_POLL_FAILURES}):`,
-          toErrorMessage(e)
-        );
-
-        if (this.consecutivePollFailures >= StarpeaceSession.MAX_CONSECUTIVE_POLL_FAILURES) {
-          // LEGACY PARITY: after 4 consecutive failures the Voyager client simply
-          // STOPS polling (fExceptCount gate, ServerCnxHandler.pas:3596-3611) —
-          // it never reconnects from here. Busy state still updates instantly via
-          // the ModelStatusChanged push (setServerBusyFromPush). Polling restarts
-          // on the next successful (re)connect (startServerBusyPolling).
-          this.log.error(
-            `[ServerBusy] ${this.consecutivePollFailures} consecutive poll failures — stopping ServerBusy polling (push channel remains active)`
-          );
-          this.stopServerBusyPolling();
-        }
-      } finally {
-        this.isPolling = false;
-      }
+    this.serverBusyCheckInterval = setInterval(() => {
+      void this.pollServerBusyOnce();
     }, this.SERVER_BUSY_CHECK_INTERVAL_MS);
+  }
+
+  private async pollServerBusyOnce(): Promise<void> {
+    if (!this.worldContextId || this.phase === SessionPhase.WORLD_CONNECTING || this.phase === SessionPhase.RECONNECTING || this.isClosing) {
+      return; // Skip during login, reconnection, or teardown
+    }
+    if (this.isPolling) return; // Previous poll still in-flight
+    this.isPolling = true;
+
+    try {
+      // O-L5 CLOSED: this used to hand-roll rid allocation, frame write,
+      // pendingRequests entry and timer — a second implementation of
+      // sendRdoRequest that drifted from the real one (no assertNotVoidPush,
+      // no errorCode contract, no metrics, logged `RDO>*` instead of `RDO>>`).
+      //
+      // It duplicated the primitive for exactly two reasons, now both
+      // expressed as options: it must send while `isServerBusy` (it is the
+      // call that clears the flag), and it must stay on the primary socket.
+      // The legacy deadline is unchanged: the ServerBusy read is a blocking
+      // property GET under ISProxyTimeOut = 180 s
+      // (ServerCnxHandler.pas:3596-3611) — a busy-but-alive server must not be
+      // counted as failed after 1 s.
+      const response = await this.sendRdoRequest(
+        'world',
+        rdoGet('ServerBusy', this.worldContextId).packet,
+        IS_PROXY_TIMEOUT_MS,
+        TimeoutCategory.NORMAL,
+        { bypassBusyGate: true, forcePrimarySocket: true },
+      );
+
+      this.consecutivePollFailures = 0;
+      const busyValue = parsePropertyResponseHelper(response.payload!, 'ServerBusy');
+      const wasBusy = this.isServerBusy;
+      // Wordbool true arrives as "#-1" on the wire: any non-zero
+      // ordinal means busy (audit V1 — "== '1'" misread the canonical "#-1").
+      this.isServerBusy = isTrueOrdinal(busyValue);
+
+      if (wasBusy && !this.isServerBusy) {
+        this.log.debug('[ServerBusy] Server now available - resuming requests');
+        this.processBufferedRequests();
+      } else if (!wasBusy && this.isServerBusy) {
+        this.log.debug('[ServerBusy] Server now busy - pausing new requests');
+      }
+
+      if (wasBusy !== this.isServerBusy) {
+        this.emit('ws_event', {
+          type: WsMessageType.EVENT_MODEL_STATUS_CHANGED,
+          status: this.isServerBusy ? MODEL_STATUS_BUSY : MODEL_STATUS_NOT_BUSY,
+        });
+      }
+    } catch (e: unknown) {
+      this.consecutivePollFailures++;
+      this.rdoMetrics.totalServerBusyPollFailures++;
+      this.log.warn(
+        `[ServerBusy] Poll failed (${this.consecutivePollFailures}/${StarpeaceSession.MAX_CONSECUTIVE_POLL_FAILURES}):`,
+        toErrorMessage(e)
+      );
+
+      if (this.consecutivePollFailures >= StarpeaceSession.MAX_CONSECUTIVE_POLL_FAILURES) {
+        // LEGACY PARITY: after 4 consecutive failures the Voyager client simply
+        // STOPS polling (fExceptCount gate, ServerCnxHandler.pas:3596-3611) —
+        // it never reconnects from here. Busy state still updates instantly via
+        // the ModelStatusChanged push (setServerBusyFromPush). Polling restarts
+        // on the next successful (re)connect (startServerBusyPolling).
+        this.log.error(
+          `[ServerBusy] ${this.consecutivePollFailures} consecutive poll failures — stopping ServerBusy polling (push channel remains active)`
+        );
+        this.stopServerBusyPolling();
+      }
+    } finally {
+      this.isPolling = false;
+    }
   }
 
   /**

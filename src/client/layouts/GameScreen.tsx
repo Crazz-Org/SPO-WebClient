@@ -15,7 +15,7 @@
 
 import { lazy, Suspense } from 'react';
 import { useUiStore } from '../store';
-import { StatusPill, CommandBar, ContextStatusStrip, RightRail, VersionBadge } from '../components/hud';
+import { StatusPill, BackupNotice, CommandBar, ContextStatusStrip, RightRail, VersionBadge } from '../components/hud';
 import { ChatStrip, ChaseBadge } from '../components/chat';
 import { StatusOverlay } from '../components/building';
 import { MapContextMenu } from '../components/map/MapContextMenu';
@@ -60,6 +60,9 @@ export function GameScreen() {
 
       {/* StatusPill — top, the player's state in one line */}
       <StatusPill />
+
+      {/* BackupNotice — the one-time explanation for the backup lamp, not desktop-only */}
+      <BackupNotice />
 
       {/* ChaseBadge — top-right, shown only while following another player's camera */}
       <ChaseBadge />

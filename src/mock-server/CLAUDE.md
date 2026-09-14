@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `status-lamps`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -242,6 +242,20 @@ tile with none (`World.pas:4243`), which is a normal answer and not an error.
 exchange carries. Its test drives the real gateway `handleContextStatus` and the
 real browser handler, then renders `ContextStatusStrip` and asserts a camera
 move produces the second ask and that the empty answer hides the strip.
+
+`status-lamps` is the two `TInterfaceServer` pushes behind the HUD's watchers and backup
+indicators (issue 611): `NotifyCompanionship( Names : widestring )`
+(`Protocol/Protocol.pas:211`, declared with its `#13#10`-list comment at `:171-173`) names the
+players viewing the same map rectangle, and `ModelStatusChanged( Status : integer )`
+(`Protocol/Protocol.pas:220`) is what the interface server turns into the human sentence about
+writing backup files — `mstBusy` sets `fServerBusy` and posts "Servers are busy creating backup
+files" (`Interface Server/InterfaceServer.pas:3844-3860`). Both are pushes nobody answers, so —
+like `chaseMoveToPush` / `chaseLeavePush` (`chase-scenario.ts:53-60`) — they are built by hand
+rather than through the emitter: a push is never something this client sends, so it is never
+catalogued. What the scenario pins that no reply could: an *empty* companionship push is a
+normal push, not an absence, so a client that only reacted to a non-empty list would leave its
+lamp lit forever once the last watcher left. Its one RDO exchange is the `get ServerBusy` the
+reconnect re-poll sends, answered busy — proof that frame is one the world can actually answer.
 
 `building-details` also carries the class picture: each fixture's `imagePath` is the class's
 `[MapImages] 64x32x0` file, and the response carries it as `iconUrl` under

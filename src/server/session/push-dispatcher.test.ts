@@ -899,6 +899,56 @@ describe('ModelStatusChanged', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// NotifyCompanionship — push-dispatcher.ts:401 · Protocol.pas:211
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('NotifyCompanionship', () => {
+  it('splits a CRLF-separated name list into an array', () => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('NotifyCompanionship', ['%Crazz\r\nSPO_test3']));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_COMPANIONSHIP,
+      names: ['Crazz', 'SPO_test3'],
+    });
+  });
+
+  it('emits an empty list for an empty push, extinguishing the lamp', () => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('NotifyCompanionship', ['%']));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_COMPANIONSHIP,
+      names: [],
+    });
+  });
+
+  it('trims surrounding whitespace from each name', () => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('NotifyCompanionship', ['% Crazz \r\n SPO_test3 ']));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_COMPANIONSHIP,
+      names: ['Crazz', 'SPO_test3'],
+    });
+  });
+
+  it('emits an empty list when the push carries no argument at all', () => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('NotifyCompanionship'));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_COMPANIONSHIP,
+      names: [],
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RefreshSeason — push-dispatcher.ts:359 · ServerCnxHandler.pas:482
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1156,10 +1206,6 @@ const PUSH_EXEMPTIONS: ReadonlyArray<{ member: string; reason: string }> = [
   {
     member: 'GMNotify',
     reason: 'Not implemented (family B). GM notifications are ignored.',
-  },
-  {
-    member: 'NotifyCompanionship',
-    reason: 'Not implemented (family B). The companions list is never received.',
   },
   {
     member: 'VoiceMsg',

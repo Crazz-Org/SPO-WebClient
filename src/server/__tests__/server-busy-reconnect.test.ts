@@ -136,6 +136,37 @@ describe('ServerBusy polling (real session) — stop@4, no reconnect', () => {
     expect(reconnectSpy).not.toHaveBeenCalled();
   });
 
+  it('a poll that flips the busy flag emits exactly one EVENT_MODEL_STATUS_CHANGED', async () => {
+    const events = jest.fn();
+    harness.session.on('ws_event', events);
+    worldSocket.addFallbackResponse({ member: 'ServerBusy', payload: 'ServerBusy="#-1"' });
+
+    harness.session.startServerBusyPolling();
+    await advanceUntil(() => internals().isServerBusy === true);
+
+    const statusEvents = events.mock.calls
+      .map(call => call[0] as { type: string; status: number })
+      .filter(e => e.type === 'EVENT_MODEL_STATUS_CHANGED');
+    expect(statusEvents).toEqual([{ type: 'EVENT_MODEL_STATUS_CHANGED', status: 0 }]);
+  });
+
+  it('a poll that does not flip the busy flag emits nothing', async () => {
+    const events = jest.fn();
+    harness.session.on('ws_event', events);
+    worldSocket.addFallbackResponse({ member: 'ServerBusy', payload: 'ServerBusy="#0"' });
+
+    harness.session.startServerBusyPolling();
+    await advanceUntil(() => internals().consecutivePollFailures === 0 && worldSocket.getCommandsByMember('ServerBusy').length > 0);
+    // Second poll: still not busy, so nothing should fire this time.
+    events.mockClear();
+    await advanceUntil(() => worldSocket.getCommandsByMember('ServerBusy').length > 1);
+
+    const statusEvents = events.mock.calls
+      .map(call => call[0] as { type: string })
+      .filter(e => e.type === 'EVENT_MODEL_STATUS_CHANGED');
+    expect(statusEvents).toEqual([]);
+  });
+
   it('polling can restart after a stop (startServerBusyPolling after reconnect)', async () => {
     harness.session.startServerBusyPolling();
     await advanceUntil(() => internals().serverBusyCheckInterval === null);

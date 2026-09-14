@@ -30,6 +30,9 @@ import {
   WsRespResearchInventory,
   WsRespResearchDetails,
   WsEventMoveTo,
+  WsEventCompanionship,
+  WsEventModelStatusChanged,
+  MODEL_STATUS_BUSY,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
 import { requestBuildingRefreshProperties, requestConnectionReachability } from './building-action-handler';
@@ -249,6 +252,18 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     case WsMessageType.EVENT_REFRESH_DATE: {
       const dateEvent = msg as WsEventRefreshDate;
       useGameStore.getState().setGameDate(delphiTDateTimeToJsDate(dateEvent.dateDouble));
+      break;
+    }
+
+    case WsMessageType.EVENT_COMPANIONSHIP: {
+      const watchers = msg as WsEventCompanionship;
+      useGameStore.getState().setWatchers(watchers.names);
+      break;
+    }
+
+    case WsMessageType.EVENT_MODEL_STATUS_CHANGED: {
+      const modelStatus = msg as WsEventModelStatusChanged;
+      useGameStore.getState().setServerBusy(modelStatus.status === MODEL_STATUS_BUSY);
       break;
     }
 

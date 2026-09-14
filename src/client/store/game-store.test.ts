@@ -188,6 +188,43 @@ describe('game-store gameDate', () => {
   });
 });
 
+describe('game-store watchers and serverBusy', () => {
+  beforeEach(() => {
+    useGameStore.getState().reset();
+  });
+
+  it('starts with no watchers and serverBusy false', () => {
+    expect(useGameStore.getState().watchers).toEqual([]);
+    expect(useGameStore.getState().serverBusy).toBe(false);
+  });
+
+  it('setWatchers stores the name list', () => {
+    useGameStore.getState().setWatchers(['Crazz', 'SPO_test3']);
+    expect(useGameStore.getState().watchers).toEqual(['Crazz', 'SPO_test3']);
+  });
+
+  it('setWatchers with an empty array clears it', () => {
+    useGameStore.getState().setWatchers(['Crazz']);
+    useGameStore.getState().setWatchers([]);
+    expect(useGameStore.getState().watchers).toEqual([]);
+  });
+
+  it('setServerBusy toggles the flag', () => {
+    useGameStore.getState().setServerBusy(true);
+    expect(useGameStore.getState().serverBusy).toBe(true);
+    useGameStore.getState().setServerBusy(false);
+    expect(useGameStore.getState().serverBusy).toBe(false);
+  });
+
+  it('reset clears both watchers and serverBusy', () => {
+    useGameStore.getState().setWatchers(['Crazz']);
+    useGameStore.getState().setServerBusy(true);
+    useGameStore.getState().reset();
+    expect(useGameStore.getState().watchers).toEqual([]);
+    expect(useGameStore.getState().serverBusy).toBe(false);
+  });
+});
+
 describe('game-store cluster browsing state', () => {
   beforeEach(() => {
     useGameStore.getState().reset();

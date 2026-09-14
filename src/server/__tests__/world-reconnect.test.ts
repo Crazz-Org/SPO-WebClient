@@ -135,11 +135,25 @@ describe('World reconnect (real session)', () => {
       await new Promise(resolve => setImmediate(resolve));
       expect(internals().pendingRequests.size).toBe(1);
 
+      // The reconnect path's own immediate ServerBusy re-poll (§3.2) must resolve
+      // too, or it would be mistaken for a ghost RID left behind by the drain.
+      worldSocket.addFallbackResponse({ member: 'ServerBusy', payload: 'ServerBusy="#0"' });
+
       await harness.session.attemptWorldReconnect();
+      await new Promise(resolve => setImmediate(resolve));
 
       const err = await captured;
       expect((err as Error).message).toContain('reconnecting');
       expect(internals().pendingRequests.size).toBe(0);
+    });
+
+    it('re-polls ServerBusy immediately on reconnect, without waiting out the 50s cadence', async () => {
+      worldSocket.addFallbackResponse({ member: 'ServerBusy', payload: 'ServerBusy="#0"' });
+
+      await harness.session.attemptWorldReconnect();
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(worldSocket.getCommandsByMember('ServerBusy')).toHaveLength(1);
     });
 
     it('dedup: concurrent callers share a single attempt', async () => {

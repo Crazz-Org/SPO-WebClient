@@ -124,6 +124,8 @@ export type { MailFolder, BankActionType, TransferDenial, AutoConnectionActionTy
 export {
   WsMessageType,
   isWsRequest,
+  MODEL_STATUS_BUSY,
+  MODEL_STATUS_NOT_BUSY,
 } from './message-types';
 
 export type {
@@ -152,6 +154,7 @@ export type {
   WsEventRefreshDate,
   WsEventTycoonRetired,
   WsEventModelStatusChanged,
+  WsEventCompanionship,
   WsEventRefreshSeason,
   WsEventMoveTo,
   WsEventChannelListChange,
