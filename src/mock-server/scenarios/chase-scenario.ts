@@ -59,6 +59,19 @@ export function chaseLeavePush(clientViewId: string): string {
   return `C sel ${clientViewId} call NotifyUserListChange "*" "%${CHASED_USER}","#1";`;
 }
 
+/** Where a MoveTo written before our StopChase landed would drag the camera. */
+export const CHASE_LATE_MOVE_TO = { x: 128, y: 512 };
+
+/**
+ * A MoveTo the server wrote before StopChase reached it. Same shape as the
+ * accepted chase's own push — "*", no QueryId, nothing to answer — and
+ * deliberately different coordinates, so a camera that moved can be told from
+ * one that never did.
+ */
+export function chaseLateMoveToPush(clientViewId: string): string {
+  return `C sel ${clientViewId} call MoveTo "*" "#${CHASE_LATE_MOVE_TO.x}","#${CHASE_LATE_MOVE_TO.y}";`;
+}
+
 function buildRdoExchanges(clientViewId: string, chaseResult: number): RdoExchange[] {
   const name = RdoValue.string(CHASED_USER);
 

@@ -201,6 +201,7 @@ export class StarpeaceClient implements ClientHandlerContext {
   public isSendingChatMessage: boolean = false;
   public isJoiningChannel: boolean = false;
   public isTypingInChat: boolean = false;
+  public isChasePending: boolean = false;
   public isSelectingCompany: boolean = false;
 
   // Road building state — delegated to game-store (single source of truth)

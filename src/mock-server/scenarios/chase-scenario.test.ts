@@ -45,6 +45,7 @@ import {
   CHASED_USER,
   CHASE_MOVE_TO,
   chaseLeavePush,
+  chaseLateMoveToPush,
 } from './chase-scenario';
 
 const CLIENT_VIEW_ID = mergeVariables().clientViewId;
@@ -120,6 +121,13 @@ describe('chase scenario — the catalogue', () => {
       expect(mock.match(ex.request)!.exchange.id).toBe(ex.id);
     }
   });
+
+  it('emits one string argument on Chase and none on StopChase', () => {
+    const start = RdoProtocol.parse(rdo.exchanges.find(e => e.id === 'chase-start')!.request);
+    expect(start.args).toEqual([`%${CHASED_USER}`]);
+    const stop = RdoProtocol.parse(rdo.exchanges.find(e => e.id === 'chase-stop')!.request);
+    expect(stop.args).toEqual([]);
+  });
 });
 
 // ===========================================================================
@@ -140,7 +148,7 @@ describe('chase scenario — start, mirror, stop', () => {
     expect(ClientBridge.setChasedUser).toHaveBeenCalledWith(CHASED_USER);
   });
 
-  it('mirrors the camera: the MoveTo push reaches centerOn with the followed coordinates', () => {
+  it('mirrors the camera: the MoveTo push reaches centerOn with the followed coordinates', async () => {
     const start = rdo.exchanges.find(e => e.id === 'chase-start')!;
     expect(start.pushes).toHaveLength(1);
 
@@ -154,14 +162,19 @@ describe('chase scenario — start, mirror, stop', () => {
     const moveTo = emitted.find(e => e.type === WsMessageType.EVENT_MOVE_TO);
     expect(moveTo).toBeDefined();
 
-    // Browser half: the event moves the camera.
+    // Browser half: a chase in flight — the pending flag, not yet the badge —
+    // opens the gate for the accepted chase's own first MoveTo
+    // (InterfaceServer.pas:1592), which the server pushes before the reply.
     const { ctx, centerOn } = makeClientDriver();
+    const chasing = clientChaseUser(ctx, CHASED_USER);
     dispatchEvent(ctx, moveTo!);
 
     expect(centerOn).toHaveBeenCalledWith(CHASE_MOVE_TO.x, CHASE_MOVE_TO.y);
 
     const { history, historyIndex } = useMapStore.getState();
     expect(history[historyIndex]).toEqual({ x: CHASE_MOVE_TO.x, y: CHASE_MOVE_TO.y });
+
+    await chasing;
   });
 
   it('stops the chase: the gateway emits StopChase, the browser clears the badge', async () => {
@@ -175,6 +188,25 @@ describe('chase scenario — start, mirror, stop', () => {
     const { ctx } = makeClientDriver();
     await clientStopChase(ctx);
     expect(ClientBridge.setChasedUser).toHaveBeenCalledWith(null);
+  });
+
+  it('a MoveTo after StopChase does not pan: the gate closed with the chase', async () => {
+    const { ctx, centerOn } = makeClientDriver();
+    await clientStopChase(ctx);
+
+    const push = makePushCtx();
+    dispatchPush(push.ctx, 'world', parsePush(chaseLateMoveToPush(CLIENT_VIEW_ID)));
+
+    const emitted = (push.ctx.emit as jest.Mock).mock.calls
+      .filter(([channel]) => channel === 'ws_event')
+      .map(([, event]) => event as WsMessage);
+    const moveTo = emitted.find(e => e.type === WsMessageType.EVENT_MOVE_TO);
+    expect(moveTo).toBeDefined();
+
+    dispatchEvent(ctx, moveTo!);
+
+    expect(centerOn).not.toHaveBeenCalled();
+    expect(useMapStore.getState().history).toEqual([]);
   });
 });
 

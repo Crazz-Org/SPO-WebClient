@@ -253,7 +253,12 @@ all**: when the followed player leaves, the only notice is the ordinary `NotifyU
 which is where the reference client clears its own `fChasedUser`
 (`Voyager.1/URLHandlers/ServerCnxHandler.pas:3029-3039`). Its test runs one ordered flow through
 both real halves — the gateway's `chaseUser`/`stopChase` against the mock, then the real push
-dispatcher into the real browser `dispatchEvent` — and asserts the camera actually moved.
+dispatcher into the real browser `dispatchEvent` — and asserts the camera actually moved. The
+mirroring is gated client-side on a live chase (the pending flag while `Chase` is still in
+flight, then the badge once it lands): `chaseLateMoveToPush` is a `MoveTo` shaped exactly like
+the accepted chase's own push but at different coordinates, standing in for a frame the server
+wrote before our `StopChase` reached it, and it is an exported push rather than an exchange
+because `StopChase` answers no push of its own for the test to attach it to.
 
 `define-zone` is `RDODefineZone`, a 6-argument `"^"` FUNCTION on `TWorld`
 (`Kernel/World.pas:4502`, declared `:392`) answering `NOERROR` (`:4568`) or
