@@ -9,6 +9,7 @@
  * 3. Concrete (pavement around buildings)
  * 4. Roads
  * 5. Buildings
+ * 5b. Pending placements (greyed, answer still in flight)
  * 6. Zone overlay (colored zones)
  * 7. Fog (blocks never loaded, darkened)
  * 8. Placement preview
@@ -72,6 +73,7 @@ import { VehicleAnimationSystem } from './vehicle-animation-system';
 import { AircraftAnimationSystem } from './aircraft-animation-system';
 import { validatePlacementZones } from './placement-validation';
 import { ExploredBlocks, BLOCK_SIZE } from '../store/explored-blocks';
+import { PendingPlacementLayer, pendingPlacementKey, type PendingPlacement } from './pending-placements';
 
 /** Alpha of a building owned by another tycoon when glassing is on — Voyager's cAlpha blend [INFERRED ≈ 50 %]. */
 const FOREIGN_BUILDING_ALPHA = 0.5;
@@ -79,6 +81,10 @@ const FOREIGN_BUILDING_ALPHA = 0.5;
 const LOSING_TINT = 'rgba(255, 0, 0, 0.45)';
 /** Black laid over a block never loaded — Voyager halves the RGB (Map.pas:3777); reads the same over the iso tiles. */
 const FOG_TINT = 'rgba(0, 0, 0, 0.55)';
+/** Grey laid over a placement whose answer has not come back — reads as "not yours yet". */
+const PENDING_TINT = 'rgba(150, 150, 160, 0.55)';
+/** A pending placeholder sits between the hover ghost (0.62) and the fog, so it reads as unconfirmed. */
+const PENDING_PLACEMENT_ALPHA = 0.55;
 
 interface CachedZone {
   x: number;
@@ -465,6 +471,11 @@ export class IsometricMapRenderer {
 
   // Per-building visual effects: upgrade flash/scale-pop and demolition shrink/fade
   private buildingEffects: Map<string, { type: 'upgrade' | 'demolish'; startTime: number; building: MapBuilding }> = new Map();
+
+  /** Placements whose answer is still in flight — drawn greyed until it settles. */
+  private pendingPlacements = new PendingPlacementLayer();
+  /** Scratch canvas for greyTexture. Separate from `losingScratch` so the two tints can never alias inside one frame. */
+  private pendingScratch: HTMLCanvasElement | null = null;
 
   /** Portal facilities (6031/6032) are non-interactive map decorations.
    *  Base visual class 6031; Delphi GetVisualClassId returns 0 or 1
@@ -2260,6 +2271,23 @@ export class IsometricMapRenderer {
     return { x: this.placementPreview.j, y: this.placementPreview.i };
   }
 
+  public addPendingPlacement(placement: PendingPlacement): string {
+    const key = this.pendingPlacements.add(placement);
+    this.requestRender();
+    return key;
+  }
+
+  public removePendingPlacement(key: string): boolean {
+    const removed = this.pendingPlacements.remove(key);
+    if (removed) this.requestRender();
+    return removed;
+  }
+
+  /** Inspection seam — the entries still pending at `now`. */
+  public getPendingPlacements(now: number = Date.now()): PendingPlacement[] {
+    return this.pendingPlacements.list(now);
+  }
+
   // =========================================================================
   // CONNECT MODE (map-click to connect two buildings)
   // =========================================================================
@@ -2661,6 +2689,7 @@ export class IsometricMapRenderer {
 
     this.hasAnimatedBuildings = false;
     this.drawBuildings(bounds);
+    this.drawPendingPlacements();
     this.drawVehicles(bounds, deltaTime, occupiedTiles);
     this.drawZoneOverlay(bounds);
     this.drawAircraft(bounds, deltaTime);
@@ -2683,7 +2712,7 @@ export class IsometricMapRenderer {
     //   > selection pulse (throttled to 15fps — slow sine wave)
     const burstActive = this.selectedBuilding !== null &&
       (performance.now() - this.selectionBurstStartTime) < 350;
-    const hasActiveEffects = this.buildingEffects.size > 0;
+    const hasActiveEffects = this.buildingEffects.size > 0 || this.pendingPlacements.size > 0;
 
     if (this.hasAnimatedBuildings || hasActiveEffects || burstActive) {
       this.requestRender();
@@ -3629,6 +3658,76 @@ export class IsometricMapRenderer {
       ctx.drawImage(texture, -scaledWidth / 2, -scaledHeight, scaledWidth, scaledHeight);
       ctx.restore();
     }
+  }
+
+  /**
+   * Greyed sprites for placements whose answer has not come back.
+   * A pending tile already covered by a real building is dropped rather than
+   * drawn, so the map can never show the same building twice.
+   */
+  private drawPendingPlacements(): void {
+    const pending = this.pendingPlacements.list(Date.now());
+    if (pending.length === 0) return;
+    const ctx = this.ctx;
+    const config = ZOOM_LEVELS[this.terrainRenderer.getZoomLevel()];
+
+    for (const p of pending) {
+      if (this.allBuildings.some(b => b.x === p.x && b.y === p.y)) {
+        this.pendingPlacements.remove(pendingPlacementKey(p.x, p.y));
+        continue;
+      }
+
+      const textureFilename = GameObjectTextureCache.getBuildingTextureFilename(p.visualClass);
+      const texture = this.gameObjectTextureCache.getTextureSync('BuildingImages', textureFilename);
+      const source = texture ?? this.loadFallbackIcon(p.fallbackIconUrl);
+      if (!source) continue;
+
+      const scaleFactor = config.tileWidth / 64;
+      const scaledWidth = source.width * scaleFactor;
+      const scaledHeight = source.height * scaleFactor;
+
+      // Anchor at the SOUTH corner of the footprint — identical switch to drawBuildings.
+      const rotation = this.terrainRenderer.getRotation();
+      let anchorI: number, anchorJ: number;
+      switch (rotation) {
+        case Rotation.NORTH: anchorI = p.y;               anchorJ = p.x;               break;
+        case Rotation.EAST:  anchorI = p.y + p.ysize - 1; anchorJ = p.x;               break;
+        case Rotation.SOUTH: anchorI = p.y + p.ysize - 1; anchorJ = p.x + p.xsize - 1; break;
+        case Rotation.WEST:  anchorI = p.y;               anchorJ = p.x + p.xsize - 1; break;
+        default:             anchorI = p.y;               anchorJ = p.x;               break;
+      }
+      const southCorner = this.terrainRenderer.mapToScreen(anchorI, anchorJ);
+      const drawX = Math.round(southCorner.x - scaledWidth / 2);
+      const drawY = Math.round(southCorner.y + config.tileHeight - scaledHeight);
+
+      const sprite: CanvasImageSource = texture ? this.greyTexture(texture) : source;
+      ctx.globalAlpha = PENDING_PLACEMENT_ALPHA;
+      ctx.drawImage(sprite, drawX, drawY, scaledWidth, scaledHeight);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /**
+   * The sprite with its own pixels shaded grey, the same composition `reddenTexture` uses but
+   * on its own scratch canvas so the two tints can never alias inside one frame.
+   */
+  private greyTexture(texture: ImageBitmap): CanvasImageSource {
+    if (!this.pendingScratch) this.pendingScratch = document.createElement('canvas');
+    const scratch = this.pendingScratch;
+    const sctx = scratch.getContext('2d');
+    if (!sctx) return texture;
+    if (scratch.width !== texture.width || scratch.height !== texture.height) {
+      scratch.width = texture.width;
+      scratch.height = texture.height;
+    }
+    sctx.globalCompositeOperation = 'source-over';
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    sctx.drawImage(texture, 0, 0);
+    sctx.globalCompositeOperation = 'source-atop';
+    sctx.fillStyle = PENDING_TINT;
+    sctx.fillRect(0, 0, scratch.width, scratch.height);
+    sctx.globalCompositeOperation = 'source-over';
+    return scratch;
   }
 
   /**
