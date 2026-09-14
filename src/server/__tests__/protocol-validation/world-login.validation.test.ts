@@ -13,7 +13,9 @@
  *   6. RegisterEventsById CALL → triggers InitClient push
  *   7. SetLanguage push (no RID, fire-and-forget)
  *   8. GET GetCompanyCount
- *   9. HTTP fetch for company list (logonComplete.asp → chooseCompany.asp)
+ *   9. 5 CALLs per company — GetCompanyOwnerRole, GetCompanyName, GetCompanyId,
+ *      GetCompanyCluster, GetCompanyFacilityCount (chooseCompany.asp:166-170).
+ *      No HTTP fetch: logonComplete.asp left the login path.
  *
  * Prerequisites: connectDirectory() must be called first to establish DIRECTORY_CONNECTED phase.
  */
@@ -39,6 +41,7 @@ import { createAuthScenario } from '../../../mock-server/scenarios/auth-scenario
 import { createWorldListScenario } from '../../../mock-server/scenarios/world-list-scenario';
 import { createCompanyListScenario } from '../../../mock-server/scenarios/company-list-scenario';
 import type { RdoScenario } from '../../../mock-server/types/rdo-exchange-types';
+import type { CompanyInfo } from '../../../shared/types';
 
 // --- Constants matching captured protocol exchanges ---
 const INTERFACE_SERVER_ID = '6892548';
@@ -129,7 +132,7 @@ describe('Protocol Validation: loginWorld()', () => {
         { rdoScenarios: [worldListBundle.rdo] },
         // Socket 2: world socket (loginWorld)
         {
-          rdoScenarios: [worldLoginRdo],
+          rdoScenarios: [worldLoginRdo, companyBundle.rdo],
           fallbackResponses: buildWorldPropertyFallbacks({
             worldName: 'Shamba',
             worldIp: '142.44.158.91',
@@ -156,7 +159,7 @@ describe('Protocol Validation: loginWorld()', () => {
   async function runFullLoginFlow(): Promise<{
     contextId: string;
     tycoonId: string;
-    companies: Array<{ id: string; name: string; ownerRole?: string }>;
+    companies: CompanyInfo[];
   }> {
     const worlds = await harness.session.connectDirectory(
       'SPO_test3', 'test3', 'Root/Areas/Asia/Worlds'
@@ -484,21 +487,34 @@ describe('Protocol Validation: loginWorld()', () => {
       expect(result.tycoonId).toBe(TYCOON_ID);
     });
 
-    it('should return a companies array from HTTP response', async () => {
+    it('should return a companies array read off the five getters', async () => {
       const result = await runFullLoginFlow();
 
       expect(result.companies).toBeDefined();
       expect(Array.isArray(result.companies)).toBe(true);
     });
 
-    it('should parse company data from chooseCompany.asp HTML', async () => {
+    it('should build the company from the five per-index getters, seal included', async () => {
       const result = await runFullLoginFlow();
 
-      // Company list scenario provides "Yellow Inc." with id "28"
+      // Company list scenario answers "Yellow Inc.", id 28, cluster PGI, 38 facilities,
+      // owned by the account itself — so the card says Private, not a role name.
       expect(result.companies.length).toBeGreaterThan(0);
       const company = result.companies[0];
       expect(company.id).toBe('28');
       expect(company.name).toBe('Yellow Inc.');
+      expect(company.cluster).toBe('PGI');
+      expect(company.status).toBe('Private');
+      expect(company.facilityCount).toBe(38);
+      expect(company.sealUrl).toContain(encodeURIComponent('images/comp-PGI.gif'));
+    });
+
+    it('never fetches logonComplete.asp — the company list comes off the wire', async () => {
+      await runFullLoginFlow();
+
+      const fetchMock = jest.requireMock('node-fetch') as { default: jest.Mock };
+      const asked = fetchMock.default.mock.calls.map(c => String(c[0]));
+      expect(asked.filter(u => u.includes('logonComplete.asp'))).toEqual([]);
     });
   });
 
@@ -590,76 +606,5 @@ describe('Protocol Validation: loginWorld()', () => {
       expect(mailIdx).toBeGreaterThan(logonIdx);
       expect(worldCmds[mailIdx]).toContain(`sel ${CONTEXT_ID}`);
     });
-  });
-});
-
-describe('Protocol Validation: loginWorld() — logonComplete.asp exits', () => {
-  let harness: ProtocolTestHarness;
-
-  const authBundle = createAuthScenario({ username: 'SPO_test3', password: 'test3' });
-  const worldListBundle = createWorldListScenario({ username: 'SPO_test3', password: 'test3' });
-  const worldLoginRdo = createWorldLoginRdoScenario();
-
-  function buildHarness(options: { logonResult: 'noAccess' | 'error'; expiresOn?: string; errorCode?: string }): ProtocolTestHarness {
-    const companyBundle = createCompanyListScenario({
-      username: 'SPO_test3',
-      password: 'test3',
-      worldName: 'Shamba',
-      worldIp: '142.44.158.91',
-      worldPort: 8000,
-    }, options);
-
-    return createProtocolTestHarness({
-      socketConfigs: [
-        { rdoScenarios: [authBundle.rdo] },
-        { rdoScenarios: [worldListBundle.rdo] },
-        {
-          rdoScenarios: [worldLoginRdo],
-          fallbackResponses: buildWorldPropertyFallbacks({
-            worldName: 'Shamba',
-            worldIp: '142.44.158.91',
-            worldPort: '8000',
-            mailAddr: '142.44.158.91',
-            mailPort: '1234',
-          }),
-          pushTriggers: buildLoginPushTriggers(CONTEXT_ID),
-        },
-      ],
-      httpScenarios: [companyBundle.http],
-    });
-  }
-
-  afterEach(() => {
-    harness.assertNoViolations();
-    harness.cleanup();
-  });
-
-  it('reports a denial when logonComplete.asp redirects to logonNoAccess.asp', async () => {
-    harness = buildHarness({ logonResult: 'noAccess', expiresOn: '01/01/2020' });
-
-    const worlds = await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
-    const shamba = worlds.find(w => w.name === 'shamba');
-    expect(shamba).toBeDefined();
-    const result = await harness.session.loginWorld('SPO_test3', 'test3', shamba!);
-
-    expect(result.loginPage).toEqual({ kind: 'denied', expiresOn: '01/01/2020' });
-    expect(result.companies).toEqual([]);
-    expect(harness.session.getAvailableCompanies()).toEqual([]);
-    // The noAccess scenario does not register a chooseCompany.asp exchange at all —
-    // if the gateway had fetched it, the HttpMock would fail to match and the fetch
-    // would reject, turning this result into 'unreachable' instead of 'denied'.
-  });
-
-  it('reports an error when logonComplete.asp redirects to logonError.asp', async () => {
-    harness = buildHarness({ logonResult: 'error', errorCode: 'ERROR_CANNOTCREATECLIENTVIEW' });
-
-    const worlds = await harness.session.connectDirectory('SPO_test3', 'test3', 'Root/Areas/Asia/Worlds');
-    const shamba = worlds.find(w => w.name === 'shamba');
-    expect(shamba).toBeDefined();
-    const result = await harness.session.loginWorld('SPO_test3', 'test3', shamba!);
-
-    expect(result.loginPage).toEqual({ kind: 'error', errorCode: 'ERROR_CANNOTCREATECLIENTVIEW' });
-    expect(result.companies).toEqual([]);
-    expect(harness.session.getAvailableCompanies()).toEqual([]);
   });
 });

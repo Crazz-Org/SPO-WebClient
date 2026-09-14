@@ -45,7 +45,12 @@ function buildHarness(): ProtocolTestHarness {
       { rdoScenarios: [createAuthScenario(VARS).rdo] },
       { rdoScenarios: [createWorldListScenario(VARS).rdo] },
       {
-        rdoScenarios: [createWorldLoginScenario(VARS).rdo, createSelectCompanyScenario(VARS).rdo],
+        rdoScenarios: [
+          createWorldLoginScenario(VARS).rdo,
+          createSelectCompanyScenario(VARS).rdo,
+          // Step 10 — the five per-index company getters the login path now reads.
+          createCompanyListScenario({ ...VARS, worldName: 'Shamba', worldIp: '142.44.158.91', worldPort: 8000 }).rdo,
+        ],
         fallbackResponses: buildWorldPropertyFallbacks({
           worldName: 'Shamba',
           worldIp: '142.44.158.91',
