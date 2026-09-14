@@ -24,6 +24,7 @@ import {
 import { toErrorMessage } from '../../shared/error-utils';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useChatStore } from '../store/chat-store';
+import { loadDefaultChannel } from '../store/default-channel';
 import type { ClientHandlerContext } from './client-context';
 
 export async function sendChatMessage(ctx: ClientHandlerContext, message: string): Promise<void> {
@@ -104,8 +105,38 @@ export async function requestUserList(ctx: ClientHandlerContext): Promise<void> 
   }
 }
 
+/**
+ * Join the player's default channel if one is pinned, otherwise today's unconditional
+ * Lobby join. A pinned name absent from the channel list is recreated (`createChannel`
+ * falls through to `JoinChannel` for a name already taken -- see the note on
+ * `createChannel` below), and any failure to land in the pinned channel falls back to
+ * Lobby with a visible notice, never a silent failure.
+ */
 export async function initChatChannels(ctx: ClientHandlerContext): Promise<void> {
   await requestChannelList(ctx);
+
+  const preferred = loadDefaultChannel();
+  if (preferred && preferred !== 'Lobby') {
+    const exists = useChatStore.getState().channels.some((ch) => ch.name === preferred);
+    if (exists) {
+      await joinChannel(ctx, preferred);
+      await requestChannelInfo(ctx, preferred);
+    } else {
+      try {
+        await createChannel(ctx, preferred, '');
+      } catch {
+        /* falls through to the Lobby fallback below */
+      }
+    }
+
+    if (useChatStore.getState().currentChannel === preferred) {
+      await requestUserList(ctx);
+      return;
+    }
+
+    ctx.showNotification(`Default channel "${preferred}" is unavailable — you are in Lobby`, 'warning');
+  }
+
   await joinChannel(ctx, '');
   ClientBridge.setCurrentChannel('Lobby');
   await requestUserList(ctx);

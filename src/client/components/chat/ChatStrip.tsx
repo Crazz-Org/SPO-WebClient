@@ -7,12 +7,13 @@
  */
 
 import { useState, useRef, useCallback, useEffect, useMemo, memo, Fragment } from 'react';
-import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye, Lock, Plus } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye, Lock, Plus, Star } from 'lucide-react';
 import { useChatStore } from '../../store/chat-store';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { useMapStore } from '../../store/map-store';
 import { useClient } from '../../context';
+import { loadDefaultChannel, saveDefaultChannel } from '../../store/default-channel';
 import { NobilityBadge } from './NobilityBadge';
 import { roleClassKeyFor } from '../../chat-line-format';
 import { runChatCommand, splitChatCoordinates, type ChatCommandContext } from '../../chat-commands';
@@ -102,6 +103,7 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
 
   const client = useClient();
   const [input, setInput] = useState('');
+  const [defaultChannel, setDefaultChannel] = useState<string | null>(() => loadDefaultChannel());
   const [channelDropdownOpen, setChannelDropdownOpen] = useState(false);
   const [pendingChannel, setPendingChannel] = useState<string | null>(null);
   const [passwordInput, setPasswordInput] = useState('');
@@ -319,6 +321,27 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
               </div>
             )}
           </div>
+
+          {/* Mark/clear the current channel as the one to rejoin on next login */}
+          {currentChannel && (
+            <button
+              type="button"
+              className={`${styles.defaultBtn} ${defaultChannel === currentChannel ? styles.defaultBtnActive : ''}`}
+              aria-label={defaultChannel === currentChannel ? 'Clear default channel' : `Set ${currentChannel} as default channel`}
+              aria-pressed={defaultChannel === currentChannel}
+              onClick={() => {
+                if (defaultChannel === currentChannel) {
+                  saveDefaultChannel(null);
+                  setDefaultChannel(null);
+                } else {
+                  saveDefaultChannel(currentChannel);
+                  setDefaultChannel(currentChannel);
+                }
+              }}
+            >
+              <Star size={12} />
+            </button>
+          )}
 
           {/* Title + channel info subtitle */}
           <div className={styles.headerTitleGroup}>
