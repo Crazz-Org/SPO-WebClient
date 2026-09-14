@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { useChatStore } from './chat-store';
+import { useChatStore, MAX_MESSAGES_PER_CHANNEL } from './chat-store';
 import type { ChatUser, ChatTab, ChatChannel } from './chat-store';
 import { CHAT_VISIBLE_KEY } from './chat-visibility';
 
@@ -199,6 +199,22 @@ describe('Chat Store — Messages', () => {
     const { messages } = useChatStore.getState();
     expect(messages['Lobby']).toHaveLength(1);
     expect(messages['Lobby'][0].text).toBe('Hello');
+  });
+
+  it('retains up to MAX_MESSAGES_PER_CHANNEL and drops the oldest overflow, well past the strip\'s 50-line window', () => {
+    const total = MAX_MESSAGES_PER_CHANNEL + 20;
+    for (let i = 0; i < total; i++) {
+      useChatStore.getState().addMessage('Lobby', {
+        id: `m${i}`, from: 'Alice', text: `msg-${i}`, timestamp: i, isSystem: false, isGM: false,
+      });
+    }
+    const { messages } = useChatStore.getState();
+    const retained = messages['Lobby'];
+    expect(retained).toHaveLength(MAX_MESSAGES_PER_CHANNEL);
+    expect(retained.length).toBeGreaterThan(50);
+    // The oldest 20 were dropped; the newest is last.
+    expect(retained[0].text).toBe('msg-20');
+    expect(retained[retained.length - 1].text).toBe(`msg-${total - 1}`);
   });
 });
 
