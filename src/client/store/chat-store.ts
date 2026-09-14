@@ -19,7 +19,9 @@ export interface ChatMessage {
   modifiers?: number;
 }
 
-const MAX_MESSAGES_PER_CHANNEL = 100;
+// A normal session's traffic on a busy channel, bounded so a long session
+// cannot grow the store without limit.
+export const MAX_MESSAGES_PER_CHANNEL = 500;
 
 export type ChatTab = 'chat' | 'online';
 

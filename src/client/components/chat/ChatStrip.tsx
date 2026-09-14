@@ -7,7 +7,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect, useMemo, memo, Fragment } from 'react';
-import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye, Lock, Plus, Star } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye, Lock, Plus, Star, History } from 'lucide-react';
 import { useChatStore } from '../../store/chat-store';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
@@ -21,6 +21,9 @@ import styles from './ChatStrip.module.css';
 
 /** How long a pause retracts the "typing..." notice, in ms. */
 const TYPING_IDLE_MS = 4000;
+
+/** How many of the retained messages the strip itself renders. */
+const STRIP_RENDER_WINDOW = 50;
 
 /**
  * Move the camera to a tile — the one owner for "go to a tile", used by both `/go`
@@ -114,14 +117,14 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
 
   const channelMessages = messages[currentChannel] ?? [];
   const lastMessage = channelMessages[channelMessages.length - 1];
-  const visibleMessages = useMemo(() => channelMessages.slice(-50), [channelMessages]);
+  const visibleMessages = useMemo(() => channelMessages.slice(-STRIP_RENDER_WINDOW), [channelMessages]);
   const onlineCount = useMemo(() => Object.keys(users).length, [users]);
   const userList = useMemo(() => Object.values(users), [users]);
 
   // Auto-scroll on new messages when expanded
   useEffect(() => {
     if (isExpanded) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [channelMessages.length, isExpanded]);
 
@@ -352,6 +355,15 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
               </span>
             )}
           </div>
+
+          {/* Open the full scrollback view — useful in embedded/mobile mode too */}
+          <button
+            className={styles.historyBtn}
+            onClick={() => useUiStore.getState().openModal('chatHistory')}
+            aria-label="Open chat history"
+          >
+            <History size={14} />
+          </button>
 
           {/* Collapse (hidden in embedded mode) */}
           {!isEmbedded && (
