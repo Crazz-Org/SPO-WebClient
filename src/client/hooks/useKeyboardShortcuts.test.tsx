@@ -19,6 +19,7 @@ function makeClient(): ClientCallbacks {
     onToggleMinimap: jest.fn(),
     onRotateCW: jest.fn(),
     onRotateCCW: jest.fn(),
+    onSetSeason: jest.fn(),
   } as unknown as ClientCallbacks;
 }
 
@@ -125,7 +126,40 @@ describe('useKeyboardShortcuts', () => {
 
   it('the reference list names every handled key', () => {
     const keys = SHORTCUTS.map((s) => s.keys).join(' ');
-    for (const k of ['B', 'M', 'E', 'P', 'L', 'R', 'D', 'H', 'Ctrl+K', 'Esc']) expect(keys).toContain(k);
+    for (const k of ['B', 'M', 'E', 'P', 'L', 'R', 'D', 'H', 'F1', 'Ctrl+K', 'Esc']) expect(keys).toContain(k);
+  });
+
+  it('F1–F4 force the season, calling onSetSeason with 0/1/2/3', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    press('F1');
+    expect(client.onSetSeason).toHaveBeenNthCalledWith(1, 0);
+    press('F2');
+    expect(client.onSetSeason).toHaveBeenNthCalledWith(2, 1);
+    press('F3');
+    expect(client.onSetSeason).toHaveBeenNthCalledWith(3, 2);
+    press('F4');
+    expect(client.onSetSeason).toHaveBeenNthCalledWith(4, 3);
+  });
+
+  it('F1 is prevented (the browser must not open Help)', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    const ev = press('F1');
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it('F2 typed into a text field leaves onSetSeason uncalled', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    press('F2', { target: input });
+    expect(client.onSetSeason).not.toHaveBeenCalled();
+  });
+
+  it('F2 is inert while a modal owns the keyboard', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    useUiStore.setState({ modal: 'settings' });
+    press('F2');
+    expect(client.onSetSeason).not.toHaveBeenCalled();
   });
 
   it('H toggles hudVisible and is prevented', () => {

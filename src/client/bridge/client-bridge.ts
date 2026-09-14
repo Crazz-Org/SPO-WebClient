@@ -46,6 +46,7 @@ import type {
   NewspaperRatingEntry,
   ChatChannel,
 } from '@/shared/types';
+import type { Season } from '@/shared/map-config';
 import { CLUSTER_IDS } from '@/shared/cluster-data';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
 import { isCapitolBuilding } from '../components/politics/CivicTabConfig';
@@ -160,6 +161,12 @@ export interface ClientCallbacks {
   onZoomOut: () => void;
   onToggleMinimap: () => void;
   onToggleDebugOverlay: () => void;
+  /**
+   * Force the terrain texture suit to a season, the way Voyager's F1–F4 accelerators did
+   * (Voyager/VoyagerWindow.pas:784-787). Purely client-side and cosmetic: the next
+   * server-pushed RefreshSeason replaces it.
+   */
+  onSetSeason: (season: Season) => void;
   /** The server's sentence for the town at world tile (x, y), or '' when there is none. */
   onRequestContextStatus: (x: number, y: number) => Promise<string>;
   /** The newest world event, or null when the server has none. */

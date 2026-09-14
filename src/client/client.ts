@@ -295,6 +295,9 @@ export class StarpeaceClient implements ClientHandlerContext {
         const renderer = this.mapNavigationUI?.getRenderer();
         if (renderer) renderer.toggleDebugMode();
       },
+      // F1–F4 force the terrain suit (Voyager/VoyagerWindow.pas:784-787). The renderer holds
+      // the season, so it survives a camera move; the server's next RefreshSeason replaces it.
+      onSetSeason: (season) => { this.mapNavigationUI?.getRenderer()?.setSeason(season); },
       // Bug-report capture (dev-only) — the four facts the report needs from the client.
       onGetCanvasAnchor: (clientX: number, clientY: number) =>
         this.mapNavigationUI?.getRenderer()?.getCanvasAnchorAt(clientX, clientY) ?? null,
