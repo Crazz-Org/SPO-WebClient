@@ -37,10 +37,9 @@ describe('ZoneTypePicker — office header', () => {
     useUiStore.getState().openModal('zonePicker');
   });
 
-  it('renders no office label when the player holds no office', () => {
+  it('renders nothing at all when the player holds no office (#606: no office -> no picker)', () => {
     renderWithProviders(<ZoneTypePicker />);
-    expect(screen.getByText('Select Zone Type')).toBeTruthy();
-    expect(screen.queryByText(/Mayor|Minister|President/)).toBeNull();
+    expect(screen.queryByText('Select Zone Type')).toBeNull();
   });
 
   it('renders "Mayor of <town>" for a mayor', () => {
@@ -78,5 +77,42 @@ describe('ZoneTypePicker — office header', () => {
     seedRole({});
     renderWithProviders(<ZoneTypePicker />);
     expect(screen.queryByText(/Mayor|Minister|President/)).toBeNull();
+  });
+});
+
+describe('ZoneTypePicker — zone list per office (#606)', () => {
+  beforeEach(() => {
+    resetStores();
+    usePoliticsStore.getState().clearRoles();
+    useGameStore.setState({ username: 'spo_test3' });
+    useUiStore.getState().openModal('zonePicker');
+  });
+
+  it('a minister of Education sees only Civics and Erase', () => {
+    seedRole({ isMinister: true, ministry: 'Education' });
+    renderWithProviders(<ZoneTypePicker />);
+    expect(screen.getByText('Civics')).toBeTruthy();
+    expect(screen.getByText('Erase')).toBeTruthy();
+    expect(screen.queryByText('High Residential')).toBeNull();
+    expect(screen.queryByText('Industrial')).toBeNull();
+  });
+
+  it('a mayor sees the seven zone labels plus Erase, never Reserved or Residential', () => {
+    seedRole({ isMayor: true, town: 'Helartia' });
+    renderWithProviders(<ZoneTypePicker />);
+    for (const label of [
+      'High Residential',
+      'Mid Residential',
+      'Low Residential',
+      'Commercial',
+      'Industrial',
+      'Civics',
+      'Offices',
+      'Erase',
+    ]) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+    expect(screen.queryByText('Reserved')).toBeNull();
+    expect(screen.queryByText('Residential')).toBeNull();
   });
 });

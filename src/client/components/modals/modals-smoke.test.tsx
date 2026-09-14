@@ -10,6 +10,8 @@ import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
+import { usePoliticsStore } from '../../store/politics-store';
+import type { PoliticalRoleInfo } from '@/shared/types';
 import { BuildMenu } from './BuildMenu';
 import { SettingsDialog } from './SettingsDialog';
 import { ZoneTypePicker } from './ZoneTypePicker';
@@ -143,7 +145,19 @@ describe('ZoneTypePicker', () => {
     expect(container.innerHTML).toBe('');
   });
 
-  it('renders when zonePicker modal is open', () => {
+  it('renders when zonePicker modal is open, for a player holding an office (#606: no office -> no picker)', () => {
+    useGameStore.setState({ username: 'spo_test3' });
+    const role: PoliticalRoleInfo = {
+      tycoonName: 'spo_test3',
+      isMayor: true,
+      town: 'Helartia',
+      isCapitalMayor: false,
+      isPresident: false,
+      isMinister: false,
+      ministry: '',
+      queriedAt: 0,
+    };
+    usePoliticsStore.getState().setTycoonRole(role);
     useUiStore.getState().openModal('zonePicker');
     renderWithProviders(<ZoneTypePicker />);
     expect(screen.getByText('Select Zone Type')).toBeTruthy();

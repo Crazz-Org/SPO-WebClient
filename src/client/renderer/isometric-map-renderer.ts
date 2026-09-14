@@ -71,6 +71,7 @@ import { CarClassManager } from './car-class-system';
 import { VehicleAnimationSystem } from './vehicle-animation-system';
 import { AircraftAnimationSystem } from './aircraft-animation-system';
 import { validatePlacementZones } from './placement-validation';
+import { zoneExclusionMask, type ZoneBuildingFootprint } from './zone-preview-exclusions';
 import { ExploredBlocks, BLOCK_SIZE } from '../store/explored-blocks';
 
 /** Alpha of a building owned by another tycoon when glassing is on — Voyager's cAlpha blend [INFERRED ≈ 50 %]. */
@@ -4087,6 +4088,10 @@ export class IsometricMapRenderer {
     ZONE_TYPES.map(z => [z.id, z.overlayColor.replace('0.3)', '0.4)')])
   );
 
+  // A tile the server will skip — shaded like the legacy `loRedded` (Map.pas:1216-1220)
+  // instead of the zone's own color.
+  private static readonly ZONE_PAINTING_EXCLUDED_COLOR = 'rgba(200,40,40,0.45)';
+
   // Zone color word → Delphi TZoneType value (Protocol.pas)
   private static readonly ZONE_COLOR_MAP: Record<string, number> = {
     red: 2,        // znResidential
@@ -4770,8 +4775,19 @@ export class IsometricMapRenderer {
     const minY = Math.min(state.startY, state.endY);
     const maxY = Math.max(state.startY, state.endY);
 
+    const mask = zoneExclusionMask(
+      { minX, minY, maxX, maxY },
+      this.zonePaintingType,
+      this.zoneBuildingFootprints(),
+      (x, y) => this.hasRoadAt(x, y),
+    );
+    const width = maxX - minX + 1;
+    let paintable = 0;
+
     for (let y = minY; y <= maxY; y++) {
       for (let x = minX; x <= maxX; x++) {
+        const excluded = mask[(y - minY) * width + (x - minX)];
+        if (!excluded) paintable++;
         const screenPos = this.terrainRenderer.mapToScreen(y, x);
         ctx.beginPath();
         ctx.moveTo(screenPos.x, screenPos.y);
@@ -4779,20 +4795,32 @@ export class IsometricMapRenderer {
         ctx.lineTo(screenPos.x, screenPos.y + config.tileHeight);
         ctx.lineTo(screenPos.x + halfWidth, screenPos.y + halfHeight);
         ctx.closePath();
-        ctx.fillStyle = fillColor;
+        ctx.fillStyle = excluded ? IsometricMapRenderer.ZONE_PAINTING_EXCLUDED_COLOR : fillColor;
         ctx.fill();
       }
     }
 
-    // Draw tile count tooltip
+    // Draw tile count tooltip — honest about how many of the rectangle the server will skip
     const tileCount = (maxX - minX + 1) * (maxY - minY + 1);
+    const tooltip = paintable === tileCount ? `${paintable} tiles` : `${paintable} of ${tileCount} tiles`;
     const endPos = this.terrainRenderer.mapToScreen(state.endY, state.endX);
     ctx.font = '12px monospace';
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 3;
-    ctx.strokeText(`${tileCount} tiles`, endPos.x + 15, endPos.y - 5);
-    ctx.fillText(`${tileCount} tiles`, endPos.x + 15, endPos.y - 5);
+    ctx.strokeText(tooltip, endPos.x + 15, endPos.y - 5);
+    ctx.fillText(tooltip, endPos.x + 15, endPos.y - 5);
+  }
+
+  /**
+   * Footprints of all known buildings, in the shape `zoneExclusionMask` needs —
+   * same `dims?.xsize || 1` / `dims?.ysize || 1` convention as `validateRoadPath`.
+   */
+  private zoneBuildingFootprints(): ZoneBuildingFootprint[] {
+    return this.allBuildings.map((building) => {
+      const dims = this.facilityDimensionsCache.get(building.visualClass);
+      return { x: building.x, y: building.y, w: dims?.xsize || 1, h: dims?.ysize || 1 };
+    });
   }
 
   /**
