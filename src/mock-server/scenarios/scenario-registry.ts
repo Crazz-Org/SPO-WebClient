@@ -41,6 +41,7 @@ import { createShowNotificationScenario } from './show-notification-scenario';
 import { createChatFlagsScenario } from './chat-flags-scenario';
 import { createChannelPasswordScenario } from './channel-password-scenario';
 import { createCreateChannelScenario } from './create-channel-scenario';
+import { createRefreshSeasonScenario } from './refresh-season-scenario';
 
 /** All recognized scenario names */
 export type ScenarioName =
@@ -76,7 +77,8 @@ export type ScenarioName =
   | 'show-notification'
   | 'chat-flags'
   | 'channel-password'
-  | 'create-channel';
+  | 'create-channel'
+  | 'refresh-season';
 
 /** Ordered list of all scenario names */
 export const SCENARIO_NAMES: ScenarioName[] = [
@@ -113,6 +115,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'chat-flags',
   'channel-password',
   'create-channel',
+  'refresh-season',
 ];
 
 /** Union result from any scenario factory */
@@ -160,6 +163,7 @@ const SCENARIO_FACTORIES: Record<
   'chat-flags': (o) => createChatFlagsScenario(o),
   'channel-password': (o) => createChannelPasswordScenario(o),
   'create-channel': (o) => createCreateChannelScenario(o),
+  'refresh-season': (o) => createRefreshSeasonScenario(o),
 };
 
 /**

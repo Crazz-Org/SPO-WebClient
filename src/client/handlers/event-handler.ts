@@ -31,8 +31,10 @@ import {
   WsRespResearchInventory,
   WsRespResearchDetails,
   WsEventMoveTo,
+  WsEventRefreshSeason,
   WsEventConnectionStats,
 } from '../../shared/types';
+import { Season } from '../../shared/map-config';
 import { toErrorMessage } from '../../shared/error-utils';
 import { connectionStats } from '../connection-stats';
 import { substituteEmoticons } from '../chat-line-format';
@@ -138,6 +140,21 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
         // The dispatcher forwards what it read rather than guessing; an
         // unreadable coordinate must not move the camera anywhere.
         ClientBridge.log('Map', `Ignoring MoveTo with unreadable coordinates (${moveTo.x}, ${moveTo.y})`);
+      }
+      break;
+    }
+
+    // The world's season turned: the Interface Server pushes RefreshSeason to
+    // every client view (InterfaceServer.pas:3721-3737), and Voyager assigns it
+    // straight to the terrain suit (MapIsoHandler.pas:546-547) — no reload.
+    case WsMessageType.EVENT_REFRESH_SEASON: {
+      const seasonEvent = msg as WsEventRefreshSeason;
+      const season = seasonEvent.season;
+      if (Number.isInteger(season) && season >= Season.WINTER && season <= Season.AUTUMN) {
+        ctx.worldSeason = season;
+        ctx.getRenderer()?.setSeason(season as Season);
+      } else {
+        ClientBridge.log('Map', `Ignoring RefreshSeason with unreadable season (${season})`);
       }
       break;
     }
