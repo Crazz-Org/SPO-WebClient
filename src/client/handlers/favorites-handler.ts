@@ -69,6 +69,67 @@ export async function removeFavorite(
   }
 }
 
+export interface FavoriteRemoval { path: string; name: string }
+
+export interface BatchRemovalOutcome {
+  /** The names the server confirmed removed. */
+  removed: string[];
+  /** One entry per item the server refused or that never got an answer. */
+  failed: { name: string; message: string }[];
+}
+
+/**
+ * Remove several favourites in one action. One `REQ_FAVORITE_DELETE` per
+ * remaining item, sequentially, so a refusal on one item never stops the
+ * rest — the batch reports what actually happened per item rather than
+ * collapsing to a single success/failure (OB-1, in its batch form).
+ */
+export async function removeFavorites(
+  ctx: ClientHandlerContext, items: readonly FavoriteRemoval[],
+): Promise<BatchRemovalOutcome> {
+  // A folder's contents go with it — asking for a selected descendant too
+  // would come back as a refusal nobody caused.
+  const toRemove = items.filter(
+    (p) => !items.some((q) => q !== p && p.path.startsWith(`${q.path}/`)),
+  );
+
+  const removed: string[] = [];
+  const failed: { name: string; message: string }[] = [];
+
+  for (const item of toRemove) {
+    const req: WsReqFavoriteDelete = { type: WsMessageType.REQ_FAVORITE_DELETE, path: item.path };
+    try {
+      const response = await ctx.sendRequest(req) as WsRespFavoriteDelete;
+      if (!response.success) {
+        failed.push({ name: item.name, message: response.message || 'the server refused it' });
+      } else {
+        removed.push(item.name);
+      }
+    } catch (err: unknown) {
+      failed.push({ name: item.name, message: toErrorMessage(err) });
+    }
+  }
+
+  const total = toRemove.length;
+  if (failed.length === 0) {
+    const message = total === 1
+      ? `"${removed[0]}" removed from your list`
+      : `${total} places removed from your list`;
+    ctx.showNotification(message, 'success');
+  } else {
+    const reasons = failed.map((f) => `"${f.name}": ${f.message}`).join('; ');
+    if (removed.length === 0) {
+      ctx.showNotification(`Nothing was removed — ${reasons}`, 'error');
+    } else {
+      ctx.showNotification(`Removed ${removed.length} of ${total} — ${reasons}`, 'warning');
+    }
+  }
+
+  if (removed.length > 0) refreshFacilities(ctx);
+
+  return { removed, failed };
+}
+
 export async function renameFavorite(
   ctx: ClientHandlerContext, path: string, name: string,
 ): Promise<void> {

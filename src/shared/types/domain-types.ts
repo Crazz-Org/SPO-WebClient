@@ -303,6 +303,27 @@ export interface FacilityDimensions {
   constructionTextureFilename?: string;  // Construction state texture filename
   animated?: boolean;         // Whether sprite has animation frames (from CLASSES.BIN)
   animArea?: { left: number; top: number; right: number; bottom: number };  // Animation sub-region
+  /** `[General] Zone` (`MapTypes.pas:157`) — the minimap's class colour, `Map.pas:7566-7576`. */
+  zoneType?: number;
+  /**
+   * The class's ambience entry — `Sounds[0]` of the CLASSES.BIN `[Sounds]` section, the
+   * entry Voyager's TStaticBuildingSoundTarget voices (Map.pas:8389). Absent when the
+   * class is silent or animation-driven.
+   */
+  sound?: {
+    /** `wave=` — a bare filename served from `/cache/Sound/`. */
+    waveFile: string;
+    /** `aten=` — multiplies the distance curve (Map.pas:8322-8325). */
+    attenuation: number;
+    /** `prio=` — lower wins when the voice cap bites (SoundMixer.pas:72). */
+    priority: number;
+    /** `loop=` — a continuous voice rather than a periodic retrigger. */
+    looped: boolean;
+    /** `prob=` — retrigger probability for a non-looped entry (Map.pas:8344). */
+    probability: number;
+    /** `per=` — ms between retrigger rolls for a non-looped entry (Map.pas:8341). */
+    periodMs: number;
+  };
 }
 
 export interface ZoneOverlayState {

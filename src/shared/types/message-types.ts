@@ -95,8 +95,10 @@ export enum WsMessageType {
   REQ_CHAT_GET_CHANNELS = 'REQ_CHAT_GET_CHANNELS',
   REQ_CHAT_GET_CHANNEL_INFO = 'REQ_CHAT_GET_CHANNEL_INFO',
   REQ_CHAT_JOIN_CHANNEL = 'REQ_CHAT_JOIN_CHANNEL',
+  REQ_CHAT_CREATE_CHANNEL = 'REQ_CHAT_CREATE_CHANNEL',
   REQ_CHAT_SEND_MESSAGE = 'REQ_CHAT_SEND_MESSAGE',
   REQ_CHAT_TYPING_STATUS = 'REQ_CHAT_TYPING_STATUS',
+  REQ_CHAT_AWAY = 'REQ_CHAT_AWAY',
   REQ_CHAT_CHASE = 'REQ_CHAT_CHASE',
   REQ_CHAT_STOP_CHASE = 'REQ_CHAT_STOP_CHASE',
 
@@ -133,6 +135,10 @@ export enum WsMessageType {
   REQ_PLACE_BUILDING = 'REQ_PLACE_BUILDING',
   REQ_GET_SURFACE = 'REQ_GET_SURFACE',
   REQ_GET_ALL_FACILITY_DIMENSIONS = 'REQ_GET_ALL_FACILITY_DIMENSIONS',
+
+  // The town sentence under the camera (ContextStatusText)
+  REQ_CONTEXT_STATUS = 'REQ_CONTEXT_STATUS',
+  RESP_CONTEXT_STATUS = 'RESP_CONTEXT_STATUS',
 
   RESP_BUILDING_CATEGORIES = 'RESP_BUILDING_CATEGORIES',
   RESP_BUILDING_FACILITIES = 'RESP_BUILDING_FACILITIES',
@@ -463,6 +469,11 @@ export interface WsEventChatMsg extends WsMessage {
   from: string;
   message: string;
   isGM?: boolean;
+  /** Speaker's nobility tier, decoded from the AccDesc the server packed into `From`
+   *  (ComposeChatUser, Protocol.pas:482-492). Absent when `From` carried no AccDesc. */
+  nobilityTier?: string;
+  /** Speaker's AccMod_* bits (Protocol.pas:403-412). Absent for the same reason. */
+  modifiers?: number;
 }
 
 export interface WsEventTycoonUpdate extends WsMessage {
@@ -550,6 +561,13 @@ export interface WsReqChatJoinChannel extends WsMessage {
   channelName: string;
 }
 
+/** Create a named channel, optionally password-protected. Mirrors Delphi CreateChannel (InterfaceServer.pas:186). */
+export interface WsReqChatCreateChannel extends WsMessage {
+  type: WsMessageType.REQ_CHAT_CREATE_CHANNEL;
+  channelName: string;
+  password: string;
+}
+
 export interface WsReqChatSendMessage extends WsMessage {
   type: WsMessageType.REQ_CHAT_SEND_MESSAGE;
   message: string;
@@ -558,6 +576,11 @@ export interface WsReqChatSendMessage extends WsMessage {
 export interface WsReqChatTypingStatus extends WsMessage {
   type: WsMessageType.REQ_CHAT_TYPING_STATUS;
   isTyping: boolean;
+}
+
+/** Announce the away state (Delphi mstAFK, composition state 2). No payload — away is one state; clearing it goes back through REQ_CHAT_TYPING_STATUS. */
+export interface WsReqChatAway extends WsMessage {
+  type: WsMessageType.REQ_CHAT_AWAY;
 }
 
 /** Start following another player's camera. Mirrors Delphi Chase (InterfaceServer.pas:189). */
@@ -713,6 +736,21 @@ export interface WsReqGetSurface extends WsMessage {
 
 export interface WsReqGetAllFacilityDimensions extends WsMessage {
   type: WsMessageType.REQ_GET_ALL_FACILITY_DIMENSIONS;
+}
+
+// ── Context status — the town sentence under the camera ─────────────────────
+
+export interface WsReqContextStatus extends WsMessage {
+  type: WsMessageType.REQ_CONTEXT_STATUS;
+  /** World tile coordinates of the camera centre, x first (`ServerCnxHandler.pas:1444`). */
+  x: number;
+  y: number;
+}
+
+export interface WsRespContextStatus extends WsMessage {
+  type: WsMessageType.RESP_CONTEXT_STATUS;
+  /** The server's sentence, or '' when there is no town under (x, y) (`World.pas:4243`). */
+  text: string;
 }
 
 export interface WsRespBuildingCategories extends WsMessage {

@@ -29,6 +29,7 @@ import { useNewspaperStore } from './store/newspaper-store';
 import { usePoliticsStore } from './store/politics-store';
 import { SoundManager } from './audio/sound-manager';
 import { MusicPlayer } from './audio/music-player';
+import { MapAmbience } from './audio/map-ambience';
 import type { ClientHandlerContext } from './handlers/client-context';
 import type { RememberedSession } from './store/remembered-session';
 import { ExploredBlocks } from './store/explored-blocks';
@@ -42,6 +43,7 @@ import * as buildingActionHandler from './handlers/building-action-handler';
 import * as roadHandler from './handlers/road-handler';
 import * as favoritesHandler from './handlers/favorites-handler';
 import * as zoneHandler from './handlers/zone-handler';
+import * as contextStatusHandler from './handlers/context-status-handler';
 import * as buildMenuHandler from './handlers/build-menu-handler';
 import * as mapHandler from './handlers/map-handler';
 import { getReconnectDelay, isMaxAttempts, isSlowPhase, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
@@ -240,6 +242,7 @@ export class StarpeaceClient implements ClientHandlerContext {
   // Audio
   public soundManager: SoundManager;
   public musicPlayer: MusicPlayer;
+  public mapAmbience: MapAmbience;
 
   private cameraUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -269,6 +272,10 @@ export class StarpeaceClient implements ClientHandlerContext {
     };
     this.soundManager = new SoundManager();
     this.musicPlayer = new MusicPlayer();
+    this.mapAmbience = new MapAmbience(
+      this.soundManager,
+      () => this.mapNavigationUI?.getRenderer()?.getAmbienceSnapshot() ?? null
+    );
     // The login screen needs the persisted settings — the language picker reads one of them —
     // and the game-view init (:797) only loads them after login. Idempotent, so both stand.
     ClientBridge.loadPersistedSettings();
@@ -280,6 +287,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       onZoomIn: () => this.mapNavigationUI?.getRenderer()?.zoomIn(),
       onZoomOut: () => this.mapNavigationUI?.getRenderer()?.zoomOut(),
       onToggleMinimap: () => { this.minimapUI?.toggle(); },
+      onRequestContextStatus: (x, y) => contextStatusHandler.requestContextStatusText(this, x, y),
       onToggleDebugOverlay: () => {
         const renderer = this.mapNavigationUI?.getRenderer();
         if (renderer) renderer.toggleDebugMode();
@@ -299,7 +307,9 @@ export class StarpeaceClient implements ClientHandlerContext {
       onServerSwitchZoneSelect: (zonePath: string) => authHandler.serverSwitchZoneSelect(this, zonePath),
       onSendChatMessage: (message: string) => chatHandler.sendChatMessage(this, message),
       onJoinChannel: (channelName: string) => chatHandler.joinChannel(this, channelName),
+      onCreateChannel: (channelName: string, password: string) => chatHandler.createChannel(this, channelName, password),
       onChatTypingChange: (isTyping: boolean) => chatHandler.setTypingStatus(this, isTyping),
+      onChatAway: () => chatHandler.setAwayStatus(this),
       onGetChannelInfo: (channelName: string) => chatHandler.requestChannelInfo(this, channelName),
       onChaseUser: (userName: string) => chatHandler.chaseUser(this, userName),
       onStopChase: () => chatHandler.stopChase(this),
@@ -586,6 +596,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       },
       onAddFavorite: (name, x, y) => { void favoritesHandler.addFavorite(this, name, x, y); },
       onRemoveFavorite: (path, name) => { void favoritesHandler.removeFavorite(this, path, name); },
+      onRemoveFavorites: (items) => { void favoritesHandler.removeFavorites(this, items); },
       onRenameFavorite: (path, name) => { void favoritesHandler.renameFavorite(this, path, name); },
       onCreateFavoriteFolder: (parentPath, name) => { void favoritesHandler.createFolder(this, parentPath, name); },
       onMoveFavorite: (path, destPath, name) => { void favoritesHandler.moveFavorite(this, path, destPath, name); },
@@ -842,6 +853,7 @@ export class StarpeaceClient implements ClientHandlerContext {
     const initAudio = () => {
       this.soundManager.initOnInteraction();
       this.musicPlayer.initOnInteraction();
+      this.mapAmbience.initOnInteraction();
       document.removeEventListener('click', initAudio);
       document.removeEventListener('keydown', initAudio);
     };
@@ -865,6 +877,9 @@ export class StarpeaceClient implements ClientHandlerContext {
     this.soundManager.setVolume(settings.soundVolume);
     this.musicPlayer.setEnabled(settings.isSoundEnabled);
     this.musicPlayer.setVolume(settings.musicVolume);
+    // Off stops every building voice; on re-arms the mixer and the next tick re-voices from
+    // the live view — no reload.
+    this.mapAmbience.setEnabled(settings.isSoundEnabled);
     if (this.minimapUI) {
       this.minimapUI.setSize(settings.minimapSize, settings.minimapPixelSize);
       this.minimapUI.setZoom(settings.minimapZoom);
@@ -885,6 +900,8 @@ export class StarpeaceClient implements ClientHandlerContext {
       });
 
       this.mapNavigationUI.setOnBuildingClick((x, y, visualClass) => {
+        // select.wav on a selection — MapIsoHandler.pas:736.
+        this.soundManager.play('ui-select');
         if (this.currentBuildingToPlace) {
           buildMenuHandler.placeBuilding(this, x, y);
         } else {
@@ -893,6 +910,8 @@ export class StarpeaceClient implements ClientHandlerContext {
       });
 
       this.mapNavigationUI.setOnEmptyMapClick(() => {
+        // click.wav on a map click — MapIsoHandler.pas:897.
+        this.soundManager.play('ui-click');
         // When building inspector is open, only clear the gold highlight — keep panel open
         if (useUiStore.getState().rightPanel === 'building') {
           // Optional chaining: the outer null-check doesn't narrow inside this callback

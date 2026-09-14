@@ -3,8 +3,11 @@
  *
  * A data map of the world, drawn from what the client already holds — no request is made:
  *  - the terrain colormap the docked minimap uses (`ui/minimap-colormap`),
- *  - every building loaded so far: mine in gold, others muted, the ones losing money in red
- *    (`MapBuilding.alert`, the server's own bit — Voyager's `cLoosingColor`, `Map.pas:3512-3626`),
+ *  - the road, concrete and building layers, coloured through the legacy's own priority chain
+ *    (`ui/minimap-paint`, ported from `TWorldMap.GetColor`, `Map.pas:3855-3918`): the selected
+ *    tile in white, an own losing building in red (`MapBuilding.alert`), a building otherwise in
+ *    its class/zone colour — dimmed for another company — then roads, then concrete, then the
+ *    terrain untouched,
  *  - the rectangle of what the iso view shows.
  * Click = jump there. Wheel = zoom around the cursor (1× … 8×), drag = pan when zoomed.
  * Toolbar: Back / Next through the camera history (`map-store`); nearest Town Hall, usable
@@ -40,7 +43,9 @@ import {
   type RGB,
   type TerrainColormap,
 } from '../../ui/minimap-colormap';
-import type { MapBuilding, TownInfo } from '@/shared/types';
+import { buildMinimapOverlay, MINIMAP_SELECTED_COLOR } from '../../ui/minimap-paint';
+import { getFacilityDimensionsCache } from '../../facility-dimensions-cache';
+import type { TownInfo } from '@/shared/types';
 import { nearestTown } from '@/shared/nearest-town';
 import { BLOCK_SIZE } from '../../store/explored-blocks';
 import styles from './MapSurface.module.css';
@@ -50,13 +55,6 @@ export const ZOOM_MAX = 8;
 const REDRAW_MS = 1000;
 const COS45 = Math.SQRT2 / 2;
 const FOG = 'rgba(0,0,0,0.5)';
-
-/** Colour of a building dot: the player's in gold, losing money in red, others muted. */
-export function buildingColor(b: MapBuilding, myTycoonId: number): string {
-  if (b.alert) return '#ef4444';
-  if (myTycoonId && b.tycoonId === myTycoonId) return '#f59e0b';
-  return 'rgba(226,232,240,0.75)';
-}
 
 interface View {
   zoom: number;
@@ -85,7 +83,8 @@ export function MapSurface() {
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
   const drag = useRef<{ startX: number; startY: number; panX: number; panY: number; moved: boolean } | null>(null);
   const colormapRef = useRef<{ key: string; cm: TerrainColormap; atlas: Map<number, RGB> | null } | null>(null);
-  const [, setTick] = useState(0);
+  const overlayRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
+  const [tick, setTick] = useState(0);
   const [townHallPending, setTownHallPending] = useState(false);
 
   // Towns: one directory read, once per session, shared with Search / Government.
@@ -128,6 +127,30 @@ export function MapSurface() {
     colormapRef.current = { key, cm, atlas };
     return cm;
   }, []);
+
+  /**
+   * The road/concrete/building layers, rebuilt once per `tick` and cached — never per render.
+   * The draw effect below has no dependency array (it reruns on every render, including the one
+   * `setHover` fires on each pointer move); iterating the road and concrete sets there would put
+   * thousands of fills on the mouse-move path, so this is the budget answer.
+   */
+  const overlay = useCallback((src: MinimapRendererAPI, cm: TerrainColormap): HTMLCanvasElement | null => {
+    const selected = src.getSelectedBuilding?.() ?? null;
+    const selKey = selected ? `${selected.x},${selected.y}` : '';
+    const key = `${tick}:${cm.width}x${cm.height}:${myTycoonId}:${selKey}`;
+    if (overlayRef.current?.key === key) return overlayRef.current.canvas;
+    const canvas = buildMinimapOverlay(cm, {
+      buildings: src.getAllBuildings?.() ?? [],
+      roads: src.getRoadTileCoords?.() ?? [],
+      concrete: src.getConcreteTileCoords?.() ?? [],
+      selected: selected ? { x: selected.x, y: selected.y } : null,
+      myTycoonId,
+      zoneOf: (vc) => getFacilityDimensionsCache().getFacility(vc)?.zoneType,
+    });
+    if (!canvas) return null;
+    overlayRef.current = { key, canvas };
+    return canvas;
+  }, [tick, myTycoonId]);
 
   /** Screen pixel → colormap pixel, through the current pan / zoom / rotation. */
   const screenToColormap = useCallback((cm: TerrainColormap, px: number, py: number) => {
@@ -179,13 +202,18 @@ export function MapSurface() {
       }
     }
 
-    // Buildings — one dot per building, in colormap space.
-    const buildings = source.getAllBuildings?.() ?? [];
-    const dot = Math.max(0.6, 1.2 / view.zoom) ;
-    for (const b of buildings) {
-      const { cx, cy } = tileToColormap(cm, b.x, b.y);
-      ctx.fillStyle = buildingColor(b, myTycoonId);
-      ctx.fillRect(cx - cm.width / 2 - dot / 2, cy - cm.height / 2 - dot / 2, dot, dot);
+    // Roads, concrete, buildings and the selection cell — the legacy priority chain, cached
+    // per tick (see `overlay` above).
+    const layers = overlay(source, cm);
+    if (layers) ctx.drawImage(layers, -cm.width / 2, -cm.height / 2);
+
+    // Selection marker — a stroke around the selected tile so it stands out at any zoom.
+    const selected = source.getSelectedBuilding?.() ?? null;
+    if (selected) {
+      const { cx, cy } = tileToColormap(cm, selected.x, selected.y);
+      ctx.strokeStyle = MINIMAP_SELECTED_COLOR;
+      ctx.lineWidth = 1.5 / scale;
+      ctx.strokeRect(cx - cm.width / 2 - 0.5, cy - cm.height / 2 - 0.5, 1, 1);
     }
 
     // Viewport rectangle.
@@ -367,10 +395,11 @@ export function MapSurface() {
       </section>
 
       <div className={styles.footer}>
-        <span className={styles.legend}>
-          <span className={`${styles.swatch} ${styles.mine}`} aria-hidden="true" /> Mine
+        <span className={styles.legend} title="Buildings take their zone colour — another company's is dimmed">
+          <span className={`${styles.swatch} ${styles.selected}`} aria-hidden="true" /> Selected
           <span className={`${styles.swatch} ${styles.losing}`} aria-hidden="true" /> Losing money
-          <span className={`${styles.swatch} ${styles.others}`} aria-hidden="true" /> Others
+          <span className={`${styles.swatch} ${styles.road}`} aria-hidden="true" /> Roads
+          <span className={`${styles.swatch} ${styles.concrete}`} aria-hidden="true" /> Concrete
         </span>
         <span className={styles.coords}>
           {hover ? `(${hover.x}, ${hover.y})` : camera ? `View at (${Math.round(camera.x)}, ${Math.round(camera.y)})` : ''}

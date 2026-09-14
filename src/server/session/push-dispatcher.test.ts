@@ -394,6 +394,43 @@ describe('ChatMsg', () => {
       rawPacket: packet.raw,
     });
   });
+
+  it('decodes the AccDesc carried after the sender name into tier and modifiers', () => {
+    // 1056576 = (0x0010 << 16) | 8000 -> Duke + GameMaster.
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('ChatMsg', ['%Zorg/1056576/0', '%hi']));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_CHAT_MSG,
+      channel: 'Lobby',
+      from: 'Zorg',
+      message: 'hi',
+      nobilityTier: 'Duke',
+      modifiers: 16,
+    });
+  });
+
+  it('emits neither key for a bare name — every SYSTEM line', () => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('ChatMsg', ['%SYSTEM', '%innos has entered Planitia']));
+
+    const [, event] = (fake.emit as jest.Mock).mock.calls[0];
+    expect(event).not.toHaveProperty('nobilityTier');
+    expect(event).not.toHaveProperty('modifiers');
+  });
+
+  it('degrades a non-numeric AccDesc to Commoner/0 rather than NaN', () => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('ChatMsg', ['%innos/notanumber', '%hi']));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', expect.objectContaining({
+      nobilityTier: 'Commoner',
+      modifiers: 0,
+    }));
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

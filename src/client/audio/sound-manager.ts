@@ -18,8 +18,10 @@ export type SoundEvent =
 
 /** Maps sound events to filenames in public/sounds/ */
 const SOUND_MAP: Record<SoundEvent, string> = {
-  'ui-click': '/sounds/come-here-notification.ogg',
-  'ui-select': '/sounds/come-here-notification.ogg',
+  // The two map one-shots Voyager plays: select.wav on a selection, click.wav on a map
+  // click (MapIsoHandler.pas:96-97, :736, :897). Bare names resolve to /cache/Sound/.
+  'ui-click': 'click.wav',
+  'ui-select': 'select.wav',
   'chat-message': '/sounds/come-here-notification.ogg',
   'mail': '/sounds/come-here-notification.ogg',
   'period-end': '/sounds/come-here-notification.ogg',
@@ -35,6 +37,14 @@ const PRELOAD_SOUNDS: SoundEvent[] = [
 
 const MAX_CONCURRENT = 8;
 
+/** A live looping voice — one on-screen sounded building. */
+interface LoopVoice {
+  filename: string;
+  source: AudioBufferSourceNode;
+  gainNode: GainNode;
+  panner: StereoPannerNode | null;
+}
+
 export class SoundManager {
   private context: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -45,6 +55,14 @@ export class SoundManager {
   private userInteracted = false;
   private activeSources = 0;
   private lastPlayTime: Map<string, number> = new Map();
+  /**
+   * Looping ambience voices, keyed by the caller's voice key. Deliberately NOT counted in
+   * `activeSources`: that budget is the one-shot budget, and 30 ambience voices must never
+   * starve a click sound.
+   */
+  private loopVoices: Map<string, LoopVoice> = new Map();
+  /** Voice keys whose buffer is still being fetched, with the filename that was asked for. */
+  private loopPending: Map<string, string> = new Map();
 
   /**
    * Call on first user interaction (click/keydown) to unlock AudioContext.
@@ -83,14 +101,24 @@ export class SoundManager {
   /** Minimum interval between repeated plays of the same event (ms) */
   private static readonly DEBOUNCE_MS = 3000;
 
+  /**
+   * Events that opt out of the 3 s debounce. The two map one-shots answer a direct click,
+   * so a player clicking twice in a row must hear it twice.
+   */
+  private static readonly DEBOUNCE_OVERRIDES: Partial<Record<SoundEvent, number>> = {
+    'ui-click': 0,
+    'ui-select': 0,
+  };
+
   /** Play a named sound event (debounced — max once per 3s per event) */
   public play(event: SoundEvent): void {
     const filename = SOUND_MAP[event];
     if (!filename) return;
 
+    const debounceMs = SoundManager.DEBOUNCE_OVERRIDES[event] ?? SoundManager.DEBOUNCE_MS;
     const now = performance.now();
     const last = this.lastPlayTime.get(event) ?? 0;
-    if (now - last < SoundManager.DEBOUNCE_MS) return;
+    if (now - last < debounceMs) return;
     this.lastPlayTime.set(event, now);
 
     this.playFile(filename);
@@ -115,6 +143,89 @@ export class SoundManager {
     }
   }
 
+  /**
+   * Start a looping voice for `key`, or update a live one's gain and pan in place.
+   *
+   * Passing a different filename for a key that already has a voice replaces it. Everything
+   * routes through `masterGain`, so the enable switch and the effects volume govern ambience
+   * exactly as they govern every other sound.
+   */
+  public setLoopVoice(key: string, filename: string, gain: number, pan: number): void {
+    if (!this.enabled || !this.userInteracted) return;
+
+    const ctx = this.ensureContext();
+    if (!ctx || !this.masterGain) return;
+
+    const existing = this.loopVoices.get(key);
+    if (existing && existing.filename === filename) {
+      existing.gainNode.gain.value = gain;
+      if (existing.panner) existing.panner.pan.value = pan;
+      return;
+    }
+    if (existing) this.stopLoopVoice(key);
+
+    const buffer = this.bufferCache.get(filename);
+    if (buffer) {
+      this.startLoopVoice(ctx, key, filename, buffer, gain, pan);
+      return;
+    }
+
+    if (this.loopPending.get(key) === filename) return; // already in flight
+    this.loopPending.set(key, filename);
+    this.loadSound(filename).then(buf => {
+      // The voice may have been stopped, or asked for a different wave, while we waited.
+      if (this.loopPending.get(key) !== filename) return;
+      this.loopPending.delete(key);
+      const liveCtx = this.context;
+      if (!buf || !this.enabled || !liveCtx || !this.masterGain) return;
+      if (this.loopVoices.has(key)) return;
+      this.startLoopVoice(liveCtx, key, filename, buf, gain, pan);
+    }).catch(() => {
+      this.loopPending.delete(key);
+    });
+  }
+
+  /** Fire a one-shot at a given gain and pan (the periodic ambience entries). */
+  public playPositioned(filename: string, gain: number, pan: number): void {
+    if (!this.enabled || !this.userInteracted) return;
+    if (this.activeSources >= MAX_CONCURRENT) return;
+
+    const ctx = this.ensureContext();
+    if (!ctx || !this.masterGain) return;
+
+    const buffer = this.bufferCache.get(filename);
+    if (buffer) {
+      this.playBuffer(ctx, buffer, { gain, pan });
+    } else {
+      this.loadSound(filename).then(buf => {
+        if (buf) this.playBuffer(ctx, buf, { gain, pan });
+      }).catch(() => { /* silently ignore playback failures */ });
+    }
+  }
+
+  /** Stop the looping voice for `key`, if any. */
+  public stopLoopVoice(key: string): void {
+    this.loopPending.delete(key);
+    const voice = this.loopVoices.get(key);
+    if (!voice) return;
+    this.loopVoices.delete(key);
+    SoundManager.teardownVoice(voice);
+  }
+
+  /** Stop every looping voice. */
+  public stopAllLoopVoices(): void {
+    for (const voice of this.loopVoices.values()) {
+      SoundManager.teardownVoice(voice);
+    }
+    this.loopVoices.clear();
+    this.loopPending.clear();
+  }
+
+  /** How many looping voices are live. */
+  public getLoopVoiceCount(): number {
+    return this.loopVoices.size;
+  }
+
   /** Preload common UI sounds */
   public preload(): void {
     for (const event of PRELOAD_SOUNDS) {
@@ -127,6 +238,8 @@ export class SoundManager {
 
   /** Stop all currently playing sounds (resets gain briefly) */
   public stopAll(): void {
+    // Before masterGain is replaced — the voices are connected to the current one.
+    this.stopAllLoopVoices();
     if (this.masterGain) {
       this.masterGain.disconnect();
       const ctx = this.context;
@@ -209,12 +322,22 @@ export class SoundManager {
     }
   }
 
-  private playBuffer(ctx: AudioContext, buffer: AudioBuffer): void {
+  private playBuffer(
+    ctx: AudioContext,
+    buffer: AudioBuffer,
+    positioned?: { gain: number; pan: number }
+  ): void {
     if (!this.masterGain) return;
 
     const source = ctx.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.masterGain);
+    if (positioned) {
+      const chain = this.buildVoiceChain(ctx, positioned.gain, positioned.pan);
+      if (!chain) return;
+      source.connect(chain.input);
+    } else {
+      source.connect(this.masterGain);
+    }
 
     this.activeSources++;
     source.onended = () => {
@@ -222,5 +345,67 @@ export class SoundManager {
     };
 
     source.start();
+  }
+
+  /**
+   * Build `[panner ->] gain -> masterGain` and return the node a source connects to.
+   *
+   * The panner is optional on purpose: a context without `createStereoPanner` still plays the
+   * voice, unpanned, rather than throwing and going silent.
+   */
+  private buildVoiceChain(ctx: AudioContext, gain: number, pan: number): {
+    input: AudioNode;
+    gainNode: GainNode;
+    panner: StereoPannerNode | null;
+  } | null {
+    if (!this.masterGain) return null;
+
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = gain;
+    gainNode.connect(this.masterGain);
+
+    let panner: StereoPannerNode | null = null;
+    if (typeof ctx.createStereoPanner === 'function') {
+      panner = ctx.createStereoPanner();
+      panner.pan.value = pan;
+      panner.connect(gainNode);
+    }
+
+    return { input: panner ?? gainNode, gainNode, panner };
+  }
+
+  private startLoopVoice(
+    ctx: AudioContext,
+    key: string,
+    filename: string,
+    buffer: AudioBuffer,
+    gain: number,
+    pan: number
+  ): void {
+    const chain = this.buildVoiceChain(ctx, gain, pan);
+    if (!chain) return;
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    source.connect(chain.input);
+
+    // Copies of the same wave start at a random offset so they do not phase-lock
+    // (SoundMixer.pas:99-102).
+    const duration = buffer.duration || 0;
+    source.start(0, Math.random() * duration);
+
+    this.loopVoices.set(key, { filename, source, gainNode: chain.gainNode, panner: chain.panner });
+  }
+
+  private static teardownVoice(voice: LoopVoice): void {
+    try {
+      voice.source.stop();
+    } catch {
+      // Already stopped — nothing to do.
+    }
+    voice.source.disconnect();
+    voice.panner?.disconnect();
+    voice.gainNode.disconnect();
   }
 }

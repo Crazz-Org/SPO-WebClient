@@ -34,6 +34,7 @@ import * as favoritesHandler from '../session/favorites-handler';
 import * as buildingManagementHandler from '../session/building-management-handler';
 import * as roadHandler from '../session/road-handler';
 import * as zoneSurfaceHandler from '../session/zone-surface-handler';
+import * as contextStatusHandler from '../session/context-status-handler';
 import * as buildingTemplatesHandler from '../session/building-templates-handler';
 import * as buildingDetailsHandler from '../session/building-details-handler';
 import * as buildingPropertyHandler from '../session/building-property-handler';
@@ -520,6 +521,13 @@ const DELEGATIONS: readonly Delegation[] = [
     result: undefined,
   },
   {
+    method: 'createChatChannel',
+    install: () => jest.spyOn(chatHandler, 'createChatChannel'),
+    call: s => s.createChatChannel('Traders', 's3cret'),
+    forwarded: ['Traders', 's3cret'],
+    result: undefined,
+  },
+  {
     method: 'sendChatMessage',
     install: () => jest.spyOn(chatHandler, 'sendChatMessage'),
     call: s => s.sendChatMessage('Bonjour à tous'),
@@ -569,6 +577,15 @@ const DELEGATIONS: readonly Delegation[] = [
     call: s => s.getSurfaceData(SurfaceType.POLLUTION, 700, 430, 706, 436),
     forwarded: [SurfaceType.POLLUTION, 700, 430, 706, 436],
     result: { width: 6, height: 6, values: [] },
+  },
+
+  // ── context-status-handler ───────────────────────────────────────────────
+  {
+    method: 'getContextStatusText',
+    install: () => jest.spyOn(contextStatusHandler, 'getContextStatusText'),
+    call: s => s.getContextStatusText(706, 436),
+    forwarded: [706, 436],
+    result: 'Podan — population 12,400',
   },
 
   // ── building-templates-handler ───────────────────────────────────────────
@@ -703,7 +720,9 @@ describe('StarpeaceSession — handler delegation', () => {
     // 74: `readWorkerCounts`, issue 552 — main added one of its own while this
     // branch was parked, so the union is 74, not the 73 either side alone saw.
     // 76: `chaseUser` and `stopChase`, issue 591.
-    expect(DELEGATIONS).toHaveLength(76);
+    // 77: `getContextStatusText`, issue 589.
+    // 78: `createChatChannel`, issue 619.
+    expect(DELEGATIONS).toHaveLength(78);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 

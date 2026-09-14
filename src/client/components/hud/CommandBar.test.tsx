@@ -4,6 +4,7 @@ import { renderWithProviders, createSpiedCallbacks } from '../../__tests__/setup
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { useMailStore } from '../../store/mail-store';
+import { useChatStore } from '../../store/chat-store';
 import { CommandBar } from './CommandBar';
 
 describe('CommandBar', () => {
@@ -12,13 +13,31 @@ describe('CommandBar', () => {
     useUiStore.setState({ modal: null, commandPaletteOpen: false, isPlacingBuilding: false, placementValid: false, placingFacility: null });
     useGameStore.setState({ isRoadBuildingMode: false, isRoadDemolishMode: false, isZonePaintingMode: false, isPublicOfficeRole: false, isVisitor: false, tycoonStats: null, overlayBeforeMode: null });
     useMailStore.setState({ unreadCount: 0 });
+    useChatStore.setState({ chatVisible: true, unreadChatCount: 0 });
   });
 
-  it('renders the six tiles and the search row', () => {
+  it('renders the seven tiles and the search row', () => {
     renderWithProviders(<CommandBar />);
-    for (const name of ['Build', 'Map', 'Empire', 'Government', 'More']) expect(screen.getByRole('button', { name })).toBeTruthy();
+    for (const name of ['Build', 'Map', 'Empire', 'Government', 'Chat', 'More']) expect(screen.getByRole('button', { name })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Mail/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Search or run a command/ })).toBeTruthy();
+  });
+
+  it('the chat tile toggles chatVisible and flips aria-pressed', () => {
+    renderWithProviders(<CommandBar />);
+    const tile = screen.getByRole('button', { name: 'Chat' });
+    expect(tile.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(tile);
+    expect(useChatStore.getState().chatVisible).toBe(false);
+    expect(screen.getByRole('button', { name: 'Chat' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('the chat tile carries the unread badge only while hidden', () => {
+    useChatStore.setState({ chatVisible: false, unreadChatCount: 3 });
+    renderWithProviders(<CommandBar />);
+    expect(screen.getByRole('button', { name: 'Chat, 3 unread' })).toBeTruthy();
+    act(() => useChatStore.setState({ chatVisible: true, unreadChatCount: 3 }));
+    expect(screen.getByRole('button', { name: 'Chat' })).toBeTruthy();
   });
 
   it('tiles open their surfaces and reflect the active one', () => {

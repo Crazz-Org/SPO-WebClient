@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import type { ChatUser } from '../../shared/types/domain-types';
+import { loadChatVisible, saveChatVisible } from './chat-visibility';
 
 export type { ChatUser };
 
@@ -14,6 +15,8 @@ export interface ChatMessage {
   timestamp: number;
   isSystem: boolean;
   isGM: boolean;
+  nobilityTier?: string;
+  modifiers?: number;
 }
 
 const MAX_MESSAGES_PER_CHANNEL = 100;
@@ -28,6 +31,8 @@ interface ChatState {
   users: Record<string, ChatUser>;
   typingUsers: Set<string>;
   isExpanded: boolean;
+  /** Desktop only: false hides the ChatStrip entirely. Persisted — issue #610. */
+  chatVisible: boolean;
   activeTab: ChatTab;
   /** Unread message count for mobile chat tab badge */
   unreadChatCount: number;
@@ -39,6 +44,10 @@ interface ChatState {
   // Actions
   setCurrentChannel: (channel: string) => void;
   setChannels: (channels: string[]) => void;
+  /** Insert one channel, ignoring a name already listed. Delphi's fControl.AddChannel. */
+  addChannel: (channel: string) => void;
+  /** Drop one channel. Delphi's fControl.DelChannel. */
+  removeChannel: (channel: string) => void;
   setChannelInfo: (channel: string, info: string) => void;
   addMessage: (channel: string, message: ChatMessage) => void;
   setUsers: (users: ChatUser[]) => void;
@@ -50,6 +59,8 @@ interface ChatState {
   setActiveTab: (tab: ChatTab) => void;
   resetUnreadChat: () => void;
   setChasedUser: (name: string | null) => void;
+  setChatVisible: (visible: boolean) => void;
+  toggleChatVisible: () => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -59,6 +70,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   users: {},
   typingUsers: new Set(),
   isExpanded: true,
+  chatVisible: loadChatVisible(),
   activeTab: 'chat' as ChatTab,
   unreadChatCount: 0,
   channelInfo: {},
@@ -69,6 +81,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setChannels: (channels) => set((state) => ({
     channels,
     currentChannel: state.currentChannel || (channels.length > 0 ? channels[0] : ''),
+  })),
+
+  addChannel: (channel) => set((state) =>
+    !channel || state.channels.includes(channel) ? {} : { channels: [...state.channels, channel] }),
+
+  // Deliberately leaves `currentChannel` alone: the server sends its own
+  // channel-change notice when it moves you, and guessing here would be a
+  // regression risk of its own.
+  removeChannel: (channel) => set((state) => ({
+    channels: state.channels.filter((c) => c !== channel),
   })),
 
   setChannelInfo: (channel, info) =>
@@ -125,4 +147,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   resetUnreadChat: () => set({ unreadChatCount: 0 }),
 
   setChasedUser: (name) => set({ chasedUser: name }),
+
+  setChatVisible: (visible) => {
+    saveChatVisible(visible);
+    // Showing chat is the player reading it — the toggle's badge clears with it.
+    set(visible ? { chatVisible: true, unreadChatCount: 0 } : { chatVisible: false });
+  },
+
+  toggleChatVisible: () => get().setChatVisible(!get().chatVisible),
 }));

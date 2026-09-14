@@ -158,6 +158,8 @@ export interface ClientCallbacks {
   onZoomOut: () => void;
   onToggleMinimap: () => void;
   onToggleDebugOverlay: () => void;
+  /** The server's sentence for the town at world tile (x, y), or '' when there is none. */
+  onRequestContextStatus: (x: number, y: number) => Promise<string>;
 
   // Bug-report capture (dev-only, armed by SPO_BUG_REPORT — see src/client/report/)
   /** What sits under a screen point on the map canvas, in tile terms. `null` if the renderer is not up. */
@@ -179,7 +181,14 @@ export interface ClientCallbacks {
   // Chat
   onSendChatMessage: (message: string) => void;
   onJoinChannel: (channelName: string) => void;
+  /**
+   * Create a named channel (Delphi CreateChannel). Returns a promise — unlike
+   * `onJoinChannel` — so the modal can await it and stay open on a refusal.
+   */
+  onCreateChannel: (channelName: string, password: string) => Promise<void>;
   onChatTypingChange: (isTyping: boolean) => void;
+  /** Announce the away state (Delphi mstAFK). */
+  onChatAway: () => void;
   onGetChannelInfo: (channelName: string) => void;
   /** Start following another player's camera (Delphi Chase). */
   onChaseUser: (userName: string) => void;
@@ -297,6 +306,8 @@ export interface ClientCallbacks {
   onRequestFacilities: () => void;
   onAddFavorite: (name: string, x: number, y: number) => void;
   onRemoveFavorite: (path: string, name: string) => void;
+  /** Remove several favourites in one action — one delete per item, failures reported per item. */
+  onRemoveFavorites: (items: { path: string; name: string }[]) => void;
   onRenameFavorite: (path: string, name: string) => void;
   onCreateFavoriteFolder: (parentPath: string, name: string) => void;
   onMoveFavorite: (path: string, destPath: string, name: string) => void;
@@ -644,6 +655,16 @@ export const ClientBridge = {
     useChatStore.getState().setChannels(channels);
   },
 
+  /** One channel appeared — the creator's own, or another player's (NotifyChannelListChange, uchInclusion). */
+  addChatChannel(channel: string): void {
+    useChatStore.getState().addChannel(channel);
+  },
+
+  /** One channel is gone (NotifyChannelListChange, uchExclusion). */
+  removeChatChannel(channel: string): void {
+    useChatStore.getState().removeChannel(channel);
+  },
+
   addChatMessage(channel: string, message: {
     id: string;
     from: string;
@@ -651,6 +672,8 @@ export const ClientBridge = {
     timestamp: number;
     isSystem: boolean;
     isGM: boolean;
+    nobilityTier?: string;
+    modifiers?: number;
   }): void {
     useChatStore.getState().addMessage(channel, message);
   },

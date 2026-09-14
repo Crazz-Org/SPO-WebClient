@@ -8,7 +8,7 @@
  * if something had changed. That is the OB-1 defect, in the client half.
  */
 
-import { addFavorite, removeFavorite, renameFavorite, createFolder, moveFavorite, migrateLocalBookmarks } from './favorites-handler';
+import { addFavorite, removeFavorite, removeFavorites, renameFavorite, createFolder, moveFavorite, migrateLocalBookmarks } from './favorites-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useGameStore } from '../store/game-store';
 import { useEmpireStore } from '../store/empire-store';
@@ -111,6 +111,99 @@ describe('removeFavorite', () => {
 
     expect(showNotification).toHaveBeenCalledWith('Failed to remove favourite: socket closed', 'error');
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+function makeQueuedCtx(answers: Answer[]) {
+  let i = 0;
+  const sendRequest = jest.fn(() => {
+    const answer = answers[i++];
+    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+  });
+  const sendMessage = jest.fn();
+  const showNotification = jest.fn();
+  const ctx = { sendRequest, sendMessage, showNotification } as unknown as ClientHandlerContext;
+  return { ctx, sendRequest, sendMessage, showNotification };
+}
+
+describe('removeFavorites', () => {
+  it('sends one request per selected item, in order, refetches once and reports success', async () => {
+    const { ctx, sendRequest, sendMessage, showNotification } = makeQueuedCtx([
+      { success: true }, { success: true }, { success: true },
+    ]);
+
+    const outcome = await removeFavorites(ctx, [
+      { path: '1', name: 'A' }, { path: '2', name: 'B' }, { path: '3', name: 'C' },
+    ]);
+
+    expect(sendRequest).toHaveBeenCalledTimes(3);
+    expect(sendRequest).toHaveBeenNthCalledWith(1, { type: WsMessageType.REQ_FAVORITE_DELETE, path: '1' });
+    expect(sendRequest).toHaveBeenNthCalledWith(2, { type: WsMessageType.REQ_FAVORITE_DELETE, path: '2' });
+    expect(sendRequest).toHaveBeenNthCalledWith(3, { type: WsMessageType.REQ_FAVORITE_DELETE, path: '3' });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith({ type: WsMessageType.REQ_EMPIRE_FACILITIES });
+    expect(showNotification).toHaveBeenCalledWith('3 places removed from your list', 'success');
+    expect(outcome).toEqual({ removed: ['A', 'B', 'C'], failed: [] });
+  });
+
+  it('a refusal among several names that item and its reason, warns, and still refetches', async () => {
+    const { ctx, sendMessage, showNotification } = makeQueuedCtx([
+      { success: true }, { success: false, message: 'Nope.' }, { success: true },
+    ]);
+
+    const outcome = await removeFavorites(ctx, [
+      { path: '1', name: 'A' }, { path: '2', name: 'B' }, { path: '3', name: 'C' },
+    ]);
+
+    expect(showNotification).toHaveBeenCalledWith('Removed 2 of 3 — "B": Nope.', 'warning');
+    expect(sendMessage).toHaveBeenCalledWith({ type: WsMessageType.REQ_EMPIRE_FACILITIES });
+    expect(outcome).toEqual({ removed: ['A', 'C'], failed: [{ name: 'B', message: 'Nope.' }] });
+  });
+
+  it('every item refused reports an error and refetches nothing', async () => {
+    const { ctx, sendMessage, showNotification } = makeQueuedCtx([
+      { success: false, message: 'Nope.' }, { success: false, message: 'Non plus.' },
+    ]);
+
+    const outcome = await removeFavorites(ctx, [
+      { path: '1', name: 'A' }, { path: '2', name: 'B' },
+    ]);
+
+    expect(showNotification).toHaveBeenCalledWith(
+      'Nothing was removed — "A": Nope.; "B": Non plus.', 'error',
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      removed: [], failed: [{ name: 'A', message: 'Nope.' }, { name: 'B', message: 'Non plus.' }],
+    });
+  });
+
+  it('a transport rejection on the first item is that item\'s failure, and the rest are still sent', async () => {
+    const { ctx, sendRequest, showNotification } = makeQueuedCtx([
+      new Error('socket closed'), { success: true },
+    ]);
+
+    const outcome = await removeFavorites(ctx, [
+      { path: '1', name: 'A' }, { path: '2', name: 'B' },
+    ]);
+
+    expect(sendRequest).toHaveBeenCalledTimes(2);
+    expect(showNotification).toHaveBeenCalledWith('Removed 1 of 2 — "A": socket closed', 'warning');
+    expect(outcome.failed).toEqual([{ name: 'A', message: 'socket closed' }]);
+    expect(outcome.removed).toEqual(['B']);
+  });
+
+  it('a selected child of a selected folder is asked for once only', async () => {
+    const { ctx, sendRequest, showNotification } = makeQueuedCtx([{ success: true }]);
+
+    const outcome = await removeFavorites(ctx, [
+      { path: '10', name: 'Farms' }, { path: '10/11', name: 'Mill' },
+    ]);
+
+    expect(sendRequest).toHaveBeenCalledTimes(1);
+    expect(sendRequest).toHaveBeenCalledWith({ type: WsMessageType.REQ_FAVORITE_DELETE, path: '10' });
+    expect(showNotification).toHaveBeenCalledWith('"Farms" removed from your list', 'success');
+    expect(outcome.removed).toEqual(['Farms']);
   });
 });
 

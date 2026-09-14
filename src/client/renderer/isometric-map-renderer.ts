@@ -21,6 +21,7 @@ import { IsometricTerrainRenderer } from './isometric-terrain-renderer';
 import { GameObjectTextureCache } from './game-object-texture-cache';
 import { VegetationFlatMapper } from './vegetation-flat-mapper';
 import { TouchHandler2D } from './touch-handler-2d';
+import type { AmbienceSnapshot, AmbienceSource } from '../audio/map-ambience';
 import {
   Point,
   Rect,
@@ -1975,6 +1976,33 @@ export class IsometricMapRenderer {
     return this.allSegments;
   }
 
+  /** `"x,y"` -> `{ x, y }` — the one place either tile-key set is decoded (for minimap layers). */
+  private static decodeTileKey(key: string): { x: number; y: number } {
+    const [x, y] = key.split(',').map(Number);
+    return { x, y };
+  }
+
+  /**
+   * Every road tile the renderer knows about (for minimap rendering).
+   */
+  public getRoadTileCoords(): Array<{ x: number; y: number }> {
+    return Array.from(this.roadTilesMap.keys(), IsometricMapRenderer.decodeTileKey);
+  }
+
+  /**
+   * Every concrete tile the renderer knows about (for minimap rendering).
+   */
+  public getConcreteTileCoords(): Array<{ x: number; y: number }> {
+    return Array.from(this.concreteTilesSet, IsometricMapRenderer.decodeTileKey);
+  }
+
+  /**
+   * The currently selected building, or null (for the minimap's selection marker).
+   */
+  public getSelectedBuilding(): MapBuilding | null {
+    return this.selectedBuilding;
+  }
+
   /**
    * Get map dimensions in tiles (for minimap scaling)
    */
@@ -2022,6 +2050,58 @@ export class IsometricMapRenderer {
       this.terrainRenderer.getRotation(),
       origin
     );
+  }
+
+  /**
+   * The on-screen buildings that carry an ambience, as the sound mixer needs them.
+   *
+   * Mirrors TStaticBuildingSoundTarget.UpdateSoundParameters (Map.pas:8374-8411): the
+   * listener is the tile under the centre of the canvas, and the pan anchor is the
+   * building's tile centre in canvas pixels. Unlike drawBuildings this takes no margin —
+   * a building off the edge of the screen contributes no voice.
+   */
+  public getAmbienceSnapshot(): AmbienceSnapshot {
+    const bounds = this.getVisibleTileBounds();
+    // screenToMap returns {x: row i, y: column j} — the listener tile.
+    const listener = this.terrainRenderer.screenToMap(this.canvas.width / 2, this.canvas.height / 2);
+    const listenerI = listener.x;
+    const listenerJ = listener.y;
+
+    const sources: AmbienceSource[] = [];
+    for (const building of this.allBuildings) {
+      const dims = this.facilityDimensionsCache.get(building.visualClass);
+      const sound = dims?.sound;
+      if (!dims || !sound) continue;
+
+      const xsize = dims.xsize || 1;
+      const ysize = dims.ysize || 1;
+      // MapBuilding.x is the column (j) and .y the row (i).
+      const onScreen =
+        building.x + xsize > bounds.minJ && building.x < bounds.maxJ &&
+        building.y + ysize > bounds.minI && building.y < bounds.maxI;
+      if (!onScreen) continue;
+
+      sources.push({
+        key: `${building.x},${building.y}`,
+        waveFile: sound.waveFile,
+        attenuation: sound.attenuation,
+        priority: sound.priority,
+        looped: sound.looped,
+        probability: sound.probability,
+        periodMs: sound.periodMs,
+        screenX: this.terrainRenderer.mapToScreen(building.y, building.x).x,
+        distance: Math.hypot(
+          listenerI - (building.y + Math.floor(ysize / 2)),
+          listenerJ - (building.x + Math.floor(xsize / 2))
+        ),
+      });
+    }
+
+    return {
+      canvasWidth: this.canvas.width,
+      zoomLevel: this.terrainRenderer.getZoomLevel(),
+      sources,
+    };
   }
 
   /**

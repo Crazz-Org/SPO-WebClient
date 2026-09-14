@@ -39,6 +39,24 @@
   letter-spacing: 0.05em;
 }
 
+.headerText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.office {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: none;
+  letter-spacing: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .closeBtn {
   display: flex;
   align-items: center;

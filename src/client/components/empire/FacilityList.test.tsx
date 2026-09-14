@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { screen, fireEvent } from '@testing-library/react';
+import { screen, fireEvent, act } from '@testing-library/react';
 import { renderWithProviders, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
 import { useMapStore } from '../../store/map-store';
@@ -34,6 +34,7 @@ function seedSource(buildings: MapBuilding[]): void {
 describe('FacilityList (H6)', () => {
   beforeEach(() => {
     useUiStore.getState().clearSurfaces();
+    useUiStore.setState({ confirmPayload: null, promptPayload: null });
     useMapStore.getState().setSource(null);
     useEmpireStore.getState().reset();
   });
@@ -296,5 +297,63 @@ describe('FacilityList (H6)', () => {
     ]);
     renderWithProviders(<FacilityList facilities={[nested]} />);
     expect(screen.getByText('5, 5 · in Farms')).toBeTruthy();
+  });
+
+  // ── batch selection: checkboxes, Remove selected, Delete/Escape ─────────
+
+  it('selecting two rows and clicking Remove selected raises one confirmation for the batch', () => {
+    const onRemoveFavorites = jest.fn();
+    renderWithProviders(
+      <FacilityList facilities={[fav(1, 'Mill', 1, 1), fav(2, 'Farm', 2, 2)]} />,
+      { clientCallbacks: createSpiedCallbacks({ onRemoveFavorites }) },
+    );
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Mill' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Farm' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove selected (2)' }));
+
+    expect(onRemoveFavorites).not.toHaveBeenCalled();
+    const payload = useUiStore.getState().confirmPayload;
+    expect(payload?.title).toBe('Remove from list');
+
+    act(() => payload?.onConfirm());
+    expect(onRemoveFavorites).toHaveBeenCalledTimes(1);
+    expect(onRemoveFavorites).toHaveBeenCalledWith([
+      { path: '1', name: 'Mill' }, { path: '2', name: 'Farm' },
+    ]);
+  });
+
+  it('the Delete key raises the same single confirmation for the selection', () => {
+    const onRemoveFavorites = jest.fn();
+    renderWithProviders(
+      <FacilityList facilities={[fav(1, 'Mill', 1, 1)]} />,
+      { clientCallbacks: createSpiedCallbacks({ onRemoveFavorites }) },
+    );
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Mill' }));
+    fireEvent.keyDown(screen.getByRole('checkbox', { name: 'Select Mill' }), { key: 'Delete' });
+
+    const payload = useUiStore.getState().confirmPayload;
+    expect(payload?.title).toBe('Remove from list');
+    act(() => payload?.onConfirm());
+    expect(onRemoveFavorites).toHaveBeenCalledTimes(1);
+  });
+
+  it('Escape clears the selection and raises no confirmation', () => {
+    const onRemoveFavorites = jest.fn();
+    renderWithProviders(
+      <FacilityList facilities={[fav(1, 'Mill', 1, 1)]} />,
+      { clientCallbacks: createSpiedCallbacks({ onRemoveFavorites }) },
+    );
+
+    const checkbox = screen.getByRole('checkbox', { name: 'Select Mill' });
+    fireEvent.click(checkbox);
+    expect(screen.getByText('1 selected')).toBeTruthy();
+
+    fireEvent.keyDown(checkbox, { key: 'Escape' });
+
+    expect(screen.queryByText('1 selected')).toBeNull();
+    expect(useUiStore.getState().confirmPayload).toBeNull();
+    expect((screen.getByRole('checkbox', { name: 'Select Mill' }) as HTMLInputElement).checked).toBe(false);
   });
 });

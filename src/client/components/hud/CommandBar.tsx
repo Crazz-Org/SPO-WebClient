@@ -3,17 +3,18 @@
  *
  * Two rows above the map: a search row that opens the Command Palette (or, while a mode is
  * active, the MODE BAR — placement / road / zone — that stays visible as long as the mode
- * lasts, which the audit found missing on desktop, H1/H2), and six tiles: Build · Map ·
- * Empire · Government · Mail · More. It replaces LeftRail on desktop; the zoom cluster
+ * lasts, which the audit found missing on desktop, H1/H2), and seven tiles: Build · Map ·
+ * Empire · Government · Mail · Chat · More. It replaces LeftRail on desktop; the zoom cluster
  * (RightRail) stays. Hidden under 768 px (the mobile shell has its own navigation).
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Hammer, Map, User, Landmark, Mail, MoreHorizontal, Search, RotateCw, Settings, Layers, Heart, Server, Route, Eraser, Grid2x2 } from 'lucide-react';
+import { Hammer, Map, User, Landmark, Mail, MessageSquare, MoreHorizontal, Search, RotateCw, Settings, Layers, Heart, Server, Route, Eraser, Grid2x2 } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { useModeDescriptor, type ModeDescriptor } from './use-mode-descriptor';
 import { useMailStore } from '../../store/mail-store';
+import { useChatStore } from '../../store/chat-store';
 import { useClient } from '../../context';
 import { Button } from '../common';
 import styles from './CommandBar.module.css';
@@ -127,6 +128,8 @@ export function CommandBar() {
   const isRoadDemolish = useGameStore((s) => s.isRoadDemolishMode);
   const isZone = useGameStore((s) => s.isZonePaintingMode);
   const unread = useMailStore((s) => s.unreadCount);
+  const chatVisible = useChatStore((s) => s.chatVisible);
+  const unreadChat = useChatStore((s) => s.unreadChatCount);
   const isVisitor = useGameStore((s) => s.isVisitor);
   const mode = useModeDescriptor();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -137,6 +140,9 @@ export function CommandBar() {
     { id: 'empire', label: 'Empire', kbd: 'E', icon: <User size={20} />, active: leftPanel === 'empire', onClick: () => toggleLeftPanel('empire') },
     { id: 'politics', label: 'Government', kbd: 'P', icon: <Landmark size={20} />, active: rightPanel === 'politics', onClick: () => toggleRightPanel('politics') },
     { id: 'mail', label: 'Mail', kbd: 'L', icon: <Mail size={20} />, active: rightPanel === 'mail', badge: unread, onClick: () => toggleRightPanel('mail') },
+    { id: 'chat', label: 'Chat', icon: <MessageSquare size={20} />, active: chatVisible,
+      badge: chatVisible ? 0 : unreadChat,
+      onClick: () => useChatStore.getState().toggleChatVisible() },
     { id: 'more', label: 'More', icon: <MoreHorizontal size={20} />, active: moreOpen || isRoadBuild || isRoadDemolish || isZone, onClick: () => setMoreOpen((v) => !v) },
   ].filter((t) => !isVisitor || (t.id !== 'build' && t.id !== 'empire'));
 

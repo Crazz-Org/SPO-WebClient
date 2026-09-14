@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createLogger } from '../shared/logger';
 import { BuildingData, getConstructionTexture } from '../shared/types/building-data';
-import { parseClassesBin } from './classes-bin-parser';
+import { parseClassesBin, SOUND_SET_KIND } from './classes-bin-parser';
 import { registerInspectorTabs } from '../shared/building-details/property-templates';
 import type { Service } from './service-registry';
 import { getCacheDir } from './paths';
@@ -40,6 +40,21 @@ export interface FacilityDimensions {
   constructionTextureFilename?: string;
   animated?: boolean;
   animArea?: { left: number; top: number; right: number; bottom: number };
+  /** `[General] Zone` (`MapTypes.pas:157`) — the minimap's class colour, `Map.pas:7566-7576`. */
+  zoneType?: number;
+  /**
+   * The class's ambience entry — `Sounds[0]` of the `[Sounds]` section, the entry Voyager's
+   * TStaticBuildingSoundTarget voices (Map.pas:8389). Absent for a silent or
+   * animation-driven class.
+   */
+  sound?: {
+    waveFile: string;
+    attenuation: number;
+    priority: number;
+    looped: boolean;
+    probability: number;
+    periodMs: number;
+  };
 }
 
 /**
@@ -242,6 +257,31 @@ export class BuildingDataService implements Service {
       constructionTextureFilename: building.constructionTextureFilename,
       animated: building.animated,
       animArea: building.animArea,
+      zoneType: building.zoneType,
+      sound: BuildingDataService.projectAmbience(building.soundData),
+    };
+  }
+
+  /**
+   * Project the class's `[Sounds]` section down to the single entry the client voices.
+   *
+   * Voyager's building ambience target reads `Sounds[0]` and nothing else (Map.pas:8389),
+   * and only a stochastic set is ambience at all — an `ssAnimDriven` array is indexed by
+   * animation frame, not played as a continuous voice.
+   */
+  private static projectAmbience(
+    soundData: BuildingData['soundData']
+  ): FacilityDimensions['sound'] {
+    if (!soundData || soundData.kind !== SOUND_SET_KIND.STOCHASTIC) return undefined;
+    const entry = soundData.sounds[0];
+    if (!entry || !entry.waveFile) return undefined;
+    return {
+      waveFile: entry.waveFile,
+      attenuation: entry.attenuation,
+      priority: entry.priority,
+      looped: entry.looped,
+      probability: entry.probability,
+      periodMs: entry.period,
     };
   }
 

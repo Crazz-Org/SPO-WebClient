@@ -30,6 +30,7 @@ import type { WsMessage, ChatUser } from '@/shared/types';
 import { dispatchEvent } from './event-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useChatStore } from '../store/chat-store';
+import { useMapStore } from '../store/map-store';
 import type { ClientHandlerContext } from './client-context';
 import type { IsometricMapRenderer } from '../renderer/isometric-map-renderer';
 
@@ -50,24 +51,29 @@ function user(name: string): ChatUser {
 beforeEach(() => {
   jest.clearAllMocks();
   useChatStore.setState({ chasedUser: null });
+  useMapStore.getState().reset();
 });
 
 describe('EVENT_MOVE_TO', () => {
-  it('centres the map on the coordinates the followed player moved to', () => {
+  it('centres the map on the coordinates the followed player moved to, exactly once, and records the position in the camera history', () => {
     const { ctx, centerOn } = makeCtx();
 
     dispatchEvent(ctx, { type: WsMessageType.EVENT_MOVE_TO, x: 706, y: 436 } as unknown as WsMessage);
 
     expect(centerOn).toHaveBeenCalledWith(706, 436);
+    expect(centerOn).toHaveBeenCalledTimes(1);
+    const { history, historyIndex } = useMapStore.getState();
+    expect(history[historyIndex]).toEqual({ x: 706, y: 436 });
   });
 
-  it('never moves the camera on coordinates the dispatcher could not read', () => {
+  it('never moves the camera on coordinates the dispatcher could not read, and records nothing', () => {
     const { ctx, centerOn } = makeCtx();
 
     dispatchEvent(ctx, { type: WsMessageType.EVENT_MOVE_TO, x: NaN, y: 436 } as unknown as WsMessage);
 
     expect(centerOn).not.toHaveBeenCalled();
     expect(ClientBridge.log).toHaveBeenCalledWith('Map', expect.stringContaining('unreadable'));
+    expect(useMapStore.getState().history).toEqual([]);
   });
 
   it('does nothing when there is no renderer yet', () => {
@@ -76,6 +82,17 @@ describe('EVENT_MOVE_TO', () => {
     expect(() =>
       dispatchEvent(ctx, { type: WsMessageType.EVENT_MOVE_TO, x: 10, y: 20 } as unknown as WsMessage),
     ).not.toThrow();
+  });
+
+  it('falls through untouched on an unknown event type', () => {
+    const { ctx, centerOn } = makeCtx();
+
+    expect(() =>
+      dispatchEvent(ctx, { type: 'NOT_A_REAL_EVENT' } as unknown as WsMessage),
+    ).not.toThrow();
+
+    expect(centerOn).not.toHaveBeenCalled();
+    expect(useMapStore.getState().history).toEqual([]);
   });
 });
 

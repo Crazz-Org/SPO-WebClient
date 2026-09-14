@@ -365,6 +365,30 @@ describe('ui-store surface stack', () => {
   });
 });
 
+describe('ui-store HUD visibility', () => {
+  beforeEach(() => {
+    useUiStore.setState({ hudVisible: true });
+  });
+
+  it('defaults to visible', () => {
+    expect(useUiStore.getState().hudVisible).toBe(true);
+  });
+
+  it('toggleHudVisible flips it', () => {
+    useUiStore.getState().toggleHudVisible();
+    expect(useUiStore.getState().hudVisible).toBe(false);
+    useUiStore.getState().toggleHudVisible();
+    expect(useUiStore.getState().hudVisible).toBe(true);
+  });
+
+  it('setHudVisible sets it directly', () => {
+    useUiStore.getState().setHudVisible(false);
+    expect(useUiStore.getState().hudVisible).toBe(false);
+    useUiStore.getState().setHudVisible(true);
+    expect(useUiStore.getState().hudVisible).toBe(true);
+  });
+});
+
 describe('ui-store map context menu', () => {
   beforeEach(() => {
     useUiStore.getState().closeMapContextMenu();

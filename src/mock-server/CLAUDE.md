@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `refresh-season`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `show-notification`, `chat-flags`, `create-channel`, `refresh-season`.
 
 `world-login` is the world socket during `loginWorld` — RDO only, since the company list itself
 arrives over HTTP. It exists for its second exchange: the admission question the reference client
@@ -230,6 +230,63 @@ refused", never "N tiles were painted". `createDefineZoneScenario(vars,
 the real gateway `handleDefineZone` and the real browser `zone-handler`
 end to end, and asserts an `ERROR_Unknown` reply reaches the player as an
 error notification, never a success toast.
+
+`context-status` is `ContextStatusText`, a 2-argument `"^"` FUNCTION on
+`TClientView` (`Interface Server/InterfaceServer.pas:149`) forwarding to
+`TWorld.RDOContextStatusText( ToTycoon, x, y )` (`Kernel/World.pas:4233`) — the
+tycoon id is injected server-side, so the client sends only `(x, y)`, x first,
+as Voyager does (`ServerCnxHandler.pas:1444`). Its two exchanges are the two
+answers that matter: a sentence for a tile inside a town, and `res="%"` for a
+tile with none (`World.pas:4243`), which is a normal answer and not an error.
+`createContextStatusScenario(vars, { text })` sets the sentence the first
+exchange carries. Its test drives the real gateway `handleContextStatus` and the
+real browser handler, then renders `ContextStatusStrip` and asserts a camera
+move produces the second ask and that the empty answer hides the strip.
+
+`show-notification` is `ShowNotification`, the Interface Server's one push for "tell the player
+something" — a 4-argument `procedure` (`Protocol/Protocol.pas:219`), so every frame here carries
+`"*"`, no QueryId and no reply. **The kind is the routing**: Voyager dispatched on it in one
+`case` (`Voyager/VoyagerWindow.pas:506-563`) rather than treating every kind as the same toast.
+A push-only scenario has no reply to prove anything with, so its four frames — one each for
+kind 0, 1, 2 and 4 — plus the browser behaviour they produce through the real dispatcher are the
+only evidence there is. Kind 4 is in the set precisely to prove the one behaviour that must
+**not** change: the toast and the build-catalogue invalidation on `Options = 1`, both carried
+through unmodified from before this scenario existed.
+
+`chat-flags` is `ChatMsg` carrying the packed AccDesc middle field
+(`ComposeChatUser`, `Protocol/Protocol.pas:482-492`) — a `procedure`
+push (`Protocol/Protocol.pas:206`), so both frames here carry `"*"`, no
+QueryId and no reply, the same shape as `show-notification`. Its two
+exchanges pin the one thing a reply could never prove: a speaker absent
+from the local user list (`chat-flags-stranger`, `Zorg`) still renders
+with the correct nobility tier and modifier badge because
+`DecodeCodeMSGChat` decorates from the AccDesc on the line itself, never
+from the roster (`Voyager/URLHandlers/ChatListHandlerViewer.pas:137-149`);
+and a speaker already in the user list (`chat-flags-known`, `SPO_test3`)
+with matching AccDesc renders the same badge either way, proving nothing
+regresses for a known speaker.
+
+`create-channel` is making a chat channel: `CreateChannel( ChannelName, Password, aSessionApp,
+aSessionAppId : widestring; anUserLimit : integer )`, a published FUNCTION on `TClientView`
+(`Interface Server/InterfaceServer.pas:186`), so both frames carry `"^"` and a QueryId and both
+are answered `res="#<code>"`. Its **five arguments** are what it fixes first: the reference
+client's New Channel dialog sent the session app and its id as **empty strings, not omitted**,
+and the user limit as `100` (`Voyager.1/URLHandlers/ChatHandlerViewer.pas:221`, which forces the
+channel-session tab closed at `:219`). Drop the two empties and `anUserLimit` lands in
+`aSessionApp`'s slot and is read as a widestring — no error, no reply difference, a channel with
+a meaningless session app and a zero user limit. What no reply could prove is the second thing:
+the body (`:1512-1533`) creates the channel only when `GetChannel` returns nil and otherwise
+**falls through to `JoinChannel`**, and both branches answer `0`. `ClientCreatedChannel` is the
+only thing that broadcasts `uchInclusion` (`:4594`, fanned out at `:4049`), so the free-name
+exchange carries that push and the taken-name exchange carries none — the push asymmetry is the
+only wire evidence of which branch ran, and it lives in the fixture because no client could
+recover it (the broadcast travels on a different path with no correlation id, and nothing needs
+the distinction). `createCreateChannelScenario(vars, { takenResult })` sets what the taken name
+answers: `13` `ERROR_InvalidPassword` or `32` `ERROR_NotEnoughRoom`
+(`Protocol/Protocol.pas:42,61`), both reachable through that fall-through alone and so themselves
+proof the name was taken. Its test drives the real gateway `createChatChannel` against the mock,
+then feeds the inclusion push through the real dispatcher into the real browser `dispatchEvent`
+and asserts the channel appeared in the store.
 
 `refresh-season` is the world's season turning: a single `pushOnly: true` exchange carrying
 `RefreshSeason( Season )`, a `procedure` pushed to every client view when the season changes

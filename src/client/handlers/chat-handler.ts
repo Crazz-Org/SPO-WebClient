@@ -15,7 +15,9 @@ import {
   WsReqChatGetChannelInfo,
   WsRespChatChannelInfo,
   WsReqChatJoinChannel,
+  WsReqChatCreateChannel,
   WsReqChatTypingStatus,
+  WsReqChatAway,
   WsReqChatChase,
   WsReqChatStopChase
 } from '../../shared/types';
@@ -70,6 +72,23 @@ export function setTypingStatus(ctx: ClientHandlerContext, isTyping: boolean): v
     isTyping,
   };
   ctx.sendMessage(req);
+}
+
+/**
+ * Announce the away state (`/afk`, composition state 2). Fire-and-forget, like
+ * `setTypingStatus`: the gateway turns this into a void `MsgCompositionChanged` push.
+ *
+ * Clearing `isTypingInChat` is the whole "typing again clears it" mechanism: away is
+ * not "composing", so the next keystroke's `setTypingStatus(ctx, true)` is a real
+ * transition rather than a no-op the dedupe swallows — which is what clears state 2
+ * server-side.
+ */
+export function setAwayStatus(ctx: ClientHandlerContext): void {
+  const req: WsReqChatAway = {
+    type: WsMessageType.REQ_CHAT_AWAY,
+  };
+  ctx.sendMessage(req);
+  ctx.isTypingInChat = false;
 }
 
 export async function requestUserList(ctx: ClientHandlerContext): Promise<void> {
@@ -143,6 +162,39 @@ export async function joinChannel(ctx: ClientHandlerContext, channelName: string
   } finally {
     ctx.isJoiningChannel = false;
   }
+}
+
+/**
+ * Create a named channel and stand in it.
+ *
+ * Unlike `joinChannel`, a failure is **rethrown**: the modal must stay open and
+ * show the server's own reason ("already exists and its password does not
+ * match"), so the player can correct the form.
+ *
+ * The list is updated by insertion, not by re-fetching — what the reference
+ * client did (`ChatHandler.pas:284-287` calls `AddChannel` on the broadcast and
+ * never re-asks). It costs no round trip, de-dups a name that was already
+ * listed, and cannot race an in-flight `GetChannelList` the way a wholesale
+ * `setChannels` would.
+ *
+ * `channelName` is passed raw: `requestChannelInfo` does its own `'Lobby'` → `''`
+ * translation, and a channel a player *names* "Lobby" is refused client-side.
+ */
+export async function createChannel(
+  ctx: ClientHandlerContext,
+  channelName: string,
+  password: string,
+): Promise<void> {
+  const req: WsReqChatCreateChannel = {
+    type: WsMessageType.REQ_CHAT_CREATE_CHANNEL,
+    channelName,
+    password,
+  };
+  await ctx.sendRequest(req);
+  ClientBridge.addChatChannel(channelName);
+  ClientBridge.setCurrentChannel(channelName);
+  ClientBridge.log('Chat', `Created channel: ${channelName}`);
+  await requestChannelInfo(ctx, channelName);
 }
 
 /**

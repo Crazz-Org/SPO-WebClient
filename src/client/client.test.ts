@@ -22,6 +22,11 @@ jest.mock('./ui/map-navigation-ui', () => ({
   })),
 }));
 
+jest.mock('./handlers/building-focus-handler', () => ({
+  handleMapClick: jest.fn(),
+  unfocusBuilding: jest.fn(),
+}));
+
 jest.mock('./ui/minimap-ui', () => ({
   MinimapUI: jest.fn().mockImplementation(() => ({
     setRenderer: jest.fn(),
@@ -102,6 +107,7 @@ describe('applySettings — renderer wiring', () => {
       mapNavigationUI,
       soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
       musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
       minimapUI: null,
     };
     const settings = { ...useGameStore.getState().settings, glassForeignBuildings };
@@ -118,6 +124,7 @@ describe('applySettings — renderer wiring', () => {
       mapNavigationUI,
       soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
       musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
       minimapUI: null,
     };
     const settings = { ...useGameStore.getState().settings, signalLosingFacilities };
@@ -135,6 +142,7 @@ describe('applySettings — renderer wiring', () => {
       mapNavigationUI: null,
       soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
       musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
       minimapUI: null,
     };
     const settings = { ...useGameStore.getState().settings, soundVolume, musicVolume };
@@ -150,6 +158,7 @@ describe('applySettings — renderer wiring', () => {
       mapNavigationUI: null,
       soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
       musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
       minimapUI: { setSize: jest.fn(), setZoom: jest.fn() },
     };
     const settings = { ...useGameStore.getState().settings, minimapSize: 'large' as const, minimapPixelSize: 260, minimapZoom: 3 };
@@ -165,6 +174,7 @@ describe('applySettings — renderer wiring', () => {
       mapNavigationUI: null,
       soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
       musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
       minimapUI: null,
     };
     const settings = { ...useGameStore.getState().settings, isSoundEnabled: false };
@@ -173,6 +183,70 @@ describe('applySettings — renderer wiring', () => {
 
     expect(fake.soundManager.setEnabled).toHaveBeenCalledWith(false);
     expect(fake.musicPlayer.setEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it.each([true, false])('fans the sound switch (%s) out to the map ambience mixer', (isSoundEnabled) => {
+    const fake = {
+      mapNavigationUI: null,
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
+      minimapUI: null,
+    };
+    const settings = { ...useGameStore.getState().settings, isSoundEnabled };
+
+    (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
+
+    expect(fake.mapAmbience.setEnabled).toHaveBeenCalledWith(isSoundEnabled);
+  });
+});
+
+describe('setupGameUICallbacks — map click one-shots', () => {
+  // The one-shot fires before the existing branch, so the branch itself is stubbed out:
+  // this test is about the sound, not about focus handling.
+  const focusHandler = jest.requireMock('./handlers/building-focus-handler') as {
+    handleMapClick: jest.Mock;
+    unfocusBuilding: jest.Mock;
+  };
+
+  function makeFake() {
+    const mapNavigationUI = {
+      setOnLoadZone: jest.fn(),
+      setOnViewportChanged: jest.fn(),
+      setOnBuildingClick: jest.fn(),
+      setOnEmptyMapClick: jest.fn(),
+      setOnMapContextMenu: jest.fn(),
+      setOnFetchFacilityDimensions: jest.fn(),
+      getRenderer: () => ({ clearSelectedBuilding: jest.fn() }),
+    };
+    return {
+      mapNavigationUI,
+      soundManager: { play: jest.fn() },
+      currentBuildingToPlace: null,
+    };
+  }
+
+  it('plays select.wav when a building is selected', () => {
+    const fake = makeFake();
+    proto.setupGameUICallbacks.call(fake);
+
+    const onBuildingClick = (fake.mapNavigationUI.setOnBuildingClick.mock.calls[0] as unknown[])[0] as
+      (x: number, y: number, visualClass: string) => void;
+    onBuildingClick(10, 20, '602');
+
+    expect(fake.soundManager.play).toHaveBeenCalledWith('ui-select');
+    expect(focusHandler.handleMapClick).toHaveBeenCalled();
+  });
+
+  it('plays click.wav on an empty map click', () => {
+    const fake = makeFake();
+    proto.setupGameUICallbacks.call(fake);
+
+    const onEmptyMapClick = (fake.mapNavigationUI.setOnEmptyMapClick.mock.calls[0] as unknown[])[0] as () => void;
+    onEmptyMapClick();
+
+    expect(fake.soundManager.play).toHaveBeenCalledWith('ui-click');
+    expect(focusHandler.unfocusBuilding).toHaveBeenCalled();
   });
 });
 

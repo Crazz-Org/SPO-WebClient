@@ -3,9 +3,11 @@ import { getCivicVisualClassIds } from '../../shared/building-details/civic-buil
 import {
   WsMessageType,
   type WsMessage,
+  type WsReqContextStatus,
   type WsReqGetSurface,
   type WsReqMapLoad,
   type WsRespAllFacilityDimensions,
+  type WsRespContextStatus,
   type WsRespMapData,
   type WsRespSurfaceData,
 } from '../../shared/types';
@@ -43,6 +45,23 @@ export const handleGetSurface: WsHandler = async (ctx: WsHandlerContext, msg: Ws
     };
     sendResponse(ctx.ws, response);
   });
+};
+
+/**
+ * The town sentence under the camera. No `withErrorHandler`: the session method
+ * already answers `''` instead of throwing — an empty answer is the normal case
+ * (`Kernel/World.pas:4243`), not an error worth an error frame.
+ */
+export const handleContextStatus: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  const req = msg as WsReqContextStatus;
+  const text = await ctx.session.getContextStatusText(req.x, req.y);
+
+  const response: WsRespContextStatus = {
+    type: WsMessageType.RESP_CONTEXT_STATUS,
+    wsRequestId: msg.wsRequestId,
+    text,
+  };
+  sendResponse(ctx.ws, response);
 };
 
 export const handleGetAllFacilityDimensions: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
