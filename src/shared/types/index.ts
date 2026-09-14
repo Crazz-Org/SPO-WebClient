@@ -181,6 +181,7 @@ export type {
   WsEventAreaRefresh,
   WsEventShowNotification,
   WsEventCacheRefresh,
+  WsEventConnectionStats,
   // Building construction messages
   WsReqGetBuildingCategories,
   WsReqGetBuildingFacilities,

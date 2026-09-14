@@ -448,6 +448,7 @@ export interface LoginHookMocks {
   setKnownObject: jest.MockedFunction<LoginContext['setKnownObject']>;
   startServerBusyPolling: jest.MockedFunction<LoginContext['startServerBusyPolling']>;
   startGcSweep: jest.MockedFunction<LoginContext['startGcSweep']>;
+  startStatsPush: jest.MockedFunction<LoginContext['startStatsPush']>;
   stopCacherKeepAlive: jest.MockedFunction<LoginContext['stopCacherKeepAlive']>;
   removeAllSocketListeners: jest.MockedFunction<LoginContext['removeAllSocketListeners']>;
   destroySocket: jest.MockedFunction<LoginContext['destroySocket']>;
@@ -633,6 +634,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
 
     startServerBusyPolling: jest.fn(),
     startGcSweep: jest.fn(),
+    startStatsPush: jest.fn(),
     stopCacherKeepAlive: jest.fn(),
 
     getSocketNames: jest.fn(() => Array.from(socketsByName.keys())),
@@ -660,6 +662,7 @@ export function makeLoginCtx(overrides: FakeLoginOptions = {}): FakeLoginCtx {
       setKnownObject: ctx.setKnownObject as LoginHookMocks['setKnownObject'],
       startServerBusyPolling: ctx.startServerBusyPolling as LoginHookMocks['startServerBusyPolling'],
       startGcSweep: ctx.startGcSweep as LoginHookMocks['startGcSweep'],
+      startStatsPush: ctx.startStatsPush as LoginHookMocks['startStatsPush'],
       stopCacherKeepAlive: ctx.stopCacherKeepAlive as LoginHookMocks['stopCacherKeepAlive'],
       removeAllSocketListeners: ctx.removeAllSocketListeners as LoginHookMocks['removeAllSocketListeners'],
       destroySocket: ctx.destroySocket as LoginHookMocks['destroySocket'],

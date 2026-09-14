@@ -47,6 +47,7 @@ import {
   ResearchInventionDetails,
   ClusterInfo,
   ClusterFacilityPreview,
+  WsEventConnectionStats,
   WorldEventLine
 } from '../shared/types';
 import { RdoFramer, RdoProtocol } from './rdo';
@@ -97,6 +98,7 @@ import * as buildingPropertyHandler from './session/building-property-handler';
 import * as researchHandler from './session/research-handler';
 import { dispatchPush } from './session/push-dispatcher';
 import * as loginHandler from './session/login-handler';
+import { LatencyTracker } from './session/latency-tracker';
 import * as abandonRoleHandler from './session/abandon-role-handler';
 import type { AbandonRoleResult } from './session/abandon-role-handler';
 import { canBufferRequest, isConnectionBoundMember } from './session/request-routing';
@@ -363,6 +365,11 @@ export class StarpeaceSession extends EventEmitter {
   private gcSweepInterval: NodeJS.Timeout | null = null;
   private readonly GC_SWEEP_INTERVAL_MS = 60_000;
   private readonly LATE_RESPONSE_GRACE_MS = 90_000;
+
+  // Connection diagnostics — rolling RDO round-trip mean, pushed to the browser periodically
+  private latency = new LatencyTracker();
+  private statsPushInterval: NodeJS.Timeout | null = null;
+  private readonly STATS_PUSH_INTERVAL_MS = 5_000;
 
   // NEW: Request buffering with ServerBusy pause/resume
   private requestBuffer: Array<{
@@ -2091,6 +2098,31 @@ public createSocket(name: string, host: string, port: number): Promise<net.Socke
     }
   }
 
+  // ── Connection stats push ───────────────────────────────────────────────
+
+  /**
+   * Start periodic push of the rolling RDO latency mean to the browser.
+   * Called when the session is declared fully connected.
+   */
+  public startStatsPush(): void {
+    if (this.statsPushInterval) return;
+    this.statsPushInterval = setInterval(() => {
+      const snap = this.latency.snapshot();
+      this.emit('ws_event', {
+        type: WsMessageType.EVENT_CONNECTION_STATS,
+        latencyMs: snap.latencyMs,
+        samples: snap.samples,
+      } as WsEventConnectionStats);
+    }, this.STATS_PUSH_INTERVAL_MS);
+  }
+
+  private stopStatsPush(): void {
+    if (this.statsPushInterval) {
+      clearInterval(this.statsPushInterval);
+      this.statsPushInterval = null;
+    }
+  }
+
   // ── Queue Status & Metrics ──────────────────────────────────────────────
 
   public getQueueStatus(): {
@@ -2491,6 +2523,7 @@ private async executeRdoRequest(socketName: string, packetData: Partial<RdoPacke
 		  clearTimeout(entry.timeoutHandle);
 
 		  if (entry.state === 'pending') {
+			this.latency.record(Date.now() - entry.sentAt);
 			// Normal path — resolve the promise
 			if (packet.errorCode && packet.errorCode > 0) {
 			  this.log.warn(`[RDO] Error response RID ${packet.rid}: ${packet.errorName} (code ${packet.errorCode})`);
@@ -2746,6 +2779,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.stopServerBusyPolling();
     this.stopCacherKeepAlive();
     this.stopGcSweep();
+    this.stopStatsPush();
 
     // 3. Close all persistent sockets (keep directory data intact)
     for (const [name, socket] of this.sockets.entries()) {
@@ -2924,6 +2958,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
 
     // Stop GC sweep
     this.stopGcSweep();
+    this.stopStatsPush();
 
     // Reject all pending RDO requests before clearing (mirrors cleanupWorldSession pattern)
     const destroyError = new Error('Session destroyed');

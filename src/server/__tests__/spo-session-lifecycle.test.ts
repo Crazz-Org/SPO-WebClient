@@ -107,6 +107,7 @@ interface SessionInternals {
   pendingRequests: Map<number, { state: string; reject: (err: unknown) => void; resolve: (p: RdoPacket) => void; sentAt: number }>;
   serverBusyCheckInterval: NodeJS.Timeout | null;
   gcSweepInterval: NodeJS.Timeout | null;
+  statsPushInterval: NodeJS.Timeout | null;
   keepAliveInterval: NodeJS.Timeout | null;
   worldReconnectAttempts: number;
   worldReconnectLastAttempt: number;
@@ -142,6 +143,8 @@ interface WsEvent {
   type: string;
   active?: boolean;
   building?: { buildingId: string; x: number; y: number };
+  latencyMs?: number | null;
+  samples?: number;
 }
 
 /** Collect everything the session emits towards the browser. */
@@ -1552,6 +1555,24 @@ describe('background timers', () => {
     expect(harness.session.getQueueStatus().rdoMetrics.totalOrphaned).toBe(1);
   });
 
+  it('starts the stats push once and emits a null-latency snapshot before any round trip', async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+    await connectWorld();
+    const events = collectWsEvents(harness.session);
+
+    harness.session.startStatsPush();
+    const first = internals(harness).statsPushInterval;
+    harness.session.startStatsPush();
+    expect(internals(harness).statsPushInterval).toBe(first);
+
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    const statsEvents = events.filter(e => e.type === 'EVENT_CONNECTION_STATS');
+    expect(statsEvents).toHaveLength(1);
+    expect(statsEvents[0].latencyMs).toBeNull();
+    expect(statsEvents[0].samples).toBe(0);
+  });
+
   it('keeps the inspector alive and stops the moment its socket disappears', async () => {
     jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
     await connectWorld();
@@ -1907,6 +1928,7 @@ describe('cleanupWorldSession — switching servers', () => {
     const closePool = jest.spyOn(pool!, 'close');
     harness.session.startServerBusyPolling();
     harness.session.startGcSweep();
+    harness.session.startStatsPush();
 
     // One request in flight and one buffered, both of which must be released.
     const inFlight = harness.session.sendRdoRequest('world', { ...GET_TYCOON, member: 'NeverAnswered' },
@@ -1926,6 +1948,7 @@ describe('cleanupWorldSession — switching servers', () => {
     expect(harness.session.getWorldPool()).toBeNull();
     expect(internals(harness).serverBusyCheckInterval).toBeNull();
     expect(internals(harness).gcSweepInterval).toBeNull();
+    expect(internals(harness).statsPushInterval).toBeNull();
 
     // World-level state is gone; credentials and the world list survive.
     expect(harness.session.worldContextId).toBeNull();

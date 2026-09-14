@@ -11,6 +11,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { StarpeaceClient } from './client';
 import { useUiStore } from './store/ui-store';
 import { useGameStore } from './store/game-store';
+import { connectionStats } from './connection-stats';
 
 const mockOwnTycoonRenderer = { setOwnTycoonId: jest.fn(), setExploredBlocks: jest.fn() };
 
@@ -307,5 +308,51 @@ describe('switchToGameView — explored-blocks wiring', () => {
     const attached = mockOwnTycoonRenderer.setExploredBlocks.mock.calls[0][0] as { has: (x: number, y: number) => boolean };
     expect(typeof attached.has).toBe('function');
     jest.useRealTimers();
+  });
+});
+
+describe('sendRaw / onWsMessage — the single byte-counting taps', () => {
+  beforeEach(() => {
+    connectionStats.reset();
+  });
+
+  it('sendRaw adds the payload byte length and forwards the string untouched', () => {
+    const send = jest.fn();
+    const fake = { ws: { send } };
+
+    (proto.sendRaw as (this: typeof fake, payload: string) => void).call(fake, '{"type":"X"}');
+
+    expect(send).toHaveBeenCalledWith('{"type":"X"}');
+    expect(connectionStats.snapshot().bytesSent).toBe('{"type":"X"}'.length);
+  });
+
+  it('onWsMessage counts the raw frame and still dispatches the parsed message', () => {
+    const handleMessage = jest.fn();
+    const fake = { handleMessage };
+    const payload = JSON.stringify({ type: 'EVENT_REFRESH_DATE', dateDouble: 1 });
+
+    (proto.onWsMessage as (this: typeof fake, event: MessageEvent) => void).call(
+      fake,
+      { data: payload } as MessageEvent,
+    );
+
+    expect(handleMessage).toHaveBeenCalledWith({ type: 'EVENT_REFRESH_DATE', dateDouble: 1 });
+    expect(connectionStats.snapshot().bytesReceived).toBe(payload.length);
+  });
+
+  it('counts and swallows a malformed frame', () => {
+    const handleMessage = jest.fn();
+    const fake = { handleMessage };
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    (proto.onWsMessage as (this: typeof fake, event: MessageEvent) => void).call(
+      fake,
+      { data: 'not json' } as MessageEvent,
+    );
+
+    expect(handleMessage).not.toHaveBeenCalled();
+    expect(connectionStats.snapshot().bytesReceived).toBe('not json'.length);
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
   });
 });

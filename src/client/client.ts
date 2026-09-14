@@ -49,6 +49,7 @@ import * as buildMenuHandler from './handlers/build-menu-handler';
 import * as mapHandler from './handlers/map-handler';
 import { getReconnectDelay, isMaxAttempts, isSlowPhase, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
 import { connectionPendingKey } from './handlers/connection-pending-key';
+import { connectionStats, utf8ByteLength } from './connection-stats';
 
 // Wire-level debug tracker exposed on window.__spoDebug (permanent instrumentation)
 interface SpoDebugWire {
@@ -318,7 +319,10 @@ export class StarpeaceClient implements ClientHandlerContext {
       onAuthCheck: (username: string, password: string) => authHandler.performAuthCheck(this, username, password),
       onDirectoryConnect: (username: string, password: string, zonePath?: string) =>
         authHandler.performDirectoryLogin(this, username, password, zonePath),
-      onWorldSelect: (worldName: string) => authHandler.login(this, worldName),
+      onWorldSelect: (worldName: string) => {
+        connectionStats.reset();
+        return authHandler.login(this, worldName);
+      },
       onCompanySelect: (companyId: string) => authHandler.selectCompanyAndStart(this, companyId),
       onResumeSession: (record: RememberedSession, password: string) =>
         authHandler.resumeSession(this, record, password),
@@ -646,7 +650,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       reportJournal.record('ws-out', msg);
       ClientBridge.log('Wire', `→ SEND ${msg.type} [${requestId.slice(-6)}]`);
       // [/E2E-DEBUG]
-      this.ws.send(JSON.stringify(msg));
+      this.sendRaw(JSON.stringify(msg));
 
       setTimeout(() => {
         if (this.pendingRequests.has(requestId)) {
@@ -670,11 +674,30 @@ export class StarpeaceClient implements ClientHandlerContext {
     reportJournal.record('ws-out', msg);
     ClientBridge.log('Wire', `→ SEND ${msg.type}`);
     // [/E2E-DEBUG]
-    this.ws.send(JSON.stringify(msg));
+    this.sendRaw(JSON.stringify(msg));
   }
 
   public rawSend(msg: WsMessage): void {
-    this.ws?.send(JSON.stringify(msg));
+    this.sendRaw(JSON.stringify(msg));
+  }
+
+  /** The one place a frame leaves the browser — so the byte counter has a single tap. */
+  private sendRaw(payload: string): void {
+    connectionStats.recordSent(utf8ByteLength(payload));
+    this.ws?.send(payload);
+  }
+
+  /** Both sockets (first connect and reconnect replay) land here — one tap inbound. */
+  private onWsMessage(event: MessageEvent): void {
+    connectionStats.recordReceived(
+      utf8ByteLength(typeof event.data === 'string' ? event.data : ''),
+    );
+    try {
+      const msg: WsMessage = JSON.parse(event.data);
+      this.handleMessage(msg);
+    } catch (e: unknown) {
+      console.error('[Client] Failed to parse message:', e);
+    }
   }
 
   public nextGeneration(category: string): number {
@@ -1009,14 +1032,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       ClientBridge.log('System', 'Gateway Connected.');
     };
 
-    this.ws.onmessage = (event) => {
-      try {
-        const msg: WsMessage = JSON.parse(event.data);
-        this.handleMessage(msg);
-      } catch (e: unknown) {
-        console.error('[Client] Failed to parse message:', e);
-      }
-    };
+    this.ws.onmessage = (event) => this.onWsMessage(event);
 
     this.ws.onclose = () => {
       this.isConnected = false;
@@ -1194,14 +1210,7 @@ export class StarpeaceClient implements ClientHandlerContext {
         });
     };
 
-    this.ws.onmessage = (event) => {
-      try {
-        const msg: WsMessage = JSON.parse(event.data);
-        this.handleMessage(msg);
-      } catch (e: unknown) {
-        console.error('[Client] Failed to parse message:', e);
-      }
-    };
+    this.ws.onmessage = (event) => this.onWsMessage(event);
 
     this.ws.onclose = () => {
       this.isConnected = false;
@@ -1253,7 +1262,7 @@ export class StarpeaceClient implements ClientHandlerContext {
 
     try {
       const req = { type: WsMessageType.REQ_LOGOUT };
-      this.ws.send(JSON.stringify(req));
+      this.sendRaw(JSON.stringify(req));
     } catch (_err: unknown) {
       // Ignore errors during page unload
     }

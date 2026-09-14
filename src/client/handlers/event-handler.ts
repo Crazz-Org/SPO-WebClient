@@ -32,9 +32,11 @@ import {
   WsRespResearchDetails,
   WsEventMoveTo,
   WsEventRefreshSeason,
+  WsEventConnectionStats,
 } from '../../shared/types';
 import { Season } from '../../shared/map-config';
 import { toErrorMessage } from '../../shared/error-utils';
+import { connectionStats } from '../connection-stats';
 import { substituteEmoticons } from '../chat-line-format';
 import { requestBuildingRefreshProperties, requestConnectionReachability } from './building-action-handler';
 import { migrateLocalBookmarks } from './favorites-handler';
@@ -286,6 +288,12 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     case WsMessageType.EVENT_REFRESH_DATE: {
       const dateEvent = msg as WsEventRefreshDate;
       useGameStore.getState().setGameDate(delphiTDateTimeToJsDate(dateEvent.dateDouble));
+      break;
+    }
+
+    case WsMessageType.EVENT_CONNECTION_STATS: {
+      const stats = msg as WsEventConnectionStats;
+      connectionStats.setLatency(stats.latencyMs, stats.samples);
       break;
     }
 
