@@ -90,6 +90,7 @@ export enum WsMessageType {
   EVENT_REFRESH_SEASON = 'EVENT_REFRESH_SEASON',
   EVENT_MOVE_TO = 'EVENT_MOVE_TO',
   EVENT_CHANNEL_LIST_CHANGE = 'EVENT_CHANNEL_LIST_CHANGE',
+  EVENT_COMPANIONSHIP = 'EVENT_COMPANIONSHIP',
 
   // Chat functionality
   REQ_CHAT_GET_USERS = 'REQ_CHAT_GET_USERS',
@@ -541,6 +542,13 @@ export interface WsEventChannelListChange extends WsMessage {
   password: string;
   /** 0=inclusion (channel created), 1=exclusion (channel removed) */
   change: number;
+}
+
+/** Who else is viewing this player's area. Mirrors Delphi NotifyCompanionship push. */
+export interface WsEventCompanionship extends WsMessage {
+  type: WsMessageType.EVENT_COMPANIONSHIP;
+  /** Watcher names, already split and trimmed; empty array means nobody. */
+  names: string[];
 }
 
 export interface WsEventRefreshDate extends WsMessage {

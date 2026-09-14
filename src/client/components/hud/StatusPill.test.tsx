@@ -54,6 +54,8 @@ describe('StatusPill', () => {
       tycoonStats: null,
       cashHistory: [],
       lastStatsUpdate: null,
+      watchers: [],
+      serverBusy: false,
     });
   });
 
@@ -145,6 +147,38 @@ describe('StatusPill', () => {
     expect(header.className).not.toContain('shifted');
     act(() => useUiStore.getState().toggleLeftPanel('empire'));
     expect(header.className).toContain('shifted');
+  });
+
+  it('shows the watchers lamp with the count and both names on hover, and nothing for an empty list', () => {
+    useGameStore.setState({ watchers: ['Crazz', 'SPO_test3'] });
+    const { unmount } = renderWithProviders(<StatusPill />);
+    const lamp = screen.getByText('2');
+    expect(lamp.getAttribute('title')).toBe('Watching your area: Crazz, SPO_test3');
+    expect(lamp.tagName).not.toBe('BUTTON');
+    unmount();
+
+    useGameStore.setState({ watchers: [] });
+    renderWithProviders(<StatusPill />);
+    expect(screen.queryByText('2')).toBeNull();
+  });
+
+  it('shows the Backup segment when serverBusy is true, and removes it when false', () => {
+    useGameStore.setState({ serverBusy: true });
+    const { unmount } = renderWithProviders(<StatusPill />);
+    const backup = screen.getByText('Backup');
+    expect(backup.tagName).not.toBe('BUTTON');
+    unmount();
+
+    useGameStore.setState({ serverBusy: false });
+    renderWithProviders(<StatusPill />);
+    expect(screen.queryByText('Backup')).toBeNull();
+  });
+
+  it('neither lamp is a button', () => {
+    useGameStore.setState({ watchers: ['Crazz'], serverBusy: true });
+    renderWithProviders(<StatusPill />);
+    expect(screen.queryByRole('button', { name: /Watching your area/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Backup in progress/ })).toBeNull();
   });
 
   it('ticks the freshness label every second', () => {

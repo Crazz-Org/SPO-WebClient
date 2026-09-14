@@ -1062,6 +1062,45 @@ describe('NotifyChannelListChange', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// NotifyCompanionship — push-dispatcher.ts:353 · ServerCnxHandler.pas:490
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('NotifyCompanionship', () => {
+  it('splits a CRLF-joined names list into an array', () => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('NotifyCompanionship', ['%Crazz\r\nSPO_test3']));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_COMPANIONSHIP,
+      names: ['Crazz', 'SPO_test3'],
+    });
+  });
+
+  it('an empty payload means nobody is watching', () => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('NotifyCompanionship', ['%']));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_COMPANIONSHIP,
+      names: [],
+    });
+  });
+
+  it('a whitespace-only payload also means nobody is watching', () => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('NotifyCompanionship', ['%   \r\n  ']));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_COMPANIONSHIP,
+      names: [],
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Cross-cutting behaviour
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1193,10 +1232,6 @@ const PUSH_EXEMPTIONS: ReadonlyArray<{ member: string; reason: string }> = [
   {
     member: 'GMNotify',
     reason: 'Not implemented (family B). GM notifications are ignored.',
-  },
-  {
-    member: 'NotifyCompanionship',
-    reason: 'Not implemented (family B). The companions list is never received.',
   },
   {
     member: 'VoiceMsg',

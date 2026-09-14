@@ -155,6 +155,7 @@ export type {
   WsEventRefreshSeason,
   WsEventMoveTo,
   WsEventChannelListChange,
+  WsEventCompanionship,
   // Chat messages
   WsReqChatGetUsers,
   WsReqChatGetChannels,
