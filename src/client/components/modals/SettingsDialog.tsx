@@ -10,7 +10,7 @@ import { useGameStore, type GameSettings, type MinimapSize } from '../../store/g
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
 import { showToast } from '../common/Toast';
-import { Switch } from '../common';
+import { Switch, confirmLogout } from '../common';
 import { SHORTCUTS } from '../../hooks/useKeyboardShortcuts';
 import { connectionStats, formatByteCount } from '../../connection-stats';
 import styles from './SettingsDialog.module.css';
@@ -68,8 +68,7 @@ export function SettingsDialog() {
   if (modal !== 'settings') return null;
 
   const handleLogout = () => {
-    closeModal();
-    client.onLogout();
+    confirmLogout(client.onLogout);
   };
 
   return (

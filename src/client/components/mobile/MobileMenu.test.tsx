@@ -42,4 +42,18 @@ describe('MobileMenu', () => {
     fireEvent.click(screen.getByRole('button', { name: /My facilities/ }));
     expect(useUiStore.getState().stack.map((s) => s.kind)).toEqual(['facilities']);
   });
+
+  it('Logout asks for confirmation before calling onLogout, and confirming logs out', () => {
+    const onLogout = jest.fn();
+    renderWithProviders(<MobileMenu />, { clientCallbacks: createSpiedCallbacks({ onLogout }) });
+
+    fireEvent.click(screen.getByRole('button', { name: /Logout/ }));
+
+    expect(onLogout).not.toHaveBeenCalled();
+    expect(useUiStore.getState().confirmPayload).not.toBeNull();
+
+    useUiStore.getState().confirmPayload!.onConfirm();
+
+    expect(onLogout).toHaveBeenCalledTimes(1);
+  });
 });
