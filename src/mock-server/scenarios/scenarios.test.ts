@@ -738,7 +738,8 @@ describe('scenario registry', () => {
     // 27: `define-zone`, issue 586.
     // 28: `context-status`, issue 589.
     // 29: `show-notification`, issue 614.
-    expect(SCENARIO_NAMES).toHaveLength(29);
+    // 30: chat-flags, issue 616.
+    expect(SCENARIO_NAMES).toHaveLength(30);
   });
 
   it('loadScenario returns bundle for each name', () => {

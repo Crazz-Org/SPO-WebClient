@@ -32,6 +32,7 @@ import {
   WsEventMoveTo,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { substituteEmoticons } from '../chat-line-format';
 import { requestBuildingRefreshProperties, requestConnectionReachability } from './building-action-handler';
 import { migrateLocalBookmarks } from './favorites-handler';
 import { ClientBridge } from '../bridge/client-bridge';
@@ -64,10 +65,12 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
       ClientBridge.addChatMessage(chat.channel, {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         from: chat.from,
-        text: chat.message,
+        text: substituteEmoticons(chat.message),
         timestamp: Date.now(),
         isSystem,
         isGM: chat.from === 'GM',
+        nobilityTier: chat.nobilityTier,
+        modifiers: chat.modifiers,
       });
       ClientBridge.log('Chat', `[${chat.channel}] ${chat.from}: ${chat.message}`);
       ctx.soundManager.play('chat-message');

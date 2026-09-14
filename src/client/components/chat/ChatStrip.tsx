@@ -12,6 +12,7 @@ import { useChatStore } from '../../store/chat-store';
 import { useGameStore } from '../../store/game-store';
 import { useClient } from '../../context';
 import { NobilityBadge } from './NobilityBadge';
+import { roleClassKeyFor } from '../../chat-line-format';
 import styles from './ChatStrip.module.css';
 
 /** How long a pause retracts the "typing..." notice, in ms. */
@@ -23,19 +24,29 @@ interface ChatMessageProps {
   text: string;
   isSystem?: boolean;
   isGM?: boolean;
+  nobilityTier?: string;
+  modifiers?: number;
 }
 
-const ChatMessage = memo(function ChatMessage({ from, text, isSystem, isGM }: ChatMessageProps) {
+const ChatMessage = memo(function ChatMessage({ from, text, isSystem, isGM, nobilityTier, modifiers }: ChatMessageProps) {
   const user = useChatStore((s) => s.users[from]);
+  // The message's own flags win; the user map is the fallback — the legacy
+  // order, where DecodeCodeMSGChat decorates from the line and never looks
+  // at the roster (ChatListHandlerViewer.pas:137-149).
+  const tier = nobilityTier ?? user?.nobilityTier;
+  const mods = modifiers ?? user?.modifiers;
+  const roleKey = roleClassKeyFor(mods);
   return (
     <div className={`${styles.message} ${isSystem ? styles.system : ''} ${isGM ? styles.gm : ''}`}>
       {!isSystem && (
         <>
-          {user && <NobilityBadge nobilityTier={user.nobilityTier} modifiers={user.modifiers} size="md" />}
+          {(tier !== undefined || mods !== undefined) && (
+            <NobilityBadge nobilityTier={tier ?? ''} modifiers={mods ?? 0} size="md" />
+          )}
           <span className={styles.sender}>{from}</span>
         </>
       )}
-      <span className={styles.text}>{text}</span>
+      <span className={[styles.text, roleKey ? styles[roleKey] : ''].filter(Boolean).join(' ')}>{text}</span>
     </div>
   );
 });
@@ -231,6 +242,8 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
                 text={msg.text}
                 isSystem={msg.isSystem}
                 isGM={msg.isGM}
+                nobilityTier={msg.nobilityTier}
+                modifiers={msg.modifiers}
               />
             ))}
             <div ref={messagesEndRef} />

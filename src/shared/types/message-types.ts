@@ -467,6 +467,11 @@ export interface WsEventChatMsg extends WsMessage {
   from: string;
   message: string;
   isGM?: boolean;
+  /** Speaker's nobility tier, decoded from the AccDesc the server packed into `From`
+   *  (ComposeChatUser, Protocol.pas:482-492). Absent when `From` carried no AccDesc. */
+  nobilityTier?: string;
+  /** Speaker's AccMod_* bits (Protocol.pas:403-412). Absent for the same reason. */
+  modifiers?: number;
 }
 
 export interface WsEventTycoonUpdate extends WsMessage {

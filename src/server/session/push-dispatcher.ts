@@ -159,17 +159,21 @@ export function dispatchPush(ctx: PushContext, _socketName: string, packet: RdoP
       let from = packet.args[0].replace(RDO_PREFIX_STRIP, '');
       const message = packet.args[1].replace(RDO_PREFIX_STRIP, '');
 
-      if (from.includes('/')) {
-        from = from.split('/')[0];
+      const fromParts = from.split('/');
+      if (fromParts.length > 1) {
+        from = fromParts[0];
       }
 
       ctx.log.debug(`[Chat] Parsed - from: "${from}", message: "${message}"`);
+
+      const accDesc = fromParts.length > 1 ? parseAccDesc(fromParts[1]) : null;
 
       const event: WsEventChatMsg = {
         type: WsMessageType.EVENT_CHAT_MSG,
         channel: ctx.getCurrentChannel() || 'Lobby',
         from: from,
         message: message,
+        ...(accDesc ? { nobilityTier: accDesc.nobilityTier, modifiers: accDesc.modifiers } : {}),
       };
 
       ctx.log.debug(`[Chat] Emitting event:`, event);
