@@ -146,6 +146,9 @@ async function submit(parsed: ParsedArgs, deps: CliDeps): Promise<number> {
   // A dead worker is announced NOW, not after the session has waited on nothing.
   const worker = deps.workerAlive();
   if (!worker.alive) {
+    // Also on stdout: a caller that captures only stdout (the pipeline's park detail) must be
+    // able to record WHICH branch of workerStatus fired, not just `{"exit": 3}`.
+    deps.out(`worker-down: ${worker.reason ?? 'unknown'}`);
     deps.err(`WORKER DOWN: ${worker.reason ?? 'unknown'}`);
     deps.err('The bench worker is not running. Fix it first:');
     deps.err('  systemctl --user status spo-bench-worker    # why it stopped');
@@ -232,6 +235,7 @@ async function wait(id: string, timeoutMinutes: number, deps: CliDeps): Promise<
     }
     const worker = deps.workerAlive();
     if (!worker.alive) {
+      deps.out(`worker-down: ${worker.reason ?? 'unknown'}`);
       deps.err(`WORKER DIED while job ${id} was pending: ${worker.reason ?? 'unknown'}`);
       deps.err('The queue is preserved; restart the worker and it will resume:');
       deps.err('  systemctl --user restart spo-bench-worker');
