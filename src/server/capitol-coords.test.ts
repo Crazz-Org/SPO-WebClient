@@ -91,4 +91,88 @@ describe('pushCapitolCoords', () => {
       pushCapitolCoords({ getHomePage: async () => { throw new Error('boom'); } }, h.ws, h.session),
     ).resolves.toBeUndefined();
   });
+
+  it('retries a rejecting fetch and answers with the Capitol once it succeeds', async () => {
+    const h = harness();
+    const sleepCalls: number[] = [];
+    const sleep = async (ms: number) => { sleepCalls.push(ms); };
+    let calls = 0;
+    const source = {
+      getHomePage: async () => {
+        calls++;
+        if (calls <= 2) throw new Error('Request timeout');
+        return [category({})];
+      },
+    };
+    await pushCapitolCoords(source, h.ws, h.session, { attempts: 4, delayMs: 0, sleep });
+    expect(h.sent.length).toBe(1);
+    expect(JSON.parse(h.sent[0])).toEqual({
+      type: WsMessageType.RESP_CAPITOL_COORDS,
+      hasCapitol: true,
+      x: 100,
+      y: 200,
+    });
+    expect(h.stored).toEqual([{ x: 100, y: 200 }]);
+    expect(calls).toBe(3);
+    expect(sleepCalls.length).toBe(2);
+  });
+
+  it('spends the whole budget on a source that keeps rejecting, then answers "no Capitol" once', async () => {
+    const h = harness();
+    const sleepCalls: number[] = [];
+    const sleep = async (ms: number) => { sleepCalls.push(ms); };
+    let calls = 0;
+    const source = { getHomePage: async () => { calls++; throw new Error('Request timeout'); } };
+    await pushCapitolCoords(source, h.ws, h.session, { attempts: 3, delayMs: 0, sleep });
+    expect(calls).toBe(3);
+    expect(sleepCalls.length).toBe(2);
+    expect(h.sent.length).toBe(1);
+    expect(JSON.parse(h.sent[0])).toEqual({
+      type: WsMessageType.RESP_CAPITOL_COORDS,
+      hasCapitol: false,
+      x: 0,
+      y: 0,
+    });
+    expect(h.stored).toEqual([null]);
+  });
+
+  it('does not retry a good fetch that simply has no Capitol', async () => {
+    const h = harness();
+    const sleep = jest.fn(async () => {});
+    let calls = 0;
+    const source = { getHomePage: async () => { calls++; return [category({ label: 'Towns' })]; } };
+    await pushCapitolCoords(source, h.ws, h.session, { attempts: 4, delayMs: 0, sleep });
+    expect(calls).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(h.sent.length).toBe(1);
+    expect(JSON.parse(h.sent[0])).toMatchObject({ hasCapitol: false, x: 0, y: 0 });
+  });
+
+  it('uses a real timer when no sleep is injected', async () => {
+    const h = harness();
+    let calls = 0;
+    const source = {
+      getHomePage: async () => {
+        calls++;
+        if (calls === 1) throw new Error('Request timeout');
+        return [category({})];
+      },
+    };
+    await pushCapitolCoords(source, h.ws, h.session, { attempts: 2, delayMs: 0 });
+    expect(calls).toBe(2);
+    expect(h.sent.length).toBe(1);
+    expect(JSON.parse(h.sent[0])).toMatchObject({ hasCapitol: true, x: 100, y: 200 });
+  });
+
+  it('clamps attempts: 0 to a single attempt', async () => {
+    const h = harness();
+    const sleep = jest.fn(async () => {});
+    let calls = 0;
+    const source = { getHomePage: async () => { calls++; throw new Error('boom'); } };
+    await pushCapitolCoords(source, h.ws, h.session, { attempts: 0, sleep });
+    expect(calls).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(h.sent.length).toBe(1);
+    expect(JSON.parse(h.sent[0])).toMatchObject({ hasCapitol: false, x: 0, y: 0 });
+  });
 });
