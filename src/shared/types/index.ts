@@ -302,6 +302,9 @@ export type {
   WsRespProfilePolicySet,
   WsReqProfileCurriculumAction,
   WsRespProfileCurriculumAction,
+  PictureUploadFailure,
+  WsReqProfileUploadPicture,
+  WsRespProfileUploadPicture,
   // Politics
   WsReqPoliticsData,
   WsRespPoliticsData,

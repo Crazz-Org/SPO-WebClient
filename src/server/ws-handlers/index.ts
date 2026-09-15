@@ -27,7 +27,7 @@ import { handleBuildRoad, handleGetRoadCost, handleDemolishRoad, handleDemolishR
 import { handleMailConnect, handleMailGetFolder, handleMailReadMessage, handleMailCompose, handleMailSaveDraft, handleMailDelete, handleMailGetUnreadCount } from './mail-handlers';
 
 // Profile
-import { handleGetProfile, handleProfileCurriculum, handleProfileBank, handleProfileBankAction, handleProfileProfitLoss, handleProfileCompanies, handleProfileCompanyProfitLoss, handleProfileAutoConnections, handleProfileAutoConnectionAction, handleProfilePolicy, handleProfilePolicySet, handleProfileCurriculumAction } from './profile-handlers';
+import { handleGetProfile, handleProfileCurriculum, handleProfileBank, handleProfileBankAction, handleProfileProfitLoss, handleProfileCompanies, handleProfileCompanyProfitLoss, handleProfileAutoConnections, handleProfileAutoConnectionAction, handleProfilePolicy, handleProfilePolicySet, handleProfileCurriculumAction, handleProfileUploadPicture } from './profile-handlers';
 
 // Search menu
 import { handleSearchMenuHome, handleSearchMenuTowns, handleSearchMenuPeopleSearch, handleSearchMenuTycoonProfile, handleSearchMenuRankings, handleSearchMenuRankingDetail, handleSearchMenuBanks, handleSearchMenuNewspapers, handleSearchMenuDirectory, handleSearchMenuTycoonFullProfile } from './search-handlers';
@@ -123,6 +123,7 @@ export const wsHandlerRegistry: Partial<Record<WsMessageType, WsHandler>> = {
   [WsMessageType.REQ_PROFILE_POLICY]: handleProfilePolicy,
   [WsMessageType.REQ_PROFILE_POLICY_SET]: handleProfilePolicySet,
   [WsMessageType.REQ_PROFILE_CURRICULUM_ACTION]: handleProfileCurriculumAction,
+  [WsMessageType.REQ_PROFILE_UPLOAD_PICTURE]: handleProfileUploadPicture,
 
   // Search menu
   [WsMessageType.REQ_SEARCH_MENU_HOME]: handleSearchMenuHome,

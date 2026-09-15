@@ -7,6 +7,7 @@ import type {
   WsReqProfilePolicySet,
   WsReqProfileCurriculumAction,
   WsReqProfileCompanyProfitLoss,
+  WsReqProfileUploadPicture,
   WsRespGetProfile,
   WsRespProfileCurriculum,
   WsRespProfileBank,
@@ -19,6 +20,7 @@ import type {
   WsRespProfilePolicy,
   WsRespProfilePolicySet,
   WsRespProfileCurriculumAction,
+  WsRespProfileUploadPicture,
 } from '../../shared/types';
 import { WsMessageType } from '../../shared/types';
 import type { BankActionType, CurriculumActionType } from '../../shared/types';
@@ -173,6 +175,24 @@ export async function handleProfileCurriculumAction(ctx: WsHandlerContext, msg: 
     message: result.message,
     ...(result.outcome === 'switched' ? { switchedTo: result.company } : {}),
     ...(result.outcome === 'no-company' ? { returnToCompanyStage: true } : {}),
+  };
+  sendResponse(ctx.ws, response);
+}
+
+/**
+ * Not wrapped in `withErrorHandler`: `uploadTycoonPicture` never rejects, and
+ * the criterion demands the server's own verdict travel back, not a generic
+ * `RESP_ERROR`.
+ */
+export async function handleProfileUploadPicture(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
+  const req = msg as WsReqProfileUploadPicture;
+  const result = await ctx.session.uploadTycoonPicture(req.pictureBase64 ?? '');
+  const response: WsRespProfileUploadPicture = {
+    type: WsMessageType.RESP_PROFILE_UPLOAD_PICTURE,
+    wsRequestId: msg.wsRequestId,
+    success: result.success,
+    reason: result.reason,
+    message: result.message,
   };
   sendResponse(ctx.ws, response);
 }
