@@ -51,7 +51,7 @@ module.exports = {
     {
       displayName: 'component',
       preset: 'ts-jest',
-      testEnvironment: 'jsdom',
+      testEnvironment: '<rootDir>/scripts/jest-jsdom-text-encoder-env.js',
       roots: ['<rootDir>/src'],
       testMatch: ['**/*.test.tsx'],
       setupFilesAfterEnv: [
