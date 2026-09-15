@@ -42,6 +42,25 @@
 #       is still broken any more than a stale PASS means it is still
 #       fine — both are simply unproven for the sha being asked about.
 #
+# The trigger (#801). A nightly is either `scheduled` — the worker's own
+# idle branch, inside its UTC window or on a main-moved event — or
+# `manual`: a maintainer ran `npm run bench:nightly-request` because they
+# had read the log and believed a red was not the code. A manual run is
+# independent of the 20 h window slot (re-measuring one sha must not
+# silently cancel that night's window run, so the gap is measured from
+# `.scheduledSubmittedAt`) but counts against the 15-minute
+# NIGHTLY_MOVE_RATE_LIMIT_MS: it is a live drive like any other. The
+# GREEN and RED lines below name the trigger, and the requester when
+# there is one, so a human reading the line knows which it was.
+#
+# The classification table itself does NOT change for a manual run, and
+# it cannot: a manual run replaces latest.json only when it ATTESTS —
+# PASS or FAIL, at the sha that was requested. ENVIRONMENT, INTERRUPTED,
+# STALE and a superseded tip leave the published file byte-identical and
+# are recorded under `nightly/manual/` instead, so they never reach this
+# script at all. That is why the non-attesting arm keeps every verdict it
+# has: the scheduled path can still produce all of them.
+#
 # Usage: bash scripts/nightly-check.sh
 set -euo pipefail
 
@@ -78,6 +97,14 @@ SHA="$(jq -r '.sha // empty' "$NIGHTLY")"
 DETAIL="$(jq -r '.detail // empty' "$NIGHTLY")"
 LOGFILE="$(jq -r '.logFile // empty' "$NIGHTLY")"
 FINISHED_AT="$(jq -r '.finishedAt // empty' "$NIGHTLY")"
+# Absent means scheduled: every file written before #801 is a scheduled run.
+TRIGGER="$(jq -r '.trigger // "scheduled"' "$NIGHTLY")"
+REQUESTED_BY="$(jq -r '.requestedBy.user // empty' "$NIGHTLY")"
+
+BY=""
+if [ "$TRIGGER" = "manual" ] && [ -n "$REQUESTED_BY" ]; then
+  BY=" by=$REQUESTED_BY"
+fi
 
 if [ -z "$VERDICT" ]; then
   echo "MAIN: UNKNOWN missing verdict field in $NIGHTLY"
@@ -87,7 +114,7 @@ fi
 case "$VERDICT" in
   FAIL)
     if [ -n "$SHA" ] && [ "$SHA" = "$ORIGIN_MAIN" ]; then
-      echo "MAIN: RED sha=$SHA detail=$DETAIL logFile=$LOGFILE"
+      echo "MAIN: RED sha=$SHA detail=$DETAIL logFile=$LOGFILE trigger=$TRIGGER$BY"
       exit 1
     else
       # A FAIL recorded for a DIFFERENT sha than origin/main's current tip proves nothing about
@@ -99,7 +126,7 @@ case "$VERDICT" in
     ;;
   PASS)
     if [ -n "$SHA" ] && [ "$SHA" = "$ORIGIN_MAIN" ]; then
-      echo "MAIN: GREEN (PASS $FINISHED_AT, sha=$SHA)"
+      echo "MAIN: GREEN (PASS $FINISHED_AT, sha=$SHA) trigger=$TRIGGER$BY"
       exit 0
     else
       echo "MAIN: UNKNOWN PASS recorded for ${SHA:-"(no sha)"}, not origin/main's current tip ($ORIGIN_MAIN) — unproven for this tip"

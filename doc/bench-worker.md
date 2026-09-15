@@ -30,6 +30,8 @@ discipline rule.
 ├── verdicts/<sha>.json             per-commit attestations — what `bench/gate` publishes
 ├── cache/                          the ~570-file asset mirror, ONE copy for the machine
 ├── nightly/checkout + latest.json  the worker's own `main` clone, and last night's verdict
+├── nightly/manual-request.json     a maintainer's request for a proof — the worker's to serve
+├── nightly/manual/<id>.json        every manual outcome, attested or not; never deleted
 ├── ref/checkout                    the checkout a fetched commit is gated in
 └── world/                          world-lock.json — finally GLOBAL
 ```
@@ -66,7 +68,7 @@ comment in `job.ts` for the measured line size and growth rate.
 | Gateway | `src/e2e/bench/gateway.ts` | clean-port guarantee, per-job gateway start/stop |
 | Attestations | `src/e2e/bench/verdict.ts` | `verdicts/<sha>.json` + `bench/gate` GitHub commit status |
 | Supervision | `scripts/bench-install.sh` | systemd --user unit, `Restart=always`, linger |
-| Nightly | `src/e2e/bench/nightly.ts` | the schedule, the `main` checkout, `nightly/latest.json` (§8) |
+| Nightly | `src/e2e/bench/nightly.ts` | the schedule, the `main` checkout, `nightly/latest.json`, and the manual request a maintainer may leave for it (§8) |
 | Owner lease | `src/e2e/bench/owner.ts` | the cross-host exclusion — the `BENCH_OWNER` repository variable (§9) |
 | Checkout | `src/e2e/bench/checkout.ts` | a worker-owned clone brought to any ref, with a conditional `npm ci` (§10) |
 | CI proof | `src/e2e/bench/ci-proof.ts` | whether CI already proved a sha's static half (§11) |
@@ -410,7 +412,8 @@ not the failure.
 | Where it runs | `~/.spo-bench/nightly/checkout` — a clone the worker owns, refreshed `fetch → reset --hard origin/main → clean -fd → npm ci` | Not the worker's own repo: a job builds its worktree, and the worker executes `dist/e2e/bench/worker.js` *from* that repo — building `main` there overwrites the running worker mid-flight. Not a `git worktree` of it either: `scripts/finish.sh` scans and reaps worktrees on its own schedule. |
 | How it is scheduled | The worker's idle branch (`worker.ts`, `workerLoop`), inside a window of **02:00–05:59 UTC**, at most one per **20 h** | No second scheduler racing the first for a serialised resource; GitHub Actions cannot reach this machine at all. UTC, not local time, so the window is one number everywhere. |
 | What "idle" means | It is a normal spool job, deposited only when the queue came back **empty** | Serialization, the `done/` report, the `.log`, `bench:status`, `INTERRUPTED` recovery and the 24 h purge all come for free. A session that deposits *during* the nightly simply queues behind it — the nightly is never aborted, and never starts while anyone waits. |
-| Who may deposit one | The worker alone — `cli.ts` does not accept `--type=nightly` | A session asking for one would be asking for the bench outside the queue's discipline. |
+| Who may deposit one | The worker alone. A human may **request** one (`npm run bench:nightly-request`), and the worker still deposits it from its idle branch | A session asking for one would be asking for the bench outside the queue's discipline. `cli.ts` still does not accept `--type=nightly`; the request is a marker, not a deposit. |
+| Manual proof | `npm run bench:nightly-request -- --reason="…"` writes `nightly/manual-request.json`. The worker serves it from the same idle branch: **independent of the 20 h slot**, but **counted against the 15-minute** `NIGHTLY_MOVE_RATE_LIMIT_MS`, and it replaces `latest.json` **only when it attests** | For the case the schedule cannot answer: a nightly that FAILs for a reason that is not the code (2026-09-13, twelve `connect ETIMEDOUT` lines) sticks to the tip until somebody pushes, and parks every card meanwhile. Independent of the slot because re-measuring one sha must not cancel that night's window run; counted against the rate limit because it **is** a live drive. Attest-only because a manual run that broke on the environment measured nothing — clearing a genuine red on the strength of a non-measurement is worse than the red. |
 | What it attests | **Nothing.** No `verdicts/<sha>.json` | That file means a *gate* ran — static stage, President exclusion, verify-gate routing — and this is a bare live drive. It would also hand `publishPendingStatuses` a `bench/gate` status to post on `main`'s own sha, a context branch protection reads, and the push hook matches an attestation to the pushing worktree, which this checkout never is. |
 
 **The published surface** is `~/.spo-bench/nightly/latest.json`, written tmp-then-rename:
@@ -418,13 +421,42 @@ not the failure.
 ```json
 { "jobId": "job-…", "sha": "<the main commit driven>", "verdict": "PASS",
   "submittedAt": "…", "finishedAt": "…", "detail": "live drive exited 0",
-  "logFile": "/home/…/.spo-bench/done/job-….log" }
+  "logFile": "/home/…/.spo-bench/done/job-….log",
+  "trigger": "scheduled | manual",        // absent ≡ scheduled
+  "scheduledSubmittedAt": "…",            // absent ≡ scheduled: use submittedAt
+  "requestedBy": { "user": "…", "host": "…", "tty": "…",
+                   "via": "bench-cli | spo", "reason": "…", "requestedAt": "…" },
+  "supersedes": { "jobId": "…", "sha": "…", "verdict": "FAIL",
+                  "trigger": "scheduled", "finishedAt": "…" } }
 ```
 
 `submittedAt` is the **deposit** time, not the start: it is what the 20 h gap is measured
 from, so a night that queued behind a long job cannot buy itself a second slot. A failure to
 refresh the checkout at all is recorded as `ENVIRONMENT` with the failing step named — which
 is also what stops the idle loop retrying every two seconds until the window closes.
+
+The last four fields are the manual path, and all four are **absent on every record written
+before it existed** — which is exactly what makes them backward-compatible. `trigger` absent
+means `scheduled`. `scheduledSubmittedAt` is the deposit time of the last *scheduled* run and
+is what the 20 h gap is really measured from; a manual write carries the previous one forward
+rather than resetting it, and absent it `submittedAt` reproduces the old arithmetic exactly.
+`requestedBy` and `supersedes` appear only on a record a manual run published — `supersedes`
+summarising the record it replaced, so a green that arrived by request still says what red it
+displaced.
+
+**Asking for one.** `npm run bench:nightly-request -- --reason="…"` reads `origin/main`'s real
+tip with `git ls-remote`, prints what is on file for it, and makes the human type the tip's
+first 8 characters back before it writes anything. It refuses inside a Claude Code session
+(`CLAUDECODE`) and refuses without a terminal, both exit 5, both before any write: deciding a
+red is not the code is a maintainer's judgement, not a session's — see
+[kanban-workflow.md § While `main` is red](kanban-workflow.md). It deposits nothing itself.
+
+**A manual run that did not measure the sha publishes nothing.** `ENVIRONMENT`, `INTERRUPTED`,
+`STALE`, `BLOCKED`, and a run whose tip moved between the confirmation and the refresh all
+leave `latest.json` **byte-identical**. Every manual outcome is recorded regardless, in
+`nightly/manual/<id>.json`, with `attested` saying which kind it was and `outcome` naming the
+ones where no job ran at all (`already-green`, `prepare-failed`, `superseded`). The worker
+never deletes those.
 
 **Reading it** is the orchestrator's first move on a task, and the rule that follows — repair-only dispatch, no
 `origin/main` merges while red — is [kanban-workflow.md § While `main` is red](kanban-workflow.md).
@@ -913,10 +945,18 @@ believe a mechanism is in place. It was restored by reverting #178 once the repo
   witness proved it. `ci-proof.test.ts`, `worker.test.ts`.
 - The push hook refuses `main` and nothing else, while still telling a mention of `git push`
   from a real one. `pre-push-gate.test.ts`.
-- A nightly is deposited only from an idle queue, inside its UTC window, at most one per
-  20 h, and only by the worker; it publishes to `nightly/latest.json` and writes no
-  attestation. A worker death mid-nightly stamps `INTERRUPTED` rather than leaving
-  yesterday's PASS standing. — `nightly.test.ts`, `worker.test.ts`.
+- A **scheduled** nightly is deposited only from an idle queue, inside its UTC window, at most
+  one per 20 h; it publishes to `nightly/latest.json` and writes no attestation. A worker
+  death mid-nightly stamps `INTERRUPTED` rather than leaving yesterday's PASS standing.
+  — `nightly.test.ts`, `worker.test.ts`.
+- A **manual** nightly is deposited from that same idle branch and nowhere else — the request
+  is a marker, and `submit --type=nightly` is still refused. It skips the 20 h slot, waits out
+  the 15-minute live-drive limit rather than being refused by it, and replaces
+  `latest.json` **only when it attests**: `PASS` or `FAIL` at the sha that was requested.
+  `ENVIRONMENT`, `INTERRUPTED`, `STALE` and a superseded tip leave the published file
+  byte-identical and are recorded under `nightly/manual/` instead. The request itself refuses
+  an agent session and a non-terminal, both before writing anything. — `nightly.test.ts`,
+  `worker.test.ts`, `cli.test.ts`.
 - A merge-queue entry is gated exactly once, only from GitHub's own queue refs, and its
   objects are **fetched before its tree is read** — so an entry whose tree already carries a
   passing attestation reuses it and takes no live slot, while an unfetchable or unreadable

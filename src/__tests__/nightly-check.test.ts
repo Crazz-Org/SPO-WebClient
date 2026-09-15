@@ -207,6 +207,72 @@ describe('scripts/nightly-check.sh — unknown must stop reading as green (actio
     expect(stdout).toContain('missing verdict field');
   });
 
+  // ---- the trigger (#801) ----------------------------------------------------------------
+  // A nightly may now be `manual` — a maintainer asked for it. The classification is
+  // deliberately unchanged by that: the line says which it was, and nothing more.
+
+  it('names the trigger and the requester on a manual GREEN', () => {
+    const benchDir = benchDirWith(
+      JSON.stringify({
+        verdict: 'PASS',
+        sha: mainSha,
+        finishedAt: 'now',
+        trigger: 'manual',
+        requestedBy: { user: 'maintainer', reason: 'the fetch timed out' },
+      }),
+    );
+    const { status, stdout } = runScript(benchDir, process.env.PATH ?? '');
+    expect(status).toBe(0);
+    expect(stdout).toContain('MAIN: GREEN');
+    expect(stdout).toContain('trigger=manual by=maintainer');
+  });
+
+  it('names the trigger and the requester on a manual RED', () => {
+    const benchDir = benchDirWith(
+      JSON.stringify({
+        verdict: 'FAIL',
+        sha: mainSha,
+        detail: 'boom',
+        trigger: 'manual',
+        requestedBy: { user: 'maintainer' },
+      }),
+    );
+    const { status, stdout } = runScript(benchDir, process.env.PATH ?? '');
+    expect(status).toBe(1);
+    expect(stdout).toContain('MAIN: RED');
+    expect(stdout).toContain('trigger=manual by=maintainer');
+  });
+
+  it('reads a record with no trigger as scheduled, and names no requester — every pre-#801 file', () => {
+    const benchDir = benchDirWith(JSON.stringify({ verdict: 'PASS', sha: mainSha, finishedAt: 'now' }));
+    const { status, stdout } = runScript(benchDir, process.env.PATH ?? '');
+    expect(status).toBe(0);
+    expect(stdout).toContain('trigger=scheduled');
+    expect(stdout).not.toContain('by=');
+  });
+
+  it('names no requester on a manual record that somehow carries none', () => {
+    const benchDir = benchDirWith(
+      JSON.stringify({ verdict: 'FAIL', sha: mainSha, detail: 'boom', trigger: 'manual' }),
+    );
+    const { status, stdout } = runScript(benchDir, process.env.PATH ?? '');
+    expect(status).toBe(1);
+    expect(stdout).toContain('trigger=manual');
+    expect(stdout).not.toContain('by=');
+  });
+
+  it('a manual record does NOT change the classification of a non-attesting verdict', () => {
+    // It could not reach this file in practice — a manual ENVIRONMENT leaves latest.json
+    // untouched — but if one ever did, the answer must still be UNKNOWN, not green.
+    const benchDir = benchDirWith(
+      JSON.stringify({ verdict: 'ENVIRONMENT', sha: mainSha, trigger: 'manual' }),
+    );
+    const { status, stdout } = runScript(benchDir, process.env.PATH ?? '');
+    expect(status).toBe(2);
+    expect(stdout).toContain('MAIN: UNKNOWN');
+    expect(stdout).not.toContain('MAIN: GREEN');
+  });
+
   // ---- mutation-proof -------------------------------------------------------------------------
   // Runs the OLD (pre-B3.2) case arm directly, spliced into a scratch copy of the script, to
   // prove the tests above actually pin something rather than being decorative. Never mutates the
@@ -245,7 +311,7 @@ describe('scripts/nightly-check.sh — unknown must stop reading as green (actio
 
   it('mutation: dropping the FAIL sha check flips the "FAIL at a different sha" test above', () => {
     const mutant = scriptWithCaseArmReplaced(
-      `  FAIL)\n    if [ -n "$SHA" ] && [ "$SHA" = "$ORIGIN_MAIN" ]; then\n      echo "MAIN: RED sha=$SHA detail=$DETAIL logFile=$LOGFILE"\n      exit 1\n    else\n      # A FAIL recorded for a DIFFERENT sha than origin/main's current tip proves nothing about\n      # THIS tip — main may or may not still be broken. Assuming "moved past it, so it's fixed"\n      # (the old behaviour) is exactly the unknown-reads-as-green bug this action fixes.\n      echo "MAIN: UNKNOWN FAIL recorded for \${SHA:-"(no sha)"}, not origin/main's current tip ($ORIGIN_MAIN) — unproven either way"\n      exit 2\n    fi\n    ;;`,
+      `  FAIL)\n    if [ -n "$SHA" ] && [ "$SHA" = "$ORIGIN_MAIN" ]; then\n      echo "MAIN: RED sha=$SHA detail=$DETAIL logFile=$LOGFILE trigger=$TRIGGER$BY"\n      exit 1\n    else\n      # A FAIL recorded for a DIFFERENT sha than origin/main's current tip proves nothing about\n      # THIS tip — main may or may not still be broken. Assuming "moved past it, so it's fixed"\n      # (the old behaviour) is exactly the unknown-reads-as-green bug this action fixes.\n      echo "MAIN: UNKNOWN FAIL recorded for \${SHA:-"(no sha)"}, not origin/main's current tip ($ORIGIN_MAIN) — unproven either way"\n      exit 2\n    fi\n    ;;`,
       `  FAIL)\n    echo "MAIN: RED sha=$SHA detail=$DETAIL logFile=$LOGFILE (mutated: no sha check)"\n    exit 1\n    ;;`
     );
     const benchDir = benchDirWith(JSON.stringify({ verdict: 'FAIL', sha: STALE_SHA, detail: 'boom' }));
