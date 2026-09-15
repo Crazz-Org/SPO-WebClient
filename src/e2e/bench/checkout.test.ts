@@ -17,6 +17,7 @@ import {
   needsInstall,
   prepareCheckout,
   recordInstalled,
+  resolveTargetRef,
   NETWORK_RETRY_DELAYS_MS,
   type CheckoutDeps,
 } from './checkout';
@@ -65,7 +66,22 @@ function clonedDir(): string {
   return dir;
 }
 
-const git = (): string => 'https://github.com/Crazz-Org/SPO-WebClient.git';
+/** Remote-tracking refs the fake origin has for one test: `refs/remotes/...` -> sha. */
+let remoteRefs: Record<string, string> = {};
+beforeEach(() => {
+  remoteRefs = {};
+});
+
+const git = (_worktree: string, args: string[]): string => {
+  if (args[0] === 'rev-parse') {
+    const wanted = args[args.length - 1];
+    const sha = remoteRefs[wanted];
+    // What `rev-parse --verify --quiet` really does when the ref is absent: exit non-zero.
+    if (!sha) throw new Error(`fatal: Needed a single revision: ${wanted}`);
+    return `${sha}\n`;
+  }
+  return 'https://github.com/Crazz-Org/SPO-WebClient.git';
+};
 
 describe('the install decision', () => {
   it('installs when node_modules is not there at all', () => {
@@ -327,7 +343,7 @@ describe('mergeRef — gating the tree the branch would actually land, not the b
     h.exitCodes = [0, 0, 0, 1, 1]; // fetch, reset, clean ok; not an ancestor; merge: conflict
     const baseSha = 'deadbeef'.repeat(5);
     const gitWithRevParse = (_worktree: string, args: string[]): string =>
-      args[0] === 'rev-parse' ? baseSha : git();
+      args[0] === 'rev-parse' ? baseSha : git(_worktree, args);
 
     const result = await prepareCheckout(
       h.deps,
@@ -585,5 +601,111 @@ describe('prepareCheckout — the job log tells a retried success from a first-t
     expect(log.match(/^--- git fetch: attempt 1\//gm)).toHaveLength(1);
     expect(log).not.toMatch(/reset.*attempt/);
     expect(log).not.toMatch(/clean.*attempt/);
+  });
+});
+
+describe('the ref is resolved against the remote, not the checkout\'s own branches', () => {
+  it('a --ref=main job after a job at sha X resets to origin/main, not X', async () => {
+    const h = harness();
+    const dir = clonedDir();
+    const shaX = 'a'.repeat(40);
+    remoteRefs['refs/remotes/origin/main'] = 'b'.repeat(40);
+
+    await prepareCheckout(h.deps, { dir, ref: shaX, workerRepo: '/repo', logFile: path.join(tempDir(), 'p1.log') }, git);
+    h.commands = [];
+
+    await prepareCheckout(h.deps, { dir, ref: 'main', workerRepo: '/repo', logFile: path.join(tempDir(), 'p2.log') }, git);
+
+    const resetArgs = h.commands.find(c => c.args[0] === 'reset')?.args;
+    expect(resetArgs).toEqual(['reset', '--hard', 'origin/main']);
+    expect(resetArgs).not.toContain(shaX);
+  });
+
+  it('a sha is passed through untouched', async () => {
+    const h = harness();
+    const dir = clonedDir();
+    const sha = 'a'.repeat(40);
+
+    await prepareCheckout(h.deps, { dir, ref: sha, workerRepo: '/repo', logFile: path.join(tempDir(), 'p.log') }, git);
+
+    expect(h.commands.find(c => c.args[0] === 'reset')?.args).toEqual(['reset', '--hard', sha]);
+  });
+
+  it('origin/... is never double-prefixed, and no rev-parse is asked at all', async () => {
+    const h = harness();
+    const dir = clonedDir();
+    remoteRefs['refs/remotes/origin/main'] = 'b'.repeat(40);
+    const gitCalls: string[][] = [];
+    const recordingGit = (worktree: string, args: string[]): string => {
+      gitCalls.push(args);
+      return git(worktree, args);
+    };
+
+    await prepareCheckout(
+      h.deps,
+      { dir, ref: 'origin/main', workerRepo: '/repo', logFile: path.join(tempDir(), 'p.log') },
+      recordingGit,
+    );
+
+    expect(h.commands.find(c => c.args[0] === 'reset')?.args).toEqual(['reset', '--hard', 'origin/main']);
+    expect(gitCalls.some(args => args[0] === 'rev-parse')).toBe(false);
+  });
+
+  it('a branch with no remote-tracking ref is left alone', async () => {
+    const h = harness();
+    const dir = clonedDir();
+
+    await prepareCheckout(h.deps, { dir, ref: 'x', workerRepo: '/repo', logFile: path.join(tempDir(), 'p.log') }, git);
+
+    expect(h.commands.find(c => c.args[0] === 'reset')?.args).toEqual(['reset', '--hard', 'x']);
+  });
+
+  it('resolves after the fetch, not before', async () => {
+    const h = harness();
+    const dir = clonedDir();
+    remoteRefs['refs/remotes/origin/main'] = 'b'.repeat(40);
+    let verbsAtRevParse: string[] = [];
+    const recordingGit = (worktree: string, args: string[]): string => {
+      if (args[0] === 'rev-parse') {
+        verbsAtRevParse = h.commands.map(c => c.args[0]);
+      }
+      return git(worktree, args);
+    };
+
+    await prepareCheckout(
+      h.deps,
+      { dir, ref: 'main', workerRepo: '/repo', logFile: path.join(tempDir(), 'p.log') },
+      recordingGit,
+    );
+
+    expect(verbsAtRevParse).toContain('fetch');
+    expect(verbsAtRevParse).not.toContain('reset');
+  });
+
+  it('is legible afterwards, in the worker log and the job log file', async () => {
+    const h = harness();
+    const dir = clonedDir();
+    const logFile = path.join(tempDir(), 'p.log');
+    remoteRefs['refs/remotes/origin/main'] = 'b'.repeat(40);
+
+    await prepareCheckout(h.deps, { dir, ref: 'main', workerRepo: '/repo', logFile }, git);
+
+    expect(h.logs.join('\n')).toMatch(/main resolved to origin\/main/);
+    expect(fs.readFileSync(logFile, 'utf8')).toContain('resolved main -> origin/main');
+  });
+});
+
+describe('resolveTargetRef', () => {
+  it('leaves an already-remote ref untouched', () => {
+    expect(resolveTargetRef('/repo', 'origin/main', git)).toBe('origin/main');
+  });
+
+  it('resolves a branch that has a remote-tracking ref', () => {
+    remoteRefs['refs/remotes/origin/main'] = 'b'.repeat(40);
+    expect(resolveTargetRef('/repo', 'main', git)).toBe('origin/main');
+  });
+
+  it('leaves a ref with no remote-tracking counterpart untouched', () => {
+    expect(resolveTargetRef('/repo', 'x', git)).toBe('x');
   });
 });
