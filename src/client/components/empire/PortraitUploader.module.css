@@ -1,0 +1,35 @@
+/* PortraitUploader — crop-and-encode dialog content, hosted inside the design system Dialog */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.fileLabel,
+.zoomLabel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.fileInput {
+  font-size: var(--text-sm);
+}
+
+.canvas {
+  align-self: center;
+  width: 150px;
+  height: 200px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  cursor: grab;
+}
+
+.error {
+  color: var(--error);
+  font-size: var(--text-xs);
+}

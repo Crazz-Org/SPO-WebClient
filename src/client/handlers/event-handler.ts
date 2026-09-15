@@ -517,6 +517,7 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
     case WsMessageType.RESP_PROFILE_POLICY:
     case WsMessageType.RESP_PROFILE_POLICY_SET:
     case WsMessageType.RESP_PROFILE_CURRICULUM_ACTION:
+    case WsMessageType.RESP_PROFILE_UPLOAD_PICTURE:
       ClientBridge.handleProfileResponse(msg);
       break;
 

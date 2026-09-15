@@ -115,6 +115,19 @@ describe('StarpeaceClient callback wiring', () => {
     );
   });
 
+  it('onProfileUploadPicture sends REQ_PROFILE_UPLOAD_PICTURE with the base64 payload', () => {
+    const sendSpy = jest.spyOn(client, 'sendMessage' as any);
+
+    client.callbacks.onProfileUploadPicture('ZmFrZS1qcGVn');
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'REQ_PROFILE_UPLOAD_PICTURE',
+        pictureBase64: 'ZmFrZS1qcGVn',
+      })
+    );
+  });
+
   it('onVisitWorld forwards to authHandler.visitWorld with the client', () => {
     client.callbacks.onVisitWorld();
 

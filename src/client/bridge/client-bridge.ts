@@ -70,6 +70,7 @@ import {
   type WsRespProfilePolicy,
   type WsRespProfilePolicySet,
   type WsRespProfileCurriculumAction,
+  type WsRespProfileUploadPicture,
   type WsRespSearchMenuHome,
   type WsRespSearchMenuTowns,
   type WsRespSearchMenuPeopleSearch,
@@ -299,6 +300,7 @@ export interface ClientCallbacks {
   // Profile actions
   onProfileBankAction: (action: BankActionType, amount?: string, toTycoon?: string, reason?: string, loanIndex?: number) => void;
   onProfileAutoConnectionAction: (action: AutoConnectionActionType, fluidId: string, suppliers?: string) => void;
+  onProfileUploadPicture: (pictureBase64: string) => void;
   onProfilePolicySet: (tycoonName: string, status: number) => void;
   onProfileCurriculumAction: (action: CurriculumActionType, value?: boolean) => void;
   onProfileSwitchCompany: (companyId: number, companyName: string, ownerRole: string) => void;
@@ -933,6 +935,16 @@ export const ClientBridge = {
         const resp = msg as WsRespProfileCurriculumAction;
         showToast(resp.message || 'Action completed', resp.success ? 'success' : 'error');
         if (resp.success) profile.incrementRefresh();
+        break;
+      }
+      case WsMessageType.RESP_PROFILE_UPLOAD_PICTURE: {
+        const resp = msg as WsRespProfileUploadPicture;
+        if (resp.success) {
+          showToast(resp.message || 'Portrait updated', 'success');
+        } else {
+          profile.revertPortrait();
+          showToast(resp.message || `Portrait refused (${resp.reason ?? 'unknown reason'})`, 'error');
+        }
         break;
       }
     }

@@ -35,6 +35,12 @@
   color: var(--text-muted);
 }
 
+.identityPortraitButton {
+  background: transparent;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
 .identityName {
   font-size: var(--text-sm);
   font-weight: var(--font-semibold);
