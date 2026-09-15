@@ -227,3 +227,68 @@ describe('HUD bottom band anchor (issue 872)', () => {
     }
   );
 });
+
+describe('toast anchor below the status pill (issue 874)', () => {
+  const tokens = stripComments(readFileSync(join(STYLES_DIR, 'design-tokens.css'), 'utf8'));
+  const pill = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/hud/StatusPill.module.css'), 'utf8')
+  );
+  const toast = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/common/Toast.module.css'), 'utf8')
+  );
+
+  /** px value of a --space-N token, read from the token file (never hard-coded here). */
+  function space(n: number): number {
+    const match = tokens.match(new RegExp(`--space-${n}:\\s*([0-9.]+)rem`));
+    expect(match).not.toBeNull();
+    return parseFloat(match![1]) * 16;
+  }
+
+  it('the toast container anchors on --content-top', () => {
+    const start = toast.indexOf('.container {');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const open = toast.indexOf('{', start);
+    const close = toast.indexOf('}', open);
+    const block = toast.slice(open + 1, close);
+    expect(block).toMatch(/top:\s*var\(--content-top\)/);
+  });
+
+  it('nothing in the client references --topbar-height any more', () => {
+    const offenders: string[] = [];
+    for (const f of allCss) {
+      const css = stripComments(readFileSync(f, 'utf8'));
+      if (/--topbar-height/.test(css)) offenders.push(relative(CLIENT_ROOT, f));
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('the resolved toast top sits at or below the status pill bottom', () => {
+    const pillTopMatch = pill.match(/\.pill\s*\{[^}]*top:\s*var\(--space-3\)/);
+    expect(pillTopMatch).not.toBeNull();
+    const pillHeightMatch = pill.match(/\.pill\s*\{[^}]*height:\s*40px/);
+    expect(pillHeightMatch).not.toBeNull();
+
+    const pillTop = space(3);
+    const pillHeight = 40;
+
+    const contentTopMatch = tokens.match(
+      /--content-top:\s*calc\(var\(--space-3\)\s*\+\s*40px\s*\+\s*var\(--space-2\)\)/
+    );
+    expect(contentTopMatch).not.toBeNull();
+    const toastTop = space(3) + 40 + space(2);
+
+    expect(toastTop).toBeGreaterThanOrEqual(pillTop + pillHeight);
+  });
+
+  it('neither responsive branch moves the anchor', () => {
+    const narrowToast = toast.match(/@media \(max-width: 768px\) \{([\s\S]*?)\n\}/);
+    expect(narrowToast).not.toBeNull();
+    expect(narrowToast![1]).not.toMatch(/\btop\s*:/);
+
+    const narrowTokens = tokens.match(/@media \(max-width: 767px\) \{\s*:root \{([\s\S]*?)\}\s*\}/);
+    expect(narrowTokens).not.toBeNull();
+    expect(narrowTokens![1]).not.toMatch(/--content-top\s*:/);
+    expect(narrowTokens![1]).not.toMatch(/--space-2\s*:/);
+    expect(narrowTokens![1]).not.toMatch(/--space-3\s*:/);
+  });
+});

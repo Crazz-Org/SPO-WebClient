@@ -35,7 +35,7 @@ pas une re-création d'identité visuelle. À fournir tel quel, Claude Design s'
 
 | Entrée | Où | Rôle pour Claude Design |
 |---|---|---|
-| Tokens | `src/client/styles/design-tokens.css` (palette « Corporate Empire » : fonds neutres sombres, vert `--primary`, or `--accent-gold`, échelle de texte 11→30 px, espacements 4→48 px, rayons, ombres, z-index, durées, **dimensions de layout HUD** : topbar 36 px, rail 48 px, panneau 560/360 px, minimap 200 px, bottomnav 56 px) | Valeurs exactes à reprendre — c'est la première chose que le skill cherche |
+| Tokens | `src/client/styles/design-tokens.css` (palette « Corporate Empire » : fonds neutres sombres, vert `--primary`, or `--accent-gold`, échelle de texte 11→30 px, espacements 4→48 px, rayons, ombres, z-index, durées, **dimensions de layout HUD** : rail 48 px, panneau 560/360 px, minimap 200 px, bottomnav 56 px) | Valeurs exactes à reprendre — c'est la première chose que le skill cherche |
 | Typo / reset / animations | `src/client/styles/typography.css`, `reset.css`, `animations.css` | Rythme vertical, transitions |
 | Bibliothèque de composants | `src/client/components/common/` — Badge, ConfirmDialog, DataTable, GlassCard, IconButton, MiniBar, ProgressBar, PromptDialog, Skeleton, SliderInput, Sparkline, StatCard, TabBar, Toast, TrendIndicator | Anatomie et états à reproduire « au pixel » dans les artboards |
 | Icônes | `lucide-react` (+ `components/icons/` RoadIcons, ZoneIcon) | Même jeu, même épaisseur de trait, en SVG inline dans les maquettes |
