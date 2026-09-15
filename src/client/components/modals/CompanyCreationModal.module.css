@@ -105,6 +105,12 @@
   color: var(--primary);
 }
 
+.clusterTabLocked {
+  opacity: 0.55;
+  border-style: dashed;
+  cursor: help;
+}
+
 /* ---- Two-column body ---- */
 
 .body {
@@ -301,6 +307,13 @@
   padding: var(--space-3) var(--space-5);
   border-top: 1px solid var(--surface-border);
   flex-shrink: 0;
+}
+
+.refusal {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }
 
 .nameInput {

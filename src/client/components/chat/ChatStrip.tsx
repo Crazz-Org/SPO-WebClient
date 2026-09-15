@@ -7,7 +7,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect, useMemo, memo, Fragment } from 'react';
-import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye, Lock, Plus, Star, History } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye, Lock, Plus, Star, VolumeX, Volume2, History } from 'lucide-react';
 import { useChatStore } from '../../store/chat-store';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
@@ -102,6 +102,9 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
   const toggleExpanded = useChatStore((s) => s.toggleExpanded);
   const setCurrentChannel = useChatStore((s) => s.setCurrentChannel);
   const chasedUser = useChatStore((s) => s.chasedUser);
+  const ignored = useChatStore((s) => s.ignored);
+  const ignoreUser = useChatStore((s) => s.ignoreUser);
+  const unignoreUser = useChatStore((s) => s.unignoreUser);
   const username = useGameStore((s) => s.username);
 
   const client = useClient();
@@ -380,42 +383,53 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
             </div>
             <div className={styles.userList}>
               {userList.length > 0 ? (
-                userList.map((user) => (
-                  <div
-                    key={user.id}
-                    className={`${styles.userRow} ${chasedUser === user.name ? styles.userRowFollowed : ''}`}
-                    aria-current={chasedUser === user.name ? 'true' : undefined}
-                  >
-                    {(() => {
-                      const isTyping = typingUsers.has(user.name);
-                      const label = user.isAway
-                        ? (isTyping ? 'away, typing' : 'away')
-                        : (isTyping ? 'typing' : 'online');
-                      return (
-                        <span
-                          className={`${styles.statusDot} ${user.isAway ? styles.statusDotAway : ''} ${isTyping ? styles.statusDotTyping : ''}`}
-                          title={label}
-                          aria-label={label}
-                        />
-                      );
-                    })()}
-                    <NobilityBadge nobilityTier={user.nobilityTier} modifiers={user.modifiers} size="sm" />
-                    <span className={styles.userName}>{user.name}</span>
-                    {/* Follow this player's camera — Voyager offered the same item on
-                        every name but the player's own (ChatListHandlerViewer.pas:123-126). */}
-                    {user.name !== username && (
-                      <button
-                        type="button"
-                        className={styles.followBtn}
-                        aria-label={`Follow ${user.name}`}
-                        title="Follow this player's camera"
-                        onClick={() => client.onChaseUser(user.name)}
-                      >
-                        <Eye size={11} />
-                      </button>
-                    )}
-                  </div>
-                ))
+                userList.map((user) => {
+                  const isIgnored = ignored.includes(user.name);
+                  const isTyping = typingUsers.has(user.name);
+                  const label = user.isAway
+                    ? (isTyping ? 'away, typing' : 'away')
+                    : (isTyping ? 'typing' : 'online');
+                  return (
+                    <div
+                      key={user.id}
+                      className={`${styles.userRow} ${chasedUser === user.name ? styles.userRowFollowed : ''} ${isIgnored ? styles.userRowIgnored : ''}`}
+                      aria-current={chasedUser === user.name ? 'true' : undefined}
+                    >
+                      <span
+                        className={`${styles.statusDot} ${user.isAway ? styles.statusDotAway : ''} ${isTyping ? styles.statusDotTyping : ''}`}
+                        title={label}
+                        aria-label={label}
+                      />
+                      <NobilityBadge nobilityTier={user.nobilityTier} modifiers={user.modifiers} size="sm" />
+                      <span className={styles.userName}>{user.name}</span>
+                      {/* Follow this player's camera — Voyager offered the same item on
+                          every name but the player's own (ChatListHandlerViewer.pas:123-126). */}
+                      {user.name !== username && (
+                        <button
+                          type="button"
+                          className={styles.followBtn}
+                          aria-label={`Follow ${user.name}`}
+                          title="Follow this player's camera"
+                          onClick={() => client.onChaseUser(user.name)}
+                        >
+                          <Eye size={11} />
+                        </button>
+                      )}
+                      {/* Ignore/un-ignore — dropped before storage in the chat store (#622). */}
+                      {user.name !== username && (
+                        <button
+                          type="button"
+                          className={styles.ignoreBtn}
+                          aria-label={isIgnored ? `Stop ignoring ${user.name}` : `Ignore ${user.name}`}
+                          title={isIgnored ? 'Stop ignoring this player' : 'Ignore this player'}
+                          onClick={() => (isIgnored ? unignoreUser(user.name) : ignoreUser(user.name))}
+                        >
+                          {isIgnored ? <Volume2 size={11} /> : <VolumeX size={11} />}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
               ) : (
                 <div className={styles.emptyUsers}>No users</div>
               )}

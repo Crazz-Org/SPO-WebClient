@@ -21,6 +21,9 @@ import type {
   WsRespProfilePolicySet,
   WsRespProfileCurriculumAction,
   WsRespProfileUploadPicture,
+  WsReqTutorialAction,
+  WsRespTutorialState,
+  WsRespTutorialAction,
 } from '../../shared/types';
 import { WsMessageType } from '../../shared/types';
 import type { BankActionType, CurriculumActionType } from '../../shared/types';
@@ -193,6 +196,38 @@ export async function handleProfileUploadPicture(ctx: WsHandlerContext, msg: WsM
     success: result.success,
     reason: result.reason,
     message: result.message,
+  };
+  sendResponse(ctx.ws, response);
+}
+
+// ---------------------------------------------------------------------------
+// Tutorial — the onboarding curriculum
+//
+// It lives beside the profile handlers because that is where the legacy client
+// put it: the Tutorial button is one of the Profile page's own buttons,
+// rendered only while the tycoon has an active assignment
+// (`TycoonOptions.asp:12`, `:231-252`).
+// ---------------------------------------------------------------------------
+
+export async function handleTutorialState(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
+  const state = await ctx.session.getTutorialState();
+  const response: WsRespTutorialState = {
+    type: WsMessageType.RESP_TUTORIAL_STATE,
+    wsRequestId: msg.wsRequestId,
+    state,
+  };
+  sendResponse(ctx.ws, response);
+}
+
+export async function handleTutorialAction(ctx: WsHandlerContext, msg: WsMessage): Promise<void> {
+  const req = msg as WsReqTutorialAction;
+  const result = await ctx.session.runTutorialAction(req.action);
+  const response: WsRespTutorialAction = {
+    type: WsMessageType.RESP_TUTORIAL_ACTION,
+    wsRequestId: msg.wsRequestId,
+    success: result.success,
+    message: result.message,
+    state: result.state,
   };
   sendResponse(ctx.ws, response);
 }

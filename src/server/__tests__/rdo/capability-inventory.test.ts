@@ -101,12 +101,6 @@ const UNWIRED: ReadonlyArray<{ type: string; reason: string }> = [
     reason: 'handleGetRoadCost exists; the client prices the road itself with ' +
       'estimateRoadCost. This is the gateway-side door bridge pricing needs. Issue #99.',
   },
-  {
-    type: 'REQ_PROFILE_UPLOAD_PICTURE',
-    reason: 'handleProfileUploadPicture speaks the cache server picture-transfer protocol ' +
-      '(PicShopForm.pas:574-617); the file picker, the crop and the browser-side send are ' +
-      'card TC-03b. Issue #705.',
-  },
 ];
 
 function declaredRequestTypes(): string[] {

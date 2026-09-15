@@ -28,7 +28,7 @@ tests in `scenarios/` (`newspaper-scenario.test.ts` among them).
 
 Scenario files in `scenarios/` define canned RDO exchanges. Each exports a `create*Scenario()` factory function that returns `{ ws: WsCaptureScenario; rdo: RdoScenario }`.
 
-Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `world-event`, `show-notification`, `chat-flags`, `create-channel`, `refresh-season`, `bank-loan-request`, `status-lamps`.
+Available scenarios: `auth`, `world-list`, `world-login`, `select-company`, `company-list`, `building-details`, `build-menu`, `build-roads`, `mail`, `switch-focus`, `civic-mutations`, `newspaper`, `connection-search`, `connection-reachability`, `tycoon-profile`, `abandon-role`, `people-search`, `trade-settings`, `gate-map`, `product-owner`, `service-figures`, `bank-tv-live-reads`, `auto-buy`, `disconnect-connections`, `worker-counts`, `chase`, `define-zone`, `context-status`, `world-event`, `show-notification`, `chat-flags`, `create-channel`, `refresh-season`, `bank-loan-request`, `status-lamps`, `tutorial`.
 
 `bank-loan-request` is the Request button of a bank's borrow box — one exchange,
 `RDOAskLoan(proxyId, amount)` on the bank block
@@ -312,6 +312,29 @@ kind 0, 1, 2 and 4 — plus the browser behaviour they produce through the real 
 only evidence there is. Kind 4 is in the set precisely to prove the one behaviour that must
 **not** change: the toast and the build-catalogue invalidation on `Options = 1`, both carried
 through unmodified from before this scenario existed.
+
+`tutorial` is the onboarding curriculum, and it is the other half of `show-notification`'s
+kind 1. The engine is entirely server-side: it announces itself with ONE push,
+`ShowNotification(ntkURLFrame, MetaTask.NotTitle, <URL>, MetaTask.NotOptions)`
+(`Tasks/Tasks.pas:470`), and everything a panel could draw sits on the tycoon's own cache
+object under the `Tutorial` prefix (`TTask.StoreToCache`, `Tasks/Tasks.pas:521-550`) — so the
+push says *something changed* and the cache says *what*. Three things it pins. **`Options` is
+the routing, not the body**: `NotOptions` defaults to `nopTutorial_SHOW` = 4
+(`Tasks/Tasks.pas:285`, constants `:29-32`) and the reference client tested
+`Options and (4 or 2) <> 0` (`Voyager/URLNotification.pas:77`), while `HideTaskButton` sends
+the same push with an empty title and `Options = 0` to take the affordance away
+(`Tasks/Tasks.pas:636-644`) — two frames that differ only in that field mean opposite things,
+so both are here. **The body is a URL and must never be rendered**: it is built by
+`TTask.GetBaseURL` (`Tasks/Tasks.pas:620-634`) and points at a page written for Internet
+Explorer 5. **The four actions bind `TutorialObjId`, not the tycoon** (`ModifyTask.asp:13`,
+`:23-34`); three are `procedure`s on `TInformativeTask` (`Tasks/InformativeTask.pas:15-17`), so
+their frames carry `"*"` and their **responses are empty**, and the fourth is a `set` on the
+published `Completed` property (`Tasks/Tasks.pas:156`). `createTutorialScenario(vars,
+{ assignment })` picks which cache shape the read answers — `welcome`, `goal` (the only kind
+that writes `TutorialGoal`, `Tasks/MakeProfitTask.pas:81`), `done`, or `none` for the tycoon
+who has no assignment. Its test drives the real push dispatcher into the real browser
+`dispatchEvent`, then the real `fetchTutorialState` against the mock, then the real
+`TutorialPanel` — and asserts an assignment on screen with no URL anywhere in it.
 
 `chat-flags` is `ChatMsg` carrying the packed AccDesc middle field
 (`ComposeChatUser`, `Protocol/Protocol.pas:482-492`) — a `procedure`

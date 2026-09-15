@@ -22,7 +22,12 @@ import { mergeVariables } from './scenario-variables';
 /** The four pushes this scenario carries, keyed by kind. */
 export const NOTIFICATIONS = {
   0: 'C sel {{tycoonProxyId}} call ShowNotification "*" "#0","%Server maintenance","%The world restarts in 10 minutes.","#0";',
-  1: 'C sel {{tycoonProxyId}} call ShowNotification "*" "#1","%Your first assignment","%tutorial.asp?Step=1&World=planitia","#0";',
+  // Options `#4` is `nopTutorial_SHOW`, the default `MetaTask.NotOptions`
+  // (Tasks/Tasks.pas:285, constants :29-32) — `#0` is `nopTutorial_OFF` and
+  // means the opposite, "take the tutorial affordance away"
+  // (Tasks/Tasks.pas:636-644). The body is the URL shape `TTask.GetBaseURL`
+  // actually builds (Tasks/Tasks.pas:620-634, prefix :12).
+  1: 'C sel {{tycoonProxyId}} call ShowNotification "*" "#1","%Your first assignment","%http://158.69.153.134/Five/0/Visual/Voyager/NewTycoon/Tasks/Welcome/0/default.asp?Tycoon=SPO_test3&WorldName=Shamba","#4";',
   2: 'C sel {{tycoonProxyId}} call ShowNotification "*" "#2","%Mayor","% has raised the sales tax.","#0";',
   4: 'C sel {{tycoonProxyId}} call ShowNotification "*" "#4","%","%Research ""Water Quest Licenses"" completed. Check for new items in your Build page.","#1";',
 } as const;
@@ -47,7 +52,7 @@ export function createShowNotificationScenario(
 
   const rdo: RdoScenario = {
     name: 'show-notification',
-    description: 'ShowNotification: one push per kind (0, 1, 2, 4) — a dialog, a suppressed URL, a chat line and a catalogue invalidation',
+    description: 'ShowNotification: one push per kind (0, 1, 2, 4) — a dialog, a tutorial assignment, a chat line and a catalogue invalidation',
     exchanges: buildRdoExchanges(vars),
     variables: vars as unknown as Record<string, string>,
   };

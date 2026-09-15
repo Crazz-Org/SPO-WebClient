@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import type { ChatUser, ChatChannel } from '../../shared/types/domain-types';
 import { loadChatVisible, saveChatVisible } from './chat-visibility';
+import { ignoredKey, readIgnored, writeIgnored } from './ignored-users';
 
 export type { ChatUser, ChatChannel };
 
@@ -42,6 +43,10 @@ interface ChatState {
   channelInfo: Record<string, string>;
   /** Name of the player whose camera we are following, or null. Delphi's fChasedUser. */
   chasedUser: string | null;
+  /** Names whose messages are dropped on arrival. Persisted per world+player — issue #622. */
+  ignored: string[];
+  /** The localStorage key the list belongs to, or null before a world is known. */
+  ignoredKey: string | null;
 
   // Actions
   setCurrentChannel: (channel: string) => void;
@@ -63,6 +68,11 @@ interface ChatState {
   setChasedUser: (name: string | null) => void;
   setChatVisible: (visible: boolean) => void;
   toggleChatVisible: () => void;
+  /** Load the ignore list for this world+player. Called once both are known — issue #622. */
+  hydrateIgnored: (world: string, player: string) => void;
+  ignoreUser: (name: string) => void;
+  unignoreUser: (name: string) => void;
+  clearIgnored: () => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -77,6 +87,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unreadChatCount: 0,
   channelInfo: {},
   chasedUser: null,
+  ignored: [],
+  ignoredKey: null,
 
   setCurrentChannel: (channel) => set({ currentChannel: channel }),
 
@@ -107,6 +119,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   addMessage: (channel, message) =>
     set((state) => {
+      if (state.ignored.includes(message.from)) return {};
       const existing = state.messages[channel] ?? [];
       const updated = [...existing, message].slice(-MAX_MESSAGES_PER_CHANNEL);
       return {
@@ -162,4 +175,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   toggleChatVisible: () => get().setChatVisible(!get().chatVisible),
+
+  hydrateIgnored: (world, player) => {
+    const key = ignoredKey(world, player);
+    set({ ignored: readIgnored(key), ignoredKey: key });
+  },
+
+  ignoreUser: (name) =>
+    set((state) => {
+      if (!name || state.ignored.includes(name)) return {};
+      const ignored = [...state.ignored, name];
+      if (state.ignoredKey) writeIgnored(state.ignoredKey, ignored);
+      return { ignored };
+    }),
+
+  unignoreUser: (name) =>
+    set((state) => {
+      const ignored = state.ignored.filter((n) => n !== name);
+      if (state.ignoredKey) writeIgnored(state.ignoredKey, ignored);
+      return { ignored };
+    }),
+
+  clearIgnored: () =>
+    set((state) => {
+      if (state.ignoredKey) writeIgnored(state.ignoredKey, []);
+      return { ignored: [] };
+    }),
 }));

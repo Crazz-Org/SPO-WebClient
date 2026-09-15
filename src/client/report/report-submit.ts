@@ -60,6 +60,16 @@ function withoutEmpty<T extends Record<string, unknown>>(value: T): T {
 const TRIM_MARKER_BYTES = 64;
 
 /**
+ * UTF-8 byte length — what `MAX_BODY_BYTES`, nginx's `client_max_body_size` and the gateway's
+ * own `Buffer`-counting check all actually measure. `String.length` counts UTF-16 code units and
+ * undercounts any accented, CJK or emoji character by 2–4×; `freeText` is documented as possibly
+ * French, so this is the ordinary case, not the exotic one (#864).
+ */
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+/**
  * Bring a report under the transport's body cap, and record what that cost.
  *
  * Every per-field limit is enforced on its own and they do not sum below `MAX_BODY_BYTES`:
@@ -69,11 +79,12 @@ const TRIM_MARKER_BYTES = 64;
  *
  * Oldest journal entries go first and the screenshot only if emptying the journal was not
  * enough, so a canvas report keeps the picture it was filed about. Sizes are measured once per
- * entry rather than by re-serializing the whole report after each drop: this runs on the main
- * thread of the browser of the person already looking at a bug.
+ * entry, in UTF-8 bytes — matching `MAX_BODY_BYTES` and the gateway's own byte count — rather
+ * than by re-serializing the whole report after each drop: this runs on the main thread of the
+ * browser of the person already looking at a bug.
  */
 function fitToBodyCap(report: BugReport): BugReport {
-  let size = JSON.stringify(report).length;
+  let size = utf8Bytes(JSON.stringify(report));
   if (size <= MAX_BODY_BYTES) return report;
 
   const target = MAX_BODY_BYTES - TRIM_MARKER_BYTES;
@@ -81,7 +92,7 @@ function fitToBodyCap(report: BugReport): BugReport {
   while (size > target && report.journal.length > 0) {
     // An entry costs its own serialization, plus the comma before the next one when there is
     // one. Counting the comma only while it exists keeps the running total exact.
-    const entry = JSON.stringify(report.journal[0]).length;
+    const entry = utf8Bytes(JSON.stringify(report.journal[0]));
     size -= report.journal.length > 1 ? entry + 1 : entry;
     report.journal.shift();
     journalDropped++;

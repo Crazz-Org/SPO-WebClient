@@ -83,6 +83,10 @@ export interface GameSettings {
   minimapPixelSize: number | null;
   /** The language sent to the world on login — one of the six ids in `shared/language.ts`. */
   languageId: string;
+  /** Legacy 'AnimateBuildings', default on — OptionsHandlerViewer.pas:510. */
+  buildingAnimations: boolean;
+  /** Legacy 'TransparentOverlays', default on — OptionsHandlerViewer.pas:513. */
+  transparentOverlays: boolean;
   /** Facility KINDS the player has hidden on the isometric map — legacy `HideFacilities`
    *  (Map.pas:6397-6407). An array, not a Set: it has to survive `JSON.stringify`. */
   hiddenFacIds: number[];
@@ -102,6 +106,8 @@ const DEFAULT_SETTINGS: GameSettings = {
   minimapZoom: 1,
   minimapPixelSize: null,
   languageId: DEFAULT_LANGUAGE_ID,
+  buildingAnimations: true,
+  transparentOverlays: true,
   hiddenFacIds: [],
 };
 

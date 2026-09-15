@@ -88,6 +88,15 @@ const PENDING_TINT = 'rgba(150, 150, 160, 0.55)';
 /** A pending placeholder sits between the hover ghost (0.62) and the fog, so it reads as unconfirmed. */
 const PENDING_PLACEMENT_ALPHA = 0.55;
 
+/**
+ * Strip the alpha from an `rgba(r, g, b, a)` overlay colour. Anything that is not an rgba string
+ * (`'transparent'`, an `rgb(...)`) is returned untouched.
+ */
+export function opaqueOverlayColor(color: string): string {
+  const m = /^rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*[\d.]+\s*\)$/.exec(color);
+  return m ? `rgb(${m[1]}, ${m[2]}, ${m[3]})` : color;
+}
+
 interface CachedZone {
   x: number;
   y: number;
@@ -571,6 +580,10 @@ export class IsometricMapRenderer {
   private ownTycoonId: number = 0;
   /** Legacy 'Signal losing facilities' (Map.pas:1323-1324): shade my own alerting buildings red. */
   private signalLosingFacilities: boolean = false;
+  /** Legacy 'AnimateBuildings' (OptionsHandlerViewer.pas:510): advance animated building GIFs. */
+  private buildingAnimations: boolean = true;
+  /** Legacy 'TransparentOverlays' (OptionsHandlerViewer.pas:513): translucent data-overlay tiles. */
+  private transparentOverlays: boolean = true;
   /** Legacy `fHiddenFacilities` (Map.pas:547): facility KINDS whose sprite is not drawn. Empty = draw all. */
   private hiddenFacIds: ReadonlySet<number> = new Set();
   /** Scratch canvas the red shade is composed on; created on first use, never while the option is off. */
@@ -3528,7 +3541,7 @@ export class IsometricMapRenderer {
 
       // Check for animated texture and pick current frame
       const animatedTexture = this.gameObjectTextureCache.getAnimatedTexture('BuildingImages', textureFilename);
-      if (animatedTexture && texture) {
+      if (this.buildingAnimations && animatedTexture && texture) {
         texture = this.gameObjectTextureCache.getAnimatedFrame(animatedTexture, performance.now());
         this.hasAnimatedBuildings = true;
       }
@@ -4115,7 +4128,7 @@ export class IsometricMapRenderer {
           ctx.lineTo(screenPos.x + halfWidth, screenPos.y + halfHeight);
           ctx.closePath();
 
-          ctx.fillStyle = color;
+          ctx.fillStyle = this.transparentOverlays ? color : opaqueOverlayColor(color);
           ctx.fill();
         }
       }
@@ -5401,6 +5414,16 @@ export class IsometricMapRenderer {
 
   public setGlassForeignBuildings(enabled: boolean): void {
     this.glassForeignBuildings = enabled;
+    this.requestRender();
+  }
+
+  public setBuildingAnimationsEnabled(enabled: boolean): void {
+    this.buildingAnimations = enabled;
+    this.requestRender();
+  }
+
+  public setTransparentOverlays(enabled: boolean): void {
+    this.transparentOverlays = enabled;
     this.requestRender();
   }
 
