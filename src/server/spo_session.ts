@@ -83,6 +83,8 @@ import {
 import * as chatHandler from './session/chat-handler';
 import * as mailHandler from './session/mail-handler';
 import * as profileFinanceHandler from './session/profile-finance-handler';
+import * as pictureTransfer from './session/picture-transfer';
+import type { PictureUploadResult } from './session/picture-transfer';
 import * as autoConnectionHandler from './session/auto-connection-handler';
 import * as politicsHandler from './session/politics-handler';
 import * as favoritesHandler from './session/favorites-handler';
@@ -1159,6 +1161,11 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
 
   public async fetchCompanies(): Promise<CompaniesData> {
     return profileFinanceHandler.fetchCompanies(this);
+  }
+
+  /** Tycoon portrait upload over the cache server's picture-transfer port (PicShopForm.pas:658-672). */
+  public async uploadTycoonPicture(pictureBase64: string): Promise<PictureUploadResult> {
+    return pictureTransfer.uploadTycoonPicture(this, pictureBase64);
   }
 
   // -- AUTO-CONNECTIONS (facade -> auto-connection-handler) -----------------

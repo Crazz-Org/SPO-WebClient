@@ -1,7 +1,7 @@
 import type { WebSocket } from 'ws';
-import { handleProfileCurriculumAction } from './profile-handlers';
+import { handleProfileCurriculumAction, handleProfileUploadPicture } from './profile-handlers';
 import type { WsHandlerContext } from './types';
-import { WsMessageType, type WsMessage, type WsRespProfileCurriculumAction, type CompanyInfo } from '../../shared/types';
+import { WsMessageType, type WsMessage, type WsRespProfileCurriculumAction, type WsRespProfileUploadPicture, type CompanyInfo } from '../../shared/types';
 
 function makeCtx(session: Record<string, unknown>) {
   const sent: WsMessage[] = [];
@@ -65,5 +65,54 @@ describe('handleProfileCurriculumAction', () => {
     expect(resp.success).toBe(true);
     expect(resp.switchedTo).toBeUndefined();
     expect(resp.returnToCompanyStage).toBeUndefined();
+  });
+});
+
+describe('handleProfileUploadPicture', () => {
+  it('carries a success result through with the echoed wsRequestId', async () => {
+    const uploadTycoonPicture = jest.fn().mockResolvedValue({ success: true });
+    const { ctx, sent } = makeCtx({ uploadTycoonPicture });
+    await handleProfileUploadPicture(ctx, {
+      type: WsMessageType.REQ_PROFILE_UPLOAD_PICTURE,
+      wsRequestId: 'r5',
+      pictureBase64: 'abc',
+    } as WsMessage);
+
+    expect(uploadTycoonPicture).toHaveBeenCalledWith('abc');
+    const resp = sent[0] as WsRespProfileUploadPicture;
+    expect(resp.wsRequestId).toBe('r5');
+    expect(resp.success).toBe(true);
+    expect(resp.reason).toBeUndefined();
+    expect(resp.message).toBeUndefined();
+  });
+
+  it('carries a failure result through unchanged', async () => {
+    const uploadTycoonPicture = jest.fn().mockResolvedValue({
+      success: false,
+      reason: 'WRONG_DIMENSIONS',
+      message: 'Picture must be 150x200; this one is 160x200.',
+    });
+    const { ctx, sent } = makeCtx({ uploadTycoonPicture });
+    await handleProfileUploadPicture(ctx, {
+      type: WsMessageType.REQ_PROFILE_UPLOAD_PICTURE,
+      wsRequestId: 'r6',
+      pictureBase64: 'def',
+    } as WsMessage);
+
+    const resp = sent[0] as WsRespProfileUploadPicture;
+    expect(resp.success).toBe(false);
+    expect(resp.reason).toBe('WRONG_DIMENSIONS');
+    expect(resp.message).toBe('Picture must be 150x200; this one is 160x200.');
+  });
+
+  it('defaults pictureBase64 to an empty string when absent', async () => {
+    const uploadTycoonPicture = jest.fn().mockResolvedValue({ success: false, reason: 'NOT_A_JPEG', message: 'x' });
+    const { ctx } = makeCtx({ uploadTycoonPicture });
+    await handleProfileUploadPicture(ctx, {
+      type: WsMessageType.REQ_PROFILE_UPLOAD_PICTURE,
+      wsRequestId: 'r7',
+    } as WsMessage);
+
+    expect(uploadTycoonPicture).toHaveBeenCalledWith('');
   });
 });

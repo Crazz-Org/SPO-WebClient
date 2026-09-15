@@ -34,8 +34,11 @@ function collectSourceFiles(dir: string): string[] {
  * Identifiers whose .write() is NOT an RDO socket (audited non-RDO surfaces):
  * - res: HTTP/SSE responses in server.ts
  * - transport: browser WebSocket transport in server.ts
+ * - pictureSocket: the cache server's picture-transfer TCP connection
+ *   (session/picture-transfer.ts) — bare "User=/World=/Size=" + JPEG bytes,
+ *   no RDO framing, no separator, issue #705
  */
-const NON_RDO_WRITERS = new Set(['res', 'transport']);
+const NON_RDO_WRITERS = new Set(['res', 'transport', 'pictureSocket']);
 
 describe('no raw socket.write() on RDO sockets', () => {
   it('every RDO write goes through writeRdoFrame()', () => {
