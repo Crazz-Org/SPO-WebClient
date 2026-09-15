@@ -169,7 +169,7 @@ describe('channel-password scenario — the UI', () => {
     fireEvent.click(screen.getByText(PROTECTED_CHANNEL));
     useUiStore.getState().promptPayload?.onSubmit(CHANNEL_PASSWORD);
 
-    expect(onJoinChannel).toHaveBeenCalledWith(PROTECTED_CHANNEL, CHANNEL_PASSWORD);
+    expect(onJoinChannel).toHaveBeenCalledWith(PROTECTED_CHANNEL, CHANNEL_PASSWORD, 'Lobby');
   });
 
   it('joins an open channel with no prompt, unchanged', () => {
@@ -177,14 +177,14 @@ describe('channel-password scenario — the UI', () => {
     fireEvent.click(screen.getByText(OPEN_CHANNEL));
 
     expect(useUiStore.getState().modal).toBeNull();
-    expect(onJoinChannel).toHaveBeenCalledWith(OPEN_CHANNEL);
+    expect(onJoinChannel).toHaveBeenCalledWith(OPEN_CHANNEL, undefined, 'Lobby');
   });
 
   it('keeps the Lobby -> "" mapping', () => {
     const { onJoinChannel } = setup();
     fireEvent.click(screen.getAllByText('Lobby')[1]);
 
-    expect(onJoinChannel).toHaveBeenCalledWith('');
+    expect(onJoinChannel).toHaveBeenCalledWith('', undefined, 'Lobby');
   });
 
   it('a fresh prompt starts blank, leaving no stale password behind', () => {

@@ -260,17 +260,19 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
                           `Join "${ch.name}"`,
                           `Password for "${ch.name}"`,
                           (password) => {
+                            const previous = useChatStore.getState().currentChannel;
                             setCurrentChannel(ch.name);
-                            client.onJoinChannel(ch.name, password);
+                            client.onJoinChannel(ch.name, password, previous);
                             client.onGetChannelInfo(ch.name);
                           },
                           { type: 'password' },
                         );
                         return;
                       }
+                      const previous = useChatStore.getState().currentChannel;
                       setCurrentChannel(ch.name);
                       // Tell server to join this channel ("Lobby" maps to "" for the server)
-                      client.onJoinChannel(ch.name === 'Lobby' ? '' : ch.name);
+                      client.onJoinChannel(ch.name === 'Lobby' ? '' : ch.name, undefined, previous);
                       client.onGetChannelInfo(ch.name);
                     }}
                   >

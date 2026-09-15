@@ -176,11 +176,24 @@ export async function requestChannelInfo(ctx: ClientHandlerContext, channelName:
   }
 }
 
-export async function joinChannel(ctx: ClientHandlerContext, channelName: string, password?: string): Promise<void> {
+/**
+ * Join a chat channel. `previousChannel` is what the caller overwrote in the chat
+ * store before calling: a refusal rolls back to it. Omit it and the handler reads
+ * the store itself -- correct only for a caller that did not write it first.
+ */
+export async function joinChannel(
+  ctx: ClientHandlerContext,
+  channelName: string,
+  password?: string,
+  previousChannel?: string,
+): Promise<void> {
   if (ctx.isJoiningChannel) return;
 
   ctx.isJoiningChannel = true;
-  const previousChannel = useChatStore.getState().currentChannel;
+  // What to fall back to on a refusal. A caller that already wrote `currentChannel`
+  // optimistically (ChatStrip) must hand us the value it overwrote -- read from the
+  // store here it would be the refused channel itself, and the rollback a no-op.
+  const rollbackTo = previousChannel ?? useChatStore.getState().currentChannel;
 
   try {
     ClientBridge.log('Chat', `Joining channel: ${channelName || 'Lobby'}`);
@@ -196,7 +209,7 @@ export async function joinChannel(ctx: ClientHandlerContext, channelName: string
     // been flattened to getErrorMessage(code) by client.ts:1090-1097 (INV-8).
     const { serverMessage } = err as { serverMessage?: string };
     const text = serverMessage || toErrorMessage(err);
-    ClientBridge.setCurrentChannel(previousChannel);
+    ClientBridge.setCurrentChannel(rollbackTo);
     ClientBridge.log('Error', `Failed to join channel: ${text}`);
     ctx.showNotification(text, 'error');
   } finally {
