@@ -16,6 +16,7 @@ import { execFileSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { toErrorMessage } from '../../shared/error-utils';
+import { probeDriveEndpoints, type ReachabilityResult } from './reachability';
 import {
   BENCH_PORT,
   benchPaths,
@@ -110,6 +111,13 @@ export interface WorkerDeps {
   /** One owner-lease renewal pass; the loop calls it on a timer. See ./owner. */
   renewLease: (nowMs: number) => Promise<RenewOutcome>;
   processAlive: (pid: number) => boolean;
+  /**
+   * Independent of the drive itself — see downgradeUnreachable and ./reachability. Takes the
+   * drive's log file, because that is where the world server's address is written down: the
+   * directory hands it out at runtime, so a process that never logged in can only learn it
+   * from the failed connect the drive already logged.
+   */
+  gameServerReachable: (driveLog: string) => Promise<ReachabilityResult>;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   log: (line: string) => void;
@@ -207,6 +215,39 @@ export const NON_ATTESTING: ReadonlySet<JobVerdict> = new Set<JobVerdict>([
   'ENVIRONMENT',
   'ABANDONED',
 ]);
+
+/**
+ * A live drive that failed its flows is not evidence about the code unless the game server was
+ * actually there to be driven. Only a FAIL is ever reconsidered — a PASS, a BLOCKED and an
+ * ENVIRONMENT already say what they mean — and only the probe's own "no" downgrades it. A probe
+ * that throws is not an answer either way, so the FAIL stands and says why.
+ */
+export async function downgradeUnreachable(
+  probe: () => Promise<ReachabilityResult>,
+  verdict: JobVerdict,
+  detail: string,
+  log: (line: string) => void,
+): Promise<{ verdict: JobVerdict; detail: string }> {
+  if (verdict !== 'FAIL') return { verdict, detail };
+  let result: ReachabilityResult;
+  try {
+    result = await probe();
+  } catch (err: unknown) {
+    log(`reachability probe threw: ${toErrorMessage(err)}`);
+    return {
+      verdict,
+      detail: `${detail}; the reachability probe could not be run (${toErrorMessage(err)}), so this FAIL is not downgraded`,
+    };
+  }
+  if (result.ok) return { verdict, detail };
+  return {
+    verdict: 'ENVIRONMENT',
+    detail:
+      `the game server was unreachable from the bench host — the independent reachability ` +
+      `probe of ${result.target} failed: ${result.detail}; the drive's FAIL says nothing about ` +
+      `the code (${detail})`,
+  };
+}
 
 /**
  * Jobs found in running/ at startup were cut mid-flight by a worker death. They are
@@ -971,6 +1012,14 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
       } else {
         bodyVerdict = GATE_EXIT_VERDICT[code] ?? 'FAIL';
         bodyDetail = `live drive exited ${code} (${bodyVerdict})`;
+        const reconsidered = await downgradeUnreachable(
+          () => deps.gameServerReachable(logFile),
+          bodyVerdict,
+          bodyDetail,
+          deps.log,
+        );
+        bodyVerdict = reconsidered.verdict;
+        bodyDetail = reconsidered.detail;
       }
     } else {
       // Lease: the report is written EARLY — it is what the waiting session unblocks on.
@@ -1521,6 +1570,7 @@ export function realWorkerDeps(
     mayDriveLive: nowMs => mayDriveLive(lease, nowMs),
     renewLease: nowMs => renewLease(ownerDeps, lease, nowMs),
     processAlive,
+    gameServerReachable: driveLog => probeDriveEndpoints(driveLog),
     now: () => Date.now(),
     sleep,
     gitAuthEnv,
