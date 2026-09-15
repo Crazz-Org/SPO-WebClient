@@ -7,6 +7,13 @@
  * the four frames plus the browser behaviour they produce are the only evidence
  * that the kind dispatch this scenario pins (`Voyager/VoyagerWindow.pas:506-563`)
  * is what the browser actually does.
+ *
+ * Kind 1 is the onboarding curriculum and it routes on `Options`, not on the
+ * body: `nopTutorial_SHOW`/`_ON` means "there is an assignment, go read it",
+ * `nopTutorial_OFF` means "take it away" (`Tasks/Tasks.pas:29-32`, `:636-644`;
+ * `Voyager/URLNotification.pas:77`). Neither raises a toast — the panel is the
+ * notification. What the assignment then looks like is the `tutorial` scenario's
+ * half; this one proves only that the push is routed and never rendered.
  */
 
 jest.mock('@/client/bridge/client-bridge', () => ({
@@ -27,9 +34,14 @@ import { dispatchEvent } from '@/client/handlers/event-handler';
 import { ClientBridge } from '@/client/bridge/client-bridge';
 import { useUiStore } from '@/client/store/ui-store';
 import { useChatStore } from '@/client/store/chat-store';
+import { useTutorialStore } from '@/client/store/tutorial-store';
 import { ConfirmDialog } from '@/client/components/common/ConfirmDialog';
 import type { ClientHandlerContext } from '@/client/handlers/client-context';
 import { createShowNotificationScenario } from './show-notification-scenario';
+import { tutorialStateFor } from './tutorial-scenario';
+
+/** A live assignment, taken from the tutorial scenario rather than invented here. */
+const WELCOME_ASSIGNMENT = tutorialStateFor('welcome')!;
 
 const { rdo } = createShowNotificationScenario();
 
@@ -56,17 +68,20 @@ function pushToEvent(frame: string): WsEventShowNotification {
 
 function makeClientDriver() {
   const showNotification = jest.fn();
+  const sendMessage = jest.fn();
   const ctx = {
     showNotification,
+    sendMessage,
     buildingCategories: [{ id: 'existing' }],
   } as unknown as ClientHandlerContext;
-  return { ctx, showNotification };
+  return { ctx, showNotification, sendMessage };
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
-  useUiStore.setState({ modal: null, confirmPayload: null });
+  useUiStore.setState({ modal: null, confirmPayload: null, stack: [] });
   useChatStore.setState({ currentChannel: 'Lobby', unreadChatCount: 0, messages: {} });
+  useTutorialStore.getState().reset();
 });
 
 describe('show-notification scenario — the catalogue', () => {
@@ -114,24 +129,43 @@ describe('show-notification scenario — kind 0, message box', () => {
   });
 });
 
-describe('show-notification scenario — kind 1, tutorial URL suppressed', () => {
-  it('never toasts the URL, toasts the title alone, and logs the URL', () => {
+describe('show-notification scenario — kind 1, the onboarding curriculum', () => {
+  it('raises no toast at all and asks the gateway for the tutorial state', () => {
     const event = pushToEvent(frameForKind(1));
     expect(event.kind).toBe(1);
-    expect(event.body).toContain('tutorial.asp');
+    expect(event.body).toContain('default.asp');
+    // nopTutorial_SHOW — "there is an assignment" (Tasks/Tasks.pas:285).
+    expect(event.options).toBe(4);
 
-    const { ctx, showNotification } = makeClientDriver();
+    const { ctx, showNotification, sendMessage } = makeClientDriver();
     dispatchEvent(ctx, event);
 
-    for (const call of showNotification.mock.calls) {
-      expect(String(call[0])).not.toContain('tutorial.asp');
-    }
-    expect(showNotification).toHaveBeenCalledWith('Your first assignment', 'info');
+    // The panel IS the notification, exactly as the URL frame was: neither the
+    // URL nor the title reaches a toast.
+    expect(showNotification).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith({ type: WsMessageType.REQ_TUTORIAL_STATE });
+    expect(useTutorialStore.getState().autoOpen).toBe(true);
 
+    // The URL still reaches the diagnostics log, and only it.
     const logged = (ClientBridge.log as jest.Mock).mock.calls
-      .some(([, message]) => typeof message === 'string' && message.includes('tutorial.asp'));
+      .some(([, message]) => typeof message === 'string' && message.includes('default.asp'));
     expect(logged).toBe(true);
     expect(useUiStore.getState().modal).toBeNull();
+  });
+
+  it('the same push with nopTutorial_OFF clears the assignment and asks for nothing', () => {
+    const hideFrame = frameForKind(1).replace('"#4";', '"#0";');
+    const event = pushToEvent(hideFrame);
+    expect(event.options).toBe(0);
+
+    useTutorialStore.setState({ assignment: WELCOME_ASSIGNMENT, loaded: true });
+
+    const { ctx, showNotification, sendMessage } = makeClientDriver();
+    dispatchEvent(ctx, event);
+
+    expect(useTutorialStore.getState().assignment).toBeNull();
+    expect(showNotification).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });
 

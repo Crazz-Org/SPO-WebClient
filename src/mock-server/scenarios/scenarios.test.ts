@@ -794,7 +794,8 @@ describe('scenario registry', () => {
     // 35: `bank-loan-request`, issue 571.
     // 36: `status-lamps`, issue 611.
     // 37: channel-list-change, issue 627.
-    expect(SCENARIO_NAMES).toHaveLength(37);
+    // 38: `tutorial`, issue 626.
+    expect(SCENARIO_NAMES).toHaveLength(38);
   });
 
   it('loadScenario returns bundle for each name', () => {

@@ -45,6 +45,7 @@ import { createChannelListChangeScenario } from './channel-list-change-scenario'
 import { createRefreshSeasonScenario } from './refresh-season-scenario';
 import { createBankLoanRequestScenario } from './bank-loan-request-scenario';
 import { createStatusLampsScenario } from './status-lamps-scenario';
+import { createTutorialScenario } from './tutorial-scenario';
 
 /** All recognized scenario names */
 export type ScenarioName =
@@ -84,7 +85,8 @@ export type ScenarioName =
   | 'channel-list-change'
   | 'refresh-season'
   | 'bank-loan-request'
-  | 'status-lamps';
+  | 'status-lamps'
+  | 'tutorial';
 
 /** Ordered list of all scenario names */
 export const SCENARIO_NAMES: ScenarioName[] = [
@@ -125,6 +127,7 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   'refresh-season',
   'bank-loan-request',
   'status-lamps',
+  'tutorial',
 ];
 
 /** Union result from any scenario factory */
@@ -176,6 +179,7 @@ const SCENARIO_FACTORIES: Record<
   'refresh-season': (o) => createRefreshSeasonScenario(o),
   'bank-loan-request': (o) => createBankLoanRequestScenario(o),
   'status-lamps': (o) => createStatusLampsScenario(o),
+  'tutorial': (o) => createTutorialScenario(o),
 };
 
 /**

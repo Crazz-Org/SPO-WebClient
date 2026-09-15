@@ -41,6 +41,8 @@ import {
   NewspaperIssue,
   NewspaperIssueList,
   PoliticalRoleInfo,
+  TutorialState,
+  TutorialActionType,
   ConnectionSearchResult,
   ConnectionReachabilityEntry,
   FavoritesItem,
@@ -87,6 +89,7 @@ import * as pictureTransfer from './session/picture-transfer';
 import type { PictureUploadResult } from './session/picture-transfer';
 import * as autoConnectionHandler from './session/auto-connection-handler';
 import * as politicsHandler from './session/politics-handler';
+import * as tutorialHandler from './session/tutorial-handler';
 import * as favoritesHandler from './session/favorites-handler';
 import type { FavoriteMutationResult } from './session/favorites-handler';
 import * as newspaperHandler from './session/newspaper-handler';
@@ -1187,6 +1190,17 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
 
   public async executeCurriculumAction(action: string, value?: boolean): Promise<{ success: boolean; message?: string }> {
     return autoConnectionHandler.executeCurriculumAction(this, action, value);
+  }
+
+  // -- TUTORIAL (facade -> tutorial-handler) --------------------------------
+  public async getTutorialState(): Promise<TutorialState | null> {
+    return tutorialHandler.fetchTutorialState(this);
+  }
+
+  public async runTutorialAction(
+    action: TutorialActionType,
+  ): Promise<{ success: boolean; message: string; state: TutorialState | null }> {
+    return tutorialHandler.runTutorialAction(this, action);
   }
 
   public async readPersonalCompanies(): Promise<CompanyInfo[]> {

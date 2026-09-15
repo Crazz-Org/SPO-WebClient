@@ -108,6 +108,11 @@ export const RDO_MEMBERS = {
   // published name — `cmm := MSProxy.Commercials` (TVGeneralSheet.pas:274) and
   // `Proxy.Commercials := …` (:322).
   Commercials:               { kind: 'accessor',  access: ['get', 'set'] },  // StdBlocks/Broadcast.pas:53; building-details-handler.ts (enrichTvTab), building-property-handler.ts:188
+  // Write-only here: the Get New Assignment button sets it to true, which is what
+  // releases the finished task (`Tasks/Tasks.pas:156`, written at `ModifyTask.asp:32-33`).
+  // The panel learns the task is done from the cached `TutorialTaskDone`, never by reading
+  // this back, so `get` has no call site and is deliberately absent.
+  Completed:                 { kind: 'accessor',  access: ['set'] },         // Tasks/Tasks.pas:156; src/server/session/tutorial-handler.ts (runTutorialAction)
   ConnectFacilities:         { kind: 'function',  arity: 2 },                // src/server/spo_session.ts:795
   ContextStatusText:         { kind: 'function',  arity: 2 },                // Interface Server/InterfaceServer.pas:149; src/server/session/context-status-handler.ts
   CreateChannel:             { kind: 'function',  arity: 5 },                // Interface Server/InterfaceServer.pas:186; src/server/session/chat-handler.ts (createChatChannel)
@@ -173,6 +178,13 @@ export const RDO_MEMBERS = {
   RDOCancelMovie:            { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
   RDOCancelResearch:         { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223
   RDOCanJoinNewWorld:        { kind: 'function',  arity: 1 },                // DServer/DirectoryServer.pas:116; src/server/session/login-handler.ts (checkWorldLimit)
+  // The three tutorial navigation members are declared together on `TInformativeTask`,
+  // each a published `procedure` taking one `useless : integer` it never reads. We emit
+  // the declared arity rather than the zero-argument form the ASP's COM proxy happened to
+  // send (`ModifyTask.asp:27-31`): the dispatcher marshals whatever arrived into EDX and
+  // the body ignores it (`Rdo/Server/RDOObjectServer.pas:214-221`, `:266-277`), so the
+  // declared form is both safe and a direct match to the citation.
+  RDOClose:                  { kind: 'procedure', arity: 1 },                // Tasks/InformativeTask.pas:15; src/server/session/tutorial-handler.ts (runTutorialAction)
   RDOCnntId:                 { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts:421
   RDOConnectInput:           { kind: 'procedure', arity: 2 },                // src/server/session/building-property-handler.ts:194,223
   RDOConnectOutput:          { kind: 'procedure', arity: 2 },                // src/server/session/building-property-handler.ts:194,223
@@ -198,10 +210,12 @@ export const RDO_MEMBERS = {
   RDOLogonClient:            { kind: 'procedure', arity: 2 },                // Kernel/World.pas:412; src/server/spo_session.ts:997
   RDOLogonUser:              { kind: 'function',  arity: 2 },                // DServer/DirectoryServer.pas:92; src/server/session/login-handler.ts:203
   RDOMapSegaUser:            { kind: 'function',  arity: 1 },                // src/server/session/login-handler.ts:199
+  RDONextStep:               { kind: 'procedure', arity: 1 },                // Tasks/InformativeTask.pas:16; src/server/session/tutorial-handler.ts (runTutorialAction)
   // DServer/DirectoryServer.pas:143 — a 0-arg published FUNCTION, kept as accessor `get`
   // under rule 1: the verb follows the reference client, which emits `get RDOOpenSession`,
   // served by the Delphi get→CallMethod fallthrough (RDOObjectServer.pas:112-116).
   RDOOpenSession:            { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts:194
+  RDOPrevStep:               { kind: 'procedure', arity: 1 },                // Tasks/InformativeTask.pas:17; src/server/session/tutorial-handler.ts (runTutorialAction)
   RDOQueryKey:               { kind: 'function',  arity: 2 },                // src/server/session/login-handler.ts:243
   RDOQueueResearch:          { kind: 'procedure', arity: 2 },                // src/server/session/building-property-handler.ts:194,223
   RDOReleaseMovie:           { kind: 'procedure', arity: 1 },                // src/server/session/building-property-handler.ts:194,223

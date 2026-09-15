@@ -36,7 +36,7 @@ export type LeftPanelType = 'empire' | 'facilities' | 'overlays';
  * return to. `rightPanel` / `leftPanel` are kept as DERIVED read-only views of the top of
  * the stack so the components written against them keep working while they migrate.
  */
-export type SurfaceKind = RightPanelType | LeftPanelType | 'build' | 'supplierSearch' | 'map';
+export type SurfaceKind = RightPanelType | LeftPanelType | 'build' | 'supplierSearch' | 'map' | 'tutorial';
 
 /** Remembered supplier-search filters (T3, B4): a player usually searches several fluids in a row. */
 export interface ConnectionFilters {
