@@ -191,7 +191,12 @@ export interface ClientCallbacks {
 
   // Chat
   onSendChatMessage: (message: string) => void;
-  onJoinChannel: (channelName: string, password?: string) => void;
+  /**
+   * Join a chat channel. `previousChannel` is what the caller overwrote in the chat
+   * store before calling: a refusal rolls back to it. Omit it and the handler reads
+   * the store itself -- correct only for a caller that did not write it first.
+   */
+  onJoinChannel: (channelName: string, password?: string, previousChannel?: string) => void;
   /**
    * Create a named channel (Delphi CreateChannel). Returns a promise — unlike
    * `onJoinChannel` — so the modal can await it and stay open on a refusal.

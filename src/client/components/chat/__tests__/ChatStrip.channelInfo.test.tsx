@@ -34,7 +34,7 @@ describe('ChatStrip channel info', () => {
     fireEvent.click(screen.getByText('Lobby'));
     fireEvent.click(screen.getByText('Trade'));
 
-    expect(onJoinChannel).toHaveBeenCalledWith('Trade');
+    expect(onJoinChannel).toHaveBeenCalledWith('Trade', undefined, 'Lobby');
     expect(onGetChannelInfo).toHaveBeenCalledWith('Trade');
   });
 
@@ -50,7 +50,7 @@ describe('ChatStrip channel info', () => {
     fireEvent.click(screen.getByText('Lobby'));
     fireEvent.click(screen.getAllByText('Lobby')[1]);
 
-    expect(onJoinChannel).toHaveBeenCalledWith('');
+    expect(onJoinChannel).toHaveBeenCalledWith('', undefined, 'Lobby');
     expect(onGetChannelInfo).toHaveBeenCalledWith('Lobby');
   });
 

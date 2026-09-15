@@ -92,13 +92,13 @@ describe('StarpeaceClient callback wiring', () => {
   it('onJoinChannel forwards to chatHandler.joinChannel with the client, channel name and password', () => {
     client.callbacks.onJoinChannel('Boardroom', 'hunter2');
 
-    expect(chatHandler.joinChannel).toHaveBeenCalledWith(client, 'Boardroom', 'hunter2');
+    expect(chatHandler.joinChannel).toHaveBeenCalledWith(client, 'Boardroom', 'hunter2', undefined);
   });
 
   it('onJoinChannel forwards an undefined password unchanged when none is given', () => {
     client.callbacks.onJoinChannel('Lobby');
 
-    expect(chatHandler.joinChannel).toHaveBeenCalledWith(client, 'Lobby', undefined);
+    expect(chatHandler.joinChannel).toHaveBeenCalledWith(client, 'Lobby', undefined, undefined);
   });
 
   it('onProfileCompanyProfitLoss sends REQ_PROFILE_COMPANY_PROFITLOSS with the company name and cluster', () => {
