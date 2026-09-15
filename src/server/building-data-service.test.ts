@@ -457,3 +457,40 @@ describe('getFacility() — zone projection', () => {
     expect(serviceWithZone(undefined).getFacility('700')!.zoneType).toBeUndefined();
   });
 });
+
+/**
+ * The numeric `facId` projection (issue #598) — carried alongside the pre-existing `facid`
+ * category slug string, never replacing it. Seeded straight into the cache, same as the
+ * ambience/zone blocks above, so the check does not depend on CLASSES.BIN being present.
+ */
+describe('getFacility() — facId projection', () => {
+  function serviceWithFacId(facId: number | undefined): BuildingDataService {
+    const service = new BuildingDataService();
+    const cache = (service as unknown as { cacheByVisualClass: Map<string, BuildingData> })
+      .cacheByVisualClass;
+    cache.set('700', {
+      visualClass: '700',
+      name: 'Farm',
+      xsize: 2,
+      ysize: 2,
+      textureFilename: 'MapFarm.gif',
+      baseVisualClass: '700',
+      visualStages: 0,
+      constructionTextureFilename: 'Construction128.gif',
+      category: 'agriculture',
+      facId,
+    });
+    return service;
+  }
+
+  it('carries the numeric facId through from the parsed class', () => {
+    const facility = serviceWithFacId(42).getFacility('700');
+    expect(facility!.facId).toBe(42);
+    expect(typeof facility!.facid).toBe('string');
+    expect(facility!.facid).toBe('agriculture');
+  });
+
+  it('leaves facId undefined when the class declares none', () => {
+    expect(serviceWithFacId(undefined).getFacility('700')!.facId).toBeUndefined();
+  });
+});

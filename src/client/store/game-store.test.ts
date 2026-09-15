@@ -632,3 +632,29 @@ describe('game-store settings — two volumes', () => {
     expect(useGameStore.getState().settings.musicVolume).toBe(0.2);
   });
 });
+
+describe('game-store hiddenFacIds / facilityKinds', () => {
+  beforeEach(() => {
+    useGameStore.getState().reset();
+  });
+
+  it('defaults hiddenFacIds to an empty array', () => {
+    expect(useGameStore.getState().settings.hiddenFacIds).toEqual([]);
+  });
+
+  it('updateSettings writes hiddenFacIds without touching a neighbouring setting', () => {
+    useGameStore.getState().updateSettings({ hiddenFacIds: [10, 20] });
+    expect(useGameStore.getState().settings.hiddenFacIds).toEqual([10, 20]);
+    expect(useGameStore.getState().settings.glassForeignBuildings).toBe(true);
+  });
+
+  it('defaults facilityKinds to an empty array', () => {
+    expect(useGameStore.getState().facilityKinds).toEqual([]);
+  });
+
+  it('setFacilityKinds stores the list', () => {
+    const kinds = [{ facId: 10, label: 'Farm' }];
+    useGameStore.getState().setFacilityKinds(kinds);
+    expect(useGameStore.getState().facilityKinds).toEqual(kinds);
+  });
+});

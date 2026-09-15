@@ -9,6 +9,7 @@ import { SurfaceType } from '@/shared/types/domain-types';
 import { VISITOR_COMPANY_ID } from '@/shared/visitor-visa';
 import { loadRememberedSession, saveRememberedSession, clearRememberedSession, type RememberedSession } from './remembered-session';
 import { DEFAULT_LANGUAGE_ID } from '@/shared/language';
+import type { FacilityKind } from '../facility-kinds';
 
 export type { RememberedSession };
 
@@ -82,6 +83,9 @@ export interface GameSettings {
   minimapPixelSize: number | null;
   /** The language sent to the world on login — one of the six ids in `shared/language.ts`. */
   languageId: string;
+  /** Facility KINDS the player has hidden on the isometric map — legacy `HideFacilities`
+   *  (Map.pas:6397-6407). An array, not a Set: it has to survive `JSON.stringify`. */
+  hiddenFacIds: number[];
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
@@ -98,6 +102,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   minimapZoom: 1,
   minimapPixelSize: null,
   languageId: DEFAULT_LANGUAGE_ID,
+  hiddenFacIds: [],
 };
 
 /* ---- Store ---- */
@@ -199,6 +204,9 @@ interface GameState {
   // Settings
   settings: GameSettings;
 
+  /** The kinds this world declares, derived once at facility preload. Not a setting — not persisted. */
+  facilityKinds: FacilityKind[];
+
   // Actions
   setStatus: (status: ConnectionStatus) => void;
   setDisconnectReason: (reason: DisconnectReason) => void;
@@ -238,6 +246,7 @@ interface GameState {
   setServerStartup: (partial: Partial<ServerStartupState>) => void;
   setMapLoading: (partial: Partial<MapLoadingState>) => void;
   updateSettings: (partial: Partial<GameSettings>) => void;
+  setFacilityKinds: (kinds: FacilityKind[]) => void;
   enterServerSwitch: () => void;
   cancelServerSwitch: () => void;
   completeServerSwitch: () => void;
@@ -290,6 +299,7 @@ export const useGameStore = create<GameState>((set) => ({
   clusterFacilitiesLoading: false,
   capitolCoords: null,
   settings: { ...DEFAULT_SETTINGS },
+  facilityKinds: [],
   serverStartup: { ready: false, progress: 0, message: 'Connecting...', services: [] },
   mapLoading: { active: false, progress: 0, message: '' },
   // Actions
@@ -352,6 +362,8 @@ export const useGameStore = create<GameState>((set) => ({
     set((state) => ({
       settings: { ...state.settings, ...partial },
     })),
+
+  setFacilityKinds: (kinds) => set({ facilityKinds: kinds }),
 
   enterServerSwitch: () =>
     set((state) => ({

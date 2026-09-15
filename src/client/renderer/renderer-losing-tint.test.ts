@@ -42,6 +42,7 @@ type Host = {
   glassForeignBuildings: boolean;
   ownTycoonId: number;
   signalLosingFacilities: boolean;
+  hiddenFacIds: ReadonlySet<number>;
   reddenTexture: jest.Mock;
   losingScratch: unknown;
   requestRender: jest.Mock;
@@ -99,6 +100,7 @@ function makeHost(sourceLog: unknown[], overrides: Partial<Host> = {}): Host {
     glassForeignBuildings: false,
     ownTycoonId: 0,
     signalLosingFacilities: false,
+    hiddenFacIds: new Set(),
     reddenTexture: jest.fn(() => REDDENED),
     losingScratch: null,
     requestRender: jest.fn(),

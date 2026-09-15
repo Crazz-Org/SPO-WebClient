@@ -23,6 +23,7 @@ import { GameObjectTextureCache } from './game-object-texture-cache';
 import { VegetationFlatMapper } from './vegetation-flat-mapper';
 import { TouchHandler2D } from './touch-handler-2d';
 import type { AmbienceSnapshot, AmbienceSource } from '../audio/map-ambience';
+import { isFacilityKindHidden } from '../facility-kinds';
 import {
   Point,
   Rect,
@@ -570,6 +571,8 @@ export class IsometricMapRenderer {
   private ownTycoonId: number = 0;
   /** Legacy 'Signal losing facilities' (Map.pas:1323-1324): shade my own alerting buildings red. */
   private signalLosingFacilities: boolean = false;
+  /** Legacy `fHiddenFacilities` (Map.pas:547): facility KINDS whose sprite is not drawn. Empty = draw all. */
+  private hiddenFacIds: ReadonlySet<number> = new Set();
   /** Scratch canvas the red shade is composed on; created on first use, never while the option is off. */
   private losingScratch: HTMLCanvasElement | null = null;
   /** Blocks this player has loaded in this world; null = fog off (no set attached). */
@@ -3497,6 +3500,7 @@ export class IsometricMapRenderer {
     const margin = 10; // Generous margin for large buildings
     const visibleBuildings = this.allBuildings.filter(b => {
       const dims = this.facilityDimensionsCache.get(b.visualClass);
+      if (isFacilityKindHidden(this.hiddenFacIds, dims)) return false;
       const bw = dims?.xsize || 1;
       const bh = dims?.ysize || 1;
       return b.x + bw > bounds.minJ - margin && b.x < bounds.maxJ + margin &&
@@ -3633,6 +3637,7 @@ export class IsometricMapRenderer {
     // These buildings no longer exist in allBuildings so they must be drawn separately.
     for (const [, effect] of this.buildingEffects) {
       if (effect.type !== 'demolish') continue;
+      if (isFacilityKindHidden(this.hiddenFacIds, this.facilityDimensionsCache.get(effect.building.visualClass))) continue;
       const DURATION = 500;
       const t = Math.min(1, (performance.now() - effect.startTime) / DURATION);
       if (t >= 1) continue;
@@ -5404,6 +5409,11 @@ export class IsometricMapRenderer {
     this.requestRender();
   }
 
+  public setHiddenFacIds(facIds: readonly number[]): void {
+    this.hiddenFacIds = new Set(facIds);
+    this.requestRender();
+  }
+
   /** The game store's decimal tycoon id; '' / undefined / unparsable means "unknown" and glasses nothing. */
   public setOwnTycoonId(tycoonId: string | undefined): void {
     this.ownTycoonId = parseInt(tycoonId || '0', 10) || 0;
@@ -5824,6 +5834,7 @@ export class IsometricMapRenderer {
   private getBuildingAt(x: number, y: number): MapBuilding | null {
     for (const building of this.allBuildings) {
       const dims = this.facilityDimensionsCache.get(building.visualClass);
+      if (isFacilityKindHidden(this.hiddenFacIds, dims)) continue;
       const xsize = dims?.xsize || 1;
       const ysize = dims?.ysize || 1;
 
