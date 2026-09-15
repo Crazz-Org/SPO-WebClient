@@ -1464,6 +1464,34 @@ describe('runJob — nightly', () => {
     expect(nightlyResult).toMatchObject({ verdict: 'FAIL' });
     expect(nightlyResult?.detail).toMatch(/live drive exited 1 \(FAIL\)/);
   });
+
+  // A manual nightly takes the other branch of the publish fork (publishManualResult, not
+  // writeNightlyResult), so the downgrade has to be proven on that surface too: the maintainer
+  // who asks "is this red really the code?" must be answered ENVIRONMENT, and the answer must
+  // not be attested — it measured nothing about main.
+  it('an unreachable game server downgrades a failing MANUAL nightly to ENVIRONMENT too', async () => {
+    const h = harness();
+    const job = deposit(h, 'nightly', [], {
+      trigger: 'manual',
+      requestedBy: {
+        user: 'maintainer',
+        host: 'bench-pc',
+        tty: '/dev/pts/3',
+        via: 'bench-cli',
+        reason: 'twelve connect ETIMEDOUT lines — this red is not the code',
+        requestedAt: '2026-09-13T13:00:00.000Z',
+      },
+    });
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+    h.reachable = { ok: false, target: 'dserver:1111', detail: 'connection refused' };
+
+    await processOldest(h.deps);
+
+    expect(h.spool.readReport(job.id)).toMatchObject({ verdict: 'ENVIRONMENT' });
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, verdict: 'ENVIRONMENT', attested: false }),
+    ]);
+  });
 });
 
 describe('runJob — live and lease', () => {
