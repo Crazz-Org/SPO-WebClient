@@ -50,7 +50,14 @@ import {
   type StaticProofAttestation,
   type StatusPublisher,
 } from './verdict';
-import { maybeRunNightly, nightlyResultFromReport, writeNightlyResult } from './nightly';
+import {
+  maybeRunNightly,
+  nightlyResultFromReport,
+  publishManualResult,
+  unknownRequester,
+  writeManualRecord,
+  writeNightlyResult,
+} from './nightly';
 import { githubAuthEnv, type GitAuthEnv } from './git-auth';
 import {
   ghVariableReader,
@@ -261,7 +268,32 @@ export function recoverInterrupted(deps: WorkerDeps): void {
     });
     // Otherwise latest.json would keep yesterday's PASS while nothing is running and
     // nothing is scheduled — main would read as proven on the strength of a job that died.
-    if (request.type === 'nightly') {
+    //
+    // A MANUAL nightly is the exception, and for the opposite reason: what it would
+    // overwrite is a real measurement of this very same sha, which a human deliberately
+    // asked to re-check. Stamping INTERRUPTED over it would destroy a genuine result on
+    // the strength of a worker death that measured nothing (see publishManualResult). The
+    // outcome is still recorded — in nightly/manual/, where every manual outcome lands.
+    //
+    // The trigger is read from the REQUEST, not a report: recovery runs at startup, before
+    // any report for this job exists, and the request is the copy that survived on disk.
+    if (request.type === 'nightly' && request.trigger === 'manual') {
+      writeManualRecord(deps.paths, {
+        id: request.id,
+        jobId: request.id,
+        requestedSha: request.fingerprint.head,
+        requestedBy: request.requestedBy ?? unknownRequester(request.submittedAt),
+        attested: false,
+        sha: request.fingerprint.head,
+        verdict: 'INTERRUPTED',
+        submittedAt: request.submittedAt,
+        finishedAt: new Date(deps.now()).toISOString(),
+        detail:
+          'the worker died while the manual proof was driving main; nothing is proven, and ' +
+          'the published result was left exactly as it was',
+        trigger: 'manual',
+      });
+    } else if (request.type === 'nightly') {
       writeNightlyResult(deps.paths, {
         jobId: request.id,
         sha: request.fingerprint.head,
@@ -269,6 +301,8 @@ export function recoverInterrupted(deps: WorkerDeps): void {
         submittedAt: request.submittedAt,
         finishedAt: new Date(deps.now()).toISOString(),
         detail: 'the worker died while the nightly was driving main; nothing is proven',
+        trigger: 'scheduled',
+        scheduledSubmittedAt: request.submittedAt,
       });
     }
     deps.spool.finish(file);
@@ -406,8 +440,15 @@ export async function processOldest(deps: WorkerDeps): Promise<boolean> {
   }
 
   // The nightly publishes to its own file, never to verdicts/ — see ./nightly.
-  if (request.type === 'nightly') {
-    writeNightlyResult(deps.paths, nightlyResultFromReport(report, request.submittedAt));
+  //
+  // A manual proof goes through publishManualResult instead: it always records the outcome
+  // under nightly/manual/, and replaces latest.json only when it genuinely measured the sha
+  // that was asked about. A scheduled run has no such condition — it publishes whatever it
+  // reached, including the non-attesting verdicts, because nothing else is watching main.
+  if (request.type === 'nightly' && request.trigger === 'manual') {
+    publishManualResult(deps.paths, report, request);
+  } else if (request.type === 'nightly') {
+    writeNightlyResult(deps.paths, nightlyResultFromReport(report, request));
   }
 
   deps.spool.finish(runningFile);
@@ -765,6 +806,9 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
     targetMoved: false,
     startedAt: new Date(deps.now()).toISOString(),
     logFile,
+    // Carried onto the report so appendJobsLog and the nightly publish path can read why
+    // this run happened without either of them having to hold the request.
+    ...(request.trigger !== undefined ? { trigger: request.trigger } : {}),
   };
   const finish = (verdict: JobVerdict, detail: string): JobReport => {
     report.verdict = verdict;

@@ -7,7 +7,7 @@ import { type runGit } from './fingerprint';
 import { benchPaths, ensureLayout, readHeartbeat, readWorkerInfo, type BenchPaths } from './paths';
 import { Spool, type JobRequest } from './job';
 import { listVerdicts, publishPendingStatuses, writeVerdictIn } from './verdict';
-import { readNightlyResult } from './nightly';
+import { nightlyResultFile, readManualRecords, readNightlyResult } from './nightly';
 import { type GatewayDeps } from './gateway';
 import { type ReachabilityResult } from './reachability';
 import {
@@ -206,7 +206,12 @@ function jobsLogVerdicts(h: Harness): { id: string; verdict: string }[] {
  * is gone, and every test that used to say 'gate' means "the job that produces an
  * attestation".
  */
-function deposit(h: Harness, type: JobRequest['type'] = 'ref', args: string[] = []): JobRequest {
+function deposit(
+  h: Harness,
+  type: JobRequest['type'] = 'ref',
+  args: string[] = [],
+  overrides: Partial<Omit<JobRequest, 'id' | 'submittedAt'>> = {},
+): JobRequest {
   return h.spool.submit(
     {
       type,
@@ -217,6 +222,7 @@ function deposit(h: Harness, type: JobRequest['type'] = 'ref', args: string[] = 
       args,
       ...(type === 'lease' ? { leaseMinutes: 1 } : {}),
       ...(type === 'ref' ? { ref: `head-of-${path.basename(h.worktree)}` } : {}),
+      ...overrides,
     },
     h.clock.nowMs,
   );
@@ -2655,5 +2661,235 @@ describe('the worker wiring reaches the credentials', () => {
     const before = Date.now();
     await realWorkerDeps(paths()).sleep(5);
     expect(Date.now() - before).toBeGreaterThanOrEqual(4);
+  });
+});
+
+/**
+ * #801 — a manual nightly publishes only what it actually measured.
+ *
+ * A scheduled nightly publishes whatever it reached, including the verdicts that prove
+ * nothing: nothing else is watching `main`, and a worker death must not leave yesterday's
+ * PASS standing. A manual proof is the opposite case — the record it would overwrite is a
+ * real measurement of the very same sha, which a human asked to re-check because they
+ * believed it was wrong. Clearing that on the strength of a timed-out fetch would destroy
+ * the only true statement on file.
+ */
+describe('a manual nightly — attest-only replacement of latest.json', () => {
+  const REQUESTED_BY = {
+    user: 'maintainer',
+    host: 'bench-pc',
+    tty: '/dev/pts/3',
+    via: 'bench-cli' as const,
+    reason: 'twelve connect ETIMEDOUT lines — this red is not the code',
+    requestedAt: '2026-09-13T13:00:00.000Z',
+  };
+
+  /** A manual nightly deposit, optionally naming a requested sha of its own. */
+  function depositManual(h: Harness, overrides: Partial<Omit<JobRequest, 'id' | 'submittedAt'>> = {}): JobRequest {
+    return deposit(h, 'nightly', [], { trigger: 'manual', requestedBy: REQUESTED_BY, ...overrides });
+  }
+
+  /** A red on file for the sha the manual proof is about to re-measure. */
+  function redOnFile(h: Harness): Buffer {
+    fs.mkdirSync(h.paths.nightly, { recursive: true });
+    fs.writeFileSync(
+      nightlyResultFile(h.paths),
+      `${JSON.stringify(
+        {
+          jobId: 'job-yesterday',
+          sha: `head-of-${path.basename(h.worktree)}`,
+          verdict: 'FAIL',
+          submittedAt: '2026-09-13T02:10:00.000Z',
+          scheduledSubmittedAt: '2026-09-13T02:10:00.000Z',
+          finishedAt: '2026-09-13T02:40:00.000Z',
+          trigger: 'scheduled',
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+    return fs.readFileSync(nightlyResultFile(h.paths));
+  }
+
+  it('a manual PASS replaces latest.json, filling supersedes and carrying the scheduled stamp', async () => {
+    const h = harness();
+    redOnFile(h);
+    const job = depositManual(h);
+
+    await processOldest(h.deps);
+
+    expect(readNightlyResult(h.paths)).toMatchObject({
+      jobId: job.id,
+      verdict: 'PASS',
+      trigger: 'manual',
+      requestedBy: { user: 'maintainer' },
+      // Not reset by a manual run: the night's own 20 h slot is untouched.
+      scheduledSubmittedAt: '2026-09-13T02:10:00.000Z',
+      supersedes: { jobId: 'job-yesterday', verdict: 'FAIL', trigger: 'scheduled' },
+    });
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, attested: true, verdict: 'PASS' }),
+    ]);
+    // Still not a gate: main's sha carries no attestation.
+    expect(listVerdicts(h.paths)).toHaveLength(0);
+  });
+
+  it('a manual FAIL replaces latest.json too — confirming a red is a real measurement', async () => {
+    const h = harness();
+    redOnFile(h);
+    const job = depositManual(h);
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+
+    await processOldest(h.deps);
+
+    expect(readNightlyResult(h.paths)).toMatchObject({
+      jobId: job.id,
+      verdict: 'FAIL',
+      trigger: 'manual',
+    });
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, attested: true, verdict: 'FAIL' }),
+    ]);
+  });
+
+  it('a manual ENVIRONMENT leaves latest.json byte-identical and records attested: false', async () => {
+    const h = harness();
+    const before = redOnFile(h);
+    const job = depositManual(h);
+    h.exitCodes = [0, 0, 0, 3]; // run.js exits ENVIRONMENT — nothing was learned about main
+
+    await processOldest(h.deps);
+
+    expect(fs.readFileSync(nightlyResultFile(h.paths))).toEqual(before);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, attested: false, verdict: 'ENVIRONMENT' }),
+    ]);
+  });
+
+  it('a manual BLOCKED leaves latest.json byte-identical — a refused world lock measured nothing', async () => {
+    const h = harness();
+    const before = redOnFile(h);
+    depositManual(h);
+    h.exitCodes = [0, 0, 0, 2];
+
+    await processOldest(h.deps);
+
+    expect(fs.readFileSync(nightlyResultFile(h.paths))).toEqual(before);
+    expect(readManualRecords(h.paths)[0]).toMatchObject({ verdict: 'BLOCKED', attested: false });
+  });
+
+  it('a manual STALE leaves latest.json byte-identical', async () => {
+    const h = harness();
+    const before = redOnFile(h);
+    const job = depositManual(h);
+    h.hashes = ['h2', 'h2']; // the tree moved between deposit and start
+
+    await processOldest(h.deps);
+
+    expect(h.spool.readReport(job.id)?.verdict).toBe('STALE');
+    expect(fs.readFileSync(nightlyResultFile(h.paths))).toEqual(before);
+    expect(readManualRecords(h.paths)[0]).toMatchObject({ verdict: 'STALE', attested: false });
+  });
+
+  it('a manual run whose driven sha is not the requested one does not replace latest.json', async () => {
+    const h = harness();
+    const before = redOnFile(h);
+    // The deposit names a sha the checkout no longer holds: the drive answered a question
+    // nobody asked, so the answer must not be published as if it had.
+    const job = depositManual(h, {
+      fingerprint: { head: 'the-sha-that-was-confirmed', hash: 'h1', clean: true },
+    });
+
+    await processOldest(h.deps);
+
+    expect(h.spool.readReport(job.id)?.verdict).toBe('PASS');
+    expect(fs.readFileSync(nightlyResultFile(h.paths))).toEqual(before);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({
+        attested: false,
+        requestedSha: 'the-sha-that-was-confirmed',
+        sha: `head-of-${path.basename(h.worktree)}`,
+      }),
+    ]);
+  });
+
+  it('a manual INTERRUPTED records the outcome and leaves latest.json byte-identical', () => {
+    const h = harness();
+    const before = redOnFile(h);
+    const job = depositManual(h);
+    h.spool.claim(h.spool.queued()[0].file);
+
+    recoverInterrupted(h.deps);
+
+    expect(fs.readFileSync(nightlyResultFile(h.paths))).toEqual(before);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, attested: false, verdict: 'INTERRUPTED', trigger: 'manual' }),
+    ]);
+    expect(h.spool.readReport(job.id)?.verdict).toBe('INTERRUPTED');
+  });
+
+  it('REGRESSION: a SCHEDULED interrupted nightly still overwrites latest.json', () => {
+    // The rule the manual path must not have taken away: a worker death mid-nightly must
+    // not leave yesterday's PASS standing, because nothing else is watching that sha.
+    const h = harness();
+    redOnFile(h);
+    const job = deposit(h, 'nightly');
+    h.spool.claim(h.spool.queued()[0].file);
+
+    recoverInterrupted(h.deps);
+
+    expect(readNightlyResult(h.paths)).toMatchObject({
+      jobId: job.id,
+      verdict: 'INTERRUPTED',
+      trigger: 'scheduled',
+    });
+    expect(readManualRecords(h.paths)).toEqual([]);
+  });
+
+  it('a manual nightly deposited without a requestedBy still names someone', () => {
+    // Only reachable across a worker upgrade: an older binary deposited it, a newer one
+    // finished it. The record has to name somebody, and "unknown" beats an absent field
+    // that would read as if the run had been scheduled.
+    const h = harness();
+    const job = deposit(h, 'nightly', [], { trigger: 'manual' });
+    h.spool.claim(h.spool.queued()[0].file);
+
+    recoverInterrupted(h.deps);
+
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, requestedBy: expect.objectContaining({ user: 'unknown' }) }),
+    ]);
+  });
+
+  it('jobs.jsonl carries the trigger for a nightly and omits the key entirely elsewhere', async () => {
+    const h = harness();
+    const manual = depositManual(h);
+    await processOldest(h.deps);
+    const ref = deposit(h);
+    await processOldest(h.deps);
+
+    const lines = fs
+      .readFileSync(h.paths.jobsLog, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(lines.find(l => l.id === manual.id)).toMatchObject({ type: 'nightly', trigger: 'manual' });
+    expect(lines.find(l => l.id === ref.id)).not.toHaveProperty('trigger');
+  });
+
+  it('a scheduled nightly publishes with trigger "scheduled" and its own slot stamp', async () => {
+    const h = harness();
+    const job = deposit(h, 'nightly', [], { trigger: 'scheduled' });
+
+    await processOldest(h.deps);
+
+    expect(readNightlyResult(h.paths)).toMatchObject({
+      jobId: job.id,
+      verdict: 'PASS',
+      trigger: 'scheduled',
+      scheduledSubmittedAt: job.submittedAt,
+    });
+    expect(readManualRecords(h.paths)).toEqual([]);
   });
 });
