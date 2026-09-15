@@ -15,6 +15,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import * as dns from 'dns';
+import * as zlib from 'zlib';
 import type { ServerResponse } from 'http';
 import fetch from 'node-fetch';
 import {
@@ -96,6 +97,32 @@ describe('proxy-image', () => {
 
   it('getPlaceholderImage returns a non-empty buffer', () => {
     expect(getPlaceholderImage().length).toBeGreaterThan(0);
+  });
+
+  it('getPlaceholderImage decodes to a 1x1 RGBA PNG with alpha 0', () => {
+    const buf = getPlaceholderImage();
+    const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(buf.subarray(0, 8)).toEqual(signature);
+    expect(buf.readUInt32BE(16)).toBe(1); // width
+    expect(buf.readUInt32BE(20)).toBe(1); // height
+    expect(buf[24]).toBe(8); // bit depth
+    expect(buf[25]).toBe(6); // colour type 6 = RGBA
+
+    let offset = 8;
+    let idat: Buffer | null = null;
+    while (offset < buf.length) {
+      const length = buf.readUInt32BE(offset);
+      const type = buf.toString('ascii', offset + 4, offset + 8);
+      if (type === 'IDAT') {
+        idat = buf.subarray(offset + 8, offset + 8 + length);
+      }
+      offset += 12 + length;
+    }
+    expect(idat).not.toBeNull();
+    const raw = zlib.inflateSync(idat as Buffer);
+    expect(raw.length).toBe(5); // filter byte + R + G + B + A
+    expect(raw[0]).toBe(0); // filter type None
+    expect(raw[4]).toBe(0); // alpha
   });
 
   it('serves a file:// URL inside the cache directory', async () => {
