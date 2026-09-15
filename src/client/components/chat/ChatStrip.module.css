@@ -502,6 +502,50 @@
   color: var(--accent-gold);
 }
 
+/* Ignore button — same ghost shape as .followBtn. */
+.ignoreBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+.userRow:hover .ignoreBtn,
+.ignoreBtn:focus-visible {
+  opacity: 1;
+}
+
+.ignoreBtn:hover {
+  color: var(--text-primary);
+}
+
+@media (hover: none) {
+  .ignoreBtn {
+    opacity: 1;
+  }
+}
+
+/* An ignored player stays listed, dimmed and struck through — you must be able to find
+   them again to un-ignore them. */
+.userRowIgnored .userName {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.userRowIgnored .ignoreBtn {
+  opacity: 1;
+  color: var(--text-muted);
+}
+
 .statusDot {
   width: 6px;
   height: 6px;
