@@ -133,6 +133,24 @@ describe('StarpeaceClient callback wiring', () => {
 
     expect(authHandler.visitWorld).toHaveBeenCalledWith(client);
   });
+
+  it('onTutorialState asks for the assignment with no arguments of its own', () => {
+    const sendSpy = jest.spyOn(client, 'sendMessage' as any);
+
+    client.callbacks.onTutorialState();
+
+    expect(sendSpy).toHaveBeenCalledWith({ type: WsMessageType.REQ_TUTORIAL_STATE });
+  });
+
+  it('onTutorialAction carries the action through untouched', () => {
+    const sendSpy = jest.spyOn(client, 'sendMessage' as any);
+
+    client.callbacks.onTutorialAction('complete');
+
+    expect(sendSpy).toHaveBeenCalledWith({
+      type: WsMessageType.REQ_TUTORIAL_ACTION, action: 'complete',
+    });
+  });
 });
 
 /**

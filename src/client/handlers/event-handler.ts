@@ -35,6 +35,8 @@ import {
   WsEventConnectionStats,
   WsEventCompanionship,
   WsEventModelStatusChanged,
+  WsRespTutorialState,
+  WsRespTutorialAction,
 } from '../../shared/types';
 import { Season } from '../../shared/map-config';
 import { toErrorMessage } from '../../shared/error-utils';
@@ -49,6 +51,7 @@ import { useBuildingStore } from '../store/building-store';
 import { useProfileStore } from '../store/profile-store';
 import { useChatStore } from '../store/chat-store';
 import { useMapStore } from '../store/map-store';
+import { useTutorialStore } from '../store/tutorial-store';
 import { getFacilityDimensionsCache } from '../facility-dimensions-cache';
 import { hasSeenBackupNotice, markBackupNoticeSeen } from '../store/backup-notice';
 import type { ClientHandlerContext } from './client-context';
@@ -60,6 +63,14 @@ import type { ClientHandlerContext } from './client-context';
 const REFRESH_INTERVAL_OWNED_MS = 8_000;      // owned buildings: 8s min interval
 const REFRESH_INTERVAL_NON_OWNED_MS = 20_000;  // non-owned: 20s min interval
 let lastBuildingRefreshTime = 0;
+
+// ── Tutorial notification options (Tasks/Tasks.pas:29-32) ─────────────────────
+// `nopTutorial_OFF` is 0 and means "take the tutorial affordance away";
+// `nopTutorial_ON` (2) and `nopTutorial_SHOW` (4) both mean "there is an
+// assignment". The reference client tested exactly this mask
+// (Voyager/URLNotification.pas:77).
+const TUTORIAL_OPT_ON = 2;
+const TUTORIAL_OPT_SHOW = 4;
 
 /**
  * Dispatch incoming server events and push messages.
@@ -343,15 +354,26 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
         break;
       }
 
-      // Kind 1 — tutorial assignment (Voyager: opened a URL frame,
-      // VoyagerWindow.pas:530-549). The card "The onboarding curriculum is gone:
-      // the server still pushes tutorial assignments and the client toasts their
-      // URL" will hand this to the tutorial trigger; until it lands, the URL is
-      // logged, never shown.
+      // Kind 1 — the onboarding curriculum (Voyager: opened a URL frame,
+      // VoyagerWindow.pas:530-549). `options` is the entire routing, exactly as
+      // it was for the reference client: `Options and (nopTutorial_SHOW or
+      // nopTutorial_ON) <> 0` meant "this frame is the tutorial"
+      // (URLNotification.pas:77, constants :10-14), and `HideTaskButton` sends
+      // `nopTutorial_OFF` with an empty title to take it away
+      // (Tasks/Tasks.pas:636-644).
+      //
+      // No toast either way. The panel IS the notification, which is what the
+      // URL frame was — a toast of the title would be a second, weaker copy of
+      // it, and a toast of the body would be the raw URL the card forbids. The
+      // URL stays in the diagnostics log above and nowhere else.
       if (notif.kind === 1) {
-        ClientBridge.log('Notification', `Tutorial URL suppressed: ${notif.body}`);
-        if (notif.title) {
-          ctx.showNotification(notif.title, 'info');
+        if ((notif.options & (TUTORIAL_OPT_SHOW | TUTORIAL_OPT_ON)) === 0) {
+          useTutorialStore.getState().setAssignment(null);
+          const stack = useUiStore.getState().stack;
+          if (stack[stack.length - 1]?.kind === 'tutorial') useUiStore.getState().popSurface();
+        } else {
+          useTutorialStore.getState().setAutoOpen(true);
+          ctx.sendMessage({ type: WsMessageType.REQ_TUTORIAL_STATE });
         }
         break;
       }
@@ -623,6 +645,37 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
         area: profile.area,
       });
       ClientBridge.setProfile(profile);
+      break;
+    }
+
+    case WsMessageType.RESP_TUTORIAL_STATE: {
+      const tut = msg as WsRespTutorialState;
+      const store = useTutorialStore.getState();
+      store.setAssignment(tut.state);
+      // The reference client popped its frame on every notify
+      // (URLNotification.pas:82-85). We only do it for a read the push asked
+      // for, so opening the panel is still the player's decision otherwise.
+      if (tut.state && store.autoOpen) {
+        store.setAutoOpen(false);
+        const stack = useUiStore.getState().stack;
+        if (stack[stack.length - 1]?.kind !== 'tutorial') {
+          useUiStore.getState().pushSurface({ kind: 'tutorial' });
+        }
+      }
+      break;
+    }
+
+    case WsMessageType.RESP_TUTORIAL_ACTION: {
+      const act = msg as WsRespTutorialAction;
+      const store = useTutorialStore.getState();
+      store.setPending(null);
+      store.setAssignment(act.state);
+      // A procedure answers nothing, so `success` here only reports that the
+      // gateway got the frame out. Only a refusal is worth telling the player
+      // about; the stage itself arrives with the push that follows.
+      if (!act.success) {
+        ctx.showNotification(act.message || 'The assignment could not be updated', 'error');
+      }
       break;
     }
 

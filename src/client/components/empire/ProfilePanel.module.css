@@ -54,6 +54,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The Tutorial door, shown only while the tycoon has a live assignment.
+   No `margin-left: auto` here: `.identityPortraitButton` already carries one,
+   and a second would split the free space instead of keeping the two controls
+   together at the right edge. */
+.identityTutorialBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.identityTutorialBtn:hover {
+  color: var(--accent-gold);
+  border-color: var(--accent-gold);
+}
+
 /* ---- Body — the list + drawer row ---- */
 
 .body {
