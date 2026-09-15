@@ -76,4 +76,21 @@ describe('PromptDialog smoke tests', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(submitted).toBe('Mill');
   });
+
+  it('type="password" renders a password input', () => {
+    renderWithProviders(<PromptDialog {...defaultProps} type="password" />);
+    const input = document.querySelector('input') as HTMLInputElement;
+    expect(input.type).toBe('password');
+  });
+
+  it('type="password" submits the untrimmed value', () => {
+    let submitted = '';
+    renderWithProviders(
+      <PromptDialog {...defaultProps} type="password" onSubmit={(v) => { submitted = v; }} />,
+    );
+    const input = document.querySelector('input') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '  pw  ' } });
+    fireEvent.click(screen.getByText('Submit'));
+    expect(submitted).toBe('  pw  ');
+  });
 });

@@ -108,8 +108,6 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
   const [input, setInput] = useState('');
   const [defaultChannel, setDefaultChannel] = useState<string | null>(() => loadDefaultChannel());
   const [channelDropdownOpen, setChannelDropdownOpen] = useState(false);
-  const [pendingChannel, setPendingChannel] = useState<string | null>(null);
-  const [passwordInput, setPasswordInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -134,8 +132,6 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
     const close = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setChannelDropdownOpen(false);
-        setPendingChannel(null);
-        setPasswordInput('');
       }
     };
     // Use setTimeout to avoid the same click event closing it immediately
@@ -208,16 +204,6 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
     client.onSendChatMessage(text);
   }, [input, client, announceTyping, commandContext]);
 
-  const submitPassword = useCallback(() => {
-    if (!pendingChannel) return;
-    setCurrentChannel(pendingChannel);
-    client.onJoinChannel(pendingChannel, passwordInput);
-    client.onGetChannelInfo(pendingChannel);
-    setPendingChannel(null);
-    setPasswordInput('');
-    setChannelDropdownOpen(false);
-  }, [pendingChannel, passwordInput, client, setCurrentChannel]);
-
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -262,65 +248,51 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
             </button>
             {channelDropdownOpen && (
               <div className={styles.channelDropdown}>
-                {pendingChannel ? (
-                  <form
-                    className={styles.passwordPrompt}
-                    onSubmit={(e) => { e.preventDefault(); submitPassword(); }}
+                {channels.map((ch) => (
+                  <button
+                    key={ch.name}
+                    className={`${styles.channelOption} ${ch.name === currentChannel ? styles.channelOptionActive : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setChannelDropdownOpen(false);
+                      if (ch.isProtected) {
+                        useUiStore.getState().requestPrompt(
+                          `Join "${ch.name}"`,
+                          `Password for "${ch.name}"`,
+                          (password) => {
+                            setCurrentChannel(ch.name);
+                            client.onJoinChannel(ch.name, password);
+                            client.onGetChannelInfo(ch.name);
+                          },
+                          { type: 'password' },
+                        );
+                        return;
+                      }
+                      setCurrentChannel(ch.name);
+                      // Tell server to join this channel ("Lobby" maps to "" for the server)
+                      client.onJoinChannel(ch.name === 'Lobby' ? '' : ch.name);
+                      client.onGetChannelInfo(ch.name);
+                    }}
                   >
-                    <label className={styles.passwordLabel} htmlFor="channel-password">
-                      Password for "{pendingChannel}"
-                    </label>
-                    <input
-                      id="channel-password"
-                      type="password"
-                      aria-label="Channel password"
-                      className={styles.passwordInput}
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      autoFocus
-                    />
-                    <button type="submit" className={styles.passwordSubmit}>Join</button>
-                  </form>
-                ) : (
-                  <>
-                    {channels.map((ch) => (
-                      <button
-                        key={ch.name}
-                        className={`${styles.channelOption} ${ch.name === currentChannel ? styles.channelOptionActive : ''}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (ch.isProtected) {
-                            setPendingChannel(ch.name);
-                            return;
-                          }
-                          setCurrentChannel(ch.name);
-                          setChannelDropdownOpen(false);
-                          // Tell server to join this channel ("Lobby" maps to "" for the server)
-                          client.onJoinChannel(ch.name === 'Lobby' ? '' : ch.name);
-                          client.onGetChannelInfo(ch.name);
-                        }}
-                      >
-                        {ch.name}
-                        {ch.isProtected && (
-                          <span className={styles.channelLock} aria-label="Password protected">
-                            <Lock size={10} />
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      className={styles.channelNew}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setChannelDropdownOpen(false);
-                        useUiStore.getState().openModal('createChannel');
-                      }}
-                    >
-                      <Plus size={12} /> New Channel…
-                    </button>
-                  </>
-                )}
+                    {ch.name}
+                    {ch.isProtected && (
+                      <span className={styles.channelLock} aria-label="Password protected">
+                        <Lock size={10} />
+                      </span>
+                    )}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={styles.channelNew}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setChannelDropdownOpen(false);
+                    useUiStore.getState().openModal('createChannel');
+                  }}
+                >
+                  <Plus size={12} /> New Channel…
+                </button>
               </div>
             )}
           </div>
