@@ -59,12 +59,9 @@ export const MAGNA_REFUSAL =
  * `(tier >= 4) or ((tier >= WL.MinLevelToBuildAdvanced) and (GetNobPoints >= 100))`.
  * The world's `MinLevelToBuildAdvanced` term is not known to the client; this uses the
  * two-clause form the reference client's own sentence states — Paradigm (tier 4) or 100
- * nobility. An unknown profile (both undefined) is refused, matching the ASP's
- * `CanBuildAdvanced = 0` fallback when `SetPath` fails.
+ * nobility. Takes the two profile fields directly, never a possibly-missing profile:
+ * whether the profile is known at all is the caller's decision, not this function's.
  */
-export function canBuildAdvanced(
-  levelTier: number | undefined,
-  nobPoints: number | undefined,
-): boolean {
-  return (levelTier ?? 0) >= 4 || (nobPoints ?? 0) >= 100;
+export function canBuildAdvanced(levelTier: number, nobPoints: number): boolean {
+  return levelTier >= 4 || nobPoints >= 100;
 }

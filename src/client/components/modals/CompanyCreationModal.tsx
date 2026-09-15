@@ -35,7 +35,12 @@ export function CompanyCreationModal() {
   // tycoonStats it is never rebuilt by the periodic EVENT_TYCOON_UPDATE push
   // (event-handler.ts:189-205), which carries no level/nobility fields of its own.
   const profile = useProfileStore((s) => s.profile);
-  const magnaLocked = !canBuildAdvanced(profile?.levelTier, profile?.nobPoints);
+  // Gate only on what is known: a profile that has not arrived yet (e.g. the
+  // first-company modal at login, or right after a company switch resets the
+  // profile store — auth-handler.ts:417-426) must show the ordinary name field,
+  // never a refusal the client has not established. The server's own
+  // ERROR_UnknownTycoon = 7 stands as the only refusal in that case.
+  const magnaLocked = profile !== null && !canBuildAdvanced(profile.levelTier, profile.nobPoints);
 
   const [selectedCluster, setSelectedCluster] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<ClusterCategory | null>(null);
@@ -161,7 +166,6 @@ export function CompanyCreationModal() {
                 key={id}
                 className={`${styles.clusterTab} ${id === selectedCluster ? styles.clusterTabActive : ''} ${locked ? styles.clusterTabLocked : ''}`}
                 onClick={() => handleClusterTabClick(id)}
-                aria-disabled={locked || undefined}
                 title={locked ? MAGNA_REFUSAL : undefined}
               >
                 {CLUSTER_DISPLAY_NAMES[id as ClusterId] ?? id}

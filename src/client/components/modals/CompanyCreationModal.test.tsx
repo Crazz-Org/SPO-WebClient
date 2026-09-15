@@ -139,20 +139,23 @@ describe('CompanyCreationModal Magna gate', () => {
     ['Paradigm, no nobility', { ...BASE_PROFILE, levelTier: 4, nobPoints: 0 }, true],
     ['Tycoon, 100 nobility', { ...BASE_PROFILE, levelTier: 2, nobPoints: 100 }, true],
     ['Tycoon, no nobility', { ...BASE_PROFILE, levelTier: 2, nobPoints: 0 }, false],
-    ['profile unknown', null, false],
-  ] as const)('%s', (_label, profile, selectable) => {
+    ['profile unknown', null, true],
+  ] as const)('%s', (_label, profile, showsNameField) => {
     openWith(profile);
     renderWithProviders(<CompanyCreationModal />);
 
     fireEvent.click(screen.getByText('Magna Corp'));
     const magnaTab = screen.getByText('Magna Corp').closest('button');
 
-    if (selectable) {
-      expect(magnaTab?.getAttribute('aria-disabled')).toBeNull();
+    // Selectable in all four cases: neither `disabled` nor `aria-disabled` — a
+    // tooltip or muted styling is fine, an a11y-disabled signal is not.
+    expect(magnaTab?.hasAttribute('disabled')).toBe(false);
+    expect(magnaTab?.hasAttribute('aria-disabled')).toBe(false);
+
+    if (showsNameField) {
       expect(screen.getByPlaceholderText('Enter company name...')).toBeTruthy();
       expect(screen.queryByText(MAGNA_REFUSAL)).toBeNull();
     } else {
-      expect(magnaTab?.getAttribute('aria-disabled')).toBe('true');
       expect(screen.getByText(MAGNA_REFUSAL)).toBeTruthy();
       expect(screen.queryByPlaceholderText('Enter company name...')).toBeNull();
       expect(screen.queryByText('Create Company')).toBeNull();

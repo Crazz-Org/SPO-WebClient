@@ -119,11 +119,10 @@ describe('cluster-data', () => {
   });
 
   describe('canBuildAdvanced', () => {
-    it.each<[number | undefined, number | undefined, boolean]>([
+    it.each<[number, number, boolean]>([
       [4, 0, true],
       [2, 100, true],
       [2, 0, false],
-      [undefined, undefined, false],
       [6, 0, true],
       [0, 99, false],
     ])('canBuildAdvanced(%p, %p) === %p', (levelTier, nobPoints, expected) => {
