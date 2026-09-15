@@ -2,10 +2,11 @@
  * The Capitol coordinates the browser's search menu waits on.
  *
  * The browser blocks its search-menu flow until a RESP_CAPITOL_COORDS arrives, so this
- * answer is not optional: when the Directory Agent is slow or unreachable, the fetch
- * rejects and the socket must still be told "no Capitol" rather than left silent. A
- * rejection that only logged turned a transient DA timeout into a full client-side hang
- * for every flow gated on the search menu.
+ * answer is not optional. A fetch that rejects — a slow or unreachable Directory Agent —
+ * is retried up to a short budget before giving up, so a login during a transient DA hang
+ * still gets the real Capitol once the DA recovers. The socket is answered exactly once,
+ * either with the Capitol that finally arrived or with `hasCapitol: false` once the budget
+ * is spent — never left silent.
  */
 
 import type { SearchMenuCategory } from '../shared/types/domain-types';
@@ -64,21 +65,47 @@ export interface CapitolCoordsSource {
   getHomePage(): Promise<SearchMenuCategory[]>;
 }
 
+/** Attempts spent on a rejecting home-page fetch, including the first. */
+const DEFAULT_ATTEMPTS = 4;
+/** Pause between two attempts, in milliseconds. */
+const DEFAULT_DELAY_MS = 2000;
+
+/** How much the fetch may retry, and how it waits. Tests inject `sleep`. */
+export interface CapitolCoordsRetryOptions {
+  /** Total attempts including the first. Clamped to at least 1. Default 4. */
+  attempts?: number;
+  /** Pause between attempts, in ms. Default 2000. */
+  delayMs?: number;
+  /** Injected by tests so no real time passes; defaults to a real timer. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
 /**
  * Fetch the search menu's home page and answer the socket with whatever Capitol it
- * names. A fetch that rejects — a slow or unreachable Directory Agent — is logged and
- * then answered as "no Capitol", never left silent.
+ * names. A fetch that rejects — a slow or unreachable Directory Agent — is retried up
+ * to the budget before the socket is answered "no Capitol"; a fetch that resolves with
+ * no usable Capitol entry answers immediately, since retrying would only delay a real
+ * answer. Exactly one RESP_CAPITOL_COORDS is sent, on every path.
  */
 export async function pushCapitolCoords(
   source: CapitolCoordsSource,
   ws: CapitolCoordsSocket,
   session: CapitolCoordsSession,
+  options: CapitolCoordsRetryOptions = {},
 ): Promise<void> {
+  const attempts = Math.max(1, options.attempts ?? DEFAULT_ATTEMPTS);
+  const delayMs = options.delayMs ?? DEFAULT_DELAY_MS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms); }));
+
   let coords: CapitolCoords | null = null;
-  try {
-    coords = findCapitolCoords(await source.getHomePage());
-  } catch (err: unknown) {
-    logger.error(`Failed to fetch Capitol coords: ${toErrorMessage(err)}`);
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      coords = findCapitolCoords(await source.getHomePage());
+      break;
+    } catch (err: unknown) {
+      logger.error(`Failed to fetch Capitol coords (attempt ${attempt}/${attempts}): ${toErrorMessage(err)}`);
+      if (attempt < attempts) await sleep(delayMs);
+    }
   }
   sendCapitolCoords(ws, session, coords);
   logger.debug(`Capitol coords: ${coords ? `${coords.x},${coords.y}` : 'none'}`);
