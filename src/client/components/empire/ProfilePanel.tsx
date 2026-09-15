@@ -12,14 +12,15 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   GraduationCap, Landmark, TrendingUp, Factory, Link, Flag, X, Plus,
-  RotateCcw, LogOut, Wrench, ChevronUp, ChevronRight, ArrowLeft, User,
+  RotateCcw, LogOut, Wrench, ChevronUp, ChevronRight, ArrowLeft, User, Camera,
 } from 'lucide-react';
-import { Skeleton, SkeletonLines, ConfirmDialog, Switch, Sparkline, ErrorState } from '../common';
+import { Skeleton, SkeletonLines, ConfirmDialog, Switch, Sparkline, ErrorState, IconButton } from '../common';
 import { useProfileStore, type ProfileTab, type CompanyProfitLossView } from '../../store/profile-store';
 import { useGameStore } from '../../store/game-store';
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
 import { isMinisterAccount } from '../../minister-account';
+import { PortraitUploader } from './PortraitUploader';
 import type {
   AutoConnectionActionType,
   CurriculumActionType,
@@ -91,18 +92,23 @@ export function ProfilePanel() {
 
 function ProfileIdentityHeader() {
   const profile = useProfileStore((s) => s.profile);
+  const portraitDataUrl = useProfileStore((s) => s.portraitDataUrl);
+  const username = useGameStore((s) => s.username);
   const [photoErrored, setPhotoErrored] = useState(false);
+  const [uploaderOpen, setUploaderOpen] = useState(false);
 
   if (!profile) return null;
 
-  const showPhoto = Boolean(profile.photoUrl) && !photoErrored;
+  const isOwnProfile = username.trim() !== '' && profile.name.trim().toLowerCase() === username.trim().toLowerCase();
+  // A fresh upload is a data URL and can never 404, so it bypasses the photoErrored fallback.
+  const shownPhoto = portraitDataUrl ?? (photoErrored ? null : profile.photoUrl || null);
 
   return (
     <header className={styles.identityHeader}>
-      {showPhoto ? (
+      {shownPhoto ? (
         <img
           className={styles.identityPhoto}
-          src={profile.photoUrl}
+          src={shownPhoto}
           alt={profile.name}
           onError={() => setPhotoErrored(true)}
         />
@@ -113,6 +119,15 @@ function ProfileIdentityHeader() {
       )}
       <span className={styles.identityName}>{profile.name}</span>
       <span className={styles.identityRank}>#{profile.ranking}</span>
+      {isOwnProfile && (
+        <IconButton
+          className={styles.identityPortraitButton}
+          icon={<Camera size={16} />}
+          label="Change portrait"
+          onClick={() => setUploaderOpen(true)}
+        />
+      )}
+      {uploaderOpen && <PortraitUploader onClose={() => setUploaderOpen(false)} />}
     </header>
   );
 }
