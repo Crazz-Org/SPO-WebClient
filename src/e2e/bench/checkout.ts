@@ -38,7 +38,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { toErrorMessage } from '../../shared/error-utils';
-import { type GitRunner } from './fingerprint';
+import { resolveRef, type GitRunner } from './fingerprint';
 import { type GitAuthEnv } from './git-auth';
 
 export interface CheckoutCommandOptions {
@@ -232,6 +232,21 @@ async function runNetworkCommand(
 }
 
 /**
+ * Resolve a job's ref against the remote before it is reset to. `git fetch` only ever
+ * advances the copies of the remote's branches (`refs/remotes/origin/*`), never a checkout's
+ * own local branch of the same name; resetting straight to a sha then drags that local
+ * branch along with it, so a later job asking for a branch by name resolves it to whatever
+ * commit yesterday's job happened to leave the local branch pointing at, not the branch's
+ * real tip.
+ */
+export function resolveTargetRef(dir: string, ref: string, git: GitRunner): string {
+  // Already spelled against the remote (the nightly's `origin/main`): nothing to resolve,
+  // and asking would look for `refs/remotes/origin/origin/main`.
+  if (ref.startsWith('origin/')) return ref;
+  return resolveRef(dir, `refs/remotes/origin/${ref}`, git) ? `origin/${ref}` : ref;
+}
+
+/**
  * Bring `dir` to `ref`, cloning it the first time. Returns the name of the step that
  * failed, or null on success.
  *
@@ -281,9 +296,17 @@ export async function prepareCheckout(
   );
   if (fetched !== 0) return { failed: 'git fetch' };
 
+  // Resolved after the fetch, never before: a branch created since the last job only has a
+  // `refs/remotes/origin/...` once the fetch has run.
+  const target = resolveTargetRef(dir, ref, git);
+  if (target !== ref) {
+    deps.log(`checkout ${dir}: ${ref} resolved to ${target} — the remote-tracking ref, not the local branch`);
+    fs.appendFileSync(logFile, `resolved ${ref} -> ${target}\n`, 'utf8');
+  }
+
   // Local, deterministic, and given no token: see runNetworkCommand.
   const localSteps: { name: string; cmd: string; args: string[] }[] = [
-    { name: `git reset --hard ${ref}`, cmd: 'git', args: ['reset', '--hard', ref] },
+    { name: `git reset --hard ${target}`, cmd: 'git', args: ['reset', '--hard', target] },
     { name: 'git clean -fd', cmd: 'git', args: ['clean', '-fd'] },
   ];
   for (const step of localSteps) {

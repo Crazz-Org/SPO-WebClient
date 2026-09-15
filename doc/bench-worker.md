@@ -537,10 +537,12 @@ node dist/e2e/bench/cli.js submit --type=ref --ref=<sha|branch> --wait
 ```
 
 The worker clones once into `<bench>/ref/checkout`, then per job: `fetch --prune --force`,
-`reset --hard <ref>`, `clean -fd`, a merge with `origin/main` unless `<ref>` already
-contains it (§ The gate base, "Gating the merged tree, not the branch"), and **`npm ci`
-only when the lockfile moved** — checked after the merge, since a merge can move it. From
-there it is an ordinary gate — same `verify-gate.js`, same routing, same President
+then a reset to `<ref>` **resolved against the remote** — `--ref=main` resets to
+`origin/main`, never to the checkout's own stale local `main`, and a sha, or a ref already
+spelled `origin/…`, is used as given — `clean -fd`, a merge with `origin/main` unless
+`<ref>` already contains it (§ The gate base, "Gating the merged tree, not the branch"), and
+**`npm ci` only when the lockfile moved** — checked after the merge, since a merge can move
+it. From there it is an ordinary gate — same `verify-gate.js`, same routing, same President
 exclusion, same live drive.
 
 Three things that are not obvious:
