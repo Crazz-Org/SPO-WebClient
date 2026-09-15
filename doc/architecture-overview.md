@@ -46,6 +46,8 @@ src/
 returns `nil`), so there was never a route-management screen to port; the panel, its
 `transport-store.ts` and the `ui-store` entry were removed in PR #270.
 
+**Porting a legacy screen?** [legacy-parity-map.md](legacy-parity-map.md) names the WebClient file that owns each Voyager panel and ASP page of the original client.
+
 ## API Endpoints
 
 | Endpoint | Purpose |
