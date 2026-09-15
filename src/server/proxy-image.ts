@@ -120,8 +120,8 @@ export interface ProxyImageDeps {
  * Generate a placeholder image (1x1 transparent PNG)
  */
 export function getPlaceholderImage(): Buffer {
-  // 1x1 transparent PNG (base64 encoded)
-  const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  // 1x1 transparent PNG (base64 encoded) -- RGBA pixel [0, 0, 0, 0], alpha 0
+  const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=';
   return Buffer.from(base64, 'base64');
 }
 
