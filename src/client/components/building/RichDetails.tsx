@@ -7,7 +7,7 @@
  */
 
 import { parseDetailsText } from './QuickStats';
-import { parseFacilityDiagnosis } from '@/shared/building-details/facility-diagnosis';
+import { hasFacilityHint, parseFacilityDiagnosis } from '@/shared/building-details/facility-diagnosis';
 import styles from './RichDetails.module.css';
 
 /* ------------------------------------------------------------------ */
@@ -511,14 +511,21 @@ interface RichDetailsViewProps {
 
 export function RichDetailsView({ detailsText, hintsText }: RichDetailsViewProps) {
   const richDetails = parseRichDetails(detailsText);
-  // The DiagnosisBanner above this block already states the hint, styled and with its
-  // "Warning:" / "Hint:" prefix stripped. `raw` is set to the hint text only when the
-  // diagnosis was read OFF the hint section (facility-diagnosis.ts:169,175) — a "Stopped …"
-  // diagnosis comes from section 1 and carries that line in `raw` instead. So this equality
-  // is exactly "the banner is already showing this sentence".
+  // Three states, not two. `hasFacilityHint` is false only when section 2 is empty, the
+  // "No hints…" placeholder or the "belongs to …" denial — that is the empty state, and it
+  // gets a plain line so it cannot be mistaken for a panel that has not loaded yet.
+  // When there IS a sentence, the DiagnosisBanner above this block may already be stating it,
+  // styled and with its "Warning:" / "Hint:" prefix stripped — that is exactly the case where
+  // `raw` was read OFF the hint section (facility-diagnosis.ts:169,175), so the equality below
+  // means "the banner already shows this sentence" and the line is dropped. But a "Stopped …"
+  // diagnosis is read off section 1 and carries THAT line in `raw` instead, leaving the real
+  // hint unstated — a weather stop writes both halves (section 1 "Stopped due to weather
+  // conditions.", section 2 "There is nothing we can do about the weather but wait.",
+  // StdBlocks/EvaluatedBlock.pas:386-389 and :426-436) — so there the hint is kept.
   const hints = (hintsText ?? '').trim();
+  const hasHint = hasFacilityHint(hintsText);
   const diagnosis = parseFacilityDiagnosis(detailsText, hintsText);
-  const bannerCarriesHint = hints !== '' && diagnosis.raw === hints;
+  const bannerCarriesHint = hasHint && diagnosis.raw === hints;
 
   return (
     <div className={styles.root}>
@@ -536,8 +543,12 @@ export function RichDetailsView({ detailsText, hintsText }: RichDetailsViewProps
         <div className={styles.detailsRaw}>{detailsText}</div>
       )}
 
-      {!bannerCarriesHint && (
+      {!hasHint && (
         <div className={styles.hintsLine}>No hints for this facility.</div>
+      )}
+
+      {hasHint && !bannerCarriesHint && (
+        <div className={styles.hintsLine}>{hints}</div>
       )}
     </div>
   );

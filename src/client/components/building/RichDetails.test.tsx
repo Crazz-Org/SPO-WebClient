@@ -88,6 +88,20 @@ describe('RichDetailsView', () => {
     );
     expect(screen.getByText('No hints for this facility.')).toBeTruthy();
   });
+
+  // A weather stop is the one stop state that also writes a real section-2 sentence
+  // (StdBlocks/EvaluatedBlock.pas:386-389 and :426-436): the banner states the section-1
+  // "Stopped …" line, so the hint itself would otherwise be shown nowhere.
+  it('keeps the hint line when the banner states a section-1 stop instead', () => {
+    renderWithProviders(
+      <RichDetailsView
+        detailsText="Stopped due to weather conditions."
+        hintsText="There is nothing we can do about the weather but wait."
+      />
+    );
+    expect(screen.getByText('There is nothing we can do about the weather but wait.')).toBeTruthy();
+    expect(screen.queryByText('No hints for this facility.')).toBeNull();
+  });
 });
 
 describe('BuildingInspector hint rendering, end to end', () => {
@@ -101,5 +115,18 @@ describe('BuildingInspector hint rendering, end to end', () => {
 
     renderWithProviders(<BuildingInspector />);
     expect(screen.getAllByText(/roof is leaking/i)).toHaveLength(1);
+  });
+
+  it('renders the weather hint exactly once while the banner states the stop', () => {
+    useBuildingStore.getState().setFocus({
+      ...mockFocus,
+      detailsText: 'Stopped due to weather conditions.',
+      hintsText: 'There is nothing we can do about the weather but wait.',
+    } as never);
+    useBuildingStore.setState({ details: mockDetails, isLoading: false });
+
+    renderWithProviders(<BuildingInspector />);
+    expect(screen.getAllByText(/nothing we can do about the weather/i)).toHaveLength(1);
+    expect(screen.queryByText('No hints for this facility.')).toBeNull();
   });
 });
