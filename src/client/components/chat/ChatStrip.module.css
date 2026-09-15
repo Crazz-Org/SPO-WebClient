@@ -2,7 +2,7 @@
 
 .strip {
   position: absolute;
-  bottom: 150px; /* above the command bar */
+  bottom: calc(var(--space-4) + var(--command-bar-height, 190px) + var(--space-3)); /* above the command bar */
   left: 50%;
   transform: translateX(-50%);
   z-index: calc(var(--z-sticky) - 50);

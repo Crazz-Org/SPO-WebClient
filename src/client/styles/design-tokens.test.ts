@@ -24,6 +24,7 @@ const STYLES_DIR = __dirname;
 /** Custom properties that are set from TypeScript at runtime, never in a stylesheet. */
 const ALLOWED_RUNTIME = new Set<string>([
   '--path-length', // SVG stroke animation, set by the component
+  '--command-bar-height', // measured height, set by CommandBar.tsx
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
