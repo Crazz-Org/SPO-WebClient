@@ -17,6 +17,7 @@ import { useUiStore, type SurfaceKind } from '../../store/ui-store';
 import { usePanel } from '../../hooks/usePanel';
 import { Chip, IconButton, ErrorBoundary } from '../common';
 import { BuildingSurface } from './BuildingSurface';
+import { BuildingSheetActions } from './BuildingSheetActions';
 import { MailPanel } from '../mail';
 import { SearchPanel } from '../search';
 import { ProfilePanel, EmpireOverview } from '../empire';
@@ -144,6 +145,7 @@ export function Sheet() {
           </nav>
         )}
         <div className={styles.stackActions}>
+          {kind === 'building' && <BuildingSheetActions />}
           <IconButton
             icon={pinned ? <PinOff size={16} /> : <Pin size={16} />}
             label={pinned ? 'Unpin sheet — map clicks replace this content' : 'Pin sheet — keep it open while clicking the map'}

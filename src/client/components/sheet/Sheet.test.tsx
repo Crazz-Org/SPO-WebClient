@@ -6,6 +6,7 @@ import { Sheet } from './Sheet';
 
 // The content components are heavy; the sheet's job is chrome + routing. Stub them.
 jest.mock('./BuildingSurface', () => ({ BuildingSurface: () => <div>BUILDING CONTENT</div> }));
+jest.mock('./BuildingSheetActions', () => ({ BuildingSheetActions: () => null }));
 jest.mock('../mail', () => ({ MailPanel: () => <div>MAIL CONTENT</div> }));
 jest.mock('../search', () => ({ SearchPanel: () => <div>SEARCH CONTENT</div> }));
 jest.mock('../empire', () => ({ ProfilePanel: () => <div>PROFILE CONTENT</div>, EmpireOverview: () => <div>FACILITIES CONTENT</div> }));

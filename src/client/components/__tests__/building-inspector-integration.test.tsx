@@ -162,7 +162,7 @@ describe('Building Inspector — integration flow', () => {
     expect(screen.getByText('$1,200')).toBeTruthy();
   });
 
-  it('renders toolbar with refresh and close buttons', () => {
+  it('renders no toolbar of its own — Refresh and Close now live on the sheet row', () => {
     useBuildingStore.setState({
       focusedBuilding: mockFocus,
       details: mockDetails,
@@ -171,8 +171,8 @@ describe('Building Inspector — integration flow', () => {
     });
     renderWithProviders(<BuildingInspector />);
 
-    expect(screen.getByLabelText('Refresh')).toBeTruthy();
-    expect(screen.getByLabelText('Close')).toBeTruthy();
+    expect(screen.queryByLabelText('Refresh')).toBeNull();
+    expect(screen.queryByLabelText('Close')).toBeNull();
   });
 });
 
@@ -235,7 +235,7 @@ describe('BuildingInspectorModal — integration flow', () => {
 
     renderWithProviders(<BuildingInspectorModal />);
 
-    // Modal has its own Close button (in header) + inspector toolbar has one too
+    // Modal has its own Close button in its header; the inspector no longer draws one.
     fireEvent.click(screen.getAllByLabelText('Close')[0]);
 
     expect(useUiStore.getState().modal).toBeNull();
