@@ -292,3 +292,174 @@ describe('toast anchor below the status pill (issue 874)', () => {
     expect(narrowTokens![1]).not.toMatch(/--space-3\s*:/);
   });
 });
+
+describe('HUD bottom stack clears the command bar (issue 875)', () => {
+  const tokens = stripComments(readFileSync(join(STYLES_DIR, 'design-tokens.css'), 'utf8'));
+  const bar = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/hud/CommandBar.module.css'), 'utf8')
+  );
+  const barTsx = readFileSync(join(CLIENT_ROOT, 'components/hud/CommandBar.tsx'), 'utf8');
+  const ctx = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/hud/ContextStatusStrip.module.css'), 'utf8')
+  );
+  const ticker = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/hud/WorldEventTicker.module.css'), 'utf8')
+  );
+
+  /** Declaration block text for `selector {`, e.g. rule(bar, '.tiles'). */
+  function rule(css: string, selector: string): string {
+    const start = css.indexOf(`${selector} {`);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const open = css.indexOf('{', start);
+    const close = css.indexOf('}', open);
+    return css.slice(open + 1, close);
+  }
+
+  /** px value of a `prop: NNpx` declaration inside a block. */
+  function px(block: string, prop: string): number {
+    const match = block.match(new RegExp(`${prop}\\s*:\\s*([0-9.]+)px`));
+    expect(match).not.toBeNull();
+    return parseFloat(match![1]);
+  }
+
+  /** Raw value text of a top-level `:root` custom property in design-tokens.css. */
+  function tokenExpr(name: string): string {
+    const match = tokens.match(new RegExp(`${name}\\s*:\\s*([^;]+);`));
+    expect(match).not.toBeNull();
+    return match![1].trim();
+  }
+
+  /** Resolve a token expression to a px number, substituting var(--x) recursively. */
+  function resolve(expr: string): number {
+    let text = expr;
+    let guard = 0;
+    while (/var\(\s*--[a-zA-Z0-9-]+\s*\)/.test(text) && guard < 10) {
+      text = text.replace(/var\(\s*(--[a-zA-Z0-9-]+)\s*\)/g, (_m, name: string) => tokenExpr(name));
+      guard += 1;
+    }
+    text = text.replace(/calc\(([^()]*)\)/g, '($1)');
+    let sum = 0;
+    for (const m of text.matchAll(/([0-9.]+)(px|rem)/g)) {
+      sum += m[2] === 'rem' ? parseFloat(m[1]) * 16 : parseFloat(m[1]);
+    }
+    return sum;
+  }
+
+  it('the bar geometry is read from CommandBar.module.css, not assumed', () => {
+    expect(px(rule(bar, '.search'), 'height')).toBe(44);
+    expect(px(rule(bar, '.modeRow'), 'height')).toBe(48);
+    expect(px(rule(bar, '.tile'), 'height')).toBe(56);
+
+    const tiles = rule(bar, '.tiles');
+    expect(px(tiles, 'gap')).toBe(6);
+    expect(px(tiles, 'padding')).toBe(6);
+
+    const columnsMatch = tiles.match(/repeat\((\d+),/);
+    expect(columnsMatch).not.toBeNull();
+    expect(Number(columnsMatch![1])).toBe(6);
+
+    expect(tiles).toMatch(/border:\s*1px/);
+
+    const barBlock = rule(bar, '.bar');
+    expect(barBlock).toMatch(/gap:\s*var\(--space-2\)/);
+  });
+
+  it('the tile count comes from CommandBar.tsx, not a hard-coded number', () => {
+    const arrayStart = barTsx.indexOf('const tiles: Tile[] = [');
+    expect(arrayStart).toBeGreaterThanOrEqual(0);
+    const arrayEnd = barTsx.indexOf('\n  ].filter', arrayStart);
+    expect(arrayEnd).toBeGreaterThan(arrayStart);
+    const slice = barTsx.slice(arrayStart, arrayEnd);
+    const tileCount = (slice.match(/\{ id: '/g) ?? []).length;
+    expect(tileCount).toBe(7);
+
+    const columns = 6;
+    const rows = Math.ceil(tileCount / columns);
+    expect(rows).toBe(2);
+  });
+
+  it('--command-bar-height resolves to the tallest (mode-row) state, computed from the source geometry', () => {
+    const tiles = rule(bar, '.tiles');
+    const tileH = px(rule(bar, '.tile'), 'height');
+    const tilesGap = px(tiles, 'gap');
+    const tilesPadding = px(tiles, 'padding');
+    const tilesBorder = 1; // .tiles border: 1px, read directly — no px() match for shorthand "1px solid"
+    expect(tiles).toMatch(/border:\s*1px/);
+
+    const columns = Number(tiles.match(/repeat\((\d+),/)![1]);
+    const arrayStart = barTsx.indexOf('const tiles: Tile[] = [');
+    const arrayEnd = barTsx.indexOf('\n  ].filter', arrayStart);
+    const tileCount = (barTsx.slice(arrayStart, arrayEnd).match(/\{ id: '/g) ?? []).length;
+    const rows = Math.ceil(tileCount / columns);
+
+    const tilesHeight = rows * tileH + (rows - 1) * tilesGap + 2 * tilesPadding + 2 * tilesBorder;
+    expect(tilesHeight).toBe(132);
+
+    const barGap = 8; // .bar { gap: var(--space-2) } = 8px, resolved via the token file
+    expect(resolve(tokenExpr('--space-2'))).toBe(barGap);
+
+    const modeH = px(rule(bar, '.modeRow'), 'height');
+    const searchH = px(rule(bar, '.search'), 'height');
+    const barHeightWithMode = modeH + barGap + tilesHeight;
+    const barHeightNoMode = searchH + barGap + tilesHeight;
+    expect(barHeightWithMode).toBe(188);
+    expect(barHeightNoMode).toBe(184);
+
+    expect(resolve(tokenExpr('--command-bar-height'))).toBe(barHeightWithMode);
+  });
+
+  it.each([1024, 1400, 2400])(
+    'at %dpx: both strips clear the bar in its tallest and shortest states, and the bar height has no width-dependent rule',
+    () => {
+      const space4 = resolve(tokenExpr('--space-4'));
+      const space2 = resolve(tokenExpr('--space-2'));
+
+      const tiles = rule(bar, '.tiles');
+      const tileH = px(rule(bar, '.tile'), 'height');
+      const tilesGap = px(tiles, 'gap');
+      const tilesPadding = px(tiles, 'padding');
+      const columns = Number(tiles.match(/repeat\((\d+),/)![1]);
+      const arrayStart = barTsx.indexOf('const tiles: Tile[] = [');
+      const arrayEnd = barTsx.indexOf('\n  ].filter', arrayStart);
+      const tileCount = (barTsx.slice(arrayStart, arrayEnd).match(/\{ id: '/g) ?? []).length;
+      const rows = Math.ceil(tileCount / columns);
+      const tilesHeight = rows * tileH + (rows - 1) * tilesGap + 2 * tilesPadding + 2 * 1;
+
+      const modeH = px(rule(bar, '.modeRow'), 'height');
+      const searchH = px(rule(bar, '.search'), 'height');
+      const barGap = space2;
+      const barHeightWithMode = modeH + barGap + tilesHeight;
+      const barHeightNoMode = searchH + barGap + tilesHeight;
+
+      const contextBottom = resolve(tokenExpr('--context-strip-bottom'));
+      expect(contextBottom).toBeGreaterThanOrEqual(space4 + barHeightWithMode);
+      expect(contextBottom).toBeGreaterThanOrEqual(space4 + barHeightNoMode);
+
+      const stripHeight = px(rule(ctx, '.strip'), 'min-height') + 2 * 1;
+      const tickerBottom = resolve(tokenExpr('--world-ticker-bottom'));
+      expect(tickerBottom).toBeGreaterThanOrEqual(contextBottom + stripHeight);
+
+      const mediaBlocks = bar.match(/@media[^{]*\{[\s\S]*?\n\}\s*\n\}/g) ?? [];
+      for (const block of mediaBlocks) {
+        expect(block).not.toMatch(/height\s*:/);
+      }
+    }
+  );
+
+  it('both strips consume the derived tokens, with no px literal of their own', () => {
+    const stripBlock = rule(ctx, '.strip');
+    expect(stripBlock).toMatch(/bottom:\s*var\(--context-strip-bottom\)/);
+    expect(stripBlock).not.toMatch(/bottom:\s*calc\([^)]*\d+px/);
+
+    const tickerBlock = rule(ticker, '.ticker');
+    expect(tickerBlock).toMatch(/bottom:\s*var\(--world-ticker-bottom\)/);
+    expect(tickerBlock).not.toMatch(/bottom:\s*calc\([^)]*\d+px/);
+  });
+
+  it('mobile keeps the exact resolved offsets it always had', () => {
+    const mobileMatch = tokens.match(/@media \(max-width: 1023px\) \{\s*:root \{([\s\S]*?)\}\s*\}/);
+    expect(mobileMatch).not.toBeNull();
+    expect(mobileMatch![1]).toMatch(/--context-strip-bottom:\s*134px/);
+    expect(mobileMatch![1]).toMatch(/--world-ticker-bottom:\s*168px/);
+  });
+});

@@ -2,8 +2,8 @@
 
 .strip {
   position: fixed;
-  /* CommandBar sits at bottom: var(--space-4) and is ~110px tall; stay clear of it. */
-  bottom: calc(var(--space-4) + 118px);
+  /* Clears CommandBar's tallest state; derived in design-tokens.css (issue 875). */
+  bottom: var(--context-strip-bottom);
   left: var(--space-4);
   right: var(--space-4);
   max-width: 904px;

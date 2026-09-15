@@ -2,8 +2,8 @@
 
 .ticker {
   position: fixed;
-  /* ContextStatusStrip sits at + 118px and is ~28px tall; stay clear of it. */
-  bottom: calc(var(--space-4) + 152px);
+  /* Clears ContextStatusStrip, which clears CommandBar; derived in design-tokens.css (issue 875). */
+  bottom: var(--world-ticker-bottom);
   left: var(--space-4);
   right: var(--space-4);
   max-width: 904px;
