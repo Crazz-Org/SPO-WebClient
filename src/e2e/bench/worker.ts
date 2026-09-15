@@ -16,7 +16,7 @@ import { execFileSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { toErrorMessage } from '../../shared/error-utils';
-import { probeGameServer, type ReachabilityResult } from './reachability';
+import { probeDriveEndpoints, type ReachabilityResult } from './reachability';
 import {
   BENCH_PORT,
   benchPaths,
@@ -111,8 +111,13 @@ export interface WorkerDeps {
   /** One owner-lease renewal pass; the loop calls it on a timer. See ./owner. */
   renewLease: (nowMs: number) => Promise<RenewOutcome>;
   processAlive: (pid: number) => boolean;
-  /** Independent of the drive itself — see downgradeUnreachable and ./reachability. */
-  gameServerReachable: () => Promise<ReachabilityResult>;
+  /**
+   * Independent of the drive itself — see downgradeUnreachable and ./reachability. Takes the
+   * drive's log file, because that is where the world server's address is written down: the
+   * directory hands it out at runtime, so a process that never logged in can only learn it
+   * from the failed connect the drive already logged.
+   */
+  gameServerReachable: (driveLog: string) => Promise<ReachabilityResult>;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   log: (line: string) => void;
@@ -1008,7 +1013,7 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
         bodyVerdict = GATE_EXIT_VERDICT[code] ?? 'FAIL';
         bodyDetail = `live drive exited ${code} (${bodyVerdict})`;
         const reconsidered = await downgradeUnreachable(
-          deps.gameServerReachable,
+          () => deps.gameServerReachable(logFile),
           bodyVerdict,
           bodyDetail,
           deps.log,
@@ -1565,7 +1570,7 @@ export function realWorkerDeps(
     mayDriveLive: nowMs => mayDriveLive(lease, nowMs),
     renewLease: nowMs => renewLease(ownerDeps, lease, nowMs),
     processAlive,
-    gameServerReachable: () => probeGameServer(),
+    gameServerReachable: driveLog => probeDriveEndpoints(driveLog),
     now: () => Date.now(),
     sleep,
     gitAuthEnv,

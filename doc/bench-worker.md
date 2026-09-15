@@ -471,21 +471,33 @@ code was broken or the game server simply was not answering from this host. `mai
 for a failure that was not the code.
 
 A `FAIL` from a `live` or `nightly` drive is now asked one further question, and only that one:
-an **independent reachability probe** (`src/e2e/bench/reachability.ts`) opens a TCP connection to
-the RDO directory endpoint the gateway is configured with (`RDO_DIR_HOST`, port 1111 —
-`src/shared/config.ts`) and closes it without writing a byte: no login, no RDO frame, nothing the
-world sees as traffic. Probe refused or timed out → the verdict is rewritten `ENVIRONMENT` and
-`detail` says the probe failed and names the target, so `nightly-check.sh` reads UNKNOWN instead
-of RED and no session is handed somebody else's outage as a repair. Probe answered → the `FAIL`
-stands untouched: a connect failure inside the flows with the front door open IS a fact about the
-code. A probe that could not be run at all is not an answer either, so the `FAIL` stands there
-too, with the reason appended to `detail`.
+an **independent reachability probe** (`src/e2e/bench/reachability.ts`) opens a TCP connection and
+closes it without writing a byte — no login, no RDO frame, nothing the world sees as traffic.
+
+It dials **both halves of the game server**, in order, because a drive needs both:
+
+1. the **directory front door** the gateway is configured with (`RDO_DIR_HOST`, port 1111 —
+   `src/shared/config.ts`). It does not answer → that is the outage, and nothing downstream
+   could have run anyway.
+2. the **world server** the directory hands back at runtime (`158.69.153.134:8000` on
+   2026-09-13). Its address is unknown to a process that never logged in, so the probe reads it
+   out of the drive's own log: Node writes a failed connect as `connect ETIMEDOUT <ip>:<port>`,
+   which names the exact endpoint. Every distinct endpoint the log names that way is re-dialled
+   after the drive is over, up to `MAX_LOG_ENDPOINTS`.
+
+Either dial refused or timed out → the verdict is rewritten `ENVIRONMENT` and `detail` names that
+endpoint and says the probe failed, so `nightly-check.sh` reads UNKNOWN instead of RED and no
+session is handed somebody else's outage as a repair. Every dial answered → the `FAIL` stands
+untouched: a connect failure inside the flows against a server that is up right now IS a fact
+about the code. A probe that could not be run at all is not an answer either, and neither is a
+drive log that cannot be read — the `FAIL` stands in both cases, with the reason in `detail`.
 
 The discriminator is deliberately outside the drive: the drive's own connect attempt cannot tell
 "the server is down" from "this change broke the login path", because both arrive as the same
-refused socket. Two limits remain, by construction — the probe answers for the directory front
-door, not for the world server the directory hands back, and a server that dies *after* the probe
-answered still reads `FAIL`. `detail` and `logFile` are what a human reads for both.
+refused socket. Re-dialling *after* the fact is what separates them. Two limits remain, by
+construction — a drive that never got far enough to log an address leaves only the front door to
+judge by, and a server that comes back up between the drive and the probe reads `FAIL`.
+`detail` and `logFile` are what a human reads for both.
 
 ## 9. The owner lease — one live bench across machines
 

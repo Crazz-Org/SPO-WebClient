@@ -81,6 +81,8 @@ interface Harness {
   reachProbeThrows: boolean;
   /** How many times the probe was invoked. */
   reachProbeCalls: number;
+  /** The drive log file each probe invocation was handed. */
+  reachProbeLogs: string[];
 }
 
 function harness(): Harness {
@@ -123,6 +125,7 @@ function harness(): Harness {
     reachable: { ok: true, target: 'dserver:1111', detail: 'connected' },
     reachProbeThrows: false,
     reachProbeCalls: 0,
+    reachProbeLogs: [],
     deps: {
       paths,
       spool,
@@ -164,8 +167,9 @@ function harness(): Harness {
         return { held: h.leaseDecision.ok };
       },
       processAlive: () => h.submitterAlive,
-      gameServerReachable: async () => {
+      gameServerReachable: async driveLog => {
         h.reachProbeCalls++;
+        h.reachProbeLogs.push(driveLog);
         if (h.reachProbeThrows) throw new Error('probe blew up');
         return h.reachable;
       },
@@ -1604,6 +1608,20 @@ describe('runJob — live and lease', () => {
     const report = await runJob(h.deps, job);
     expect(report.verdict).toBe('PASS');
     expect(h.reachProbeCalls).toBe(0);
+  });
+
+  // The world server's address is handed out by the directory at runtime, so the only place it
+  // is written down on this host is the drive's own log (`connect ETIMEDOUT <ip>:<port>`). The
+  // probe therefore has to be handed that file, or it can only ever answer for the front door.
+  it('hands the probe the drive log, and carries the named world server into the detail', async () => {
+    const h = harness();
+    const job = deposit(h, 'live');
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+    h.reachable = { ok: false, target: '158.69.153.134:8000', detail: 'connect ETIMEDOUT' };
+    const report = await runJob(h.deps, job);
+    expect(h.reachProbeLogs).toEqual([report.logFile]);
+    expect(report.verdict).toBe('ENVIRONMENT');
+    expect(report.detail).toContain('158.69.153.134:8000');
   });
 
   it('an unreachable game server downgrades a failing live drive to ENVIRONMENT', async () => {
