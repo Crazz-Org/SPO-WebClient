@@ -290,13 +290,7 @@ export function QuickStats({ focus }: QuickStatsProps) {
 
   return (
     <div className={styles.bar}>
-      {focus.detailsText && (
-        <RichDetailsView detailsText={focus.detailsText} hintsText={focus.hintsText} />
-      )}
-
-      {!focus.detailsText && focus.hintsText && (
-        <div className={styles.hint}>{focus.hintsText}</div>
-      )}
+      <RichDetailsView detailsText={focus.detailsText} hintsText={focus.hintsText} />
 
       {constructionPct !== null ? (
         <div className={styles.construction}>

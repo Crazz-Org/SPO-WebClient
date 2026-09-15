@@ -7,6 +7,7 @@
  */
 
 import { parseDetailsText } from './QuickStats';
+import { parseFacilityDiagnosis } from '@/shared/building-details/facility-diagnosis';
 import styles from './RichDetails.module.css';
 
 /* ------------------------------------------------------------------ */
@@ -510,7 +511,14 @@ interface RichDetailsViewProps {
 
 export function RichDetailsView({ detailsText, hintsText }: RichDetailsViewProps) {
   const richDetails = parseRichDetails(detailsText);
-  const showHint = hintsText && hintsText !== 'No hints for this facility.';
+  // The DiagnosisBanner above this block already states the hint, styled and with its
+  // "Warning:" / "Hint:" prefix stripped. `raw` is set to the hint text only when the
+  // diagnosis was read OFF the hint section (facility-diagnosis.ts:169,175) — a "Stopped …"
+  // diagnosis comes from section 1 and carries that line in `raw` instead. So this equality
+  // is exactly "the banner is already showing this sentence".
+  const hints = (hintsText ?? '').trim();
+  const diagnosis = parseFacilityDiagnosis(detailsText, hintsText);
+  const bannerCarriesHint = hints !== '' && diagnosis.raw === hints;
 
   return (
     <div className={styles.root}>
@@ -528,8 +536,8 @@ export function RichDetailsView({ detailsText, hintsText }: RichDetailsViewProps
         <div className={styles.detailsRaw}>{detailsText}</div>
       )}
 
-      {showHint && (
-        <div className={styles.hintsLine}>{hintsText}</div>
+      {!bannerCarriesHint && (
+        <div className={styles.hintsLine}>No hints for this facility.</div>
       )}
     </div>
   );
