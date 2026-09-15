@@ -69,6 +69,9 @@ function createTestRenderer(overrides: {
   const onWater = overrides.isOnWaterPlatform ?? false;
   renderer.isOnWaterPlatform = () => onWater;
 
+  // No facility kinds hidden — the default, inert state
+  renderer.hiddenFacIds = new Set();
+
   // No recorded position by default — fallback path is used
   renderer.selectedBuildingDrawnTop = null;
 

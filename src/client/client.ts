@@ -913,6 +913,7 @@ export class StarpeaceClient implements ClientHandlerContext {
         renderer.setSignalLosingFacilities(settings.signalLosingFacilities);
         renderer.setBuildingAnimationsEnabled(settings.buildingAnimations);
         renderer.setTransparentOverlays(settings.transparentOverlays);
+        renderer.setHiddenFacIds(settings.hiddenFacIds);
       }
     }
     this.soundManager.setEnabled(settings.isSoundEnabled);

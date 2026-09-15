@@ -100,6 +100,7 @@ describe('applySettings — renderer wiring', () => {
       setSignalLosingFacilities: jest.fn(),
       setBuildingAnimationsEnabled: jest.fn(),
       setTransparentOverlays: jest.fn(),
+      setHiddenFacIds: jest.fn(),
     };
   }
 
@@ -169,6 +170,23 @@ describe('applySettings — renderer wiring', () => {
     (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
 
     expect(renderer.setTransparentOverlays).toHaveBeenCalledWith(transparentOverlays);
+  });
+
+  it('wires hiddenFacIds to the renderer', () => {
+    const renderer = makeRenderer();
+    const mapNavigationUI = { getRenderer: () => renderer };
+    const fake = {
+      mapNavigationUI,
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
+      minimapUI: null,
+    };
+    const settings = { ...useGameStore.getState().settings, hiddenFacIds: [10, 20] };
+
+    (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
+
+    expect(renderer.setHiddenFacIds).toHaveBeenCalledWith([10, 20]);
   });
 
   it.each([

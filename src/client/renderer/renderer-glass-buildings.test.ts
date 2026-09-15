@@ -42,6 +42,7 @@ type Host = {
   };
   glassForeignBuildings: boolean;
   ownTycoonId: number;
+  hiddenFacIds: ReadonlySet<number>;
   requestRender: jest.Mock;
 };
 
@@ -93,6 +94,7 @@ function makeHost(overrides: Partial<Host> = {}): Host {
     },
     glassForeignBuildings: true,
     ownTycoonId: 0,
+    hiddenFacIds: new Set(),
     requestRender: jest.fn(),
     ...overrides,
   };

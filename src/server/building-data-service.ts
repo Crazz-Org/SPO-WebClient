@@ -31,6 +31,9 @@ export interface FacilityDimensions {
   visualClass: string;
   name: string;
   facid: string;
+  /** `[General] FacId` (`classes-bin-parser.ts:115`) — the facility KIND, shared by every
+   *  visual class of the same facility. 0 / absent means the class declares none. */
+  facId?: number;
   xsize: number;
   ysize: number;
   level: number;
@@ -249,6 +252,7 @@ export class BuildingDataService implements Service {
       visualClass: building.visualClass,
       name: building.name,
       facid: building.category || '',
+      facId: building.facId,
       xsize: building.xsize,
       ysize: building.ysize,
       level: building.visualStages,

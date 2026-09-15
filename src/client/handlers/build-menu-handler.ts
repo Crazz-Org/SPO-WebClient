@@ -24,6 +24,7 @@ import { ClientBridge } from '../bridge/client-bridge';
 import { useUiStore } from '../store/ui-store';
 import { useGameStore } from '../store/game-store';
 import { getFacilityDimensionsCache } from '../facility-dimensions-cache';
+import { facilityKindsFrom } from '../facility-kinds';
 import { registerCivicVisualClass } from '../../shared/building-details/civic-buildings';
 import type { ClientHandlerContext } from './client-context';
 import { enterZonesOverlayForMode, leaveZonesOverlayAfterMode } from './overlay-mode';
@@ -259,6 +260,8 @@ export async function preloadFacilityDimensions(ctx: ClientHandlerContext): Prom
         registerCivicVisualClass(id);
       }
     }
+
+    useGameStore.getState().setFacilityKinds(facilityKindsFrom(response.dimensions));
 
     ClientBridge.log('Cache', `Loaded ${cache.getSize()} facility dimensions`);
   } catch (err: unknown) {
