@@ -158,7 +158,14 @@ export function parseAccDesc(accDescStr: string): {
 export interface ChatUser {
   name: string;
   id: string;
-  status: number; // 0 = normal, 1 = typing
+  /**
+   * The away (AFK) flag the server packs as the third field of a user-list line —
+   * `ComposeChatUser(name, id, AFK)`, `Protocol/Protocol.pas:483-493`. It is NOT a
+   * composition state: `TClientView.MsgCompositionChanged` raises it only for `mstAFK`
+   * and clears it for `mstComposing` (`InterfaceServer.pas:1495-1502`). Live "typing"
+   * arrives separately, on `NotifyMsgCompositionState`.
+   */
+  isAway: boolean;
   nobilityPoints: number;
   nobilityTier: string;
   modifiers: number;
@@ -1455,6 +1462,42 @@ export interface PoliticalRoleInfo {
   isMinister: boolean;
   ministry: string;
   queriedAt: number;
+}
+
+// =============================================================================
+// TUTORIAL (the onboarding curriculum)
+// =============================================================================
+
+/** One of the four actions ModifyTask.asp dispatches (`Tasks/ModifyTask.asp:26-33`). */
+export type TutorialActionType = 'next' | 'prev' | 'close' | 'complete';
+
+/**
+ * The live assignment, as the tycoon cache object publishes it
+ * (`TTask.StoreToCache`, `Tasks/Tasks.pas:521-550`).
+ *
+ * A super-task recurses into its sub-task with the SAME prefix
+ * (`Tasks/Tasks.pas:784-789`), so these fields always describe the innermost
+ * live assignment, never the container.
+ */
+export interface TutorialState {
+  /** TutorialObjId — the raw object id the four actions bind to. Never 0. */
+  taskObjId: string;
+  /** TutorialId — MetaTask.KindId, e.g. 'Welcome', 'BuildFacility'. */
+  kindId: string;
+  /** TutorialName — MetaTask.Name, the assignment's title. */
+  name: string;
+  /** TutorialStage — 0-based. */
+  stage: number;
+  /** TutorialProgress — round(100 * stage / StageCount). */
+  progress: number;
+  /** TutorialGoal — only the money-goal kinds write it (`Tasks/MakeProfitTask.pas:81`); '' otherwise. */
+  goal: string;
+  /** TutorialTaskDone — the goal is met and the player must ask for the next one. */
+  done: boolean;
+  /** TutorialCompany — the company the assignment is set in; '' when unset. */
+  company: string;
+  /** TutorialTown — the town the assignment is set in; '' when unset. */
+  town: string;
 }
 
 // =============================================================================

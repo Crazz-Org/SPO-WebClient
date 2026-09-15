@@ -14,6 +14,7 @@ export interface PromptDialogProps {
   placeholder?: string;
   defaultValue?: string;
   submitLabel?: string;
+  type?: 'text' | 'password';
   onSubmit: (value: string) => void;
   onCancel: () => void;
 }
@@ -24,17 +25,20 @@ export function PromptDialog({
   placeholder,
   defaultValue = '',
   submitLabel = 'Submit',
+  type = 'text',
   onSubmit,
   onCancel,
 }: PromptDialogProps) {
   const [value, setValue] = useState(defaultValue);
   const inputId = useId();
   const trimmed = value.trim();
-  const canSubmit = trimmed.length > 0;
+  // A password is submitted raw: trimming it would silently mangle it.
+  const canSubmit = type === 'password' ? value.length > 0 : trimmed.length > 0;
+  const submitValue = type === 'password' ? value : trimmed;
 
   const submit = useCallback(() => {
-    if (canSubmit) onSubmit(trimmed);
-  }, [canSubmit, onSubmit, trimmed]);
+    if (canSubmit) onSubmit(submitValue);
+  }, [canSubmit, onSubmit, submitValue]);
 
   return (
     <Dialog
@@ -46,6 +50,7 @@ export function PromptDialog({
     >
       <input
         id={inputId}
+        type={type}
         className={styles.input}
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -59,7 +64,7 @@ export function PromptDialog({
         aria-label={message}
         autoFocus
         spellCheck={false}
-        autoComplete="off"
+        autoComplete={type === 'password' ? 'current-password' : 'off'}
       />
     </Dialog>
   );

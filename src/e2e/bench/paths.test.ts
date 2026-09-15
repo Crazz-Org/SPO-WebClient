@@ -165,6 +165,19 @@ describe('heartbeat', () => {
       fs.writeFileSync(paths.heartbeat, `${JSON.stringify({ writtenAt: 'not-a-number', currentJob: 'x', startedAt: 'y' })}\n`, 'utf8');
       expect(readHeartbeat(paths)).toBeNull();
     });
+
+    it('readHeartbeat returns null for an empty file, not an epoch-zero beat', () => {
+      const paths = tempBench();
+      fs.writeFileSync(paths.heartbeat, '', 'utf8');
+      expect(readHeartbeat(paths)).toBeNull();
+      expect(heartbeatAgeMs(paths)).toBeNull();
+    });
+
+    it('readHeartbeat returns null for a whitespace-only file', () => {
+      const paths = tempBench();
+      fs.writeFileSync(paths.heartbeat, '   \n\t\n', 'utf8');
+      expect(readHeartbeat(paths)).toBeNull();
+    });
   });
 });
 
@@ -206,6 +219,16 @@ describe('workerStatus — what a submitter learns at deposit time', () => {
     writeWorkerInfo(paths, INFO);
     touchHeartbeat(paths);
     expect(workerStatus(paths, Date.now(), () => true)).toEqual({ alive: true, info: INFO });
+  });
+
+  it('an empty heartbeat file reads as never-heartbeat, not a 57-year-old beat', () => {
+    const paths = tempBench();
+    writeWorkerInfo(paths, INFO);
+    fs.writeFileSync(paths.heartbeat, '', 'utf8');
+    const status = workerStatus(paths, Date.now(), () => true);
+    expect(status.alive).toBe(false);
+    expect(status.reason).toMatch(/never heartbeat/);
+    expect(status.reason).not.toMatch(/\d{6,} s old/);
   });
 });
 

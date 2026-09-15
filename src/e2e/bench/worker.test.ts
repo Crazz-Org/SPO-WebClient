@@ -7,8 +7,9 @@ import { type runGit } from './fingerprint';
 import { benchPaths, ensureLayout, readHeartbeat, readWorkerInfo, type BenchPaths } from './paths';
 import { Spool, type JobRequest } from './job';
 import { listVerdicts, publishPendingStatuses, writeVerdictIn } from './verdict';
-import { readNightlyResult } from './nightly';
+import { nightlyResultFile, readManualRecords, readNightlyResult } from './nightly';
 import { type GatewayDeps } from './gateway';
+import { type ReachabilityResult } from './reachability';
 import {
   authEnvForGitArgs,
   mergeQueueDeps,
@@ -16,6 +17,7 @@ import {
   classifyStage,
   countCapabilityExceptions,
   DEADLINE_EXIT_CODE,
+  downgradeUnreachable,
   liveAttestationFrom,
   main,
   mergeQueueDeps,
@@ -73,6 +75,14 @@ interface Harness {
   prepareRefCalls: string[];
   leaseRenewals: number;
   clock: { nowMs: number };
+  /** What the reachability probe reports. */
+  reachable: ReachabilityResult;
+  /** When true, deps.gameServerReachable rejects instead of resolving. */
+  reachProbeThrows: boolean;
+  /** How many times the probe was invoked. */
+  reachProbeCalls: number;
+  /** The drive log file each probe invocation was handed. */
+  reachProbeLogs: string[];
 }
 
 function harness(): Harness {
@@ -112,6 +122,10 @@ function harness(): Harness {
     prepareRefCalls: [],
     leaseRenewals: 0,
     clock: { nowMs: 1_000_000 },
+    reachable: { ok: true, target: 'dserver:1111', detail: 'connected' },
+    reachProbeThrows: false,
+    reachProbeCalls: 0,
+    reachProbeLogs: [],
     deps: {
       paths,
       spool,
@@ -153,6 +167,12 @@ function harness(): Harness {
         return { held: h.leaseDecision.ok };
       },
       processAlive: () => h.submitterAlive,
+      gameServerReachable: async driveLog => {
+        h.reachProbeCalls++;
+        h.reachProbeLogs.push(driveLog);
+        if (h.reachProbeThrows) throw new Error('probe blew up');
+        return h.reachable;
+      },
       now: () => (h.clock.nowMs += 10),
       sleep: async () => {},
       gitAuthEnv: () => h.gitAuthEnv,
@@ -190,7 +210,12 @@ function jobsLogVerdicts(h: Harness): { id: string; verdict: string }[] {
  * is gone, and every test that used to say 'gate' means "the job that produces an
  * attestation".
  */
-function deposit(h: Harness, type: JobRequest['type'] = 'ref', args: string[] = []): JobRequest {
+function deposit(
+  h: Harness,
+  type: JobRequest['type'] = 'ref',
+  args: string[] = [],
+  overrides: Partial<Omit<JobRequest, 'id' | 'submittedAt'>> = {},
+): JobRequest {
   return h.spool.submit(
     {
       type,
@@ -201,6 +226,7 @@ function deposit(h: Harness, type: JobRequest['type'] = 'ref', args: string[] = 
       args,
       ...(type === 'lease' ? { leaseMinutes: 1 } : {}),
       ...(type === 'ref' ? { ref: `head-of-${path.basename(h.worktree)}` } : {}),
+      ...overrides,
     },
     h.clock.nowMs,
   );
@@ -1323,6 +1349,54 @@ describe('nextGateAttempt — F2: a malformed counter file must never fail the g
   });
 });
 
+describe('downgradeUnreachable', () => {
+  const log = (): void => {};
+
+  it('leaves a non-FAIL verdict untouched and never calls the probe', async () => {
+    let called = false;
+    const probe = async (): Promise<ReachabilityResult> => {
+      called = true;
+      return { ok: true, target: 'dserver:1111', detail: 'connected' };
+    };
+    const result = await downgradeUnreachable(probe, 'BLOCKED', 'run.js exited 2 (BLOCKED)', log);
+    expect(result).toEqual({ verdict: 'BLOCKED', detail: 'run.js exited 2 (BLOCKED)' });
+    expect(called).toBe(false);
+  });
+
+  it('leaves a FAIL untouched when the probe says the front door is open', async () => {
+    const probe = async (): Promise<ReachabilityResult> => ({
+      ok: true,
+      target: 'dserver:1111',
+      detail: 'connected',
+    });
+    const result = await downgradeUnreachable(probe, 'FAIL', 'live drive exited 1 (FAIL)', log);
+    expect(result).toEqual({ verdict: 'FAIL', detail: 'live drive exited 1 (FAIL)' });
+  });
+
+  it('downgrades a FAIL to ENVIRONMENT when the probe finds the server unreachable', async () => {
+    const probe = async (): Promise<ReachabilityResult> => ({
+      ok: false,
+      target: 'dserver:1111',
+      detail: 'connect timed out after 10000ms',
+    });
+    const result = await downgradeUnreachable(probe, 'FAIL', 'live drive exited 1 (FAIL)', log);
+    expect(result.verdict).toBe('ENVIRONMENT');
+    expect(result.detail).toMatch(/independent reachability probe of dserver:1111 failed/);
+    expect(result.detail).toMatch(/connect timed out after 10000ms/);
+    expect(result.detail).toMatch(/live drive exited 1 \(FAIL\)/);
+  });
+
+  it('keeps the FAIL and says why when the probe itself throws', async () => {
+    const probe = async (): Promise<ReachabilityResult> => {
+      throw new Error('dns lookup failed');
+    };
+    const result = await downgradeUnreachable(probe, 'FAIL', 'live drive exited 1 (FAIL)', log);
+    expect(result.verdict).toBe('FAIL');
+    expect(result.detail).toMatch(/reachability probe could not be run \(dns lookup failed\)/);
+    expect(result.detail).toMatch(/not downgraded/);
+  });
+});
+
 describe('runJob — nightly', () => {
   it('builds and drives exactly what a live job does — it is a live drive against main', async () => {
     const h = harness();
@@ -1367,6 +1441,60 @@ describe('runJob — nightly', () => {
       args: ['dist/e2e/run.js', '--branch=main', `--sha=head-of-${path.basename(h.worktree)}`],
     });
     expect(report.verdict).toBe('PASS');
+  });
+
+  it('an unreachable game server downgrades a failing nightly to ENVIRONMENT, not FAIL', async () => {
+    const h = harness();
+    deposit(h, 'nightly');
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+    h.reachable = { ok: false, target: 'dserver:1111', detail: 'connect timed out after 10000ms' };
+
+    await processOldest(h.deps);
+
+    const nightlyResult = readNightlyResult(h.paths);
+    expect(nightlyResult).toMatchObject({ verdict: 'ENVIRONMENT' });
+    expect(nightlyResult?.detail).toMatch(/independent reachability probe/);
+  });
+
+  it('a code-caused connect failure (probe OK) is not downgraded — still FAIL', async () => {
+    const h = harness();
+    deposit(h, 'nightly');
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+    // h.reachable defaults to { ok: true, ... } — the front door is open.
+
+    await processOldest(h.deps);
+
+    const nightlyResult = readNightlyResult(h.paths);
+    expect(nightlyResult).toMatchObject({ verdict: 'FAIL' });
+    expect(nightlyResult?.detail).toMatch(/live drive exited 1 \(FAIL\)/);
+  });
+
+  // A manual nightly takes the other branch of the publish fork (publishManualResult, not
+  // writeNightlyResult), so the downgrade has to be proven on that surface too: the maintainer
+  // who asks "is this red really the code?" must be answered ENVIRONMENT, and the answer must
+  // not be attested — it measured nothing about main.
+  it('an unreachable game server downgrades a failing MANUAL nightly to ENVIRONMENT too', async () => {
+    const h = harness();
+    const job = deposit(h, 'nightly', [], {
+      trigger: 'manual',
+      requestedBy: {
+        user: 'maintainer',
+        host: 'bench-pc',
+        tty: '/dev/pts/3',
+        via: 'bench-cli',
+        reason: 'twelve connect ETIMEDOUT lines — this red is not the code',
+        requestedAt: '2026-09-13T13:00:00.000Z',
+      },
+    });
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+    h.reachable = { ok: false, target: 'dserver:1111', detail: 'connection refused' };
+
+    await processOldest(h.deps);
+
+    expect(h.spool.readReport(job.id)).toMatchObject({ verdict: 'ENVIRONMENT' });
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, verdict: 'ENVIRONMENT', attested: false }),
+    ]);
   });
 });
 
@@ -1472,6 +1600,38 @@ describe('runJob — live and lease', () => {
     // now() advances 10 ms per call; a 1-minute lease expires after enough hold cycles.
     const report = await runJob(h.deps, job);
     expect(report.detail).toMatch(/lease expired/);
+  });
+
+  it('a PASS drive never calls the reachability probe — no question worth paying for', async () => {
+    const h = harness();
+    const job = deposit(h, 'live');
+    const report = await runJob(h.deps, job);
+    expect(report.verdict).toBe('PASS');
+    expect(h.reachProbeCalls).toBe(0);
+  });
+
+  // The world server's address is handed out by the directory at runtime, so the only place it
+  // is written down on this host is the drive's own log (`connect ETIMEDOUT <ip>:<port>`). The
+  // probe therefore has to be handed that file, or it can only ever answer for the front door.
+  it('hands the probe the drive log, and carries the named world server into the detail', async () => {
+    const h = harness();
+    const job = deposit(h, 'live');
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+    h.reachable = { ok: false, target: '158.69.153.134:8000', detail: 'connect ETIMEDOUT' };
+    const report = await runJob(h.deps, job);
+    expect(h.reachProbeLogs).toEqual([report.logFile]);
+    expect(report.verdict).toBe('ENVIRONMENT');
+    expect(report.detail).toContain('158.69.153.134:8000');
+  });
+
+  it('an unreachable game server downgrades a failing live drive to ENVIRONMENT', async () => {
+    const h = harness();
+    const job = deposit(h, 'live');
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+    h.reachable = { ok: false, target: 'dserver:1111', detail: 'connection refused' };
+    const report = await runJob(h.deps, job);
+    expect(report.verdict).toBe('ENVIRONMENT');
+    expect(report.detail).toMatch(/independent reachability probe/);
   });
 });
 
@@ -2547,5 +2707,235 @@ describe('the worker wiring reaches the credentials', () => {
     const before = Date.now();
     await realWorkerDeps(paths()).sleep(5);
     expect(Date.now() - before).toBeGreaterThanOrEqual(4);
+  });
+});
+
+/**
+ * #801 — a manual nightly publishes only what it actually measured.
+ *
+ * A scheduled nightly publishes whatever it reached, including the verdicts that prove
+ * nothing: nothing else is watching `main`, and a worker death must not leave yesterday's
+ * PASS standing. A manual proof is the opposite case — the record it would overwrite is a
+ * real measurement of the very same sha, which a human asked to re-check because they
+ * believed it was wrong. Clearing that on the strength of a timed-out fetch would destroy
+ * the only true statement on file.
+ */
+describe('a manual nightly — attest-only replacement of latest.json', () => {
+  const REQUESTED_BY = {
+    user: 'maintainer',
+    host: 'bench-pc',
+    tty: '/dev/pts/3',
+    via: 'bench-cli' as const,
+    reason: 'twelve connect ETIMEDOUT lines — this red is not the code',
+    requestedAt: '2026-09-13T13:00:00.000Z',
+  };
+
+  /** A manual nightly deposit, optionally naming a requested sha of its own. */
+  function depositManual(h: Harness, overrides: Partial<Omit<JobRequest, 'id' | 'submittedAt'>> = {}): JobRequest {
+    return deposit(h, 'nightly', [], { trigger: 'manual', requestedBy: REQUESTED_BY, ...overrides });
+  }
+
+  /** A red on file for the sha the manual proof is about to re-measure. */
+  function redOnFile(h: Harness): Buffer {
+    fs.mkdirSync(h.paths.nightly, { recursive: true });
+    fs.writeFileSync(
+      nightlyResultFile(h.paths),
+      `${JSON.stringify(
+        {
+          jobId: 'job-yesterday',
+          sha: `head-of-${path.basename(h.worktree)}`,
+          verdict: 'FAIL',
+          submittedAt: '2026-09-13T02:10:00.000Z',
+          scheduledSubmittedAt: '2026-09-13T02:10:00.000Z',
+          finishedAt: '2026-09-13T02:40:00.000Z',
+          trigger: 'scheduled',
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+    return fs.readFileSync(nightlyResultFile(h.paths));
+  }
+
+  it('a manual PASS replaces latest.json, filling supersedes and carrying the scheduled stamp', async () => {
+    const h = harness();
+    redOnFile(h);
+    const job = depositManual(h);
+
+    await processOldest(h.deps);
+
+    expect(readNightlyResult(h.paths)).toMatchObject({
+      jobId: job.id,
+      verdict: 'PASS',
+      trigger: 'manual',
+      requestedBy: { user: 'maintainer' },
+      // Not reset by a manual run: the night's own 20 h slot is untouched.
+      scheduledSubmittedAt: '2026-09-13T02:10:00.000Z',
+      supersedes: { jobId: 'job-yesterday', verdict: 'FAIL', trigger: 'scheduled' },
+    });
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, attested: true, verdict: 'PASS' }),
+    ]);
+    // Still not a gate: main's sha carries no attestation.
+    expect(listVerdicts(h.paths)).toHaveLength(0);
+  });
+
+  it('a manual FAIL replaces latest.json too — confirming a red is a real measurement', async () => {
+    const h = harness();
+    redOnFile(h);
+    const job = depositManual(h);
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+
+    await processOldest(h.deps);
+
+    expect(readNightlyResult(h.paths)).toMatchObject({
+      jobId: job.id,
+      verdict: 'FAIL',
+      trigger: 'manual',
+    });
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, attested: true, verdict: 'FAIL' }),
+    ]);
+  });
+
+  it('a manual ENVIRONMENT leaves latest.json byte-identical and records attested: false', async () => {
+    const h = harness();
+    const before = redOnFile(h);
+    const job = depositManual(h);
+    h.exitCodes = [0, 0, 0, 3]; // run.js exits ENVIRONMENT — nothing was learned about main
+
+    await processOldest(h.deps);
+
+    expect(fs.readFileSync(nightlyResultFile(h.paths))).toEqual(before);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, attested: false, verdict: 'ENVIRONMENT' }),
+    ]);
+  });
+
+  it('a manual BLOCKED leaves latest.json byte-identical — a refused world lock measured nothing', async () => {
+    const h = harness();
+    const before = redOnFile(h);
+    depositManual(h);
+    h.exitCodes = [0, 0, 0, 2];
+
+    await processOldest(h.deps);
+
+    expect(fs.readFileSync(nightlyResultFile(h.paths))).toEqual(before);
+    expect(readManualRecords(h.paths)[0]).toMatchObject({ verdict: 'BLOCKED', attested: false });
+  });
+
+  it('a manual STALE leaves latest.json byte-identical', async () => {
+    const h = harness();
+    const before = redOnFile(h);
+    const job = depositManual(h);
+    h.hashes = ['h2', 'h2']; // the tree moved between deposit and start
+
+    await processOldest(h.deps);
+
+    expect(h.spool.readReport(job.id)?.verdict).toBe('STALE');
+    expect(fs.readFileSync(nightlyResultFile(h.paths))).toEqual(before);
+    expect(readManualRecords(h.paths)[0]).toMatchObject({ verdict: 'STALE', attested: false });
+  });
+
+  it('a manual run whose driven sha is not the requested one does not replace latest.json', async () => {
+    const h = harness();
+    const before = redOnFile(h);
+    // The deposit names a sha the checkout no longer holds: the drive answered a question
+    // nobody asked, so the answer must not be published as if it had.
+    const job = depositManual(h, {
+      fingerprint: { head: 'the-sha-that-was-confirmed', hash: 'h1', clean: true },
+    });
+
+    await processOldest(h.deps);
+
+    expect(h.spool.readReport(job.id)?.verdict).toBe('PASS');
+    expect(fs.readFileSync(nightlyResultFile(h.paths))).toEqual(before);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({
+        attested: false,
+        requestedSha: 'the-sha-that-was-confirmed',
+        sha: `head-of-${path.basename(h.worktree)}`,
+      }),
+    ]);
+  });
+
+  it('a manual INTERRUPTED records the outcome and leaves latest.json byte-identical', () => {
+    const h = harness();
+    const before = redOnFile(h);
+    const job = depositManual(h);
+    h.spool.claim(h.spool.queued()[0].file);
+
+    recoverInterrupted(h.deps);
+
+    expect(fs.readFileSync(nightlyResultFile(h.paths))).toEqual(before);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, attested: false, verdict: 'INTERRUPTED', trigger: 'manual' }),
+    ]);
+    expect(h.spool.readReport(job.id)?.verdict).toBe('INTERRUPTED');
+  });
+
+  it('REGRESSION: a SCHEDULED interrupted nightly still overwrites latest.json', () => {
+    // The rule the manual path must not have taken away: a worker death mid-nightly must
+    // not leave yesterday's PASS standing, because nothing else is watching that sha.
+    const h = harness();
+    redOnFile(h);
+    const job = deposit(h, 'nightly');
+    h.spool.claim(h.spool.queued()[0].file);
+
+    recoverInterrupted(h.deps);
+
+    expect(readNightlyResult(h.paths)).toMatchObject({
+      jobId: job.id,
+      verdict: 'INTERRUPTED',
+      trigger: 'scheduled',
+    });
+    expect(readManualRecords(h.paths)).toEqual([]);
+  });
+
+  it('a manual nightly deposited without a requestedBy still names someone', () => {
+    // Only reachable across a worker upgrade: an older binary deposited it, a newer one
+    // finished it. The record has to name somebody, and "unknown" beats an absent field
+    // that would read as if the run had been scheduled.
+    const h = harness();
+    const job = deposit(h, 'nightly', [], { trigger: 'manual' });
+    h.spool.claim(h.spool.queued()[0].file);
+
+    recoverInterrupted(h.deps);
+
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: job.id, requestedBy: expect.objectContaining({ user: 'unknown' }) }),
+    ]);
+  });
+
+  it('jobs.jsonl carries the trigger for a nightly and omits the key entirely elsewhere', async () => {
+    const h = harness();
+    const manual = depositManual(h);
+    await processOldest(h.deps);
+    const ref = deposit(h);
+    await processOldest(h.deps);
+
+    const lines = fs
+      .readFileSync(h.paths.jobsLog, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(lines.find(l => l.id === manual.id)).toMatchObject({ type: 'nightly', trigger: 'manual' });
+    expect(lines.find(l => l.id === ref.id)).not.toHaveProperty('trigger');
+  });
+
+  it('a scheduled nightly publishes with trigger "scheduled" and its own slot stamp', async () => {
+    const h = harness();
+    const job = deposit(h, 'nightly', [], { trigger: 'scheduled' });
+
+    await processOldest(h.deps);
+
+    expect(readNightlyResult(h.paths)).toMatchObject({
+      jobId: job.id,
+      verdict: 'PASS',
+      trigger: 'scheduled',
+      scheduledSubmittedAt: job.submittedAt,
+    });
+    expect(readManualRecords(h.paths)).toEqual([]);
   });
 });

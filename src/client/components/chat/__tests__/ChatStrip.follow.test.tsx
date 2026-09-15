@@ -16,7 +16,7 @@ import { ChatStrip } from '../ChatStrip';
 import type { ChatUser } from '@/shared/types';
 
 function user(name: string, id: string): ChatUser {
-  return { name, id, status: 0, nobilityPoints: 0, nobilityTier: 'Citizen', modifiers: 0 } as ChatUser;
+  return { name, id, isAway: false, nobilityPoints: 0, nobilityTier: 'Citizen', modifiers: 0 } as ChatUser;
 }
 
 function setup() {

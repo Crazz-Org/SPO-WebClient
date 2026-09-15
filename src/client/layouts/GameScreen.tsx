@@ -34,6 +34,7 @@ import { Sheet } from '../components/sheet';
 const BuildMenu = lazy(() => import('../components/modals/BuildMenu').then(m => ({ default: m.BuildMenu })));
 const BuildingInspectorModal = lazy(() => import('../components/modals/BuildingInspectorModal').then(m => ({ default: m.BuildingInspectorModal })));
 const ChangelogModal = lazy(() => import('../components/modals/ChangelogModal').then(m => ({ default: m.ChangelogModal })));
+const ChatHistoryModal = lazy(() => import('../components/modals/ChatHistoryModal').then(m => ({ default: m.ChatHistoryModal })));
 const ConnectionPickerModal = lazy(() => import('../components/modals/ConnectionPickerModal').then(m => ({ default: m.ConnectionPickerModal })));
 const CreateChannelModal = lazy(() => import('../components/modals/CreateChannelModal').then(m => ({ default: m.CreateChannelModal })));
 const NewspaperModal = lazy(() => import('../components/modals/NewspaperModal').then(m => ({ default: m.NewspaperModal })));
@@ -92,6 +93,7 @@ export function GameScreen() {
       <Suspense fallback={null}>
         <BuildingInspectorModal />
         <BuildMenu />
+        <ChatHistoryModal />
         <ConnectionPickerModal />
         <CreateChannelModal />
         <SupplierSearchModal />
@@ -124,6 +126,7 @@ export function GameScreen() {
           message={promptPayload.message}
           placeholder={promptPayload.placeholder}
           defaultValue={promptPayload.defaultValue}
+          type={promptPayload.type}
           onSubmit={(value) => { promptPayload.onSubmit(value); closeModal(); }}
           onCancel={closeModal}
         />

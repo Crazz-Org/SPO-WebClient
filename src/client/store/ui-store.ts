@@ -36,7 +36,7 @@ export type LeftPanelType = 'empire' | 'facilities' | 'overlays';
  * return to. `rightPanel` / `leftPanel` are kept as DERIVED read-only views of the top of
  * the stack so the components written against them keep working while they migrate.
  */
-export type SurfaceKind = RightPanelType | LeftPanelType | 'build' | 'supplierSearch' | 'map';
+export type SurfaceKind = RightPanelType | LeftPanelType | 'build' | 'supplierSearch' | 'map' | 'tutorial';
 
 /** Remembered supplier-search filters (T3, B4): a player usually searches several fluids in a row. */
 export interface ConnectionFilters {
@@ -68,7 +68,7 @@ function legacyView(stack: Surface[]): { rightPanel: RightPanelType | null; left
     leftPanel: LEFT_KINDS.has(top.kind) ? (top.kind as LeftPanelType) : null,
   };
 }
-export type ModalType = 'buildMenu' | 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'createChannel' | 'connectionPicker' | 'zonePicker' | 'supplierSearch' | 'buildingInspector' | 'newspaper' | 'changelog';
+export type ModalType = 'buildMenu' | 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'createChannel' | 'connectionPicker' | 'zonePicker' | 'supplierSearch' | 'buildingInspector' | 'newspaper' | 'changelog' | 'chatHistory';
 export type MobileTab = 'map' | 'chat' | 'build' | 'more';
 
 /** The right-click map context menu — what tile it opened on, and what sits there. */
@@ -106,7 +106,7 @@ interface UiState {
   /** Payload for confirmation dialogs */
   confirmPayload: { title: string; message: string; onConfirm: () => void; options?: ConfirmOptions } | null;
   /** Payload for text-input prompt dialogs */
-  promptPayload: { title: string; message: string; placeholder?: string; defaultValue?: string; onSubmit: (value: string) => void } | null;
+  promptPayload: { title: string; message: string; placeholder?: string; defaultValue?: string; type?: 'text' | 'password'; onSubmit: (value: string) => void } | null;
 
   // Build menu data
   buildMenuCategories: BuildingCategory[];
@@ -177,7 +177,7 @@ interface UiState {
   openModal: (type: ModalType) => void;
   closeModal: () => void;
   requestConfirm: (title: string, message: string, onConfirm: () => void, options?: ConfirmOptions) => void;
-  requestPrompt: (title: string, message: string, onSubmit: (value: string) => void, options?: { placeholder?: string; defaultValue?: string }) => void;
+  requestPrompt: (title: string, message: string, onSubmit: (value: string) => void, options?: { placeholder?: string; defaultValue?: string; type?: 'text' | 'password' }) => void;
 
   // Actions — Build menu data
   setBuildMenuCategories: (cats: BuildingCategory[], capitolIconUrl?: string) => void;

@@ -231,7 +231,7 @@ export function dispatchPush(ctx: PushContext, _socketName: string, packet: RdoP
       const user: ChatUser = {
         name: userParts[0],
         id: accDescStr,
-        status: parseInt(userParts[2], 10) || 0,
+        isAway: userParts[2]?.trim() === '1',
         ...parseAccDesc(accDescStr),
       };
 

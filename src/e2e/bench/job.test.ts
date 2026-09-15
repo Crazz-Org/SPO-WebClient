@@ -320,6 +320,29 @@ describe('jobsLog — the durable line jobsLog purge (and done/) can no longer t
     appendJobsLog(paths, reportFor('job-z'));
     expect(readJobsLog(paths)).toEqual([]);
   });
+
+  it('carries the trigger on a nightly line — "was this run asked for, or was it the schedule"', () => {
+    const paths = tempBench();
+    appendJobsLog(
+      paths,
+      finishedReportFor('job-manual', { type: 'nightly', branch: 'main', trigger: 'manual' }),
+    );
+    expect(readJobsLog(paths)[0]).toMatchObject({ type: 'nightly', trigger: 'manual' });
+  });
+
+  it('omits the trigger key entirely on a non-nightly report, even when the report carries one', () => {
+    // The field is meaningless on a `ref` or `live` job, and a key that always read
+    // "scheduled" there would look as if the question had been asked of it.
+    const paths = tempBench();
+    appendJobsLog(paths, finishedReportFor('job-ref', { trigger: 'scheduled' }));
+    expect(readJobsLog(paths)[0]).not.toHaveProperty('trigger');
+  });
+
+  it('omits the trigger key on a nightly that never carried one — every pre-#801 record', () => {
+    const paths = tempBench();
+    appendJobsLog(paths, finishedReportFor('job-old', { type: 'nightly', branch: 'main' }));
+    expect(readJobsLog(paths)[0]).not.toHaveProperty('trigger');
+  });
 });
 
 describe('the duplicate guard keys on the subject, not the directory', () => {

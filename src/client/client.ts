@@ -201,6 +201,7 @@ export class StarpeaceClient implements ClientHandlerContext {
   public isSendingChatMessage: boolean = false;
   public isJoiningChannel: boolean = false;
   public isTypingInChat: boolean = false;
+  public isChasePending: boolean = false;
   public isSelectingCompany: boolean = false;
 
   // Road building state — delegated to game-store (single source of truth)
@@ -312,7 +313,8 @@ export class StarpeaceClient implements ClientHandlerContext {
       onCancelServerSwitch: () => authHandler.cancelServerSwitch(),
       onServerSwitchZoneSelect: (zonePath: string) => authHandler.serverSwitchZoneSelect(this, zonePath),
       onSendChatMessage: (message: string) => chatHandler.sendChatMessage(this, message),
-      onJoinChannel: (channelName: string, password?: string) => chatHandler.joinChannel(this, channelName, password),
+      onJoinChannel: (channelName: string, password?: string, previousChannel?: string) =>
+        chatHandler.joinChannel(this, channelName, password, previousChannel),
       onCreateChannel: (channelName: string, password: string) => chatHandler.createChannel(this, channelName, password),
       onChatTypingChange: (isTyping: boolean) => chatHandler.setTypingStatus(this, isTyping),
       onChatAway: () => chatHandler.setAwayStatus(this),
@@ -509,12 +511,21 @@ export class StarpeaceClient implements ClientHandlerContext {
       onProfilePolicySet: (tycoonName, status) => this.sendMessage({
         type: WsMessageType.REQ_PROFILE_POLICY_SET, tycoonName, status,
       }),
+      onProfileUploadPicture: (pictureBase64) => this.sendMessage({
+        type: WsMessageType.REQ_PROFILE_UPLOAD_PICTURE, pictureBase64,
+      }),
       onProfileCurriculumAction: (action, value) => {
         if (action === 'abandonRole') { void authHandler.abandonRole(this); return; }
         this.sendMessage({ type: WsMessageType.REQ_PROFILE_CURRICULUM_ACTION, action, value });
       },
       onProfileSwitchCompany: (companyId, companyName, ownerRole) =>
         authHandler.profileSwitchCompany(this, companyId, companyName, ownerRole),
+
+      // Tutorial
+      onTutorialState: () => this.sendMessage({ type: WsMessageType.REQ_TUTORIAL_STATE }),
+      onTutorialAction: (action) => this.sendMessage({
+        type: WsMessageType.REQ_TUTORIAL_ACTION, action,
+      }),
 
       // Politics
       onRequestPoliticsData: (townName, buildingX, buildingY, isCapitol) => {
@@ -900,6 +911,8 @@ export class StarpeaceClient implements ClientHandlerContext {
         renderer.setAircraftAnimationsEnabled(settings.aircraftAnimations);
         renderer.setGlassForeignBuildings(settings.glassForeignBuildings);
         renderer.setSignalLosingFacilities(settings.signalLosingFacilities);
+        renderer.setBuildingAnimationsEnabled(settings.buildingAnimations);
+        renderer.setTransparentOverlays(settings.transparentOverlays);
       }
     }
     this.soundManager.setEnabled(settings.isSoundEnabled);

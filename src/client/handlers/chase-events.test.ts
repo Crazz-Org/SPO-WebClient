@@ -45,7 +45,7 @@ function makeCtx() {
 }
 
 function user(name: string): ChatUser {
-  return { name, id: '0', status: 0, nobilityPoints: 0, nobilityTier: 'Citizen', modifiers: 0 } as ChatUser;
+  return { name, id: '0', isAway: false, nobilityPoints: 0, nobilityTier: 'Citizen', modifiers: 0 } as ChatUser;
 }
 
 beforeEach(() => {
@@ -56,6 +56,7 @@ beforeEach(() => {
 
 describe('EVENT_MOVE_TO', () => {
   it('centres the map on the coordinates the followed player moved to, exactly once, and records the position in the camera history', () => {
+    useChatStore.setState({ chasedUser: CHASED });
     const { ctx, centerOn } = makeCtx();
 
     dispatchEvent(ctx, { type: WsMessageType.EVENT_MOVE_TO, x: 706, y: 436 } as unknown as WsMessage);
@@ -67,6 +68,7 @@ describe('EVENT_MOVE_TO', () => {
   });
 
   it('never moves the camera on coordinates the dispatcher could not read, and records nothing', () => {
+    useChatStore.setState({ chasedUser: CHASED });
     const { ctx, centerOn } = makeCtx();
 
     dispatchEvent(ctx, { type: WsMessageType.EVENT_MOVE_TO, x: NaN, y: 436 } as unknown as WsMessage);
@@ -74,6 +76,24 @@ describe('EVENT_MOVE_TO', () => {
     expect(centerOn).not.toHaveBeenCalled();
     expect(ClientBridge.log).toHaveBeenCalledWith('Map', expect.stringContaining('unreadable'));
     expect(useMapStore.getState().history).toEqual([]);
+  });
+
+  it('does not pan when nobody is being followed and no chase is starting', () => {
+    const { ctx, centerOn } = makeCtx();
+
+    dispatchEvent(ctx, { type: WsMessageType.EVENT_MOVE_TO, x: 706, y: 436 } as unknown as WsMessage);
+
+    expect(centerOn).not.toHaveBeenCalled();
+    expect(useMapStore.getState().history).toEqual([]);
+  });
+
+  it('pans on the pending flag alone — the accepted chase\'s own first MoveTo arrives before the badge is up', () => {
+    const { ctx, centerOn } = makeCtx();
+    (ctx as unknown as { isChasePending: boolean }).isChasePending = true;
+
+    dispatchEvent(ctx, { type: WsMessageType.EVENT_MOVE_TO, x: 706, y: 436 } as unknown as WsMessage);
+
+    expect(centerOn).toHaveBeenCalledWith(706, 436);
   });
 
   it('does nothing when there is no renderer yet', () => {

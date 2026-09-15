@@ -14,14 +14,14 @@ import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
 import { CHANNEL_USER_LIMIT } from '../../shared/chat-channel';
 import { parsePropertyResponse as parsePropertyResponseHelper, writeRdoFrame } from '../rdo-helpers';
-import { ERROR_InvalidPassword, ERROR_NotEnoughRoom, ERROR_Unknown } from '../../shared/error-codes';
+import { ERROR_InvalidPassword, ERROR_NotEnoughRoom, ERROR_Unknown, ERROR_InvalidUserName } from '../../shared/error-codes';
 
 // =========================================================================
 // PRIVATE HELPERS
 // =========================================================================
 
 /**
- * Parse user list format: "name/id/status\n..."
+ * Parse user list format: "name/accDesc/afk\n..."
  */
 function parseChatUserList(ctx: SessionContext, rawData: string): ChatUser[] {
   const users: ChatUser[] = [];
@@ -35,7 +35,7 @@ function parseChatUserList(ctx: SessionContext, rawData: string): ChatUser[] {
       users.push({
         name: parts[0].trim(),
         id: accDescStr,
-        status: parseInt(parts[2], 10) || 0,
+        isAway: parts[2]?.trim() === '1',
         nobilityPoints,
         nobilityTier,
         modifiers,
@@ -126,6 +126,14 @@ export class ChannelJoinError extends Error {
   constructor(readonly code: number, message: string) {
     super(message);
     this.name = 'ChannelJoinError';
+  }
+}
+
+/** A Chase refusal the player can act on. Carries the server's own code. */
+export class ChaseError extends Error {
+  constructor(readonly code: number, message: string) {
+    super(message);
+    this.name = 'ChaseError';
   }
 }
 
@@ -308,10 +316,14 @@ export async function chaseUser(ctx: SessionContext, userName: string): Promise<
     ctx.log.debug(`[Chat] Now chasing: ${userName}`);
     return;
   }
-  if (result === '12') {
-    throw new Error(`Cannot follow ${userName}: unknown, offline, or already following you`);
+  const code = Number.parseInt(result, 10);
+  if (code === ERROR_InvalidUserName) {
+    throw new ChaseError(
+      ERROR_InvalidUserName,
+      `Cannot follow ${userName}: unknown, offline, or already following you`,
+    );
   }
-  throw new Error(`Chase failed: ${result}`);
+  throw new ChaseError(Number.isNaN(code) ? ERROR_Unknown : code, `Chase failed: ${result}`);
 }
 
 /**

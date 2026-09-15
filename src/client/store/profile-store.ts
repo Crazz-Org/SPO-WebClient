@@ -52,6 +52,11 @@ interface ProfileState {
   // Refresh counter — incremented after successful actions to trigger re-fetch
   refreshCounter: number;
 
+  /** The portrait the browser just produced, shown instead of `profile.photoUrl`. */
+  portraitDataUrl: string | null;
+  /** What `portraitDataUrl` held before the last optimistic apply, for a refused upload. */
+  previousPortraitDataUrl: string | null;
+
   // Actions
   setProfile: (profile: TycoonProfileFull) => void;
   setCurrentTab: (tab: ProfileTab | null) => void;
@@ -70,6 +75,8 @@ interface ProfileState {
   setSupplierSearchLoading: (loading: boolean) => void;
   clearSupplierSearch: () => void;
   incrementRefresh: () => void;
+  applyPortrait: (dataUrl: string) => void;
+  revertPortrait: () => void;
   reset: () => void;
 }
 
@@ -88,6 +95,8 @@ export const useProfileStore = create<ProfileState>((set) => ({
   supplierSearchResults: [],
   supplierSearchLoading: false,
   refreshCounter: 0,
+  portraitDataUrl: null,
+  previousPortraitDataUrl: null,
 
   setProfile: (profile) => set({ profile, isLoading: false }),
   setCurrentTab: (tab) => set({ currentTab: tab, companyProfitLoss: null }),
@@ -120,6 +129,8 @@ export const useProfileStore = create<ProfileState>((set) => ({
   setSupplierSearchLoading: (loading) => set({ supplierSearchLoading: loading }),
   clearSupplierSearch: () => set({ supplierSearch: null, supplierSearchResults: [], supplierSearchLoading: false }),
   incrementRefresh: () => set((s) => ({ refreshCounter: s.refreshCounter + 1 })),
+  applyPortrait: (dataUrl) => set((s) => ({ previousPortraitDataUrl: s.portraitDataUrl, portraitDataUrl: dataUrl })),
+  revertPortrait: () => set((s) => ({ portraitDataUrl: s.previousPortraitDataUrl, previousPortraitDataUrl: null })),
 
   reset: () =>
     set((s) => ({
@@ -136,6 +147,8 @@ export const useProfileStore = create<ProfileState>((set) => ({
       supplierSearch: null,
       supplierSearchResults: [],
       supplierSearchLoading: false,
+      portraitDataUrl: null,
+      previousPortraitDataUrl: null,
       // Increment (not zero) so the useEffect re-triggers even on an unchanged section
       refreshCounter: s.refreshCounter + 1,
     })),

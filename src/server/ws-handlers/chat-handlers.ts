@@ -17,7 +17,7 @@ import {
 } from '../../shared/types';
 import type { WsHandlerContext, WsHandler } from './types';
 import { sendResponse, sendError } from './ws-utils';
-import { ChannelJoinError } from '../session/chat-handler';
+import { ChannelJoinError, ChaseError } from '../session/chat-handler';
 
 export const handleChatGetUsers: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
   console.log('[Gateway] Getting chat user list');
@@ -107,7 +107,15 @@ export const handleChatAway: WsHandler = async (ctx: WsHandlerContext, msg: WsMe
 export const handleChatChase: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
   const req = msg as WsReqChatChase;
   console.log(`[Gateway] Chasing user: ${req.userName}`);
-  await ctx.session.chaseUser(req.userName);
+  try {
+    await ctx.session.chaseUser(req.userName);
+  } catch (err: unknown) {
+    if (err instanceof ChaseError) {
+      sendError(ctx.ws, msg.wsRequestId, err.message, err.code);
+      return;
+    }
+    throw err;
+  }
   const response: WsRespChatSuccess = {
     type: WsMessageType.RESP_CHAT_SUCCESS,
     wsRequestId: msg.wsRequestId,

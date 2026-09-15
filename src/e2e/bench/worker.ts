@@ -16,6 +16,7 @@ import { execFileSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { toErrorMessage } from '../../shared/error-utils';
+import { probeDriveEndpoints, type ReachabilityResult } from './reachability';
 import {
   BENCH_PORT,
   benchPaths,
@@ -49,7 +50,14 @@ import {
   type StaticProofAttestation,
   type StatusPublisher,
 } from './verdict';
-import { maybeRunNightly, nightlyResultFromReport, writeNightlyResult } from './nightly';
+import {
+  maybeRunNightly,
+  nightlyResultFromReport,
+  publishManualResult,
+  unknownRequester,
+  writeManualRecord,
+  writeNightlyResult,
+} from './nightly';
 import { githubAuthEnv, type GitAuthEnv } from './git-auth';
 import {
   ghVariableReader,
@@ -103,6 +111,13 @@ export interface WorkerDeps {
   /** One owner-lease renewal pass; the loop calls it on a timer. See ./owner. */
   renewLease: (nowMs: number) => Promise<RenewOutcome>;
   processAlive: (pid: number) => boolean;
+  /**
+   * Independent of the drive itself — see downgradeUnreachable and ./reachability. Takes the
+   * drive's log file, because that is where the world server's address is written down: the
+   * directory hands it out at runtime, so a process that never logged in can only learn it
+   * from the failed connect the drive already logged.
+   */
+  gameServerReachable: (driveLog: string) => Promise<ReachabilityResult>;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   log: (line: string) => void;
@@ -202,6 +217,39 @@ export const NON_ATTESTING: ReadonlySet<JobVerdict> = new Set<JobVerdict>([
 ]);
 
 /**
+ * A live drive that failed its flows is not evidence about the code unless the game server was
+ * actually there to be driven. Only a FAIL is ever reconsidered — a PASS, a BLOCKED and an
+ * ENVIRONMENT already say what they mean — and only the probe's own "no" downgrades it. A probe
+ * that throws is not an answer either way, so the FAIL stands and says why.
+ */
+export async function downgradeUnreachable(
+  probe: () => Promise<ReachabilityResult>,
+  verdict: JobVerdict,
+  detail: string,
+  log: (line: string) => void,
+): Promise<{ verdict: JobVerdict; detail: string }> {
+  if (verdict !== 'FAIL') return { verdict, detail };
+  let result: ReachabilityResult;
+  try {
+    result = await probe();
+  } catch (err: unknown) {
+    log(`reachability probe threw: ${toErrorMessage(err)}`);
+    return {
+      verdict,
+      detail: `${detail}; the reachability probe could not be run (${toErrorMessage(err)}), so this FAIL is not downgraded`,
+    };
+  }
+  if (result.ok) return { verdict, detail };
+  return {
+    verdict: 'ENVIRONMENT',
+    detail:
+      `the game server was unreachable from the bench host — the independent reachability ` +
+      `probe of ${result.target} failed: ${result.detail}; the drive's FAIL says nothing about ` +
+      `the code (${detail})`,
+  };
+}
+
+/**
  * Jobs found in running/ at startup were cut mid-flight by a worker death. They are
  * reported INTERRUPTED, never silently re-run: the body may have half-executed against
  * the live world, and the session should look before resubmitting.
@@ -225,7 +273,32 @@ export function recoverInterrupted(deps: WorkerDeps): void {
     });
     // Otherwise latest.json would keep yesterday's PASS while nothing is running and
     // nothing is scheduled — main would read as proven on the strength of a job that died.
-    if (request.type === 'nightly') {
+    //
+    // A MANUAL nightly is the exception, and for the opposite reason: what it would
+    // overwrite is a real measurement of this very same sha, which a human deliberately
+    // asked to re-check. Stamping INTERRUPTED over it would destroy a genuine result on
+    // the strength of a worker death that measured nothing (see publishManualResult). The
+    // outcome is still recorded — in nightly/manual/, where every manual outcome lands.
+    //
+    // The trigger is read from the REQUEST, not a report: recovery runs at startup, before
+    // any report for this job exists, and the request is the copy that survived on disk.
+    if (request.type === 'nightly' && request.trigger === 'manual') {
+      writeManualRecord(deps.paths, {
+        id: request.id,
+        jobId: request.id,
+        requestedSha: request.fingerprint.head,
+        requestedBy: request.requestedBy ?? unknownRequester(request.submittedAt),
+        attested: false,
+        sha: request.fingerprint.head,
+        verdict: 'INTERRUPTED',
+        submittedAt: request.submittedAt,
+        finishedAt: new Date(deps.now()).toISOString(),
+        detail:
+          'the worker died while the manual proof was driving main; nothing is proven, and ' +
+          'the published result was left exactly as it was',
+        trigger: 'manual',
+      });
+    } else if (request.type === 'nightly') {
       writeNightlyResult(deps.paths, {
         jobId: request.id,
         sha: request.fingerprint.head,
@@ -233,6 +306,8 @@ export function recoverInterrupted(deps: WorkerDeps): void {
         submittedAt: request.submittedAt,
         finishedAt: new Date(deps.now()).toISOString(),
         detail: 'the worker died while the nightly was driving main; nothing is proven',
+        trigger: 'scheduled',
+        scheduledSubmittedAt: request.submittedAt,
       });
     }
     deps.spool.finish(file);
@@ -370,8 +445,15 @@ export async function processOldest(deps: WorkerDeps): Promise<boolean> {
   }
 
   // The nightly publishes to its own file, never to verdicts/ — see ./nightly.
-  if (request.type === 'nightly') {
-    writeNightlyResult(deps.paths, nightlyResultFromReport(report, request.submittedAt));
+  //
+  // A manual proof goes through publishManualResult instead: it always records the outcome
+  // under nightly/manual/, and replaces latest.json only when it genuinely measured the sha
+  // that was asked about. A scheduled run has no such condition — it publishes whatever it
+  // reached, including the non-attesting verdicts, because nothing else is watching main.
+  if (request.type === 'nightly' && request.trigger === 'manual') {
+    publishManualResult(deps.paths, report, request);
+  } else if (request.type === 'nightly') {
+    writeNightlyResult(deps.paths, nightlyResultFromReport(report, request));
   }
 
   deps.spool.finish(runningFile);
@@ -729,6 +811,9 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
     targetMoved: false,
     startedAt: new Date(deps.now()).toISOString(),
     logFile,
+    // Carried onto the report so appendJobsLog and the nightly publish path can read why
+    // this run happened without either of them having to hold the request.
+    ...(request.trigger !== undefined ? { trigger: request.trigger } : {}),
   };
   const finish = (verdict: JobVerdict, detail: string): JobReport => {
     report.verdict = verdict;
@@ -927,6 +1012,14 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
       } else {
         bodyVerdict = GATE_EXIT_VERDICT[code] ?? 'FAIL';
         bodyDetail = `live drive exited ${code} (${bodyVerdict})`;
+        const reconsidered = await downgradeUnreachable(
+          () => deps.gameServerReachable(logFile),
+          bodyVerdict,
+          bodyDetail,
+          deps.log,
+        );
+        bodyVerdict = reconsidered.verdict;
+        bodyDetail = reconsidered.detail;
       }
     } else {
       // Lease: the report is written EARLY — it is what the waiting session unblocks on.
@@ -1477,6 +1570,7 @@ export function realWorkerDeps(
     mayDriveLive: nowMs => mayDriveLive(lease, nowMs),
     renewLease: nowMs => renewLease(ownerDeps, lease, nowMs),
     processAlive,
+    gameServerReachable: driveLog => probeDriveEndpoints(driveLog),
     now: () => Date.now(),
     sleep,
     gitAuthEnv,

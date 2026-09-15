@@ -30,6 +30,8 @@ discipline rule.
 ├── verdicts/<sha>.json             per-commit attestations — what `bench/gate` publishes
 ├── cache/                          the ~570-file asset mirror, ONE copy for the machine
 ├── nightly/checkout + latest.json  the worker's own `main` clone, and last night's verdict
+├── nightly/manual-request.json     a maintainer's request for a proof — the worker's to serve
+├── nightly/manual/<id>.json        every manual outcome, attested or not; never deleted
 ├── ref/checkout                    the checkout a fetched commit is gated in
 └── world/                          world-lock.json — finally GLOBAL
 ```
@@ -66,7 +68,7 @@ comment in `job.ts` for the measured line size and growth rate.
 | Gateway | `src/e2e/bench/gateway.ts` | clean-port guarantee, per-job gateway start/stop |
 | Attestations | `src/e2e/bench/verdict.ts` | `verdicts/<sha>.json` + `bench/gate` GitHub commit status |
 | Supervision | `scripts/bench-install.sh` | systemd --user unit, `Restart=always`, linger |
-| Nightly | `src/e2e/bench/nightly.ts` | the schedule, the `main` checkout, `nightly/latest.json` (§8) |
+| Nightly | `src/e2e/bench/nightly.ts` | the schedule, the `main` checkout, `nightly/latest.json`, and the manual request a maintainer may leave for it (§8) |
 | Owner lease | `src/e2e/bench/owner.ts` | the cross-host exclusion — the `BENCH_OWNER` repository variable (§9) |
 | Checkout | `src/e2e/bench/checkout.ts` | a worker-owned clone brought to any ref, with a conditional `npm ci` (§10) |
 | CI proof | `src/e2e/bench/ci-proof.ts` | whether CI already proved a sha's static half (§11) |
@@ -410,7 +412,8 @@ not the failure.
 | Where it runs | `~/.spo-bench/nightly/checkout` — a clone the worker owns, refreshed `fetch → reset --hard origin/main → clean -fd → npm ci` | Not the worker's own repo: a job builds its worktree, and the worker executes `dist/e2e/bench/worker.js` *from* that repo — building `main` there overwrites the running worker mid-flight. Not a `git worktree` of it either: `scripts/finish.sh` scans and reaps worktrees on its own schedule. |
 | How it is scheduled | The worker's idle branch (`worker.ts`, `workerLoop`), inside a window of **02:00–05:59 UTC**, at most one per **20 h** | No second scheduler racing the first for a serialised resource; GitHub Actions cannot reach this machine at all. UTC, not local time, so the window is one number everywhere. |
 | What "idle" means | It is a normal spool job, deposited only when the queue came back **empty** | Serialization, the `done/` report, the `.log`, `bench:status`, `INTERRUPTED` recovery and the 24 h purge all come for free. A session that deposits *during* the nightly simply queues behind it — the nightly is never aborted, and never starts while anyone waits. |
-| Who may deposit one | The worker alone — `cli.ts` does not accept `--type=nightly` | A session asking for one would be asking for the bench outside the queue's discipline. |
+| Who may deposit one | The worker alone. A human may **request** one (`npm run bench:nightly-request`), and the worker still deposits it from its idle branch | A session asking for one would be asking for the bench outside the queue's discipline. `cli.ts` still does not accept `--type=nightly`; the request is a marker, not a deposit. |
+| Manual proof | `npm run bench:nightly-request -- --reason="…"` writes `nightly/manual-request.json`. The worker serves it from the same idle branch: **independent of the 20 h slot**, but **counted against the 15-minute** `NIGHTLY_MOVE_RATE_LIMIT_MS`, and it replaces `latest.json` **only when it attests** | For the case the schedule cannot answer: a nightly that FAILs for a reason that is not the code (2026-09-13, twelve `connect ETIMEDOUT` lines) sticks to the tip until somebody pushes, and parks every card meanwhile. Independent of the slot because re-measuring one sha must not cancel that night's window run; counted against the rate limit because it **is** a live drive. Attest-only because a manual run that broke on the environment measured nothing — clearing a genuine red on the strength of a non-measurement is worse than the red. |
 | What it attests | **Nothing.** No `verdicts/<sha>.json` | That file means a *gate* ran — static stage, President exclusion, verify-gate routing — and this is a bare live drive. It would also hand `publishPendingStatuses` a `bench/gate` status to post on `main`'s own sha, a context branch protection reads, and the push hook matches an attestation to the pushing worktree, which this checkout never is. |
 
 **The published surface** is `~/.spo-bench/nightly/latest.json`, written tmp-then-rename:
@@ -418,7 +421,13 @@ not the failure.
 ```json
 { "jobId": "job-…", "sha": "<the main commit driven>", "verdict": "PASS",
   "submittedAt": "…", "finishedAt": "…", "detail": "live drive exited 0",
-  "logFile": "/home/…/.spo-bench/done/job-….log" }
+  "logFile": "/home/…/.spo-bench/done/job-….log",
+  "trigger": "scheduled | manual",        // absent ≡ scheduled
+  "scheduledSubmittedAt": "…",            // absent ≡ scheduled: use submittedAt
+  "requestedBy": { "user": "…", "host": "…", "tty": "…",
+                   "via": "bench-cli | spo", "reason": "…", "requestedAt": "…" },
+  "supersedes": { "jobId": "…", "sha": "…", "verdict": "FAIL",
+                  "trigger": "scheduled", "finishedAt": "…" } }
 ```
 
 `submittedAt` is the **deposit** time, not the start: it is what the 20 h gap is measured
@@ -426,15 +435,69 @@ from, so a night that queued behind a long job cannot buy itself a second slot. 
 refresh the checkout at all is recorded as `ENVIRONMENT` with the failing step named — which
 is also what stops the idle loop retrying every two seconds until the window closes.
 
+The last four fields are the manual path, and all four are **absent on every record written
+before it existed** — which is exactly what makes them backward-compatible. `trigger` absent
+means `scheduled`. `scheduledSubmittedAt` is the deposit time of the last *scheduled* run and
+is what the 20 h gap is really measured from; a manual write carries the previous one forward
+rather than resetting it, and absent it `submittedAt` reproduces the old arithmetic exactly.
+`requestedBy` and `supersedes` appear only on a record a manual run published — `supersedes`
+summarising the record it replaced, so a green that arrived by request still says what red it
+displaced.
+
+**Asking for one.** `npm run bench:nightly-request -- --reason="…"` reads `origin/main`'s real
+tip with `git ls-remote`, prints what is on file for it, and makes the human type the tip's
+first 8 characters back before it writes anything. It refuses inside a Claude Code session
+(`CLAUDECODE`) and refuses without a terminal, both exit 5, both before any write: deciding a
+red is not the code is a maintainer's judgement, not a session's — see
+[kanban-workflow.md § While `main` is red](kanban-workflow.md). It deposits nothing itself.
+
+**A manual run that did not measure the sha publishes nothing.** `ENVIRONMENT`, `INTERRUPTED`,
+`STALE`, `BLOCKED`, and a run whose tip moved between the confirmation and the refresh all
+leave `latest.json` **byte-identical**. Every manual outcome is recorded regardless, in
+`nightly/manual/<id>.json`, with `attested` saying which kind it was and `outcome` naming the
+ones where no job ran at all (`already-green`, `prepare-failed`, `superseded`). The worker
+never deletes those.
+
 **Reading it** is the orchestrator's first move on a task, and the rule that follows — repair-only dispatch, no
 `origin/main` merges while red — is [kanban-workflow.md § While `main` is red](kanban-workflow.md).
 `main` counts as red only while the failing `sha` is *still* `origin/main`; `ENVIRONMENT` and
 `INTERRUPTED` are not red, because the run learned nothing about `main` either way.
 
-**Known limit.** `dist/e2e/run.js` maps to a binary PASS/FAIL (`worker.ts`, the live branch),
-so a night refused for a dirty world lock reads as `FAIL` until a human opens `logFile`. The
-`detail` and `logFile` fields exist for exactly that reading. Tightening the mapping is a
-separate change to the driver, not to the schedule.
+**The mapping, and its discriminator.** `dist/e2e/run.js`'s exit code is read through
+`GATE_EXIT_VERDICT` (`worker.ts`): a night refused for a dirty world lock (exit 2) reads
+`BLOCKED`, a pre-flight abort (exit 3) reads `ENVIRONMENT`. What stayed wrong was the fourth
+case — a drive that reached the flows and failed them exits 1, and that read `FAIL` whether the
+code was broken or the game server simply was not answering from this host. `main` then read red
+for a failure that was not the code.
+
+A `FAIL` from a `live` or `nightly` drive is now asked one further question, and only that one:
+an **independent reachability probe** (`src/e2e/bench/reachability.ts`) opens a TCP connection and
+closes it without writing a byte — no login, no RDO frame, nothing the world sees as traffic.
+
+It dials **both halves of the game server**, in order, because a drive needs both:
+
+1. the **directory front door** the gateway is configured with (`RDO_DIR_HOST`, port 1111 —
+   `src/shared/config.ts`). It does not answer → that is the outage, and nothing downstream
+   could have run anyway.
+2. the **world server** the directory hands back at runtime (`158.69.153.134:8000` on
+   2026-09-13). Its address is unknown to a process that never logged in, so the probe reads it
+   out of the drive's own log: Node writes a failed connect as `connect ETIMEDOUT <ip>:<port>`,
+   which names the exact endpoint. Every distinct endpoint the log names that way is re-dialled
+   after the drive is over, up to `MAX_LOG_ENDPOINTS`.
+
+Either dial refused or timed out → the verdict is rewritten `ENVIRONMENT` and `detail` names that
+endpoint and says the probe failed, so `nightly-check.sh` reads UNKNOWN instead of RED and no
+session is handed somebody else's outage as a repair. Every dial answered → the `FAIL` stands
+untouched: a connect failure inside the flows against a server that is up right now IS a fact
+about the code. A probe that could not be run at all is not an answer either, and neither is a
+drive log that cannot be read — the `FAIL` stands in both cases, with the reason in `detail`.
+
+The discriminator is deliberately outside the drive: the drive's own connect attempt cannot tell
+"the server is down" from "this change broke the login path", because both arrive as the same
+refused socket. Re-dialling *after* the fact is what separates them. Two limits remain, by
+construction — a drive that never got far enough to log an address leaves only the front door to
+judge by, and a server that comes back up between the drive and the probe reads `FAIL`.
+`detail` and `logFile` are what a human reads for both.
 
 ## 9. The owner lease — one live bench across machines
 
@@ -505,10 +568,12 @@ node dist/e2e/bench/cli.js submit --type=ref --ref=<sha|branch> --wait
 ```
 
 The worker clones once into `<bench>/ref/checkout`, then per job: `fetch --prune --force`,
-`reset --hard <ref>`, `clean -fd`, a merge with `origin/main` unless `<ref>` already
-contains it (§ The gate base, "Gating the merged tree, not the branch"), and **`npm ci`
-only when the lockfile moved** — checked after the merge, since a merge can move it. From
-there it is an ordinary gate — same `verify-gate.js`, same routing, same President
+then a reset to `<ref>` **resolved against the remote** — `--ref=main` resets to
+`origin/main`, never to the checkout's own stale local `main`, and a sha, or a ref already
+spelled `origin/…`, is used as given — `clean -fd`, a merge with `origin/main` unless
+`<ref>` already contains it (§ The gate base, "Gating the merged tree, not the branch"), and
+**`npm ci` only when the lockfile moved** — checked after the merge, since a merge can move
+it. From there it is an ordinary gate — same `verify-gate.js`, same routing, same President
 exclusion, same live drive.
 
 Three things that are not obvious:
@@ -913,10 +978,18 @@ believe a mechanism is in place. It was restored by reverting #178 once the repo
   witness proved it. `ci-proof.test.ts`, `worker.test.ts`.
 - The push hook refuses `main` and nothing else, while still telling a mention of `git push`
   from a real one. `pre-push-gate.test.ts`.
-- A nightly is deposited only from an idle queue, inside its UTC window, at most one per
-  20 h, and only by the worker; it publishes to `nightly/latest.json` and writes no
-  attestation. A worker death mid-nightly stamps `INTERRUPTED` rather than leaving
-  yesterday's PASS standing. — `nightly.test.ts`, `worker.test.ts`.
+- A **scheduled** nightly is deposited only from an idle queue, inside its UTC window, at most
+  one per 20 h; it publishes to `nightly/latest.json` and writes no attestation. A worker
+  death mid-nightly stamps `INTERRUPTED` rather than leaving yesterday's PASS standing.
+  — `nightly.test.ts`, `worker.test.ts`.
+- A **manual** nightly is deposited from that same idle branch and nowhere else — the request
+  is a marker, and `submit --type=nightly` is still refused. It skips the 20 h slot, waits out
+  the 15-minute live-drive limit rather than being refused by it, and replaces
+  `latest.json` **only when it attests**: `PASS` or `FAIL` at the sha that was requested.
+  `ENVIRONMENT`, `INTERRUPTED`, `STALE` and a superseded tip leave the published file
+  byte-identical and are recorded under `nightly/manual/` instead. The request itself refuses
+  an agent session and a non-terminal, both before writing anything. — `nightly.test.ts`,
+  `worker.test.ts`, `cli.test.ts`.
 - A merge-queue entry is gated exactly once, only from GitHub's own queue refs, and its
   objects are **fetched before its tree is read** — so an entry whose tree already carries a
   passing attestation reuses it and takes no live slot, while an unfetchable or unreadable

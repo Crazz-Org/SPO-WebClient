@@ -39,6 +39,7 @@
     "bench:wait": "bash scripts/bench-wait.sh",
     "pr:wait": "bash scripts/pr-wait.sh",
     "bench:nightly": "bash scripts/nightly-check.sh",
+    "bench:nightly-request": "node dist/e2e/bench/cli.js request-nightly",
     "board:status": "bash scripts/board-status.sh",
     "board:take": "bash scripts/board-take.sh",
     "board:move": "bash scripts/board-move.sh",

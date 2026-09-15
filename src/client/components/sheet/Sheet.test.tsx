@@ -12,6 +12,7 @@ jest.mock('../empire', () => ({ ProfilePanel: () => <div>PROFILE CONTENT</div>, 
 jest.mock('../hud/OverlayMenu', () => ({ OverlayMenu: () => <div>OVERLAYS CONTENT</div> }));
 jest.mock('../politics/PoliticsHome', () => ({ PoliticsHome: () => <div>POLITICS CONTENT</div> }));
 jest.mock('../modals/BuildMenu', () => ({ BuildMenu: ({ embedded }: { embedded?: boolean }) => <div>BUILD CONTENT {embedded ? 'embedded' : ''}</div> }));
+jest.mock('../tutorial', () => ({ TutorialPanel: () => <div>TUTORIAL CONTENT</div> }));
 jest.mock('../modals/ConnectionPickerModal', () => ({ ConnectionPickerContent: ({ onClose }: { onClose: () => void }) => <button onClick={onClose}>PICKER CONTENT</button> }));
 
 describe('Sheet', () => {
@@ -44,6 +45,17 @@ describe('Sheet', () => {
     expect(screen.getByRole('region', { name: 'Mail' })).toBeTruthy();
     expect(screen.getByText('MAIL CONTENT')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Mail' })).toBeTruthy();
+  });
+
+  it('routes the tutorial surface, under the legacy label', () => {
+    act(() => useUiStore.getState().setRootSurface({ kind: 'tutorial' }));
+    renderWithProviders(<Sheet />);
+    // 'Tutorial' is the label eNewTycon.lng:89 gave the Profile-page button.
+    expect(screen.getByRole('region', { name: 'Tutorial' })).toBeTruthy();
+    expect(screen.getByText('TUTORIAL CONTENT')).toBeTruthy();
+    // Not in OWN_HEADER: the sheet supplies the heading AND the close affordance.
+    expect(screen.getByRole('heading', { name: 'Tutorial' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
   });
 
   it('the building content draws its own header, so the sheet adds none', () => {

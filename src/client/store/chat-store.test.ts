@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { useChatStore } from './chat-store';
+import { useChatStore, MAX_MESSAGES_PER_CHANNEL } from './chat-store';
 import type { ChatUser, ChatTab, ChatChannel } from './chat-store';
 import { CHAT_VISIBLE_KEY } from './chat-visibility';
 
@@ -18,8 +18,8 @@ function installStorage() {
 }
 
 /** Shorthand: create a ChatUser with default nobility fields. */
-function user(name: string, id: string, status = 0): ChatUser {
-  return { name, id, status, nobilityPoints: 0, nobilityTier: 'Commoner', modifiers: 0 };
+function user(name: string, id: string, isAway = false): ChatUser {
+  return { name, id, isAway, nobilityPoints: 0, nobilityTier: 'Commoner', modifiers: 0 };
 }
 
 function resetStore() {
@@ -72,10 +72,10 @@ describe('Chat Store — User list', () => {
 
   it('addUser overwrites an existing user with the same name', () => {
     useChatStore.getState().setUsers([user('Alice', 'u1')]);
-    useChatStore.getState().addUser(user('Alice', 'u1', 1));
+    useChatStore.getState().addUser(user('Alice', 'u1', true));
     const { users } = useChatStore.getState();
     expect(Object.keys(users)).toHaveLength(1);
-    expect(users['Alice'].status).toBe(1);
+    expect(users['Alice'].isAway).toBe(true);
   });
 
   it('removeUser removes a user by name', () => {
@@ -102,11 +102,11 @@ describe('Chat Store — User list', () => {
     expect(users['Player1'].name).toBe('Player1');
   });
 
-  it('addUser with 2-field format (name + id, no status)', () => {
+  it('addUser with 2-field format (name + id, no afk flag)', () => {
     useChatStore.getState().addUser(user('Player1', '12345'));
     const { users } = useChatStore.getState();
     expect(users['Player1'].id).toBe('12345');
-    expect(users['Player1'].status).toBe(0);
+    expect(users['Player1'].isAway).toBe(false);
   });
 
   it('removeUser by name works when user was added with different id', () => {
@@ -212,6 +212,22 @@ describe('Chat Store — Messages', () => {
     const { messages } = useChatStore.getState();
     expect(messages['Lobby']).toHaveLength(1);
     expect(messages['Lobby'][0].text).toBe('Hello');
+  });
+
+  it('retains up to MAX_MESSAGES_PER_CHANNEL and drops the oldest overflow, well past the strip\'s 50-line window', () => {
+    const total = MAX_MESSAGES_PER_CHANNEL + 20;
+    for (let i = 0; i < total; i++) {
+      useChatStore.getState().addMessage('Lobby', {
+        id: `m${i}`, from: 'Alice', text: `msg-${i}`, timestamp: i, isSystem: false, isGM: false,
+      });
+    }
+    const { messages } = useChatStore.getState();
+    const retained = messages['Lobby'];
+    expect(retained).toHaveLength(MAX_MESSAGES_PER_CHANNEL);
+    expect(retained.length).toBeGreaterThan(50);
+    // The oldest 20 were dropped; the newest is last.
+    expect(retained[0].text).toBe('msg-20');
+    expect(retained[retained.length - 1].text).toBe(`msg-${total - 1}`);
   });
 });
 

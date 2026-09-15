@@ -43,6 +43,7 @@ import type {
   BankActionType,
   AutoConnectionActionType,
   CurriculumActionType,
+  TutorialActionType,
   NewspaperRatingEntry,
   ChatChannel,
 } from '@/shared/types';
@@ -70,6 +71,7 @@ import {
   type WsRespProfilePolicy,
   type WsRespProfilePolicySet,
   type WsRespProfileCurriculumAction,
+  type WsRespProfileUploadPicture,
   type WsRespSearchMenuHome,
   type WsRespSearchMenuTowns,
   type WsRespSearchMenuPeopleSearch,
@@ -191,7 +193,12 @@ export interface ClientCallbacks {
 
   // Chat
   onSendChatMessage: (message: string) => void;
-  onJoinChannel: (channelName: string, password?: string) => void;
+  /**
+   * Join a chat channel. `previousChannel` is what the caller overwrote in the chat
+   * store before calling: a refusal rolls back to it. Omit it and the handler reads
+   * the store itself -- correct only for a caller that did not write it first.
+   */
+  onJoinChannel: (channelName: string, password?: string, previousChannel?: string) => void;
   /**
    * Create a named channel (Delphi CreateChannel). Returns a promise — unlike
    * `onJoinChannel` — so the modal can await it and stay open on a refusal.
@@ -294,9 +301,15 @@ export interface ClientCallbacks {
   // Profile actions
   onProfileBankAction: (action: BankActionType, amount?: string, toTycoon?: string, reason?: string, loanIndex?: number) => void;
   onProfileAutoConnectionAction: (action: AutoConnectionActionType, fluidId: string, suppliers?: string) => void;
+  onProfileUploadPicture: (pictureBase64: string) => void;
   onProfilePolicySet: (tycoonName: string, status: number) => void;
   onProfileCurriculumAction: (action: CurriculumActionType, value?: boolean) => void;
   onProfileSwitchCompany: (companyId: number, companyName: string, ownerRole: string) => void;
+
+  // Tutorial — the onboarding curriculum. Both are fire-and-forget: the answer
+  // comes back through the event dispatcher, which owns the store.
+  onTutorialState: () => void;
+  onTutorialAction: (action: TutorialActionType) => void;
 
   // Politics
   onRequestPoliticsData: (townName: string, buildingX: number, buildingY: number, isCapitol: boolean) => void;
@@ -439,10 +452,17 @@ export const ClientBridge = {
     // just ended.
     useBuildingStore.getState().clearFocus();
     useBuildingStore.getState().forgetSection();
+    // The chaser entry lives on the connection's TClientView, so the chase is
+    // over the moment the socket is; a badge surviving into the next session
+    // would name a follow that no longer exists. No StopChase is sent — there
+    // is nobody left to answer it, and a frame written into a closing socket
+    // can only hang the close.
+    useChatStore.getState().setChasedUser(null);
   },
 
   setReconnecting(): void {
     useGameStore.getState().setStatus('reconnecting');
+    useChatStore.getState().setChasedUser(null);
   },
 
   setCredentials(username: string, tycoonId?: string): void {
@@ -923,6 +943,16 @@ export const ClientBridge = {
         const resp = msg as WsRespProfileCurriculumAction;
         showToast(resp.message || 'Action completed', resp.success ? 'success' : 'error');
         if (resp.success) profile.incrementRefresh();
+        break;
+      }
+      case WsMessageType.RESP_PROFILE_UPLOAD_PICTURE: {
+        const resp = msg as WsRespProfileUploadPicture;
+        if (resp.success) {
+          showToast(resp.message || 'Portrait updated', 'success');
+        } else {
+          profile.revertPortrait();
+          showToast(resp.message || `Portrait refused (${resp.reason ?? 'unknown reason'})`, 'error');
+        }
         break;
       }
     }

@@ -109,7 +109,7 @@ describe('chat-flags scenario — a speaker present in the user list', () => {
     useChatStore.getState().addUser({
       name: 'SPO_test3',
       id: '8389108',
-      status: 0,
+      isAway: false,
       nobilityPoints: 500,
       nobilityTier: 'Baron',
       modifiers: 128,

@@ -861,6 +861,20 @@ Two rules follow, and they bind every session:
    attestation records that `baseMain`, and the honest note the push hook prints about a
    moved `main` is exactly the signal to wait rather than sync.
 
+**When the red is not the code.** A nightly can FAIL for a reason that has nothing to do with
+`main` — on 2026-09-13 a run recorded `FAIL` at `609928f1` behind twelve
+`connect ETIMEDOUT 158.69.153.134:8000` lines. `main` is immutable at a sha, so that red
+sticks to the tip until somebody pushes a commit, and rule 1 parks every card in the meantime
+(39 of them by 13:00Z that day). A **maintainer** who has opened `logFile` and believes the
+failure was the environment may ask for the same tip to be re-driven:
+`npm run bench:nightly-request -- --reason="…"`. It confirms the tip with them, leaves a
+marker, and the worker deposits the job from its own idle branch like any other nightly — the
+proof turns `main` green only if it actually passes, and a run that breaks on the environment
+again leaves the red exactly where it was. **A session may not ask for one, and the command
+refuses to run inside one** (exit 5): asking for a re-measurement is asking past rule 1, and
+that judgement is the maintainer's. Mechanism:
+[bench-worker.md § The nightly proof of `main`](bench-worker.md).
+
 Why the rule is written here rather than enforced by a hook: a red `main` is the moment the
 board's priority order stops being the human's to set, and that is a rule about *dispatch* —
 the thing this document governs. A hook refusing merges would also have to be sure which

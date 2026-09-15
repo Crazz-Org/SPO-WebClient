@@ -7,7 +7,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect, useMemo, memo, Fragment } from 'react';
-import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye, Lock, Plus, Star, VolumeX, Volume2 } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronUp as ChevronUpIcon, Send, Users, Eye, Lock, Plus, Star, VolumeX, Volume2, History } from 'lucide-react';
 import { useChatStore } from '../../store/chat-store';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
@@ -21,6 +21,9 @@ import styles from './ChatStrip.module.css';
 
 /** How long a pause retracts the "typing..." notice, in ms. */
 const TYPING_IDLE_MS = 4000;
+
+/** How many of the retained messages the strip itself renders. */
+const STRIP_RENDER_WINDOW = 50;
 
 /**
  * Move the camera to a tile — the one owner for "go to a tile", used by both `/go`
@@ -108,8 +111,6 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
   const [input, setInput] = useState('');
   const [defaultChannel, setDefaultChannel] = useState<string | null>(() => loadDefaultChannel());
   const [channelDropdownOpen, setChannelDropdownOpen] = useState(false);
-  const [pendingChannel, setPendingChannel] = useState<string | null>(null);
-  const [passwordInput, setPasswordInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -117,14 +118,14 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
 
   const channelMessages = messages[currentChannel] ?? [];
   const lastMessage = channelMessages[channelMessages.length - 1];
-  const visibleMessages = useMemo(() => channelMessages.slice(-50), [channelMessages]);
+  const visibleMessages = useMemo(() => channelMessages.slice(-STRIP_RENDER_WINDOW), [channelMessages]);
   const onlineCount = useMemo(() => Object.keys(users).length, [users]);
   const userList = useMemo(() => Object.values(users), [users]);
 
   // Auto-scroll on new messages when expanded
   useEffect(() => {
     if (isExpanded) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [channelMessages.length, isExpanded]);
 
@@ -134,8 +135,6 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
     const close = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setChannelDropdownOpen(false);
-        setPendingChannel(null);
-        setPasswordInput('');
       }
     };
     // Use setTimeout to avoid the same click event closing it immediately
@@ -208,16 +207,6 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
     client.onSendChatMessage(text);
   }, [input, client, announceTyping, commandContext]);
 
-  const submitPassword = useCallback(() => {
-    if (!pendingChannel) return;
-    setCurrentChannel(pendingChannel);
-    client.onJoinChannel(pendingChannel, passwordInput);
-    client.onGetChannelInfo(pendingChannel);
-    setPendingChannel(null);
-    setPasswordInput('');
-    setChannelDropdownOpen(false);
-  }, [pendingChannel, passwordInput, client, setCurrentChannel]);
-
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -262,65 +251,53 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
             </button>
             {channelDropdownOpen && (
               <div className={styles.channelDropdown}>
-                {pendingChannel ? (
-                  <form
-                    className={styles.passwordPrompt}
-                    onSubmit={(e) => { e.preventDefault(); submitPassword(); }}
+                {channels.map((ch) => (
+                  <button
+                    key={ch.name}
+                    className={`${styles.channelOption} ${ch.name === currentChannel ? styles.channelOptionActive : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setChannelDropdownOpen(false);
+                      if (ch.isProtected) {
+                        useUiStore.getState().requestPrompt(
+                          `Join "${ch.name}"`,
+                          `Password for "${ch.name}"`,
+                          (password) => {
+                            const previous = useChatStore.getState().currentChannel;
+                            setCurrentChannel(ch.name);
+                            client.onJoinChannel(ch.name, password, previous);
+                            client.onGetChannelInfo(ch.name);
+                          },
+                          { type: 'password' },
+                        );
+                        return;
+                      }
+                      const previous = useChatStore.getState().currentChannel;
+                      setCurrentChannel(ch.name);
+                      // Tell server to join this channel ("Lobby" maps to "" for the server)
+                      client.onJoinChannel(ch.name === 'Lobby' ? '' : ch.name, undefined, previous);
+                      client.onGetChannelInfo(ch.name);
+                    }}
                   >
-                    <label className={styles.passwordLabel} htmlFor="channel-password">
-                      Password for "{pendingChannel}"
-                    </label>
-                    <input
-                      id="channel-password"
-                      type="password"
-                      aria-label="Channel password"
-                      className={styles.passwordInput}
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      autoFocus
-                    />
-                    <button type="submit" className={styles.passwordSubmit}>Join</button>
-                  </form>
-                ) : (
-                  <>
-                    {channels.map((ch) => (
-                      <button
-                        key={ch.name}
-                        className={`${styles.channelOption} ${ch.name === currentChannel ? styles.channelOptionActive : ''}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (ch.isProtected) {
-                            setPendingChannel(ch.name);
-                            return;
-                          }
-                          setCurrentChannel(ch.name);
-                          setChannelDropdownOpen(false);
-                          // Tell server to join this channel ("Lobby" maps to "" for the server)
-                          client.onJoinChannel(ch.name === 'Lobby' ? '' : ch.name);
-                          client.onGetChannelInfo(ch.name);
-                        }}
-                      >
-                        {ch.name}
-                        {ch.isProtected && (
-                          <span className={styles.channelLock} aria-label="Password protected">
-                            <Lock size={10} />
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      className={styles.channelNew}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setChannelDropdownOpen(false);
-                        useUiStore.getState().openModal('createChannel');
-                      }}
-                    >
-                      <Plus size={12} /> New Channel…
-                    </button>
-                  </>
-                )}
+                    {ch.name}
+                    {ch.isProtected && (
+                      <span className={styles.channelLock} aria-label="Password protected">
+                        <Lock size={10} />
+                      </span>
+                    )}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={styles.channelNew}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setChannelDropdownOpen(false);
+                    useUiStore.getState().openModal('createChannel');
+                  }}
+                >
+                  <Plus size={12} /> New Channel…
+                </button>
               </div>
             )}
           </div>
@@ -355,6 +332,15 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
               </span>
             )}
           </div>
+
+          {/* Open the full scrollback view — useful in embedded/mobile mode too */}
+          <button
+            className={styles.historyBtn}
+            onClick={() => useUiStore.getState().openModal('chatHistory')}
+            aria-label="Open chat history"
+          >
+            <History size={14} />
+          </button>
 
           {/* Collapse (hidden in embedded mode) */}
           {!isEmbedded && (
@@ -399,13 +385,21 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
               {userList.length > 0 ? (
                 userList.map((user) => {
                   const isIgnored = ignored.includes(user.name);
+                  const isTyping = typingUsers.has(user.name);
+                  const label = user.isAway
+                    ? (isTyping ? 'away, typing' : 'away')
+                    : (isTyping ? 'typing' : 'online');
                   return (
                     <div
                       key={user.id}
                       className={`${styles.userRow} ${chasedUser === user.name ? styles.userRowFollowed : ''} ${isIgnored ? styles.userRowIgnored : ''}`}
                       aria-current={chasedUser === user.name ? 'true' : undefined}
                     >
-                      <span className={`${styles.statusDot} ${user.status === 1 ? styles.statusDotTyping : ''}`} />
+                      <span
+                        className={`${styles.statusDot} ${user.isAway ? styles.statusDotAway : ''} ${isTyping ? styles.statusDotTyping : ''}`}
+                        title={label}
+                        aria-label={label}
+                      />
                       <NobilityBadge nobilityTier={user.nobilityTier} modifiers={user.modifiers} size="sm" />
                       <span className={styles.userName}>{user.name}</span>
                       {/* Follow this player's camera — Voyager offered the same item on

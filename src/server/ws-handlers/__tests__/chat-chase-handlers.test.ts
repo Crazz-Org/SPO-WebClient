@@ -12,6 +12,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 import type { WebSocket } from 'ws';
 import { WsMessageType, type WsMessage } from '../../../shared/types';
 import { handleChatChase, handleChatStopChase } from '../chat-handlers';
+import { ChaseError } from '../../session/chat-handler';
 import type { WsHandlerContext } from '../types';
 
 function createCtx(failure?: Error) {
@@ -59,6 +60,21 @@ describe('handleChatChase', () => {
 
     await expect(handleChatChase(ctx, chaseRequest('Ghost'))).rejects.toThrow('Cannot follow Ghost');
     expect(sent).toEqual([]);
+  });
+
+  it('turns a ChaseError into one RESP_ERROR carrying its code and sentence', async () => {
+    const { ctx, sent } = createCtx(
+      new ChaseError(12, 'Cannot follow Ghost: unknown, offline, or already following you'),
+    );
+
+    await expect(handleChatChase(ctx, chaseRequest('Ghost'))).resolves.toBeUndefined();
+
+    expect(sent).toEqual([{
+      type: WsMessageType.RESP_ERROR,
+      wsRequestId: '77',
+      errorMessage: 'Cannot follow Ghost: unknown, offline, or already following you',
+      code: 12,
+    }]);
   });
 });
 

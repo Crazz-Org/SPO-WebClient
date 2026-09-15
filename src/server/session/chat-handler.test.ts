@@ -34,6 +34,7 @@ import {
   chaseUser,
   stopChase,
   getCurrentChannel,
+  ChaseError,
 } from './chat-handler';
 import { RDO_MEMBERS } from '../../shared/rdo-members';
 import { CHANNEL_USER_LIMIT } from '../../shared/chat-channel';
@@ -43,7 +44,7 @@ import { RdoValue, RdoCommand } from '../../shared/rdo-types';
 import { RdoVerb, RdoAction } from '../../shared/types';
 import type { RdoPacket } from '../../shared/types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
-import { ERROR_InvalidPassword, ERROR_NotEnoughRoom } from '../../shared/error-codes';
+import { ERROR_InvalidPassword, ERROR_NotEnoughRoom, ERROR_InvalidUserName, ERROR_Unknown } from '../../shared/error-codes';
 
 const WORLD = FAKE_CONTEXT_IDS.worldContextId;
 
@@ -83,13 +84,22 @@ describe('getChatUserList', () => {
     expect(await getChatUserList(fake.ctx)).toEqual([]);
   });
 
-  it('parses one "name/accDesc/status" line through the real parseAccDesc', async () => {
+  it('parses one "name/accDesc/afk" line through the real parseAccDesc', async () => {
     const fake = makeSessionCtx();
     // accDesc 0x00010BB8 = modifiers 1 (upper word), 3000 nobility points → Earl
     fake.respond(() => 'res="%Fred/68536/1"');
 
     expect(await getChatUserList(fake.ctx)).toEqual([
-      { name: 'Fred', id: '68536', status: 1, nobilityPoints: 3000, nobilityTier: 'Earl', modifiers: 1 },
+      { name: 'Fred', id: '68536', isAway: true, nobilityPoints: 3000, nobilityTier: 'Earl', modifiers: 1 },
+    ]);
+  });
+
+  it('parses the away flag from the third field', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="%Crazz/3/1"');
+
+    expect(await getChatUserList(fake.ctx)).toEqual([
+      expect.objectContaining({ name: 'Crazz', id: '3', isAway: true }),
     ]);
   });
 
@@ -100,10 +110,10 @@ describe('getChatUserList', () => {
     const users = await getChatUserList(fake.ctx);
 
     expect(users.map(u => u.name)).toEqual(['Alice', 'Bob', 'Carol']);
-    // Bob has no accDesc nor status: defaults '0' and 0
-    expect(users[1]).toEqual({ name: 'Bob', id: '0', status: 0, nobilityPoints: 0, nobilityTier: 'Commoner', modifiers: 0 });
-    // Carol: non-numeric status → 0, 500 points → Baron
-    expect(users[2]).toEqual({ name: 'Carol', id: '500', status: 0, nobilityPoints: 500, nobilityTier: 'Baron', modifiers: 0 });
+    // Bob has no accDesc nor afk field: defaults '0' and false
+    expect(users[1]).toEqual({ name: 'Bob', id: '0', isAway: false, nobilityPoints: 0, nobilityTier: 'Commoner', modifiers: 0 });
+    // Carol: non-'1' afk field → false, 500 points → Baron
+    expect(users[2]).toEqual({ name: 'Carol', id: '500', isAway: false, nobilityPoints: 500, nobilityTier: 'Baron', modifiers: 0 });
   });
 
   it('refuses without a world context and sends nothing', async () => {
@@ -593,6 +603,38 @@ describe('chaseUser', () => {
     const fake = makeSessionCtx();
     fake.respond(() => 'res="#1"');
     await expect(chaseUser(fake.ctx, CHASED)).rejects.toThrow('Chase failed: 1');
+  });
+
+  it('resolves on the "0" success path', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#0"');
+    await expect(chaseUser(fake.ctx, CHASED)).resolves.toBeUndefined();
+  });
+
+  it('rejects with a ChaseError carrying ERROR_InvalidUserName on "#12"', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#12"');
+    let caught: unknown;
+    try {
+      await chaseUser(fake.ctx, CHASED);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ChaseError);
+    expect((caught as ChaseError).code).toBe(ERROR_InvalidUserName);
+  });
+
+  it('rejects with a ChaseError carrying ERROR_Unknown on a non-numeric answer', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="not-a-number"');
+    let caught: unknown;
+    try {
+      await chaseUser(fake.ctx, CHASED);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ChaseError);
+    expect((caught as ChaseError).code).toBe(ERROR_Unknown);
   });
 
   it('refuses without a world context', async () => {

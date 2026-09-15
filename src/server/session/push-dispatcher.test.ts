@@ -543,7 +543,7 @@ describe('NotifyUserListChange', () => {
       user: {
         name: 'innos',
         id: '8388608',
-        status: 0,
+        isAway: false,
         nobilityPoints: 0,
         modifiers: 128,
         nobilityTier: 'Commoner',
@@ -564,7 +564,7 @@ describe('NotifyUserListChange', () => {
       user: {
         name: 'Mayor of Podan',
         id: '0',
-        status: 0,
+        isAway: false,
         nobilityPoints: 0,
         modifiers: 0,
         nobilityTier: 'Commoner',
@@ -579,7 +579,7 @@ describe('NotifyUserListChange', () => {
     dispatchPush(fake.ctx, WORLD_SOCKET, incoming('NotifyUserListChange', ['%innos/75536/1', '#0']));
 
     expect(fake.emit).toHaveBeenCalledWith('ws_event', expect.objectContaining({
-      user: expect.objectContaining({ nobilityPoints: 10000, modifiers: 1, nobilityTier: 'Duke', status: 1 }),
+      user: expect.objectContaining({ nobilityPoints: 10000, modifiers: 1, nobilityTier: 'Duke', isAway: true }),
     }));
   });
 

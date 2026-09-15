@@ -169,6 +169,22 @@ describe('ClientBridge existing methods', () => {
     expect(useBuildingStore.getState().rememberedSection).toBeNull();
   });
 
+  it('setDisconnected clears a live chase — the chaser entry lives on the socket', () => {
+    useChatStore.setState({ chasedUser: 'Mayor of Podan' });
+
+    ClientBridge.setDisconnected();
+
+    expect(useChatStore.getState().chasedUser).toBeNull();
+  });
+
+  it('setReconnecting clears a live chase — the lost socket ends it too', () => {
+    useChatStore.setState({ chasedUser: 'Mayor of Podan' });
+
+    ClientBridge.setReconnecting();
+
+    expect(useChatStore.getState().chasedUser).toBeNull();
+  });
+
   it('setCredentials should set username', () => {
     ClientBridge.setCredentials('testUser');
     expect(useGameStore.getState().username).toBe('testUser');
@@ -520,6 +536,40 @@ describe('ClientBridge handleProfileResponse — RESP_PROFILE_COMPANY_PROFITLOSS
   });
 });
 
+describe('ClientBridge handleProfileResponse — RESP_PROFILE_UPLOAD_PICTURE', () => {
+  beforeEach(() => {
+    useProfileStore.getState().reset();
+  });
+
+  it('a success leaves the optimistic portrait in place', () => {
+    useProfileStore.getState().applyPortrait('data:image/jpeg;base64,new');
+
+    ClientBridge.handleProfileResponse({
+      type: WsMessageType.RESP_PROFILE_UPLOAD_PICTURE,
+      wsRequestId: 'req-1',
+      success: true,
+      message: 'Portrait updated',
+    } as unknown as WsMessage);
+
+    expect(useProfileStore.getState().portraitDataUrl).toBe('data:image/jpeg;base64,new');
+  });
+
+  it('a refusal reverts to the previous portrait', () => {
+    useProfileStore.setState({ portraitDataUrl: 'data:image/jpeg;base64,before' });
+    useProfileStore.getState().applyPortrait('data:image/jpeg;base64,new');
+
+    ClientBridge.handleProfileResponse({
+      type: WsMessageType.RESP_PROFILE_UPLOAD_PICTURE,
+      wsRequestId: 'req-1',
+      success: false,
+      reason: 'WRONG_DIMENSIONS',
+      message: 'Picture must be 150x200; this one is 400x400.',
+    } as unknown as WsMessage);
+
+    expect(useProfileStore.getState().portraitDataUrl).toBe('data:image/jpeg;base64,before');
+  });
+});
+
 describe('ClientBridge handleNewspaperResponse — the paper view (#516)', () => {
   const LIST = {
     paperName: 'Helartia Herald',
@@ -646,6 +696,34 @@ describe('ClientBridge settings persistence — minimap zoom/size round trip', (
 
       expect(useGameStore.getState().settings.minimapZoom).toBe(2.5);
       expect(useGameStore.getState().settings.minimapPixelSize).toBe(260);
+    } finally {
+      delete (globalThis as unknown as { localStorage?: Storage }).localStorage;
+    }
+  });
+});
+
+describe('ClientBridge settings persistence — building animations / transparent overlays round trip', () => {
+  it('persists buildingAnimations and transparentOverlays and restores them on load', () => {
+    const store = new Map<string, string>();
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+      removeItem: (key: string) => { store.delete(key); },
+      clear: () => { store.clear(); },
+      key: () => null,
+      length: 0,
+    };
+
+    try {
+      const settings = { ...useGameStore.getState().settings, buildingAnimations: false, transparentOverlays: false };
+      ClientBridge.persistSettings(settings);
+
+      useGameStore.getState().updateSettings({ buildingAnimations: true, transparentOverlays: true });
+
+      ClientBridge.loadPersistedSettings();
+
+      expect(useGameStore.getState().settings.buildingAnimations).toBe(false);
+      expect(useGameStore.getState().settings.transparentOverlays).toBe(false);
     } finally {
       delete (globalThis as unknown as { localStorage?: Storage }).localStorage;
     }

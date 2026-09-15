@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { fireEvent, screen, act } from '@testing-library/react';
 import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../../__tests__/setup/render-helpers';
 import { ChatStrip } from '../ChatStrip';
+import { useChatStore } from '../../../store/chat-store';
 
 function setup() {
   const onChatTypingChange = jest.fn();
@@ -85,5 +86,31 @@ describe('ChatStrip typing notice', () => {
 
     expect(onSendChatMessage).toHaveBeenCalledWith('hello');
     expect(onChatTypingChange).toHaveBeenCalledWith(false);
+  });
+});
+
+describe('ChatStrip away marker', () => {
+  beforeEach(() => {
+    resetStores();
+  });
+
+  it('shows away and typing as independent markers that can both be on', () => {
+    useChatStore.getState().setUsers([
+      { name: 'Crazz', id: '3', isAway: true, nobilityPoints: 0, nobilityTier: 'Commoner', modifiers: 0 },
+    ]);
+    renderWithProviders(<ChatStrip />);
+
+    const dot = screen.getByLabelText('away');
+    expect(dot.className).toMatch(/statusDotAway/);
+    expect(dot.className).not.toMatch(/statusDotTyping/);
+
+    act(() => {
+      useChatStore.getState().setUserTyping('Crazz', true);
+    });
+
+    const updatedDot = screen.getByLabelText('away, typing');
+    expect(updatedDot.className).toMatch(/statusDotAway/);
+    expect(updatedDot.className).toMatch(/statusDotTyping/);
+    expect(useChatStore.getState().users['Crazz'].isAway).toBe(true);
   });
 });

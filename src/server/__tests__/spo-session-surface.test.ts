@@ -41,6 +41,7 @@ import * as buildingPropertyHandler from '../session/building-property-handler';
 import * as researchHandler from '../session/research-handler';
 import * as loginHandler from '../session/login-handler';
 import * as abandonRoleHandler from '../session/abandon-role-handler';
+import * as tutorialHandler from '../session/tutorial-handler';
 import { RdoParser } from '../../shared/rdo-types';
 import { PROXY_IMAGE_ENDPOINT } from '../../shared/proxy-utils';
 import { SessionPhase, SurfaceType } from '../../shared/types';
@@ -310,6 +311,22 @@ const DELEGATIONS: readonly Delegation[] = [
     call: s => s.executeCurriculumAction('publish', true),
     forwarded: ['publish', true],
     result: { success: true },
+  },
+
+  // ── tutorial-handler ─────────────────────────────────────────────────────
+  {
+    method: 'getTutorialState',
+    install: () => jest.spyOn(tutorialHandler, 'fetchTutorialState'),
+    call: s => s.getTutorialState(),
+    forwarded: [],
+    result: null,
+  },
+  {
+    method: 'runTutorialAction',
+    install: () => jest.spyOn(tutorialHandler, 'runTutorialAction'),
+    call: s => s.runTutorialAction('next'),
+    forwarded: ['next'],
+    result: { success: true, message: '', state: null },
   },
 
   // ── favorites-handler ────────────────────────────────────────────────────
@@ -722,7 +739,8 @@ describe('StarpeaceSession — handler delegation', () => {
     // 76: `chaseUser` and `stopChase`, issue 591.
     // 77: `getContextStatusText`, issue 589.
     // 78: `createChatChannel`, issue 619.
-    expect(DELEGATIONS).toHaveLength(78);
+    // 79-80: `getTutorialState` / `runTutorialAction`, issue 626.
+    expect(DELEGATIONS).toHaveLength(80);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 

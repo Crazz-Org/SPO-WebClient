@@ -14,6 +14,7 @@ import { showToast } from '../common/Toast';
 import { Switch, confirmLogout } from '../common';
 import { SHORTCUTS } from '../../hooks/useKeyboardShortcuts';
 import { connectionStats, formatByteCount } from '../../connection-stats';
+import { buildSupportUrl, getSupportUrl } from '../../support-link';
 import styles from './SettingsDialog.module.css';
 
 export function SettingsDialog() {
@@ -27,6 +28,8 @@ export function SettingsDialog() {
   const ignored = useChatStore((s) => s.ignored);
   const unignoreUser = useChatStore((s) => s.unignoreUser);
   const clearIgnored = useChatStore((s) => s.clearIgnored);
+  const worldName = useGameStore((s) => s.worldName);
+  const supportHref = buildSupportUrl(getSupportUrl(), worldName, username);
   const [debugSending, setDebugSending] = useState(false);
 
   const handleSendDebugReport = useCallback(async () => {
@@ -114,6 +117,16 @@ export function SettingsDialog() {
               label="Signal losing facilities"
               checked={settings.signalLosingFacilities}
               onChange={(v) => handleSettingChange({ signalLosingFacilities: v })}
+            />
+            <ToggleRow
+              label="Building animations"
+              checked={settings.buildingAnimations}
+              onChange={(v) => handleSettingChange({ buildingAnimations: v })}
+            />
+            <ToggleRow
+              label="Transparent overlays"
+              checked={settings.transparentOverlays}
+              onChange={(v) => handleSettingChange({ transparentOverlays: v })}
             />
             <ToggleRow
               label="Debug overlay"
@@ -226,6 +239,14 @@ export function SettingsDialog() {
             >
               {debugSending ? 'Sending...' : 'Send Debug Report'}
             </button>
+          </section>
+
+          {/* Support */}
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>Support</h3>
+            <a className={styles.supportLink} href={supportHref} target="_blank" rel="noopener noreferrer">
+              Contact Support
+            </a>
           </section>
 
           {/* Logout */}

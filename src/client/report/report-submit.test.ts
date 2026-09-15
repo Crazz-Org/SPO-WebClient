@@ -195,6 +195,52 @@ describe('buildReport — the aggregate body budget', () => {
   });
 });
 
+/**
+ * #864 — `fitToBodyCap` measured `JSON.stringify(...).length`, UTF-16 code units, against a
+ * byte cap. A multi-byte-heavy report could pass that check while still being over the real
+ * byte size sent on the wire, and die on a 413 the client never saw coming.
+ */
+describe('buildReport — multi-byte content is priced in bytes, not characters', () => {
+  /** ~200 journal entries of 16,000 'é' (2 UTF-8 bytes, 1 UTF-16 unit) each — no quote or
+   * backslash, so `boundPayload`'s escape correction does not run a slow shrink loop. */
+  function fillJournalWithMultiByteEntries(count: number, charsPerEntry: number): void {
+    const payload = 'é'.repeat(charsPerEntry);
+    reportJournal.arm();
+    for (let i = 0; i < count; i++) {
+      reportJournal.record('ws-out', { type: 'RES_MAP_CHUNK', payload });
+    }
+  }
+
+  it('trims a report that fits under the byte cap in UTF-16 length but not in real UTF-8 bytes', () => {
+    fillJournalWithMultiByteEntries(200, 16000);
+    const snapshot = reportJournal.snapshot();
+    const charLength = JSON.stringify(snapshot).length;
+    const byteLength = new TextEncoder().encode(JSON.stringify(snapshot)).length;
+    // The premise: passes the old (char) check, fails the real (byte) one — this is what makes
+    // the test a regression guard that fails on the pre-fix code.
+    expect(charLength).toBeLessThanOrEqual(MAX_BODY_BYTES);
+    expect(byteLength).toBeGreaterThan(MAX_BODY_BYTES);
+
+    const report = buildReport(draft);
+
+    expect(new TextEncoder().encode(JSON.stringify(report)).length).toBeLessThanOrEqual(MAX_BODY_BYTES);
+    expect(report.trimmed?.journalDropped).toBeGreaterThan(0);
+    expect(report.journal.length).toBeGreaterThan(0);
+    expect(validateBugReport(report).ok).toBe(true);
+  });
+
+  it('prices the per-entry trim cost in bytes too, so the running total does not drift', () => {
+    // A smaller multi-byte journal: only a handful of entries need dropping to fit.
+    fillJournalWithMultiByteEntries(40, 16000);
+
+    const report = buildReport(draft);
+
+    expect(new TextEncoder().encode(JSON.stringify(report)).length).toBeLessThanOrEqual(MAX_BODY_BYTES);
+    expect(report.journal.length).toBeGreaterThan(0);
+    expect(validateBugReport(report).ok).toBe(true);
+  });
+});
+
 describe('submitReport', () => {
   it('POSTs JSON to /api/bug-report, and the body passes the gateway validator', async () => {
     const calls = mockFetch({ ok: true, status: 200, body: { ok: true, file: 'a.json' } });

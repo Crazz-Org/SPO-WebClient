@@ -50,6 +50,8 @@ import type {
   NewspaperIssue,
   NewspaperIssueList,
   PoliticalRoleInfo,
+  TutorialActionType,
+  TutorialState,
   ClusterInfo,
   ClusterFacilityPreview,
   DirectoryRef,
@@ -277,6 +279,14 @@ export enum WsMessageType {
   RESP_PROFILE_POLICY_SET = 'RESP_PROFILE_POLICY_SET',
   REQ_PROFILE_CURRICULUM_ACTION = 'REQ_PROFILE_CURRICULUM_ACTION',
   RESP_PROFILE_CURRICULUM_ACTION = 'RESP_PROFILE_CURRICULUM_ACTION',
+  REQ_PROFILE_UPLOAD_PICTURE = 'REQ_PROFILE_UPLOAD_PICTURE',
+  RESP_PROFILE_UPLOAD_PICTURE = 'RESP_PROFILE_UPLOAD_PICTURE',
+
+  // Tutorial (the onboarding curriculum — lives on the profile page, TycoonOptions.asp:231-252)
+  REQ_TUTORIAL_STATE = 'REQ_TUTORIAL_STATE',
+  RESP_TUTORIAL_STATE = 'RESP_TUTORIAL_STATE',
+  REQ_TUTORIAL_ACTION = 'REQ_TUTORIAL_ACTION',
+  RESP_TUTORIAL_ACTION = 'RESP_TUTORIAL_ACTION',
 
   // Politics
   REQ_POLITICS_DATA = 'REQ_POLITICS_DATA',
@@ -1596,6 +1606,52 @@ export interface WsRespProfileCurriculumAction extends WsMessage {
   switchedTo?: CompanyInfo;
   /** abandonRole only: no personal company is left — the client returns to the company stage. */
   returnToCompanyStage?: boolean;
+}
+
+// --- Picture upload (cache server picture-transfer port, PicShopForm.pas:574-617) ---
+export type PictureUploadFailure =
+  | 'NOT_A_JPEG' | 'WRONG_DIMENSIONS' | 'TOO_LARGE' | 'INVALID_IDENTITY' | 'NO_SESSION'
+  | 'CONNECT_FAILED' | 'GREETING_REFUSED' | 'SERVER_ERROR' | 'UNEXPECTED_REPLY'
+  | 'DISCONNECTED' | 'TIMEOUT';
+
+export interface WsReqProfileUploadPicture extends WsMessage {
+  type: WsMessageType.REQ_PROFILE_UPLOAD_PICTURE;
+  /** base64 of a 150x200 JPEG. The browser crops and encodes it (card TC-03b). */
+  pictureBase64: string;
+}
+
+export interface WsRespProfileUploadPicture extends WsMessage {
+  type: WsMessageType.RESP_PROFILE_UPLOAD_PICTURE;
+  success: boolean;
+  reason?: PictureUploadFailure;
+  message?: string;
+}
+
+// =============================================================================
+// TUTORIAL — the onboarding curriculum
+// =============================================================================
+
+export interface WsReqTutorialState extends WsMessage {
+  type: WsMessageType.REQ_TUTORIAL_STATE;
+}
+
+export interface WsRespTutorialState extends WsMessage {
+  type: WsMessageType.RESP_TUTORIAL_STATE;
+  /** `null` is "this tycoon has no assignment" — not an error, and not an empty one. */
+  state: TutorialState | null;
+}
+
+export interface WsReqTutorialAction extends WsMessage {
+  type: WsMessageType.REQ_TUTORIAL_ACTION;
+  action: TutorialActionType;
+}
+
+export interface WsRespTutorialAction extends WsMessage {
+  type: WsMessageType.RESP_TUTORIAL_ACTION;
+  success: boolean;
+  message: string;
+  /** The state re-read after the action; `null` once the assignment is gone. */
+  state: TutorialState | null;
 }
 
 // =============================================================================
