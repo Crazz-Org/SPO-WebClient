@@ -9,6 +9,7 @@ import { Spool, type JobRequest } from './job';
 import { listVerdicts, publishPendingStatuses, writeVerdictIn } from './verdict';
 import { readNightlyResult } from './nightly';
 import { type GatewayDeps } from './gateway';
+import { type ReachabilityResult } from './reachability';
 import {
   authEnvForGitArgs,
   mergeQueueDeps,
@@ -16,6 +17,7 @@ import {
   classifyStage,
   countCapabilityExceptions,
   DEADLINE_EXIT_CODE,
+  downgradeUnreachable,
   liveAttestationFrom,
   main,
   mergeQueueDeps,
@@ -73,6 +75,12 @@ interface Harness {
   prepareRefCalls: string[];
   leaseRenewals: number;
   clock: { nowMs: number };
+  /** What the reachability probe reports. */
+  reachable: ReachabilityResult;
+  /** When true, deps.gameServerReachable rejects instead of resolving. */
+  reachProbeThrows: boolean;
+  /** How many times the probe was invoked. */
+  reachProbeCalls: number;
 }
 
 function harness(): Harness {
@@ -112,6 +120,9 @@ function harness(): Harness {
     prepareRefCalls: [],
     leaseRenewals: 0,
     clock: { nowMs: 1_000_000 },
+    reachable: { ok: true, target: 'dserver:1111', detail: 'connected' },
+    reachProbeThrows: false,
+    reachProbeCalls: 0,
     deps: {
       paths,
       spool,
@@ -153,6 +164,11 @@ function harness(): Harness {
         return { held: h.leaseDecision.ok };
       },
       processAlive: () => h.submitterAlive,
+      gameServerReachable: async () => {
+        h.reachProbeCalls++;
+        if (h.reachProbeThrows) throw new Error('probe blew up');
+        return h.reachable;
+      },
       now: () => (h.clock.nowMs += 10),
       sleep: async () => {},
       gitAuthEnv: () => h.gitAuthEnv,
@@ -1323,6 +1339,54 @@ describe('nextGateAttempt — F2: a malformed counter file must never fail the g
   });
 });
 
+describe('downgradeUnreachable', () => {
+  const log = (): void => {};
+
+  it('leaves a non-FAIL verdict untouched and never calls the probe', async () => {
+    let called = false;
+    const probe = async (): Promise<ReachabilityResult> => {
+      called = true;
+      return { ok: true, target: 'dserver:1111', detail: 'connected' };
+    };
+    const result = await downgradeUnreachable(probe, 'BLOCKED', 'run.js exited 2 (BLOCKED)', log);
+    expect(result).toEqual({ verdict: 'BLOCKED', detail: 'run.js exited 2 (BLOCKED)' });
+    expect(called).toBe(false);
+  });
+
+  it('leaves a FAIL untouched when the probe says the front door is open', async () => {
+    const probe = async (): Promise<ReachabilityResult> => ({
+      ok: true,
+      target: 'dserver:1111',
+      detail: 'connected',
+    });
+    const result = await downgradeUnreachable(probe, 'FAIL', 'live drive exited 1 (FAIL)', log);
+    expect(result).toEqual({ verdict: 'FAIL', detail: 'live drive exited 1 (FAIL)' });
+  });
+
+  it('downgrades a FAIL to ENVIRONMENT when the probe finds the server unreachable', async () => {
+    const probe = async (): Promise<ReachabilityResult> => ({
+      ok: false,
+      target: 'dserver:1111',
+      detail: 'connect timed out after 10000ms',
+    });
+    const result = await downgradeUnreachable(probe, 'FAIL', 'live drive exited 1 (FAIL)', log);
+    expect(result.verdict).toBe('ENVIRONMENT');
+    expect(result.detail).toMatch(/independent reachability probe of dserver:1111 failed/);
+    expect(result.detail).toMatch(/connect timed out after 10000ms/);
+    expect(result.detail).toMatch(/live drive exited 1 \(FAIL\)/);
+  });
+
+  it('keeps the FAIL and says why when the probe itself throws', async () => {
+    const probe = async (): Promise<ReachabilityResult> => {
+      throw new Error('dns lookup failed');
+    };
+    const result = await downgradeUnreachable(probe, 'FAIL', 'live drive exited 1 (FAIL)', log);
+    expect(result.verdict).toBe('FAIL');
+    expect(result.detail).toMatch(/reachability probe could not be run \(dns lookup failed\)/);
+    expect(result.detail).toMatch(/not downgraded/);
+  });
+});
+
 describe('runJob — nightly', () => {
   it('builds and drives exactly what a live job does — it is a live drive against main', async () => {
     const h = harness();
@@ -1367,6 +1431,32 @@ describe('runJob — nightly', () => {
       args: ['dist/e2e/run.js', '--branch=main', `--sha=head-of-${path.basename(h.worktree)}`],
     });
     expect(report.verdict).toBe('PASS');
+  });
+
+  it('an unreachable game server downgrades a failing nightly to ENVIRONMENT, not FAIL', async () => {
+    const h = harness();
+    deposit(h, 'nightly');
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+    h.reachable = { ok: false, target: 'dserver:1111', detail: 'connect timed out after 10000ms' };
+
+    await processOldest(h.deps);
+
+    const nightlyResult = readNightlyResult(h.paths);
+    expect(nightlyResult).toMatchObject({ verdict: 'ENVIRONMENT' });
+    expect(nightlyResult?.detail).toMatch(/independent reachability probe/);
+  });
+
+  it('a code-caused connect failure (probe OK) is not downgraded — still FAIL', async () => {
+    const h = harness();
+    deposit(h, 'nightly');
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+    // h.reachable defaults to { ok: true, ... } — the front door is open.
+
+    await processOldest(h.deps);
+
+    const nightlyResult = readNightlyResult(h.paths);
+    expect(nightlyResult).toMatchObject({ verdict: 'FAIL' });
+    expect(nightlyResult?.detail).toMatch(/live drive exited 1 \(FAIL\)/);
   });
 });
 
@@ -1472,6 +1562,24 @@ describe('runJob — live and lease', () => {
     // now() advances 10 ms per call; a 1-minute lease expires after enough hold cycles.
     const report = await runJob(h.deps, job);
     expect(report.detail).toMatch(/lease expired/);
+  });
+
+  it('a PASS drive never calls the reachability probe — no question worth paying for', async () => {
+    const h = harness();
+    const job = deposit(h, 'live');
+    const report = await runJob(h.deps, job);
+    expect(report.verdict).toBe('PASS');
+    expect(h.reachProbeCalls).toBe(0);
+  });
+
+  it('an unreachable game server downgrades a failing live drive to ENVIRONMENT', async () => {
+    const h = harness();
+    const job = deposit(h, 'live');
+    h.exitCodes = [0, 0, 0, 1]; // fetch, build:server, build:e2e, then the drive fails
+    h.reachable = { ok: false, target: 'dserver:1111', detail: 'connection refused' };
+    const report = await runJob(h.deps, job);
+    expect(report.verdict).toBe('ENVIRONMENT');
+    expect(report.detail).toMatch(/independent reachability probe/);
   });
 });
 

@@ -431,10 +431,29 @@ is also what stops the idle loop retrying every two seconds until the window clo
 `main` counts as red only while the failing `sha` is *still* `origin/main`; `ENVIRONMENT` and
 `INTERRUPTED` are not red, because the run learned nothing about `main` either way.
 
-**Known limit.** `dist/e2e/run.js` maps to a binary PASS/FAIL (`worker.ts`, the live branch),
-so a night refused for a dirty world lock reads as `FAIL` until a human opens `logFile`. The
-`detail` and `logFile` fields exist for exactly that reading. Tightening the mapping is a
-separate change to the driver, not to the schedule.
+**The mapping, and its discriminator.** `dist/e2e/run.js`'s exit code is read through
+`GATE_EXIT_VERDICT` (`worker.ts`): a night refused for a dirty world lock (exit 2) reads
+`BLOCKED`, a pre-flight abort (exit 3) reads `ENVIRONMENT`. What stayed wrong was the fourth
+case — a drive that reached the flows and failed them exits 1, and that read `FAIL` whether the
+code was broken or the game server simply was not answering from this host. `main` then read red
+for a failure that was not the code.
+
+A `FAIL` from a `live` or `nightly` drive is now asked one further question, and only that one:
+an **independent reachability probe** (`src/e2e/bench/reachability.ts`) opens a TCP connection to
+the RDO directory endpoint the gateway is configured with (`RDO_DIR_HOST`, port 1111 —
+`src/shared/config.ts`) and closes it without writing a byte: no login, no RDO frame, nothing the
+world sees as traffic. Probe refused or timed out → the verdict is rewritten `ENVIRONMENT` and
+`detail` says the probe failed and names the target, so `nightly-check.sh` reads UNKNOWN instead
+of RED and no session is handed somebody else's outage as a repair. Probe answered → the `FAIL`
+stands untouched: a connect failure inside the flows with the front door open IS a fact about the
+code. A probe that could not be run at all is not an answer either, so the `FAIL` stands there
+too, with the reason appended to `detail`.
+
+The discriminator is deliberately outside the drive: the drive's own connect attempt cannot tell
+"the server is down" from "this change broke the login path", because both arrive as the same
+refused socket. Two limits remain, by construction — the probe answers for the directory front
+door, not for the world server the directory hands back, and a server that dies *after* the probe
+answered still reads `FAIL`. `detail` and `logFile` are what a human reads for both.
 
 ## 9. The owner lease — one live bench across machines
 
