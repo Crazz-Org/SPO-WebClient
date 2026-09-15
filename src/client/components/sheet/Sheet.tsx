@@ -21,7 +21,6 @@ import { MailPanel } from '../mail';
 import { SearchPanel } from '../search';
 import { ProfilePanel, EmpireOverview } from '../empire';
 import { OverlayMenu } from '../hud/OverlayMenu';
-import { FacilityFilterMenu } from '../hud/FacilityFilterMenu';
 import { PoliticsHome } from '../politics/PoliticsHome';
 import { BuildMenu } from '../modals/BuildMenu';
 import { ConnectionPickerContent } from '../modals/ConnectionPickerModal';
@@ -80,12 +79,7 @@ export function SurfaceContent({ kind }: { kind: SurfaceKind }) {
     case 'facilities':
       return <EmpireOverview />;
     case 'overlays':
-      return (
-        <>
-          <OverlayMenu />
-          <FacilityFilterMenu />
-        </>
-      );
+      return <OverlayMenu />;
     case 'build':
       return <BuildMenu embedded onClose={() => useUiStore.getState().popSurface()} />;
     case 'supplierSearch':

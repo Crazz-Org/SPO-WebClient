@@ -3,12 +3,14 @@
  *
  * Renders inside LeftPanel. Grouped by category: Special, Environment,
  * Population, Market. Only one overlay active at a time; clicking the active
- * overlay disables it.
+ * overlay disables it. The facility-kind filter is rendered as a sibling section below the
+ * list, so the single-selection menu above it is untouched.
  */
 
 import { OVERLAY_LIST, type SurfaceType } from '@/shared/types';
 import { useGameStore } from '../../store/game-store';
 import { useClient } from '../../context';
+import { FacilityFilterMenu } from './FacilityFilterMenu';
 import styles from './OverlayMenu.module.css';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -35,30 +37,33 @@ export function OverlayMenu() {
   let lastCategory = '';
 
   return (
-    <div className={styles.list} role="menu" aria-label="Map Overlays">
-      {OVERLAY_LIST.map((overlay) => {
-        const showHeader = overlay.category !== lastCategory;
-        lastCategory = overlay.category;
+    <>
+      <div className={styles.list} role="menu" aria-label="Map Overlays">
+        {OVERLAY_LIST.map((overlay) => {
+          const showHeader = overlay.category !== lastCategory;
+          lastCategory = overlay.category;
 
-        const isZones = overlay.type === 'ZONES';
-        const isActive = isZones ? isCityZonesEnabled : activeOverlay === overlay.type;
+          const isZones = overlay.type === 'ZONES';
+          const isActive = isZones ? isCityZonesEnabled : activeOverlay === overlay.type;
 
-        return (
-          <div key={overlay.type}>
-            {showHeader && (
-              <div className={styles.categoryLabel}>{CATEGORY_LABELS[overlay.category]}</div>
-            )}
-            <button
-              className={`${styles.item} ${isActive ? styles.active : ''}`}
-              role="menuitem"
-              onClick={() => isZones ? handleToggleCityZones() : handleSelect(overlay.type)}
-            >
-              <span className={styles.itemLabel}>{overlay.label}</span>
-              {isActive && <span className={styles.indicator} />}
-            </button>
-          </div>
-        );
-      })}
-    </div>
+          return (
+            <div key={overlay.type}>
+              {showHeader && (
+                <div className={styles.categoryLabel}>{CATEGORY_LABELS[overlay.category]}</div>
+              )}
+              <button
+                className={`${styles.item} ${isActive ? styles.active : ''}`}
+                role="menuitem"
+                onClick={() => isZones ? handleToggleCityZones() : handleSelect(overlay.type)}
+              >
+                <span className={styles.itemLabel}>{overlay.label}</span>
+                {isActive && <span className={styles.indicator} />}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <FacilityFilterMenu />
+    </>
   );
 }

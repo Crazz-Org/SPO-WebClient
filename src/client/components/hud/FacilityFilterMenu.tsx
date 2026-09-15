@@ -1,6 +1,7 @@
 /**
  * FacilityFilterMenu — hide whole kinds of facility (CLASSES.BIN FacIds) to declutter a dense
- * city. Sibling of OverlayMenu on the 'overlays' surface, never nested inside its menu role.
+ * city. Rendered by OverlayMenu below its overlay list, as a sibling section — never nested
+ * inside that list's `menu` role, so the single-selection overlay menu is untouched.
  */
 
 import { useMemo } from 'react';

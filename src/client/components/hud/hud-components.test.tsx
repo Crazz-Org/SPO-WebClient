@@ -246,6 +246,29 @@ describe('OverlayMenu', () => {
     expect(screen.getByText('Special')).toBeTruthy();
     expect(screen.getByText('Environment')).toBeTruthy();
   });
+
+  it('routes a plain overlay item to onSetOverlay and City Zones to onToggleCityZones', () => {
+    const onSetOverlay = jest.fn();
+    const onToggleCityZones = jest.fn();
+    renderWithProviders(<OverlayMenu />, {
+      clientCallbacks: createSpiedCallbacks({ onSetOverlay, onToggleCityZones }),
+    });
+
+    fireEvent.click(screen.getByText('Pollution'));
+    expect(onSetOverlay).toHaveBeenCalledTimes(1);
+    expect(onToggleCityZones).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('City Zones'));
+    expect(onToggleCityZones).toHaveBeenCalledTimes(1);
+    expect(onSetOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it('mounts the facility-kind filter below the overlay list', () => {
+    useUiStore.setState({ facilityKinds: [{ facId: 40, label: 'Farm' }] });
+    renderWithProviders(<OverlayMenu />);
+    expect(screen.getByText('Facility kinds')).toBeTruthy();
+    expect(screen.getByLabelText('Farm')).toBeTruthy();
+  });
 });
 
 describe('FacilityFilterMenu', () => {
