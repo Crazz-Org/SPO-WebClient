@@ -126,6 +126,7 @@ export function GameScreen() {
           message={promptPayload.message}
           placeholder={promptPayload.placeholder}
           defaultValue={promptPayload.defaultValue}
+          type={promptPayload.type}
           onSubmit={(value) => { promptPayload.onSubmit(value); closeModal(); }}
           onCancel={closeModal}
         />

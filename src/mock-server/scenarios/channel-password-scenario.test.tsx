@@ -25,6 +25,7 @@ import { ERROR_InvalidPassword, ERROR_NotEnoughRoom } from '@/shared/error-codes
 import { joinChannel as clientJoinChannel } from '@/client/handlers/chat-handler';
 import type { ClientHandlerContext } from '@/client/handlers/client-context';
 import { useChatStore } from '@/client/store/chat-store';
+import { useUiStore } from '@/client/store/ui-store';
 import { fireEvent, screen } from '@testing-library/react';
 import { renderWithProviders, resetStores, createSpiedCallbacks } from '@/client/__tests__/setup/render-helpers';
 import { ChatStrip } from '@/client/components/chat/ChatStrip';
@@ -120,6 +121,10 @@ describe('channel-password scenario — the channel list', () => {
 
 // ===========================================================================
 // 3-4. The UI — the padlock and the password prompt
+//
+// The protected-channel password is asked through the shared `requestPrompt`
+// (issue #827), not a bespoke inline form: the dropdown closes immediately
+// and the password itself lives in the ui-store's `promptPayload`.
 // ===========================================================================
 
 describe('channel-password scenario — the UI', () => {
@@ -153,15 +158,16 @@ describe('channel-password scenario — the UI', () => {
     const { onJoinChannel } = setup();
     fireEvent.click(screen.getByText(PROTECTED_CHANNEL));
 
-    expect(screen.getByLabelText('Channel password')).toBeInTheDocument();
+    expect(useUiStore.getState().modal).toBe('prompt');
+    expect(useUiStore.getState().promptPayload?.type).toBe('password');
+    expect(screen.queryByLabelText('Channel password')).toBeNull();
     expect(onJoinChannel).not.toHaveBeenCalled();
   });
 
   it('sends the typed password on submit', () => {
     const { onJoinChannel } = setup();
     fireEvent.click(screen.getByText(PROTECTED_CHANNEL));
-    fireEvent.change(screen.getByLabelText('Channel password'), { target: { value: CHANNEL_PASSWORD } });
-    fireEvent.click(screen.getByText('Join'));
+    useUiStore.getState().promptPayload?.onSubmit(CHANNEL_PASSWORD);
 
     expect(onJoinChannel).toHaveBeenCalledWith(PROTECTED_CHANNEL, CHANNEL_PASSWORD);
   });
@@ -170,7 +176,7 @@ describe('channel-password scenario — the UI', () => {
     const { onJoinChannel } = setup();
     fireEvent.click(screen.getByText(OPEN_CHANNEL));
 
-    expect(screen.queryByLabelText('Channel password')).toBeNull();
+    expect(useUiStore.getState().modal).toBeNull();
     expect(onJoinChannel).toHaveBeenCalledWith(OPEN_CHANNEL);
   });
 
@@ -181,19 +187,17 @@ describe('channel-password scenario — the UI', () => {
     expect(onJoinChannel).toHaveBeenCalledWith('');
   });
 
-  it('clears a pending password prompt on outside click, leaving no stale password behind', async () => {
+  it('a fresh prompt starts blank, leaving no stale password behind', () => {
     const { onJoinChannel } = setup();
     fireEvent.click(screen.getByText(PROTECTED_CHANNEL));
-    fireEvent.change(screen.getByLabelText('Channel password'), { target: { value: 'partial' } });
+    expect(useUiStore.getState().promptPayload?.defaultValue).toBeUndefined();
 
-    await new Promise((r) => setTimeout(r, 0));
-    fireEvent.click(document.body);
-
+    useUiStore.getState().closeModal();
     expect(onJoinChannel).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByText('Lobby'));
     fireEvent.click(screen.getByText(PROTECTED_CHANNEL));
-    expect(screen.getByLabelText('Channel password')).toHaveValue('');
+    expect(useUiStore.getState().promptPayload?.defaultValue).toBeUndefined();
   });
 });
 

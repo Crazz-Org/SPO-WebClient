@@ -106,7 +106,7 @@ interface UiState {
   /** Payload for confirmation dialogs */
   confirmPayload: { title: string; message: string; onConfirm: () => void; options?: ConfirmOptions } | null;
   /** Payload for text-input prompt dialogs */
-  promptPayload: { title: string; message: string; placeholder?: string; defaultValue?: string; onSubmit: (value: string) => void } | null;
+  promptPayload: { title: string; message: string; placeholder?: string; defaultValue?: string; type?: 'text' | 'password'; onSubmit: (value: string) => void } | null;
 
   // Build menu data
   buildMenuCategories: BuildingCategory[];
@@ -177,7 +177,7 @@ interface UiState {
   openModal: (type: ModalType) => void;
   closeModal: () => void;
   requestConfirm: (title: string, message: string, onConfirm: () => void, options?: ConfirmOptions) => void;
-  requestPrompt: (title: string, message: string, onSubmit: (value: string) => void, options?: { placeholder?: string; defaultValue?: string }) => void;
+  requestPrompt: (title: string, message: string, onSubmit: (value: string) => void, options?: { placeholder?: string; defaultValue?: string; type?: 'text' | 'password' }) => void;
 
   // Actions — Build menu data
   setBuildMenuCategories: (cats: BuildingCategory[], capitolIconUrl?: string) => void;
