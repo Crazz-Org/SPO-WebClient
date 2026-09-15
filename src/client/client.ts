@@ -902,6 +902,8 @@ export class StarpeaceClient implements ClientHandlerContext {
         renderer.setAircraftAnimationsEnabled(settings.aircraftAnimations);
         renderer.setGlassForeignBuildings(settings.glassForeignBuildings);
         renderer.setSignalLosingFacilities(settings.signalLosingFacilities);
+        renderer.setBuildingAnimationsEnabled(settings.buildingAnimations);
+        renderer.setTransparentOverlays(settings.transparentOverlays);
       }
     }
     this.soundManager.setEnabled(settings.isSoundEnabled);

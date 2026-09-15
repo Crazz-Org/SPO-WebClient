@@ -631,4 +631,20 @@ describe('game-store settings — two volumes', () => {
     expect(useGameStore.getState().settings.soundVolume).toBe(0.9);
     expect(useGameStore.getState().settings.musicVolume).toBe(0.2);
   });
+
+  it('defaults buildingAnimations and transparentOverlays to true', () => {
+    const { settings } = useGameStore.getState();
+    expect(settings.buildingAnimations).toBe(true);
+    expect(settings.transparentOverlays).toBe(true);
+  });
+
+  it('updateSettings writes buildingAnimations and transparentOverlays without touching the other', () => {
+    useGameStore.getState().updateSettings({ buildingAnimations: false });
+    expect(useGameStore.getState().settings.buildingAnimations).toBe(false);
+    expect(useGameStore.getState().settings.transparentOverlays).toBe(true);
+
+    useGameStore.getState().updateSettings({ transparentOverlays: false });
+    expect(useGameStore.getState().settings.transparentOverlays).toBe(false);
+    expect(useGameStore.getState().settings.buildingAnimations).toBe(false);
+  });
 });
