@@ -141,8 +141,7 @@
   --duration-panel: 300ms;
 
   /* ---- Layout — HUD Overlay System ---- */
-  --topbar-height: 36px;
-  --topbar-bg: rgba(12, 13, 16, 0.7);
+  --topbar-bg: rgba(12, 13, 16, 0.7); /* not a top bar — the ChatStrip panel's glass fill (ChatStrip.module.css) */
   --rail-button-size: 48px;
   --rail-gap: 8px;
   --chatstrip-collapsed: 80px;
@@ -165,7 +164,7 @@
   --sai-right: env(safe-area-inset-right, 0px);
   --sai-bottom: env(safe-area-inset-bottom, 0px);
   --sai-left: env(safe-area-inset-left, 0px);
-  --content-top: calc(var(--space-3) + 40px + var(--space-2)); /* below the status pill (mobile) */
+  --content-top: calc(var(--space-3) + 40px + var(--space-2)); /* below the status pill — mobile info bar and the toast stack */
 
   /* ---- HUD bottom band — one horizontal anchor (issue 872) ----
      CommandBar and ChatStrip share one left edge; opening a surface only shrinks
@@ -208,7 +207,6 @@
     --text-2xl: 1.25rem;
     --text-xl: 1.125rem;
     --text-sm: 0.8125rem;  /* 13px on mobile */
-    --topbar-height: 32px;
     --panel-width-desktop: 100vw;
     --panel-width-tablet: 100vw;
     --chatstrip-expanded: 160px;
