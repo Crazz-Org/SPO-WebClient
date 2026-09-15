@@ -6,9 +6,9 @@
  * They run in jsdom and use @testing-library/react.
  */
 
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react';
-import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../../__tests__/setup/render-helpers';
+import { renderWithProviders, resetStores } from '../../../__tests__/setup/render-helpers';
 import { useBuildingStore } from '../../../store/building-store';
 import { BuildingInspector } from '../BuildingInspector';
 import { QuickStats } from '../QuickStats';
@@ -188,18 +188,19 @@ describe('InspectorHeader smoke test', () => {
   });
 });
 
-describe('BuildingInspector toolbar', () => {
+describe('BuildingInspector — no toolbar of its own', () => {
   beforeEach(() => {
     resetStores();
   });
 
-  it('renders refresh and close buttons in the toolbar', () => {
+  it('renders no Close, Refresh or View on map — those now live on the sheet row', () => {
     useBuildingStore.getState().setFocus(mockFocus);
     useBuildingStore.setState({ details: mockDetails, isLoading: false });
 
     renderWithProviders(<BuildingInspector />);
-    expect(screen.getByLabelText('Refresh')).toBeTruthy();
-    expect(screen.getByLabelText('Close')).toBeTruthy();
+    expect(screen.queryByLabelText('Close')).toBeNull();
+    expect(screen.queryByLabelText('Refresh')).toBeNull();
+    expect(screen.queryByLabelText('View on map')).toBeNull();
   });
 
   it('the diagnosis banner reads the pushed hint and its action opens the matching tab (T2, B7)', () => {
@@ -209,15 +210,6 @@ describe('BuildingInspector toolbar', () => {
     expect(screen.getByText(/No supplies/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Find Cotton suppliers' }));
     expect(useBuildingStore.getState().currentTab).toBe('supplies');
-  });
-
-  it('"View on map" recentres the camera on the building (T3, N9)', () => {
-    useBuildingStore.getState().setFocus(mockFocus);
-    useBuildingStore.setState({ details: mockDetails, isLoading: false });
-    const onNavigateToBuilding = jest.fn();
-    renderWithProviders(<BuildingInspector />, { clientCallbacks: createSpiedCallbacks({ onNavigateToBuilding }) });
-    fireEvent.click(screen.getByLabelText('View on map'));
-    expect(onNavigateToBuilding).toHaveBeenCalledWith(mockDetails.x, mockDetails.y);
   });
 });
 

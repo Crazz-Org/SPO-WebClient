@@ -82,4 +82,19 @@ describe('BottomSheet', () => {
     );
     expect(screen.getByRole('dialog')).toBeTruthy();
   });
+
+  it('renders header actions alongside the single Close button', () => {
+    renderWithProviders(
+      <BottomSheet
+        open
+        onClose={() => {}}
+        title="Building Inspector"
+        actions={<button aria-label="View on map" />}
+      >
+        <p>Sheet content</p>
+      </BottomSheet>,
+    );
+    expect(screen.getByLabelText('View on map')).toBeTruthy();
+    expect(screen.getAllByLabelText('Close')).toHaveLength(1);
+  });
 });

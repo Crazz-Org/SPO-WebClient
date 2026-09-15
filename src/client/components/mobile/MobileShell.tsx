@@ -13,7 +13,7 @@ import { useClient } from '../../context';
 import { useModeDescriptor } from '../hud/use-mode-descriptor';
 import { ChatStrip } from '../chat';
 import { ErrorBoundary } from '../common';
-import { SurfaceContent, SURFACE_TITLES } from '../sheet';
+import { SurfaceContent, SURFACE_TITLES, BuildingSheetActions } from '../sheet';
 import { useChatStore } from '../../store/chat-store';
 import { BottomNav } from './BottomNav';
 import { BottomSheet } from './BottomSheet';
@@ -111,6 +111,7 @@ export function MobileShell() {
         open={sheetOpen}
         onClose={handleSheetClose}
         title={sheetTitle}
+        actions={top?.kind === 'building' ? <BuildingSheetActions /> : undefined}
       >
         <ErrorBoundary>
           <SheetContent />
