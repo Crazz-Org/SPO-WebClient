@@ -82,6 +82,10 @@ export interface GameSettings {
   minimapPixelSize: number | null;
   /** The language sent to the world on login — one of the six ids in `shared/language.ts`. */
   languageId: string;
+  /** Legacy 'AnimateBuildings', default on — OptionsHandlerViewer.pas:510. */
+  buildingAnimations: boolean;
+  /** Legacy 'TransparentOverlays', default on — OptionsHandlerViewer.pas:513. */
+  transparentOverlays: boolean;
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
@@ -98,6 +102,8 @@ const DEFAULT_SETTINGS: GameSettings = {
   minimapZoom: 1,
   minimapPixelSize: null,
   languageId: DEFAULT_LANGUAGE_ID,
+  buildingAnimations: true,
+  transparentOverlays: true,
 };
 
 /* ---- Store ---- */

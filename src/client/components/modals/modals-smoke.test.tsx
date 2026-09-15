@@ -88,6 +88,38 @@ describe('SettingsDialog', () => {
     expect((screen.getByRole('switch', { name: 'Signal losing facilities' }) as HTMLInputElement).checked).toBe(true);
   });
 
+  it('offers a Building animations switch, checked by default, that flips on click and forwards the merged settings', () => {
+    useUiStore.getState().openModal('settings');
+    const onSettingsChange = jest.fn();
+    renderWithProviders(<SettingsDialog />, {
+      clientCallbacks: createSpiedCallbacks({ onSettingsChange }),
+    });
+    const sw = screen.getByRole('switch', { name: 'Building animations' }) as HTMLInputElement;
+    expect(sw.checked).toBe(true);
+    fireEvent.click(sw);
+    expect((screen.getByRole('switch', { name: 'Building animations' }) as HTMLInputElement).checked).toBe(false);
+    expect(useGameStore.getState().settings.buildingAnimations).toBe(false);
+    expect(onSettingsChange).toHaveBeenCalledWith(
+      expect.objectContaining({ buildingAnimations: false }),
+    );
+  });
+
+  it('offers a Transparent overlays switch, checked by default, that flips on click and forwards the merged settings', () => {
+    useUiStore.getState().openModal('settings');
+    const onSettingsChange = jest.fn();
+    renderWithProviders(<SettingsDialog />, {
+      clientCallbacks: createSpiedCallbacks({ onSettingsChange }),
+    });
+    const sw = screen.getByRole('switch', { name: 'Transparent overlays' }) as HTMLInputElement;
+    expect(sw.checked).toBe(true);
+    fireEvent.click(sw);
+    expect((screen.getByRole('switch', { name: 'Transparent overlays' }) as HTMLInputElement).checked).toBe(false);
+    expect(useGameStore.getState().settings.transparentOverlays).toBe(false);
+    expect(onSettingsChange).toHaveBeenCalledWith(
+      expect.objectContaining({ transparentOverlays: false }),
+    );
+  });
+
   it('offers separate Effects volume and Music volume sliders, both defaulting to 50%', () => {
     useUiStore.getState().openModal('settings');
     renderWithProviders(<SettingsDialog />);
