@@ -2,10 +2,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { benchPaths, ensureLayout, type BenchPaths } from './paths';
-import { Spool } from './job';
+import { Spool, type ManualRequester } from './job';
 import type { GitRunner, TreeFingerprint } from './fingerprint';
 import {
+  deleteManualRequest,
+  manualProofDue,
+  manualRecordFile,
+  manualRequestFile,
   maybeRunNightly,
+  newestManualDepositMs,
   nightlyCheckout,
   nightlyDue,
   nightlyPrepareLog,
@@ -14,8 +19,14 @@ import {
   NIGHTLY_MIN_GAP_MS,
   NIGHTLY_MOVE_RATE_LIMIT_MS,
   prepareCheckout,
+  publishManualResult,
+  readManualRecords,
+  readManualRequest,
   readNightlyResult,
+  writeManualRecord,
   writeNightlyResult,
+  type ManualNightlyRecord,
+  type ManualRequest,
   type NightlyDeps,
   type NightlyResult,
 } from './nightly';
@@ -40,6 +51,8 @@ interface Harness {
   gitCalls: { worktree: string; args: string[] }[];
   gitThrows: boolean;
   fingerprintThrows: boolean;
+  /** What the checkout fingerprints as. Defaults to the value every pre-#801 test assumed. */
+  head: string;
   clock: { nowMs: number };
   git: GitRunner;
   /** What `resolveRef(workerRepo, 'origin/main')` reports — undefined until a test sets it,
@@ -62,6 +75,7 @@ function harness(): Harness {
     gitCalls: [],
     gitThrows: false,
     fingerprintThrows: false,
+    head: 'main-sha-abc',
     clock: { nowMs: IN_WINDOW },
     mainSha: undefined,
     git: (worktree, args) => {
@@ -74,7 +88,7 @@ function harness(): Harness {
       spool,
       fingerprint: (): TreeFingerprint => {
         if (h.fingerprintThrows) throw new Error('tree vanished');
-        return { head: 'main-sha-abc', hash: 'nightly-hash', clean: true };
+        return { head: h.head, hash: 'nightly-hash', clean: true };
       },
       resolveRef: (): string | undefined => h.mainSha,
       runCommand: async (cmd, args, options) => {
@@ -97,6 +111,41 @@ function ranSteps(h: Harness): string[] {
 
 function result(overrides: Partial<NightlyResult> = {}): NightlyResult {
   return { verdict: 'PASS', submittedAt: new Date(IN_WINDOW).toISOString(), ...overrides };
+}
+
+/** Real 40-hex shas: the marker refuses anything looser, so the tests must use real ones. */
+const TIP = 'a1b2c3d4'.repeat(5);
+const MOVED_TIP = 'f9e8d7c6'.repeat(5);
+
+function requester(overrides: Partial<ManualRequester> = {}): ManualRequester {
+  return {
+    user: 'maintainer',
+    host: 'bench-pc',
+    tty: '/dev/pts/3',
+    via: 'bench-cli',
+    reason: 'twelve connect ETIMEDOUT lines — this red is not the code',
+    requestedAt: new Date(IN_WINDOW).toISOString(),
+    ...overrides,
+  };
+}
+
+/** Put a marker on disk exactly as `request-nightly` would. */
+function fileRequest(h: Harness, request: Partial<ManualRequest> = {}): void {
+  fs.mkdirSync(h.paths.nightly, { recursive: true });
+  fs.writeFileSync(
+    manualRequestFile(h.paths),
+    `${JSON.stringify({ sha: TIP, requestedBy: requester(), ...request }, null, 2)}\n`,
+    'utf8',
+  );
+}
+
+/** The published file's exact bytes, or null when it does not exist. */
+function latestBytes(h: Harness): Buffer | null {
+  try {
+    return fs.readFileSync(nightlyResultFile(h.paths));
+  } catch {
+    return null;
+  }
 }
 
 describe('nightlyDue', () => {
@@ -538,7 +587,7 @@ describe('nightlyResultFromReport', () => {
         detail: 'live drive exited 0',
         logFile: '/logs/job-9.log',
       },
-      'deposited-at',
+      { submittedAt: 'deposited-at' },
     );
 
     expect(built).toEqual({
@@ -549,16 +598,30 @@ describe('nightlyResultFromReport', () => {
       finishedAt: 'then',
       detail: 'live drive exited 0',
       logFile: '/logs/job-9.log',
+      trigger: 'scheduled',
+      scheduledSubmittedAt: 'deposited-at',
     });
   });
 
   it('falls back to the deposit fingerprint when the job never started', () => {
     const built = nightlyResultFromReport(
       { id: 'job-9', verdict: 'ABANDONED', fingerprints: { atSubmit: fingerprint('at-submit') } },
-      'deposited-at',
+      { submittedAt: 'deposited-at' },
     );
 
     expect(built.sha).toBe('at-submit');
+  });
+
+  it('stamps every scheduled write as the night\'s slot — the two stamps are the same value', () => {
+    // What makes the 20 h gap keep its old arithmetic: a scheduled deposit IS the slot, so
+    // scheduledSubmittedAt repeats submittedAt and only a MANUAL write can make them differ.
+    const built = nightlyResultFromReport(
+      { id: 'job-9', verdict: 'FAIL', fingerprints: { atSubmit: fingerprint('at-submit') } },
+      { submittedAt: '2026-09-14T02:10:00.000Z', trigger: 'scheduled' },
+    );
+
+    expect(built.trigger).toBe('scheduled');
+    expect(built.scheduledSubmittedAt).toBe('2026-09-14T02:10:00.000Z');
   });
 });
 
@@ -621,5 +684,510 @@ describe('nightlyDue after a result that proved nothing', () => {
   it('needs a current main sha — without one there is nothing to prove against', () => {
     const last = failed(Date.UTC(2026, 8, 3, 7, 49, 22));
     expect(nightlyDue(last, false, OUTSIDE, undefined, last.sha)).toBe(false);
+  });
+});
+
+/**
+ * #801 — the maintainer-requested proof of `main`.
+ *
+ * A nightly that FAILs for a reason that is not the code (2026-09-13: twelve
+ * `connect ETIMEDOUT 158.69.153.134:8000` lines) sticks to `origin/main`'s tip until
+ * somebody pushes a commit, and the orchestrator parks every card in the meantime. The
+ * request marker is how a human says "re-measure that same tip" without any of it
+ * becoming a way to deposit a nightly from outside the worker's idle branch.
+ */
+describe('manualProofDue', () => {
+  it('is due when nothing has run at all', () => {
+    expect(manualProofDue(false, OUTSIDE)).toBe(true);
+  });
+
+  it('is refused inside the 15-minute live-drive limit — a manual proof IS a live drive', () => {
+    expect(manualProofDue(false, OUTSIDE, OUTSIDE - 60_000)).toBe(false);
+  });
+
+  it('holds the boundary — one ms short is refused, exactly on it is due', () => {
+    expect(manualProofDue(false, OUTSIDE, OUTSIDE - NIGHTLY_MOVE_RATE_LIMIT_MS + 1)).toBe(false);
+    expect(manualProofDue(false, OUTSIDE, OUTSIDE - NIGHTLY_MOVE_RATE_LIMIT_MS)).toBe(true);
+  });
+
+  it('is refused while a nightly is already queued or running', () => {
+    expect(manualProofDue(true, OUTSIDE)).toBe(false);
+  });
+
+  it('treats an unparseable last-run stamp as no prior run', () => {
+    expect(manualProofDue(false, OUTSIDE, NaN)).toBe(true);
+  });
+
+  it('ignores the window and the 20 h slot entirely — that is the point of asking', () => {
+    // 12:00 UTC, nowhere near 02:00-05:00, and a scheduled run 30 minutes ago would still
+    // hold the window path off for 20 h. Neither is a reason to refuse a human.
+    expect(manualProofDue(false, OUTSIDE, OUTSIDE - NIGHTLY_MOVE_RATE_LIMIT_MS - 1)).toBe(true);
+  });
+});
+
+describe('the manual request marker', () => {
+  it('round-trips a well-formed request', () => {
+    const h = harness();
+    fileRequest(h);
+
+    expect(readManualRequest(h.paths, () => {})).toMatchObject({
+      sha: TIP,
+      requestedBy: { user: 'maintainer', via: 'bench-cli' },
+    });
+  });
+
+  it('reads an absent marker as nothing, without logging', () => {
+    const h = harness();
+    const logs: string[] = [];
+
+    expect(readManualRequest(h.paths, line => logs.push(line))).toBeNull();
+    expect(logs).toEqual([]);
+  });
+
+  it('deletes and logs an unparseable marker — a bad write must not wedge the idle loop', () => {
+    const h = harness();
+    fs.mkdirSync(h.paths.nightly, { recursive: true });
+    fs.writeFileSync(manualRequestFile(h.paths), '{ not json', 'utf8');
+    const logs: string[] = [];
+
+    expect(readManualRequest(h.paths, line => logs.push(line))).toBeNull();
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(false);
+    expect(logs.join('\n')).toMatch(/unreadable manual request/);
+  });
+
+  it('deletes and logs a marker whose sha is not a 40-hex commit', () => {
+    const h = harness();
+    fileRequest(h, { sha: 'abc123' });
+    const logs: string[] = [];
+
+    expect(readManualRequest(h.paths, line => logs.push(line))).toBeNull();
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(false);
+    expect(logs.join('\n')).toMatch(/not a 40-hex commit/);
+  });
+
+  it('deletes and logs a marker with a blank reason — a live drive states why', () => {
+    const h = harness();
+    fileRequest(h, { requestedBy: requester({ reason: '   ' }) });
+    const logs: string[] = [];
+
+    expect(readManualRequest(h.paths, line => logs.push(line))).toBeNull();
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(false);
+    expect(logs.join('\n')).toMatch(/no reason/);
+  });
+
+  it('deletes and logs a marker with no requestedBy at all', () => {
+    const h = harness();
+    fs.mkdirSync(h.paths.nightly, { recursive: true });
+    fs.writeFileSync(manualRequestFile(h.paths), JSON.stringify({ sha: TIP }), 'utf8');
+    const logs: string[] = [];
+
+    expect(readManualRequest(h.paths, line => logs.push(line))).toBeNull();
+    expect(logs.join('\n')).toMatch(/no reason/);
+  });
+
+  it('deleteManualRequest is a no-op when there is nothing to delete', () => {
+    const h = harness();
+    expect(() => deleteManualRequest(h.paths)).not.toThrow();
+  });
+});
+
+describe('manual records', () => {
+  const record = (overrides: Partial<ManualNightlyRecord> = {}): ManualNightlyRecord => ({
+    id: 'manual-1',
+    requestedSha: TIP,
+    requestedBy: requester(),
+    attested: false,
+    verdict: 'ENVIRONMENT',
+    submittedAt: new Date(IN_WINDOW).toISOString(),
+    trigger: 'manual',
+    ...overrides,
+  });
+
+  it('writes into nightly/manual/, creating the directory, and leaves no .tmp behind', () => {
+    const h = harness();
+    writeManualRecord(h.paths, record());
+
+    expect(JSON.parse(fs.readFileSync(manualRecordFile(h.paths, 'manual-1'), 'utf8'))).toMatchObject({
+      id: 'manual-1',
+      attested: false,
+    });
+    expect(fs.existsSync(`${manualRecordFile(h.paths, 'manual-1')}.tmp`)).toBe(false);
+  });
+
+  it('reads an absent directory as no records at all', () => {
+    expect(readManualRecords(harness().paths)).toEqual([]);
+    expect(newestManualDepositMs(harness().paths)).toBeUndefined();
+  });
+
+  it('skips an unreadable record rather than hiding the rest', () => {
+    const h = harness();
+    writeManualRecord(h.paths, record({ id: 'manual-good' }));
+    fs.writeFileSync(manualRecordFile(h.paths, 'manual-bad'), '{ not json', 'utf8');
+    fs.writeFileSync(path.join(h.paths.nightly, 'manual', 'notes.txt'), 'ignored', 'utf8');
+
+    expect(readManualRecords(h.paths).map(r => r.id)).toEqual(['manual-good']);
+  });
+
+  it('newestManualDepositMs takes the largest parseable deposit stamp', () => {
+    const h = harness();
+    writeManualRecord(h.paths, { ...record({ id: 'manual-old' }), submittedAt: new Date(IN_WINDOW - 60_000).toISOString() });
+    writeManualRecord(h.paths, { ...record({ id: 'manual-new' }), submittedAt: new Date(IN_WINDOW).toISOString() });
+    writeManualRecord(h.paths, { ...record({ id: 'manual-broken' }), submittedAt: 'not a date' });
+
+    expect(newestManualDepositMs(h.paths)).toBe(IN_WINDOW);
+  });
+});
+
+describe('maybeRunNightly — the manual branch', () => {
+  /** A red on file for TIP, deposited long enough ago not to trip the rate limit. */
+  function redAtTip(h: Harness, sha: string = TIP): void {
+    writeNightlyResult(
+      h.paths,
+      result({
+        verdict: 'FAIL',
+        sha,
+        jobId: 'job-yesterday',
+        submittedAt: new Date(h.clock.nowMs - NIGHTLY_MOVE_RATE_LIMIT_MS - 1).toISOString(),
+        scheduledSubmittedAt: new Date(h.clock.nowMs - NIGHTLY_MOVE_RATE_LIMIT_MS - 1).toISOString(),
+        trigger: 'scheduled',
+      }),
+    );
+  }
+
+  it('KEEPS the request while the 15-minute limit is still open — it waits, it is not refused', async () => {
+    const h = harness();
+    h.clock.nowMs = OUTSIDE;
+    writeNightlyResult(
+      h.paths,
+      result({ verdict: 'FAIL', sha: TIP, submittedAt: new Date(OUTSIDE - 60_000).toISOString() }),
+    );
+    fileRequest(h);
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(false);
+
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(true);
+    expect(h.spool.queued()).toEqual([]);
+    expect(h.commands).toEqual([]);
+    expect(h.logs.join('\n')).toMatch(/waiting/);
+  });
+
+  it('KEEPS the request while a nightly is already pending', async () => {
+    const h = harness();
+    h.clock.nowMs = OUTSIDE;
+    h.head = TIP;
+    redAtTip(h);
+    fileRequest(h);
+    // One manual proof already deposited and claimed; a second request must wait, not race.
+    await maybeRunNightly(h.deps, '/repo', h.git);
+    h.spool.claim(h.spool.queued()[0].file);
+    fileRequest(h);
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(false);
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(true);
+  });
+
+  it('records already-green and drives nothing when latest.json is PASS at the requested sha', async () => {
+    const h = harness();
+    h.clock.nowMs = OUTSIDE;
+    writeNightlyResult(
+      h.paths,
+      result({ verdict: 'PASS', sha: TIP, submittedAt: new Date(OUTSIDE - 3_600_000).toISOString() }),
+    );
+    const before = latestBytes(h);
+    fileRequest(h);
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(false);
+
+    expect(latestBytes(h)).toEqual(before);
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(false);
+    expect(h.commands).toEqual([]);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ outcome: 'already-green', attested: false, requestedSha: TIP }),
+    ]);
+  });
+
+  it('a prepare failure leaves latest.json BYTE-IDENTICAL and records ENVIRONMENT beside it', async () => {
+    // The load-bearing rule: a manual run that broke on the environment measured nothing,
+    // so it must not clear the red it was asked to re-check.
+    const h = harness();
+    h.clock.nowMs = OUTSIDE;
+    redAtTip(h);
+    const before = latestBytes(h);
+    fs.mkdirSync(path.join(nightlyCheckout(h.paths), '.git'), { recursive: true });
+    h.exitCodes = [0, 0, 0, 1]; // fetch, reset, clean, then npm ci fails
+    fileRequest(h);
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(false);
+
+    expect(latestBytes(h)).toEqual(before);
+    expect(h.spool.queued()).toEqual([]);
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(false);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({
+        verdict: 'ENVIRONMENT',
+        outcome: 'prepare-failed',
+        attested: false,
+        detail: expect.stringContaining('npm ci'),
+      }),
+    ]);
+  });
+
+  it('a fingerprint failure is the same non-event — latest.json byte-identical, ENVIRONMENT recorded', async () => {
+    const h = harness();
+    h.clock.nowMs = OUTSIDE;
+    redAtTip(h);
+    const before = latestBytes(h);
+    h.fingerprintThrows = true;
+    fileRequest(h);
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(false);
+
+    expect(latestBytes(h)).toEqual(before);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({
+        verdict: 'ENVIRONMENT',
+        outcome: 'prepare-failed',
+        detail: expect.stringContaining('tree vanished'),
+      }),
+    ]);
+  });
+
+  it('records superseded, and drives nothing, when main moved before the refresh', async () => {
+    const h = harness();
+    h.clock.nowMs = OUTSIDE;
+    redAtTip(h);
+    const before = latestBytes(h);
+    h.head = MOVED_TIP; // the checkout came back on a different tip than was confirmed
+    fileRequest(h);
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(false);
+
+    expect(latestBytes(h)).toEqual(before);
+    expect(h.spool.queued()).toEqual([]);
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(false);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({
+        outcome: 'superseded',
+        verdict: 'STALE',
+        attested: false,
+        requestedSha: TIP,
+        sha: MOVED_TIP,
+      }),
+    ]);
+  });
+
+  it('deposits a nightly carrying trigger and requestedBy, and drops the marker', async () => {
+    const h = harness();
+    h.clock.nowMs = OUTSIDE;
+    h.head = TIP;
+    redAtTip(h);
+    fileRequest(h);
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(true);
+
+    const queued = h.spool.queued();
+    expect(queued).toHaveLength(1);
+    expect(queued[0].request).toMatchObject({
+      type: 'nightly',
+      branch: 'main',
+      worktree: nightlyCheckout(h.paths),
+      submitter: { pid: 0 },
+      trigger: 'manual',
+      requestedBy: { user: 'maintainer', host: 'bench-pc', via: 'bench-cli' },
+      fingerprint: { head: TIP },
+    });
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(false);
+    expect(h.logs.join('\n')).toContain('manual proof');
+  });
+
+  it('serves the manual request even outside the window and inside the 20 h slot', async () => {
+    // Exactly the case the command exists for: 12:00 UTC, a scheduled run this morning.
+    const h = harness();
+    h.clock.nowMs = OUTSIDE;
+    h.head = TIP;
+    redAtTip(h);
+    fileRequest(h);
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(true);
+  });
+
+  it('a corrupt marker is discarded and the SCHEDULED path still runs on the same tick', async () => {
+    const h = harness();
+    fs.mkdirSync(h.paths.nightly, { recursive: true });
+    fs.writeFileSync(manualRequestFile(h.paths), '{ not json', 'utf8');
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(true);
+
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(false);
+    expect(h.spool.queued()[0].request.trigger).toBe('scheduled');
+    expect(readManualRecords(h.paths)).toEqual([]);
+  });
+
+  it('a marker with a short sha is discarded and does not throw', async () => {
+    const h = harness();
+    fileRequest(h, { sha: 'deadbeef' });
+
+    await expect(maybeRunNightly(h.deps, '/repo', h.git)).resolves.toBe(true);
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(false);
+  });
+
+  it('counts a manual deposit against the 15-minute limit for the NEXT request', async () => {
+    const h = harness();
+    h.clock.nowMs = OUTSIDE;
+    h.head = TIP;
+    redAtTip(h);
+    fileRequest(h);
+    await maybeRunNightly(h.deps, '/repo', h.git);
+    // The first proof finished and left nothing pending; a second request arrives 1 min later.
+    h.spool.discard(h.spool.queued()[0].file);
+    fs.rmSync(nightlyResultFile(h.paths), { force: true });
+    writeManualRecord(h.paths, {
+      id: 'manual-just-now',
+      requestedSha: TIP,
+      requestedBy: requester(),
+      attested: true,
+      verdict: 'FAIL',
+      sha: TIP,
+      submittedAt: new Date(OUTSIDE).toISOString(),
+      trigger: 'manual',
+    });
+    h.clock.nowMs = OUTSIDE + 60_000;
+    fileRequest(h, { sha: MOVED_TIP });
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(false);
+    expect(fs.existsSync(manualRequestFile(h.paths))).toBe(true);
+  });
+});
+
+describe('the 20 h gap is measured from the SCHEDULED stamp', () => {
+  it('a manual write 90 minutes ago does not suppress the window run it never filled', async () => {
+    const h = harness();
+    // A manual proof landed at 01:30; the last SCHEDULED deposit was 21 h before now.
+    writeNightlyResult(
+      h.paths,
+      result({
+        verdict: 'FAIL',
+        sha: MOVED_TIP,
+        submittedAt: new Date(IN_WINDOW - 90 * 60_000).toISOString(),
+        scheduledSubmittedAt: new Date(IN_WINDOW - 21 * 60 * 60_000).toISOString(),
+        trigger: 'manual',
+      }),
+    );
+
+    expect(await maybeRunNightly(h.deps, '/repo', h.git)).toBe(true);
+    expect(h.spool.queued()[0].request.trigger).toBe('scheduled');
+  });
+
+  it('and a record with no scheduled stamp at all keeps the old arithmetic exactly', () => {
+    // Every file written before #801 is this shape: the fallback must reproduce today's
+    // answer, not change it.
+    const legacy = result({ sha: MOVED_TIP, submittedAt: new Date(IN_WINDOW - 90 * 60_000).toISOString() });
+    expect(legacy.scheduledSubmittedAt).toBeUndefined();
+    expect(nightlyDue(legacy, false, IN_WINDOW)).toBe(false);
+
+    const old = result({ sha: MOVED_TIP, submittedAt: new Date(IN_WINDOW - NIGHTLY_MIN_GAP_MS).toISOString() });
+    expect(nightlyDue(old, false, IN_WINDOW)).toBe(true);
+  });
+});
+
+describe('publishManualResult — attest-only replacement', () => {
+  const fp = (head: string) => ({ head, hash: 'h', clean: true });
+  const request = { submittedAt: 'deposited-at', fingerprint: fp(TIP), requestedBy: requester() };
+  const report = (overrides: Partial<Parameters<typeof publishManualResult>[1]> = {}) => ({
+    id: 'job-manual-1',
+    verdict: 'PASS' as const,
+    fingerprints: { atSubmit: fp(TIP), atStart: fp(TIP) },
+    finishedAt: 'then',
+    detail: 'live drive exited 0',
+    logFile: '/logs/job-manual-1.log',
+    ...overrides,
+  });
+
+  it('replaces latest.json on a PASS that measured the requested sha, with supersedes filled', () => {
+    const h = harness();
+    writeNightlyResult(
+      h.paths,
+      result({ verdict: 'FAIL', sha: TIP, jobId: 'job-red', finishedAt: 'yesterday', trigger: 'scheduled', scheduledSubmittedAt: 'scheduled-stamp' }),
+    );
+
+    publishManualResult(h.paths, report(), request);
+
+    expect(readNightlyResult(h.paths)).toMatchObject({
+      jobId: 'job-manual-1',
+      sha: TIP,
+      verdict: 'PASS',
+      trigger: 'manual',
+      scheduledSubmittedAt: 'scheduled-stamp',
+      requestedBy: { user: 'maintainer' },
+      supersedes: { jobId: 'job-red', sha: TIP, verdict: 'FAIL', trigger: 'scheduled', finishedAt: 'yesterday' },
+    });
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ id: 'job-manual-1', attested: true, verdict: 'PASS' }),
+    ]);
+  });
+
+  it('replaces latest.json on a FAIL too — a manual proof may confirm the red', () => {
+    const h = harness();
+    writeNightlyResult(h.paths, result({ verdict: 'FAIL', sha: TIP }));
+
+    publishManualResult(h.paths, report({ verdict: 'FAIL' }), request);
+
+    expect(readNightlyResult(h.paths)).toMatchObject({ verdict: 'FAIL', trigger: 'manual' });
+  });
+
+  it('carries a pre-#801 record\'s own submittedAt forward as the scheduled stamp', () => {
+    const h = harness();
+    // No scheduledSubmittedAt: every record written before this existed was a scheduled one.
+    writeNightlyResult(h.paths, result({ verdict: 'FAIL', sha: TIP, submittedAt: 'legacy-stamp' }));
+
+    publishManualResult(h.paths, report(), request);
+
+    expect(readNightlyResult(h.paths)?.scheduledSubmittedAt).toBe('legacy-stamp');
+  });
+
+  it('omits supersedes and the scheduled stamp when nothing was on file', () => {
+    const h = harness();
+
+    publishManualResult(h.paths, report(), request);
+
+    const published = readNightlyResult(h.paths);
+    expect(published?.supersedes).toBeUndefined();
+    expect(published?.scheduledSubmittedAt).toBeUndefined();
+  });
+
+  for (const verdict of ['ENVIRONMENT', 'INTERRUPTED', 'STALE', 'BLOCKED', 'ABANDONED', 'DIRTY'] as const) {
+    it(`leaves latest.json byte-identical on ${verdict}, and still records the outcome`, () => {
+      const h = harness();
+      writeNightlyResult(h.paths, result({ verdict: 'FAIL', sha: TIP, jobId: 'job-red' }));
+      const before = latestBytes(h);
+
+      publishManualResult(h.paths, report({ verdict }), request);
+
+      expect(latestBytes(h)).toEqual(before);
+      expect(readManualRecords(h.paths)).toEqual([
+        expect.objectContaining({ id: 'job-manual-1', verdict, attested: false }),
+      ]);
+    });
+  }
+
+  it('leaves latest.json byte-identical when the driven sha is not the requested one', () => {
+    const h = harness();
+    writeNightlyResult(h.paths, result({ verdict: 'FAIL', sha: TIP }));
+    const before = latestBytes(h);
+
+    publishManualResult(h.paths, report({ fingerprints: { atSubmit: fp(TIP), atStart: fp(MOVED_TIP) } }), request);
+
+    expect(latestBytes(h)).toEqual(before);
+    expect(readManualRecords(h.paths)).toEqual([
+      expect.objectContaining({ attested: false, requestedSha: TIP, sha: MOVED_TIP }),
+    ]);
+  });
+
+  it('names an unknown requester rather than omitting one, for a job deposited by an older worker', () => {
+    const h = harness();
+
+    publishManualResult(h.paths, report(), { submittedAt: 'deposited-at', fingerprint: fp(TIP) });
+
+    expect(readNightlyResult(h.paths)?.requestedBy).toMatchObject({ user: 'unknown', host: 'unknown' });
   });
 });

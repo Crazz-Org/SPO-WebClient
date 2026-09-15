@@ -33,6 +33,26 @@ export type JobVerdict =
   /** A lease job: the gateway is up and held for the session. */
   | 'LEASED';
 
+/**
+ * Why a nightly exists. `scheduled` is the worker's own idle branch — the window, the
+ * main-moved trigger; `manual` is a maintainer who ran `npm run bench:nightly-request`
+ * because a red was not the code. Absent everywhere means `scheduled`: every record
+ * written before the manual path existed is one.
+ */
+export type NightlyTrigger = 'scheduled' | 'manual';
+
+/** Who asked for a manual nightly, recorded so a live drive is never anonymous. */
+export interface ManualRequester {
+  user: string;
+  host: string;
+  /** The controlling terminal, or 'unknown' when it could not be read. */
+  tty: string;
+  via: 'bench-cli' | 'spo';
+  /** Required, trimmed, non-empty — a drive of the live world states its reason. */
+  reason: string;
+  requestedAt: string;
+}
+
 export interface JobRequest {
   id: string;
   type: JobType;
@@ -61,6 +81,10 @@ export interface JobRequest {
    * ./merge-queue.
    */
   queueEntry?: boolean;
+  /** `nightly` only: why this one was deposited. Absent ≡ `'scheduled'`. */
+  trigger?: NightlyTrigger;
+  /** `nightly` + `trigger: 'manual'` only: the human behind the request. */
+  requestedBy?: ManualRequester;
 }
 
 export interface JobReport {
@@ -107,6 +131,8 @@ export interface JobReport {
   /** lease only. */
   port?: number;
   leaseUntil?: string;
+  /** `nightly` only: copied from the request by `runJob`, so the publish path can read it. */
+  trigger?: NightlyTrigger;
 }
 
 /**
@@ -133,6 +159,8 @@ export interface JobsLogLine {
   startedAt: string;
   finishedAt: string;
   detail?: string;
+  /** `nightly` only: `scheduled` or `manual`. Absent on every other job type. */
+  trigger?: NightlyTrigger;
 }
 
 /**
@@ -184,6 +212,9 @@ export function appendJobsLog(
     startedAt: report.startedAt,
     finishedAt: report.finishedAt,
     ...(report.detail !== undefined ? { detail: report.detail } : {}),
+    // Nightly only: on any other type the field is meaningless, and a key that is always
+    // "scheduled" on a `ref` line would read as if the question had been asked of it.
+    ...(report.type === 'nightly' && report.trigger !== undefined ? { trigger: report.trigger } : {}),
   };
   try {
     fs.appendFileSync(paths.jobsLog, `${JSON.stringify(line)}\n`, 'utf8');
