@@ -81,6 +81,7 @@ describe('submit', () => {
     h.aliveReason = 'heartbeat is 45 s old';
     expect(await main(['submit', '--type=ref'], h.deps)).toBe(3);
     expect(h.err[0]).toMatch(/WORKER DOWN: heartbeat is 45 s old/);
+    expect(h.out.join('\n')).toMatch(/worker-down: heartbeat is 45 s old/);
     expect(h.spool.queued()).toHaveLength(0);
   });
 
@@ -218,6 +219,7 @@ describe('wait', () => {
     h.deps.workerAlive = () => ({ alive: ++checks < 3, reason: 'pid gone' });
     expect(await main(['wait', 'job-1'], h.deps)).toBe(3);
     expect(h.err.join('\n')).toMatch(/WORKER DIED/);
+    expect(h.out.join('\n')).toMatch(/worker-down:/);
   });
 
   it('times out with exit 4 when the report never lands', async () => {

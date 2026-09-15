@@ -192,6 +192,12 @@ export interface HeartbeatContent {
  * idle) supplies `currentJob`/`startedAt`. Called from worker.ts's own `setInterval`, still
  * deliberately independent of the work loop (see that file's comment) — this only changes
  * WHAT gets written each beat, not the fact that it rides its own timer.
+ *
+ * The write is atomic: it lands in a temp file beside the target and `fs.renameSync`s it into
+ * place. `fs.writeFileSync` on the live path directly would truncate-then-write, leaving a
+ * window where the file on disk is empty; a reader landing in that window used to see `''`, and
+ * readHeartbeat's legacy bare-number fallback turned that into a beat from epoch zero. A rename
+ * is atomic within one filesystem, so a reader always sees either the previous beat or this one.
  */
 export function touchHeartbeat(paths: BenchPaths, current?: CurrentJob | null): void {
   const content: HeartbeatContent = {
@@ -199,7 +205,13 @@ export function touchHeartbeat(paths: BenchPaths, current?: CurrentJob | null): 
     currentJob: current?.id ?? null,
     startedAt: current?.startedAt ?? null,
   };
-  fs.writeFileSync(paths.heartbeat, `${JSON.stringify(content)}\n`, 'utf8');
+  // The temp file sits beside the target, never in /tmp: rename is only atomic WITHIN one
+  // filesystem, and the bench root may be a different mount from the system temp dir. Per-pid
+  // and reused every beat, not per-beat-unique — a crash mid-write leaves at most one stale
+  // heartbeat.<pid>.tmp, which the next beat of that pid overwrites.
+  const tmpFile = `${paths.heartbeat}.${process.pid}.tmp`;
+  fs.writeFileSync(tmpFile, `${JSON.stringify(content)}\n`, 'utf8');
+  fs.renameSync(tmpFile, paths.heartbeat);
 }
 
 /**
@@ -210,7 +222,10 @@ export function touchHeartbeat(paths: BenchPaths, current?: CurrentJob | null): 
  * epoch-ms number (`currentJob`/`startedAt` read as absent) so a worker mid-upgrade — the old
  * binary's last beat still on disk for up to one `HEARTBEAT_PERIOD_MS` after the new one
  * starts — does not read as dead for that one tick. Genuinely corrupt content (neither shape
- * parses to a finite timestamp) returns null, same as an absent file always has.
+ * parses to a finite timestamp) returns null, same as an absent file always has. Empty or
+ * whitespace-only content also returns null, rather than falling into the legacy branch —
+ * `Number('')` is `0`, which `Number.isFinite` accepts, so without this guard an empty file
+ * would read as a beat from 1970.
  */
 export function readHeartbeat(paths: BenchPaths): HeartbeatContent | null {
   let raw: string;
@@ -219,6 +234,10 @@ export function readHeartbeat(paths: BenchPaths): HeartbeatContent | null {
   } catch {
     return null;
   }
+  // Must come BEFORE either branch below: `''` is not an object, so it falls through to the
+  // legacy bare-number branch, and `Number('')` is 0 — which `Number.isFinite` accepts. `raw` is
+  // already trimmed, so this covers a whitespace-only file too.
+  if (raw === '') return null;
   // A bare number (the legacy pre-B5.2 shape) is itself valid JSON — `JSON.parse("123")` is
   // `123`, not a parse failure — so a `try/catch` around JSON.parse alone cannot tell the two
   // shapes apart: it would "succeed" into a number with no `.writtenAt` to read. The object
