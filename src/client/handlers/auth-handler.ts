@@ -97,10 +97,22 @@ export async function performDirectoryLogin(ctx: ClientHandlerContext, username:
   }
 }
 
-export async function login(ctx: ClientHandlerContext, worldName: string): Promise<boolean> {
+/**
+ * Why `login()` does not return a boolean: three different things end it without reaching the
+ * company stage, and only the caller knows which of them is worth a word to the player.
+ * `page-shown` in particular is not a failure — the world answered, and the page it sent is
+ * already on screen.
+ */
+export type LoginOutcome =
+  | 'entered'          // the company stage was reached  (was `true`)
+  | 'page-shown'       // the world answered with a login page; showLoginPage() rendered it
+  | 'no-credentials'   // nothing was sent: this session no longer holds the credentials
+  | 'refused';         // the request threw; login() already showed the gateway's own wording
+
+export async function login(ctx: ClientHandlerContext, worldName: string): Promise<LoginOutcome> {
   if (!ctx.storedUsername || !ctx.storedPassword) {
     ClientBridge.showError('Session lost, please reconnect');
-    return false;
+    return 'no-credentials';
   }
 
   ClientBridge.log('Login', `Joining world ${worldName}...`);
@@ -135,7 +147,7 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
           : `Login page reported error: ${page.errorCode}`);
       ctx.availableCompanies = [];
       ClientBridge.showLoginPage(resp.loginPage);
-      return false;
+      return 'page-shown';
     }
 
     ctx.availableCompanies = resp.companies ?? [];
@@ -150,7 +162,7 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
         : `Nobility ${resp.admission.shortfall} below the world minimum`);
     }
     ClientBridge.showCompanies(ctx.availableCompanies, resp.admission);
-    return true;
+    return 'entered';
 
   } catch (err: unknown) {
     ClientBridge.log('Error', `Login failed: ${toErrorMessage(err)}`);
@@ -159,7 +171,7 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
     // code's generic sentence instead would hide which credential was wrong.
     const { serverMessage } = err as { serverMessage?: string };
     ctx.showNotification(`World login failed: ${serverMessage || toErrorMessage(err)}`, 'error');
-    return false;
+    return 'refused';
   }
 }
 
@@ -521,16 +533,21 @@ export async function logout(ctx: ClientHandlerContext): Promise<void> {
 
 /**
  * One-click re-entry: the same four steps the four screens run, back to back, with the
- * middle screens hidden by `resumeTarget`. Any step that does not succeed forgets the record,
- * tells the player why, and leaves the screen where the normal flow would be.
+ * middle screens hidden by `resumeTarget`. Most steps that do not succeed forget the record,
+ * tell the player why, and leave the screen where the normal flow would be — except a world
+ * that *answers* with a login page (visa choice / expired pass / portal error): that page is
+ * already on screen and is the explanation, so the chain just stops without forgetting anything.
  */
 export async function resumeSession(ctx: ClientHandlerContext, record: RememberedSession, password: string): Promise<void> {
   const store = useGameStore.getState();
   store.setResumeTarget(record);
-  const giveUp = (reason: string): void => {
-    useGameStore.getState().forgetRememberedSession();
+  const stopResume = (): void => {
     useGameStore.getState().setResumeTarget(null);
     ClientBridge.setLoginLoading(false);
+  };
+  const giveUp = (reason: string): void => {
+    useGameStore.getState().forgetRememberedSession();
+    stopResume();
     ClientBridge.showError(`Could not return to ${record.worldName}: ${reason}. Sign in step by step.`);
   };
 
@@ -538,7 +555,24 @@ export async function resumeSession(ctx: ClientHandlerContext, record: Remembere
   const worlds = await performDirectoryLogin(ctx, record.username, password, record.zonePath || undefined);
   if (!worlds) { giveUp('the region did not answer'); return; }
   if (!worlds.some(w => w.name === record.worldName)) { giveUp('the world is no longer listed in its region'); return; }
-  if (!(await login(ctx, record.worldName))) { giveUp('the world refused the login'); return; }
+  const outcome = await login(ctx, record.worldName);
+  if (outcome === 'page-shown') {
+    // The world answered. The page it sent IS the explanation, and clearing resumeTarget is what
+    // lets LoginScreen show it (LoginScreen.tsx:53). No toast to contradict it, and the record is
+    // still good — the player may well be one visa click away from using it again.
+    ClientBridge.log('Login', 'Resume stopped: the world answered with a login page');
+    stopResume();
+    return;
+  }
+  if (outcome === 'no-credentials') { giveUp('this session no longer held the saved sign-in'); return; }
+  if (outcome === 'refused') {
+    // login() already showed the gateway's own worded refusal (auth-handler.ts:161); a second,
+    // vaguer sentence on top of it would only bury the one that names the real cause.
+    ClientBridge.log('Login', 'Resume stopped: the world login was refused');
+    useGameStore.getState().forgetRememberedSession();
+    stopResume();
+    return;
+  }
   if (!ctx.availableCompanies.some(c => c.id === record.companyId)) { giveUp(`the company "${record.companyName}" is no longer there`); return; }
   if (!(await selectCompanyAndStart(ctx, record.companyId))) { giveUp('the company could not be selected'); return; }
   useGameStore.getState().setResumeTarget(null);
