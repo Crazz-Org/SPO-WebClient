@@ -3,10 +3,10 @@
 .bar {
   position: fixed;
   bottom: var(--space-4);
-  left: var(--space-4);
-  right: var(--space-4);
-  max-width: 904px;
-  margin: 0 auto;
+  left: var(--hud-bar-left);
+  right: var(--hud-bar-right);
+  max-width: var(--hud-bar-max);
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -14,10 +14,9 @@
   transition: right var(--duration-panel) var(--ease-out);
 }
 
-/* A surface is open: stay on the free area, left of the sheet */
+/* A surface is open: only the right edge moves — the left anchor is unchanged */
 .shifted {
-  right: calc(var(--panel-width-desktop) + var(--sheet-inset) + var(--space-4));
-  margin: 0;
+  right: var(--hud-bar-right-shifted);
 }
 
 /* ---- search row ---- */

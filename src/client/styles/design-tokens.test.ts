@@ -152,3 +152,78 @@ describe('desktop sheet width (issue 471)', () => {
     expect(remaining).toBeGreaterThan(0);
   });
 });
+
+describe('HUD bottom band anchor (issue 872)', () => {
+  const commandBar = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/hud/CommandBar.module.css'), 'utf8')
+  );
+  const chatStrip = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/chat/ChatStrip.module.css'), 'utf8')
+  );
+
+  function block(css: string, selector: string): string {
+    const start = css.indexOf(selector);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const open = css.indexOf('{', start);
+    const close = css.indexOf('}', open);
+    return css.slice(open + 1, close);
+  }
+
+  it('.bar anchors its left edge with --hud-bar-left and no margin: 0 auto', () => {
+    const bar = block(commandBar, '.bar {');
+    expect(bar).toMatch(/left:\s*var\(--hud-bar-left\)/);
+    expect(commandBar).not.toMatch(/margin:\s*0 auto/);
+  });
+
+  it('.shifted moves only the right edge — no left, no margin', () => {
+    const shifted = block(commandBar, '.shifted {');
+    expect(shifted).toMatch(/right:\s*/);
+    expect(shifted).not.toMatch(/left:/);
+    expect(shifted).not.toMatch(/margin:/);
+  });
+
+  it('.strip derives left from --hud-bar-left, never a raw viewport centre', () => {
+    const strip = block(chatStrip, '.strip {');
+    expect(strip).toMatch(/left:\s*calc\(var\(--hud-bar-left\)/);
+    expect(chatStrip).not.toMatch(/translateX\(-50%\)/);
+  });
+
+  function panelWidthAt(viewport: number): number {
+    if (viewport < 1400) return 420;
+    return Math.min(Math.max(472, viewport * 0.3), 1000);
+  }
+
+  const HUD_BAR_MAX = 904;
+  const SPACE_4 = 16;
+  const SHEET_INSET = 16;
+
+  function barLeft(viewport: number): number {
+    return Math.max(SPACE_4, (viewport - HUD_BAR_MAX) / 2);
+  }
+
+  function barRightShifted(viewport: number): number {
+    return panelWidthAt(viewport) + SHEET_INSET + SPACE_4;
+  }
+
+  it.each([1024, 1400, 2400])(
+    'at %dpx: closed and open left are equal, open width is positive, and neither element crosses the sheet',
+    (viewport) => {
+      const closedLeft = barLeft(viewport);
+      const openLeft = barLeft(viewport); // same token, both states
+      expect(openLeft).toBe(closedLeft);
+
+      const openRight = viewport - barRightShifted(viewport);
+      const openWidth = Math.min(HUD_BAR_MAX, openRight - openLeft);
+      expect(openWidth).toBeGreaterThan(0);
+
+      const sheetLeft = viewport - (panelWidthAt(viewport) + SHEET_INSET);
+      const barRightEdge = openLeft + openWidth;
+      expect(barRightEdge).toBeLessThanOrEqual(sheetLeft);
+
+      const chatWidth = Math.min(620, openWidth);
+      const chatLeft = openLeft + (openWidth - chatWidth) / 2;
+      const chatRightEdge = chatLeft + chatWidth;
+      expect(chatRightEdge).toBeLessThanOrEqual(sheetLeft);
+    }
+  );
+});

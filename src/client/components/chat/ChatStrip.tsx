@@ -1,9 +1,9 @@
 /**
- * ChatStrip — Bottom-center persistent chat hub.
+ * ChatStrip — persistent chat hub anchored on the command bar's free area.
  *
  * Reduced (44px): online badge + last message preview + input + expand toggle.
  * Expanded (300px): header with channel dropdown, chat messages on left, online users on right, input.
- * z-150, centered at bottom of viewport.
+ * z-150, horizontally anchored with the command bar (#872).
  */
 
 import { useState, useRef, useCallback, useEffect, useMemo, memo, Fragment } from 'react';
@@ -87,7 +87,7 @@ const ChatMessage = memo(function ChatMessage({ from, text, isSystem, isGM, nobi
 });
 
 interface ChatStripProps {
-  /** 'desktop' (default): positioned bottom-center. 'embedded': fills parent, always expanded. */
+  /** 'desktop' (default): anchored on the command bar's free area. 'embedded': fills parent, always expanded. */
   mode?: 'desktop' | 'embedded';
 }
 
@@ -106,6 +106,8 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
   const ignoreUser = useChatStore((s) => s.ignoreUser);
   const unignoreUser = useChatStore((s) => s.unignoreUser);
   const username = useGameStore((s) => s.username);
+  // A surface is open: follow the command bar's free area rather than the viewport centre (#872).
+  const surfaceOpen = useUiStore((s) => s.stack.length > 0 && !s.connectMode.active);
 
   const client = useClient();
   const [input, setInput] = useState('');
@@ -230,6 +232,7 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
     styles.strip,
     showExpanded ? styles.expanded : '',
     isEmbedded ? styles.embedded : '',
+    !isEmbedded && surfaceOpen ? styles.shifted : '',
   ].filter(Boolean).join(' ');
 
   return (

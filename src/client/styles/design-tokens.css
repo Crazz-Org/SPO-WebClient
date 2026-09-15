@@ -167,6 +167,19 @@
   --sai-left: env(safe-area-inset-left, 0px);
   --content-top: calc(var(--space-3) + 40px + var(--space-2)); /* below the status pill (mobile) */
 
+  /* ---- HUD bottom band — one horizontal anchor (issue 872) ----
+     CommandBar and ChatStrip share one left edge; opening a surface only shrinks
+     the free width on the right, it never re-anchors either of them. */
+  --hud-bar-max: 904px;
+  --hud-bar-left: max(var(--space-4), calc((100vw - var(--hud-bar-max)) / 2));
+  --hud-bar-right: var(--space-4);
+  --hud-bar-right-shifted: calc(var(--panel-width-desktop) + var(--sheet-inset) + var(--space-4));
+  --hud-bar-width: min(var(--hud-bar-max), calc(100vw - var(--hud-bar-left) - var(--hud-bar-right)));
+  --hud-bar-width-shifted: min(var(--hud-bar-max), calc(100vw - var(--hud-bar-left) - var(--hud-bar-right-shifted)));
+  /* per-element knobs — ChatStrip.shifted / .expanded swap these two */
+  --hud-free-width: var(--hud-bar-width);
+  --chat-strip-width: var(--chat-box-width);
+
   /* ---- Breakpoints (for reference — use in @media queries) ---- */
   /* --bp-mobile: 480px → 767px     */
   /* --bp-tablet: 768px → 1023px    */
