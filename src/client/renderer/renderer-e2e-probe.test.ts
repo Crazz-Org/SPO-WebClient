@@ -121,6 +121,8 @@ describe('getCanvasAnchorAt', () => {
     terrainRenderer: { screenToMap: (x: number, y: number) => { x: number; y: number } };
     allBuildings: Array<{ visualClass: string; x: number; y: number }>;
     facilityDimensionsCache: { get: (visualClass: string) => { xsize: number; ysize: number } | undefined };
+    hiddenFacIds: Set<number>;
+    isFacilityKindHidden: (visualClass: string) => boolean;
     roadTilesMap: Map<string, boolean>;
     concreteTilesSet: Set<string>;
     screenToMap: (clientX: number, clientY: number) => { i: number; j: number };
@@ -146,6 +148,8 @@ describe('getCanvasAnchorAt', () => {
       terrainRenderer: { screenToMap: () => ({ x: opts.at.row, y: opts.at.column }) },
       allBuildings: (opts.buildings ?? []).map(b => ({ visualClass: b.visualClass, x: b.x, y: b.y })),
       facilityDimensionsCache: { get: (visualClass: string) => dims.get(visualClass) },
+      hiddenFacIds: new Set(),
+      isFacilityKindHidden: () => false,
       roadTilesMap: new Map((opts.roads ?? []).map(([x, y]) => [`${x},${y}`, true])),
       concreteTilesSet: new Set((opts.concrete ?? []).map(([x, y]) => `${x},${y}`)),
       screenToMap: null as unknown as AnchorHost['screenToMap'],

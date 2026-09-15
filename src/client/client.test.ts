@@ -98,6 +98,7 @@ describe('applySettings — renderer wiring', () => {
       setAircraftAnimationsEnabled: jest.fn(),
       setGlassForeignBuildings: jest.fn(),
       setSignalLosingFacilities: jest.fn(),
+      setHiddenFacIds: jest.fn(),
     };
   }
 
@@ -133,6 +134,23 @@ describe('applySettings — renderer wiring', () => {
     (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
 
     expect(renderer.setSignalLosingFacilities).toHaveBeenCalledWith(signalLosingFacilities);
+  });
+
+  it('wires hiddenFacIds to the renderer', () => {
+    const renderer = makeRenderer();
+    const mapNavigationUI = { getRenderer: () => renderer };
+    const fake = {
+      mapNavigationUI,
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
+      minimapUI: null,
+    };
+    const settings = { ...useGameStore.getState().settings, hiddenFacIds: [40, 75] };
+
+    (proto.applySettings as (this: typeof fake, s: typeof settings) => void).call(fake, settings);
+
+    expect(renderer.setHiddenFacIds).toHaveBeenCalledWith([40, 75]);
   });
 
   it.each([

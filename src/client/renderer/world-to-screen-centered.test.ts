@@ -58,6 +58,7 @@ function createTestRenderer(overrides: {
   renderer.facilityDimensionsCache = {
     get: () => building ? { xsize: building.visualClass === 'small' ? 1 : 4, ysize: building.visualClass === 'small' ? 1 : 4 } : undefined,
   };
+  renderer.hiddenFacIds = new Set();
 
   // Texture cache mock
   const texH = overrides.textureHeight ?? 0;

@@ -570,6 +570,8 @@ export class IsometricMapRenderer {
   private ownTycoonId: number = 0;
   /** Legacy 'Signal losing facilities' (Map.pas:1323-1324): shade my own alerting buildings red. */
   private signalLosingFacilities: boolean = false;
+  /** Facility kinds (FacIds) the player chose to hide — empty means nothing is hidden. */
+  private hiddenFacIds: Set<number> = new Set();
   /** Scratch canvas the red shade is composed on; created on first use, never while the option is off. */
   private losingScratch: HTMLCanvasElement | null = null;
   /** Blocks this player has loaded in this world; null = fog off (no set attached). */
@@ -3487,6 +3489,14 @@ export class IsometricMapRenderer {
    * Draw buildings as isometric tiles with textures
    * Uses Painter's algorithm: sort by depth (y + x) so buildings closer to viewer are drawn last
    */
+  /** A building is hidden only when its class resolves to a POSITIVE FacId the player hid.
+   *  An unresolved class (dims undefined) or FacId 0 is never hidden — FID_None is not a kind. */
+  private isFacilityKindHidden(visualClass: string): boolean {
+    if (this.hiddenFacIds.size === 0) return false;
+    const facId = this.facilityDimensionsCache.get(visualClass)?.facId;
+    return typeof facId === 'number' && facId > 0 && this.hiddenFacIds.has(facId);
+  }
+
   private drawBuildings(bounds: TileBounds) {
     const ctx = this.ctx;
     const config = ZOOM_LEVELS[this.terrainRenderer.getZoomLevel()];
@@ -3496,6 +3506,7 @@ export class IsometricMapRenderer {
     // Pre-filter buildings by visible bounds (with margin for multi-tile buildings)
     const margin = 10; // Generous margin for large buildings
     const visibleBuildings = this.allBuildings.filter(b => {
+      if (this.isFacilityKindHidden(b.visualClass)) return false;
       const dims = this.facilityDimensionsCache.get(b.visualClass);
       const bw = dims?.xsize || 1;
       const bh = dims?.ysize || 1;
@@ -3638,6 +3649,7 @@ export class IsometricMapRenderer {
       if (t >= 1) continue;
 
       const demolishing = effect.building;
+      if (this.isFacilityKindHidden(demolishing.visualClass)) continue;
       const dims = this.facilityDimensionsCache.get(demolishing.visualClass);
       const xsize = dims?.xsize || 1;
       const ysize = dims?.ysize || 1;
@@ -5404,6 +5416,12 @@ export class IsometricMapRenderer {
     this.requestRender();
   }
 
+  /** The hidden facility kinds (FacIds). A non-array (an old/corrupt persisted blob) hides nothing. */
+  public setHiddenFacIds(facIds: number[] | undefined): void {
+    this.hiddenFacIds = new Set(Array.isArray(facIds) ? facIds : []);
+    this.requestRender();
+  }
+
   /** The game store's decimal tycoon id; '' / undefined / unparsable means "unknown" and glasses nothing. */
   public setOwnTycoonId(tycoonId: string | undefined): void {
     this.ownTycoonId = parseInt(tycoonId || '0', 10) || 0;
@@ -5823,6 +5841,7 @@ export class IsometricMapRenderer {
    */
   private getBuildingAt(x: number, y: number): MapBuilding | null {
     for (const building of this.allBuildings) {
+      if (this.isFacilityKindHidden(building.visualClass)) continue;
       const dims = this.facilityDimensionsCache.get(building.visualClass);
       const xsize = dims?.xsize || 1;
       const ysize = dims?.ysize || 1;

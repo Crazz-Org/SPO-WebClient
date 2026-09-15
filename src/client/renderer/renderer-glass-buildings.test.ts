@@ -30,7 +30,7 @@ type Host = {
   };
   canvas: { width: number; height: number };
   allBuildings: MapBuilding[];
-  facilityDimensionsCache: Map<string, { xsize: number; ysize: number }>;
+  facilityDimensionsCache: Map<string, { xsize: number; ysize: number; facId?: number }>;
   hoveredBuilding: MapBuilding | null;
   selectedBuilding: MapBuilding | null;
   buildingEffects: Map<string, unknown>;
@@ -42,6 +42,9 @@ type Host = {
   };
   glassForeignBuildings: boolean;
   ownTycoonId: number;
+  hiddenFacIds: Set<number>;
+  /** The real predicate is a private method, so a plain host object needs its own copy. */
+  isFacilityKindHidden: (visualClass: string) => boolean;
   requestRender: jest.Mock;
 };
 
@@ -72,7 +75,7 @@ function makeBuilding(tycoonId: number, x: number, y: number): MapBuilding {
 }
 
 function makeHost(overrides: Partial<Host> = {}): Host {
-  return {
+  const host: Host = {
     ctx: makeCtx(),
     terrainRenderer: {
       getZoomLevel: () => 3,
@@ -93,9 +96,17 @@ function makeHost(overrides: Partial<Host> = {}): Host {
     },
     glassForeignBuildings: true,
     ownTycoonId: 0,
+    hiddenFacIds: new Set(),
+    isFacilityKindHidden: () => false,
     requestRender: jest.fn(),
     ...overrides,
   };
+  host.isFacilityKindHidden = (visualClass) => {
+    if (host.hiddenFacIds.size === 0) return false;
+    const facId = host.facilityDimensionsCache.get(visualClass)?.facId;
+    return typeof facId === 'number' && facId > 0 && host.hiddenFacIds.has(facId);
+  };
+  return host;
 }
 
 const BOUNDS = { minI: 0, maxI: 20, minJ: 0, maxJ: 20 };

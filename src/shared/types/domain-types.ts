@@ -313,6 +313,7 @@ export interface FacilityDimensions {
   visualClass: string;        // Visual class identifier (matches ObjectsInArea response)
   name: string;               // Building name
   facid: string;              // Internal FacID
+  facId?: number;              // CLASSES.BIN [General] FacId — the facility KIND. Not 'facid' above, which is the never-assigned legacy category string.
   xsize: number;              // Building width in tiles
   ysize: number;              // Building height in tiles
   level: number;              // Building level/tier
