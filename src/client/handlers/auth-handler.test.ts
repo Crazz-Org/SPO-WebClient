@@ -615,7 +615,7 @@ describe('auth-handler', () => {
       );
     });
 
-    it('stops after three requests when the world login itself returns a denial page', async () => {
+    it('stops after three requests when the world login itself returns a denial page, leaving the record and the page standing', async () => {
       const sendRequest = jest.fn()
         .mockResolvedValueOnce({ type: WsMessageType.RESP_AUTH_SUCCESS })
         .mockResolvedValueOnce({ type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: RECORD.worldName }] })
@@ -630,6 +630,62 @@ describe('auth-handler', () => {
       await resumeSession(ctx, RECORD, 'pw');
 
       expect(sendRequest).toHaveBeenCalledTimes(3);
+      expect(gameStoreState.forgetRememberedSession).not.toHaveBeenCalled();
+      expect(ClientBridge.showError).not.toHaveBeenCalled();
+      expect(ClientBridge.showLoginPage).toHaveBeenCalledWith({ kind: 'denied', expiresOn: '01/01/2020' });
+      expect(gameStoreState.setResumeTarget).toHaveBeenLastCalledWith(null);
+    });
+
+    it('stops after three requests when the world login returns a visa choice, leaving the record and the page standing', async () => {
+      const sendRequest = jest.fn()
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_AUTH_SUCCESS })
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: RECORD.worldName }] })
+        .mockResolvedValueOnce({
+          type: WsMessageType.RESP_LOGIN_SUCCESS,
+          tycoonId: '1',
+          companies: [],
+          loginPage: { kind: 'visa', firstVisit: true },
+        });
+      const ctx = makeResumeCtx(sendRequest);
+
+      await resumeSession(ctx, RECORD, 'pw');
+
+      expect(sendRequest).toHaveBeenCalledTimes(3);
+      expect(gameStoreState.forgetRememberedSession).not.toHaveBeenCalled();
+      expect(ClientBridge.showError).not.toHaveBeenCalled();
+      expect(ClientBridge.showLoginPage).toHaveBeenCalledWith({ kind: 'visa', firstVisit: true });
+      expect(gameStoreState.setResumeTarget).toHaveBeenLastCalledWith(null);
+    });
+
+    it('stops after two requests and forgets the record when the session no longer holds credentials for the world login', async () => {
+      const sendRequest = jest.fn()
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_AUTH_SUCCESS })
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: RECORD.worldName }] });
+      const ctx = makeResumeCtx(sendRequest);
+
+      // An empty password: performAuthCheck/performDirectoryLogin store it verbatim on ctx, so
+      // login()'s own `!ctx.storedPassword` guard fires — the "nothing was sent" branch.
+      await resumeSession(ctx, RECORD, '');
+
+      expect(sendRequest).toHaveBeenCalledTimes(2);
+      expect(gameStoreState.forgetRememberedSession).toHaveBeenCalled();
+      expect(ClientBridge.showError).toHaveBeenCalledWith(
+        expect.stringContaining('no longer held the saved sign-in'),
+      );
+    });
+
+    it('stops after three requests and forgets the record when the world login is refused, without stacking a second toast', async () => {
+      const sendRequest = jest.fn()
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_AUTH_SUCCESS })
+        .mockResolvedValueOnce({ type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: RECORD.worldName }] })
+        .mockRejectedValueOnce(Object.assign(new Error('nope'), { serverMessage: 'You supplied an invalid password.' }));
+      const ctx = makeResumeCtx(sendRequest);
+
+      await resumeSession(ctx, RECORD, 'pw');
+
+      expect(sendRequest).toHaveBeenCalledTimes(3);
+      expect(ctx.showNotification).toHaveBeenCalledWith('World login failed: You supplied an invalid password.', 'error');
+      expect(ClientBridge.showError).not.toHaveBeenCalled();
       expect(gameStoreState.forgetRememberedSession).toHaveBeenCalled();
     });
 
