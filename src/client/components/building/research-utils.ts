@@ -108,10 +108,12 @@ export interface OngoingResearchItem extends MergedInventionItem {
 }
 
 /**
- * Collect every `developing` item across all loaded categories, plus any
+ * Collect every `developing` item across the cached categories, plus any
  * `available` item with a live `'queue'` op still in flight, as one ordered
- * list (#888). Categories are walked in ascending index order so the result
- * is stable across sessions regardless of load order.
+ * list (#888). `ResearchPanel` fetches all five categories on mount, so the
+ * cache is the whole queue, not just the tab on screen. Categories are walked
+ * in ascending index order so the result is stable across sessions regardless
+ * of the order the responses arrived in.
  */
 export function collectOngoingResearch(
   inventoryByCategory: ReadonlyMap<number, ResearchCategoryData>,

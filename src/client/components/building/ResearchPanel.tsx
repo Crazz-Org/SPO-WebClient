@@ -2,7 +2,7 @@
  * ResearchPanel — Research/Inventions panel for HQ buildings.
  *
  * Layout:
- *   OngoingResearchBlock (all `developing` items, across loaded categories — #888)
+ *   OngoingResearchBlock (every `developing` item, all five categories — #888)
  *   CategoryTabBar  (5 tabs: GENERAL, COMMERCE, REAL ESTATE, INDUSTRY, CIVICS)
  *   InventionGroupList (scrollable)
  *     InventionGroup[] (collapsible accordion per parent category)
@@ -37,6 +37,9 @@ interface ResearchPanelProps {
 
 const FALLBACK_TABS = ['GENERAL', 'COMMERCE', 'REAL ESTATE', 'INDUSTRY', 'CIVICS'];
 
+/** The five research categories the server exposes (`avl0..4` / `dev0..4` / `has0..4`). */
+const RESEARCH_CATEGORY_COUNT = FALLBACK_TABS.length;
+
 /** Stable empty identities — a `new Map()` inline in the fallback would defeat the memo below. */
 const EMPTY_INVENTORY: ReadonlyMap<number, ResearchCategoryData> = new Map();
 const EMPTY_PENDING_OPS: ReadonlyMap<string, ResearchPendingEntry> = new Map();
@@ -56,13 +59,24 @@ export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
   const tabLabels = categoryTabs.length > 0 ? categoryTabs : FALLBACK_TABS;
   const inventory = research?.inventoryByCategory.get(activeCategoryIndex) ?? null;
 
-  // Fetch category tabs + first category on mount
+  // Fetch category tabs + every category on mount.
+  //
+  // The "In research queue" block above the tabs has to show everything that is
+  // developing, and a queued invention can sit in any of the five categories —
+  // so all five are fetched here rather than one per tab visit. This is a
+  // deliberate exception to "do not eagerly fetch data for tabs/panels not yet
+  // visible" (src/client/CLAUDE.md): the data feeds a block that is on screen
+  // from the first paint, not a tab the player has not opened. The visible
+  // category goes out first so its list paints without waiting on the rest.
   useEffect(() => {
     client.onResearchFetchCategoryTabs();
-    client.onResearchLoadInventory(buildingX, buildingY, 0);
+    for (let i = 0; i < RESEARCH_CATEGORY_COUNT; i++) {
+      client.onResearchLoadInventory(buildingX, buildingY, i);
+    }
   }, [client, buildingX, buildingY]);
 
-  // Handle tab change — lazy load if not cached
+  // Handle tab change — the mount effect already asked for every category, so
+  // this only fires for one whose response never arrived (a retry path).
   const handleTabChange = useCallback(
     (tabId: string) => {
       const index = parseInt(tabId, 10);
@@ -390,7 +404,7 @@ function DetailPanel({
 // =============================================================================
 
 /**
- * All `developing` items across loaded categories, one honest group — #887
+ * All `developing` items across every category, one honest group — #887
  * (active-item progress) has not landed, so this does not distinguish an
  * "active" item from queued-behind ones.
  */

@@ -1,6 +1,6 @@
 /**
  * The "In research queue" block (#888): renders above the category tabs,
- * lists every `developing` item across loaded categories with no false
+ * lists every `developing` item across all five categories with no false
  * active/queued distinction (#887 has not landed), and gives optimistic
  * queue/cancel feedback without waiting on the full inventory round-trip.
  */
@@ -24,6 +24,14 @@ const cat1: ResearchCategoryData = {
   categoryIndex: 1,
   available: [],
   developing: [{ inventionId: 'D2', name: 'Deuce', parent: 'Comm' }],
+  completed: [],
+};
+
+/** The last tab — never the active one in these tests. */
+const cat4: ResearchCategoryData = {
+  categoryIndex: 4,
+  available: [],
+  developing: [{ inventionId: 'D4', name: 'Omega', parent: 'Civ' }],
   completed: [],
 };
 
@@ -75,6 +83,36 @@ describe('OngoingResearchBlock', () => {
     expect(container.querySelector('.ongoingLabel')?.textContent).toBe('In research queue');
     const names = Array.from(container.querySelectorAll('.ongoingName')).map((el) => el.textContent);
     expect(names).toEqual(['Delta', 'Deuce']);
+  });
+
+  it('asks for every category on mount, so the block can cover the whole queue', () => {
+    const onResearchLoadInventory = jest.fn();
+    const callbacks = createSpiedCallbacks({ onResearchLoadInventory });
+
+    renderWithProviders(
+      <ResearchPanel buildingX={10} buildingY={20} />,
+      { clientCallbacks: callbacks },
+    );
+
+    expect(onResearchLoadInventory.mock.calls).toEqual([
+      [10, 20, 0],
+      [10, 20, 1],
+      [10, 20, 2],
+      [10, 20, 3],
+      [10, 20, 4],
+    ]);
+  });
+
+  it('lists a developing item from a category the player never opened', () => {
+    const emptyCat0: ResearchCategoryData = { categoryIndex: 0, available: [], developing: [], completed: [] };
+    seedResearch({ inventoryByCategory: new Map([[0, emptyCat0], [4, cat4]]) });
+
+    const { container } = renderWithProviders(<ResearchPanel buildingX={10} buildingY={20} />);
+
+    // The open tab (0) has nothing developing; the queued item lives in tab 4.
+    expect(useBuildingStore.getState().research?.activeCategoryIndex).toBe(0);
+    const names = Array.from(container.querySelectorAll('.ongoingName')).map((el) => el.textContent);
+    expect(names).toEqual(['Omega']);
   });
 
   it('does not imply progress or an active item — no "%" and no "active" wording', () => {
