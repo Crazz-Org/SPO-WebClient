@@ -59,6 +59,15 @@ function mailFireAndForget(ctx: SessionContext, targetId: string, method: RdoMem
 const MAIL_READ_TOUCH_TIMEOUT_MS = 5000;
 
 /**
+ * One retry when the GET never answered. The legacy MessageBody.asp endpoint is
+ * occasionally slower than the 5 s deadline, and a single miss used to leave the
+ * unread flag set for good — the read itself is idempotent (it only writes
+ * `Read`), so asking again is safe. A non-OK status is NOT retried: the server
+ * answered, and it answered the same thing twice in a row would too.
+ */
+const MAIL_READ_TOUCH_ATTEMPTS = 2;
+
+/**
  * Touch MessageBody.asp for an Inbox message so the mail server's `Read` header
  * flag is set (MailMessageAuto.pas:165-166), the way MessageBody.asp:28-30 does when
  * a Voyager page opens the message. Never throws — a failed or slow GET only degrades
@@ -79,13 +88,20 @@ async function markInboxMessageRead(ctx: SessionContext, messageId: string): Pro
 
   const url = `http://${ctx.currentWorldInfo.ip}/five/0/visual/voyager/mail/MessageBody.asp?${params.toString().replace(/\+/g, '%20')}`;
 
-  try {
-    const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' }, MAIL_READ_TOUCH_TIMEOUT_MS);
-    if (!response.ok) {
-      ctx.log.warn(`[Mail] MessageBody.asp returned ${response.status} — unread flag not cleared`);
+  for (let attempt = 1; attempt <= MAIL_READ_TOUCH_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' }, MAIL_READ_TOUCH_TIMEOUT_MS);
+      if (!response.ok) {
+        ctx.log.warn(`[Mail] MessageBody.asp returned ${response.status} — unread flag not cleared`);
+      }
+      return;
+    } catch (e: unknown) {
+      if (attempt < MAIL_READ_TOUCH_ATTEMPTS) {
+        ctx.log.debug(`[Mail] Header touch attempt ${attempt} failed, retrying: ${toErrorMessage(e)}`);
+        continue;
+      }
+      ctx.log.warn('[Mail] Header touch failed — unread flag not cleared:', toErrorMessage(e));
     }
-  } catch (e: unknown) {
-    ctx.log.warn('[Mail] Header touch failed — unread flag not cleared:', toErrorMessage(e));
   }
 }
 

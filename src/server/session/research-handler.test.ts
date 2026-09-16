@@ -157,6 +157,36 @@ describe('getResearchInventory', () => {
     await expect(getResearchInventory(fake.ctx, X, Y, CAT)).rejects.toThrow('Request timeout: GetPropertyList');
     expect(fake.cacher.closeObject).toHaveBeenCalledWith(TEMP_OBJ);
   });
+
+  it('carries the active research and marks the one developing item the server named', async () => {
+    const values = new Map<string, string>([
+      ['dev2RsId0', 'INV_D'], ['dev2RsName0', 'Delta'],
+      ['dev2RsId1', 'INV_E'], ['dev2RsName1', 'Epsilon'],
+    ]);
+    const fake = makeInventoryCtx(['0', '2', '0'], props => props.map(p => values.get(p) ?? ''));
+    (fake.ctx.focusBuilding as jest.Mock).mockResolvedValue({
+      buildingId: CURR_BLOCK, buildingName: 'Research Center', ownerName: 'SPO_test3',
+    });
+    fake.respond(() => 'res="%42% research completed:-:Researching Epsilon. Cost: $900.:-:Hint:-:"');
+
+    const data = await getResearchInventory(fake.ctx, X, Y, CAT);
+
+    expect(data.activeResearch).toEqual({ percentComplete: 42, inventionName: 'Epsilon' });
+    expect(data.developing.map(i => i.active)).toEqual([undefined, true]);
+  });
+
+  it('leaves the three lists exactly as before when the status read fails', async () => {
+    // The default fake has no `focusBuilding` implementation, so the status read
+    // throws and is swallowed — the inventory answer must be untouched.
+    const fake = makeInventoryCtx(['0', '1', '0'], props => props.map(p => (p === 'dev2RsId0' ? 'INV_D' : '')));
+
+    const data = await getResearchInventory(fake.ctx, X, Y, CAT);
+
+    expect(data.activeResearch).toBeUndefined();
+    expect(data.developing).toEqual([
+      { inventionId: 'INV_D', name: 'INV_D', enabled: undefined, cost: undefined, parent: undefined, volatile: undefined },
+    ]);
+  });
 });
 
 // ===========================================================================
