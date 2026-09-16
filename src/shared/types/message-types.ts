@@ -2100,6 +2100,24 @@ export interface WsRespFavoriteMove extends WsMessage {
 // RESEARCH / INVENTIONS MESSAGES
 // =============================================================================
 
+/**
+ * The one research a Research Center is working on right now, read out of the
+ * facility status text rather than the object cache.
+ *
+ * `TResearchCenter.GetStatusText` appends "<n>% research completed" to the
+ * sttMain section (`Kernel/ResearchCenter.pas:722`, string at
+ * `Kernel/SimHints.pas:332`) and "Researching <name>. Cost: <money>." to the
+ * sttSecondary section (`:733`, string at `Kernel/SimHints.pas:333`) — and
+ * neither when `fCurrResearch` is nil. Both fields are therefore optional:
+ * the server can answer one, both, or neither.
+ */
+export interface ActiveResearchStatus {
+  /** The invention named by "Researching <name>. Cost: …". */
+  inventionName?: string;
+  /** 0..100, from "<n>% research completed". */
+  percentComplete?: number;
+}
+
 /** A single invention item from the server cache. */
 export interface ResearchInventionItem {
   /** Invention string ID (e.g., "GreenTech.Level1") */
@@ -2114,6 +2132,8 @@ export interface ResearchInventionItem {
   parent?: string;
   /** Whether this is a volatile/dynamic invention */
   volatile?: boolean;
+  /** Set on the ONE developing item the server says is being researched right now. */
+  active?: boolean;
 }
 
 /** Research data for a single category tab. */
@@ -2122,6 +2142,12 @@ export interface ResearchCategoryData {
   available: ResearchInventionItem[];
   developing: ResearchInventionItem[];
   completed: ResearchInventionItem[];
+  /**
+   * The building's current research, when it has one. Building-level, not
+   * category-level: the same value rides every category's answer, while
+   * `active` is set only on the developing item of the matching category.
+   */
+  activeResearch?: ActiveResearchStatus;
 }
 
 /** Detailed invention info from RDOGetInvPropsByLang + RDOGetInvDescEx. */

@@ -149,6 +149,38 @@ describe('getResearchInventory', () => {
     expect(data.available).toEqual([{ inventionId: 'INV_S', name: 'INV_S', enabled: false, cost: undefined, parent: undefined, volatile: undefined }]);
   });
 
+  // ── active research (research-status-handler) ────────────────────────────
+
+  it('carries the active research and marks the one developing item it names', async () => {
+    const values = new Map<string, string>([
+      ['dev2RsId0', 'INV_D'], ['dev2RsName0', 'Delta'],
+      ['dev2RsId1', 'INV_G'], ['dev2RsName1', 'Green Tech'],
+    ]);
+    const fake = makeInventoryCtx(['0', '2', '0'], props => props.map(p => values.get(p) ?? ''));
+    (fake.ctx.focusBuilding as jest.Mock).mockResolvedValue({
+      buildingId: '40155328', buildingName: 'Research Center', ownerName: 'SPO_test3',
+    });
+    fake.respond(() => 'res="%37% research completed:-:Researching Green Tech. Cost: $99.:-::-:"');
+
+    const data = await getResearchInventory(fake.ctx, X, Y, CAT);
+
+    expect(data.activeResearch).toEqual({ percentComplete: 37, inventionName: 'Green Tech' });
+    expect(data.developing.map(d => d.active)).toEqual([undefined, true]);
+  });
+
+  it('leaves the three lists untouched when the status read fails', async () => {
+    // The default fake has no `focusBuilding` implementation, so the status read
+    // fails silently — the answer must be what it is without this feature.
+    const fake = makeInventoryCtx(['0', '1', '0'], props => props.map(p => (p === 'dev2RsId0' ? 'INV_D' : '')));
+
+    const data = await getResearchInventory(fake.ctx, X, Y, CAT);
+
+    expect(data.activeResearch).toBeUndefined();
+    expect(data.developing).toHaveLength(1);
+    expect(data.developing[0].active).toBeUndefined();
+    expect(fake.sent).toHaveLength(0);
+  });
+
   it('closes the temp object even when a cache read throws, and rethrows', async () => {
     const fake = makeSessionCtx();
     fake.cacher.createObject.mockResolvedValue(TEMP_OBJ);
