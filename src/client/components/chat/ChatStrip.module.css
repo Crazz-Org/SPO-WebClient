@@ -2,7 +2,7 @@
 
 .strip {
   position: absolute;
-  bottom: calc(var(--space-4) + var(--command-bar-height, 190px) + var(--space-3)); /* above the command bar */
+  bottom: calc(var(--space-4) + var(--command-bar-height) + var(--space-3)); /* above the command bar */
   left: calc(var(--hud-bar-left) + (var(--hud-free-width) - min(var(--chat-strip-width), var(--hud-free-width))) / 2);
   transform: none;
   z-index: calc(var(--z-sticky) - 50);
