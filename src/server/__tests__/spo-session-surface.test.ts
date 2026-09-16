@@ -39,6 +39,7 @@ import * as buildingTemplatesHandler from '../session/building-templates-handler
 import * as buildingDetailsHandler from '../session/building-details-handler';
 import * as buildingPropertyHandler from '../session/building-property-handler';
 import * as researchHandler from '../session/research-handler';
+import * as researchStatusHandler from '../session/research-status-handler';
 import * as loginHandler from '../session/login-handler';
 import * as abandonRoleHandler from '../session/abandon-role-handler';
 import * as tutorialHandler from '../session/tutorial-handler';
@@ -711,6 +712,15 @@ const DELEGATIONS: readonly Delegation[] = [
     forwarded: [706, 436, 'Invention7'],
     result: { name: 'Invention7' },
   },
+
+  // ── research-status-handler ──────────────────────────────────────────────
+  {
+    method: 'getActiveResearchStatus',
+    install: () => jest.spyOn(researchStatusHandler, 'getActiveResearchStatus'),
+    call: s => s.getActiveResearchStatus(706, 436),
+    forwarded: [706, 436],
+    result: { inventionName: 'Green Tech', percentComplete: 37 },
+  },
 ];
 
 describe('StarpeaceSession — handler delegation', () => {
@@ -740,7 +750,8 @@ describe('StarpeaceSession — handler delegation', () => {
     // 77: `getContextStatusText`, issue 589.
     // 78: `createChatChannel`, issue 619.
     // 79-80: `getTutorialState` / `runTutorialAction`, issue 626.
-    expect(DELEGATIONS).toHaveLength(80);
+    // 81: `getActiveResearchStatus`, issue 887.
+    expect(DELEGATIONS).toHaveLength(81);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 

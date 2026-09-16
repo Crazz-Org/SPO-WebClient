@@ -48,6 +48,7 @@ import {
   FavoritesItem,
   ResearchCategoryData,
   ResearchInventionDetails,
+  ActiveResearchStatus,
   ClusterInfo,
   ClusterFacilityPreview,
   WsEventConnectionStats,
@@ -103,6 +104,7 @@ import * as buildingTemplatesHandler from './session/building-templates-handler'
 import * as buildingDetailsHandler from './session/building-details-handler';
 import * as buildingPropertyHandler from './session/building-property-handler';
 import * as researchHandler from './session/research-handler';
+import * as researchStatusHandler from './session/research-status-handler';
 import { dispatchPush } from './session/push-dispatcher';
 import * as loginHandler from './session/login-handler';
 import { LatencyTracker } from './session/latency-tracker';
@@ -3069,6 +3071,11 @@ private handlePush(socketName: string, packet: RdoPacket) {
   // -- CONTEXT STATUS (facade -> context-status-handler) --------------------
   public async getContextStatusText(x: number, y: number): Promise<string> {
     return contextStatusHandler.getContextStatusText(this, x, y);
+  }
+
+  // -- ACTIVE RESEARCH (facade -> research-status-handler) ------------------
+  public async getActiveResearchStatus(x: number, y: number): Promise<ActiveResearchStatus | null> {
+    return researchStatusHandler.getActiveResearchStatus(this, x, y);
   }
 
   // -- WORLD EVENTS (facade -> world-events-handler) -------------------------

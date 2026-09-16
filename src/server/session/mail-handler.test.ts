@@ -698,6 +698,46 @@ describe('readMailMessage', () => {
     expect(fake.log.warn).toHaveBeenCalledWith('[Mail] Header touch failed — unread flag not cleared:', 'ECONNREFUSED');
   });
 
+  it('retries the header touch once when the first GET hits its deadline, and stays silent when the retry lands', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake);
+    const timeout = Object.assign(new Error('aborted'), { name: 'TimeoutError' });
+    mockFetch.mockRejectedValueOnce(timeout).mockResolvedValueOnce(htmlResponse('<html></html>'));
+
+    const msg = await readMailMessage(fake.ctx, 'Inbox', 'MSG-77');
+
+    expect(msg.messageId).toBe('MSG-77');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[1][0]).toBe(mockFetch.mock.calls[0][0]);
+    expect(fake.log.warn).not.toHaveBeenCalled();
+  });
+
+  it('warns once after the retry also times out, and still returns the message', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake);
+    mockFetch.mockRejectedValue(Object.assign(new Error('aborted'), { name: 'TimeoutError' }));
+
+    const msg = await readMailMessage(fake.ctx, 'Inbox', 'MSG-77');
+
+    expect(msg.messageId).toBe('MSG-77');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(fake.log.warn).toHaveBeenCalledTimes(1);
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[Mail] Header touch failed — unread flag not cleared:',
+      expect.stringContaining('Fetch timed out after 5000ms'),
+    );
+  });
+
+  it('does not retry a refused connection — that is an answer, not latency', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake);
+    mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
+
+    await readMailMessage(fake.ctx, 'Inbox', 'MSG-77');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   it('a GetLines timeout rejects before the header touch, and MessageBody.asp is never fetched', async () => {
     const fake = makeMailCtx();
     fake.respond(p => {
