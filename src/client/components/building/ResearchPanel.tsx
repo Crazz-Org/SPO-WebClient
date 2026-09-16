@@ -2,6 +2,7 @@
  * ResearchPanel — Research/Inventions panel for HQ buildings.
  *
  * Layout:
+ *   OngoingResearchBlock (all `developing` items, across loaded categories — #888)
  *   CategoryTabBar  (5 tabs: GENERAL, COMMERCE, REAL ESTATE, INDUSTRY, CIVICS)
  *   InventionGroupList (scrollable)
  *     InventionGroup[] (collapsible accordion per parent category)
@@ -11,7 +12,7 @@
  */
 
 import { useEffect, useCallback, useState, useMemo } from 'react';
-import type { ResearchInventionDetails } from '@/shared/types';
+import type { ResearchCategoryData, ResearchInventionDetails } from '@/shared/types';
 import { useBuildingStore } from '../../store/building-store';
 import { useClient } from '../../context';
 import { TabBar } from '../common/TabBar';
@@ -22,7 +23,10 @@ import {
   isGroupResearchable,
   countAvailableEnabled,
   countByStatus,
+  collectOngoingResearch,
   type MergedInventionItem,
+  type OngoingResearchItem,
+  type ResearchPendingEntry,
 } from './research-utils';
 import styles from './ResearchPanel.module.css';
 
@@ -32,6 +36,10 @@ interface ResearchPanelProps {
 }
 
 const FALLBACK_TABS = ['GENERAL', 'COMMERCE', 'REAL ESTATE', 'INDUSTRY', 'CIVICS'];
+
+/** Stable empty identities — a `new Map()` inline in the fallback would defeat the memo below. */
+const EMPTY_INVENTORY: ReadonlyMap<number, ResearchCategoryData> = new Map();
+const EMPTY_PENDING_OPS: ReadonlyMap<string, ResearchPendingEntry> = new Map();
 
 export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
   const client = useClient();
@@ -115,8 +123,18 @@ export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
     [merged, selectedId],
   );
 
+  const pendingOps = research?.pendingOps ?? EMPTY_PENDING_OPS;
+  const ongoing = useMemo(
+    () => collectOngoingResearch(research?.inventoryByCategory ?? EMPTY_INVENTORY, pendingOps),
+    [research?.inventoryByCategory, pendingOps],
+  );
+
   return (
     <div className={styles.panel}>
+      {ongoing.length > 0 && (
+        <OngoingResearchBlock items={ongoing} isOwner={isOwner} onCancel={handleCancelResearch} />
+      )}
+
       {/* Category tabs */}
       <TabBar
         tabs={tabs}
@@ -363,6 +381,51 @@ function DetailPanel({
       {details.description && (
         <div className={styles.detailDescription}>{details.description}</div>
       )}
+    </div>
+  );
+}
+
+// =============================================================================
+// ONGOING RESEARCH BLOCK (#888)
+// =============================================================================
+
+/**
+ * All `developing` items across loaded categories, one honest group — #887
+ * (active-item progress) has not landed, so this does not distinguish an
+ * "active" item from queued-behind ones.
+ */
+function OngoingResearchBlock({
+  items,
+  isOwner,
+  onCancel,
+}: {
+  items: OngoingResearchItem[];
+  isOwner: boolean;
+  onCancel: (inventionId: string) => void;
+}) {
+  return (
+    <div className={styles.ongoingBlock}>
+      <div className={styles.ongoingHeader}>
+        <span className={styles.ongoingLabel}>In research queue</span>
+        <span className={styles.ongoingCount}>{items.length}</span>
+      </div>
+      <div className={styles.ongoingList}>
+        {items.map((item) => (
+          <div key={item.inventionId} className={styles.ongoingRow}>
+            <span className={`${styles.statusDot} ${styles.statusResearching}`} />
+            <span className={styles.ongoingName}>{item.name || item.inventionId}</span>
+            {item.isPending && <span className={styles.ongoingPending}>sending…</span>}
+            {isOwner && (
+              <button
+                className={`${styles.inlineBtn} ${styles.inlineBtnCancel}`}
+                onClick={() => onCancel(item.inventionId)}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

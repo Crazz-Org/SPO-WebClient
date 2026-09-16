@@ -448,6 +448,82 @@ describe('Building Store — Research state', () => {
   });
 });
 
+describe('Building Store — Research pending ops (#888)', () => {
+  beforeEach(resetStore);
+
+  function setupResearchContext() {
+    useBuildingStore.getState().setDetails(makeBuildingDetails(100, 200));
+    useBuildingStore.getState().setResearchCategoryTabs(['GENERAL']);
+  }
+
+  it('markResearchPending creates the slice when research is null', () => {
+    expect(useBuildingStore.getState().research).toBeNull();
+
+    useBuildingStore.getState().markResearchPending('AI.Level1', 'queue');
+
+    const research = useBuildingStore.getState().research;
+    expect(research).not.toBeNull();
+    expect(research!.pendingOps.get('AI.Level1')?.op).toBe('queue');
+    expect(typeof research!.pendingOps.get('AI.Level1')?.timestamp).toBe('number');
+  });
+
+  it('clearResearchPending removes the entry', () => {
+    useBuildingStore.getState().markResearchPending('AI.Level1', 'queue');
+    useBuildingStore.getState().clearResearchPending('AI.Level1');
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('AI.Level1')).toBe(false);
+  });
+
+  it('clearResearchPending is a no-op when research is null', () => {
+    expect(useBuildingStore.getState().research).toBeNull();
+    useBuildingStore.getState().clearResearchPending('AI.Level1');
+    expect(useBuildingStore.getState().research).toBeNull();
+  });
+
+  it('setResearchInventory drops a queue op once the item arrives in developing', () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('AI.Level1', 'queue');
+    useBuildingStore.getState().setResearchInventory(mockInventory); // AI.Level1 is in `developing`
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('AI.Level1')).toBe(false);
+  });
+
+  it('setResearchInventory keeps a queue op while the item is still in available (lagging read)', () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('GreenTech.Level1', 'queue');
+    useBuildingStore.getState().setResearchInventory(mockInventory); // still `available`
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('GreenTech.Level1')).toBe(true);
+  });
+
+  it('setResearchInventory drops a cancel op once the item is no longer in developing', () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('AI.Level1', 'queue');
+    useBuildingStore.getState().setResearchInventory(mockInventory);
+    useBuildingStore.getState().markResearchPending('AI.Level1', 'cancel');
+    const settled: ResearchCategoryData = {
+      categoryIndex: 0,
+      // A cancelled item reverts to available — it must still be "known" by
+      // this category read for the settle rule to see it, or the read says
+      // nothing about it (belongs to another category / vanished entirely).
+      available: [...mockInventory.available, { inventionId: 'AI.Level1', name: 'AI Level 1' }],
+      developing: [],
+      completed: mockInventory.completed,
+    };
+    useBuildingStore.getState().setResearchInventory(settled);
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('AI.Level1')).toBe(false);
+  });
+
+  it('setResearchInventory leaves an op alone whose id is absent from the incoming category', () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('Unrelated.Item', 'queue');
+    useBuildingStore.getState().setResearchInventory(mockInventory);
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('Unrelated.Item')).toBe(true);
+  });
+});
+
 describe('Building Store — Optimistic SET feedback', () => {
   beforeEach(resetStore);
 

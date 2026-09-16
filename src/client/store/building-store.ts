@@ -15,6 +15,7 @@ import type {
 } from '@/shared/types';
 import type { RoadReachability } from '@/shared/road-circuits';
 import { registerInspectorTabs, isGateTab } from '@/shared/building-details';
+import type { ResearchPendingEntry, ResearchPendingOp } from '../components/building/research-utils';
 
 /** `${x},${y}` — the key `connectionPicker.reachability` is indexed by. */
 export function reachabilityKey(x: number, y: number): string {
@@ -35,6 +36,8 @@ interface ResearchState {
   selectedDetails: ResearchInventionDetails | null;
   isLoadingInventory: boolean;
   isLoadingDetails: boolean;
+  /** Writes whose effect the block paints before the server read-back agrees (#888). */
+  pendingOps: Map<string, ResearchPendingEntry>;
 }
 
 /** Tracks an in-flight SET command (optimistic feedback). */
@@ -246,6 +249,8 @@ interface BuildingState {
   setResearchDetails: (details: ResearchInventionDetails) => void;
   setResearchActiveCategoryIndex: (index: number) => void;
   setResearchLoading: (field: 'inventory' | 'details', loading: boolean) => void;
+  markResearchPending: (inventionId: string, op: ResearchPendingOp) => void;
+  clearResearchPending: (inventionId: string) => void;
   clearResearch: () => void;
 }
 
@@ -256,6 +261,7 @@ const INITIAL_RESEARCH: ResearchState = {
   loadedCategories: new Set(),
   selectedInventionId: null,
   selectedDetails: null,
+  pendingOps: new Map(),
   isLoadingInventory: false,
   isLoadingDetails: false,
 };
@@ -729,12 +735,29 @@ export const useBuildingStore = create<BuildingState>((set) => ({
       nextMap.set(data.categoryIndex, data);
       const nextLoaded = new Set(prev.loadedCategories);
       nextLoaded.add(data.categoryIndex);
+
+      // Drop a pending op only once this authoritative read agrees with it —
+      // the object cache can still serve the pre-write value for 30-90s
+      // (OB-29), and dropping on mere arrival would bounce the item back out
+      // of the block on the normal path.
+      const developingIds = new Set(data.developing.map((i) => i.inventionId));
+      const knownIds = new Set(
+        [...data.available, ...data.developing, ...data.completed].map((i) => i.inventionId),
+      );
+      const nextPending = new Map(prev.pendingOps);
+      for (const [id, entry] of prev.pendingOps) {
+        if (!knownIds.has(id)) continue;
+        const agreed = entry.op === 'queue' ? developingIds.has(id) : !developingIds.has(id);
+        if (agreed) nextPending.delete(id);
+      }
+
       return {
         research: {
           ...prev,
           inventoryByCategory: nextMap,
           loadedCategories: nextLoaded,
           isLoadingInventory: false,
+          pendingOps: nextPending,
         },
       };
     }),
@@ -780,4 +803,20 @@ export const useBuildingStore = create<BuildingState>((set) => ({
     })),
 
   clearResearch: () => set({ research: null }),
+
+  markResearchPending: (inventionId, op) =>
+    set((state) => {
+      const prev = state.research ?? INITIAL_RESEARCH;
+      const next = new Map(prev.pendingOps);
+      next.set(inventionId, { op, timestamp: Date.now() });
+      return { research: { ...prev, pendingOps: next } };
+    }),
+
+  clearResearchPending: (inventionId) =>
+    set((state) => {
+      if (!state.research) return state;
+      const next = new Map(state.research.pendingOps);
+      next.delete(inventionId);
+      return { research: { ...state.research, pendingOps: next } };
+    }),
 }));

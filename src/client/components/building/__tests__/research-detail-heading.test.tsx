@@ -28,6 +28,7 @@ function seedResearch(overrides: {
       activeCategoryIndex: 0,
       categoryTabs: [],
       loadedCategories: new Set([0]),
+      pendingOps: new Map(),
       isLoadingInventory: false,
       isLoadingDetails: false,
       ...overrides,
