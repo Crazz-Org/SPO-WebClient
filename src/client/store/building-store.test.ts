@@ -448,6 +448,84 @@ describe('Building Store — Research state', () => {
   });
 });
 
+describe('Building Store — Research pending ops (#888)', () => {
+  beforeEach(resetStore);
+
+  function setupResearchContext() {
+    useBuildingStore.getState().setDetails(makeBuildingDetails(100, 200));
+    useBuildingStore.getState().setResearchCategoryTabs(['GENERAL']);
+  }
+
+  it('markResearchPending creates the research slice when research is null', () => {
+    expect(useBuildingStore.getState().research).toBeNull();
+    useBuildingStore.getState().markResearchPending('A1', 'queue');
+
+    const research = useBuildingStore.getState().research;
+    expect(research).not.toBeNull();
+    const entry = research!.pendingOps.get('A1');
+    expect(entry?.op).toBe('queue');
+    expect(typeof entry?.timestamp).toBe('number');
+  });
+
+  it('clearResearchPending removes the entry', () => {
+    useBuildingStore.getState().markResearchPending('A1', 'queue');
+    useBuildingStore.getState().clearResearchPending('A1');
+    expect(useBuildingStore.getState().research!.pendingOps.has('A1')).toBe(false);
+  });
+
+  it('clearResearchPending is a no-op when research is null', () => {
+    expect(useBuildingStore.getState().research).toBeNull();
+    useBuildingStore.getState().clearResearchPending('A1');
+    expect(useBuildingStore.getState().research).toBeNull();
+  });
+
+  it('setResearchInventory drops a "queue" op when the item arrives in developing', () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('GreenTech.Level1', 'queue');
+    const data: ResearchCategoryData = {
+      categoryIndex: 0,
+      available: [],
+      developing: [{ inventionId: 'GreenTech.Level1', name: 'Green Tech 1' }],
+      completed: [],
+    };
+    useBuildingStore.getState().setResearchInventory(data);
+    expect(useBuildingStore.getState().research!.pendingOps.has('GreenTech.Level1')).toBe(false);
+  });
+
+  it('setResearchInventory keeps a "queue" op when the item is still in available (lagging read)', () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('GreenTech.Level1', 'queue');
+    const data: ResearchCategoryData = {
+      categoryIndex: 0,
+      available: [{ inventionId: 'GreenTech.Level1', name: 'Green Tech 1', enabled: true }],
+      developing: [],
+      completed: [],
+    };
+    useBuildingStore.getState().setResearchInventory(data);
+    expect(useBuildingStore.getState().research!.pendingOps.has('GreenTech.Level1')).toBe(true);
+  });
+
+  it('setResearchInventory drops a "cancel" op when the item is no longer in developing', () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('AI.Level1', 'cancel');
+    const data: ResearchCategoryData = {
+      categoryIndex: 0,
+      available: [{ inventionId: 'AI.Level1', name: 'AI Level 1', enabled: true }],
+      developing: [],
+      completed: [],
+    };
+    useBuildingStore.getState().setResearchInventory(data);
+    expect(useBuildingStore.getState().research!.pendingOps.has('AI.Level1')).toBe(false);
+  });
+
+  it('leaves an op alone whose id is absent from the incoming category', () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('OtherCat.Item', 'queue');
+    useBuildingStore.getState().setResearchInventory(mockInventory);
+    expect(useBuildingStore.getState().research!.pendingOps.has('OtherCat.Item')).toBe(true);
+  });
+});
+
 describe('Building Store — Optimistic SET feedback', () => {
   beforeEach(resetStore);
 

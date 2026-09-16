@@ -2,6 +2,7 @@
  * ResearchPanel — Research/Inventions panel for HQ buildings.
  *
  * Layout:
+ *   OngoingResearchBlock (all `developing` items across every category, #888)
  *   CategoryTabBar  (5 tabs: GENERAL, COMMERCE, REAL ESTATE, INDUSTRY, CIVICS)
  *   InventionGroupList (scrollable)
  *     InventionGroup[] (collapsible accordion per parent category)
@@ -11,7 +12,7 @@
  */
 
 import { useEffect, useCallback, useState, useMemo } from 'react';
-import type { ResearchInventionDetails } from '@/shared/types';
+import type { ResearchCategoryData, ResearchInventionDetails } from '@/shared/types';
 import { useBuildingStore } from '../../store/building-store';
 import { useClient } from '../../context';
 import { TabBar } from '../common/TabBar';
@@ -22,7 +23,10 @@ import {
   isGroupResearchable,
   countAvailableEnabled,
   countByStatus,
+  collectOngoingResearch,
   type MergedInventionItem,
+  type OngoingResearchItem,
+  type ResearchPendingEntry,
 } from './research-utils';
 import styles from './ResearchPanel.module.css';
 
@@ -32,6 +36,10 @@ interface ResearchPanelProps {
 }
 
 const FALLBACK_TABS = ['GENERAL', 'COMMERCE', 'REAL ESTATE', 'INDUSTRY', 'CIVICS'];
+/** Fixed category count (research.0.dat's tab count never varies at runtime). */
+const RESEARCH_CATEGORY_COUNT = FALLBACK_TABS.length;
+const EMPTY_INVENTORY: ReadonlyMap<number, ResearchCategoryData> = new Map();
+const EMPTY_PENDING_OPS: ReadonlyMap<string, ResearchPendingEntry> = new Map();
 
 export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
   const client = useClient();
@@ -48,10 +56,17 @@ export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
   const tabLabels = categoryTabs.length > 0 ? categoryTabs : FALLBACK_TABS;
   const inventory = research?.inventoryByCategory.get(activeCategoryIndex) ?? null;
 
-  // Fetch category tabs + first category on mount
+  // Fetch category tabs + every category on mount. Widened from "first category
+  // only" so the "In research queue" block (#888) can aggregate `developing`
+  // items across all categories, not just the one the player happens to have
+  // open — the per-tab lazy-load rule (src/client/CLAUDE.md) still governs
+  // React.lazy() component loading and tab browsing; it does not cover this
+  // one mount-time aggregate, which #888's "all developing items" needs.
   useEffect(() => {
     client.onResearchFetchCategoryTabs();
-    client.onResearchLoadInventory(buildingX, buildingY, 0);
+    for (let i = 0; i < RESEARCH_CATEGORY_COUNT; i++) {
+      client.onResearchLoadInventory(buildingX, buildingY, i);
+    }
   }, [client, buildingX, buildingY]);
 
   // Handle tab change — lazy load if not cached
@@ -115,8 +130,18 @@ export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
     [merged, selectedId],
   );
 
+  const pendingOps = research?.pendingOps ?? EMPTY_PENDING_OPS;
+  const ongoing = useMemo(
+    () => collectOngoingResearch(research?.inventoryByCategory ?? EMPTY_INVENTORY, pendingOps),
+    [research?.inventoryByCategory, pendingOps],
+  );
+
   return (
     <div className={styles.panel}>
+      {ongoing.length > 0 && (
+        <OngoingResearchBlock items={ongoing} isOwner={isOwner} onCancel={handleCancelResearch} />
+      )}
+
       {/* Category tabs */}
       <TabBar
         tabs={tabs}
@@ -363,6 +388,42 @@ function DetailPanel({
       {details.description && (
         <div className={styles.detailDescription}>{details.description}</div>
       )}
+    </div>
+  );
+}
+
+// =============================================================================
+// ONGOING RESEARCH BLOCK (#888)
+// =============================================================================
+
+function OngoingResearchBlock({ items, isOwner, onCancel }: {
+  items: OngoingResearchItem[];
+  isOwner: boolean;
+  onCancel: (inventionId: string) => void;
+}) {
+  return (
+    <div className={styles.ongoingBlock}>
+      <div className={styles.ongoingHeader}>
+        <span className={styles.ongoingLabel}>In research queue</span>
+        <span className={styles.ongoingCount}>{items.length}</span>
+      </div>
+      <div className={styles.ongoingList}>
+        {items.map((item) => (
+          <div key={item.inventionId} className={styles.ongoingRow}>
+            <span className={`${styles.statusDot} ${styles.statusResearching}`} />
+            <span className={styles.ongoingName}>{item.name || item.inventionId}</span>
+            {item.isPending && <span className={styles.ongoingPending}>sending…</span>}
+            {isOwner && (
+              <button
+                className={`${styles.inlineBtn} ${styles.inlineBtnCancel}`}
+                onClick={() => onCancel(item.inventionId)}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

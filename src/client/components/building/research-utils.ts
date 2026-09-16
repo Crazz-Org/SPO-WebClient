@@ -87,3 +87,64 @@ export function countByStatus(items: MergedInventionItem[]): { avail: number; de
   }
   return { avail, dev, has };
 }
+
+export type ResearchPendingOp = 'queue' | 'cancel';
+
+/** An in-flight optimistic write, keyed by inventionId in the store's `pendingOps` map. */
+export interface ResearchPendingEntry {
+  op: ResearchPendingOp;
+  timestamp: number;
+}
+
+/** An unsettled optimistic mark older than this is ignored (the server's view wins). */
+export const RESEARCH_PENDING_TTL_MS = 60_000;
+
+/** An item shown in the "In research queue" block — no progress/active distinction (#887 not landed). */
+export interface OngoingResearchItem extends MergedInventionItem {
+  /** Which category tab this item came from. */
+  categoryIndex: number;
+  /** True while the write that put it here has not been agreed by a server read. */
+  isPending: boolean;
+}
+
+/**
+ * Aggregate every `developing` item across all loaded categories, overlaid with
+ * unsettled optimistic queue/cancel writes, for the "In research queue" block.
+ */
+export function collectOngoingResearch(
+  inventoryByCategory: ReadonlyMap<number, ResearchCategoryData>,
+  pendingOps: ReadonlyMap<string, ResearchPendingEntry>,
+  now: number = Date.now(),
+): OngoingResearchItem[] {
+  const liveOp = (inventionId: string): ResearchPendingOp | null => {
+    const entry = pendingOps.get(inventionId);
+    if (!entry) return null;
+    if (now - entry.timestamp >= RESEARCH_PENDING_TTL_MS) return null;
+    return entry.op;
+  };
+
+  const result: OngoingResearchItem[] = [];
+  const emitted = new Set<string>();
+  const categoryIndices = [...inventoryByCategory.keys()].sort((a, b) => a - b);
+
+  for (const categoryIndex of categoryIndices) {
+    const data = inventoryByCategory.get(categoryIndex);
+    if (!data) continue;
+
+    for (const item of data.developing) {
+      if (emitted.has(item.inventionId)) continue;
+      if (liveOp(item.inventionId) === 'cancel') continue;
+      emitted.add(item.inventionId);
+      result.push({ ...item, status: 'researching', categoryIndex, isPending: liveOp(item.inventionId) !== null });
+    }
+
+    for (const item of data.available) {
+      if (emitted.has(item.inventionId)) continue;
+      if (liveOp(item.inventionId) !== 'queue') continue;
+      emitted.add(item.inventionId);
+      result.push({ ...item, status: 'researching', categoryIndex, isPending: true });
+    }
+  }
+
+  return result;
+}
