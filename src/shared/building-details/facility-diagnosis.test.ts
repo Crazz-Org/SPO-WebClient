@@ -1,4 +1,19 @@
-import { parseFacilityDiagnosis } from './facility-diagnosis';
+import { hasFacilityHint, parseFacilityDiagnosis } from './facility-diagnosis';
+
+describe('hasFacilityHint', () => {
+  it('is false for an empty, placeholder or denied section 2', () => {
+    expect(hasFacilityHint(undefined)).toBe(false);
+    expect(hasFacilityHint('')).toBe(false);
+    expect(hasFacilityHint('   ')).toBe(false);
+    expect(hasFacilityHint('No hints for this facility.')).toBe(false);
+    expect(hasFacilityHint('This facility belongs to Crazz. There are no hints for you.')).toBe(false);
+  });
+
+  it('is true for any real sentence, including one paired with a section-1 stop', () => {
+    expect(hasFacilityHint('Warning: This facility needs Qualified work force.')).toBe(true);
+    expect(hasFacilityHint('There is nothing we can do about the weather but wait.')).toBe(true);
+  });
+});
 
 describe('parseFacilityDiagnosis', () => {
   it('a stop in section 1 wins over any hint', () => {

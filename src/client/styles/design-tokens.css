@@ -141,8 +141,7 @@
   --duration-panel: 300ms;
 
   /* ---- Layout — HUD Overlay System ---- */
-  --topbar-height: 36px;
-  --topbar-bg: rgba(12, 13, 16, 0.7);
+  --topbar-bg: rgba(12, 13, 16, 0.7); /* not a top bar — the ChatStrip panel's glass fill (ChatStrip.module.css) */
   --rail-button-size: 48px;
   --rail-gap: 8px;
   --chatstrip-collapsed: 80px;
@@ -165,13 +164,45 @@
   --sai-right: env(safe-area-inset-right, 0px);
   --sai-bottom: env(safe-area-inset-bottom, 0px);
   --sai-left: env(safe-area-inset-left, 0px);
-  --content-top: calc(var(--space-3) + 40px + var(--space-2)); /* below the status pill (mobile) */
+  --content-top: calc(var(--space-3) + 40px + var(--space-2)); /* below the status pill — mobile info bar and the toast stack */
+
+  /* ---- HUD bottom band — one horizontal anchor (issue 872) ----
+     CommandBar and ChatStrip share one left edge; opening a surface only shrinks
+     the free width on the right, it never re-anchors either of them. */
+  --hud-bar-max: 904px;
+  --hud-bar-left: max(var(--space-4), calc((100vw - var(--hud-bar-max)) / 2));
+  --hud-bar-right: var(--space-4);
+  --hud-bar-right-shifted: calc(var(--panel-width-desktop) + var(--sheet-inset) + var(--space-4));
+  --hud-bar-width: min(var(--hud-bar-max), calc(100vw - var(--hud-bar-left) - var(--hud-bar-right)));
+  --hud-bar-width-shifted: min(var(--hud-bar-max), calc(100vw - var(--hud-bar-left) - var(--hud-bar-right-shifted)));
+  /* per-element knobs — ChatStrip.shifted / .expanded swap these two */
+  --hud-free-width: var(--hud-bar-width);
+  --chat-strip-width: var(--chat-box-width);
+
+  /* ---- HUD bottom stack — one command-bar height, two derived bands (issue 875) ----
+     CommandBar is a flex column: one 48px mode row (or a 44px search row — the taller of
+     the two is what the bands must clear), --space-2, and the tile grid (2 rows of 56px
+     + one 6px gap + 2x6px padding + 2x1px border = 132px). design-tokens.test.ts recomputes
+     this from CommandBar's own CSS and fails if a row or a tile row is added here. */
+  --command-bar-height: calc(48px + var(--space-2) + 132px);
+  --hud-strip-height: 30px; /* ContextStatusStrip/WorldEventTicker: min-height 28 + 2x1px border */
+  --context-strip-bottom: calc(var(--space-4) + var(--command-bar-height) + var(--space-2));
+  --world-ticker-bottom: calc(var(--context-strip-bottom) + var(--hud-strip-height) + var(--space-2));
 
   /* ---- Breakpoints (for reference — use in @media queries) ---- */
   /* --bp-mobile: 480px → 767px     */
   /* --bp-tablet: 768px → 1023px    */
   /* --bp-narrow-desktop: 1024px → 1399px */
   /* --bp-desktop: 1400px+          */
+}
+
+/* ---- Below 1024px the command bar is hidden (CommandBar.module.css) — the two HUD bands
+       keep the exact mobile offsets they have always had (issue 875). ---- */
+@media (max-width: 1023px) {
+  :root {
+    --context-strip-bottom: 134px;
+    --world-ticker-bottom: 168px;
+  }
 }
 
 /* ---- Narrow desktop — reduce panel width to avoid overlap ---- */
@@ -195,7 +226,6 @@
     --text-2xl: 1.25rem;
     --text-xl: 1.125rem;
     --text-sm: 0.8125rem;  /* 13px on mobile */
-    --topbar-height: 32px;
     --panel-width-desktop: 100vw;
     --panel-width-tablet: 100vw;
     --chatstrip-expanded: 160px;

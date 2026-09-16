@@ -7,36 +7,6 @@
   overflow: hidden;
 }
 
-/* Toolbar — refresh + close, top-right */
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  flex-shrink: 0;
-  animation: toolbarIn 200ms ease-out both;
-}
-
-.toolbar > button {
-  transition: transform 200ms ease-out, background 200ms ease-out;
-}
-
-.toolbar > button:hover {
-  transform: translateY(-1px);
-  background: var(--bg-elevated);
-}
-
-@keyframes toolbarIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .toolbar { animation: none; }
-  .toolbar > button:hover { transform: none; }
-}
-
 /* Header */
 .header {
   padding: var(--space-4);

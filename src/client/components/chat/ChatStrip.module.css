@@ -1,13 +1,12 @@
-/* ChatStrip — bottom-center social chat hub */
+/* ChatStrip — social chat hub anchored on the command bar's free area */
 
 .strip {
   position: absolute;
   bottom: calc(var(--space-4) + var(--command-bar-height, 190px) + var(--space-3)); /* above the command bar */
-  left: 50%;
-  transform: translateX(-50%);
+  left: calc(var(--hud-bar-left) + (var(--hud-free-width) - min(var(--chat-strip-width), var(--hud-free-width))) / 2);
+  transform: none;
   z-index: calc(var(--z-sticky) - 50);
-  width: var(--chat-box-width);
-  max-width: calc(100vw - 140px);
+  width: min(var(--chat-strip-width), var(--hud-free-width));
   height: var(--chatstrip-collapsed);
   background: var(--topbar-bg);
   border: 1px solid var(--surface-border);
@@ -15,14 +14,19 @@
   display: flex;
   flex-direction: column;
   transition: height var(--duration-base) var(--ease-default),
-    width var(--duration-base) var(--ease-default);
+    width var(--duration-base) var(--ease-default),
+    left var(--duration-panel) var(--ease-out);
   overflow: visible;
 }
 
 .strip.expanded {
   height: var(--chatstrip-expanded);
-  width: 620px;
-  max-width: calc(100vw - 60px);
+  --chat-strip-width: 620px;
+}
+
+/* A surface is open: the same free area the command bar keeps (issue 872) */
+.strip.shifted {
+  --hud-free-width: var(--hud-bar-width-shifted);
 }
 
 /* ========================================================================= */

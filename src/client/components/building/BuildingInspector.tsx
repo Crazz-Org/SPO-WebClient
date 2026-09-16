@@ -8,11 +8,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Edit3, RefreshCw, X, Check, Crosshair, Star, Mail } from 'lucide-react';
+import { Edit3, X, Check, Star, Mail } from 'lucide-react';
 import { useBuildingStore } from '../../store/building-store';
 import { useEmpireStore } from '../../store/empire-store';
 import { useGameStore } from '../../store/game-store';
-import { useUiStore } from '../../store';
 import { useClient } from '../../context';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
 import type { BuildingPropertyValue, TownHallDemographics } from '@/shared/types';
@@ -72,7 +71,6 @@ export function BuildingInspector({ hideHeader }: BuildingInspectorProps = {}) {
   const setCurrentTab = useBuildingStore((s) => s.setCurrentTab);
   const isOwner = useBuildingStore((s) => s.isOwner);
   const favorites = useEmpireStore((s) => s.facilities);
-  const closeRightPanel = useUiStore((s) => s.closeRightPanel);
   const client = useClient();
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState('');
@@ -128,10 +126,6 @@ export function BuildingInspector({ hideHeader }: BuildingInspectorProps = {}) {
     [activeGroupData],
   );
 
-  const handleRefresh = useCallback(() => {
-    if (details) client.onRefreshBuilding(details.x, details.y);
-  }, [details?.x, details?.y, client]);
-
   const handleRetryFromError = useCallback(() => {
     if (focusedBuilding) {
       useBuildingStore.getState().setDetailsError(null);
@@ -139,10 +133,6 @@ export function BuildingInspector({ hideHeader }: BuildingInspectorProps = {}) {
       client.onRefreshBuilding(focusedBuilding.x, focusedBuilding.y);
     }
   }, [focusedBuilding?.x, focusedBuilding?.y, client]);
-
-  const handleClose = useCallback(() => {
-    closeRightPanel();
-  }, [closeRightPanel]);
 
   const handleStartRename = useCallback(() => {
     setNewName(details?.buildingName ?? '');
@@ -298,36 +288,6 @@ export function BuildingInspector({ hideHeader }: BuildingInspectorProps = {}) {
 
   return (
     <div className={styles.inspector}>
-      {/* Toolbar — refresh + close (top-right, hidden when modal provides its own) */}
-      {!hideHeader && (
-        <div className={styles.toolbar}>
-          <IconButton
-            icon={<Crosshair size={16} />}
-            label="View on map"
-            size="sm"
-            variant="ghost"
-            disabled={!details}
-            onClick={() => {
-              if (details) client.onNavigateToBuilding(details.x, details.y);
-            }}
-          />
-          <IconButton
-            icon={<RefreshCw size={16} />}
-            label="Refresh"
-            size="sm"
-            variant="ghost"
-            onClick={handleRefresh}
-          />
-          <IconButton
-            icon={<X size={16} />}
-            label="Close"
-            size="sm"
-            variant="ghost"
-            onClick={handleClose}
-          />
-        </div>
-      )}
-
       {/* Header — name/level, society + owner, revenue and ROI.
           Hidden when inside the civic modal, which states its own title. */}
       {!hideHeader && (

@@ -4,8 +4,19 @@
   position: fixed;
   inset: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--bg-primary);
+}
+
+/* Vertical centring that yields instead of clipping. An auto margin absorbs only
+   POSITIVE free space: when the stage is shorter than the shell it is centred exactly
+   as before, and when it is taller both margins resolve to zero, so the stage starts
+   at the top edge and every pixel of it is reachable by scrolling. `align-items:
+   center` cannot do this — it splits the overflow in two and pushes half of it to a
+   negative y, where no scrollbar can follow. */
+.screen > * {
+  margin-block: auto;
 }

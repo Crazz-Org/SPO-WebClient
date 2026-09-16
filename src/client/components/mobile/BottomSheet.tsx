@@ -17,9 +17,10 @@ interface BottomSheetProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  actions?: ReactNode;
 }
 
-export function BottomSheet({ open, onClose, title, children }: BottomSheetProps) {
+export function BottomSheet({ open, onClose, title, children, actions }: BottomSheetProps) {
   const sheetSnap = useUiStore((s) => s.mobileSheetSnap);
   const setSheetSnap = useUiStore((s) => s.setMobileSheetSnap);
 
@@ -91,9 +92,12 @@ export function BottomSheet({ open, onClose, title, children }: BottomSheetProps
         {/* Header */}
         <div className={styles.header}>
           <h3 className={styles.title}>{title}</h3>
-          <button className={styles.closeBtn} onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
+          <div className={styles.headerActions}>
+            {actions}
+            <button className={styles.closeBtn} onClick={onClose} aria-label="Close">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Content */}

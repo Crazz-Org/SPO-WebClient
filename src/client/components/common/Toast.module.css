@@ -2,7 +2,7 @@
 
 .container {
   position: fixed;
-  top: calc(var(--topbar-height) + var(--space-3));
+  top: var(--content-top);
   left: 50%;
   transform: translateX(-50%);
   display: flex;

@@ -41,6 +41,16 @@ export interface FacilityDiagnosis {
 const NO_HINTS = /^No hints for this facility\.?$/i;
 const HINTS_DENIED = /^This facility belongs to .+ There are no hints for you\.?$/i;
 
+/**
+ * True when section 2 carries a real sentence — i.e. not empty, not the
+ * "No hints for this facility." placeholder, and not the "belongs to …" denial
+ * the server sends for a facility the player may not inspect.
+ */
+export function hasFacilityHint(hintsText: string | undefined): boolean {
+  const hints = (hintsText ?? '').trim();
+  return hints !== '' && !NO_HINTS.test(hints) && !HINTS_DENIED.test(hints);
+}
+
 /** Section-1 "Stopped …" heads — `Kernel/Kernel.pas:5017-5024`, strings at `:13476-13479`. */
 const STOPPED_RULES: Array<{ re: RegExp; message: (m: RegExpMatchArray) => string }> = [
   { re: /^Stopped by (.+?)\.?$/im, message: (m) => `Stopped by ${m[1]}.` },
