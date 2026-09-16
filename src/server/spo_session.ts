@@ -46,6 +46,7 @@ import {
   ConnectionSearchResult,
   ConnectionReachabilityEntry,
   FavoritesItem,
+  ActiveResearchStatus,
   ResearchCategoryData,
   ResearchInventionDetails,
   ClusterInfo,
@@ -98,6 +99,7 @@ import * as buildingManagementHandler from './session/building-management-handle
 import * as roadHandler from './session/road-handler';
 import * as zoneSurfaceHandler from './session/zone-surface-handler';
 import * as contextStatusHandler from './session/context-status-handler';
+import * as researchStatusHandler from './session/research-status-handler';
 import * as worldEventsHandler from './session/world-events-handler';
 import * as buildingTemplatesHandler from './session/building-templates-handler';
 import * as buildingDetailsHandler from './session/building-details-handler';
@@ -3069,6 +3071,11 @@ private handlePush(socketName: string, packet: RdoPacket) {
   // -- CONTEXT STATUS (facade -> context-status-handler) --------------------
   public async getContextStatusText(x: number, y: number): Promise<string> {
     return contextStatusHandler.getContextStatusText(this, x, y);
+  }
+
+  // -- ACTIVE RESEARCH (facade -> research-status-handler) ------------------
+  public async getActiveResearchStatus(x: number, y: number): Promise<ActiveResearchStatus | null> {
+    return researchStatusHandler.getActiveResearchStatus(this, x, y);
   }
 
   // -- WORLD EVENTS (facade -> world-events-handler) -------------------------
