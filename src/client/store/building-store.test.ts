@@ -1212,3 +1212,90 @@ describe('Building Store — remembered section', () => {
     expect(useBuildingStore.getState().rememberedSection).toBeNull();
   });
 });
+
+describe('Building Store — Research optimistic marks (#888)', () => {
+  beforeEach(resetStore);
+
+  function setupResearchContext() {
+    useBuildingStore.getState().setDetails(makeBuildingDetails(100, 200));
+    useBuildingStore.getState().setResearchCategoryTabs(['GENERAL']);
+  }
+
+  it('markResearchPending creates the research slice when it is still null', () => {
+    expect(useBuildingStore.getState().research).toBeNull();
+
+    useBuildingStore.getState().markResearchPending('A1', 'queue');
+
+    const entry = useBuildingStore.getState().research!.pendingOps.get('A1')!;
+    expect(entry.op).toBe('queue');
+    expect(typeof entry.timestamp).toBe('number');
+  });
+
+  it('markResearchPending preserves the rest of the slice', () => {
+    setupResearchContext();
+    useBuildingStore.getState().setResearchInventory(mockInventory);
+
+    useBuildingStore.getState().markResearchPending('X', 'cancel');
+
+    const research = useBuildingStore.getState().research!;
+    expect(research.inventoryByCategory.get(0)).toBe(mockInventory);
+    expect(research.pendingOps.get('X')!.op).toBe('cancel');
+  });
+
+  it('clearResearchPending removes the entry', () => {
+    useBuildingStore.getState().markResearchPending('A1', 'queue');
+    useBuildingStore.getState().clearResearchPending('A1');
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('A1')).toBe(false);
+  });
+
+  it('clearResearchPending is a no-op when research is null', () => {
+    useBuildingStore.getState().clearResearchPending('A1');
+    expect(useBuildingStore.getState().research).toBeNull();
+  });
+
+  it("setResearchInventory drops a 'queue' mark once the item arrives in developing", () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('AI.Level1', 'queue');
+
+    useBuildingStore.getState().setResearchInventory(mockInventory);
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('AI.Level1')).toBe(false);
+  });
+
+  it("setResearchInventory keeps a 'queue' mark while the read still shows it available (OB-29)", () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('GreenTech.Level1', 'queue');
+
+    useBuildingStore.getState().setResearchInventory(mockInventory);
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('GreenTech.Level1')).toBe(true);
+  });
+
+  it("setResearchInventory drops a 'cancel' mark once the item leaves developing", () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('GreenTech.Level1', 'cancel');
+
+    useBuildingStore.getState().setResearchInventory(mockInventory);
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('GreenTech.Level1')).toBe(false);
+  });
+
+  it("setResearchInventory keeps a 'cancel' mark the read contradicts", () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('AI.Level1', 'cancel');
+
+    useBuildingStore.getState().setResearchInventory(mockInventory);
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('AI.Level1')).toBe(true);
+  });
+
+  it('setResearchInventory leaves a mark alone whose id belongs to another category', () => {
+    setupResearchContext();
+    useBuildingStore.getState().markResearchPending('Elsewhere.Level1', 'queue');
+
+    useBuildingStore.getState().setResearchInventory(mockInventory);
+
+    expect(useBuildingStore.getState().research!.pendingOps.has('Elsewhere.Level1')).toBe(true);
+  });
+});

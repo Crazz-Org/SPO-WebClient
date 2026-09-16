@@ -1224,24 +1224,44 @@ async function cancelResearch(ctx: ClientHandlerContext, buildingDetails: Buildi
   }
 }
 
+/**
+ * The mark goes in BEFORE the write so the research-queue block paints the move at the
+ * click, not a round-trip later (#888). `setBuildingProperty` never throws — it returns
+ * `false` — so the failure branch is where a refused write is rolled back; leaving the
+ * mark there would make the block claim a queue entry the server does not hold.
+ */
 export async function queueResearchDirect(ctx: ClientHandlerContext, buildingX: number, buildingY: number, inventionId: string): Promise<void> {
+  useBuildingStore.getState().markResearchPending(inventionId, 'queue');
   try {
-    await setBuildingProperty(ctx, buildingX, buildingY, 'RDOQueueResearch', '0', { inventionId, priority: '10' });
+    const ok = await setBuildingProperty(ctx, buildingX, buildingY, 'RDOQueueResearch', '0', { inventionId, priority: '10' });
+    if (!ok) {
+      useBuildingStore.getState().clearResearchPending(inventionId);
+      ctx.showNotification('Research could not be queued', 'error');
+      return;
+    }
     ctx.showNotification('Research queued', 'success');
     const activeCat = useBuildingStore.getState().research?.activeCategoryIndex ?? 0;
     loadResearchInventory(ctx, buildingX, buildingY, activeCat);
   } catch (err: unknown) {
+    useBuildingStore.getState().clearResearchPending(inventionId);
     ctx.showNotification(`Failed to queue research: ${toErrorMessage(err)}`, 'error');
   }
 }
 
 export async function cancelResearchDirect(ctx: ClientHandlerContext, buildingX: number, buildingY: number, inventionId: string): Promise<void> {
+  useBuildingStore.getState().markResearchPending(inventionId, 'cancel');
   try {
-    await setBuildingProperty(ctx, buildingX, buildingY, 'RDOCancelResearch', '0', { inventionId });
+    const ok = await setBuildingProperty(ctx, buildingX, buildingY, 'RDOCancelResearch', '0', { inventionId });
+    if (!ok) {
+      useBuildingStore.getState().clearResearchPending(inventionId);
+      ctx.showNotification('Research could not be cancelled', 'error');
+      return;
+    }
     ctx.showNotification('Research cancelled', 'success');
     const activeCat = useBuildingStore.getState().research?.activeCategoryIndex ?? 0;
     loadResearchInventory(ctx, buildingX, buildingY, activeCat);
   } catch (err: unknown) {
+    useBuildingStore.getState().clearResearchPending(inventionId);
     ctx.showNotification(`Failed to cancel research: ${toErrorMessage(err)}`, 'error');
   }
 }

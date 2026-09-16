@@ -10,6 +10,8 @@ import {
   isGroupResearchable,
   countAvailableEnabled,
   countByStatus,
+  collectOngoingResearch,
+  RESEARCH_PENDING_TTL_MS,
   type MergedInventionItem,
 } from './research-utils';
 
@@ -204,5 +206,127 @@ describe('countByStatus', () => {
     expect(counts.has).toBe(2);
     expect(counts.dev).toBe(1);
     expect(counts.avail).toBe(0);
+  });
+});
+
+describe('collectOngoingResearch', () => {
+  const NOW = 1_000_000;
+
+  /** `name` defaults to the id — the enrichment step does the same when research.0.dat has no entry. */
+  function cat(
+    categoryIndex: number,
+    available: { inventionId: string; name?: string }[],
+    developing: { inventionId: string; name?: string }[],
+    completed: { inventionId: string; name?: string }[] = [],
+  ): ResearchCategoryData {
+    const fill = (items: { inventionId: string; name?: string }[]) =>
+      items.map((i) => ({ inventionId: i.inventionId, name: i.name ?? i.inventionId }));
+    return {
+      categoryIndex,
+      available: fill(available),
+      developing: fill(developing),
+      completed: fill(completed),
+    };
+  }
+
+  it('returns an empty list for an empty inventory', () => {
+    expect(collectOngoingResearch(new Map(), new Map(), NOW)).toEqual([]);
+  });
+
+  it('returns an empty list when nothing is developing and nothing is pending', () => {
+    const inv = new Map([[0, cat(0, [{ inventionId: 'A1', name: 'Alpha' }], [])]]);
+    expect(collectOngoingResearch(inv, new Map(), NOW)).toEqual([]);
+  });
+
+  it('emits developing items with their category index and no pending mark', () => {
+    const inv = new Map([[2, cat(2, [], [{ inventionId: 'D1', name: 'Delta' }])]]);
+
+    const out = collectOngoingResearch(inv, new Map(), NOW);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      inventionId: 'D1',
+      name: 'Delta',
+      status: 'researching',
+      categoryIndex: 2,
+      isPending: false,
+    });
+  });
+
+  it('walks categories in ascending index order, not load order', () => {
+    const inv = new Map([
+      [3, cat(3, [], [{ inventionId: 'Z' }])],
+      [1, cat(1, [], [{ inventionId: 'A' }])],
+    ]);
+
+    expect(collectOngoingResearch(inv, new Map(), NOW).map((i) => i.inventionId)).toEqual(['A', 'Z']);
+  });
+
+  it('aggregates developing items across every cached category', () => {
+    const inv = new Map([
+      [0, cat(0, [], [{ inventionId: 'C0' }])],
+      [4, cat(4, [], [{ inventionId: 'C4' }])],
+    ]);
+
+    expect(collectOngoingResearch(inv, new Map(), NOW).map((i) => i.inventionId)).toEqual(['C0', 'C4']);
+  });
+
+  it("promotes an available item carrying a live 'queue' mark", () => {
+    const inv = new Map([[0, cat(0, [{ inventionId: 'A1', name: 'Alpha' }], [])]]);
+    const pending = new Map([['A1', { op: 'queue' as const, timestamp: NOW }]]);
+
+    const out = collectOngoingResearch(inv, pending, NOW);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ inventionId: 'A1', status: 'researching', isPending: true });
+  });
+
+  it("drops a developing item carrying a live 'cancel' mark", () => {
+    const inv = new Map([[0, cat(0, [], [{ inventionId: 'D1' }, { inventionId: 'D2' }])]]);
+    const pending = new Map([['D1', { op: 'cancel' as const, timestamp: NOW }]]);
+
+    expect(collectOngoingResearch(inv, pending, NOW).map((i) => i.inventionId)).toEqual(['D2']);
+  });
+
+  it('marks a developing item pending while its own queue mark is unsettled', () => {
+    const inv = new Map([[0, cat(0, [], [{ inventionId: 'D1' }])]]);
+    const pending = new Map([['D1', { op: 'queue' as const, timestamp: NOW }]]);
+
+    expect(collectOngoingResearch(inv, pending, NOW)[0].isPending).toBe(true);
+  });
+
+  it('ignores a mark older than the TTL, in both directions', () => {
+    const stale = NOW - RESEARCH_PENDING_TTL_MS;
+    const queueInv = new Map([[0, cat(0, [{ inventionId: 'A1' }], [{ inventionId: 'D1' }])]]);
+    const pending = new Map([
+      ['A1', { op: 'queue' as const, timestamp: stale }],
+      ['D1', { op: 'cancel' as const, timestamp: stale }],
+    ]);
+
+    const out = collectOngoingResearch(queueInv, pending, NOW);
+
+    // The stale queue no longer promotes A1; the stale cancel no longer hides D1.
+    expect(out.map((i) => i.inventionId)).toEqual(['D1']);
+    expect(out[0].isPending).toBe(false);
+  });
+
+  it('emits an id once when it appears in two categories', () => {
+    const inv = new Map([
+      [0, cat(0, [], [{ inventionId: 'DUP', name: 'First' }])],
+      [1, cat(1, [{ inventionId: 'DUP', name: 'Second' }], [])],
+    ]);
+    const pending = new Map([['DUP', { op: 'queue' as const, timestamp: NOW }]]);
+
+    const out = collectOngoingResearch(inv, pending, NOW);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].categoryIndex).toBe(0);
+  });
+
+  it('falls back to Date.now() when no clock is passed', () => {
+    const inv = new Map([[0, cat(0, [{ inventionId: 'A1' }], [])]]);
+    const pending = new Map([['A1', { op: 'queue' as const, timestamp: Date.now() }]]);
+
+    expect(collectOngoingResearch(inv, pending)).toHaveLength(1);
   });
 });

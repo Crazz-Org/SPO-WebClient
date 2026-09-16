@@ -2,6 +2,7 @@
  * ResearchPanel — Research/Inventions panel for HQ buildings.
  *
  * Layout:
+ *   OngoingResearchBlock ("In research queue" — every queued item, all categories)
  *   CategoryTabBar  (5 tabs: GENERAL, COMMERCE, REAL ESTATE, INDUSTRY, CIVICS)
  *   InventionGroupList (scrollable)
  *     InventionGroup[] (collapsible accordion per parent category)
@@ -22,8 +23,12 @@ import {
   isGroupResearchable,
   countAvailableEnabled,
   countByStatus,
+  collectOngoingResearch,
   type MergedInventionItem,
+  type OngoingResearchItem,
+  type ResearchPendingEntry,
 } from './research-utils';
+import type { ResearchCategoryData } from '@/shared/types';
 import styles from './ResearchPanel.module.css';
 
 interface ResearchPanelProps {
@@ -32,6 +37,10 @@ interface ResearchPanelProps {
 }
 
 const FALLBACK_TABS = ['GENERAL', 'COMMERCE', 'REAL ESTATE', 'INDUSTRY', 'CIVICS'];
+
+/** Module-scope so the memo fallbacks keep one identity across renders. */
+const EMPTY_INVENTORY: ReadonlyMap<number, ResearchCategoryData> = new Map();
+const EMPTY_PENDING_OPS: ReadonlyMap<string, ResearchPendingEntry> = new Map();
 
 export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
   const client = useClient();
@@ -48,10 +57,18 @@ export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
   const tabLabels = categoryTabs.length > 0 ? categoryTabs : FALLBACK_TABS;
   const inventory = research?.inventoryByCategory.get(activeCategoryIndex) ?? null;
 
-  // Fetch category tabs + first category on mount
+  // Fetch category tabs + every category on mount.
+  //
+  // The panel used to fetch category 0 only and lazy-load the rest on tab click. The
+  // research-queue block below has to show everything queued, and an item queued in a
+  // category the player never opened would simply be missing — so the inventory is
+  // fetched whole, once, here. The per-tab lazy load in `handleTabChange` stays as the
+  // fallback for a category whose response has not landed yet.
   useEffect(() => {
     client.onResearchFetchCategoryTabs();
-    client.onResearchLoadInventory(buildingX, buildingY, 0);
+    for (let i = 0; i < FALLBACK_TABS.length; i++) {
+      client.onResearchLoadInventory(buildingX, buildingY, i);
+    }
   }, [client, buildingX, buildingY]);
 
   // Handle tab change — lazy load if not cached
@@ -115,8 +132,19 @@ export function ResearchPanel({ buildingX, buildingY }: ResearchPanelProps) {
     [merged, selectedId],
   );
 
+  // Everything in the research queue, every category, with the optimistic marks overlaid.
+  const pendingOps = research?.pendingOps ?? EMPTY_PENDING_OPS;
+  const ongoing = useMemo(
+    () => collectOngoingResearch(research?.inventoryByCategory ?? EMPTY_INVENTORY, pendingOps),
+    [research?.inventoryByCategory, pendingOps],
+  );
+
   return (
     <div className={styles.panel}>
+      {ongoing.length > 0 && (
+        <OngoingResearchBlock items={ongoing} isOwner={isOwner} onCancel={handleCancelResearch} />
+      )}
+
       {/* Category tabs */}
       <TabBar
         tabs={tabs}
@@ -363,6 +391,49 @@ function DetailPanel({
       {details.description && (
         <div className={styles.detailDescription}>{details.description}</div>
       )}
+    </div>
+  );
+}
+
+// =============================================================================
+// RESEARCH QUEUE BLOCK
+// =============================================================================
+
+/**
+ * The queue is one honestly-labelled group. The wire carries no progress figure and no
+ * "which one is being worked on" flag (#887 is not implemented), so nothing here may
+ * imply an active/waiting split. The name is a span, not a button: an item can come from
+ * a category other than the one on screen, and the detail heading resolves names from the
+ * active category only.
+ */
+function OngoingResearchBlock({ items, isOwner, onCancel }: {
+  items: OngoingResearchItem[];
+  isOwner: boolean;
+  onCancel: (inventionId: string) => void;
+}) {
+  return (
+    <div className={styles.ongoingBlock}>
+      <div className={styles.ongoingHeader}>
+        <span className={styles.ongoingLabel}>In research queue</span>
+        <span className={styles.ongoingCount}>{items.length}</span>
+      </div>
+      <div className={styles.ongoingList}>
+        {items.map((item) => (
+          <div key={item.inventionId} className={styles.ongoingRow}>
+            <span className={`${styles.statusDot} ${styles.statusResearching}`} />
+            <span className={styles.ongoingName}>{item.name || item.inventionId}</span>
+            {item.isPending && <span className={styles.ongoingPending}>{'sending…'}</span>}
+            {isOwner && (
+              <button
+                className={`${styles.inlineBtn} ${styles.inlineBtnCancel}`}
+                onClick={() => onCancel(item.inventionId)}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
