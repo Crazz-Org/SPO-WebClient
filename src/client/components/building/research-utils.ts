@@ -87,3 +87,67 @@ export function countByStatus(items: MergedInventionItem[]): { avail: number; de
   }
   return { avail, dev, has };
 }
+
+// =============================================================================
+// ONGOING RESEARCH BLOCK (#888)
+// =============================================================================
+
+export type ResearchPendingOp = 'queue' | 'cancel';
+
+export interface ResearchPendingEntry {
+  op: ResearchPendingOp;
+  timestamp: number;
+}
+
+/** An unsettled optimistic mark older than this is ignored (the server's view wins). */
+export const RESEARCH_PENDING_TTL_MS = 60_000;
+
+export interface OngoingResearchItem extends MergedInventionItem {
+  /** Which category tab this item came from. */
+  categoryIndex: number;
+  /** True while the write that put it here has not been agreed by a server read. */
+  isPending: boolean;
+}
+
+/**
+ * Aggregate every `developing` item across all loaded categories, plus any
+ * `available` item with a live 'queue' op, into one honestly-ordered list
+ * for the "In research queue" block (#888).
+ */
+export function collectOngoingResearch(
+  inventoryByCategory: ReadonlyMap<number, ResearchCategoryData>,
+  pendingOps: ReadonlyMap<string, ResearchPendingEntry>,
+  now: number = Date.now(),
+): OngoingResearchItem[] {
+  const isLive = (inventionId: string): boolean => {
+    const entry = pendingOps.get(inventionId);
+    return !!entry && now - entry.timestamp < RESEARCH_PENDING_TTL_MS;
+  };
+
+  const result: OngoingResearchItem[] = [];
+  const emitted = new Set<string>();
+  const categoryIndices = Array.from(inventoryByCategory.keys()).sort((a, b) => a - b);
+
+  for (const categoryIndex of categoryIndices) {
+    const data = inventoryByCategory.get(categoryIndex);
+    if (!data) continue;
+
+    for (const item of data.developing) {
+      if (emitted.has(item.inventionId)) continue;
+      const entry = pendingOps.get(item.inventionId);
+      if (entry && entry.op === 'cancel' && isLive(item.inventionId)) continue;
+      emitted.add(item.inventionId);
+      result.push({ ...item, status: 'researching', categoryIndex, isPending: isLive(item.inventionId) });
+    }
+
+    for (const item of data.available) {
+      if (emitted.has(item.inventionId)) continue;
+      const entry = pendingOps.get(item.inventionId);
+      if (!entry || entry.op !== 'queue' || !isLive(item.inventionId)) continue;
+      emitted.add(item.inventionId);
+      result.push({ ...item, status: 'researching', categoryIndex, isPending: true });
+    }
+  }
+
+  return result;
+}

@@ -1225,23 +1225,37 @@ async function cancelResearch(ctx: ClientHandlerContext, buildingDetails: Buildi
 }
 
 export async function queueResearchDirect(ctx: ClientHandlerContext, buildingX: number, buildingY: number, inventionId: string): Promise<void> {
+  useBuildingStore.getState().markResearchPending(inventionId, 'queue');
   try {
-    await setBuildingProperty(ctx, buildingX, buildingY, 'RDOQueueResearch', '0', { inventionId, priority: '10' });
+    const ok = await setBuildingProperty(ctx, buildingX, buildingY, 'RDOQueueResearch', '0', { inventionId, priority: '10' });
+    if (!ok) {
+      useBuildingStore.getState().clearResearchPending(inventionId);
+      ctx.showNotification('Research could not be queued', 'error');
+      return;
+    }
     ctx.showNotification('Research queued', 'success');
     const activeCat = useBuildingStore.getState().research?.activeCategoryIndex ?? 0;
     loadResearchInventory(ctx, buildingX, buildingY, activeCat);
   } catch (err: unknown) {
+    useBuildingStore.getState().clearResearchPending(inventionId);
     ctx.showNotification(`Failed to queue research: ${toErrorMessage(err)}`, 'error');
   }
 }
 
 export async function cancelResearchDirect(ctx: ClientHandlerContext, buildingX: number, buildingY: number, inventionId: string): Promise<void> {
+  useBuildingStore.getState().markResearchPending(inventionId, 'cancel');
   try {
-    await setBuildingProperty(ctx, buildingX, buildingY, 'RDOCancelResearch', '0', { inventionId });
+    const ok = await setBuildingProperty(ctx, buildingX, buildingY, 'RDOCancelResearch', '0', { inventionId });
+    if (!ok) {
+      useBuildingStore.getState().clearResearchPending(inventionId);
+      ctx.showNotification('Research could not be cancelled', 'error');
+      return;
+    }
     ctx.showNotification('Research cancelled', 'success');
     const activeCat = useBuildingStore.getState().research?.activeCategoryIndex ?? 0;
     loadResearchInventory(ctx, buildingX, buildingY, activeCat);
   } catch (err: unknown) {
+    useBuildingStore.getState().clearResearchPending(inventionId);
     ctx.showNotification(`Failed to cancel research: ${toErrorMessage(err)}`, 'error');
   }
 }
