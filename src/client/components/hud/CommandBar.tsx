@@ -8,7 +8,7 @@
  * (RightRail) stays. Hidden under 768 px (the mobile shell has its own navigation).
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Hammer, Map, User, Landmark, Mail, MessageSquare, MoreHorizontal, Search, RotateCw, Settings, Layers, Heart, Server, Route, Eraser, Grid2x2 } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
@@ -149,8 +149,34 @@ export function CommandBar() {
   const connectActive = useUiStore((s) => s.connectMode.active);
   const cls = [styles.bar, stack.length > 0 && !connectActive ? styles.shifted : ''].filter(Boolean).join(' ');
 
+  const barRef = useRef<HTMLDivElement>(null);
+  const hasMode = Boolean(mode);
+
+  useLayoutEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const measure = () => {
+      const h = el.getBoundingClientRect().height;
+      if (h > 0) {
+        document.documentElement.style.setProperty('--command-bar-height', `${h}px`);
+      } else {
+        document.documentElement.style.removeProperty('--command-bar-height');
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      return () => document.documentElement.style.removeProperty('--command-bar-height');
+    }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      document.documentElement.style.removeProperty('--command-bar-height');
+    };
+  }, [isVisitor, hasMode]);
+
   return (
-    <div className={cls}>
+    <div className={cls} ref={barRef}>
       {mode ? (
         <ModeRow mode={mode} />
       ) : (

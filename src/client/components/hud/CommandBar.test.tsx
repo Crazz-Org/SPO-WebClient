@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { screen, fireEvent, act } from '@testing-library/react';
 import { renderWithProviders, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
@@ -226,5 +226,64 @@ describe('CommandBar', () => {
       useUiStore.getState().setIsPlacingBuilding(true);
     });
     expect(screen.getByRole('status').textContent).toContain('-$239,000');
+  });
+
+  describe('--command-bar-height', () => {
+    let getRectSpy: ReturnType<typeof jest.spyOn>;
+    let observe: ReturnType<typeof jest.fn>;
+    let disconnect: ReturnType<typeof jest.fn>;
+    let originalResizeObserver: typeof ResizeObserver | undefined;
+
+    const rectOfHeight = (height: number): DOMRect =>
+      ({ top: 0, left: 0, right: 0, bottom: height, width: 904, height, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+
+    beforeEach(() => {
+      observe = jest.fn();
+      disconnect = jest.fn();
+      originalResizeObserver = global.ResizeObserver;
+      global.ResizeObserver = jest.fn().mockImplementation(() => ({
+        observe,
+        unobserve: jest.fn(),
+        disconnect,
+      })) as unknown as typeof ResizeObserver;
+    });
+
+    afterEach(() => {
+      getRectSpy.mockRestore();
+      document.documentElement.style.removeProperty('--command-bar-height');
+      if (originalResizeObserver) global.ResizeObserver = originalResizeObserver;
+      else delete (global as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+    });
+
+    it('publishes the measured height as a custom property and observes the bar for resize', () => {
+      getRectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rectOfHeight(182));
+      renderWithProviders(<CommandBar />);
+      expect(document.documentElement.style.getPropertyValue('--command-bar-height')).toBe('182px');
+      expect(observe).toHaveBeenCalledTimes(1);
+    });
+
+    it('removes the property and disconnects the observer on unmount', () => {
+      getRectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rectOfHeight(182));
+      const { unmount } = renderWithProviders(<CommandBar />);
+      expect(document.documentElement.style.getPropertyValue('--command-bar-height')).toBe('182px');
+      unmount();
+      expect(disconnect).toHaveBeenCalledTimes(1);
+      expect(document.documentElement.style.getPropertyValue('--command-bar-height')).toBe('');
+    });
+
+    it('leaves the property unset when the measured height is 0 (bar hidden)', () => {
+      getRectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rectOfHeight(0));
+      renderWithProviders(<CommandBar />);
+      expect(document.documentElement.style.getPropertyValue('--command-bar-height')).toBe('');
+    });
+
+    it('falls back to a no-observer cleanup when ResizeObserver is unavailable', () => {
+      delete (global as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+      getRectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rectOfHeight(182));
+      const { unmount } = renderWithProviders(<CommandBar />);
+      expect(document.documentElement.style.getPropertyValue('--command-bar-height')).toBe('182px');
+      unmount();
+      expect(document.documentElement.style.getPropertyValue('--command-bar-height')).toBe('');
+    });
   });
 });
