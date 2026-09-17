@@ -44,6 +44,8 @@ type Host = {
   ownTycoonId: number;
   hiddenFacIds: ReadonlySet<number>;
   requestRender: jest.Mock;
+  drawBuildingSelectionEffect: jest.Mock;
+  drawSelectionBurst: jest.Mock;
 };
 
 const proto = IsometricMapRenderer.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
@@ -96,6 +98,8 @@ function makeHost(overrides: Partial<Host> = {}): Host {
     ownTycoonId: 0,
     hiddenFacIds: new Set(),
     requestRender: jest.fn(),
+    drawBuildingSelectionEffect: jest.fn(),
+    drawSelectionBurst: jest.fn(),
     ...overrides,
   };
 }
@@ -110,36 +114,63 @@ function alphaLog(host: Host): number[] {
   return (host.ctx as unknown as { alphaLog: number[] }).alphaLog;
 }
 
+// The block below used to key glassing off `ownTycoonId` (the local player) — that was the bug
+// (issue #894). Legacy always compared to the *selected* building's owner and glassed nothing
+// with no selection:
+//   Map.pas:1415-1416 — `if (fInstances[idx].fCompany <> Company) and fGlassBuildings then
+//     include(item.Options, loGlassed);`
+//   Map.pas:5979 — `Company := fMap.fInstances[idx].fCompany;` inside the click handler, i.e.
+//     `Company` is the clicked (selected) building's owner, not the local player's.
+//   Map.pas:1405-1406 — the whole block sits under `with fSelection do if ok`, so no selection
+//     means nothing glasses.
+// These cases were rewritten openly, per CLAUDE.md, rather than patched to keep the old spec.
 describe('drawBuildings — glassing', () => {
-  it('draws the foreign building translucent and the own building solid when the option is on', () => {
+  it('glasses a building whose owner differs from the selected building\'s owner; buildings sharing that owner, including the selected one, stay solid', () => {
+    const selected = makeBuilding(9, 2, 2);
     const host = makeHost({
-      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
+      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 3, 3), selected],
       glassForeignBuildings: true,
-      ownTycoonId: 7,
-    });
-    drawBuildings(host);
-    expect(alphaLog(host)).toEqual([1, 0.5]);
-    expect(host.ctx.globalAlpha).toBe(1);
-  });
-
-  it('draws every building solid when the option is off', () => {
-    const host = makeHost({
-      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
-      glassForeignBuildings: false,
-      ownTycoonId: 7,
-    });
-    drawBuildings(host);
-    expect(alphaLog(host)).toEqual([1, 1]);
-  });
-
-  it('glasses nothing when no tycoon id is known yet', () => {
-    const host = makeHost({
-      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
-      glassForeignBuildings: true,
+      selectedBuilding: selected,
       ownTycoonId: 0,
     });
     drawBuildings(host);
+    expect(alphaLog(host)).toEqual([0.5, 1, 1]);
+    expect(host.ctx.globalAlpha).toBe(1);
+  });
+
+  it('draws every building solid when the option is off, even with a building selected', () => {
+    const selected = makeBuilding(9, 2, 2);
+    const host = makeHost({
+      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 3, 3), selected],
+      glassForeignBuildings: false,
+      selectedBuilding: selected,
+      ownTycoonId: 0,
+    });
+    drawBuildings(host);
+    expect(alphaLog(host)).toEqual([1, 1, 1]);
+  });
+
+  it('glasses nothing when no building is selected, regardless of ownTycoonId', () => {
+    const host = makeHost({
+      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
+      glassForeignBuildings: true,
+      selectedBuilding: null,
+      ownTycoonId: 7,
+    });
+    drawBuildings(host);
     expect(alphaLog(host)).toEqual([1, 1]);
+  });
+
+  it('keys glassing off the selected owner even when that owner is not the local player', () => {
+    const selected = makeBuilding(9, 2, 2);
+    const host = makeHost({
+      allBuildings: [makeBuilding(7, 1, 1), selected],
+      glassForeignBuildings: true,
+      selectedBuilding: selected,
+      ownTycoonId: 7,
+    });
+    drawBuildings(host);
+    expect(alphaLog(host)).toEqual([0.5, 1]);
   });
 });
 

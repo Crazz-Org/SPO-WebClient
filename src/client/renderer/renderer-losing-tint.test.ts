@@ -167,6 +167,7 @@ describe('drawBuildings — losing-facility reddening', () => {
       glassForeignBuildings: true,
       signalLosingFacilities: true,
       ownTycoonId: 7,
+      selectedBuilding: makeBuilding(7, 5, 5, false),
     });
     drawBuildings(host);
     expect(host.reddenTexture).not.toHaveBeenCalled();
