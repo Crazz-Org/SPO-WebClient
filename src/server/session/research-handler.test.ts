@@ -157,6 +157,39 @@ describe('getResearchInventory', () => {
     await expect(getResearchInventory(fake.ctx, X, Y, CAT)).rejects.toThrow('Request timeout: GetPropertyList');
     expect(fake.cacher.closeObject).toHaveBeenCalledWith(TEMP_OBJ);
   });
+
+  // ── the active research, read off the facility status text (issue 887) ────
+
+  it('carries the active research and marks the one developing item the status text names', async () => {
+    const fake = makeInventoryCtx(['0', '2', '0'], props => props.map(p => {
+      if (p === 'dev2RsId0') return 'GreenTech.Level1';
+      if (p === 'dev2RsName0') return 'Green Tech';
+      if (p === 'dev2RsId1') return 'Robotics.Level1';
+      if (p === 'dev2RsName1') return 'Robotics';
+      return '';
+    }));
+    (fake.ctx.focusBuilding as jest.Mock).mockResolvedValue({
+      buildingId: '40133601', buildingName: 'Research Center', ownerName: 'SPO_test3',
+    });
+    fake.respond(() => 'res="%37% research completed:-:Researching Green Tech. Cost: $1,250,000.:-::-:"');
+
+    const data = await getResearchInventory(fake.ctx, X, Y, CAT);
+
+    expect(data.activeResearch).toEqual({ percentComplete: 37, inventionName: 'Green Tech' });
+    expect(data.developing.map(i => i.active)).toEqual([true, undefined]);
+  });
+
+  it('answers exactly what it answered before when the status read fails', async () => {
+    // The default fake has no `focusBuilding` implementation, so the status read
+    // throws and is swallowed: the three lists are untouched and no field is added.
+    const fake = makeInventoryCtx(['0', '1', '0'], props => props.map(p =>
+      p === 'dev2RsId0' ? 'GreenTech.Level1' : ''));
+
+    const data = await getResearchInventory(fake.ctx, X, Y, CAT);
+
+    expect(data.activeResearch).toBeUndefined();
+    expect(data.developing.every(i => i.active === undefined)).toBe(true);
+  });
 });
 
 // ===========================================================================

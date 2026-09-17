@@ -90,6 +90,7 @@ export const RDO_MEMBERS = {
   AccountStatus:             { kind: 'function',  arity: 2 },                // src/server/session/login-handler.ts:369
   AddHeaders:                { kind: 'procedure', arity: 1 },                // src/server/session/mail-handler.ts:131,224
   AddLine:                   { kind: 'procedure', arity: 1 },                // src/server/session/mail-handler.ts:137
+  AllObjectStatusText:       { kind: 'function',  arity: 2 },                // Interface Server/InterfaceServer.pas:148; src/server/session/research-status-handler.ts
   BreakCircuitAt:            { kind: 'function',  arity: 4 },                // src/server/session/road-handler.ts:333
   // Read-only here: the bank budget slider writes through RDOSetLoanPerc
   // (StdBlocks/Banks.pas:47), never `set BudgetPerc`. Voyager reads it live off

@@ -12,6 +12,7 @@ import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
 import { parsePropertyResponse as parsePropertyResponseHelper } from '../rdo-helpers';
 import { parseResearchItems } from './session-utils';
+import { getActiveResearchStatus, markActiveDeveloping } from './research-status-handler';
 
 /**
  * Fetch the full research inventory (available / developing / completed) for
@@ -21,6 +22,10 @@ export async function getResearchInventory(
   ctx: SessionContext,
   x: number, y: number, categoryIndex: number
 ): Promise<ResearchCategoryData> {
+  // Building-level, not category-level: a Research Center runs one research at a
+  // time. Never throws — a missing status leaves the three lists exactly as before.
+  const activeResearch = await getActiveResearchStatus(ctx, x, y);
+
   await ctx.connectMapService();
   const tempObjectId = await ctx.cacherCreateObject();
 
@@ -77,7 +82,9 @@ export async function getResearchInventory(
     const developing = parseResearchItems('dev', cat, devCount, allItemValues, false);
     const completed = parseResearchItems('has', cat, hasCount, allItemValues, false);
 
-    return { categoryIndex, available, developing, completed };
+    markActiveDeveloping(developing, activeResearch);
+
+    return { categoryIndex, available, developing, completed, activeResearch: activeResearch ?? undefined };
   } finally {
     await ctx.cacherCloseObject(tempObjectId);
   }
