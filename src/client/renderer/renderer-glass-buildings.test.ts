@@ -3,6 +3,15 @@
  * setOwnTycoonId). The monolith is too heavy to instantiate in jsdom, so these private/public
  * methods are exercised via prototype `.call()` with a crafted host — same pattern as
  * renderer-aircraft.test.ts in this directory.
+ *
+ * The `drawBuildings — glassing` block below was rewritten for issue #894: the previous version
+ * of this block encoded the bug as its spec — it keyed glassing off `ownTycoonId` (the logged-in
+ * player) with `selectedBuilding` never set. The legacy client never did that: the comparand is
+ * always the *selected* building's owner, and nothing glasses with no selection —
+ * `Voyager/Components/MapIsoView/Map.pas:1415-1416` (`if (fInstances[idx].fCompany <> Company)
+ * and fGlassBuildings then include(item.Options, loGlassed)`), `Map.pas:5979`
+ * (`Company := fMap.fInstances[idx].fCompany;`, assigned from the clicked building), and
+ * `Map.pas:1405-1406` (the whole block gated on `with fSelection do if ok`).
  */
 
 import { describe, it, expect, jest } from '@jest/globals';
@@ -44,6 +53,9 @@ type Host = {
   ownTycoonId: number;
   hiddenFacIds: ReadonlySet<number>;
   requestRender: jest.Mock;
+  selectedBuildingDrawnTop: unknown;
+  drawBuildingSelectionEffect: jest.Mock;
+  drawSelectionBurst: jest.Mock;
 };
 
 const proto = IsometricMapRenderer.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
@@ -96,6 +108,9 @@ function makeHost(overrides: Partial<Host> = {}): Host {
     ownTycoonId: 0,
     hiddenFacIds: new Set(),
     requestRender: jest.fn(),
+    selectedBuildingDrawnTop: null,
+    drawBuildingSelectionEffect: jest.fn(),
+    drawSelectionBurst: jest.fn(),
     ...overrides,
   };
 }
@@ -111,35 +126,56 @@ function alphaLog(host: Host): number[] {
 }
 
 describe('drawBuildings — glassing', () => {
-  it('draws the foreign building translucent and the own building solid when the option is on', () => {
+  it('glasses buildings owned by someone other than the selected owner; same-owner and the selected building itself stay solid', () => {
+    const selected = makeBuilding(7, 1, 1);
+    const sameOwner = makeBuilding(7, 2, 2);
+    const foreign = makeBuilding(9, 3, 3);
     const host = makeHost({
-      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
-      glassForeignBuildings: true,
-      ownTycoonId: 7,
-    });
-    drawBuildings(host);
-    expect(alphaLog(host)).toEqual([1, 0.5]);
-    expect(host.ctx.globalAlpha).toBe(1);
-  });
-
-  it('draws every building solid when the option is off', () => {
-    const host = makeHost({
-      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
-      glassForeignBuildings: false,
-      ownTycoonId: 7,
-    });
-    drawBuildings(host);
-    expect(alphaLog(host)).toEqual([1, 1]);
-  });
-
-  it('glasses nothing when no tycoon id is known yet', () => {
-    const host = makeHost({
-      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
+      allBuildings: [selected, sameOwner, foreign],
+      selectedBuilding: selected,
       glassForeignBuildings: true,
       ownTycoonId: 0,
     });
     drawBuildings(host);
+    expect(alphaLog(host)).toEqual([1, 1, 0.5]);
+    expect(host.ctx.globalAlpha).toBe(1);
+  });
+
+  it('draws every building solid when the option is off, even with a selection', () => {
+    const selected = makeBuilding(7, 1, 1);
+    const host = makeHost({
+      allBuildings: [selected, makeBuilding(9, 2, 2)],
+      selectedBuilding: selected,
+      glassForeignBuildings: false,
+      ownTycoonId: 0,
+    });
+    drawBuildings(host);
     expect(alphaLog(host)).toEqual([1, 1]);
+  });
+
+  it('glasses nothing when no building is selected, whatever ownTycoonId holds', () => {
+    const host = makeHost({
+      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
+      selectedBuilding: null,
+      glassForeignBuildings: true,
+      ownTycoonId: 7,
+    });
+    drawBuildings(host);
+    expect(alphaLog(host)).toEqual([1, 1]);
+  });
+
+  it('keys glassing off the selected owner even when that owner is not the local player', () => {
+    const selected = makeBuilding(9, 1, 1);
+    const sameOwner = makeBuilding(9, 2, 2);
+    const foreign = makeBuilding(7, 3, 3);
+    const host = makeHost({
+      allBuildings: [selected, sameOwner, foreign],
+      selectedBuilding: selected,
+      glassForeignBuildings: true,
+      ownTycoonId: 7,
+    });
+    drawBuildings(host);
+    expect(alphaLog(host)).toEqual([1, 1, 0.5]);
   });
 });
 

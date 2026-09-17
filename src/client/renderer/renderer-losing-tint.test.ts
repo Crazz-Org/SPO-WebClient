@@ -164,6 +164,7 @@ describe('drawBuildings — losing-facility reddening', () => {
     const sourceLog: unknown[] = [];
     const host = makeHost(sourceLog, {
       allBuildings: [makeBuilding(9, 1, 1, true)],
+      selectedBuilding: makeBuilding(7, 5, 5, false),
       glassForeignBuildings: true,
       signalLosingFacilities: true,
       ownTycoonId: 7,
