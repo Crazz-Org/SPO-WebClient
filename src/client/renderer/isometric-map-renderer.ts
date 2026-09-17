@@ -574,9 +574,14 @@ export class IsometricMapRenderer {
   private vehicleSystem: VehicleAnimationSystem | null = null;
   private vehicleSystemReady: boolean = false;
   private aircraftSystem: AircraftAnimationSystem = new AircraftAnimationSystem();
-  /** Legacy 'UseTransparency' (Map.pas:1415-1416): draw buildings of other tycoons translucent. */
+  /**
+   * Legacy 'UseTransparency' (Map.pas:1415-1416): master on/off for fading every building whose
+   * owner differs from the *selected* building's owner (Map.pas:5979 — the comparand is the
+   * clicked building's owner, not the local player). No selection ⇒ nothing faded
+   * (Map.pas:1405-1406, the `if ok` gate).
+   */
   private glassForeignBuildings: boolean = true;
-  /** The player's own tycoon id, 0 until login supplies one — 0 glasses nothing. */
+  /** The player's own tycoon id, 0 until login supplies one — feeds only the losing-facilities reddening below. */
   private ownTycoonId: number = 0;
   /** Legacy 'Signal losing facilities' (Map.pas:1323-1324): shade my own alerting buildings red. */
   private signalLosingFacilities: boolean = false;
@@ -3592,7 +3597,7 @@ export class IsometricMapRenderer {
         const effect = this.buildingEffects.get(effectKey);
         const isUpgrading = effect?.type === 'upgrade';
 
-        const glassed = this.glassForeignBuildings && this.ownTycoonId !== 0 && building.tycoonId !== this.ownTycoonId;
+        const glassed = this.glassForeignBuildings && this.selectedBuilding !== null && building.tycoonId !== this.selectedBuilding.tycoonId;
         ctx.globalAlpha = glassed ? FOREIGN_BUILDING_ALPHA : 1;
         // Legacy Map.pas:1323-1324 — only MY alerting buildings, only when the option is on.
         const reddened = this.signalLosingFacilities && building.alert && this.ownTycoonId !== 0 && building.tycoonId === this.ownTycoonId;
@@ -5437,7 +5442,7 @@ export class IsometricMapRenderer {
     this.requestRender();
   }
 
-  /** The game store's decimal tycoon id; '' / undefined / unparsable means "unknown" and glasses nothing. */
+  /** The game store's decimal tycoon id; '' / undefined / unparsable means "unknown". Feeds only the losing-facilities reddening (see `:3598`). */
   public setOwnTycoonId(tycoonId: string | undefined): void {
     this.ownTycoonId = parseInt(tycoonId || '0', 10) || 0;
     this.requestRender();
