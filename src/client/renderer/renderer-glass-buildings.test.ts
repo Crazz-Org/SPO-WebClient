@@ -44,6 +44,8 @@ type Host = {
   ownTycoonId: number;
   hiddenFacIds: ReadonlySet<number>;
   requestRender: jest.Mock;
+  drawBuildingSelectionEffect: jest.Mock;
+  drawSelectionBurst: jest.Mock;
 };
 
 const proto = IsometricMapRenderer.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
@@ -96,6 +98,8 @@ function makeHost(overrides: Partial<Host> = {}): Host {
     ownTycoonId: 0,
     hiddenFacIds: new Set(),
     requestRender: jest.fn(),
+    drawBuildingSelectionEffect: jest.fn(),
+    drawSelectionBurst: jest.fn(),
     ...overrides,
   };
 }
@@ -110,36 +114,61 @@ function alphaLog(host: Host): number[] {
   return (host.ctx as unknown as { alphaLog: number[] }).alphaLog;
 }
 
+// The block below used to encode the *wrong* behaviour — glassing keyed to `ownTycoonId`, with
+// `selectedBuilding` never set — which was the bug this test file's card (#894) fixed. Per
+// CLAUDE.md a test is never quietly edited to force a pass, so this block is rewritten openly:
+// legacy (`~/SPO-Original`) confirms glassing keys off the *selected* building's owner, not the
+// local player — `Voyager/Components/MapIsoView/Map.pas:1415-1416`
+// (`if (fInstances[idx].fCompany <> Company) and fGlassBuildings then include(...)`),
+// `Map.pas:5979` (`Company := fMap.fInstances[idx].fCompany;`, the clicked building's owner),
+// and `Map.pas:1405-1406` (the whole block under `with fSelection do if ok` — no selection ⇒
+// nothing glassed).
 describe('drawBuildings — glassing', () => {
-  it('draws the foreign building translucent and the own building solid when the option is on', () => {
+  it("glasses a building whose owner differs from the selected building's owner; buildings sharing that owner, including the selected one, stay solid", () => {
+    const selected = makeBuilding(9, 2, 2);
     const host = makeHost({
-      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
+      allBuildings: [makeBuilding(7, 1, 1), selected, makeBuilding(9, 3, 3)],
       glassForeignBuildings: true,
-      ownTycoonId: 7,
+      selectedBuilding: selected,
     });
     drawBuildings(host);
-    expect(alphaLog(host)).toEqual([1, 0.5]);
+    expect(alphaLog(host)).toEqual([0.5, 1, 1]);
     expect(host.ctx.globalAlpha).toBe(1);
   });
 
-  it('draws every building solid when the option is off', () => {
+  it('draws every building solid when the option is off, even with a building selected', () => {
+    const selected = makeBuilding(9, 2, 2);
+    const host = makeHost({
+      allBuildings: [makeBuilding(7, 1, 1), selected],
+      glassForeignBuildings: false,
+      selectedBuilding: selected,
+    });
+    drawBuildings(host);
+    expect(alphaLog(host)).toEqual([1, 1]);
+  });
+
+  it('glasses nothing when no building is selected, regardless of ownTycoonId', () => {
     const host = makeHost({
       allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
-      glassForeignBuildings: false,
+      glassForeignBuildings: true,
+      selectedBuilding: null,
       ownTycoonId: 7,
     });
     drawBuildings(host);
     expect(alphaLog(host)).toEqual([1, 1]);
   });
 
-  it('glasses nothing when no tycoon id is known yet', () => {
+  it('keys glassing off the selected owner even when that owner is not the local player', () => {
+    const selected = makeBuilding(9, 2, 2);
     const host = makeHost({
-      allBuildings: [makeBuilding(7, 1, 1), makeBuilding(9, 2, 2)],
+      allBuildings: [makeBuilding(7, 1, 1), selected],
       glassForeignBuildings: true,
-      ownTycoonId: 0,
+      selectedBuilding: selected,
+      ownTycoonId: 7,
     });
     drawBuildings(host);
-    expect(alphaLog(host)).toEqual([1, 1]);
+    expect(alphaLog(host)).toEqual([0.5, 1]);
+    expect(host.ctx.globalAlpha).toBe(1);
   });
 });
 
