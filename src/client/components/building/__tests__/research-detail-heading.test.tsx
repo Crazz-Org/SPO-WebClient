@@ -30,6 +30,7 @@ function seedResearch(overrides: {
       loadedCategories: new Set([0]),
       isLoadingInventory: false,
       isLoadingDetails: false,
+      pendingOps: new Map(),
       ...overrides,
     },
   });
