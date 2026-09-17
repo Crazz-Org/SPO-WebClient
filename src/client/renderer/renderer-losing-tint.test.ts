@@ -166,6 +166,7 @@ describe('drawBuildings — losing-facility reddening', () => {
       allBuildings: [makeBuilding(9, 1, 1, true)],
       glassForeignBuildings: true,
       signalLosingFacilities: true,
+      selectedBuilding: makeBuilding(7, 5, 5, false),
       ownTycoonId: 7,
     });
     drawBuildings(host);

@@ -109,7 +109,7 @@ export function SettingsDialog() {
               onChange={(v) => handleSettingChange({ aircraftAnimations: v })}
             />
             <ToggleRow
-              label="Fade other players' buildings"
+              label="Fade buildings not owned by the selected owner"
               checked={settings.glassForeignBuildings}
               onChange={(v) => handleSettingChange({ glassForeignBuildings: v })}
             />
