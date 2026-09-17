@@ -696,6 +696,35 @@ describe('readMailMessage', () => {
 
     expect(msg.messageId).toBe('MSG-77');
     expect(fake.log.warn).toHaveBeenCalledWith('[Mail] Header touch failed — unread flag not cleared:', 'ECONNREFUSED');
+    // Both attempts were spent before the warning was raised.
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('a timed-out MessageBody.asp is retried once, and the second attempt clears the flag silently', async () => {
+    // The bench's mail-roundtrip flake: one slow MessageBody.asp response left the
+    // unread flag set and CheckNewMail unchanged. The retry is what closes it.
+    const fake = makeMailCtx();
+    answerRead(fake);
+    mockFetch
+      .mockRejectedValueOnce(new Error('Fetch timed out after 5000ms'))
+      .mockResolvedValueOnce(htmlResponse('<html></html>'));
+
+    const msg = await readMailMessage(fake.ctx, 'Inbox', 'MSG-77');
+
+    expect(msg.messageId).toBe('MSG-77');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[1][0]).toBe(mockFetch.mock.calls[0][0]);
+    expect(fake.log.warn).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a non-OK status — the server answered, it just did not help', async () => {
+    const fake = makeMailCtx();
+    answerRead(fake);
+    mockFetch.mockResolvedValue(htmlResponse('', 500));
+
+    await readMailMessage(fake.ctx, 'Inbox', 'MSG-77');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it('a GetLines timeout rejects before the header touch, and MessageBody.asp is never fetched', async () => {

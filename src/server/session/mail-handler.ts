@@ -79,13 +79,24 @@ async function markInboxMessageRead(ctx: SessionContext, messageId: string): Pro
 
   const url = `http://${ctx.currentWorldInfo.ip}/five/0/visual/voyager/mail/MessageBody.asp?${params.toString().replace(/\+/g, '%20')}`;
 
-  try {
-    const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' }, MAIL_READ_TOUCH_TIMEOUT_MS);
-    if (!response.ok) {
-      ctx.log.warn(`[Mail] MessageBody.asp returned ${response.status} — unread flag not cleared`);
+  // One retry. MessageBody.asp is a legacy IIS page whose first response can miss
+  // the 5 s deadline under load — when it does, the unread flag stays set and the
+  // client's next CheckNewMail still counts the message. A second attempt costs one
+  // GET on a path that already ran after the RDO sequence completed.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' }, MAIL_READ_TOUCH_TIMEOUT_MS);
+      if (!response.ok) {
+        ctx.log.warn(`[Mail] MessageBody.asp returned ${response.status} — unread flag not cleared`);
+      }
+      return;
+    } catch (e: unknown) {
+      if (attempt === 0) {
+        ctx.log.debug(`[Mail] Header touch failed, retrying once: ${toErrorMessage(e)}`);
+        continue;
+      }
+      ctx.log.warn('[Mail] Header touch failed — unread flag not cleared:', toErrorMessage(e));
     }
-  } catch (e: unknown) {
-    ctx.log.warn('[Mail] Header touch failed — unread flag not cleared:', toErrorMessage(e));
   }
 }
 
