@@ -41,7 +41,7 @@ import type { RdoMemberName } from '../../shared/rdo-members';
 import { parsePropertyResponse as parsePropertyResponseHelper, writeRdoFrame } from '../rdo-helpers';
 import { parseMessageListHtml } from '../mail-list-parser';
 import { toErrorMessage } from '../../shared/error-utils';
-import { fetchWithTimeout } from '../fetch-with-timeout';
+import { fetchWithTimeout, FetchTimeoutError } from '../fetch-with-timeout';
 import { withLangId } from '../../shared/language';
 import { extractMetaRefreshUrl } from '../../shared/mail-html-utils';
 
@@ -57,6 +57,14 @@ function mailFireAndForget(ctx: SessionContext, targetId: string, method: RdoMem
 // ── Private Helpers ────────────────────────────────────────────────────────
 
 const MAIL_READ_TOUCH_TIMEOUT_MS = 5000;
+
+/**
+ * One retry when the single 5 s deadline expires. The legacy MessageBody.asp is
+ * occasionally slower than that under load, and a lone slow answer used to leave
+ * the unread flag set for good. Only a timeout is retried — a refused connection
+ * or a non-OK status will answer the same way twice.
+ */
+const MAIL_READ_TOUCH_ATTEMPTS = 2;
 
 /**
  * Touch MessageBody.asp for an Inbox message so the mail server's `Read` header
@@ -79,13 +87,21 @@ async function markInboxMessageRead(ctx: SessionContext, messageId: string): Pro
 
   const url = `http://${ctx.currentWorldInfo.ip}/five/0/visual/voyager/mail/MessageBody.asp?${params.toString().replace(/\+/g, '%20')}`;
 
-  try {
-    const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' }, MAIL_READ_TOUCH_TIMEOUT_MS);
-    if (!response.ok) {
-      ctx.log.warn(`[Mail] MessageBody.asp returned ${response.status} — unread flag not cleared`);
+  for (let attempt = 1; attempt <= MAIL_READ_TOUCH_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetchWithTimeout(withLangId(url, ctx.languageId), { redirect: 'follow' }, MAIL_READ_TOUCH_TIMEOUT_MS);
+      if (!response.ok) {
+        ctx.log.warn(`[Mail] MessageBody.asp returned ${response.status} — unread flag not cleared`);
+      }
+      return;
+    } catch (e: unknown) {
+      if (e instanceof FetchTimeoutError && attempt < MAIL_READ_TOUCH_ATTEMPTS) {
+        ctx.log.debug(`[Mail] Header touch timed out, retrying once: ${toErrorMessage(e)}`);
+        continue;
+      }
+      ctx.log.warn('[Mail] Header touch failed — unread flag not cleared:', toErrorMessage(e));
+      return;
     }
-  } catch (e: unknown) {
-    ctx.log.warn('[Mail] Header touch failed — unread flag not cleared:', toErrorMessage(e));
   }
 }
 
