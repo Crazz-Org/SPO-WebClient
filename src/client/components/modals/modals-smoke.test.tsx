@@ -70,13 +70,13 @@ describe('SettingsDialog', () => {
     expect((screen.getByRole('switch', { name: 'Aircraft animations' }) as HTMLInputElement).checked).toBe(false);
   });
 
-  it("offers a Fade other players' buildings switch, checked by default, that flips on click", () => {
+  it('offers a Fade buildings not owned by the selected owner switch, checked by default, that flips on click', () => {
     useUiStore.getState().openModal('settings');
     renderWithProviders(<SettingsDialog />);
-    const sw = screen.getByRole('switch', { name: "Fade other players' buildings" }) as HTMLInputElement;
+    const sw = screen.getByRole('switch', { name: 'Fade buildings not owned by the selected owner' }) as HTMLInputElement;
     expect(sw.checked).toBe(true);
     fireEvent.click(sw);
-    expect((screen.getByRole('switch', { name: "Fade other players' buildings" }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole('switch', { name: 'Fade buildings not owned by the selected owner' }) as HTMLInputElement).checked).toBe(false);
   });
 
   it('offers a Signal losing facilities switch, unchecked by default, that flips on click', () => {
