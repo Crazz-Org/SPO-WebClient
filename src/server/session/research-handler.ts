@@ -12,6 +12,7 @@ import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
 import { parsePropertyResponse as parsePropertyResponseHelper } from '../rdo-helpers';
 import { parseResearchItems } from './session-utils';
+import { getActiveResearchStatus } from './research-status-handler';
 
 /**
  * Fetch the full research inventory (available / developing / completed) for
@@ -21,6 +22,11 @@ export async function getResearchInventory(
   ctx: SessionContext,
   x: number, y: number, categoryIndex: number
 ): Promise<ResearchCategoryData> {
+  // Building-level, not category-level: a Research Center runs one research at a
+  // time. Never throws — a missing status leaves the three lists exactly as before.
+  // Read before the temp object exists, so it cannot extend that object's lifetime.
+  const activeResearch = await getActiveResearchStatus(ctx, x, y);
+
   await ctx.connectMapService();
   const tempObjectId = await ctx.cacherCreateObject();
 
@@ -77,7 +83,13 @@ export async function getResearchInventory(
     const developing = parseResearchItems('dev', cat, devCount, allItemValues, false);
     const completed = parseResearchItems('has', cat, hasCount, allItemValues, false);
 
-    return { categoryIndex, available, developing, completed };
+    // The `active` flag is NOT set here. The status text names the invention by
+    // its display name, and the cache only carries display names for volatile
+    // inventions (`Inventions/Inventions.pas:756-759` writes `RsName` only when
+    // `fVolatile`) — for the standard tree `parseResearchItems` leaves the id in
+    // `name`. `markActiveDeveloping` therefore runs in the WS handler, after the
+    // `.dat` catalogue has filled those names in (`misc-handlers.ts`).
+    return { categoryIndex, available, developing, completed, activeResearch: activeResearch ?? undefined };
   } finally {
     await ctx.cacherCloseObject(tempObjectId);
   }
