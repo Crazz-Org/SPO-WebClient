@@ -33,6 +33,7 @@ import {
 import * as ErrorCodes from '../../shared/error-codes';
 import type { WsHandlerContext, WsHandler } from './types';
 import { sendResponse, sendError, withErrorHandler } from './ws-utils';
+import { markActiveDeveloping } from '../session/research-status-handler';
 
 export const handleDefineZone: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
   await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_AccessDenied, async () => {
@@ -262,6 +263,11 @@ export const handleResearchInventory: WsHandler = async (ctx: WsHandlerContext, 
       enrichSection(data.developing);
       enrichSection(data.completed);
     }
+
+    // After the enrichment, never before it: the status text names the active
+    // invention by its display name, and until this point a non-volatile item
+    // still carries its id in `name` (`Inventions/Inventions.pas:756-759`).
+    markActiveDeveloping(data.developing, data.activeResearch ?? null);
 
     const response: WsRespResearchInventory = {
       type: WsMessageType.RESP_RESEARCH_INVENTORY,

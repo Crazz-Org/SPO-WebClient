@@ -77,10 +77,20 @@ export function parseResearchStatusText(statusText: string): ActiveResearchStatu
  * Mark the one developing item the status text names, if it is in this
  * category's list. Exactly one item is ever marked.
  *
- * Finding no match is a normal outcome, not a failure: the active research may
- * belong to another category tab, and an empty `dev{cat}RsName{i}` makes
- * `parseResearchItems` put the id in `name` (`session-utils.ts:130`). The name
- * still reaches the client on `activeResearch`, so nothing is lost.
+ * **Call this only on a list whose display names are already filled in.** The
+ * status text names the invention by its display name, while the object cache
+ * writes `dev{cat}RsName{i}` only for volatile inventions
+ * (`Inventions/Inventions.pas:756-759`, `if fVolatile then Cache.WriteString(kind
+ * + 'RsName' …)`). For the whole standard research tree the cache slot is empty
+ * and `parseResearchItems` puts the *id* in `name` (`session-utils.ts:130`); the
+ * display name arrives later, from the parsed `research.0.dat` catalogue, in
+ * `ws-handlers/misc-handlers.ts`. That is why the only caller sits there, after
+ * the enrichment, and not in `research-handler.ts` beside the cache reads.
+ *
+ * Finding no match is still a normal outcome, not a failure: the active research
+ * may belong to another category tab, or the gateway may have no `.dat` index
+ * loaded. The name always reaches the client on `activeResearch`, so nothing is
+ * lost when the mark cannot be placed.
  */
 export function markActiveDeveloping(
   developing: ResearchInventionItem[],

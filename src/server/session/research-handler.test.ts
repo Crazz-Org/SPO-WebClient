@@ -149,21 +149,26 @@ describe('getResearchInventory', () => {
     expect(data.available).toEqual([{ inventionId: 'INV_S', name: 'INV_S', enabled: false, cost: undefined, parent: undefined, volatile: undefined }]);
   });
 
-  it('carries the active research and marks the one developing item the status text names', async () => {
+  it('carries the active research read out of the status text, and marks nothing itself', async () => {
+    // The cache holds a display name only for a volatile invention
+    // (`Inventions/Inventions.pas:756-759`), so the mark cannot be placed here —
+    // it belongs to the WS handler, after the .dat enrichment. What this
+    // function owes is the datum itself.
     const values = new Map<string, string>([
-      ['dev2RsId0', 'INV_D'], ['dev2RsName0', 'Delta'],
-      ['dev2RsId1', 'INV_E'], ['dev2RsName1', 'Epsilon'],
+      ['dev2RsId0', 'AdvFarm'],
+      ['dev2RsId1', 'INV_E'],
     ]);
     const fake = makeInventoryCtx(['0', '2', '0'], props => props.map(p => values.get(p) ?? ''));
     (fake.ctx.focusBuilding as jest.Mock).mockResolvedValue({
       buildingId: '30441088', buildingName: 'Research Center', ownerName: 'SPO_test3',
     });
-    fake.respond(() => 'res="%41% research completed:-:Researching Epsilon. Cost: $1,250,000.:-:"');
+    fake.respond(() => 'res="%41% research completed:-:Researching Advanced Farming. Cost: $1,250,000.:-:"');
 
     const data = await getResearchInventory(fake.ctx, X, Y, CAT);
 
-    expect(data.activeResearch).toEqual({ percentComplete: 41, inventionName: 'Epsilon' });
-    expect(data.developing.map(i => i.active)).toEqual([undefined, true]);
+    expect(data.activeResearch).toEqual({ percentComplete: 41, inventionName: 'Advanced Farming' });
+    // ids, not display names — nothing is marked at this layer
+    expect(data.developing.map(i => i.active)).toEqual([undefined, undefined]);
   });
 
   it('answers exactly as before when the status read cannot be made', async () => {
