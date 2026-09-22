@@ -5,7 +5,7 @@
  */
 
 import { Crosshair, RefreshCw } from 'lucide-react';
-import { useBuildingStore } from '../../store/building-store';
+import { useBuildingStore, REFRESH_BUILDING_ACTION } from '../../store/building-store';
 import { useClient } from '../../context';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
 import { IconButton } from '../common';
@@ -13,6 +13,7 @@ import { IconButton } from '../common';
 export function BuildingSheetActions() {
   const details = useBuildingStore((s) => s.details);
   const focusedBuilding = useBuildingStore((s) => s.focusedBuilding);
+  const refreshing = useBuildingStore((s) => s.inFlightActions).has(REFRESH_BUILDING_ACTION);
   const client = useClient();
 
   const visualClass = details?.visualClass ?? focusedBuilding?.visualClass;
@@ -34,6 +35,7 @@ export function BuildingSheetActions() {
         label="Refresh"
         size="sm"
         variant="ghost"
+        disabled={refreshing}
         onClick={() => client.onRefreshBuilding(details.x, details.y)}
       />
     </>

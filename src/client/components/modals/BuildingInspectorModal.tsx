@@ -7,7 +7,7 @@
 
 import { RefreshCw, X } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
-import { useBuildingStore } from '../../store/building-store';
+import { useBuildingStore, REFRESH_BUILDING_ACTION } from '../../store/building-store';
 import { usePoliticsStore } from '../../store/politics-store';
 import { useClient } from '../../context';
 import { BuildingInspector } from '../building/BuildingInspector';
@@ -21,6 +21,7 @@ export function BuildingInspectorModal() {
   const closeModal = useUiStore((s) => s.closeModal);
   const details = useBuildingStore((s) => s.details);
   const focusedBuilding = useBuildingStore((s) => s.focusedBuilding);
+  const refreshing = useBuildingStore((s) => s.inFlightActions).has(REFRESH_BUILDING_ACTION);
   const politicsData = usePoliticsStore((s) => s.data);
   const client = useClient();
 
@@ -60,6 +61,7 @@ export function BuildingInspectorModal() {
               label="Refresh"
               size="sm"
               variant="ghost"
+              disabled={refreshing}
               onClick={handleRefresh}
             />
             <button className={styles.closeBtn} onClick={handleClose} aria-label="Close">

@@ -8,8 +8,8 @@
  * that makes the lists re-read, and the ordering it depends on.
  */
 
-import { refreshAfterConnectionChange, handleBuildingAction } from './building-action-handler';
-import { useBuildingStore } from '../store/building-store';
+import { refreshAfterConnectionChange, handleBuildingAction, refreshBuildingDetails } from './building-action-handler';
+import { useBuildingStore, REFRESH_BUILDING_ACTION } from '../store/building-store';
 import { useUiStore } from '../store/ui-store';
 import { ClientBridge } from '../bridge/client-bridge';
 import type { ClientHandlerContext } from './client-context';
@@ -164,6 +164,65 @@ describe('refreshAfterConnectionChange', () => {
     expect(ctx.sendRequest).toHaveBeenCalledWith(
       expect.objectContaining({ x: 10, y: 20, visualClass: '0' }),
     );
+  });
+});
+
+describe('refreshBuildingDetails', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useBuildingStore.getState().clearDetails();
+  });
+
+  function makeRefreshCtx(sendRequest: jest.Mock): ClientHandlerContext {
+    return {
+      currentFocusedVisualClass: '1234',
+      inFlightBuildingDetails: new Map(),
+      showNotification: jest.fn(),
+      sendRequest,
+    } as unknown as ClientHandlerContext;
+  }
+
+  it('marks the shared action busy for the round trip and clears it once it lands', async () => {
+    let resolveRequest: (value: { details: BuildingDetailsResponse }) => void;
+    const pending = new Promise<{ details: BuildingDetailsResponse }>((resolve) => {
+      resolveRequest = resolve;
+    });
+    const ctx = makeRefreshCtx(jest.fn().mockReturnValue(pending));
+
+    const call = refreshBuildingDetails(ctx, 10, 20);
+    expect(useBuildingStore.getState().inFlightActions.has(REFRESH_BUILDING_ACTION)).toBe(true);
+
+    resolveRequest!({ details: makeDetails(10, 20) });
+    await call;
+
+    expect(useBuildingStore.getState().inFlightActions.has(REFRESH_BUILDING_ACTION)).toBe(false);
+    expect(ClientBridge.updateBuildingDetails).toHaveBeenCalledTimes(1);
+  });
+
+  it('raises a visible error and keeps the stale panel when the request comes back null', async () => {
+    seedLoadedPanel();
+    const ctx = makeRefreshCtx(jest.fn().mockRejectedValue(new Error('transport down')));
+
+    await refreshBuildingDetails(ctx, 10, 20);
+
+    expect(ctx.showNotification).toHaveBeenCalledWith('Failed to refresh building details', 'error');
+    expect(useBuildingStore.getState().details).not.toBeNull();
+    expect(useBuildingStore.getState().inFlightActions.has(REFRESH_BUILDING_ACTION)).toBe(false);
+  });
+
+  it('raises a visible error and still clears the busy flag when a downstream write throws', async () => {
+    seedLoadedPanel();
+    const ctx = makeRefreshCtx(jest.fn().mockResolvedValue({ details: makeDetails(10, 20) }));
+    (ClientBridge.updateBuildingDetails as jest.Mock).mockImplementationOnce(() => {
+      throw new Error('store write failed');
+    });
+
+    await refreshBuildingDetails(ctx, 10, 20);
+
+    expect(ctx.showNotification).toHaveBeenCalledWith(
+      'Failed to refresh building details: store write failed', 'error',
+    );
+    expect(useBuildingStore.getState().inFlightActions.has(REFRESH_BUILDING_ACTION)).toBe(false);
   });
 });
 
