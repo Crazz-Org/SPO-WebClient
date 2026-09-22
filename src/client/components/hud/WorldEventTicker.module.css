@@ -1,9 +1,9 @@
-/* WorldEventTicker — the newest world event, a slim strip above ContextStatusStrip */
+/* WorldEventTicker — a slim strip in the top band, under StatusPill */
 
 .ticker {
   position: fixed;
-  /* Clears ContextStatusStrip, which clears CommandBar; derived in design-tokens.css (issue 875). */
-  bottom: var(--world-ticker-bottom);
+  /* Top band, directly under StatusPill; derived in design-tokens.css (issue 889). */
+  top: var(--world-ticker-top);
   left: var(--space-4);
   right: var(--space-4);
   max-width: 904px;
@@ -26,7 +26,28 @@
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  z-index: var(--z-hud);
+  z-index: var(--z-ticker);
+  transition: right var(--duration-panel) var(--ease-out);
+}
+
+/* A surface is open: only the right edge moves, exactly as in StatusPill.shifted
+   (StatusPill.module.css:32) and RightRail.shifted — the ticker re-centres on what is left. */
+.shifted {
+  right: calc(var(--panel-width-desktop) + var(--sheet-inset) + var(--space-4));
+}
+
+/* Desktop only: the docked minimap owns the top-left corner (minimap-ui.ts:253-254 — a
+   --minimap-size square at a 12px inset). Same clearance StatusPill.shifted uses. */
+@media (min-width: 1024px) {
+  .ticker {
+    left: calc(var(--minimap-size) + var(--space-10));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker {
+    transition: none;
+  }
 }
 
 .link {

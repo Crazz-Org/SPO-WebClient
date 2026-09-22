@@ -179,15 +179,17 @@
   --hud-free-width: var(--hud-bar-width);
   --chat-strip-width: var(--chat-box-width);
 
-  /* ---- HUD bottom stack — one command-bar height, two derived bands (issue 875) ----
+  /* ---- HUD bottom stack — one command-bar height, one derived band (issue 875), plus the
+     ticker's top band (issue 889) ----
      CommandBar is a flex column: one 48px mode row (or a 44px search row — the taller of
-     the two is what the bands must clear), --space-2, and the tile grid (2 rows of 56px
+     the two is what the band must clear), --space-2, and the tile grid (2 rows of 56px
      + one 6px gap + 2x6px padding + 2x1px border = 132px). design-tokens.test.ts recomputes
      this from CommandBar's own CSS and fails if a row or a tile row is added here. */
   --command-bar-height: calc(48px + var(--space-2) + 132px);
-  --hud-strip-height: 30px; /* ContextStatusStrip/WorldEventTicker: min-height 28 + 2x1px border */
   --context-strip-bottom: calc(var(--space-4) + var(--command-bar-height) + var(--space-2));
-  --world-ticker-bottom: calc(var(--context-strip-bottom) + var(--hud-strip-height) + var(--space-2));
+  /* The newest world event, in the top band directly under StatusPill — the same anchor
+     the toast stack uses (issue 889). */
+  --world-ticker-top: var(--content-top);
 
   /* ---- Breakpoints (for reference — use in @media queries) ---- */
   /* --bp-mobile: 480px → 767px     */
@@ -196,12 +198,13 @@
   /* --bp-desktop: 1400px+          */
 }
 
-/* ---- Below 1024px the command bar is hidden (CommandBar.module.css) — the two HUD bands
-       keep the exact mobile offsets they have always had (issue 875). ---- */
+/* ---- Below 1024px the command bar is hidden (CommandBar.module.css) — the bottom band keeps
+       the exact mobile offset it has always had (issue 875), and StatusPill is hidden, so the
+       ticker clears MobileInfoBar instead (issue 889). ---- */
 @media (max-width: 1023px) {
   :root {
     --context-strip-bottom: 134px;
-    --world-ticker-bottom: 168px;
+    --world-ticker-top: calc(var(--sai-top) + 36px + var(--space-2));
   }
 }
 

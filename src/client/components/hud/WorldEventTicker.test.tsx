@@ -13,6 +13,7 @@ import { WorldEventTicker, POLL_MS } from './WorldEventTicker';
 import { ClientContext } from '../../context/ClientContext';
 import type { ClientCallbacks } from '../../bridge/client-bridge';
 import { useMapStore } from '../../store/map-store';
+import { useUiStore } from '../../store/ui-store';
 import type { WorldEventLine } from '../../../shared/types';
 
 function renderTicker(onRequestWorldEvent: jest.Mock) {
@@ -33,12 +34,16 @@ describe('WorldEventTicker', () => {
     jest.useFakeTimers();
     hiddenSpy = jest.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     useMapStore.setState({ source: null });
+    useUiStore.getState().clearSurfaces();
+    useUiStore.getState().setConnectMode(false);
   });
 
   afterEach(() => {
     jest.useRealTimers();
     hiddenSpy.mockRestore();
     useMapStore.setState({ source: null });
+    useUiStore.getState().clearSurfaces();
+    useUiStore.getState().setConnectMode(false);
   });
 
   it('states the card\'s cadence', () => {
@@ -117,6 +122,33 @@ describe('WorldEventTicker', () => {
     await act(async () => { jest.advanceTimersByTime(POLL_MS * 2); await Promise.resolve(); });
 
     expect(ask).not.toHaveBeenCalled();
+  });
+
+  it('takes the shifted class when a surface is open', async () => {
+    const ask = jest.fn().mockResolvedValue(EVENT);
+
+    renderTicker(ask);
+    await act(async () => { await Promise.resolve(); });
+
+    const ticker = screen.getByRole('status');
+    expect(ticker.className).not.toContain('shifted');
+
+    act(() => useUiStore.getState().toggleLeftPanel('empire'));
+    expect(ticker.className).toContain('shifted');
+  });
+
+  it('connect mode does not shift it', async () => {
+    const ask = jest.fn().mockResolvedValue(EVENT);
+
+    renderTicker(ask);
+    await act(async () => { await Promise.resolve(); });
+
+    act(() => {
+      useUiStore.getState().toggleLeftPanel('empire');
+      useUiStore.getState().setConnectMode(true);
+    });
+
+    expect(screen.getByRole('status').className).not.toContain('shifted');
   });
 
   it('a late answer after unmount sets no state', async () => {
