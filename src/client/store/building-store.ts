@@ -22,6 +22,9 @@ export function reachabilityKey(x: number, y: number): string {
   return `${x},${y}`;
 }
 
+/** Action id the shared building refresh registers in `inFlightActions`. */
+export const REFRESH_BUILDING_ACTION = 'refreshBuilding';
+
 interface ResearchState {
   /** Cached inventory per category tab (key = categoryIndex 0..4). */
   inventoryByCategory: Map<number, ResearchCategoryData>;

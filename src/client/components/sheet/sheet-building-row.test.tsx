@@ -71,6 +71,18 @@ describe('Sheet — the building row (non-civic)', () => {
     expect(onRefreshBuilding).toHaveBeenCalledWith(7, 9);
   });
 
+  it('disables the non-civic Refresh button while the shared refresh action is in flight', () => {
+    useBuildingStore.getState().setDetails(details({}));
+    act(() => useUiStore.getState().setRootSurface({ kind: 'building' }));
+    renderWithProviders(<Sheet />);
+
+    expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(false);
+    act(() => useBuildingStore.getState().addInFlightAction('refreshBuilding'));
+    expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(true);
+    act(() => useBuildingStore.getState().removeInFlightAction('refreshBuilding'));
+    expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('Pin toggles', () => {
     useBuildingStore.getState().setDetails(details({}));
     act(() => useUiStore.getState().setRootSurface({ kind: 'building' }));

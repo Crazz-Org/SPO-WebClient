@@ -43,7 +43,7 @@ import {
 import { toErrorMessage } from '../../shared/error-utils';
 import { showToast, dismissToast } from '../components/common/Toast';
 import { ClientBridge } from '../bridge/client-bridge';
-import { useBuildingStore, gateKey } from '../store/building-store';
+import { useBuildingStore, gateKey, REFRESH_BUILDING_ACTION } from '../store/building-store';
 import type { GateTabId } from '../store/building-store';
 import { useGameStore } from '../store/game-store';
 import { useUiStore } from '../store/ui-store';
@@ -102,16 +102,27 @@ export async function refreshBuildingDetails(ctx: ClientHandlerContext, x: numbe
   const vc = ctx.currentFocusedVisualClass || '0';
   // Reset lazy tab states so they re-fetch on next view
   useBuildingStore.getState().resetTabLoadingStates();
-  const details = await requestBuildingDetails(ctx, x, y, vc);
-  if (details) {
-    ClientBridge.updateBuildingDetails(details);
-  } else {
+  useBuildingStore.getState().addInFlightAction(REFRESH_BUILDING_ACTION);
+  try {
+    const details = await requestBuildingDetails(ctx, x, y, vc);
+    if (details) {
+      ClientBridge.updateBuildingDetails(details);
+      return;
+    }
     // If we're in a loading/error state with no details, surface the error
     // so the user sees a retry button instead of an eternal skeleton.
     const state = useBuildingStore.getState();
     if (state.isLoading && !state.details) {
       state.setDetailsError('Failed to load building details. Please try again.');
     }
+    // A panel that already has details keeps them on screen — but the user must
+    // be told the figures in front of them are the old ones (issue #886).
+    ctx.showNotification('Failed to refresh building details', 'error');
+  } catch (err: unknown) {
+    ClientBridge.log('Error', `Failed to refresh building details: ${toErrorMessage(err)}`);
+    ctx.showNotification(`Failed to refresh building details: ${toErrorMessage(err)}`, 'error');
+  } finally {
+    useBuildingStore.getState().removeInFlightAction(REFRESH_BUILDING_ACTION);
   }
 }
 

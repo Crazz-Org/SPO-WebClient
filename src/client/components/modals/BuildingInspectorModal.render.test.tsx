@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { screen } from '@testing-library/react';
+import { screen, act } from '@testing-library/react';
 import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
 import { useBuildingStore } from '../../store/building-store';
 import { useUiStore } from '../../store/ui-store';
@@ -74,5 +74,19 @@ describe('BuildingInspectorModal smoke tests', () => {
 
     renderWithProviders(<BuildingInspectorModal />);
     expect(screen.getByLabelText('Close')).toBeTruthy();
+  });
+
+  it('disables Refresh while the shared refresh action is in flight, and re-enables once it clears', () => {
+    useUiStore.getState().openModal('buildingInspector');
+    useBuildingStore.setState({ details: mockDetails, isLoading: false });
+
+    renderWithProviders(<BuildingInspectorModal />);
+    expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(false);
+
+    act(() => useBuildingStore.getState().addInFlightAction('refreshBuilding'));
+    expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(true);
+
+    act(() => useBuildingStore.getState().removeInFlightAction('refreshBuilding'));
+    expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

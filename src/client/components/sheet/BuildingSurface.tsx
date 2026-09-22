@@ -8,7 +8,7 @@
  */
 
 import { RefreshCw, Mail } from 'lucide-react';
-import { useBuildingStore } from '../../store/building-store';
+import { useBuildingStore, REFRESH_BUILDING_ACTION } from '../../store/building-store';
 import { usePoliticsStore } from '../../store/politics-store';
 import { useClient } from '../../context';
 import { isCivicBuilding } from '@/shared/building-details/civic-buildings';
@@ -22,6 +22,7 @@ import styles from './BuildingSurface.module.css';
 export function BuildingSurface() {
   const details = useBuildingStore((s) => s.details);
   const focusedBuilding = useBuildingStore((s) => s.focusedBuilding);
+  const refreshing = useBuildingStore((s) => s.inFlightActions).has(REFRESH_BUILDING_ACTION);
   const politicsData = usePoliticsStore((s) => s.data);
   const client = useClient();
 
@@ -51,10 +52,10 @@ export function BuildingSurface() {
         )}
         <IconButton
           icon={<RefreshCw size={16} />}
-          label="Refresh"
+          label={refreshing ? 'Refreshing…' : 'Refresh'}
           size="sm"
           variant="ghost"
-          disabled={!details}
+          disabled={!details || refreshing}
           onClick={() => {
             if (details) client.onRefreshBuilding(details.x, details.y);
           }}

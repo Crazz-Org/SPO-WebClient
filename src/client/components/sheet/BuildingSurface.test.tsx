@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { screen, fireEvent } from '@testing-library/react';
+import { screen, fireEvent, act } from '@testing-library/react';
 import { renderWithProviders, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useBuildingStore } from '../../store/building-store';
 import { usePoliticsStore } from '../../store/politics-store';
@@ -88,5 +88,17 @@ describe('BuildingSurface', () => {
     useBuildingStore.getState().setDetails(details({ groups: {} }));
     renderWithProviders(<BuildingSurface />);
     expect(screen.queryByRole('button', { name: /Write to the Mayor/ })).toBeNull();
+  });
+
+  it('disables Refresh while the shared refresh action is in flight, and re-enables once it clears', () => {
+    useBuildingStore.getState().setDetails(details({}));
+    renderWithProviders(<BuildingSurface />);
+    expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(false);
+
+    act(() => useBuildingStore.getState().addInFlightAction('refreshBuilding'));
+    expect((screen.getByRole('button', { name: 'Refreshing…' }) as HTMLButtonElement).disabled).toBe(true);
+
+    act(() => useBuildingStore.getState().removeInFlightAction('refreshBuilding'));
+    expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
