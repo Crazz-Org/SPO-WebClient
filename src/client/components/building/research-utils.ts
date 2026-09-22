@@ -87,3 +87,71 @@ export function countByStatus(items: MergedInventionItem[]): { avail: number; de
   }
   return { avail, dev, has };
 }
+
+export type ResearchPendingOp = 'queue' | 'cancel';
+
+export interface ResearchPendingEntry {
+  op: ResearchPendingOp;
+  timestamp: number;
+}
+
+/** An unsettled optimistic mark older than this is ignored (the server's view wins). */
+export const RESEARCH_PENDING_TTL_MS = 60_000;
+
+export interface OngoingResearchItem extends MergedInventionItem {
+  /** Which category tab this item came from. */
+  categoryIndex: number;
+  /** True while the write that put it here has not been agreed by a server read. */
+  isPending: boolean;
+}
+
+/**
+ * All `developing` items across every loaded category, plus any `available` item with a
+ * live `'queue'` op (optimistic paint) and minus any `developing` item with a live `'cancel'`
+ * op (optimistic removal). One group — #887 (active/queued distinction) has not landed.
+ */
+export function collectOngoingResearch(
+  inventoryByCategory: ReadonlyMap<number, ResearchCategoryData>,
+  pendingOps: ReadonlyMap<string, ResearchPendingEntry>,
+  now: number = Date.now(),
+): OngoingResearchItem[] {
+  const isLive = (id: string, op: ResearchPendingOp): boolean => {
+    const entry = pendingOps.get(id);
+    return !!entry && entry.op === op && now - entry.timestamp < RESEARCH_PENDING_TTL_MS;
+  };
+
+  const hasLiveOp = (id: string): boolean => {
+    const entry = pendingOps.get(id);
+    return !!entry && now - entry.timestamp < RESEARCH_PENDING_TTL_MS;
+  };
+
+  const result: OngoingResearchItem[] = [];
+  const emitted = new Set<string>();
+  const categoryIndices = Array.from(inventoryByCategory.keys()).sort((a, b) => a - b);
+
+  for (const categoryIndex of categoryIndices) {
+    const data = inventoryByCategory.get(categoryIndex);
+    if (!data) continue;
+
+    for (const item of data.developing) {
+      if (emitted.has(item.inventionId)) continue;
+      if (isLive(item.inventionId, 'cancel')) continue;
+      emitted.add(item.inventionId);
+      result.push({ ...item, status: 'researching', categoryIndex, isPending: hasLiveOp(item.inventionId) });
+    }
+  }
+
+  for (const categoryIndex of categoryIndices) {
+    const data = inventoryByCategory.get(categoryIndex);
+    if (!data) continue;
+
+    for (const item of data.available) {
+      if (emitted.has(item.inventionId)) continue;
+      if (!isLive(item.inventionId, 'queue')) continue;
+      emitted.add(item.inventionId);
+      result.push({ ...item, status: 'researching', categoryIndex, isPending: true });
+    }
+  }
+
+  return result;
+}

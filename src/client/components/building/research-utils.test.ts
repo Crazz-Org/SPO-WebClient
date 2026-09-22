@@ -10,7 +10,10 @@ import {
   isGroupResearchable,
   countAvailableEnabled,
   countByStatus,
+  collectOngoingResearch,
+  RESEARCH_PENDING_TTL_MS,
   type MergedInventionItem,
+  type ResearchPendingEntry,
 } from './research-utils';
 
 const mockData: ResearchCategoryData = {
@@ -204,5 +207,91 @@ describe('countByStatus', () => {
     expect(counts.has).toBe(2);
     expect(counts.dev).toBe(1);
     expect(counts.avail).toBe(0);
+  });
+});
+
+describe('collectOngoingResearch', () => {
+  const NOW = 1_000_000;
+
+  function cat(categoryIndex: number, data: Partial<ResearchCategoryData>): ResearchCategoryData {
+    return { categoryIndex, available: [], developing: [], completed: [], ...data };
+  }
+
+  it('returns an empty array for an empty map', () => {
+    expect(collectOngoingResearch(new Map(), new Map(), NOW)).toEqual([]);
+  });
+
+  it('emits developing items from one category with categoryIndex and isPending false', () => {
+    const byCategory = new Map([
+      [0, cat(0, { developing: [{ inventionId: 'D1', name: 'Delta' }] })],
+    ]);
+    const result = collectOngoingResearch(byCategory, new Map(), NOW);
+    expect(result).toEqual([
+      { inventionId: 'D1', name: 'Delta', status: 'researching', categoryIndex: 0, isPending: false },
+    ]);
+  });
+
+  it('emits items from two loaded categories in ascending category order', () => {
+    const byCategory = new Map([
+      [3, cat(3, { developing: [{ inventionId: 'D3', name: 'Three' }] })],
+      [1, cat(1, { developing: [{ inventionId: 'D1', name: 'One' }] })],
+    ]);
+    const result = collectOngoingResearch(byCategory, new Map(), NOW);
+    expect(result.map((i) => i.inventionId)).toEqual(['D1', 'D3']);
+  });
+
+  it('promotes an available item with a live queue op, marked isPending', () => {
+    const byCategory = new Map([
+      [0, cat(0, { available: [{ inventionId: 'A1', name: 'Alpha' }] })],
+    ]);
+    const pendingOps = new Map<string, ResearchPendingEntry>([
+      ['A1', { op: 'queue', timestamp: NOW }],
+    ]);
+    const result = collectOngoingResearch(byCategory, pendingOps, NOW);
+    expect(result).toEqual([
+      { inventionId: 'A1', name: 'Alpha', status: 'researching', categoryIndex: 0, isPending: true },
+    ]);
+  });
+
+  it('a cancel op removes a developing item from the block', () => {
+    const byCategory = new Map([
+      [0, cat(0, { developing: [{ inventionId: 'D1', name: 'Delta' }] })],
+    ]);
+    const pendingOps = new Map<string, ResearchPendingEntry>([
+      ['D1', { op: 'cancel', timestamp: NOW }],
+    ]);
+    expect(collectOngoingResearch(byCategory, pendingOps, NOW)).toEqual([]);
+  });
+
+  it('ignores a pending entry past the TTL for both a promotion and a cancellation', () => {
+    const stale = NOW - RESEARCH_PENDING_TTL_MS - 1;
+    const byCategory = new Map([
+      [0, cat(0, {
+        available: [{ inventionId: 'A1', name: 'Alpha' }],
+        developing: [{ inventionId: 'D1', name: 'Delta' }],
+      })],
+    ]);
+    const pendingOps = new Map<string, ResearchPendingEntry>([
+      ['A1', { op: 'queue', timestamp: stale }],
+      ['D1', { op: 'cancel', timestamp: stale }],
+    ]);
+    const result = collectOngoingResearch(byCategory, pendingOps, NOW);
+    // The stale queue op does not promote A1; the stale cancel op does not remove D1.
+    expect(result).toEqual([
+      { inventionId: 'D1', name: 'Delta', status: 'researching', categoryIndex: 0, isPending: false },
+    ]);
+  });
+
+  it('emits an id once even when it appears developing in one category and available in another', () => {
+    const byCategory = new Map([
+      [0, cat(0, { developing: [{ inventionId: 'X1', name: 'X' }] })],
+      [1, cat(1, { available: [{ inventionId: 'X1', name: 'X' }] })],
+    ]);
+    const pendingOps = new Map<string, ResearchPendingEntry>([
+      ['X1', { op: 'queue', timestamp: NOW }],
+    ]);
+    const result = collectOngoingResearch(byCategory, pendingOps, NOW);
+    expect(result).toHaveLength(1);
+    expect(result[0].categoryIndex).toBe(0);
   });
 });
