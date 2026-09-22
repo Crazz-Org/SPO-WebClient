@@ -21,6 +21,51 @@ import { join, relative } from 'node:path';
 const CLIENT_ROOT = join(__dirname, '..');
 const STYLES_DIR = __dirname;
 
+function stripComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+const tokensCss = stripComments(readFileSync(join(STYLES_DIR, 'design-tokens.css'), 'utf8'));
+
+/** Declaration block text for `selector {`, e.g. rule(bar, '.tiles'). */
+function rule(css: string, selector: string): string {
+  const start = css.indexOf(`${selector} {`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const open = css.indexOf('{', start);
+  const close = css.indexOf('}', open);
+  return css.slice(open + 1, close);
+}
+
+/** px value of a `prop: NNpx` declaration inside a block. */
+function px(block: string, prop: string): number {
+  const match = block.match(new RegExp(`${prop}\\s*:\\s*([0-9.]+)px`));
+  expect(match).not.toBeNull();
+  return parseFloat(match![1]);
+}
+
+/** Raw value text of a top-level `:root` custom property in design-tokens.css. */
+function tokenExpr(name: string): string {
+  const match = tokensCss.match(new RegExp(`${name}\\s*:\\s*([^;]+);`));
+  expect(match).not.toBeNull();
+  return match![1].trim();
+}
+
+/** Resolve a token expression to a px number, substituting var(--x) recursively. */
+function resolve(expr: string): number {
+  let text = expr;
+  let guard = 0;
+  while (/var\(\s*--[a-zA-Z0-9-]+\s*\)/.test(text) && guard < 10) {
+    text = text.replace(/var\(\s*(--[a-zA-Z0-9-]+)\s*\)/g, (_m, name: string) => tokenExpr(name));
+    guard += 1;
+  }
+  text = text.replace(/calc\(([^()]*)\)/g, '($1)');
+  let sum = 0;
+  for (const m of text.matchAll(/([0-9.]+)(px|rem)/g)) {
+    sum += m[2] === 'rem' ? parseFloat(m[1]) * 16 : parseFloat(m[1]);
+  }
+  return sum;
+}
+
 /** Custom properties that are set from TypeScript at runtime, never in a stylesheet. */
 const ALLOWED_RUNTIME = new Set<string>([
   '--path-length', // SVG stroke animation, set by the component
@@ -36,10 +81,6 @@ function walk(dir: string, out: string[] = []): string[] {
     }
   }
   return out;
-}
-
-function stripComments(css: string): string {
-  return css.replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 const allCss = walk(CLIENT_ROOT);
@@ -306,45 +347,6 @@ describe('HUD bottom stack clears the command bar (issue 875)', () => {
     readFileSync(join(CLIENT_ROOT, 'components/hud/WorldEventTicker.module.css'), 'utf8')
   );
 
-  /** Declaration block text for `selector {`, e.g. rule(bar, '.tiles'). */
-  function rule(css: string, selector: string): string {
-    const start = css.indexOf(`${selector} {`);
-    expect(start).toBeGreaterThanOrEqual(0);
-    const open = css.indexOf('{', start);
-    const close = css.indexOf('}', open);
-    return css.slice(open + 1, close);
-  }
-
-  /** px value of a `prop: NNpx` declaration inside a block. */
-  function px(block: string, prop: string): number {
-    const match = block.match(new RegExp(`${prop}\\s*:\\s*([0-9.]+)px`));
-    expect(match).not.toBeNull();
-    return parseFloat(match![1]);
-  }
-
-  /** Raw value text of a top-level `:root` custom property in design-tokens.css. */
-  function tokenExpr(name: string): string {
-    const match = tokens.match(new RegExp(`${name}\\s*:\\s*([^;]+);`));
-    expect(match).not.toBeNull();
-    return match![1].trim();
-  }
-
-  /** Resolve a token expression to a px number, substituting var(--x) recursively. */
-  function resolve(expr: string): number {
-    let text = expr;
-    let guard = 0;
-    while (/var\(\s*--[a-zA-Z0-9-]+\s*\)/.test(text) && guard < 10) {
-      text = text.replace(/var\(\s*(--[a-zA-Z0-9-]+)\s*\)/g, (_m, name: string) => tokenExpr(name));
-      guard += 1;
-    }
-    text = text.replace(/calc\(([^()]*)\)/g, '($1)');
-    let sum = 0;
-    for (const m of text.matchAll(/([0-9.]+)(px|rem)/g)) {
-      sum += m[2] === 'rem' ? parseFloat(m[1]) * 16 : parseFloat(m[1]);
-    }
-    return sum;
-  }
-
   it('the bar geometry is read from CommandBar.module.css, not assumed', () => {
     expect(px(rule(bar, '.search'), 'height')).toBe(44);
     expect(px(rule(bar, '.modeRow'), 'height')).toBe(48);
@@ -435,10 +437,6 @@ describe('HUD bottom stack clears the command bar (issue 875)', () => {
       expect(contextBottom).toBeGreaterThanOrEqual(space4 + barHeightWithMode);
       expect(contextBottom).toBeGreaterThanOrEqual(space4 + barHeightNoMode);
 
-      const stripHeight = px(rule(ctx, '.strip'), 'min-height') + 2 * 1;
-      const tickerBottom = resolve(tokenExpr('--world-ticker-bottom'));
-      expect(tickerBottom).toBeGreaterThanOrEqual(contextBottom + stripHeight);
-
       const mediaBlocks = bar.match(/@media[^{]*\{[\s\S]*?\n\}\s*\n\}/g) ?? [];
       for (const block of mediaBlocks) {
         expect(block).not.toMatch(/height\s*:/);
@@ -446,20 +444,181 @@ describe('HUD bottom stack clears the command bar (issue 875)', () => {
     }
   );
 
-  it('both strips consume the derived tokens, with no px literal of their own', () => {
+  it('the context strip consumes the derived token, with no px literal of its own; the ticker declares no bottom at all', () => {
     const stripBlock = rule(ctx, '.strip');
     expect(stripBlock).toMatch(/bottom:\s*var\(--context-strip-bottom\)/);
     expect(stripBlock).not.toMatch(/bottom:\s*calc\([^)]*\d+px/);
 
     const tickerBlock = rule(ticker, '.ticker');
-    expect(tickerBlock).toMatch(/bottom:\s*var\(--world-ticker-bottom\)/);
-    expect(tickerBlock).not.toMatch(/bottom:\s*calc\([^)]*\d+px/);
+    expect(tickerBlock).not.toMatch(/bottom\s*:/);
   });
 
-  it('mobile keeps the exact resolved offsets it always had', () => {
+  it('mobile keeps the exact resolved offset it always had', () => {
     const mobileMatch = tokens.match(/@media \(max-width: 1023px\) \{\s*:root \{([\s\S]*?)\}\s*\}/);
     expect(mobileMatch).not.toBeNull();
     expect(mobileMatch![1]).toMatch(/--context-strip-bottom:\s*134px/);
-    expect(mobileMatch![1]).toMatch(/--world-ticker-bottom:\s*168px/);
+  });
+});
+
+describe('world event ticker sits in the top band (issue 889)', () => {
+  const ticker = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/hud/WorldEventTicker.module.css'), 'utf8')
+  );
+  const statusPill = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/hud/StatusPill.module.css'), 'utf8')
+  );
+  const chaseBadge = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/chat/ChaseBadge.module.css'), 'utf8')
+  );
+  const mobileInfoBar = stripComments(
+    readFileSync(join(CLIENT_ROOT, 'components/mobile/MobileInfoBar.module.css'), 'utf8')
+  );
+  const minimapUi = readFileSync(join(CLIENT_ROOT, 'ui/minimap-ui.ts'), 'utf8');
+
+  /** px value of a `prop: NNpx` declaration inside a block. */
+  function px(block: string, prop: string): number {
+    const match = block.match(new RegExp(`${prop}\\s*:\\s*([0-9.]+)px`));
+    expect(match).not.toBeNull();
+    return parseFloat(match![1]);
+  }
+
+  /** Declaration block text for `selector {`, e.g. rule(bar, '.tiles'). */
+  function rule(css: string, selector: string): string {
+    const start = css.indexOf(`${selector} {`);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const open = css.indexOf('{', start);
+    const close = css.indexOf('}', open);
+    return css.slice(open + 1, close);
+  }
+
+  /** px value of a `--space-N` token, read from the token file. */
+  function space(n: number): number {
+    const match = tokensCss.match(new RegExp(`--space-${n}:\\s*([0-9.]+)rem`));
+    expect(match).not.toBeNull();
+    return parseFloat(match![1]) * 16;
+  }
+
+  function panelWidthAt(viewport: number): number {
+    if (viewport < 1400) return 420;
+    return Math.min(Math.max(472, viewport * 0.3), 1000);
+  }
+
+  /** Content of the first `@media <query> { ... }` block, brace-balanced. */
+  function mediaBlock(css: string, query: string): string {
+    const start = css.indexOf(query);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const open = css.indexOf('{', start);
+    let depth = 1;
+    let i = open + 1;
+    while (depth > 0 && i < css.length) {
+      if (css[i] === '{') depth += 1;
+      else if (css[i] === '}') depth -= 1;
+      i += 1;
+    }
+    return css.slice(open + 1, i - 1);
+  }
+
+  it('.ticker anchors on --world-ticker-top, declares no bottom, and uses --z-ticker', () => {
+    const tickerBlock = rule(ticker, '.ticker');
+    expect(tickerBlock).toMatch(/top:\s*var\(--world-ticker-top\)/);
+    expect(tickerBlock).not.toMatch(/bottom\s*:/);
+    expect(tickerBlock).toMatch(/z-index:\s*var\(--z-ticker\)/);
+  });
+
+  it('the resolved --world-ticker-top is at or below both StatusPill and ChaseBadge bottom edges', () => {
+    const pillBlock = rule(statusPill, '.pill');
+    const pillTop = space(3);
+    expect(pillBlock).toMatch(/top:\s*var\(--space-3\)/);
+    const pillHeight = px(pillBlock, 'height');
+    expect(pillHeight).toBe(40);
+
+    const badgeBlock = rule(chaseBadge, '.badge');
+    const badgeTop = space(2);
+    expect(badgeBlock).toMatch(/top:\s*var\(--space-2\)/);
+    const badgeHeight = px(badgeBlock, 'height');
+    expect(badgeHeight).toBe(28);
+
+    const tickerTop = resolve(tokenExpr('--world-ticker-top'));
+
+    expect(tickerTop).toBeGreaterThanOrEqual(pillTop + pillHeight);
+    expect(tickerTop).toBeGreaterThanOrEqual(badgeTop + badgeHeight);
+  });
+
+  it('.shifted carries the same right-edge expression as StatusPill.shifted and sets no top/bottom/left/margin', () => {
+    const tickerShifted = rule(ticker, '.shifted');
+    const pillShifted = rule(statusPill, '.shifted');
+
+    const tickerRight = tickerShifted.match(/right:\s*([^;]+);/);
+    const pillRight = pillShifted.match(/right:\s*([^;]+);/);
+    expect(tickerRight).not.toBeNull();
+    expect(pillRight).not.toBeNull();
+    expect(tickerRight![1].trim()).toBe(pillRight![1].trim());
+
+    expect(tickerShifted).not.toMatch(/top\s*:/);
+    expect(tickerShifted).not.toMatch(/bottom\s*:/);
+    expect(tickerShifted).not.toMatch(/left\s*:/);
+    expect(tickerShifted).not.toMatch(/margin\s*:/);
+  });
+
+  it.each([1024, 2400])(
+    'at %dpx desktop: the ticker clears the docked minimap on the left, stays clear of the sheet when shifted, and the shifted width is positive',
+    (viewport) => {
+      const desktopBlock = mediaBlock(ticker, '@media (min-width: 1024px)');
+      const tickerLeftMatch = desktopBlock.match(/left:\s*calc\(var\(--minimap-size\)\s*\+\s*var\(--space-10\)\)/);
+      expect(tickerLeftMatch).not.toBeNull();
+
+      const desktopPadMatch = minimapUi.match(/DESKTOP_PAD\s*=\s*([0-9.]+)/);
+      expect(desktopPadMatch).not.toBeNull();
+      const desktopPad = parseFloat(desktopPadMatch![1]);
+      const minimapSize = resolve(tokenExpr('--minimap-size'));
+      const minimapRight = desktopPad + minimapSize;
+
+      const tickerLeft = minimapSize + space(10);
+      expect(tickerLeft).toBeGreaterThanOrEqual(minimapRight);
+
+      const panelWidth = panelWidthAt(viewport);
+      const sheetInset = space(4);
+      const sheetLeft = viewport - (panelWidth + sheetInset);
+      const shiftedRight = panelWidth + sheetInset + space(4);
+      const tickerRightEdge = viewport - shiftedRight;
+      expect(tickerRightEdge).toBeLessThanOrEqual(sheetLeft);
+
+      const shiftedWidth = tickerRightEdge - tickerLeft;
+      expect(shiftedWidth).toBeGreaterThan(0);
+    }
+  );
+
+  it('the mobile override defines --world-ticker-top, resolving to at or below MobileInfoBar clearance', () => {
+    const mobileMatch = tokensCss.match(/@media \(max-width: 1023px\) \{\s*:root \{([\s\S]*?)\}\s*\}/);
+    expect(mobileMatch).not.toBeNull();
+    const mobileBlock = mobileMatch![1];
+    expect(mobileBlock).toMatch(/--world-ticker-top\s*:/);
+
+    const infoBarBlock = rule(mobileInfoBar, '.bar');
+    const infoBarHeight = px(infoBarBlock, 'height');
+    expect(infoBarHeight).toBe(36);
+
+    const match = mobileBlock.match(/--world-ticker-top:\s*([^;]+);/);
+    expect(match).not.toBeNull();
+    // --sai-top resolves to 0 via env()'s 0px fallback.
+    const resolved = resolve(match![1].replace(/var\(--sai-top\)/g, '0px'));
+
+    expect(resolved).toBeGreaterThanOrEqual(infoBarHeight);
+  });
+
+  it('no stylesheet under src/client still references the retired bottom-band tokens', () => {
+    // Built at runtime, not written as a literal — this token is retired repo-wide (issue 889).
+    const retiredTokens = [
+      ['--world-ticker', 'bottom'].join('-'),
+      ['--hud-strip', 'height'].join('-'),
+    ];
+    const offenders: string[] = [];
+    for (const f of allCss) {
+      const css = stripComments(readFileSync(f, 'utf8'));
+      if (retiredTokens.some((t) => css.includes(t))) {
+        offenders.push(relative(CLIENT_ROOT, f));
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

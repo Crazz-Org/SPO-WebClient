@@ -2,6 +2,8 @@
  * WorldEventTicker — the newest world event (`PickEvent`,
  * `Interface Server/InterfaceServer.pas:166`), where the legacy toolbar
  * scrolled events continuously (`Voyager/URLHandlers/ToolbarHandlerViewer.pas:207-271`).
+ * Lives in the top band, directly under `StatusPill`, and shifts with the open sheet the
+ * same way `StatusPill.shifted` does (issue 889).
  *
  * `PickEvent` pops the event off the tycoon's queue destructively
  * (`Kernel/Kernel.pas:11255-11271`) — a poll nobody reads throws the event
@@ -28,6 +30,7 @@
 import { useEffect, useState } from 'react';
 import { useClient } from '../../context/ClientContext';
 import { useMapStore } from '../../store/map-store';
+import { useUiStore } from '../../store/ui-store';
 import type { WorldEventLine } from '../../../shared/types';
 import styles from './WorldEventTicker.module.css';
 
@@ -57,6 +60,8 @@ export function WorldEventTicker() {
     };
   }, [client]);
 
+  const surfaceOpen = useUiStore((s) => s.stack.length > 0 && !s.connectMode.active);
+
   if (!event || !event.text.trim()) return null;
 
   const label = `${event.date} — ${event.text}`;
@@ -68,8 +73,10 @@ export function WorldEventTicker() {
     useMapStore.getState().recordPosition(event.x!, event.y!);
   };
 
+  const tickerClass = [styles.ticker, surfaceOpen ? styles.shifted : ''].filter(Boolean).join(' ');
+
   return (
-    <div className={styles.ticker} role="status" aria-live="polite">
+    <div className={tickerClass} role="status" aria-live="polite">
       {hasCoords ? (
         <button
           type="button"

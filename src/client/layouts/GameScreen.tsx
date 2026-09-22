@@ -4,7 +4,7 @@
  * The canvas fills 100% of the viewport (managed by client.ts).
  * All UI is absolutely positioned overlays:
  * - StatusPill (z-350): top, player status in one line
- * - WorldEventTicker (z-350): just above ContextStatusStrip, the newest world event (#612)
+ * - WorldEventTicker (z-340): top band, under StatusPill, the newest world event (#612, #889)
  * - ContextStatusStrip (z-350): just above CommandBar, the town sentence under the camera
  * - CommandBar (z-350): bottom, search / mode bar + seven tiles
  * - RightRail (z-200): map controls
@@ -71,7 +71,7 @@ export function GameScreen() {
       {/* ChaseBadge — top-right, shown only while following another player's camera */}
       <ChaseBadge />
 
-      {/* WorldEventTicker — the newest world event (PickEvent), #612 */}
+      {/* WorldEventTicker — top band, under StatusPill; the newest world event (PickEvent), #612 #889 */}
       <WorldEventTicker />
 
       {/* ContextStatusStrip — the server's sentence for the town under the camera */}
