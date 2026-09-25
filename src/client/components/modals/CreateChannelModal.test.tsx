@@ -5,7 +5,9 @@
  * `btnCreate.Enabled` (`NewChannelForm.pas:57-60`): a non-empty name and two
  * passwords that agree, compared case-INSENSITIVELY like the server does.
  * A refusal from the server leaves the modal mounted so the player can read
- * why and correct the form.
+ * why and correct the form — and shows the gateway's own sentence, which
+ * `client.ts` carries on `serverMessage` (the Error's message is only the
+ * generic text for the code, "Unknown error" for most of them).
  */
 
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
@@ -13,6 +15,20 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
 import { CreateChannelModal } from './CreateChannelModal';
+import type { WebSocket } from 'ws';
+import { RdoProtocol } from '@/server/rdo';
+import { makeSessionCtx } from '@/server/__tests__/session/fake-session-context';
+import { createChatChannel } from '@/server/session/chat-handler';
+import { handleChatCreateChannel } from '@/server/ws-handlers/chat-handlers';
+import type { WsHandlerContext } from '@/server/ws-handlers/types';
+import { getErrorMessage } from '@/shared/error-codes';
+import { WsMessageType, type WsMessage } from '@/shared/types';
+import { RdoMock } from '@/mock-server/rdo-mock';
+import {
+  createCreateChannelScenario,
+  TAKEN_CHANNEL,
+  CHANNEL_PASSWORD,
+} from '@/mock-server/scenarios/create-channel-scenario';
 
 function openModal() {
   useUiStore.getState().openModal('createChannel');
@@ -124,6 +140,21 @@ describe('CreateChannelModal — submitting', () => {
     expect(useUiStore.getState().modal).toBe('createChannel');
   });
 
+  it('shows the gateway sentence carried on serverMessage, not the generic "Unknown error"', async () => {
+    const sentence = 'Channel "Traders" already exists and its password does not match';
+    // The shape `handleMessage` in client.ts builds for a RESP_ERROR.
+    const rejection = Object.assign(new Error('Unknown error'), { code: 1, serverMessage: sentence });
+    const { callbacks } = spiedCreate(rejection);
+    renderWithProviders(<CreateChannelModal />, { clientCallbacks: callbacks });
+
+    fill('Traders', 'wrong', 'wrong');
+    fireEvent.click(createBtn());
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(sentence));
+    expect(screen.getByRole('alert').textContent).not.toContain('Unknown error');
+    expect(useUiStore.getState().modal).toBe('createChannel');
+  });
+
   it('sends nothing when an invalid form is submitted anyway', () => {
     const { onCreateChannel, callbacks } = spiedCreate();
     renderWithProviders(<CreateChannelModal />, { clientCallbacks: callbacks });
@@ -177,5 +208,66 @@ describe('CreateChannelModal — submitting', () => {
     renderWithProviders(<CreateChannelModal />);
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(useUiStore.getState().modal).toBeNull();
+  });
+});
+
+// ===========================================================================
+// L1 — the refusal travels mock → gateway → ws handler → browser → modal
+// ===========================================================================
+
+describe('CreateChannelModal — a taken name refused by the server (L1)', () => {
+  beforeEach(openModal);
+
+  it('shows the server-side sentence for res="#13"', async () => {
+    const rdoMock = new RdoMock();
+    rdoMock.addScenario(createCreateChannelScenario(undefined, { takenResult: 13 }).rdo);
+    const fake = makeSessionCtx();
+    fake.respond((packet) => {
+      const frame = `${RdoProtocol.format(packet as never)};`;
+      const hit = rdoMock.match(frame);
+      return hit ? hit.response.replace(/^A\d+\s+/, '') : new Error(`L1: no exchange for ${frame}`);
+    });
+
+    const onCreateChannel = jest.fn(async (name: unknown, password: unknown) => {
+      const sent: Array<Record<string, unknown>> = [];
+      const ws = {
+        send(payload: string): void {
+          sent.push(JSON.parse(payload) as Record<string, unknown>);
+        },
+      } as unknown as WebSocket;
+      const wsCtx = {
+        ws,
+        session: {
+          createChatChannel: (n: string, p: string) => createChatChannel(fake.ctx, n, p),
+        },
+      } as unknown as WsHandlerContext;
+
+      await handleChatCreateChannel(wsCtx, {
+        type: WsMessageType.REQ_CHAT_CREATE_CHANNEL,
+        wsRequestId: '1',
+        channelName: name,
+        password,
+      } as unknown as WsMessage);
+
+      const [frame] = sent;
+      if (frame.type === WsMessageType.RESP_ERROR) {
+        // Exactly what `handleMessage` in client.ts builds from a RESP_ERROR.
+        const code = frame.code as number;
+        const err = new Error(getErrorMessage(code)) as Error & { code: number; serverMessage: string };
+        err.code = code;
+        err.serverMessage = frame.errorMessage as string;
+        throw err;
+      }
+    });
+    const callbacks = createSpiedCallbacks({ onCreateChannel: onCreateChannel as (...a: unknown[]) => unknown });
+    renderWithProviders(<CreateChannelModal />, { clientCallbacks: callbacks });
+
+    fill(TAKEN_CHANNEL, CHANNEL_PASSWORD, CHANNEL_PASSWORD);
+    fireEvent.click(createBtn());
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent)
+      .toBe('Channel "Podan Merchants" already exists and its password does not match'));
+    expect(onCreateChannel).toHaveBeenCalledWith(TAKEN_CHANNEL, CHANNEL_PASSWORD);
+    expect(useUiStore.getState().modal).toBe('createChannel');
   });
 });

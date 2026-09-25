@@ -137,6 +137,14 @@ export class ChaseError extends Error {
   }
 }
 
+/** A CreateChannel refusal the player can act on (the name is taken and the fall-through JoinChannel refused). Carries the server's own code. */
+export class ChannelCreateError extends Error {
+  constructor(readonly code: number, message: string) {
+    super(message);
+    this.name = 'ChannelCreateError';
+  }
+}
+
 /**
  * The two refusals a player can actually do something about
  * (`InterfaceServer.pas:1542-1552`): a wrong password, and a channel already at
@@ -228,10 +236,10 @@ export async function createChatChannel(
     return;
   }
   if (result === '13') {
-    throw new Error(`Channel "${channelName}" already exists and its password does not match`);
+    throw new ChannelCreateError(ERROR_InvalidPassword, `Channel "${channelName}" already exists and its password does not match`);
   }
   if (result === '32') {
-    throw new Error(`Channel "${channelName}" already exists and is full`);
+    throw new ChannelCreateError(ERROR_NotEnoughRoom, `Channel "${channelName}" already exists and is full`);
   }
   throw new Error(`Failed to create channel: ${result}`);
 }
