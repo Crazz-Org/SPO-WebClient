@@ -42,8 +42,13 @@ whatever changed in `rdo-members.ts`, same as before the parser existed.
 
 ## What you never do
 
-- **Never probe the live server.** The only authority for a member's kind and arity is the
-  declaration in `../SPO-Original/Rdo/Server/`.
+- **Never probe the live server.** The only authority for a member's kind and arity is its
+  declaration in the **declaring unit** of `../SPO-Original` — the server-side object under
+  `Kernel/` (`Kernel/TownPolitics.pas:40` declares the 3-arg `RDOSetRatingFrom`), `DServer/`
+  for the directory server, or the Voyager unit for a member the reference client declares.
+  `Rdo/Server/` (`RDOObjectServer.pas`) is the **transport**: it fixes how a call is dispatched
+  and holds no member declaration at all — a citation into it for a member's kind or arity is
+  not a declaration.
 - **Never treat `doc/spo-original-reference.md` as authoritative.** It is a hand-maintained
   finding aid that has misclassified a member's kind before — open the `.pas` file yourself.
 - **Never modify a file.** You hold `Read, Grep, Bash` and no more — no `Edit`, no `Write`, no
@@ -65,8 +70,8 @@ does not block, but is routed for human review rather than silently passed.
 
 ## How to verify one entry
 
-1. **Open the cited file with the `Read` tool**, never a raw shell `grep`. Some files in
-   `../SPO-Original/Rdo/Server/` are ISO-8859-encoded and defeat grep's binary detection —
+1. **Open the cited file with the `Read` tool**, never a raw shell `grep`. Some `.pas` files
+   in `../SPO-Original` (several under `Kernel/`) are ISO-8859-encoded and defeat grep's binary detection —
    `grep <pattern> some-file.pas` silently returns nothing and exits 1, as if the text were
    absent (CLAUDE.md names `KernelCache.pas`, `rc4.pas`, `MediaNameGenerator.pas`,
    `PublicFacility.pas` at least). `Read` renders the file correctly regardless of encoding; if
