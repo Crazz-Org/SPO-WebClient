@@ -48,7 +48,7 @@ pas une re-création d'identité visuelle. À fournir tel quel, Claude Design s'
 
 1. **Connexion** — AuthStage → WorldStage → ZoneStage → CompanyStage, AuthErrorModal, ServerStartupScreen, MapLoadingScreen
 2. **HUD de jeu** — InfoWidget, LeftRail, RightRail, ChatStrip, VersionBadge, OverlayMenu
-3. **Panneaux droits** — BuildingInspector (header, menu, QuickStats, RichDetails, Research, Revenue, Workforce, Supplies, Products, Inputs), Mail, Search (+ TycoonProfileView), Transport, Politics (Overview, Population, Elections, Administration, Taxes, Jobs, Ministries, Residentials, Services, Towns, Votes, Campaign, RatingsRail, RulerCard)
+3. **Panneaux droits** — BuildingInspector (header, menu, QuickStats, RichDetails, Research, Revenue, Workforce, Supplies, Products, Inputs), Mail, Search (+ TycoonProfileView), Politics (Overview, Population, Elections, Administration, Taxes, Jobs, Ministries, Residentials, Services, Towns, Votes, Campaign, RatingsRail, RulerCard)
 4. **Panneaux gauches** — EmpireOverview, ProfilePanel, FacilityList, FinancialSummary, Map Overlays
 5. **Modales** — BuildMenu, ZoneTypePicker, BuildingInspectorModal, SupplierSearchModal, CompanyCreationModal, ConnectionPickerModal, SettingsDialog, NewspaperModal, ChangelogModal, ServerSwitchOverlay, ConfirmDialog / PromptDialog (et leur empilement `modalBeneath`)
 6. **Commande** — CommandPalette (Cmd+K)

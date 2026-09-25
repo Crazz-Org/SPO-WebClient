@@ -76,7 +76,7 @@
       "x": 2960,
       "y": 1000,
       "w": 520,
-      "text": "CARTE — tuile « Map » (M) de la barre de commande, desktop et mobile : ouvre la surface Map de la feuille (PR #67/#68) — minicarte de données (terrain, bâtiments chargés, rectangle de vue), clic = sauter, zoom 1–8×, Back/Next, Nearest Town Hall, Bookmarks locaux. Le losange ancré reste via Plus › Docked minimap. Hors lot : brouillard, couleur par classe ; favoris serveur = ticket OB-33."
+      "text": "CARTE — tuile « Map » (M) de la barre de commande, desktop et mobile : ouvre la surface Map de la feuille (PR #67/#68) — minicarte de données (terrain, bâtiments chargés, rectangle de vue), clic = sauter, zoom 1–8×, Back/Next, Nearest Town Hall, Bookmarks locaux. Le losange ancré reste via Plus › Docked minimap. Hors lot : favoris serveur = ticket OB-33."
     }
   ],
   "launch": {

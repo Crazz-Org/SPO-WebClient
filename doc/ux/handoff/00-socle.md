@@ -240,8 +240,8 @@ Tuile active : fond `--accent-gold-subtle`, bordure `--accent-gold-dark`, texte 
 Mobile : `left/right: 8px; bottom: 8px`, recherche 44 px + 5 tuiles (sans Plus → dans Carte /
 Empire ; Zones et Routes sous Construire comme aujourd'hui).
 **Porté (PR #70)** : `BottomNav` = les **six** tuiles du desktop (Build · Map · Chat · Government · Mail ·
-More) — Chat reste une tuile (social mobile) et More garde ce que la spec n'avait pas placé (Search,
-Transport, Profile, My facilities, calques, zoom, réglages, serveur) ; la rangée de recherche est
+More) — Chat reste une tuile (social mobile) et More garde ce que la spec n'avait pas placé (Search, Profile,
+My facilities, calques, zoom, réglages, serveur) ; la rangée de recherche est
 une pastille 44 px au-dessus des tuiles sur l'onglet carte (`MobileSearchPill` → palette). Écart voulu.
 
 **Barre de mode** : pendant placement / route / zone, la ligne recherche devient la barre de
