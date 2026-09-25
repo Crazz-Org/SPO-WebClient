@@ -285,3 +285,17 @@ export function rdoSet(member: RdoMemberName, targetId: string | number, value: 
     value,
   });
 }
+
+/**
+ * Members whose catalogue kind is `procedure` — the only kind that may be sent
+ * fire-and-forget (`.toFrame()`, no QueryId). `"^"` with no rid on a `function`
+ * builds a reply with no destination: the server crashes.
+ */
+export type RdoProcedureName = {
+  [K in RdoMemberName]: (typeof RDO_MEMBERS)[K]['kind'] extends 'procedure' ? K : never;
+}[RdoMemberName];
+
+/** True when `name` is catalogued with kind `procedure`. */
+export function isCataloguedRdoProcedure(name: string): name is RdoProcedureName {
+  return isCataloguedRdoMember(name) && RDO_MEMBERS[name].kind === 'procedure';
+}

@@ -1,4 +1,5 @@
-import { KNOWN_RDO_COMMANDS } from './building-property-handler';
+import { KNOWN_RDO_COMMANDS, RDO_SET_PROPERTIES } from './building-property-handler';
+import { RDO_MEMBERS } from '../../shared/rdo-members';
 import * as templateGroups from '../../shared/building-details/template-groups';
 import type { RdoCommandMapping } from '../../shared/building-details/property-definitions';
 
@@ -43,5 +44,34 @@ describe('UI command vocabulary vs gateway allowlist', () => {
       .filter(command => !KNOWN_RDO_COMMANDS.has(command));
 
     expect(orphans).toEqual([]);
+  });
+});
+
+describe('KNOWN_RDO_COMMANDS kinds', () => {
+  // Every command on the list is emitted with rdoCall(...) — "*" with no QueryId,
+  // safe only on a procedure. The one exemption is derived from the routing
+  // constant that sends a name to rdoSet before the call branch is reached.
+  const callable = [...KNOWN_RDO_COMMANDS].filter((c) => !RDO_SET_PROPERTIES.has(c));
+  const members = RDO_MEMBERS as Record<string, { kind: string; access?: readonly string[] }>;
+  const isCatalogued = (c: string): boolean => Object.prototype.hasOwnProperty.call(RDO_MEMBERS, c);
+
+  it('every call-routed entry is a catalogued procedure', () => {
+    const offenders = callable.filter((c) => !isCatalogued(c) || members[c].kind !== 'procedure');
+    expect(offenders).toEqual([]);
+  });
+
+  it('is not vacuous', () => {
+    expect(callable.length).toBeGreaterThan(30);
+  });
+
+  it('every RDO_SET_PROPERTIES entry is a catalogued settable accessor', () => {
+    const offenders = [...RDO_SET_PROPERTIES].filter(
+      (c) => !isCatalogued(c) || members[c].kind !== 'accessor' || !(members[c].access ?? []).includes('set')
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('the set-routed exemption is exactly RDOAcceptCloning', () => {
+    expect([...RDO_SET_PROPERTIES]).toEqual(['RDOAcceptCloning']);
   });
 });

@@ -546,10 +546,8 @@ describe('RdoCommand', () => {
       expect(RdoCommand.sel(100).call('M').build()).toBe('C sel 100 call M "*";');
     });
 
-    it('never produces the one unsafe form — "^" without a QueryId', () => {
-      // withRequestId only ever ADDS a QueryId, so it cannot produce the unsafe
-      // combination. Reaching "^" without a rid still requires an explicit
-      // method() call, which is unchanged behaviour.
+    it('withRequestId puts the QueryId at the head of the frame', () => {
+      // withRequestId only ever ADDS a QueryId, placed right after the "C".
       const cmd = RdoCommand.sel(100).call('M').withRequestId(9).build();
       expect(cmd.startsWith('C 9 ')).toBe(true);
     });
@@ -574,7 +572,8 @@ describe('RdoCommand', () => {
       expect(cmd).toBe('C sel 100575368 call RDOSetSalaries "*" "#100","#120","#150";');
     });
 
-    it('should build RDOLogonClient command', () => {
+    it('builder example: explicit method() yields "^" (not a production form — RDOLogonClient is a procedure, sent "*" via rdoCall)', () => {
+      // Exercises the RdoCommand builder only; production code never emits this frame.
       const cmd = RdoCommand.sel(123)
         .call('RDOLogonClient')
         .method()
