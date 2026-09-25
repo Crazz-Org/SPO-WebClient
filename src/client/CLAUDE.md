@@ -76,3 +76,7 @@ Schema: `src/shared/bug-report-schema.ts`.
 ## App Entry Point
 
 `App.tsx` routes between `LoginScreen` and `GameScreen` based on `useGameStore.status`. Shows `ServerStartupScreen` until backend is ready.
+
+## Legacy images
+
+Cross-origin legacy images go through `/proxy-image`; the CSP blocks the rest and no test layer will tell you.

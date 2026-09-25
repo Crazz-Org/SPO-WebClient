@@ -27,6 +27,7 @@ import { sharesRoadCircuit } from '../../shared/road-circuits';
 import { toErrorMessage } from '../../shared/error-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
 import { withLangId } from '../../shared/language';
+import { toProxyUrl } from '../../shared/proxy-utils';
 import { redactUrlCredentials } from '../url-redact';
 import { requireDaParams } from './asp-da-params';
 
@@ -335,11 +336,12 @@ async function readElectionsOff(ctx: SessionContext): Promise<boolean> {
 /**
  * `mayordata.asp:39` / `opositiondata.asp:53` — the same portrait path for a
  * ruler and for a candidate. Only the gateway knows the world IP, so it is
- * built here. Empty name → empty string, never a URL to nobody.
+ * built here, then routed through `/proxy-image`: the browser CSP blocks the
+ * raw cross-origin URL. Empty name → empty string, never a URL to nobody.
  */
 function portraitUrl(ctx: SessionContext, worldIp: string, tycoonName: string): string {
   if (!tycoonName) return '';
-  return `http://${worldIp}/fivedata/userinfo/${encodeURIComponent(ctx.currentWorldInfo?.name || '')}/${encodeURIComponent(tycoonName)}/largephoto.jpg`;
+  return toProxyUrl(`http://${worldIp}/fivedata/userinfo/${encodeURIComponent(ctx.currentWorldInfo?.name || '')}/${encodeURIComponent(tycoonName)}/largephoto.jpg`);
 }
 
 interface RulerData {

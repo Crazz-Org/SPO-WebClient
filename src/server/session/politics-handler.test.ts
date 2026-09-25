@@ -1155,8 +1155,8 @@ describe('getPoliticsData', () => {
       ifelRating: 45,
       mandateNo: 2,
       // `mayordata.asp:39` composes the same path; only the gateway knows the
-      // world's IP, so the URL is built here rather than in the browser.
-      rulerPhotoUrl: 'http://158.69.153.134/fivedata/userinfo/Shamba/Rio/largephoto.jpg',
+      // world's IP, so the URL is built here and proxied (the CSP blocks it raw).
+      rulerPhotoUrl: '/proxy-image?url=' + encodeURIComponent('http://158.69.153.134/fivedata/userinfo/Shamba/Rio/largephoto.jpg'),
       popularRatings: [{ name: 'Unemployment', value: 85 }],
       ifelRatings: [{ name: 'IFEL A', value: 40 }],
       tycoonsRatings: [{ name: 'Tycoon B', value: 12, id: '3' }],
@@ -1356,9 +1356,11 @@ describe('getPoliticsData', () => {
     );
     expect(data.campaignCount).toBe(3);
     expect(data.campaigns).toEqual([
-      { candidateName: 'Alice', rating: 61, prestige: 2000, photoUrl: 'http://158.69.153.134/fivedata/userinfo/Shamba/Alice/largephoto.jpg' },
-      { candidateName: 'Carol', rating: 0, prestige: 0, photoUrl: 'http://158.69.153.134/fivedata/userinfo/Shamba/Carol/largephoto.jpg' },
+      { candidateName: 'Alice', rating: 61, prestige: 2000, photoUrl: '/proxy-image?url=' + encodeURIComponent('http://158.69.153.134/fivedata/userinfo/Shamba/Alice/largephoto.jpg') },
+      { candidateName: 'Carol', rating: 0, prestige: 0, photoUrl: '/proxy-image?url=' + encodeURIComponent('http://158.69.153.134/fivedata/userinfo/Shamba/Carol/largephoto.jpg') },
     ]);
+    expect(data.rulerPhotoUrl.startsWith('/proxy-image?url=')).toBe(true);
+    expect(data.campaigns[0].photoUrl.startsWith('/proxy-image?url=')).toBe(true);
   });
 
   it('encodes a candidate name with a space in the portrait URL', async () => {
@@ -1373,7 +1375,7 @@ describe('getPoliticsData', () => {
     const data = await getPoliticsData(fake.ctx, 'T', 1, 2);
 
     expect(data.campaigns[0].photoUrl).toBe(
-      'http://158.69.153.134/fivedata/userinfo/Shamba/Ann%20Lee/largephoto.jpg',
+      '/proxy-image?url=' + encodeURIComponent('http://158.69.153.134/fivedata/userinfo/Shamba/Ann%20Lee/largephoto.jpg'),
     );
   });
 

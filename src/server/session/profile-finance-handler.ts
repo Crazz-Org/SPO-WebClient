@@ -22,6 +22,7 @@ import { extractAllActionUrls } from '../asp-url-extractor';
 import { toErrorMessage } from '../../shared/error-utils';
 import { fetchWithTimeout } from '../fetch-with-timeout';
 import { withLangId } from '../../shared/language';
+import { toProxyUrl } from '../../shared/proxy-utils';
 import { requireDaParams } from './asp-da-params';
 import { isCacheUnavailablePage } from './asp-cache-unavailable';
 
@@ -155,7 +156,7 @@ export async function fetchTycoonProfile(ctx: SessionContext, tycoonName?: strin
           : rawUrl.startsWith('/')
             ? `http://${worldIp}${rawUrl}`
             : `${baseUrl}/${rawUrl}`;
-        profile.photoUrl = `/proxy-image?url=${encodeURIComponent(fullUrl)}`;
+        profile.photoUrl = toProxyUrl(fullUrl);
       }
     }
   } catch (e: unknown) {
@@ -328,7 +329,7 @@ function parseCurriculumDetails(
   const badgeMatch = /images\/level(\w+)\.gif/i.exec(html);
   if (badgeMatch && baseUrl) {
     try {
-      currentLevelBadgeUrl = `/proxy-image?url=${encodeURIComponent(new URL(badgeMatch[0], baseUrl).href)}`;
+      currentLevelBadgeUrl = toProxyUrl(new URL(badgeMatch[0], baseUrl).href);
     } catch {
       // unusable page URL — no badge
     }
