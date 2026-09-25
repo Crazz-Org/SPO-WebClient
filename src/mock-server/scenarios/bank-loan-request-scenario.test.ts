@@ -82,7 +82,7 @@ describe('bank-loan-request scenario — the catalogue and the wire', () => {
 function makeCtx(result: number, proxyId: number | null = BANK_LOAN_TYCOON) {
   const { rdo } = createBankLoanRequestScenario(undefined, { result });
   const fake = makeSessionCtx({ sockets: ['construction'], fTycoonProxyId: proxyId });
-  (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([BANK_LOAN_BLOCK]);
+  (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([BANK_LOAN_BLOCK]); // substrate-exception: reads the cacher, which the fake stubs and which emits no frame, so no scenario can answer it
 
   const mock = new RdoMock();
   mock.addScenario(rdo);
@@ -126,14 +126,14 @@ describe('bank-loan-request scenario — the gateway drive', () => {
 
   it('throws when no building stands at the coordinates', async () => {
     const { fake } = makeCtx(0);
-    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([]);
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([]); // substrate-exception: reads the cacher, which the fake stubs and which emits no frame, so no scenario can answer it
 
     await expect(requestBankLoan(fake.ctx, X, Y, BANK_LOAN_RAW_AMOUNT)).rejects.toThrow(/No building found/);
   });
 
   it('connects the construction socket when it is not up yet', async () => {
     const { fake } = makeCtx(0);
-    (fake.ctx.getSocket as jest.Mock).mockReturnValue(undefined);
+    (fake.ctx.getSocket as jest.Mock).mockReturnValue(undefined); // substrate-exception: socket presence is connection state on the fake, not a frame, so no scenario can answer it
 
     await requestBankLoan(fake.ctx, X, Y, BANK_LOAN_RAW_AMOUNT);
 
@@ -142,7 +142,7 @@ describe('bank-loan-request scenario — the gateway drive', () => {
 
   it('answers -1 rather than a bogus ordinal when the block answers nothing readable', async () => {
     const fake = makeSessionCtx({ sockets: ['construction'] });
-    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([BANK_LOAN_BLOCK]);
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([BANK_LOAN_BLOCK]); // substrate-exception: reads the cacher, which the fake stubs and which emits no frame, so no scenario can answer it
     fake.respond(() => 'res="%"');
 
     expect(await requestBankLoan(fake.ctx, X, Y, BANK_LOAN_RAW_AMOUNT)).toEqual({ result: -1 });

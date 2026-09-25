@@ -28,8 +28,8 @@ const Y = 436;
  */
 function makeCtx(): FakeSessionCtx {
   const fake = makeSessionCtx({ sockets: ['construction'] });
-  fake.cacher.createObject.mockResolvedValue(TRADE_TARGETS.tempObject);
-  fake.cacher.getPropertyList.mockImplementation(async (_id: string, props: string[]) => {
+  fake.cacher.createObject.mockResolvedValue(TRADE_TARGETS.tempObject); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
+  fake.cacher.getPropertyList.mockImplementation(async (_id: string, props: string[]) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
     if (props[0] === 'CurrBlock') return [TRADE_TARGETS.currBlock, TRADE_TARGETS.objectId];
     return ['0'];
   });

@@ -86,12 +86,12 @@ async function readStateThroughMock(variant: TutorialAssignmentVariant) {
   mock.addScenario(scenario);
 
   const fake = makeSessionCtx({ cachedUsername: 'SPO_test3', sockets: ['construction'] });
-  fake.cacher.createObject.mockResolvedValue(TUTORIAL_TARGETS.tempObject);
-  fake.cacher.setPath.mockImplementation(async (id, path) => {
+  fake.cacher.createObject.mockResolvedValue(TUTORIAL_TARGETS.tempObject); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
+  fake.cacher.setPath.mockImplementation(async (id, path) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
     const result = mock.match(rdoCall('SetPath', id, RdoValue.string(path)).toFrame());
     if (!result) throw new Error(`L1: no exchange for SetPath ${path}`);
   });
-  fake.cacher.getPropertyList.mockImplementation(async (id, props) => {
+  fake.cacher.getPropertyList.mockImplementation(async (id, props) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
     const frame = rdoCall('GetPropertyList', id, RdoValue.string(props.join('\t') + '\t')).toFrame();
     const result = mock.match(frame);
     if (!result) throw new Error(`L1: no exchange for GetPropertyList ${props.join(',')}`);

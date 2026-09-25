@@ -65,7 +65,7 @@ describe('service-figures scenario — the catalogue and the wire', () => {
 describe('service-figures scenario — the drive', () => {
   function makeCtx() {
     const fake = makeSessionCtx({ sockets: ['construction'] });
-    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([SERVICE_FIGURES_BLOCK]);
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([SERVICE_FIGURES_BLOCK]); // substrate-exception: reads the cacher, which the fake stubs and which emits no frame, so no scenario can answer it
 
     const mock = new RdoMock();
     mock.addScenario(rdo);

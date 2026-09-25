@@ -59,8 +59,8 @@ function makeDriver() {
   rdoMock.addScenario(rdo);
 
   const fake: FakeSessionCtx = makeSessionCtx({ sockets: ['construction'] });
-  fake.cacher.getPropertyList.mockResolvedValue([WORKER_COUNTS_BLOCK]);
-  fake.cacher.setObject.mockResolvedValue(undefined);
+  fake.cacher.getPropertyList.mockResolvedValue([WORKER_COUNTS_BLOCK]); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
+  fake.cacher.setObject.mockResolvedValue(undefined); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
   setActiveInspectorForTest(fake.ctx, {
     tempObjectId: WORKER_COUNTS_TEMP_OBJECT,
     x: X,

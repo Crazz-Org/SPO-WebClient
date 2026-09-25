@@ -116,7 +116,7 @@ describe('auto-buy scenario — the ten header names', () => {
       if (packet.member === 'SetPath') return 'res="#-1"';
       return '';
     });
-    fake.cacher.getPropertyList.mockImplementation(
+    fake.cacher.getPropertyList.mockImplementation( // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
       async (_id: string, names: string[]) => names.map(n => HEADER[n] ?? ''),
     );
   });
@@ -173,8 +173,8 @@ describe('auto-buy scenario — the target on the wire', () => {
    */
   function makeCtx(selected = '1'): FakeSessionCtx {
     const fake = makeSessionCtx({ sockets: ['construction'] });
-    fake.cacher.createObject.mockResolvedValue(AUTO_BUY_TARGETS.tempObject);
-    fake.cacher.getPropertyList.mockImplementation(async (_id: string, props: string[]) => {
+    fake.cacher.createObject.mockResolvedValue(AUTO_BUY_TARGETS.tempObject); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
+    fake.cacher.getPropertyList.mockImplementation(async (_id: string, props: string[]) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
       if (props[0] === 'CurrBlock') return [AUTO_BUY_TARGETS.currBlock, AUTO_BUY_TARGETS.objectId];
       if (props[0] === 'InputCount') return ['1'];
       if (/^InputPath\d+$/.test(props[0])) return [AUTO_BUY_GATE_PATH];

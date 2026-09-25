@@ -97,12 +97,12 @@ describe('bank-tv-live-reads scenario — the drive', () => {
       fTycoonProxyId: BANK_LIVE_READS_TYCOON,
     });
     let next = 900001;
-    fake.cacher.createObject.mockImplementation(async () => String(next++));
-    fake.cacher.getPropertyList.mockImplementation(
+    fake.cacher.createObject.mockImplementation(async () => String(next++)); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
+    fake.cacher.getPropertyList.mockImplementation( // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
       async (_id: string, names: string[]) =>
         names.map(n => (n === 'Name' ? 'Probe' : n === 'CurrBlock' ? block : '')),
     );
-    (fake.ctx.focusBuilding as jest.Mock).mockResolvedValue({
+    (fake.ctx.focusBuilding as jest.Mock).mockResolvedValue({ // substrate-exception: focusBuilding is a bare jest.fn() on the fake and emits no frame, so no scenario can answer it
       buildingId: '40133602', buildingName: 'Probe', ownerName: '',
     });
 
@@ -159,11 +159,11 @@ describe('bank-tv-live-reads scenario — the drive', () => {
         fTycoonProxyId: BANK_LIVE_READS_TYCOON,
       });
       let next = 900001;
-      fake.cacher.createObject.mockImplementation(async () => String(next++));
-      fake.cacher.getPropertyList.mockImplementation(
+      fake.cacher.createObject.mockImplementation(async () => String(next++)); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
+      fake.cacher.getPropertyList.mockImplementation( // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
         async (_id: string, names: string[]) => names.map(n => (n === 'CurrBlock' ? block : '')),
       );
-      (fake.ctx.focusBuilding as jest.Mock).mockResolvedValue({
+      (fake.ctx.focusBuilding as jest.Mock).mockResolvedValue({ // substrate-exception: focusBuilding is a bare jest.fn() on the fake and emits no frame, so no scenario can answer it
         buildingId: '40133602', buildingName: 'Probe', ownerName: '',
       });
       fake.respond((packet) => {
