@@ -8,11 +8,18 @@
  * citation in `src/shared/rdo-members.ts` against the real Pascal declaration in
  * `~/SPO-Original` no longer requires an LLM read every time.
  *
- * This script is DARK: nothing in CI or in the citation-verifier subagent calls it yet. It
- * exists so a baseline can be taken over the real catalogue (`scripts/rdo-citation-baseline.js`)
- * ahead of a follow-up PR that wires it into the actual verification path. See the citation
- * for the RDO catalogue caution: a wrong `kind`/`arity` there does not fail to compile, it can
- * crash or freeze a live production game server.
+ * Who calls it today:
+ *
+ *   - `scripts/check-pr-rules.js` requires it: `checkCitation` -> `verifyEntrySafe` ->
+ *     `verifyEntry`, run as the PR-rules step of the required CI check
+ *     (`.github/workflows/ci.yml`). When every changed catalogue entry carries a `.pas` citation
+ *     that MATCHes, the change takes the zero-LLM fast path (row 4 of `checkCitation`'s
+ *     decision table); anything else falls back to the PR-body citation check (rows 2, 3, 5).
+ *   - `scripts/rdo-citation-baseline.js`, the one-off baseline generator over the real catalogue.
+ *   - Its own CLI (`describe` / `check` / `entry`), for a manual check.
+ *
+ * See the citation for the RDO catalogue caution: a wrong `kind`/`arity` there does not fail
+ * to compile, it can crash or freeze a live production game server.
  *
  * ## Encoding
  *
