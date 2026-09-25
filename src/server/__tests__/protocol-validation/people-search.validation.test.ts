@@ -54,11 +54,11 @@ describe('Protocol Validation: searchPeople()', () => {
   });
 
   it('returns a known alias found in its bucket, and covers all 26 buckets with RDOSetCurrentKey', async () => {
-    // RDOSetCurrentKey carries no state the mock can see across calls, and
-    // RdoMock's `methodMatch` tier answers ANY call for a member from the
-    // first exchange declaring it, ignoring args — so a single "bucket C is
-    // true" exchange plus a FallbackResponse for the rest would catch every
-    // OTHER bucket too. One exchange per letter, matched on its own args via
+    // RDOSetCurrentKey carries no state the mock can see across calls, so the
+    // answer per bucket has to come from the frame's own argument. RdoMock
+    // answers an exchange only when every key it declares matches the frame
+    // (a member-only exchange answers nothing without a `looseMatch` reason),
+    // so one exchange per letter, matched on its own full argument list via
     // `keyFieldMatch`, is what keeps only bucket C true.
     const setKeyExchanges: RdoScenario['exchanges'] = Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZ').map(letter => ({
       id: `people-search-setkey-${letter}`,
@@ -77,7 +77,8 @@ describe('Protocol Validation: searchPeople()', () => {
           id: 'people-search-searchkey-c',
           request: `C 3 sel ${vars.directorySessionId} call RDOSearchKey "^" "%*Crazz*","%Alias\r\n"`,
           response: `A3 res="%Count=1\r\nKey0=crazz\r\nAlias0=Crazz\r\n"`,
-          matchKeys: { member: 'RDOSearchKey' },
+          // RDOSearchKey(SearchPattern, ValueNameList) as login-handler.ts:366-370 emits it.
+          matchKeys: { verb: 'sel', action: 'call', member: 'RDOSearchKey', argsPattern: ['"%*Crazz*"', '*'] },
         },
       ],
       variables: vars as unknown as Record<string, string>,
@@ -143,7 +144,8 @@ describe('Protocol Validation: searchPeople()', () => {
           id: 'people-search-searchkey-single',
           request: `C 3 sel ${vars.directorySessionId} call RDOSearchKey "^" "%*","%Alias\r\n"`,
           response: `A3 res="%Count=1\r\nKey0=crazz\r\nAlias0=Crazz\r\n"`,
-          matchKeys: { member: 'RDOSearchKey', argsPattern: ['"%*"'] },
+          // Full two-arg list (pattern, ValueNameList) as login-handler.ts:366-370 emits it.
+          matchKeys: { member: 'RDOSearchKey', argsPattern: ['"%*"', '*'] },
         },
       ],
       variables: vars as unknown as Record<string, string>,

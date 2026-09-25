@@ -93,6 +93,8 @@ export function createSelectCompanyScenario(
         matchKeys: { verb: 'sel', action: 'call', member: 'PickEvent' },
       },
       {
+        // GetTycoonCookie(TycoonId, CookieId): the id first, the cookie name second, as
+        // login-handler.ts:729-751 emits it — so each argsPattern pins position 1, not 0.
         id: 'sc-rdo-003',
         request: `C 36 sel ${vars.clientViewId} call GetTycoonCookie "^" "#22","%LastY.0"`,
         response: `A36 res="%${CAPTURED_COOKIE.lastY}"`,
@@ -100,7 +102,7 @@ export function createSelectCompanyScenario(
           verb: 'sel',
           action: 'call',
           member: 'GetTycoonCookie',
-          argsPattern: ['"%LastY.0"'],
+          argsPattern: ['*', '"%LastY.0"'],
         },
       },
       {
@@ -111,7 +113,7 @@ export function createSelectCompanyScenario(
           verb: 'sel',
           action: 'call',
           member: 'GetTycoonCookie',
-          argsPattern: ['"%LastX.0"'],
+          argsPattern: ['*', '"%LastX.0"'],
         },
       },
       {
@@ -122,7 +124,7 @@ export function createSelectCompanyScenario(
           verb: 'sel',
           action: 'call',
           member: 'GetTycoonCookie',
-          argsPattern: ['"%"'],
+          argsPattern: ['*', '"%"'],
         },
       },
     ],

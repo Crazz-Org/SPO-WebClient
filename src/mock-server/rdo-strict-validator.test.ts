@@ -8,6 +8,9 @@ import {
   RdoStrictValidator,
   ViolationSeverity,
   ViolationType,
+  KNOWN_PRODUCTION_DIVERGENCES,
+  argMismatchSeverity,
+  type KnownProductionDivergence,
 } from './rdo-strict-validator';
 import { RdoProtocol } from '@/server/rdo';
 import { rdoSet } from '@/shared/rdo-frame';
@@ -300,7 +303,7 @@ describe('RdoStrictValidator', () => {
         (v) => v.type === ViolationType.ARG_COUNT_MISMATCH
       );
       expect(argViolation).toBeDefined();
-      expect(argViolation!.severity).toBe(ViolationSeverity.WARNING);
+      expect(argViolation!.severity).toBe(ViolationSeverity.ERROR);
       expect(argViolation!.message).toContain('3');
       expect(argViolation!.message).toContain('2');
     });
@@ -350,6 +353,53 @@ describe('RdoStrictValidator', () => {
   });
 
   // =========================================================================
+  // Known production divergences — the one allowlist
+  // =========================================================================
+
+  describe('KNOWN_PRODUCTION_DIVERGENCES', () => {
+    const synthetic: readonly KnownProductionDivergence[] = [
+      { member: 'Logon', type: ViolationType.ARG_COUNT_MISMATCH, differs: 'x', reason: '[UNKNOWN]' },
+      { member: 'SetPrice', type: ViolationType.ARG_TYPE_PREFIX_MISMATCH, differs: 'y', reason: '[UNKNOWN]' },
+    ];
+
+    it('argMismatchSeverity is WARNING only for a listed member AND type', () => {
+      expect(argMismatchSeverity('Logon', ViolationType.ARG_COUNT_MISMATCH, synthetic))
+        .toBe(ViolationSeverity.WARNING);
+      expect(argMismatchSeverity('SetPrice', ViolationType.ARG_TYPE_PREFIX_MISMATCH, synthetic))
+        .toBe(ViolationSeverity.WARNING);
+      expect(argMismatchSeverity('Logon', ViolationType.ARG_TYPE_PREFIX_MISMATCH, synthetic))
+        .toBe(ViolationSeverity.ERROR);
+      expect(argMismatchSeverity('Other', ViolationType.ARG_COUNT_MISMATCH, synthetic))
+        .toBe(ViolationSeverity.ERROR);
+      expect(argMismatchSeverity(undefined, ViolationType.ARG_COUNT_MISMATCH, synthetic))
+        .toBe(ViolationSeverity.ERROR);
+    });
+
+    it('an unlisted arg-count mismatch fails the validator (hasErrors)', () => {
+      validator.addScenario(
+        makeScenario({
+          matchKeys: { verb: 'sel', action: 'call', member: 'Unlisted', argsPattern: ['"#1"'] },
+          request: 'C 1 sel 100 call Unlisted "^" "#1"',
+        })
+      );
+      const cmd = 'C 1 sel 100 call Unlisted "^" "#1","#2"';
+      validator.validate(RdoProtocol.parse(cmd), cmd);
+      expect(validator.hasErrors()).toBe(true);
+    });
+
+    it('every entry names a member, one of the two types, what differs and why', () => {
+      for (const entry of KNOWN_PRODUCTION_DIVERGENCES) {
+        expect(entry.member.trim()).not.toBe('');
+        expect([ViolationType.ARG_COUNT_MISMATCH, ViolationType.ARG_TYPE_PREFIX_MISMATCH])
+          .toContain(entry.type);
+        expect(entry.differs.trim()).not.toBe('');
+        expect(entry.reason.trim()).not.toBe('');
+        expect(argMismatchSeverity(entry.member, entry.type)).toBe(ViolationSeverity.WARNING);
+      }
+    });
+  });
+
+  // =========================================================================
   // ARG_TYPE_PREFIX_MISMATCH
   // =========================================================================
 
@@ -375,7 +425,7 @@ describe('RdoStrictValidator', () => {
         (v) => v.type === ViolationType.ARG_TYPE_PREFIX_MISMATCH
       );
       expect(typeViolation).toBeDefined();
-      expect(typeViolation!.severity).toBe(ViolationSeverity.WARNING);
+      expect(typeViolation!.severity).toBe(ViolationSeverity.ERROR);
       expect(typeViolation!.message).toContain("'%'");
       expect(typeViolation!.message).toContain("'#'");
       expect(typeViolation!.message).toContain('string');

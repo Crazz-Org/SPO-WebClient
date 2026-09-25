@@ -18,9 +18,12 @@ import { normalizeSetPacket } from './rdo-mock';
 // ---------------------------------------------------------------------------
 
 export enum ViolationSeverity {
-  /** Command will malfunction — wrong verb/action/separator */
+  /** Command will malfunction — wrong verb/action/separator, arg count or arg type prefix */
   ERROR = 'ERROR',
-  /** Command may work but is suspicious — arg count/type mismatch */
+  /**
+   * A known production divergence (`KNOWN_PRODUCTION_DIVERGENCES`) — reported, never fails a
+   * test
+   */
   WARNING = 'WARNING',
   /** Informational — no scenario covers this member */
   INFO = 'INFO',
@@ -33,6 +36,38 @@ export enum ViolationType {
   ARG_COUNT_MISMATCH = 'ARG_COUNT_MISMATCH',
   ARG_TYPE_PREFIX_MISMATCH = 'ARG_TYPE_PREFIX_MISMATCH',
   UNRECOGNIZED_MEMBER = 'UNRECOGNIZED_MEMBER',
+}
+
+/** One member whose working production frame differs from its fixture in arity or type prefix */
+export interface KnownProductionDivergence {
+  member: string;
+  type: ViolationType.ARG_COUNT_MISMATCH | ViolationType.ARG_TYPE_PREFIX_MISMATCH;
+  /** What the production frame sends that the fixture/declaration does not */
+  differs: string;
+  /** Why the production frame is kept as is (a citation), or '[UNKNOWN]' */
+  reason: string;
+}
+
+/**
+ * The ONE allowlist of arg-count / type-prefix divergences that stay WARNING. An entry is added
+ * only when a currently-working production frame would otherwise fail; every other arg-count or
+ * type-prefix mismatch is an ERROR.
+ */
+export const KNOWN_PRODUCTION_DIVERGENCES: readonly KnownProductionDivergence[] = [];
+
+/**
+ * Severity of an arg-count / type-prefix mismatch: WARNING when the member is on the allowlist
+ * for that violation type, ERROR otherwise. `allowlist` is a parameter only so a test can
+ * exercise the WARNING branch; the validator always passes the default.
+ */
+export function argMismatchSeverity(
+  member: string | undefined,
+  type: KnownProductionDivergence['type'],
+  allowlist: readonly KnownProductionDivergence[] = KNOWN_PRODUCTION_DIVERGENCES
+): ViolationSeverity {
+  return allowlist.some((d) => d.member === member && d.type === type)
+    ? ViolationSeverity.WARNING
+    : ViolationSeverity.ERROR;
 }
 
 /** A single protocol violation with AI-friendly context */
@@ -418,7 +453,7 @@ export class RdoStrictValidator {
       if (sentCount !== expectedCount) {
         violations.push({
           exchangeId,
-          severity: ViolationSeverity.WARNING,
+          severity: argMismatchSeverity(parsed.member, ViolationType.ARG_COUNT_MISMATCH),
           type: ViolationType.ARG_COUNT_MISMATCH,
           sentCommand: rawCommand,
           sent: {
@@ -459,7 +494,7 @@ export class RdoStrictValidator {
           if (expectedPrefix && sentPrefix && expectedPrefix !== sentPrefix) {
             violations.push({
               exchangeId,
-              severity: ViolationSeverity.WARNING,
+              severity: argMismatchSeverity(parsed.member, ViolationType.ARG_TYPE_PREFIX_MISMATCH),
               type: ViolationType.ARG_TYPE_PREFIX_MISMATCH,
               sentCommand: rawCommand,
               sent: {

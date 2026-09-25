@@ -291,8 +291,8 @@ renders it as a CRLF-separated `Name=Value` block (`TEvent.Render`,
 `Kernel/Events.pas:99-115`) — the argument is the tycoon id, injected nowhere,
 unlike `ContextStatusText`'s world context. Its two answers, the rendered
 block and `res="%"`, travel on an **identical** frame, since `PickEvent` takes
-no argument that distinguishes them, so `RdoMock`'s first three match
-strategies (which do not skip an already-consumed exchange) would answer the
+no argument that distinguishes them, and no `RdoMock` match strategy skips an
+already-consumed exchange, so two exchanges in one scenario would answer the
 event block twice and starve the empty answer. `createWorldEventScenario`
 therefore builds one exchange per call, keyed on its `{ event }` option
 (`undefined`/`EVENT_FIXTURE` for the block, `null` for `res="%"`), and its
@@ -407,7 +407,8 @@ Each `RdoScenario` has a `name`, `description`, and array of `RdoExchange` objec
   id: 'auth-rdo-001',
   request: 'C 0 idof "DirectoryServer"',          // Raw RDO command
   response: 'A0 objid="${directoryServerId}"',     // Expected response
-  matchKeys: { verb: 'idof', targetId: '...' },   // Flexible matching fields
+  matchKeys: { verb: 'idof', targetId: '...' },   // Every declared key must match the frame
+  looseMatch: undefined,                            // Optional: '<reason>' to answer on member/verb alone
   pushes: [],                                       // Optional server pushes
   pushOnly: false,                                  // true = server-initiated, no request
 }
@@ -421,20 +422,32 @@ Each `RdoScenario` has a `name`, `description`, and array of `RdoExchange` objec
 
 1. Create `scenarios/my-scenario.ts`
 2. Export `createMyScenario(overrides?: Partial<ScenarioVariables>)`
-3. Define exchanges with `matchKeys` for flexible matching
+3. Define exchanges with `matchKeys` — every key you declare is checked, and `argsPattern` is the full argument list
 4. Register in `scenarios/scenario-registry.ts`
 
 ## RDO Matching Hierarchy
 
-`RdoMock.match()` tries strategies in order (first match wins):
-1. **Exact match**: verb + targetId + action + member + all args
-2. **Key field match**: verb + action + member (wildcard targetId)
-3. **Method match**: action + member only
-4. **Nth occurrence**: same method, return next unconsumed exchange
+An exchange answers a frame only if **every key its `matchKeys` declares** matches the frame. A
+declared `targetId` (other than `'*'`) must equal the frame's target; a declared `argsPattern` is
+the **full** argument list — the frame must carry exactly that many args (`'*'` leaves a position
+unpinned, extra trailing args are refused). `RdoMock.match()` tries strategies in order (first
+match wins):
+1. **Exact match**: verb + specific targetId + action + member + argsPattern, all declared and equal
+2. **Key field match**: every declared key equal — argsPattern exchanges first, then those
+   without. An exchange declaring only a member (no verb/action/args, target absent or `'*'`)
+   is skipped
+3. **idof match**: an `idof` frame whose name equals an exchange's exact `targetId`
+4. **Loose fallback**: only exchanges with a non-empty `looseMatch: '<reason>'` — answers on the
+   member name alone (for `idof`, the verb alone). Without a reason, a frame that matches no
+   declared key set gets `null`
+
+No strategy skips an already-consumed exchange. `looseMatch` is the written exception, never the
+default: give an exchange precise keys first, and state why when it genuinely must answer any
+frame for its member.
 
 ## Strict Validator
 
-`rdo-strict-validator.ts` validates every outgoing RDO command against protocol rules. Use it in tests to catch protocol violations (wrong type prefixes, missing separators, invalid verbs) before they reach a real server.
+`rdo-strict-validator.ts` validates every outgoing RDO command against protocol rules. Use it in tests to catch protocol violations (wrong type prefixes, missing separators, invalid verbs) before they reach a real server. A wrong verb, action or separator is an `ERROR`, and so is an **arg count or arg type prefix** mismatch — except for a member listed in `KNOWN_PRODUCTION_DIVERGENCES`, the one allowlist of known production divergences (member, what differs, reason or `[UNKNOWN]`), which reports it as a `WARNING`. An entry is added only when a currently-working production frame would otherwise fail; the production frame is never changed to satisfy a fixture.
 
 ## Testing Pattern
 
