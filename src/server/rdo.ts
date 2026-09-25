@@ -278,46 +278,15 @@ export class RdoProtocol {
 					const remainder = parts.slice(3).join(' ');
 
 					if (packet.action === RdoAction.CALL) {
-						// CRITICAL FIX: Parse push commands with "*" separator
-						// Format: sel ID call Method "*" Param1,Param2
-						// Check for both "^" (method) and "*" (push) separators
-						let sepIndex = remainder.indexOf(RDO_CONSTANTS.METHOD_SEPARATOR);
-						let separator = RDO_CONSTANTS.METHOD_SEPARATOR;
-
-						if (sepIndex === -1) {
-							// Try push separator
-							sepIndex = remainder.indexOf(RDO_CONSTANTS.PUSH_SEPARATOR);
-							separator = RDO_CONSTANTS.PUSH_SEPARATOR;
-						}
-
-						// Also try quoted versions
-						if (sepIndex === -1) {
-							sepIndex = remainder.indexOf('"^"');
-							separator = '^';
-						}
-
-						if (sepIndex === -1) {
-							sepIndex = remainder.indexOf('"*"');
-							separator = '*';
-						}
-
-						if (sepIndex !== -1) {
-							packet.member = remainder.substring(0, sepIndex).trim();
-							packet.separator = separator;
-
-							// Find where the separator ends (skip quotes)
-							let argsStart = sepIndex;
-							if (remainder[sepIndex] === '"') {
-								// Quoted separator like "*" or "^"
-								argsStart = remainder.indexOf('"', sepIndex + 1) + 1;
-							} else {
-								// Unquoted separator
-								argsStart = sepIndex + separator.length;
-							}
-
-							const argsStr = remainder.substring(argsStart).trim();
-
-							// NEW: Parse arguments respecting quoted strings
+						// Format: sel ID call Member "^"|"*" Arg1,Arg2
+						// The separator is the token that FOLLOWS the member name — never a
+						// "^"/"*" found further on, which may sit inside a quoted argument
+						// (a chat line `a "^" b` travels as "%a ""^"" b").
+						const sepMatch = remainder.match(/^\s*([^\s"]+)\s*("\^"|"\*")/);
+						if (sepMatch) {
+							packet.member = sepMatch[1];
+							packet.separator = sepMatch[2];
+							const argsStr = remainder.substring(sepMatch[0].length).trim();
 							if (argsStr.length > 0) {
 								const rawArgs = this.parseQuotedArgs(argsStr);
 								packet.args = rawArgs.map(arg => this.stripTypedToken(arg));
