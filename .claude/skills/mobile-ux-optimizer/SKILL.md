@@ -33,6 +33,13 @@ Build touch-optimized, performant mobile experiences with proper viewport handli
 - General CSS/Tailwind questions → use Tailwind docs or `web-design-expert`
 - PWA installation/service workers → use `pwa-expert` skill
 
+## SPO: fixed HUD elements
+
+A new fixed HUD element takes `top`/`bottom`/`z-index` from the HUD stack block in
+`src/client/styles/design-tokens.css` (the `--hud-*`, `--command-bar-height`,
+`--context-strip-bottom`, `--world-ticker-top` and `--z-*` tokens), never a literal of its own,
+and gets an assertion for its band in `src/client/styles/design-tokens.test.ts`.
+
 ## Core Principles
 
 ### Mobile-First Means Build Up, Not Down

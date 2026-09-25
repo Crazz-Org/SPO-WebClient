@@ -85,10 +85,21 @@ onClick → store action → bridge method → RDO command → response handler 
 
 Never leave an action that only sets local state when the server also needs to know.
 
+## Merge, don't replace; reset where the session ends
+
+A producer that runs on a tick merges into its slice (`{ ...s.slice, ...patch }`); it never
+replaces a slice another producer writes — a replace drops every field the tick does not carry
+(the level badge lost on every tycoon tick).
+
+A session-scoped slice is cleared in `ClientBridge.reset()` and, if company-scoped, in the
+company-switch reset (`applyLocalCompanySwitch`, `src/client/handlers/auth-handler.ts`) — name
+which in the store's JSDoc.
+
 ## Checklist
 
 - [ ] No `??`/`||` fallback inside any selector
 - [ ] `subscribeWithSelector` applied only if non-React code needs a slice subscription
 - [ ] State and action interfaces declared separately
+- [ ] A tick producer merges into its slice; the reset that clears the slice is named in JSDoc
 - [ ] No `any` — `unknown` in catch blocks, `toErrorMessage(err)` from `@/shared/error-utils`
 - [ ] Test added at `src/client/store/<name>-store.test.ts` (coverage floor 93%)

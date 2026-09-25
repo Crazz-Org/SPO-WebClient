@@ -27,6 +27,8 @@ These are real bugs that have shipped. Check each before touching coordinate cod
 | **Concrete tile coordinates** | Stored as `` `${x},${y}` `` (col,row), **not** `` `${i},${j}` `` (row,col). Wrong order silently misplaces concrete. See [doc/concrete_rendering.md](../../../doc/concrete_rendering.md). |
 | **ROAD_TYPE `as const`** | The constants are `as const`; annotate local vars as `number` explicitly or type narrowing bites. See [doc/road_rendering_reference.md](../../../doc/road_rendering_reference.md). |
 | **Painter's order** | Back-to-front by `i + j`. Any change to iteration order must preserve this or sprites overlap wrongly. |
+| **Derived texture caches** | A derived texture is cached per source texture. Every cache field names in its comment the events that clear it, and is cleared wherever its inputs are. |
+| **Per-frame / per-tick logs** | A warning in a per-frame or per-tick path fires once, not every frame. |
 
 ## Frame budget
 
