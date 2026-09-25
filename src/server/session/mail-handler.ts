@@ -37,7 +37,7 @@ import type { MailFolder } from '../../shared/types/domain-types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { RdoValue } from '../../shared/rdo-types';
 import { rdoCall } from '../../shared/rdo-frame';
-import type { RdoMemberName } from '../../shared/rdo-members';
+import type { RdoProcedureName } from '../../shared/rdo-frame';
 import { parsePropertyResponse as parsePropertyResponseHelper, writeRdoFrame } from '../rdo-helpers';
 import { parseMessageListHtml } from '../mail-list-parser';
 import { toErrorMessage } from '../../shared/error-utils';
@@ -46,7 +46,7 @@ import { withLangId } from '../../shared/language';
 import { extractMetaRefreshUrl } from '../../shared/mail-html-utils';
 
 // ── Fire-and-forget helper for void mail procedures ──────────────────────
-function mailFireAndForget(ctx: SessionContext, targetId: string, method: RdoMemberName, ...args: RdoValue[]): void {
+function mailFireAndForget(ctx: SessionContext, targetId: string, method: RdoProcedureName, ...args: RdoValue[]): void {
   const socket = ctx.getSocket('mail');
   if (!socket) throw new Error('Mail socket unavailable');
   const cmd = rdoCall(method, targetId, ...args).toFrame();

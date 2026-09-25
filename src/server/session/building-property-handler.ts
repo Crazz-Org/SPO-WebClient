@@ -7,7 +7,8 @@
 
 import type { SessionContext } from './session-context';
 import { RdoValue } from '../../shared/rdo-types';
-import { rdoCall, rdoGet, rdoSet } from '../../shared/rdo-frame';
+import { rdoCall, rdoGet, rdoSet, isCataloguedRdoProcedure } from '../../shared/rdo-frame';
+import type { RdoProcedureName } from '../../shared/rdo-frame';
 import { isCataloguedRdoMember } from '../../shared/rdo-members';
 import type { RdoMemberName } from '../../shared/rdo-members';
 import { TimeoutCategory } from '../../shared/timeout-categories';
@@ -44,16 +45,22 @@ export const KNOWN_RDO_COMMANDS: ReadonlySet<string> = new Set([
 // the `"*"` separator, which on a function is the arbitrary-write form. Its one
 // legitimate use is the `"^"` read in building-details-handler.ts:938.
 
+// Published properties that use SET verb (not CALL) on CurrBlock.
+// These are Delphi published properties accessed via RTTI, not methods.
+export const RDO_SET_PROPERTIES: ReadonlySet<string> = new Set([
+  'RDOAcceptCloning', // TBlock.RDOAcceptCloning — boolean, Kernel.pas:1304
+]);
+
 /**
- * Narrow a runtime-chosen name to a catalogued member.
+ * Narrow a runtime-chosen name to a catalogued `procedure`.
  *
- * `isCataloguedRdoMember` is a type guard, so this is what lets the emitter keep
- * an `RdoMemberName` parameter without a cast at the two sites that choose their
- * member at run time. The name still comes from the browser; nothing here
- * assumes otherwise.
+ * Both call sites (the synchronous `RDOConnectInput/Output` path and the
+ * fire-and-forget branch) emit `"*"`, which is only safe on a procedure — so the
+ * guard narrows to `RdoProcedureName`, not to any catalogued member. The name
+ * still comes from the browser; nothing here assumes otherwise.
  */
-function assertCallable(name: string): asserts name is RdoMemberName {
-  if (!isCataloguedRdoMember(name)) {
+function assertCallable(name: string): asserts name is RdoProcedureName {
+  if (!isCataloguedRdoProcedure(name)) {
     throw new Error(`Unknown building property command "${name}" — not in RDO_MEMBERS.`);
   }
 }
@@ -197,12 +204,6 @@ async function setBuildingPropertyImpl(
 
     // Build the RDO command arguments based on the command type
     const rdoArgs = buildRdoCommandArgs(ctx, propertyName, value, additionalParams);
-
-    // Published properties that use SET verb (not CALL) on CurrBlock.
-    // These are Delphi published properties accessed via RTTI, not methods.
-    const RDO_SET_PROPERTIES: ReadonlySet<string> = new Set([
-      'RDOAcceptCloning', // TBlock.RDOAcceptCloning — boolean, Kernel.pas:1304
-    ]);
 
     // Fire-and-forget commands always use "*" (VoidId) separator — matching Delphi
     // Send() with timeout=0. The "^" (VariantId) separator is forbidden without a RID:
