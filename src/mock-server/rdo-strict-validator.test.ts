@@ -10,6 +10,9 @@ import {
   ViolationType,
 } from './rdo-strict-validator';
 import { RdoProtocol } from '@/server/rdo';
+import { rdoSet } from '@/shared/rdo-frame';
+import { RdoValue } from '@/shared/rdo-types';
+import { normalizeSetPacket } from './rdo-mock';
 import type { RdoScenario } from './types/rdo-exchange-types';
 
 // ---------------------------------------------------------------------------
@@ -129,7 +132,8 @@ describe('RdoStrictValidator', () => {
       expect(violations[0].severity).toBe(ViolationSeverity.ERROR);
     });
 
-    it('should detect set vs call mismatch', () => {
+    // Tolerance case: the emitter always glues `Name="v"`; the spaced SET form is never emitted.
+    it('tolerance: spaced SET form (never emitted) — detects set vs call mismatch', () => {
       validator.addScenario(
         makeScenario({
           matchKeys: { verb: 'sel', action: 'call', member: 'DoSomething' },
@@ -152,6 +156,20 @@ describe('RdoStrictValidator', () => {
         (v) => v.type === ViolationType.ACTION_MISMATCH
       );
       expect(actionViolation).toBeDefined();
+    });
+
+    it('emitter SET form (no space) — detects set vs call mismatch', () => {
+      validator.addScenario(
+        makeScenario({
+          matchKeys: { verb: 'sel', action: 'call', member: 'EnableEvents' },
+          request: 'C 1 sel 100 call EnableEvents "^" "#1"',
+        })
+      );
+
+      const cmd = rdoSet('EnableEvents', 100, RdoValue.int(1)).toFrame();
+      const violations = validator.validate(RdoProtocol.parse(cmd), cmd);
+
+      expect(violations.map((v) => v.type)).toContain(ViolationType.ACTION_MISMATCH);
     });
   });
 
@@ -548,7 +566,8 @@ describe('RdoStrictValidator', () => {
       // and we sent no args. Let's adjust the test.
     });
 
-    it('should pick candidate with fewest violations when all have some', () => {
+    // Tolerance case: the emitter always glues `Name="v"`; the spaced SET form is never emitted.
+    it('tolerance: spaced SET form (never emitted) — picks candidate with fewest violations', () => {
       // sc-001: expects call + 2 args
       // sc-002: expects get (no args)
       validator.addScenario(
@@ -593,6 +612,149 @@ describe('RdoStrictValidator', () => {
       // Best match should have ACTION_MISMATCH
       expect(violations.length).toBeGreaterThanOrEqual(1);
       expect(violations.some((v) => v.type === ViolationType.ACTION_MISMATCH)).toBe(true);
+    });
+
+    it('emitter SET form (no space) — picks candidate with fewest violations', () => {
+      validator.addScenario(
+        makeScenario(
+          {
+            name: 'multi-exchange-emitter',
+            id: 'sc-101',
+            request: 'C 1 sel 100 call Completed "^" "#1","#2"',
+            matchKeys: {
+              verb: 'sel',
+              action: 'call',
+              member: 'Completed',
+              argsPattern: ['"#1"', '"#2"'],
+            },
+          },
+          [
+            {
+              id: 'sc-102',
+              request: 'C 2 sel 100 get Completed',
+              response: 'A2 res="#0"',
+              matchKeys: { verb: 'sel', action: 'get', member: 'Completed' },
+            },
+          ]
+        )
+      );
+
+      const cmd = rdoSet('Completed', 200, RdoValue.int(1)).toFrame();
+      const violations = validator.validate(RdoProtocol.parse(cmd), cmd);
+
+      expect(violations.some((v) => v.type === ViolationType.ACTION_MISMATCH)).toBe(true);
+    });
+  });
+
+  // =========================================================================
+  // SET frames (emitter output)
+  // =========================================================================
+
+  describe('SET frames (emitter output)', () => {
+    const enableEventsScenario = (action = 'set'): RdoScenario =>
+      makeScenario({
+        id: 'set-001',
+        request: rdoSet('EnableEvents', '8161308', RdoValue.int(-1)).toFrame(),
+        response: '',
+        matchKeys: { verb: 'sel', action, member: 'EnableEvents' },
+      });
+
+    it('matching SET yields no violation (toFrame and format forms)', () => {
+      validator.addScenario(enableEventsScenario());
+      const frame = rdoSet('EnableEvents', '8161308', RdoValue.int(-1));
+      const a = frame.toFrame();
+      const b = RdoProtocol.format({ raw: '', type: 'REQUEST', ...frame.packet, rid: 34 });
+      expect(validator.validate(RdoProtocol.parse(a), a)).toHaveLength(0);
+      expect(validator.validate(RdoProtocol.parse(b), b)).toHaveLength(0);
+    });
+
+    it('SET is actually looked at — action mismatch against a get exchange', () => {
+      validator.addScenario(enableEventsScenario('get'));
+      const cmd = rdoSet('EnableEvents', '8161308', RdoValue.int(-1)).toFrame();
+      const violations = validator.validate(RdoProtocol.parse(cmd), cmd);
+      expect(violations.map((v) => v.type)).toContain(ViolationType.ACTION_MISMATCH);
+    });
+
+    it('SET whose value prefix differs yields a violation', () => {
+      validator.addScenario(enableEventsScenario());
+      const cmd = rdoSet('EnableEvents', '8161308', RdoValue.string('-1')).toFrame();
+      const violations = validator.validate(RdoProtocol.parse(cmd), cmd);
+      expect(violations).toHaveLength(1);
+      expect(violations[0].type).toBe(ViolationType.ARG_TYPE_PREFIX_MISMATCH);
+      expect(violations[0].sent.member).toBe('EnableEvents');
+      expect(violations[0].message).toContain("'%'");
+      expect(violations[0].message).toContain("'#'");
+    });
+
+    it('SET arg count differing from the exchange value is reported', () => {
+      validator.addScenario(enableEventsScenario());
+      const packet = { ...rdoSet('EnableEvents', '8161308', RdoValue.int(-1)).packet };
+      // A SET with no value at all (never emitted) — nothing to split, so 0 args.
+      const cmd = 'C 1 sel 8161308 set EnableEvents';
+      const violations = validator.validate(
+        { raw: cmd, type: 'REQUEST', ...packet, member: 'EnableEvents', args: [] },
+        cmd
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0].type).toBe(ViolationType.ARG_COUNT_MISMATCH);
+      expect(violations[0].expected.argsPattern).toEqual(['#-1']);
+      expect(violations[0].fix).toContain('1 arg(s)');
+    });
+
+    it('SET on an unknown property is reported like an unknown CALL', () => {
+      validator = new RdoStrictValidator({ reportUnrecognizedMembers: true });
+      validator.addScenario(enableEventsScenario());
+      const cmd = rdoSet('Completed', 555, RdoValue.int(-1)).toFrame();
+      const violations = validator.validate(RdoProtocol.parse(cmd), cmd);
+      expect(violations).toHaveLength(1);
+      expect(violations[0].type).toBe(ViolationType.UNRECOGNIZED_MEMBER);
+      expect(violations[0].severity).toBe(ViolationSeverity.INFO);
+      expect(violations[0].sent.member).toBe('Completed');
+      expect(violations[0].message).toContain('"Completed"');
+      expect(violations[0].message).not.toContain('Completed=');
+
+      const callCmd = 'C 1 sel 555 call Nope "^"';
+      const callViolations = validator.validate(RdoProtocol.parse(callCmd), callCmd);
+      expect(violations[0].type).toBe(callViolations[0].type);
+      expect(violations[0].severity).toBe(callViolations[0].severity);
+    });
+
+    it('exempts a SET by its bare property name', () => {
+      validator = new RdoStrictValidator({ exemptMembers: new Set(['EnableEvents']) });
+      validator.addScenario(enableEventsScenario());
+      const cmd = rdoSet('EnableEvents', '8161308', RdoValue.string('-1')).toFrame();
+      expect(validator.validate(RdoProtocol.parse(cmd), cmd)).toHaveLength(0);
+    });
+  });
+
+  describe('normalizeSetPacket', () => {
+    it('splits a glued int SET', () => {
+      const cmd = rdoSet('EnableEvents', '8161308', RdoValue.int(-1)).toFrame();
+      const n = normalizeSetPacket(RdoProtocol.parse(cmd));
+      expect(n.member).toBe('EnableEvents');
+      expect(n.args).toEqual(['#-1']);
+    });
+
+    it('returns a non-SET packet as-is', () => {
+      const p = RdoProtocol.parse('C 1 sel 100 call Foo "^" "#42"');
+      expect(normalizeSetPacket(p)).toBe(p);
+    });
+
+    it('returns a spaced SET (no =) as-is', () => {
+      const p = RdoProtocol.parse('C 1 sel 100 set Foo "#1"');
+      expect(normalizeSetPacket(p)).toBe(p);
+    });
+
+    it('rejoins a string value containing a space', () => {
+      const cmd = RdoProtocol.format({
+        raw: '',
+        type: 'REQUEST',
+        ...rdoSet('Completed', 1, RdoValue.string('a b')).packet,
+        rid: 1,
+      });
+      const n = normalizeSetPacket(RdoProtocol.parse(cmd));
+      expect(n.member).toBe('Completed');
+      expect(n.args).toEqual(['%a b']);
     });
   });
 

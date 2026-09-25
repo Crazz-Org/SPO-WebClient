@@ -9,8 +9,9 @@
  */
 
 import { RdoProtocol } from '@/server/rdo';
-import type { RdoPacket } from '@/shared/types/protocol-types';
+import { RdoAction, type RdoPacket } from '@/shared/types/protocol-types';
 import type { RdoExchange, RdoScenario } from './types/rdo-exchange-types';
+import { normalizeSetPacket } from './rdo-mock';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -106,7 +107,7 @@ export class RdoStrictValidator {
     for (const exchange of scenario.exchanges) {
       if (exchange.pushOnly) continue; // skip server-initiated pushes
       const parsedRequest = exchange.request
-        ? RdoProtocol.parse(exchange.request)
+        ? normalizeSetPacket(RdoProtocol.parse(exchange.request))
         : null;
       this.indexed.push({
         exchange,
@@ -120,8 +121,9 @@ export class RdoStrictValidator {
    * Validate a parsed command against all loaded exchanges.
    * Returns violations found (may be empty). Does NOT block matching.
    */
-  validate(parsed: RdoPacket, rawCommand: string): RdoViolation[] {
+  validate(input: RdoPacket, rawCommand: string): RdoViolation[] {
     if (!this.config.enabled) return [];
+    const parsed = normalizeSetPacket(input);
 
     const member = parsed.member;
     const isIdof = parsed.verb === 'idof';
@@ -404,9 +406,14 @@ export class RdoStrictValidator {
     }
 
     // --- Arg count check ---
-    if (mk.argsPattern !== undefined) {
+    // A SET exchange without argsPattern falls back to its own request value.
+    const expectedArgs = mk.argsPattern ??
+      (parsed.action === RdoAction.SET && expectedParsed?.action === RdoAction.SET
+        ? expectedParsed.args
+        : undefined);
+    if (expectedArgs !== undefined) {
       const sentCount = parsed.args?.length ?? 0;
-      const expectedCount = mk.argsPattern.length;
+      const expectedCount = expectedArgs.length;
 
       if (sentCount !== expectedCount) {
         violations.push({
@@ -424,7 +431,7 @@ export class RdoStrictValidator {
             verb: mk.verb,
             action: mk.action,
             member: mk.member,
-            argsPattern: mk.argsPattern,
+            argsPattern: expectedArgs,
           },
           message:
             `Method '${parsed.member}' matched but arg count mismatch: ` +
@@ -432,7 +439,7 @@ export class RdoStrictValidator {
           fix: this.generateFix(
             ViolationType.ARG_COUNT_MISMATCH,
             parsed,
-            mk,
+            { ...mk, argsPattern: expectedArgs },
             parsed.member ?? ''
           ),
           docRef: 'doc/spo-original-reference.md',
@@ -440,7 +447,7 @@ export class RdoStrictValidator {
       } else {
         // --- Arg type prefix check (only when counts match) ---
         for (let i = 0; i < expectedCount; i++) {
-          const expectedArg = mk.argsPattern[i];
+          const expectedArg = expectedArgs[i];
           const sentArg = parsed.args?.[i] ?? '';
 
           // Skip wildcard patterns
@@ -465,7 +472,7 @@ export class RdoStrictValidator {
                 verb: mk.verb,
                 action: mk.action,
                 member: mk.member,
-                argsPattern: mk.argsPattern,
+                argsPattern: expectedArgs,
               },
               message:
                 `Method '${parsed.member}' arg[${i}] type prefix mismatch: ` +
