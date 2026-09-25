@@ -3,6 +3,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as net from 'net';
 import * as dns from 'dns';
+import { createHash } from 'crypto';
 import { toErrorMessage } from '../shared/error-utils';
 import { TIMEOUTS } from '../shared/constants';
 import { fetchWithTimeout, FetchTimeoutError } from './fetch-with-timeout';
@@ -136,6 +137,76 @@ export function getImageContentType(filename: string): string {
   }
 }
 
+/** Version tag on every game-server cache file name; files without it are never indexed. */
+export const GAME_SERVER_CACHE_PREFIX = 'gs1-';
+
+/**
+ * How long a stored failure placeholder is trusted before the image is fetched again.
+ */
+export const STORED_PLACEHOLDER_TTL_MS = 60 * 60 * 1000;
+
+const GAME_SERVER_CACHE_NAME_RE = new RegExp(
+  `^${GAME_SERVER_CACHE_PREFIX}[0-9a-f]{40}\\.(${ALLOWED_IMAGE_EXTENSIONS.map((e) => e.slice(1)).join('|')})$`,
+);
+
+/**
+ * Cache file name for an image fetched from the game server, derived from the URL's full
+ * (lower-cased) path so two images sharing a basename in different directories get two files.
+ * Only called after `sanitizeImageFilename` succeeded for the same URL.
+ */
+export function gameServerCacheName(imageUrl: string, filename: string): string {
+  const pathname = new URL(imageUrl).pathname.toLowerCase();
+  const hash = createHash('sha256').update(pathname).digest('hex').slice(0, 40);
+  return GAME_SERVER_CACHE_PREFIX + hash + path.extname(filename).toLowerCase();
+}
+
+/** Whether `name` has the current game-server cache file name shape. */
+export function isGameServerCacheName(name: string): boolean {
+  return GAME_SERVER_CACHE_NAME_RE.test(name);
+}
+
+/**
+ * Build the image file index: update-server mirror files keyed by lowercase basename,
+ * game-server files in `webclientCacheDir` keyed by their versioned cache name.
+ */
+export async function buildImageFileIndexEntries(
+  cacheRoot: string,
+  webclientCacheDir: string,
+): Promise<Map<string, string>> {
+  const newIndex = new Map<string, string>();
+
+  // Index files in update server cache subdirectories
+  try {
+    const entries = await fsp.readdir(cacheRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const dirPath = path.join(cacheRoot, entry.name);
+        const files = await fsp.readdir(dirPath);
+        for (const file of files) {
+          newIndex.set(file.toLowerCase(), path.join(dirPath, file));
+        }
+      }
+    }
+  } catch {
+    // Cache root doesn't exist yet
+  }
+
+  // Index game-server files in webclient-cache (legacy basename files are skipped)
+  try {
+    const files = await fsp.readdir(webclientCacheDir);
+    for (const file of files) {
+      const key = file.toLowerCase();
+      if (isGameServerCacheName(key) && !newIndex.has(key)) {
+        newIndex.set(key, path.join(webclientCacheDir, file));
+      }
+    }
+  } catch {
+    // webclient-cache doesn't exist yet
+  }
+
+  return newIndex;
+}
+
 /**
  * Proxy image from remote server to avoid CORS/Referer blocking.
  * Uses in-memory file index for O(1) cache lookup instead of scanning directories.
@@ -211,17 +282,32 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
     return;
   }
 
+  const cacheName = gameServerCacheName(imageUrl, filename);
+
   try {
-    // O(1) lookup in pre-built file index (replaces readdirSync scans)
-    const cachedPath = imageFileIndex.get(filename.toLowerCase());
+    // O(1) lookup in pre-built file index: update-server mirror by basename first,
+    // then the game-server cache by its path-derived name
+    const basenameKey = filename.toLowerCase();
+    const cacheKey = imageFileIndex.has(basenameKey) ? basenameKey : cacheName;
+    const cachedPath = imageFileIndex.get(cacheKey);
     if (cachedPath) {
       const content = await fsp.readFile(cachedPath);
-      res.writeHead(200, {
-        'Content-Type': getImageContentType(cachedPath),
-        'Cache-Control': 'public, max-age=31536000'
-      });
-      res.end(content);
-      return;
+      if (!content.equals(getPlaceholderImage())) {
+        res.writeHead(200, {
+          'Content-Type': getImageContentType(cachedPath),
+          'Cache-Control': 'public, max-age=31536000'
+        });
+        res.end(content);
+        return;
+      }
+      // A stored failure placeholder: never cached by the browser, and re-fetched once stale
+      const { mtimeMs } = await fsp.stat(cachedPath);
+      if (Date.now() - mtimeMs < STORED_PLACEHOLDER_TTL_MS) {
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(content);
+        return;
+      }
+      imageFileIndex.delete(cacheKey);
     }
 
     // Not in index — try downloading from update server
@@ -285,10 +371,10 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
     const buffer = Buffer.from(arrayBuffer);
 
     // Cache in webclient-cache (async)
-    const webclientImagePath = resolveInside(webclientCacheDir, filename);
+    const webclientImagePath = resolveInside(webclientCacheDir, cacheName);
     if (webclientImagePath) {
       await fsp.writeFile(webclientImagePath, buffer);
-      imageFileIndex.set(filename.toLowerCase(), webclientImagePath);
+      imageFileIndex.set(cacheName, webclientImagePath);
     }
     log.debug(`Downloaded from game server: ${filename}`);
 
@@ -309,10 +395,10 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
 
     // Cache the placeholder to avoid repeated failed downloads
     const placeholder = getPlaceholderImage();
-    const webclientImagePath = resolveInside(webclientCacheDir, filename);
+    const webclientImagePath = resolveInside(webclientCacheDir, cacheName);
     if (webclientImagePath) {
       await fsp.writeFile(webclientImagePath, placeholder).catch(() => {});
-      imageFileIndex.set(filename.toLowerCase(), webclientImagePath);
+      imageFileIndex.set(cacheName, webclientImagePath);
     }
 
     // Return placeholder image instead of 404
