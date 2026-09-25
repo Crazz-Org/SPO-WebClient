@@ -579,14 +579,14 @@ The server cache only writes `Name` for **volatile** inventions (those with `lic
 | **Template group** | `src/shared/building-details/template-groups.ts:186-205` | `HQ_INVENTIONS_GROUP` with `RESEARCH_PANEL` marker property |
 | **Handler mapping** | same file, HANDLER_TO_GROUP | `'hdqInventions'` → `HQ_INVENTIONS_GROUP` |
 | **Tab injection** | `registerInspectorTabs()` | Auto-appends Research tab for any HQ building |
-| **RDO commands** | `src/server/spo_session.ts:6277-6291` | `RDOQueueResearch` + `RDOCancelResearch` wire format |
-| **Cache inventory** | `src/server/spo_session.ts:6544-6606` | `getResearchInventory()` — fetches counts + per-item cache props in batches |
-| **Detail fetch** | `src/server/spo_session.ts:6616-6665` | `getResearchDetails()` — calls `RDOGetInvPropsByLang` + `RDOGetInvDescEx` |
-| **Item parser** | `src/server/spo_session.ts:6674-6700` | `parseResearchItems()` — builds `ResearchInventionItem[]` from cache values |
+| **RDO commands** | `src/server/session/building-property-handler.ts` (`buildRdoCommandArgs`) | `RDOQueueResearch` + `RDOCancelResearch` wire format |
+| **Cache inventory** | `src/server/session/research-handler.ts` | `getResearchInventory()` — fetches counts + per-item cache props in batches |
+| **Detail fetch** | `src/server/session/research-handler.ts` | `getResearchDetails()` — calls `RDOGetInvPropsByLang` + `RDOGetInvDescEx` |
+| **Item parser** | `src/server/session/session-utils.ts` | `parseResearchItems()` — builds `ResearchInventionItem[]` from cache values |
 | **Message types** | `src/shared/types/message-types.ts:1117-1175` | `ResearchInventionItem`, `ResearchCategoryData`, `ResearchInventionDetails`, WsReq/Resp types |
-| **Server gateway** | `src/server/server.ts:1570-1591` | `REQ_RESEARCH_INVENTORY` + `REQ_RESEARCH_DETAILS` handlers |
-| **Client callbacks** | `src/client/client.ts:326-329` | `onResearchLoadInventory()`, `onResearchGetDetails()` |
-| **Client actions** | `src/client/client.ts:1872-1908` | `queueResearch()`, `cancelResearch()` — fully wired |
+| **Server gateway** | `src/server/ws-handlers/misc-handlers.ts` (`handleResearchInventory` / `handleResearchDetails`) | `REQ_RESEARCH_INVENTORY` + `REQ_RESEARCH_DETAILS` handlers |
+| **Client callbacks** | `src/client/client.ts` | `onResearchLoadInventory()`, `onResearchGetDetails()` |
+| **Client actions** | `src/client/handlers/building-action-handler.ts` | `queueResearchDirect()`, `cancelResearchDirect()` — fully wired |
 | **State store** | `src/client/store/building-store.ts:15-86` | `ResearchState` with inventory, selection, details, loading flags |
 | **React panel** | `src/client/components/building/ResearchPanel.tsx` | Section tabs, invention list with parent grouping, detail panel, action bar |
 | **Panel CSS** | `src/client/components/building/ResearchPanel.module.css` | Full styling |

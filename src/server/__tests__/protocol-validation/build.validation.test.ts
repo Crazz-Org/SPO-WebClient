@@ -449,7 +449,7 @@ describe('Protocol Validation: buildRoad() + placeBuilding()', () => {
       return match ? parseInt(match[1], 10) : -1;
     };
 
-    // Error message map matching spo_session.ts:4062-4071
+    // Error message map matching the errorMessages map in buildRoad (road-handler.ts)
     const errorMessages: Record<number, string> = {
       1: 'Road construction failed — please try a different location',
       2: 'Invalid road segment — check your coordinates',
@@ -497,7 +497,7 @@ describe('Protocol Validation: buildRoad() + placeBuilding()', () => {
     });
 
     describe('partial build result aggregation', () => {
-      // Simulates the buildRoad() aggregation logic from spo_session.ts:4026-4103
+      // Simulates the buildRoad() aggregation logic from buildRoad in road-handler.ts
       function aggregateResults(
         segmentResults: number[]
       ): { success: boolean; partial?: boolean; totalTiles: number } {

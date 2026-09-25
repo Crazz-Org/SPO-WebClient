@@ -172,7 +172,7 @@ describe('CompInputSection: read-only display (editable=false)', () => {
   });
 
   it('empty cEditable string means not editable (false)', () => {
-    // Mirrors spo_session.ts:5780: (allValues[base+5] ?? '').toLowerCase() === 'yes'
+    // Mirrors fetchCompInputData in building-details-handler.ts: (allValues[base+5] ?? '').toLowerCase() === 'yes'
     const parsedEditable = ('').toLowerCase() === 'yes';
     expect(parsedEditable).toBe(false);
   });

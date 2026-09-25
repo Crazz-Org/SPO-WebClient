@@ -124,7 +124,7 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
       username: ctx.storedUsername,
       password: ctx.storedPassword,
       worldName,
-      // Read on every send, so the reconnect replay (client.ts:1114) carries it too.
+      // Read on every send, so the reconnect replay (attemptReconnect in client.ts) carries it too.
       languageId: normalizeLanguageId(useGameStore.getState().settings.languageId)
     };
     const resp = (await ctx.sendRequest(req)) as WsRespLoginSuccess;

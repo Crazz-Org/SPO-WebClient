@@ -828,7 +828,7 @@ PATCH repos/Crazz-Org/SPO-WebClient/pulls/<N> --input <json>`.
 usable — the error is on stderr, so a piped or backgrounded call reads as success again.
 **`--json` never touches that field and works**: `gh pr view <N> --json state`,
 `gh issue view <N> --json state,title`. That is why nothing in the tree is broken — every
-caller already passes it (`scripts/finish.sh:188,208,215`, `scripts/deps-gate.sh:61`). Read a
+caller already passes it (every `gh pr view` / `gh pr list` in `scripts/finish.sh` and `scripts/deps-gate.sh`). Read a
 PR or an issue with `--json`, or with REST (`gh api repos/Crazz-Org/SPO-WebClient/issues/<N>`).
 ⚠ `.github/workflows/claude-review.yml:123` allowlists the bare `gh pr view`, so the review
 agent meets the same wall. `gh pr create`, `gh pr merge` and `gh issue list` are unaffected.

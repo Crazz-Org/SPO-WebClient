@@ -46,7 +46,7 @@ Moved to [SPO-Deploy's `doc/production-security-policy.md` §1](https://github.c
 
 | ID | Requirement | Status | Enforcement |
 |---|---|---|---|
-| SEC-L-1 | Passwords MUST never be written to any log; RDO wire logs MUST redact `RDOLogonUser`/`Logon`/`AccountStatus`/`RDOLogonClient` arguments. Passwords are held in memory only and cleared at session end. | Met (`spo_session.ts:114-120,2613`) | L4 (log-scan after real login attempt) |
+| SEC-L-1 | Passwords MUST never be written to any log; RDO wire logs MUST redact `RDOLogonUser`/`Logon`/`AccountStatus`/`RDOLogonClient` arguments. Passwords are held in memory only and cleared at session end. | Met (`SENSITIVE_MEMBERS` / `redactRdoRaw` and `destroy()` in `spo_session.ts`) | L4 (log-scan after real login attempt) |
 | SEC-L-2 | Production MUST run `LOG_LEVEL=info` or stricter — never `debug` (session IDs leak at debug). This supersedes the older `warn` recommendation; `info` is the policy floor and the `.env.example` default. | Met (`shared/config.ts` defaults to `info`; the SEC-R-2 startup check refuses an explicit `debug` in production) | L0 (`server/production-config.test.ts`) |
 
 SEC-L-3 (log rotation/format) and SEC-L-4 (`.env` permissions, `SPO_GM_USERS`) moved to
