@@ -181,6 +181,8 @@ that task only. What it met in passing — an unrelated snag noticed while readi
 file it did not change, a "valuable but out of scope" remark — is neither filed nor narrated:
 no new issue, no closing section of the end report. A test session or a requested audit finds
 it again, at a moment where someone asked for it. Only the maintainer widens a session's scope.
+The pipeline harness refuses writes under `.claude/`; a card whose change must land there is
+maintainer-only and says so in its body.
 
 ## Environment
 
