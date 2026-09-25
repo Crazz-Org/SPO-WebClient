@@ -376,12 +376,12 @@ describe('RdoProtocol.parse()', () => {
     });
 
     it('should handle arguments with quoted strings containing commas', () => {
-      const packet = RdoProtocol.parse('C sel 200 call SetName "%Building, Inc.";');
-      // Note: Current parser doesn't fully support commas within quoted strings
-      // The entire string gets parsed into the member field
+      const packet = RdoProtocol.parse('C sel 200 call SetName "*" "%Building, Inc.";');
       expect(packet.verb).toBe(RdoVerb.SEL);
       expect(packet.action).toBe(RdoAction.CALL);
-      expect(packet.member).toBe('SetName "%Building, Inc."');
+      expect(packet.member).toBe('SetName');
+      expect(packet.separator).toBe('"*"');
+      expect(packet.args).toEqual(['%Building, Inc.']);
     });
 
     it('should parse call with request ID', () => {
@@ -907,6 +907,43 @@ describe('RdoProtocol.parse — call arguments', () => {
 
     expect(packet.member).toBe('ClientAware');
     expect(packet.separator).toBeUndefined();
+  });
+});
+
+describe('RdoProtocol.parse — a separator-like string inside a quoted argument (#915)', () => {
+  // Delphi doubles a quote inside a string; rdo-types.ts:374 undoubles it.
+  it('reads the separator after the member, not a "^" inside the chat text', () => {
+    const packet = RdoProtocol.parse('C sel 100 call ChatMsg "*" "%a ""^"" b";');
+
+    expect(packet.member).toBe('ChatMsg');
+    expect(packet.separator).toBe('"*"');
+    expect(packet.args).toEqual(['%a "^" b']);
+  });
+
+  it('reads the separator after the member in a CALL request too', () => {
+    const packet = RdoProtocol.parse('C 7 sel 100 call ChatMsg "*" "%a ""^"" b";');
+
+    expect(packet.type).toBe('REQUEST');
+    expect(packet.rid).toBe(7);
+    expect(packet.member).toBe('ChatMsg');
+    expect(packet.separator).toBe('"*"');
+    expect(packet.args).toEqual(['%a "^" b']);
+  });
+
+  it('regression guard (green before the fix): a "*" inside the chat text', () => {
+    const packet = RdoProtocol.parse('C sel 100 call ChatMsg "*" "%a ""*"" b";');
+
+    expect(packet.member).toBe('ChatMsg');
+    expect(packet.separator).toBe('"*"');
+    expect(packet.args).toEqual(['%a "*" b']);
+  });
+
+  it('regression guard (green before the fix): a comma inside a quoted argument', () => {
+    const packet = RdoProtocol.parse('C sel 100 call ChatMsg "*" "%Crazz","%hello, world";');
+
+    expect(packet.member).toBe('ChatMsg');
+    expect(packet.separator).toBe('"*"');
+    expect(packet.args).toEqual(['%Crazz', '%hello, world']);
   });
 });
 
