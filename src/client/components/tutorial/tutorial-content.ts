@@ -184,7 +184,8 @@ export const TUTORIAL_CONTENT: Readonly<Record<string, readonly TutorialStageCon
     },
   ],
 
-  MainHQ: [
+  // Server KindId is 'MainHq' (Tasks/CommonTasks.pas:77); the ASP folder is spelled MainHQ — IIS ignored case, an object key does not.
+  MainHq: [
     {
       heading: 'Tutorial Assignment: Build the Company Headquarters',
       paragraphs: [
