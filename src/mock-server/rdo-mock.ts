@@ -6,6 +6,7 @@
 
 import { RdoProtocol } from '@/server/rdo';
 import { RdoAction, type RdoPacket } from '@/shared/types/protocol-types';
+import { RdoParser } from '@/shared/rdo-types';
 import type { RdoExchange, RdoScenario } from './types/rdo-exchange-types';
 import { substituteVariables, mergeVariables } from './scenarios/scenario-variables';
 import type { ScenarioVariables } from './scenarios/scenario-variables';
@@ -15,6 +16,22 @@ export interface RdoMatchResult {
   exchange: RdoExchange;
   response: string;
   pushes: string[];
+}
+
+/**
+ * Split a SET packet's glued `Name=<value>` member (how `RdoProtocol.parse` reads the emitter's
+ * `set Name="#v"` form) into the bare property name and the value as the single argument, in the
+ * same `<prefix><value>` shape CALL args take. Any other packet is returned unchanged.
+ * Shared by RdoMock and RdoStrictValidator so the two cannot drift.
+ */
+export function normalizeSetPacket(parsed: RdoPacket): RdoPacket {
+  if (parsed.action !== RdoAction.SET || !parsed.member) return parsed;
+  const eq = parsed.member.indexOf('=');
+  if (eq === -1) return parsed;
+  // A value containing whitespace was split by the parser; its tail landed in args.
+  const rawValue = [parsed.member.slice(eq + 1), ...(parsed.args ?? [])].join(' ');
+  const { prefix, value } = RdoParser.extract(rawValue);
+  return { ...parsed, member: parsed.member.slice(0, eq), args: [prefix + value] };
 }
 
 /**
@@ -38,9 +55,7 @@ export class RdoMock {
    * before comparison.
    */
   private static memberName(parsed: RdoPacket): string | undefined {
-    if (parsed.action !== RdoAction.SET || !parsed.member) return parsed.member;
-    const eq = parsed.member.indexOf('=');
-    return eq === -1 ? parsed.member : parsed.member.slice(0, eq);
+    return normalizeSetPacket(parsed).member;
   }
 
   addScenario(scenario: RdoScenario): void {
