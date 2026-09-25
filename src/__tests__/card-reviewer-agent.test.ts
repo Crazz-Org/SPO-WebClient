@@ -142,10 +142,21 @@ describe('card-reviewer agent', () => {
         expect(text).toMatch(/A criterion names the shared helper or a bound, never a formatting literal/);
       });
 
-      it('adds no fifth verdict', () => {
-        const verdictRows = agent.match(/^\| `(?:FILE|FILE AMENDED|DO NOT FILE)` \|/gm) ?? [];
+      it('adds no fourth verdict', () => {
+        // Every row of the verdict table, whatever its label — a new verdict adds a row.
+        const start = agent.indexOf('## Your verdict — one of three');
+        const end = agent.indexOf('`FILE AMENDED` must name');
+        expect(start).toBeGreaterThan(-1);
+        expect(end).toBeGreaterThan(start);
+        const verdictRows = agent.slice(start, end).match(/^\| `[^`]+` \|/gm) ?? [];
         expect(verdictRows).toHaveLength(3);
-        expect(agent).toMatch(/## Your verdict — one of three/);
+      });
+
+      it('lets DO NOT FILE carry a wrong-repo finding, so the new bullet has a verdict to land in', () => {
+        const text = collapse(agent);
+        expect(text).toMatch(/\| `DO NOT FILE` \| There is no card here — [^|]*not this repo's \(refile on the named tracker\)/);
+        expect(text).toMatch(/or, for a card whose ground truth is in another repo, the tracker to refile on/);
+        expect(text).toMatch(/For DO NOT FILE: the reference that makes the finding moot, or the tracker to refile on/);
       });
     });
 

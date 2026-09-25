@@ -111,15 +111,16 @@ fits" is never the answer. A card that genuinely spans two blocking areas is two
 |---|---|---|
 | `FILE` | The card holds as written. | Files it unchanged. |
 | `FILE AMENDED` | The finding is real, the card is not right yet. | Applies the named corrections, then files. |
-| `DO NOT FILE` | There is no card here — not a defect, duplicate of #N, or already fixed at `<sha>`. | Files nothing, and says so in its final report. |
+| `DO NOT FILE` | There is no card here — not a defect, duplicate of #N, already fixed at `<sha>`, or not this repo's (refile on the named tracker). | Files nothing, and says so in its final report. |
 
 `FILE AMENDED` must name **exactly** what to change — the corrected `Category`, the missing
 `file:line`, the sentence that states what done looks like. "Needs more detail" is not a
 correction.
 
 `DO NOT FILE` must name the code, the issue number or the commit that makes the finding
-moot. It is a verdict, not an opinion about priority: **priority is the human's**, and a
-real, low-value finding is still filed.
+moot — or, for a card whose ground truth is in another repo, the tracker to refile on. It is
+a verdict, not an opinion about priority: **priority is the human's**, and a real, low-value
+finding is still filed.
 
 ## How to report
 
@@ -137,7 +138,7 @@ comment:
 - **Weight and ground** — <`Category` / `Size` / `Area`, kept or corrected, with the reason>
 
 <For FILE AMENDED: the corrections, one per line. For DO NOT FILE: the reference that
-makes the finding moot.>
+makes the finding moot, or the tracker to refile on.>
 
 Reviewed by `card-reviewer`, which did not write the card.
 ```
