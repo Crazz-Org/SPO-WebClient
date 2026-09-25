@@ -674,3 +674,48 @@ describe('game-store hiddenFacIds / facilityKinds', () => {
     expect(useGameStore.getState().facilityKinds).toEqual(kinds);
   });
 });
+
+describe('game-store tycoonStats merge', () => {
+  beforeEach(() => useGameStore.getState().reset());
+
+  const base = { username: 'u', incomePerHour: '10', ranking: 3, buildingCount: 2, maxBuildings: 50 };
+  const profile = { ...base, cash: '500', prestige: 7, levelName: 'Entrepreneur', levelTier: 2, nobPoints: 150, area: 10 };
+
+  it('keeps profile-only fields across periodic ticks while cash updates', () => {
+    const s = useGameStore.getState();
+    s.setTycoonStats(profile);
+    s.setTycoonStats({ ...base, cash: '1000', failureLevel: 0 });
+    let t = useGameStore.getState().tycoonStats;
+    expect(t?.levelName).toBe('Entrepreneur');
+    expect(t?.levelTier).toBe(2);
+    expect(t?.nobPoints).toBe(150);
+    expect(t?.cash).toBe('1000');
+    s.setTycoonStats({ ...base, cash: '2500', failureLevel: 0 });
+    t = useGameStore.getState().tycoonStats;
+    expect(t?.levelName).toBe('Entrepreneur');
+    expect(t?.levelTier).toBe(2);
+    expect(t?.nobPoints).toBe(150);
+    expect(t?.cash).toBe('2500');
+    expect(useGameStore.getState().cashHistory.at(-1)).toBe(2500);
+  });
+
+  it('overwrites a key the new push carries', () => {
+    const s = useGameStore.getState();
+    s.setTycoonStats(profile);
+    s.setTycoonStats({ ...profile, levelName: 'Magnate' });
+    expect(useGameStore.getState().tycoonStats?.levelName).toBe('Magnate');
+  });
+
+  it('reset nulls the merged slice and nothing leaks afterwards', () => {
+    const s = useGameStore.getState();
+    s.setTycoonStats(profile);
+    s.setTycoonStats({ ...base, cash: '1000', failureLevel: 0 });
+    useGameStore.getState().reset();
+    const r = useGameStore.getState();
+    expect(r.tycoonStats).toBeNull();
+    expect(r.lastStatsUpdate).toBeNull();
+    expect(r.cashHistory).toEqual([]);
+    r.setTycoonStats({ ...base, cash: '1000', failureLevel: 0 });
+    expect(useGameStore.getState().tycoonStats).not.toHaveProperty('levelName');
+  });
+});

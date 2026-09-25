@@ -327,7 +327,7 @@ export const useGameStore = create<GameState>((set) => ({
     const next = Number.isFinite(cashNum)
       ? [...prev.slice(-(12 - 1)), cashNum]
       : prev;
-    return { tycoonStats: stats, lastStatsUpdate: Date.now(), cashHistory: next };
+    return { tycoonStats: { ...state.tycoonStats, ...stats },lastStatsUpdate: Date.now(), cashHistory: next };
   }),
   setGameDate: (date) => set({ gameDate: date }),
 
