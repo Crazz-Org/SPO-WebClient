@@ -68,6 +68,22 @@ The claimer must be able to start without redoing the investigation. Require:
 - what is wrong or missing, stated as behaviour and not as a conclusion;
 - what **done** looks like — the card's own acceptance criterion.
 
+Then read that criterion against where it has to land:
+
+- **Ground truth in this repo.** If the cited files or behaviour live in SPO-Pipeline
+  (`orchestrator/*.js`, `bin/spo`, `prompts/`) or SPO-Deploy → `DO NOT FILE`, naming the
+  tracker to refile on.
+- **Satisfiable by a diff.** A "done" clause that needs a PR-body sentence, an issue comment,
+  a live measurement or a maintainer reply → `FILE AMENDED`, rewritten as something a test or
+  the tree shows.
+- **Not against a scoped rule.** Open the `CLAUDE.md` of the card's Area — the scoped one
+  nearest its files (`src/client/`, `src/server/`, `src/shared/`, `src/mock-server/`), else the
+  root one — and grep it for the criterion's verb; a contradiction → `FILE AMENDED` naming the
+  rule.
+- **Title and criterion promise the same set.** Name any case the title covers and the
+  criterion does not (the second renderer, the other language, "any building" vs civic) and
+  say in or out. A criterion names the shared helper or a bound, never a formatting literal.
+
 ### 4 · Is the weight right, and the ground named?
 
 `Category` (🔴 Defect · 🟠 Latent trap · 🟡 Feature/Gap · ⚪ Observation · 📚 Doc/Infra) and

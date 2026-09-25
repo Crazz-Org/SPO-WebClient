@@ -109,6 +109,46 @@ describe('card-reviewer agent', () => {
       expect(collapse(agent)).toMatch(/what \*\*done\*\* looks like/);
     });
 
+    // The audit's C21-C23: cards filed on the wrong repo, with a "done" only a PR body or a
+    // live read could show, against a scoped CLAUDE.md, or narrower than their own title.
+    describe('check 3 reads the criterion against where it has to land', () => {
+      const check3 = (): string => {
+        const start = agent.indexOf('### 3 · Is it actionable as written?');
+        const end = agent.indexOf('### 4 ·');
+        return collapse(agent.slice(start, end));
+      };
+
+      it('sends a card whose ground truth is in SPO-Pipeline or SPO-Deploy away', () => {
+        expect(check3()).toMatch(
+          /\*\*Ground truth in this repo\.\*\* If the cited files or behaviour live in SPO-Pipeline \(`orchestrator\/\*\.js`, `bin\/spo`, `prompts\/`\) or SPO-Deploy → `DO NOT FILE`, naming the tracker to refile on/
+        );
+      });
+
+      it('amends a done clause a diff cannot satisfy', () => {
+        expect(check3()).toMatch(
+          /\*\*Satisfiable by a diff\.\*\* A "done" clause that needs a PR-body sentence, an issue comment, a live measurement or a maintainer reply → `FILE AMENDED`/
+        );
+      });
+
+      it('amends a criterion that contradicts the scoped CLAUDE.md', () => {
+        const text = check3();
+        expect(text).toMatch(/\*\*Not against a scoped rule\.\*\* Open the `CLAUDE\.md` of the card's Area/);
+        expect(text).toMatch(/grep it for the criterion's verb; a contradiction → `FILE AMENDED` naming the rule/);
+      });
+
+      it('makes the reviewer name every case the title covers and the criterion does not', () => {
+        const text = check3();
+        expect(text).toMatch(/\*\*Title and criterion promise the same set\.\*\* Name any case the title covers and the criterion does not/);
+        expect(text).toMatch(/A criterion names the shared helper or a bound, never a formatting literal/);
+      });
+
+      it('adds no fifth verdict', () => {
+        const verdictRows = agent.match(/^\| `(?:FILE|FILE AMENDED|DO NOT FILE)` \|/gm) ?? [];
+        expect(verdictRows).toHaveLength(3);
+        expect(agent).toMatch(/## Your verdict — one of three/);
+      });
+    });
+
     it('names both weight fields, which feed the human priority order', () => {
       expect(agent).toMatch(/`Category`/);
       expect(agent).toMatch(/`Size`/);
@@ -239,6 +279,12 @@ describe('the mechanism is named on all five surfaces', () => {
 
   it('is in the CLAUDE.md sub-agents table', () => {
     expect(claudeMd).toMatch(/\|\s*`card-reviewer`\s*\|\s*Fable\s*\|/);
+  });
+
+  it('says in CLAUDE.md that a card landing under .claude/ is maintainer-only', () => {
+    expect(collapse(claudeMd)).toMatch(
+      /The pipeline harness refuses writes under `\.claude\/`; a card whose change must land there is maintainer-only and says so in its body/
+    );
   });
 
   it('is in the feeding rule', () => {
