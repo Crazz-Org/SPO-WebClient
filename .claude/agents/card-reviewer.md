@@ -38,10 +38,16 @@ to judge. The claim is what you are testing, not the prose. A finder who misread
 or who described intentional and documented behaviour as a defect, produces a card whose
 claimer spends its whole context proving there is nothing to do.
 
-Where the card asserts something about the RDO wire, the authority is the server-side
-declaration in the Rdo/Server/ directory of SPO-Original (`~/SPO-Original/Rdo/Server/` or
-`../SPO-Original/Rdo/Server/` relative to the repo root) — not the draft's summary of it, and
-never the live server.
+Where the card asserts something about the RDO wire, the authority is the member's
+declaration in its **declaring unit** in SPO-Original (`~/SPO-Original`, or `../SPO-Original`
+relative to the repo root) — the server-side object under `Kernel/` (`Kernel/TownPolitics.pas:40`
+declares the 3-arg `RDOSetRatingFrom`), `DServer/` for the directory server, or the Voyager
+unit for a member the reference client declares — not the draft's summary of it, and never
+the live server. `Rdo/Server/` is the **transport**: it holds no member declaration, so a card
+citing it for a member's kind or arity does not hold. And a form the reference client
+demonstrably emitted wins over the bare declaration (CLAUDE.md § *Two rules the catalogue does
+not encode*, rule 2): a card that would "correct" a separator the client emits today from the
+declaration alone does not hold either.
 
 ### 2 · Is it already covered?
 

@@ -147,9 +147,23 @@ describe('card-reviewer agent', () => {
       );
     });
 
-    it('sends an RDO claim to the server declaration, not to the finding aid', () => {
-      expect(agent).toMatch(/\.\.\/SPO-Original\/Rdo\/Server\//);
+    it('sends an RDO claim to the declaring unit, not to the finding aid', () => {
+      // Rdo/Server/ is the transport and holds no member declaration (CLAUDE.md § Adding or
+      // changing a member); the declaration lives in Kernel/, DServer/ or the Voyager unit.
+      const text = collapse(agent);
+      expect(text).toMatch(/\*\*declaring unit\*\*/);
+      expect(text).toMatch(/`Kernel\/` \(`Kernel\/TownPolitics\.pas:40`/);
+      expect(text).toMatch(/`DServer\/` for the directory server/);
+      expect(text).toMatch(/the Voyager unit/);
+      expect(text).toMatch(/`Rdo\/Server\/` is the \*\*transport\*\*: it holds no member declaration/);
+      expect(text).not.toMatch(/declaration in (?:the )?[^.]{0,40}Rdo\/Server/);
       expect(agent).toMatch(/never probe the live server|never treat `doc\/spo-original-reference\.md`/);
+    });
+
+    it('keeps a separator the reference client emitted over the bare declaration', () => {
+      expect(collapse(agent)).toMatch(
+        /a card that would "correct" a separator the client emits today from the declaration alone does not hold/
+      );
     });
   });
 
