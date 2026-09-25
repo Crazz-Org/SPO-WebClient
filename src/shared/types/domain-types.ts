@@ -1205,7 +1205,8 @@ export interface PoliticsCampaignEntry {
   prestige: number;
   /**
    * `opositiondata.asp:53` — `/fivedata/userinfo/<World>/<Tycoon>/largephoto.jpg`,
-   * absolute on the world host, built by the gateway like `rulerPhotoUrl`.
+   * on the world host, built by the gateway like `rulerPhotoUrl` and served as
+   * a `/proxy-image?url=…` URL wrapping that path.
    * Empty string when the entry has no name (never an `<img>` for it).
    */
   photoUrl: string;
@@ -1269,7 +1270,8 @@ export interface PoliticsData {
   /** `RulerPeriods` — displayed as "Mandate No". */
   mandateNo: number;
   /**
-   * Absolute URL of the ruler's portrait, or `''` when there is no ruler.
+   * `/proxy-image?url=…` URL wrapping the ruler's world-host portrait, or `''`
+   * when there is no ruler.
    *
    * Built server-side because only the gateway knows the world's IP.
    * `mayordata.asp:39` composes the same path, and ships it behind an
