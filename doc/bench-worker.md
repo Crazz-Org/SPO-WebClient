@@ -646,8 +646,9 @@ Two things follow, in this order of importance:
    of a median job) for the ordinary transient, not a throttle survivor.
 
    `worker.ts`'s separate `git fetch --quiet origin main` (the `origin/main` refresh before
-   `verify-gate`, ~worker.ts:799) is deliberately **not** wrapped in this retry: its failure
-   is already ignored (`worker.test.ts:691-696` pins a 128 exit as still `PASS`), so it has
+   `verify-gate`, inside `runJob` in `worker.ts`) is deliberately **not** wrapped in this retry:
+   its failure is already ignored (the `ignores a failed origin/main fetch — offline, the gate
+   falls back on its own` test in `worker.test.ts` pins a 128 exit as still `PASS`), so it has
    never produced an ENVIRONMENT and is not part of the corpus above; for `ref` jobs it is
    redundant since `prepareRef` just ran a retried fetch; for `live`/`lease` jobs a missed
    refresh only leaves `baseMain` naming a lagging local ref, a precision loss in the
@@ -663,7 +664,8 @@ Measured, not asserted: each mutant below was applied by hand to `runNetworkComm
 `checkout.ts`, `npx jest src/e2e/bench/checkout.test.ts --selectProjects unit` was run against
 it, and the file was restored before the next mutant. Non-zero exit = killed. **6/8 killed**;
 the two survivors are both expected and accepted, not gaps — the comment block over
-`checkout.test.ts:501` carries this same table anchored to the tests that killed each mutant.
+the `prepareCheckout — the job log tells a retried success from a first-try one` describe in
+`checkout.test.ts` carries this same table anchored to the tests that killed each mutant.
 
 | # | mutant | result |
 |---|---|---|

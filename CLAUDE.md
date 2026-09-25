@@ -143,7 +143,7 @@ worktree, where `..` resolves to `.claude/worktrees/`, not the repo root.
 ```
 
 **Cite `Five/0`.** The six instances are byte-identical to each other and `Five/0` is the path
-the gateway fetches (`buildAspUrl`, `spo_session.ts:927`); the bare `Five/` template diverges,
+the gateway fetches (`buildAspUrl` in `spo_session.ts`); the bare `Five/` template diverges,
 so a line number from it lands on other code.
 
 Two things the pages are the authority for, and the Pascal is not:
@@ -311,6 +311,8 @@ on Helartia; capability exceptions are read from the server, never overridden �
 TypeScript strict. camelCase vars/methods, PascalCase classes/interfaces. `unknown` in catch
 blocks + `toErrorMessage(err)` from `@/shared/error-utils`. JSDoc for public API only.
 Small, focused changes.
+
+Cite in-repo code by symbol, never by line — `buildRoad` in `road-handler.ts`, not `spo_session.ts:4026`. `File.pas:Line` and `x.asp:Line` stay: those trees are frozen.
 
 `eslint.config.js` encodes what is a rule here and what is a deliberate shape — read the
 comments before turning something off. CI fails on any ESLint **error**; warnings are a

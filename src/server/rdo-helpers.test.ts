@@ -211,7 +211,7 @@ describe('cleanPayload', () => {
 
   describe('tab-boundary behavior (documents known trade-off)', () => {
     // cleanPayload's final .trim() strips trailing tabs. This is why
-    // spo_session.ts:3491 inlines its own extraction for GetPropertyList
+    // cacherGetPropertyList in spo_session.ts inlines its own extraction for GetPropertyList
     // where positional alignment of tab-delimited values is critical.
 
     it('trailing tab is stripped — tab-split yields fewer elements', () => {

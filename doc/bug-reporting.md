@@ -33,7 +33,7 @@ talking to, and no client rebuild is needed to turn the feature on or off.
 ⚠ **Setting the flag in your own shell does nothing.** `npm run dev` deposits a job file and
 waits; the gateway is started by the **bench worker**, from the worker's environment
 ([`bench-submit.sh`](../scripts/bench-submit.sh) passes none, and
-[`worker.ts:369`](../src/e2e/bench/worker.ts) builds the gateway's environment as exactly
+[`runJob` in `worker.ts`](../src/e2e/bench/worker.ts) builds the gateway's environment as exactly
 `E2E_WORLD_STATE_DIR` and `SPO_CACHE_DIR`). `SPO_BUG_REPORT=true npm run dev` is inert.
 
 The flag has to live in the worker's own environment:
@@ -50,7 +50,7 @@ systemctl --user unset-environment SPO_BUG_REPORT && systemctl --user restart sp
 
 Leaving it on between test sessions is safe but not free of effect. On the gateway it adds one
 `<script src="/spo-runtime-config.js">` tag to `index.html`
-([`server.ts:1038`](../src/server/server.ts)) — the L2 live drive is a headless `ws` client that
+([the `index.html` injection in the `http.createServer` handler of `server.ts`](../src/server/server.ts)) — the L2 live drive is a headless `ws` client that
 never loads the HTML, so gates and nightly runs are untouched. A browser, though, gets the
 capture UI: nothing visible on desktop until F8, but on mobile the floating button is there,
 which is a distraction during an L3 pass. Turn it off when you are done.

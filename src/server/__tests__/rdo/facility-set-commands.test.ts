@@ -3,7 +3,7 @@
  * RDO Protocol Tests - Facility SET Command Formats
  *
  * Tests command format correctness for all 11 SET command variants
- * in buildRdoCommandArgs() (spo_session.ts:4795-4886).
+ * in buildRdoCommandArgs() (building-property-handler.ts).
  *
  * Since buildRdoCommandArgs is private, we replicate the same
  * RdoCommand builder calls and verify output format.
@@ -161,7 +161,7 @@ function buildRdoCommandArgs(
 }
 
 /**
- * Replicates mapRdoCommandToPropertyName from spo_session.ts:4896-4948
+ * Replicates mapRdoCommandToPropertyName from building-property-handler.ts
  */
 function mapRdoCommandToPropertyName(
   rdoCommand: string,

@@ -41,7 +41,7 @@ const WORLD_SOCKET = 'world';
 
 /**
  * Build an incoming PUSH packet the way `RdoProtocol.parse()` hands it over:
- * quotes stripped, type prefix KEPT (`stripTypedToken`, `rdo.ts:529-537`).
+ * quotes stripped, type prefix KEPT (`stripTypedToken` in `rdo.ts`).
  */
 function incoming(member: string | undefined, args?: string[]): RdoPacket {
   const argList = (args ?? []).map(a => `"${a}"`).join(',');
