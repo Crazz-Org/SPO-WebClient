@@ -157,6 +157,10 @@ describe('card-reviewer agent', () => {
         expect(text).toMatch(/\| `DO NOT FILE` \| There is no card here — [^|]*not this repo's \(refile on the named tracker\)/);
         expect(text).toMatch(/or, for a card whose ground truth is in another repo, the tracker to refile on/);
         expect(text).toMatch(/For DO NOT FILE: the reference that makes the finding moot, or the tracker to refile on/);
+        // The rulebook states the same contract; it must not keep the narrower one.
+        expect(collapse(rulebook)).toMatch(
+          /`DO NOT FILE` names the code, the issue number or the commit that makes the finding moot — or, for a card whose ground truth is in another repo, the tracker to refile on/
+        );
       });
     });
 

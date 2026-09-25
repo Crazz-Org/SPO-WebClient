@@ -602,8 +602,9 @@ Three verdicts, and what each does to the flow:
 | `FILE AMENDED` | Applies the named corrections — body, `Category`, `Size`, `Area` — then files. |
 | `DO NOT FILE` | Files nothing, and says nothing of it in its final report. |
 
-`DO NOT FILE` names the code, the issue number or the commit that makes the finding moot. It
-is never about priority: **priority is the human's**, and a real but low-value finding is
+`DO NOT FILE` names the code, the issue number or the commit that makes the finding moot — or,
+for a card whose ground truth is in another repo, the tracker to refile on. It is never about
+priority: **priority is the human's**, and a real but low-value finding is
 still filed, at the bottom of Todo like any other.
 
 **The trace.** Immediately after creating the issue, the session posts the verdict
