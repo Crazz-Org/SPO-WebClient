@@ -49,6 +49,7 @@ relative to the repo root — but **not** from a session worktree, where `..` re
 3. **Surface scan** — Grep for the feature name, class name, or RDO method name across relevant directories only (not the entire codebase).
 4. **Interface section** — Read only the `interface` section first (stop at `implementation`). Extract: type hierarchy, published members, property declarations.
 5. **Targeted deep dive** — Read `implementation` of specific methods that matter. Use line ranges (first 50 + last 20 for large files, then targeted middle).
+5b. **Find the writer** — For every value the client will compare (cache property, ASP field, `KindId`), cite the Pascal that *writes* it — `StoreToCache`, `WriteString`/`WriteInteger`, `KindId :=`, `.Values[Language]` — quote the literal and its type, and say whether it depends on language or a registry. A declaration or a reader is not a writer; if none is found, write `[UNKNOWN]`.
 6. **Synthesize** — Write findings with evidence citations. Mark uncertainties.
 
 ### Output Format
@@ -84,17 +85,23 @@ Emit only sections the question needs — omit sections with no findings. Always
 
 **Example — kind/arity lookup (minimal format):**
 ```
-## Finding: RDOObjectAt member type
+## Finding: RDOSetRatingFrom member type
 
 ### RDO Surface
 | Member | Kind | Verb | Params | Return | Notes |
 |--------|------|------|--------|--------|-------|
-| ObjectAt | function | ^ | 2 (x: int, y: int) | object | returns world object at coords |
+| RDOSetRatingFrom | procedure | call | 3 (RatingId: widestring, TycoonId: widestring, Value: integer) | none | bound to the Town Hall |
 
 ### Evidence Chain
-- RDOObjectServer.pas:145 — `function ObjectAt(x, y: Integer): TRDOObject;` declaration (2 params, returns object)
-- Voyager/RDOBrowser.pas:28 — client emits `^` for this function
+- Kernel/TownPolitics.pas:40 — `procedure RDOSetRatingFrom( RatingId : widestring; TycoonId : widestring; Value : integer );` declaration (3 params, no result)
+- Five/0/Visual/Voyager/Politics/rdoModifyRating.asp:24-27 (SPO-ASP) — the reference client does `BindTo(TownHallId)`, then calls `RDOSetRatingFrom(RatingId, TycoonName, Value)` in that order
 ```
+
+The declaration lives in the declaring unit (`Kernel/`, `DServer/`, or a Voyager unit), never in
+`Rdo/Server/` — that directory is the transport and declares no member. Where the reference
+client demonstrably emitted a form, that form wins over the bare declaration (CLAUDE.md § *Two
+rules the catalogue does not encode*, rule 2): report a difference as a finding, never as a fix
+to a call that works today.
 
 ## Mode: Document
 

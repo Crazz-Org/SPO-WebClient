@@ -108,6 +108,30 @@ match hierarchy and the step-by-step for adding a scenario.
 | Testing only level 1 of property resolution | Cover all three: direct → indexed (`Price0`) → columnSuffix (`Tax0Percent`) |
 | Async RDO test without timeout category | `testTimeout` is 10 s; a VERY_SLOW category call will hang the suite |
 
+## An assertion must be able to fail
+
+A green test that cannot go red proves nothing and still counts toward coverage.
+
+- **Watch it fail first.** Before committing a new test, break the production line it guards
+  (delete or invert it) and watch the test go red. Then restore the line.
+- **Never compare a value to a lookup of itself** — `expect(MAP[k]).toBe(MAP[k])` passes on
+  any `MAP`.
+- **Never copy the function under test into the test file.** A test-local copy tests the
+  copy. Export the function, or drive its public caller.
+- **A loop of `expect`s is preceded by a non-empty assertion** — `expect(rows.length).toBeGreaterThan(0)`
+  — or an empty list passes every iteration it never ran.
+- **Assert the change, not the resting state.** If a mount effect or a fixture already
+  produces the asserted state, the test passes without the code under test; assert what the
+  action changed.
+- **No `Date.now()` bounds in unit tests.** The bench runs under load, so a wall-clock limit
+  flakes. Use fake timers (`jest.useFakeTimers()`), or assert order instead of duration.
+- **In `src/mock-server/scenarios/`, do not stub `fake.cacher.*` / `fake.ctx.*`.** A stub
+  there tests your belief about the server, not the server's captured answer. Serve the row
+  from the scenario, or mark the line `// substrate-exception: <why>`.
+- **RDO expected frames are string literals**, never built with `rdoCall` / `RdoCommand` —
+  a frame built by the emitter under test agrees with it by construction. Pin the separator
+  the client emits today; never change a separator from a test.
+
 ## Before declaring done
 
 ```bash
