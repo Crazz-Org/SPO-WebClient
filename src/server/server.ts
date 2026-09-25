@@ -35,7 +35,7 @@ import { buildRuntimeConfigScript } from './runtime-config';
 import { handleBugReportRequest, DEFAULT_QUEUE_DIR } from './bug-report-endpoint';
 import { handleReportPullList, handleReportPullFetch, handleReportPullAck } from './report-pull-endpoint';
 import { enforceProductionConfig } from './production-config';
-import { proxyImage, type ProxyImageDeps } from './proxy-image';
+import { proxyImage, buildImageFileIndexEntries, type ProxyImageDeps } from './proxy-image';
 import { fetchWithTimeout } from './fetch-with-timeout';
 
 /**
@@ -159,7 +159,8 @@ function registerServices(): void {
 // =============================================================================
 // In-memory file index for proxy-image (avoids readdirSync on every request)
 // =============================================================================
-// Maps lowercase filename → full path on disk
+// Maps key → full path on disk: update-server files by lowercase basename,
+// game-server files by their `gs1-<hash>` name
 const imageFileIndex = new Map<string, string>();
 
 /**
@@ -168,37 +169,7 @@ const imageFileIndex = new Map<string, string>();
  */
 async function buildImageFileIndex(): Promise<void> {
   // Build into a temporary map, then swap atomically to avoid serving 404s during rebuild
-  const newIndex = new Map<string, string>();
-  const CACHE_ROOT = getCacheDir();
-
-  // Index files in update server cache subdirectories
-  try {
-    const entries = await fsp.readdir(CACHE_ROOT, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const dirPath = path.join(CACHE_ROOT, entry.name);
-        const files = await fsp.readdir(dirPath);
-        for (const file of files) {
-          newIndex.set(file.toLowerCase(), path.join(dirPath, file));
-        }
-      }
-    }
-  } catch {
-    // Cache root doesn't exist yet
-  }
-
-  // Index files in webclient-cache
-  try {
-    const files = await fsp.readdir(WEBCLIENT_CACHE_DIR);
-    for (const file of files) {
-      const key = file.toLowerCase();
-      if (!newIndex.has(key)) {
-        newIndex.set(key, path.join(WEBCLIENT_CACHE_DIR, file));
-      }
-    }
-  } catch {
-    // webclient-cache doesn't exist yet
-  }
+  const newIndex = await buildImageFileIndexEntries(getCacheDir(), WEBCLIENT_CACHE_DIR);
 
   // Atomic swap: clear and repopulate in one synchronous block
   imageFileIndex.clear();

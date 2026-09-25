@@ -25,6 +25,11 @@ import {
   sanitizeImageFilename,
   isPrivateAddress,
   resolvesToPublicAddress,
+  gameServerCacheName,
+  isGameServerCacheName,
+  buildImageFileIndexEntries,
+  GAME_SERVER_CACHE_PREFIX,
+  STORED_PLACEHOLDER_TTL_MS,
   type ProxyImageDeps,
 } from './proxy-image';
 
@@ -209,7 +214,7 @@ describe('proxy-image', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual(Buffer.from('fromgame'));
-    expect(deps.imageFileIndex.get('gameimg.png')).toBeDefined();
+    expect(deps.imageFileIndex.get(gameServerCacheName('http://example.test/dir/gameimg.png', 'gameimg.png'))).toBeDefined();
   });
 
   it('returns 504 on a timeout and does not cache a placeholder or touch the index', async () => {
@@ -233,9 +238,128 @@ describe('proxy-image', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers).toEqual({ 'Content-Type': 'image/png' });
-    expect(deps.imageFileIndex.get('broken.png')).toBeDefined();
-    const target = deps.imageFileIndex.get('broken.png') as string;
+    const brokenKey = gameServerCacheName('http://example.test/dir/broken.png', 'broken.png');
+    expect(deps.imageFileIndex.get(brokenKey)).toBeDefined();
+    const target = deps.imageFileIndex.get(brokenKey) as string;
     expect(fs.existsSync(target)).toBe(true);
+  });
+
+  describe('game-server cache keys', () => {
+    const alphaUrl = 'http://example.test/fivedata/userinfo/planitia/Alpha/largephoto.jpg';
+    const betaUrl = 'http://example.test/fivedata/userinfo/planitia/Beta/largephoto.jpg';
+
+    function okFetch(text: string): { ok: true; arrayBuffer: () => Promise<ArrayBuffer> } {
+      return { ok: true, arrayBuffer: async () => toArrayBuffer(text) };
+    }
+
+    function storePlaceholder(url: string): string {
+      const cacheName = gameServerCacheName(url, 'largephoto.jpg');
+      const filePath = path.join(webclientCacheDir, cacheName);
+      fs.writeFileSync(filePath, getPlaceholderImage());
+      deps.imageFileIndex.set(cacheName, filePath);
+      return filePath;
+    }
+
+    it('derives distinct, versioned names from the full path', () => {
+      const alpha = gameServerCacheName(alphaUrl, 'largephoto.jpg');
+      const beta = gameServerCacheName(betaUrl, 'largephoto.jpg');
+      expect(alpha).not.toBe(beta);
+      expect(isGameServerCacheName(alpha)).toBe(true);
+      expect(isGameServerCacheName(beta)).toBe(true);
+      expect(alpha.endsWith('.jpg')).toBe(true);
+      expect(beta.endsWith('.jpg')).toBe(true);
+      expect(alpha.startsWith(GAME_SERVER_CACHE_PREFIX)).toBe(true);
+      expect(gameServerCacheName(alphaUrl.replace('Alpha', 'ALPHA'), 'largephoto.jpg')).toBe(alpha);
+      expect(isGameServerCacheName('largephoto.jpg')).toBe(false);
+    });
+
+    it('stores two URLs differing only by directory as two cache files', async () => {
+      mockFetch.mockResolvedValueOnce(okFetch('alpha')).mockResolvedValueOnce(okFetch('beta'));
+
+      const resA = fakeRes();
+      await proxyImage(alphaUrl, resA, deps);
+      const resB = fakeRes();
+      await proxyImage(betaUrl, resB, deps);
+      expect(resA.body).toEqual(Buffer.from('alpha'));
+      expect(resB.body).toEqual(Buffer.from('beta'));
+
+      const files = await fsp.readdir(webclientCacheDir);
+      expect(files).toHaveLength(2);
+      expect(files).not.toContain('largephoto.jpg');
+
+      const resA2 = fakeRes();
+      await proxyImage(alphaUrl, resA2, deps);
+      expect(resA2.body).toEqual(Buffer.from('alpha'));
+      expect(resA2.headers).toEqual({ 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=31536000' });
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not serve a placeholder written under the legacy basename by an older build', async () => {
+      fs.writeFileSync(path.join(webclientCacheDir, 'largephoto.jpg'), getPlaceholderImage());
+      deps.imageFileIndex = await buildImageFileIndexEntries(cacheRoot, webclientCacheDir);
+      expect(deps.imageFileIndex.has('largephoto.jpg')).toBe(false);
+
+      mockFetch.mockResolvedValueOnce(okFetch('alpha'));
+      const res = fakeRes();
+      await proxyImage(alphaUrl, res, deps);
+      expect(mockFetch).toHaveBeenCalled();
+      expect(res.body).toEqual(Buffer.from('alpha'));
+    });
+
+    it('serves a fresh stored placeholder without a long-lived cache header', async () => {
+      storePlaceholder(alphaUrl);
+      const res = fakeRes();
+      await proxyImage(alphaUrl, res, deps);
+      expect(res.statusCode).toBe(200);
+      expect(res.headers).toEqual({ 'Content-Type': 'image/png' });
+      expect(res.body).toEqual(getPlaceholderImage());
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('re-fetches the image once a stored placeholder is past its TTL', async () => {
+      const filePath = storePlaceholder(alphaUrl);
+      const stale = (Date.now() - STORED_PLACEHOLDER_TTL_MS - 60_000) / 1000;
+      fs.utimesSync(filePath, stale, stale);
+
+      mockFetch.mockResolvedValueOnce(okFetch('fresh'));
+      const res = fakeRes();
+      await proxyImage(alphaUrl, res, deps);
+      expect(res.body).toEqual(Buffer.from('fresh'));
+      expect(mockFetch.mock.calls.some((call: unknown[]) => call[0] === alphaUrl)).toBe(true);
+      expect(fs.readFileSync(filePath)).toEqual(Buffer.from('fresh'));
+    });
+  });
+
+  describe('buildImageFileIndexEntries', () => {
+    it('keeps basename keys for the update-server mirror so /cache still resolves', async () => {
+      const buildingDir = path.join(cacheRoot, 'BuildingImages');
+      fs.mkdirSync(buildingDir);
+      const realPath = path.join(buildingDir, 'MapPGILoResF64x32x0.gif');
+      fs.writeFileSync(realPath, Buffer.from('gif'));
+      fs.writeFileSync(path.join(cacheRoot, 'loose.txt'), 'x');
+      const gsName = gameServerCacheName('http://example.test/a/b.png', 'b.png');
+      fs.writeFileSync(path.join(webclientCacheDir, gsName), 'png');
+      fs.writeFileSync(path.join(webclientCacheDir, 'largephoto.jpg'), 'jpg');
+
+      const index = await buildImageFileIndexEntries(cacheRoot, webclientCacheDir);
+
+      // Same lookup as the /cache route in server.ts
+      const relativePath = 'BuildingImages/MAPPGILORESF64X32X0.GIF';
+      const lastSlash = relativePath.lastIndexOf('/');
+      const filename = lastSlash >= 0 ? relativePath.substring(lastSlash + 1) : relativePath;
+      expect(index.get(filename.toLowerCase())).toBe(realPath);
+      expect(index.get(gsName)).toBe(path.join(webclientCacheDir, gsName));
+      expect(index.has('largephoto.jpg')).toBe(false);
+      expect(index.has('loose.txt')).toBe(false);
+    });
+
+    it('returns an empty map when neither directory exists', async () => {
+      const index = await buildImageFileIndexEntries(
+        path.join(cacheRoot, 'missing-root'),
+        path.join(webclientCacheDir, 'missing-webclient'),
+      );
+      expect(index.size).toBe(0);
+    });
   });
 
   describe('sanitizeImageFilename', () => {
