@@ -96,10 +96,10 @@ function serve(): FakeSessionCtx {
   });
 
   (fake.ctx.buildAspUrl as jest.MockedFunction<SessionContext['buildAspUrl']>)
-    .mockImplementation((aspPath, extraParams) => buildUrl(aspPath, extraParams));
+    .mockImplementation((aspPath, extraParams) => buildUrl(aspPath, extraParams)); // substrate-exception: an ASP page over HTTP, not an RDO frame, so RdoMock cannot answer it
 
   (fake.ctx.fetchAspPage as jest.MockedFunction<SessionContext['fetchAspPage']>)
-    .mockImplementation(async (aspPath, extraParams) => {
+    .mockImplementation(async (aspPath, extraParams) => { // substrate-exception: an ASP page over HTTP, not an RDO frame, so RdoMock cannot answer it
       const url = buildUrl(aspPath, extraParams);
       requested.push(url);
       const response = answer(url);

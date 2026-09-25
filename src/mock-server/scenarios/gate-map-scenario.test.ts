@@ -70,7 +70,7 @@ describe('gate-map scenario — the drive', () => {
 
   function makeGateMapCtx() {
     const fake = makeSessionCtx({ sockets: ['map'] });
-    fake.cacher.createObject.mockResolvedValue(GATE_MAP_TARGETS.tempObject);
+    fake.cacher.createObject.mockResolvedValue(GATE_MAP_TARGETS.tempObject); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
 
     const mock = new RdoMock();
     mock.addScenario(rdo);
@@ -81,7 +81,7 @@ describe('gate-map scenario — the drive', () => {
       return r ? (RdoProtocol.parse(r.response).payload ?? '') : '';
     });
 
-    fake.cacher.getPropertyList.mockImplementation(async (id: string, names: string[]) => {
+    fake.cacher.getPropertyList.mockImplementation(async (id: string, names: string[]) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
       const frame = rdoCall('GetPropertyList', id, RdoValue.string(names.join('\t') + '\t')).toFrame();
       const r = mock.match(frame);
       if (!r) return [];

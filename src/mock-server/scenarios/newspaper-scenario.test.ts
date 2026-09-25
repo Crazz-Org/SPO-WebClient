@@ -261,7 +261,7 @@ describe('newspaper scenario — the rated post', () => {
       activeUsername: 'SPO_test3', cachedPassword: 'test3',
       daAddr: '158.69.153.134', daPort: 7001,
     });
-    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([TOWN_HALL, '']);
+    (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([TOWN_HALL, '']); // substrate-exception: reads the cacher, which the fake stubs and which emits no frame, so no scenario can answer it
 
     mockFetch.mockImplementation(async (url: string, init?: unknown) => {
       const method = (init as { method?: string } | undefined)?.method ?? 'GET';

@@ -170,11 +170,21 @@ export interface FakeSessionOptions extends Partial<SessionContext> {
 /**
  * Build a fake `SessionContext`.
  *
- * Configure business answers on the returned mocks
- * (`fake.cacher.getPropertyList.mockResolvedValue([...])`, `fake.respond(...)`)
- * rather than through `overrides` where possible: `overrides` replaces the
- * method on `ctx`, and the `cacher` / `log` handles then point at whatever the
- * override installed, which is only usable if it is itself a `jest.fn()`.
+ * Serve a frame's answer from a capture, not a stub: load an `RdoMock` with
+ * the scenario (`mock.addScenario(createXScenario())`) and answer through
+ * `fake.respond(packet => mock.match(frame) ...)`. A stub on `fake.ctx.*`
+ * tests your belief about the server, not its captured answer.
+ *
+ * The exception is the cacher (`fake.cacher.*` and the ctx methods it backs):
+ * the fake's cacher emits no frame, so no scenario can answer it — stub it
+ * (`fake.cacher.getPropertyList.mockResolvedValue([...])`), and in
+ * `src/mock-server/scenarios/` mark the line
+ * `// substrate-exception: <why the capture cannot answer this>`;
+ * `substrate-discipline.test.ts` enforces it.
+ *
+ * Prefer these handles over `overrides`: `overrides` replaces the method on
+ * `ctx`, and the `cacher` / `log` handles then point at whatever the override
+ * installed, which is only usable if it is itself a `jest.fn()`.
  */
 export function makeSessionCtx(overrides: FakeSessionOptions = {}): FakeSessionCtx {
   const { sockets = [], ...rest } = overrides;

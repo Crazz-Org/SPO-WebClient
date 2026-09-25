@@ -296,13 +296,13 @@ describe('civic-mutations scenario — the world.five flag drives getPoliticsDat
       activeUsername: 'SPO_test3', cachedPassword: 'test3',
       daAddr: '158.69.153.134', daPort: 7001,
     });
-    fake.cacher.createObject.mockResolvedValue(CIVIC_TARGETS.tempObject);
-    fake.cacher.setPath.mockImplementation(async (id, path) => {
+    fake.cacher.createObject.mockResolvedValue(CIVIC_TARGETS.tempObject); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
+    fake.cacher.setPath.mockImplementation(async (id, path) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
       const frame = rdoCall('SetPath', id, RdoValue.string(path)).toFrame();
       const result = rdoMock.match(frame);
       if (!result) throw new Error(`L1: no exchange for SetPath ${path}`);
     });
-    fake.cacher.getPropertyList.mockImplementation(async (id, props) => {
+    fake.cacher.getPropertyList.mockImplementation(async (id, props) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
       const frame = rdoCall(
         'GetPropertyList', id, RdoValue.string(props.join('\t') + '\t'),
       ).toFrame();

@@ -9,6 +9,7 @@
  * cache row a minister's session actually holds ends up narrowing the list,
  * not a constant baked into the component.
  */
+// substrate-exception: drives the real gateway -> bridge -> component path over a tycoon-cache row; the fake's cacher emits no frame and no create*Scenario captures this row
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react';

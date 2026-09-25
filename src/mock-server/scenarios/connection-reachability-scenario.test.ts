@@ -69,7 +69,7 @@ describe('connection-reachability scenario — the catalogue', () => {
 describe('connection-reachability scenario — the drive', () => {
   function makeDriveCtx() {
     const fake = makeSessionCtx({ currentWorldInfo: { name: 'Shamba', url: '', ip: '', port: 0 } });
-    fake.cacher.createObject.mockResolvedValue(REACHABILITY_TEMP_OBJECT);
+    fake.cacher.createObject.mockResolvedValue(REACHABILITY_TEMP_OBJECT); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
 
     const mock = new RdoMock();
     mock.addScenario(rdo);
@@ -89,7 +89,7 @@ describe('connection-reachability scenario — the drive', () => {
       return `${x},${y}`;
     };
 
-    fake.cacher.getPropertyList.mockImplementation(async (id: string, props: string[]) => {
+    fake.cacher.getPropertyList.mockImplementation(async (id: string, props: string[]) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
       expect(id).toBe(REACHABILITY_TEMP_OBJECT);
       expect(props).toEqual(['NearCircuits']);
       const key = lastBoundPosition();
