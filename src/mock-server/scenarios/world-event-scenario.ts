@@ -18,12 +18,11 @@
  *
  * ONE EXCHANGE PER VARIANT, NOT TWO IN ONE ARRAY. Both answers travel on an
  * identical frame — `PickEvent` takes no argument that would let the mock
- * tell them apart — and `RdoMock`'s first three match strategies do not skip
- * already-consumed exchanges (`exactMatch`/`keyFieldMatch`/`methodMatch` all
- * return the first full-key match, `rdo-mock.ts:109-113`; only
- * `nthOccurrenceMatch` advances, `:193-195`, and it is reached last). Two
- * identical-frame exchanges in one scenario would answer the event block
- * twice and leave the empty-answer exchange unconsumed forever. So the
+ * tell them apart — and no `RdoMock` match strategy skips an already-consumed
+ * exchange: each returns the first exchange whose declared keys all match the
+ * frame (`RdoMock.match`). Two identical-frame exchanges in one scenario would
+ * answer the event block twice and leave the empty-answer exchange unconsumed
+ * forever. So the
  * **test**, not this factory, plays the sequence: `mock.clearScenarios()`
  * then `mock.addScenario(createWorldEventScenario(undefined, { event: null }).rdo)`
  * between the two asks — the same "the factory option picks the answer"

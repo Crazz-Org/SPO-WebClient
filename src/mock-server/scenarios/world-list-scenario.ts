@@ -123,7 +123,8 @@ export function createWorldListScenario(
           verb: 'sel',
           action: 'call',
           member: 'RDOQueryKey',
-          argsPattern: ['"%Root/Areas/America/Worlds"'],
+          // Full two-arg list (path, field block) as login-handler.ts:261-265 emits it.
+          argsPattern: ['"%Root/Areas/America/Worlds"', '*'],
         },
       },
       {
@@ -155,7 +156,8 @@ export function createWorldListScenario(
           verb: 'sel',
           action: 'call',
           member: 'RDOQueryKey',
-          argsPattern: ['"%Root/Areas/Asia/Worlds"'],
+          // Full two-arg list (path, field block) as login-handler.ts:261-265 emits it.
+          argsPattern: ['"%Root/Areas/Asia/Worlds"', '*'],
         },
       },
     ],

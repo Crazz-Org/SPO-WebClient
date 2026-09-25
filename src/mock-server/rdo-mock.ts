@@ -7,7 +7,7 @@
 import { RdoProtocol } from '@/server/rdo';
 import { RdoAction, type RdoPacket } from '@/shared/types/protocol-types';
 import { RdoParser } from '@/shared/rdo-types';
-import type { RdoExchange, RdoScenario } from './types/rdo-exchange-types';
+import type { RdoExchange, RdoMatchKey, RdoScenario } from './types/rdo-exchange-types';
 import { substituteVariables, mergeVariables } from './scenarios/scenario-variables';
 import type { ScenarioVariables } from './scenarios/scenario-variables';
 
@@ -37,11 +37,16 @@ export function normalizeSetPacket(parsed: RdoPacket): RdoPacket {
 /**
  * RdoMock — matches incoming RDO commands to captured exchange data.
  *
- * Matching hierarchy (first match wins):
- * 1. Exact match: verb + targetId + action + member + all args
- * 2. Key field match: verb + action + member (wildcard targetId)
- * 3. Method match: action + member only
- * 4. Nth occurrence: same method, return next unconsumed
+ * An exchange answers a frame only if EVERY key its `matchKeys` declares matches the frame:
+ * a declared target must equal the frame's target, a declared `argsPattern` must have exactly
+ * as many positions as the frame has args. Matching order (first match wins):
+ * 1. Exact match: verb + specific targetId + action + member + argsPattern all declared and equal
+ * 2. Key field match: every declared key equal (argsPattern exchanges first); an exchange that
+ *    declares only a member (no verb/action/args, target absent or '*') is skipped here
+ * 3. idof match: `idof` frame whose name equals an exchange's specific `targetId`
+ * 4. Loose fallback: ONLY exchanges carrying a non-empty `looseMatch` reason — answers on the
+ *    member name alone (or, for `idof`, the verb alone)
+ * No strategy skips an already-consumed exchange.
  */
 export class RdoMock {
   private exchanges: RdoExchange[] = [];
@@ -56,6 +61,22 @@ export class RdoMock {
    */
   private static memberName(parsed: RdoPacket): string | undefined {
     return normalizeSetPacket(parsed).member;
+  }
+
+  /** True when the exchange, by its own declaration, answers on the member name alone. */
+  private static isMemberOnly(mk: RdoMatchKey): boolean {
+    return (
+      !!mk.member &&
+      mk.verb === undefined &&
+      mk.action === undefined &&
+      mk.argsPattern === undefined &&
+      (mk.targetId === undefined || mk.targetId === '*')
+    );
+  }
+
+  /** True when the exchange opted into member-/verb-only matching with a written reason. */
+  private static hasLooseReason(ex: RdoExchange): boolean {
+    return typeof ex.looseMatch === 'string' && ex.looseMatch.trim() !== '';
   }
 
   addScenario(scenario: RdoScenario): void {
@@ -77,8 +98,8 @@ export class RdoMock {
     const matched =
       this.exactMatch(parsed) ??
       this.keyFieldMatch(parsed) ??
-      this.methodMatch(parsed) ??
-      this.nthOccurrenceMatch(parsed);
+      this.idofMatch(parsed) ??
+      this.looseFallback(parsed);
 
     if (!matched) return null;
 
@@ -134,88 +155,65 @@ export class RdoMock {
 
   private keyFieldMatch(parsed: RdoPacket): RdoExchange | null {
     const member = RdoMock.memberName(parsed);
-    // First pass: try exchanges that have argsPattern (most specific)
-    for (const ex of this.exchanges) {
-      if (!ex.matchKeys || ex.pushOnly) continue;
-      const mk = ex.matchKeys;
-      if (!mk.argsPattern) continue;
+    // First pass: exchanges that declare an argsPattern (most specific); second pass: the rest.
+    for (const withArgs of [true, false]) {
+      for (const ex of this.exchanges) {
+        if (!ex.matchKeys || ex.pushOnly) continue;
+        const mk = ex.matchKeys;
+        if ((mk.argsPattern !== undefined) !== withArgs) continue;
+        // A member-only exchange answers nothing here — only the loose fallback, with a reason.
+        if (!mk.member || RdoMock.isMemberOnly(mk)) continue;
 
-      const verbOk = mk.verb === undefined || mk.verb === parsed.verb;
-      const actionOk = mk.action === undefined || mk.action === parsed.action;
-      const memberOk = mk.member === undefined || mk.member === member;
-      const targetWildcard = mk.targetId === undefined || mk.targetId === '*';
-      const argsOk = this.argsMatch(mk.argsPattern, parsed.args);
+        const verbOk = mk.verb === undefined || mk.verb === parsed.verb;
+        const actionOk = mk.action === undefined || mk.action === parsed.action;
+        const memberOk = mk.member === member;
+        const targetOk = mk.targetId === undefined || mk.targetId === '*' || mk.targetId === parsed.targetId;
+        const argsOk = mk.argsPattern === undefined || this.argsMatch(mk.argsPattern, parsed.args);
 
-      if (verbOk && actionOk && memberOk && targetWildcard && mk.member && argsOk) {
-        return ex;
+        if (verbOk && actionOk && memberOk && targetOk && argsOk) {
+          return ex;
+        }
       }
     }
+    return null;
+  }
 
-    // Second pass: exchanges without argsPattern (wildcard args)
+  /** An `idof` frame is verb + name, so an exchange naming that exact object is a full match. */
+  private idofMatch(parsed: RdoPacket): RdoExchange | null {
+    if (parsed.verb !== 'idof' || !parsed.targetId) return null;
     for (const ex of this.exchanges) {
-      if (!ex.matchKeys || ex.pushOnly) continue;
-      const mk = ex.matchKeys;
-      if (mk.argsPattern) continue;
-
-      const verbOk = mk.verb === undefined || mk.verb === parsed.verb;
-      const actionOk = mk.action === undefined || mk.action === parsed.action;
-      const memberOk = mk.member === undefined || mk.member === member;
-      const targetWildcard = mk.targetId === undefined || mk.targetId === '*';
-
-      if (verbOk && actionOk && memberOk && targetWildcard && mk.member) {
+      if (ex.pushOnly) continue;
+      if (ex.matchKeys?.verb === 'idof' && ex.matchKeys.targetId === parsed.targetId) {
         return ex;
       }
     }
     return null;
   }
 
-  private methodMatch(parsed: RdoPacket): RdoExchange | null {
+  /**
+   * The only member-only (or, for `idof`, verb-only) path — reserved for exchanges that state
+   * why in `looseMatch`.
+   */
+  private looseFallback(parsed: RdoPacket): RdoExchange | null {
+    const isIdof = parsed.verb === 'idof';
     const member = RdoMock.memberName(parsed);
     for (const ex of this.exchanges) {
-      if (!ex.matchKeys || ex.pushOnly) continue;
+      if (ex.pushOnly || !ex.matchKeys || !RdoMock.hasLooseReason(ex)) continue;
       const mk = ex.matchKeys;
-
-      if (mk.member && mk.member === member) {
+      if (isIdof) {
+        if (mk.verb === 'idof' && (mk.targetId === undefined || mk.targetId === '*' || mk.targetId === parsed.targetId)) {
+          return ex;
+        }
+      } else if (mk.member && mk.member === member) {
         return ex;
       }
     }
     return null;
-  }
-
-  private nthOccurrenceMatch(parsed: RdoPacket): RdoExchange | null {
-    // Find exchanges matching by member, return next unconsumed or wrap around
-    const member = RdoMock.memberName(parsed);
-    const candidates = this.exchanges.filter(ex => {
-      if (!ex.matchKeys?.member || ex.pushOnly) return false;
-      return ex.matchKeys.member === member;
-    });
-
-    if (candidates.length === 0) {
-      // Try matching by verb (for idof commands)
-      if (parsed.verb === 'idof' && parsed.targetId) {
-        const idofCandidates = this.exchanges.filter(ex =>
-          !ex.pushOnly &&
-          ex.matchKeys?.verb === 'idof' && (
-            ex.matchKeys?.targetId === parsed.targetId ||
-            ex.matchKeys?.targetId === '*'
-          )
-        );
-        if (idofCandidates.length > 0) return idofCandidates[0];
-      }
-      return null;
-    }
-
-    // Find first unconsumed
-    const unconsumed = candidates.find(c => !this.consumed.has(c.id));
-    if (unconsumed) return unconsumed;
-
-    // Wrap around — return the first candidate
-    return candidates[0];
   }
 
   private argsMatch(pattern: string[], actual: string[] | undefined): boolean {
     if (!actual) return pattern.length === 0;
-    if (pattern.length > actual.length) return false;
+    if (pattern.length !== actual.length) return false;
 
     for (let i = 0; i < pattern.length; i++) {
       if (pattern[i] !== '*' && pattern[i] !== actual[i]) {

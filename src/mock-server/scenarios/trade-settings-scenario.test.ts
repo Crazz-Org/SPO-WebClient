@@ -82,6 +82,15 @@ describe('trade-settings scenario — the catalogue', () => {
     expect(argsFor('RDOSetTradeLevel')).not.toContain('"#1"');
   });
 
+  it('answers nothing for an argument outside the legal set, or the wrong target', () => {
+    const mock = new RdoMock();
+    mock.addScenario(rdo);
+    const legal = rdo.exchanges.find(e => e.id === 'trade-rdo-set-trade-level-2')!.request;
+    expect(mock.match(legal.replace('"#2"', '"#1"'))).toBeNull();
+    expect(mock.match(legal.replace(TRADE_TARGETS.currBlock, TRADE_TARGETS.objectId))).toBeNull();
+    expect(mock.match(legal.replace('"#2"', '"#2","#2"'))).toBeNull();
+  });
+
   it('matches each frame back to its own exchange', () => {
     const mock = new RdoMock();
     mock.addScenario(rdo);

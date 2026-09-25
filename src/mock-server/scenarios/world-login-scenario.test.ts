@@ -23,6 +23,7 @@ import {
   buildLoginPushTriggers,
   ProtocolTestHarness,
 } from '@/server/__tests__/protocol-validation/protocol-test-harness';
+import { RdoMock } from '../rdo-mock';
 import { createAuthScenario } from './auth-scenario';
 import { createWorldListScenario } from './world-list-scenario';
 import { createCompanyListScenario } from './company-list-scenario';
@@ -133,9 +134,19 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
   });
 
   // The language criterion over the wire: the session language travels on the
-  // SetLanguage frame, and the scenario's exchange is gated on `"%2"`, so a
-  // gateway that dropped it would match nothing at all. The `LangId` half of this
-  // criterion moved to `login-handler.test.ts` with the ASP fetch it belongs to.
+  // SetLanguage frame, and the scenario's exchange pins the context target and
+  // its exact one-position `argsPattern` `"%2"` with no `looseMatch` reason, so
+  // RdoMock answers a frame that dropped or changed it with nothing at all (the
+  // next test proves it). The `LangId` half of this criterion moved to
+  // `login-handler.test.ts` with the ASP fetch it belongs to.
+  it('the %2 SetLanguage exchange answers no other language and no bare frame', () => {
+    const mock = new RdoMock();
+    mock.addScenario(createWorldLoginScenario(VARS, { languageId: '2' }).rdo);
+    expect(mock.match(`C sel ${CONTEXT_ID} call SetLanguage "*" "%2"`)?.exchange.id).toBe('wlogin-rdo-setlang');
+    expect(mock.match(`C sel ${CONTEXT_ID} call SetLanguage "*" "%0"`)).toBeNull();
+    expect(mock.match(`C sel ${CONTEXT_ID} call SetLanguage "*"`)).toBeNull();
+  });
+
   it('a session opened with language 2 emits SetLanguage %2', async () => {
     buildHarness(undefined, '2');
     harness.session.setLanguageId('2');

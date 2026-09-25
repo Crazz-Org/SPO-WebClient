@@ -9,7 +9,11 @@ export interface RdoMatchKey {
   targetId?: string;      // Object ID (use '*' for wildcard)
   action?: string;        // 'call', 'get', 'set'
   member?: string;        // Method/property name
-  argsPattern?: string[]; // Specific args to match (others ignored)
+  /**
+   * The FULL argument list: a frame must carry exactly `argsPattern.length` args, each equal to
+   * its position here (quotes ignored). Use `'*'` for a position whose value is not pinned.
+   */
+  argsPattern?: string[];
 }
 
 /** A single RDO exchange: command -> response + optional pushes */
@@ -23,6 +27,12 @@ export interface RdoExchange {
   pushes?: string[];
   /** Key fields for flexible matching */
   matchKeys?: RdoMatchKey;
+  /**
+   * The reason this exchange may answer on its member name alone (or, for an `idof` exchange,
+   * on the verb alone). Without it, `RdoMock` answers only a frame matching every key
+   * `matchKeys` declares. An empty string counts as absent.
+   */
+  looseMatch?: string;
   /**
    * If true, this exchange is a server-initiated push (no client request).
    * The `response` field contains the push command, and `request` should be ''.

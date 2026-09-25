@@ -11,7 +11,10 @@
  * There is nothing in a reply that could catch a wrong one: a `procedure`
  * answers nothing (`OB-28`), so the **response is empty on purpose** and the
  * frame itself is the only evidence. This scenario fixes one exchange per legal
- * value of each member; anything else the client emits matches nothing here.
+ * value of each member; anything else the client emits matches nothing here,
+ * because every exchange pins the `CurrBlock` target and its exact one-position
+ * `argsPattern`, none carries a `looseMatch` reason, and `RdoMock` answers only a
+ * frame matching every key an exchange declares.
  *
  * Every request is built by the real emitter (`rdoCall`), so the separator and
  * the arity come from the catalogue rather than from this file, and the values

@@ -373,11 +373,10 @@ describe('argsPattern Matching Accuracy', () => {
     // Build a command with property names that don't exist in any exchange
     const cmd = buildGetPropertyListCommand(200, '99999', ['NonExistent', 'FakeProperty']);
 
-    // Should still match via methodMatch fallback (member=GetPropertyList)
-    // but let's verify it matches SOME exchange (not the specific one)
+    // Every GetPropertyList exchange pins its full argsPattern and none carries a
+    // `looseMatch` reason, so a frame naming other properties answers nothing.
     const result = rdoMock.match(cmd);
-    // methodMatch returns the first GetPropertyList exchange found
-    expect(result).not.toBeNull();
+    expect(result).toBeNull();
   });
 
   it('should match argsPattern-specific exchange over wildcard', () => {
