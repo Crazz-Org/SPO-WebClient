@@ -32,7 +32,7 @@ import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
 import { WsDriverError } from './ws-driver';
-import { GOVERNED_TOWN, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS, WORLD_NAME } from './config';
+import { GOVERNED_TOWN, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
 import { findCurrentSurvivalLog, openLogWindow } from './live-log';
 import { runProbe, probeFailure, type ProbeResult, type ProbeSpec } from './probe';
 import {
@@ -48,8 +48,6 @@ import {
   type LiveSession,
 } from './session';
 import type { WorldLock } from './world-lock';
-import * as loginHandler from '../server/session/login-handler';
-import { DEFAULT_LANGUAGE_ID } from '../shared/language';
 
 export interface FlowContext {
   lock: WorldLock;
@@ -68,19 +66,6 @@ export interface FlowResult {
   messagesReceived: number;
   wireErrors: number;
   error?: string;
-  /** Values recorded, never asserted — a reading for a later card (see logonPageVerdict). */
-  readings?: LogonPageReading[];
-}
-
-export interface LogonPageReading {
-  account: string;
-  kind: 'companies' | 'denied' | 'error' | 'unreachable';
-  /** The `PA` query value logonNoAccess.asp carried — only when denied. */
-  expiresOn?: string;
-  /** logonError.asp's ErrorCode — only when error. */
-  errorCode?: string;
-  /** How many companies the page listed — only when companies. */
-  companies?: number;
 }
 
 export interface Flow {
@@ -957,74 +942,6 @@ const directoryBrowse: Flow = {
   },
 };
 
-const SILENT_LOG = {
-  info: (): void => undefined,
-  debug: (): void => undefined,
-  warn: (): void => undefined,
-  error: (): void => undefined,
-};
-
-/**
- * Read-only bench probe: what the world's logon page answers for each locked account.
- * The verdict is recorded in the run artifact, never asserted; the flow fails only when the
- * request cannot be made. It stays in FLOWS until the login "denied" card ships, which removes
- * it — once the gateway takes the verdict at login, loginSpine exercises the same page on
- * every gate.
- */
-const logonPageVerdict: Flow = {
-  name: 'logon-page-verdict',
-  what: 'logonComplete.asp verdict for each locked account — recorded, never asserted',
-  mutates: false,
-  async run() {
-    const assertions = new Assertions();
-    const readings: LogonPageReading[] = [];
-    let sent = 0;
-    let received = 0;
-    let wireErrors = 0;
-    for (const account of [PRIMARY_ACCOUNT, SECONDARY_ACCOUNT]) {
-      const session = await login(account);
-      try {
-        const world = session.world;
-        if (!world?.ip) {
-          assertions.check(
-            `${account.username}: the logon page request can be made`,
-            false,
-            `no IP for ${WORLD_NAME} in the directory listing`,
-          );
-          continue;
-        }
-        const r = await loginHandler.fetchCompaniesViaHttp(
-          { log: SILENT_LOG, currentWorldInfo: world, languageId: DEFAULT_LANGUAGE_ID },
-          world.ip,
-          account.username,
-        );
-        const reading: LogonPageReading = { account: account.username, kind: r.kind };
-        if (r.kind === 'companies') reading.companies = r.companies.length;
-        else if (r.kind === 'denied') reading.expiresOn = r.expiresOn;
-        else if (r.kind === 'error') reading.errorCode = r.errorCode;
-        else assertions.unproven(`${account.username} logon page verdict`, 'logonComplete.asp unreachable');
-        readings.push(reading);
-      } finally {
-        sent += session.driver.log.filter(e => e.direction === 'sent').length;
-        received += session.driver.log.filter(e => e.direction === 'received').length;
-        wireErrors += session.driver.errors.length;
-        await logoff(session);
-      }
-    }
-    return {
-      name: 'logon-page-verdict',
-      status: assertions.failed ? 'FAIL' : assertions.unprovenItems.length > 0 ? 'UNPROVEN' : 'PASS',
-      assertions: assertions.items,
-      unproven: assertions.unprovenItems,
-      probes: [],
-      messagesSent: sent,
-      messagesReceived: received,
-      wireErrors,
-      readings,
-    };
-  },
-};
-
 export const FLOWS: Flow[] = [
   loginSpine,
   politicsRead,
@@ -1039,7 +956,6 @@ export const FLOWS: Flow[] = [
   zoningAlertRead,
   nearestTownHall,
   directoryBrowse,
-  logonPageVerdict,
 ];
 
 export function flowByName(name: string): Flow {

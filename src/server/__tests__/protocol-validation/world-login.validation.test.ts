@@ -15,7 +15,8 @@
  *   8. GET GetCompanyCount
  *   9. 5 CALLs per company — GetCompanyOwnerRole, GetCompanyName, GetCompanyId,
  *      GetCompanyCluster, GetCompanyFacilityCount (chooseCompany.asp:166-170).
- *      No HTTP fetch: logonComplete.asp left the login path.
+ *  10. One HTTP fetch of logonComplete.asp, after the company getters — the page's
+ *      portal-travel verdict (logonComplete.asp:26-67); only a real-date denial counts.
  *
  * Prerequisites: connectDirectory() must be called first to establish DIRECTORY_CONNECTED phase.
  */
@@ -509,12 +510,16 @@ describe('Protocol Validation: loginWorld()', () => {
       expect(company.sealUrl).toContain(encodeURIComponent('images/comp-PGI.gif'));
     });
 
-    it('never fetches logonComplete.asp — the company list comes off the wire', async () => {
-      await runFullLoginFlow();
+    it('reads the company list off the wire, then asks logonComplete.asp once for its verdict', async () => {
+      const result = await runFullLoginFlow();
 
       const fetchMock = jest.requireMock('node-fetch') as { default: jest.Mock };
       const asked = fetchMock.default.mock.calls.map(c => String(c[0]));
-      expect(asked.filter(u => u.includes('logonComplete.asp'))).toEqual([]);
+      const logon = asked.filter(u => u.includes('logonComplete.asp'));
+      expect(logon).toHaveLength(1);
+      expect(logon[0]).toContain('WorldName=Shamba');
+      expect(logon[0]).toContain('UserName=SPO_test3');
+      expect(result.companies[0].id).toBe('28');
     });
   });
 

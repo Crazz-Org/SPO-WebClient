@@ -58,10 +58,13 @@ single `%`-prefixed string, because that is the whole shape of the declaration
 frame sent against the context id would answer about nobody, with no error to show for it.
 
 `company-list` is the player's company list, and it has both halves for one reason: the login
-path reads it over **RDO**, while `logonComplete.asp` / `chooseCompany.asp` stay in the HTTP half
-because other paths still fetch them (`readPersonalCompanies`, the read-before-resign list of
-`rdoAbandonRole.asp:22-27`). The RDO half is five exchanges, one per field the legacy page read
-in its own loop (`chooseCompany.asp:166-170`): `GetCompanyOwnerRole`, `GetCompanyName`,
+path reads it over **RDO**, while the HTTP half serves `logonComplete.asp`, which the login asks
+after the RDO read for its portal-travel verdict (`logonComplete.asp:26-67`), and
+`chooseCompany.asp`, which `readPersonalCompanies` still fetches (the read-before-resign list of
+`rdoAbandonRole.asp:22-27`). Its `noAccess` variant drives the denial and the fail-open cases
+(`company-list-logon-verdict.test.ts`): only a real `PA` date denies, while `01/01/2008` or an
+empty `PA` logs one warning and the login continues. The RDO half is five exchanges, one per
+field the legacy page read in its own loop (`chooseCompany.asp:166-170`): `GetCompanyOwnerRole`, `GetCompanyName`,
 `GetCompanyId`, `GetCompanyCluster`, `GetCompanyFacilityCount` — each a published one-argument
 `function` on `TClientView` (`Interface Server/InterfaceServer.pas:169`-`:173`), so every frame
 carries `"^"`, a QueryId, and exactly one argument. That argument is `#`-prefixed and must stay
@@ -74,7 +77,7 @@ it is already answered by `buildWorldPropertyFallbacks` (`protocol-test-harness.
 `visitor-login.validation.test.ts` overrides that fallback to `#0` to drive the zero-company
 fork; a second source for one member would break that override. Its test
 (`company-list-rdo.test.ts`) drives the real `loginWorld` and asserts the five frames, their
-order, the parsed `CompanyInfo`, and that no `logonComplete.asp` fetch was made.
+order, the parsed `CompanyInfo`, and that `logonComplete.asp` is asked exactly once.
 
 `world-list` is the directory query session: the world list itself, plus the world-limit
 question the reference client asked before offering a new world.

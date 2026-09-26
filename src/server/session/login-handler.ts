@@ -552,6 +552,8 @@ export async function loginWorld(
   //     in that order. The page itself is no longer fetched: the two fields it
   //     displayed and the scrape dropped (cluster, facility count) are read here.
   const companies = await readCompanyList(ctx, contextId, companyCount, username, world.ip);
+  // 11. The logon page's verdict — portal travel (logonComplete.asp:26-67). Fails open.
+  const denial = await readLogonVerdict(ctx, world.ip, username);
 
   let loginPage: LoginPageOutcome | undefined;
 
@@ -567,6 +569,10 @@ export async function loginWorld(
     // chooseCompany.asp:38-40 — zero companies is the visa fork, not an error.
     loginPage = { kind: 'visa', firstVisit };
   }
+
+  // The page redirected to logonNoAccess.asp before it ever listed companies or offered a visa
+  // (logonComplete.asp:59-66, then the ResultType switch), so its denial outranks both.
+  if (denial) loginPage = denial;
 
   ctx.setAvailableCompanies(companies);
 
@@ -1064,6 +1070,51 @@ async function checkWorldLimit(ctx: LoginContext, sessionId: string, username: s
     ctx.log.warn(`[Session] RDOCanJoinNewWorld failed — proceeding without the world-limit check: ${toErrorMessage(err)}`);
     return null;
   }
+}
+
+/**
+ * What logonComplete.asp:56-58 writes into PA when PaidPlanets is unset — or when the page's own
+ * directory connection failed (:26-55 never reach the read). Always in the past, so the page
+ * "denies" on it; it is not a verdict (#752: set on accounts that work).
+ */
+const UNSET_PLANET_ACCESS = '01/01/2008';
+
+/**
+ * The logon page's verdict — logonComplete.asp, asked after the RDO company read, for the one thing
+ * only it knows: whether portal travel to this world has expired (logonComplete.asp:26-67).
+ * Returns a denial only for a logonNoAccess.asp redirect carrying a real PA date. Every other outcome —
+ * the page's unset value (empty or 01/01/2008), logonError.asp, an unreachable page or a thrown fetch
+ * (fetchCompaniesViaHttp turns that into 'unreachable') — logs ONE warning and returns undefined: the
+ * login proceeds exactly as it would without the page.
+ */
+async function readLogonVerdict(
+  ctx: LoginContext, worldIp: string, username: string,
+): Promise<LoginPageOutcome | undefined> {
+  // fetchCompaniesViaHttp logs its own outcome at warn/error; routed to debug here so the one
+  // warning below is the only one a login emits for this step.
+  const toDebug = (...args: unknown[]): void => { ctx.log.debug(...args); };
+  const verdict = await fetchCompaniesViaHttp(
+    {
+      log: { info: toDebug, debug: toDebug, warn: toDebug, error: toDebug },
+      currentWorldInfo: ctx.currentWorldInfo,
+      languageId: ctx.languageId,
+    },
+    worldIp, username,
+  );
+  if (verdict.kind === 'companies') return undefined;
+  if (verdict.kind === 'denied') {
+    const expiresOn = verdict.expiresOn.trim();
+    if (expiresOn && expiresOn !== UNSET_PLANET_ACCESS) {
+      ctx.log.info(`[Session] Logon page: portal travel denied — access expired on ${expiresOn}`);
+      return { kind: 'denied', expiresOn };
+    }
+    ctx.log.warn(`[Session] Logon page: logonNoAccess.asp carried PA "${verdict.expiresOn}" — the page's unset value, not a verdict; login continues`);
+    return undefined;
+  }
+  ctx.log.warn(verdict.kind === 'error'
+    ? `[Session] Logon page: logonError.asp ${verdict.errorCode} — login continues without the portal check`
+    : '[Session] Logon page: logonComplete.asp unreachable — login continues without the portal check');
+  return undefined;
 }
 
 export type FetchCompaniesResult =
