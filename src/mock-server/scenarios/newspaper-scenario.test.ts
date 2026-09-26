@@ -28,6 +28,7 @@ import { SearchMenuService } from '@/server/search-menu-service';
 import { parseNewspapersPage } from '@/server/search-menu-parser';
 import { HttpMock } from '../http-mock';
 import { RdoMock } from '../rdo-mock';
+import type { RdoScenario } from '../types/rdo-exchange-types';
 import { CIVIC_TARGETS } from './civic-mutations-scenario';
 import {
   createNewspaperScenario,
@@ -248,7 +249,7 @@ describe('newspaper scenario — the rated post', () => {
   let framesAtPost = -1;
   let postedForm: URLSearchParams | null = null;
 
-  function driveRatedPost(): { fake: FakeSessionCtx; rdoMock: RdoMock } {
+  function driveRatedPost(): { fake: FakeSessionCtx; rdoMock: RdoMock; rdo: RdoScenario } {
     const { rdo, http } = createNewspaperScenario();
     const httpMock = new HttpMock();
     httpMock.addScenario(http);
@@ -280,7 +281,7 @@ describe('newspaper scenario — the rated post', () => {
       } as unknown as Response;
     });
 
-    return { fake, rdoMock };
+    return { fake, rdoMock, rdo };
   }
 
   beforeEach(() => {
@@ -288,13 +289,8 @@ describe('newspaper scenario — the rated post', () => {
     postedForm = null;
   });
 
-  it('passes strict RDO validation', () => {
-    const { rdo } = createNewspaperScenario();
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('a post carrying two changed criteria emits two RDOSetRatingFrom frames before the column, and the body ends with those two lines', async () => {
-    const { fake, rdoMock } = driveRatedPost();
+    const { fake, rdoMock, rdo } = driveRatedPost();
 
     const result = await postNewspaperColumn(
       fake.ctx, TARGET, MOCK_RATED_POST.subject, MOCK_RATED_POST.body,
@@ -315,6 +311,7 @@ describe('newspaper scenario — the rated post', () => {
     expect(fake.frames.construction).toEqual(
       fake.frames.construction.map((f) => rdoMock.match(f)!.exchange.request),
     );
+    expect(fake.frames.construction).toPassStrictRdoValidation(rdo);
 
     // `:96-143` before `:146` — both frames were already out when the POST left.
     expect(framesAtPost).toBe(2);

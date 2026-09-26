@@ -20,7 +20,7 @@ const SELF = path.basename(__filename);
 const FACTORY_EXEMPT = new Set(['scenario-variables.test.ts']);
 
 /** Ratchet — may only go DOWN; lower it when an exception is removed, never raise it. */
-const MAX_SUBSTRATE_EXCEPTIONS = 36;
+const MAX_SUBSTRATE_EXCEPTIONS = 34;
 
 const EXCEPTION_RE = /\/\/\s*substrate-exception:\s*\S/;
 const STUB_SOURCE =

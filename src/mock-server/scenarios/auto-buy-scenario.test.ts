@@ -43,10 +43,6 @@ const Y = 436;
 // ── The catalogue half ──────────────────────────────────────────────────────
 
 describe('auto-buy scenario — the frames', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('is a 1-argument procedure, so every frame carries "*" and none carries "^"', () => {
     expect(RDO_MEMBERS.RDOSelSelected.kind).toBe('procedure');
     expect(RDO_MEMBERS.RDOSelSelected).toHaveProperty('arity', 1);
@@ -210,6 +206,7 @@ describe('auto-buy scenario — the target on the wire', () => {
     const mock = new RdoMock();
     mock.addScenario(rdo);
     expect(mock.match(frame)!.exchange.id).toBe(id);
+    expect(frame).toPassStrictRdoValidation(rdo);
 
     // `Cache.WriteBoolean` stores '1'/'0' (Cache/CacheAgent.pas:150-152).
     expect(result.confirmed).toBe(true);

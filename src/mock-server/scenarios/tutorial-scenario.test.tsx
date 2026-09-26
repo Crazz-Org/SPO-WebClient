@@ -28,7 +28,7 @@ import type { RdoPacket, WsMessage } from '@/shared/types';
 import { WsMessageType, type WsEventShowNotification } from '@/shared/types';
 import { makePushCtx, makeSessionCtx } from '@/server/__tests__/session/fake-session-context';
 import { dispatchPush } from '@/server/session/push-dispatcher';
-import { fetchTutorialState } from '@/server/session/tutorial-handler';
+import { fetchTutorialState, runTutorialAction } from '@/server/session/tutorial-handler';
 import { dispatchEvent } from '@/client/handlers/event-handler';
 import { useTutorialStore } from '@/client/store/tutorial-store';
 import { useUiStore } from '@/client/store/ui-store';
@@ -76,11 +76,12 @@ function makeClientDriver() {
 }
 
 /**
- * The real `fetchTutorialState`, answered by `RdoMock` through the scenario's
- * own exchanges — the same wiring `civic-mutations-scenario.test.ts` uses, so
- * the decode is proved against the fixture and not against a hand-written stub.
+ * A session whose cacher reads and `sendRdoRequest` are answered by `RdoMock`
+ * through the scenario's own exchanges — the same wiring
+ * `civic-mutations-scenario.test.ts` uses, so the decode is proved against the
+ * fixture and not against a hand-written stub. A frame no exchange covers fails.
  */
-async function readStateThroughMock(variant: TutorialAssignmentVariant) {
+function makeTutorialDriver(variant: TutorialAssignmentVariant) {
   const { rdo: scenario } = createTutorialScenario(undefined, { assignment: variant });
   const mock = new RdoMock();
   mock.addScenario(scenario);
@@ -98,8 +99,18 @@ async function readStateThroughMock(variant: TutorialAssignmentVariant) {
     const m = /res="%([^"]*)"/.exec(result.response);
     return m ? m[1].split('\t') : [];
   });
+  fake.respond((packet) => {
+    const frame = `${RdoProtocol.format(packet as RdoPacket)};`;
+    const hit = mock.match(frame);
+    return hit ? hit.response.replace(/^A\d+\s+/, '') : new Error(`L1: no exchange for ${frame}`);
+  });
 
-  return fetchTutorialState(fake.ctx);
+  return { fake, mock };
+}
+
+/** The real `fetchTutorialState`, read through `makeTutorialDriver`. */
+async function readStateThroughMock(variant: TutorialAssignmentVariant) {
+  return fetchTutorialState(makeTutorialDriver(variant).fake.ctx);
 }
 
 function renderPanel() {
@@ -121,28 +132,6 @@ beforeEach(() => {
 });
 
 describe('tutorial scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
-  it('the three navigation actions are procedures: "*", never "^"', () => {
-    for (const slug of ['next', 'prev', 'close']) {
-      const ex = exchange(`tutorial-rdo-${slug}`);
-      expect(ex.request).toContain('"*"');
-      expect(ex.request).not.toContain('"^"');
-      expect(ex.request).toContain(`sel ${TUTORIAL_TARGETS.taskObjId} call`);
-      // A procedure answers nothing — the frame is the only evidence there is.
-      expect(ex.response).toBe('');
-    }
-  });
-
-  it('Completed is emitted as a set, never as a call', () => {
-    const ex = exchange('tutorial-rdo-complete');
-    expect(ex.request).toContain(`sel ${TUTORIAL_TARGETS.taskObjId} set Completed=`);
-    expect(ex.request).not.toContain('call Completed');
-    expect(ex.matchKeys?.action).toBe('set');
-  });
-
   it('both pushes are kind 1 and differ only in Options — 4 shows, 0 hides', () => {
     expect(exchange('tutorial-push-show').response).toContain('"#4";');
     expect(exchange('tutorial-push-hide').response).toContain('"#0";');
@@ -152,6 +141,39 @@ describe('tutorial scenario — the catalogue', () => {
       expect(ex.request).toBe('');
       expect(ex.response).toContain('call ShowNotification "*" "#1"');
     }
+  });
+});
+
+describe('tutorial scenario — the four actions, through the real gateway', () => {
+  it.each([
+    { action: 'next', literal: 'C sel 130600501 call RDONextStep "*" "#0";' },
+    { action: 'prev', literal: 'C sel 130600501 call RDOPrevStep "*" "#0";' },
+    { action: 'close', literal: 'C sel 130600501 call RDOClose "*" "#0";' },
+  ] as const)('the three navigation actions are procedures: "*", never "^" ($action)', async ({ action, literal }) => {
+    const { fake, mock } = makeTutorialDriver('welcome');
+
+    const result = await runTutorialAction(fake.ctx, action);
+
+    expect(result.success).toBe(true);
+    // Fire-and-forget on TutorialObjId: one frame, no QueryId, no reply awaited.
+    expect(fake.frames.construction).toEqual([literal]);
+    expect(mock.match(fake.frames.construction[0])!.exchange.id).toBe(`tutorial-rdo-${action}`);
+    expect(fake.frames.construction).toPassStrictRdoValidation(rdo);
+    // No Completed set went out alongside it.
+    expect(fake.sent.some(s => s.packet.member === 'Completed')).toBe(false);
+  });
+
+  it('Completed is emitted as a set, never as a call', async () => {
+    const { fake, mock } = makeTutorialDriver('welcome');
+
+    const result = await runTutorialAction(fake.ctx, 'complete');
+
+    expect(result.success).toBe(true);
+    const frames = fake.sent.map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
+    expect(frames).toEqual(['C sel 130600501 set Completed="#-1";']);
+    expect(mock.match(frames[0])!.exchange.id).toBe('tutorial-rdo-complete');
+    expect(frames).toPassStrictRdoValidation(rdo);
+    expect(fake.frames.construction).toEqual([]);
   });
 });
 

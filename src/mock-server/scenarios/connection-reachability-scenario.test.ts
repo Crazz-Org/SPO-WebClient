@@ -37,10 +37,6 @@ import {
 const { rdo } = createConnectionReachabilityScenario();
 
 describe('connection-reachability scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('every exchange but CloseObject is a catalogued function, carrying "^"; CloseObject carries "*"', () => {
     for (const ex of rdo.exchanges) {
       if (ex.id === 'cr-rdo-close') {
@@ -143,6 +139,7 @@ describe('connection-reachability scenario — the drive', () => {
       'cr-rdo-find', 'cr-rdo-set-self', 'cr-rdo-set-near', 'cr-rdo-set-far',
       'cr-rdo-set-roadless', 'cr-rdo-set-ghost',
     ]));
+    expect(hits.map(h => h.frame)).toPassStrictRdoValidation(rdo);
 
     expect(fake.cacher.closeObject).toHaveBeenCalledTimes(1);
     expect(fake.cacher.closeObject).toHaveBeenCalledWith(REACHABILITY_TEMP_OBJECT);
