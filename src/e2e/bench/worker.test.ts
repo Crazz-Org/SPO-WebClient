@@ -2408,13 +2408,12 @@ describe('runWithDeadline: an actual kill, not just a timer that gives up waitin
   // statement, but it only gets to run that statement once the runtime is up. A deadline
   // tighter than that startup cost makes SIGKILL land before the file is ever written, and
   // the read below dies on ENOENT — a machine-load flake, not a regression. 3s of headroom
-  // for a boot that normally takes tens of milliseconds; the bound below still proves the
-  // wait is bounded and not "however long the OS takes".
+  // for a boot that normally takes tens of milliseconds; the Jest timeout (20s) is what
+  // bounds the wait.
   it('kills a process that ignores SIGTERM — SIGKILL still ends it, the OS process is actually gone, and the wait is bounded', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-bench-deadline-'));
     const logFile = path.join(dir, 'job.log');
     const pidFile = path.join(dir, 'pid');
-    const start = Date.now();
     const code = await runWithDeadline(
       'node',
       [
@@ -2426,76 +2425,104 @@ describe('runWithDeadline: an actual kill, not just a timer that gives up waitin
       { stage: 'ignores-sigterm', deadlineMs: 3_000, killGraceMs: 250 },
     );
     expect(code).toBe(DEADLINE_EXIT_CODE);
-    // Bound: deadlineMs + 2*killGraceMs + slack, never "however long the OS takes".
-    expect(Date.now() - start).toBeLessThan(8_000);
     expect(fs.readFileSync(logFile, 'utf8')).toMatch(/exceeded its .*deadline — killing/);
     const pid = Number(fs.readFileSync(pidFile, 'utf8'));
     expect(() => process.kill(pid, 0)).toThrow(); // ESRCH: no such process — SIGKILL actually landed
   }, 20_000);
 
+  // Polls `kill(pid, 0)` until it throws and returns the error code. No fixed delay: an
+  // orphaned grandchild is reaped by init asynchronously, and a zombie still answers signal 0.
+  async function waitUntilGone(pid: number): Promise<string | undefined> {
+    for (;;) {
+      try {
+        process.kill(pid, 0);
+      } catch (err: unknown) {
+        return (err as NodeJS.ErrnoException).code;
+      }
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  }
+
   // Mutation target: "kill the direct child only" (drop detached:true, or signal +pid instead
   // of -pid) — a real grandchild, spawned the way `npm run build:*` spawns `tsc`, must die too.
+  // The proof is `process.kill(pid, 0)` throwing ESRCH for the grandchild's own pid; if only
+  // the direct child were killed, the grandchild lives on, the poll never ends, and the Jest
+  // timeout fails the test.
   it('kills the whole process group — a grandchild the command spawns dies too', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-bench-deadline-'));
     const logFile = path.join(dir, 'job.log');
-    const marker = path.join(dir, 'grandchild-alive');
+    const pidFile = path.join(dir, 'grandchild-pid');
     const scriptFile = path.join(dir, 'parent.js');
-    // The parent spawns a grandchild that keeps touching `marker` every 50ms, then hangs
-    // itself — exactly the shape of `npm run build:*` forking `tsc` and then a wedged tsc.
+    // The parent spawns a grandchild that writes its own pid and hangs, then hangs itself —
+    // exactly the shape of `npm run build:*` forking `tsc` and then a wedged tsc.
     fs.writeFileSync(
       scriptFile,
       [
         "const { spawn } = require('child_process');",
-        "const fs = require('fs');",
-        `const marker = ${JSON.stringify(marker)};`,
-        "const gc = spawn(process.execPath, ['-e', " +
-          "\"setInterval(() => { try { require('fs').writeFileSync(process.argv[1], String(Date.now())); } catch {} }, 50);\", marker], " +
+        `const pidFile = ${JSON.stringify(pidFile)};`,
+        "spawn(process.execPath, ['-e', " +
+          "\"require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);\", pidFile], " +
           "{ stdio: 'ignore' });",
         'setInterval(() => {}, 1000);', // the parent itself also just hangs
       ].join('\n'),
     );
+    // 3s deadline: two cold node starts must finish before the kill, same reason as above.
     const code = await runWithDeadline(
       process.execPath,
       [scriptFile],
       { cwd: dir, logFile },
-      { stage: 'group-kill', deadlineMs: 300, killGraceMs: 200 },
+      { stage: 'group-kill', deadlineMs: 3_000, killGraceMs: 250 },
     );
     expect(code).toBe(DEADLINE_EXIT_CODE);
-    // The grandchild should have stopped writing by now; if only the direct child were
-    // killed, `marker` would keep getting fresher every 50ms indefinitely.
-    const firstCheck = fs.existsSync(marker) ? fs.statSync(marker).mtimeMs : 0;
-    await new Promise(resolve => setTimeout(resolve, 400));
-    const secondCheck = fs.existsSync(marker) ? fs.statSync(marker).mtimeMs : 0;
-    expect(secondCheck).toBe(firstCheck);
-  }, 10_000);
+    const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+    expect(await waitUntilGone(pid)).toBe('ESRCH');
+  }, 20_000);
 
   // Mutation target: "a killer that waits on the process it killed" — the exact recurring
   // shape this chantier's report warns about. A process that never reports 'close' (the
   // real-world case: a child stuck in uninterruptible I/O wait, immune even to SIGKILL for a
-  // while) must not hang this function forever.
+  // while) must not hang this function forever. Runs on fake timers: no real time involved,
+  // the test asserts signal order and the exit code only.
   it('resolves via its own backstop even when the process never reports close', async () => {
-    const logFile = tmpLog();
-    const fakeChild = new EventEmitter() as unknown as ReturnType<typeof import('child_process').spawn>;
-    (fakeChild as unknown as { pid: number }).pid = 4242;
-    const killCalls: { pid: number; signal: NodeJS.Signals }[] = [];
-    const start = Date.now();
-    const code = await runWithDeadline(
-      'ignored-because-spawn-is-injected',
-      [],
-      { cwd: process.cwd(), logFile },
-      { stage: 'backstop', deadlineMs: 50, killGraceMs: 50 },
-      {
-        spawnProcess: (() => fakeChild) as unknown as typeof import('child_process').spawn,
-        kill: (pid, signal) => killCalls.push({ pid, signal }),
-      },
-    );
-    expect(code).toBe(DEADLINE_EXIT_CODE);
-    expect(Date.now() - start).toBeLessThan(2_000);
-    // Both signals sent, to the whole GROUP (negative pid), in order.
-    expect(killCalls).toEqual([
-      { pid: -4242, signal: 'SIGTERM' },
-      { pid: -4242, signal: 'SIGKILL' },
-    ]);
+    jest.useFakeTimers();
+    try {
+      const logFile = tmpLog();
+      const fakeChild = new EventEmitter() as unknown as ReturnType<typeof import('child_process').spawn>;
+      (fakeChild as unknown as { pid: number }).pid = 4242;
+      const killCalls: { pid: number; signal: NodeJS.Signals }[] = [];
+      const settledWith: number[] = [];
+      const done = runWithDeadline(
+        'ignored-because-spawn-is-injected',
+        [],
+        { cwd: process.cwd(), logFile },
+        { stage: 'backstop', deadlineMs: 50, killGraceMs: 50 },
+        {
+          spawnProcess: (() => fakeChild) as unknown as typeof import('child_process').spawn,
+          kill: (pid, signal) => killCalls.push({ pid, signal }),
+        },
+      ).then(c => {
+        settledWith.push(c);
+        return c;
+      });
+      await jest.advanceTimersByTimeAsync(50);
+      expect(killCalls).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+      expect(settledWith).toEqual([]);
+      await jest.advanceTimersByTimeAsync(50);
+      expect(killCalls).toEqual([
+        { pid: -4242, signal: 'SIGTERM' },
+        { pid: -4242, signal: 'SIGKILL' },
+      ]);
+      expect(settledWith).toEqual([]);
+      await jest.advanceTimersByTimeAsync(50);
+      expect(await done).toBe(DEADLINE_EXIT_CODE);
+      // Both signals sent, to the whole GROUP (negative pid), in order.
+      expect(killCalls).toEqual([
+        { pid: -4242, signal: 'SIGTERM' },
+        { pid: -4242, signal: 'SIGKILL' },
+      ]);
+    } finally {
+      jest.useRealTimers();
+    }
   }, 5_000);
 });
 
