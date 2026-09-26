@@ -256,13 +256,11 @@ export class StarpeaceSession extends EventEmitter {
   private atWorldLimit: boolean | null = null;
 
   // Event synchronization
-  private interfaceEventsId: string | null = null;
   private waitingForInitClient: boolean = false;
   private initClientReceived: Promise<void> | null = null;
   private initClientResolver: (() => void) | null = null;
 
   // Session State
-  private directorySessionId: string | null = null;
   public worldContextId: string | null = null;
   public tycoonId: string | null = null;
   public currentWorldInfo: WorldInfo | null = null;
@@ -311,7 +309,6 @@ export class StarpeaceSession extends EventEmitter {
   public cachedUsername: string | null = null;
   private _cachedPassword: string | null = null;
   public get cachedPassword(): string | null { return this._cachedPassword; }
-  private cachedZonePath: string = 'Root/Areas/Asia/Worlds';
 
   // The language the player picked — sent to the world with SetLanguage and carried as LangId
   // on every ASP fetch. Survives a world switch; the next REQ_LOGIN_WORLD overwrites it.
@@ -347,6 +344,8 @@ export class StarpeaceSession extends EventEmitter {
   private lastPlayerY: number = 0;
   
     // Chat state
+  // Read by chatHandler.getCurrentChannel through a cast on `this` — the rule cannot see that read.
+  // eslint-disable-next-line @typescript-eslint/no-unused-private-class-members
   private currentChannel: string = ''; // Empty = lobby
   private chatUsers: Map<string, ChatUser> = new Map();
   
@@ -547,7 +546,6 @@ export class StarpeaceSession extends EventEmitter {
   }
   public setCachedPassword(value: string | null): void { this._cachedPassword = value; }
   public setLanguageId(value: string | undefined): void { this.languageId = normalizeLanguageId(value); }
-  public setCachedZonePath(value: string): void { this.cachedZonePath = value; }
   public setActiveUsername(value: string | null): void { this.activeUsername = value; }
   public setCorrelationId(corrId: string | null): void { this.log.setField('corrId', corrId); }
   public setCurrentCompany(value: CompanyInfo | null): void { this.currentCompany = value; }
@@ -2875,7 +2873,6 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.daPort = null;
     this.aspActionCache.clear();
     this.interfaceServerId = null;
-    this.interfaceEventsId = null;
     this.mailAccount = null;
     this.accountStatus = null;
     this.mailAddr = null;
@@ -3035,7 +3032,6 @@ private handlePush(socketName: string, packet: RdoPacket) {
 
     // Reset state
     this.phase = SessionPhase.DISCONNECTED;
-    this.directorySessionId = null;
     this.worldContextId = null;
     this.tycoonId = null;
     this.currentWorldInfo = null;
@@ -3044,7 +3040,6 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.worldId = null;
     this.daPort = null;
     this.aspActionCache.clear();
-    this.interfaceEventsId = null;
     this.currentFocusedBuildingId = null;
     this.currentFocusedCoords = null;
     this.currentFocusedBuildingName = null;

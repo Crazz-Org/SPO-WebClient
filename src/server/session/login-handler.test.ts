@@ -320,7 +320,6 @@ describe('connectDirectory — world list parsing', () => {
     expect(fake.state.cachedUsername).toBe('SPO_test3');
     expect(fake.state.activeUsername).toBe('SPO_test3');
     expect(fake.state.cachedPassword).toBe('test3');
-    expect(fake.state.cachedZonePath).toBe('Root/Areas/Asia/Worlds');
     const query = fake.sent.find(s => s.packet.member === 'RDOQueryKey');
     expect(query?.packet.args?.[0]).toBe('"%Root/Areas/Asia/Worlds"');
   });
@@ -333,7 +332,6 @@ describe('connectDirectory — world list parsing', () => {
 
     const query = fake.sent.find(s => s.packet.member === 'RDOQueryKey');
     expect(query?.packet.args?.[0]).toBe('"%Root/Areas/Free Space/Worlds"');
-    expect(fake.state.cachedZonePath).toBe('Root/Areas/Free Space/Worlds');
   });
 
   it('builds a WorldInfo per entry and indexes them by name', async () => {

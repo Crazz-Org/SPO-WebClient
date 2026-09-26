@@ -102,7 +102,6 @@ export interface LoginContext {
   setCurrentWorldInfo(value: WorldInfo | null): void;
   setCachedUsername(value: string | null): void;
   setCachedPassword(value: string | null): void;
-  setCachedZonePath(value: string): void;
   setAtWorldLimit(value: boolean | null): void;
   setActiveUsername(value: string | null): void;
   setCurrentCompany(value: CompanyInfo | null): void;
@@ -178,7 +177,6 @@ export async function connectDirectory(
   ctx.setCachedUsername(username);
   ctx.setActiveUsername(username);
   ctx.setCachedPassword(pass);
-  ctx.setCachedZonePath(zonePath || 'Root/Areas/Asia/Worlds');
   // A re-connect (a zone change, a server switch) must not carry the previous answer.
   ctx.setAtWorldLimit(null);
 
