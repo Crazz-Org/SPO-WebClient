@@ -1,94 +1,40 @@
 /**
- * Tests for Research/Technology System RDO commands (Phase 3.1)
- * Verifies RDOQueueResearch and RDOCancelResearch formats.
+ * RDO wire test — RDOQueueResearch / RDOCancelResearch, driven through the
+ * production emitter (`setBuildingProperty` and its research argument builder in
+ * building-property-handler.ts), written fire-and-forget on the construction
+ * socket with the building's CurrBlock as target.
  */
 
 import { describe, it, expect } from '@jest/globals';
-import { RdoCommand, RdoValue } from '../../../shared/rdo-types';
+import { makeSessionCtx } from '../session/fake-session-context';
+import { setBuildingProperty } from '../../session/building-property-handler';
 
-describe('Research Commands RDO Protocol', () => {
-  const blockId = '#127839460';
+const BLOCK = '127839460';
 
-  describe('RDOQueueResearch', () => {
-    it('should build correct command with inventionId and priority', () => {
-      const cmd = RdoCommand
-        .sel(blockId)
-        .call('RDOQueueResearch')
-        .push()
-        .args(
-          RdoValue.string('GreenTech.Level1'),
-          RdoValue.int(10)
-        )
-        .build();
+async function emit(member: string, params: Record<string, string>): Promise<{ success: boolean; frames: string[] }> {
+  const fake = makeSessionCtx({ sockets: ['construction'] });
+  fake.cacher.createObject.mockResolvedValue('temp-1');
+  fake.cacher.getPropertyList.mockResolvedValue([BLOCK, BLOCK]);
+  const result = await setBuildingProperty(fake.ctx, 10, 20, member, '0', params);
+  return { success: result.success, frames: fake.frames.construction };
+}
 
-      expect(cmd).toContain('sel #127839460');
-      expect(cmd).toContain('call RDOQueueResearch');
-      expect(cmd).toContain('"*"'); // void procedure
-      expect(cmd).toContain('"%GreenTech.Level1"');
-      expect(cmd).toContain('"#10"');
-    });
-
-    it('should use push separator (*) for void procedure', () => {
-      const cmd = RdoCommand
-        .sel(blockId)
-        .call('RDOQueueResearch')
-        .push()
-        .args(RdoValue.string('Test'), RdoValue.int(5))
-        .build();
-
-      expect(cmd).toContain('"*"');
-      expect(cmd).not.toContain('"^"');
-    });
-
-    it('should use string prefix (%) for inventionId', () => {
-      const cmd = RdoCommand
-        .sel(blockId)
-        .call('RDOQueueResearch')
-        .push()
-        .args(RdoValue.string('MediaEmpire.Level1'), RdoValue.int(10))
-        .build();
-
-      expect(cmd).toContain('"%MediaEmpire.Level1"');
-    });
-
-    it('should use integer prefix (#) for priority', () => {
-      const cmd = RdoCommand
-        .sel(blockId)
-        .call('RDOQueueResearch')
-        .push()
-        .args(RdoValue.string('Inv'), RdoValue.int(15))
-        .build();
-
-      expect(cmd).toContain('"#15"');
-    });
+describe('Research wire frames (setBuildingProperty)', () => {
+  it('RDOQueueResearch carries the invention and the given priority', async () => {
+    const r = await emit('RDOQueueResearch', { inventionId: 'GreenTech.Level1', priority: '15' });
+    expect(r.success).toBe(true);
+    expect(r.frames).toEqual([`C sel ${BLOCK} call RDOQueueResearch "*" "%GreenTech.Level1","#15";`]);
   });
 
-  describe('RDOCancelResearch', () => {
-    it('should build correct command with inventionId only', () => {
-      const cmd = RdoCommand
-        .sel(blockId)
-        .call('RDOCancelResearch')
-        .push()
-        .args(RdoValue.string('GreenTech.Level1'))
-        .build();
+  it('RDOQueueResearch defaults the priority to 10', async () => {
+    const r = await emit('RDOQueueResearch', { inventionId: 'GreenTech.Level1' });
+    expect(r.success).toBe(true);
+    expect(r.frames).toEqual([`C sel ${BLOCK} call RDOQueueResearch "*" "%GreenTech.Level1","#10";`]);
+  });
 
-      expect(cmd).toContain('sel #127839460');
-      expect(cmd).toContain('call RDOCancelResearch');
-      expect(cmd).toContain('"*"');
-      expect(cmd).toContain('"%GreenTech.Level1"');
-    });
-
-    it('should use single string argument', () => {
-      const cmd = RdoCommand
-        .sel(blockId)
-        .call('RDOCancelResearch')
-        .push()
-        .args(RdoValue.string('TestInvention'))
-        .build();
-
-      // Should have exactly one arg (no priority)
-      expect(cmd).toContain('"%TestInvention"');
-      expect(cmd).not.toMatch(/"#\d+"/);
-    });
+  it('RDOCancelResearch carries the invention only', async () => {
+    const r = await emit('RDOCancelResearch', { inventionId: 'GreenTech.Level1' });
+    expect(r.success).toBe(true);
+    expect(r.frames).toEqual([`C sel ${BLOCK} call RDOCancelResearch "*" "%GreenTech.Level1";`]);
   });
 });

@@ -1,87 +1,54 @@
-// @ts-nocheck
 /**
- * RDO Protocol Tests - CloseObject Command
- *
- * Validates that the CloseObject void push command for the WSObjectCacher
- * matches the Delphi server format.
- *
- * Delphi reference: CacheServerReportForm.pas:92
- *   procedure CloseObject(Obj : integer);  — published, void
+ * RDO wire test — CloseObject, driven through the production emitter
+ * (`cacherCloseObject` in spo_session.ts): void push on the cacher root,
+ * one integer argument (the temp object id), no RID.
  */
 
-/// <reference path="../matchers/rdo-matchers.d.ts" />
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
-import { describe, it, expect } from '@jest/globals';
-import { RdoCommand, RdoValue } from '../../../shared/rdo-types';
+jest.mock('net', () => ({
+  Socket: jest.fn(),
+}));
+jest.mock('node-fetch', () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
 
-describe('CloseObject — Map Service cacher void push', () => {
-  const cacherId = '8161400';
-  const tempObjectId = '7024008';
+import { createProtocolTestHarness, ProtocolTestHarness } from '../protocol-validation/protocol-test-harness';
 
-  describe('Command format', () => {
-    it('should produce correct void push wire format with integer arg', () => {
-      const cmd = RdoCommand.sel(cacherId)
-        .call('CloseObject')
-        .push()
-        .args(RdoValue.int(parseInt(tempObjectId, 10)))
-        .build();
+const CACHER_ID = '8161400';
 
-      expect(cmd).toBe(`C sel ${cacherId} call CloseObject "*" "#${tempObjectId}";`);
+describe('CloseObject wire frame (cacherCloseObject)', () => {
+  let harness: ProtocolTestHarness;
+
+  const writes = (): string[] => harness.getSockets()[0].getCapturedWrites();
+
+  beforeEach(async () => {
+    harness = createProtocolTestHarness({
+      socketConfigs: [{ rdoScenarios: [], disableStrictValidation: true }],
     });
-
-    it('should use void separator (*) — fire-and-forget', () => {
-      const cmd = RdoCommand.sel(cacherId)
-        .call('CloseObject')
-        .push()
-        .args(RdoValue.int(parseInt(tempObjectId, 10)))
-        .build();
-
-      expect(cmd).toContain('"*"');
-      expect(cmd).not.toContain('"^"');
-    });
-
-    it('should have no request ID (push, not request)', () => {
-      const cmd = RdoCommand.sel(cacherId)
-        .call('CloseObject')
-        .push()
-        .args(RdoValue.int(parseInt(tempObjectId, 10)))
-        .build();
-
-      expect(cmd).toMatch(/^C sel/);
-    });
-
-    it('should format the object ID as integer with # prefix', () => {
-      const cmd = RdoCommand.sel(cacherId)
-        .call('CloseObject')
-        .push()
-        .args(RdoValue.int(parseInt(tempObjectId, 10)))
-        .build();
-
-      expect(cmd).toContain(`"#${tempObjectId}"`);
-    });
-
-    it('should match generic RDO call format', () => {
-      const cmd = RdoCommand.sel(cacherId)
-        .call('CloseObject')
-        .push()
-        .args(RdoValue.int(parseInt(tempObjectId, 10)))
-        .build();
-
-      expect(cmd).toMatchRdoCallFormat('CloseObject');
-    });
+    await harness.session.createSocket('map', '127.0.0.1', 6000);
+    harness.session.setCacherId(CACHER_ID);
   });
 
-  describe('Delphi conformity', () => {
-    it('should exactly match Delphi wire format', () => {
-      // Delphi sends: C sel <cacherId> call CloseObject "*" "#<tempObjectId>";
-      const delphiExpected = `C sel ${cacherId} call CloseObject "*" "#${tempObjectId}";`;
-      const webClientCmd = RdoCommand.sel(cacherId)
-        .call('CloseObject')
-        .push()
-        .args(RdoValue.int(parseInt(tempObjectId, 10)))
-        .build();
+  afterEach(() => {
+    harness.session.destroy();
+    harness.cleanup();
+  });
 
-      expect(webClientCmd).toBe(delphiExpected);
-    });
+  it('writes the void CloseObject frame on the cacher root with the temp id', () => {
+    harness.session.cacherCloseObject('7024008');
+    expect(writes()).toEqual([`C sel ${CACHER_ID} call CloseObject "*" "#7024008";`]);
+  });
+
+  it('carries the id it was given, not a constant', () => {
+    harness.session.cacherCloseObject('5551234');
+    expect(writes()).toEqual([`C sel ${CACHER_ID} call CloseObject "*" "#5551234";`]);
+  });
+
+  it('writes nothing without a cacher', () => {
+    harness.session.setCacherId(null);
+    harness.session.cacherCloseObject('7024008');
+    expect(writes()).toEqual([]);
   });
 });
