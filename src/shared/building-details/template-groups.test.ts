@@ -40,7 +40,8 @@ import {
   TOWN_JOBS_GROUP,
   TOWN_RES_GROUP,
   TOWN_SERVICES_GROUP,
-  TOWN_TAXES_GROUP
+  TOWN_TAXES_GROUP,
+  TRADE_GROUP,
 } from './template-groups';
 import {
   collectTemplatePropertyNamesStructured,
@@ -519,35 +520,27 @@ describe('Specialized handler RDO properties', () => {
 });
 
 describe('ENUM type properties', () => {
-  it('IndGeneral should use ENUM type for TradeRole and TradeLevel', () => {
-    const tradeRole = IND_GENERAL_GROUP.properties.find(p => p.rdoName === 'TradeRole');
-    expect(tradeRole!.type).toBe(PropertyType.ENUM);
-    expect(tradeRole!.enumLabels).toBeDefined();
-    expect(tradeRole!.enumLabels!['0']).toBe('Neutral');
-    expect(tradeRole!.enumLabels!['3']).toBe('Buyer');
+  // These entries only place the trade controls; rendering (and the labels shown)
+  // is covered by src/client/components/building/__tests__/trade-controls.test.tsx.
+  const cases: Array<[string, typeof IND_GENERAL_GROUP, string[]]> = [
+    ['IND_GENERAL_GROUP', IND_GENERAL_GROUP, ['TradeRole', 'TradeLevel']],
+    ['WH_GENERAL_GROUP', WH_GENERAL_GROUP, ['Role', 'TradeLevel']],
+    ['TRADE_GROUP', TRADE_GROUP, ['TradeRole', 'TradeLevel']],
+  ];
 
-    const tradeLevel = IND_GENERAL_GROUP.properties.find(p => p.rdoName === 'TradeLevel');
-    expect(tradeLevel!.type).toBe(PropertyType.ENUM);
-    expect(tradeLevel!.editable).toBe(true);
-    expect(tradeLevel!.enumLabels!['0']).toBe('Same Owner');
-    expect(tradeLevel!.enumLabels!['3']).toBe('Anyone');
+  it.each(cases)('%s keeps its trade ENUM entries without enumLabels', (_name, group, names) => {
+    for (const name of names) {
+      const def = group.properties.find(p => p.rdoName === name && p.type === PropertyType.ENUM);
+      expect(def).toBeDefined();
+      expect(def!.enumLabels).toBeUndefined();
+    }
   });
 
-  it('WHGeneral should use ENUM type for Role and TradeLevel', () => {
-    const role = WH_GENERAL_GROUP.properties.find(p => p.rdoName === 'Role');
-    expect(role!.type).toBe(PropertyType.ENUM);
-
-    const tradeLevel = WH_GENERAL_GROUP.properties.find(p => p.rdoName === 'TradeLevel');
-    expect(tradeLevel!.type).toBe(PropertyType.ENUM);
-    expect(tradeLevel!.editable).toBe(true);
-  });
-
-  it('IndGeneral TradeRole should use ENUM type with facility role labels', () => {
-    const tradeRole = IND_GENERAL_GROUP.properties.find(p => p.rdoName === 'TradeRole');
-    expect(tradeRole!.type).toBe(PropertyType.ENUM);
-    expect(tradeRole!.editable).toBe(true);
-    expect(tradeRole!.enumLabels!['1']).toBe('Producer');
-    expect(tradeRole!.enumLabels!['6']).toBe('Import');
+  it('keeps the editable flags on the trade entries', () => {
+    const ind = IND_GENERAL_GROUP.properties;
+    expect(ind.find(p => p.rdoName === 'TradeRole')!.editable).toBe(true);
+    expect(ind.find(p => p.rdoName === 'TradeLevel')!.editable).toBe(true);
+    expect(WH_GENERAL_GROUP.properties.find(p => p.rdoName === 'TradeLevel')!.editable).toBe(true);
   });
 });
 
