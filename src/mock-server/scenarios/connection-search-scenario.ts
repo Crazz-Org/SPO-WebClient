@@ -12,7 +12,7 @@
  * The three exchanges reproduce that frame:
  *
  *  - `cs-rdo-001` — the captured FindSuppliers trace of
- *    `src/server/__tests__/rdo/connection-search.test.ts:9-10`, `"#54"` ninth
+ *    `CAPTURED_FIND_SUPPLIERS_RESPONSE` in `src/server/session/politics-handler.test.ts`, `"#54"` ninth
  *    (`rolProducer|rolDistributer|rolImporter|rolCompExport`, the four boxes of
  *    `OutputSearchHandlerViewer.pas:337-351`), answered with a seven-field row.
  *  - `cs-rdo-002` — the same shape for FindClients, `"#78"` ninth

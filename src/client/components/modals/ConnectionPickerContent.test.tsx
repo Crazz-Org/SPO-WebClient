@@ -234,7 +234,7 @@ describe('ConnectionPickerContent (T3)', () => {
 
   it('a supplier search with every box ticked sends Role 54', () => {
     // The four boxes of OutputSearchHandlerViewer.pas:337-351 — the `#54` of the
-    // captured trace (src/server/__tests__/rdo/connection-search.test.ts:9).
+    // captured trace (`CAPTURED_FIND_SUPPLIERS_RESPONSE` in `src/server/session/politics-handler.test.ts`).
     openPicker();
     const onConnectionSearch = jest.fn();
     renderWithProviders(<ConnectionPickerContent onClose={() => {}} />, { clientCallbacks: createSpiedCallbacks({ onConnectionSearch }) });

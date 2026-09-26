@@ -1826,6 +1826,28 @@ describe.each([
 // =============================================================================
 // searchConnections — the branches rdo-callsite-wire-format.test.ts leaves open
 // =============================================================================
+
+/**
+ * A captured FindSuppliers answer: 11 LF-separated 7-field rows. Captured RDO trace:
+ *
+ *   C 92 sel 30501576 call FindSuppliers "^" "%Drugs","%Shamba","%","%","#20","#459","#389","#1","#54";
+ *   A92 res="%463}389}Trade Center}PGI}Olympus}$80}40\n...";
+ *
+ * `#54` is the ninth argument of that trace — the Role mask.
+ */
+const CAPTURED_FIND_SUPPLIERS_RESPONSE = `res="%463}389}Trade Center}PGI}Olympus}$80}40
+483}684}Trade Center}Dissidents}Clementia}$80}40
+205}505}Trade Center}PGI}Eraclia}$80}40
+131}298}Trade Center}Mariko}Drakka}$80}40
+767}500}Trade Center}Mariko}Toshimi}$80}40
+667}116}Trade Center}Dissidents}Paraiso}$80}40
+885}319}Trade Center}Moab}Atharsia}$80}40
+407}925}Trade Center}Moab}Cathar}$80}40
+137}78}Trade Center}Mariko}Gundia}$80}40
+101}676}Trade Center}Dissidents}Silmaria}$80}40
+805}827}Trade Center}PGI}Vulcania}$80}40
+"`;
+
 describe('searchConnections', () => {
   function makeSearchCtx(overrides: Partial<SessionContext> = {}): FakeSessionCtx {
     return makeSessionCtx({ currentWorldInfo: WORLD, ...overrides });
@@ -1935,6 +1957,37 @@ describe('searchConnections', () => {
     fake.respond(() => new Error('Request timeout: FindSuppliers'));
     expect(await searchConnections(fake.ctx, 1, 2, 'F', 'input')).toEqual([]);
     expect(fake.log.warn).toHaveBeenCalledWith('[Connections] input search failed: Request timeout: FindSuppliers');
+  });
+
+  it('parses the captured 11-row FindSuppliers answer (LF rows), keeping $80 literal', async () => {
+    const fake = makeSearchCtx();
+    fake.respond(() => CAPTURED_FIND_SUPPLIERS_RESPONSE);
+
+    const results = await searchConnections(fake.ctx, 459, 389, 'Drugs', 'input');
+
+    expect(results).toHaveLength(11);
+    expect(results[0]).toEqual({
+      x: 463, y: 389, facilityName: 'Trade Center', companyName: 'PGI', town: 'Olympus', price: '$80', quality: '40',
+    });
+    expect(results[1]).toEqual({
+      x: 483, y: 684, facilityName: 'Trade Center', companyName: 'Dissidents', town: 'Clementia', price: '$80', quality: '40',
+    });
+    expect(results[4]).toEqual({
+      x: 767, y: 500, facilityName: 'Trade Center', companyName: 'Mariko', town: 'Toshimi', price: '$80', quality: '40',
+    });
+    expect(results[10]).toEqual({
+      x: 805, y: 827, facilityName: 'Trade Center', companyName: 'PGI', town: 'Vulcania', price: '$80', quality: '40',
+    });
+    expect(results.every(r => r.price === '$80')).toBe(true);
+  });
+
+  it('a Role mask of 0 reaches the wire as #0 — ??, not ||', async () => {
+    const fake = makeSearchCtx();
+    fake.respond(() => 'res="%"');
+
+    await searchConnections(fake.ctx, 1, 2, 'Food', 'input', { roles: 0 });
+
+    expect(fake.sent[0].packet.args?.[8]).toBe(RdoValue.int(0).format());
   });
 });
 

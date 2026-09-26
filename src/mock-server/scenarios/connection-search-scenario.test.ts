@@ -6,7 +6,7 @@
  * The assertion that matters is the ninth argument of the frame the real
  * gateway emits: `"#54"` for a supplier search with every box ticked, `"#78"`
  * for a customer search. 54 is not a number chosen here — it is the `#54` of the
- * captured trace (`src/server/__tests__/rdo/connection-search.test.ts:9`), and
+ * captured trace (`CAPTURED_FIND_SUPPLIERS_RESPONSE` in `src/server/session/politics-handler.test.ts`), and
  * the client used to send 27 for the same four boxes.
  */
 

@@ -16,7 +16,7 @@
  *    `Voyager/URLHandlers/OutputSearchHandlerViewer.pas:337-351`: Export
  *    Warehouses → rolCompExport, Regular Warehouses → rolDistributer, City Trade
  *    Centers → rolImporter, Factories → rolProducer. All four = **54**, the `#54`
- *    of the captured trace (`src/server/__tests__/rdo/connection-search.test.ts:9`).
+ *    of the captured trace (`CAPTURED_FIND_SUPPLIERS_RESPONSE` in `src/server/session/politics-handler.test.ts`).
  *  - client search (`FindClients`, our `direction: 'output'`) —
  *    `Voyager/URLHandlers/InputSearchHandlerViewer.pas:313-327`: Import
  *    Warehouses → rolCompInport, Regular Warehouses → rolDistributer, Stores →
