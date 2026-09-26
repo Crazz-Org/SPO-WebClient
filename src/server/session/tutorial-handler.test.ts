@@ -151,6 +151,7 @@ describe('runTutorialAction — the four actions', () => {
     expect(fake.sent[0].category).toBe(TimeoutCategory.NORMAL);
     expect(fake.sent[0].packet.action).toBe('set');
     expect(fake.sent[0].packet.member).toBe('Completed');
+    expect(fake.sent[0].packet.targetId).toBe('130600501');
     // -1 is the Delphi WordBool TRUE.
     expect(fake.sent[0].packet.args).toEqual(['"#-1"']);
   });

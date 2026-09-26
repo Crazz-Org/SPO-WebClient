@@ -148,12 +148,13 @@ describe('placeBuilding', () => {
   // The captured request is
   //   C 147 sel 8184316 call NewFacility "^" "%PGISupermarketC","#618","#28","#618"
   // (live capture, build-menu scenario).
+  // The capture has companyId == y == 618, so the test uses distinct values to make a swap visible.
   it('targets the world context and types the four arguments as %,#,#,#', async () => {
     const fake = makeSessionCtx();
     fake.respond(() => 'res="#0"');
-    Object.assign(fake.ctx, { currentCompany: { id: '618', name: 'Yellow Inc.' } });
+    Object.assign(fake.ctx, { currentCompany: { id: '4104', name: 'Yellow Inc.' } });
 
-    await placeBuilding(fake.ctx, 'PGISupermarketC', 28, 618);
+    await placeBuilding(fake.ctx, 'PGISupermarketC', 28, 931);
 
     const [{ packet, socketName, category }] = fake.sent;
     expect(socketName).toBe('world');
@@ -165,9 +166,9 @@ describe('placeBuilding', () => {
     expect(packet.separator).toBe('"^"');
     expect(packet.args).toEqual([
       RdoValue.string('PGISupermarketC').format(),
-      RdoValue.int(618).format(),
+      RdoValue.int(4104).format(),
       RdoValue.int(28).format(),
-      RdoValue.int(618).format(),
+      RdoValue.int(931).format(),
     ]);
     expect(category).toBe(TimeoutCategory.NORMAL);
   });

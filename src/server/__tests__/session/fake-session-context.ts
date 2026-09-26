@@ -9,8 +9,9 @@
  * WHY IT IS SHARED. Four test files already grew their own `makeCtx()` and they
  * have diverged on the one thing that must not vary — how a frame is read off
  * the socket. `building-mutations.test.ts:35-40` decodes the Buffer as latin1;
- * `mail-handler-emission.test.ts:30` does `write: () => true` and throws the
- * frame away, so it can assert nothing about the fire-and-forget `"*"` channel.
+ * `mail-handler-emission.test.ts` used to discard every frame written to the
+ * socket, so it could assert nothing about the fire-and-forget `"*"` channel;
+ * it now builds on this factory.
  * Latin-1 is the codec of the whole `writeRdoFrame` path (`rdo-helpers.ts:80`,
  * `RDOUtils.pas` WideStrToStr): it is an invariant of the protocol, not a detail
  * each test file gets to re-decide.

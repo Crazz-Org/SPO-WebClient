@@ -627,7 +627,7 @@ describe('executeAutoConnectionAction', () => {
       expect(fake.log.debug).toHaveBeenCalledWith('[AutoConnections] Using cached URL for delete');
     });
 
-    it('delete without suppliers still goes out on the cached URL (no guard on that path)', async () => {
+    it("pins today's behaviour — delete without suppliers still goes out on the cached URL, stale Supplier=OLD included (no guard on that path)", async () => {
       const fake = makeWebCtx();
       warmCache(fake, 'DeleteDefaultSupplier.asp', `${IS_BASE}DeleteDefaultSupplier.asp?Supplier=OLD`);
       expect(await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIPlastics')).toEqual({ success: true });

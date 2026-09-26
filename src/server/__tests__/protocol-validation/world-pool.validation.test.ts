@@ -46,6 +46,7 @@ import {
   ProtocolTestHarness,
   HarnessConfig,
 } from './protocol-test-harness';
+import { MockTcpSocket } from './mock-tcp-socket';
 import { createAuthScenario } from '../../../mock-server/scenarios/auth-scenario';
 import { createWorldListScenario } from '../../../mock-server/scenarios/world-list-scenario';
 import { createCompanyListScenario } from '../../../mock-server/scenarios/company-list-scenario';
@@ -172,18 +173,44 @@ describe('Protocol Validation: world connection pool', () => {
       harness = buildHarness({ enabled: true, socketConfigs: [poolSocketConfig] });
     });
 
-    it('should not open a single pool connection before the session is bound', async () => {
+    it('should hold no pool connection when the session-binding frames have gone out', async () => {
       // initWorldPool() runs immediately after the world socket connects, long
       // before Logon. Constructing the pool there is fine; populating is not.
       const worlds = await harness.session.connectDirectory(
         'SPO_test3', 'test3', 'Root/Areas/Asia/Worlds'
       );
       const shamba = worlds.find(w => w.name === 'shamba');
+      expect(shamba).toBeDefined();
 
-      const loginPromise = harness.session.loginWorld('SPO_test3', 'test3', shamba!);
-      // Sampled while the login sequence is in flight.
-      expect(harness.getPoolSockets()).toHaveLength(0);
-      await loginPromise;
+      // Sampled at the moment the last binding frame (RegisterEventsById) reaches
+      // the primary socket — after Logon, TycoonId and RDOCnntId have gone out.
+      const samples: Array<{ pool: number; primary: string[] }> = [];
+      const realWrite = MockTcpSocket.prototype.write;
+      const spy = jest.spyOn(MockTcpSocket.prototype, 'write').mockImplementation(function (
+        this: MockTcpSocket, data: string | Buffer, encoding?: string, callback?: () => void,
+      ): boolean {
+        const result = realWrite.call(this, data, encoding, callback);
+        const raw = typeof data === 'string' ? data : data.toString('latin1');
+        if (samples.length === 0 && /\bcall RegisterEventsById\b/.test(raw)) {
+          samples.push({ pool: harness.getPoolSockets().length, primary: harness.getCapturedCommands(2) });
+        }
+        return result;
+      });
+      try {
+        await harness.session.loginWorld('SPO_test3', 'test3', shamba!);
+        await flush();
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(samples).toHaveLength(1);
+      const positions = ['call Logon', 'get TycoonId', 'get RDOCnntId', 'call RegisterEventsById']
+        .map(frame => samples[0].primary.findIndex(c => c.includes(frame)));
+      for (const pos of positions) expect(pos).toBeGreaterThanOrEqual(0);
+      expect(positions).toEqual([...positions].sort((a, b) => a - b));
+      expect(samples[0].pool).toBe(0);
+      // Non-vacuity: the same run did populate the pool afterwards.
+      expect(harness.getPoolSockets().length).toBeGreaterThan(0);
     });
 
     it('should keep every session-binding frame on the primary world socket', async () => {
