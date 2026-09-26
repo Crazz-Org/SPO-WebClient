@@ -84,8 +84,8 @@ export const IND_GENERAL_GROUP: PropertyGroup = {
     // (IndustryGeneralSheet.pas:143) and never shows it. PropertyGroup skips the row.
     { rdoName: 'Role', displayName: 'Role', type: PropertyType.TEXT },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
-    { rdoName: 'TradeRole', displayName: 'Trade Role', type: PropertyType.ENUM, editable: true, enumLabels: { '0': 'Neutral', '1': 'Producer', '2': 'Distributor', '3': 'Buyer', '4': 'Importer', '5': 'Export', '6': 'Import' } },
-    { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true, enumLabels: { '0': 'Same Owner', '1': 'Subsidiaries', '2': 'Allies', '3': 'Anyone' } },
+    { rdoName: 'TradeRole', displayName: 'Trade Role', type: PropertyType.ENUM, editable: true },
+    { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true },
     { rdoName: 'connectMap', displayName: 'Connect', type: PropertyType.ACTION_BUTTON, actionId: 'connectMap', buttonLabel: 'Connect' },
     { rdoName: 'tradeConnect', displayName: 'Quick Trade', type: PropertyType.TRADE_CONNECT_BUTTONS },
     { rdoName: 'demolish', displayName: 'Demolish', type: PropertyType.ACTION_BUTTON, actionId: 'demolish', buttonLabel: 'Demolish' },
@@ -330,8 +330,8 @@ export const WH_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
-    { rdoName: 'Role', displayName: 'Trade Role', type: PropertyType.ENUM, enumLabels: { '0': 'Neutral', '1': 'Producer', '2': 'Distributor', '3': 'Buyer', '4': 'Importer', '5': 'Export', '6': 'Import' } },
-    { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true, enumLabels: { '0': 'Same Owner', '1': 'Subsidiaries', '2': 'Allies', '3': 'Anyone' } },
+    { rdoName: 'Role', displayName: 'Trade Role', type: PropertyType.ENUM },
+    { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true },
     { rdoName: 'GateMap', displayName: 'Wares', type: PropertyType.WARE_CHECKLIST },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
     { rdoName: 'connectMap', displayName: 'Connect', type: PropertyType.ACTION_BUTTON, actionId: 'connectMap', buttonLabel: 'Connect' },
@@ -1105,8 +1105,8 @@ export const TRADE_GROUP: PropertyGroup = {
   icon: 'T',
   order: 35,
   properties: [
-    { rdoName: 'TradeRole', displayName: 'Trade Role', type: PropertyType.ENUM, enumLabels: { '0': 'Neutral', '1': 'Producer', '2': 'Distributor', '3': 'Buyer', '4': 'Importer', '5': 'Export', '6': 'Import' } },
-    { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true, enumLabels: { '0': 'Same Owner', '1': 'Subsidiaries', '2': 'Allies', '3': 'Anyone' } },
+    { rdoName: 'TradeRole', displayName: 'Trade Role', type: PropertyType.ENUM },
+    { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true },
     { rdoName: 'GateMap', displayName: 'Gate Map', type: PropertyType.NUMBER, hideEmpty: true },
   ],
 };
