@@ -25,7 +25,7 @@ export const ROUTES: RouteRule[] = [
   // Order matters: the first matching rule wins, so the paths that need no live drive
   // are matched before the broad source rules that would otherwise swallow them.
   {
-    test: /^doc\/|\.md$|^src\/mock-server\/|\.test\.tsx?$/,
+    test: /^doc\/|\.md$|^src\/mock-server\/|\.test\.tsx?$|^src\/__tests__\/[^/]+\.baseline\.json$/,
     flows: [],
     why: 'documentation, L1 substrate or tests — static verification only',
   },

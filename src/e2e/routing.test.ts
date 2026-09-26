@@ -83,6 +83,12 @@ describe('route', () => {
     expect(decision.staticOnly).toBe(true);
   });
 
+  it('does not require a live drive for a test baseline fixture', () => {
+    const decision = route(['src/__tests__/test-hygiene.baseline.json']);
+    expect(decision.unmapped).toEqual([]);
+    expect(decision.staticOnly).toBe(true);
+  });
+
   it('treats repo-root config and generated output as static-only', () => {
     const decision = route(['.gitignore', '.editorconfig', 'tsconfig.json', 'report/x.html', 'coverage/lcov.info']);
     expect(decision.unmapped).toEqual([]);
