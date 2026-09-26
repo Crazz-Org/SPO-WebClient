@@ -185,7 +185,8 @@ describe('General handler RDO properties', () => {
 
   it('ResGeneral should show effective crime, effective pollution and efficiency beside the raw figures', () => {
     // PopulatedBlock.pas:931-933 — ActualCrime/ActualPollution/Efficiency are only written
-    // for a TMetaPopulatedBlock, so hideEmpty drops the row instead of printing 0%.
+    // for a TMetaPopulatedBlock, so hideEmpty drops the row only when the cache has nothing;
+    // a real 0 % is printed.
     const effectiveNames = ['ActualCrime', 'ActualPollution', 'Efficiency'];
     const rdoNames = RES_GENERAL_GROUP.properties.map(p => p.rdoName);
     for (const name of effectiveNames) {

@@ -179,7 +179,7 @@ export const RES_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'Crime', displayName: 'Crime', type: PropertyType.PERCENTAGE },
     // PopulatedBlock.pas:931-933 — the crime/pollution left after the block's resistance,
     // and the block's efficiency. Only written for a TMetaPopulatedBlock; hideEmpty drops
-    // the row when the cache has nothing rather than printing 0%.
+    // the row only when the cache has nothing; a real 0 % is printed.
     { rdoName: 'ActualCrime', displayName: 'Effective Crime', type: PropertyType.PERCENTAGE, hideEmpty: true },
     { rdoName: 'Pollution', displayName: 'Pollution', type: PropertyType.PERCENTAGE },
     { rdoName: 'ActualPollution', displayName: 'Effective Pollution', type: PropertyType.PERCENTAGE, hideEmpty: true },
