@@ -214,3 +214,32 @@ describe('markActiveDeveloping', () => {
     expect(developing[0].active).toBeUndefined();
   });
 });
+
+/**
+ * The server formats both sentences in the tycoon's language
+ * (`Kernel/ResearchCenter.pas:722`, `:733`). No `sim.lang` translation exists in
+ * the Delphi tree, so these non-English strings are invented for the test; the
+ * parser holds only the English patterns and must show nothing, never crash.
+ */
+describe('a tycoon whose language is not English', () => {
+  it.each([
+    ['Spanish', '37% de investigación completada', 'Investigando Tecnología Verde. Costo: $1,250,000. Compañía apoyada al 200%.'],
+    ['German', '37% der Forschung abgeschlossen', 'Erforsche Grüne Technik. Kosten: $1,250,000.'],
+  ])('%s: no progress shown, no crash', async (_lang, main, secondary) => {
+    const fake = withFocus(makeSessionCtx());
+    fake.respond(() => sections(main, secondary));
+
+    await expect(getActiveResearchStatus(fake.ctx, X, Y)).resolves.toBeNull();
+    expect(fake.sent).toHaveLength(1);
+
+    const parsed = parseResearchStatusText(`${main}:-:${secondary}:-:Hint`);
+    expect(parsed).toBeNull();
+
+    const developing: ResearchInventionItem[] = [
+      { inventionId: 'Inv0', name: 'Tecnología Verde' },
+      { inventionId: 'Inv1', name: 'Grüne Technik' },
+    ];
+    expect(() => markActiveDeveloping(developing, parsed)).not.toThrow();
+    expect(developing.map(i => i.active)).toEqual([undefined, undefined]);
+  });
+});

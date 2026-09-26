@@ -36,6 +36,19 @@ import { TimeoutCategory } from '../../shared/timeout-categories';
 import { parsePropertyResponse } from '../rdo-helpers';
 import { toErrorMessage } from '../../shared/error-utils';
 
+/**
+ * [UNKNOWN] Non-English status text. Both sentences are picked per
+ * `ToTycoon.Language` (`Kernel/ResearchCenter.pas:722`, `:733`). Only the English
+ * defaults are in the tree (`Kernel/SimHints.pas:332-333`); translations load at
+ * run time from `Languages\ms\<LangId>\sim.lang` (`Kernel/SimMLS.pas:19`), and no
+ * such file exists in SPO-Original or SPO-ASP, so no per-language pattern can be
+ * cited. No numeric alternative exists either: `fProgress` is protected
+ * (`Kernel/ResearchCenter.pas:81`) and `StoreToCache` (`Kernel/ResearchCenter.pas:770`)
+ * writes no progress to the cache. Result: for a non-English tycoon
+ * `parseResearchStatusText` returns `null` — no progress and no active mark are
+ * shown — and `getActiveResearchStatus` still never rejects.
+ */
+
 /** `mtidResearchMain` = `'%d%% research completed'` (`Kernel/SimHints.pas:332`). */
 const PERCENT_RE = /(\d+)\s*%\s*research completed/i;
 
