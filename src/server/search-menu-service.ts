@@ -88,8 +88,6 @@ export function directoryPagePath(ref: DirectoryRef, worldName: string): string 
 }
 
 export class SearchMenuService {
-  private interfaceServerHost: string;
-  private interfaceServerPort: number;
   private worldName: string;
   private tycoonName: string;
   private companyName: string;
@@ -107,8 +105,6 @@ export class SearchMenuService {
     daPort: number,
     languageId: string
   ) {
-    this.interfaceServerHost = interfaceServerHost;
-    this.interfaceServerPort = interfaceServerPort;
     this.worldName = worldName;
     this.tycoonName = tycoonName;
     this.companyName = companyName;

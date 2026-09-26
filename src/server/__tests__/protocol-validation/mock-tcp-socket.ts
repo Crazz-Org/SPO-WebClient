@@ -43,7 +43,6 @@ export class MockTcpSocket extends EventEmitter {
   private capturedWrites: string[] = [];
   private pushTriggers: PushTrigger[] = [];
   private fallbackResponses: FallbackResponse[] = [];
-  private serverRequestRidCounter = 50000;
   private pendingTimers: ReturnType<typeof setTimeout>[] = [];
 
   writable = true;

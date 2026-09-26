@@ -94,6 +94,16 @@ export default tseslint.config(
     },
   },
 
+  {
+    // A private field that is written but never read is dead state kept alive by its own tests.
+    // src/client/ is left out: its renderer carries five such members that are a separate card.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/client/**'],
+    rules: {
+      '@typescript-eslint/no-unused-private-class-members': 'error',
+    },
+  },
+
   // Must stay last: switches off every rule Prettier owns.
   prettier
 );
