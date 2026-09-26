@@ -1,13 +1,10 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { screen } from '@testing-library/react';
+import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useSearchStore } from '../../store/search-store';
 import { SearchPanel } from './SearchPanel';
 import { WsMessageType } from '@/shared/types';
-import type { TownInfo, RankingEntry, BankInfo } from '@/shared/types';
-// Separate statement on purpose: the import header above is a frozen span for this change.
-import { fireEvent } from '@testing-library/react';
-import type { SearchMenuCategory } from '@/shared/types';
+import type { TownInfo, RankingEntry, BankInfo, SearchMenuCategory } from '@/shared/types';
 
 const TOWN_BASE: TownInfo = {
   name: 'Helartia',
