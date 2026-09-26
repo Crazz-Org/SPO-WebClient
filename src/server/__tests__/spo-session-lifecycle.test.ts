@@ -651,6 +651,30 @@ describe('cacher object pool', () => {
     untyped.cleanup();
   });
 
+  // Moved from rdo-helpers.test.ts, where these payloads ran on a copy of the parser; they now run on the real one.
+  it.each([
+    // [label, payload, requested names, what production returns]
+    ['splits tab-delimited values', 'res="%Bars\tBooks\tCars"', ['A', 'B', 'C'], ['Bars', 'Books', 'Cars']],
+    ['keeps multi-word values whole', 'res="%Processed Food\tFresh Food\tHousehold Appliances"', ['A', 'B', 'C'], ['Processed Food', 'Fresh Food', 'Household Appliances']],
+    ['keeps an empty value between two tabs', 'res="%value1\t\tvalue3"', ['A', 'B', 'C'], ['value1', '', 'value3']],
+    ['keeps an empty value in the middle of a real answer', 'res="%SPO_test3\t29\t\t-134478120-\t32\t-1\t"', ['A', 'B', 'C', 'D', 'E', 'F'], ['SPO_test3', '29', '', '-134478120-', '32', '-1']],
+    ['keeps one empty slot per requested property in an all-empty answer', 'res="%\t\t\t"', ['A', 'B', 'C'], ['', '', '']],
+    ['reads a single value with no tab', 'res="%42"', ['A'], ['42']],
+    ['drops only the final delimiter tab', 'res="%Bars\tBooks\t"', ['A', 'B'], ['Bars', 'Books']],
+    ['keeps float values verbatim', 'res="%21.417142868042\t1.47142863273621\t0.0366818867623806"', ['A', 'B', 'C'], ['21.417142868042', '1.47142863273621', '0.0366818867623806']],
+  ])('%s', async (_label, payload, names, expected) => {
+    const h = answering('GetPropertyList', payload);
+    const warn = jest.spyOn(h.session.log, 'warn');
+    await h.session.createSocket('map', WORLD.ip, 7000);
+
+    await expect(h.session.cacherGetPropertyList(TEMP_OBJECT_ID, names)).resolves.toEqual(expected);
+    // One value per requested property: the short-answer warning stays silent.
+    expect(warn).not.toHaveBeenCalled();
+
+    h.session.destroy();
+    h.cleanup();
+  });
+
   it('does not try to close a temp object with no cacher or no map socket', async () => {
     // No cacherId at all.
     expect(() => harness.session.cacherCloseObject(TEMP_OBJECT_ID)).not.toThrow();
