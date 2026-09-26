@@ -129,6 +129,21 @@ describe('connection-reachability scenario — the drive', () => {
     }
     expect(consumed.has('cr-rdo-near')).toBe(true);
 
+    // Every frame production sent that a fixture answers equals that fixture's
+    // literal byte for byte. CreateObject, CloseObject and the NearCircuits read
+    // go through the stubbed cacher and emit no frame, so they are not here.
+    const hits = fake.sent
+      .map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`)
+      .map(frame => ({ frame, hit: mock.match(frame) }))
+      .filter(h => h.hit !== null);
+    for (const { frame, hit } of hits) {
+      expect(frame).toBe(hit!.exchange.request);
+    }
+    expect(new Set(hits.map(h => h.hit!.exchange.id))).toEqual(new Set([
+      'cr-rdo-find', 'cr-rdo-set-self', 'cr-rdo-set-near', 'cr-rdo-set-far',
+      'cr-rdo-set-roadless', 'cr-rdo-set-ghost',
+    ]));
+
     expect(fake.cacher.closeObject).toHaveBeenCalledTimes(1);
     expect(fake.cacher.closeObject).toHaveBeenCalledWith(REACHABILITY_TEMP_OBJECT);
     expect(onBatch).toHaveBeenCalledTimes(1);

@@ -26,11 +26,11 @@
  *    `TTycoon.Id` would dereference nothing, with no error to show for it, so the
  *    argument is pinned here.
  *
- * Every request is built by the real emitter (`rdoCall(...)` / `rdoGet(...)`), so
- * the separator and arity come from the catalogue, never from this file.
+ * Every request is the literal frame production emits, captured in the sibling
+ * test — written out here, never rebuilt with the emitter, so a wrong catalogue
+ * entry cannot produce a matching wrong fixture.
  */
 
-import { rdoCall, rdoGet } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
@@ -65,9 +65,7 @@ function buildRdoExchanges(): RdoExchange[] {
   return [
     {
       id: 'btl-rdo-estloan',
-      request: rdoCall(
-        'RDOEstimateLoan', BANK_LIVE_READS_BLOCK, RdoValue.int(BANK_LIVE_READS_TYCOON),
-      ).toFrame(),
+      request: `C sel ${BANK_LIVE_READS_BLOCK} call RDOEstimateLoan "^" "#${BANK_LIVE_READS_TYCOON}";`,
       response: `A200 res="%${BANK_LIVE_READS_ANSWERS.estLoan}"`,
       matchKeys: {
         verb: 'sel', targetId: BANK_LIVE_READS_BLOCK, action: 'call', member: 'RDOEstimateLoan',
@@ -76,7 +74,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'btl-rdo-budgetperc',
-      request: rdoGet('BudgetPerc', BANK_LIVE_READS_BLOCK).toFrame(),
+      request: `C sel ${BANK_LIVE_READS_BLOCK} get BudgetPerc;`,
       response: `A200 BudgetPerc="#${BANK_LIVE_READS_ANSWERS.budgetPerc}"`,
       matchKeys: {
         verb: 'sel', targetId: BANK_LIVE_READS_BLOCK, action: 'get', member: 'BudgetPerc',
@@ -84,7 +82,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'btl-rdo-interest',
-      request: rdoGet('Interest', BANK_LIVE_READS_BLOCK).toFrame(),
+      request: `C sel ${BANK_LIVE_READS_BLOCK} get Interest;`,
       response: `A200 Interest="#${BANK_LIVE_READS_ANSWERS.interest}"`,
       matchKeys: {
         verb: 'sel', targetId: BANK_LIVE_READS_BLOCK, action: 'get', member: 'Interest',
@@ -92,7 +90,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'btl-rdo-term',
-      request: rdoGet('Term', BANK_LIVE_READS_BLOCK).toFrame(),
+      request: `C sel ${BANK_LIVE_READS_BLOCK} get Term;`,
       response: `A200 Term="#${BANK_LIVE_READS_ANSWERS.term}"`,
       matchKeys: {
         verb: 'sel', targetId: BANK_LIVE_READS_BLOCK, action: 'get', member: 'Term',
@@ -100,7 +98,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'btl-rdo-hoursonair',
-      request: rdoGet('HoursOnAir', TV_LIVE_READS_BLOCK).toFrame(),
+      request: `C sel ${TV_LIVE_READS_BLOCK} get HoursOnAir;`,
       response: `A200 HoursOnAir="#${TV_LIVE_READS_ANSWERS.hoursOnAir}"`,
       matchKeys: {
         verb: 'sel', targetId: TV_LIVE_READS_BLOCK, action: 'get', member: 'HoursOnAir',
@@ -111,7 +109,7 @@ function buildRdoExchanges(): RdoExchange[] {
       // The inspector stores the answer under the one-m key `Comercials`
       // (Voyager/TVGeneralSheet.pas:15).
       id: 'btl-rdo-commercials',
-      request: rdoGet('Commercials', TV_LIVE_READS_BLOCK).toFrame(),
+      request: `C sel ${TV_LIVE_READS_BLOCK} get Commercials;`,
       response: `A200 Commercials="#${TV_LIVE_READS_ANSWERS.commercials}"`,
       matchKeys: {
         verb: 'sel', targetId: TV_LIVE_READS_BLOCK, action: 'get', member: 'Commercials',

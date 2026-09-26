@@ -29,7 +29,6 @@
  * convention `createChaseScenario(vars, { chaseResult })` already uses.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
@@ -49,7 +48,9 @@ export const EVENT_FIXTURE = {
 export const EVENT_TILE = { x: 706, y: 436 };
 
 function buildRdoExchanges(event: typeof EVENT_FIXTURE | null): RdoExchange[] {
-  const request = rdoCall('PickEvent', WORLD_CONTEXT_ID, RdoValue.int(Number(TYCOON_ID))).toFrame();
+  // The literal frame production emits (QueryId stripped), captured in the
+  // sibling test — never rebuilt with the emitter.
+  const request = `C sel ${WORLD_CONTEXT_ID} call PickEvent "^" "#${TYCOON_ID}";`;
   const matchKeys = {
     verb: 'sel',
     targetId: WORLD_CONTEXT_ID,

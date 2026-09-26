@@ -15,9 +15,7 @@ import type { HttpScenario } from '../types/http-exchange-types';
 import type { RdoScenario } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
-import { rdoCall } from '../../shared/rdo-frame';
 import type { RdoMemberName } from '../../shared/rdo-members';
-import { RdoValue } from '../../shared/rdo-types';
 
 /** Extracted company data from chooseCompany.asp HTML */
 export interface CapturedCompanyData {
@@ -384,27 +382,29 @@ export function createCompanyListScenario(
 
   // The five per-index reads chooseCompany.asp:165-204 made, one exchange each,
   // for index 0 — the only index the fixture's one company has. Each request is
-  // built by the emitter, so the fixture cannot drift from the frame the gateway
-  // writes; the `"#0"` argsPattern is what makes an index sent as a widestring
-  // (`"%0"`) match nothing at all.
+  // the literal frame the gateway writes (QueryId stripped), captured in
+  // `company-list-rdo.test.ts` — never rebuilt with the emitter; the `"#0"`
+  // argsPattern is what makes an index sent as a widestring (`"%0"`) match
+  // nothing at all.
   //
   // GetCompanyCount is deliberately absent: `buildWorldPropertyFallbacks` already
   // answers it, and `visitor-login.validation.test.ts` overrides that fallback to
   // drive the zero-company fork. Two sources for one member would break it.
-  const rdoAnswers: ReadonlyArray<readonly [RdoMemberName, string]> = [
-    ['GetCompanyOwnerRole', `%${vars.companyOwnerRole}`],
-    ['GetCompanyName', `%${vars.companyName}`],
-    ['GetCompanyId', `#${vars.companyId}`],
-    ['GetCompanyCluster', `%${vars.companyCluster}`],
-    ['GetCompanyFacilityCount', `#${CAPTURED_COMPANY.facilityCount}`],
+  const view = vars.clientViewId;
+  const rdoAnswers: ReadonlyArray<readonly [RdoMemberName, string, string]> = [
+    ['GetCompanyOwnerRole', `%${vars.companyOwnerRole}`, `C sel ${view} call GetCompanyOwnerRole "^" "#0";`],
+    ['GetCompanyName', `%${vars.companyName}`, `C sel ${view} call GetCompanyName "^" "#0";`],
+    ['GetCompanyId', `#${vars.companyId}`, `C sel ${view} call GetCompanyId "^" "#0";`],
+    ['GetCompanyCluster', `%${vars.companyCluster}`, `C sel ${view} call GetCompanyCluster "^" "#0";`],
+    ['GetCompanyFacilityCount', `#${CAPTURED_COMPANY.facilityCount}`, `C sel ${view} call GetCompanyFacilityCount "^" "#0";`],
   ];
 
   const rdo: RdoScenario = {
     name: 'company-list',
     description: 'The five per-index company getters chooseCompany.asp:166-170 read',
-    exchanges: rdoAnswers.map(([member, answer], i) => ({
+    exchanges: rdoAnswers.map(([member, answer, request], i) => ({
       id: `cl-rdo-${String(i + 1).padStart(3, '0')}`,
-      request: rdoCall(member, vars.clientViewId, RdoValue.int(0)).toFrame(),
+      request,
       response: `A${i} res="${answer}"`,
       matchKeys: {
         verb: 'sel',

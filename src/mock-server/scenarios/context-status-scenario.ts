@@ -16,7 +16,6 @@
  * is what this scenario pins.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
@@ -34,10 +33,7 @@ function buildRdoExchanges(text: string): RdoExchange[] {
   return [
     {
       id: 'cs-rdo-001',
-      request: rdoCall(
-        'ContextStatusText', WORLD_CONTEXT_ID,
-        RdoValue.int(TOWN_TILE.x), RdoValue.int(TOWN_TILE.y),
-      ).toFrame(),
+      request: `C sel ${WORLD_CONTEXT_ID} call ContextStatusText "^" "#706","#436";`,
       response: `A700 res="%${text}"`,
       // The two exchanges differ only by their coordinates, so the args are part
       // of the key — without them the mock would answer the town sentence for
@@ -52,10 +48,7 @@ function buildRdoExchanges(text: string): RdoExchange[] {
     },
     {
       id: 'cs-rdo-002',
-      request: rdoCall(
-        'ContextStatusText', WORLD_CONTEXT_ID,
-        RdoValue.int(EMPTY_TILE.x), RdoValue.int(EMPTY_TILE.y),
-      ).toFrame(),
+      request: `C sel ${WORLD_CONTEXT_ID} call ContextStatusText "^" "#120","#120";`,
       response: 'A700 res="%"',
       matchKeys: {
         verb: 'sel',

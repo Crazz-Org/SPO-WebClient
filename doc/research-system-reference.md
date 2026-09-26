@@ -593,7 +593,7 @@ The server cache only writes `Name` for **volatile** inventions (those with `lic
 | **`.dat` parser** | `src/shared/research-dat-parser.ts` | Parses `research.{lang}.dat` binary → structured invention data |
 | **API endpoint** | `src/server/server.ts` | `GET /api/research-inventions` serves parsed `.dat` data as JSON |
 | **Tests** | `src/server/__tests__/research-inventory.test.ts` | `parseResearchItems()` tests (93 lines) |
-| **Tests** | `src/server/__tests__/rdo/research-commands.test.ts` | RDO wire format tests (94 lines) |
+| **Tests** | `src/server/__tests__/rdo/research-commands.test.ts` | Drives setBuildingProperty; asserts the literal RDOQueueResearch / RDOCancelResearch frames |
 | **Tests** | `src/shared/building-details/hq-inventions.test.ts` | Template structure tests (91 lines) |
 | **Tests** | `src/shared/research-dat-parser.test.ts` | Binary parser tests |
 

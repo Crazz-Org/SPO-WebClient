@@ -1,49 +1,25 @@
-// @ts-nocheck
 /**
- * RDO Protocol Tests - Chat Commands
- *
- * GetUserList was changed from GET (property) to CALL (function).
- * These tests validate the verb fix and its consequence on response parsing.
- *
- * Delphi reference (TClientView, InterfaceServer.pas:191):
- *   GetUserList() — function → call "^", zero args, res="..."
+ * RDO wire test — GetUserList, driven through the production emitter
+ * (`getChatUserList` in chat-handler.ts). GetUserList is a 0-arg `function`
+ * on TClientView (InterfaceServer.pas:191) → `call "^"` with a RID, on the
+ * world socket. The packet is rendered exactly as `sendRdoRequest` renders it.
  */
 
-/// <reference path="../matchers/rdo-matchers.d.ts" />
-
 import { describe, it, expect } from '@jest/globals';
+import { makeSessionCtx, FAKE_CONTEXT_IDS } from '../session/fake-session-context';
+import { getChatUserList } from '../../session/chat-handler';
 import { RdoProtocol } from '../../rdo';
-import { RdoPacket, RdoVerb, RdoAction } from '../../../shared/types';
+import type { RdoPacket } from '../../../shared/types';
 
-function formatAsProduction(packetData: Partial<RdoPacket>, rid = 1): string {
-  const packet = { ...packetData, rid, type: 'REQUEST' } as RdoPacket;
-  return RdoProtocol.format(packet);
-}
+describe('GetUserList wire frame (getChatUserList)', () => {
+  it('emits a 0-arg "^" call on the world context, over the world socket', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="%"');
+    await getChatUserList(fake.ctx);
 
-describe('getChatUserList() — verb fix GET → CALL', () => {
-  const worldContextId = '127839460';
-
-  // Exact packetData from spo_session.ts line 3913-3918
-  const packetData: Partial<RdoPacket> = {
-    verb: RdoVerb.SEL,
-    targetId: worldContextId,
-    action: RdoAction.CALL,
-    member: 'GetUserList',
-    separator: '"^"',
-  };
-
-  it('should produce correct wire: call (not get), "^" separator, zero args', () => {
-    const wire = formatAsProduction(packetData, 42);
-
-    expect(wire).toBe(`C 42 sel ${worldContextId} call GetUserList "^"`);
-  });
-
-  it('CALL response uses res= key, not GetUserList= property key', () => {
-    // CALL → server responds with res="..."
-    // GET  → server responds with GetUserList="..."
-    // Production code parses with parsePropertyResponseHelper(payload, 'res')
-    const payload = 'res="%user1\nuser2"';
-    expect(/^res=/.test(payload)).toBe(true);
-    expect(/^GetUserList=/.test(payload)).toBe(false);
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0].socketName).toBe('world');
+    const frame = RdoProtocol.format({ ...fake.sent[0].packet, rid: 42, type: 'REQUEST' } as RdoPacket);
+    expect(frame).toBe(`C 42 sel ${FAKE_CONTEXT_IDS.worldContextId} call GetUserList "^"`);
   });
 });

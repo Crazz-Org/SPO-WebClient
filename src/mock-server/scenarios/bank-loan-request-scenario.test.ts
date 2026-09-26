@@ -117,6 +117,16 @@ describe('bank-loan-request scenario — the gateway drive', () => {
     expect(mock.getConsumedIds()).toEqual(new Set(['bl-rdo-ask-loan']));
   });
 
+  it('the fixture request is byte-for-byte the frame production emitted', async () => {
+    const { fake, mock } = makeCtx(0);
+
+    await requestBankLoan(fake.ctx, X, Y, BANK_LOAN_RAW_AMOUNT);
+
+    const frame = `${RdoProtocol.format(fake.sent[0].packet as RdoPacket)};`;
+    const hit = mock.match(frame)!;
+    expect(frame).toBe(hit.exchange.request);
+  });
+
   it('answers -1 and sends no frame at all when there is no proxy id', async () => {
     const { fake } = makeCtx(0, null);
 

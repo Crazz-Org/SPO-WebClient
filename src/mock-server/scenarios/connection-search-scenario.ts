@@ -12,7 +12,7 @@
  * The three exchanges reproduce that frame:
  *
  *  - `cs-rdo-001` — the captured FindSuppliers trace of
- *    `src/server/__tests__/rdo/connection-search.test.ts:9-10`, `"#54"` ninth
+ *    `CAPTURED_FIND_SUPPLIERS_RESPONSE` in `src/server/session/politics-handler.test.ts`, `"#54"` ninth
  *    (`rolProducer|rolDistributer|rolImporter|rolCompExport`, the four boxes of
  *    `OutputSearchHandlerViewer.pas:337-351`), answered with a seven-field row.
  *  - `cs-rdo-002` — the same shape for FindClients, `"#78"` ninth
@@ -24,12 +24,11 @@
  *    argument-by-argument (`rdo-mock.ts:190-194`), so a gateway that ignored the
  *    player's choice of order would land on the wrong exchange.
  *
- * Both requests are built by the real emitter (`rdoCall`), so the fixture cannot
- * drift from what ships, and the separator and arity come from the catalogue
- * rather than from this file.
+ * Every request is the literal frame production emits (QueryId stripped),
+ * captured in the sibling test — never rebuilt with the emitter, so a wrong
+ * catalogue entry cannot produce a matching wrong fixture.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import { rolesToMask, ALL_CONNECTION_ROLES } from '@/shared/connection-roles';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
@@ -114,7 +113,7 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
   return [
     {
       id: 'cs-rdo-001',
-      request: rdoCall('FindSuppliers', CONNECTION_SEARCH_CACHER_ID, ...supplierArgs).toFrame(),
+      request: `C sel ${CONNECTION_SEARCH_CACHER_ID} call FindSuppliers "^" "%Drugs","%${vars.worldName}","%","%","#20","#459","#389","#1","#54";`,
       // x}y}FacName}Company}Town}$Price}Quality — the seven-field supplier row.
       response: 'A92 res="%463}389}Trade Center}PGI}Olympus}$80}40"',
       matchKeys: {
@@ -124,7 +123,7 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
     },
     {
       id: 'cs-rdo-002',
-      request: rdoCall('FindClients', CONNECTION_SEARCH_CACHER_ID, ...clientArgs).toFrame(),
+      request: `C sel ${CONNECTION_SEARCH_CACHER_ID} call FindClients "^" "%Drugs","%${vars.worldName}","%","%","#20","#459","#389","#1","#78";`,
       // x}y}FacName}Company}Town — a client row carries no price or quality.
       response: 'A93 res="%463}389}Drug Store}PGI}Olympus"',
       matchKeys: {
@@ -134,7 +133,7 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
     },
     {
       id: 'cs-rdo-003',
-      request: rdoCall('FindSuppliers', CONNECTION_SEARCH_CACHER_ID, ...qualityArgs).toFrame(),
+      request: `C sel ${CONNECTION_SEARCH_CACHER_ID} call FindSuppliers "^" "%Drugs","%${vars.worldName}","%","%","#20","#459","#389","#2","#54";`,
       // Same seven-field supplier row — only the order the server chose differs.
       response: 'A94 res="%463}389}Trade Center}PGI}Olympus}$80}40"',
       matchKeys: {

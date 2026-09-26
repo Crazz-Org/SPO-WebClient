@@ -18,8 +18,9 @@
  * Both are functions, so every frame here carries `"^"` and a QueryId and the
  * server answers `res="#<code>"`. A `"*"` on either would be an arbitrary
  * memory write on the real server, with no error to show for it — which is why
- * the requests below are built by the real emitter (`rdoCall`) and the
- * separator comes from the catalogue rather than from this file.
+ * the requests below are the literal frames production emits (QueryId
+ * stripped), captured in the sibling test, rather than rebuilt with the
+ * emitter from the same catalogue they are meant to check.
  *
  * **The mirroring is the push, not the reply.** Every `SetViewedArea` of the
  * followed player pushes `MoveTo(x + dx div 2, y + dy div 2)` to each chaser
@@ -33,7 +34,6 @@
  * (`Voyager.1/URLHandlers/ServerCnxHandler.pas:3029-3039`).
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
@@ -78,7 +78,7 @@ function buildRdoExchanges(clientViewId: string, chaseResult: number): RdoExchan
   return [
     {
       id: 'chase-start',
-      request: rdoCall('Chase', clientViewId, name).toFrame(),
+      request: `C sel ${clientViewId} call Chase "^" "%${CHASED_USER}";`,
       response: `A1 res="#${chaseResult}"`,
       // The server's own first MoveTo (InterfaceServer.pas:1592) — only sent
       // when it accepted.
@@ -93,7 +93,7 @@ function buildRdoExchanges(clientViewId: string, chaseResult: number): RdoExchan
     },
     {
       id: 'chase-stop',
-      request: rdoCall('StopChase', clientViewId).toFrame(),
+      request: `C sel ${clientViewId} call StopChase "^";`,
       response: 'A2 res="#0"',
       matchKeys: {
         verb: 'sel',

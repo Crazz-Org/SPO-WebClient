@@ -117,7 +117,7 @@ the role is gone. It also serves the post-abandon `NewTycoon/TycoonCurriculum.as
 ASP page.
 
 `civic-mutations` is the write half of the Politics surface — one RDO exchange per
-civic `procedure` the gateway emits (built by `rdoCall`, so it cannot drift), the two
+civic `procedure` the gateway emits (its request the literal frame, written out by hand), the two
 id lookups that precede a tax or budget write, and the five Politics ASP pages
 `getPoliticsData` fetches. Its mutation exchanges carry an **empty response** on
 purpose: a `procedure` answers nothing, so no reply can ever say the write landed.
@@ -131,7 +131,7 @@ folder's ruler block and `world.five`'s `ElectionsOn`, `1` by default, `0` via
 (`Voyager/WHGeneralSheet.pas:155`), so every checkbox contributes the bit of its ordinal:
 every box of the supplier form ticked is `#54`, of the client form `#78`. A wrong mask
 produces no crash and no error reply — the server simply answers about facilities nobody asked
-about — so the captured `#54` (`src/server/__tests__/rdo/connection-search.test.ts:9`) is the
+about — so the captured `#54` (`CAPTURED_FIND_SUPPLIERS_RESPONSE` in `src/server/session/politics-handler.test.ts`) is the
 only thing that can catch it. Its test drives the real `searchConnections` and matches the
 emitted frame back against the exchange.
 
@@ -155,9 +155,10 @@ of `RDOSearchKey`. The A-Z index sends the bare `*` inside one `Root/Users/<Lett
 what the reference client emitted for a letter (`DirectoryServer.wsc:841-847`), which the
 server turns into `Entry LIKE 'Root/Users/<Letter>/%'` (`DirectoryManager.pas:1001-1017`) — and
 a typed term sends the wrapped `*term*` across all 26 buckets. A wrong pattern draws no error,
-just other people's names, so the two frames are fixed here. Both are built by the emitter
-(`rdoCall`); only `idof` is written out, because it has no fire-and-forget form. Its test
-drives the real `searchPeople` and matches each emitted frame back against the exchange.
+just other people's names, so the two frames are fixed here. Every request is a literal
+frame, as production emits it with the QueryId stripped. Its test drives the real
+`searchPeople` and matches the session open, the bucket select and the two `RDOSearchKey`
+frames back against their exchanges, each byte-equal to its fixture literal.
 
 `trade-settings` is every argument the two facility trade controls can send: `RDOSetRole` with
 2, 5 or 6 and `RDOSetTradeLevel` with 0, 2 or 3 — one exchange per value, six in all. Both are
@@ -424,6 +425,10 @@ Each `RdoScenario` has a `name`, `description`, and array of `RdoExchange` objec
 2. Export `createMyScenario(overrides?: Partial<ScenarioVariables>)`
 3. Define exchanges with `matchKeys` — every key you declare is checked, and `argsPattern` is the full argument list
 4. Register in `scenarios/scenario-registry.ts`
+5. Write each `request:` as a string literal copied from the frame production emits in the
+   sibling test (QueryId stripped), never built with the emitter (`rdoCall` / `rdoGet` /
+   `rdoSet`) — a fixture built from the catalogue cannot catch a wrong catalogue entry.
+   `scenario-fixture-literals.test.ts` enforces this.
 
 ## RDO Matching Hierarchy
 

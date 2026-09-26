@@ -6,7 +6,7 @@
  * The assertion that matters is the ninth argument of the frame the real
  * gateway emits: `"#54"` for a supplier search with every box ticked, `"#78"`
  * for a customer search. 54 is not a number chosen here — it is the `#54` of the
- * captured trace (`src/server/__tests__/rdo/connection-search.test.ts:9`), and
+ * captured trace (`CAPTURED_FIND_SUPPLIERS_RESPONSE` in `src/server/session/politics-handler.test.ts`), and
  * the client used to send 27 for the same four boxes.
  */
 
@@ -105,7 +105,10 @@ describe('connection-search scenario — the Role argument on the wire', () => {
 
     const mock = new RdoMock();
     mock.addScenario(rdo);
-    expect(mock.match(frame)!.exchange.id).toBe('cs-rdo-001');
+    const hit = mock.match(frame)!;
+    expect(hit.exchange.id).toBe('cs-rdo-001');
+    // The fixture request is byte-for-byte the frame production emitted.
+    expect(frame).toBe(hit.exchange.request);
   });
 
   it('choosing quality puts "#2" eighth and lands on its own exchange', async () => {
@@ -119,7 +122,10 @@ describe('connection-search scenario — the Role argument on the wire', () => {
     // (rdo-mock.ts:190-194), so the two cannot collide.
     const mock = new RdoMock();
     mock.addScenario(rdo);
-    expect(mock.match(frame)!.exchange.id).toBe('cs-rdo-003');
+    const hit = mock.match(frame)!;
+    expect(hit.exchange.id).toBe('cs-rdo-003');
+    // The fixture request is byte-for-byte the frame production emitted.
+    expect(frame).toBe(hit.exchange.request);
   });
 
   it('a customer search with every box ticked puts "#78" ninth', async () => {
@@ -130,7 +136,10 @@ describe('connection-search scenario — the Role argument on the wire', () => {
 
     const mock = new RdoMock();
     mock.addScenario(rdo);
-    expect(mock.match(frame)!.exchange.id).toBe('cs-rdo-002');
+    const hit = mock.match(frame)!;
+    expect(hit.exchange.id).toBe('cs-rdo-002');
+    // The fixture request is byte-for-byte the frame production emitted.
+    expect(frame).toBe(hit.exchange.request);
   });
 
   it('the two exchanges carry exactly those two masks', () => {

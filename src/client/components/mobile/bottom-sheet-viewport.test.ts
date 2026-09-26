@@ -6,15 +6,14 @@ describe('BottomSheet.module.css viewport-height fallback', () => {
   const lines = css.split('\n').map((line) => line.trim());
 
   it('follows every non-dvh vh declaration with an otherwise-identical dvh declaration', () => {
-    const vhLines = lines.filter((line) => /\d+vh\b/.test(line) && !/\d+dvh\b/.test(line));
-    expect(vhLines.length).toBeGreaterThan(0);
-
-    for (const vhLine of vhLines) {
-      const index = lines.indexOf(vhLine);
-      const nextLine = lines[index + 1];
-      const dvhLine = vhLine.replace(/(\d+)vh/g, '$1dvh');
-      expect(nextLine).toBe(dvhLine);
-    }
+    const isVh = (line: string): boolean => /\d+vh\b/.test(line) && !/\d+dvh\b/.test(line);
+    let count = 0;
+    lines.forEach((line, index) => {
+      if (!isVh(line)) return;
+      count++;
+      expect(lines[index + 1]).toBe(line.replace(/(\d+)vh/g, '$1dvh'));
+    });
+    expect(count).toBeGreaterThan(0);
   });
 
   it('contains the three expected dvh declarations', () => {

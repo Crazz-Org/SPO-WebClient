@@ -16,13 +16,12 @@
  * `argsPattern`, none carries a `looseMatch` reason, and `RdoMock` answers only a
  * frame matching every key an exchange declares.
  *
- * Every request is built by the real emitter (`rdoCall`), so the separator and
- * the arity come from the catalogue rather than from this file, and the values
- * come from `shared/building-details/trade-settings.ts` — the same lists the
+ * Every request is the literal frame production emits, captured in the sibling
+ * test — never rebuilt with the emitter, so a wrong catalogue entry cannot
+ * produce a matching wrong fixture — and the values come from `shared/building-details/trade-settings.ts` — the same lists the
  * controls build their options from, never restated.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoMemberName } from '@/shared/rdo-members';
 import {
@@ -52,11 +51,23 @@ interface TradeMutation {
   slug: string;
   member: RdoMemberName;
   values: readonly number[];
+  /** The frame production emits for one value, member and separator spelled out. */
+  request: (value: number) => string;
 }
 
 const TRADE_MUTATIONS: TradeMutation[] = [
-  { slug: 'rdo-set-role', member: 'RDOSetRole', values: TRADE_MODE_VALUES },
-  { slug: 'rdo-set-trade-level', member: 'RDOSetTradeLevel', values: TRADE_LEVEL_VALUES },
+  {
+    slug: 'rdo-set-role',
+    member: 'RDOSetRole',
+    values: TRADE_MODE_VALUES,
+    request: (value) => `C sel ${TRADE_TARGETS.currBlock} call RDOSetRole "*" "#${value}";`,
+  },
+  {
+    slug: 'rdo-set-trade-level',
+    member: 'RDOSetTradeLevel',
+    values: TRADE_LEVEL_VALUES,
+    request: (value) => `C sel ${TRADE_TARGETS.currBlock} call RDOSetTradeLevel "*" "#${value}";`,
+  },
 ];
 
 function buildRdoExchanges(): RdoExchange[] {
@@ -67,7 +78,7 @@ function buildRdoExchanges(): RdoExchange[] {
       const arg = RdoValue.int(value);
       exchanges.push({
         id: `trade-${mutation.slug}-${value}`,
-        request: rdoCall(mutation.member, TRADE_TARGETS.currBlock, arg).toFrame(),
+        request: mutation.request(value),
         // A `procedure` answers nothing — there is no reply to capture (OB-28).
         response: '',
         matchKeys: {

@@ -815,6 +815,75 @@ describe('ShowNotification', () => {
       body: 'Le maire a été élu',
     }));
   });
+
+  it.each(['"^"', undefined])(
+    'does not look at the separator (%s) — the frame still becomes a notification',
+    (separator) => {
+      const fake = makePushCtx();
+
+      dispatchPush(fake.ctx, WORLD_SOCKET, {
+        ...incoming('ShowNotification', ['#4', '%', '%Body', '#1']),
+        separator,
+      });
+
+      expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+        type: WsMessageType.EVENT_SHOW_NOTIFICATION,
+        kind: 4,
+        title: '',
+        body: 'Body',
+        options: 1,
+      });
+    },
+  );
+
+  it('reads a bare % title as empty and keeps quotes inside the body', () => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('ShowNotification', [
+      '#4', '%',
+      '%Research "Water Quest Licenses" completed. Check for new items in your Build page.',
+      '#1',
+    ]));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_SHOW_NOTIFICATION,
+      kind: 4,
+      title: '',
+      body: 'Research "Water Quest Licenses" completed. Check for new items in your Build page.',
+      options: 1,
+    });
+  });
+
+  it.each([0, 1, 2, 3, 4])('reads every NotificationKind (TNotificationKind 0..4): %i', (kind) => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('ShowNotification', [`#${kind}`, '%', '%', '#0']));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_SHOW_NOTIFICATION,
+      kind,
+      title: '',
+      body: '',
+      options: 0,
+    });
+  });
+
+  it.each([
+    { args: ['#2'], kind: 2 },
+    { args: [], kind: 0 },
+  ])('fills the fields a short frame omits with neutral values: $args', ({ args, kind }) => {
+    const fake = makePushCtx();
+
+    dispatchPush(fake.ctx, WORLD_SOCKET, incoming('ShowNotification', args));
+
+    expect(fake.emit).toHaveBeenCalledWith('ws_event', {
+      type: WsMessageType.EVENT_SHOW_NOTIFICATION,
+      kind,
+      title: '',
+      body: '',
+      options: 0,
+    });
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

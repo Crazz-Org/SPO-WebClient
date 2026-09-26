@@ -94,7 +94,22 @@ describe('people-search scenario — the pattern on the wire', () => {
 
     const mock = new RdoMock();
     mock.addScenario(rdo);
-    expect(mock.match(searches[0].frame)!.exchange.id).toBe('ps-rdo-004');
+
+    // The session open and the bucket select are answered by hand above, but the
+    // frames are production's: each must still equal its fixture literal.
+    const opens = sent.filter(s => s.packet.member === 'RDOOpenSession');
+    expect(opens).toHaveLength(1);
+    const openHit = mock.match(opens[0].frame)!;
+    expect(openHit.exchange.id).toBe('ps-rdo-002');
+    expect(opens[0].frame).toBe(openHit.exchange.request);
+    const keyHit = mock.match(setKeys[0].frame)!;
+    expect(keyHit.exchange.id).toBe('ps-rdo-003');
+    expect(setKeys[0].frame).toBe(keyHit.exchange.request);
+
+    const hit = mock.match(searches[0].frame)!;
+    expect(hit.exchange.id).toBe('ps-rdo-004');
+    // The fixture request is byte-for-byte the frame production emitted.
+    expect(searches[0].frame).toBe(hit.exchange.request);
   });
 
   it('a typed request sweeps 26 buckets with the wrapped "%*Crazz*"', async () => {
@@ -109,7 +124,10 @@ describe('people-search scenario — the pattern on the wire', () => {
     mock.addScenario(rdo);
     for (const s of searches) {
       expect(s.packet.args?.[0]).toBe(`"%${containsPattern(PEOPLE_SEARCH_TERM)}"`);
-      expect(mock.match(s.frame)!.exchange.id).toBe('ps-rdo-005');
+      const hit = mock.match(s.frame)!;
+      expect(hit.exchange.id).toBe('ps-rdo-005');
+      // The fixture request is byte-for-byte the frame production emitted.
+      expect(s.frame).toBe(hit.exchange.request);
     }
   });
 });

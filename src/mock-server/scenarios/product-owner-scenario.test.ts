@@ -126,6 +126,17 @@ describe('product-owner scenario — the drive', () => {
 
     expect(mock.getConsumedIds().has('po-rdo-cnx0')).toBe(true);
 
+    // Every frame production sent that a fixture answers equals that fixture's
+    // literal byte for byte (the cacher reads emit no frame and are not here).
+    const hits = fake.sent
+      .map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`)
+      .map(frame => ({ frame, hit: mock.match(frame) }))
+      .filter(h => h.hit !== null);
+    for (const { frame, hit } of hits) {
+      expect(frame).toBe(hit!.exchange.request);
+    }
+    expect(new Set(hits.map(h => h.hit!.exchange.id))).toEqual(new Set(['po-rdo-outputs', 'po-rdo-setpath', 'po-rdo-cnx0']));
+
     releaseInspector(fake.ctx);
   });
 });

@@ -7,8 +7,9 @@
  * (`Interface Server/InterfaceServer.pas:186`) — a published FUNCTION on
  * `TClientView`, so both frames here carry `"^"` and a QueryId and the server
  * answers `res="#<code>"`. A `"*"` would be an arbitrary memory write with no
- * error to show for it, which is why the requests below are built by the real
- * emitter (`rdoCall`) and the separator comes from the catalogue.
+ * error to show for it, which is why the requests below are the literal frames
+ * production emits (QueryId stripped), captured in the sibling test — never
+ * rebuilt with the emitter from the catalogue they are meant to check.
  *
  * **Five arguments, and the middle two are the trap.** The reference client's
  * New Channel dialog sent `('', '', 100)` for the session app, its id and the
@@ -33,7 +34,6 @@
  * one of them.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import { CHANNEL_USER_LIMIT } from '@/shared/chat-channel';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
@@ -79,7 +79,7 @@ function buildRdoExchanges(clientViewId: string, takenResult: number): RdoExchan
   return [
     {
       id: 'create-channel-free',
-      request: rdoCall('CreateChannel', clientViewId, ...freeArgs).toFrame(),
+      request: `C sel ${clientViewId} call CreateChannel "^" "%${FREE_CHANNEL}","%${CHANNEL_PASSWORD}","%","%","#100";`,
       response: 'A1 res="#0"',
       // Created: ClientCreatedChannel broadcast the inclusion (:4594).
       pushes: [channelInclusionPush(clientViewId, FREE_CHANNEL, CHANNEL_PASSWORD)],
@@ -93,7 +93,7 @@ function buildRdoExchanges(clientViewId: string, takenResult: number): RdoExchan
     },
     {
       id: 'create-channel-taken',
-      request: rdoCall('CreateChannel', clientViewId, ...takenArgs).toFrame(),
+      request: `C sel ${clientViewId} call CreateChannel "^" "%${TAKEN_CHANNEL}","%${CHANNEL_PASSWORD}","%","%","#100";`,
       response: `A2 res="#${takenResult}"`,
       // Taken: JoinChannel answered instead, and it broadcasts nothing.
       pushes: [],

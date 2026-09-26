@@ -2,7 +2,7 @@
  * The Role bitmask, checked against the two reference forms.
  *
  * 54 and 78 are not chosen numbers: 54 is the `#54` of the captured
- * FindSuppliers trace (`src/server/__tests__/rdo/connection-search.test.ts:9`),
+ * FindSuppliers trace (`CAPTURED_FIND_SUPPLIERS_RESPONSE` in `src/server/session/politics-handler.test.ts`),
  * and 78 is what `InputSearchHandlerViewer.pas:313-327` produces with every box
  * ticked. A table that starts at rolProducer = 1 gives 27 and 15 instead —
  * every checkbox filtering on its neighbour's member.

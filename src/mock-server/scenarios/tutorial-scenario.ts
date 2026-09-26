@@ -31,12 +31,11 @@
  *    property (`Tasks/Tasks.pas:156`), which is what `ModifyTask.asp:32-33`
  *    emits and what unblocks a finished task.
  *
- * Every request frame is produced by the real emitter (`rdoCall` / `rdoSet`), so
- * the fixture cannot drift from what ships.
+ * Every request is written out as the literal frame production emits (QueryId
+ * stripped) — never rebuilt with the emitter, so a wrong catalogue entry cannot
+ * produce a matching wrong fixture.
  */
 
-import { rdoCall, rdoSet } from '@/shared/rdo-frame';
-import { RdoValue } from '@/shared/rdo-types';
 import type { TutorialState } from '@/shared/types';
 import { TUTORIAL_PROPS } from '@/server/session/tutorial-handler';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
@@ -176,24 +175,24 @@ function showNotificationPush(
 
 /**
  * The four actions, in the order `ModifyTask.asp:26-33` lists them, each with
- * the member and verb its catalogue entry implies.
+ * the member and verb its catalogue entry implies, and the literal frame it emits.
  */
 const ACTIONS = [
   {
     slug: 'next', member: 'RDONextStep', action: 'call',
-    frame: () => rdoCall('RDONextStep', TUTORIAL_TARGETS.taskObjId, RdoValue.int(0)),
+    request: `C sel ${TUTORIAL_TARGETS.taskObjId} call RDONextStep "*" "#0";`,
   },
   {
     slug: 'prev', member: 'RDOPrevStep', action: 'call',
-    frame: () => rdoCall('RDOPrevStep', TUTORIAL_TARGETS.taskObjId, RdoValue.int(0)),
+    request: `C sel ${TUTORIAL_TARGETS.taskObjId} call RDOPrevStep "*" "#0";`,
   },
   {
     slug: 'close', member: 'RDOClose', action: 'call',
-    frame: () => rdoCall('RDOClose', TUTORIAL_TARGETS.taskObjId, RdoValue.int(0)),
+    request: `C sel ${TUTORIAL_TARGETS.taskObjId} call RDOClose "*" "#0";`,
   },
   {
     slug: 'complete', member: 'Completed', action: 'set',
-    frame: () => rdoSet('Completed', TUTORIAL_TARGETS.taskObjId, RdoValue.int(-1)),
+    request: `C sel ${TUTORIAL_TARGETS.taskObjId} set Completed="#-1";`,
   },
 ] as const;
 
@@ -205,7 +204,7 @@ function buildRdoExchanges(vars: ScenarioVariables, variant: TutorialAssignmentV
   const reads: RdoExchange[] = [
     {
       id: 'tutorial-rdo-set-path',
-      request: rdoCall('SetPath', TUTORIAL_TARGETS.tempObject, RdoValue.string(path)).toFrame(),
+      request: `C sel ${TUTORIAL_TARGETS.tempObject} call SetPath "^" "%${path}";`,
       // Delphi WordBool TRUE.
       response: 'A0 res="#-1"',
       matchKeys: {
@@ -217,9 +216,7 @@ function buildRdoExchanges(vars: ScenarioVariables, variant: TutorialAssignmentV
       // `argsPattern` keeps this from falling through `RdoMock`'s member-only
       // match onto another scenario's `GetPropertyList`.
       id: 'tutorial-rdo-state-read',
-      request: rdoCall(
-        'GetPropertyList', TUTORIAL_TARGETS.tempObject, RdoValue.string(query),
-      ).toFrame(),
+      request: `C sel ${TUTORIAL_TARGETS.tempObject} call GetPropertyList "^" "%${query}";`,
       response: `A0 res="%${assignment.values.join('\t')}"`,
       matchKeys: {
         verb: 'sel', action: 'call', member: 'GetPropertyList',
@@ -230,7 +227,7 @@ function buildRdoExchanges(vars: ScenarioVariables, variant: TutorialAssignmentV
 
   const actions: RdoExchange[] = ACTIONS.map(a => ({
     id: `tutorial-rdo-${a.slug}`,
-    request: a.frame().toFrame(),
+    request: a.request,
     // The three procedures answer nothing. `Completed` is a `set`, whose only
     // answer is the bare acknowledgement.
     response: a.action === 'set' ? 'A0 res="#0"' : '',

@@ -90,7 +90,7 @@ describe('world-event scenario', () => {
   it('the gateway answers the rendered event block', async () => {
     const mock = new RdoMock();
     mock.addScenario(createWorldEventScenario().rdo);
-    const { ask } = makeGateway(mock);
+    const { ask, fake } = makeGateway(mock);
 
     await expect(ask()).resolves.toMatchObject({
       event: {
@@ -102,6 +102,10 @@ describe('world-event scenario', () => {
       },
     });
     expect(mock.getConsumedIds().has('we-rdo-001')).toBe(true);
+    // Each fixture request is byte-for-byte the frame production emitted.
+    const frames = fake.sent.map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
+    expect(frames.map(f => mock.match(f)!.exchange.id)).toEqual(['we-rdo-001']);
+    expect(frames).toEqual(frames.map(f => mock.match(f)!.exchange.request));
   });
 
   it('the ticker shows the first event and keeps it through an empty-answer poll — no error logged', async () => {
