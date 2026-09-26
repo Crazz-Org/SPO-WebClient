@@ -1630,12 +1630,13 @@ async function fetchCompInputData(ctx: SessionContext, tempObjectId: string): Pr
     // Step 3: parse into CompInputData objects (7 props per input)
     for (let i = 0; i < count; i++) {
       const base = i * 7;
+      const rawMax = allValues[base + 4];
       result.push({
         name:      allValues[base]     ?? '',
         supplied:  parseFloat(allValues[base + 1] || '0'),
         demanded:  parseFloat(allValues[base + 2] || '0'),
         ratio:     parseInt(allValues[base + 3]   || '0', 10),
-        maxDemand: parseInt(allValues[base + 4]   || '100', 10),
+        maxDemand: parseInt(rawMax === undefined || rawMax === '' ? '100' : rawMax, 10),
         editable:  (allValues[base + 5] ?? '').toLowerCase() === 'yes',
         units:     allValues[base + 6] ?? '',
       });

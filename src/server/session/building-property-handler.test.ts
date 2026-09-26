@@ -986,6 +986,53 @@ describe('argument construction', () => {
     );
   });
 
+  it('sends a zero film budget as zero, same frame shape', async () => {
+    const fake = makeConstructionCtx();
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOLaunchMovie', '0', { filmName: 'Zero', budget: '0', months: '6' }));
+
+    expect(onlyFrame(fake)).toEqual(
+      RdoCommand.sel(CURR_BLOCK).call('RDOLaunchMovie').push().args(
+        RdoValue.string('Zero'), RdoValue.double(0), RdoValue.int(6), RdoValue.int(0),
+      ).build(),
+    );
+  });
+
+  it('sends zero film months as zero', async () => {
+    const fake = makeConstructionCtx();
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOLaunchMovie', '0', { filmName: 'Zero', budget: '2500000', months: '0' }));
+
+    expect(onlyFrame(fake)).toEqual(
+      RdoCommand.sel(CURR_BLOCK).call('RDOLaunchMovie').push().args(
+        RdoValue.string('Zero'), RdoValue.double(2500000), RdoValue.int(0), RdoValue.int(0),
+      ).build(),
+    );
+  });
+
+  it('applies the movie defaults when budget and months are empty', async () => {
+    const fake = makeConstructionCtx();
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOLaunchMovie', '0', { budget: '', months: '' }));
+
+    expect(onlyFrame(fake)).toEqual(
+      RdoCommand.sel(CURR_BLOCK).call('RDOLaunchMovie').push().args(
+        RdoValue.string(''), RdoValue.double(1000000), RdoValue.int(12), RdoValue.int(0),
+      ).build(),
+    );
+  });
+
+  it('queues research at priority 0 when 0 is submitted', async () => {
+    const fake = makeConstructionCtx();
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOQueueResearch', '0', { inventionId: 'Combustion', priority: '0' }));
+
+    expect(onlyFrame(fake)).toEqual(
+      RdoCommand.sel(CURR_BLOCK).call('RDOQueueResearch').push()
+        .args(RdoValue.string('Combustion'), RdoValue.int(0)).build(),
+    );
+  });
+
   it('writes accented text as single latin1 bytes on the wire', async () => {
     // The frame is captured off the socket as a Buffer and decoded latin1, the
     // same codec writeRdoFrame writes with (rdo-helpers.ts:80).
