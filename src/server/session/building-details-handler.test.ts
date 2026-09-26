@@ -1779,6 +1779,16 @@ describe('getBuildingTabData', () => {
       ]);
     });
 
+    it('keeps a zero max demand instead of the 100 default', async () => {
+      const fake = makeDetailsCtx();
+      setActiveInspectorForTest(fake.ctx, makeInspector({ hasCompInputs: true }));
+      cacheValues(fake, { cInputCount: '1', 'cInput0.0': 'Advertising', cInputMax0: '0' });
+
+      const { compInputs } = await getBuildingTabData(fake.ctx, X, Y, 'compInputs');
+
+      expect(compInputs?.[0].maxDemand).toBe(0);
+    });
+
     it('returns nothing when the company declares no inputs', async () => {
       const fake = makeDetailsCtx();
       setActiveInspectorForTest(fake.ctx, makeInspector({ hasCompInputs: true }));

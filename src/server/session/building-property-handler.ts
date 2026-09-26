@@ -434,6 +434,11 @@ async function setBuildingPropertyImpl(
 // MODULE-PRIVATE — buildRdoCommandArgs
 // =========================================================================
 
+/** The submitted value, or `fallback` when the field is absent (undefined or ''). A '0' is kept. */
+function valueOrDefault(value: string | undefined, fallback: string): string {
+  return value === undefined || value === '' ? fallback : value;
+}
+
 /**
  * Build RDO command arguments based on command type
  * Uses RdoValue for type-safe argument formatting
@@ -677,8 +682,8 @@ function buildRdoCommandArgs(
       // Args: name (widestring), budget (double), months (integer), autoInfo (word bitmask)
       // MovieStudios.pas — flgAutoRelease=$01 (bit0), flgAutoProduce=$02 (bit1)
       const filmName = params.filmName || '';
-      const budget = params.budget || '1000000';
-      const months = params.months || '12';
+      const budget = valueOrDefault(params.budget, '1000000');
+      const months = valueOrDefault(params.months, '12');
       const autoRelBit = parseInt(params.autoRel || '0', 10) !== 0 ? 1 : 0;
       const autoProdBit = parseInt(params.autoProd || '0', 10) !== 0 ? 1 : 0;
       const autoInfo = autoRelBit | (autoProdBit << 1);
@@ -728,7 +733,7 @@ function buildRdoCommandArgs(
       // Args: inventionId (widestring), priority (integer, default=10)
       // Delphi: procedure RDOQueueResearch(InventionId: widestring; Priority: integer)
       const inventionId = params.inventionId || '';
-      const priority = parseInt(params.priority || '10', 10);
+      const priority = parseInt(valueOrDefault(params.priority, '10'), 10);
       args.push(RdoValue.string(inventionId), RdoValue.int(priority));
       break;
     }
