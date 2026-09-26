@@ -9,6 +9,7 @@ import { useState, useCallback, useRef } from 'react';
 import type { CompInputData } from '@/shared/types';
 import { formatNumber } from '@/shared/building-details';
 import { useClient } from '../../context';
+import { SaveIndicator } from './SaveIndicator';
 import styles from './PropertyGroup.module.css';
 
 // =============================================================================
@@ -102,6 +103,7 @@ function CompInputSection({
                 onChange={handleDemandChange}
               />
               <span className={styles.ciDemandPerc}>{Math.round(demPct)}%</span>
+              <SaveIndicator propertyKey={`RDOSetCompanyInputDemand:${JSON.stringify({ index: String(inputIndex) })}`} />
             </div>
 
             {/* Row 2: Supply bar — scaled to maxDemand capacity */}

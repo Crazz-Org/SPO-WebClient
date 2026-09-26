@@ -191,12 +191,14 @@ function SortHeader({
   sortable,
   active,
   onSort,
+  propertyKey,
 }: {
   label: string;
   mode: 0 | 1;
   sortable: boolean;
   active: boolean;
   onSort: (mode: 0 | 1) => void;
+  propertyKey: string;
 }) {
   if (!sortable) {
     return <th style={{ width: 60 }}>{label}</th>;
@@ -210,6 +212,7 @@ function SortHeader({
       >
         {label}
       </button>
+      {active && <SaveIndicator propertyKey={propertyKey} />}
     </th>
   );
 }
@@ -526,6 +529,7 @@ const SupplyCard = memo(function SupplyCard({
                     sortable={sortable}
                     active={localSortMode === 0}
                     onSort={handleSortMode}
+                    propertyKey={`RDOSetInputSortMode:${JSON.stringify({ fluidId })}`}
                   />
                   <th style={{ width: 60 }}>Overpaid</th>
                   <th style={{ width: 80 }}>Last</th>
@@ -535,6 +539,7 @@ const SupplyCard = memo(function SupplyCard({
                     sortable={sortable}
                     active={localSortMode === 1}
                     onSort={handleSortMode}
+                    propertyKey={`RDOSetInputSortMode:${JSON.stringify({ fluidId })}`}
                   />
                   <th style={{ width: 60 }}>T.Cost</th>
                   <th style={{ width: 24 }}></th>
@@ -560,7 +565,10 @@ const SupplyCard = memo(function SupplyCard({
                     </td>
                     <td>{conn.createdBy}</td>
                     <td>${conn.price}</td>
-                    <td>{conn.overprice}%</td>
+                    <td>
+                      {conn.overprice}%
+                      {fluidId && <SaveIndicator propertyKey={`RDOSetInputOverPrice:${JSON.stringify({ fluidId, index: String(j) })}`} />}
+                    </td>
                     <td>{conn.lastValue}</td>
                     <td>{conn.quality}</td>
                     <td>{conn.cost}</td>
