@@ -7,8 +7,9 @@
  * legacy company page read (`Interface Server/InterfaceServer.pas:169-173`,
  * `chooseCompany.asp:166-170`).
  *
- * It also proves criterion 3 over the wire rather than by reading the source: no
- * `logonComplete.asp` fetch is made on the login path at all.
+ * It also proves over the wire that the login asks `logonComplete.asp` exactly once,
+ * for its portal-travel verdict (`logonComplete.asp:26-67`), and that the page's
+ * company-list answer adds no `loginPage` to the result.
  */
 
 // Must mock before any imports that use them
@@ -151,12 +152,13 @@ describe('L1: company-list RDO half driven through loginWorld()', () => {
     ]);
   });
 
-  it('fetches no logonComplete.asp at all', async () => {
-    await runLogin();
+  it('asks logonComplete.asp once for its verdict, and the company list answer adds no loginPage', async () => {
+    const { result } = await runLogin();
 
     const fetchMock = jest.requireMock('node-fetch') as { default: { mock: { calls: unknown[][] } } };
     const asked = fetchMock.default.mock.calls.map(c => String(c[0]));
-    expect(asked.filter(u => u.includes('logonComplete.asp'))).toEqual([]);
+    expect(asked.filter(u => u.includes('logonComplete.asp'))).toHaveLength(1);
+    expect(result.loginPage).toBeUndefined();
   });
 
   it('raises no strict-validation violation', async () => {

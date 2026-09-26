@@ -195,6 +195,13 @@ async function runLoginWorld(
   return promise;
 }
 
+/** Every `[Session] Logon page` warning the login wrote — the fail-open trace. */
+function logonPageWarnings(fake: FakeLoginCtx): string[] {
+  return fake.log.warn.mock.calls
+    .map(c => String(c[0]))
+    .filter(m => m.startsWith('[Session] Logon page'));
+}
+
 /** The exact SetLanguage push the login and re-login paths must emit. */
 function setLanguageFrame(contextId: string, languageId = '0'): string {
   return RdoCommand.sel(contextId).call('SetLanguage').push().args(RdoValue.string(languageId)).build();
@@ -953,14 +960,30 @@ describe('loginWorld', () => {
 
   // ── The company list — the five per-index reads chooseCompany.asp:166-170 made ──
 
-  it('never fetches logonComplete.asp on the login path', async () => {
+  it('asks logonComplete.asp once, after the five company getters', async () => {
     const fake = makeLoginCtx();
     fake.respond(loginResponder());
+    let sentWhenFetched = -1;
+    fetchMock.mockImplementation(async () => {
+      sentWhenFetched = fake.sent.length;
+      return {
+        text: async () => COMPANY_HTML,
+        url: `http://1.2.3.4/chooseCompany.asp?ClientViewId=${CONTEXT_ID}`,
+      };
+    });
 
-    await runLoginWorld(fake);
+    const result = await runLoginWorld(fake);
 
     const asked = fetchMock.mock.calls.map(c => String(c[0]));
-    expect(asked.filter(u => u.includes('logonComplete.asp'))).toEqual([]);
+    const logon = asked.filter(u => u.includes('logonComplete.asp'));
+    expect(logon).toHaveLength(1);
+    expect(logon[0]).toContain('UserName=SPO_test3');
+    // Every company getter frame was already on the wire when the page was asked.
+    expect(fake.sent.filter(s => COMPANY_GETTERS.includes(s.packet.member as CompanyGetter)))
+      .toHaveLength(10);
+    expect(sentWhenFetched).toBe(fake.sent.length);
+    expect(result.loginPage).toBeUndefined();
+    expect(logonPageWarnings(fake)).toEqual([]);
   });
 
   it('reads each company with the five getters, in the ASP order, carrying an integer index', async () => {
@@ -1342,13 +1365,128 @@ describe('loginWorld', () => {
   });
 });
 
+describe('loginWorld — the logon page verdict (logonComplete.asp:26-67)', () => {
+  const REAL_DENIAL = 'http://1.2.3.4/Five/0/Visual/Voyager/NewLogon/logonNoAccess.asp?PA=01%2F01%2F2020&Logon=FALSE';
+
+  /** The redirect the page answers with, as fetchCompaniesViaHttp sees it after following it. */
+  function pageAnswers(url: string): void {
+    fetchMock.mockResolvedValue({ url, text: async () => '' });
+  }
+
+  it('denies on a logonNoAccess.asp redirect carrying a real date, leaving the session as a mismatch does', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+    pageAnswers(REAL_DENIAL);
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toEqual({ kind: 'denied', expiresOn: '01/01/2020' });
+    expect(logonPageWarnings(fake)).toEqual([]);
+    expect(fake.log.info).toHaveBeenCalledWith(
+      '[Session] Logon page: portal travel denied — access expired on 01/01/2020',
+    );
+    expect(result.companies.map(c => c.id)).toEqual(['55', '56']);
+    expect(fake.state.availableCompanies).toEqual(result.companies);
+
+    // The COMPANY_LIST_MISMATCH outcome, for comparison: same session shape.
+    const mismatch = makeLoginCtx();
+    mismatch.respond(loginResponder({}, []));
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({
+      text: async () => COMPANY_HTML,
+      url: `http://1.2.3.4/chooseCompany.asp?ClientViewId=${CONTEXT_ID}`,
+    });
+    const mismatchResult = await runLoginWorld(mismatch);
+    expect(mismatchResult.loginPage).toEqual({ kind: 'error', errorCode: 'COMPANY_LIST_MISMATCH' });
+
+    for (const f of [fake, mismatch]) {
+      expect(f.state.phase).toBe(SessionPhase.WORLD_CONNECTING);
+      expect(f.state.worldContextId).toBe(CONTEXT_ID);
+      expect(f.state.tycoonId).toBe(TYCOON_ID);
+    }
+    expect(mismatch.state.availableCompanies).toEqual(mismatchResult.companies);
+  });
+
+  it('lets a real denial outrank the visa fork', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder({ GetCompanyCount: '#0' }));
+    pageAnswers(REAL_DENIAL);
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toEqual({ kind: 'denied', expiresOn: '01/01/2020' });
+  });
+
+  it('lets a real denial outrank a company list mismatch, which is still logged', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder({}, []));
+    pageAnswers(REAL_DENIAL);
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toEqual({ kind: 'denied', expiresOn: '01/01/2020' });
+    expect(fake.log.error).toHaveBeenCalledWith(
+      '[Session] GetCompanyCount says 2 but only 0 company/companies could be read — company list incomplete',
+    );
+  });
+
+  it.each([
+    ['PA=01%2F01%2F2008', 'the page\'s forced 01/01/2008'],
+    ['PA=', 'an empty PA'],
+  ])('fails open on %s — %s: no loginPage, one warning', async (pa) => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+    pageAnswers(`http://1.2.3.4/Five/0/Visual/Voyager/NewLogon/logonNoAccess.asp?${pa}&Logon=FALSE`);
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toBeUndefined();
+    expect(result.companies.map(c => c.id)).toEqual(['55', '56']);
+    expect(logonPageWarnings(fake)).toHaveLength(1);
+  });
+
+  it('fails open on logonError.asp: no loginPage, one warning naming the code', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+    pageAnswers('http://1.2.3.4/Five/0/Visual/Voyager/NewLogon/logonError.asp?ErrorCode=ERROR_FIVEISDOWN');
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toBeUndefined();
+    expect(logonPageWarnings(fake)).toEqual([
+      '[Session] Logon page: logonError.asp ERROR_FIVEISDOWN — login continues without the portal check',
+    ]);
+  });
+
+  it('fails open on a thrown fetch: the login resolves, one warning, no [HTTP] line above debug', async () => {
+    const fake = makeLoginCtx();
+    fake.respond(loginResponder());
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
+
+    const result = await runLoginWorld(fake);
+
+    expect(result.loginPage).toBeUndefined();
+    expect(result.contextId).toBe(CONTEXT_ID);
+    expect(logonPageWarnings(fake)).toEqual([
+      '[Session] Logon page: logonComplete.asp unreachable — login continues without the portal check',
+    ]);
+    const loud = [...fake.log.warn.mock.calls, ...fake.log.error.mock.calls]
+      .map(c => String(c[0]))
+      .filter(m => m.startsWith('[HTTP]'));
+    expect(loud).toEqual([]);
+    expect(fake.log.debug.mock.calls.map(c => String(c[0])))
+      .toContain('[HTTP] Failed to fetch companies:');
+  });
+});
+
 // ── Company selection ───────────────────────────────────────────────────────
 
 /**
- * `logonComplete.asp` left the login path, but not the codebase: it is still the
- * read-before-resign list `readPersonalCompanies` fetches for the abandon-role
- * flow (`rdoAbandonRole.asp:22-27`). These are the same assertions the login
- * tests made, now on the function that still performs the fetch.
+ * `logonComplete.asp` serves two callers: the login asks it for its portal-travel
+ * verdict after the RDO company read (`logonComplete.asp:26-67`), and
+ * `readPersonalCompanies` reads it as the read-before-resign list for the
+ * abandon-role flow (`rdoAbandonRole.asp:22-27`). These assertions pin the fetch
+ * both of them share.
  */
 describe('fetchCompaniesViaHttp — the page readPersonalCompanies still fetches', () => {
   const httpCtx = (overrides = {}) => makeLoginCtx({ currentWorldInfo: WORLD, ...overrides });
