@@ -1,0 +1,1685 @@
+ÍActions
+FullWeb=home.asp
+General
+xSize=7
+ySize=7
+Zone=8
+Urban=0
+Images
+LargeIcon=LargeIcon.gif
+InspectorInfo
+TabCount=8
+TabName0=GENERAL
+TabHandler0=unkGeneral
+TabName1=SUPPLIES
+TabHandler1=Supplies
+TabName2=TOWNS
+TabHandler2=CapitolTowns
+TabName3=SERVICES
+TabHandler3=townServices
+TabName4=JOBS
+TabHandler4=townJobs
+TabName5=RESIDENTIALS
+TabHandler5=townRes
+TabName6=VOTES
+TabHandler6=Votes
+TabName7=MIGRATION
+TabHandler7=townMigration
+MapImages
+64x32x0=Construction448.gif
+Paths
+Voyager=Visual/Voyager/IsoMap/
+Images=/Five/Visual/Clusters/Common/Construction/Images/
+SitePages
+CnxsSearch=/Visual/Clusters/Generic/search/CnxsSearch.asp
+Sounds
+Select=radio2.wav
+Kind=2
+Count=1
+0=wave=jackhammer.wav, period=6000
+VoyagerActions
+QuickWeb=ConstructionEdit.asp
+Urban=1
+TabCount=7
+TabHandler0=capitolGeneral
+TabName1=MINISTERIES
+TabHandler1=Ministeries
+64x32x0=MapIFELCapitol64x32x0.gif
+Images=/Five/Visual/Clusters/IFEL/facilities/Capitol/Main/images/
+Select=default.wav
+xSize=2
+ySize=2
+TabCount=2
+64x32x0=Construction128.gif
+TabName1=JOBS
+TabHandler1=Workforce
+64x32x0=MapPGIHeadquarter64x32x0.gif
+Images=/Five/Visual/Clusters/IFEL/facilities/MinistryHQ/Main/images/
+Zone=6
+xSize=5
+ySize=5
+FacId=120
+TabName2=SUPPLIES
+TabHandler2=Supplies
+TabName3=JOBS
+TabHandler3=Workforce
+TabName4=MANAGEMENT
+TabHandler4=facManagement
+64x32x0=Construction320.gif
+SitePages=Visual/Clusters/Generic/facilities/Industries/
+Site
+FacilityClass=Warehouse
+HomePageText
+val0=HomePage0.txt
+TabCount=5
+TabHandler0=IndGeneral
+TabName1=CLIENTS
+TabHandler1=Products
+64x32x0=MapUWColdStorage64x32x0.gif
+Images=/Five/Visual/Clusters/UW/facilities/ColdStorage/images/
+Texts=/Five/Visual/Clusters/UW/facilities/ColdStorage/texts/
+Select=Mine.wav
+QuickWeb=SupplierEdit.asp
+Effects
+0=Id=4, x=235, y=114, glassed=0
+0=Id=5, x=235, y=114, glassed=0
+FacId=121
+64x32x0=MapUWChemicalStorage64x32x0.gif
+Images=/Five/Visual/Clusters/UW/facilities/ChemicalStorage/images/
+Texts=/Five/Visual/Clusters/UW/facilities/ChemicalStorage/texts/
+0=Id=4, x=178, y=111, glassed=0
+0=Id=5, x=178, y=111, glassed=0
+xSize=6
+ySize=6
+FacId=122
+64x32x0=Construction384.gif
+64x32x0=MapUWUniversalA64x32x0.gif
+Images=/Five/Visual/Clusters/UW/facilities/GeneralStorage/images/
+Texts=/Five/Visual/Clusters/UW/facilities/GeneralStorage/texts/
+0=Id=4, x=172, y=134, glassed=0
+0=Id=5, x=172, y=134, glassed=0
+64x32x0=MapUWLargeColdStorage64x32x0.gif
+Images=/Five/Visual/Clusters/UW/facilities/LargeColdStorage/images/
+Texts=/Five/Visual/Clusters/UW/facilities/LargeColdStorage/texts/
+0=Id=4, x=148, y=186, glassed=0
+0=Id=5, x=148, y=186, glassed=0
+FacId=124
+64x32x0=MapUWOre64x32x0.gif
+Images=/Five/Visual/Clusters/UW/facilities/OreStorage/images/
+Texts=/Five/Visual/Clusters/UW/facilities/OreStorage/texts/
+0=Id=4, x=227, y=159, glassed=0
+0=Id=5, x=227, y=159, glassed=0
+FacId=123
+64x32x0=MapUWFabrics64x32x0.gif
+Images=/Five/Visual/Clusters/UW/facilities/FabricsStorage/images/
+Texts=/Five/Visual/Clusters/UW/facilities/FabricsStorage/texts/
+0=Id=4, x=162, y=171, glassed=0
+0=Id=5, x=162, y=171, glassed=0
+xSize=4
+ySize=4
+FacId=125
+64x32x0=Construction256.gif
+TabHandler0=WHGeneral
+64x32x0=MapUWMegaWHImp64x32x0.gif
+Images=/Five/Visual/Clusters/UW/facilities/MegaStorageImp/images/
+Texts=/Five/Visual/Clusters/UW/facilities/MegaStorageImp/texts/
+FacId=126
+64x32x0=MapUWMegaWHExp64x32x0.gif
+Images=/Five/Visual/Clusters/UW/facilities/MegaStorageExp/images/
+Texts=/Five/Visual/Clusters/UW/facilities/MegaStorageExp/texts/
+Zone=7
+xSize=3
+ySize=3
+FacId=10
+TabName2=JOBS
+TabHandler2=Workforce
+TabName3=MANAGEMENT
+TabHandler3=facManagement
+TabName4=HISTORY
+TabHandler4=Chart
+64x32x0=Construction192.gif
+Actions=/Five/Visual/Clusters/PGI/Facilities/Construction/
+SitePages=Visual/Clusters/Generic/facilities/Headquarters/
+FacilityClass=Headquarter
+SiteImages
+BkImage=logo.gif
+TabHandler0=HqGeneral
+TabName1=SERVICES
+64x32x0=MapPGIHQ1.gif
+Actions=/Five/Visual/Clusters/PGI/facilities/Headquarters/
+Images=/Five/Visual/Clusters/PGI/facilities/Headquarters/Area/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Headquarters/Area/texts/
+Select=PGI.wav
+QuickWeb=HeadquarterEdit.asp
+64x32x0=MapPGIHQ2.gif
+64x32x0=MapPGIHQ3.gif
+64x32x0=MapPGIHQ4.gif
+64x32x0=MapPGIHQ5.gif
+Actions=/Five/Visual/Clusters/Dissidents/Facilities/Construction/
+64x32x0=MapDisHQ1.gif
+Actions=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/Area/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/Area/texts/
+Select=Dissident.wav
+64x32x0=MapDisHQ2.gif
+64x32x0=MapDisHQ3.gif
+64x32x0=MapDisHQ4.gif
+64x32x0=MapDisHQ5.gif
+Actions=/Five/Visual/Clusters/Mariko/Facilities/Construction/
+64x32x0=MapMKOHQ1.gif
+Actions=/Five/Visual/Clusters/Mariko/facilities/Headquarters/
+Images=/Five/Visual/Clusters/MKO/facilities/Headquarters/Area/images/
+Texts=/Five/Visual/Clusters/MKO/facilities/Headquarters/Area/texts/
+Select=MKO.wav
+64x32x0=MapMKOHQ2.gif
+64x32x0=MapMKOHQ3.gif
+64x32x0=MapMKOHQ4.gif
+64x32x0=MapMKOHQ5.gif
+Actions=/Five/Visual/Clusters/Moab/Facilities/Construction/
+SitePages=Visual/Clusters/Moab/facilities/Sacred/
+64x32x0=MapMoabHQ1.gif
+Actions=/Five/Visual/Clusters/Moab/facilities/Sacred/
+Images=/Five/Visual/Clusters/Moab/facilities/Headquarters/Area/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Headquarters/Area/texts/
+Select=Moab.wav
+64x32x0=MapMoabHQ2.gif
+64x32x0=MapMoabHQ3.gif
+64x32x0=MapMoabHQ4.gif
+64x32x0=MapMoabHQ5.gif
+FacId=102
+TabName2=MANAGEMENT
+TabHandler2=facManagement
+SitePages=Visual/Clusters/Moab/facilities/PublicFacilities/
+FacilityClass=PublicFacility
+TabCount=3
+64x32x0=MapMoabCorrectional64x32x0.gif
+Actions=/Five/Visual/Clusters/Moab/facilities/Correctional/
+Images=/Five/Visual/Clusters/Moab/facilities/PublicFacilities/LargeCorrectional/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/PublicFacilities/LargeCorrectional/texts/
+Select=Correctional.wav
+QuickWeb=UnknownEdit.asp
+FacId=80
+TabName2=SERVICES
+TabHandler2=compInputs
+TabName5=HISTORY
+TabHandler5=Chart
+TabName6=HISTORY
+TabHandler6=Chart
+SitePages=Visual/Clusters/Moab/facilities/Industries/
+FacilityClass=Industry
+TabCount=6
+64x32x0=MapMoabComp64x32x0.gif
+Actions=/Five/Visual/Clusters/Moab/facilities/Industries/
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Computing/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Computing/texts/
+Select=Computing.wav
+FacId=81
+Images=/Five/Visual/Clusters/Moab/Facilities/Common/Images/
+64x32x0=MapMoabLegal64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Legal/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Legal/texts/
+Select=Legal.wav
+FacId=40
+TabHandler3=compInputs
+TabHandler4=Workforce
+TabName5=MANAGEMENT
+TabHandler5=facManagement
+Animated=0
+TabName1=PRODUCTS
+64x32x0=MapMoabFarm64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Farms/SmallFarm/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Farms/SmallFarm/texts/
+Animations
+Left=75
+Top=17
+Right=180
+Bottom=112
+Animated=1
+0=wave=plop.wav, aten=0.7, loop=1
+FacId=46
+0=Id=11, x=110, y=252, glassed=0
+64x32x0=MapMoabMine64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Mine/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Mine/texts/
+Left=168
+Top=0
+Right=218
+Bottom=134
+Kind=1
+Count=8
+7=wave=steammine.wav
+FacId=52
+64x32x0=MapMoabElectComp64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Electronic/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Electronic/texts/
+FacId=42
+64x32x0=MapMoabFood64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Food/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Food/texts/
+Left=137
+Top=84
+Right=201
+Bottom=121
+FacId=50
+64x32x0=MapMoabMetal64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Metal/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Metal/texts/
+Select=Metal.wav
+FacId=44
+64x32x0=MapMoabChemical64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Chemical/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Chemical/texts/
+Select=Chemical.wav
+FacId=48
+64x32x0=MapMoabTextile64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Textile/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Textile/texts/
+Select=Electric.wav
+FacId=54
+64x32x0=MapMoabClothings64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Clothing/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Clothing/texts/
+FacId=62
+64x32x0=MapMoabCarDome64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Cars/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Cars/texts/
+Select=car.wav
+FacId=56
+64x32x0=MapMoabHHADome64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/HHA/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/HHA/texts/
+Select=HHA.wav
+FacId=58
+64x32x0=MapMoabBMDome64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/BM/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/BM/texts/
+Select=name =.wav
+FacId=64
+64x32x0=MapMoabConst64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Construction/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Construction/texts/
+FacId=60
+64x32x0=MapMoabHeavy64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Heavy/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Heavy/texts/
+FacId=200
+64x32x0=MapMoabOilRig64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/OilRig/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/OilRig/texts/
+Count=2
+0=Id=2, x=124, y=3, glassed=0
+1=Id=2, x=124, y=3, glassed=1
+FacId=201
+64x32x0=MapMoabRefinery64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Industries/Refinery/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Industries/Refinery/texts/
+Count=4
+0=Id=3, x=94, y=0, glassed=1
+1=Id=3, x=118, y=12, glassed=1
+2=Id=3, x=144, y=24, glassed=1
+3=Id=3, x=169, y=38, glassed=1
+Zone=5
+FacId=27
+TabName2=HISTORY
+TabHandler2=Chart
+SitePages=Visual/Clusters/Moab/facilities/Residentials/
+FacilityClass=Residential
+TabHandler0=ResGeneral
+TabName1=MANAGEMENT
+TabHandler1=facManagement
+64x32x0=MapMoabLoResA64x32x0.gif
+Actions=/Five/Visual/Clusters/Moab/facilities/Residentials/
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/LoResA/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/LoResA/texts/
+0=wave=moabdrums.wav, aten=0.5, per=10000, prob=0.01
+QuickWeb=ResidentialEdit.asp
+64x32x0=MapMoabLoResAEmpty64x32x0.gif
+64x32x0=MapMoabLoResB64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/LoResB/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/LoResB/texts/
+64x32x0=MapMoabLoResBEmpty64x32x0.gif
+64x32x0=MapMoabLoResC64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/LoResC/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/LoResC/texts/
+64x32x0=MapMoabLoResCEmpty64x32x0.gif
+64x32x0=MapMoabLoResD64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/LoResD/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/LoResD/texts/
+64x32x0=MapMoabLoResDEmpty64x32x0.gif
+Zone=4
+FacId=26
+64x32x0=MapMoabMidResA64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/MidResA/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/MidResA/texts/
+64x32x0=MapMoabMidResAEmpty64x32x0.gif
+64x32x0=MapMoabMidResB64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/MidResB/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/MidResB/texts/
+64x32x0=MapMoabMidResBEmpty64x32x0.gif
+Zone=3
+FacId=25
+64x32x0=MapMoabHiResA64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/HiResA/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/HiResA/texts/
+64x32x0=MapMoabHiResAEmpty64x32x0.gif
+64x32x0=MapMoabHiResB64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/HiResB/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/HiResB/texts/
+64x32x0=MapMoabHiResC64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/HiResC/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/HiResC/texts/
+64x32x0=MapMoabHiResCEmpty64x32x0.gif
+64x32x0=MapMoabMidResC.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/MidResC/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/MidResC/texts/
+64x32x0=MapMoabLoCostMidRes.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/MidResD/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/MidResD/texts/
+64x32x0=MapMoabHiResD.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/HiResD/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/HiResD/texts/
+Zone=2
+FacId=22
+Left=63
+Right=74
+Bottom=12
+FacId=20
+64x32x0=MapDisloCostHiRes64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/LoCostHiRes/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/LoCostHiRes/texts/
+FacId=21
+Left=50
+Right=60
+Bottom=10
+64x32x0=MapDisLoCostMiRes64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/LoCostMidRes/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/LoCostMidRes/texts/
+Left=65
+Right=77
+Bottom=13
+64x32x0=MapDisLoCostLoRes64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Residentials/LoCostLoRes/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Residentials/LoCostLoRes/texts/
+TabHandler0=townGeneral
+TabName1=COMMERCE
+TabHandler1=townServices
+TabName2=TAXES
+TabHandler2=townTaxes
+TabHandler3=townJobs
+TabName4=RESIDENTIALS
+TabHandler4=townRes
+TabName5=VOTES
+TabHandler5=Votes
+64x32x0=MapMoabTownHall64x32x0.gif
+Actions=/Five/Visual/Clusters/Moab/facilities/Town/TownHall/
+Images=/Five/Visual/Clusters/Moab/facilities/Town/TownHall/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Town/TownHall/texts/
+0=wave=mystic.wav, aten=0.8, per=5000, prob=0.5
+QuickWeb=TownHallEdit.asp
+64x32x0=MapMoabTradeCenter64x32x0.gif
+Actions=/Five/Visual/Clusters/Moab/facilities/Town/TradeCenter/
+Images=/Five/Visual/Clusters/Moab/facilities/Town/TradeCenter/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Town/TradeCenter/texts/
+xSize=1
+ySize=1
+FacId=70
+64x32x0=Construction64.gif
+SitePages=Visual/Clusters/Moab/facilities/Stores/
+FacilityClass=Store
+Left=14
+Right=61
+Bottom=54
+TabHandler0=SrvGeneral
+64x32x0=MapMoabFoodStore64x32x0.gif
+Actions=/Five/Visual/Clusters/Moab/facilities/Stores/
+Images=/Five/Visual/Clusters/Moab/facilities/Stores/Food/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Stores/Food/texts/
+Select=Shop1.wav
+QuickWeb=ServiceEdit.asp
+FacId=74
+64x32x0=MapMoabCarStore64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Stores/Car/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Stores/Car/texts/
+FacId=71
+Left=10
+Bottom=52
+64x32x0=MapMoabClothesStore64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Stores/Clothes/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Stores/Clothes/texts/
+FacId=75
+64x32x0=MapMoabSupermarket64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Stores/Supermarket/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Stores/Supermarket/texts/
+FacId=76
+64x32x0=MapMoabJoyDome64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Stores/JoyDome/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Stores/JoyDome/texts/
+FacId=72
+Right=59
+Bottom=47
+64x32x0=MapMoabHHAStore64x32x0.gif
+FacId=78
+64x32x0=MapMoabMovie64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Stores/Movie/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Stores/Movie/texts/
+Select=Movie.wav
+FacId=91
+64x32x0=MapMoabGasStation64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Stores/GasStation/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Stores/GasStation/texts/
+TabHandler1=compInputs
+64x32x0=MapMoabCathedral64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Sacred/Cathedral/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Sacred/Cathedral/texts/
+FacId=11
+64x32x0=MapMoabIndustryTower64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Sacred/IndTower/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Sacred/IndTower/texts/
+FacId=13
+64x32x0=MapMoabMarketTower64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Sacred/IllusionTower/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Sacred/IllusionTower/texts/
+FacId=12
+64x32x0=MapMoabResidentialTower64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Sacred/LifeTower/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Sacred/LifeTower/texts/
+FacId=14
+64x32x0=MapMoabCorrectionalTower64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Sacred/CorrectionTower/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Sacred/CorrectionTower/texts/
+Zone=9
+FacId=30
+64x32x0=MapMoabOfficeA64x32x0.gif
+Actions=/Five/Visual/Clusters/Moab/facilities/Business/
+Images=/Five/Visual/Clusters/Moab/facilities/Business/OfficeA/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Business/OfficeA/texts/
+QuickWeb=BusinessEdit.asp
+64x32x0=MapMoabOfficeAEmpty64x32x0.gif
+64x32x0=MapMoabOfficeB64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Business/OfficeB/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Business/OfficeB/texts/
+64x32x0=MapMoabOfficeBEmpty64x32x0.gif
+FacId=111
+TabName2=CLIENTS
+TabHandler2=Products
+TabName4=ANTENNAS
+TabHandler4=Antennas
+TabHandler0=TVGeneral
+64x32x0=MapMoabTV64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Business/TVStation/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Business/TVStation/texts/
+FacId=112
+64x32x0=MapDisTVAntenna64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Business/TVAntenna/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Business/TVAntenna/texts/
+0=wave=antenna.wav, aten=0.9, per=10000, prob=0.8
+64x32x0=MapDisFarm64x32x0.gif
+Actions=/Five/Visual/Clusters/Dissidents/facilities/Industries/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Farms/Large/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Farms/Large/texts/
+Select=DeepMetal.wav
+Left=126
+Right=166
+Bottom=48
+0=wave=pigs.wav, aten=0.8, per=10000, prob=0.8
+64x32x0=MapDisSmallFarm64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Farms/Small/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Farms/Small/texts/
+Left=118
+Top=10
+Right=150
+Bottom=46
+0=Id=11, x=122, y=180, glassed=0
+64x32x0=MapDisMine64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Mine/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Mine/texts/
+0=wave=mine.wav, loop=1
+0=Id=11, x=132, y=150, glassed=0
+64x32x0=MapDisSmallMine64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallMine/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallMine/texts/
+64x32x0=MapDisClothings64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Clothing/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Clothing/texts/
+64x32x0=MapDisSmallClothings64x32x0.gif
+64x32x0=MapDisFoodProc64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Food/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Food/texts/
+Left=66
+Right=222
+Bottom=160
+64x32x0=MapDisSmallFoodProc64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallFood/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallFood/texts/
+64x32x0=MapDisMetal64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Metal/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Metal/texts/
+64x32x0=MapDisSmallMetal64x32x0.gif
+64x32x0=MapDisChemical64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Chemical/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Chemical/texts/
+64x32x0=MapDisSmallChemical64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallChemical/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallChemical/texts/
+0=wave=dummy.wav
+64x32x0=MapDisTextile64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Textile/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Textile/texts/
+64x32x0=MapDisSmallTextile64x32x0.gif
+64x32x0=MapDisElectIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Electronics/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Electronics/texts/
+64x32x0=MapDisSmallElectIndustry64x32x0.gif
+64x32x0=MapDisCarIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Car/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Car/texts/
+FacId=202
+64x32x0=MapDisLiquorFact64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/LiquorFact/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/LiquorFact/texts/
+64x32x0=MapDisHeavyIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Heavy/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Heavy/texts/
+Select=Heavy.wav
+64x32x0=MapDisSmallHeavyIndustry64x32x0.gif
+64x32x0=MapDisConstIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Construction/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Construction/texts/
+Select=Construction.wav
+64x32x0=MapDisCompIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Computing/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Computing/texts/
+64x32x0=MapDisHHAIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/HHA/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/HHA/texts/
+Left=120
+Top=39
+Right=199
+Bottom=100
+0=Id=1, x=165, y=3, glassed=1
+64x32x0=MapDisSmallHHAIndustry64x32x0.gif
+64x32x0=MapDisLegalServ64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Business/LegalServices/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Business/LegalServices/texts/
+64x32x0=MapDisBusMachIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/BusMach/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/BusMach/texts/
+Select=MB.wav
+FacId=110
+TabHandler0=BankGeneral
+TabName1=LOANS
+TabHandler1=BankLoans
+64x32x0=MapDisBank64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Business/Bank/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Business/Bank/texts/
+SitePages=Visual/Clusters/Generic/facilities/Residentials/
+64x32x0=MapDisloResC64x32x0.gif
+Actions=/Five/Visual/Clusters/Dissidents/facilities/Residentials/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoResC/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoResC/texts/
+64x32x0=MapDisloResCEmpty64x32x0.gif
+64x32x0=MapDisMiResD64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResD/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResD/texts/
+64x32x0=MapDisMiResDEmpty64x32x0.gif
+64x32x0=MapDisMiResE64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResE/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResE/texts/
+64x32x0=MapDisMiResEEmpty64x32x0.gif
+64x32x0=MapDisLoResA64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoResA/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoResA/texts/
+64x32x0=MapDisLoResAEmpty64x32x0.gif
+64x32x0=MapDisLoResB64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoResB/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoResB/texts/
+64x32x0=MapDisLoResBEmpty64x32x0.gif
+64x32x0=MapDisMidResA64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResA/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResA/texts/
+64x32x0=MapDisMidResAEmpty64x32x0.gif
+64x32x0=MapDisMidResB64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResB/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResB/texts/
+64x32x0=MapDisHiResA64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/HiResA/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/HiResA/texts/
+64x32x0=MapDisHiResAEmpty64x32x0.gif
+64x32x0=MapDisHiResB64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/HiResB/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/HiResB/texts/
+Left=30
+Right=116
+Bottom=142
+64x32x0=MapDisHiResBEmpty64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoCostLoRes/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoCostLoRes/texts/
+Select=Residential.wav
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoCostMidRes/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoCostMidRes/texts/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoCostHiRes/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoCostHiRes/texts/
+64x32x0=MapDisTownHall64x32x0.gif
+Actions=/Five/Visual/Clusters/Dissidents/facilities/Town/TownHall/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Town/TownHall/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Town/TownHall/texts/
+64x32x0=MapDisTradeCenter64x32x0.gif
+Actions=/Five/Visual/Clusters/Dissidents/facilities/Town/TradeCenter/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Town/TradeCenter/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Town/TradeCenter/texts/
+64x32x0=MapDisHiResC64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/HiResC/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/HiResC/texts/
+64x32x0=MapDisHiResCEmpty64x32x0.gif
+64x32x0=MapDisHiResD64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/HiResD/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/HiResD/texts/
+64x32x0=MapDisHiResDEmpty64x32x0.gif
+64x32x0=MapDisMiResC64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResC/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResC/texts/
+64x32x0=MapDisMiResCEmpty64x32x0.gif
+SitePages=Visual/Clusters/Generic/facilities/Stores/
+64x32x0=MapDisHHAStore64x32x0.gif
+Actions=/Five/Visual/Clusters/Dissidents/facilities/Stores/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/HHA/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Stores/HHA/texts/
+64x32x0=MapDisFoodStore64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/Food/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Stores/Food/texts/
+64x32x0=MapDisCarStore64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/Car/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Stores/Car/texts/
+64x32x0=MapDisClothesStore64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/Clothes/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Stores/Clothes/texts/
+64x32x0=MapDisSupermarketA64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/SupermarketA/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Stores/SupermarketA/texts/
+64x32x0=MapDisClub64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/Bar/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Stores/Bar/texts/
+Select=Club.wav
+64x32x0=MapDisSupermarketB64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/SupermarketB/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Stores/SupermarketB/texts/
+FacId=77
+Left=15
+Right=57
+64x32x0=MapDisRestaurant64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/Restaurant/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Stores/Restaurant/texts/
+Select=Restaurant.wav
+64x32x0=MapDisMovie64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/Movie/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Stores/Movie/texts/
+FacId=69
+64x32x0=MapDisToys64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Toys/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/Toys/texts/
+FacId=100
+SitePages=Visual/Clusters/Generic/facilities/PublicFacilities/
+VisualClass=PublicFacility
+64x32x0=MapDisHospital64x32x0.gif
+Actions=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/
+Images=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/Hospital/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/Hospital/images/
+Select=Hospital.wav
+QuickWeb=PublicFacEdit.asp
+FacId=101
+Left=54
+Top=19
+Right=144
+Bottom=78
+64x32x0=MapDisSchool64x32x0.gif
+Actions=/Five/Visual/Clusters/Dissidents/facilities/PublicsFacilities/
+Images=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/School/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/School/texts/
+Select=School.wav
+0=wave=school.wav, aten=0.9, per=10000, prob=0.8
+64x32x0=MapDisPolice64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/PoliceStation/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/PoliceStation/texts/
+Select=Police.wav
+0=wave=dogs.wav, aten=0.9, per=10000, prob=0.8
+FacId=105
+64x32x0=MapSmallPark64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/SmallPark/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/SmallPark/texts/
+64x32x0=MapMediumPark64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/Park/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/Park/texts/
+64x32x0=MapCentralPark64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/CentralPark/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/PublicFacilities/CentralPark/texts/
+FacId=90
+64x32x0=MapDisToyStore64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/Toys/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Stores/Toys/texts/
+64x32x0=MapDisMainHeadquarter64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/Main/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/Main/texts/
+64x32x0=MapDisHeadquarter64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/IndTower/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/IndTower/texts/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/Stores/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/Stores/texts/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/LifeTower/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/LifeTower/texts/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/PublicFacilities/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Headquarters/PublicFacilities/texts/
+64x32x0=MapDisOfficeA64x32x0.gif
+Actions=/Five/Visual/Clusters/Dissidents/facilities/Business/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Business/OfficeA/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Business/OfficeA/texts/
+64x32x0=MapDisOfficeAEmpty64x32x0.gif
+64x32x0=MapDisOfficeB64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Business/OfficeB/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Business/OfficeB/texts/
+64x32x0=MapDisOfficeBEmpty64x32x0.gif
+64x32x0=MapDisOfficeC64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Business/OfficeC/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Business/OfficeC/texts/
+64x32x0=MapDisOfficeCEmpty64x32x0.gif
+64x32x0=MapDisTV64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Business/TVStation/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Business/TVStation/texts/
+Images=/Five/Visual/Clusters/Dissidents/facilities/Business/TVAntenna/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Business/TVAntenna/texts/
+64x32x0=MapMKOFarm64x32x0.gif
+Actions=/Five/Visual/Clusters/Mariko/facilities/Industries/
+Images=/Five/Visual/Clusters/Mariko/facilities/Farms/Large/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Farms/Large/texts/
+64x32x0=MapMKOSmallFarm64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Farms/Small/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Farms/Small/texts/
+0=wave=farm.wav, loop=1
+0=Id=11, x=25, y=110, glassed=0
+64x32x0=MapMKOMine64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Mine/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Mine/texts/
+64x32x0=MapMKOSmallMine64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallMine/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallMine/texts/
+64x32x0=MapMKOClothingIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Clothing/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Clothing/texts/
+64x32x0=MapMKOSmallClothingIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallClothing/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallClothing/texts/
+64x32x0=MapMKOFoodProc64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Food/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Food/texts/
+64x32x0=MapMKOSmallFoodProc64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallFood/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallFood/texts/
+64x32x0=MapMkoMetalIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Metal/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Metal/texts/
+64x32x0=MapMkoSmallMetalIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallMetal/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallMetal/texts/
+64x32x0=MapMkoChemical64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Chemical/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Chemical/texts/
+64x32x0=MapMKOSmallChemical64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallChemical/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallChemical/texts/
+64x32x0=MapMkoTextile64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Textile/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Textile/texts/
+64x32x0=MapMKOSmallTextile64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallTextile/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallTextile/texts/
+64x32x0=MapMKOElectComp64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Electronics/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Electronics/texts/
+64x32x0=MapMKOSmallElectComp64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallElectronics/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallElectronics/texts/
+64x32x0=MapMKOCarIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Car/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Car/texts/
+64x32x0=MapMkoHeavyIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Heavy/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Heavy/texts/
+64x32x0=MapMkoConstIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Construction/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Construction/texts/
+64x32x0=MapMKOCompIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Computing/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Computing/texts/
+64x32x0=MapMkoHHAIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/HHA/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/HHA/texts/
+64x32x0=MapMKOSmallHHAIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallHHA/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallHHA/texts/
+64x32x0=MapMKOLegalServ64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Business/LegalServices/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Business/LegalServices/texts/
+64x32x0=MapMkoBusMachIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/BusMach/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/BusMach/texts/
+FacId=68
+64x32x0=MapMkoPlasticIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/Plastic/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/Plastic/texts/
+64x32x0=MapMKOHiResA64x32x0.gif
+Actions=/Five/Visual/Clusters/Mariko/facilities/Residentials/
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/HiResA/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/HiResA/texts/
+64x32x0=MapMKOHiResAEmpty64x32x0.gif
+64x32x0=MapMKOHiResB64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/HiResB/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/HiResB/texts/
+64x32x0=MapMKOHiResBEmpty64x32x0.gif
+64x32x0=MapMKOHiResC64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/HiResC/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/HiResC/texts/
+64x32x0=MapMKOHiResCEmpty64x32x0.gif
+64x32x0=MapMKOHiResD64x32x0.gif
+64x32x0=MapMKOMiResA64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResA/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResA/texts/
+64x32x0=MapMKOMiResAEmpty64x32x0.gif
+64x32x0=MapMKOMiResB64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResB/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResB/texts/
+64x32x0=MapMKOMiResBEmpty64x32x0.gif
+64x32x0=MapMKOMiResC64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResC/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResC/texts/
+64x32x0=MapMKOMiResCEmpty64x32x0.gif
+64x32x0=MapMKOMiResD64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResD/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResD/texts/
+64x32x0=MapMKOMiResDEmpty64x32x0.gif
+64x32x0=MapMKOLoResA64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoResA/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoResA/texts/
+64x32x0=MapMKOLoResAEmpty64x32x0.gif
+64x32x0=MapMKOLoResB64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoResB/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoResB/texts/
+64x32x0=MapMKOLoResBEmpty64x32x0.gif
+64x32x0=MapMKOLoResC64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoResC/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoResC/texts/
+64x32x0=MapMKOLoResCEmpty64x32x0.gif
+64x32x0=MapMKOLoResD64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoResD/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoResD/texts/
+64x32x0=MapMKOLoResDEmpty64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoCostHiRes/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoCostHiRes/texts/
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoCostMidRes/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoCostMidRes/texts/
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoCostLoRes/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/LoCostLoRes/texts/
+64x32x0=MapMkoTownHall64x32x0.gif
+Actions=/Five/Visual/Clusters/Mariko/facilities/Town/TownHall/
+Images=/Five/Visual/Clusters/Mariko/facilities/Town/TownHall/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Town/TownHall/texts/
+64x32x0=MapMkoTradeCenter64x32x0.gif
+Actions=/Five/Visual/Clusters/Mariko/facilities/Town/TradeCenter/
+Images=/Five/Visual/Clusters/Mariko/facilities/Town/TradeCenter/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Town/TradeCenter/texts/
+64x32x0=MapMKOFoodStore64x32x0.gif
+Actions=/Five/Visual/Clusters/Mariko/facilities/Stores/
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/Food/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Stores/Food/texts/
+64x32x0=MapMKOClothesStore64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/Clothes/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Stores/Clothes/texts/
+64x32x0=MapMkoHHAStore64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/HHA/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Stores/HHA/texts/
+64x32x0=MapMKOCarStore64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/Car/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Stores/Car/texts/
+64x32x0=MapMkoSuperMarketA64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/SupermarketA/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Stores/SupermarketA/texts/
+64x32x0=MapMkoSuperMarketB64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/SupermarketB/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Stores/SupermarketB/texts/
+64x32x0=MapMkoSuperMarketC64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/SupermarketC/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Stores/SupermarketC/texts/
+64x32x0=MapMKOBar64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/Bar/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Stores/Bar/texts/
+64x32x0=MapMKORestaurant64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/Restaurant/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Stores/Restaurant/texts/
+64x32x0=MapMKOMovie64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/Movie/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Stores/Movie/texts/
+64x32x0=MapMKOHospital64x32x0.gif
+Actions=/Five/Visual/Clusters/Mariko/facilities/PublicFacilities/
+Images=/Five/Visual/Clusters/Mariko/facilities/PublicFacilities/Hospital/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/PublicFacilities/Hospital/images/
+64x32x0=MapMKOSchool64x32x0.gif
+Actions=/Five/Visual/Clusters/Mariko/facilities/PublicsFacilities/
+Images=/Five/Visual/Clusters/Mariko/facilities/PublicFacilities/School/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/PublicFacilities/School/texts/
+64x32x0=MapMKOPolice64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/PublicFacilities/PoliceStation/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/PublicFacilities/PoliceStation/texts/
+64x32x0=MapMKOTV64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Business/TVStation/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Business/TVStation/texts/
+Images=/Five/Visual/Clusters/Mariko/facilities/Business/TVAntenna/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Business/TVAntenna/texts/
+64x32x0=MapMKOMainHeadquarter64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Headquarters/Main/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Headquarters/Main/texts/
+64x32x0=MapMKOHeadquarter64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Headquarters/Areas/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Headquarters/Areas/texts/
+64x32x0=MapMKOOfficeA64x32x0.gif
+Actions=/Five/Visual/Clusters/Mariko/facilities/Business/
+Images=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeA/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeA/texts/
+64x32x0=MapMKOOfficeAEmpty64x32x0.gif
+64x32x0=MapMKOOfficeB64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeB/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeB/texts/
+64x32x0=MapMKOOfficeBEmpty64x32x0.gif
+64x32x0=MapMKOOfficeC64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeC/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeC/texts/
+64x32x0=MapMKOOfficeCEmpty64x32x0.gif
+64x32x0=MapMKOOfficeD64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeD/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeD/texts/
+64x32x0=MapMKOOfficeDEmpty64x32x0.gif
+64x32x0=MapMKOOfficeE64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeE/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeE/texts/
+64x32x0=MapMKOOfficeEEmpty64x32x0.gif
+64x32x0=MapPGIFarm64x32x0.gif
+Actions=/Five/Visual/Clusters/PGI/facilities/Industries/
+Images=/Five/Visual/Clusters/PGI/facilities/Farms/Large/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Farms/Large/texts/
+64x32x0=MapPGISmallFarm64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Farms/Small/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Farms/Small/texts/
+0=wave=pigs.wav, aten=0.7, per=10000, prob=0.8
+0=Id=11, x=67, y=110, glassed=0
+64x32x0=MapPGIMine64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/LargeMine/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/LargeMine/texts/
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallMine/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallMine/texts/
+64x32x0=MapPGIClothesIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/LargeClothing/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/LargeClothing/texts/
+64x32x0=MapPGISmallClothing64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallClothing/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallClothing/texts/
+64x32x0=MapPGIFoodProc64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/LargeFood/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/LargeFood/texts/
+64x32x0=MapPGISmallFoodProc64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallFood/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallFood/texts/
+64x32x0=MapPGIMetalIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/LargeMetal/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/LargeMetal/texts/
+64x32x0=MapPGISmallMetalIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallMetal/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallMetal/texts/
+64x32x0=MapPGIChemIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/LargeChemical/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/LargeChemical/texts/
+64x32x0=MapPGISmallChemical64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallChemical/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallChemical/texts/
+64x32x0=MapPGITextileIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/LargeTextile/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/LargeTextile/texts/
+64x32x0=MapPGISmallTextileIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallTextile/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallTextile/texts/
+64x32x0=MapPGIElectComp64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/LargeElect/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/LargeElect/texts/
+64x32x0=MapPGISmallElectComp64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallElect/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallElect/texts/
+64x32x0=MapPGICarIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/Car/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/Car/texts/
+64x32x0=MapPGIHeavyIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/Heavy/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/Heavy/texts/
+64x32x0=MapPGISmallHeavyIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallHeavyIndustry/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallHeavyIndustry/texts/
+64x32x0=MapPGIConstIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/Construction/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/Construction/texts/
+64x32x0=MapPGIComputing64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Business/Computing/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Business/Computing/texts/
+64x32x0=MapPGIHHAIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/LargeHHA/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/LargeHHA/texts/
+64x32x0=MapPGISmallHHAIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallHHA/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallHHA/texts/
+64x32x0=MapPGILegalServ64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Business/LegalServices/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Business/LegalServices/texts/
+64x32x0=MapPGIBMIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/LargeBM/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/LargeBM/texts/
+64x32x0=MapPGISmallBMIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallBMIndustry/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallBMIndustry/texts/
+FacId=66
+64x32x0=MapPGIPharmaIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/Pharma/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/Pharma/texts/
+64x32x0=MapPGIHiResA64x32x0.gif
+Actions=/Five/Visual/Clusters/PGI/facilities/Residentials/
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResA/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResA/texts/
+64x32x0=MapPGIHiResAEmpty64x32x0.gif
+64x32x0=MapPGIHiResB64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResB/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResB/texts/
+64x32x0=MapPGIHiResBEmpty64x32x0.gif
+64x32x0=MapPGIHiResC64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResC/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResC/texts/
+64x32x0=MapPGIHiResCEmpty64x32x0.gif
+64x32x0=MapPGIHiResD64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResD/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResD/texts/
+64x32x0=MapPGIHiResDEmpty64x32x0.gif
+64x32x0=MapPGIHiResE64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResE/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResE/texts/
+64x32x0=MapPGIHiResEEmpty64x32x0.gif
+64x32x0=MapPGIMiResA64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/MidResA/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/MidResA/texts/
+64x32x0=MapPGIMiResAEmpty64x32x0.gif
+64x32x0=MapPGIMiResB64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/MidResB/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/MidResB/texts/
+64x32x0=MapPGIMiResBEmpty64x32x0.gif
+64x32x0=MapPGIMiResC64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/MidResC/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/MidResC/texts/
+64x32x0=MapPGIMiResCEmpty64x32x0.gif
+64x32x0=MapPGIMiResD64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/MidResD/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/MidResD/texts/
+64x32x0=MapPGIMiResDEmpty64x32x0.gif
+64x32x0=MapPGIMiResE64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/MidResE/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/MidResE/texts/
+64x32x0=MapPGIMiResEEmpty64x32x0.gif
+64x32x0=MapPGILoResA64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResA/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResA/texts/
+64x32x0=MapPGILoResAEmpty64x32x0.gif
+64x32x0=MapPGILoResB64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResB/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResB/texts/
+64x32x0=MapPGILoResBEmpty64x32x0.gif
+64x32x0=MapPGILoResC64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResC/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResC/texts/
+64x32x0=MapPGILoResCEmpty64x32x0.gif
+64x32x0=MapPGILoResD64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResD/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResD/texts/
+64x32x0=MapPGILoResDEmpty64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/LoCostHiRes/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/LoCostHiRes/texts/
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/LoCostMidRes/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/LoCostMidRes/texts/
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/LoCostLoRes/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/LoCostLoRes/texts/
+64x32x0=MapPGIHiResF64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResF/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResF/texts/
+64x32x0=MapPGIHiResFEmpty64x32x0.gif
+64x32x0=MapPGITownHall64x32x0.gif
+Actions=/Five/Visual/Clusters/PGI/facilities/Town/TownHall/
+Images=/Five/Visual/Clusters/PGI/facilities/Town/TownHall/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Town/TownHall/texts/
+64x32x0=MapPGITradeCenter64x32x0.gif
+Actions=/Five/Visual/Clusters/PGI/facilities/Town/TradeCenter/
+Images=/Five/Visual/Clusters/PGI/facilities/Town/TradeCenter/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Town/TradeCenter/texts/
+64x32x0=MapPGIFoodStore64x32x0.gif
+Actions=/Five/Visual/Clusters/PGI/facilities/Stores/
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/Food/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/Food/texts/
+64x32x0=MapPGIClothesStore64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/Clothes/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/Clothes/texts/
+64x32x0=MapPGIHHAStore64x32x0.gif
+64x32x0=MapPGICarStore64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/Car/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/Car/texts/
+FacId=79
+64x32x0=MapPGIDrugStore64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/Drugs/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/Drugs/texts/
+64x32x0=MapPGIMarketA64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/SupermarketA/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/SupermarketA/texts/
+64x32x0=MapPGIMarketB64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/SupermarketB/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/SupermarketB/texts/
+64x32x0=MapPGIMarketC64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/SupermarketC/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/SupermarketC/texts/
+64x32x0=MapPGIBar64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/Bar/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/Bar/texts/
+64x32x0=MapPGIRestaurant64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/Restaurant/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/Restaurant/texts/
+64x32x0=MapPGIMovieA64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/MovieA/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/MovieA/texts/
+64x32x0=MapPGIMovieB64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Stores/MovieB/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Stores/MovieB/texts/
+64x32x0=MapPGIHospital64x32x0.gif
+Actions=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/
+Images=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/Hospital/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/Hospital/images/
+64x32x0=MapPGISchool64x32x0.gif
+Actions=/Five/Visual/Clusters/PGI/facilities/PublicsFacilities/
+Images=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/School/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/School/texts/
+64x32x0=MapPGIPolice64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/PoliceStation/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/PoliceStation/texts/
+FacId=103
+64x32x0=MapPGIFire64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/FireStation/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/FireStation/texts/
+Images=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/Park/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/PublicFacilities/Park/texts/
+64x32x0=MapPGIMainHeadquarter64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Headquarters/Main/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Headquarters/Main/texts/
+64x32x0=MapPGIOfficeA64x32x0.gif
+Actions=/Five/Visual/Clusters/PGI/facilities/Business/
+Images=/Five/Visual/Clusters/PGI/facilities/Business/OfficeA/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Business/OfficeA/texts/
+64x32x0=MapPGIOfficeAEmpty64x32x0.gif
+64x32x0=MapPGIOfficeB64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Business/OfficeB/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Business/OfficeB/texts/
+64x32x0=MapPGIOfficeBEmpty64x32x0.gif
+64x32x0=MapPGIOfficeC64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Business/OfficeC/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Business/OfficeC/texts/
+64x32x0=MapPGIOfficeCEmpty64x32x0.gif
+64x32x0=MapPGITV64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Business/TVStation/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Business/TVStation/texts/
+Images=/Five/Visual/Clusters/PGI/facilities/Business/TVAntenna/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Business/TVAntenna/texts/
+64x32x0=MagnaConst192.gif
+64x32x0=MapMagnaWhirlpool64x32.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Residentials/Whirlpool/images/
+Texts=/Five/Visual/Clusters/Magna/facilities/Residentials/Whirlpool/images/
+64x32x0=MapMagnaWhirlpoolEmpty64x32.gif
+64x32x0=MapMagnaSolarium64x32.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Residentials/Solarium/images/
+Texts=/Five/Visual/Clusters/Magna/facilities/Residentials/Solarium/images/
+64x32x0=MapMagnaSolariumEmpty64x32.gif
+64x32x0=MapMagnaIvoryTower64x32.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Residentials/IvoryTower/images/
+64x32x0=MapMagnaIvoryTowerEmpty64x32.gif
+64x32x0=MapMagnaMayFlower64x32.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Residentials/MayFlower/images/
+64x32x0=MapMagnaMayFlowerEmpty64x32.gif
+64x32x0=MapMagnaCloudCity64x32.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Residentials/CloudCity/images/
+64x32x0=MapMagnaCloudCityEmpty64x32.gif
+64x32x0=MapMagnaHeaven64x32.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Residentials/Heaven/images/
+64x32x0=MapMagnaHeavenEmpty64x32.gif
+64x32x0=MapMagnaHive64x32.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Residentials/Hive/images/
+64x32x0=MapMagnaHiveEmpty64x32.gif
+64x32x0=MapMagnaOctopus64x32.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Residentials/Octopus/images/
+64x32x0=MapMagnaOctopusEmpty64x32.gif
+64x32x0=MapMagnaSkyDome64x32.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Residentials/SkyDome/images/
+64x32x0=MapMagnaSkyDomeEmpty64x32.gif
+64x32x0=MapMagnaTheSpring64x32.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Residentials/TheSpring/images/
+64x32x0=MapMagnaTheSpringEmpty64x32.gif
+Actions=/Five/Visual/Clusters/Magna/facilities/Stores/
+64x32x0=MapMagnaSupermarketA64x32x0.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Stores/SupermarketA/images/
+Texts=/Five/Visual/Clusters/Magna/facilities/Stores/SupermarketA/texts/
+64x32x0=MapMagnaSupermarketB64x32x0.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Stores/SupermarketB/images/
+Texts=/Five/Visual/Clusters/Magna/facilities/Stores/SupermarketB/texts/
+Actions=/Five/Visual/Clusters/Magna/facilities/ResearchCenters/
+64x32x0=MapMagnaResearch64x32x0.gif
+Images=/Five/Visual/Clusters/Magna/facilities/ResearchCenter/ResearchCenter/images/
+Texts=/Five/Visual/Clusters/Magna/facilities/ResearchCenter/ResearchCenter/texts/
+xSize=8
+ySize=8
+FacId=65
+64x32x0=MovieStudiosConstruction.gif
+Actions=/Five/Visual/Clusters/Magna/facilities/Industries/
+Images=/Five/Visual/Clusters/Magna/facilities/Industries/Movie/images/Construction/
+TabName1=FILMS
+TabHandler1=Films
+TabName2=PRODUCTS
+TabName3=SUPPLIES
+TabHandler3=Supplies
+TabName4=SERVICES
+TabHandler4=compInputs
+TabName5=JOBS
+TabHandler5=Workforce
+TabName6=MANAGEMENT
+TabHandler6=facManagement
+TabName7=HISTORY
+TabHandler7=Chart
+64x32x0=MapMagnaMovieStudios64x32x0.gif
+Images=/Five/Visual/Clusters/Magna/facilities/Industries/Movie/images/
+Texts=/Five/Visual/Clusters/Magna/facilities/Industries/Movie/texts/
+FacId=140
+TabCount=1
+64x32x0=MapIFELStatueOfLiberty64x32x0.gif
+Actions=/Five/Visual/Clusters/IFEL/facilities/Monuments/
+Images=/Five/Visual/Clusters/IFEL/facilities/Monuments/StofLiberty/images/
+Texts=/Five/Visual/Clusters/IFEL/facilities/Monuments/StofLiberty/texts/
+64x32x0=MapIFELTower64x32x0.gif
+Images=/Five/Visual/Clusters/IFEL/facilities/Monuments/IFELTower/images/
+Texts=/Five/Visual/Clusters/IFEL/facilities/Monuments/IFELTower/texts/
+FacId=151
+Selectable=0
+Accident=1
+64x32x0=MapPortalIn64x32x0.gif
+Actions=/Five/Visual/Clusters/IFEL/facilities/Portal/
+64x32x0=MapPortalOut64x32x0.gif
+64x32x0=MapDisMidResF64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResF/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/MidResF/texts/
+64x32x0=MapDisMidResFEmpty64x32x0.gif
+64x32x0=MapDisloResD64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoResD/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Residentials/LoResD/texts/
+64x32x0=MapDisloResDEmpty64x32x0.gif
+0=Id=7, x=158, y=253, glassed=0
+0=Id=8, x=160, y=252, glassed=0
+0=Id=9, x=110, y=252, glassed=0
+0=Id=10, x=110, y=252, glassed=0
+0=Id=7, x=123, y=180, glassed=0
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/ChemMine/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/ChemMine/texts/
+0=Id=7, x=137, y=156, glassed=0
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallChemMine/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallChemMine/texts/
+0=Id=8, x=125, y=180, glassed=0
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/SiliconMine/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/SiliconMine/texts/
+0=Id=8, x=130, y=150, glassed=0
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallSiliconMine/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallSiliconMine/texts/
+0=Id=9, x=123, y=180, glassed=0
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/StoneMine/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/StoneMine/texts/
+0=Id=9, x=130, y=154, glassed=0
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallStoneMine/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallStoneMine/texts/
+0=Id=10, x=115, y=181, glassed=0
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/CoalMine/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/CoalMine/texts/
+0=Id=10, x=117, y=157, glassed=0
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallCoalMine/images/
+Texts=/Five/Visual/Clusters/Dissidents/facilities/Industries/SmallCoalMine/texts/
+FacId=207
+64x32x0=LumberMillConstruction.gif
+64x32x0=MapDisLumber1_64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Lumbermill/images/
+64x32x0=MapDisLumber2_64x32x0.gif
+64x32x0=MapDisLumber3_64x32x0.gif
+64x32x0=MapDisLumber4_64x32x0.gif
+64x32x0=MapDisLumber5_64x32x0.gif
+64x32x0=MapDisLumber6_64x32x0.gif
+64x32x0=MapDisLumber7_64x32x0.gif
+0=Id=7, x=25, y=110, glassed=0
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/ChemMine/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/ChemMine/texts/
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallChemMine/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallChemMine/texts/
+0=Id=8, x=25, y=110, glassed=0
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SiliconMine/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SiliconMine/texts/
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallSiliconMine/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallSiliconMine/texts/
+0=Id=9, x=25, y=110, glassed=0
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/StoneMine/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/StoneMine/texts/
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallStoneMine/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallStoneMine/texts/
+0=Id=10, x=12, y=110, glassed=0
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/CoalMine/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/CoalMine/texts/
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallCoalMine/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/SmallCoalMine/texts/
+FacId=208
+64x32x0=MapDisFurniture64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Industries/Furniture/images/
+FacId=92
+64x32x0=MapDisFurnitureStore64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/Furniture/images/
+FacId=93
+64x32x0=MapDisBookStore64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/Books/images/
+FacId=94
+64x32x0=MapMKOComputerStore64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/Computers/images/
+FacId=95
+64x32x0=MapDisFuneral64x32x0.gif
+Images=/Five/Visual/Clusters/Dissidents/facilities/Stores/Funeral/images/
+FacId=96
+64x32x0=MapMKOCDStore64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Stores/CDs/images/
+64x32x0=MapMoabFuneral64x32x0.gif
+Images=/Five/Visual/Clusters/Moab/facilities/Stores/Funeral/images/
+Texts=/Five/Visual/Clusters/Moab/facilities/Stores/Funeral/texts/
+0=Id=7, x=67, y=110, glassed=0
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/ChemMine/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/ChemMine/texts/
+64x32x0=MapPGISmallMine64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallChemMine/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallChemMine/texts/
+0=Id=8, x=67, y=110, glassed=0
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SiliconMine/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SiliconMine/texts/
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallSiliconMine/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallSiliconMine/texts/
+0=Id=9, x=67, y=110, glassed=0
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/StoneMine/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/StoneMine/texts/
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallStoneMine/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallStoneMine/texts/
+0=Id=10, x=67, y=110, glassed=0
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/CoalMine/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/CoalMine/texts/
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/SmallCoalMine/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/SmallCoalMine/texts/
+64x32x0=MapPGIHiResJ64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResJ/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResJ/texts/
+64x32x0=MapPGIHiResJEmpty64x32x0.gif
+64x32x0=MapPGIHiResG64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResG/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResG/texts/
+64x32x0=MapPGIHiResGEmpty64x32x0.gif
+64x32x0=MapPGIHiResH64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResH/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResH/texts/
+64x32x0=MapPGIHiResHEmpty64x32x0.gif
+64x32x0=MapPGIHiResI64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResI/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/HiResI/texts/
+64x32x0=MapPGIHiResIEmpty64x32x0.gif
+64x32x0=MapPGILoResE64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResE/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResE/texts/
+64x32x0=MapPGILoResEEmpty64x32x0.gif
+64x32x0=MapPGILoResF64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResF/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Residentials/LoResF/texts/
+64x32x0=MapPGILoResFEmpty64x32x0.gif
+64x32x0=MapPGIOfficeD64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Business/OfficeD/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Business/OfficeD/texts/
+64x32x0=MapPGIOfficeDEmpty64x32x0.gif
+FacId=209
+64x32x0=MapPGIPaperIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/Paper/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/Paper/texts/
+xSounds
+FacId=210
+64x32x0=MapPGIPrintingPlant64x32x0.gif
+Images=/Five/Visual/Clusters/PGI/facilities/Industries/Printing/images/
+Texts=/Five/Visual/Clusters/PGI/facilities/Industries/Printing/texts/
+FacId=106
+64x32x0=MapIFELDump64x32.gif
+Actions=/Five/Visual/Clusters/Common/facilities/PublicsFacilities/
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/Disposal/images/
+64x32x0=MapIFELJail64x32.gif
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/Jail/images/
+FacId=107
+64x32x0=MapIFELTennis64x32.gif
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/Tennis/images/
+64x32x0=MapIFELMuseum64x32.gif
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/Museum/images/
+64x32x0=MapIFELCollege64x32.gif
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/College/images/
+64x32x0=MapIFELAlienParkA64x32x0.gif
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/SmallParkA/images/
+Texts=/Five/Visual/Clusters/Common/facilities/PublicFacilities/SmallParkA/texts/
+64x32x0=MapIFELAlienParkB64x32x0.gif
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/SmallParkB/images/
+Texts=/Five/Visual/Clusters/Common/facilities/PublicFacilities/SmallParkB/texts/
+64x32x0=MapIFELAlienParkC64x32x0.gif
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/SmallParkC/images/
+Texts=/Five/Visual/Clusters/Common/facilities/PublicFacilities/SmallParkC/texts/
+64x32x0=MapIFELAlienParkD64x32x0.gif
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/SmallParkD/images/
+Texts=/Five/Visual/Clusters/Common/facilities/PublicFacilities/SmallParkD/texts/
+TabHandler0=Mausoleum
+64x32x0=MapIFELParadigmMausoleum64x32x0.gif
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/ParadigmMausoleum/images/
+xSize=9
+ySize=9
+64x32x0=mausoleumconst.gif
+64x32x0=MapIFELLegendMausoleum64x32x0.gif
+Images=/Five/Visual/Clusters/Common/facilities/PublicFacilities/LegendMausoleum/images/
+64x32x0=MapMKOMiResE64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResE/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResE/texts/
+64x32x0=MapMKOMiResEEmpty64x32x0.gif
+64x32x0=MapMKOLowResE64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/LowResE/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/LowResE/texts/
+64x32x0=MapMKOLowResEEmpty64x32x0.gif
+64x32x0=MapMKOMiResG64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResG/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Residentials/MidResG/texts/
+64x32x0=MapMKOMiResGEmpty64x32x0.gif
+64x32x0=MapMKOOfficeF64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeF/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Business/OfficeF/texts/
+64x32x0=MapMKOOfficeFEmpty64x32x0.gif
+FacId=211
+64x32x0=MapMkoCDIndustry64x32x0.gif
+Images=/Five/Visual/Clusters/Mariko/facilities/Industries/CDPlant/images/
+Texts=/Five/Visual/Clusters/Mariko/facilities/Industries/CDPlant/texts/
+64x32x0=MapMkoCarIndustry64x32x0.gif
+bó 	          	 
+                        ! " # $ % & ' ( ò        )   	 *  + , -            .   /   ! " 0 ´ 	    1 2    	 3      4      ! " # $ % & ' ( ¨     1 2   	 3   5 6  7   8   ! " 0 -
+     9 : ; <   	 3     = > ? @ A B  C  D   E F   ! " # $ % & ' ( .     9 : ; < G % H   	 I  J K L = > ? @ A B  M   D N O E F   ! " P ' Q /   R % S   9 : ; < G % H   	 I  J K L = > ? @ A B  M   D N O E F   ! " P ' Q 0   R % T   9 : ; < G % H   	 I  J K L = > ? @ A B  M   D N O E F   ! " P ' Q 7
+     9 : ; U   	 3     = > ? @ A B  C  D   E F   ! " # $ % & ' ( 8     9 : ; U G % H   	 I  J K L = > ? @ A B  V   D W X E F   ! " P ' Q 9   R % Y   9 : ; U G % H   	 I  J K L = > ? @ A B  V   D W X E F   ! " P ' Q :   R % Z   9 : ; U G % H   	 I  J K L = > ? @ A B  V   D W X E F   ! " P ' Q A
+     9 [ \ ]   	 3     = > ? @ A B  ^  D   E F   ! " # $ % & ' ( B     9 [ \ ] G % H   	 I  J K L = > ? @ A B  _   D ` a E F   ! " P ' Q C   R % b   9 [ \ ] G % H   	 I  J K L = > ? @ A B  _   D ` a E F   ! " P ' Q D   R % c   9 [ \ ] G % H   	 I  J K L = > ? @ A B  _   D ` a E F   ! " P ' Q K
+     9 : ; <   	 3     = > ? @ A B  C  D   E F   ! " # $ % & ' ( L     9 : ; < G % H   	 I  J K L = > ? @ A B  d   D e f E F   ! " 0 ' Q M   R % g   9 : ; < G % H   	 I  J K L = > ? @ A B  d   D e f E F   ! " 0 ' Q N   R % h   9 : ; < G % H   	 I  J K L = > ? @ A B  d   D e f E F   ! " 0 ' Q _
+     9 : ; i   	 3     = > ? @ A B  C  D   E F   ! " # $ % & ' ( `     9 : ; i G % H   	 I  J K L = > ? @ A B  j   D k l E F   ! " 0 ' Q a   R % m   9 : ; i G % H   	 I  J K L = > ? @ A B  j   D k l E F   ! " 0 ' Q b   R % n   9 : ; i G % H   	 I  J K L = > ? @ A B  j   D k l E F   ! " 0 ' Q Ø
+     9 : ; o   	 3     = > ? @ A B  C  D   E F   ! " # $ % & ' ( ∞     9 : ; o G % H   	 I  J K L = > ? @ A B  p   D q r E F   ! " 0 ' Q ±   R % s   9 : ; o G % H   	 I  J K L = > ? @ A B  p   D q r E F   ! " 0 ' Q ≤   R % t   9 : ; o G % H   	 I  J K L = > ? @ A B  p   D q r E F   ! " 0 ' Q 
+     9 u v w   	 3     = > ? @ A B  x  D   E F   ! " # $ % & ' ( 
+     9 u v w   	 I  y K L = > ? @ A B  z   D { | E F   ! " 0 ' Q 
+     9 u v }   	 3     = > ? @ A B  x  D   E F   ! " # $ % & ' ( 
+     9 u v }   	 I  y K L = > ? @ A B  ~   D  Ä E F   ! " 0 ' Q Y     Å Ç É Ñ   	 3     Ö Ü á à â ä  ã  å ç   E é è ê   ! " # $ % & ' ( Z    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ì   î ç ï ñ E é è ê   ! " ó ' ò [    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ô   î ç ï ñ E é è ê   ! " ó ' ò \    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ö   î ç ï ñ E é è ê   ! " ó ' ò ]    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  õ   î ç ï ñ E é è ê   ! " ó ' ò ^    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ú   î ç ï ñ E é è ê   ! " ó ' ò ã     Å Ç É Ñ   	 3     Ö Ü á à â ä  ã  ù ç   E é è ê   ! " # $ % & ' ( å    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  û   ü ç † ° E é è ê   ! " ¢ ' ò ç    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  £   ü ç † ° E é è ê   ! " ¢ ' ò é    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  §   ü ç † ° E é è ê   ! " ¢ ' ò è    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  •   ü ç † ° E é è ê   ! " ¢ ' ò ê    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ¶   ü ç † ° E é è ê   ! " ¢ ' ò Ω     Å Ç É Ñ   	 3     Ö Ü á à â ä  ã  ß ç   E é è ê   ! " # $ % & ' ( æ    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ®   © ç ™ ´ E é è ê   ! " ¨ ' ò ø    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ≠   © ç ™ ´ E é è ê   ! " ¨ ' ò ¿    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  Æ   © ç ™ ´ E é è ê   ! " ¨ ' ò ¡    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  Ø   © ç ™ ´ E é è ê   ! " ¨ ' ò ¬    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ∞   © ç ™ ´ E é è ê   ! " ¨ ' ò Ô     Å Ç É Ñ   	 3     Ö Ü á à â ä  ã  ± ≤   E é è ê   ! " # $ % & ' (     ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ≥   ¥ ≤ µ ∂ E é è ê   ! " ∑ ' ò Ò    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ∏   ¥ ≤ µ ∂ E é è ê   ! " ∑ ' ò Ú    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  π   ¥ ≤ µ ∂ E é è ê   ! " ∑ ' ò Û    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ∫   ¥ ≤ µ ∂ E é è ê   ! " ∑ ' ò Ù    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ª   ¥ ≤ µ ∂ E é è ê   ! " ∑ ' ò ˝      º 1 2   	 3     Ω æ  4  ± ø   E ¿ è ê   ! " # $ % & ' ( ˛    )  º 1 2   	 ¡   5 6 Ω æ  ¬   √ ø ƒ ≈ E ¿ è ê   ! " ∆ ' «     Å  1 2 »   	 3     …   ? @ A B À Ã Õ Œ  4  ± œ   E – è ê   ! " # $ % & ' (     Å ) 1 2 » G % H   	 —  J K L …   ? @ A B À Ã Õ Œ  “   ” œ ‘ ’ E – è ê   ! " ÷ ' Q     9  1 2 ◊   	 3     …   ? @ A B À Ã Õ Œ  4  ± œ  ÿ E – è ê   ! " # $ % & ' (     9 ) 1 2 ◊ G % H   	 —  J K L …   ? @ A B À Ã Õ Œ  Ÿ   ” œ ⁄ € E – è ê   ! " ‹ ' Q W    9  u v ›   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ± œ   E – è ê   ! " # $ % & ' ( X    9  u v › ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ‰   ” œ Â Ê E – è ê   ! " 0 ' Q Y   Á Ë È Í Î  9  u v › Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ‰   ” œ Â Ê E – è ê   ! " 0 $ % Ì ' Q a    9  [ \ Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ^  ± œ   E – è ê   ! " # $ % & ' ( b   R % Ô  9  [ \ Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ” œ Ò Ú E – è ê   ! " P ' Q c   Á Û Ù ı ˆ R % Ô  9  [ \ Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ” œ Ò Ú E – è ê   ! " P ˜ ¯ ˘ ' Q k    9  u v ˙   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ± œ   E – è ê   ! " # $ % & ' ( l    9  u v ˙ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ˚   ” œ ¸ ˝ E – è ê   ! " 0 ' Q u    9  : ; ˛   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ± œ   E – è ê   ! " # $ % & ' ( v    9  : ; ˛ ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ˇ   ” œ  E – è ê   ! " 0 ' Q w   Á  9  : ; ˛ Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ˇ   ” œ  E – è ê   ! " 0 ' Q     9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ± œ   E – è ê   ! " # $ % & ' ( Ä    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ” œ 	E – è ê   ! " 
+' Q â    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ^  ± œ   E – è ê   ! " # $ % & ' ( ä    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ” œ E – è ê   ! " ' Q ì    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ± œ   E – è ê   ! " # $ % & ' ( î    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ” œ E – è ê   ! " ' Q ù    9  u v   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ± œ   E – è ê   ! " # $ % & ' ( û    9  u v G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ” œ E – è ê   ! " 0 ' Q ß    9  [ \   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ^  ± œ  ÿ E – è ê   ! " # $ % & ' ( ®    9  [ \ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ” œ E – è ê   ! " ' Q ±    9  [ \   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ^  ± œ  ÿ E – è ê   ! " # $ % & ' ( ≤    9  [ \ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ” œ  !E – è ê   ! " "' Q ª    9  : ; #  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ± œ  ÿ E – è ê   ! " # $ % & ' ( º    9  : ; #G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  $  ” œ %&E – è ê   ! " '' Q ≈    9  u v (  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ± œ   E – è ê   ! " # $ % & ' ( ∆    9  u v (G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  )  ” œ *+E – è ê   ! " 0 ' Q œ    9  u v ,  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ± œ   E – è ê   ! " # $ % & ' ( –    9  u v ,G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  -  ” œ ./E – è ê   ! " 0 ' Q Ÿ    9  u v 0  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ± œ   E – è ê   ! " # $ % & ' ( ⁄    9  u v 0‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  1  ” œ 23E – è ê   ! " 0 ' Q €   R 456 9  u v 0Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  1  ” œ 23E – è ê   ! " 0 ' Q „    9  : ; 7  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ± œ   E – è ê   ! " # $ % & ' ( ‰    9  : ; 7‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  8  ” œ 9:E – è ê   ! " 0 ' Q Â   R ;<=>? 9  : ; 7Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  8  ” œ 9:E – è ê   ! " 0 ' Q      @AÇ É   	 3     BC ã  ± D  E Eè ê   ! " $ % & # ' (     ) @AÇ É G % H   	 ¡  FGHBC I JD KLE Eè ê   ! " $ % M0 ' N    ) @AÇ É G % H   	 ¡  FGHBC O JD KLE Eè ê   ! " $ % M0 ' N     @AÇ É   	 3     BC ã  ± D  E Eè ê   ! " $ % & # ' (      ) @AÇ É G % H   	 ¡  FGHBC P JD QRE Eè ê   ! " $ % M0 ' N!    ) @AÇ É G % H   	 ¡  FGHBC S JD QRE Eè ê   ! " $ % M0 ' N)     @A1 2   	 3     BC 4  ± D  E Eè ê   ! " $ % & # ' ( *    ) @A1 2 G % H   	 ¡  FGHBC T JD UVE Eè ê   ! " $ % M0 ' N+    ) @A1 2 G % H   	 ¡  FGHBC W JD UVE Eè ê   ! " $ % M0 ' N3     @Au v   	 3     BC x  ± D  E Eè ê   ! " $ % & # ' ( 4    ) @Au v G % H   	 ¡  FGHBC X JD YZE Eè ê   ! " $ % M0 ' N5    ) @Au v G % H   	 ¡  FGHBC [ JD YZE Eè ê   ! " $ % M0 ' N=     \]1 2   	 3     BC 4  ± D  E Eè ê   ! " $ % & # ' ( >    ) \]1 2 G % H   	 ¡  FGHBC ^ JD _`E Eè ê   ! " $ % M0 ' N?    ) \]1 2 G % H   	 ¡  FGHBC a JD _`E Eè ê   ! " $ % M0 ' NG     \]: ;   	 3     BC C  ± D  E Eè ê   ! " $ % & # ' ( H    ) \]: ; G % H   	 ¡  FGHBC b JD cdE Eè ê   ! " $ % M0 ' NI    ) \]: ; G % H   	 ¡  FGHBC e JD cdE Eè ê   ! " $ % M0 ' NQ     fgÇ É   	 3     BC ã  ± D  E Eè ê   ! " $ % & # ' ( R    ) fgÇ É G % H   	 ¡  FGHBC h JD ijE Eè ê   ! " $ % M0 ' NS    ) fgÇ É G % H   	 ¡  FGHBC k JD ijE Eè ê   ! " $ % M0 ' N[     fgÇ É   	 3     BC ã  ± D  E Eè ê   ! " $ % & # ' ( \    ) fgÇ É G % H   	 ¡  FGHBC l JD mnE Eè ê   ! " $ % M0 ' N]    ) fgÇ É G % H   	 ¡  FGHBC l JD mnE Eè ê   ! " $ % M0 ' Ne     fg1 2   	 3     BC 4  ± D  E Eè ê   ! " $ % & # ' ( f    ) fg1 2 G % H   	 ¡  FGHBC o JD pqE Eè ê   ! " $ % M0 ' Ng    ) fg1 2 G % H   	 ¡  FGHBC r JD pqE Eè ê   ! " $ % M0 ' Nó     \]1 2   	 3     BC 4  ± D  E Eè ê   ! " $ % & # ' ( ò    ) \]1 2 G % H   	 ¡  FGHBC s JD tuE Eè ê   ! " $ % M0 ' N°     \]Ç É   	 3     BC ã  ± D  E Eè ê   ! " $ % & # ' ( ¢    ) \]Ç É G % H   	 ¡  FGHBC v JD wxE Eè ê   ! " $ % M0 ' N´     fgÇ É   	 3     BC ã  ± D  E Eè ê   ! " $ % & # ' ( ¨    ) fgÇ É G % H   	 ¡  FGHBC y JD z{E Eè ê   ! " $ % M0 ' Nµ     |1 2 }  	 3     BC 4  ± D  E Eè ê   ! " $ % & # ' ( ∂   Á ~Ù ÄÅ ) |1 2 }Ï G % H   	 ¡  FGHBC Ç  JDÉÑE Eè ê   ! " 0 $ % M' Nø     |1 2 Ö  	 3     BC 4  JD  E Eè ê   ! " $ % & # ' ( ¿   Á ÜÙ áàÖ ) |1 2 ÖÏ G % H   	 ¡  FGHBC â  JDäãE Eè ê   ! " 0 $ % M' N…     |1 2 }  	 3     BC 4  ± D  E Eè ê   ! " $ % & # ' (     Á åÙ çé} ) |1 2 }Ï G % H   	 ¡  FGHBC è  JDêëE Eè ê   ! " 0 $ % M' N‹
+      )   	 —  íìîïñ? óòôöõ ú  ùûüè ê   ! " 0 $ % †' °Ê 1 2 ) G % H 	 3   „ L  ¢ £§•Ø     Å ¶ß®  	 3     …   ? @ A B À Ã  © ± ™  E ´è ê   ! " # $ % & ' ( ∞   Á ¨Ù ≠Æ ) Å ¶ß®Ï   	 —  Ø  …   ? @ A B À Ã  ∞  ±™≤≥E ´è ê   ! " ¥' µπ     Å 1 2 ∂  	 3     …   ? @ A B À Ã  4  ± ™  E ´è ê   ! " # $ % & ' ( ∫    ) Å 1 2 ∂  	 —  Ø  …   ? @ A B À Ã  ∑  ±™∏πE ´è ê   ! " ¥' µ√     Å ¶ß∫  	 3     …   ? @ A B À Ã  © ± ™  E ´è ê   ! " # $ % & ' ( ƒ   Á ªÙ áº ) Å ¶ß∫Ï   	 —  Ø  …   ? @ A B À Ã  Ω  ±™æøE ´è ê   ! " ¥' µÕ     Å Ç É ¿  	 3     …   ? @ A B À Ã  ã  ± ™  E ´è ê   ! " # $ % & ' ( Œ    ) Å Ç É ¿‚   	 —  Ø  …   ? @ A B À Ã  ¡  ±™¬√E ´è ê   ! " ¥' µ◊     Å ¶ßƒ  	 3     …   ? @ A B À Ã  © ± ™  E ´è ê   ! " # $ % & ' ( ÿ    ) Å ¶ßƒ  	 —  Ø  …   ? @ A B À Ã  ≈  ±™∆«E ´è ê   ! " ¥' µ·     Å ¶ß»  	 3     …   ? @ A B À Ã  © ± ™  E ´è ê   ! " # $ % & ' ( ‚   Á ¨Ù …  ) Å ¶ß»Ï   	 —  Ø  …   ? @ A B À Ã  À  ±™≤≥E ´è ê   ! " ¥' µÎ     Å 1 2 Ã  	 3     …   ? @ A B À Ã  4  ± ™  E ´è ê   ! " # $ % & ' ( Ï    ) Å 1 2 Ã  	 —  Ø  …   ? @ A B À Ã  Õ  ±™ŒœE ´è ê   ! " –' µı     Å 1 2 —  	 3     …   ? @ A B À Ã  4  ± ™  E ´è ê   ! " # $ % & ' ( ˆ    ) Å 1 2 —  	 —  Ø  …   ? @ A B À Ã  “  ±™”‘E ´è ê   ! " ¥' µm     Å Ç É Ñ   	 3     … > á à â ä  ã  ± ≤   E é è ê   ! " # $ % & ' ( n    ) Å Ç É Ñ   	 I  ë í ’… > á à â ä  ÷  ¥ ≤ ◊ÿE é è ê   ! " ∑ ' ò w     Å 1 2 Ÿ  	 3     Ö Ü á à â ä  4  ± ≤   E é è ê   ! " # $ % & ' ( x    ) Å 1 2 Ÿ  	 I  ë í ’Ö Ü á à â ä  ⁄  ¥ ≤ €‹E é è ê   ! " ∑ ' ò Å     Å 1 2 ›  	 3     Ö Ü á à â ä  4  ± ≤   E é è ê   ! " # $ % & ' ( Ç    ) Å 1 2 ›  	 I  ë í ’Ö Ü á à â ä  ﬁ  ¥ ≤ ﬂ‡E é è ê   ! " ∑ ' ò ã     Å 1 2 ·  	 3     Ö Ü á à â ä  4  ± ≤  ÿ E é è ê   ! " # $ % & ' ( å    ) Å 1 2 ·  	 I  ë í ’Ö Ü á à â ä  ‚  ¥ ≤ „‰E é è ê   ! " ∑ ' ò ï     Å 1 2 Â  	 3     Ö Ü á à â ä  4  ± ≤  ÿ E é è ê   ! " # $ % & ' ( ñ    ) Å 1 2 Â  	 I  ë í ’Ö Ü á à â ä  Ê  ¥ ≤ ÁËE é è ê   ! " ∑ ' ò ü
+    È Ç É Í  	 3     BC ã  ±   è ê   ! " # $ % & ' ( †    È) Ç É ÍG % H   	 ¡  FGHBC Î  ÏÌÓè ê   ! " 0 ' Ô°    È) Ç É ÍG % H   	 ¡  FGHBC   ÏÌÓè ê   ! " 0 ' Ô©
+    È 1 2 Í  	 3     BC 4  ±   è ê   ! " # $ % & ' ( ™    È) 1 2 ÍG % H   	 ¡  FGHBC Ò  ÏÚÛè ê   ! " 0 ' Ô´    È) 1 2 ÍG % H   	 ¡  FGHBC Ù  ÏÚÛè ê   ! " 0 ' ÔΩ	    Å  Ç É ı  	 3     ˆ˜á à ¯˘À Ã  ã    ±   ! " # $ % & ' ( æ
+    Å ) Ç É ı‚ G % H   	 —  ˙5 6 ˆ˜á à ¯˘À Ã  ˚  ¸˝  ! " 0 ' Ô«	      1 2 ˛  	 3     Ω æ  4    ±   ! " # $ % & ' ( »
+     ) 1 2 ˛‚ G % H   	 ¡   5 6 Ω æ  ˇ     ! " 0 $ % ' Ô?    9  : ; ›   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( @    9  : ; › ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E – è ê   ! " ' Q A   Á Ù 	
+ 9  : ; › Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E – è ê   ! " $ % ' Q C    9  Ç É ›   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  ù D   E – è ê   ! " # $ % & ' ( D    9  Ç É › ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E – è ê   ! " ' Q E   Á  9  Ç É › Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E – è ê   ! " $ % ' Q I    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( J   R %  9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E – è ê   ! " P ' Q K   R %  9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E – è ê   ! " P $ % ' Q M    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( N   R %  9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E – è ê   ! " P ' Q O   R %  9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E – è ê   ! " P $ % ' Q S    9  u v   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( T    9  u v G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E – è ê   ! " 0 ' Q W    9  u v   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( X    9  u v G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E – è ê   ! " 0 ' Q ]    9  u v ˛   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( ^    9  u v ˛ ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D !"E – è ê   ! " 0 ' Q _   Á #Ù $% 9  u v ˛ Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D !"E – è ê   ! " 0 ' Q a    9  u v ˛   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( b    9  u v ˛ ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  &  D '(E – è ê   ! " 0 ' Q c   Á #Ù $% 9  u v ˛ Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  &  D '(E – è ê   ! " 0 ' Q g    9  u v   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( h    9  u v G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  )  D *+E – è ê   ! " 
+' Q l    9  u v G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ,  D *+E – è ê   ! " 
+' Q q    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( r    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  -  D ./E – è ê   ! " ' Q u    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( v    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  0  D 12E – è ê   ! " $ % 3' Q {    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( |    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  4  D 56E – è ê   ! " ' Q     9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( Ä    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  7  D 56E – è ê   ! " ' Q Ö    9  : ; ˙   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( Ü    9  : ; ˙ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  8  D 9:E – è ê   ! " ' Q â    9  : ; ˙   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( ä    9  : ; ˙ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ;  D 9:E – è ê   ! " ' Q è    9  u v   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( ê    9  u v G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  <  D =>E – è ê   ! " ' Q ì    9  u v ?  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( î    9  u v ?  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  @  D ABE – è ê   ! " 0 ' Q ô    9  u v ,  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( ö    9  u v ,G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  C  D DEE – è ê   ! " F' Q ù    9  u v ,  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( û    9  u v ,G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  G  D DEE – è ê   ! " F' Q £    9  u v (  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( §    9  u v (G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  H  D IJE – è ê   ! " K' Q ß    9  u v (  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( ®    9  u v (G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  H  D IJE – è ê   ! " K' Q ≠    Å  1 2 »   	 3     …   ? @ A B À Ã Õ Œ  4  ù D   E – è ê   ! " # $ % & ' ( Æ    Å ) 1 2 » G % H   	 —  J K L …   ? @ A B À Ã Õ Œ  L  D MNE – è ê   ! " ÷ ' Q ±    Å  1 2 »   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  4  ù D   E – è ê   ! " # $ % & ' ( ≤    Å ) 1 2 » G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  L  D MNE – è ê   ! " ÷ ' Q ∑    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( ∏    9  : ; ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  O  D PQE – è ê   ! " "' Q π   Á RSTUR % V 9  : ; Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  O  D PQE – è ê   ! " "' Q ª    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( º    9  : ; ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  W  D PQE – è ê   ! " "' Q Ω   Á RSTUR % V 9  : ; Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  W  D PQE – è ê   ! " "' Q ¡    Å  1 2 ◊   	 3     …   ? @ A B À Ã Õ Œ  4  ù D   E – è ê   ! " # $ % & ' ( ¬    Å ) 1 2 ◊ G % H   	 —  J K L …   ? @ A B À Ã Õ Œ  X  D YZE – è ê   ! " ‹ ' Q À    9  u v #  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( Ã    9  u v #G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  [  D \]E – è ê   ! " "' Q œ    9  u v #  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ù D   E – è ê   ! " # $ % & ' ( –    9  u v #G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  [  D \]E – è ê   ! " ^' Q ’	    È _1 2   	 3     Ö Ü á à â ä  4    ù   ! " # $ % & ' ( ÷
+    È) _1 2 G % H   	 I  `abÖ Ü á à â ä  c  de  ! " 0 ' Ô	     @A1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( 	    ) @A1 2 G % H   	 ¡  FGHBC g hf ijE Eè ê   ! " 0 ' N		    ) @A1 2 G % H   	 ¡  FGHBC k hf ijE Eè ê   ! " 0 ' N%	     \]1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( &	    ) \]1 2 G % H   	 ¡  FGHBC l hf mnE Eè ê   ! " 0 ' N'	    ) \]1 2 G % H   	 ¡  FGHBC o hf mnE Eè ê   ! " 0 ' N/	     \]Ç É   	 3     BC ã  ù f  E Eè ê   ! " # $ % & ' ( 0	    ) \]Ç É G % H   	 ¡  FGHBC p hf qrE Eè ê   ! " 0 ' N1	    ) \]Ç É G % H   	 ¡  FGHBC s hf qrE Eè ê   ! " 0 ' Na	     @A1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( b	    ) @A1 2 G % H   	 ¡  FGHBC t hf uvE Eè ê   ! " 0 ' Nc	    ) @A1 2 G % H   	 ¡  FGHBC w hf uvE Eè ê   ! " 0 ' Nk	     @A1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( l	    ) @A1 2 G % H   	 ¡  FGHBC x hf yzE Eè ê   ! " 0 ' Nm	    ) @A1 2 G % H   	 ¡  FGHBC { hf yzE Eè ê   ! " 0 ' Nu	     \]1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( v	    ) \]1 2 G % H   	 ¡  FGHBC | hf }~E Eè ê   ! " 0 ' Nw	    ) \]1 2 G % H   	 ¡  FGHBC  hf }~E Eè ê   ! " 0 ' N	     \]1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( Ä	    ) \]1 2 G % H   	 ¡  FGHBC Ä hf ÅÇE Eè ê   ! " 0 ' NÅ	    ) \]1 2 G % H   	 ¡  FGHBC Ä hf ÅÇE Eè ê   ! " 0 ' Nâ	     fg1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( ä	    ) fg1 2 G % H   	 ¡  FGHBC É hf ÑÖE Eè ê   ! " 0 ' Nã	    ) fg1 2 G % H   	 ¡  FGHBC Ü hf ÑÖE Eè ê   ! " 0 ' Nì	     fg1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( î	    ) fg1 2 Ï G % H   	 ¡  FGHBC á hf àâE Eè ê   ! " 0 ' Nï	   Á äÙ ãå ) fg1 2 Ï G % H   	 ¡  FGHBC ç hf àâE Eè ê   ! " 0 ' Nù	     |1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( û	   Á åÙ çé} ) |1 2 Ï G % H   	 ¡  FGHBC è  hféèE Eè ê   ! " ê' Nß	     |1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( ®	   Á ÜÙ áàÖ ) |1 2 Ï G % H   	 ¡  FGHBC â  hfëíE Eè ê   ! " ê' N±	     |1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( ≤	   Á ~Ù ÄÅ ) |1 2 Ï G % H   	 ¡  FGHBC Ç  hfìîE Eè ê   ! " ê' Nƒ	
+    ) [ \   	 —  íìîïñ? óòôöõ ï  ñóòè ê   ! " 0 ' °Œ	 Ç É ) G % H 	 3   „ L  ô öõúÌ	     fg1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( Ó	    ) fg1 2 G % H   	 ¡  FGHBC ù hf ûüE Eè ê   ! " 0 ' NÔ	    ) fg1 2 G % H   	 ¡  FGHBC † hf ûüE Eè ê   ! " 0 ' N˜	     fg1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( ¯	    ) fg1 2 G % H   	 ¡  FGHBC ° hf ¢£E Eè ê   ! " 0 ' N˘	    ) fg1 2 G % H   	 ¡  FGHBC § hf ¢£E Eè ê   ! " 0 ' N
+     \]Ç É   	 3     BC ã  ù f  E Eè ê   ! " # $ % & ' ( 
+    ) \]Ç É G % H   	 ¡  FGHBC • hf ¶ßE Eè ê   ! " 0 ' N
+    ) \]Ç É G % H   	 ¡  FGHBC ® hf ¶ßE Eè ê   ! " 0 ' Ne
+     Å ¶ß»  	 3     …   ? @ A B À Ã  © ù ©  E ´è ê   ! " # $ % & ' ( f
+    ) Å ¶ß»  	 —  Ø  …   ? @ A B À Ã  ™  ´©¨≠E ´è ê   ! " 0 ' µó
+     Å ¶ß®  	 3     …   ? @ A B À Ã  © ù ©  E ´è ê   ! " # $ % & ' ( ò
+    ) Å ¶ß®  	 —  Ø  …   ? @ A B À Ã  Æ  ´©Ø∞E ´è ê   ! " 0 ' µ°
+     Å ¶ß∂  	 3     …   ? @ A B À Ã  © ù ©  E ´è ê   ! " # $ % & ' ( ¢
+    ) Å ¶ß∂  	 —  Ø  …   ? @ A B À Ã  ±  ´©≤≥E ´è ê   ! " 0 ' µ´
+     Å ¶ß∫  	 3     …   ? @ A B À Ã  © ù ©  E ´è ê   ! " # $ % & ' ( ¨
+    ) Å ¶ß∫  	 —  Ø  …   ? @ A B À Ã  ¥  ´©µ∂E ´è ê   ! " 0 ' µµ
+    ) Å Ç É ¿  	 —  Ø  …   ? @ A B À Ã  ã   ´©E ´è ê   ! " 0 ' µ∂
+    ) Å Ç É ¿  	 —  Ø  …   ? @ A B À Ã  ∑  ´©∏πE ´è ê   ! " 0 ' µø
+     Å 1 2 ƒ  	 3     …   ? @ A B À Ã  4  ù ©  E ´è ê   ! " # $ % & ' ( ¿
+    ) Å 1 2 ƒ  	 —  Ø  …   ? @ A B À Ã  ∫  ´©ªºE ´è ê   ! " Ω' µ…
+    ) Å 1 2 ¿  	 —  Ø  …   ? @ A B À Ã  4   ´©E ´è ê   ! " 0 ' µ 
+    ) Å 1 2 ¿  	 —  Ø  …   ? @ A B À Ã  æ  ´©ø¿E ´è ê   ! " 0 ' µ”
+     Å ¶ß¡  	 3     …   ? @ A B À Ã  © ù ©  E ´è ê   ! " # $ % & ' ( ‘
+   Á ¬Ù √Æ ) Å ¶ß¡Ï   	 —  Ø  …   ? @ A B À Ã  ƒ  ´©≈∆E ´è ê   ! " «' µ›
+     Å 1 2 Ã  	 3     …   ? @ A B À Ã  4  ù ©  E ´è ê   ! " # $ % & ' ( ﬁ
+    ) Å 1 2 Ã  	 —  Ø  …   ? @ A B À Ã  »  ´©… E ´è ê   ! " –' µÁ
+    9  Ç É À  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  ù D   E – è ê   ! " # $ % & ' ( Ë
+    9  Ç É ÀG % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ã  D ÕŒE – è ê   ! " 0 ' Q Ò
+      Ç É œ  	 3     Ω æ  ã  ù –  E —è ê   ! " # $ % & ' ( Ú
+    )  Ç É œ  	 ¡   5 6 Ω æ  “  ”–‘’E —è ê   ! " ÷' ◊˚
+      Ç É ÿ  	 3     Ω æ  ã  ù –  E —è ê   ! " # $ % & ' ( ¸
+   Á Ÿ⁄€‹ )  Ç É ÿÏ   	 ¡   5 6 Ω æ  ›  ﬁ–ﬂ‡E —è ê   ! " ·$ % ‚' ◊      ¶ßº   	 3     Ω æ  © ù –  E —è ê   ! " # $ % & ' (     )  ¶ßº   	 ¡   5 6 Ω æ  „  ﬁ–‰ÂE —è ê   ! " Ê$ % Á' ◊      Ç É Ë  	 3     Ω æ  ã  ù –  E —è ê   ! " # $ % & ' (     )  Ç É Ë  	 ¡   5 6 Ω æ  È  ﬁ–ÍÎE —è ê   ! " Ê' ◊      : ; Ë  	 3     Ω æ  C  ù –  E —è ê   ! " # $ % & ' (     )  : ; Ë  	 ¡   5 6 Ω æ  Ï  ﬁ–ÌÓE —è ê   ! " Ê' ◊#        Ë  	 3     Ω æ    ù –  E —è ê   ! " # $ % & ' ( $    )    Ë  	 ¡   5 6 Ω æ  Ô  ﬁ–ÒE —è ê   ! " Ê' ◊K     Å ¶ßÚ  	 3     …   ? @ A B À Ã  © ù ©  E ´è ê   ! " # $ % & ' ( L    ) Å ¶ßÚ  	 —  Ø  …   ? @ A B À Ã  Û  ´©ÙıE ´è ê   ! " 0 ' µO    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( P    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  <  D =>E – è ê   ! " ' Q U     Å u v Ñ   	 3     Ö Ü á à â ä  x  ù ç   E é è ê   ! " # $ % & ' ( V    ) Å u v Ñ   	 I  ë í  Ö Ü á à â ä  ˆ  ü ç ˜¯E é è ê   ! " ¢ ' ò _     Å 1 2 Ÿ  	 3     Ö Ü á à â ä  4  ù ç   E é è ê   ! " # $ % & ' ( `    ) Å 1 2 Ÿ  	 I  ë í ’Ö Ü á à â ä  ˘  ü ç ˙˚E é è ê   ! " ¢ ' ò i     Å 1 2 ›  	 3     Ö Ü á à â ä  4  ù ç   E é è ê   ! " # $ % & ' ( j    ) Å 1 2 ›  	 I  ë í ’Ö Ü á à â ä  ˘  ü ç ¸˝E é è ê   ! " ¢ ' ò s     Å 1 2 ·  	 3     Ö Ü á à â ä  4  ù ç   E é è ê   ! " # $ % & ' ( t    ) Å 1 2 ·  	 I  ë í ’Ö Ü á à â ä  ˘  ü ç ˛ˇE é è ê   ! " ¢ ' ò }     Å 1 2 Â  	 3     Ö Ü á à â ä  4  ù ç   E é è ê   ! " # $ % & ' ( ~    ) Å 1 2 Â  	 I  ë í ’Ö Ü á à â ä  ˘  ü ç  E é è ê   ! " ¢ ' ò á
+    È 1 2 Í  	 3     BC 4  ù   è ê   ! " # $ % & ' ( à    È) 1 2 ÍG % H   	 ¡  FGHBC   è ê   ! " 0 ' Ôâ    È) 1 2 ÍG % H   	 ¡  FGHBC   è ê   ! " 0 ' Ôë
+    È 1 2 Í  	 3     BC 4  ù   è ê   ! " # $ % & ' ( í    È) 1 2 ÍG % H   	 ¡  FGHBC   	è ê   ! " 0 ' Ôì    È) 1 2 ÍG % H   	 ¡  FGHBC 
+  	è ê   ! " 0 ' Ôõ
+    È 1 2 Í  	 3     BC 4  ù   è ê   ! " # $ % & ' ( ú    È) 1 2 ÍG % H   	 ¡  FGHBC   è ê   ! " 0 ' Ôù    È) 1 2 ÍG % H   	 ¡  FGHBC   è ê   ! " 0 ' Ô•	    Å  Ç É ı  	 3     ˆ˜á à ¯˘À Ã  ã    ù   ! " # $ % & ' ( ¶
+    Å ) Ç É ıÏ G % H   	 —  ˙5 6 ˆ˜á à ¯˘À Ã      ! " 0 ' ÔØ	      1 2 ˛  	 3     Ω æ  4    ù   ! " # $ % & ' ( ∞
+     ) 1 2 ˛‚ G % H   	 ¡   5 6 Ω æ  ˇ    ! " 0 $ % ' Ô'
+    9  : ; ›   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( (    9  : ; › G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E –   ! " ' Q +
+    9  : ; ›   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( ,
+    9  : ; ›   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E –   ! " 0 $ % ' Q 1
+    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( 2   R %  9  : ; Ó G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D E –   ! " P ' Q 5
+    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( 6   R %  9  : ; Ó   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D !"E –   ! " 0 ' Q ;
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( <    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  #  D $%E –   ! " 0 ' Q ?
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( @
+    9  : ;   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  &  D '(E –   ! " 0 ' Q E
+    9  : ; ˛   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( F    9  : ; ˛ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  )  D *+E –   ! " 0 ' Q I
+    9  : ; ˛   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( J
+    9  : ; ˛   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ,  D -.E –   ! " 0 ' Q O
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( P    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  /  D 01E –   ! " 
+' Q S
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( T
+    9  : ;   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  2  D 34E –   ! " 0 ' Q Y
+    9  u v   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ß D   E –   ! " # $ % & ' ( Z    9  u v G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  5  D 67E –   ! " ' Q ]
+    9  u v   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ß D   E –   ! " # $ % & ' ( ^
+    9  u v   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  8  D 9:E –   ! " 0 ' Q c
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( d    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ;  D <=E –   ! " ' Q g
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( h
+    9  : ;   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  >  D ?@E –   ! " 0 ' Q m
+    9  u v ˙   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ß D   E –   ! " # $ % & ' ( n    9  u v ˙ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  A  D BCE –   ! " ' Q q
+    9  u v ˙   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ß D   E –   ! " # $ % & ' ( r
+    9  u v ˙   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  D  D EFE –   ! " 0 ' Q w
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( x    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  G  D HIE –   ! " ' Q Å
+    9  : ; ,  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( Ç    9  : ; ,G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  J  D KLE –   ! " F' Q ã
+    9  : ; (  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( å    9  : ; (G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  M  D NOE –   ! " K' Q ï
+    Å  1 2 »   	 3     …   ? @ A B À Ã Õ Œ  4  ß D   E –   ! " # $ % & ' ( ñ    Å ) 1 2 » G % H   	 —  J K L …   ? @ A B À Ã Õ Œ  P  D QRE –   ! " ÷ ' Q ü
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( †    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  S  D TUE –   ! " "' Q £
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( §
+    9  : ;   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  V  D WXE –   ! " 0 ' Q ©
+    Å  1 2 ◊   	 3     …   ? @ A B À Ã Õ Œ  4  ß D   E –   ! " # $ % & ' ( ™    Å ) 1 2 ◊ G % H   	 —  J K L …   ? @ A B À Ã Õ Œ  Y  D Z[E –   ! " ‹ ' Q ≥
+    9  u v #  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ß D   E –   ! " # $ % & ' ( ¥    9  u v #G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  \  D ]^E –   ! " "' Q Ω
+    9  : ; _  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( æ    9  : ; _G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  `  D abE –   ! " 0 ' Q Â     fg1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( Ê    ) fg1 2 G % H   	 ¡  FGHBC c df efE Eè ê   ! " 0 ' NÁ    ) fg1 2 G % H   	 ¡  FGHBC g df efE Eè ê   ! " 0 ' NÔ     fg1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' (     ) fg1 2 G % H   	 ¡  FGHBC h df ijE Eè ê   ! " 0 ' NÒ    ) fg1 2 G % H   	 ¡  FGHBC k df ijE Eè ê   ! " 0 ' N˘     fg1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( ˙    ) fg1 2 G % H   	 ¡  FGHBC l df mnE Eè ê   ! " 0 ' N˚    ) fg1 2 G % H   	 ¡  FGHBC o df mnE Eè ê   ! " 0 ' N     fg1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' (     ) fg1 2 G % H   	 ¡  FGHBC p df ijE Eè ê   ! " 0 ' N    ) fg1 2 G % H   	 ¡  FGHBC p df ijE Eè ê   ! " 0 ' N     \]1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' (     ) \]1 2 G % H   	 ¡  FGHBC q df rsE Eè ê   ! " 0 ' N    ) \]1 2 G % H   	 ¡  FGHBC t df rsE Eè ê   ! " 0 ' N!     \]1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( "    ) \]1 2 G % H   	 ¡  FGHBC u df vwE Eè ê   ! " 0 ' N#    ) \]1 2 G % H   	 ¡  FGHBC x df vwE Eè ê   ! " 0 ' N+     \]1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( ,    ) \]1 2 G % H   	 ¡  FGHBC y df z{E Eè ê   ! " 0 ' N-    ) \]1 2 G % H   	 ¡  FGHBC | df z{E Eè ê   ! " 0 ' N5     \]1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( 6    ) \]1 2 G % H   	 ¡  FGHBC } df ~E Eè ê   ! " 0 ' N7    ) \]1 2 G % H   	 ¡  FGHBC Ä df ~E Eè ê   ! " 0 ' NI     @A1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( J    ) @A1 2 G % H   	 ¡  FGHBC Å df ÇÉE Eè ê   ! " 0 ' NK    ) @A1 2 G % H   	 ¡  FGHBC Ñ df ÇÉE Eè ê   ! " 0 ' NS     @AÇ É   	 3     BC ã  ß f  E Eè ê   ! " # $ % & ' ( T    ) @AÇ É G % H   	 ¡  FGHBC Ö df ÜáE Eè ê   ! " 0 ' NU    ) @AÇ É G % H   	 ¡  FGHBC à df ÜáE Eè ê   ! " 0 ' N]     @A1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( ^    ) @A1 2 G % H   	 ¡  FGHBC â df äãE Eè ê   ! " 0 ' N_    ) @A1 2 G % H   	 ¡  FGHBC å df äãE Eè ê   ! " 0 ' Ng     @AÇ É   	 3     BC ã  ß f  E Eè ê   ! " # $ % & ' ( h    ) @AÇ É G % H   	 ¡  FGHBC ç df éèE Eè ê   ! " 0 ' Ni    ) @AÇ É G % H   	 ¡  FGHBC ê df éèE Eè ê   ! " 0 ' N{     |1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( |   Á ~Ù ÄÅ ) |1 2 Ï G % H   	 ¡  FGHBC Ç  dfëíE Eè ê   ! " ê' NÖ     |1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( Ü   Á ÜÙ áàÖ ) |1 2 Ï G % H   	 ¡  FGHBC â  dfìîE Eè ê   ! " ê' Nè     |1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( ê   Á åÙ çé} ) |1 2 Ï G % H   	 ¡  FGHBC è  dfïñE Eè ê   ! " ê' N¨
+    ) [ \   	 —  íìîïñ? óòôöõ ó  òôöè ê   ! " 0 ' °∂ Ç É ) G % H 	 3   „ L  õ úùû     Å ¶ß®  	 3     …   ? @ A B À Ã  © ß ©  E ´è ê   ! " # $ % & ' (     ) Å ¶ß®  	 —  Ø  …   ? @ A B À Ã  ü  †©°¢E ´è ê   ! " 0 ' µ/     Å ¶ß∫  	 3     …   ? @ A B À Ã  © ß ©  E ´è ê   ! " # $ % & ' ( 0    ) Å ¶ß∫  	 —  Ø  …   ? @ A B À Ã  £  †©§•E ´è ê   ! " 0 ' µM     Å ¶ß»  	 3     …   ? @ A B À Ã  © ß ©  E ´è ê   ! " # $ % & ' ( N    ) Å ¶ß»  	 —  Ø  …   ? @ A B À Ã  ¶  †©ß®E ´è ê   ! " 0 ' µk     Å 1 2 ∂  	 3     …   ? @ A B À Ã  4  ß ©  E ´è ê   ! " # $ % & ' ( l    ) Å 1 2 ∂  	 —  Ø  …   ? @ A B À Ã  ©  †©™´E ´è ê   ! " 0 ' µâ    ) Å u v ¿  	 —  Ø  …   ? @ A B À Ã  x   †©E ´è ê   ! " 0 ' µä    ) Å u v ¿  	 —  Ø  …   ? @ A B À Ã  ¨  †©≠ÆE ´è ê   ! " 0 ' µì    ) Å 1 2 ¿  	 —  Ø  …   ? @ A B À Ã  4   †©E ´è ê   ! " 0 ' µî    ) Å 1 2 ¿  	 —  Ø  …   ? @ A B À Ã  Ø  †©∞±E ´è ê   ! " 0 ' µù    ) Å 1 2 ¿  	 —  Ø  …   ? @ A B À Ã  4   †©E ´è ê   ! " 0 ' µû    ) Å 1 2 ¿  	 —  Ø  …   ? @ A B À Ã  ≤  †©≥¥E ´è ê   ! " 0 ' µß     Å 1 2 ƒ  	 3     …   ? @ A B À Ã  4  ß ©  E ´è ê   ! " # $ % & ' ( ®    ) Å 1 2 ƒ  	 —  Ø  …   ? @ A B À Ã  µ  †©∂∑E ´è ê   ! " Ω' µª     Å 1 2 ¡  	 3     …   ? @ A B À Ã  © ß ©  E ´è ê   ! " # $ % & ' ( º    ) Å 1 2 ¡  	 —  Ø  …   ? @ A B À Ã  ∏  †©π∫E ´è ê   ! " «' µ≈     Å 1 2 Ã  	 3     …   ? @ A B À Ã  4  ß ©  E ´è ê   ! " # $ % & ' ( ∆    ) Å 1 2 Ã  	 —  Ø  …   ? @ A B À Ã  ª  †©ºΩE ´è ê   ! " –' µŸ      1 2 œ  	 3     Ω æ  4  ß –  E ¿ è ê   ! " # $ % & ' ( ⁄    )  1 2 œ  	 ¡   5 6 Ω æ  æ  ø–¿¡E ¿ è ê   ! " ÷' ◊„      1 2 ÿ  	 3     Ω æ  4  ß –  E ¿ è ê   ! " # $ % & ' ( ‰    )  1 2 ÿ  	 ¡   5 6 Ω æ  ¬  √–ƒ≈E ¿ è ê   ! " ·' ◊Ì      1 2 º   	 3     Ω æ  4  ß –  E ¿ è ê   ! " # $ % & ' ( Ó    )  1 2 º   	 ¡   5 6 Ω æ  ∆  √–«»E ¿ è ê   ! " Ê$ % Á' ◊)	    Å  1 2 ı  	 3     ˆ˜á à ¯˘À Ã  4    ß   ! " # $ % & ' ( *
+    Å ) 1 2 ı‚ G % H   	 —  ˙5 6 ˆ˜á à ¯˘À Ã  …   À  ! " 0 ' Ô3	      1 2 ˛  	 3     Ω æ  4    ß   ! " # $ % & ' ( 4
+     ) 1 2 ˛‚ G % H   	 ¡   5 6 Ω æ  ˇ  ÃÕ  ! " 0 $ % ' Ô=     Å Ç É Ñ   	 3     Ö Ü á à â ä  ã  ß ç   E é è ê   ! " # $ % & ' ( >    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  Œ  © ç œ–E é è ê   ! " ¨ ' ò G     Å 1 2   	 3     Ö Ü á à â ä  4  ß ç   E é è ê   ! " # $ % & ' ( H    ) Å 1 2   	 I  ë í ’Ö Ü á à â ä  —  © ç “”E é è ê   ! " 0 ' ò o
+    È 1 2 Í  	 3     BC 4  ß   è ê   ! " # $ % & ' ( p    È) 1 2 ÍG % H   	 ¡  FGHBC ‘  ’÷◊è ê   ! " 0 ' Ôq    È) 1 2 ÍG % H   	 ¡  FGHBC ÿ  ’÷◊è ê   ! " 0 ' Ôy
+    È 1 2 Í  	 3     BC 4  ß   è ê   ! " # $ % & ' ( z    È) 1 2 ÍG % H   	 ¡  FGHBC Ÿ  ’⁄€è ê   ! " 0 ' Ô{    È) 1 2 ÍG % H   	 ¡  FGHBC ‹  ’⁄€è ê   ! " 0 ' ÔÉ
+    È ¶ßÍ  	 3     BC © ß   è ê   ! " # $ % & ' ( Ñ    È) ¶ßÍG % H   	 ¡  FGHBC ›  ’ﬁﬂè ê   ! " 0 ' ÔÖ    È) ¶ßÍG % H   	 ¡  FGHBC ‡  ’ﬁﬂè ê   ! " 0 ' Ôç
+    È ¶ßÍ  	 3     BC © ß   è ê   ! " # $ % & ' ( é    È) ¶ßÍG % H   	 ¡  FGHBC ·  ’‚„è ê   ! " 0 ' Ôè    È) ¶ßÍG % H   	 ¡  FGHBC ‰  ’‚„è ê   ! " 0 ' Ôó
+    È Ç É Í  	 3     BC ã  ß   è ê   ! " # $ % & ' ( ò    È) Ç É ÍG % H   	 ¡  FGHBC Â  ’ÊÁè ê   ! " 0 ' Ôô    È) Ç É ÍG % H   	 ¡  FGHBC Ë  ’ÊÁè ê   ! " 0 ' Ô
+    9  : ; ›   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' (     9  : ; › G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  È  ÍD ÎÏE –   ! " ' Q 
+    9  u v ›   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  å D   E –   ! " # $ % & ' ( 
+    9  u v ›   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ì  ÍD ÓÔE –   ! " 0 $ % ' Q 
+    9  Ç É Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' (    R % Ò 9  Ç É Ó G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ú  ÍD ÛÙE –   ! " P ' Q 
+    9  Ç É Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' (    R % Ò 9  Ç É Ó G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ú  ÍD ıˆE –   ! " P ' Q #
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' ( $    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ˜  ÍD ¯˘E –   ! " 0 ' Q '
+    9  Ç É   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( (
+    9  Ç É   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ˙  ÍD ˚¸E –   ! " 0 ' Q -
+    9  : ; ˛   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' ( .    9  : ; ˛ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ˝  ÍD ˛ˇE –   ! " 0 ' Q 1
+    9  Ç É ˛   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( 2
+    9  Ç É ˛   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ÍD E –   ! " 0 ' Q 7
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' ( 8    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ÍD E –   ! " 
+' Q ;
+    9  u v   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  å D   E –   ! " # $ % & ' ( <
+    9  u v   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ÍD E –   ! " 0 ' Q A
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' ( B    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  	  ÍD 
+E –   ! " ' Q E
+    9  Ç É   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( F
+    9  Ç É   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ÍD E –   ! " 0 ' Q K
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' ( L    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ÍD E –   ! " ' Q O
+    9  u v   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  å D   E –   ! " # $ % & ' ( P
+    9  u v   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ÍD E –   ! " 0 ' Q U
+    9  : ; ˙   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' ( V    9  : ; ˙ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ÍD E –   ! " ' Q Y
+    9  Ç É ˙   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( Z
+    9  Ç É ˙   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ÍD E –   ! " 0 ' Q _
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' ( `    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ÍD E –   ! " ' Q i
+    9  : ; ,  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' ( j    9  : ; ,G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    ÍD  E –   ! " F' Q m
+    9  Ç É ,  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( n
+    9  Ç É ,  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  !  ÍD "#E –   ! " 0 ' Q s
+    9  u v (  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  å D   E –   ! " # $ % & ' ( t    9  u v (G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  $  ÍD %&E –   ! " K' Q }
+    Å  1 2 »   	 3     …   ? @ A B À Ã Õ Œ  4  å D   E –   ! " # $ % & ' ( ~    Å ) 1 2 » G % H   	 —  J K L …   ? @ A B À Ã Õ Œ  '  ÍD ()E –   ! " ÷ ' Q á
+    9  : ;   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' ( à    9  : ; G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  *  ÍD +,E –   ! " "' Q ã
+    9  Ç É   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( å
+    9  Ç É   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  -  ÍD ./E –   ! " 0 ' Q ë
+    Å  1 2 ◊   	 3     …   ? @ A B À Ã Õ Œ  4  å D   E –   ! " # $ % & ' ( í    Å ) 1 2 ◊ G % H   	 —  J K L …   ? @ A B À Ã Õ Œ  0  ÍD 12E –   ! " ‹ ' Q õ
+    9  u v #  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  å D   E –   ! " # $ % & ' ( ú
+    9  u v #  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  3  ÍD 45E –   ! " 0 ' Q ü
+    9  Ç É #  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( †
+    9  Ç É #  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  6  ÍD 78E –   ! " 0 ' Q Ø
+    9  : ; 9  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  å D   E –   ! " # $ % & ' ( ∞
+    9  : ; 9  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  :  ÍD ;<E –   ! " 0 ' Q Õ     fgu v   	 3     BC x  å f  E Eè ê   ! " # $ % & ' ( Œ    ) fgu v G % H   	 ¡  FGHBC = >f ?@E Eè ê   ! " 0 ' Nœ    ) fgu v G % H   	 ¡  FGHBC A >f ?@E Eè ê   ! " 0 ' N◊     fg1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( ÿ    ) fg1 2 G % H   	 ¡  FGHBC B >f CDE Eè ê   ! " 0 ' NŸ    ) fg1 2 G % H   	 ¡  FGHBC E >f CDE Eè ê   ! " 0 ' N·     fg1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( ‚    ) fg1 2 G % H   	 ¡  FGHBC F >f GHE Eè ê   ! " 0 ' N„    ) fg1 2 G % H   	 ¡  FGHBC I >f GHE Eè ê   ! " 0 ' NÎ     fg1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( Ï    ) fg1 2 G % H   	 ¡  FGHBC J >f KLE Eè ê   ! " 0 ' NÌ    ) fg1 2 G % H   	 ¡  FGHBC M >f KLE Eè ê   ! " 0 ' Nı     fg1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( ˆ    ) fg1 2 G % H   	 ¡  FGHBC N >f OPE Eè ê   ! " 0 ' N˜    ) fg1 2 G % H   	 ¡  FGHBC Q >f OPE Eè ê   ! " 0 ' Nˇ     \]1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' (      ) \]1 2 G % H   	 ¡  FGHBC R >f STE Eè ê   ! " 0 ' N    ) \]1 2 G % H   	 ¡  FGHBC U >f STE Eè ê   ! " 0 ' N	     \]1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( 
+    ) \]1 2 G % H   	 ¡  FGHBC V >f WXE Eè ê   ! " 0 ' N    ) \]1 2 G % H   	 ¡  FGHBC Y >f WXE Eè ê   ! " 0 ' N     \]1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' (     ) \]1 2 G % H   	 ¡  FGHBC Z >f [\E Eè ê   ! " 0 ' N    ) \]1 2 G % H   	 ¡  FGHBC ] >f [\E Eè ê   ! " 0 ' N     \]1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' (     ) \]1 2 G % H   	 ¡  FGHBC ^ >f _`E Eè ê   ! " 0 ' N    ) \]1 2 G % H   	 ¡  FGHBC a >f _`E Eè ê   ! " 0 ' N'     \]1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( (    ) \]1 2 G % H   	 ¡  FGHBC b >f cdE Eè ê   ! " 0 ' N)    ) \]1 2 G % H   	 ¡  FGHBC e >f cdE Eè ê   ! " 0 ' N1     @A1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( 2    ) @A1 2 G % H   	 ¡  FGHBC f >f ghE Eè ê   ! " 0 ' N3    ) @A1 2 G % H   	 ¡  FGHBC i >f ghE Eè ê   ! " 0 ' N;     @AÇ É   	 3     BC ã  å f  E Eè ê   ! " # $ % & ' ( <    ) @AÇ É G % H   	 ¡  FGHBC j >f klE Eè ê   ! " 0 ' N=    ) @AÇ É G % H   	 ¡  FGHBC m >f klE Eè ê   ! " 0 ' NE     @A1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( F    ) @A1 2 G % H   	 ¡  FGHBC n >f opE Eè ê   ! " 0 ' NG    ) @A1 2 G % H   	 ¡  FGHBC q >f opE Eè ê   ! " 0 ' NO     @A1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( P    ) @A1 2 G % H   	 ¡  FGHBC r >f stE Eè ê   ! " 0 ' NQ    ) @A1 2 G % H   	 ¡  FGHBC u >f stE Eè ê   ! " 0 ' Nc     |1 2 Å  	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( d   Á ~Ù ÄÅ ) |1 2 ÅÏ G % H   	 ¡  FGHBC Ç  >fvwE Eè ê   ! " ê' Nm     |1 2 Ö  	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( n   Á ÜÙ áàÖ ) |1 2 ÖÏ G % H   	 ¡  FGHBC â  >fxyE Eè ê   ! " ê' Nw     |1 2 }  	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( x   Á åÙ çé} ) |1 2 }Ï G % H   	 ¡  FGHBC è  >fz{E Eè ê   ! " ê' NÅ     fg1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( Ç    ) fg1 2 G % H   	 ¡  FGHBC | >f }~E Eè ê   ! " 0 ' NÉ    ) fg1 2 G % H   	 ¡  FGHBC  >f }~E Eè ê   ! " 0 ' Nî
+    ) u v   	 —  íìîïñ? óòôöõ Ä  ÅÇÉè ê   ! " 0 ' °û 1 2 ) G % H 	 3   „ L  Ñ ÖÜá˘     Å ¶ß®  	 3     …   ? @ A B À Ã  © å ©  E ´è ê   ! " # $ % & ' ( ˙    ) Å ¶ß®  	 —  Ø  …   ? @ A B À Ã  à  â©äãE ´è ê   ! " 0 ' µ     Å ¶ß∫  	 3     …   ? @ A B À Ã  © å ©  E ´è ê   ! " # $ % & ' (     ) Å ¶ß∫  	 —  Ø  …   ? @ A B À Ã  å  â©çéE ´è ê   ! " 0 ' µ5     Å ¶ß»  	 3     …   ? @ A B À Ã  © å ©  E ´è ê   ! " # $ % & ' ( 6    ) Å ¶ß»  	 —  Ø  …   ? @ A B À Ã  è  â©çéE ´è ê   ! " 0 ' µS     Å 1 2 ∂  	 3     …   ? @ A B À Ã  4  å ©  E ´è ê   ! " # $ % & ' ( T    ) Å 1 2 ∂  	 —  Ø  …   ? @ A B À Ã  ê  â©ëíE ´è ê   ! " 0 ' µ]     Å 1 2 ì  	 3     …   ? @ A B À Ã  4  å ©  E ´è ê   ! " # $ % & ' ( ^    ) Å 1 2 ì  	 —  Ø  …   ? @ A B À Ã  î  â©ïñE ´è ê   ! " 0 ' µq    ) Å u v ¿  	 —  Ø  …   ? @ A B À Ã  x   â©E ´è ê   ! " 0 ' µr    ) Å u v ¿  	 —  Ø  …   ? @ A B À Ã  ó  â©òôE ´è ê   ! " 0 ' µ{    ) Å Ç É ¿  	 —  Ø  …   ? @ A B À Ã  ã   â©E ´è ê   ! " 0 ' µ|    ) Å Ç É ¿  	 —  Ø  …   ? @ A B À Ã  ö  â©õúE ´è ê   ! " 0 ' µÖ    ) Å 1 2 ¿  	 —  Ø  …   ? @ A B À Ã  4   â©E ´è ê   ! " 0 ' µÜ    ) Å 1 2 ¿  	 —  Ø  …   ? @ A B À Ã  ù  â©ûüE ´è ê   ! " 0 ' µè     Å ¶ßƒ  	 3     …   ? @ A B À Ã  © å ©  E ´è ê   ! " # $ % & ' ( ê    ) Å ¶ßƒ  	 —  Ø  …   ? @ A B À Ã  †  â©°¢E ´è ê   ! " Ω' µ£     Å ¶ß¡  	 3     …   ? @ A B À Ã  © å ©  E ´è ê   ! " # $ % & ' ( §    ) Å ¶ß¡  	 —  Ø  …   ? @ A B À Ã  £  â©§•E ´è ê   ! " «' µ≠     Å 1 2 Ã  	 3     …   ? @ A B À Ã  4  å ©  E ´è ê   ! " # $ % & ' ( Æ    ) Å 1 2 Ã  	 —  Ø  …   ? @ A B À Ã  ¶  â©ß®E ´è ê   ! " –' µ∑     Å 1 2 Ã  	 3     …   ? @ A B À Ã  4  å ©  E ´è ê   ! " # $ % & ' ( ∏    ) Å 1 2 Ã  	 —  Ø  …   ? @ A B À Ã  ©  â©™´E ´è ê   ! " –' µ¡      1 2 œ  	 3     Ω æ  4  å –  E ¿ è ê   ! " # $ % & ' ( ¬    )  1 2 œ  	 ¡   5 6 Ω æ  ¨  ≠–ÆØE ¿ è ê   ! " ÷' ◊À      1 2 ÿ  	 3     Ω æ  4  å –  E ¿ è ê   ! " # $ % & ' ( Ã    )  1 2 ÿ  	 ¡   5 6 Ω æ  ∞  ±–≤≥E ¿ è ê   ! " ·' ◊’      1 2 º   	 3     Ω æ  4  å –  E ¿ è ê   ! " # $ % & ' ( ÷    )  1 2 º   	 ¡   5 6 Ω æ  ¥  ±–µ∂E ¿ è ê   ! " Ê$ % Á' ◊ﬂ      1 2 ∑  	 3     Ω æ  4  å –  E ¿ è ê   ! " # $ % & ' ( ‡    )  1 2 ∑  	 ¡   5 6 Ω æ  ∏  ±–π∫E ¿ è ê   ! " Ê' ◊È      : ; Ë  	 3     Ω æ  C  å –  E ¿ è ê   ! " # $ % & ' ( Í    )  : ; Ë  	 ¡   5 6 Ω æ  Ï  ±–ªºE ¿ è ê   ! " Ê' ◊%     Å 1 2 Ñ   	 3     Ö Ü á à â ä  4  å ç   E é è ê   ! " # $ % & ' ( &    ) Å 1 2 Ñ   	 I  ë í  Ö Ü á à â ä  Ω  î ç æøE é è ê   ! " ó ' ò /     Å 1 2   	 3     Ö Ü á à â ä  4  å ç   E é è ê   ! " # $ % & ' ( 0    ) Å 1 2   	 I  ë í ’Ö Ü á à â ä  7   î ç ï ñ E é è ê   ! " ó ' ò W
+    È 1 2 Í  	 3     BC 4  å   è ê   ! " # $ % & ' ( X    È) 1 2 ÍG % H   	 ¡  FGHBC ¿  ¡¬√è ê   ! " 0 ' ÔY    È) 1 2 ÍG % H   	 ¡  FGHBC ƒ  ¡¬√è ê   ! " 0 ' Ôa
+    È 1 2 Í  	 3     BC 4  å   è ê   ! " # $ % & ' ( b    È) 1 2 ÍG % H   	 ¡  FGHBC ≈  ¡∆«è ê   ! " 0 ' Ôc    È) 1 2 ÍG % H   	 ¡  FGHBC »  ¡∆«è ê   ! " 0 ' Ôk
+    È 1 2 Í  	 3     BC 4  å   è ê   ! " # $ % & ' ( l    È) 1 2 ÍG % H   	 ¡  FGHBC …  ¡ Àè ê   ! " 0 ' Ôm    È) 1 2 ÍG % H   	 ¡  FGHBC Ã  ¡ Àè ê   ! " 0 ' Ôu	    Å  Ç É ı  	 3     ˆ˜á à ¯˘À Ã  ã    å   ! " # $ % & ' ( v
+    Å ) Ç É ı‚ G % H   	 —  ˙5 6 ˆ˜á à ¯˘À Ã  Õ  Œœ  ! " 0 ' Ô	      1 2 ˛  	 3     Ω æ  4    å   ! " # $ % & ' ( Ä
+     ) 1 2 ˛‚ G % H   	 ¡   5 6 Ω æ  ˇ  –—  ! " 0 $ % ' ÔÌ	     fgÇ É   	 3     BC “     ! " # $ % & ' ( Ó	    ) fgÇ É   	 ¡  FGHBC ”  ‘’  ! " 0 ' NÔ	    ) fgÇ É   	 ¡  FGHBC ÷  ‘’  ! " 0 ' N˜	     fgÇ É   	 3     BC “     ! " # $ % & ' ( ¯	    ) fgÇ É   	 ¡  FGHBC ◊  ÿŸ  ! " 0 ' N˘	    ) fgÇ É   	 ¡  FGHBC ⁄  ÿŸ  ! " 0 ' N	     \]Ç É   	 3     BC “     ! " # $ % & ' ( 	    ) \]Ç É   	 ¡  FGHBC €  ‹  ! " 0 ' N	    ) \]Ç É   	 ¡  FGHBC ›  ‹  ! " 0 ' N	     \]Ç É   	 3     BC “     ! " # $ % & ' ( 	    ) \]Ç É   	 ¡  FGHBC ﬁ  ﬂ  ! " 0 ' N	    ) \]Ç É   	 ¡  FGHBC ‡  ﬂ  ! " 0 ' N	     \]Ç É   	 3     BC “     ! " # $ % & ' ( 	    ) \]Ç É   	 ¡  FGHBC ·  ‚  ! " 0 ' N	    ) \]Ç É   	 ¡  FGHBC „  ‚  ! " 0 ' N	     @AÇ É   	 3     BC “     ! " # $ % & ' (  	    ) @AÇ É   	 ¡  FGHBC ‰  Â  ! " 0 ' N!	    ) @AÇ É   	 ¡  FGHBC Ê  Â  ! " 0 ' N)	     @AÇ É   	 3     BC “     ! " # $ % & ' ( *	    ) @AÇ É   	 ¡  FGHBC Á  Ë  ! " 0 ' N+	    ) @AÇ É   	 ¡  FGHBC È  Ë  ! " 0 ' N3	     @AÇ É   	 3     BC “     ! " # $ % & ' ( 4	    ) @AÇ É   	 ¡  FGHBC Í  Î  ! " 0 ' N5	    ) @AÇ É   	 ¡  FGHBC Ï  Î  ! " 0 ' NG	     \]Ç É   	 3     BC “     ! " # $ % & ' ( H	    ) \]Ç É   	 ¡  FGHBC Ì  Ó  ! " 0 ' NI	    ) \]Ç É   	 ¡  FGHBC Ô  Ó  ! " 0 ' NQ	     @AÇ É   	 3     BC “     ! " # $ % & ' ( R	    ) @AÇ É   	 ¡  FGHBC   Ò  ! " 0 ' NS	    ) @AÇ É   	 ¡  FGHBC Ú  Ò  ! " 0 ' N[    ) Å : ; ¿  	 —  Ø  …   ? @ A B À Ã  C   Û©E ´è ê   ! " 0 ' µ\    ) Å : ; ¿  	 —  Ø  …   ? @ A B À Ã  Ù  Û©ıˆE ´è ê   ! " 0 ' µe    ) Å : ; ¿  	 —  Ø  …   ? @ A B À Ã  C   Û©E ´è ê   ! " 0 ' µf    ) Å : ; ¿  	 —  Ø  …   ? @ A B À Ã  ˜  Û©¯˘E ´è ê   ! " 0 ' µo    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ã   ˙ç E é è ê   ! " 0 ' ò p    ) Å Ç É Ñ   	 I  ë í  Ö Ü á à â ä  ˚  ˙ç ¸˝E é è ê   ! " 0 ' ò y    È ˛ˇ   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ   D  E – è ê   ! " # $ % & ' ( z    È) ˛ˇ   	 
+  J ˜	
+   D E – è ê   ! " 0 ' Q {
+    u v     	 3      x  å   è ê   ! " # $ % & ' ( |	    u v  )   	      è ê   ! " 0 Ö
+    u v     	 3      x  å   è ê   ! " # $ % & ' ( Ü	    u v  )   	      è ê   ! " 0 è	    u v  ) Ï   	       !è ê   ! " 0 ê	    u v  ) Ï   	    "  !è ê   ! " 0 e     \]1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( f    ) \]1 2 G % H   	 ¡  FGHBC # hf $%E Eè ê   ! " 0 ' Ng    ) \]1 2 G % H   	 ¡  FGHBC & hf $%E Eè ê   ! " 0 ' No     @A1 2   	 3     BC 4  ù f  E Eè ê   ! " # $ % & ' ( p    ) @A1 2 G % H   	 ¡  FGHBC ' hf ()E Eè ê   ! " 0 ' Nq    ) @A1 2 G % H   	 ¡  FGHBC * hf ()E Eè ê   ! " 0 ' Nc    9  [ \ Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ^  ± œ   E – è ê   ! " # $ % & ' ( d   R % + 9  [ \ Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ” œ Ò Ú E – è ê   ! " P ' Q e   R % + 9  [ \ Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ” œ Ò Ú E – è ê   ! " P ˜ ¯ ˘ ' Q m    9  [ \ Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ^  ± œ   E – è ê   ! " # $ % & ' ( n   R % , 9  [ \ Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ” œ Ò Ú E – è ê   ! " P ' Q o   R % , 9  [ \ Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ” œ Ò Ú E – è ê   ! " P ˜ ¯ ˘ ' Q w    9  [ \ Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ^  ± œ   E – è ê   ! " # $ % & ' ( x   R % - 9  [ \ Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ” œ Ò Ú E – è ê   ! " P ' Q y   R % - 9  [ \ Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ” œ Ò Ú E – è ê   ! " P ˜ ¯ ˘ ' Q Å    9  [ \ Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ^  ± œ   E – è ê   ! " # $ % & ' ( Ç   R % . 9  [ \ Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ” œ Ò Ú E – è ê   ! " P ' Q É   R % . 9  [ \ Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     ” œ Ò Ú E – è ê   ! " P ˜ ¯ ˘ ' Q «    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( »   R % / 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D 01E – è ê   ! " P ' Q …   R % / 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D 01E – è ê   ! " P $ % ' Q À    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( Ã   R % 2 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D 34E – è ê   ! " P ' Q Õ   R % 2 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D 34E – è ê   ! " P $ % ' Q —    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( “   R % 5 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D 67E – è ê   ! " P ' Q ”   R % 5 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D 67E – è ê   ! " P $ % ' Q ’    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( ÷   R % 8 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D 9:E – è ê   ! " P ' Q ◊   R % 8 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D 9:E – è ê   ! " P $ % ' Q €    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( ‹   R % ; 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D <=E – è ê   ! " P ' Q ›   R % ; 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D <=E – è ê   ! " P $ % ' Q ﬂ    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( ‡   R % > 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D ?@E – è ê   ! " P ' Q ·   R % > 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D ?@E – è ê   ! " P $ % ' Q Â    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( Ê   R % A 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D BCE – è ê   ! " P ' Q Á   R % A 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D BCE – è ê   ! " P $ % ' Q È    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ù D   E – è ê   ! " # $ % & ' ( Í   R % D 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D EFE – è ê   ! " P ' Q Î   R % D 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D EFE – è ê   ! " P $ % ' Q !    9  ˛ˇG  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  H ù D   E – è ê   ! " # $ % & ' ( "    9  ˛ˇG  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  I  D JE – è ê   ! " 0 ' Q #    9  ˛ˇG  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  K  D JE – è ê   ! " 0 ' Q $    9  ˛ˇG  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  L  D JE – è ê   ! " 0 ' Q %    9  ˛ˇG  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  M  D JE – è ê   ! " 0 ' Q &    9  ˛ˇG  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  N  D JE – è ê   ! " 0 ' Q '    9  ˛ˇG  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  O  D JE – è ê   ! " 0 ' Q (    9  ˛ˇG  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  P  D JE – è ê   ! " 0 ' Q +
+    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( ,   R % Q 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D RSE –   ! " P ' Q -   R % Q 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D RSE –   ! " P $ % ' Q /
+    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( 0   R % Q 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D TUE –   ! " P ' Q 1   R % Q 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D TUE –   ! " P $ % ' Q 5
+    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( 6   R % V 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D WXE –   ! " P ' Q 7   R % V 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D WXE –   ! " P $ % ' Q 9
+    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( :   R % V 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D YZE –   ! " P ' Q ;   R % V 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D YZE –   ! " P $ % ' Q ?
+    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( @   R % [ 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D \]E –   ! " P ' Q A   R % [ 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D \]E –   ! " P $ % ' Q C
+    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( D   R % [ 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D ^_E –   ! " P ' Q E   R % [ 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D ^_E –   ! " P $ % ' Q I
+    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( J   R % ` 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D abE –   ! " P ' Q K   R % ` 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ    D abE –   ! " P $ % ' Q M
+    9  : ; Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  C  ß D   E –   ! " # $ % & ' ( N   R % ` 9  : ; Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D cdE –   ! " P ' Q O   R % ` 9  : ; Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ     D cdE –   ! " P $ % ' Q S    9  Ç É e  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  ù D   E – è ê   ! " # $ % & ' ( T    9  Ç É e  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  f  D gE – è ê   ! " 0 ' Q ]     Å ¶ßh  	 3     …   ? @ A B À Ã  © ù ©  E ´è ê   ! " # $ % & ' ( ^    ) Å ¶ßh  	 —  Ø  …   ? @ A B À Ã  i  ´©jE ´è ê   ! " 0 ' µg     Å ¶ßk  	 3     …   ? @ A B À Ã  © ù ©  E ´è ê   ! " # $ % & ' ( h    ) Å ¶ßk  	 —  Ø  …   ? @ A B À Ã  l  ´©mE ´è ê   ! " 0 ' µq     Å ¶ßn  	 3     …   ? @ A B À Ã  © ß ©  E ´è ê   ! " # $ % & ' ( r    ) Å ¶ßn  	 —  Ø  …   ? @ A B À Ã  o  †©pE ´è ê   ! " 0 ' µ{     Å 1 2 q  	 3     …   ? @ A B À Ã  4  ù ©  E ´è ê   ! " # $ % & ' ( |    ) Å 1 2 q  	 —  Ø  …   ? @ A B À Ã  r  ´©sE ´è ê   ! " 0 ' µÄ     Å ¶ßt  	 3     …   ? @ A B À Ã  © ß ©  E ´è ê   ! " # $ % & ' ( Å    ) Å ¶ßtÏ   	 —  Ø  …   ? @ A B À Ã  u  †©vE ´è ê   ! " 0 ' µÖ     Å 1 2 q  	 3     …   ? @ A B À Ã  4  ± ™  E ´è ê   ! " # $ % & ' ( Ü    ) Å 1 2 q  	 —  Ø  …   ? @ A B À Ã  w  ±™xyE ´è ê   ! " ¥' µè
+    9  Ç É Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( ê   R % z 9  Ç É Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ú  ÍD {|E –   ! " P ' Q ë   R % z 9  Ç É Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ú  ÍD {|E –   ! " P $ % ' Q ì
+    9  Ç É Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( î   R % z 9  Ç É Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  }  ÍD ~E –   ! " P ' Q ï   R % z 9  Ç É Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  }  ÍD ~E –   ! " P $ % ' Q ô
+    9  Ç É Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( ö   R % Ä 9  Ç É Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ú  ÍD ÅÇE –   ! " P ' Q õ   R % Ä 9  Ç É Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ú  ÍD ÅÇE –   ! " P $ % ' Q ù
+    9  Ç É Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( û   R % Ä 9  Ç É Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  }  ÍD ÉÑE –   ! " P ' Q ü   R % Ä 9  Ç É Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  }  ÍD ÉÑE –   ! " P $ % ' Q £
+    9  Ç É Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( §   R % Ö 9  Ç É Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ú  ÍD ÜáE –   ! " P ' Q •   R % Ö 9  Ç É Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ú  ÍD ÜáE –   ! " P $ % ' Q ß
+    9  Ç É Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( ®   R % Ö 9  Ç É Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  }  ÍD àâE –   ! " P ' Q ©   R % Ö 9  Ç É Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  }  ÍD àâE –   ! " P $ % ' Q ≠
+    9  Ç É Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( Æ   R % ä 9  Ç É Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ú  ÍD ãåE –   ! " P ' Q Ø   R % ä 9  Ç É Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ú  ÍD ãåE –   ! " P $ % ' Q ±
+    9  Ç É Ó   	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  ã  å D   E –   ! " # $ % & ' ( ≤   R % ä 9  Ç É Ó ‚ G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  }  ÍD çéE –   ! " P ' Q ≥   R % ä 9  Ç É Ó Ï G % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  }  ÍD çéE –   ! " P $ % ' Q M     fg1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( N    ) fg1 2 G % H   	 ¡  FGHBC è >f êëE Eè ê   ! " 0 ' NO    ) fg1 2 G % H   	 ¡  FGHBC í >f êëE Eè ê   ! " 0 ' NW     fg1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( X    ) fg1 2 G % H   	 ¡  FGHBC ì >f îïE Eè ê   ! " 0 ' NY    ) fg1 2 G % H   	 ¡  FGHBC ñ >f îïE Eè ê   ! " 0 ' Na     fg1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( b    ) fg1 2 G % H   	 ¡  FGHBC ó >f òôE Eè ê   ! " 0 ' Nc    ) fg1 2 G % H   	 ¡  FGHBC ö >f òôE Eè ê   ! " 0 ' Nk     fg1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( l    ) fg1 2 G % H   	 ¡  FGHBC õ >f úùE Eè ê   ! " 0 ' Nm    ) fg1 2 G % H   	 ¡  FGHBC û >f úùE Eè ê   ! " 0 ' Nu     @A1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( v    ) @A1 2 G % H   	 ¡  FGHBC ü >f †°E Eè ê   ! " 0 ' Nw    ) @A1 2 G % H   	 ¡  FGHBC ¢ >f †°E Eè ê   ! " 0 ' N     @A1 2   	 3     BC 4  å f  E Eè ê   ! " # $ % & ' ( Ä    ) @A1 2 G % H   	 ¡  FGHBC £ >f §•E Eè ê   ! " 0 ' NÅ    ) @A1 2 G % H   	 ¡  FGHBC ¶ >f §•E Eè ê   ! " 0 ' Nâ
+    È 1 2 Í  	 3     BC 4  å   è ê   ! " # $ % & ' ( ä    È) 1 2 ÍG % H   	 ¡  FGHBC ß  ¡®©è ê   ! " 0 ' Ôã    È) 1 2 ÍG % H   	 ¡  FGHBC ™  ¡®©è ê   ! " 0 ' Ôì
+    9  u v ´  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  å D   E –   ! " # $ % & ' ( î    9  u v ´  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ¨  ÍD ≠ÆE –   ! " 0 ' Q Øù
+    9  u v ∞  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  å D   E –   ! " # $ % & ' ( û    9  u v ∞  	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  ±  ÍD ≤≥E –   ! " 0 ' Q ØA     9 : ; ¥  	 3     Ω æ  C  ù –  E —è ê   ! " # $ % & ' ( B     9 : ; ¥  	 ¡   5 6 Ω æ  µ  ∂–∑E —è ê   ! " 0 ' ◊K     9 : ; º   	 3     Ω æ  C  ù –  E —è ê   ! " # $ % & ' ( L     9 : ; º   	 ¡   5 6 Ω æ  ∏  ∂–πE —è ê   ! " 0 ' ◊U      Ç É ∫  	 3     Ω æ  ã  ù –  E —è ê   ! " # $ % & ' ( V    )  Ç É ∫  	 ¡   5 6 Ω æ  ª  ∂–ºE —è ê   ! " 0 ' ◊_     Å : ; ∫  	 3     Ω æ  C  ù –  E —è ê   ! " # $ % & ' ( `    ) Å : ; ∫  	 ¡   5 6 Ω æ  Ω  ∂–æE —è ê   ! " 0 ' ◊i     Å ˛ˇÿ  	 3     Ω æ    ù –  E —è ê   ! " # $ % & ' ( j    ) Å ˛ˇÿ  	 ¡   5 6 Ω æ  ø  ∂–¿E —è ê   ! " 0 ' ◊s      Ç É Ë  	 3     Ω æ  ã  ù –  E —è ê   ! " # $ % & ' ( t    )  Ç É Ë  	 ¡   5 6 Ω æ  ¡  ﬁ–¬√E —è ê   ! " 0 ' ◊}      Ç É Ë  	 3     Ω æ  ã  ù –  E —è ê   ! " # $ % & ' ( ~    )  Ç É Ë  	 ¡   5 6 Ω æ  ƒ  ﬁ–≈∆E —è ê   ! " 0 ' ◊á      Ç É Ë  	 3     Ω æ  ã  ù –  E —è ê   ! " # $ % & ' ( à    )  Ç É Ë  	 ¡   5 6 Ω æ  «  ﬁ–»…E —è ê   ! " 0 ' ◊ë      Ç É Ë  	 3     Ω æ  ã  ù –  E —è ê   ! " # $ % & ' ( í    )  Ç É Ë  	 ¡   5 6 Ω æ     ﬁ–ÀÃE —è ê   ! " 0 ' ◊õ      Ç É Ë  	 3     Ω æ  “ ù –  E —è ê   ! " # $ % & ' ( ú    )  Ç É Ë  	  Õ5 6 Ω æ  Œ ﬁ– œÃE —è ê   ! " 0 ' µ•      –—Ë  	 3     Ω æ  “ ù –  E —è ê   ! " # $ % & ' ( ¶    )  –—Ë  	  Õ5 6 Ω æ  ” ﬁ– ‘ÃE —è ê   ! " 0 ' µØ     9 : ; ¥  	 3     Ω æ  C  ù –  E —è ê   ! " # $ % & ' ( ∞     9 : ; ¥  	 I  J „ L Ö Ü á à â ä  p   ∂–∑E —è ê   ! " 0 ' Q π     9 : ; ¥  	 3     Ω æ  C  ù –  E —è ê   ! " # $ % & ' ( ∫     9 : ; ¥  	 —  J „ L = > ? @ A B À Ã  d   ∂–∑E —è ê   ! " 0 ' Q 5!     \]1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( 6!    ) \]1 2 G % H   	 ¡  FGHBC ’ df ÷◊E Eè ê   ! " 0 ' N7!    ) \]1 2 G % H   	 ¡  FGHBC ÿ df ÷◊E Eè ê   ! " 0 ' N?!     @A1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( @!    ) @A1 2 G % H   	 ¡  FGHBC Ÿ df ⁄€E Eè ê   ! " 0 ' NA!    ) @A1 2 G % H   	 ¡  FGHBC ‹ df ⁄€E Eè ê   ! " 0 ' NI!     \]1 2   	 3     BC 4  ß f  E Eè ê   ! " # $ % & ' ( J!    ) \]1 2 G % H   	 ¡  FGHBC › df ﬁﬂE Eè ê   ! " 0 ' NK!    ) \]1 2 G % H   	 ¡  FGHBC ‡ df ﬁﬂE Eè ê   ! " 0 ' NS!
+    È 1 2 Í  	 3     BC 4  ß   è ê   ! " # $ % & ' ( T!    È) 1 2 ÍG % H   	 ¡  FGHBC ·  ’‚„è ê   ! " 0 ' ÔU!    È) 1 2 ÍG % H   	 ¡  FGHBC ‰  ’‚„è ê   ! " 0 ' Ô]!
+    9  u v Â  	 3     = >  ﬁ  ﬂ ‡ · Õ Œ  x  ß D   E –   ! " # $ % & ' ( ^!    9  u v ÂG % H   	 *  J „ L = >  ﬁ  ﬂ ‡ · Õ Œ  Ê  D ÁËE –   ! " 0 ' Q 
