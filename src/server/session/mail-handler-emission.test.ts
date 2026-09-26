@@ -6,13 +6,15 @@ import * as mailHandler from './mail-handler';
 /**
  * What the mail and chat handlers actually put on the wire — §7 of the audit.
  *
- * `mail.validation.test.ts` builds its own packet with `separator: '"*"'` and
- * then asserts that it contains `"*"`. It tests its own input. While the handler
- * emitted `"^"`, that suite stayed green — which is exactly why P-H1 survived
- * long enough for one frame to freeze the shared Interface Server.
+ * `mail.validation.test.ts` used to construct its packet with `separator: '"*"'`
+ * and then assert that it contained `"*"` — it tested its own input. While the
+ * handler emitted `"^"`, that suite stayed green, which is exactly why P-H1
+ * survived long enough for one frame to freeze the shared Interface Server.
+ * Since #947 that suite drives the real handlers through the protocol harness
+ * and pins the frames they emit.
  *
- * These tests observe the handlers instead. If a separator regresses, they fail;
- * a suite that constructs the packet itself never can.
+ * These tests observe the handlers too, against a mocked transport. If a
+ * separator regresses, they fail.
  */
 
 interface Captured {
