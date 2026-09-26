@@ -14,12 +14,12 @@
  * `(fUserLimit = 0) or (fMembers.Count < fUserLimit)` and answers
  * `ERROR_NotEnoughRoom = 32` when the channel is full, otherwise `NOERROR = 0`.
  *
- * Both members are functions, so every frame here carries `"^"` and a QueryId
- * and the requests are built by the real emitter (`rdoCall`) so the separator
- * and arity come from the catalogue, never from this file.
+ * Both members are functions, so every frame here carries `"^"` and a QueryId.
+ * Each request is the literal frame production emits (QueryId stripped),
+ * captured in the sibling test — never rebuilt with the emitter, so a wrong
+ * catalogue entry cannot produce a matching wrong fixture.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
@@ -44,7 +44,7 @@ function buildRdoExchanges(worldId: string): RdoExchange[] {
   return [
     {
       id: 'channel-list',
-      request: rdoCall('GetChannelList', worldId, RdoValue.string('ROOT')).toFrame(),
+      request: `C sel ${worldId} call GetChannelList "^" "%ROOT";`,
       response: `A1 res="%${CHANNEL_LIST_RAW}"`,
       matchKeys: {
         verb: 'sel',
@@ -55,9 +55,7 @@ function buildRdoExchanges(worldId: string): RdoExchange[] {
     },
     {
       id: 'join-protected-wrong-password',
-      request: rdoCall(
-        'JoinChannel', worldId, RdoValue.string(PROTECTED_CHANNEL), emptyPassword,
-      ).toFrame(),
+      request: `C sel ${worldId} call JoinChannel "^" "%${PROTECTED_CHANNEL}","%";`,
       response: 'A2 res="#13"',
       matchKeys: {
         verb: 'sel',
@@ -69,9 +67,7 @@ function buildRdoExchanges(worldId: string): RdoExchange[] {
     },
     {
       id: 'join-protected-right-password',
-      request: rdoCall(
-        'JoinChannel', worldId, RdoValue.string(PROTECTED_CHANNEL), rightPassword,
-      ).toFrame(),
+      request: `C sel ${worldId} call JoinChannel "^" "%${PROTECTED_CHANNEL}","%${CHANNEL_PASSWORD}";`,
       response: 'A3 res="#0"',
       matchKeys: {
         verb: 'sel',
@@ -83,9 +79,7 @@ function buildRdoExchanges(worldId: string): RdoExchange[] {
     },
     {
       id: 'join-open-full',
-      request: rdoCall(
-        'JoinChannel', worldId, RdoValue.string(OPEN_CHANNEL), emptyPassword,
-      ).toFrame(),
+      request: `C sel ${worldId} call JoinChannel "^" "%${OPEN_CHANNEL}","%";`,
       response: 'A4 res="#32"',
       matchKeys: {
         verb: 'sel',

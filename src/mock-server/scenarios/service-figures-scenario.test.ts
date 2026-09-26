@@ -89,6 +89,10 @@ describe('service-figures scenario — the drive', () => {
       demand: SERVICE_FIGURES_ANSWERS.demand,
     });
     expect(mock.getConsumedIds()).toEqual(new Set(['sf-rdo-demand', 'sf-rdo-supply']));
+    // Each fixture request is byte-for-byte the frame production emitted.
+    const frames = fake.sent.map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
+    expect(frames.map(f => mock.match(f)!.exchange.id)).toEqual(['sf-rdo-demand', 'sf-rdo-supply']);
+    expect(frames).toEqual(frames.map(f => mock.match(f)!.exchange.request));
   });
 
   it('emits the "^" read form with the service index as the single argument', async () => {

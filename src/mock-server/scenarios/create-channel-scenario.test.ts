@@ -156,7 +156,10 @@ describe('create-channel scenario — a free name', () => {
       .resolves.toBeUndefined();
 
     const [frame] = server.frames();
-    expect(server.rdoMock.match(frame)!.exchange.id).toBe('create-channel-free');
+    const hit = server.rdoMock.match(frame)!;
+    expect(hit.exchange.id).toBe('create-channel-free');
+    // The fixture request is byte-for-byte the frame production emitted.
+    expect(frame).toBe(hit.exchange.request);
     expect(server.fake.ctx.setCurrentChannel).toHaveBeenCalledWith(FREE_CHANNEL);
   });
 
@@ -202,7 +205,10 @@ describe('create-channel scenario — a taken name', () => {
       .resolves.toBeUndefined();
 
     const [frame] = server.frames();
-    expect(server.rdoMock.match(frame)!.exchange.id).toBe('create-channel-taken');
+    const hit = server.rdoMock.match(frame)!;
+    expect(hit.exchange.id).toBe('create-channel-taken');
+    // The fixture request is byte-for-byte the frame production emitted.
+    expect(frame).toBe(hit.exchange.request);
     expect(server.fake.ctx.setCurrentChannel).toHaveBeenCalledWith(TAKEN_CHANNEL);
   });
 

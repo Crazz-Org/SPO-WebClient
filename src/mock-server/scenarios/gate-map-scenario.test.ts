@@ -131,6 +131,17 @@ describe('gate-map scenario — the drive', () => {
       RdoValue.string(GATE_MAP_INPUTS[2].path).format(),
     ]);
 
+    // Every frame production sent that a fixture answers equals that fixture's
+    // literal byte for byte (the cacher reads emit no frame and are not here).
+    const hits = fake.sent
+      .map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`)
+      .map(frame => ({ frame, hit: mock.match(frame) }))
+      .filter(h => h.hit !== null);
+    for (const { frame, hit } of hits) {
+      expect(frame).toBe(hit!.exchange.request);
+    }
+    expect(new Set(hits.map(h => h.hit!.exchange.id))).toEqual(new Set(['gm-rdo-inputs', 'gm-rdo-setpath-chemicals', 'gm-rdo-setpath-fuel']));
+
     const gateMapReads = fake.cacher.getPropertyList.mock.calls.filter(
       ([, names]) => names.length === 1 && names[0] === 'GateMap',
     );

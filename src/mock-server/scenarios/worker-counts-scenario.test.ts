@@ -146,7 +146,10 @@ describe('worker-counts scenario — the calls on the wire', () => {
       expect(f.packet.action).toBe(RdoAction.CALL);
       expect(f.packet.targetId).toBe(WORKER_COUNTS_BLOCK);
       expect(f.packet.args).toEqual([`"#${kind}"`]);
-      expect(rdoMock.match(f.frame)!.exchange.id).toBe(`wc-rdo-get-workers-${kind}`);
+      const hit = rdoMock.match(f.frame)!;
+      expect(hit.exchange.id).toBe(`wc-rdo-get-workers-${kind}`);
+      // The fixture request is byte-for-byte the frame production emitted.
+      expect(f.frame).toBe(hit.exchange.request);
     });
 
     // The block is read once, from the cache, and never asked for again.

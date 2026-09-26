@@ -12,8 +12,6 @@
  * painted". This is the only evidence the gateway (and this scenario) has.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
-import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
@@ -28,13 +26,9 @@ function buildRdoExchanges(result: number): RdoExchange[] {
   return [
     {
       id: 'dz-rdo-001',
-      request: rdoCall(
-        'DefineZone', WORLD_CONTEXT_ID,
-        RdoValue.int(TYCOON_ID),
-        RdoValue.int(2),
-        RdoValue.int(100), RdoValue.int(100),
-        RdoValue.int(102), RdoValue.int(102),
-      ).toFrame(),
+      // The literal frame production emits (QueryId stripped), captured in the
+      // sibling test — never rebuilt with the emitter.
+      request: `C sel ${WORLD_CONTEXT_ID} call DefineZone "^" "#${TYCOON_ID}","#2","#100","#100","#102","#102";`,
       response: `A700 res="#${result}"`,
       matchKeys: { verb: 'sel', action: 'call', member: 'DefineZone' },
     },

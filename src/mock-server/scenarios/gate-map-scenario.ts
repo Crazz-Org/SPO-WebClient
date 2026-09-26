@@ -16,12 +16,11 @@
  * OB-28-style: a mutation is proven by what was asked, not by what would have
  * answered) is the only thing that catches it.
  *
- * Every request is built by the real emitter (`rdoCall(...).toFrame()`), so the
- * separator and arity come from the catalogue, never from this file.
+ * Every request is the literal frame production emits (QueryId stripped),
+ * captured in the sibling test where one drives it — never rebuilt with the
+ * emitter, so a wrong catalogue entry cannot produce a matching wrong fixture.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
-import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
@@ -63,7 +62,7 @@ function buildRdoExchanges(): RdoExchange[] {
   return [
     {
       id: 'gm-rdo-gatemap',
-      request: rdoCall('GetPropertyList', tempObject, RdoValue.string(gateMapQuery)).toFrame(),
+      request: `C sel ${tempObject} call GetPropertyList "^" "%GateMap\t";`,
       response: `A200 res="%${GATE_MAP_VALUE}"`,
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'GetPropertyList',
@@ -72,7 +71,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'gm-rdo-inputs',
-      request: rdoCall('GetInputNames', tempObject, RdoValue.int(0), RdoValue.string('0')).toFrame(),
+      request: `C sel ${tempObject} call GetInputNames "^" "#0","%0";`,
       response: `A200 res="%${inputsWire}"`,
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'GetInputNames',
@@ -81,7 +80,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'gm-rdo-setpath-chemicals',
-      request: rdoCall('SetPath', tempObject, RdoValue.string(chemicals.path)).toFrame(),
+      request: `C sel ${tempObject} call SetPath "^" "%${chemicals.path}";`,
       response: 'A200 res="#-1"',
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'SetPath',
@@ -93,7 +92,7 @@ function buildRdoExchanges(): RdoExchange[] {
       // enabled ones. Nothing about the response distinguishes it — only the
       // fact that a correct client never sends this request does.
       id: 'gm-rdo-setpath-ore',
-      request: rdoCall('SetPath', tempObject, RdoValue.string(ore.path)).toFrame(),
+      request: `C sel ${tempObject} call SetPath "^" "%${ore.path}";`,
       response: 'A200 res="#-1"',
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'SetPath',
@@ -102,7 +101,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'gm-rdo-setpath-fuel',
-      request: rdoCall('SetPath', tempObject, RdoValue.string(fuel.path)).toFrame(),
+      request: `C sel ${tempObject} call SetPath "^" "%${fuel.path}";`,
       response: 'A200 res="#-1"',
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'SetPath',
@@ -113,7 +112,7 @@ function buildRdoExchanges(): RdoExchange[] {
       // The supply header read that follows a SetPath. cnxCount (index 7 of
       // SUPPLY_HEADER_NAMES) answers 0 so the gate opens with no connections.
       id: 'gm-rdo-header',
-      request: rdoCall('GetPropertyList', tempObject, RdoValue.string(headerQuery)).toFrame(),
+      request: `C sel ${tempObject} call GetPropertyList "^" "%${headerQuery}";`,
       response: 'A200 res="%CHEMICALS\t120\t\t\t\t\t\t0\t1\t40133600"',
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'GetPropertyList',

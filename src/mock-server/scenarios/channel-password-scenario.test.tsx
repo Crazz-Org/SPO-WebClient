@@ -45,13 +45,22 @@ function makeServerDriver() {
   rdoMock.addScenario(rdo);
 
   const fake = makeSessionCtx();
+  /** Every frame production emitted that a fixture answered, beside that fixture's literal. */
+  const matched: { id: string; frame: string; request: string }[] = [];
   fake.respond((packet) => {
     const frame = `${RdoProtocol.format(packet as never)};`;
     const hit = rdoMock.match(frame);
+    if (hit) matched.push({ id: hit.exchange.id, frame, request: hit.exchange.request });
     return hit ? hit.response.replace(/^A\d+\s+/, '') : new Error(`L1: no exchange for ${frame}`);
   });
 
-  return { fake, rdoMock };
+  return { fake, rdoMock, matched };
+}
+
+/** Each fixture request is byte-for-byte the frame production emitted for it. */
+function expectLiteralFrames(matched: { id: string; frame: string; request: string }[], ids: string[]) {
+  expect(matched.map(m => m.id)).toEqual(ids);
+  expect(matched.map(m => m.frame)).toEqual(matched.map(m => m.request));
 }
 
 /** The browser side: a ctx whose requests can be made to resolve or reject. */
@@ -109,13 +118,14 @@ describe('channel-password scenario — the catalogue', () => {
 
 describe('channel-password scenario — the channel list', () => {
   it('reports the open channel open and the protected channel protected', async () => {
-    const { fake } = makeServerDriver();
+    const { fake, matched } = makeServerDriver();
 
     await expect(getChatChannelList(fake.ctx)).resolves.toEqual([
       { name: 'Lobby', isProtected: false },
       { name: OPEN_CHANNEL, isProtected: false },
       { name: PROTECTED_CHANNEL, isProtected: true },
     ]);
+    expectLiteralFrames(matched, ['channel-list']);
   });
 });
 
@@ -207,10 +217,11 @@ describe('channel-password scenario — the UI', () => {
 
 describe('channel-password scenario — join outcomes', () => {
   it('the right password joins the protected channel', async () => {
-    const { fake } = makeServerDriver();
+    const { fake, matched } = makeServerDriver();
 
     await expect(joinChatChannel(fake.ctx, PROTECTED_CHANNEL, CHANNEL_PASSWORD)).resolves.toBeUndefined();
     expect(fake.ctx.setCurrentChannel).toHaveBeenCalledWith(PROTECTED_CHANNEL);
+    expectLiteralFrames(matched, ['join-protected-right-password']);
   });
 
   it('gives the wrong password and the full channel two different, player-readable messages', async () => {
@@ -229,6 +240,8 @@ describe('channel-password scenario — join outcomes', () => {
     expect((wrongPassword as ChannelJoinError).message).not.toBe((fullChannel as ChannelJoinError).message);
     expect((wrongPassword as ChannelJoinError).message).not.toBe(`Failed to join channel: ${ERROR_InvalidPassword}`);
     expect((fullChannel as ChannelJoinError).message).not.toBe(`Failed to join channel: ${ERROR_NotEnoughRoom}`);
+    expectLiteralFrames(wrongPasswordDriver.matched, ['join-protected-wrong-password']);
+    expectLiteralFrames(fullChannelDriver.matched, ['join-open-full']);
   });
 });
 

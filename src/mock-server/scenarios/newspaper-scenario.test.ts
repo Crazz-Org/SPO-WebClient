@@ -311,6 +311,10 @@ describe('newspaper scenario — the rated post', () => {
       'newspaper-rdo-set-rating-41123457',
     ]);
     expect(rdoMock.getConsumedIds().size).toBe(2);
+    // Each fixture request is byte-for-byte the frame production emitted.
+    expect(fake.frames.construction).toEqual(
+      fake.frames.construction.map((f) => rdoMock.match(f)!.exchange.request),
+    );
 
     // `:96-143` before `:146` — both frames were already out when the POST left.
     expect(framesAtPost).toBe(2);

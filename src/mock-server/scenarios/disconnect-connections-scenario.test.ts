@@ -127,6 +127,9 @@ describe('disconnect-connections scenario — the argument on the wire', () => {
 
     const mock = new RdoMock();
     mock.addScenario(rdo);
-    expect(mock.match(frame)!.exchange.id).toBe(id);
+    const hit = mock.match(frame)!;
+    expect(hit.exchange.id).toBe(id);
+    // The fixture request is byte-for-byte the frame production emitted.
+    expect(frame).toBe(hit.exchange.request);
   });
 });

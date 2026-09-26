@@ -156,6 +156,16 @@ describe('L1: world-login scenario driven through loginWorld()', () => {
     const setLang = harness.getSockets()[2].getCapturedWrites().find(w => w.includes('SetLanguage'));
     expect(setLang).toContain(`sel ${CONTEXT_ID} call SetLanguage "*" "%2"`);
 
+    // The fixture request is byte-for-byte the command the gateway wrote
+    // (captured without its frame delimiter; a procedure carries no QueryId).
+    const command = harness.getCapturedCommands(2).find(c => c.includes(' call SetLanguage '))!;
+    const frame = `${command.replace(/^C \d+ /, 'C ')};`;
+    const mock = new RdoMock();
+    mock.addScenario(createWorldLoginScenario(VARS, { languageId: '2' }).rdo);
+    const hit = mock.match(frame)!;
+    expect(hit.exchange.id).toBe('wlogin-rdo-setlang');
+    expect(frame).toBe(hit.exchange.request);
+
     expect(result.companies.length).toBeGreaterThan(0);
     harness.assertNoViolations();
   });

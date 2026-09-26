@@ -16,8 +16,6 @@
 import type { RdoScenario } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
-import { rdoCall } from '../../shared/rdo-frame';
-import { RdoValue } from '../../shared/rdo-types';
 
 /** The id `idof "InterfaceServer"` answers with, and the target every pre-Logon frame carries. */
 export const WORLD_LOGIN_INTERFACE_SERVER_ID = '6892548';
@@ -86,7 +84,7 @@ export function createWorldLoginScenario(
         // Voyager sends it right after RegisterEventsById (`ServerCnxHandler.pas:2792`);
         // a `procedure` answers nothing (`rdo-members.ts:221`), so the response is empty.
         id: 'wlogin-rdo-setlang',
-        request: rdoCall('SetLanguage', vars.clientViewId, RdoValue.string(languageId)).toFrame(),
+        request: `C sel ${vars.clientViewId} call SetLanguage "*" "%${languageId}";`,
         response: '',
         matchKeys: {
           verb: 'sel',

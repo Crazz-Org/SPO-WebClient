@@ -18,11 +18,11 @@
  * the block, the facility object or the cacher handle fails here rather than
  * matching by accident.
  *
- * Every request is built by the real emitter (`rdoCall`), so the separator and
- * the arity come from the catalogue rather than from this file.
+ * Every request is the literal frame production emits, captured in the sibling
+ * test — written out here, never rebuilt with the emitter, so a wrong catalogue
+ * entry cannot produce a matching wrong fixture.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
@@ -74,7 +74,7 @@ function buildRdoExchanges(): RdoExchange[] {
     const value = RdoValue.int(arg);
     return {
       id,
-      request: rdoCall('RDOSelSelected', AUTO_BUY_TARGETS.gateObjectId, value).toFrame(),
+      request: `C sel ${AUTO_BUY_TARGETS.gateObjectId} call RDOSelSelected "*" "#${arg}";`,
       // A `procedure` answers nothing — there is no reply to capture (OB-28).
       response: '',
       matchKeys: {

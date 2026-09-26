@@ -14,12 +14,11 @@
  * included — a gateway that regresses to the seven-name query matches nothing
  * here, and the drive test fails.
  *
- * Every request is built by the real emitter (`rdoCall(...).toFrame()`), so the
- * separator and arity come from the catalogue, never from this file.
+ * Every request is the literal frame production emits (QueryId stripped),
+ * captured in the sibling test where one drives it — never rebuilt with the
+ * emitter, so a wrong catalogue entry cannot produce a matching wrong fixture.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
-import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
@@ -74,7 +73,7 @@ function buildRdoExchanges(): RdoExchange[] {
   return [
     {
       id: 'po-rdo-gatemap',
-      request: rdoCall('GetPropertyList', tempObject, RdoValue.string(gateMapQuery)).toFrame(),
+      request: `C sel ${tempObject} call GetPropertyList "^" "%GateMap\t";`,
       response: 'A200 res="%1"',
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'GetPropertyList',
@@ -83,7 +82,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'po-rdo-outputs',
-      request: rdoCall('GetOutputNames', tempObject, RdoValue.int(0), RdoValue.string('0')).toFrame(),
+      request: `C sel ${tempObject} call GetOutputNames "^" "#0","%0";`,
       response: `A200 res="%${path}::\n${name}"`,
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'GetOutputNames',
@@ -92,7 +91,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'po-rdo-setpath',
-      request: rdoCall('SetPath', tempObject, RdoValue.string(path)).toFrame(),
+      request: `C sel ${tempObject} call SetPath "^" "%${path}";`,
       response: 'A200 res="#-1"',
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'SetPath',
@@ -101,7 +100,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'po-rdo-header',
-      request: rdoCall('GetPropertyList', tempObject, RdoValue.string(headerQuery)).toFrame(),
+      request: `C sel ${tempObject} call GetPropertyList "^" "%${headerQuery}";`,
       response: 'A200 res="%CHEMICALS\t485\t82\t110\t105\t320.50\t1"',
       matchKeys: {
         verb: 'sel', targetId: tempObject, action: 'call', member: 'GetPropertyList',
@@ -112,9 +111,7 @@ function buildRdoExchanges(): RdoExchange[] {
       // The trap: the query must include cnxCreatedBy0 — a gateway that still
       // asks for only the seven Voyager names matches nothing here.
       id: 'po-rdo-cnx0',
-      request: rdoCall(
-        'GetSubObjectProps', tempObject, RdoValue.int(0), RdoValue.string(cnxQuery),
-      ).toFrame(),
+      request: `C sel ${tempObject} call GetSubObjectProps "^" "#0","%${cnxQuery}";`,
       response:
         `A200 res="%${PRODUCT_OWNER_ROW.facilityName}\t${PRODUCT_OWNER_ROW.companyName}\t` +
         `${PRODUCT_OWNER_ROW.lastValue}\t${PRODUCT_OWNER_ROW.connected}\t` +

@@ -64,6 +64,10 @@ async function driveGateway(result: number): Promise<WsRespDefineZone> {
 
   expect(sent).toHaveLength(1);
   expect(mock.getConsumedIds().has('dz-rdo-001')).toBe(true);
+  // The fixture request is byte-for-byte the frame production emitted.
+  const frames = fake.sent.map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
+  expect(frames.map(f => mock.match(f)!.exchange.id)).toEqual(['dz-rdo-001']);
+  expect(frames).toEqual(frames.map(f => mock.match(f)!.exchange.request));
   return sent[0] as WsRespDefineZone;
 }
 

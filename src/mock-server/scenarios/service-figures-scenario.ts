@@ -14,11 +14,11 @@
  * and nothing but that disagreement can catch it — both sources are plausible
  * numbers in the same range.
  *
- * Every request is built by the real emitter (`rdoCall(...).toFrame()`), so the
- * separator and arity come from the catalogue, never from this file.
+ * Every request is the literal frame production emits (QueryId stripped),
+ * captured in the sibling test — never rebuilt with the emitter, so a wrong
+ * catalogue entry cannot produce a matching wrong fixture.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
@@ -42,9 +42,7 @@ function buildRdoExchanges(): RdoExchange[] {
   return [
     {
       id: 'sf-rdo-demand',
-      request: rdoCall(
-        'RDOGetDemand', SERVICE_FIGURES_BLOCK, RdoValue.int(SERVICE_FIGURES_INDEX),
-      ).toFrame(),
+      request: `C sel ${SERVICE_FIGURES_BLOCK} call RDOGetDemand "^" "#${SERVICE_FIGURES_INDEX}";`,
       response: `A200 res="#${SERVICE_FIGURES_ANSWERS.demand}"`,
       matchKeys: {
         verb: 'sel', targetId: SERVICE_FIGURES_BLOCK, action: 'call', member: 'RDOGetDemand',
@@ -53,9 +51,7 @@ function buildRdoExchanges(): RdoExchange[] {
     },
     {
       id: 'sf-rdo-supply',
-      request: rdoCall(
-        'RDOGetSupply', SERVICE_FIGURES_BLOCK, RdoValue.int(SERVICE_FIGURES_INDEX),
-      ).toFrame(),
+      request: `C sel ${SERVICE_FIGURES_BLOCK} call RDOGetSupply "^" "#${SERVICE_FIGURES_INDEX}";`,
       response: `A200 res="#${SERVICE_FIGURES_ANSWERS.supply}"`,
       matchKeys: {
         verb: 'sel', targetId: SERVICE_FIGURES_BLOCK, action: 'call', member: 'RDOGetSupply',

@@ -18,15 +18,12 @@
  * about other players — so the only place the difference can be caught is here,
  * against the frame the real gateway emits.
  *
- * Both `RDOSearchKey` requests are built by the real emitter (`rdoCall`), so the
- * fixture cannot drift from what ships, and the separator and arity come from
- * the catalogue rather than from this file. `idof` is the one exception: it
- * exists to read an object id, so it has no fire-and-forget form the emitter can
- * build (`rdo-frame.ts:180-186`) — it is written here as the other scenarios
- * write it.
+ * Every request is written out as the literal frame production emits (QueryId
+ * stripped) — never rebuilt with the emitter, so a wrong catalogue entry cannot
+ * produce a matching wrong fixture. The two `RDOSearchKey` frames are the ones
+ * the sibling test captures from the real gateway and matches back here.
  */
 
-import { rdoCall, rdoGet } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
@@ -75,13 +72,13 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
     },
     {
       id: 'ps-rdo-002',
-      request: rdoGet('RDOOpenSession', vars.directoryServerId).toFrame(),
+      request: `C sel ${vars.directoryServerId} get RDOOpenSession;`,
       response: `A1 RDOOpenSession="#${vars.directorySessionId}"`,
       matchKeys: { verb: 'sel', action: 'get', member: 'RDOOpenSession' },
     },
     {
       id: 'ps-rdo-003',
-      request: rdoCall('RDOSetCurrentKey', vars.directorySessionId, setKeyArg).toFrame(),
+      request: `C sel ${vars.directorySessionId} call RDOSetCurrentKey "^" "%${PEOPLE_SEARCH_KEY}";`,
       // `#-1` — the bucket exists, so the search that follows is issued.
       response: `A2 res="#-1"`,
       matchKeys: {
@@ -91,7 +88,7 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
     },
     {
       id: 'ps-rdo-004',
-      request: rdoCall('RDOSearchKey', vars.directorySessionId, ...prefixArgs).toFrame(),
+      request: `C sel ${vars.directorySessionId} call RDOSearchKey "^" "%*","%Alias\r\n";`,
       response: `A3 ${SEARCH_ANSWER}`,
       matchKeys: {
         verb: 'sel', action: 'call', member: 'RDOSearchKey',
@@ -100,7 +97,7 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
     },
     {
       id: 'ps-rdo-005',
-      request: rdoCall('RDOSearchKey', vars.directorySessionId, ...containsArgs).toFrame(),
+      request: `C sel ${vars.directorySessionId} call RDOSearchKey "^" "%*Crazz*","%Alias\r\n";`,
       response: `A4 ${SEARCH_ANSWER}`,
       matchKeys: {
         verb: 'sel', action: 'call', member: 'RDOSearchKey',

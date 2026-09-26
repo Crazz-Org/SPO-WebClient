@@ -121,6 +121,9 @@ describe('trade-settings scenario — the arguments on the wire', () => {
 
     const mock = new RdoMock();
     mock.addScenario(rdo);
-    expect(mock.match(frame)!.exchange.id).toBe(`trade-${slug}-${value}`);
+    const hit = mock.match(frame)!;
+    expect(hit.exchange.id).toBe(`trade-${slug}-${value}`);
+    // The fixture request is byte-for-byte the frame production emitted.
+    expect(frame).toBe(hit.exchange.request);
   });
 });
