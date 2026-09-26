@@ -95,7 +95,7 @@ function commitFile(dir: string, file: string, body: string, message: string): v
 
 /** A bin dir holding the fake `npm`, prepended to PATH for each run. */
 let fakeBin: string;
-/** The scratch repo every case starts from — built once, copied per case (git init is slow). */
+/** The scratch repo every case starts from — built once, cloned per case (git init is slow). */
 let template: string;
 
 beforeAll(() => {
@@ -124,7 +124,17 @@ beforeAll(() => {
  */
 function scratchRepo(options: RepoOptions = {}): string {
   const dir = scratch('spo-gate-repo-');
-  fs.cpSync(template, dir, { recursive: true });
+  // Git makes the copy: copying a live `.git` tree file by file is fragile.
+  git(dir, 'clone', '-q', '-b', 'feature/x', template, '.');
+  git(dir, 'branch', '-q', 'main', 'origin/main');
+  // The clone's origin points at the template; origin/main must exist only with `withRemote`.
+  git(dir, 'remote', 'remove', 'origin');
+  // A clone does not carry the template's config.
+  git(dir, 'config', 'user.email', 'test@example.com');
+  git(dir, 'config', 'user.name', 'test');
+  git(dir, 'config', 'commit.gpgsign', 'false');
+  // The fakes are git-ignored, so the clone lacks them — copy `dist/` alone (no `.git`).
+  fs.cpSync(path.join(template, 'dist'), path.join(dir, 'dist'), { recursive: true });
 
   if (options.withRemote) {
     // `main` has not moved since the fork, so pushing it now yields the same origin/main
