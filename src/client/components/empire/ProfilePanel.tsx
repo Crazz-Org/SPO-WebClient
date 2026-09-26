@@ -91,10 +91,18 @@ export function ProfilePanel() {
 // Identity header — portrait, name and rank, shown above the section list
 // ---------------------------------------------------------------------------
 
+/** Own profile under either name — mirrors `resolveTycoon` in profile-finance-handler.ts:
+ *  case-insensitive, and an empty name never matches. */
+function isOwnTycoonName(name: string, ...ownNames: string[]): boolean {
+  const target = name.trim().toLowerCase();
+  return target !== '' && ownNames.some((own) => own.trim() !== '' && own.trim().toLowerCase() === target);
+}
+
 function ProfileIdentityHeader() {
   const profile = useProfileStore((s) => s.profile);
   const portraitDataUrl = useProfileStore((s) => s.portraitDataUrl);
   const username = useGameStore((s) => s.username);
+  const activeUsername = useGameStore((s) => s.activeUsername);
   // The legacy Tutorial button existed only while `ActiveTutorial <> ""`
   // (`TycoonOptions.asp:12`, rendered `:231-252`). Reading the store is also
   // what keeps the panel's no-round-trip-on-open contract: nothing is fetched
@@ -105,7 +113,7 @@ function ProfileIdentityHeader() {
 
   if (!profile) return null;
 
-  const isOwnProfile = username.trim() !== '' && profile.name.trim().toLowerCase() === username.trim().toLowerCase();
+  const isOwnProfile = isOwnTycoonName(profile.name, username, activeUsername);
   // A fresh upload is a data URL and can never 404, so it bypasses the photoErrored fallback.
   const shownPhoto = portraitDataUrl ?? (photoErrored ? null : profile.photoUrl || null);
 

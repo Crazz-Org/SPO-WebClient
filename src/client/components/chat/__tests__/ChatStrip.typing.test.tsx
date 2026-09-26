@@ -87,6 +87,31 @@ describe('ChatStrip typing notice', () => {
     expect(onSendChatMessage).toHaveBeenCalledWith('hello');
     expect(onChatTypingChange).toHaveBeenCalledWith(false);
   });
+
+  it('retracts it exactly once when the strip unmounts mid-sentence', () => {
+    const { input, onChatTypingChange, unmount } = setup();
+
+    fireEvent.change(input, { target: { value: 'hel' } });
+    onChatTypingChange.mockClear();
+    unmount();
+
+    expect(onChatTypingChange).toHaveBeenCalledTimes(1);
+    expect(onChatTypingChange).toHaveBeenCalledWith(false);
+
+    act(() => { jest.advanceTimersByTime(4000); });
+    expect(onChatTypingChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends nothing on unmount when nothing is pending', () => {
+    const { input, onChatTypingChange, unmount } = setup();
+
+    fireEvent.change(input, { target: { value: 'hello' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    onChatTypingChange.mockClear();
+    unmount();
+
+    expect(onChatTypingChange).not.toHaveBeenCalled();
+  });
 });
 
 describe('ChatStrip away marker', () => {

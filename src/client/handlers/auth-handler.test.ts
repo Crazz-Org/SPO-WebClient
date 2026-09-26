@@ -53,6 +53,7 @@ const mockGameStoreMethods = {
   setResumeTarget: jest.fn(),
   serverSwitchMode: false,
   completeServerSwitch: jest.fn(),
+  setActiveUsername: jest.fn(),
 };
 
 const gameStoreState = mockGameStoreMethods;
@@ -340,6 +341,26 @@ describe('auth-handler', () => {
       expect(ClientBridge.setCompany).toHaveBeenCalledWith('[VISITOR VISA]', '0');
       expect(ClientBridge.setPublicOfficeRole).toHaveBeenCalledWith(false, '');
       expect(ctx.showNotification).not.toHaveBeenCalled();
+    });
+
+    it('entering a role company makes the role the active username', async () => {
+      const ctx = makeCtx({
+        availableCompanies: [{ id: '56', name: 'Mayor of Kalisz', ownerRole: 'Mayor of Kalisz' }],
+        sendRequest: jest.fn().mockResolvedValue({ type: 'RESP_SWITCH_COMPANY' }),
+        switchToGameView: jest.fn().mockResolvedValue(undefined),
+        preloadFacilityDimensions: jest.fn().mockResolvedValue(undefined),
+        connectMailService: jest.fn().mockResolvedValue(undefined),
+        getProfile: jest.fn().mockResolvedValue(undefined),
+        initChatChannels: jest.fn().mockResolvedValue(undefined),
+        sendMessage: jest.fn(),
+      });
+
+      await selectCompanyAndStart(ctx, '56');
+
+      expect(ctx.sendRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ type: WsMessageType.REQ_SWITCH_COMPANY }),
+      );
+      expect(mockGameStoreMethods.setActiveUsername).toHaveBeenCalledWith('Mayor of Kalisz');
     });
   });
 
@@ -719,6 +740,20 @@ describe('auth-handler', () => {
       applyLocalCompanySwitch(ctx, { id: '56', name: 'Mayor of Kalisz', ownerRole: 'Mayor of Kalisz' });
 
       expect(ClientBridge.setPublicOfficeRole).toHaveBeenCalledWith(true, 'Mayor of Kalisz');
+    });
+
+    it('a role company makes the role the active username', () => {
+      const ctx = makeCtx();
+      applyLocalCompanySwitch(ctx, { id: '56', name: 'Mayor of Kalisz', ownerRole: 'Mayor of Kalisz' });
+
+      expect(mockGameStoreMethods.setActiveUsername).toHaveBeenCalledWith('Mayor of Kalisz');
+    });
+
+    it('a company with no ownerRole falls back to the plain username', () => {
+      const ctx = makeCtx();
+      applyLocalCompanySwitch(ctx, { id: '55', name: 'SPO_test3 - Green', ownerRole: '' });
+
+      expect(mockGameStoreMethods.setActiveUsername).toHaveBeenCalledWith('testUser');
     });
 
     it('a request failure shows an error and applies no local switch', async () => {

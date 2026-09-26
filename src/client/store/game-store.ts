@@ -164,6 +164,14 @@ interface GameState {
   selectedZoneType: number;
   isPublicOfficeRole: boolean;
   ownerRole: string;
+  /**
+   * The name the gateway now speaks as — `company.ownerRole` or the plain username,
+   * as `switchCompany` in `login-handler.ts` derives it. No response carries it, so
+   * `auth-handler` derives it the same way. `''` until a company is entered.
+   * Cleared by `reset()` (`ClientBridge.reset()`); rewritten on every company
+   * entry/switch (`selectCompanyAndStart`, `applyLocalCompanySwitch`).
+   */
+  activeUsername: string;
 
   // Overlays
   isCityZonesEnabled: boolean;
@@ -231,6 +239,7 @@ interface GameState {
   setZonePaintingMode: (active: boolean) => void;
   setSelectedZoneType: (zoneType: number) => void;
   setPublicOfficeRole: (isPublicOffice: boolean, role?: string) => void;
+  setActiveUsername: (name: string) => void;
   setCityZonesEnabled: (enabled: boolean) => void;
   setOverlayBeforeMode: (v: { type: 'zones' | 'overlay' | 'none'; overlay?: SurfaceType } | null) => void;
   setActiveOverlay: (overlay: SurfaceType | null) => void;
@@ -284,6 +293,7 @@ export const useGameStore = create<GameState>((set) => ({
   selectedZoneType: 2,
   isPublicOfficeRole: false,
   ownerRole: '',
+  activeUsername: '',
   isCityZonesEnabled: false,
   overlayBeforeMode: null,
   activeOverlay: null,
@@ -336,6 +346,7 @@ export const useGameStore = create<GameState>((set) => ({
   setZonePaintingMode: (active) => set({ isZonePaintingMode: active }),
   setSelectedZoneType: (zoneType) => set({ selectedZoneType: zoneType }),
   setPublicOfficeRole: (isPublicOffice, role) => set({ isPublicOfficeRole: isPublicOffice, ownerRole: role ?? '' }),
+  setActiveUsername: (name) => set({ activeUsername: name }),
   setCityZonesEnabled: (enabled) => set({ isCityZonesEnabled: enabled }),
   setOverlayBeforeMode: (v) => set({ overlayBeforeMode: v }),
   setActiveOverlay: (overlay) => set({ activeOverlay: overlay }),
@@ -417,6 +428,7 @@ export const useGameStore = create<GameState>((set) => ({
       selectedZoneType: 2,
       isPublicOfficeRole: false,
       ownerRole: '',
+      activeUsername: '',
       isCityZonesEnabled: false,
   overlayBeforeMode: null,
       loginWorlds: [],
