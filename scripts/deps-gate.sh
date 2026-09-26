@@ -124,7 +124,7 @@ for n in "${prs[@]}"; do
 
   echo "-- gate PASS for ${sha:0:8}: arming auto-merge"
   # --merge, never --squash: main's merge queue is set to MERGE and overrides the flag anyway.
-  # Never --delete-branch here — it would destroy the queue entry (CLAUDE.md § merge queue).
+  # Never --delete-branch here — it would destroy the queue entry (CLAUDE.md § Git).
   gh pr merge "$n" --merge --auto
 
   deadline=$(( $(date +%s) + MERGE_TIMEOUT_S ))

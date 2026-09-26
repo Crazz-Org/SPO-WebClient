@@ -198,6 +198,32 @@ function offendersFor(pins: Pin[], resolve: (relFile: string) => string): string
   return offenders;
 }
 
+/** Pure — exit codes documented in `cli.ts`'s header that have no row in the doc's exit table
+ * (the rows under the `| exit | means |` header line, keyed by their first cell). */
+function exitCodesMissingFromDoc(cliSource: string, docSource: string): string[] {
+  const block = /\/\*\*([\s\S]*?)\*\//.exec(cliSource);
+  const lines = (block ? block[1] : '').split('\n').map((l) => l.replace(/^\s*\* ?/, ''));
+  const start = lines.findIndex((l) => l.startsWith('Exit codes:'));
+  const paragraph: string[] = [];
+  for (let i = start; start >= 0 && i < lines.length && lines[i].trim() !== ''; i++) paragraph.push(lines[i]);
+  const codes = paragraph
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^Exit codes:\s*/, '')
+    .split('·')
+    .map((part) => /^(\d+)\s/.exec(part.trim()))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => m[1]);
+
+  const docLines = docSource.split('\n');
+  const header = docLines.findIndex((l) => /^\|\s*exit\s*\|\s*means\s*\|/.test(l));
+  const rows = new Set<string>();
+  for (let i = header + 1; header >= 0 && i < docLines.length && docLines[i].startsWith('|'); i++) {
+    rows.add(docLines[i].split('|')[1].trim());
+  }
+  return codes.filter((c) => !rows.has(c));
+}
+
 function readReal(rel: string): string {
   return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
 }
@@ -234,6 +260,23 @@ describe('bench-side doc-constant sweep', () => {
     };
     const offenders = offendersFor(PINS, resolve);
     expect(offenders).toEqual([]);
+  });
+
+  test('every exit code in cli.ts\'s header has a row in bench-worker.md\'s exit table', () => {
+    const cli = readReal('src/e2e/bench/cli.ts');
+    const doc = readReal('doc/bench-worker.md');
+    // The header yields at least 0–4; an empty parse would pass the second check vacuously.
+    expect(exitCodesMissingFromDoc(cli, '').length).toBeGreaterThanOrEqual(5);
+    expect(exitCodesMissingFromDoc(cli, doc)).toEqual([]);
+  });
+
+  test('a doc exit table missing a code the header documents reports that code', () => {
+    const cli = readReal('src/e2e/bench/cli.ts');
+    const doc = readReal('doc/bench-worker.md')
+      .split('\n')
+      .filter((l) => !l.startsWith('| 6 |'))
+      .join('\n');
+    expect(exitCodesMissingFromDoc(cli, doc)).toEqual(['6']);
   });
 
   test('JobVerdict in job.ts has exactly the 9 members this sweep pins -- no more, no fewer', () => {
