@@ -70,6 +70,7 @@ describe('runFlow', () => {
         name: 'ok',
         status: 'PASS' as const,
         assertions: [],
+        unproven: [],
         probes: [],
         messagesSent: 1,
         messagesReceived: 1,
@@ -447,12 +448,16 @@ describe('mail-roundtrip', () => {
   function mailSession(
     inboxSubjects: string[],
     record?: (msg: WsMessage) => void,
-    opts: { unreadCount?: number; afterUnreadCount?: number } = {},
+    opts: { unreadCount?: number; afterUnreadCount?: number; ignoreDelete?: boolean } = {},
   ) {
-    const { unreadCount = 1, afterUnreadCount = 0 } = opts;
+    const { unreadCount = 1, afterUnreadCount = 0, ignoreDelete = false } = opts;
+    const deleted = new Set<string>();
     return stubSession(msg => {
       record?.(msg);
       switch (msg.type) {
+        case WsMessageType.REQ_MAIL_DELETE:
+          if (!ignoreDelete) deleted.add((msg as unknown as { messageId: string }).messageId);
+          return { type: WsMessageType.RESP_MAIL_DELETED, success: true };
         case WsMessageType.RESP_MAIL_CONNECTED:
         case WsMessageType.REQ_MAIL_CONNECT:
           return { type: WsMessageType.RESP_MAIL_CONNECTED, unreadCount };
@@ -462,7 +467,9 @@ describe('mail-roundtrip', () => {
           return {
             type: WsMessageType.RESP_MAIL_FOLDER,
             folder: 'Inbox',
-            messages: inboxSubjects.map((subject, i) => ({ messageId: String(i), subject })),
+            messages: inboxSubjects
+              .map((subject, i) => ({ messageId: String(i), subject }))
+              .filter(m => !deleted.has(m.messageId)),
           };
         case WsMessageType.REQ_MAIL_READ_MESSAGE:
           return { type: WsMessageType.RESP_MAIL_MESSAGE, message: {} };
@@ -501,6 +508,27 @@ describe('mail-roundtrip', () => {
 
     expect(result.status).toBe('PASS');
     expect(sent.some(m => m.type === WsMessageType.REQ_MAIL_DELETE)).toBe(true);
+  });
+
+  it('FAILs when the deleted message is still listed', async () => {
+    let subject = '';
+    jest.spyOn(session, 'login').mockImplementation(async () =>
+      mailSession(
+        subject ? [subject] : [],
+        msg => {
+          if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
+            subject = (msg as unknown as { subject: string }).subject;
+          }
+        },
+        { ignoreDelete: true },
+      ),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+
+    const result = await flowByName('mail-roundtrip').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/deleted again/);
   });
 
   it('FAILs when the unread count does not drop after the read', async () => {
@@ -839,21 +867,21 @@ describe('newspaper-read', () => {
 
   // A bar that parses but lists nothing is the world running no news server —
   // an environment exception. It is recorded, and no issue is opened.
-  it('records an exception, and opens no issue, when the paper keeps none', async () => {
+  it('is UNPROVEN, and opens no issue, when the paper keeps none', async () => {
     const requests = arrange({ list: { paperName: 'Helartia Herald', issues: [], error: '' } });
     const result = await flowByName('newspaper-read').run(ctx);
-    expect(result.status).toBe('PASS');
-    expect(result.assertions.find(a => /environment exception/.test(a.what))).toMatchObject({
-      ok: true,
-      detail: 'Helartia Herald: 0 issues',
-    });
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toHaveLength(1);
+    expect(result.unproven[0]).toMatch(/Helartia Herald: 0 issues/);
+    expect(result.assertions.every(a => a.ok)).toBe(true);
     expect(requests.some(m => m.type === WsMessageType.REQ_NEWSPAPER_ISSUE)).toBe(false);
   });
 
-  it('fails when the bar itself could not be read', async () => {
+  it('fails when the bar itself could not be read — a failure wins over UNPROVEN', async () => {
     arrange({ list: { paperName: 'Helartia Herald', issues: [], error: 'HTTP 500' } });
     const result = await flowByName('newspaper-read').run(ctx);
     expect(result.status).toBe('FAIL');
+    expect(result.unproven).toHaveLength(1);
     expect(result.assertions.find(a => !a.ok)?.detail).toBe('HTTP 500');
   });
 
@@ -906,8 +934,10 @@ describe('zoning-alert-read', () => {
     noHtmlBody?: boolean;
     onRequest?: (msg: WsMessage) => void;
     focusResult?: 'ok' | 'error';
+    focusBuildingId?: string;
   } = {}) {
     const {
+      focusBuildingId = '42',
       inboxSubjects = ['Zoning Alert!'],
       htmlBody = over.noHtmlBody ? undefined : `<a href="${ZONED_ANCHOR}">Demolished Building</a>`,
       onRequest,
@@ -934,7 +964,7 @@ describe('zoning-alert-read', () => {
             if (focusResult === 'error') {
               throw new WsDriverError('not found', 404, WsMessageType.REQ_BUILDING_FOCUS);
             }
-            return { type: WsMessageType.RESP_BUILDING_FOCUS, building: {} };
+            return { type: WsMessageType.RESP_BUILDING_FOCUS, building: { buildingId: focusBuildingId } };
           case WsMessageType.REQ_BUILDING_UNFOCUS:
             return { type: WsMessageType.RESP_CHAT_SUCCESS };
           default:
@@ -958,14 +988,24 @@ describe('zoning-alert-read', () => {
     expect(requests.some(m => m.type === WsMessageType.REQ_BUILDING_UNFOCUS)).toBe(true);
   });
 
-  it('an empty inbox is an environment exception, and sends no REQ_BUILDING_FOCUS', async () => {
+  it('an empty inbox is UNPROVEN, and sends no REQ_BUILDING_FOCUS', async () => {
     const requests = arrange({ inboxSubjects: [] });
 
     const result = await flowByName('zoning-alert-read').run(ctx);
 
-    expect(result.status).toBe('PASS');
-    expect(result.assertions.find(a => /nothing was zoned out/.test(a.what))).toMatchObject({ ok: true });
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toHaveLength(1);
+    expect(result.unproven[0]).toMatch(/no "Zoning Alert!" in the inbox/);
     expect(requests.some(m => m.type === WsMessageType.REQ_BUILDING_FOCUS)).toBe(false);
+  });
+
+  it('FAILs when the focus reply names no building', async () => {
+    arrange({ focusBuildingId: '' });
+
+    const result = await flowByName('zoning-alert-read').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/focus opened on a building/);
   });
 
   it('FAILs when the alert page has no htmlBody', async () => {
