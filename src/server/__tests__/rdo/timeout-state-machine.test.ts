@@ -8,6 +8,11 @@
  * - A timeout NEVER triggers a reconnect (close-only policy, ReportCnxFailure no-op)
  * - A late response after the timeout is logged/counted, never resolved
  * - An orphaned response (unknown RID) is dropped and counted, never crashes
+ *
+ * assertNoViolations() is not called: the socket carries no scenario exchange
+ * (rdoScenarios: []), so the strict validator has nothing to compare a frame
+ * against; what each test checks is asserted directly on the session and the
+ * socket's captured traffic instead.
  */
 
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
