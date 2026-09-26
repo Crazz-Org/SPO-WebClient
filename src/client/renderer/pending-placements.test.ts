@@ -66,6 +66,31 @@ describe('PendingPlacementLayer', () => {
     expect(layer.size).toBe(0);
   });
 
+  it('nextExpiry is null for an empty layer', () => {
+    expect(new PendingPlacementLayer(100).nextExpiry()).toBeNull();
+  });
+
+  it('nextExpiry is the oldest entry\'s startedAt + TTL', () => {
+    const layer = new PendingPlacementLayer(100);
+    layer.add(makePlacement(1, 1, 50));
+    layer.add(makePlacement(2, 2, 20));
+    layer.add(makePlacement(3, 3, 70));
+    expect(layer.nextExpiry()).toBe(120);
+  });
+
+  it('nextExpiry moves forward after remove and after a prune', () => {
+    const layer = new PendingPlacementLayer(100);
+    layer.add(makePlacement(1, 1, 0));
+    layer.add(makePlacement(2, 2, 30));
+    layer.add(makePlacement(3, 3, 60));
+    layer.remove('1,1');
+    expect(layer.nextExpiry()).toBe(130);
+    layer.list(130); // prunes 2,2
+    expect(layer.nextExpiry()).toBe(160);
+    layer.list(160);
+    expect(layer.nextExpiry()).toBeNull();
+  });
+
   it('pendingPlacementKey formats "x,y"', () => {
     expect(pendingPlacementKey(3, 4)).toBe('3,4');
   });

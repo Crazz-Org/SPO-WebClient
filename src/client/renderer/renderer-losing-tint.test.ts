@@ -35,6 +35,7 @@ type Host = {
   buildingEffects: Map<string, unknown>;
   hasAnimatedBuildings: boolean;
   isOnWaterPlatform: () => boolean;
+  footprintAnchor: (...args: unknown[]) => unknown;
   gameObjectTextureCache: {
     getTextureSync: () => unknown;
     getAnimatedTexture: () => null;
@@ -93,6 +94,7 @@ function makeHost(sourceLog: unknown[], overrides: Partial<Host> = {}): Host {
     buildingEffects: new Map(),
     hasAnimatedBuildings: false,
     isOnWaterPlatform: () => false,
+    footprintAnchor: proto.footprintAnchor,
     gameObjectTextureCache: {
       getTextureSync: () => TEX,
       getAnimatedTexture: () => null,

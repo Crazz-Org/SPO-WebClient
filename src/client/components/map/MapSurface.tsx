@@ -139,13 +139,14 @@ export function MapSurface() {
     const selKey = selected ? `${selected.x},${selected.y}` : '';
     const key = `${tick}:${cm.width}x${cm.height}:${myTycoonId}:${selKey}`;
     if (overlayRef.current?.key === key) return overlayRef.current.canvas;
+    const dims = getFacilityDimensionsCache();
     const canvas = buildMinimapOverlay(cm, {
       buildings: src.getAllBuildings?.() ?? [],
       roads: src.getRoadTileCoords?.() ?? [],
       concrete: src.getConcreteTileCoords?.() ?? [],
       selected: selected ? { x: selected.x, y: selected.y } : null,
       myTycoonId,
-      zoneOf: (vc) => getFacilityDimensionsCache().getFacility(vc)?.zoneType,
+      zoneOf: (vc) => (dims.isInitialized() ? dims.getFacility(vc)?.zoneType : undefined),
     });
     if (!canvas) return null;
     overlayRef.current = { key, canvas };

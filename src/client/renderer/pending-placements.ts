@@ -62,6 +62,15 @@ export class PendingPlacementLayer {
     return this.entries.size;
   }
 
+  /** When the oldest entry's TTL runs out (epoch ms), or null when nothing is pending. */
+  nextExpiry(): number | null {
+    let oldest: number | null = null;
+    for (const placement of this.entries.values()) {
+      if (oldest === null || placement.startedAt < oldest) oldest = placement.startedAt;
+    }
+    return oldest === null ? null : oldest + this.ttlMs;
+  }
+
   clear(): void {
     this.entries.clear();
   }

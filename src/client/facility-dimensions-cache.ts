@@ -27,6 +27,8 @@ const MAX_FALLBACK_SEARCH = 7;
 export class ClientFacilityDimensionsCache {
   private cache: Map<string, FacilityDimensions> = new Map();
   private initialized: boolean = false;
+  /** The uninitialised-lookup warning fires once, not once per call; clear() re-arms it. */
+  private warnedUninitialized = false;
 
   /** Fallback resolution cache: maps unresolved IDs to resolved IDs (or '' for no match) */
   private fallbackCache: Map<string, string> = new Map();
@@ -61,7 +63,10 @@ export class ClientFacilityDimensionsCache {
    */
   getFacility(visualClass: string): FacilityDimensions | undefined {
     if (!this.initialized) {
-      logger.warn('[ClientFacilityDimensionsCache] Cache not initialized, returning undefined');
+      if (!this.warnedUninitialized) {
+        logger.warn('[ClientFacilityDimensionsCache] Cache not initialized, returning undefined');
+        this.warnedUninitialized = true;
+      }
       return undefined;
     }
 
@@ -133,6 +138,7 @@ export class ClientFacilityDimensionsCache {
     this.cache.clear();
     this.fallbackCache.clear();
     this.initialized = false;
+    this.warnedUninitialized = false;
     logger.info('[ClientFacilityDimensionsCache] Cache cleared');
   }
 }

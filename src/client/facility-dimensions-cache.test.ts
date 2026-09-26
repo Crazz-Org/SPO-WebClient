@@ -7,11 +7,13 @@ import { describe, it, expect, beforeEach } from '@jest/globals';
 import { ClientFacilityDimensionsCache } from './facility-dimensions-cache';
 import { FacilityDimensions } from '../shared/types';
 
-// Mock logger to prevent console spam during tests
+// Mock logger to prevent console spam during tests; `warn` is routed through a lazy arrow so the
+// file-level mock can be read without tripping the jest.mock hoisting TDZ.
+const mockWarn = jest.fn();
 jest.mock('../shared/logger', () => ({
   createLogger: () => ({
     info: jest.fn(),
-    warn: jest.fn(),
+    warn: (...a: unknown[]) => mockWarn(...a),
     error: jest.fn(),
     debug: jest.fn()
   })
@@ -291,5 +293,31 @@ describe('ClientFacilityDimensionsCache', () => {
       // ID 1 walks back to 0
       expect(cache.getFacility('1')!.name).toBe('ZeroBuilding');
     });
+  });
+});
+
+describe('ClientFacilityDimensionsCache — uninitialised warning', () => {
+  beforeEach(() => {
+    mockWarn.mockClear();
+  });
+
+  it('warns once, not once per lookup, on an uninitialised cache', () => {
+    const cache = new ClientFacilityDimensionsCache();
+    expect(cache.getFacility('1')).toBeUndefined();
+    expect(cache.getFacility('2')).toBeUndefined();
+    expect(cache.getFacility('3')).toBeUndefined();
+    const notInit = mockWarn.mock.calls.filter(c => String(c[0]).includes('Cache not initialized'));
+    expect(notInit).toHaveLength(1);
+  });
+
+  it('clear() re-arms the warning', () => {
+    const cache = new ClientFacilityDimensionsCache();
+    cache.getFacility('1');
+    cache.getFacility('1');
+    cache.clear();
+    cache.getFacility('1');
+    cache.getFacility('1');
+    const notInit = mockWarn.mock.calls.filter(c => String(c[0]).includes('Cache not initialized'));
+    expect(notInit).toHaveLength(2);
   });
 });
