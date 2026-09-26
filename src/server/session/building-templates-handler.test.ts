@@ -192,14 +192,6 @@ describe('placeCapitol', () => {
     expect(result.buildingId).toBeNull();
   });
 
-  it('reports failure on a non-zero result code', async () => {
-    const { ctx } = makeCtx('res="#33"');
-
-    const result = await placeCapitol(ctx, 100, 200);
-
-    expect(result).toEqual({ success: false, buildingId: null });
-  });
-
   it('refuses to place without a world context', async () => {
     const { ctx } = makeCtx('res="#0"');
     (ctx as { worldContextId: number | null }).worldContextId = null;
@@ -230,6 +222,30 @@ describe('placeCapitol', () => {
       RdoValue.int(200).format(),
     ]);
     expect(fake.sent[0].packet.targetId).toBe(fake.ctx.worldContextId);
+  });
+});
+
+describe('placeBuilding and placeCapitol map a refusal the same way', () => {
+  const placers = [
+    ['placeBuilding', (ctx: SessionContext) => placeBuilding(ctx, 'PGISupermarketC', 28, 618)],
+    ['placeCapitol', (ctx: SessionContext) => placeCapitol(ctx, 100, 200)],
+  ] as const;
+
+  it.each(placers)('%s carries res="#33" through as errorCode 33', async (_name, place) => {
+    const { ctx } = makeCtx('res="#33"');
+
+    const result = await place(ctx);
+
+    expect(result).toEqual({ success: false, buildingId: null, errorCode: 33 });
+  });
+
+  it.each(placers)('%s reports no errorCode on an unparseable payload', async (_name, place) => {
+    const { ctx } = makeCtx('');
+
+    const result = await place(ctx);
+
+    expect(result).toEqual({ success: false, buildingId: null });
+    expect(result).not.toHaveProperty('errorCode');
   });
 });
 

@@ -161,7 +161,8 @@ export async function handleBuildCapitol(ctx: WsHandlerContext, msg: WsMessage):
       };
       sendResponse(ctx.ws, response);
     } else {
-      sendError(ctx.ws, msg.wsRequestId, 'Failed to place Capitol - check placement location', ErrorCodes.ERROR_AccessDenied);
+      const code = result.errorCode ?? ErrorCodes.ERROR_Unknown;
+      sendError(ctx.ws, msg.wsRequestId, ErrorCodes.getErrorMessage(code), code);
     }
   });
 }

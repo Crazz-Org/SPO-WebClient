@@ -3178,3 +3178,44 @@ describe('readWorkerCounts', () => {
     expect(fake.ctx.connectConstructionService).toHaveBeenCalledTimes(1);
   });
 });
+
+// =============================================================================
+// Twins: every enrich*Tab degrades only its own tab when the connect fails
+// =============================================================================
+
+describe('a failed construction connect degrades only its own tab', () => {
+  it.each([
+    ['votes', '9040', ['townGeneral', 'probeBlock'], ['probeBlock'], 'votes', 'VoteOf', { activeUsername: 'SPO_test3' }],
+    ['upgrade', '9041', ['unkGeneral', 'facManagement'], ['upgrade'], 'upgrade', 'AcceptCloning', {}],
+    ['bank', '9042', ['BankGeneral'], ['bankGeneral'], 'bankGeneral', 'Interest', {}],
+    ['tv', '9043', ['TVGeneral'], ['tvGeneral'], 'tvGeneral', 'HoursOnAir', {}],
+  ] as const)('%s tab', async (_label, vc, handlers, sections, groupKey, entry, over) => {
+    HANDLER_TO_GROUP['probeBlock'] = PROBE_BLOCK_GROUP;
+    const fake = makeDetailsCtx({ sockets: ['map'], ...over });
+    (fake.ctx.connectConstructionService as jest.Mock).mockRejectedValue(new Error('construction down'));
+    registerTabs(vc, [...handlers]);
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { Name: 'Some Facility', CurrBlock: '40133888' });
+    rdoMembers(fake, {
+      RDOVoteOf: 'res="%Fred"',
+      AcceptCloning: 'AcceptCloning="#1"',
+      RDOEstimateLoan: 'res="%$5,000,000"',
+      BudgetPerc: 'BudgetPerc="#75"',
+      Interest: 'Interest="#12"',
+      Term: 'Term="#5"',
+      HoursOnAir: 'HoursOnAir="#18"',
+      Commercials: 'Commercials="#35"',
+    });
+
+    await expect(getBuildingBasicDetails(fake.ctx, X, Y, vc)).resolves.toBeDefined();
+    const tab = await getBuildingTabData(fake.ctx, X, Y, sections[0], vc, [...sections]);
+
+    expect(fake.ctx.connectConstructionService).toHaveBeenCalled();
+    const group = tab.groups?.[groupKey] ?? [];
+    expect(group.some(p => p.name === entry)).toBe(false);
+    if (groupKey === 'bankGeneral') {
+      expect(group.some(p => p.name === 'EstLoan')).toBe(false);
+    }
+    expect(fake.sent.filter(s => s.socketName === 'construction')).toEqual([]);
+  });
+});
