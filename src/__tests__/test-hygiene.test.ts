@@ -53,11 +53,10 @@ const BASELINE: Record<Shape | 'exceptions', { max: number; sites: string[] }> =
     ],
   },
   tsNocheck: {
-    max: 6,
+    max: 5,
     sites: [
       'src/server/__tests__/rdo/building-operations.test.ts:1',
       'src/server/__tests__/rdo/company-session.test.ts:1',
-      'src/server/__tests__/rdo/facility-inspector-gaps.test.ts:1',
       'src/server/__tests__/rdo/facility-set-commands.test.ts:1',
       'src/server/__tests__/rdo/login-flow.test.ts:1',
       'src/server/__tests__/rdo/rdo-value-equivalence.test.ts:1',
