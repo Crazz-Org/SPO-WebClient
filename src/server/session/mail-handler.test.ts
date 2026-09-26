@@ -18,7 +18,8 @@
  *     (observed on the live wire).
  *   - `writeRdoFrame` (`fake.frames.mail`) — `AddHeaders` and `DeleteMessage`,
  *     fire-and-forget, `"*"` and no QueryId. `mail-handler-emission.test.ts`
- *     is blind to this channel (`write: () => true`); this file is not.
+ *     now captures this channel too, alongside the request channel, as one
+ *     ordered sequence per entry point.
  *
  * The message id `NewMail` / `OpenMessage` answer is the one every
  * `AddLine`, `Get*` and `CloseMessage` must carry — it is never one of the
@@ -619,7 +620,8 @@ describe('readMailMessage', () => {
     expect(fake.sent[0].packet.args?.[0]).toBe(RdoValue.string('').format());
   });
 
-  it('when OpenMessage answers an empty payload, the reads still go out with an EMPTY target and CloseMessage is never sent', async () => {
+  it("pins today's behaviour — when OpenMessage answers an empty payload, the reads still go out with an EMPTY target and CloseMessage is never sent", async () => {
+    // Whether this is a defect is a maintainer question.
     // Pinned as CURRENT behaviour: the handler does not guard msgId after
     // OpenMessage (mail-handler.ts:301-304). The three reads are issued with
     // targetId '' — production would build `sel  call GetHeaders` — and the
