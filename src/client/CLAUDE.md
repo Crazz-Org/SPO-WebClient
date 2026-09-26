@@ -39,6 +39,8 @@ Input handling: `renderer/touch-handler-2d.ts` for canvas mouse/touch events.
 
 Each component folder contains: main component + optional `.module.css` + optional utils + optional `__tests__/` + `index.ts` barrel export.
 
+Before closing a fix on a shared component, grep every renderer (`grep -rn '<Name' src/client`) and fix each, or say in the PR why not.
+
 ## ClientContext
 
 `useClient()` hook (from `context/ClientContext.tsx`) provides server communication callbacks. Components must use this hook -- never import the bridge module directly.

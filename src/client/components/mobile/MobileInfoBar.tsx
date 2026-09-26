@@ -11,6 +11,7 @@
 import { formatMoney, formatIncome, incomeSign } from '../../format-utils';
 import { useGameStore } from '../../store/game-store';
 import { useUiStore } from '../../store/ui-store';
+import { isPanelOffered } from '../../visitor-gating';
 import styles from './MobileInfoBar.module.css';
 
 /** Format date compactly: "Aug 27, 92" */
@@ -24,8 +25,11 @@ export function MobileInfoBar() {
   const tycoonStats = useGameStore((s) => s.tycoonStats);
   const gameDate = useGameStore((s) => s.gameDate);
   const username = useGameStore((s) => s.username);
+  const isVisitor = useGameStore((s) => s.isVisitor);
   const openLeftPanel = useUiStore((s) => s.openLeftPanel);
   const setMobileTab = useUiStore((s) => s.setMobileTab);
+  const canOpenEmpire = isPanelOffered('empire', isVisitor);
+  const canOpenFacilities = isPanelOffered('facilities', isVisitor);
 
   const handleTap = () => {
     setMobileTab('map');
@@ -44,25 +48,42 @@ export function MobileInfoBar() {
       : sign === 'negative' ? styles.incomeNegative
         : styles.incomeNeutral;
 
+  const mainContent = (
+    <>
+      {/* World + Date */}
+      <span className={styles.world}>
+        {worldName ? worldName.toUpperCase() : 'OFFLINE'}
+      </span>
+      <span className={styles.date}>{formatDate(gameDate)}</span>
+
+      {/* Financial */}
+      {tycoonStats && (
+        <>
+          <span className={styles.cash}>{formatMoney(tycoonStats.cash)}</span>
+          <span className={incomeClass}>{formatIncome(tycoonStats.incomePerHour)}</span>
+        </>
+      )}
+    </>
+  );
+
+  const identityContent = tycoonStats && (
+    <span className={styles.identity}>
+      #{tycoonStats.ranking} {username}
+    </span>
+  );
+
   return (
     <div className={styles.bar}>
-      <button className={styles.tapArea} onClick={handleTap} aria-label="Open empire overview">
-        {/* World + Date */}
-        <span className={styles.world}>
-          {worldName ? worldName.toUpperCase() : 'OFFLINE'}
-        </span>
-        <span className={styles.date}>{formatDate(gameDate)}</span>
+      {/* A visitor has no empire to open: the same content, not a button (no dead control). */}
+      {canOpenEmpire ? (
+        <button className={styles.tapArea} onClick={handleTap} aria-label="Open empire overview">
+          {mainContent}
+        </button>
+      ) : (
+        <div className={styles.tapArea}>{mainContent}</div>
+      )}
 
-        {/* Financial */}
-        {tycoonStats && (
-          <>
-            <span className={styles.cash}>{formatMoney(tycoonStats.cash)}</span>
-            <span className={incomeClass}>{formatIncome(tycoonStats.incomePerHour)}</span>
-          </>
-        )}
-      </button>
-
-      {failureLevel >= 1 && (
+      {failureLevel >= 1 && canOpenFacilities && (
         <button
           className={styles.debtTag}
           onClick={handleDebtTap}
@@ -73,13 +94,13 @@ export function MobileInfoBar() {
       )}
 
       {/* Identity — same tap target as the main area */}
-      {tycoonStats && (
+      {tycoonStats && (canOpenEmpire ? (
         <button className={styles.identityTap} onClick={handleTap} aria-label="Open empire overview">
-          <span className={styles.identity}>
-            #{tycoonStats.ranking} {username}
-          </span>
+          {identityContent}
         </button>
-      )}
+      ) : (
+        <div className={styles.identityTap}>{identityContent}</div>
+      ))}
     </div>
   );
 }

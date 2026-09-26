@@ -4,6 +4,7 @@ import { renderWithProviders, createSpiedCallbacks } from '../../__tests__/setup
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { MobileMenu } from './MobileMenu';
+import { VISITOR_GATED_PANELS } from '../../visitor-gating';
 
 function setSupportUrl(value: string | undefined): void {
   const w = window as unknown as Record<string, unknown>;
@@ -18,6 +19,7 @@ describe('MobileMenu', () => {
   beforeEach(() => {
     useUiStore.getState().clearSurfaces();
     useUiStore.setState({ commandPaletteOpen: false, mobileTab: 'more' });
+    useGameStore.setState({ isVisitor: false });
   });
 
   it('Profile opens the empire surface on mobile (was unreachable)', () => {
@@ -65,6 +67,18 @@ describe('MobileMenu', () => {
     useUiStore.getState().confirmPayload!.onConfirm();
 
     expect(onLogout).toHaveBeenCalledTimes(1);
+  });
+
+  it('a visitor is offered no gated panel (no Profile, no My facilities)', () => {
+    useGameStore.setState({ isVisitor: true });
+    renderWithProviders(<MobileMenu />);
+    expect(screen.queryByRole('button', { name: /Profile/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /My facilities/ })).toBeNull();
+    for (const name of [/Mail/, /Search/, /Government/]) expect(screen.getByRole('button', { name })).toBeTruthy();
+    for (const button of screen.getAllByRole('button')) {
+      fireEvent.click(button);
+      for (const s of useUiStore.getState().stack) expect(VISITOR_GATED_PANELS.has(s.kind)).toBe(false);
+    }
   });
 
   describe('Support', () => {

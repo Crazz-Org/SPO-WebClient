@@ -10,8 +10,9 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Hammer, Map, User, Landmark, Mail, MessageSquare, MoreHorizontal, Search, RotateCw, Settings, Layers, Heart, Server, Route, Eraser, Grid2x2 } from 'lucide-react';
-import { useUiStore } from '../../store/ui-store';
+import { useUiStore, type SurfaceKind } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
+import { isPanelOffered } from '../../visitor-gating';
 import { useModeDescriptor, type ModeDescriptor } from './use-mode-descriptor';
 import { useMailStore } from '../../store/mail-store';
 import { useChatStore } from '../../store/chat-store';
@@ -22,6 +23,8 @@ import styles from './CommandBar.module.css';
 interface Tile {
   id: string;
   label: string;
+  /** The panel this tile opens — checked against the visitor-gating list. */
+  panel?: SurfaceKind;
   kbd?: string;
   icon: ReactNode;
   active: boolean;
@@ -108,7 +111,7 @@ function MoreMenu({ onClose }: { onClose: () => void }) {
       {isPublicOfficeRole && item(isZone ? 'Stop zone painting' : 'Zone painting', <Grid2x2 size={16} />, () => (isZone ? client.onCancelZonePainting() : openModal('zonePicker')), isZone)}
       {item('Map overlays', <Layers size={16} />, () => toggleLeftPanel('overlays'))}
       {item('Docked minimap', <Map size={16} />, () => client.onToggleMinimap())}
-      {!isVisitor && item('My facilities', <Heart size={16} />, () => toggleLeftPanel('facilities'))}
+      {isPanelOffered('facilities', isVisitor) && item('My facilities', <Heart size={16} />, () => toggleLeftPanel('facilities'))}
       {item('Settings', <Settings size={16} />, () => openModal('settings'))}
       {item('Switch server', <Server size={16} />, () => client.onSwitchServer())}
     </div>
@@ -135,16 +138,16 @@ export function CommandBar() {
   const [moreOpen, setMoreOpen] = useState(false);
 
   const tiles: Tile[] = [
-    { id: 'build', label: 'Build', kbd: 'B', icon: <Hammer size={20} />, active: stack[stack.length - 1]?.kind === 'build' || isPlacing, onClick: toggleBuildSurface },
-    { id: 'map', label: 'Map', kbd: 'M', icon: <Map size={20} />, active: stack[stack.length - 1]?.kind === 'map', onClick: () => useUiStore.getState().toggleMapSurface() },
-    { id: 'empire', label: 'Empire', kbd: 'E', icon: <User size={20} />, active: leftPanel === 'empire', onClick: () => toggleLeftPanel('empire') },
-    { id: 'politics', label: 'Government', kbd: 'P', icon: <Landmark size={20} />, active: rightPanel === 'politics', onClick: () => toggleRightPanel('politics') },
-    { id: 'mail', label: 'Mail', kbd: 'L', icon: <Mail size={20} />, active: rightPanel === 'mail', badge: unread, onClick: () => toggleRightPanel('mail') },
+    { id: 'build', label: 'Build', panel: 'build' as const, kbd: 'B', icon: <Hammer size={20} />, active: stack[stack.length - 1]?.kind === 'build' || isPlacing, onClick: toggleBuildSurface },
+    { id: 'map', label: 'Map', panel: 'map' as const, kbd: 'M', icon: <Map size={20} />, active: stack[stack.length - 1]?.kind === 'map', onClick: () => useUiStore.getState().toggleMapSurface() },
+    { id: 'empire', label: 'Empire', panel: 'empire' as const, kbd: 'E', icon: <User size={20} />, active: leftPanel === 'empire', onClick: () => toggleLeftPanel('empire') },
+    { id: 'politics', label: 'Government', panel: 'politics' as const, kbd: 'P', icon: <Landmark size={20} />, active: rightPanel === 'politics', onClick: () => toggleRightPanel('politics') },
+    { id: 'mail', label: 'Mail', panel: 'mail' as const, kbd: 'L', icon: <Mail size={20} />, active: rightPanel === 'mail', badge: unread, onClick: () => toggleRightPanel('mail') },
     { id: 'chat', label: 'Chat', icon: <MessageSquare size={20} />, active: chatVisible,
       badge: chatVisible ? 0 : unreadChat,
       onClick: () => useChatStore.getState().toggleChatVisible() },
     { id: 'more', label: 'More', icon: <MoreHorizontal size={20} />, active: moreOpen || isRoadBuild || isRoadDemolish || isZone, onClick: () => setMoreOpen((v) => !v) },
-  ].filter((t) => !isVisitor || (t.id !== 'build' && t.id !== 'empire'));
+  ].filter((t) => !t.panel || isPanelOffered(t.panel, isVisitor));
 
   const connectActive = useUiStore((s) => s.connectMode.active);
   const cls = [styles.bar, stack.length > 0 && !connectActive ? styles.shifted : ''].filter(Boolean).join(' ');

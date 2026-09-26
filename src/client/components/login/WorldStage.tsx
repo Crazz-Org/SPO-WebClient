@@ -15,7 +15,7 @@ interface WorldStageProps {
   worlds: WorldInfo[];
   onSelect: (worldName: string) => void;
   onBack?: () => void;
-  onRetry?: () => void;
+  onRetry: (() => void) | null;
   isLoading: boolean;
   /** RDOCanJoinNewWorld said this account already holds as many worlds as its nobility allows. */
   atWorldLimit?: boolean;

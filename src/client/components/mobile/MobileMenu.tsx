@@ -11,9 +11,10 @@ import {
   ZoomIn, ZoomOut, Layers, RefreshCw, RotateCw,
   Settings, Globe, Bug, Command, User, Heart, LogOut, LifeBuoy,
 } from 'lucide-react';
-import { useUiStore } from '../../store/ui-store';
+import { useUiStore, type SurfaceKind } from '../../store/ui-store';
 import { useMailStore } from '../../store/mail-store';
 import { useGameStore } from '../../store/game-store';
+import { isPanelOffered } from '../../visitor-gating';
 import { useClient } from '../../context';
 import { Badge, confirmLogout } from '../common';
 import { buildSupportUrl, getSupportUrl } from '../../support-link';
@@ -30,6 +31,8 @@ interface MenuItem {
   action?: () => void;
   href?: string;
   badge?: number;
+  /** The panel this item opens — checked against the visitor-gating list. */
+  panel?: SurfaceKind;
 }
 
 export function MobileMenu() {
@@ -42,6 +45,7 @@ export function MobileMenu() {
   const unreadCount = useMailStore((s) => s.unreadCount);
   const worldName = useGameStore((s) => s.worldName);
   const username = useGameStore((s) => s.username);
+  const isVisitor = useGameStore((s) => s.isVisitor);
   const client = useClient();
 
   /** Open a panel and stay on map so the BottomSheet shows panel content */
@@ -60,17 +64,17 @@ export function MobileMenu() {
     {
       label: 'Communication',
       items: [
-        { label: 'Mail', icon: Mail, action: () => openPanel(() => openRightPanel('mail')), badge: unreadCount },
+        { label: 'Mail', icon: Mail, action: () => openPanel(() => openRightPanel('mail')), badge: unreadCount, panel: 'mail' },
       ],
     },
     {
       label: 'Exploration',
       items: [
-        { label: 'Search', icon: Search, action: () => openPanel(() => openRightPanel('search')) },
+        { label: 'Search', icon: Search, action: () => openPanel(() => openRightPanel('search')), panel: 'search' },
         { label: 'Command palette', icon: Command, action: () => doAction(() => openCommandPalette()) },
-        { label: 'Profile', icon: User, action: () => openPanel(() => openLeftPanel('empire')) },
-        { label: 'My facilities', icon: Heart, action: () => openPanel(() => openLeftPanel('facilities')) },
-        { label: 'Government', icon: Landmark, action: () => openPanel(() => openRightPanel('politics')) },
+        { label: 'Profile', icon: User, action: () => openPanel(() => openLeftPanel('empire')), panel: 'empire' },
+        { label: 'My facilities', icon: Heart, action: () => openPanel(() => openLeftPanel('facilities')), panel: 'facilities' },
+        { label: 'Government', icon: Landmark, action: () => openPanel(() => openRightPanel('politics')), panel: 'politics' },
       ],
     },
     {
@@ -79,7 +83,7 @@ export function MobileMenu() {
         { label: 'Zoom In', icon: ZoomIn, action: () => doAction(() => client.onZoomIn()) },
         { label: 'Zoom Out', icon: ZoomOut, action: () => doAction(() => client.onZoomOut()) },
         { label: 'Rotate view', icon: RotateCw, action: () => doAction(() => client.onRotateCW()) },
-        { label: 'Map Overlays', icon: Layers, action: () => doAction(() => toggleLeftPanel('overlays')) },
+        { label: 'Map Overlays', icon: Layers, action: () => doAction(() => toggleLeftPanel('overlays')), panel: 'overlays' },
         { label: 'Refresh Map', icon: RefreshCw, action: () => doAction(() => client.onRefreshMap()) },
       ],
     },
@@ -100,7 +104,7 @@ export function MobileMenu() {
       {groups.map(({ label, items }) => (
         <div key={label} className={styles.group}>
           <span className={styles.groupLabel}>{label}</span>
-          {items.map(({ label: itemLabel, icon: Icon, action, href, badge }) => {
+          {items.filter((i) => !i.panel || isPanelOffered(i.panel, isVisitor)).map(({ label: itemLabel, icon: Icon, action, href, badge }) => {
             const children = (
               <>
                 <Icon size={18} className={styles.icon} />

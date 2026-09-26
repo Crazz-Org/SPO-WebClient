@@ -27,7 +27,7 @@ interface CompanyStageProps {
   isLoading: boolean;
   loginPage?: LoginPageOutcome | null;
   /** CanJoinWorldEx said this world will refuse a new company — so it is not offered. */
-  admission?: WorldAdmission | null;
+  admission: WorldAdmission | null;
   /**
    * RDOCanJoinNewWorld said this account is at its nobility-bound world limit. It only blocks
    * a world the player holds no company in — the guard Kernel/World.pas:6028 applies.

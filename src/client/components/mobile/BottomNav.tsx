@@ -9,21 +9,22 @@
  */
 
 import { Map, MessageSquare, Hammer, Landmark, Mail, MoreHorizontal } from 'lucide-react';
-import { useUiStore, type MobileTab } from '../../store/ui-store';
+import { useUiStore, type MobileTab, type SurfaceKind } from '../../store/ui-store';
 import { useChatStore } from '../../store/chat-store';
 import { useMailStore } from '../../store/mail-store';
 import { useGameStore } from '../../store/game-store';
+import { isPanelOffered } from '../../visitor-gating';
 import { Badge } from '../common';
 import styles from './BottomNav.module.css';
 
 type TileId = MobileTab | 'politics' | 'mail';
 
-const TILES: { id: TileId; label: string; icon: typeof Map }[] = [
-  { id: 'build', label: 'Build', icon: Hammer },
-  { id: 'map', label: 'Map', icon: Map },
+const TILES: { id: TileId; label: string; icon: typeof Map; panel?: SurfaceKind }[] = [
+  { id: 'build', label: 'Build', icon: Hammer, panel: 'build' },
+  { id: 'map', label: 'Map', icon: Map, panel: 'map' },
   { id: 'chat', label: 'Chat', icon: MessageSquare },
-  { id: 'politics', label: 'Government', icon: Landmark },
-  { id: 'mail', label: 'Mail', icon: Mail },
+  { id: 'politics', label: 'Government', icon: Landmark, panel: 'politics' },
+  { id: 'mail', label: 'Mail', icon: Mail, panel: 'mail' },
   { id: 'more', label: 'More', icon: MoreHorizontal },
 ];
 
@@ -37,7 +38,7 @@ export function BottomNav() {
   const unreadChat = useChatStore((s) => s.unreadChatCount);
   const unreadMail = useMailStore((s) => s.unreadCount);
   const isVisitor = useGameStore((s) => s.isVisitor);
-  const tiles = TILES.filter((t) => !isVisitor || t.id !== 'build');
+  const tiles = TILES.filter((t) => !t.panel || isPanelOffered(t.panel, isVisitor));
 
   const isActive = (id: TileId): boolean => {
     if (id === 'map') return topKind === 'map';
