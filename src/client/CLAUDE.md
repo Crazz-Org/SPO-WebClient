@@ -25,6 +25,8 @@ All styles use `.module.css` with scoped class names. No CSS-in-JS.
 import styles from './MyComponent.module.css';
 ```
 
+A new fixed HUD element registers its band in the table in `design-tokens.test.ts`.
+
 ## Canvas Renderer
 
 Custom 2D isometric engine in `renderer/`. The main file is `isometric-map-renderer.ts` (~195KB monolith).

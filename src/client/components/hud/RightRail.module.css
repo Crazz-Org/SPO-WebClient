@@ -2,7 +2,7 @@
 
 .rail {
   position: absolute;
-  bottom: 150px; /* above the command bar (two rows + margins) */
+  bottom: var(--right-rail-bottom); /* clear of the command bar, derived in design-tokens.css (issue 931) */
   right: var(--space-3);
   z-index: var(--z-sticky);
   display: flex;

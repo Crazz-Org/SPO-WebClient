@@ -3,8 +3,8 @@ import { join } from 'node:path';
 
 /**
  * Static guard for the chat strip's clearance over the command bar (issue #873): the strip's
- * `bottom` offset must be a composed `calc()` referencing `--command-bar-height`, not a bare
- * constant — and the offset that expression resolves to must sit above the bar's real
+ * `bottom` offset must reference `--command-bar-height` (directly, or through the token chain it
+ * sits on — `--chat-strip-bottom`, issue 931), not a bare constant — and the offset that expression resolves to must sit above the bar's real
  * (non-visitor) top edge, so an eighth tile that pushes the grid to a third row fails this test
  * until `--command-bar-height` is raised with it.
  *
@@ -57,6 +57,21 @@ function readTokens(css: string): Map<string, string> {
   return tokens;
 }
 
+/** Inline every `var(--token)` reference, recursively, so a bare token reads as its full expression. */
+function expand(expr: string, tokens: Map<string, string>): string {
+  return expr.replace(/var\(\s*(--[a-zA-Z0-9-]+)\s*\)/g, (whole, name: string) => {
+    const value = tokens.get(name);
+    if (value === undefined) throw new Error(`token ${name} is not declared`);
+    return `${whole}{${expand(value, tokens)}}`;
+  });
+}
+
+/** The strip's `bottom` declaration — a composed `calc()` or a bare `var(--token)`. */
+function stripBottom(css: string): string | null {
+  const m = block(css, '.strip {').match(/bottom:\s*([^;]+);/);
+  return m ? m[1].trim() : null;
+}
+
 function block(css: string, selector: string): string {
   const idx = css.indexOf(selector);
   if (idx === -1) throw new Error(`selector ${selector} not found`);
@@ -72,11 +87,11 @@ describe('the chat strip clears the command bar', () => {
   const tokensCss = readFileSync(TOKENS_CSS, 'utf8');
 
   it('references the measured --command-bar-height, not a bare constant', () => {
-    const stripBlock = block(chatStripCss, '.strip {');
-    const m = stripBlock.match(/bottom:\s*(calc\([^;]+\));/);
-    expect(m).not.toBeNull();
-    const boundsDecl = m![1];
-    expect(boundsDecl).toContain('var(--command-bar-height');
+    const boundsDecl = stripBottom(chatStripCss);
+    expect(boundsDecl).not.toBeNull();
+    // The strip may sit on a token (issue 931: `--chat-strip-bottom`); the chain it expands to
+    // must still reach the measured bar height.
+    expect(expand(boundsDecl!, readTokens(tokensCss))).toContain('var(--command-bar-height');
   });
 
   it("the resolved offset clears the non-visitor bar's real top edge", () => {
@@ -113,9 +128,9 @@ describe('the chat strip clears the command bar', () => {
     expect(resolve('var(--command-bar-height)', tokens)).toBe(barHeight);
 
     // 3. the strip's own bottom edge, resolved from its declaration.
-    const m = block(chatStripCss, '.strip {').match(/bottom:\s*(calc\([^;]+\));/);
-    expect(m).not.toBeNull();
-    const stripBottomEdge = resolve(m![1], tokens);
+    const boundsDecl = stripBottom(chatStripCss);
+    expect(boundsDecl).not.toBeNull();
+    const stripBottomEdge = resolve(boundsDecl!, tokens);
 
     expect(stripBottomEdge).toBeGreaterThan(barTopEdge);
   });

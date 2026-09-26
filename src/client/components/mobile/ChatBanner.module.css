@@ -3,7 +3,7 @@
 .banner {
   display: none; /* Only on mobile */
   position: fixed;
-  top: calc(var(--content-top) + var(--space-2));
+  top: var(--chat-banner-top);
   left: var(--space-3);
   right: var(--space-3);
   z-index: var(--z-ticker);
