@@ -294,6 +294,12 @@ describe('unkGeneral', () => {
     const prop = UNK_GENERAL_GROUP.properties.find(p => p.actionId === 'demolish');
     expect(prop!.buttonLabel).toBe('Demolish');
   });
+
+  it('Name and Creator: both fetched by the template', () => {
+    const propNames = UNK_GENERAL_GROUP.properties.map(p => p.rdoName);
+    expect(propNames).toContain('Name');
+    expect(propNames).toContain('Creator');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -386,6 +392,10 @@ describe('HqGeneral', () => {
   it('Demolish button: buttonLabel is "Demolish"', () => {
     const prop = HQ_GENERAL_GROUP.properties.find(p => p.actionId === 'demolish');
     expect(prop!.buttonLabel).toBe('Demolish');
+  });
+
+  it('Name: fetched by the template', () => {
+    expect(HQ_GENERAL_GROUP.properties.map(p => p.rdoName)).toContain('Name');
   });
 });
 

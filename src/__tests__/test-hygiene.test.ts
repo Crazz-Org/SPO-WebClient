@@ -54,13 +54,12 @@ const BASELINE: Record<Shape | 'exceptions', { max: number; sites: string[] }> =
     ],
   },
   tsNocheck: {
-    max: 9,
+    max: 8,
     sites: [
       'src/server/__tests__/rdo/building-operations.test.ts:1',
       'src/server/__tests__/rdo/chat-commands.test.ts:1',
       'src/server/__tests__/rdo/close-object.test.ts:1',
       'src/server/__tests__/rdo/company-session.test.ts:1',
-      'src/server/__tests__/rdo/facility-inspector-gaps.test.ts:1',
       'src/server/__tests__/rdo/facility-set-commands.test.ts:1',
       'src/server/__tests__/rdo/keep-alive.test.ts:1',
       'src/server/__tests__/rdo/login-flow.test.ts:1',
