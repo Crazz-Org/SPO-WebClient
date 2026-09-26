@@ -1373,6 +1373,19 @@ describe('handleServerRequest', () => {
     expect(socket.getCapturedWrites().join('\n')).toContain('A99998 error 5');
   });
 
+  it('answers on the map socket when the request arrived there, not on world', async () => {
+    const world = await connectWorld();
+    await harness.session.connectMapService();
+    const map = harness.getSockets()[1];
+    harness.session.setKnownObject('InterfaceEvents', '38123456');
+
+    map.emit('data', Buffer.from('C 99991 idof "InterfaceEvents";', 'latin1'));
+    await flush();
+
+    expect(map.getCapturedWrites().join('\n')).toContain('A99991 objid="38123456";');
+    expect(world.getCapturedWrites().join('\n')).not.toContain('A99991');
+  });
+
   it('answers the AnswerStatus heartbeat with NOERROR', async () => {
     const socket = await connectWorld();
 
