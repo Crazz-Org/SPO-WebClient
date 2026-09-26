@@ -40,11 +40,10 @@ const BASELINE: Record<Shape | 'exceptions', { max: number; sites: string[] }> =
     sites: ['src/client/renderer/isometric-terrain-renderer.test.ts:438'],
   },
   replicaFunction: {
-    max: 9,
+    max: 8,
     sites: [
       'src/client/components/building/__tests__/resolve-rdo-command.test.ts:22',
       'src/server/__tests__/cache-sync-service.test.ts:19',
-      'src/server/__tests__/protocol-validation/build.validation.test.ts:501',
       'src/server/__tests__/rdo/facility-set-commands.test.ts:21',
       'src/server/__tests__/rdo/facility-set-commands.test.ts:166',
       'src/server/__tests__/rdo/facility-set-commands.test.ts:199',

@@ -7,10 +7,17 @@
  * server calls us on, and the three teardown paths.
  *
  * Every test drives the REAL session through `createProtocolTestHarness`
- * (MockTcpSocket + the strict validator), because these are the paths where a
- * hand-written double would simply agree with whatever the code does. The one
- * rule that is never bent: `sendRdoRequest` is never mocked here — it is the
- * subject.
+ * (MockTcpSocket, with strict validation switched off on every socket), because
+ * these are the paths where a hand-written double would simply agree with
+ * whatever the code does. The one rule that is never bent: `sendRdoRequest` is
+ * never mocked here — it is the subject.
+ *
+ * assertNoViolations() is not called: every socket here carries only the
+ * `idof` scenario plus member fallbacks. The harness exempts every fallback
+ * member from validation and never argument-checks an `idof` frame, so the
+ * validator would have nothing to report; several tests also deliberately send
+ * refused or degraded frames that no fixture describes. The wire forms these
+ * tests care about are pinned by literal assertions instead.
  */
 
 jest.mock('net', () => ({ Socket: jest.fn() }));
