@@ -1064,11 +1064,6 @@ export interface ProfitLossNode {
   chartData?: number[];
   isHeader?: boolean;
   children?: ProfitLossNode[];
-}
-
-// Declaration merging: adds the tax fields without touching the interface block above
-// (kept verbatim for the plan's invariant).
-export interface ProfitLossNode {
   /** Tax account (TycoonProfitAndLoses.asp:167, :179 — Obj.AccountIsTax). On the level-2
    *  header the page renders the Town / IFEL captions; on each row beneath, the split. */
   isTax?: boolean;
