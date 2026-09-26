@@ -26,8 +26,14 @@ import type {
   WsRespPoliticsData,
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuDirectory,
+  WsRespMapData,
 } from '../shared/types/message-types';
-import type { DirectoryRef, DirectoryPage } from '../shared/types/domain-types';
+import type {
+  BuildingPropertyValue,
+  DirectoryRef,
+  DirectoryPage,
+  MapBuilding,
+} from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
@@ -68,8 +74,24 @@ export interface FlowResult {
   messagesReceived: number;
   wireErrors: number;
   error?: string;
-  /** Values recorded, never asserted — a reading for a later card (see logonPageVerdict). */
-  readings?: LogonPageReading[];
+  /**
+   * Values recorded, never asserted — a reading for a later card (see logonPageVerdict and
+   * warehouseRoleReading).
+   */
+  readings?: (LogonPageReading | TradeRoleReading)[];
+}
+
+/** One facility's trade fields, as the inspector's opening read served them (#1006). */
+export interface TradeRoleReading {
+  facility: 'warehouse' | 'industry';
+  x: number;
+  y: number;
+  visualClass: string;
+  templateName: string;
+  /** The raw cached `Role` value, verbatim — `'absent'` when the read did not return it. */
+  role: string;
+  /** The raw cached `TradeRole` value, verbatim — `'absent'` when the read did not return it. */
+  tradeRole: string;
 }
 
 export interface LogonPageReading {
@@ -1025,6 +1047,108 @@ const logonPageVerdict: Flow = {
   },
 };
 
+/** A property's raw value from any group of an opening read, or 'absent'. */
+function rawProperty(groups: { [groupId: string]: BuildingPropertyValue[] }, name: string): string {
+  for (const group of Object.values(groups)) {
+    const hit = group.find(p => p.name === name);
+    if (hit) return hit.value;
+  }
+  return 'absent';
+}
+
+/** The gateway's default loadMapArea chunk — one window centred on the town hall. */
+const ROLE_PROBE_SPAN = 64;
+const ROLE_PROBE_MAX_READS = 40;
+const INDUSTRY_TRADE_ROLES = ['2', '5', '6'];
+
+/**
+ * Read-only bench probe (#1006): what a real WHGeneral warehouse's cached `Role` holds, and,
+ * if one exists nearby, an IndGeneral facility's `Role`/`TradeRole`. The values are recorded
+ * in the run artifact and never asserted; the flow fails only when a read fails, and reports
+ * UNPROVEN when no warehouse is found. It is removed by the follow-up card that acts on the
+ * reading.
+ */
+const warehouseRoleReading: Flow = {
+  name: 'warehouse-role-reading',
+  what: "a warehouse's cached Role / TradeRole near the governed town — recorded, never asserted",
+  mutates: false,
+  async run() {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const response = await session.driver.request<WsRespMapData>(
+        {
+          type: WsMessageType.REQ_MAP_LOAD,
+          x: Math.max(0, town.x - ROLE_PROBE_SPAN / 2),
+          y: Math.max(0, town.y - ROLE_PROBE_SPAN / 2),
+          width: ROLE_PROBE_SPAN,
+          height: ROLE_PROBE_SPAN,
+        },
+        [WsMessageType.RESP_MAP_DATA, WsMessageType.EVENT_MAP_DATA],
+        TIMEOUTS.login,
+      );
+      const buildings: MapBuilding[] = response.data?.buildings ?? [];
+      const dist = (b: MapBuilding): number => Math.abs(b.x - town.x) + Math.abs(b.y - town.y);
+      const sorted = [...buildings].sort((a, b) => dist(a) - dist(b));
+
+      const handlerByClass = new Map<string, string>();
+      let reads = 0;
+      let warehouse: TradeRoleReading | undefined;
+      let industry: TradeRoleReading | undefined;
+      for (const b of sorted) {
+        if ((warehouse && industry) || reads >= ROLE_PROBE_MAX_READS) break;
+        const known = handlerByClass.get(b.visualClass);
+        if (known !== undefined) {
+          if (known !== 'WHGeneral' && known !== 'IndGeneral') continue;
+          if (known === 'WHGeneral' && warehouse) continue;
+          if (known === 'IndGeneral' && industry) continue;
+        }
+        const details = await readBuildingDetails(session, b.x, b.y, b.visualClass);
+        reads++;
+        const handlers = details.tabs.map(t => t.handlerName);
+        const handler = handlers.includes('WHGeneral')
+          ? 'WHGeneral'
+          : handlers.includes('IndGeneral')
+            ? 'IndGeneral'
+            : (handlers[0] ?? '');
+        handlerByClass.set(b.visualClass, handler);
+        const reading: TradeRoleReading = {
+          facility: handler === 'WHGeneral' ? 'warehouse' : 'industry',
+          x: b.x,
+          y: b.y,
+          visualClass: b.visualClass,
+          templateName: details.templateName,
+          role: rawProperty(details.groups, 'Role'),
+          tradeRole: rawProperty(details.groups, 'TradeRole'),
+        };
+        if (handler === 'WHGeneral' && !warehouse) warehouse = reading;
+        else if (
+          handler === 'IndGeneral' &&
+          !industry &&
+          INDUSTRY_TRADE_ROLES.includes(reading.tradeRole)
+        ) {
+          industry = reading;
+        }
+      }
+
+      const readings: TradeRoleReading[] = [];
+      if (warehouse) readings.push(warehouse);
+      if (industry) readings.push(industry);
+      if (!warehouse) {
+        assertions.unproven(
+          `a WHGeneral warehouse's cached Role near ${GOVERNED_TOWN}`,
+          `none among ${buildings.length} building(s) in the ${ROLE_PROBE_SPAN}×${ROLE_PROBE_SPAN} ` +
+            `window (${reads} inspector read(s))`,
+        );
+      }
+      return { ...report('warehouse-role-reading', assertions, [], session), readings };
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   politicsRead,
@@ -1040,6 +1164,7 @@ export const FLOWS: Flow[] = [
   nearestTownHall,
   directoryBrowse,
   logonPageVerdict,
+  warehouseRoleReading,
 ];
 
 export function flowByName(name: string): Flow {
