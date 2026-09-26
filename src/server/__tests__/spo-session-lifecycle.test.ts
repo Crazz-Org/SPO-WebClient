@@ -101,6 +101,7 @@ function makeHarness(): ProtocolTestHarness {
 
 /** The private members a lifecycle test legitimately needs to observe. */
 interface SessionInternals {
+  latency: { record(ms: number): void; snapshot(): { latencyMs: number | null; samples: number } };
   isClosing: boolean;
   isServerBusy: boolean;
   requestIdCounter: number;
@@ -1963,6 +1964,16 @@ describe('endSession', () => {
 });
 
 describe('cleanupWorldSession — switching servers', () => {
+  it('resets the latency tracker so the previous server does not colour the new mean', async () => {
+    await connectWorld();
+    internals(harness).latency.record(120);
+    expect(internals(harness).latency.snapshot().samples).toBe(1);
+
+    await harness.session.cleanupWorldSession();
+
+    expect(internals(harness).latency.snapshot()).toEqual({ latencyMs: null, samples: 0 });
+  });
+
   it('returns the session to a directory-only state, ready for another world', async () => {
     const socket = await connectWorld();
     harness.session.setTycoonId('4666201923');

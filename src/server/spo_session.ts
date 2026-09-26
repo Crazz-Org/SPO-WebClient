@@ -2899,6 +2899,8 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.knownObjects.clear();
     this.chatUsers.clear();
     this.currentChannel = '';
+    // Round trips to the previous server must not colour the new one's mean.
+    this.latency.reset();
 
     // 6. Reset phase to allow new loginWorld()
     this.loggedOff = false; // re-arm graceful logoff for the next world session

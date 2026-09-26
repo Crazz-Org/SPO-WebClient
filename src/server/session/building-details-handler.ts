@@ -82,8 +82,8 @@ export interface ActiveInspector {
   hasCompInputs: boolean;
   isWarehouse: boolean;
   /**
-   * The building's block id, memoised on the first worker-count tick. The
-   * workforce poll binds to it 20 s after 20 s; re-reading `CurrBlock` from the
+   * The building's block id, memoised on the first live poll — workforce
+   * or service figures. Both polls bind to it tick after tick; re-reading `CurrBlock` from the
    * cacher every time would put a cacher round-trip on the wire for a value
    * that cannot change while the same temp object is open.
    */
@@ -609,6 +609,30 @@ const WORKER_KINDS = [0, 1, 2];
  * must not re-create a Delphi temp object, so it returns without touching the
  * wire at all.
  */
+/**
+ * The block id of the building this inspector is open on, read from the cacher
+ * once and then served from `inspector.currBlock`. Voyager did the same: the
+ * sheet read `fCurrBlock` once at load (Voyager/SrvGeneralSheetForm.pas:152-162)
+ * and cleared it on reload (:204). A new building or a released inspector means
+ * a new ActiveInspector object with no cached value, so it resolves again.
+ * Only the cacher read holds the inspector's mutex: it moves the shared temp object.
+ */
+async function resolveInspectorCurrBlock(
+  ctx: SessionContext, inspector: ActiveInspector, x: number, y: number,
+): Promise<string> {
+  if (!inspector.currBlock) {
+    const release = await inspector.mutex.acquire();
+    try {
+      await ctx.cacherSetObject(inspector.tempObjectId, x, y);
+      const [block] = await ctx.cacherGetPropertyList(inspector.tempObjectId, ['CurrBlock']);
+      inspector.currBlock = block || '';
+    } finally {
+      release();
+    }
+  }
+  return inspector.currBlock;
+}
+
 export async function readWorkerCounts(
   ctx: SessionContext,
   x: number,
@@ -628,21 +652,7 @@ export async function readWorkerCounts(
   }
   if (wanted.length === 0) return [];
 
-  if (!inspector.currBlock) {
-    // Only the cacher read needs the inspector's mutex: it moves the shared
-    // temp object. The RDOGetWorkers calls below target the block, not the
-    // temp object, so they run outside it.
-    const release = await inspector.mutex.acquire();
-    try {
-      await ctx.cacherSetObject(inspector.tempObjectId, x, y);
-      const [block] = await ctx.cacherGetPropertyList(inspector.tempObjectId, ['CurrBlock']);
-      inspector.currBlock = block || '';
-    } finally {
-      release();
-    }
-  }
-
-  const currBlock = inspector.currBlock;
+  const currBlock = await resolveInspectorCurrBlock(ctx, inspector, x, y);
   if (!currBlock) {
     ctx.log.debug(`[BuildingDetails] No CurrBlock for (${x},${y}), worker counts skipped`);
     return [];
@@ -1717,6 +1727,9 @@ async function fetchSubObjectProperties(
  * Only the selected index is asked for, as the reference client does: the whole
  * point of the poll is that it costs one round-trip pair per tick whatever the
  * service count. The result strings travel unparsed; the client parses.
+ *
+ * With an inspector open on (x, y), the block is resolved once per inspector
+ * and reused tick after tick; with none open, the one-shot cacher read stays.
  */
 export async function getBuildingServiceFigures(
   ctx: SessionContext,
@@ -1725,7 +1738,10 @@ export async function getBuildingServiceFigures(
   serviceIndex: number,
 ): Promise<{ supply: string; demand: string }> {
   await ctx.connectMapService();
-  const [currBlock] = await ctx.getCacherPropertyListAt(x, y, ['CurrBlock']);
+  const inspector = getActiveInspector(ctx, x, y);
+  const currBlock = inspector
+    ? await resolveInspectorCurrBlock(ctx, inspector, x, y)
+    : (await ctx.getCacherPropertyListAt(x, y, ['CurrBlock']))[0];
   if (!currBlock) throw new Error(`No building found at (${x}, ${y})`);
 
   if (!ctx.getSocket('construction')) {
