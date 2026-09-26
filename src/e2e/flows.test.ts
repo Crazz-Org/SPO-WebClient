@@ -1339,3 +1339,143 @@ describe('logon-page-verdict', () => {
     expect(off).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('warehouse-role-reading', () => {
+  type B = { x: number; y: number; visualClass: string; handler: string; props?: { name: string; value: string }[] };
+
+  function arrange(buildings: B[] | undefined, fail = false) {
+    const stub = stubSession(msg =>
+      msg.type === WsMessageType.REQ_MAP_LOAD
+        ? { type: WsMessageType.RESP_MAP_DATA, ...(buildings ? { data: { buildings } } : {}) }
+        : undefined,
+    );
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+    const read = jest.spyOn(session, 'readBuildingDetails').mockImplementation(async (_s, x, y) => {
+      if (fail) throw new Error('details timed out');
+      const b = (buildings ?? []).find(c => c.x === x && c.y === y)!;
+      return {
+        templateName: `T-${b.handler}`,
+        visualClass: b.visualClass,
+        tabs: [{ id: 'g', name: 'G', icon: '', order: 0, handlerName: b.handler }],
+        groups: { g: [{ name: 'Name', value: 'x' }], h: b.props ?? [] },
+      } as unknown as Awaited<ReturnType<typeof session.readBuildingDetails>>;
+    });
+    return { off, read, stub };
+  }
+
+  it('is read-only and listed', () => {
+    expect(flowByName('warehouse-role-reading').mutates).toBe(false);
+  });
+
+  it('records Role as absent when the read does not serve it, asserting nothing', async () => {
+    const { off, stub } = arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral' }]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.assertions).toEqual([]);
+    expect(result.readings).toEqual([
+      {
+        facility: 'warehouse', x: 101, y: 201, visualClass: '4001',
+        templateName: 'T-WHGeneral', role: 'absent', tradeRole: 'absent',
+      },
+    ]);
+    expect(stub.driver.request).toHaveBeenCalledWith(
+      expect.objectContaining({ type: WsMessageType.REQ_MAP_LOAD, x: 68, y: 168, width: 64, height: 64 }),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it("records Role = 'Warehouse' verbatim", async () => {
+    arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral', props: [{ name: 'Role', value: 'Warehouse' }] }]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.assertions).toEqual([]);
+    expect(result.readings?.[0]).toMatchObject({ role: 'Warehouse' });
+  });
+
+  it('records a numeric Role verbatim, and an empty one as empty', async () => {
+    arrange([
+      { x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral', props: [{ name: 'Role', value: '2' }, { name: 'TradeRole', value: '' }] },
+    ]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.assertions).toEqual([]);
+    expect(result.readings?.[0]).toMatchObject({ role: '2', tradeRole: '' });
+  });
+
+  it('records the nearest trading industry, skipping one whose TradeRole is not 2/5/6', async () => {
+    arrange([
+      { x: 150, y: 230, visualClass: '4001', handler: 'WHGeneral' },
+      { x: 100, y: 201, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '1' }] },
+      { x: 100, y: 202, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'Role', value: '0' }, { name: 'TradeRole', value: '5' }] },
+      { x: 100, y: 203, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '6' }] },
+    ]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.readings).toEqual([
+      expect.objectContaining({ facility: 'warehouse', x: 150, y: 230 }),
+      { facility: 'industry', x: 100, y: 202, visualClass: '5001', templateName: 'T-IndGeneral', role: '0', tradeRole: '5' },
+    ]);
+  });
+
+  it('does not re-read a class already known to be neither warehouse nor industry, nor a second warehouse', async () => {
+    const { read } = arrange([
+      { x: 100, y: 201, visualClass: '7', handler: 'Residential' },
+      { x: 100, y: 202, visualClass: '7', handler: 'Residential' },
+      { x: 100, y: 203, visualClass: '4001', handler: 'WHGeneral' },
+      { x: 100, y: 204, visualClass: '4001', handler: 'WHGeneral' },
+      { x: 100, y: 205, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
+      { x: 100, y: 206, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
+    ]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(result.readings).toHaveLength(2);
+  });
+
+  it('skips a known industry class once an industry is recorded', async () => {
+    const { read } = arrange([
+      { x: 100, y: 201, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
+      { x: 100, y: 202, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
+      { x: 100, y: 203, visualClass: '8', handler: '' },
+    ]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.readings).toEqual([expect.objectContaining({ facility: 'industry', x: 100, y: 201 })]);
+  });
+
+  it('reports UNPROVEN, never PASS, when no warehouse is in the window', async () => {
+    arrange([{ x: 100, y: 201, visualClass: '7', handler: 'Residential' }]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toHaveLength(1);
+    expect(result.unproven[0]).toMatch(/WHGeneral/);
+    expect(result.unproven[0]).toMatch(/1 building\(s\).*1 inspector read/);
+    expect(result.readings).toEqual([]);
+  });
+
+  it('stops after 40 inspector reads and reports UNPROVEN', async () => {
+    const many = Array.from({ length: 45 }, (_, i) => ({ x: 100, y: 201 + i, visualClass: `c${i}`, handler: 'Other' }));
+    many.push({ x: 150, y: 250, visualClass: '4001', handler: 'WHGeneral' });
+    const { read } = arrange(many);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(read).toHaveBeenCalledTimes(40);
+    expect(result.status).toBe('UNPROVEN');
+  });
+
+  it('reports UNPROVEN with zero buildings when the map answer carries no data', async () => {
+    arrange(undefined);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/0 building\(s\)/);
+  });
+
+  it('fails when the read itself fails, and still logs off', async () => {
+    const { off } = arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral' }], true);
+    const result = await runFlow(flowByName('warehouse-role-reading'), ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.error).toMatch(/details timed out/);
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+});
