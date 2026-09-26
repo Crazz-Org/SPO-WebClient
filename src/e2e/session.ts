@@ -21,6 +21,7 @@ import type {
   TownInfo,
   BuildingPropertyValue,
   MapBuilding,
+  WorldInfo,
 } from '../shared/types/domain-types';
 import { WsDriver } from './ws-driver';
 import {
@@ -38,6 +39,8 @@ export interface LiveSession {
   company: CompanyInfo;
   worlds: number;
   companies: CompanyInfo[];
+  /** The planitia entry from the directory listing — its IP reaches the world's ASP pages. */
+  world?: WorldInfo;
 }
 
 /**
@@ -94,7 +97,8 @@ export async function login(account: E2eAccount): Promise<LiveSession> {
 
   await awaitSearchMenu(driver);
 
-  return { driver, account, company, worlds: directory.worlds.length, companies };
+  const world = directory.worlds.find(w => w.name === WORLD_NAME);
+  return { driver, account, company, worlds: directory.worlds.length, companies, world };
 }
 
 /**

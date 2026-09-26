@@ -7,6 +7,7 @@ import { WsDriver, WsDriverError } from './ws-driver';
 import * as session from './session';
 import * as probeModule from './probe';
 import * as liveLog from './live-log';
+import * as loginHandler from '../server/session/login-handler';
 import { PRIMARY_ACCOUNT, SECONDARY_ACCOUNT } from './config';
 
 function stubSession(responder: (msg: WsMessage) => unknown): session.LiveSession {
@@ -1261,5 +1262,80 @@ describe('directory-browse', () => {
 
     expect(result.status).toBe('FAIL');
     expect(result.assertions.find(a => !a.ok)?.what).toMatch(/three legacy forms/);
+  });
+});
+
+describe('logon-page-verdict', () => {
+  const world = { name: 'planitia', url: '', ip: '10.0.0.1', port: 8000 };
+
+  function arrange(result: Awaited<ReturnType<typeof loginHandler.fetchCompaniesViaHttp>>, withWorld = true) {
+    const stub = stubSession(() => undefined);
+    stub.world = withWorld ? world : undefined;
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    const fetch = jest.spyOn(loginHandler, 'fetchCompaniesViaHttp').mockImplementation(async c => {
+      c.log.info('i');
+      c.log.debug('d');
+      c.log.warn('w');
+      c.log.error('e');
+      return result;
+    });
+    return { off, fetch };
+  }
+
+  it('is read-only and listed', () => {
+    expect(flowByName('logon-page-verdict').mutates).toBe(false);
+  });
+
+  it('records the company count for both accounts without asserting it', async () => {
+    const { off, fetch } = arrange({
+      kind: 'companies',
+      companies: [{ id: '1', name: 'a' }, { id: '2', name: 'b' }],
+      realContextId: null,
+    });
+    const result = await flowByName('logon-page-verdict').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.assertions).toEqual([]);
+    expect(result.readings).toEqual([
+      { account: 'SPO_test3', kind: 'companies', companies: 2 },
+      { account: 'Crazz', kind: 'companies', companies: 2 },
+    ]);
+    expect(fetch).toHaveBeenCalledWith(expect.objectContaining({ currentWorldInfo: world }), '10.0.0.1', 'SPO_test3');
+    expect(fetch).toHaveBeenCalledWith(expect.anything(), '10.0.0.1', 'Crazz');
+    expect(off).toHaveBeenCalledTimes(2);
+    expect(result.messagesSent).toBe(2);
+    expect(result.messagesReceived).toBe(2);
+  });
+
+  it('records the PA value when denied, without asserting', async () => {
+    arrange({ kind: 'denied', expiresOn: '01/01/2020' });
+    const result = await flowByName('logon-page-verdict').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.assertions).toEqual([]);
+    expect(result.readings?.[0]).toEqual({ account: 'SPO_test3', kind: 'denied', expiresOn: '01/01/2020' });
+  });
+
+  it('records the error code on an error page', async () => {
+    arrange({ kind: 'error', errorCode: 'ERROR_FIVEISDOWN' });
+    const result = await flowByName('logon-page-verdict').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.readings?.[1]).toEqual({ account: 'Crazz', kind: 'error', errorCode: 'ERROR_FIVEISDOWN' });
+  });
+
+  it('reports UNPROVEN when the page is unreachable', async () => {
+    arrange({ kind: 'unreachable' });
+    const result = await flowByName('logon-page-verdict').run(ctx);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toHaveLength(2);
+    expect(result.unproven[0]).toMatch(/unreachable/);
+    expect(result.readings?.[0]).toEqual({ account: 'SPO_test3', kind: 'unreachable' });
+  });
+
+  it('fails only when the request cannot be made, and still logs off', async () => {
+    const { off, fetch } = arrange({ kind: 'unreachable' }, false);
+    const result = await flowByName('logon-page-verdict').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(off).toHaveBeenCalledTimes(2);
   });
 });

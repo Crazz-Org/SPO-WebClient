@@ -1066,7 +1066,7 @@ async function checkWorldLimit(ctx: LoginContext, sessionId: string, username: s
   }
 }
 
-type FetchCompaniesResult =
+export type FetchCompaniesResult =
   | { kind: 'companies'; companies: CompanyInfo[]; realContextId: string | null }
   | { kind: 'denied'; expiresOn: string }
   | { kind: 'error'; errorCode: string }
@@ -1076,7 +1076,7 @@ type FetchCompaniesResult =
  * Fetch companies via HTTP (ASP endpoint)
  */
 export async function fetchCompaniesViaHttp(
-  ctx: LoginContext,
+  ctx: Pick<LoginContext, 'log' | 'currentWorldInfo' | 'languageId'>,
   worldIp: string,
   username: string,
 ): Promise<FetchCompaniesResult> {
