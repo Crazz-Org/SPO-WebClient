@@ -10,7 +10,9 @@
  *  2. no stylesheet may remove the focus ring (`outline: none` / `outline: 0`) without
  *     providing a `:focus-visible` rule in the same file;
  *  3. the type scale never drops below 12 px (11 px is the one documented exception,
- *     `--text-2xs`), including inside media queries.
+ *     `--text-2xs`), including inside media queries;
+ *  4. no two fixed HUD elements that are visible together overlap, unless a whitelist row
+ *     says so (the HUD band table, issue 931).
  *
  * Why a Jest test and not stylelint: no new dependency (CLAUDE.md), and the gate already
  * runs Jest on every PR.
@@ -64,6 +66,226 @@ function resolve(expr: string): number {
     sum += m[2] === 'rem' ? parseFloat(m[1]) * 16 : parseFloat(m[1]);
   }
   return sum;
+}
+
+/* ---- Viewport-aware CSS resolver (issue 931) ----
+   resolve() above only sums px numbers; the band table needs min()/max()/vw and media
+   queries, so it gets its own small evaluator. No eval, no new Function. */
+
+interface Viewport {
+  label: string;
+  w: number;
+  h: number;
+}
+
+type Vars = ReadonlyMap<string, string>;
+
+/** Index just past the `}` that closes the `{` at `open`. */
+function blockEnd(css: string, open: number): number {
+  let depth = 1;
+  let i = open + 1;
+  while (depth > 0 && i < css.length) {
+    if (css[i] === '{') depth += 1;
+    else if (css[i] === '}') depth -= 1;
+    i += 1;
+  }
+  return i;
+}
+
+/** Every top-level `prelude { body }` block, in source order, brace-balanced. */
+function topLevelBlocks(css: string): { prelude: string; body: string }[] {
+  const out: { prelude: string; body: string }[] = [];
+  let i = 0;
+  for (;;) {
+    const open = css.indexOf('{', i);
+    if (open < 0) return out;
+    const end = blockEnd(css, open);
+    out.push({ prelude: css.slice(i, open).trim(), body: css.slice(open + 1, end - 1) });
+    i = end;
+  }
+}
+
+/** Every top-level `@media … { … }` block. */
+function mediaBlocks(css: string): { query: string; body: string }[] {
+  return topLevelBlocks(css)
+    .filter((b) => b.prelude.startsWith('@media'))
+    .map((b) => ({ query: b.prelude.slice('@media'.length).trim(), body: b.body }));
+}
+
+interface CssRule {
+  media: string | null;
+  selectors: string[];
+  body: string;
+}
+
+/** Style rules in source order; rules inside `@media` carry their query, other at-rules are skipped. */
+function cssRules(css: string): CssRule[] {
+  const out: CssRule[] = [];
+  for (const { prelude, body } of topLevelBlocks(css)) {
+    if (prelude.startsWith('@media')) {
+      const media = prelude.slice('@media'.length).trim();
+      for (const inner of topLevelBlocks(body)) {
+        out.push({ media, selectors: inner.prelude.split(',').map((s) => s.trim()), body: inner.body });
+      }
+    } else if (!prelude.startsWith('@')) {
+      out.push({ media: null, selectors: prelude.split(',').map((s) => s.trim()), body });
+    }
+  }
+  return out;
+}
+
+/** (min-width|max-width|max-height: Npx), `and` (all hold), `,` (any holds); any other feature is false. */
+function matchesQuery(query: string, vp: Viewport): boolean {
+  return query.split(',').some((part) =>
+    part.split(/\band\b/).every((feature) => {
+      const m = feature.trim().match(/^\(\s*(min-width|max-width|max-height)\s*:\s*([0-9.]+)px\s*\)$/);
+      if (!m) return false;
+      const n = parseFloat(m[2]);
+      if (m[1] === 'min-width') return vp.w >= n;
+      if (m[1] === 'max-width') return vp.w <= n;
+      return vp.h <= n;
+    })
+  );
+}
+
+/**
+ * Declarations of `selector` at `vp` (or at base when `vp` is null): every rule whose selector
+ * list names it exactly or with a trailing `:not(...)`, in source order, last one wins.
+ */
+function declsAt(css: string, selector: string, vp: Viewport | null): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of cssRules(css)) {
+    if (r.media !== null && (vp === null || !matchesQuery(r.media, vp))) continue;
+    if (!r.selectors.some((s) => s === selector || s.startsWith(`${selector}:not(`))) continue;
+    for (const decl of r.body.split(';')) {
+      const colon = decl.indexOf(':');
+      if (colon < 0) continue;
+      out.set(decl.slice(0, colon).trim(), decl.slice(colon + 1).trim());
+    }
+  }
+  return out;
+}
+
+/** The `:root` custom properties at `vp` — base, then every matching `@media` override. */
+function tokensAt(vp: Viewport): Vars {
+  return declsAt(tokensCss, ':root', vp);
+}
+
+function unitScale(unit: string | undefined, vp: Viewport): number {
+  switch (unit) {
+    case 'rem':
+      return 16;
+    case 'vw':
+    case '%': // every table element is fixed, or absolute inside the full-viewport .screen
+      return vp.w / 100;
+    case 'vh':
+    case 'dvh':
+      return vp.h / 100;
+    default: // px, or a unitless number (z-index, line-height)
+      return 1;
+  }
+}
+
+/**
+ * Evaluate a CSS length expression at `vp`: numbers (px, rem, vw, vh, dvh, %, unitless),
+ * + - * /, parentheses, calc/min/max/clamp, var(--x) (from `extra`, then `tokens`) and
+ * env(name, fallback). Anything else throws — no silent zeros.
+ */
+function evalLength(expr: string, vp: Viewport, tokens: Vars, extra: Vars = new Map(), depth = 0): number {
+  if (depth > 20) throw new Error(`var() nesting too deep in "${expr}"`);
+  const toks = expr.match(/--[a-zA-Z0-9-]+|[a-zA-Z][a-zA-Z0-9-]*|(?:\d+\.?\d*|\.\d+)(?:px|rem|dvh|vw|vh|%)?|\S/g) ?? [];
+  let pos = 0;
+  const peek = (): string | undefined => toks[pos];
+  const next = (): string => {
+    const t = toks[pos];
+    if (t === undefined) throw new Error(`unexpected end of "${expr}"`);
+    pos += 1;
+    return t;
+  };
+  const expectTok = (want: string): void => {
+    const got = next();
+    if (got !== want) throw new Error(`expected "${want}", got "${got}" in "${expr}"`);
+  };
+
+  function parseExpr(): number {
+    let v = parseTerm();
+    while (peek() === '+' || peek() === '-') {
+      const op = next();
+      const r = parseTerm();
+      v = op === '+' ? v + r : v - r;
+    }
+    return v;
+  }
+
+  function parseTerm(): number {
+    let v = parseFactor();
+    while (peek() === '*' || peek() === '/') {
+      const op = next();
+      const r = parseFactor();
+      v = op === '*' ? v * r : v / r;
+    }
+    return v;
+  }
+
+  function parseArgs(): number[] {
+    const out = [parseExpr()];
+    while (peek() === ',') {
+      next();
+      out.push(parseExpr());
+    }
+    expectTok(')');
+    return out;
+  }
+
+  function parseFactor(): number {
+    const t = next();
+    if (t === '-') return -parseFactor();
+    if (t === '(') {
+      const v = parseExpr();
+      expectTok(')');
+      return v;
+    }
+    const num = t.match(/^(\d+\.?\d*|\.\d+)(px|rem|dvh|vw|vh|%)?$/);
+    if (num) return parseFloat(num[1]) * unitScale(num[2], vp);
+    if (peek() !== '(') throw new Error(`unknown token "${t}" in "${expr}"`);
+    next();
+    switch (t) {
+      case 'calc': {
+        const v = parseExpr();
+        expectTok(')');
+        return v;
+      }
+      case 'min':
+        return Math.min(...parseArgs());
+      case 'max':
+        return Math.max(...parseArgs());
+      case 'clamp': {
+        const args = parseArgs();
+        if (args.length !== 3) throw new Error(`clamp() needs 3 arguments in "${expr}"`);
+        return Math.max(args[0], Math.min(args[1], args[2]));
+      }
+      case 'var': {
+        const name = next();
+        const value = extra.get(name) ?? tokens.get(name);
+        if (value === undefined) throw new Error(`undefined custom property ${name} in "${expr}"`);
+        expectTok(')');
+        return evalLength(value, vp, tokens, extra, depth + 1);
+      }
+      case 'env': {
+        next(); // the environment variable name — every inset is 0 in this table
+        expectTok(',');
+        const v = parseExpr();
+        expectTok(')');
+        return v;
+      }
+      default:
+        throw new Error(`unknown function ${t}() in "${expr}"`);
+    }
+  }
+
+  const value = parseExpr();
+  if (pos !== toks.length) throw new Error(`trailing "${toks.slice(pos).join(' ')}" in "${expr}"`);
+  return value;
 }
 
 /** Custom properties that are set from TypeScript at runtime, never in a stylesheet. */
@@ -437,9 +659,11 @@ describe('HUD bottom stack clears the command bar (issue 875)', () => {
       expect(contextBottom).toBeGreaterThanOrEqual(space4 + barHeightWithMode);
       expect(contextBottom).toBeGreaterThanOrEqual(space4 + barHeightNoMode);
 
-      const mediaBlocks = bar.match(/@media[^{]*\{[\s\S]*?\n\}\s*\n\}/g) ?? [];
-      for (const block of mediaBlocks) {
-        expect(block).not.toMatch(/height\s*:/);
+      const blocks = mediaBlocks(bar);
+      expect(blocks.length).toBeGreaterThan(0);
+      expect(blocks.length).toBe((bar.match(/@media/g) ?? []).length);
+      for (const block of blocks) {
+        expect(block.body).not.toMatch(/(^|[\s;{])height\s*:/);
       }
     }
   );
@@ -453,10 +677,24 @@ describe('HUD bottom stack clears the command bar (issue 875)', () => {
     expect(tickerBlock).not.toMatch(/bottom\s*:/);
   });
 
-  it('mobile keeps the exact resolved offset it always had', () => {
+  it('the mobile context-strip offset is derived from BottomNav, the safe area and MobileSearchPill', () => {
     const mobileMatch = tokens.match(/@media \(max-width: 1023px\) \{\s*:root \{([\s\S]*?)\}\s*\}/);
     expect(mobileMatch).not.toBeNull();
-    expect(mobileMatch![1]).toMatch(/--context-strip-bottom:\s*134px/);
+    const decl = mobileMatch![1].match(/--context-strip-bottom:\s*([^;]+);/);
+    expect(decl).not.toBeNull();
+    expect(decl![1]).toMatch(/var\(--bottomnav-height\)/);
+    expect(decl![1]).toMatch(/var\(--sai-bottom\)/);
+
+    const vp: Viewport = { label: '390x844', w: 390, h: 844 };
+    const vpTokens = tokensAt(vp);
+    const pillCss = stripComments(
+      readFileSync(join(CLIENT_ROOT, 'components/mobile/MobileSearchPill.module.css'), 'utf8')
+    );
+    const pill = declsAt(pillCss, '.pill', vp);
+    const pillTop =
+      evalLength(pill.get('bottom') ?? '', vp, vpTokens) + evalLength(pill.get('min-height') ?? '', vp, vpTokens);
+    const stripBottom = evalLength(vpTokens.get('--context-strip-bottom') ?? '', vp, vpTokens);
+    expect(stripBottom).toBeGreaterThanOrEqual(pillTop);
   });
 });
 
@@ -620,5 +858,470 @@ describe('world event ticker sits in the top band (issue 889)', () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('HUD band table (issue 931)', () => {
+  /*
+   * Every fixed/absolute HUD element, its band resolved from its own CSS at five viewports.
+   * A new fixed HUD element registers its band here (src/client/CLAUDE.md). Only the layout
+   * rule (anchored, centred, translateX) lives in a row; every value the CSS declares is read
+   * through declsAt/evalLength. A dimension set by content is a named constant in the row with
+   * its reason — that is the element's stated maximum band. Safe-area insets are 0.
+   */
+  interface Box {
+    x0: number;
+    x1: number;
+    y0: number;
+    y1: number;
+  }
+
+  interface Ctx {
+    vp: Viewport;
+    /** The row's selector declarations at this viewport. */
+    decls: Map<string, string>;
+    /** Evaluate an expression at this viewport. */
+    len: (expr: string, extra?: Vars) => number;
+    /** Evaluate one of the row's own declarations; throws when it is absent. */
+    num: (prop: string, extra?: Vars) => number;
+    /** Declarations of another selector in the same file, at this viewport. */
+    other: (selector: string) => Map<string, string>;
+  }
+
+  interface HudRow {
+    name: string;
+    css: string;
+    selector: string;
+    /** true, or the reason the component is never rendered. */
+    mounted: true | string;
+    band: (vp: Viewport, d: Ctx) => Box;
+  }
+
+  const VIEWPORTS: Viewport[] = [
+    { label: '1024x768', w: 1024, h: 768 },
+    { label: '1400x900', w: 1400, h: 900 },
+    { label: '2400x1350', w: 2400, h: 1350 },
+    { label: '390x844', w: 390, h: 844 },
+    { label: '1023x768', w: 1023, h: 768 },
+  ];
+
+  const read = (rel: string): string => readFileSync(join(CLIENT_ROOT, rel), 'utf8');
+  const cssOf = (rel: string): string => stripComments(read(rel));
+
+  /** Horizontally centred between `left` and W − `right`, capped by `maxW` (margin: 0 auto). */
+  function centred(vp: Viewport, left: number, right: number, maxW: number): { x0: number; x1: number } {
+    const avail = vp.w - left - right;
+    const w = Math.min(avail, maxW);
+    const x0 = left + (avail - w) / 2;
+    return { x0, x1: x0 + w };
+  }
+
+  /** A band anchored by `bottom`, `h` tall. */
+  const fromBottom = (vp: Viewport, bottom: number, h: number): { y0: number; y1: number } => ({
+    y0: vp.h - bottom - h,
+    y1: vp.h - bottom,
+  });
+
+  /** Toast card, tallest case: 2 × 12px padding + 2 × 1px border + three 18px lines (12px / 1.5, title included). */
+  const TOAST_CARD_MAX = 80;
+  /** The "+N more" row: 2 × 4px padding + one 18px line. */
+  const TOAST_OVERFLOW_ROW = 26;
+  /** VersionBadge: "Beta X.Y.Z (YYYY-MM-DD HH:MM #NNNN)" is about 37 characters at 12px. */
+  const VERSION_BADGE_WIDTH = 240;
+  /** ChaseBadge icon: <Eye size={12}>. */
+  const CHASE_ICON = 12;
+  /** RightRail: a group of 2 and a group of 5 `md` IconButtons (guarded against RightRail.tsx below). */
+  const RIGHT_RAIL_GROUPS = [2, 5];
+
+  const maxVisibleMatch = read('components/common/Toast.tsx').match(/export const MAX_VISIBLE = (\d+);/);
+  const MAX_VISIBLE = maxVisibleMatch ? Number(maxVisibleMatch[1]) : NaN;
+
+  function rightRailHeight(d: Ctx): number {
+    const button = evalLength(
+      declsAt(cssOf('components/common/IconButton.module.css'), '.md', d.vp).get('height') ?? '',
+      d.vp,
+      tokensAt(d.vp)
+    );
+    const railGap = d.len('var(--rail-gap)');
+    const groups = RIGHT_RAIL_GROUPS.map((n) => n * button + (n - 1) * railGap);
+    const divider = d.len(d.other('.divider').get('height') ?? '') + 2 * d.len('var(--space-1)');
+    return groups.reduce((a, b) => a + b, 0) + 2 * d.num('gap') + divider;
+  }
+
+  const HUD_BANDS: HudRow[] = [
+    {
+      name: 'StatusPill',
+      css: 'components/hud/StatusPill.module.css',
+      selector: '.pill',
+      mounted: true,
+      // Stated: width: max-content and no max-width outside .shifted — nothing caps it at rest.
+      band: (vp, d) => ({ x0: 0, x1: vp.w, y0: d.num('top'), y1: d.num('top') + d.num('height') }),
+    },
+    {
+      name: 'ChaseBadge',
+      css: 'components/chat/ChaseBadge.module.css',
+      selector: '.badge',
+      mounted: true,
+      band: (vp, d) => {
+        const padX = d.len((d.decls.get('padding') ?? '').split(/\s+/)[1] ?? '');
+        const border = d.len((d.decls.get('border') ?? '').split(/\s+/)[0] ?? '');
+        const nameMax = d.len(d.other('.name').get('max-width') ?? '');
+        // Stated max width: padding + border + icon + gap + the capped name.
+        const maxW = 2 * padX + 2 * border + CHASE_ICON + d.num('gap') + nameMax;
+        const right = d.num('right');
+        return { x0: vp.w - right - maxW, x1: vp.w - right, y0: d.num('top'), y1: d.num('top') + d.num('height') };
+      },
+    },
+    {
+      name: 'WorldEventTicker',
+      css: 'components/hud/WorldEventTicker.module.css',
+      selector: '.ticker',
+      mounted: true,
+      // Stated: one nowrap line, so min-height is the height.
+      band: (vp, d) => ({
+        ...centred(vp, d.num('left'), d.num('right'), d.num('max-width')),
+        y0: d.num('top'),
+        y1: d.num('top') + d.num('min-height'),
+      }),
+    },
+    {
+      name: 'Toast',
+      css: 'components/common/Toast.module.css',
+      selector: '.container',
+      mounted: true,
+      band: (vp, d) => {
+        const maxW = d.decls.get('max-width') === 'none' ? Infinity : d.num('max-width');
+        const w = Math.min(d.num('width'), maxW);
+        // Stated max band: MAX_VISIBLE cards at their tallest, their gaps, and the overflow row.
+        const h = MAX_VISIBLE * TOAST_CARD_MAX + MAX_VISIBLE * d.num('gap') + TOAST_OVERFLOW_ROW;
+        return { x0: vp.w / 2 - w / 2, x1: vp.w / 2 + w / 2, y0: d.num('top'), y1: d.num('top') + h };
+      },
+    },
+    {
+      name: 'ChatBanner',
+      css: 'components/mobile/ChatBanner.module.css',
+      selector: '.banner',
+      mounted: true,
+      // Stated max band: white-space: nowrap, so min-height is the maximum.
+      band: (vp, d) => ({
+        x0: d.num('left'),
+        x1: vp.w - d.num('right'),
+        y0: d.num('top'),
+        y1: d.num('top') + d.num('min-height'),
+      }),
+    },
+    {
+      name: 'MobileInfoBar',
+      css: 'components/mobile/MobileInfoBar.module.css',
+      selector: '.bar',
+      mounted: true,
+      band: (vp, d) => ({
+        x0: d.num('left'),
+        x1: vp.w - d.num('right'),
+        y0: d.num('top'),
+        y1: d.num('top') + d.num('height'),
+      }),
+    },
+    {
+      name: 'ContextStatusStrip',
+      css: 'components/hud/ContextStatusStrip.module.css',
+      selector: '.strip',
+      mounted: true,
+      // Stated: one nowrap line, so min-height is the height.
+      band: (vp, d) => ({
+        ...centred(vp, d.num('left'), d.num('right'), d.num('max-width')),
+        ...fromBottom(vp, d.num('bottom'), d.num('min-height')),
+      }),
+    },
+    {
+      name: 'ChatStrip',
+      css: 'components/chat/ChatStrip.module.css',
+      selector: '.strip',
+      mounted: true,
+      // Max band = the expanded state: its height and its --chat-strip-width.
+      band: (vp, d) => {
+        const expanded = d.other('.strip.expanded');
+        const extra = new Map([['--chat-strip-width', expanded.get('--chat-strip-width') ?? '']]);
+        const left = d.num('left', extra);
+        return {
+          x0: left,
+          x1: left + d.num('width', extra),
+          ...fromBottom(vp, d.num('bottom'), d.len(expanded.get('height') ?? '')),
+        };
+      },
+    },
+    {
+      name: 'CommandBar',
+      css: 'components/hud/CommandBar.module.css',
+      selector: '.bar',
+      mounted: true,
+      // Height: --command-bar-height, proven equal to the bar's geometry by the issue-875 describe.
+      band: (vp, d) => {
+        const left = d.num('left');
+        return {
+          x0: left,
+          x1: left + Math.min(d.num('max-width'), vp.w - left - d.num('right')),
+          ...fromBottom(vp, d.num('bottom'), d.len('var(--command-bar-height)')),
+        };
+      },
+    },
+    {
+      name: 'RightRail',
+      css: 'components/hud/RightRail.module.css',
+      selector: '.rail',
+      mounted: true,
+      band: (vp, d) => {
+        const right = d.num('right');
+        const button = 40; // the `md` IconButton width, read as its height in rightRailHeight
+        return { x0: vp.w - right - button, x1: vp.w - right, ...fromBottom(vp, d.num('bottom'), rightRailHeight(d)) };
+      },
+    },
+    {
+      name: 'LeftRail',
+      css: 'components/hud/LeftRail.module.css',
+      selector: '.rail',
+      mounted: 'no renderer — CommandBar replaced it on desktop (CommandBar.tsx header)',
+      band: () => {
+        throw new Error('LeftRail is mounted again: give it a real band');
+      },
+    },
+    {
+      name: 'VersionBadge',
+      css: 'components/hud/VersionBadge.module.css',
+      selector: '.badge',
+      mounted: true,
+      band: (vp, d) => {
+        const right = d.num('right');
+        const h = 2 * d.num('font-size') * d.num('line-height'); // two lines
+        return { x0: vp.w - right - VERSION_BADGE_WIDTH, x1: vp.w - right, ...fromBottom(vp, d.num('bottom'), h) };
+      },
+    },
+    {
+      name: 'BottomNav',
+      css: 'components/mobile/BottomNav.module.css',
+      selector: '.nav',
+      mounted: true,
+      band: (vp, d) => ({
+        x0: d.num('left'),
+        x1: vp.w - d.num('right'),
+        ...fromBottom(vp, d.num('bottom'), d.num('height')),
+      }),
+    },
+    {
+      name: 'MobileSearchPill',
+      css: 'components/mobile/MobileSearchPill.module.css',
+      selector: '.pill',
+      mounted: true,
+      // Stated: one nowrap line, so min-height is the height.
+      band: (vp, d) => ({
+        ...centred(vp, d.num('left'), d.num('right'), d.num('max-width')),
+        ...fromBottom(vp, d.num('bottom'), d.num('min-height')),
+      }),
+    },
+    {
+      name: 'BottomSheet',
+      css: 'components/mobile/BottomSheet.module.css',
+      selector: '.sheet',
+      mounted: true,
+      // Stated max band: its max-height (the .full snap).
+      band: (vp, d) => ({
+        x0: d.num('left'),
+        x1: vp.w - d.num('right'),
+        ...fromBottom(vp, d.num('bottom'), d.num('max-height')),
+      }),
+    },
+  ];
+
+  /** Pairs that are never rendered at the same time (MobileShell guards, asserted below). */
+  const NEVER_TOGETHER: [string, string][] = [
+    ['BottomSheet', 'ChatBanner'],
+    ['BottomSheet', 'MobileSearchPill'],
+  ];
+
+  /** The whitelist: `over` may sit over `under`, for the stated reason. */
+  const MAY_SIT_OVER: { over: string; under: string; reason: string }[] = [
+    {
+      over: 'Toast',
+      under: 'WorldEventTicker',
+      reason: 'intentional — --world-ticker-top is --content-top, the anchor the toast stack uses (issue 889)',
+    },
+    {
+      over: 'Toast',
+      under: 'ChatStrip',
+      reason: 'the toast stack is the top layer (--z-toast) and transient; at 1024x768 its three-card maximum reaches the expanded chat',
+    },
+    { over: 'Toast', under: 'ChatBanner', reason: 'the same reason as ChatStrip, below 1024 px' },
+    { over: 'Toast', under: 'BottomSheet', reason: 'the toast layer sits over every surface (--z-toast > --z-modal)' },
+    {
+      over: 'ChaseBadge',
+      under: 'StatusPill',
+      reason: 'pre-existing: pinned top-right at --space-2 (issue 889), shown only while chasing, it is the control that ends the chase; the pill is uncapped at rest',
+    },
+    { over: 'ChaseBadge', under: 'MobileInfoBar', reason: 'the same, below 1024 px (--z-hud > --z-overlay)' },
+    {
+      over: 'CommandBar',
+      under: 'VersionBadge',
+      reason: 'the build footnote is --z-dropdown, bottom-right; below about 1400 px the bar right end covers part of it (pre-existing, accepted)',
+    },
+    ...['MobileInfoBar', 'WorldEventTicker', 'ContextStatusStrip', 'ChaseBadge'].map((under) => ({
+      over: 'BottomSheet',
+      under,
+      reason: 'the one content surface below 1024 px: at its full snap it covers the map HUD by design, and its .backdrop already dims everything above BottomNav',
+    })),
+  ];
+
+  function ctxFor(row: HudRow, vp: Viewport): Ctx {
+    const css = cssOf(row.css);
+    const tokens = tokensAt(vp);
+    const decls = declsAt(css, row.selector, vp);
+    const len = (expr: string, extra?: Vars): number => evalLength(expr, vp, tokens, extra);
+    return {
+      vp,
+      decls,
+      len,
+      num: (prop, extra) => {
+        const v = decls.get(prop);
+        if (v === undefined) throw new Error(`${row.name}: ${row.selector} declares no ${prop} at ${vp.label}`);
+        return len(v, extra);
+      },
+      other: (selector) => declsAt(css, selector, vp),
+    };
+  }
+
+  const visible = (row: HudRow, vp: Viewport): boolean =>
+    row.mounted === true && declsAt(cssOf(row.css), row.selector, vp).get('display') !== 'none';
+
+  const strictlyOverlap = (a: Box, b: Box): boolean =>
+    a.y0 < b.y1 && b.y0 < a.y1 && a.x0 < b.x1 && b.x0 < a.x1;
+
+  const neverTogether = (a: string, b: string): boolean =>
+    NEVER_TOGETHER.some(([p, q]) => (p === a && q === b) || (p === b && q === a));
+
+  const whitelisted = (a: string, b: string): boolean =>
+    MAY_SIT_OVER.some((w) => (w.over === a && w.under === b) || (w.over === b && w.under === a));
+
+  const fmt = (n: number): string => String(Math.round(n * 10) / 10);
+
+  /** Every overlapping pair of rows visible together at `vp`, whitelisted or not. */
+  function overlapsAt(vp: Viewport): { a: string; b: string; text: string }[] {
+    const bands = HUD_BANDS.filter((row) => visible(row, vp)).map((row) => ({
+      name: row.name,
+      box: row.band(vp, ctxFor(row, vp)),
+    }));
+    const out: { a: string; b: string; text: string }[] = [];
+    for (let i = 0; i < bands.length; i += 1) {
+      for (let j = i + 1; j < bands.length; j += 1) {
+        const a = bands[i];
+        const b = bands[j];
+        if (neverTogether(a.name, b.name) || !strictlyOverlap(a.box, b.box)) continue;
+        const y = `[${fmt(Math.max(a.box.y0, b.box.y0))}, ${fmt(Math.min(a.box.y1, b.box.y1))}]`;
+        const x = `[${fmt(Math.max(a.box.x0, b.box.x0))}, ${fmt(Math.min(a.box.x1, b.box.x1))}]`;
+        out.push({ a: a.name, b: b.name, text: `${vp.label} ${a.name} × ${b.name}: y ${y} x ${x}` });
+      }
+    }
+    return out;
+  }
+
+  it('names exactly the fifteen fixed HUD elements, each positioned fixed or absolute', () => {
+    expect(HUD_BANDS.map((r) => r.name).sort()).toEqual(
+      [
+        'StatusPill',
+        'ChaseBadge',
+        'WorldEventTicker',
+        'Toast',
+        'ChatBanner',
+        'MobileInfoBar',
+        'ContextStatusStrip',
+        'ChatStrip',
+        'CommandBar',
+        'RightRail',
+        'LeftRail',
+        'VersionBadge',
+        'BottomNav',
+        'MobileSearchPill',
+        'BottomSheet',
+      ].sort()
+    );
+    for (const row of HUD_BANDS) {
+      const position = declsAt(cssOf(row.css), row.selector, null).get('position');
+      expect({ row: row.name, position }).toEqual({ row: row.name, position: expect.stringMatching(/^(fixed|absolute)$/) });
+    }
+  });
+
+  it.each(VIEWPORTS)('at $label: no two HUD bands visible together overlap outside the whitelist', (vp) => {
+    const offenders = overlapsAt(vp)
+      .filter((o) => !whitelisted(o.a, o.b))
+      .map((o) => o.text);
+    expect(offenders).toEqual([]);
+  });
+
+  it('every whitelist row names a real overlap, and its `over` element stacks at or above its `under`', () => {
+    const seen = VIEWPORTS.flatMap((vp) => overlapsAt(vp));
+    const zIndex = (name: string, vp: Viewport): number => {
+      const row = HUD_BANDS.find((r) => r.name === name);
+      if (!row) throw new Error(`no table row named ${name}`);
+      return ctxFor(row, vp).num('z-index');
+    };
+    for (const w of MAY_SIT_OVER) {
+      const used = seen.some((o) => (o.a === w.over && o.b === w.under) || (o.a === w.under && o.b === w.over));
+      expect({ ...w, used }).toEqual({ ...w, used: true });
+      expect(zIndex(w.over, VIEWPORTS[0])).toBeGreaterThanOrEqual(zIndex(w.under, VIEWPORTS[0]));
+    }
+  });
+
+  it('the Toast row reads MAX_VISIBLE from Toast.tsx', () => {
+    expect(MAX_VISIBLE).toBeGreaterThan(0);
+  });
+
+  it('the RightRail row matches RightRail.tsx: seven md buttons, a 345 px column', () => {
+    const tsx = read('components/hud/RightRail.tsx');
+    const buttons = (tsx.match(/<IconButton/g) ?? []).length;
+    expect(buttons).toBe(RIGHT_RAIL_GROUPS.reduce((a, b) => a + b, 0));
+    expect((tsx.match(/size="md"/g) ?? []).length).toBe(buttons);
+    const row = HUD_BANDS.find((r) => r.name === 'RightRail');
+    expect(row).toBeDefined();
+    expect(rightRailHeight(ctxFor(row!, VIEWPORTS[0]))).toBe(345);
+  });
+
+  it('LeftRail really is unmounted — no .tsx under src/client renders it', () => {
+    const renderers: string[] = [];
+    const scan = (dir: string): void => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) {
+          if (entry !== 'node_modules') scan(full);
+        } else if (entry.endsWith('.tsx') && !entry.endsWith('.test.tsx') && readFileSync(full, 'utf8').includes('<LeftRail')) {
+          renderers.push(relative(CLIENT_ROOT, full));
+        }
+      }
+    };
+    scan(CLIENT_ROOT);
+    expect(renderers).toEqual([]);
+    const row = HUD_BANDS.find((r) => r.name === 'LeftRail');
+    expect(row?.mounted).not.toBe(true);
+    expect(() => row?.band(VIEWPORTS[0], ctxFor(row, VIEWPORTS[0]))).toThrow(/give it a real band/);
+  });
+
+  it('MobileShell still keeps BottomSheet apart from ChatBanner and MobileSearchPill', () => {
+    const shell = read('components/mobile/MobileShell.tsx');
+    expect(shell).toMatch(/const sheetOpen = \(mobileTab !== 'map' \|\| hasRightPanel\) && !connectActive;/);
+    expect(shell).toMatch(/\{mobileTab === 'map' && !hasRightPanel && <ChatBanner \/>\}/);
+    expect(shell).toMatch(/\{mobileTab === 'map' && !hasRightPanel && [^{}]*<MobileSearchPill \/>\}/);
+  });
+
+  it('the evaluator refuses what it cannot read instead of returning 0', () => {
+    const vp = VIEWPORTS[0];
+    const tokens = tokensAt(vp);
+    expect(() => evalLength('auto', vp, tokens)).toThrow(/unknown token/);
+    expect(() => evalLength('var(--no-such-token)', vp, tokens)).toThrow(/undefined custom property/);
+    expect(() => evalLength('attr(x)', vp, tokens)).toThrow(/unknown function/);
+    expect(() => evalLength('clamp(1px, 2px)', vp, tokens)).toThrow(/3 arguments/);
+    expect(() => evalLength('1px 2px', vp, tokens)).toThrow(/trailing/);
+    expect(() => evalLength('calc(1px', vp, tokens)).toThrow(/unexpected end/);
+    expect(() => evalLength('calc(1px]', vp, tokens)).toThrow(/expected "\)"/);
+    expect(() => evalLength('var(--a)', vp, tokens, new Map([['--a', 'var(--a)']]))).toThrow(/too deep/);
+    expect(evalLength('calc(-1 * 2rem / 4 + 10vh - 1dvh + 50%)', vp, tokens)).toBeCloseTo(-8 + 76.8 - 7.68 + 512);
+    expect(matchesQuery('(max-height: 900px)', vp)).toBe(true);
+    expect(matchesQuery('(hover: none)', vp)).toBe(false);
   });
 });
