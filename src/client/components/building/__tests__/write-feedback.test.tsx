@@ -5,16 +5,20 @@
  * tabs. These tests pin the three that had nothing: the supplier sliders, the connection
  * actions of a gate, and the rename. Each drives the store the way the write path does
  * (pending → confirmed / failed) and asserts what the panel says.
+ *
+ * That every write site renders an indicator bound to its own key is now enforced from
+ * source by `save-indicator-coverage.test.ts`; this file pins the behaviour of chosen sites.
  */
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, screen } from '@testing-library/react';
 import { renderWithProviders, resetStores } from '../../../__tests__/setup/render-helpers';
 import { SuppliesPanel } from '../SuppliesGroup';
+import { CompInputsPanel } from '../InputsGroup';
 import { ProductsPanel } from '../ProductsGroup';
 import { useBuildingStore } from '../../../store/building-store';
 import { connectionPendingKey } from '../../../handlers/connection-pending-key';
-import type { BuildingSupplyData, BuildingProductData } from '@/shared/types';
+import type { BuildingSupplyData, BuildingProductData, BuildingConnectionData, CompInputData } from '@/shared/types';
 
 const X = 10;
 const Y = 20;
@@ -92,5 +96,46 @@ describe('a connection change says so on its own gate', () => {
     expandGate('Cotton');
     act(() => useBuildingStore.getState().setPending(connectionPendingKey('RDODisconnectInput', 'Wool'), '0'));
     expect(screen.queryByText('Saving…')).toBeNull();
+  });
+});
+
+describe('the sort, overpayment and demand writes say they are saving', () => {
+  beforeEach(() => resetStores());
+
+  const row: BuildingConnectionData = {
+    facilityName: 'Farm A', companyName: 'Yellow Inc.', createdBy: 'SPO_test3', price: '100',
+    overprice: '10', lastValue: '900', cost: '$12', quality: '95%', connected: true,
+    x: 40, y: 50,
+  };
+  const sortable: BuildingSupplyData = {
+    ...supply, qpSorted: '1', sortMode: '0', connectionCount: 1, connections: [row],
+  };
+
+  it('the sort write shows one indicator, on the active column', () => {
+    renderWithProviders(<SuppliesPanel supplies={[sortable]} canEdit buildingX={X} buildingY={Y} />);
+    expandGate('Cotton');
+    act(() => useBuildingStore.getState().setPending('RDOSetInputSortMode:{"fluidId":"Cotton"}', '1'));
+    expect(screen.getAllByText('Saving…').length).toBe(1);
+    act(() => useBuildingStore.getState().confirmPending('RDOSetInputSortMode:{"fluidId":"Cotton"}', 'confirmed'));
+    expect(screen.getByText('Saved')).toBeTruthy();
+  });
+
+  it('the overpayment write shows on its own row only', () => {
+    renderWithProviders(<SuppliesPanel supplies={[sortable]} canEdit buildingX={X} buildingY={Y} />);
+    expandGate('Cotton');
+    act(() => useBuildingStore.getState().setPending('RDOSetInputOverPrice:{"fluidId":"Cotton","index":"1"}', '20'));
+    expect(screen.queryByText('Saving…')).toBeNull();
+    act(() => useBuildingStore.getState().setPending('RDOSetInputOverPrice:{"fluidId":"Cotton","index":"0"}', '20'));
+    expect(screen.getByText('Saving…')).toBeTruthy();
+  });
+
+  it('the company input demand write shows its indicator', () => {
+    const input: CompInputData = {
+      name: 'Computer Services', supplied: 50, demanded: 100, ratio: 75, maxDemand: 200,
+      editable: true, units: 'units',
+    };
+    renderWithProviders(<CompInputsPanel compInputs={[input]} canEdit buildingX={X} buildingY={Y} />);
+    act(() => useBuildingStore.getState().setPending('RDOSetCompanyInputDemand:{"index":"0"}', '50'));
+    expect(screen.getByText('Saving…')).toBeTruthy();
   });
 });
