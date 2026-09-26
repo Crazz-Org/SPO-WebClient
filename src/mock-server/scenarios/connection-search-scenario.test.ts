@@ -57,10 +57,6 @@ async function emit(direction: 'input' | 'output', roles: number, sortMode?: num
 }
 
 describe('connection-search scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('both searches are 9-argument functions, so both frames carry "^"', () => {
     for (const member of ['FindSuppliers', 'FindClients'] as const) {
       expect(RDO_MEMBERS[member].kind).toBe('function');
@@ -109,6 +105,7 @@ describe('connection-search scenario — the Role argument on the wire', () => {
     expect(hit.exchange.id).toBe('cs-rdo-001');
     // The fixture request is byte-for-byte the frame production emitted.
     expect(frame).toBe(hit.exchange.request);
+    expect(frame).toPassStrictRdoValidation(rdo);
   });
 
   it('choosing quality puts "#2" eighth and lands on its own exchange', async () => {
@@ -126,6 +123,7 @@ describe('connection-search scenario — the Role argument on the wire', () => {
     expect(hit.exchange.id).toBe('cs-rdo-003');
     // The fixture request is byte-for-byte the frame production emitted.
     expect(frame).toBe(hit.exchange.request);
+    expect(frame).toPassStrictRdoValidation(rdo);
   });
 
   it('a customer search with every box ticked puts "#78" ninth', async () => {
@@ -140,6 +138,7 @@ describe('connection-search scenario — the Role argument on the wire', () => {
     expect(hit.exchange.id).toBe('cs-rdo-002');
     // The fixture request is byte-for-byte the frame production emitted.
     expect(frame).toBe(hit.exchange.request);
+    expect(frame).toPassStrictRdoValidation(rdo);
   });
 
   it('the two exchanges carry exactly those two masks', () => {

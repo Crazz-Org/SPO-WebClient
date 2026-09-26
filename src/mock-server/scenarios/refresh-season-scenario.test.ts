@@ -52,11 +52,6 @@ beforeEach(() => {
 });
 
 describe('refresh-season scenario', () => {
-  it('passes strict RDO validation', () => {
-    const { rdo } = createRefreshSeasonScenario();
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('matches its own frame in the mock', () => {
     const { rdo } = createRefreshSeasonScenario();
     const mock = new RdoMock();

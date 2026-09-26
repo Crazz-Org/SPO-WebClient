@@ -47,10 +47,6 @@ async function emit(member: string, value: number): Promise<string> {
 }
 
 describe('trade-settings scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('both members are 1-argument procedures, so every frame carries "*"', () => {
     for (const member of ['RDOSetRole', 'RDOSetTradeLevel'] as const) {
       expect(RDO_MEMBERS[member].kind).toBe('procedure');
@@ -125,5 +121,6 @@ describe('trade-settings scenario — the arguments on the wire', () => {
     expect(hit.exchange.id).toBe(`trade-${slug}-${value}`);
     // The fixture request is byte-for-byte the frame production emitted.
     expect(frame).toBe(hit.exchange.request);
+    expect(frame).toPassStrictRdoValidation(rdo);
   });
 });

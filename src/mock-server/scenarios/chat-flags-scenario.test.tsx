@@ -61,10 +61,6 @@ beforeEach(() => {
 });
 
 describe('chat-flags scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('every exchange is a push with no request and a "*" separator', () => {
     for (const ex of rdo.exchanges) {
       expect(ex.pushOnly).toBe(true);

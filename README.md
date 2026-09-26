@@ -318,7 +318,7 @@ npm run release:preview    # the notes the next merge to main would publish
 - **Convention:** `module.ts` -> `module.test.ts` in the same directory
 - **Custom matchers:** seven, all in `src/server/__tests__/matchers/rdo-matchers.ts` —
   `toContainRdoCommand()`, `toMatchRdoFormat()`, `toMatchRdoCallFormat()`, `toMatchRdoSetFormat()`,
-  `toHaveRdoTypePrefix()`, `toMatchRdoResponse()`, `toPassStrictRdoValidation()`
+  `toHaveRdoTypePrefix()`, `toMatchRdoResponse()`, `toPassStrictRdoValidation(scenario)`
 
 ### The four layers, and what decides a merge
 

@@ -82,14 +82,10 @@ describe('world-event scenario', () => {
     useMapStore.setState({ source: null });
   });
 
-  it('passes strict RDO validation', () => {
-    const { rdo } = createWorldEventScenario();
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('the gateway answers the rendered event block', async () => {
+    const { rdo } = createWorldEventScenario();
     const mock = new RdoMock();
-    mock.addScenario(createWorldEventScenario().rdo);
+    mock.addScenario(rdo);
     const { ask, fake } = makeGateway(mock);
 
     await expect(ask()).resolves.toMatchObject({
@@ -102,8 +98,11 @@ describe('world-event scenario', () => {
       },
     });
     expect(mock.getConsumedIds().has('we-rdo-001')).toBe(true);
-    // Each fixture request is byte-for-byte the frame production emitted.
     const frames = fake.sent.map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
+    // On the world context, the tycoon id as its single argument.
+    expect(frames).toEqual(['C sel 8161308 call PickEvent "^" "#4666201923";']);
+    expect(frames).toPassStrictRdoValidation(rdo);
+    // Each fixture request is byte-for-byte the frame production emitted.
     expect(frames.map(f => mock.match(f)!.exchange.id)).toEqual(['we-rdo-001']);
     expect(frames).toEqual(frames.map(f => mock.match(f)!.exchange.request));
   });

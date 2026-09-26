@@ -45,12 +45,11 @@ const Y = 226;
 /** The four ordinals of `Voyager/BankGeneralSheet.pas:22`. */
 const ORDINALS = [0, 1, 2, 3] as const;
 
+/** The outcome each ordinal stands for, written out (`Voyager/BankGeneralSheet.pas:22`). */
+const OUTCOME_OF = { 0: 'approved', 1: 'rejected', 2: 'notEnoughFunds', 3: 'error' } as const;
+
 describe('bank-loan-request scenario — the catalogue and the wire', () => {
   const { rdo } = createBankLoanRequestScenario();
-
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
 
   it('RDOAskLoan is a catalogued 2-argument function (StdBlocks/Banks.pas:46)', () => {
     expect(RDO_MEMBERS.RDOAskLoan).toEqual({ kind: 'function', arity: 2 });
@@ -93,7 +92,7 @@ function makeCtx(result: number, proxyId: number | null = BANK_LOAN_TYCOON) {
     return r ? (RdoProtocol.parse(r.response).payload ?? '') : '';
   });
 
-  return { fake, mock };
+  return { fake, mock, rdo };
 }
 
 describe('bank-loan-request scenario — the gateway drive', () => {
@@ -118,13 +117,14 @@ describe('bank-loan-request scenario — the gateway drive', () => {
   });
 
   it('the fixture request is byte-for-byte the frame production emitted', async () => {
-    const { fake, mock } = makeCtx(0);
+    const { fake, mock, rdo } = makeCtx(0);
 
     await requestBankLoan(fake.ctx, X, Y, BANK_LOAN_RAW_AMOUNT);
 
     const frame = `${RdoProtocol.format(fake.sent[0].packet as RdoPacket)};`;
     const hit = mock.match(frame)!;
     expect(frame).toBe(hit.exchange.request);
+    expect(frame).toPassStrictRdoValidation(rdo);
   });
 
   it('answers -1 and sends no frame at all when there is no proxy id', async () => {
@@ -195,8 +195,7 @@ describe('bank-loan-request scenario — the four verdicts, end to end', () => {
     const ordinal = await clientRequestBankLoan(clientCtx, X, Y, BANK_LOAN_RAW_AMOUNT);
 
     expect(ordinal).toBe(result);
-    expect(BANK_LOAN_VERDICTS[bankLoanOutcomeOf(ordinal)].message)
-      .toBe(BANK_LOAN_VERDICTS[bankLoanOutcomeOf(result)].message);
+    expect(bankLoanOutcomeOf(ordinal)).toBe(OUTCOME_OF[result]);
   });
 
   it('the four ordinals produce four different messages on screen', () => {

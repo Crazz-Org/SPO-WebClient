@@ -15,7 +15,7 @@ import { RdoValue } from '@/shared/rdo-types';
 import { RDO_MEMBERS } from '@/shared/rdo-members';
 import type { RdoPacket } from '@/shared/types';
 import { getBuildingBasicDetails } from '@/server/session/building-details-handler';
-import { makeSessionCtx } from '@/server/__tests__/session/fake-session-context';
+import { makeSessionCtx, FAKE_CONTEXT_IDS } from '@/server/__tests__/session/fake-session-context';
 import type { FakeSessionCtx } from '@/server/__tests__/session/fake-session-context';
 import {
   registerInspectorTabs,
@@ -41,10 +41,6 @@ const BANK_CLASS = '9570';
 const TV_CLASS = '9571';
 
 describe('bank-tv-live-reads scenario — the catalogue and the wire', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('RDOEstimateLoan is a catalogued 1-argument function', () => {
     // StdBlocks/Banks.pas:45 — `function RDOEstimateLoan( ClientId : integer ) : olevariant;`
     expect(RDO_MEMBERS.RDOEstimateLoan).toEqual({ kind: 'function', arity: 1 });
@@ -91,7 +87,15 @@ describe('bank-tv-live-reads scenario — the drive', () => {
     clearInspectorTabsCache();
   });
 
-  function makeCtx(block: string): { fake: FakeSessionCtx; mock: RdoMock } {
+  /** A mock loaded with the scenario. */
+  function scenarioMock(): RdoMock {
+    const mock = new RdoMock();
+    mock.addScenario(rdo);
+    return mock;
+  }
+
+  /** A session on `block`, answered by `mock` — a fresh one, or one shared across inspectors. */
+  function makeCtx(block: string, mock: RdoMock = scenarioMock()): { fake: FakeSessionCtx; mock: RdoMock } {
     const fake = makeSessionCtx({
       sockets: ['map', 'construction'],
       fTycoonProxyId: BANK_LIVE_READS_TYCOON,
@@ -105,9 +109,6 @@ describe('bank-tv-live-reads scenario — the drive', () => {
     (fake.ctx.focusBuilding as jest.Mock).mockResolvedValue({ // substrate-exception: focusBuilding is a bare jest.fn() on the fake and emits no frame, so no scenario can answer it
       buildingId: '40133602', buildingName: 'Probe', ownerName: '',
     });
-
-    const mock = new RdoMock();
-    mock.addScenario(rdo);
 
     fake.respond((packet) => {
       const frame = `${RdoProtocol.format(packet as RdoPacket)};`;
@@ -132,6 +133,16 @@ describe('bank-tv-live-reads scenario — the drive', () => {
     expect(mock.getConsumedIds()).toEqual(new Set([
       'btl-rdo-estloan', 'btl-rdo-budgetperc', 'btl-rdo-interest', 'btl-rdo-term',
     ]));
+
+    const frames = fake.sent.map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
+    // Bound to the bank block, carrying the InitClient proxy id — never TTycoon.Id,
+    // which the server would pointer-cast to nothing (Banks.pas:149).
+    const estimate = frames.filter(f => f.includes(' RDOEstimateLoan '));
+    expect(estimate).toEqual(['C sel 130200101 call RDOEstimateLoan "^" "#30440112";']);
+    expect(estimate[0]).not.toContain(FAKE_CONTEXT_IDS.tycoonId);
+    const answered = frames.filter(f => mock.match(f) !== null);
+    expect(answered).toHaveLength(4);
+    expect(answered).toPassStrictRdoValidation(rdo);
   });
 
   it('populates the TV sheet from the block, under the template read key', async () => {
@@ -147,30 +158,14 @@ describe('bank-tv-live-reads scenario — the drive', () => {
   });
 
   it('across both inspectors every one of the six exchanges is consumed', async () => {
-    const mock = new RdoMock();
-    mock.addScenario(rdo);
+    const mock = scenarioMock();
     const proven = new Set<string>();
 
     for (const [block, visualClass] of [
       [BANK_LIVE_READS_BLOCK, BANK_CLASS],
       [TV_LIVE_READS_BLOCK, TV_CLASS],
     ] as const) {
-      const fake = makeSessionCtx({
-        sockets: ['map', 'construction'],
-        fTycoonProxyId: BANK_LIVE_READS_TYCOON,
-      });
-      let next = 900001;
-      fake.cacher.createObject.mockImplementation(async () => String(next++)); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
-      fake.cacher.getPropertyList.mockImplementation( // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
-        async (_id: string, names: string[]) => names.map(n => (n === 'CurrBlock' ? block : '')),
-      );
-      (fake.ctx.focusBuilding as jest.Mock).mockResolvedValue({ // substrate-exception: focusBuilding is a bare jest.fn() on the fake and emits no frame, so no scenario can answer it
-        buildingId: '40133602', buildingName: 'Probe', ownerName: '',
-      });
-      fake.respond((packet) => {
-        const r = mock.match(`${RdoProtocol.format(packet as RdoPacket)};`);
-        return r ? (RdoProtocol.parse(r.response).payload ?? '') : '';
-      });
+      const { fake } = makeCtx(block, mock);
 
       await getBuildingBasicDetails(fake.ctx, X, Y, visualClass);
 

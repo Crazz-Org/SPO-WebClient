@@ -104,10 +104,6 @@ describe('mail-scenario — readMailMessage at the WS frontier', () => {
     mockFetch.mockReset();
   });
 
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('an Inbox read runs the RDO sequence and touches MessageBody.asp exactly once', async () => {
     const { wsCtx, sentCommands, sentResponses } = drive();
 
@@ -116,6 +112,16 @@ describe('mail-scenario — readMailMessage at the WS frontier', () => {
     expect(membersOf(sentCommands)).toEqual([
       'OpenMessage', 'GetHeaders', 'GetLines', 'GetAttachmentCount', 'CloseMessage',
     ]);
+    // OpenMessage on the mail server, the three reads on the message it
+    // answered, and the message handed back to the server to close.
+    expect(sentCommands).toEqual([
+      'C 3000 sel 30437308 call OpenMessage "^" "%Shamba","%SPO_test3@Shamba.net","%Inbox","%MSG-77"',
+      'C 3001 sel 30430750 call GetHeaders "^" "#0"',
+      'C 3002 sel 30430750 call GetLines "^" "#0"',
+      'C 3003 sel 30430750 call GetAttachmentCount "^" "#0"',
+      'C 3004 sel 30437308 call CloseMessage "*" "#30430750"',
+    ]);
+    expect(sentCommands).toPassStrictRdoValidation(rdo);
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const url = mockFetch.mock.calls[0][0] as string;
     const httpMock = new HttpMock();

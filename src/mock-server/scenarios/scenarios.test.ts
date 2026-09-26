@@ -209,7 +209,7 @@ describe('company-list scenario', () => {
     expect(chooseCompany.body).not.toContain('Yellow Inc.');
   });
 
-  it('noAccess variant has 6 exchanges, redirects to logonNoAccess.asp, and no companyId', () => {
+  it('noAccess variant has 3 exchanges, redirects to logonNoAccess.asp, and no companyId', () => {
     const { http } = createCompanyListScenario(undefined, { logonResult: 'noAccess', expiresOn: '01/01/2020' });
     expect(http.exchanges).toHaveLength(3);
     const logonComplete = http.exchanges[1];
@@ -768,7 +768,7 @@ describe('world-event scenario', () => {
 });
 
 describe('scenario registry', () => {
-  it('SCENARIO_NAMES has 37 entries', () => {
+  it('SCENARIO_NAMES has 38 entries', () => {
     // 14, not 13: the `world-login` scenario was added with the CanJoinWorldEx
     // admission check (Interface Server/InterfaceServer.pas:441).
     // 15: `abandon-role`, issue 547.
