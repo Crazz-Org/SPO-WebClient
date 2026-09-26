@@ -131,7 +131,7 @@ folder's ruler block and `world.five`'s `ElectionsOn`, `1` by default, `0` via
 (`Voyager/WHGeneralSheet.pas:155`), so every checkbox contributes the bit of its ordinal:
 every box of the supplier form ticked is `#54`, of the client form `#78`. A wrong mask
 produces no crash and no error reply — the server simply answers about facilities nobody asked
-about — so the captured `#54` (`src/server/__tests__/rdo/connection-search.test.ts:9`) is the
+about — so the captured `#54` (`CAPTURED_FIND_SUPPLIERS_RESPONSE` in `src/server/session/politics-handler.test.ts`) is the
 only thing that can catch it. Its test drives the real `searchConnections` and matches the
 emitted frame back against the exchange.
 

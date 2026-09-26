@@ -1382,6 +1382,97 @@ describe('push classification', () => {
 
     jest.restoreAllMocks();
   });
+
+  it.each(['REQUEST', 'RESPONSE'] as const)('only a PUSH frame is a refresh push (%s is not)', (type) => {
+    const session = newSession();
+
+    expect(session.isRefreshAreaPush({ raw: '', type, member: 'RefreshArea', separator: '"*"' })).toBe(false);
+    expect(session.isRefreshObjectPush({ raw: '', type, member: 'RefreshObject', separator: '"*"' })).toBe(false);
+  });
+
+  it('the separator and the exact member name must both match', () => {
+    const session = newSession();
+
+    expect(session.isRefreshAreaPush({ raw: '', type: 'PUSH', member: 'RefreshArea' })).toBe(false);
+    expect(session.isRefreshObjectPush({ raw: '', type: 'PUSH', member: 'RefreshObject' })).toBe(false);
+    expect(session.isRefreshAreaPush(push('refresharea'))).toBe(false);
+    expect(session.isRefreshObjectPush(push('refreshobject'))).toBe(false);
+    expect(session.isRefreshAreaPush({ raw: '', type: 'PUSH', separator: '"*"' })).toBe(false);
+    expect(session.isRefreshObjectPush({ raw: '', type: 'PUSH', separator: '"*"' })).toBe(false);
+  });
+
+  it('a RefreshArea needs four arguments, the data block is optional', () => {
+    const session = newSession();
+
+    expect(session.parseRefreshAreaPush(push('RefreshArea', ['"#50"', '"#60"', '"#10"']))).toBeNull();
+    expect(session.parseRefreshAreaPush(push('RefreshArea', ['"#50"', '"#60"', '"#10"', '"#10"'])))
+      .toEqual({ x: 50, y: 60, width: 10, height: 10 });
+  });
+
+  it('a focused building whose push carries only id and change gets no detail', () => {
+    const session = newSession();
+    session.currentFocusedCoords = { x: 100, y: 200 };
+
+    expect(session.parseRefreshObjectPush(push('RefreshObject', ['"#127839460"', '"#1"'])))
+      .toEqual({ buildingId: '127839460', kindOfChange: 1, buildingInfo: null });
+  });
+
+  it('parses the captured Drug Store ExtraInfo while focused', () => {
+    const session = newSession();
+    session.currentFocusedCoords = { x: 100, y: 200 };
+    const extraInfo = ['10', 'Yellow Inc.', 'Pharmaceutics sales at 1%',
+      '(-$36/h):-:Drug Store.  Upgrade Level: 1  Items Sold: 1/h  Potential customers (per day): 0 hi, 1 mid, 1 low. Actual customers: 0 hi, 1 mid, 1 low.  Efficiency: 87%  Desirability: 46:-:Hint: Try to attract more customers by offering better quality and prices.:-:'].join('\n');
+    const packet: RdoPacket = {
+      raw: `C sel 40133496 call RefreshObject "*" "#127839460","#0","%${extraInfo}";`,
+      type: 'PUSH', member: 'RefreshObject', separator: '"*"',
+      args: ['#127839460', '#0', `%${extraInfo}`],
+    };
+
+    const parsed = session.parseRefreshObjectPush(packet);
+
+    expect(parsed).toEqual({
+      buildingId: '127839460',
+      kindOfChange: 0,
+      buildingInfo: {
+        buildingId: '127839460',
+        buildingName: '10',
+        ownerName: 'Yellow Inc.',
+        salesInfo: 'Pharmaceutics sales at 1%',
+        revenue: '-$36/h',
+        detailsText: 'Drug Store.  Upgrade Level: 1  Items Sold: 1/h  Potential customers (per day): 0 hi, 1 mid, 1 low. Actual customers: 0 hi, 1 mid, 1 low.  Efficiency: 87%  Desirability: 46',
+        hintsText: 'Hint: Try to attract more customers by offering better quality and prices.',
+        x: 100,
+        y: 200,
+        xsize: 1,
+        ysize: 1,
+        visualClass: '0',
+      },
+    });
+    expect(parsed?.buildingInfo?.demographics).toBeUndefined();
+  });
+
+  it('parses the captured Town Hall demographics while focused', () => {
+    const session = newSession();
+    session.currentFocusedCoords = { x: 933, y: 1000 };
+    const extraInfo = 'Town Hall\n\nHelartia\n\n18,372 inhabitants:-:253 High class (0% unemp), 905 Middle class (41% unemp), 17,214 Low class (86% unemp).:-:No High class movements. 3 citizens of Middle class moved out last day.2% due to salaries and work conditions, 19% due to residential conditions, 15% due to low coverage of public services, 8% due to unemployment, 54% due to lack of products and services.No Low class movements.:-:';
+
+    const parsed = session.parseRefreshObjectPush(
+      push('RefreshObject', ['#224289740', '#0', `%${extraInfo}`]));
+
+    expect(parsed?.buildingId).toBe('224289740');
+    expect(parsed?.buildingInfo).toMatchObject({ buildingName: 'Town Hall', ownerName: 'Helartia' });
+    const demographics = parsed?.buildingInfo?.demographics;
+    expect(demographics?.totalInhabitants).toBe(18372);
+    expect(demographics?.totalInhabitantsLabel).toBe('18,372');
+    expect(demographics?.classes).toEqual([
+      { className: 'High', population: 253, populationLabel: '253', unemploymentPct: 0 },
+      { className: 'Middle', population: 905, populationLabel: '905', unemploymentPct: 41 },
+      { className: 'Low', population: 17214, populationLabel: '17,214', unemploymentPct: 86 },
+    ]);
+    expect(demographics?.movements).toHaveLength(3);
+    expect(demographics?.movements[1]).toMatchObject({ direction: 'out', count: 3 });
+    expect(demographics?.movements[1]?.reasons).toHaveLength(5);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
