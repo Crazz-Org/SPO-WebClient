@@ -620,20 +620,15 @@ describe('readMailMessage', () => {
     expect(fake.sent[0].packet.args?.[0]).toBe(RdoValue.string('').format());
   });
 
-  it("pins today's behaviour — when OpenMessage answers an empty payload, the reads still go out with an EMPTY target and CloseMessage is never sent", async () => {
-    // Whether this is a defect is a maintainer question.
-    // Pinned as CURRENT behaviour: the handler does not guard msgId after
-    // OpenMessage (mail-handler.ts:301-304). The three reads are issued with
-    // targetId '' — production would build `sel  call GetHeaders` — and the
-    // CloseMessage in `finally` dies on `RdoValue.int(NaN)` (assertWireInteger),
-    // swallowed by its own try/catch as a warning. Nothing is released
-    // server-side. A live-campaign entry, not a Jest fix.
+  it.each([
+    ['an empty answer', ''],
+    ['#0', 'OpenMessage="#0"'],
+  ])('when OpenMessage answers %s, only OpenMessage is sent and the read rejects (MsgComposerHandler.pas:418-434)', async (_label, answer) => {
     const fake = makeMailCtx();
-    fake.respond(() => '');
-    await readMailMessage(fake.ctx, 'Inbox', 'X');
-    expect(membersOf(fake.sent)).toEqual(['OpenMessage', 'GetHeaders', 'GetLines', 'GetAttachmentCount']);
-    expect(fake.sent[1].packet.targetId).toBe('');
-    expect(fake.log.warn).toHaveBeenCalledWith('[Mail] Failed to close message:', expect.any(Error));
+    fake.respond(() => answer);
+    await expect(readMailMessage(fake.ctx, 'Inbox', 'X')).rejects.toThrow('message could not be opened');
+    expect(membersOf(fake.sent)).toEqual(['OpenMessage']);
+    expect(fake.sent).toHaveLength(1);
   });
 
   it.each([
