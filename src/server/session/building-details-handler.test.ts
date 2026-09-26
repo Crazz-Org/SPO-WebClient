@@ -3004,6 +3004,70 @@ describe('getBuildingServiceFigures', () => {
     return fake;
   }
 
+  /** An inspector-backed fake whose fallback read runs the four cacher calls, as the session does. */
+  function inspectorServiceCtx(): FakeSessionCtx {
+    const fake = makeDetailsCtx({ sockets: ['map', 'construction'] });
+    (fake.ctx.getCacherPropertyListAt as jest.MockedFunction<SessionContext['getCacherPropertyListAt']>)
+      .mockImplementation(async (x: number, y: number, names: string[]) => {
+        const temp = await fake.ctx.cacherCreateObject();
+        try {
+          await fake.ctx.cacherSetObject(temp, x, y);
+          return await fake.ctx.cacherGetPropertyList(temp, names);
+        } finally {
+          await fake.ctx.cacherCloseObject(temp);
+        }
+      });
+    cacheValues(fake, { CurrBlock: '40133600' });
+    rdoMembers(fake, { RDOGetDemand: 'res="#37"', RDOGetSupply: 'res="#64"' });
+    return fake;
+  }
+
+  it('resolves CurrBlock once per open inspector across three polls', async () => {
+    const fake = inspectorServiceCtx();
+    setActiveInspectorForTest(fake.ctx, makeInspector());
+
+    for (let i = 0; i < 3; i++) await getBuildingServiceFigures(fake.ctx, X, Y, 1);
+
+    expect(fake.cacher.createObject).toHaveBeenCalledTimes(0);
+    expect(fake.cacher.closeObject).toHaveBeenCalledTimes(0);
+    expect(fake.cacher.setObject.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledTimes(1);
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledWith(FIRST_TEMP, ['CurrBlock']);
+    expect(fake.ctx.getCacherPropertyListAt).not.toHaveBeenCalled();
+    expect(fake.sent.map(s => s.packet.member)).toEqual([
+      'RDOGetDemand', 'RDOGetSupply', 'RDOGetDemand', 'RDOGetSupply', 'RDOGetDemand', 'RDOGetSupply',
+    ]);
+    for (const s of fake.sent) expect(s.packet.targetId).toBe('40133600');
+  });
+
+  it('resolves again when another building is selected', async () => {
+    const fake = inspectorServiceCtx();
+    setActiveInspectorForTest(fake.ctx, makeInspector());
+    await getBuildingServiceFigures(fake.ctx, X, Y, 1);
+
+    releaseInspector(fake.ctx);
+    setActiveInspectorForTest(fake.ctx, makeInspector({ tempObjectId: '900777', x: X + 5 }));
+    await getBuildingServiceFigures(fake.ctx, X + 5, Y, 1);
+
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledTimes(2);
+    expect(fake.cacher.getPropertyList).toHaveBeenLastCalledWith('900777', ['CurrBlock']);
+  });
+
+  it('resolves again through a one-shot read once the inspector is closed', async () => {
+    const fake = inspectorServiceCtx();
+    setActiveInspectorForTest(fake.ctx, makeInspector());
+    await getBuildingServiceFigures(fake.ctx, X, Y, 1);
+
+    releaseInspector(fake.ctx);
+    await getBuildingServiceFigures(fake.ctx, X, Y, 1);
+
+    expect(fake.ctx.getCacherPropertyListAt).toHaveBeenCalledTimes(1);
+    expect(fake.cacher.createObject).toHaveBeenCalledTimes(1);
+    // One close from the fallback read, one from releaseInspector itself.
+    expect(fake.cacher.closeObject).toHaveBeenCalledTimes(2);
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledTimes(2);
+  });
+
   it('reads both figures off the block on the construction socket', async () => {
     const fake = serviceCtx('40133600');
     rdoMembers(fake, { RDOGetDemand: 'res="#37"', RDOGetSupply: 'res="#64"' });
