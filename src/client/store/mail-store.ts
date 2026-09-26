@@ -11,6 +11,15 @@ import type {
 
 type MailView = 'list' | 'read' | 'compose';
 
+// Client-side budget on a letter body — the server has no documented limit, so this is
+// a sane cap chosen to keep a paste from silently becoming an unusable wall of text.
+export const MAIL_BODY_MAX_CHARS = 10240;
+
+/** Every write of `composeBody` goes through this, so no path opens the composer over the cap. */
+function capBody(body: string): string {
+  return body.slice(0, MAIL_BODY_MAX_CHARS);
+}
+
 /**
  * The rule above the quoted text of a reply — 39 underscores, exactly the
  * `tidMessageSeparator` the original client inserted
@@ -147,7 +156,7 @@ export const useMailStore = create<MailState>((set) => ({
       currentView: 'compose',
       composeTo: to,
       composeSubject: subject,
-      composeBody: body,
+      composeBody: capBody(body),
       composeHeaders: headers,
       composeDraftId: null,
     }),
@@ -159,7 +168,7 @@ export const useMailStore = create<MailState>((set) => ({
       // Case-insensitive, as the Pascal's `pos(…, UpperCase(Subj))` test is —
       // a subject already answered once must not collect a second prefix.
       composeSubject: /^re:/i.test(message.subject.trim()) ? message.subject : `Re: ${message.subject}`,
-      composeBody: buildReplyBody(message),
+      composeBody: capBody(buildReplyBody(message)),
       composeHeaders: buildReplyHeaders(message),
       composeDraftId: null,
     }),
@@ -171,7 +180,7 @@ export const useMailStore = create<MailState>((set) => ({
       // Same case-insensitive test as Reply (MsgComposerHandler.pas:226-228) — a subject
       // already forwarded once must not collect a second prefix.
       composeSubject: /^fw:/i.test(message.subject.trim()) ? message.subject : `Fw: ${message.subject}`,
-      composeBody: buildReplyBody(message),
+      composeBody: capBody(buildReplyBody(message)),
       composeHeaders: '',
       composeDraftId: null,
     }),
@@ -181,7 +190,7 @@ export const useMailStore = create<MailState>((set) => ({
       currentView: 'compose',
       composeTo: message.toAddr || message.to,
       composeSubject: message.subject,
-      composeBody: message.body.join('\n'),
+      composeBody: capBody(message.body.join('\n')),
       composeHeaders: '',
       composeDraftId: message.messageId,
       isMessageLoading: false,
@@ -200,7 +209,7 @@ export const useMailStore = create<MailState>((set) => ({
     }),
 
   setComposeField: (field, value) =>
-    set(field === 'to' ? { composeTo: value } : field === 'subject' ? { composeSubject: value } : { composeBody: value }),
+    set(field === 'to' ? { composeTo: value } : field === 'subject' ? { composeSubject: value } : { composeBody: capBody(value) }),
   setSending: (sending) => set({ isSending: sending }),
   setSavingDraft: (saving) => set({ isSavingDraft: saving }),
   setMessageLoading: (loading) => set({ isMessageLoading: loading }),

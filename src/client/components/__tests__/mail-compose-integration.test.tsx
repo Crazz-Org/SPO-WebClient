@@ -18,7 +18,8 @@ import {
   createSpiedCallbacks,
 } from '../../__tests__/setup/render-helpers';
 import { useMailStore } from '../../store/mail-store';
-import { MailPanel, MAIL_BODY_MAX_CHARS } from '../mail/MailPanel';
+import { MailPanel } from '../mail/MailPanel';
+import { MAIL_BODY_MAX_CHARS } from '../../store/mail-store';
 import { ClientBridge } from '../../bridge/client-bridge';
 import { WsMessageType } from '@/shared/types';
 import type { MailMessageFull } from '@/shared/types';

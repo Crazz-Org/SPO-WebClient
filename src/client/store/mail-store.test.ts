@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { useMailStore, buildReplyBody, buildReplyHeaders, REPLY_SEPARATOR } from './mail-store';
+import { useMailStore, buildReplyBody, buildReplyHeaders, REPLY_SEPARATOR, MAIL_BODY_MAX_CHARS } from './mail-store';
 import type { MailMessageHeader, MailMessageFull } from '@/shared/types';
 
 const mockMessages: MailMessageHeader[] = [
@@ -282,5 +282,47 @@ describe('Mail Store — Drafts', () => {
     expect(useMailStore.getState().isSavingDraft).toBe(true);
     useMailStore.getState().setSavingDraft(false);
     expect(useMailStore.getState().isSavingDraft).toBe(false);
+  });
+});
+
+describe('Mail Store — body cap on every store write', () => {
+  beforeEach(resetStore);
+
+  /** A source message whose quoted body alone runs past the cap. */
+  const longMessage: MailMessageFull = {
+    ...mockFullMessage,
+    body: Array.from({ length: 200 }, () => 'x'.repeat(100)),
+  };
+
+  it('an over-long reply is capped', () => {
+    expect(buildReplyBody(longMessage).length).toBeGreaterThan(MAIL_BODY_MAX_CHARS);
+    useMailStore.getState().startReply(longMessage);
+    const body = useMailStore.getState().composeBody;
+    expect(body.length).toBe(MAIL_BODY_MAX_CHARS);
+    expect(body.startsWith(REPLY_SEPARATOR)).toBe(true);
+  });
+
+  it('an over-long forward is capped', () => {
+    useMailStore.getState().startForward(longMessage);
+    const body = useMailStore.getState().composeBody;
+    expect(body.length).toBe(MAIL_BODY_MAX_CHARS);
+    expect(body.startsWith(REPLY_SEPARATOR)).toBe(true);
+  });
+
+  it('an in-budget reply is left whole', () => {
+    useMailStore.getState().startReply(mockFullMessage);
+    expect(useMailStore.getState().composeBody).toBe(buildReplyBody(mockFullMessage));
+  });
+
+  it('startCompose, startEditDraft and setComposeField cap an over-long body', () => {
+    const tooLong = 'y'.repeat(MAIL_BODY_MAX_CHARS + 50);
+    useMailStore.getState().startCompose('a@b', 'S', tooLong);
+    expect(useMailStore.getState().composeBody.length).toBe(MAIL_BODY_MAX_CHARS);
+
+    useMailStore.getState().startEditDraft(longMessage);
+    expect(useMailStore.getState().composeBody.length).toBe(MAIL_BODY_MAX_CHARS);
+
+    useMailStore.getState().setComposeField('body', tooLong);
+    expect(useMailStore.getState().composeBody).toBe(tooLong.slice(0, MAIL_BODY_MAX_CHARS));
   });
 });

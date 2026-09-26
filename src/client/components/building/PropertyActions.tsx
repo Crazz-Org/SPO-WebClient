@@ -19,6 +19,7 @@ import { parseCloneMenu, parseCurrencyInput, parseFilmMonths, FILM_MONTHS_MIN, F
 import { useBuildingStore } from '../../store/building-store';
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
+import { NON_WAREHOUSE_TRADE_ROLES } from './trade-constants';
 import styles from './PropertyGroup.module.css';
 
 // =============================================================================
@@ -218,7 +219,7 @@ export function TradeConnectButtons({
   // non-warehouse roles rolNeutral/rolProducer/rolBuyer/rolImporter (:191-197).
   // The buttons are disabled, not hidden (:233-234).
   const isWarehouse = vm.get('Role') === 'Warehouse';
-  const nonWarehouseTradeRole = ['0', '1', '3', '4'].includes(vm.get('TradeRole') ?? '');
+  const nonWarehouseTradeRole = NON_WAREHOUSE_TRADE_ROLES.includes(vm.get('TradeRole') ?? '');
   const warehouseTradeOffered = !isWarehouse || nonWarehouseTradeRole;
   return (
     <div className={styles.tradeConnectGrid}>

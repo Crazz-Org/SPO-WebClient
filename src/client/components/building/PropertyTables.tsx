@@ -22,6 +22,7 @@ import {
 import { computePendingKey } from './property-utils';
 import { useServiceFigures } from './useServiceFigures';
 import { SliderInput, CurrencyInput } from './PropertyInputs';
+import { PRICE_PERCENT_MAX } from './trade-constants';
 import styles from './PropertyGroup.module.css';
 
 // =============================================================================
@@ -275,7 +276,6 @@ export function ServiceCardList({
       {Array.from({ length: rowCount }, (_, i) => {
         const price = parseFloat(getVal('srvPrices', i)) || 0;
         const marketPrice = parseFloat(getVal('srvMarketPrices', i)) || 0;
-        const dollarPrice = marketPrice > 0 ? (price / 100) * marketPrice : 0;
         const isSelected = i === selected;
         const salesRaw = getVal('srvSales', i);
 
@@ -290,7 +290,7 @@ export function ServiceCardList({
             onSelect={() => setSelectedIndex(i)}
             pricePc={price}
             avgPricePc={parseFloat(getVal('srvAvgPrices', i)) || 0}
-            dollarPrice={dollarPrice}
+            marketPrice={marketPrice}
             priceMax={colByPrefix.get('srvPrices')?.max ?? 500}
             priceStep={colByPrefix.get('srvPrices')?.step ?? 10}
             canEdit={canEdit && !!colByPrefix.get('srvPrices')?.editable}
@@ -333,7 +333,6 @@ export function ProductSummaryCards({
       {priced.map((product, i) => {
         const pricePc = parseFloat(product.pricePc ?? '') || 0;
         const marketPrice = parseFloat(product.marketPrice ?? '') || 0;
-        const dollarPrice = marketPrice > 0 ? (pricePc / 100) * marketPrice : 0;
 
         return (
           <ProductSaleCard
@@ -341,8 +340,8 @@ export function ProductSummaryCards({
             name={product.name || product.metaFluid || ''}
             pricePc={pricePc}
             avgPricePc={parseFloat(product.avgPrice ?? '') || 0}
-            dollarPrice={dollarPrice}
-            priceMax={400}
+            marketPrice={marketPrice}
+            priceMax={PRICE_PERCENT_MAX}
             priceStep={1}
             canEdit={canEdit}
             rdoName={`PricePc`}
@@ -368,7 +367,7 @@ function ProductSaleCard({
   onSelect,
   pricePc,
   avgPricePc,
-  dollarPrice,
+  marketPrice,
   priceMax,
   priceStep,
   canEdit,
@@ -385,7 +384,7 @@ function ProductSaleCard({
   onSelect?: () => void;
   pricePc: number;
   avgPricePc: number;
-  dollarPrice: number;
+  marketPrice: number;
   priceMax: number;
   priceStep: number;
   canEdit: boolean;
@@ -401,6 +400,18 @@ function ProductSaleCard({
         : supply > 0
           ? styles.pscSupplyWarn
           : styles.pscSupplyBad;
+
+  // The label beside the slider is the slider's own value priced out, so it
+  // follows the thumb rather than the server's last answer — the same
+  // "seen / live" shape ProductCard uses: a server value the card has not
+  // shown yet re-seeds it, a drag is never stomped.
+  const [seenPricePc, setSeenPricePc] = useState(pricePc);
+  const [livePricePc, setLivePricePc] = useState(pricePc);
+  if (pricePc !== seenPricePc) {
+    setSeenPricePc(pricePc);
+    setLivePricePc(pricePc);
+  }
+  const dollarPrice = marketPrice > 0 ? (livePricePc / 100) * marketPrice : 0;
 
   return (
     <div className={`${styles.pscCard}${selected ? ` ${styles.pscCardSelected}` : ''}`}>
@@ -437,7 +448,7 @@ function ProductSaleCard({
       )}
 
       <span className={styles.pscPrice}>
-        {dollarPrice > 0 ? `${formatCurrency(dollarPrice)} (${pricePc}%)` : `${pricePc}%`}
+        {dollarPrice > 0 ? `${formatCurrency(dollarPrice)} (${livePricePc}%)` : `${livePricePc}%`}
       </span>
 
       <PriceSliderWithMarker
@@ -448,6 +459,7 @@ function ProductSaleCard({
         canEdit={canEdit}
         rdoName={rdoName}
         onPropertyChange={onPropertyChange}
+        onValueChange={setLivePricePc}
       />
     </div>
   );
