@@ -130,7 +130,7 @@ export function BuildingInspector({ hideHeader }: BuildingInspectorProps = {}) {
     if (focusedBuilding) {
       useBuildingStore.getState().setDetailsError(null);
       useBuildingStore.getState().setLoading(true);
-      client.onRefreshBuilding(focusedBuilding.x, focusedBuilding.y);
+      client.onRefreshBuilding(focusedBuilding.x, focusedBuilding.y, { userInitiated: true });
     }
   }, [focusedBuilding?.x, focusedBuilding?.y, client]);
 
@@ -173,7 +173,7 @@ export function BuildingInspector({ hideHeader }: BuildingInspectorProps = {}) {
 
     const doRefresh = () => {
       if (!isConnected) return;
-      client.onRefreshBuilding(x, y);
+      client.onRefreshBuilding(x, y, { userInitiated: false });
       // Tab re-fetch is handled by the useEffect at line ~162 which reacts
       // to resetTabLoadingStates() inside refreshBuildingDetails().
       // The previous 2-second setTimeout here caused race conditions by

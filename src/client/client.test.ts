@@ -12,6 +12,7 @@ import { StarpeaceClient } from './client';
 import { useUiStore } from './store/ui-store';
 import { useGameStore } from './store/game-store';
 import { connectionStats } from './connection-stats';
+import * as buildingActionHandler from './handlers/building-action-handler';
 
 const mockOwnTycoonRenderer = { setOwnTycoonId: jest.fn(), setExploredBlocks: jest.fn() };
 
@@ -408,5 +409,15 @@ describe('sendRaw / onWsMessage — the single byte-counting taps', () => {
     expect(connectionStats.snapshot().bytesReceived).toBe('not json'.length);
     expect(consoleErrorSpy).toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
+  });
+});
+
+describe('refreshBuildingDetails — forwards the userInitiated flag (issue #929)', () => {
+  it('passes the caller\'s opts through to the handler', async () => {
+    const spy = jest.spyOn(buildingActionHandler, 'refreshBuildingDetails').mockResolvedValue(undefined);
+    const fake = {};
+    await proto.refreshBuildingDetails.call(fake, 4, 5, { userInitiated: false });
+    expect(spy).toHaveBeenCalledWith(expect.anything(), 4, 5, { userInitiated: false });
+    spy.mockRestore();
   });
 });

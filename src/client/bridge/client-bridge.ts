@@ -226,7 +226,7 @@ export interface ClientCallbacks {
   // Building
   onSetBuildingProperty: (x: number, y: number, propertyName: string, value: string, additionalParams?: Record<string, string>) => void;
   onUpgradeBuilding: (x: number, y: number, action: string, count?: number) => void;
-  onRefreshBuilding: (x: number, y: number) => void;
+  onRefreshBuilding: (x: number, y: number, opts: { userInitiated: boolean }) => void;
   /** Lightweight refresh: re-read the properties of the focused building only. */
   onRefreshBuildingProperties: (x: number, y: number) => void;
   /** Live jobs-filled figures for the listed classes — RDOGetWorkers per class, on the Workforce tab's 20 s timer. */

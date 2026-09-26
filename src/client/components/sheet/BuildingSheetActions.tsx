@@ -36,7 +36,7 @@ export function BuildingSheetActions() {
         size="sm"
         variant="ghost"
         disabled={refreshing}
-        onClick={() => client.onRefreshBuilding(details.x, details.y)}
+        onClick={() => client.onRefreshBuilding(details.x, details.y, { userInitiated: true })}
       />
     </>
   );

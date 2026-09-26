@@ -53,7 +53,7 @@ describe('BuildingSurface', () => {
     renderWithProviders(<BuildingSurface />, { clientCallbacks: createSpiedCallbacks({ onRefreshBuilding }) });
     expect(screen.getByText('President: Crazz')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(onRefreshBuilding).toHaveBeenCalledWith(5, 6);
+    expect(onRefreshBuilding).toHaveBeenCalledWith(5, 6, { userInitiated: true });
   });
 
   it('falls back to the focused building name while details load', () => {

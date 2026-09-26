@@ -98,7 +98,7 @@ async function requestBuildingDetailsImpl(
   }
 }
 
-export async function refreshBuildingDetails(ctx: ClientHandlerContext, x: number, y: number): Promise<void> {
+export async function refreshBuildingDetails(ctx: ClientHandlerContext, x: number, y: number, opts: { userInitiated: boolean }): Promise<void> {
   const vc = ctx.currentFocusedVisualClass || '0';
   // Reset lazy tab states so they re-fetch on next view
   useBuildingStore.getState().resetTabLoadingStates();
@@ -115,12 +115,14 @@ export async function refreshBuildingDetails(ctx: ClientHandlerContext, x: numbe
     if (state.isLoading && !state.details) {
       state.setDetailsError('Failed to load building details. Please try again.');
     }
-    // A panel that already has details keeps them on screen — but the user must
-    // be told the figures in front of them are the old ones (issue #886).
-    ctx.showNotification('Failed to refresh building details', 'error');
+    // A panel that already has details keeps them on screen. A user-started
+    // refresh must tell the user the figures are the old ones (issue #886);
+    // an unattended one (auto-refresh, post-action) only logs (issue #929).
+    ClientBridge.log('Error', 'Failed to refresh building details');
+    if (opts.userInitiated) ctx.showNotification('Failed to refresh building details', 'error');
   } catch (err: unknown) {
     ClientBridge.log('Error', `Failed to refresh building details: ${toErrorMessage(err)}`);
-    ctx.showNotification(`Failed to refresh building details: ${toErrorMessage(err)}`, 'error');
+    if (opts.userInitiated) ctx.showNotification(`Failed to refresh building details: ${toErrorMessage(err)}`, 'error');
   } finally {
     useBuildingStore.getState().removeInFlightAction(REFRESH_BUILDING_ACTION);
   }
@@ -874,7 +876,7 @@ async function executeConnectFacilities(ctx: ClientHandlerContext, targetX: numb
       );
     }
 
-    refreshBuildingDetails(ctx, source.x, source.y);
+    refreshBuildingDetails(ctx, source.x, source.y, { userInitiated: false });
   } catch (err: unknown) {
     ctx.showNotification(`Connection failed: ${toErrorMessage(err)}`, 'error');
   } finally {
@@ -924,7 +926,7 @@ async function launchMovie(ctx: ClientHandlerContext, buildingDetails: BuildingD
     const ok = await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RDOLaunchMovie', '0', params);
     if (ok) {
       ctx.showNotification(`Launching movie: ${params.filmName}`, 'success');
-      refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+      refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
     } else {
       ctx.showNotification('Failed to launch movie', 'error');
     }
@@ -939,7 +941,7 @@ async function cancelMovie(ctx: ClientHandlerContext, buildingDetails: BuildingD
     const ok = await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RDOCancelMovie', '0');
     if (ok) {
       ctx.showNotification('Movie production cancelled', 'success');
-      refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+      refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
     } else {
       ctx.showNotification('Failed to cancel movie', 'error');
     }
@@ -953,7 +955,7 @@ async function releaseMovie(ctx: ClientHandlerContext, buildingDetails: Building
     const ok = await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RDOReleaseMovie', '0');
     if (ok) {
       ctx.showNotification('Movie released', 'success');
-      refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+      refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
     } else {
       ctx.showNotification('Failed to release movie', 'error');
     }
@@ -1016,7 +1018,7 @@ async function banMinister(ctx: ClientHandlerContext, buildingDetails: BuildingD
       ministryId: ministryIdStr,
     });
     ctx.showNotification('Minister deposed', 'success');
-    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
   } catch (err: unknown) {
     ctx.showNotification(`Failed to depose minister: ${toErrorMessage(err)}`, 'error');
   }
@@ -1033,7 +1035,7 @@ async function sitMinister(ctx: ClientHandlerContext, buildingDetails: BuildingD
       ministerName,
     });
     ctx.showNotification(`${ministerName} appointed as minister`, 'success');
-    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
   } catch (err: unknown) {
     ctx.showNotification(`Failed to appoint minister: ${toErrorMessage(err)}`, 'error');
   }
@@ -1056,7 +1058,7 @@ function electMayorInline(ctx: ClientHandlerContext, buildingDetails: BuildingDe
         });
         if (success) {
           ctx.showNotification(`${playerName} elected as mayor of ${townName}`, 'success');
-          setTimeout(() => refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y), 1000);
+          setTimeout(() => refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false }), 1000);
         } else {
           ctx.showNotification(`Failed to elect mayor of ${townName}`, 'error');
         }
@@ -1086,7 +1088,7 @@ function electMinisterInline(ctx: ClientHandlerContext, buildingDetails: Buildin
         });
         if (success) {
           ctx.showNotification(`${playerName} appointed as ${ministryName}`, 'success');
-          setTimeout(() => refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y), 1000);
+          setTimeout(() => refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false }), 1000);
         } else {
           ctx.showNotification(`Failed to appoint ${playerName}`, 'error');
         }
@@ -1110,7 +1112,7 @@ async function deposeMinisterInline(ctx: ClientHandlerContext, buildingDetails: 
     });
     if (success) {
       ctx.showNotification('Minister deposed', 'success');
-      setTimeout(() => refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y), 1000);
+      setTimeout(() => refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false }), 1000);
     } else {
       ctx.showNotification('Failed to depose minister', 'error');
     }
@@ -1151,7 +1153,7 @@ async function voteForCandidateInline(ctx: ClientHandlerContext, buildingDetails
     return;
   }
   // Delay refresh to allow void push ("*") to be processed by the server
-  setTimeout(() => refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y), 500);
+  setTimeout(() => refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false }), 500);
 }
 
 // ── Repair Actions ──────────────────────────────────────────────────────────
@@ -1160,7 +1162,7 @@ async function startRepair(ctx: ClientHandlerContext, buildingDetails: BuildingD
   try {
     await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RdoRepair', '0');
     ctx.showNotification('Repair started', 'success');
-    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
   } catch (err: unknown) {
     ctx.showNotification(`Failed to start repair: ${toErrorMessage(err)}`, 'error');
   }
@@ -1170,7 +1172,7 @@ async function stopRepair(ctx: ClientHandlerContext, buildingDetails: BuildingDe
   try {
     await setBuildingProperty(ctx, buildingDetails.x, buildingDetails.y, 'RdoStopRepair', '0');
     ctx.showNotification('Repair stopped', 'success');
-    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y);
+    refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
   } catch (err: unknown) {
     ctx.showNotification(`Failed to stop repair: ${toErrorMessage(err)}`, 'error');
   }
