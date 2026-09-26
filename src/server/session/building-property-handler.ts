@@ -447,8 +447,8 @@ function valueOrDefault(value: string | undefined, fallback: string): string {
  * - RDOSetPrice(index=0, value=220) -> "#0","#220"
  * - RDOSetSalaries(sal0=100, sal1=120, sal2=150) -> "#100","#120","#150"
  * - RDOSetCompanyInputDemand(index=0, ratio=75) -> "#0","#75"
- * - RDOSetInputMaxPrice(metaFluid=5, maxPrice=500) -> "#5","#500"
- * - RDOSetInputMinK(metaFluid=5, minK=10) -> "#5","#10"
+ * - RDOSetInputMaxPrice(fluidId|metaFluid='5', maxPrice=500) -> "%5","#500" (fluid is a widestring)
+ * - RDOSetInputMinK(fluidId|metaFluid='5', minK=10) -> "%5","#10" (fluid is a widestring)
  */
 function buildRdoCommandArgs(
   ctx: SessionContext,
