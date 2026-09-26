@@ -59,8 +59,8 @@ const BASELINE: Record<Shape | 'exceptions', { max: number; sites: string[] }> =
     ],
   },
   checkTrue: {
-    max: 4,
-    sites: ['src/e2e/flows.ts:291', 'src/e2e/flows.ts:683', 'src/e2e/flows.ts:729', 'src/e2e/flows.ts:775'],
+    max: 0,
+    sites: [],
   },
   exceptions: { max: 0, sites: [] },
 };

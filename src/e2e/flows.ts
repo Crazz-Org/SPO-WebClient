@@ -57,8 +57,10 @@ export interface FlowContext {
 
 export interface FlowResult {
   name: string;
-  status: 'PASS' | 'FAIL';
+  status: 'PASS' | 'FAIL' | 'UNPROVEN';
   assertions: { what: string; ok: boolean; detail?: string }[];
+  /** What the flow could not prove, each with its reason. */
+  unproven: string[];
   probes: ProbeResult[];
   messagesSent: number;
   messagesReceived: number;
@@ -79,6 +81,11 @@ class Assertions {
   readonly items: { what: string; ok: boolean; detail?: string }[] = [];
   check(what: string, ok: boolean, detail?: string): void {
     this.items.push({ what, ok, detail });
+  }
+  /** Record what the flow could not prove, and why — the world held nothing to test. */
+  readonly unprovenItems: string[] = [];
+  unproven(what: string, reason: string): void {
+    this.unprovenItems.push(`${what} — ${reason}`);
   }
   get failed(): boolean {
     return this.items.some(a => !a.ok);
@@ -288,7 +295,15 @@ const mailRoundTrip: Flow = {
           { type: WsMessageType.REQ_MAIL_DELETE, folder: 'Inbox', messageId: delivered.messageId },
           WsMessageType.RESP_MAIL_DELETED,
         );
-        assertions.check('the probe message was deleted again', true);
+        const inboxAfter = await recipient.driver.request<WsRespMailFolder>(
+          { type: WsMessageType.REQ_MAIL_GET_FOLDER, folder: 'Inbox' },
+          WsMessageType.RESP_MAIL_FOLDER,
+        );
+        assertions.check(
+          'the probe message was deleted again',
+          !inboxAfter.messages.some(m => m.messageId === delivered.messageId),
+          `messageId=${delivered.messageId}`,
+        );
       }
       return report('mail-roundtrip', assertions, [], recipient);
     } finally {
@@ -680,10 +695,9 @@ const newspaperRead: Flow = {
       } else {
         // Environment exception, not a defect — see the flow's note above. Never
         // fall through to REQ_NEWSPAPER_ISSUE with the folder `''`.
-        assertions.check(
-          'the bar kept no issue — environment exception, no news server prints on this world',
-          true,
-          `${paperName}: 0 issues`,
+        assertions.unproven(
+          'the newest issue opens with stories',
+          `${paperName}: 0 issues — no news server prints on this world`,
         );
       }
 
@@ -703,8 +717,8 @@ const ZONING_ALERT_SUBJECT = 'Zoning Alert!'; // World.pas:2721
  * through `parseLocalAspUrl` — the same translator the client's link interceptor uses —
  * and sends the very REQ_BUILDING_FOCUS the client sends on a click.
  *
- * No zoning alert in the inbox is an environment exception, not a failure — nothing was
- * zoned out of this account lately. A demolished building answering `ERROR_FacilityNotFound`
+ * No zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
+ * was zoned out of this account lately, so the flow proved nothing. A demolished building answering `ERROR_FacilityNotFound`
  * is also accepted: the whole point of the alert is that the building is gone.
  */
 const zoningAlertRead: Flow = {
@@ -726,9 +740,9 @@ const zoningAlertRead: Flow = {
       const alert = inbox.messages.find(m => m.subject === ZONING_ALERT_SUBJECT);
 
       if (!alert) {
-        assertions.check(
-          'no zoning alert in the inbox — nothing was zoned out of this account lately',
-          true,
+        assertions.unproven(
+          'a zoning alert link focuses its tile',
+          'no "Zoning Alert!" in the inbox — nothing was zoned out of this account lately',
         );
         return report('zoning-alert-read', assertions, [], session);
       }
@@ -750,13 +764,12 @@ const zoningAlertRead: Flow = {
 
       if (targets.length > 0) {
         const { x, y } = targets[0];
-        let focused = false;
+        let focus: WsRespBuildingFocus | undefined;
         try {
-          await session.driver.request<WsRespBuildingFocus>(
+          focus = await session.driver.request<WsRespBuildingFocus>(
             { type: WsMessageType.REQ_BUILDING_FOCUS, x, y },
             WsMessageType.RESP_BUILDING_FOCUS,
           );
-          focused = true;
         } catch (err: unknown) {
           // The building the alert names was, by definition, demolished — a gateway
           // "not found" for that exact tile is an accepted outcome, not a wire failure.
@@ -767,12 +780,16 @@ const zoningAlertRead: Flow = {
           );
         }
 
-        if (focused) {
+        if (focus !== undefined) {
           await session.driver.request(
             { type: WsMessageType.REQ_BUILDING_UNFOCUS },
             WsMessageType.RESP_CHAT_SUCCESS,
           );
-          assertions.check('the map centred on the demolished building tile', true, `x=${x} y=${y}`);
+          assertions.check(
+            'the focus opened on a building at the alert tile',
+            Boolean(focus.building.buildingId),
+            `x=${x} y=${y} buildingId=${focus.building.buildingId}`,
+          );
           assertions.check('no gateway errors', session.driver.errors.length === 0);
         }
       }
@@ -958,6 +975,7 @@ export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult>
       name: flow.name,
       status: 'FAIL',
       assertions: [],
+      unproven: [],
       probes: [],
       messagesSent: 0,
       messagesReceived: 0,
@@ -986,8 +1004,9 @@ function report(
   const failed = assertions.failed || probes.some(p => p.status === 'FAIL');
   return {
     name,
-    status: failed ? 'FAIL' : 'PASS',
+    status: failed ? 'FAIL' : assertions.unprovenItems.length > 0 ? 'UNPROVEN' : 'PASS',
     assertions: assertions.items,
+    unproven: assertions.unprovenItems,
     probes,
     messagesSent: sent,
     messagesReceived: received,
