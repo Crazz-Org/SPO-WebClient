@@ -19,11 +19,11 @@
  * `NEAR_CIRCUITS_AT` entry and the drive answers its read with a rejection, to
  * exercise the "read failed" arm of the same `unknown` outcome.
  *
- * Every request is built by the real emitter (`rdoCall(...).toFrame()`), so the
- * separator and arity come from the catalogue, never from this file.
+ * Every request is the literal frame production emits (QueryId stripped),
+ * captured in the sibling test where one drives it — never rebuilt with the
+ * emitter, so a wrong catalogue entry cannot produce a matching wrong fixture.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import { rolesToMask, ALL_CONNECTION_ROLES } from '@/shared/connection-roles';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
@@ -74,7 +74,7 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
 
   const setObjectExchange = (id: string, x: number, y: number): RdoExchange => ({
     id,
-    request: rdoCall('SetObject', REACHABILITY_TEMP_OBJECT, RdoValue.int(x), RdoValue.int(y)).toFrame(),
+    request: `C sel ${REACHABILITY_TEMP_OBJECT} call SetObject "^" "#${x}","#${y}";`,
     response: 'A200 res="#-1"',
     matchKeys: {
       verb: 'sel', targetId: REACHABILITY_TEMP_OBJECT, action: 'call', member: 'SetObject',
@@ -85,7 +85,7 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
   return [
     {
       id: 'cr-rdo-find',
-      request: rdoCall('FindSuppliers', REACHABILITY_CACHER_ID, ...findArgs).toFrame(),
+      request: `C sel ${REACHABILITY_CACHER_ID} call FindSuppliers "^" "%Cotton","%${vars.worldName}","%","%","#20","#472","#392","#1","#54";`,
       response: `A200 res="%${rows}"`,
       matchKeys: {
         verb: 'sel', targetId: REACHABILITY_CACHER_ID, action: 'call', member: 'FindSuppliers',
@@ -94,7 +94,7 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
     },
     {
       id: 'cr-rdo-create',
-      request: rdoCall('CreateObject', REACHABILITY_CACHER_ID, RdoValue.string(vars.worldName)).toFrame(),
+      request: `C sel ${REACHABILITY_CACHER_ID} call CreateObject "^" "%${vars.worldName}";`,
       response: `A200 res="#${REACHABILITY_TEMP_OBJECT}"`,
       matchKeys: {
         verb: 'sel', targetId: REACHABILITY_CACHER_ID, action: 'call', member: 'CreateObject',
@@ -111,7 +111,7 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
       // per bound coordinate from NEAR_CIRCUITS_AT (RdoMock's exact match
       // returns the first exchange every time for identical frames, rdo-mock.ts:97-118).
       id: 'cr-rdo-near',
-      request: rdoCall('GetPropertyList', REACHABILITY_TEMP_OBJECT, RdoValue.string('NearCircuits\t')).toFrame(),
+      request: `C sel ${REACHABILITY_TEMP_OBJECT} call GetPropertyList "^" "%NearCircuits\t";`,
       response: `A200 res="%${REACHABILITY_BUILDING.nearCircuits}"`,
       matchKeys: {
         verb: 'sel', targetId: REACHABILITY_TEMP_OBJECT, action: 'call', member: 'GetPropertyList',
@@ -121,7 +121,7 @@ function buildRdoExchanges(vars: ScenarioVariables): RdoExchange[] {
     {
       // CloseObject is a procedure — no reply carries anything.
       id: 'cr-rdo-close',
-      request: rdoCall('CloseObject', REACHABILITY_CACHER_ID, RdoValue.int(parseInt(REACHABILITY_TEMP_OBJECT, 10))).toFrame(),
+      request: `C sel ${REACHABILITY_CACHER_ID} call CloseObject "*" "#${REACHABILITY_TEMP_OBJECT}";`,
       response: 'A200',
       matchKeys: {
         verb: 'sel', targetId: REACHABILITY_CACHER_ID, action: 'call', member: 'CloseObject',

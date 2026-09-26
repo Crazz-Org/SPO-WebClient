@@ -141,7 +141,10 @@ describe('chase scenario — start, mirror, stop', () => {
     await expect(serverChaseUser(server.fake.ctx, CHASED_USER)).resolves.toBeUndefined();
 
     const [frame] = server.frames();
-    expect(server.rdoMock.match(frame)!.exchange.id).toBe('chase-start');
+    const hit = server.rdoMock.match(frame)!;
+    expect(hit.exchange.id).toBe('chase-start');
+    // The fixture request is byte-for-byte the frame production emitted.
+    expect(frame).toBe(hit.exchange.request);
 
     const { ctx } = makeClientDriver();
     await clientChaseUser(ctx, CHASED_USER);
@@ -183,7 +186,10 @@ describe('chase scenario — start, mirror, stop', () => {
     await expect(serverStopChase(server.fake.ctx)).resolves.toBeUndefined();
 
     const [frame] = server.frames();
-    expect(server.rdoMock.match(frame)!.exchange.id).toBe('chase-stop');
+    const hit = server.rdoMock.match(frame)!;
+    expect(hit.exchange.id).toBe('chase-stop');
+    // The fixture request is byte-for-byte the frame production emitted.
+    expect(frame).toBe(hit.exchange.request);
 
     const { ctx } = makeClientDriver();
     await clientStopChase(ctx);

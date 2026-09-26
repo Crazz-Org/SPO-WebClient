@@ -22,11 +22,11 @@
  * The `{ result }` option picks which of the four ordinals the block answers, so
  * one factory covers approved / rejected / not-enough-funds / error.
  *
- * Every request is built by the real emitter (`rdoCall(...).toFrame()`), so the
- * separator and arity come from the catalogue, never from this file.
+ * Every request is the literal frame production emits, captured in the sibling
+ * test — written out here, never rebuilt with the emitter, so a wrong catalogue
+ * entry cannot produce a matching wrong fixture.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
@@ -48,10 +48,7 @@ function buildRdoExchanges(result: number): RdoExchange[] {
   return [
     {
       id: 'bl-rdo-ask-loan',
-      request: rdoCall(
-        'RDOAskLoan', BANK_LOAN_BLOCK,
-        RdoValue.int(BANK_LOAN_TYCOON), RdoValue.string(BANK_LOAN_AMOUNT),
-      ).toFrame(),
+      request: `C sel ${BANK_LOAN_BLOCK} call RDOAskLoan "^" "#${BANK_LOAN_TYCOON}","%${BANK_LOAN_AMOUNT}";`,
       response: `A200 res="#${result}"`,
       matchKeys: {
         verb: 'sel', targetId: BANK_LOAN_BLOCK, action: 'call', member: 'RDOAskLoan',

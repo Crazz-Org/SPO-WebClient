@@ -149,6 +149,7 @@ describe('bank-tv-live-reads scenario — the drive', () => {
   it('across both inspectors every one of the six exchanges is consumed', async () => {
     const mock = new RdoMock();
     mock.addScenario(rdo);
+    const proven = new Set<string>();
 
     for (const [block, visualClass] of [
       [BANK_LIVE_READS_BLOCK, BANK_CLASS],
@@ -172,8 +173,19 @@ describe('bank-tv-live-reads scenario — the drive', () => {
       });
 
       await getBuildingBasicDetails(fake.ctx, X, Y, visualClass);
+
+      // Each fixture request is byte-for-byte the frame production emitted.
+      const hits = fake.sent
+        .map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`)
+        .map(frame => ({ frame, hit: mock.match(frame) }))
+        .filter(h => h.hit !== null);
+      for (const { frame, hit } of hits) {
+        expect(frame).toBe(hit!.exchange.request);
+        proven.add(hit!.exchange.id);
+      }
     }
 
     expect(mock.getConsumedIds()).toEqual(new Set(rdo.exchanges.map(e => e.id)));
+    expect(proven).toEqual(new Set(rdo.exchanges.map(e => e.id)));
   });
 });

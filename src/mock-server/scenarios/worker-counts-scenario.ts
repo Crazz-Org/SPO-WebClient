@@ -19,12 +19,11 @@
  *    call; the exchanges below are per-kind, so a gateway that asked for all
  *    three regardless would leave one unconsumed.
  *
- * Every request is built by the real emitter (`rdoCall`), so the fixture cannot
- * drift from what ships, and the separator and arity come from the catalogue
- * rather than from this file.
+ * Every request is the literal frame production emits (QueryId stripped),
+ * captured in the sibling test — never rebuilt with the emitter, so a wrong
+ * catalogue entry cannot produce a matching wrong fixture.
  */
 
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { ScenarioVariables } from './scenario-variables';
@@ -44,7 +43,7 @@ function buildRdoExchanges(): RdoExchange[] {
     const arg = RdoValue.int(kind);
     return {
       id: `wc-rdo-get-workers-${kind}`,
-      request: rdoCall('RDOGetWorkers', WORKER_COUNTS_BLOCK, arg).toFrame(),
+      request: `C sel ${WORKER_COUNTS_BLOCK} call RDOGetWorkers "^" "#${kind}";`,
       response: `A${kind} res="#${WORKER_COUNTS[kind]}"`,
       matchKeys: {
         verb: 'sel',

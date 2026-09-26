@@ -27,6 +27,7 @@ import {
   buildLoginPushTriggers,
   ProtocolTestHarness,
 } from '@/server/__tests__/protocol-validation/protocol-test-harness';
+import { RdoMock } from '../rdo-mock';
 import { createAuthScenario } from './auth-scenario';
 import { createWorldListScenario } from './world-list-scenario';
 import { createCompanyListScenario, CAPTURED_COMPANY } from './company-list-scenario';
@@ -105,6 +106,23 @@ describe('L1: company-list RDO half driven through loginWorld()', () => {
         new RegExp(`^C \\d+ sel ${CONTEXT_ID} call ${member} "\\^" "#0"$`).test(c));
       expect(matching).toHaveLength(1);
     }
+  });
+
+  it('each fixture request is byte-for-byte the frame the gateway wrote, QueryId stripped', async () => {
+    await runLogin();
+
+    // The harness captures the real wire command, `C <rid> sel ...` without the
+    // frame delimiter; the fixture literal is that frame with the rid dropped.
+    const frames = harness.getCapturedCommands(2)
+      .filter(c => GETTERS.some(m => c.includes(` call ${m} `)))
+      .map(c => `${c.replace(/^C \d+ /, 'C ')};`);
+    const mock = new RdoMock();
+    mock.addScenario(createCompanyListScenario(COMPANY_VARS).rdo);
+
+    expect(frames.map(f => mock.match(f)!.exchange.id)).toEqual([
+      'cl-rdo-001', 'cl-rdo-002', 'cl-rdo-003', 'cl-rdo-004', 'cl-rdo-005',
+    ]);
+    expect(frames).toEqual(frames.map(f => mock.match(f)!.exchange.request));
   });
 
   it('emits them in the order chooseCompany.asp:166-170 read them', async () => {

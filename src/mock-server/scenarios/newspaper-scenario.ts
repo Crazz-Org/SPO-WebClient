@@ -33,8 +33,9 @@
  *  - `New Directory/Newspapers.asp` — the directory's Media listing, one row
  *    per paper in the world (`Newspapers.asp:12-24`); `papers: []` is the
  *    world with no newspapers.
- *  - two `RDOSetRatingFrom` exchanges — the rated post's frames, built by the
- *    emitter and answered by nothing, because a `procedure` answers nothing.
+ *  - two `RDOSetRatingFrom` exchanges — the rated post's frames, written out as
+ *    the literal frames production emits and answered by nothing, because a
+ *    `procedure` answers nothing.
  *  - `POST boardmsg.asp?action=post` — the index `RenderGlobal` re-renders with
  *    the new column in it (`:198-219`), the only oracle a post has; and
  *    `GET boardlist.asp` — the tree the page reloads beside it (`:46-48`).
@@ -46,7 +47,6 @@
 import type { HttpScenario, HttpExchange } from '../types/http-exchange-types';
 import type { RdoScenario, RdoExchange } from '../types/rdo-exchange-types';
 import type { NewspaperIssueRef, NewspaperListing } from '../../shared/types';
-import { rdoCall } from '@/shared/rdo-frame';
 import { RdoValue } from '@/shared/rdo-types';
 import type { ScenarioVariables } from './scenario-variables';
 import { mergeVariables } from './scenario-variables';
@@ -361,8 +361,9 @@ function boardListPage(): string {
  * The rated post's RDO half — one `RDOSetRatingFrom` per criterion, in the
  * order the reader's block lists them.
  *
- * Built by the emitter, so the frame cannot drift from the catalogue. The
- * response is **empty on purpose**: `RDOSetRatingFrom` is a `procedure`
+ * Each request is the literal frame production emits, captured in the sibling
+ * test — never rebuilt with the emitter, so a wrong catalogue entry cannot
+ * produce a matching wrong fixture. The response is **empty on purpose**: `RDOSetRatingFrom` is a `procedure`
  * (`Kernel/TownPolitics.pas:40`), so nothing ever comes back to say the write
  * landed — the report the column carries is the only record, and it is written
  * from what went out.
@@ -378,7 +379,7 @@ function buildRdoExchanges(): RdoExchange[] {
     ];
     return {
       id: `newspaper-rdo-set-rating-${rating.id}`,
-      request: rdoCall('RDOSetRatingFrom', CIVIC_TARGETS.townHallId, ...args).toFrame(),
+      request: `C sel ${CIVIC_TARGETS.townHallId} call RDOSetRatingFrom "*" "%${rating.id}","%SPO_test3","#${rating.value}";`,
       response: '',
       matchKeys: {
         verb: 'sel',
