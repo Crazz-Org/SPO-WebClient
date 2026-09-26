@@ -64,7 +64,7 @@ const LOCK: readonly LockRow[] = [
   ['CreateObject',             'call',    '"^"', 1,    U],
   ['DAAddr',                   'get',     null,  null, U],
   ['DALockPort',               'get',     null,  null, U],
-  ['DefineZone',               'call',    '"^"', 6,    U],
+  ['DefineZone',               'call',    '"^"', 6,    'Interface Server/InterfaceServer.pas:161; Voyager/URLHandlers/ServerCnxHandler.pas:2231'],
   ['DeleteMessage',            'call',    '"*"', 4,    U],
   ['EnableEvents',             'set',     null,  null, U],
   ['FindClients',              'call',    '"^"', 9,    U],
