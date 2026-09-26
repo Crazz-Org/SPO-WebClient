@@ -130,7 +130,7 @@ function OverpaymentPopover({
       fluidId,
       index: String(connIndex),
     });
-    client.onRefreshBuilding(buildingX, buildingY);
+    client.onRefreshBuilding(buildingX, buildingY, { userInitiated: false });
     onClose();
   };
 

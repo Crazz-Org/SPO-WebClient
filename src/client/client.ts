@@ -352,7 +352,7 @@ export class StarpeaceClient implements ClientHandlerContext {
         buildingActionHandler.setBuildingProperty(this, x, y, propertyName, value, additionalParams),
       onUpgradeBuilding: (x, y, action, count) =>
         buildingActionHandler.upgradeBuildingAction(this, x, y, action as 'DOWNGRADE' | 'START_UPGRADE' | 'STOP_UPGRADE', count),
-      onRefreshBuilding: (x, y) => buildingActionHandler.refreshBuildingDetails(this, x, y),
+      onRefreshBuilding: (x, y, opts) => buildingActionHandler.refreshBuildingDetails(this, x, y, opts),
       // Lightweight refresh — reuses the existing Delphi temp object instead of
       // re-focusing the building. Used after a SET whose applied value the
       // server may have corrected (a salary below the town minimum wage), where
@@ -746,8 +746,8 @@ export class StarpeaceClient implements ClientHandlerContext {
     return buildingActionHandler.requestBuildingDetails(this, x, y, visualClass);
   }
 
-  public refreshBuildingDetails(x: number, y: number) {
-    return buildingActionHandler.refreshBuildingDetails(this, x, y);
+  public refreshBuildingDetails(x: number, y: number, opts: { userInitiated: boolean }) {
+    return buildingActionHandler.refreshBuildingDetails(this, x, y, opts);
   }
 
   public setBuildingProperty(x: number, y: number, propertyName: string, value: string, additionalParams?: Record<string, string>) {

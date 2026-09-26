@@ -112,7 +112,7 @@ export interface ClientHandlerContext {
 
   // ── Cross-handler Methods ────────────────────────────────────────────────
   requestBuildingDetails(x: number, y: number, visualClass: string): Promise<BuildingDetailsResponse | null>;
-  refreshBuildingDetails(x: number, y: number): Promise<void>;
+  refreshBuildingDetails(x: number, y: number, opts: { userInitiated: boolean }): Promise<void>;
   setBuildingProperty(x: number, y: number, propertyName: string, value: string, additionalParams?: Record<string, string>): Promise<boolean>;
   loadMapArea(x?: number, y?: number, w?: number, h?: number): void;
   loadAlignedMapArea(x: number, y: number, margin?: number): void;

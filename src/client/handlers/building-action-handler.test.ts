@@ -189,7 +189,7 @@ describe('refreshBuildingDetails', () => {
     });
     const ctx = makeRefreshCtx(jest.fn().mockReturnValue(pending));
 
-    const call = refreshBuildingDetails(ctx, 10, 20);
+    const call = refreshBuildingDetails(ctx, 10, 20, { userInitiated: true });
     expect(useBuildingStore.getState().inFlightActions.has(REFRESH_BUILDING_ACTION)).toBe(true);
 
     resolveRequest!({ details: makeDetails(10, 20) });
@@ -203,7 +203,7 @@ describe('refreshBuildingDetails', () => {
     seedLoadedPanel();
     const ctx = makeRefreshCtx(jest.fn().mockRejectedValue(new Error('transport down')));
 
-    await refreshBuildingDetails(ctx, 10, 20);
+    await refreshBuildingDetails(ctx, 10, 20, { userInitiated: true });
 
     expect(ctx.showNotification).toHaveBeenCalledWith('Failed to refresh building details', 'error');
     expect(useBuildingStore.getState().details).not.toBeNull();
@@ -217,12 +217,126 @@ describe('refreshBuildingDetails', () => {
       throw new Error('store write failed');
     });
 
-    await refreshBuildingDetails(ctx, 10, 20);
+    await refreshBuildingDetails(ctx, 10, 20, { userInitiated: true });
 
     expect(ctx.showNotification).toHaveBeenCalledWith(
       'Failed to refresh building details: store write failed', 'error',
     );
     expect(useBuildingStore.getState().inFlightActions.has(REFRESH_BUILDING_ACTION)).toBe(false);
+  });
+
+  it('a failing auto-refresh (null path) logs but shows no toast', async () => {
+    seedLoadedPanel();
+    const ctx = makeRefreshCtx(jest.fn().mockRejectedValue(new Error('transport down')));
+
+    await refreshBuildingDetails(ctx, 10, 20, { userInitiated: false });
+
+    expect(ctx.showNotification).not.toHaveBeenCalled();
+    expect(ClientBridge.log).toHaveBeenCalledWith('Error', expect.stringContaining('Failed to refresh building details'));
+    expect(useBuildingStore.getState().inFlightActions.has(REFRESH_BUILDING_ACTION)).toBe(false);
+  });
+
+  it('a failing auto-refresh (catch path) logs but shows no toast', async () => {
+    seedLoadedPanel();
+    const ctx = makeRefreshCtx(jest.fn().mockResolvedValue({ details: makeDetails(10, 20) }));
+    (ClientBridge.updateBuildingDetails as jest.Mock).mockImplementationOnce(() => {
+      throw new Error('store write failed');
+    });
+
+    await refreshBuildingDetails(ctx, 10, 20, { userInitiated: false });
+
+    expect(ctx.showNotification).not.toHaveBeenCalled();
+    expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Failed to refresh building details: store write failed');
+    expect(useBuildingStore.getState().inFlightActions.has(REFRESH_BUILDING_ACTION)).toBe(false);
+  });
+
+  it('a failing auto-refresh still sets the retry error when the panel is loading', async () => {
+    useBuildingStore.getState().setLoading(true);
+    const ctx = makeRefreshCtx(jest.fn().mockRejectedValue(new Error('transport down')));
+
+    await refreshBuildingDetails(ctx, 10, 20, { userInitiated: false });
+
+    expect(useBuildingStore.getState().detailsError).toBeTruthy();
+    expect(ctx.showNotification).not.toHaveBeenCalled();
+  });
+
+  it('a post-action refresh failure is logged, not toasted', async () => {
+    const details = makeDetails(10, 20);
+    const ctx = {
+      currentFocusedVisualClass: '1234',
+      inFlightSetProperty: new Map(),
+      inFlightBuildingDetails: new Map(),
+      showNotification: jest.fn(),
+      sendRequest: jest.fn().mockImplementation(async (req: { type: string }) => {
+        if (req.type === 'REQ_BUILDING_SET_PROPERTY') {
+          return { success: true, newValue: '', confirmed: undefined };
+        }
+        throw new Error('transport down');
+      }),
+    } as unknown as ClientHandlerContext;
+
+    handleBuildingAction(ctx, 'startRepair', details);
+    for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(ctx.showNotification).toHaveBeenCalledWith('Repair started', 'success');
+    const messages = (ctx.showNotification as jest.Mock).mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(messages.some((m) => m.startsWith('Failed to refresh building details'))).toBe(false);
+    expect(ClientBridge.log).toHaveBeenCalledWith('Error', expect.stringContaining('Failed to refresh building details'));
+  });
+});
+
+describe('post-action refreshes are unattended (issue #929)', () => {
+  const drain = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+  const realPrompt = (globalThis as { prompt?: unknown }).prompt;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    useBuildingStore.getState().clearDetails();
+    (globalThis as { prompt?: unknown }).prompt = jest.fn(() => '3');
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+    (globalThis as { prompt?: unknown }).prompt = realPrompt;
+  });
+
+  function makeFailingRefreshCtx() {
+    return {
+      currentFocusedVisualClass: '1234',
+      inFlightSetProperty: new Map(),
+      inFlightBuildingDetails: new Map(),
+      showNotification: jest.fn(),
+      sendRequest: jest.fn().mockImplementation(async (req: { type: string }) => {
+        if (req.type === 'REQ_BUILDING_SET_PROPERTY') return { success: true, newValue: '', confirmed: undefined };
+        if (req.type === 'REQ_POLITICS_VOTE') return { success: true };
+        throw new Error('transport down');
+      }),
+    } as unknown as ClientHandlerContext;
+  }
+
+  const cases: Array<[string, Record<string, string> | undefined, boolean]> = [
+    ['stopRepair', undefined, false],
+    ['banMinister', undefined, false],
+    ['sitMinister', undefined, false],
+    ['deposeMinister', { MinistryId: '3' }, false],
+    ['voteCandidate', { Candidate: 'Alice' }, false],
+    ['electMayor', { Town: 'Helartia' }, true],
+    ['electMinister', { MinistryId: '3' }, true],
+  ];
+
+  it.each(cases)('%s: a failing follow-up refresh is logged, never toasted', async (actionId, rowData, viaPrompt) => {
+    const ctx = makeFailingRefreshCtx();
+    handleBuildingAction(ctx, actionId, makeDetails(10, 20), rowData);
+    if (viaPrompt) useUiStore.getState().promptPayload!.onSubmit('Bob');
+    await drain();
+    jest.advanceTimersByTime(1000);
+    await drain();
+
+    const messages = (ctx.showNotification as jest.Mock).mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(messages.some((m) => m.startsWith('Failed to refresh building details'))).toBe(false);
+    expect(ClientBridge.log).toHaveBeenCalledWith('Error', expect.stringContaining('Failed to refresh building details'));
   });
 });
 

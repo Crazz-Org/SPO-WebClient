@@ -68,7 +68,7 @@ describe('Sheet — the building row (non-civic)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View on map' }));
     expect(onNavigateToBuilding).toHaveBeenCalledWith(7, 9);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(onRefreshBuilding).toHaveBeenCalledWith(7, 9);
+    expect(onRefreshBuilding).toHaveBeenCalledWith(7, 9, { userInitiated: true });
   });
 
   it('disables the non-civic Refresh button while the shared refresh action is in flight', () => {

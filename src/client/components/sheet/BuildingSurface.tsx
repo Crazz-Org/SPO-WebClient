@@ -57,7 +57,7 @@ export function BuildingSurface() {
           variant="ghost"
           disabled={!details || refreshing}
           onClick={() => {
-            if (details) client.onRefreshBuilding(details.x, details.y);
+            if (details) client.onRefreshBuilding(details.x, details.y, { userInitiated: true });
           }}
         />
       </div>

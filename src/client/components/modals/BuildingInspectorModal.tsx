@@ -36,7 +36,7 @@ export function BuildingInspectorModal() {
   };
 
   const handleRefresh = () => {
-    if (details) client.onRefreshBuilding(details.x, details.y);
+    if (details) client.onRefreshBuilding(details.x, details.y, { userInitiated: true });
   };
 
   return (

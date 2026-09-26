@@ -1041,7 +1041,7 @@ describe('SuppliesPanel', () => {
     expect(onSetBuildingProperty).toHaveBeenCalledWith(
       100, 200, 'RDOSetInputOverPrice', '20', { fluidId: 'fluid_steel', index: '0' },
     );
-    expect(onRefreshBuilding).toHaveBeenCalledWith(100, 200);
+    expect(onRefreshBuilding).toHaveBeenCalledWith(100, 200, { userInitiated: false });
   });
 
   it('fires onDisconnectConnection on overpayment Delete', () => {
