@@ -813,7 +813,9 @@ describe('postNewspaperColumn', () => {
     ]);
   });
 
-  it('a list read that fails after the post is reported as a failure', async () => {
+  // The post has landed (the re-rendered index shows it), so a failed re-read
+  // of the column list must not turn it into a failure.
+  it('a list read that answers HTTP 500 after the post still reports the column published', async () => {
     const fake = makeWebCtx();
     mockFetch
       .mockResolvedValueOnce(htmlResponse(POSTED))
@@ -821,7 +823,26 @@ describe('postNewspaperColumn', () => {
 
     const result = await postNewspaperColumn(fake.ctx, TARGET, 'VERY NICE GUY', 'VOTE FOR HIM');
 
-    expect(result).toEqual({ success: false, message: 'The newspaper answered HTTP 500.', board: null });
+    expect(result.success).toBe(true);
+    expect(result.message).toBe('Column published');
+    expect(result.board!.tree).toEqual([]);
+    expect(result.board!.columns).toHaveLength(1);
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('re-read after the post failed'));
+  });
+
+  it('a list read that rejects after the post still reports the column published', async () => {
+    const fake = makeWebCtx();
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(POSTED))
+      .mockRejectedValueOnce(new Error('ECONNRESET'));
+
+    const result = await postNewspaperColumn(fake.ctx, TARGET, 'VERY NICE GUY', 'VOTE FOR HIM');
+
+    expect(result.success).toBe(true);
+    expect(result.board!.tree).toEqual([]);
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[Newspaper] Column list re-read after the post failed: ECONNRESET',
+    );
   });
 
   // ===========================================================================

@@ -471,9 +471,16 @@ export async function postNewspaperColumn(
       && c.subject.trim() === subject.trim());
 
     // `boardmsg.asp:46-48` — after a post the page reloads the `BoardList`
-    // frame too, so the tree is re-read the same way. A failed re-read lands
-    // in the catch below and is reported truthfully; a Refresh still shows it.
-    const tree = await readColumnTree(ctx, target, worldIp, root);
+    // frame too, so the tree is re-read the same way. The post has already
+    // landed (the index above is the oracle), so a failed re-read does not
+    // turn it into a failure: the board carries an empty tree, the log keeps
+    // a note, and a Refresh re-reads it.
+    let tree: NewspaperTreeEntry[] = [];
+    try {
+      tree = await readColumnTree(ctx, target, worldIp, root);
+    } catch (e: unknown) {
+      ctx.log.warn(`[Newspaper] Column list re-read after the post failed: ${toErrorMessage(e)}`);
+    }
 
     return {
       success: published,

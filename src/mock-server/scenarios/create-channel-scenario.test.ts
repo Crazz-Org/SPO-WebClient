@@ -27,7 +27,11 @@ jest.mock('@/client/bridge/client-bridge', () => ({
 import { RdoProtocol } from '@/server/rdo';
 import { RDO_MEMBERS } from '@/shared/rdo-members';
 import { CHANNEL_USER_LIMIT } from '@/shared/chat-channel';
-import { createChatChannel } from '@/server/session/chat-handler';
+import { createChatChannel, ChannelCreateError } from '@/server/session/chat-handler';
+import { handleChatCreateChannel } from '@/server/ws-handlers/chat-handlers';
+import type { WsHandlerContext } from '@/server/ws-handlers/types';
+import type { WebSocket } from 'ws';
+import { ERROR_InvalidPassword, ERROR_NotEnoughRoom } from '@/shared/error-codes';
 import { dispatchPush } from '@/server/session/push-dispatcher';
 import { makeSessionCtx, makePushCtx } from '@/server/__tests__/session/fake-session-context';
 import { dispatchEvent } from '@/client/handlers/event-handler';
@@ -229,5 +233,47 @@ describe('create-channel scenario — refusals', () => {
     await expect(createChatChannel(server.fake.ctx, TAKEN_CHANNEL, CHANNEL_PASSWORD))
       .rejects.toThrow(/full/);
     expect(server.fake.ctx.setCurrentChannel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [13, ERROR_InvalidPassword],
+    [32, ERROR_NotEnoughRoom],
+  ])('takenResult %i rejects with a ChannelCreateError carrying that code', async (takenResult, code) => {
+    const server = makeServerDriver(createCreateChannelScenario(undefined, { takenResult }).rdo);
+
+    const caught = await createChatChannel(server.fake.ctx, TAKEN_CHANNEL, CHANNEL_PASSWORD)
+      .catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(ChannelCreateError);
+    expect((caught as ChannelCreateError).code).toBe(code);
+  });
+
+  it('the ws handler answers the refusal with RESP_ERROR carrying the code and the sentence', async () => {
+    const server = makeServerDriver(createCreateChannelScenario(undefined, { takenResult: 13 }).rdo);
+    const sent: Array<Record<string, unknown>> = [];
+    const ws = {
+      send(payload: string): void {
+        sent.push(JSON.parse(payload) as Record<string, unknown>);
+      },
+    } as unknown as WebSocket;
+    const ctx = {
+      ws,
+      session: {
+        createChatChannel: (n: string, p: string) => createChatChannel(server.fake.ctx, n, p),
+      },
+    } as unknown as WsHandlerContext;
+
+    await handleChatCreateChannel(ctx, {
+      type: WsMessageType.REQ_CHAT_CREATE_CHANNEL,
+      wsRequestId: '7',
+      channelName: TAKEN_CHANNEL,
+      password: CHANNEL_PASSWORD,
+    } as unknown as WsMessage);
+
+    expect(sent).toEqual([{
+      type: WsMessageType.RESP_ERROR,
+      wsRequestId: '7',
+      errorMessage: 'Channel "Podan Merchants" already exists and its password does not match',
+      code: 13,
+    }]);
   });
 });

@@ -63,7 +63,10 @@ export function CreateChannelModal() {
       closeModal();
     } catch (err: unknown) {
       // The modal stays mounted so the player can read why and correct it.
-      setServerError(toErrorMessage(err));
+      // The gateway's own sentence rides on `serverMessage` (client.ts); the
+      // Error's message is only the generic text for the code.
+      const { serverMessage } = err as { serverMessage?: string };
+      setServerError(serverMessage || toErrorMessage(err));
     } finally {
       setLoading(false);
     }

@@ -27,6 +27,7 @@ import {
   getChatChannelInfo,
   joinChatChannel,
   ChannelJoinError,
+  ChannelCreateError,
   createChatChannel,
   sendChatMessage,
   setChatTypingStatus,
@@ -419,6 +420,36 @@ describe('createChatChannel', () => {
     fake.respond(() => 'res="#1"');
 
     await expect(createChatChannel(fake.ctx, 'X', '')).rejects.toThrow('Failed to create channel: 1');
+  });
+
+  it('throws a ChannelCreateError carrying ERROR_InvalidPassword on res="#13"', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#13"');
+
+    const caught = await createChatChannel(fake.ctx, 'Locked', 'wrong').catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(ChannelCreateError);
+    expect((caught as ChannelCreateError).code).toBe(ERROR_InvalidPassword);
+    expect((caught as ChannelCreateError).message).toBe('Channel "Locked" already exists and its password does not match');
+  });
+
+  it('throws a ChannelCreateError carrying ERROR_NotEnoughRoom on res="#32"', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#32"');
+
+    const caught = await createChatChannel(fake.ctx, 'Packed', '').catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(ChannelCreateError);
+    expect((caught as ChannelCreateError).code).toBe(ERROR_NotEnoughRoom);
+    expect((caught as ChannelCreateError).name).toBe('ChannelCreateError');
+    expect((caught as ChannelCreateError).message).toBe('Channel "Packed" already exists and is full');
+  });
+
+  it('does not type any other result as a refusal', async () => {
+    const fake = makeSessionCtx();
+    fake.respond(() => 'res="#1"');
+
+    const caught = await createChatChannel(fake.ctx, 'X', '').catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(ChannelCreateError);
   });
 
   it('treats an empty payload as a failure', async () => {
