@@ -6,7 +6,7 @@
  * The cancel button disappears at Company stage (old server already disconnected).
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { useGameStore } from '../../store/game-store';
 import { useClient } from '../../context';
@@ -23,21 +23,29 @@ export function ServerSwitchOverlay() {
   const isLoading = useGameStore((s) => s.loginLoading);
   const loginPage = useGameStore((s) => s.loginPage);
   const atWorldLimit = useGameStore((s) => s.loginAtWorldLimit);
+  const admission = useGameStore((s) => s.loginAdmission);
   const username = useGameStore((s) => s.username);
   const setLoginStage = useGameStore((s) => s.setLoginStage);
   const setLoginLoading = useGameStore((s) => s.setLoginLoading);
 
   const client = useClient();
   const [selectedWorld, setSelectedWorld] = useState('');
+  const lastZoneRef = useRef<WorldZone | null>(null);
 
   // Zone → Worlds: use stored credentials via dedicated callback
   const handleZoneSelect = useCallback(
     (zone: WorldZone) => {
       setLoginLoading(true);
+      lastZoneRef.current = zone;
       client.onServerSwitchZoneSelect(zone.path);
     },
     [client, setLoginLoading],
   );
+
+  // Retry the last zone query after an empty/failed world list (stored-credentials path)
+  const handleRetryWorlds = useCallback(() => {
+    if (lastZoneRef.current) handleZoneSelect(lastZoneRef.current);
+  }, [handleZoneSelect]);
 
   // Worlds → Companies: reuses same onWorldSelect (server handles cleanup)
   const handleWorldSelect = useCallback(
@@ -105,6 +113,7 @@ export function ServerSwitchOverlay() {
             worlds={worlds}
             onSelect={handleWorldSelect}
             onBack={handleBackToZones}
+            onRetry={handleRetryWorlds}
             isLoading={isLoading}
             atWorldLimit={atWorldLimit}
           />
@@ -116,6 +125,7 @@ export function ServerSwitchOverlay() {
             worldName={selectedWorld}
             loginPage={loginPage}
             atWorldLimit={atWorldLimit}
+            admission={admission}
             username={username}
             onSelect={handleCompanySelect}
             onCreate={handleCreateCompany}

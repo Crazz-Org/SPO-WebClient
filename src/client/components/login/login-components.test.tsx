@@ -75,17 +75,17 @@ describe('WorldStage', () => {
   ];
 
   it('renders world selection title', () => {
-    renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} isLoading={false} />);
+    renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} onRetry={() => {}} isLoading={false} />);
     expect(screen.getByText('Select a World')).toBeTruthy();
   });
 
   it('renders available worlds', () => {
-    renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} isLoading={false} />);
+    renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} onRetry={() => {}} isLoading={false} />);
     expect(screen.getByText('Shamba')).toBeTruthy();
   });
 
   it('renders offline worlds', () => {
-    renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} isLoading={false} />);
+    renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} onRetry={() => {}} isLoading={false} />);
     expect(screen.getByText('Offline World')).toBeTruthy();
   });
 
@@ -93,13 +93,13 @@ describe('WorldStage', () => {
   // before picking a world, which is the whole point of asking during connectDirectory.
   it('warns about the world limit when the directory refused another world', () => {
     renderWithProviders(
-      <WorldStage worlds={worlds} onSelect={() => {}} isLoading={false} atWorldLimit />,
+      <WorldStage worlds={worlds} onSelect={() => {}} onRetry={() => {}} isLoading={false} atWorldLimit />,
     );
     expect(screen.getByText(/reached the number of worlds your nobility allows/)).toBeTruthy();
   });
 
   it('says nothing about a limit when the directory did not refuse', () => {
-    renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} isLoading={false} />);
+    renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} onRetry={() => {}} isLoading={false} />);
     expect(screen.queryByText(/reached the number of worlds your nobility allows/)).toBeNull();
   });
 
@@ -108,14 +108,14 @@ describe('WorldStage', () => {
     const dated: WorldInfo[] = [
       { name: 'Dated', url: '', ip: '127.0.0.1', port: 1234, running3: true, online: 1, players: 1, population: 10, date: '2232' },
     ];
-    renderWithProviders(<WorldStage worlds={dated} onSelect={() => {}} isLoading={false} />);
+    renderWithProviders(<WorldStage worlds={dated} onSelect={() => {}} onRetry={() => {}} isLoading={false} />);
     expect(screen.getByText('Year')).toBeTruthy();
     expect(screen.getByText('2232')).toBeTruthy();
   });
 
   it('shows no year tile on an online world whose record has no date', () => {
     const undated: WorldInfo[] = [worlds[0]];
-    renderWithProviders(<WorldStage worlds={undated} onSelect={() => {}} isLoading={false} />);
+    renderWithProviders(<WorldStage worlds={undated} onSelect={() => {}} onRetry={() => {}} isLoading={false} />);
     expect(screen.queryByText('Year')).toBeNull();
   });
 
@@ -123,7 +123,7 @@ describe('WorldStage', () => {
     const offlineDated: WorldInfo[] = [
       { name: 'Offline Dated', url: '', ip: '127.0.0.1', port: 1234, running3: false, online: 0, players: 0, population: 0, date: '2232' },
     ];
-    renderWithProviders(<WorldStage worlds={offlineDated} onSelect={() => {}} isLoading={false} />);
+    renderWithProviders(<WorldStage worlds={offlineDated} onSelect={() => {}} onRetry={() => {}} isLoading={false} />);
     expect(screen.getByText('Server unavailable')).toBeTruthy();
     expect(screen.queryByText('Year')).toBeNull();
     expect(screen.queryByText('2232')).toBeNull();
@@ -147,13 +147,13 @@ describe('WorldStage', () => {
   });
 
   it('hides the retry control when no retry handler is given', () => {
-    renderWithProviders(<WorldStage worlds={[]} onSelect={() => {}} isLoading={false} />);
+    renderWithProviders(<WorldStage worlds={[]} onSelect={() => {}} onRetry={null} isLoading={false} />);
     expect(screen.getByText(/servers are down/i)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 
   it('shows a deadline gauge while loading', () => {
-    const { unmount } = renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} isLoading />);
+    const { unmount } = renderWithProviders(<WorldStage worlds={worlds} onSelect={() => {}} onRetry={() => {}} isLoading />);
     expect(screen.getByRole('progressbar')).toBeTruthy();
     unmount();
   });
@@ -177,6 +177,7 @@ describe('CompanyStage', () => {
     onBack: () => {},
     isLoading: false,
     username: 'SPO_test3',
+    admission: null,
   };
 
   it('renders company selection title', () => {

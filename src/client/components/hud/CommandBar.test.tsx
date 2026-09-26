@@ -6,6 +6,7 @@ import { useGameStore } from '../../store/game-store';
 import { useMailStore } from '../../store/mail-store';
 import { useChatStore } from '../../store/chat-store';
 import { CommandBar } from './CommandBar';
+import { VISITOR_GATED_PANELS } from '../../visitor-gating';
 
 describe('CommandBar', () => {
   beforeEach(() => {
@@ -186,6 +187,29 @@ describe('CommandBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('a visitor is offered no gated panel', () => {
+    useGameStore.setState({ isVisitor: true });
+    renderWithProviders(<CommandBar />);
+    const noGatedSurface = () => {
+      for (const s of useUiStore.getState().stack) expect(VISITOR_GATED_PANELS.has(s.kind)).toBe(false);
+    };
+    expect(screen.queryByRole('button', { name: 'Build' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Empire' })).toBeNull();
+    for (const button of screen.getAllByRole('button')) {
+      fireEvent.click(button);
+      noGatedSurface();
+    }
+    if (!screen.queryByRole('menu')) fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    const labels = screen.getAllByRole('menuitem').map((m) => m.textContent ?? '');
+    expect(labels.length).toBeGreaterThan(0);
+    expect(labels).not.toContain('My facilities');
+    for (const label of labels) {
+      if (!screen.queryByRole('menu')) fireEvent.click(screen.getByRole('button', { name: 'More' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: label }));
+      noGatedSurface();
+    }
   });
 
   it('a visitor sees no Build/Empire tiles and no road/facilities items in More', () => {

@@ -10,6 +10,7 @@ import { useMailStore } from '../../store/mail-store';
 import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
 import { useGameStore } from '../../store/game-store';
 import { BottomNav } from './BottomNav';
+import { VISITOR_GATED_PANELS } from '../../visitor-gating';
 import { BottomSheet } from './BottomSheet';
 
 describe('BottomNav — the mobile command bar', () => {
@@ -55,6 +56,17 @@ describe('BottomNav — the mobile command bar', () => {
     renderWithProviders(<BottomNav />);
     expect(screen.queryByLabelText('Build')).toBeNull();
     for (const name of ['Map', 'Chat', 'Government', 'Mail', 'More']) expect(screen.getByLabelText(name)).toBeTruthy();
+  });
+
+  it('a visitor is offered no gated panel', () => {
+    useGameStore.setState({ isVisitor: true });
+    renderWithProviders(<BottomNav />);
+    expect(screen.queryByLabelText('Build')).toBeNull();
+    for (const tab of screen.getAllByRole('tab')) {
+      fireEvent.click(tab);
+      for (const s of useUiStore.getState().stack) expect(VISITOR_GATED_PANELS.has(s.kind)).toBe(false);
+      expect(useUiStore.getState().mobileTab).not.toBe('build');
+    }
   });
 
   it('badges: unread chat on Chat, unread mail on Mail', () => {

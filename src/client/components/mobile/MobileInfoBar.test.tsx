@@ -9,7 +9,7 @@ describe('MobileInfoBar', () => {
   beforeEach(() => {
     useUiStore.getState().clearSurfaces();
     useUiStore.getState().setMobileTab('build');
-    useGameStore.setState({ worldName: 'planitia', username: 'SPO_test3', tycoonStats: { cash: '1000', incomePerHour: '10', ranking: 3, buildingCount: 1, maxBuildings: 9 } as never });
+    useGameStore.setState({ isVisitor: false, worldName: 'planitia', username: 'SPO_test3', tycoonStats: { cash: '1000', incomePerHour: '10', ranking: 3, buildingCount: 1, maxBuildings: 9 } as never });
   });
 
   it('a tap opens the Profile surface in the sheet (the former Fav tab is gone)', () => {
@@ -33,5 +33,19 @@ describe('MobileInfoBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View facilities losing money' }));
     expect(useUiStore.getState().mobileTab).toBe('map');
     expect(useUiStore.getState().stack.map((s) => s.kind)).toEqual(['facilities']);
+  });
+
+  it('a visitor is offered no gated panel: no empire tap, no Debt tag', () => {
+    useGameStore.setState({
+      isVisitor: true,
+      tycoonStats: { cash: '1000', incomePerHour: '10', ranking: 3, buildingCount: 1, maxBuildings: 9, failureLevel: 1 } as never,
+    });
+    renderWithProviders(<MobileInfoBar />);
+    expect(screen.queryByRole('button', { name: 'Open empire overview' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'View facilities losing money' })).toBeNull();
+    expect(screen.getByText('PLANITIA')).toBeTruthy();
+    expect(screen.getByText(/#3 SPO_test3/)).toBeTruthy();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+    expect(useUiStore.getState().stack).toEqual([]);
   });
 });
