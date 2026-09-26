@@ -416,6 +416,24 @@ describe('game-store company switching state', () => {
   });
 });
 
+describe('game-store activeUsername', () => {
+  beforeEach(() => {
+    useGameStore.getState().reset();
+  });
+
+  it('is empty until a company is entered', () => {
+    expect(useGameStore.getState().activeUsername).toBe('');
+  });
+
+  it('setActiveUsername sets it and reset clears it', () => {
+    useGameStore.getState().setActiveUsername('Mayor of Helartia');
+    expect(useGameStore.getState().activeUsername).toBe('Mayor of Helartia');
+
+    useGameStore.getState().reset();
+    expect(useGameStore.getState().activeUsername).toBe('');
+  });
+});
+
 describe('game-store rememberedSession slice', () => {
   const RECORD: RememberedSession = {
     username: 'SPO_test3',

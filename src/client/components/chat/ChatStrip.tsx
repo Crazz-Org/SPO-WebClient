@@ -164,10 +164,16 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
     }
   }, [client]);
 
-  // Retract the notice if the strip goes away mid-sentence.
+  // Retract the notice if the strip goes away mid-sentence. A pending idle timer
+  // means the last thing announced was `true`, so exactly one `false` goes out;
+  // no timer (never typed, already sent, or `/afk`) means there is nothing to retract.
   useEffect(() => () => {
-    if (typingIdleTimer.current) clearTimeout(typingIdleTimer.current);
-  }, []);
+    if (typingIdleTimer.current) {
+      clearTimeout(typingIdleTimer.current);
+      typingIdleTimer.current = null;
+      client.onChatTypingChange(false);
+    }
+  }, [client]);
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const text = e.target.value;

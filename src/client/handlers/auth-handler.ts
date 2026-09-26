@@ -36,6 +36,15 @@ import { useUiStore } from '../store/ui-store';
 import type { ClientHandlerContext } from './client-context';
 import type { RememberedSession } from '../store/remembered-session';
 
+/**
+ * The name the gateway speaks as after entering `company` — `switchCompany`
+ * (login-handler.ts) sets `activeUsername` to `company.ownerRole || cachedUsername`.
+ * No response carries it back, so it is derived here the same way.
+ */
+function activeUsernameFor(company: CompanyInfo, storedUsername: string): string {
+  return company.ownerRole || storedUsername;
+}
+
 export async function performAuthCheck(ctx: ClientHandlerContext, username: string, password: string): Promise<boolean> {
   ClientBridge.setLoginLoading(true);
   ClientBridge.log('Auth', 'Checking credentials...');
@@ -258,6 +267,7 @@ export async function selectCompanyAndStart(ctx: ClientHandlerContext, companyId
     const roleLower = roleRaw.toLowerCase();
     const isPublicOffice = roleLower.includes('president') || roleLower.includes('minister') || roleLower.includes('mayor');
     ClientBridge.setPublicOfficeRole(isPublicOffice, roleRaw);
+    useGameStore.getState().setActiveUsername(activeUsernameFor(company, ctx.storedUsername));
 
     if (ctx.storedUsername) {
       ctx.sendMessage({ type: WsMessageType.REQ_TYCOON_ROLE, tycoonName: ctx.storedUsername });
@@ -428,6 +438,7 @@ export function serverSwitchZoneSelect(ctx: ClientHandlerContext, zonePath: stri
 
 export function applyLocalCompanySwitch(ctx: ClientHandlerContext, company: CompanyInfo): void {
   ctx.currentCompanyName = company.name;
+  useGameStore.getState().setActiveUsername(activeUsernameFor(company, ctx.storedUsername));
   ClientBridge.setCompany(company.name, String(company.id));
   const roleLower = (company.ownerRole ?? '').toLowerCase();
   const isPublicOffice = roleLower.includes('president') || roleLower.includes('minister') || roleLower.includes('mayor');
