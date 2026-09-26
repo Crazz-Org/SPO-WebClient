@@ -2068,6 +2068,10 @@ describe('resolveConnectionReachability', () => {
     expect(fake.cacher.closeObject).toHaveBeenCalledTimes(1);
     expect(fake.cacher.closeObject).toHaveBeenCalledWith(TEMP_ID);
     expect(fake.sent.map(s => s.packet.member)).toEqual(['SetObject', 'SetObject', 'SetObject', 'SetObject', 'SetObject']);
+    for (const req of fake.sent) {
+      expect(req.socketName).toBe('map');
+      expect(req.packet.targetId).toBe(TEMP_ID);
+    }
     expect(fake.sent.map(s => positionOf(s.packet.args))).toEqual([
       BUILDING, CONNECTED_POS, ISOLATED_POS, ISOLATED_EMPTY_POS, UNKNOWN_POS,
     ]);

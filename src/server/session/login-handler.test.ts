@@ -1910,6 +1910,14 @@ describe('reconnectWorldSocket — the full re-login', () => {
     expect(register?.packet.args).toEqual([`"#${CNNT_ID}"`]);
     // Same ordering rule as the initial login.
     expect(fake.hooks.populateWorldPool).toHaveBeenCalledTimes(1);
+    const populate = fake.hooks.populateWorldPool.mock.invocationCallOrder[0];
+    const binding = ['Logon', 'TycoonId', 'RDOCnntId', 'RegisterEventsById'].map(member => {
+      const i = fake.sent.findIndex(s => s.packet.member === member);
+      expect(i).toBeGreaterThanOrEqual(0);
+      return fake.hooks.sendRdoRequest.mock.invocationCallOrder[i];
+    });
+    expect(binding).toEqual([...binding].sort((a, b) => a - b));
+    for (const sentAt of binding) expect(populate).toBeGreaterThan(sentAt);
   });
 
   it('re-sends SetLanguage against the NEW context id', async () => {
