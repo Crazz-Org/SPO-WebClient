@@ -17,13 +17,14 @@
  */
 
 import type { WebSocket } from 'ws';
-import { handleBuildingWorkerCounts, handlePlaceBuilding } from './building-handlers';
+import { handleBuildCapitol, handleBuildingWorkerCounts, handlePlaceBuilding } from './building-handlers';
 import type { WsHandlerContext } from './types';
 import {
   WsMessageType,
   type WsMessage,
   type WsRespBuildingWorkerCounts,
   type WsRespBuildingPlaced,
+  type WsRespCapitolPlaced,
   type WsRespError,
   type WorkerCount,
 } from '../../shared/types';
@@ -164,6 +165,65 @@ describe('handlePlaceBuilding', () => {
     expect(resp.type).toBe(WsMessageType.RESP_BUILDING_PLACED);
     expect(resp.x).toBe(28);
     expect(resp.y).toBe(618);
+    expect('buildingId' in resp).toBe(false);
+  });
+});
+
+describe('handlePlaceBuilding and handleBuildCapitol report a refusal the same way', () => {
+  type Handler = (ctx: WsHandlerContext, msg: WsMessage) => Promise<void>;
+
+  function makeCtx(method: string, result: unknown) {
+    const sent: WsMessage[] = [];
+    const ws = {
+      send: jest.fn((payload: string) => sent.push(JSON.parse(payload) as WsMessage)),
+    } as unknown as WebSocket;
+    const ctx = {
+      ws,
+      session: { [method]: jest.fn().mockResolvedValue(result) },
+    } as unknown as WsHandlerContext;
+    return { ctx, sent };
+  }
+
+  const handlers: ReadonlyArray<readonly [string, Handler, WsMessage]> = [
+    ['placeBuilding', handlePlaceBuilding, {
+      type: WsMessageType.REQ_PLACE_BUILDING, wsRequestId: 'req-1', facilityClass: 'PGISupermarketC', x: 28, y: 618,
+    } as unknown as WsMessage],
+    ['placeCapitol', handleBuildCapitol, {
+      type: WsMessageType.REQ_BUILD_CAPITOL, wsRequestId: 'req-2', x: 100, y: 200,
+    } as unknown as WsMessage],
+  ];
+
+  it.each(handlers)('%s forwards code 33 as RESP_ERROR "Too many facilities"', async (method, handler, request) => {
+    const { ctx, sent } = makeCtx(method, { success: false, buildingId: null, errorCode: 33 });
+
+    await handler(ctx, request);
+
+    expect(sent).toHaveLength(1);
+    const resp = sent[0] as WsRespError;
+    expect(resp.type).toBe(WsMessageType.RESP_ERROR);
+    expect(resp.code).toBe(33);
+    expect(resp.errorMessage).toBe('Too many facilities');
+  });
+
+  it.each(handlers)('%s falls back to ERROR_Unknown when the refusal carries no code', async (method, handler, request) => {
+    const { ctx, sent } = makeCtx(method, { success: false, buildingId: null });
+
+    await handler(ctx, request);
+
+    const resp = sent[0] as WsRespError;
+    expect(resp.code).toBe(ErrorCodes.ERROR_Unknown);
+    expect(resp.errorMessage).toBe('Unknown error');
+  });
+
+  it('handleBuildCapitol reports success without a buildingId key', async () => {
+    const { ctx, sent } = makeCtx('placeCapitol', { success: true, buildingId: null });
+
+    await handleBuildCapitol(ctx, handlers[1][2]);
+
+    const resp = sent[0] as WsRespCapitolPlaced;
+    expect(resp.type).toBe(WsMessageType.RESP_CAPITOL_PLACED);
+    expect(resp.x).toBe(100);
+    expect(resp.y).toBe(200);
     expect('buildingId' in resp).toBe(false);
   });
 });

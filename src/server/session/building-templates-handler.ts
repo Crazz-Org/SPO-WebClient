@@ -696,7 +696,7 @@ export async function placeCapitol(
   ctx: SessionContext,
   x: number,
   y: number
-): Promise<{ success: boolean; buildingId: string | null }> {
+): Promise<{ success: boolean; buildingId: string | null; errorCode?: number }> {
   if (!ctx.worldContextId) {
     throw new Error('Not logged into world - cannot place Capitol');
   }
@@ -718,7 +718,9 @@ export async function placeCapitol(
       return { success: true, buildingId: null };
     } else {
       ctx.log.warn(`[Capitol] Capitol placement failed. Result code: ${resultCode}`);
-      return { success: false, buildingId: null };
+      return resultCode >= 0
+        ? { success: false, buildingId: null, errorCode: resultCode }
+        : { success: false, buildingId: null };
     }
   } catch (e: unknown) {
     ctx.log.error('[Capitol] Failed to place Capitol:', e);

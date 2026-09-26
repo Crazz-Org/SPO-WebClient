@@ -42,6 +42,8 @@ When adding a new handler:
 
 Existing handlers: `chat-handler`, `mail-handler`, `profile-finance-handler`, `auto-connection-handler`, `politics-handler`, `building-management-handler`, `road-handler`, `zone-surface-handler`, `building-templates-handler`, `building-details-handler`, `building-property-handler`, `research-handler`, `login-handler`.
 
+A function with a twin (`enrich*Tab`, `place*`, `handle*`) gets its fix in the same diff and one `it.each` over the set.
+
 ## Push Dispatcher
 
 Incoming RDO pushes from game servers route through `push-dispatcher.ts`. New push types must be registered there.

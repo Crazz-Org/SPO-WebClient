@@ -979,8 +979,13 @@ async function enrichBankTab(
   const currBlock = allValues.get('CurrBlock');
   if (!currBlock) return;
 
-  if (!ctx.getSocket('construction')) {
-    await ctx.connectConstructionService();
+  try {
+    if (!ctx.getSocket('construction')) {
+      await ctx.connectConstructionService();
+    }
+  } catch (e: unknown) {
+    ctx.log.debug(`[BuildingDetails] Bank enrichment failed: ${toErrorMessage(e)}`);
+    return;
   }
 
   // Estimated loan — its own try, because Voyager wraps only this call and lets

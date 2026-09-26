@@ -3104,7 +3104,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return buildingTemplatesHandler.placeBuilding(this, facilityClass, x, y);
   }
 
-  public async placeCapitol(x: number, y: number): Promise<{ success: boolean; buildingId: string | null }> {
+  public async placeCapitol(x: number, y: number): Promise<{ success: boolean; buildingId: string | null; errorCode?: number }> {
     return buildingTemplatesHandler.placeCapitol(this, x, y);
   }
 
