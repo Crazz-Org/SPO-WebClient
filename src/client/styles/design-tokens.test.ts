@@ -1286,11 +1286,11 @@ describe('HUD band table (issue 931)', () => {
   it('LeftRail really is unmounted — no .tsx under src/client renders it', () => {
     const renderers: string[] = [];
     const scan = (dir: string): void => {
-      for (const entry of readdirSync(dir)) {
-        const full = join(dir, entry);
-        if (statSync(full).isDirectory()) {
-          if (entry !== 'node_modules') scan(full);
-        } else if (entry.endsWith('.tsx') && !entry.endsWith('.test.tsx') && readFileSync(full, 'utf8').includes('<LeftRail')) {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules') scan(full);
+        } else if (entry.name.endsWith('.tsx') && !entry.name.endsWith('.test.tsx') && readFileSync(full, 'utf8').includes('<LeftRail')) {
           renderers.push(relative(CLIENT_ROOT, full));
         }
       }
