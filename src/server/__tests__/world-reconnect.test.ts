@@ -10,6 +10,11 @@
  * - Pending RIDs drained (rejected) BEFORE reconnecting (ghost-RID rule)
  * - Promise dedup: concurrent callers share one attempt
  * - Give up at max retries → emit 'worldDisconnected'
+ *
+ * assertNoViolations() is not called: the socket carries no scenario exchange
+ * (rdoScenarios: []), so the strict validator has nothing to compare a frame
+ * against; what each test checks is asserted directly on the session and the
+ * socket's captured traffic instead.
  */
 
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';

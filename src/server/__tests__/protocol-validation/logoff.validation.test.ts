@@ -8,6 +8,11 @@
  * hard-destroyed the socket ~100ms later.
  *
  * Drives the REAL StarpeaceSession.endSession() through the protocol harness.
+ *
+ * assertNoViolations() is not called: the socket carries no scenario exchange
+ * (rdoScenarios: []), so the strict validator has nothing to compare a frame
+ * against; what each test checks is asserted directly on the session and the
+ * socket's captured traffic instead.
  */
 
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';

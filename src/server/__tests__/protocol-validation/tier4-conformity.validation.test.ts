@@ -8,6 +8,10 @@
  *  P1a AnswerStatus heartbeat must be answered A<rid> res="#0"
  *      (legacy TISEvents.AnswerStatus → NOERROR, ServerCnxHandler.pas:666-669)
  *  P1b Malformed "Aerror 17" busy rejection must flip the busy flag
+ *
+ * assertNoViolations() is not called: the socket carries no scenario exchange
+ * (rdoScenarios: []), so the strict validator has nothing to compare a frame
+ * against; the frames are pinned by literal assertions instead.
  */
 
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
