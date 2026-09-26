@@ -155,6 +155,20 @@ describe('MapSurface', () => {
     expect(ctx.strokes).toContain('#ffffff'); // selection marker stroke
   });
 
+  it('does not look up facility zones while the dimensions cache is not initialised', () => {
+    const dims = getFacilityDimensionsCache();
+    expect(dims.isInitialized()).toBe(false);
+    const getFacility = jest.spyOn(dims, 'getFacility');
+    try {
+      useMapStore.getState().setSource(fakeSource());
+      renderWithProviders(<MapSurface />);
+      expect(ctx.drawImage).toHaveBeenCalled(); // the minimap (buildings included) painted
+      expect(getFacility).not.toHaveBeenCalled();
+    } finally {
+      getFacility.mockRestore();
+    }
+  });
+
   it('Back / Next walk the history and move the camera; Nearest Town Hall arrives through the selecting path', () => {
     const src = fakeSource();
     useMapStore.getState().setSource(src);

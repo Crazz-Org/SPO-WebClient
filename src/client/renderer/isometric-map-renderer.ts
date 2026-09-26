@@ -487,6 +487,9 @@ export class IsometricMapRenderer {
   private pendingPlacements = new PendingPlacementLayer();
   /** Scratch canvas for greyTexture. Separate from `losingScratch` so the two tints can never alias inside one frame. */
   private pendingScratch: HTMLCanvasElement | null = null;
+  /** The one timer that redraws when the oldest pending placement expires, and the moment it is set for. */
+  private pendingExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingExpiryAt: number | null = null;
 
   /** Portal facilities (6031/6032) are non-interactive map decorations.
    *  Base visual class 6031; Delphi GetVisualClassId returns 0 or 1
@@ -590,8 +593,12 @@ export class IsometricMapRenderer {
   private transparentOverlays: boolean = true;
   /** Legacy `fHiddenFacilities` (Map.pas:547): facility KINDS whose sprite is not drawn. Empty = draw all. */
   private hiddenFacIds: ReadonlySet<number> = new Set();
-  /** Scratch canvas the red shade is composed on; created on first use, never while the option is off. */
+  /** Scratch canvas the red shade is composed on; created on first use, never while the option is off.
+   *  drawBuildings keeps each composed canvas per source texture (`reddenedTextures`), so a fresh
+   *  scratch is started for every new texture and a cached copy is never overwritten. */
   private losingScratch: HTMLCanvasElement | null = null;
+  /** Reddened copy of each source texture, composed once and reused every frame after. */
+  private reddenedTextures: WeakMap<ImageBitmap, CanvasImageSource> | null = null;
   /** Blocks this player has loaded in this world; null = fog off (no set attached). */
   private exploredBlocks: ExploredBlocks | null = null;
   private animationLoopRunning: boolean = false;
@@ -1312,6 +1319,7 @@ export class IsometricMapRenderer {
     this.allSegments = [];
     this.roadTilesMap.clear();
     this.cachedOccupiedTiles = null; // Invalidate occupation cache
+    this.zonePreviewCache = null;
 
     this.cachedZones.forEach(zone => {
       this.allBuildings.push(...zone.buildings);
@@ -1642,6 +1650,7 @@ export class IsometricMapRenderer {
 
     // Rebuild concrete set and invalidate occupation cache with accurate dimensions
     this.cachedOccupiedTiles = null;
+    this.zonePreviewCache = null;
     this.rebuildConcreteSet();
 
     // Preload building textures for all unique visual classes
@@ -1857,19 +1866,9 @@ export class IsometricMapRenderer {
 
     // Fallback: compute from south-corner anchor (same formula as drawBuildings).
     // Used on the first frame before the renderer has drawn the selected building.
-    const rotation = this.terrainRenderer.getRotation();
-    let anchorI: number, anchorJ: number;
-    switch (rotation) {
-      case Rotation.NORTH: anchorI = worldY;              anchorJ = worldX;              break;
-      case Rotation.EAST:  anchorI = worldY + ysize - 1;  anchorJ = worldX;              break;
-      case Rotation.SOUTH: anchorI = worldY + ysize - 1;  anchorJ = worldX + xsize - 1;  break;
-      case Rotation.WEST:  anchorI = worldY;              anchorJ = worldX + xsize - 1;  break;
-      default:             anchorI = worldY;              anchorJ = worldX;              break;
-    }
-    const southCornerScreenPos = this.terrainRenderer.mapToScreen(anchorI, anchorJ);
-
     const config = ZOOM_LEVELS[this.terrainRenderer.getZoomLevel()];
     const scaleFactor = config.tileWidth / 64;
+    const anchor = this.footprintAnchor(worldX, worldY, xsize, ysize, scaleFactor);
     let scaledHeight = 80 * scaleFactor; // fallback
 
     const building = this.getBuildingAt(worldX, worldY);
@@ -1881,13 +1880,9 @@ export class IsometricMapRenderer {
       }
     }
 
-    let textureTopY = southCornerScreenPos.y + config.tileHeight - scaledHeight;
+    const textureTopY = anchor.y + config.tileHeight - scaledHeight - anchor.lift;
 
-    if (this.isOnWaterPlatform(anchorJ, anchorI)) {
-      textureTopY -= Math.round(PLATFORM_SHIFT * scaleFactor);
-    }
-
-    return { x: southCornerScreenPos.x, y: textureTopY, textureHeight: scaledHeight };
+    return { x: anchor.x, y: textureTopY, textureHeight: scaledHeight };
   }
 
   /** Mark a building as selected (focused) — shows gold pulsing footprint + entry burst ring. */
@@ -2743,13 +2738,22 @@ export class IsometricMapRenderer {
 
     // Game info overlay removed — stats available via debug mode (D key)
 
+    this.scheduleNextFrame();
+  }
+
+  /**
+   * Decide whether (and when) the next frame is drawn after this one. Pending placements do
+   * not animate, so they never hold the loop: they only get one redraw when the oldest expires.
+   */
+  private scheduleNextFrame(): void {
     // Keep rendering while any time-based animation is active.
     // Priority order: animated building textures (full fps) > active effects (full fps)
     //   > selection burst (full fps for 350ms) > placement breathing (throttled 20fps)
     //   > selection pulse (throttled to 15fps — slow sine wave)
     const burstActive = this.selectedBuilding !== null &&
       (performance.now() - this.selectionBurstStartTime) < 350;
-    const hasActiveEffects = this.buildingEffects.size > 0 || this.pendingPlacements.size > 0;
+    this.schedulePendingExpiry();
+    const hasActiveEffects = this.buildingEffects.size > 0;
 
     if (this.hasAnimatedBuildings || hasActiveEffects || burstActive) {
       this.requestRender();
@@ -2773,6 +2777,26 @@ export class IsometricMapRenderer {
         setTimeout(() => this.requestRender(), 66 - (now - this.lastPulseRenderTime));
       }
     }
+  }
+
+  /**
+   * Arm one timer for the moment the oldest pending placement expires, so the frame that prunes
+   * it is drawn even when nothing else is animating. Re-arms only when that moment changes.
+   */
+  private schedulePendingExpiry(): void {
+    const at = this.pendingPlacements.nextExpiry();
+    if (at === this.pendingExpiryAt) return;
+    if (this.pendingExpiryTimer !== null) {
+      clearTimeout(this.pendingExpiryTimer);
+      this.pendingExpiryTimer = null;
+    }
+    this.pendingExpiryAt = at;
+    if (at === null) return;
+    this.pendingExpiryTimer = setTimeout(() => {
+      this.pendingExpiryTimer = null;
+      this.pendingExpiryAt = null;
+      this.requestRender();
+    }, Math.max(0, at - Date.now()));
   }
 
   /**
@@ -3478,11 +3502,31 @@ export class IsometricMapRenderer {
     }
   }
 
+  /** South-corner screen anchor of a footprint (the tile nearest the viewer — it moves with rotation)
+   *  and the upward water-platform lift, in px, for a sprite standing on it. The one source for
+   *  drawBuildings, drawPendingPlacements and worldToScreenCentered. */
+  private footprintAnchor(x: number, y: number, xsize: number, ysize: number, scaleFactor: number): { x: number; y: number; lift: number } {
+    //   NORTH: (y, x)  EAST: (y+h-1, x)  SOUTH: (y+h-1, x+w-1)  WEST: (y, x+w-1)
+    const rotation = this.terrainRenderer.getRotation();
+    let anchorI: number, anchorJ: number;
+    switch (rotation) {
+      case Rotation.NORTH: anchorI = y;              anchorJ = x;              break;
+      case Rotation.EAST:  anchorI = y + ysize - 1;  anchorJ = x;              break;
+      case Rotation.SOUTH: anchorI = y + ysize - 1;  anchorJ = x + xsize - 1;  break;
+      case Rotation.WEST:  anchorI = y;              anchorJ = x + xsize - 1;  break;
+      default:             anchorI = y;              anchorJ = x;              break;
+    }
+    const screen = this.terrainRenderer.mapToScreen(anchorI, anchorJ);
+    const lift = this.isOnWaterPlatform(anchorJ, anchorI) ? Math.round(PLATFORM_SHIFT * scaleFactor) : 0;
+    return { x: screen.x, y: screen.y, lift };
+  }
+
   /**
    * The sprite with its own pixels shaded red — legacy loReddened (Map.pas:1323-1324 →
    * Lander.pas:294-295). Composed on a scratch canvas: 'source-atop' keeps the fill inside
    * the sprite's alpha, so the terrain under the bounding box is untouched. Returns the
-   * untinted texture if no 2D context can be had.
+   * untinted texture if no 2D context can be had. Composes once per call; drawBuildings keeps
+   * each composed canvas per source texture, so this runs once per texture, not once per frame.
    */
   private reddenTexture(texture: ImageBitmap): CanvasImageSource {
     if (!this.losingScratch) this.losingScratch = document.createElement('canvas');
@@ -3561,27 +3605,13 @@ export class IsometricMapRenderer {
         // Calculate the anchor point: the SOUTH corner of the building footprint.
         // The south corner (closest to viewer, highest screen Y) changes with rotation:
         //   NORTH: (y, x)  EAST: (y+h-1, x)  SOUTH: (y+h-1, x+w-1)  WEST: (y, x+w-1)
-        const rotation = this.terrainRenderer.getRotation();
-        let anchorI: number, anchorJ: number;
-        switch (rotation) {
-          case Rotation.NORTH: anchorI = building.y;              anchorJ = building.x;              break;
-          case Rotation.EAST:  anchorI = building.y + ysize - 1;  anchorJ = building.x;              break;
-          case Rotation.SOUTH: anchorI = building.y + ysize - 1;  anchorJ = building.x + xsize - 1;  break;
-          case Rotation.WEST:  anchorI = building.y;              anchorJ = building.x + xsize - 1;  break;
-          default:             anchorI = building.y;              anchorJ = building.x;              break;
-        }
-        const southCornerScreenPos = this.terrainRenderer.mapToScreen(anchorI, anchorJ);
+        // Buildings on water platforms are elevated to match the platform (anchor.lift).
+        const anchor = this.footprintAnchor(building.x, building.y, xsize, ysize, scaleFactor);
 
         // The texture bottom-center should align with the south vertex of the south corner tile
         // South vertex is at screenPos.y + tileHeight
-        const drawX = Math.round(southCornerScreenPos.x - scaledWidth / 2);
-        let drawY = Math.round(southCornerScreenPos.y + config.tileHeight - scaledHeight);
-
-        // Buildings on water platforms are elevated to match the platform
-        if (this.isOnWaterPlatform(anchorJ, anchorI)) {
-          const platformYShift = Math.round(PLATFORM_SHIFT * scaleFactor);
-          drawY -= platformYShift;
-        }
+        const drawX = Math.round(anchor.x - scaledWidth / 2);
+        const drawY = Math.round(anchor.y + config.tileHeight - scaledHeight) - anchor.lift;
 
         // Cull if completely off-screen
         if (drawX + scaledWidth < 0 ||
@@ -3600,7 +3630,17 @@ export class IsometricMapRenderer {
         ctx.globalAlpha = glassed ? FOREIGN_BUILDING_ALPHA : 1;
         // Legacy Map.pas:1323-1324 — only MY alerting buildings, only when the option is on.
         const reddened = this.signalLosingFacilities && building.alert && this.ownTycoonId !== 0 && building.tycoonId === this.ownTycoonId;
-        const sprite: CanvasImageSource = reddened ? this.reddenTexture(texture) : texture;
+        let sprite: CanvasImageSource = texture;
+        if (reddened) {
+          if (!this.reddenedTextures) this.reddenedTextures = new WeakMap();
+          let red = this.reddenedTextures.get(texture);
+          if (!red) {
+            this.losingScratch = null; // each source texture keeps its own tinted canvas — a cached copy is never overwritten
+            red = this.reddenTexture(texture);
+            this.reddenedTextures.set(texture, red);
+          }
+          sprite = red;
+        }
 
         if (isUpgrading && effect) {
           const t = Math.min(1, (performance.now() - effect.startTime) / 450);
@@ -3628,7 +3668,7 @@ export class IsometricMapRenderer {
         if (isSelected) {
           // Record exact drawn position for StatusOverlay positioning
           this.selectedBuildingDrawnTop = {
-            x: southCornerScreenPos.x,
+            x: anchor.x,
             y: drawY,
             textureHeight: scaledHeight,
           };
@@ -3725,19 +3765,10 @@ export class IsometricMapRenderer {
       const scaledWidth = source.width * scaleFactor;
       const scaledHeight = source.height * scaleFactor;
 
-      // Anchor at the SOUTH corner of the footprint — identical switch to drawBuildings.
-      const rotation = this.terrainRenderer.getRotation();
-      let anchorI: number, anchorJ: number;
-      switch (rotation) {
-        case Rotation.NORTH: anchorI = p.y;               anchorJ = p.x;               break;
-        case Rotation.EAST:  anchorI = p.y + p.ysize - 1; anchorJ = p.x;               break;
-        case Rotation.SOUTH: anchorI = p.y + p.ysize - 1; anchorJ = p.x + p.xsize - 1; break;
-        case Rotation.WEST:  anchorI = p.y;               anchorJ = p.x + p.xsize - 1; break;
-        default:             anchorI = p.y;               anchorJ = p.x;               break;
-      }
-      const southCorner = this.terrainRenderer.mapToScreen(anchorI, anchorJ);
-      const drawX = Math.round(southCorner.x - scaledWidth / 2);
-      const drawY = Math.round(southCorner.y + config.tileHeight - scaledHeight);
+      // Anchor at the SOUTH corner of the footprint, lifted onto a water platform — as drawBuildings.
+      const anchor = this.footprintAnchor(p.x, p.y, p.xsize, p.ysize, scaleFactor);
+      const drawX = Math.round(anchor.x - scaledWidth / 2);
+      const drawY = Math.round(anchor.y + config.tileHeight - scaledHeight) - anchor.lift;
 
       const sprite: CanvasImageSource = texture ? this.greyTexture(texture) : source;
       ctx.globalAlpha = PENDING_PLACEMENT_ALPHA;
@@ -5913,6 +5944,13 @@ export class IsometricMapRenderer {
       clearTimeout(this.cameraStopTimer);
       this.cameraStopTimer = null;
     }
+
+    // Cancel the pending-placement expiry redraw
+    if (this.pendingExpiryTimer !== null) {
+      clearTimeout(this.pendingExpiryTimer);
+    }
+    this.pendingExpiryTimer = null;
+    this.pendingExpiryAt = null;
 
     // Remove event listeners
     this.canvas.removeEventListener('mousedown', this.boundMouseDown);

@@ -415,3 +415,107 @@ describe('addCachedZone — bounds clipping', () => {
     expect(cached.segments[0]).toBe(segment);
   });
 });
+
+describe('footprintAnchor — the one south-corner anchor + water lift', () => {
+  type AnchorHost = {
+    terrainRenderer: { getRotation: () => number; mapToScreen: (i: number, j: number) => { x: number; y: number } };
+    isOnWaterPlatform: (x: number, y: number) => boolean;
+  };
+  const footprintAnchor = (IsometricMapRenderer.prototype as unknown as Record<string, unknown>).footprintAnchor as (
+    this: AnchorHost, x: number, y: number, xsize: number, ysize: number, scaleFactor: number,
+  ) => { x: number; y: number; lift: number };
+
+  function makeAnchorHost(rotation: number, onWater = false) {
+    const calls: Array<{ i: number; j: number }> = [];
+    const waterCalls: Array<{ x: number; y: number }> = [];
+    const host: AnchorHost = {
+      terrainRenderer: {
+        getRotation: () => rotation,
+        mapToScreen: (i, j) => { calls.push({ i, j }); return { x: j * 100 + i, y: i * 100 + j }; },
+      },
+      isOnWaterPlatform: (x, y) => { waterCalls.push({ x, y }); return onWater; },
+    };
+    return { host, calls, waterCalls };
+  }
+
+  it.each([
+    [Rotation.NORTH, 20, 10],
+    [Rotation.EAST, 23, 10],
+    [Rotation.SOUTH, 23, 12],
+    [Rotation.WEST, 20, 12],
+    [99, 20, 10], // unknown rotation → the default branch, same as NORTH
+  ])('rotation %s anchors at (i=%s, j=%s)', (rotation, i, j) => {
+    const { host, calls, waterCalls } = makeAnchorHost(rotation as number);
+    const anchor = footprintAnchor.call(host, 10, 20, 3, 4, 1);
+    expect(calls).toEqual([{ i, j }]);
+    expect(waterCalls).toEqual([{ x: j, y: i }]); // isOnWaterPlatform(col, row)
+    expect(anchor).toEqual({ x: j * 100 + i, y: i * 100 + j, lift: 0 });
+  });
+
+  it('lifts by round(PLATFORM_SHIFT * scaleFactor) on a water platform', () => {
+    const { host } = makeAnchorHost(Rotation.NORTH, true);
+    expect(footprintAnchor.call(host, 10, 20, 1, 1, 1).lift).toBe(Math.round(PLATFORM_SHIFT * 1));
+    expect(footprintAnchor.call(host, 10, 20, 1, 1, 0.5).lift).toBe(Math.round(PLATFORM_SHIFT * 0.5));
+  });
+
+  it('lift is 0 off water', () => {
+    const { host } = makeAnchorHost(Rotation.NORTH, false);
+    expect(footprintAnchor.call(host, 10, 20, 1, 1, 1).lift).toBe(0);
+  });
+});
+
+describe('zonePreviewCache is cleared wherever cachedOccupiedTiles is', () => {
+  const STALE = { key: 'stale', tiles: [{ x: 1, y: 1 }] };
+
+  it('rebuildAggregatedData (via addCachedZone) drops the zone preview', () => {
+    const renderer = Object.create(IsometricMapRenderer.prototype) as unknown as Record<string, unknown> & {
+      addCachedZone: (x: number, y: number, w: number, h: number, b: MapBuilding[], s: unknown[]) => void;
+    };
+    Object.assign(renderer, {
+      allBuildings: [],
+      allSegments: [],
+      roadTilesMap: new Map(),
+      cachedOccupiedTiles: new Set(['1,1']),
+      zonePreviewCache: STALE,
+      cachedZones: new Map(),
+      concreteTilesSet: new Set(),
+      debugConcreteSourceMap: new Map(),
+      roadsRendering: null,
+      buildingEffects: new Map(),
+      terrainRenderer: { getTerrainLoader: () => null },
+      vegetationMapper: { updateDynamicContent: () => {} },
+      addWaterRoadJunctionConcrete: () => {},
+      zoneRequestManager: null,
+      facilityDimensionsCache: { get: () => ({ xsize: 1, ysize: 1 }) },
+      fetchDimensionsForBuildings: () => {},
+      invalidateGroundCache: () => {},
+      requestRender: () => {},
+    });
+
+    renderer.addCachedZone(448, 320, 64, 64, [makeBuilding({ x: 460, y: 330, visualClass: '2852' })], []);
+
+    expect(renderer.cachedOccupiedTiles).toBeNull();
+    expect(renderer.zonePreviewCache).toBeNull();
+  });
+
+  it('fetchDimensionsForBuildings drops both caches once the dimensions land', async () => {
+    const renderer = Object.create(IsometricMapRenderer.prototype) as unknown as Record<string, unknown>;
+    const requestRender = jest.fn();
+    Object.assign(renderer, {
+      facilityDimensionsCache: new Map(),
+      onFetchFacilityDimensions: async () => ({ xsize: 2, ysize: 2 }),
+      cachedOccupiedTiles: new Set(['1,1']),
+      zonePreviewCache: STALE,
+      rebuildConcreteSet: () => {},
+      preloadBuildingTextures: () => {},
+      requestRender,
+    });
+
+    const fetchDims = renderer.fetchDimensionsForBuildings as (this: unknown, b: MapBuilding[]) => Promise<void>;
+    await fetchDims.call(renderer, [makeBuilding({ x: 1, y: 1, visualClass: '2852' })]);
+
+    expect(renderer.cachedOccupiedTiles).toBeNull();
+    expect(renderer.zonePreviewCache).toBeNull();
+    expect(requestRender).toHaveBeenCalled();
+  });
+});
