@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState, memo } from 'react';
 import { Send, Trash2, Reply, Forward, PenSquare, Save } from 'lucide-react';
-import { useMailStore } from '../../store/mail-store';
+import { useMailStore, MAIL_BODY_MAX_CHARS } from '../../store/mail-store';
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
 import { TabBar, Skeleton, showToast, EmptyState } from '../common';
@@ -33,10 +33,6 @@ export const EMPTY_FOLDER_TEXT: Record<MailFolder, { title: string; description:
     description: 'A draft is a message you saved before finishing it. Save one from Compose and it waits here.',
   },
 };
-
-// Client-side budget on a letter body — the server has no documented limit, so this is
-// a sane cap chosen to keep a paste from silently becoming an unusable wall of text.
-export const MAIL_BODY_MAX_CHARS = 10240;
 
 interface MailMessageRowProps {
   msg: MailMessageHeader;
