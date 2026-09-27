@@ -21,7 +21,56 @@ jest.mock('./log-transport', () => ({
   FileTransport: jest.fn(),
 }));
 
-import { Logger, LogRingBuffer, createLogger, generateSessionId } from './logger';
+import { Logger, LogRingBuffer, createLogger, generateSessionId, closeLogTransports } from './logger';
+
+describe('closeLogTransports', () => {
+  it('resolves when neither transport is configured', async () => {
+    await expect(closeLogTransports()).resolves.toBeUndefined();
+  });
+
+  it('awaits the close() of both transports', async () => {
+    const resolvers: Array<() => void> = [];
+    const closes: jest.Mock[] = [];
+    let closeAll: () => Promise<void> = () => Promise.reject(new Error('logger not loaded'));
+
+    // The module-level mocks above are shared: configure them for one fresh
+    // load of the logger, then put them back.
+    const { config } = require('./config') as { config: { logging: Record<string, unknown> } };
+    const { FileTransport } = require('./log-transport') as { FileTransport: jest.Mock };
+    const saved = { ...config.logging };
+    config.logging.filePath = '/tmp/a';
+    config.logging.errorFilePath = '/tmp/b';
+    FileTransport.mockImplementation(() => {
+      const close = jest.fn(() => new Promise<void>((resolve) => { resolvers.push(resolve); }));
+      closes.push(close);
+      return { write: jest.fn(), close };
+    });
+    try {
+      jest.isolateModules(() => {
+        closeAll = (require('./logger') as typeof import('./logger')).closeLogTransports;
+      });
+    } finally {
+      delete config.logging.errorFilePath;
+      Object.assign(config.logging, saved);
+      FileTransport.mockReset();
+    }
+
+    let settled = false;
+    const done = closeAll().then(() => { settled = true; });
+
+    expect(closes).toHaveLength(2);
+    expect(closes[0]).toHaveBeenCalledTimes(1);
+    expect(closes[1]).toHaveBeenCalledTimes(1);
+
+    resolvers[0]();
+    await new Promise((r) => setImmediate(r));
+    expect(settled).toBe(false);
+
+    resolvers[1]();
+    await done;
+    expect(settled).toBe(true);
+  });
+});
 
 describe('Logger', () => {
   let consoleSpy: jest.SpyInstance;

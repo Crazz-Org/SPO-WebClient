@@ -267,6 +267,11 @@ export function getErrorFileTransport(): FileTransport | null {
   return errorFileTransport;
 }
 
+/** Flush and close both file transports (whichever exist). Awaited by graceful shutdown before process.exit. */
+export async function closeLogTransports(): Promise<void> {
+  await Promise.all([fileTransport?.close(), errorFileTransport?.close()]);
+}
+
 export function createLogger(context: string): Logger {
   return new Logger(context);
 }
