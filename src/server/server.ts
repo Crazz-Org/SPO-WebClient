@@ -16,6 +16,7 @@ import { MapDataService } from './map-data-service';
 import { serviceRegistry, setupGracefulShutdown } from './service-registry';
 import { CacheWatcher } from './cache-watcher';
 import { pushCapitolCoords } from './capitol-coords';
+import { resolveClientIp } from './client-ip';
 import {
   WsMessageType,
   SessionPhase,
@@ -307,15 +308,10 @@ const proxyImageDeps: ProxyImageDeps = {
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 
 /**
- * Extract client IP, respecting X-Forwarded-For when behind a trusted reverse proxy.
+ * Extract client IP; behind the trusted reverse proxy, the rightmost X-Forwarded-For entry.
  */
 function getClientIp(req: { headers: http.IncomingHttpHeaders; socket: { remoteAddress?: string } }): string {
-  if (TRUST_PROXY) {
-    const xff = req.headers['x-forwarded-for'];
-    const first = typeof xff === 'string' ? xff.split(',')[0].trim() : undefined;
-    if (first) return first.replace('::ffff:', '');
-  }
-  return (req.socket.remoteAddress || '0.0.0.0').replace('::ffff:', '');
+  return resolveClientIp(req.headers, req.socket.remoteAddress, TRUST_PROXY);
 }
 
 /**
