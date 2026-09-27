@@ -184,9 +184,17 @@ export async function buildImageFileIndexEntries(
         const fullPath = path.join(webclientCacheDir, file);
         try {
           // A failure placeholder left on disk by an older build is not an image: skip it
+          // One open handle for both the size check and the read, so they see the same file
           const placeholder = getPlaceholderImage();
-          const { size } = await fsp.stat(fullPath);
-          if (size === placeholder.length && (await fsp.readFile(fullPath)).equals(placeholder)) {
+          const handle = await fsp.open(fullPath, 'r');
+          let isPlaceholder: boolean;
+          try {
+            const { size } = await handle.stat();
+            isPlaceholder = size === placeholder.length && (await handle.readFile()).equals(placeholder);
+          } finally {
+            await handle.close();
+          }
+          if (isPlaceholder) {
             continue;
           }
           newIndex.set(key, fullPath);
