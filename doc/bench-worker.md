@@ -110,7 +110,9 @@ comment in `job.ts` for the measured line size and growth rate.
    A failing step is a `FAIL` naming the step, before any gateway starts.
 7. **Gateway** from that worktree, with `SPO_CACHE_DIR=~/.spo-bench/cache` so it reads the
    machine-wide asset mirror instead of priming an empty one in the worktree; wait for
-   `phase=ready`.
+   `phase=ready`. The gateway alone is also started with `SINGLE_USER_MODE=true`: it serves one
+   local client, the worker's own driver, so the per-IP auth / proxy / WS ceilings are skipped
+   (#1029). The body never gets this variable.
 8. **Static witness** (`ref` only): ask GitHub whether `typecheck + tests` concluded
    **success for this exact sha**. On a recorded success, `--skip-static --static-from=ci`
    is passed to verify-gate and the ~113 s of typecheck + lint + Jest is not replayed on the
@@ -120,8 +122,8 @@ comment in `job.ts` for the measured line size and growth rate.
    `build:e2e`, the routing, the President exclusion and the live drive are what the bench
    alone can do, and they always run. See `src/e2e/bench/ci-proof.ts` and §11.
 9. **Body**, with `E2E_WORLD_STATE_DIR=~/.spo-bench/world` and
-   `SPO_CACHE_DIR=~/.spo-bench/cache` — the same two variables the gateway was started
-   with at step 6, so a replayed Jest suite reads the assets the gateway served:
+   `SPO_CACHE_DIR=~/.spo-bench/cache` — the same two shared-state variables the gateway
+   was started with at step 7 (the gateway alone also gets `SINGLE_USER_MODE=true`), so a replayed Jest suite reads the assets the gateway served:
    - `ref` → `node scripts/verify-gate.js` (static, President exclusion, routing, live
      drive) — **one exit code per outcome**: 0 `PASS` · 1 `FAIL` · 2 `BLOCKED` ·
      3 `ENVIRONMENT`. Anything else is read as `FAIL`. The gate used to return 0 or 1 and
@@ -362,6 +364,11 @@ quotas got out of the way for the test phase; the servers hold this easily:
 
 The mechanisms remain (env knobs, `production-config.ts` readout at boot) — tighten before
 any public deployment.
+
+Since #1029 the bench gateway runs with `SINGLE_USER_MODE=true`, which skips all three per-IP
+checks, so these ceilings no longer gate the bench — they apply only to a shared deployment.
+The bench also no longer exercises the missing-Origin rejection; a foreign Origin is still
+refused, and the driver sends an Origin anyway.
 
 The e2e layer's own live-run rate limiter — `checkRateLimit` in `src/e2e/world-lock.ts`,
 a minimum interval between runs plus a daily cap — was **deleted**, not tuned, on

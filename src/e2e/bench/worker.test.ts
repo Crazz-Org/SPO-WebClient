@@ -706,6 +706,22 @@ describe('runJob — gate', () => {
     });
   });
 
+  it.each([
+    ['gate (ref)', 'ref'],
+    ['live', 'live'],
+    ['nightly', 'nightly'],
+  ] as const)('starts the %s gateway in single-user mode, and keeps it out of the body env', async (_label, type) => {
+    const h = harness();
+    const job = deposit(h, type);
+    await runJob(h.deps, job);
+    expect(h.gatewayEnvs).toHaveLength(1);
+    expect(h.gatewayEnvs[0].SINGLE_USER_MODE).toBe('true');
+    // A replayed Jest suite reads SINGLE_USER_MODE through src/shared/config.ts.
+    const body = h.commands.find(c => c.cmd === 'node');
+    expect(body).toBeDefined();
+    expect(body?.env?.SINGLE_USER_MODE).toBeUndefined();
+  });
+
   it('points the gateway and the body at the bench-wide asset cache, not the worktree', async () => {
     const h = harness();
     const job = deposit(h);
@@ -713,7 +729,7 @@ describe('runJob — gate', () => {
     // The gateway is what primes and reads the mirror; without this it would download
     // all ~570 files into a fresh worktree on the bench's exclusive time.
     expect(h.gatewayEnvs).toEqual([
-      { E2E_WORLD_STATE_DIR: h.paths.world, SPO_CACHE_DIR: h.paths.cache },
+      { E2E_WORLD_STATE_DIR: h.paths.world, SPO_CACHE_DIR: h.paths.cache, SINGLE_USER_MODE: 'true' },
     ]);
     // verify-gate replays the Jest suite when there is no receipt, and tests that read
     // real assets must be pointed at the same mirror or they silently self-skip.
