@@ -6,7 +6,7 @@ import { MAX_RECONNECT_ATTEMPTS } from '../../handlers/reconnect-utils';
 import { ReconnectingOverlay } from './ReconnectingOverlay';
 
 beforeEach(() => {
-  useGameStore.setState({ status: 'disconnected', reconnectAttempt: 0 });
+  useGameStore.setState({ status: 'disconnected', reconnectAttempt: 0, serverRestarting: false });
 });
 
 describe('ReconnectingOverlay', () => {
@@ -69,5 +69,24 @@ describe('ReconnectingOverlay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /try now/i }));
     expect(onTriggerReconnect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ReconnectingOverlay — gateway restarting', () => {
+  it('titles the spinner card "Server restarting" with the automatic-reconnect line', () => {
+    useGameStore.setState({ status: 'reconnecting', reconnectAttempt: 2, serverRestarting: true });
+    renderWithProviders(<ReconnectingOverlay />);
+    expect(screen.getByText('Server restarting')).toBeTruthy();
+    expect(screen.getByText(/reconnect automatically/i)).toBeTruthy();
+    expect(screen.queryByText('Connection lost')).toBeNull();
+    expect(screen.getByText(new RegExp(`attempt 2 of ${MAX_RECONNECT_ATTEMPTS}`, 'i'))).toBeTruthy();
+    expect(screen.getByText('Try now')).toBeTruthy();
+  });
+
+  it('falls back to the "Connection lost" error card once attempts are exhausted', () => {
+    useGameStore.setState({ status: 'disconnected', disconnectReason: 'connection_lost', serverRestarting: false });
+    renderWithProviders(<ReconnectingOverlay />);
+    expect(screen.getByText('Connection lost')).toBeTruthy();
+    expect(screen.queryByText('Server restarting')).toBeNull();
   });
 });

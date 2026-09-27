@@ -117,6 +117,8 @@ interface GameState {
   // Connection
   status: ConnectionStatus;
   disconnectReason: DisconnectReason;
+  /** True from a close with code 1012 (gateway restarting) until the session is connected or given up. In memory only. */
+  serverRestarting: boolean;
   username: string;
   /**
    * The player's own tycoon id, decimal, from `WsRespLoginSuccess.tycoonId`.
@@ -224,6 +226,7 @@ interface GameState {
   // Actions
   setStatus: (status: ConnectionStatus) => void;
   setDisconnectReason: (reason: DisconnectReason) => void;
+  setServerRestarting: (restarting: boolean) => void;
   setReconnectAttempt: (attempt: number) => void;
   setCredentials: (username: string, tycoonId?: string) => void;
   setWorld: (worldName: string) => void;
@@ -272,6 +275,7 @@ export const useGameStore = create<GameState>((set) => ({
   // Initial state
   status: 'disconnected',
   disconnectReason: null,
+  serverRestarting: false,
   username: '',
   tycoonId: '',
   worldName: '',
@@ -319,8 +323,13 @@ export const useGameStore = create<GameState>((set) => ({
   serverStartup: { ready: false, progress: 0, message: 'Connecting...', services: [] },
   mapLoading: { active: false, progress: 0, message: '' },
   // Actions
-  setStatus: (status) => set({ status, ...(status === 'connected' ? { disconnectReason: null } : {}) }),
+  setStatus: (status) => set({
+    status,
+    ...(status === 'connected' ? { disconnectReason: null } : {}),
+    ...(status === 'connected' || status === 'disconnected' ? { serverRestarting: false } : {}),
+  }),
   setDisconnectReason: (reason) => set({ disconnectReason: reason }),
+  setServerRestarting: (restarting) => set({ serverRestarting: restarting }),
   setReconnectAttempt: (attempt) => set({ reconnectAttempt: attempt }),
   setCredentials: (username, tycoonId) =>
     set(tycoonId === undefined ? { username } : { username, tycoonId }),
@@ -407,6 +416,7 @@ export const useGameStore = create<GameState>((set) => ({
     set({
       status: 'disconnected',
       disconnectReason: null,
+      serverRestarting: false,
       username: '',
       tycoonId: '',
       worldName: '',

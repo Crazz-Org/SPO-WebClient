@@ -737,3 +737,27 @@ describe('game-store tycoonStats merge', () => {
     expect(useGameStore.getState().tycoonStats).not.toHaveProperty('levelName');
   });
 });
+
+describe('game-store serverRestarting', () => {
+  beforeEach(() => useGameStore.getState().reset());
+
+  it('survives reconnecting, clears on connected', () => {
+    useGameStore.getState().setServerRestarting(true);
+    useGameStore.getState().setStatus('reconnecting');
+    expect(useGameStore.getState().serverRestarting).toBe(true);
+    useGameStore.getState().setStatus('connected');
+    expect(useGameStore.getState().serverRestarting).toBe(false);
+  });
+
+  it('clears on disconnected', () => {
+    useGameStore.getState().setServerRestarting(true);
+    useGameStore.getState().setStatus('disconnected');
+    expect(useGameStore.getState().serverRestarting).toBe(false);
+  });
+
+  it('clears on reset', () => {
+    useGameStore.getState().setServerRestarting(true);
+    useGameStore.getState().reset();
+    expect(useGameStore.getState().serverRestarting).toBe(false);
+  });
+});
