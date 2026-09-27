@@ -45,6 +45,7 @@ import * as abandonRoleHandler from '../session/abandon-role-handler';
 import * as tutorialHandler from '../session/tutorial-handler';
 import { RdoParser } from '../../shared/rdo-types';
 import { PROXY_IMAGE_ENDPOINT } from '../../shared/proxy-utils';
+import { proxyImageHosts } from '../proxy-image';
 import { SessionPhase, SurfaceType } from '../../shared/types';
 import type { ChatUser, CompanyInfo, RdoPacket, WorldInfo } from '../../shared/types';
 
@@ -782,6 +783,31 @@ describe('StarpeaceSession — handler delegation', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // Proxying and ASP URLs
 // ═══════════════════════════════════════════════════════════════════════════
+
+describe('proxy-image host registration', () => {
+  afterEach(() => {
+    proxyImageHosts.delete('203.0.113.7');
+    proxyImageHosts.delete('203.0.113.8');
+  });
+
+  it('adds the world IP to the set the /proxy-image route reads', () => {
+    const session = newSession();
+    session.setCurrentWorldInfo({ ...WORLD, ip: '203.0.113.7' });
+    expect(proxyImageHosts.has('203.0.113.7')).toBe(true);
+  });
+
+  it('adds DAAddr to the set the /proxy-image route reads', () => {
+    const session = newSession();
+    session.setDaAddr('203.0.113.8');
+    expect(proxyImageHosts.has('203.0.113.8')).toBe(true);
+  });
+
+  it('accepts a cleared world and a cleared DAAddr', () => {
+    const session = newSession();
+    expect(() => session.setDaAddr(null)).not.toThrow();
+    expect(() => session.setCurrentWorldInfo(null)).not.toThrow();
+  });
+});
 
 describe('convertToProxyUrl', () => {
   it('leaves an empty URL and an already-proxied URL alone', () => {

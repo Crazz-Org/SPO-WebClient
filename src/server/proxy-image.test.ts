@@ -23,8 +23,8 @@ import {
   getImageContentType,
   getPlaceholderImage,
   sanitizeImageFilename,
-  isPrivateAddress,
-  resolvesToPublicAddress,
+  proxyImageHosts,
+  registerProxyImageHost,
   gameServerCacheName,
   isGameServerCacheName,
   buildImageFileIndexEntries,
@@ -81,6 +81,7 @@ describe('proxy-image', () => {
       webclientCacheDir,
       updateServerCacheUrl: 'https://update.example.test/cache',
       log: { debug: jest.fn(), warn: jest.fn() },
+      allowedHosts: new Set(['example.test']),
     };
   });
 
@@ -389,58 +390,6 @@ describe('proxy-image', () => {
     });
   });
 
-  describe('isPrivateAddress', () => {
-    it('flags private and loopback IPv4 addresses', () => {
-      expect(isPrivateAddress('10.0.0.1')).toBe(true);
-      expect(isPrivateAddress('127.0.0.1')).toBe(true);
-      expect(isPrivateAddress('192.168.1.1')).toBe(true);
-      expect(isPrivateAddress('169.254.1.1')).toBe(true);
-      expect(isPrivateAddress('172.16.0.1')).toBe(true);
-      expect(isPrivateAddress('255.255.255.255')).toBe(true);
-    });
-
-    it('flags private and loopback IPv6 addresses, including mapped v4', () => {
-      expect(isPrivateAddress('::1')).toBe(true);
-      expect(isPrivateAddress('fe80::1')).toBe(true);
-      expect(isPrivateAddress('fc00::1')).toBe(true);
-      expect(isPrivateAddress('::ffff:10.0.0.1')).toBe(true);
-    });
-
-    it('accepts public addresses', () => {
-      expect(isPrivateAddress('93.184.216.34')).toBe(false);
-      expect(isPrivateAddress('2606:2800:220:1:248:1893:25c8:1946')).toBe(false);
-    });
-  });
-
-  describe('resolvesToPublicAddress', () => {
-    it('accepts a public IP literal without a DNS lookup', async () => {
-      expect(await resolvesToPublicAddress('93.184.216.34')).toBe(true);
-      expect(mockLookup).not.toHaveBeenCalled();
-    });
-
-    it('rejects a private IP literal without a DNS lookup', async () => {
-      expect(await resolvesToPublicAddress('127.0.0.1')).toBe(false);
-      expect(mockLookup).not.toHaveBeenCalled();
-    });
-
-    it('resolves a hostname and accepts it when every address is public', async () => {
-      mockLookup.mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }]);
-      expect(await resolvesToPublicAddress('example.test')).toBe(true);
-    });
-
-    it('rejects a hostname resolving to a private address', async () => {
-      mockLookup.mockResolvedValueOnce([{ address: '127.0.0.1', family: 4 }]);
-      expect(await resolvesToPublicAddress('evil.test')).toBe(false);
-    });
-
-    it('rejects a hostname whose lookup throws or returns nothing', async () => {
-      mockLookup.mockRejectedValueOnce(new Error('ENOTFOUND'));
-      expect(await resolvesToPublicAddress('nowhere.test')).toBe(false);
-      mockLookup.mockResolvedValueOnce([]);
-      expect(await resolvesToPublicAddress('empty.test')).toBe(false);
-    });
-  });
-
   it('rejects a path-traversal filename and never writes outside the cache directories', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
@@ -467,14 +416,117 @@ describe('proxy-image', () => {
     expect(await fsp.readdir(webclientCacheDir)).toEqual([]);
   });
 
-  it('does not call the fallback fetch when the hostname resolves to a private address', async () => {
-    mockLookup.mockResolvedValueOnce([{ address: '127.0.0.1', family: 4 }]);
+  it('rejects an unregistered name without resolving it', async () => {
     const res = fakeRes();
     await proxyImage('http://internal.example.test/dir/blocked.png', res, deps);
 
-    expect(mockFetch).not.toHaveBeenCalledWith('http://internal.example.test/dir/blocked.png', {}, expect.anything());
-    expect(res.statusCode).toBe(200);
-    expect(res.headers).toEqual({ 'Content-Type': 'image/png' });
-    expect(deps.imageFileIndex.get('blocked.png')).toBeUndefined();
+    expect(res.statusCode).toBe(403);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockLookup).not.toHaveBeenCalled();
+    expect(await fsp.readdir(webclientCacheDir)).toEqual([]);
+  });
+
+  describe('host allowlist (SSRF)', () => {
+    it.each([
+      'http://[::ffff:7f00:1]/a.png',
+      'http://[::ffff:127.0.0.1]/a.png',
+      'http://[::ffff:a9fe:a9fe]/a.png',
+      'http://[0:0:0:0:0:ffff:7f00:1]/a.png',
+      'http://[::7f00:1]/a.png',
+      'http://[::1]/a.png',
+      'http://[::]/a.png',
+      'http://0.0.0.0/a.png',
+      'http://2130706433/a.png',
+      'http://0x7f.1/a.png',
+      'http://[fc00::1]/a.png',
+      'http://[fe80::1]/a.png',
+      'http://localhost./a.png',
+    ])('answers 403 for %s without fetching or resolving', async (url) => {
+      const res = fakeRes();
+      await proxyImage(url, res, deps);
+      expect(res.statusCode).toBe(403);
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockLookup).not.toHaveBeenCalled();
+    });
+
+    it('rejects a public but unregistered host', async () => {
+      const res = fakeRes();
+      await proxyImage('http://93.184.216.34/a.png', res, deps);
+      expect(res.statusCode).toBe(403);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('fetches a registered world IP and returns its body without any DNS lookup', async () => {
+      deps.allowedHosts = new Set(['158.69.153.134']);
+      mockFetch.mockResolvedValueOnce({ ok: true, arrayBuffer: async () => toArrayBuffer('worldimg') });
+      const url = 'http://158.69.153.134/five/0/visual/x.png';
+      const res = fakeRes();
+      await proxyImage(url, res, deps);
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual(Buffer.from('worldimg'));
+      expect(mockFetch).toHaveBeenCalledWith(url, expect.objectContaining({ redirect: 'manual' }));
+      expect(mockLookup).toHaveBeenCalledTimes(0);
+    });
+
+    it('does not follow a redirect from a registered host and caches only the placeholder', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        headers: { get: () => 'http://169.254.169.254/latest/meta-data/iam.png' },
+        arrayBuffer: async () => toArrayBuffer('SECRET'),
+      });
+      const url = 'http://example.test/dir/redirected.png';
+      const res = fakeRes();
+      await proxyImage(url, res, deps);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(url, expect.objectContaining({ redirect: 'manual' }));
+      expect(res.body).toEqual(getPlaceholderImage());
+      const files = await fsp.readdir(webclientCacheDir);
+      expect(files.length).toBeGreaterThan(0);
+      for (const file of files) {
+        const content = fs.readFileSync(path.join(webclientCacheDir, file));
+        expect(content).toEqual(getPlaceholderImage());
+        expect(content.toString('latin1')).not.toContain('SECRET');
+      }
+    });
+
+    it('asks the update server not to follow redirects either', async () => {
+      const existingDir = path.join(cacheRoot, 'Buildings');
+      fs.mkdirSync(existingDir, { recursive: true });
+      const existingFile = path.join(existingDir, 'placeholder.png');
+      fs.writeFileSync(existingFile, Buffer.from('x'));
+      deps.imageFileIndex.set('placeholder.png', existingFile);
+      mockFetch.mockResolvedValueOnce({ ok: true, arrayBuffer: async () => toArrayBuffer('upd') });
+
+      const res = fakeRes();
+      await proxyImage('http://example.test/dir/updimg.png', res, deps);
+      expect(res.body).toEqual(Buffer.from('upd'));
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('update.example.test'),
+        expect.objectContaining({ redirect: 'manual' }),
+      );
+    });
+  });
+
+  describe('registerProxyImageHost', () => {
+    const added: string[] = [];
+    afterEach(() => {
+      for (const host of added.splice(0)) proxyImageHosts.delete(host);
+    });
+
+    it('stores the canonical hostname, dropping the port and lower-casing a name', () => {
+      registerProxyImageHost('Planitia.Example:8000');
+      registerProxyImageHost('158.69.153.134');
+      added.push('planitia.example', '158.69.153.134');
+      expect(proxyImageHosts.has('planitia.example')).toBe(true);
+      expect(proxyImageHosts.has('158.69.153.134')).toBe(true);
+    });
+
+    it.each([null, undefined, '', 'a b', 'x/y', 'u@127.0.0.1', '[::1'])('ignores %p', (host) => {
+      const before = new Set(proxyImageHosts);
+      registerProxyImageHost(host);
+      expect(proxyImageHosts).toEqual(before);
+    });
   });
 });

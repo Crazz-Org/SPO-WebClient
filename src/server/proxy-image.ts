@@ -1,8 +1,6 @@
 import * as http from 'http';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
-import * as net from 'net';
-import * as dns from 'dns';
 import { createHash } from 'crypto';
 import { toErrorMessage } from '../shared/error-utils';
 import { TIMEOUTS } from '../shared/constants';
@@ -59,53 +57,17 @@ function resolveInside(root: string, name: string): string | null {
   return resolvedPath;
 }
 
-/**
- * Whether `ip` (already known to be a valid IP literal) is a private/link-local/loopback
- * address, IPv4 or IPv6, including IPv4-mapped IPv6.
- */
-export function isPrivateAddress(ip: string): boolean {
-  if (net.isIP(ip) === 4) {
-    const parts = ip.split('.').map(Number);
-    const [a, b] = parts;
-    if (a === 0) return true;
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (ip === '255.255.255.255') return true;
-    return false;
-  }
-  if (net.isIP(ip) === 6) {
-    const lower = ip.toLowerCase();
-    if (lower === '::' || lower === '::1') return true;
-    if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) {
-      return true;
-    }
-    if (/^f[cd]/.test(lower)) return true;
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
-    if (mapped) return isPrivateAddress(mapped[1]);
-    return false;
-  }
-  return true;
-}
+/** Hosts the gateway learned from the directory / interface servers — the only hosts the game-server fetch may reach. */
+export const proxyImageHosts = new Set<string>();
 
-/**
- * DNS-resolution-based SSRF guard: resolves `hostname` and confirms every returned address is
- * public, rather than trusting a hostname string deny-list.
- */
-export async function resolvesToPublicAddress(hostname: string): Promise<boolean> {
-  const literal = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
-  if (net.isIP(literal)) {
-    return !isPrivateAddress(literal);
-  }
+/** Register a host a trusted server named (world IP, DAAddr). Stored in the canonical `new URL().hostname` form. */
+export function registerProxyImageHost(host: string | null | undefined): void {
+  if (!host || !/^[A-Za-z0-9.:[\]-]+$/.test(host)) return;
   try {
-    const addresses = await dns.promises.lookup(hostname, { all: true, verbatim: true });
-    if (!addresses.length) return false;
-    return addresses.every((entry) => !isPrivateAddress(entry.address));
+    const canonical = new URL(`http://${host}`).hostname;
+    if (canonical) proxyImageHosts.add(canonical);
   } catch {
-    return false;
+    // not a host — ignore
   }
 }
 
@@ -115,6 +77,8 @@ export interface ProxyImageDeps {
   webclientCacheDir: string;
   updateServerCacheUrl: string;
   log: { debug(msg: string): void; warn(msg: string): void };
+  /** Canonical hostnames the game-server fallback may fetch (see `proxyImageHosts`). */
+  allowedHosts: ReadonlySet<string>;
 }
 
 /**
@@ -212,7 +176,7 @@ export async function buildImageFileIndexEntries(
  * Uses in-memory file index for O(1) cache lookup instead of scanning directories.
  */
 export async function proxyImage(imageUrl: string, res: http.ServerResponse, deps: ProxyImageDeps): Promise<void> {
-  const { imageFileIndex, cacheRoot, webclientCacheDir, updateServerCacheUrl, log } = deps;
+  const { imageFileIndex, cacheRoot, webclientCacheDir, updateServerCacheUrl, log, allowedHosts } = deps;
 
   // Handle file:// URLs — serve local files only from within the cache directory
   if (imageUrl.startsWith('file://')) {
@@ -244,32 +208,19 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
     return;
   }
 
-  // Security: block requests to private/internal IP ranges
+  // Security: only hosts a trusted server named (world IP, DAAddr) — compared on the canonical
+  // hostname the URL parser produces, so no alternate spelling of an internal address can match
+  let hostname: string;
   try {
-    const urlObj = new URL(imageUrl);
-    const hostname = urlObj.hostname;
-    if (hostname === 'localhost' ||
-        hostname === '127.0.0.1' ||
-        hostname === '::1' ||
-        hostname === '[::1]' ||
-        hostname === '0.0.0.0' ||
-        hostname === '255.255.255.255' ||
-        hostname.startsWith('0.') ||
-        hostname.startsWith('10.') ||
-        hostname.startsWith('192.168.') ||
-        hostname.startsWith('169.254.') ||
-        /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
-        /^fe80[:%]/i.test(hostname) ||
-        /^\[fe80[:%]/i.test(hostname) ||
-        /^fc/i.test(hostname) || /^\[fc/i.test(hostname) ||
-        /^fd/i.test(hostname) || /^\[fd/i.test(hostname)) {
-      res.writeHead(403);
-      res.end('Access to internal addresses is not allowed');
-      return;
-    }
+    hostname = new URL(imageUrl).hostname;
   } catch {
     res.writeHead(400);
     res.end('Invalid URL');
+    return;
+  }
+  if (!allowedHosts.has(hostname)) {
+    res.writeHead(403);
+    res.end('Image host is not allowed');
     return;
   }
 
@@ -323,7 +274,7 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
     for (const dir of imageDirs) {
       try {
         const updateUrl = `${updateServerCacheUrl}/${dir}/${filename}`;
-        const response = await fetchWithTimeout(updateUrl, {}, TIMEOUTS.IMAGE_DOWNLOAD);
+        const response = await fetchWithTimeout(updateUrl, { redirect: 'manual' }, TIMEOUTS.IMAGE_DOWNLOAD);
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer();
           const buffer = Buffer.from(arrayBuffer);
@@ -353,16 +304,9 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
 
     if (downloaded) return;
 
-    // Not on update server, try game server (fallback) — guard against SSRF via DNS resolution
-    const fallbackHostname = new URL(imageUrl).hostname;
-    if (!(await resolvesToPublicAddress(fallbackHostname))) {
-      const placeholder = getPlaceholderImage();
-      res.writeHead(200, { 'Content-Type': 'image/png' });
-      res.end(placeholder);
-      return;
-    }
-
-    const response = await fetchWithTimeout(imageUrl, {}, TIMEOUTS.IMAGE_DOWNLOAD);
+    // Not on update server, try game server (fallback). The host is allowlisted above and a
+    // redirect is not followed: a 3xx is !ok and ends in the placeholder path below.
+    const response = await fetchWithTimeout(imageUrl, { redirect: 'manual' }, TIMEOUTS.IMAGE_DOWNLOAD);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
