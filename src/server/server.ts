@@ -38,6 +38,15 @@ import { handleReportPullList, handleReportPullFetch, handleReportPullAck } from
 import { enforceProductionConfig } from './production-config';
 import { proxyImage, buildImageFileIndexEntries, type ProxyImageDeps } from './proxy-image';
 import { fetchWithTimeout } from './fetch-with-timeout';
+import {
+  RATE_LIMIT_WINDOW_MS,
+  RATE_LIMIT_MAX_AUTH,
+  RATE_LIMIT_MAX_PROXY,
+  WS_MAX_CONNECTIONS_PER_IP,
+  checkRateLimit,
+  checkAuthRateLimit,
+  sweepExpiredRateLimits,
+} from './rate-limit';
 
 /**
  * Starpeace Gateway Server
@@ -340,46 +349,8 @@ function setSecurityHeaders(res: http.ServerResponse): void {
   }
 }
 
-// Simple in-memory rate limiter for sensitive endpoints
-const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
-const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-// Ceilings raised to 1000/min on 2026-08-22 (developer decision) for the automated test
-// phase: the bench worker serializes real live traffic, and the Delphi servers hold this
-// load without trouble. Tighten again before any public deployment.
-// Recorded as exception SEC-X-1 in doc/production-security-policy.md §9 — the policy floor
-// is auth 10/min and proxy 60/min, and SPO-Deploy's DEPLOY.md ("Before the first public
-// deployment") is what raises the question at the right moment. This comment is not.
-const RATE_LIMIT_MAX_AUTH = 1000;     // max auth attempts per minute per IP
-const RATE_LIMIT_MAX_PROXY = 1000;    // max proxy-image requests per minute per IP
-const RATE_LIMIT_MAX_ENTRIES = 10_000; // max entries before forced cleanup
-
-function checkRateLimit(ip: string, category: string, maxRequests: number): boolean {
-  const key = `${category}:${ip}`;
-  const now = Date.now();
-  const entry = rateLimitMap.get(key);
-
-  if (!entry || now > entry.resetTime) {
-    // Prevent unbounded growth: evict expired entries when map is too large
-    if (rateLimitMap.size >= RATE_LIMIT_MAX_ENTRIES) {
-      for (const [k, v] of rateLimitMap) {
-        if (now > v.resetTime) rateLimitMap.delete(k);
-      }
-    }
-    rateLimitMap.set(key, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-
-  entry.count++;
-  return entry.count <= maxRequests;
-}
-
-// Periodic cleanup of expired rate limit entries (every 5 minutes)
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitMap) {
-    if (now > entry.resetTime) rateLimitMap.delete(key);
-  }
-}, 300_000);
+// The per-IP ceilings and the limiter live in rate-limit.ts; sweep expired entries every 5 minutes.
+setInterval(() => sweepExpiredRateLimits(), 300_000);
 
 // 1. HTTP Server for Static Files + Image Proxy
 const server = http.createServer(async (req, res) => {
@@ -899,9 +870,6 @@ const server = http.createServer(async (req, res) => {
 // 2. WebSocket Server
 // Per-IP WebSocket connection tracking for rate limiting
 const wsConnectionsPerIp = new Map<string, number>();
-// 1000 since 2026-08-22 (developer decision, test phase — see the rate-limit note above).
-// Exception SEC-X-1; the SEC-W-3 floor is 5 per IP. Restore it before any public deployment.
-const WS_MAX_CONNECTIONS_PER_IP = 1000;
 const WS_MAX_PAYLOAD_BYTES = 64 * 1024; // 64KB max message size (policy SEC-W-2)
 
 const wss = new WebSocketServer({
@@ -1126,19 +1094,16 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
  * Message Router — dispatches to handler modules in ws-handlers/
  */
 async function handleClientMessage(ws: WebSocket, session: StarpeaceSession, searchMenuService: SearchMenuService | null, msg: WsMessage, clientIp: string) {
-  // Rate limit authentication attempts
-  const authTypes: string[] = [WsMessageType.REQ_AUTH_CHECK, WsMessageType.REQ_CONNECT_DIRECTORY, WsMessageType.REQ_LOGIN_WORLD];
-  if (authTypes.includes(msg.type)) {
-    if (!SINGLE_USER_MODE && !checkRateLimit(clientIp, 'auth', RATE_LIMIT_MAX_AUTH)) {
-      const errorResp: WsRespError = {
-        type: WsMessageType.RESP_ERROR,
-        wsRequestId: msg.wsRequestId,
-        errorMessage: 'Too many authentication attempts. Please try again later.',
-        code: ErrorCodes.ERROR_Unknown
-      };
-      ws.send(JSON.stringify(errorResp));
-      return;
-    }
+  // Rate limit authentication attempts — one per-IP bucket per auth-bearing message type
+  if (!SINGLE_USER_MODE && !checkAuthRateLimit(clientIp, msg.type)) {
+    const errorResp: WsRespError = {
+      type: WsMessageType.RESP_ERROR,
+      wsRequestId: msg.wsRequestId,
+      errorMessage: 'Too many authentication attempts. Please try again later.',
+      code: ErrorCodes.ERROR_Unknown
+    };
+    ws.send(JSON.stringify(errorResp));
+    return;
   }
 
   // Phase-based message gate: reject messages not allowed for current session phase

@@ -202,8 +202,9 @@ serializes live traffic is the bench worker's single-flight queue above, which i
 policy — one owner, one job at a time — not a protection the world needs. Gateway-side
 rate limits (auth attempts, `/proxy-image`, concurrent WS connections per IP —
 [bench-worker.md](bench-worker.md) §6) are a separate mechanism, keyed by IP rather than
-by run, and are unaffected by this removal; they remain raised for the test phase and are
-tightened at public-deployment time per SEC-H-4 (`doc/production-security-policy.md`).
+by run, and are unaffected by this removal; they stand at the production values (SEC-H-4,
+SEC-W-3, `doc/production-security-policy.md`); the bench gateway skips them through
+`SINGLE_USER_MODE`.
 
 ---
 

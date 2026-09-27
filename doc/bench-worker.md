@@ -353,17 +353,18 @@ is exactly the silent pass this bench exists to prevent.
 
 ## 6. Rate limits (2026-08-22, developer decision; live-run limiter removed 2026-09-03)
 
-The bench queue is the real throttle — one job at a time — so the gateway's own numeric
-quotas got out of the way for the test phase; the servers hold this easily:
+The bench queue is the real throttle — one job at a time. From 2026-08-22 the gateway's own
+numeric quotas were raised to 1000 for the test phase (policy exception SEC-X-1); #1031
+(2026-09-27) restored them to the production values:
 
-| Knob | Was | Is |
+| Knob | 2026-08-22 → 2026-09-27 | Is (production) |
 |---|---|---|
-| gateway auth attempts / min / IP (`server.ts`) | 10 | 1000 |
-| gateway proxy-image requests / min / IP | 60 | 1000 |
-| gateway concurrent WS connections / IP | 5 | 1000 |
+| gateway auth attempts / min / IP, per auth-bearing message type (`server/rate-limit.ts`) | 1000 | 10 |
+| gateway proxy-image requests / min / IP | 1000 | 60 |
+| gateway concurrent WS connections / IP | 1000 | 20 |
 
-The mechanisms remain (env knobs, `production-config.ts` readout at boot) — tighten before
-any public deployment.
+The `production-config.ts` readout prints them at boot, and a production start in
+`SINGLE_USER_MODE` is refused.
 
 Since #1029 the bench gateway runs with `SINGLE_USER_MODE=true`, which skips all three per-IP
 checks, so these ceilings no longer gate the bench — they apply only to a shared deployment.

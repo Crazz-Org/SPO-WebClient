@@ -150,3 +150,30 @@ describe('enforceProductionConfig', () => {
     expect(log.error).not.toHaveBeenCalled();
   });
 });
+
+describe('single-user mode in production (SEC-W-1)', () => {
+  it('refuses a production start in single-user mode, naming the policy row', () => {
+    const verdict = checkProductionConfig(PROD_ENV, 'info', true);
+    expect(verdict.errors).toHaveLength(1);
+    expect(verdict.errors[0]).toContain('SINGLE_USER_MODE');
+    expect(verdict.errors[0]).toContain('SEC-W-1');
+  });
+
+  it('accepts single-user mode outside production', () => {
+    expect(checkProductionConfig({ NODE_ENV: 'development' }, 'info', true).errors).toHaveLength(0);
+  });
+
+  it('accepts a production start without single-user mode', () => {
+    expect(checkProductionConfig(PROD_ENV, 'info', false).errors).toHaveLength(0);
+  });
+
+  it('reads the running value: enforceProductionConfig refuses singleUserMode=true', () => {
+    const log = recorder();
+    expect(() =>
+      enforceProductionConfig(PROD_ENV, 'info', { ...RUNTIME, singleUserMode: true }, log)
+    ).toThrow(/Refusing to start/);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error.mock.calls[0][0]).toContain('SINGLE_USER_MODE');
+    expect(log.error.mock.calls[0][0]).toContain('SEC-W-1');
+  });
+});
