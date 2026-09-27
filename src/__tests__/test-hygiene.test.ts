@@ -11,12 +11,14 @@
  *  - tsNocheck: `@ts-nocheck`;
  *  - checkTrue: `check(<string>, true` (matched across newlines).
  *
- * Each count must stay `<=` the BASELINE below (today's numbers, with their sites). A new
- * occurrence fails with its file and line. The baseline only goes DOWN — same rule as the
- * `jest.config.js` thresholds. A line may opt out with `// hygiene-exception: <reason>` on
- * the hit line or the line above; exceptions are counted and ratcheted too.
+ * The baseline (today's sites per shape) lives in `test-hygiene.baseline.json` and must match
+ * the scan exactly: a new site or a stale site fails with its file and line. It is rewritten by
+ * `npm run hygiene:baseline`, which never raises a count. A line may opt out with
+ * `// hygiene-exception: <reason>` on the hit line or the line above; exceptions are ratcheted too.
+ * Baseline conflict? Take either side, run `npm run hygiene:baseline`, commit.
  */
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
@@ -27,43 +29,56 @@ const FLOWS = path.join(SRC, 'e2e', 'flows.ts');
 type Shape = 'selfComparison' | 'literalExpect' | 'replicaFunction' | 'tsNocheck' | 'checkTrue';
 const SHAPES: Shape[] = ['selfComparison', 'literalExpect', 'replicaFunction', 'tsNocheck', 'checkTrue'];
 
-const BASELINE: Record<Shape | 'exceptions', { max: number; sites: string[] }> = {
-  selfComparison: {
-    max: 2,
-    sites: [
-      'src/client/renderer/isometric-terrain-renderer.test.ts:438',
-      'src/e2e/bench/fingerprint.test.ts:29',
-    ],
-  },
-  literalExpect: {
-    max: 1,
-    sites: ['src/client/renderer/isometric-terrain-renderer.test.ts:438'],
-  },
-  replicaFunction: {
-    max: 5,
-    sites: [
-      'src/client/components/building/__tests__/resolve-rdo-command.test.ts:22',
-      'src/server/__tests__/cache-sync-service.test.ts:19',
-      'src/server/__tests__/rdo/tycoon-role-cache.test.ts:25',
-      'src/server/__tests__/security-hardening.test.ts:59',
-      'src/server/__tests__/supply-controls.test.ts:214',
-    ],
-  },
-  tsNocheck: {
-    max: 4,
-    sites: [
-      'src/server/__tests__/rdo/building-operations.test.ts:1',
-      'src/server/__tests__/rdo/company-session.test.ts:1',
-      'src/server/__tests__/rdo/login-flow.test.ts:1',
-      'src/server/__tests__/rdo/rdo-value-equivalence.test.ts:1',
-    ],
-  },
-  checkTrue: {
-    max: 0,
-    sites: [],
-  },
-  exceptions: { max: 0, sites: [] },
-};
+type Key = Shape | 'exceptions';
+const KEYS: Key[] = [...SHAPES, 'exceptions'];
+type Baseline = Record<Key, string[]>;
+const BASELINE_FILE = path.join(__dirname, 'test-hygiene.baseline.json');
+const COMMAND = 'npm run hygiene:baseline';
+
+export function readBaseline(file: string): Baseline {
+  const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (typeof parsed !== 'object' || parsed === null) throw new Error(`${file}: not a JSON object`);
+  const obj = parsed as Record<string, unknown>;
+  const out = {} as Baseline;
+  for (const key of KEYS) {
+    const v = obj[key];
+    if (!Array.isArray(v) || !v.every((s) => typeof s === 'string')) {
+      throw new Error(`${file}: "${key}" must be an array of strings`);
+    }
+    out[key] = v as string[];
+  }
+  return out;
+}
+
+export function rebaseline(
+  committed: Baseline,
+  current: Baseline,
+): { raised: string[] } | { next: Baseline; changes: string[] } {
+  const raised: string[] = [];
+  for (const key of KEYS) {
+    if (current[key].length > committed[key].length) {
+      for (const s of current[key]) if (!committed[key].includes(s)) raised.push(`${key} ${s}`);
+    }
+  }
+  if (raised.length > 0) return { raised };
+  const next = {} as Baseline;
+  const changes: string[] = [];
+  for (const key of KEYS) {
+    next[key] = [...current[key]].sort();
+    for (const s of committed[key]) if (!current[key].includes(s)) changes.push(`- ${key} ${s}`);
+    for (const s of current[key]) if (!committed[key].includes(s)) changes.push(`+ ${key} ${s}`);
+  }
+  return { next, changes };
+}
+
+export function writeBaseline(file: string, current: Baseline): string[] {
+  const r = rebaseline(readBaseline(file), current);
+  if ('raised' in r) {
+    throw new Error('hygiene baseline NOT written — a count would go up. New sites:\n' + r.raised.join('\n'));
+  }
+  fs.writeFileSync(file, JSON.stringify(r.next, null, 2) + '\n');
+  return r.changes;
+}
 
 /** Balanced-paren argument starting right after an opening `(` at `start`; null if unbalanced. */
 function parenArg(line: string, start: number): { arg: string; end: number } | null {
@@ -228,16 +243,91 @@ function realFiles(): FileSource[] {
   return files;
 }
 
-describe('test hygiene ratchet', () => {
-  const result = scan(realFiles());
+const WRITE = process.env.HYGIENE_BASELINE_WRITE === '1';
+const list = (sites: string[]): string => sites.map((s) => `  ${s}`).join('\n');
 
-  for (const key of [...SHAPES, 'exceptions'] as const) {
-    it(`${key}: no new occurrence, count <= baseline`, () => {
-      const newHits = result[key].filter((s) => !BASELINE[key].sites.includes(s));
-      expect(newHits).toEqual([]);
-      expect(result[key].length).toBeLessThanOrEqual(BASELINE[key].max);
+(WRITE ? describe.skip : describe)('test hygiene ratchet', () => {
+  const result = scan(realFiles());
+  const baseline = readBaseline(BASELINE_FILE);
+
+  for (const key of KEYS) {
+    it(`${key}: no new occurrence, no stale site, count <= baseline`, () => {
+      const newHits = result[key].filter((s) => !baseline[key].includes(s));
+      if (newHits.length > 0) {
+        throw new Error(
+          `${key}: new site(s):\n${list(newHits)}\nFix the test. If a baseline site only moved, run \`${COMMAND}\`.`,
+        );
+      }
+      const stale = baseline[key].filter((s) => !result[key].includes(s));
+      if (stale.length > 0) {
+        throw new Error(`${key}: stale baseline site(s):\n${list(stale)}\nRun \`${COMMAND}\` and commit.`);
+      }
+      expect(result[key].length).toBeLessThanOrEqual(baseline[key].length);
     });
   }
+});
+
+(WRITE ? describe : describe.skip)('write the hygiene baseline', () => {
+  it('rewrites the baseline from the current scan', () => {
+    const changes = writeBaseline(BASELINE_FILE, scan(realFiles()));
+    console.log(changes.length > 0 ? changes.join('\n') : 'hygiene baseline unchanged');
+  });
+});
+
+describe('baseline write mode', () => {
+  const empty = (): Baseline => ({
+    selfComparison: [],
+    literalExpect: [],
+    replicaFunction: [],
+    tsNocheck: [],
+    checkTrue: [],
+    exceptions: [],
+  });
+  const tmpFile = (b: Baseline): string => {
+    const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hygiene-')), 'baseline.json');
+    fs.writeFileSync(f, JSON.stringify(b));
+    return f;
+  };
+
+  it('writes a lower count', () => {
+    const f = tmpFile({ ...empty(), tsNocheck: ['a:1', 'b:1'] });
+    const changes = writeBaseline(f, { ...empty(), tsNocheck: ['a:1'] });
+    expect(readBaseline(f).tsNocheck).toEqual(['a:1']);
+    expect(changes).toEqual(['- tsNocheck b:1']);
+  });
+
+  it('drops a stale site and shows a moved one', () => {
+    const f = tmpFile({ ...empty(), replicaFunction: ['x:10'] });
+    const changes = writeBaseline(f, { ...empty(), replicaFunction: ['x:12'] });
+    expect(readBaseline(f).replicaFunction).toEqual(['x:12']);
+    expect(changes).toEqual(['- replicaFunction x:10', '+ replicaFunction x:12']);
+  });
+
+  it('refuses a higher count and writes nothing', () => {
+    const f = tmpFile({ ...empty(), selfComparison: ['a:1'] });
+    const before = fs.readFileSync(f, 'utf8');
+    expect(() => writeBaseline(f, { ...empty(), selfComparison: ['a:1', 'n:5'] })).toThrow(/selfComparison n:5/);
+    expect(fs.readFileSync(f, 'utf8')).toBe(before);
+  });
+
+  it('writes a sorted file ending with a newline', () => {
+    const f = tmpFile({ ...empty(), tsNocheck: ['b:1', 'a:1'] });
+    writeBaseline(f, { ...empty(), tsNocheck: ['b:1', 'a:1'] });
+    const text = fs.readFileSync(f, 'utf8');
+    expect(text).toBe(JSON.stringify({ ...empty(), tsNocheck: ['a:1', 'b:1'] }, null, 2) + '\n');
+  });
+
+  it('readBaseline rejects a malformed file', () => {
+    const missing = tmpFile(empty());
+    const obj = JSON.parse(fs.readFileSync(missing, 'utf8')) as Record<string, unknown>;
+    delete obj.checkTrue;
+    fs.writeFileSync(missing, JSON.stringify(obj));
+    expect(() => readBaseline(missing)).toThrow(/checkTrue/);
+    fs.writeFileSync(missing, JSON.stringify({ ...empty(), tsNocheck: [1] }));
+    expect(() => readBaseline(missing)).toThrow(/tsNocheck/);
+    fs.writeFileSync(missing, 'null');
+    expect(() => readBaseline(missing)).toThrow(/not a JSON object/);
+  });
 });
 
 describe('the scanner reds a new occurrence', () => {
@@ -248,7 +338,7 @@ describe('the scanner reds a new occurrence', () => {
     expect(selfComparison(src)).toEqual([3]);
     const res = scan([...realFiles(), { rel: 'synthetic.test.ts', source: src, flowsOnly: false }]);
     expect(res.selfComparison).toContain('synthetic.test.ts:3');
-    expect(res.selfComparison.length).toBeGreaterThan(BASELINE.selfComparison.max);
+    expect(res.selfComparison.length).toBeGreaterThan(readBaseline(BASELINE_FILE).selfComparison.length);
   });
 
   it('detects toEqual / toStrictEqual and ignores .not and differing args', () => {

@@ -1,0 +1,20 @@
+{
+  "selfComparison": [
+    "src/client/renderer/isometric-terrain-renderer.test.ts:438",
+    "src/e2e/bench/fingerprint.test.ts:29"
+  ],
+  "literalExpect": [
+    "src/client/renderer/isometric-terrain-renderer.test.ts:438"
+  ],
+  "replicaFunction": [
+    "src/client/components/building/__tests__/resolve-rdo-command.test.ts:22",
+    "src/server/__tests__/cache-sync-service.test.ts:19",
+    "src/server/__tests__/security-hardening.test.ts:59",
+    "src/server/__tests__/supply-controls.test.ts:214"
+  ],
+  "tsNocheck": [
+    "src/server/__tests__/rdo/rdo-value-equivalence.test.ts:1"
+  ],
+  "checkTrue": [],
+  "exceptions": []
+}
