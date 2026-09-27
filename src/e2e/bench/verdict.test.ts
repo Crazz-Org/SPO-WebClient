@@ -286,6 +286,58 @@ describe('statusDescription', () => {
       expect(description).toContain('static-only');
     });
   });
+
+  // #1010 — a required flow that ended UNPROVEN fails the gate; the status says how many.
+  describe('unproven flows (doc/E2E-POLICY.md §7)', () => {
+    it('renders the unproven count in the protected tail', () => {
+      const description = statusDescription(
+        verdictFor('c1', {
+          verdict: 'FAIL',
+          live: { status: 'ran', flows: ['zoning-alert-read'] },
+          unproven: 1,
+          baseMain: 'b'.repeat(40),
+        }),
+      );
+      expect(description).toBe('FAIL — live — 1 unproven flow(s) — base bbbbbbbb — job job-1');
+    });
+
+    it('keeps both counts within the limit next to a long job id', () => {
+      const description = statusDescription(
+        verdictFor('c1', {
+          verdict: 'FAIL',
+          live: { status: 'ran', flows: ['zoning-alert-read'] },
+          exceptions: 3,
+          unproven: 2,
+          baseMain: 'b'.repeat(40),
+          reusedFrom: 'e'.repeat(40),
+          jobId: 'x'.repeat(200),
+        }),
+      );
+      expect(description.length).toBeLessThanOrEqual(STATUS_DESCRIPTION_MAX);
+      expect(description).toContain('3 capability exception(s) — 2 unproven flow(s)');
+      expect(description).toContain('base bbbbbbbb');
+    });
+
+    it('renders a count of 0 byte-for-byte as the line of today', () => {
+      const shapes: BenchVerdict[] = [
+        verdictFor('c1'),
+        verdictFor('c1', { live: { status: 'ran', flows: ['login-spine'] }, baseMain: 'b'.repeat(40) }),
+        verdictFor('c1', { exceptions: 2, baseMain: 'b'.repeat(40), reusedFrom: 'e'.repeat(40) }),
+      ];
+      for (const v of shapes) {
+        expect(statusDescription({ ...v, unproven: 0 })).toBe(statusDescription(v));
+      }
+      expect(
+        statusDescription(
+          verdictFor('c1', {
+            live: { status: 'ran', flows: ['login-spine'] },
+            baseMain: 'b'.repeat(40),
+            unproven: 0,
+          }),
+        ),
+      ).toBe('PASS — live — base bbbbbbbb — job job-1');
+    });
+  });
 });
 
 describe('publishPendingStatuses — failure-streak logging', () => {

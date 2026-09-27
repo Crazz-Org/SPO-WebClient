@@ -670,3 +670,98 @@ describe('stage 5 — capability judgement (doc/E2E-POLICY.md §7)', () => {
     expect(run.artifact).toMatchObject({ verdict: 'FAIL' });
   });
 });
+
+describe('stage 6 — unproven flows (doc/E2E-POLICY.md §7)', () => {
+  const noAlert = 'no "Zoning Alert!" in the inbox — the flow\'s data — seed failed: timeout';
+  const noIssue = 'the newest issue opens with stories — 0 issues';
+  const liveWith = (flows: Array<{ name: string; status: string; unproven: string[] }>) =>
+    JSON.stringify({ status: 'PASS', flows });
+
+  it('fails the gate when a REQUIRED flow ends UNPROVEN', () => {
+    const run = runGate(scratchRepo(), ['--live'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['login-spine', 'zoning-alert-read'] }),
+      FAKE_LIVE: liveWith([
+        { name: 'login-spine', status: 'PASS', unproven: [] },
+        { name: 'zoning-alert-read', status: 'UNPROVEN', unproven: [noAlert] },
+      ]),
+    });
+    expect(run.code).toBe(1);
+    expect(run.artifact?.verdict).toBe('FAIL');
+    expect(run.artifact?.unproven).toEqual([
+      { flow: 'zoning-alert-read', required: true, reasons: [noAlert] },
+    ]);
+    expect(run.stdout).toMatch(/UNPROVEN REQUIRED FLOW/);
+    expect(run.stdout).toContain('zoning-alert-read');
+    expect(run.stdout).toContain(`  ? ${noAlert}`);
+    expect(run.stdout).toMatch(/§7/);
+    expect(run.stdout).toMatch(/Gate FAIL\. Artifact:/);
+  });
+
+  it('records an UNPROVEN flow run only because --flows named it as informational, and passes', () => {
+    const run = runGate(scratchRepo(), ['--live', '--flows=login-spine,newspaper-read'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['login-spine'] }),
+      FAKE_LIVE: liveWith([
+        { name: 'login-spine', status: 'PASS', unproven: [] },
+        { name: 'newspaper-read', status: 'UNPROVEN', unproven: [noIssue] },
+      ]),
+    });
+    expect(run.code).toBe(0);
+    expect(run.artifact?.verdict).toBe('PASS');
+    expect(run.artifact?.unproven).toEqual([
+      { flow: 'newspaper-read', required: false, reasons: [noIssue] },
+    ]);
+    expect(run.stdout).toMatch(/informational/);
+    expect(run.stdout).toContain(`  ? ${noIssue}`);
+    expect(run.stdout).not.toMatch(/UNPROVEN REQUIRED FLOW/);
+  });
+
+  it('leaves unproven empty when every flow passes', () => {
+    const run = runGate(scratchRepo(), ['--live'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['login-spine'] }),
+      FAKE_LIVE: liveWith([{ name: 'login-spine', status: 'PASS', unproven: [] }]),
+    });
+    expect(run.code).toBe(0);
+    expect(run.artifact?.verdict).toBe('PASS');
+    expect(run.artifact?.unproven).toEqual([]);
+    expect(run.stdout).not.toMatch(/informational/);
+  });
+
+  it('leaves unproven empty and still exits 3 on an ENVIRONMENT abort', () => {
+    const run = runGate(scratchRepo(), ['--live'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['zoning-alert-read'] }),
+      FAKE_LIVE: JSON.stringify({ status: 'ENVIRONMENT' }),
+    });
+    expect(run.code).toBe(3);
+    expect(run.artifact?.verdict).toBe('ENVIRONMENT');
+    expect(run.artifact?.unproven).toEqual([]);
+  });
+
+  it('still fails on a required UNPROVEN next to a refused capability, and records the exception', () => {
+    const run = runGate(scratchRepo(), ['--live'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['zoning-alert-read'] }),
+      FAKE_PRESIDENT: JSON.stringify(['RDOSitMayor']),
+      FAKE_LIVE: JSON.stringify({
+        status: 'PASS',
+        flows: [{ name: 'zoning-alert-read', status: 'UNPROVEN', unproven: [noAlert] }],
+        capabilities: [
+          {
+            capability: 'president',
+            account: 'SPO_test3',
+            members: ['RDOSitMayor', 'RDOSitMinister'],
+            determined: true,
+            granted: false,
+            checks: [{ what: 'canGovern on the Capitol (server grantAccess)', value: 'false' }],
+            checkedAt: 'now',
+          },
+        ],
+      }),
+    });
+    expect(run.code).toBe(1);
+    expect(run.artifact?.verdict).toBe('FAIL');
+    expect(run.stdout).toMatch(/CAPABILITY EXCEPTION/);
+    expect((run.artifact?.exclusions as { capability: unknown[] }).capability).toHaveLength(1);
+    expect(run.artifact?.unproven).toEqual([
+      { flow: 'zoning-alert-read', required: true, reasons: [noAlert] },
+    ]);
+  });
+});

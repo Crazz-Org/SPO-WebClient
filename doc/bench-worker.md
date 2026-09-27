@@ -149,7 +149,9 @@ comment in `job.ts` for the measured line size and growth rate.
     trusts — and `merge-queue.ts` treats any existing attestation as *already answered*, so
     a wrong one is never revisited.
 
-Verdicts: `PASS` (possibly with capability exceptions listed — §7 of the policy) · `FAIL` ·
+Verdicts: `PASS` (possibly with capability exceptions listed — §7 of the policy) · `FAIL`
+(including a required flow that ended UNPROVEN — §7 of the policy; the `bench/gate` status
+then shows `— N unproven flow(s)`) ·
 `BLOCKED` (the live stage was refused before running: dirty world or another run already
 in flight) · `ENVIRONMENT` (does not consume an attempt) · `STALE` · `DIRTY` (gate on
 uncommitted changes — commit first) · `ABANDONED` ·

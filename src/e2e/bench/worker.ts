@@ -439,6 +439,7 @@ export async function processOldest(deps: WorkerDeps): Promise<boolean> {
       jobId: request.id,
       createdAt: new Date(deps.now()).toISOString(),
       exceptions: countCapabilityExceptions(report.gateArtifact),
+      unproven: countUnprovenFlows(report.gateArtifact),
       live: liveAttestationFrom(report.gateArtifact),
       staticProof: staticProofAttestationFrom(report.staticProof),
     });
@@ -469,6 +470,21 @@ export function countCapabilityExceptions(artifactPath: string | undefined): num
       exclusions?: { capability?: unknown[] };
     };
     return artifact.exclusions?.capability?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * How many UNPROVEN flows the gate artifact records (doc/E2E-POLICY.md §7), required or
+ * informational; 0 when unreadable, absent, or written before the field existed. Shown on
+ * GitHub only — a required one already made the gate's exit code FAIL.
+ */
+export function countUnprovenFlows(artifactPath: string | undefined): number {
+  if (!artifactPath) return 0;
+  try {
+    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as { unproven?: unknown };
+    return Array.isArray(artifact.unproven) ? artifact.unproven.length : 0;
   } catch {
     return 0;
   }
