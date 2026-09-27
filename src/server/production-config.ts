@@ -23,7 +23,7 @@
 
 /** The knobs the readout names — read from the running server, not from the environment. */
 export interface SecurityRuntimeValues {
-  /** `X-Forwarded-For` is honoured only when this is on (SEC-H-7). */
+  /** Only when this is on is the rightmost `X-Forwarded-For` entry used as the client IP (SEC-H-7). */
   trustProxy: boolean;
   /** `Strict-Transport-Security` is emitted only when this is on (SEC-T-3, in SPO-Deploy's policy — transport moved there). */
   hstsEnabled: boolean;
