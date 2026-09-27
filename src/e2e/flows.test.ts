@@ -7,7 +7,7 @@ import { WsDriver, WsDriverError } from './ws-driver';
 import * as session from './session';
 import * as probeModule from './probe';
 import * as liveLog from './live-log';
-import { PRIMARY_ACCOUNT, SECONDARY_ACCOUNT } from './config';
+import { PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
 
 function stubSession(responder: (msg: WsMessage) => unknown): session.LiveSession {
   return {
@@ -445,18 +445,31 @@ describe('politics-write', () => {
 });
 
 describe('mail-roundtrip', () => {
+  // A real gap between re-reads would make this suite slow for no reason (issue #1025) —
+  // every test in this block injects a no-op sleep so a bounded retry loop resolves at
+  // in-memory speed.
+  const mailCtx = { ...ctx, sleep: async () => {} };
+
   function mailSession(
     inboxSubjects: string[],
     record?: (msg: WsMessage) => void,
-    opts: { unreadCount?: number; afterUnreadCount?: number; ignoreDelete?: boolean } = {},
+    opts: {
+      unreadCount?: number;
+      afterUnreadCount?: number;
+      ignoreDelete?: boolean;
+      /** Inbox re-reads after REQ_MAIL_DELETE before the message actually disappears. */
+      deleteLandsOnRead?: number;
+    } = {},
   ) {
-    const { unreadCount = 1, afterUnreadCount = 0, ignoreDelete = false } = opts;
+    const { unreadCount = 1, afterUnreadCount = 0, ignoreDelete = false, deleteLandsOnRead = 1 } = opts;
     const deleted = new Set<string>();
+    let pendingDeleteId: string | undefined;
+    let readsSinceDelete = 0;
     return stubSession(msg => {
       record?.(msg);
       switch (msg.type) {
         case WsMessageType.REQ_MAIL_DELETE:
-          if (!ignoreDelete) deleted.add((msg as unknown as { messageId: string }).messageId);
+          if (!ignoreDelete) pendingDeleteId = (msg as unknown as { messageId: string }).messageId;
           return { type: WsMessageType.RESP_MAIL_DELETED, success: true };
         case WsMessageType.RESP_MAIL_CONNECTED:
         case WsMessageType.REQ_MAIL_CONNECT:
@@ -464,6 +477,10 @@ describe('mail-roundtrip', () => {
         case WsMessageType.REQ_MAIL_COMPOSE:
           return { type: WsMessageType.RESP_MAIL_SENT };
         case WsMessageType.REQ_MAIL_GET_FOLDER:
+          if (pendingDeleteId && !deleted.has(pendingDeleteId)) {
+            readsSinceDelete += 1;
+            if (readsSinceDelete >= deleteLandsOnRead) deleted.add(pendingDeleteId);
+          }
           return {
             type: WsMessageType.RESP_MAIL_FOLDER,
             folder: 'Inbox',
@@ -485,7 +502,7 @@ describe('mail-roundtrip', () => {
     jest.spyOn(session, 'login').mockResolvedValue(mailSession([]));
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
 
-    const result = await flowByName('mail-roundtrip').run(ctx);
+    const result = await flowByName('mail-roundtrip').run(mailCtx);
 
     expect(result.status).toBe('FAIL');
     expect(result.assertions.find(a => !a.ok)?.what).toMatch(/arrived in the recipient inbox/);
@@ -504,13 +521,57 @@ describe('mail-roundtrip', () => {
     );
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
 
-    const result = await flowByName('mail-roundtrip').run(ctx);
+    const result = await flowByName('mail-roundtrip').run(mailCtx);
 
     expect(result.status).toBe('PASS');
     expect(sent.some(m => m.type === WsMessageType.REQ_MAIL_DELETE)).toBe(true);
   });
 
-  it('FAILs when the deleted message is still listed', async () => {
+  it('PASSes with a single re-read when the delete has already landed', async () => {
+    let subject = '';
+    jest.spyOn(session, 'login').mockImplementation(async () =>
+      mailSession(
+        subject ? [subject] : [],
+        msg => {
+          if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
+            subject = (msg as unknown as { subject: string }).subject;
+          }
+        },
+        { deleteLandsOnRead: 1 },
+      ),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+
+    const result = await flowByName('mail-roundtrip').run(mailCtx);
+
+    expect(result.status).toBe('PASS');
+    const checked = result.assertions.find(a => a.what === 'the probe message was deleted again');
+    expect(checked?.detail).toMatch(/reads=1$/);
+  });
+
+  it('PASSes once the delete lands by the third re-read', async () => {
+    let subject = '';
+    jest.spyOn(session, 'login').mockImplementation(async () =>
+      mailSession(
+        subject ? [subject] : [],
+        msg => {
+          if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
+            subject = (msg as unknown as { subject: string }).subject;
+          }
+        },
+        { deleteLandsOnRead: 3 },
+      ),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+
+    const result = await flowByName('mail-roundtrip').run(mailCtx);
+
+    expect(result.status).toBe('PASS');
+    const checked = result.assertions.find(a => a.what === 'the probe message was deleted again');
+    expect(checked?.detail).toMatch(/reads=3$/);
+  });
+
+  it('FAILs and names the read count when the message is still listed after the bound', async () => {
     let subject = '';
     jest.spyOn(session, 'login').mockImplementation(async () =>
       mailSession(
@@ -525,10 +586,41 @@ describe('mail-roundtrip', () => {
     );
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
 
-    const result = await flowByName('mail-roundtrip').run(ctx);
+    const result = await flowByName('mail-roundtrip').run(mailCtx);
 
     expect(result.status).toBe('FAIL');
-    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/deleted again/);
+    const failed = result.assertions.find(a => !a.ok);
+    expect(failed?.what).toMatch(/deleted again/);
+    expect(failed?.detail).toMatch(/reads=5$/);
+  });
+
+  it('waits on a real timer between re-reads when the flow injects no sleep', async () => {
+    jest.useFakeTimers();
+    try {
+      let subject = '';
+      jest.spyOn(session, 'login').mockImplementation(async () =>
+        mailSession(
+          subject ? [subject] : [],
+          msg => {
+            if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
+              subject = (msg as unknown as { subject: string }).subject;
+            }
+          },
+          { deleteLandsOnRead: 2 },
+        ),
+      );
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+
+      const resultPromise = flowByName('mail-roundtrip').run(ctx);
+      await jest.advanceTimersByTimeAsync(TIMEOUTS.mailDeleteReread);
+      const result = await resultPromise;
+
+      expect(result.status).toBe('PASS');
+      const checked = result.assertions.find(a => a.what === 'the probe message was deleted again');
+      expect(checked?.detail).toMatch(/reads=2$/);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('FAILs when the unread count does not drop after the read', async () => {
@@ -548,7 +640,7 @@ describe('mail-roundtrip', () => {
     );
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
 
-    const result = await flowByName('mail-roundtrip').run(ctx);
+    const result = await flowByName('mail-roundtrip').run(mailCtx);
 
     expect(result.status).toBe('FAIL');
     const failed = result.assertions.find(a => !a.ok);
@@ -561,7 +653,7 @@ describe('mail-roundtrip', () => {
     jest.spyOn(session, 'login').mockResolvedValue(mailSession([], msg => sent.push(msg)));
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
 
-    await flowByName('mail-roundtrip').run(ctx);
+    await flowByName('mail-roundtrip').run(mailCtx);
 
     const compose = sent.find(m => m.type === WsMessageType.REQ_MAIL_COMPOSE);
     expect(compose).toMatchObject({ to: 'Crazz' });

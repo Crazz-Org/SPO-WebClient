@@ -82,6 +82,11 @@ export const TIMEOUTS = {
   login: 60_000,
   /** How long a write may take to appear in the model-server log. */
   logSettle: 20_000,
+  /**
+   * Gap between Inbox re-reads while waiting for `DeleteMessage` — a fire-and-forget RDO
+   * procedure — to remove the message before the next `MessageList.asp` fetch (issue #1025).
+   */
+  mailDeleteReread: 1_000,
 } as const;
 
 export const LIMITS = {
@@ -89,6 +94,8 @@ export const LIMITS = {
   gateMaxAgeMinutes: numberFromEnv('GATE_MAX_AGE_MINUTES', 60),
   /** Attempts before the loop gives up and reports (doc/E2E-POLICY.md §8). */
   maxAttempts: 3,
+  /** Inbox re-reads mail-roundtrip takes after REQ_MAIL_DELETE before it gives up (issue #1025). */
+  mailDeleteMaxReads: 5,
 } as const;
 
 /** Where run artifacts live. Gitignored — evidence is per-machine, per-worktree. */
