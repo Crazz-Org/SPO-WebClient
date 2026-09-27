@@ -36,7 +36,7 @@ import { buildRuntimeConfigScript } from './runtime-config';
 import { handleBugReportRequest, DEFAULT_QUEUE_DIR } from './bug-report-endpoint';
 import { handleReportPullList, handleReportPullFetch, handleReportPullAck } from './report-pull-endpoint';
 import { enforceProductionConfig } from './production-config';
-import { proxyImage, buildImageFileIndexEntries, type ProxyImageDeps } from './proxy-image';
+import { proxyImage, buildImageFileIndexEntries, proxyImageHosts, type ProxyImageDeps } from './proxy-image';
 import { fetchWithTimeout } from './fetch-with-timeout';
 import {
   RATE_LIMIT_WINDOW_MS,
@@ -312,6 +312,7 @@ const proxyImageDeps: ProxyImageDeps = {
   webclientCacheDir: WEBCLIENT_CACHE_DIR,
   updateServerCacheUrl: UPDATE_SERVER.CACHE_URL,
   log: { debug: (msg: string) => logger.debug(msg), warn: (msg: string) => logger.warn(msg) },
+  allowedHosts: proxyImageHosts,
 };
 
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';

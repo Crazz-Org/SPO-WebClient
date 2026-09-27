@@ -1,6 +1,7 @@
 import * as net from 'net';
 import { EventEmitter } from 'events';
 import { fetchWithTimeout } from './fetch-with-timeout';
+import { registerProxyImageHost } from './proxy-image';
 import { TimeoutCategory, TIMEOUT_CONFIG, IS_PROXY_TIMEOUT_MS } from '../shared/timeout-categories';
 import {
   RdoPacket,
@@ -530,7 +531,7 @@ export class StarpeaceSession extends EventEmitter {
   public setCacherId(value: string | null): void { this.cacherId = value; }
   public setWorldId(value: string | null): void { this.worldId = value; }
   public setDaPort(value: number | null): void { this.daPort = value; }
-  public setDaAddr(value: string | null): void { this.daAddr = value; }
+  public setDaAddr(value: string | null): void { this.daAddr = value; registerProxyImageHost(value); }
   public setMailAccount(value: string | null): void { this.mailAccount = value; }
   public setAccountStatus(value: number | null): void { this.accountStatus = value; }
   public setMailAddr(value: string | null): void { this.mailAddr = value; }
@@ -538,7 +539,7 @@ export class StarpeaceSession extends EventEmitter {
   public setWorldXSize(value: number | null): void { this.worldXSize = value; }
   public setWorldYSize(value: number | null): void { this.worldYSize = value; }
   public setWorldSeason(value: number | null): void { this.worldSeason = value; }
-  public setCurrentWorldInfo(value: WorldInfo | null): void { this.currentWorldInfo = value; }
+  public setCurrentWorldInfo(value: WorldInfo | null): void { this.currentWorldInfo = value; registerProxyImageHost(value?.ip); }
   public setCachedUsername(value: string | null): void {
     this.cachedUsername = value;
     if (value) {
