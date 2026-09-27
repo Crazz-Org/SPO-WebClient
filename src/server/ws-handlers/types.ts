@@ -13,6 +13,8 @@ export interface WsHandlerContext {
   inventionIndex: DatInventionIndex | null;
   connectedClients: Map<WebSocket, string>;
   gmUsernames: Set<string>;
+  /** Called once the world accepted a REQ_LOGIN_WORLD; the bug-report ticket records who logged in. */
+  onWorldLogin?: (username: string, worldName: string) => void;
 }
 
 export type WsHandler = (ctx: WsHandlerContext, msg: WsMessage) => Promise<void>;

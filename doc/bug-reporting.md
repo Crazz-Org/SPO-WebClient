@@ -10,8 +10,33 @@ context that was already there, and a JSON report lands in a local queue. Later,
 [`/triage-report`](../.claude/commands/triage-report.md) session reads that queue and files
 proper kanban cards, on its own.
 
-**It is dev-only.** Off by default, and in a normal deployment the deposit endpoint does not
-exist — it answers `404`, not `403`, because nothing about the response should suggest it might.
+**Off by default.** With the flag unset the deposit endpoint does not exist — it answers `404`,
+not `403`, because nothing about the response should suggest it might. In production it can be
+opened to logged-in players with `SPO_BUG_REPORT=player`; the deposit is then guarded as below.
+
+## What protects the deposit
+
+The same guards apply in every mode, dev included. They live in
+[`bug-report-endpoint.ts`](../src/server/bug-report-endpoint.ts) and
+[`bug-report-tickets.ts`](../src/server/bug-report-tickets.ts), and run in this order:
+
+- **Only a logged-in player can deposit.** When the browser opens its WebSocket, the gateway
+  hands it a random ticket as a cookie (`HttpOnly; SameSite=Strict; Path=/api/bug-report`, and
+  `Secure` behind TLS). The browser sends it back by itself with the report. A missing or
+  unknown ticket, a closed connection's ticket, or a session that has not finished logging into
+  a world answers **403** `Log in to a world to send a report`. `SameSite=Strict` also stops
+  another site from posting a report on the player's behalf.
+- **The gateway says who reported.** `username` and `world` in the stored file are the ones the
+  world accepted at login on that connection — whatever the browser wrote in the body.
+- **Limits.** 10 requests per minute per IP, then **429**; `MAX_REPORTS_PER_SESSION` (5)
+  reports per connection, then **429**; 4 MB per body, then **413**.
+- **The queue is capped.** At 100 files (`MAX_QUEUE_FILES`) or 100 MiB (`MAX_QUEUE_BYTES`)
+  waiting to be pulled — top-level files only, `pulled/` does not count — the deposit writes
+  nothing, answers **503** `The report queue is full — try again later`, and logs a warning.
+- **Secrets are scrubbed before the file exists.** In the journal, every `password` field (any
+  case, any depth, and inside a payload that was cut to a string) becomes `[redacted]`; chat and
+  mail frames keep only their `msgType` and `ts`, so triage sees that a message happened but not
+  what it said.
 
 > **The schema is [`src/shared/bug-report-schema.ts`](../src/shared/bug-report-schema.ts).**
 > Every field, every limit and the validator live there and are deliberately not restated in this
@@ -20,8 +45,17 @@ exist — it answers `404`, not `403`, because nothing about the response should
 
 ## Enabling it
 
-One flag, `SPO_BUG_REPORT=true`, read by both halves: the gateway serves the deposit endpoint,
-and the client mounts the capture UI.
+One flag, `SPO_BUG_REPORT`, read by both halves: the gateway serves the deposit endpoint, and
+the client mounts the capture UI. It takes two values:
+
+| Value | For | The player reaches the reporter through |
+|---|---|---|
+| `SPO_BUG_REPORT=true` | dev / test sessions | F8, the floating mobile button, and the Support entry |
+| `SPO_BUG_REPORT=player` | production players | the Support entry only |
+
+Either value turns the deposit on, and the deposit behaves the same for both. Any other value
+leaves the feature off. The runtime config announces the mode as `window.__SPO_BUG_REPORT__=true`
+or `window.__SPO_BUG_REPORT__="player"`.
 
 The gateway passes the flag to the browser by injecting `/spo-runtime-config.js`, which sets
 `window.__SPO_BUG_REPORT__`; the client prefers that over its own build-time environment
@@ -197,8 +231,8 @@ Roughly ten minutes, no phone required for the first half.
    ```bash
    curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' -d '{}' http://localhost:8080/api/bug-report
    ```
-   With it on the same call answers `400` — the endpoint exists and the empty body failed
-   validation, which is the answer you want.
+   With it on, the same call now answers `403` — the endpoint exists, and curl has no logged-in
+   session's ticket. A deposit has to come from the browser's own session, after a world login.
 2. **Log in** and reach a screen with real data.
 3. **Press F8**, then click a control showing a number. The control must not fire.
 4. **Fill *expected*** and submit. A toast reports the queue filename.

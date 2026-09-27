@@ -34,6 +34,7 @@ import { parseResearchDat, buildInventionIndex, type DatInventionIndex } from '.
 import { getPublicDir, getCacheDir, getWebclientCacheDir } from './paths';
 import { buildRuntimeConfigScript } from './runtime-config';
 import { handleBugReportRequest, DEFAULT_QUEUE_DIR } from './bug-report-endpoint';
+import { ReportTicketRegistry } from './bug-report-tickets';
 import { handleReportPullList, handleReportPullFetch, handleReportPullAck } from './report-pull-endpoint';
 import { enforceProductionConfig } from './production-config';
 import { proxyImage, buildImageFileIndexEntries, proxyImageHosts, type ProxyImageDeps } from './proxy-image';
@@ -367,6 +368,7 @@ const server = http.createServer(async (req, res) => {
       singleUserMode: SINGLE_USER_MODE,
       forceWorld: config.server.forceWorld,
       bugReport: config.server.bugReportMode,
+      bugReportPlayerMode: config.server.bugReportPlayerMode,
       registerUrl: config.server.registerUrl,
     });
     res.writeHead(200, {
@@ -667,7 +669,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Bug report deposit: POST /api/bug-report — dev-only, 404 unless SPO_BUG_REPORT=true.
+  // Bug report deposit: POST /api/bug-report — 404 unless SPO_BUG_REPORT is true or player;
+  // 403 without a logged-in session's ticket.
   // Everything, transport included, lives in bug-report-endpoint.ts, which tests can import.
   // checkRateLimit's window is fixed at RATE_LIMIT_WINDOW_MS (60 s) — this is 10 per minute.
   if (safePath === '/api/bug-report' && req.method === 'POST') {
@@ -675,6 +678,8 @@ const server = http.createServer(async (req, res) => {
       enabled: config.server.bugReportMode,
       queueDir: config.server.reportsDir || DEFAULT_QUEUE_DIR,
       allowRequest: () => checkRateLimit(getClientIp(req), 'bug-report', 10),
+      tickets: reportTickets,
+      warn: (message) => logger.warn(message),
     });
     return;
   }
@@ -914,6 +919,10 @@ const wss = new WebSocketServer({
   },
 });
 
+// Bug-report tickets: one cookie per WebSocket upgrade ties a report deposit to its session.
+const reportTickets = new ReportTicketRegistry();
+if (config.server.bugReportMode) reportTickets.listenForUpgrades(wss, TRUST_PROXY);
+
 // GM Chat: track all connected WebSocket clients and their usernames
 const connectedClients = new Map<WebSocket, string>(); // ws → username
 const GM_USERNAMES = new Set((process.env.SPO_GM_USERS || '').split(',').map(s => s.trim()).filter(Boolean));
@@ -924,6 +933,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
 
   // Create a dedicated Starpeace Session for this connection
   const spSession = new StarpeaceSession();
+  const reportTicket = reportTickets.bindConnection(req, spSession);
   spSession.log.info('SESSION_START', { ip: clientIp });
 
   // Search Menu Service (will be initialized after login)
@@ -996,7 +1006,8 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       const isQuietMsg = QUIET_WS_TYPES.has(msg.type);
       if (!isQuietMsg) spSession.log.info(`WS>> ${msg.type}`, { wsRequestId: msg.wsRequestId });
 
-      await handleClientMessage(ws, spSession, searchMenuService, msg, clientIp);
+      await handleClientMessage(ws, spSession, searchMenuService, msg, clientIp,
+        (username, worldName) => reportTickets.recordWorldLogin(reportTicket, { username, world: worldName }));
       spSession.setCorrelationId(null);
 
       // Initialize SearchMenuService after successful login response
@@ -1071,6 +1082,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       phase: String(spSession.getPhase()),
     });
     connectedClients.delete(ws);
+    reportTickets.revoke(reportTicket);
 
     // Decrement per-IP connection count
     const count = wsConnectionsPerIp.get(clientIp) || 0;
@@ -1093,7 +1105,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
 /**
  * Message Router — dispatches to handler modules in ws-handlers/
  */
-async function handleClientMessage(ws: WebSocket, session: StarpeaceSession, searchMenuService: SearchMenuService | null, msg: WsMessage, clientIp: string) {
+async function handleClientMessage(ws: WebSocket, session: StarpeaceSession, searchMenuService: SearchMenuService | null, msg: WsMessage, clientIp: string, onWorldLogin?: (username: string, worldName: string) => void) {
   // Rate limit authentication attempts — one per-IP bucket per auth-bearing message type
   if (!SINGLE_USER_MODE && !checkAuthRateLimit(clientIp, msg.type)) {
     const errorResp: WsRespError = {
@@ -1136,7 +1148,7 @@ async function handleClientMessage(ws: WebSocket, session: StarpeaceSession, sea
 
   try {
     await handler(
-      { ws, session, searchMenuService, facilityDimensionsCache, inventionIndex, connectedClients, gmUsernames: GM_USERNAMES },
+      { ws, session, searchMenuService, facilityDimensionsCache, inventionIndex, connectedClients, gmUsernames: GM_USERNAMES, onWorldLogin },
       msg,
     );
     if (!QUIET_WS_TYPES.has(msg.type)) session.log.info(`WS<< ${msg.type} OK`, { wsRequestId: msg.wsRequestId });
