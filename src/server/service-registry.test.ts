@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { ServiceRegistry, Service, type StartupProgressEvent } from './service-registry';
+import { ServiceRegistry, Service, setupGracefulShutdown, type StartupProgressEvent } from './service-registry';
 
 /** Minimal mock service that tracks lifecycle calls */
 class MockService implements Service {
@@ -417,5 +417,89 @@ describe('ServiceRegistry', () => {
       const result = registry.healthCheck();
       expect(result.uptime).toBeGreaterThanOrEqual(0);
     });
+  });
+});
+
+describe('setupGracefulShutdown', () => {
+  const EVENTS = ['SIGTERM', 'SIGINT', 'uncaughtException', 'unhandledRejection'] as const;
+  type Handler = (...args: unknown[]) => void;
+  let before: Map<string, Function[]>;
+  let exitSpy: jest.SpiedFunction<typeof process.exit>;
+  const added = (ev: string): Handler =>
+    process.listeners(ev as NodeJS.Signals).find(l => !before.get(ev)!.includes(l)) as Handler;
+
+  beforeEach(() => {
+    before = new Map(EVENTS.map(ev => [ev, [...process.listeners(ev as NodeJS.Signals)]]));
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    for (const ev of EVENTS) {
+      for (const l of process.listeners(ev as NodeJS.Signals)) {
+        if (!before.get(ev)!.includes(l)) process.removeListener(ev, l);
+      }
+    }
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  const pending = () => jest.fn((_reason: string) => new Promise<void>(() => undefined));
+
+  it('runs the injected sequence once on the first SIGTERM', () => {
+    const run = pending();
+    setupGracefulShutdown(run);
+    added('SIGTERM')();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith('SIGTERM');
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('forces on the second SIGINT and exits immediately on the third', async () => {
+    jest.useFakeTimers();
+    const run = pending();
+    const server = { close: jest.fn(), closeAllConnections: jest.fn() };
+    setupGracefulShutdown(run, server);
+    const sigint = added('SIGINT');
+    sigint();
+    expect(run).toHaveBeenCalledWith('SIGINT');
+    sigint();
+    expect(server.closeAllConnections).toHaveBeenCalledTimes(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(500);
+    expect(exitSpy).toHaveBeenCalledWith(0);
+    sigint();
+    expect(exitSpy).toHaveBeenLastCalledWith(1);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the same sequence on an uncaught exception, once, without counting it as a signal', () => {
+    const run = pending();
+    setupGracefulShutdown(run);
+    const onException = added('uncaughtException');
+    onException(new Error('first'));
+    expect(run).toHaveBeenCalledWith('uncaughtException');
+    onException(new Error('second'));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+    // A SIGTERM during the drain is the first signal, not a force
+    added('SIGTERM')();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('exits 1 when the sequence itself rejects', async () => {
+    const run = jest.fn((_reason: string) => Promise.reject(new Error('x')));
+    setupGracefulShutdown(run);
+    added('SIGTERM')();
+    await new Promise(r => setImmediate(r));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('logs an unhandled rejection without exiting', () => {
+    setupGracefulShutdown(pending());
+    added('unhandledRejection')('why', Promise.resolve());
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 });

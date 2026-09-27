@@ -5,7 +5,7 @@ import * as path from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { StarpeaceSession } from './spo_session';
 import { config } from '../shared/config';
-import { createLogger, getFileTransport, getErrorFileTransport, LogLevel } from '../shared/logger';
+import { createLogger, getFileTransport, getErrorFileTransport, LogLevel, closeLogTransports } from '../shared/logger';
 import { UPDATE_SERVER } from '../shared/constants';
 import { fileToProxyUrl, PROXY_IMAGE_ENDPOINT } from '../shared/proxy-utils';
 import * as ErrorCodes from '../shared/error-codes';
@@ -14,6 +14,7 @@ import { SearchMenuService } from './search-menu-service';
 import { UpdateService } from './update-service';
 import { MapDataService } from './map-data-service';
 import { serviceRegistry, setupGracefulShutdown } from './service-registry';
+import { ConnectionDrain, createSessionTeardown, createShutdownSequence } from './gateway-shutdown';
 import { CacheWatcher } from './cache-watcher';
 import { pushCapitolCoords } from './capitol-coords';
 import { resolveClientIp } from './client-ip';
@@ -878,7 +879,7 @@ const wsConnectionsPerIp = new Map<string, number>();
 const WS_MAX_PAYLOAD_BYTES = 64 * 1024; // 64KB max message size (policy SEC-W-2)
 
 const wss = new WebSocketServer({
-  server,
+  noServer: true,
   maxPayload: WS_MAX_PAYLOAD_BYTES,
   verifyClient: (info, callback) => {
     // Validate Origin header to prevent Cross-Site WebSocket Hijacking
@@ -919,12 +920,26 @@ const wss = new WebSocketServer({
   },
 });
 
+/**
+ * Mount the gateway's WebSocket upgrade wiring on an http.Server — the module server at load, a
+ * test's own server in the harness. Same code `ws` installs itself for its `server` option;
+ * `verifyClient` still runs inside `handleUpgrade`.
+ */
+export function mountWebSocketGateway(target: http.Server): void {
+  target.on('upgrade', (req, socket, head) => {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
+}
+mountWebSocketGateway(server);
+
 // Bug-report tickets: one cookie per WebSocket upgrade ties a report deposit to its session.
 const reportTickets = new ReportTicketRegistry();
 if (config.server.bugReportMode) reportTickets.listenForUpgrades(wss, TRUST_PROXY);
 
 // GM Chat: track all connected WebSocket clients and their usernames
 const connectedClients = new Map<WebSocket, string>(); // ws → username
+/** Every live connection's teardown — drained by the shutdown sequence. */
+export const connectionDrain = new ConnectionDrain();
 const GM_USERNAMES = new Set((process.env.SPO_GM_USERS || '').split(',').map(s => s.trim()).filter(Boolean));
 
 wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
@@ -935,6 +950,12 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   const spSession = new StarpeaceSession();
   const reportTicket = reportTickets.bindConnection(req, spSession);
   spSession.log.info('SESSION_START', { ip: clientIp });
+
+  // One teardown per connection, shared by the close handler and the shutdown drain
+  const teardown = createSessionTeardown(spSession, (err) =>
+    logger.error(`Error sending Logoff on close: ${toErrorMessage(err)}`),
+  );
+  connectionDrain.track(ws, teardown);
 
   // Search Menu Service (will be initialized after login)
   let searchMenuService: SearchMenuService | null = null;
@@ -1053,6 +1074,9 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   }
 
   ws.on('message', (data: string) => {
+    // Shutdown drain started: no message reaches a handler any more
+    if (connectionDrain.isDraining()) return;
+
     // Peek at message type to decide lane (lightweight JSON key extraction)
     let msgType: string | undefined;
     try {
@@ -1091,14 +1115,12 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
     } else {
       wsConnectionsPerIp.set(clientIp, count - 1);
     }
-    // Send Logoff before cleanup to gracefully close game server session
-    // Note: endSession() schedules socket closure 2 seconds after Logoff
-    try {
-      await spSession.endSession();
-    } catch (err: unknown) {
-      logger.error(`Error sending Logoff on close: ${toErrorMessage(err)}`);
-    }
-    spSession.destroy();
+    // Send Logoff before cleanup to gracefully close the game server session.
+    // endSession() ends the world socket itself once Logoff is acknowledged or times out (5 s);
+    // destroy() runs only after it settles. The teardown is shared with the shutdown drain,
+    // so it runs once however many callers await it.
+    await teardown();
+    connectionDrain.untrack(ws);
   });
 });
 
@@ -1181,7 +1203,6 @@ export interface GatewayOptions {
 export interface GatewayInstance {
   server: http.Server;
   port: number;
-  shutdown: () => Promise<void>;
 }
 
 export async function startGateway(options?: GatewayOptions): Promise<GatewayInstance> {
@@ -1325,38 +1346,24 @@ export async function startGateway(options?: GatewayOptions): Promise<GatewayIns
 
   logger.info(`Server ready at http://${HOST}:${PORT}`);
 
-  // Build shutdown function (does NOT call process.exit)
-  const shutdown = async (): Promise<void> => {
-    logger.info('[Gateway] Shutting down...');
+  return { server, port: PORT };
+}
 
-    // Close all active WebSocket connections before stopping the HTTP server
-    for (const client of wss.clients) {
-      if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
-        client.close(1001, 'Server shutting down');
-      }
-    }
-    logger.info(`[Gateway] Closed ${wss.clients.size} WebSocket client(s)`);
-
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-      // Force close after 2s if server.close() hangs
-      setTimeout(() => {
-        if ((server as { closeAllConnections?: () => void }).closeAllConnections) {
-          (server as { closeAllConnections: () => void }).closeAllConnections();
-        }
-        resolve();
-      }, 2000);
-    });
-
-    // Shut down services with a 10s overall timeout
-    await Promise.race([
-      serviceRegistry.shutdown(),
-      new Promise<void>((resolve) => setTimeout(resolve, 10_000)),
-    ]);
-    logger.info('[Gateway] Shutdown complete');
-  };
-
-  return { server, port: PORT, shutdown };
+/**
+ * Wire the one shutdown sequence: SIGTERM, the first SIGINT and `uncaughtException` all run it.
+ */
+export function installGatewayShutdown(target: http.Server): void {
+  setupGracefulShutdown(
+    createShutdownSequence({
+      server: target,
+      drain: connectionDrain,
+      registry: serviceRegistry,
+      closeLogTransports,
+      exit: (code) => process.exit(code),
+      log: logger,
+    }),
+    target,
+  );
 }
 
 // =============================================================================
@@ -1376,7 +1383,7 @@ async function main(): Promise<void> {
   setupStandaloneErrorHandlers();
   try {
     const gateway = await startGateway();
-    setupGracefulShutdown(serviceRegistry, gateway.server);
+    installGatewayShutdown(gateway.server);
   } catch (error: unknown) {
     logger.error(`Failed to start server: ${toErrorMessage(error)}`);
     process.exit(1);
