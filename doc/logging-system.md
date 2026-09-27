@@ -76,7 +76,9 @@ Requires [jq](https://jqlang.github.io/jq/).
 | `LOG_MAX_FILES`        | `5`                   | Number of rotated files to keep                         |
 | `LOG_RING_BUFFER_SIZE` | `20`                  | Recent entries kept per session for error context        |
 
-**Rotation:** When a log file exceeds `LOG_MAX_SIZE`, it is renamed to `.1`, previous `.1` becomes `.2`, etc. Files beyond `LOG_MAX_FILES` are deleted. Both `LOG_FILE` and `LOG_ERROR_FILE` rotate independently.
+**Rotation:** When a log file exceeds `LOG_MAX_SIZE`, it is renamed to `.1`, previous `.1` becomes `.2`, etc. Files beyond `LOG_MAX_FILES` are deleted. Both `LOG_FILE` and `LOG_ERROR_FILE` rotate independently. Each file keeps the current file plus `LOG_MAX_FILES` rotated ones, so its ceiling is `(LOG_MAX_FILES + 1) × LOG_MAX_SIZE`.
+
+**Writing and shutdown:** each file is written through one append-mode stream (`FileTransport` in `src/shared/log-transport.ts`), so logging a line never blocks the gateway on a file call. The rotation is decided when the line is logged and carried out asynchronously between two lines: no line is lost, duplicated or put in the wrong file. Lines waiting for the disk are held in memory up to 8 MB per file; beyond that, whole lines are dropped. If the file cannot be written (full disk, broken mount), one line goes to stderr, lines are dropped while the file is unavailable, and the file is reopened every 30 s; on success a `resumed, N lines dropped` line follows on stderr. The console copy of every line is unaffected. Because writes are asynchronous, the last lines before `process.exit` are lost unless shutdown first awaits `closeLogTransports()` (`src/shared/logger.ts`), which flushes and closes both files.
 
 **Production:** `LOG_LEVEL=debug` may log session IDs, so `info` is the default and the policy floor (SEC-L-2). With `NODE_ENV=production` the gateway **refuses to start** on an explicit `LOG_LEVEL=debug` (`src/server/production-config.ts`). Ask for `debug` explicitly when developing.
 
