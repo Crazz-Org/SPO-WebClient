@@ -51,6 +51,9 @@ import { getReconnectDelay, isMaxAttempts, isSlowPhase, MAX_RECONNECT_ATTEMPTS }
 import { connectionPendingKey } from './handlers/connection-pending-key';
 import { connectionStats, utf8ByteLength } from './connection-stats';
 
+/** WebSocket close code 1012 "Service Restart" (IANA registry, RFC 6455 §7.4): the gateway is restarting. */
+const WS_CLOSE_SERVICE_RESTART = 1012;
+
 // Wire-level debug tracker exposed on window.__spoDebug (permanent instrumentation)
 interface SpoDebugWire {
   sent: number;
@@ -1052,7 +1055,7 @@ export class StarpeaceClient implements ClientHandlerContext {
 
     this.ws.onmessage = (event) => this.onWsMessage(event);
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event?: CloseEvent) => {
       this.isConnected = false;
       this.cleanupTimers();
       // Drain pending requests immediately to avoid noisy 15s timeouts
@@ -1069,6 +1072,9 @@ export class StarpeaceClient implements ClientHandlerContext {
       if (!this.storedUsername || !this.storedPassword) {
         ClientBridge.setDisconnected();
         return;
+      }
+      if (event?.code === WS_CLOSE_SERVICE_RESTART) {
+        useGameStore.getState().setServerRestarting(true);
       }
       ClientBridge.setReconnecting();
       this.scheduleReconnect();
@@ -1230,7 +1236,7 @@ export class StarpeaceClient implements ClientHandlerContext {
 
     this.ws.onmessage = (event) => this.onWsMessage(event);
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event?: CloseEvent) => {
       this.isConnected = false;
       this.cleanupTimers();
       this.pendingRequests.forEach(({ reject }) => reject(new Error('Disconnected')));
@@ -1244,6 +1250,9 @@ export class StarpeaceClient implements ClientHandlerContext {
         return;
       }
       if (this.storedUsername && this.storedPassword) {
+        if (event?.code === WS_CLOSE_SERVICE_RESTART) {
+          useGameStore.getState().setServerRestarting(true);
+        }
         ClientBridge.setReconnecting();
         this.scheduleReconnect();
       } else {

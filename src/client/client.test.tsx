@@ -28,11 +28,13 @@ import * as chatHandler from './handlers/chat-handler';
 import * as authHandler from './handlers/auth-handler';
 import * as buildingActionHandler from './handlers/building-action-handler';
 import { WsMessageType, type WsMessage } from '../shared/types';
+import { useGameStore } from './store/game-store';
+import { ClientBridge } from './bridge/client-bridge';
 
 class FakeSocket {
   onopen: (() => void) | null = null;
   onmessage: ((e: unknown) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((e?: { code: number }) => void) | null = null;
   onerror: ((e: unknown) => void) | null = null;
   send(): void { /* no-op */ }
   close(): void { /* no-op */ }
@@ -507,5 +509,72 @@ describe('Mail body splitting', () => {
       const call = sendSpy.mock.calls[0][0] as Record<string, unknown>;
       expect('existingDraftId' in call).toBe(false);
     });
+  });
+});
+
+describe('close code 1012 — gateway restarting', () => {
+  let client: StarpeaceClient;
+  type Internals = { ws: FakeSocket; storedUsername: string | null; storedPassword: string | null; currentWorldName: string };
+  const internals = () => client as unknown as Internals;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    client = new StarpeaceClient();
+    useGameStore.setState({ status: 'connected', serverRestarting: false, companyId: 'C1' });
+    internals().storedUsername = 'u';
+    internals().storedPassword = 'p';
+    internals().currentWorldName = 'planitia';
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('a close with 1012 sets the restart cause and enters reconnecting', () => {
+    internals().ws.onclose?.({ code: 1012 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    expect(useGameStore.getState().serverRestarting).toBe(true);
+  });
+
+  it('a later 1006 on a reconnect socket keeps the cause', () => {
+    const first = internals().ws;
+    first.onclose?.({ code: 1012 });
+    jest.advanceTimersByTime(60_000);
+    const second = internals().ws;
+    expect(second).not.toBe(first);
+    second.onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    expect(useGameStore.getState().serverRestarting).toBe(true);
+  });
+
+  it('a 1012 on a reconnect socket also sets the cause', () => {
+    internals().ws.onclose?.({ code: 1006 });
+    jest.advanceTimersByTime(60_000);
+    internals().ws.onclose?.({ code: 1012 });
+    expect(useGameStore.getState().serverRestarting).toBe(true);
+  });
+
+  it('reaching connected clears the cause', () => {
+    internals().ws.onclose?.({ code: 1012 });
+    ClientBridge.setConnected();
+    expect(useGameStore.getState().serverRestarting).toBe(false);
+  });
+
+  it.each([1000, 1001, 1006])('a close with %i leaves the cause unset', (code) => {
+    internals().ws.onclose?.({ code });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    expect(useGameStore.getState().serverRestarting).toBe(false);
+  });
+
+  it('a 1012 with no stored credentials does not set the cause', () => {
+    internals().storedUsername = null;
+    internals().storedPassword = null;
+    internals().ws.onclose?.({ code: 1012 });
+    expect(useGameStore.getState().status).toBe('disconnected');
+    expect(useGameStore.getState().serverRestarting).toBe(false);
   });
 });

@@ -2,7 +2,8 @@
  * ReconnectingOverlay — Connection status overlay.
  *
  * Two modes:
- * 1. Reconnecting: spinner + attempt counter + "Try now" button
+ * 1. Reconnecting: spinner + attempt counter + "Try now" button — titled "Server restarting"
+ *    after a close with code 1012, otherwise "Connection lost"
  * 2. Disconnected with reason: error icon + explanation + "Return to home page" button
  */
 
@@ -25,6 +26,7 @@ export function ReconnectingOverlay() {
   const status = useGameStore((s) => s.status);
   const attempt = useGameStore((s) => s.reconnectAttempt);
   const disconnectReason = useGameStore((s) => s.disconnectReason);
+  const serverRestarting = useGameStore((s) => s.serverRestarting);
   const client = useClient();
 
   const isReconnecting = status === 'reconnecting';
@@ -67,7 +69,10 @@ export function ReconnectingOverlay() {
           <div className={spinnerStyles.dot} />
           <div className={spinnerStyles.dot} />
         </div>
-        <p className={styles.title}>Connection lost</p>
+        <p className={styles.title}>{serverRestarting ? 'Server restarting' : 'Connection lost'}</p>
+        {serverRestarting && (
+          <p className={styles.attempt}>The game will reconnect automatically.</p>
+        )}
         <p className={styles.attempt}>
           {isSlowPhase(attempt - 1)
             ? `Reconnecting… slow poll (attempt ${attempt} of ${MAX_RECONNECT_ATTEMPTS})`
