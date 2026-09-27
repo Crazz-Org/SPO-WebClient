@@ -38,7 +38,7 @@ import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
 import { WsDriverError } from './ws-driver';
-import { GOVERNED_TOWN, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
+import { GOVERNED_TOWN, LIMITS, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
 import { findCurrentSurvivalLog, openLogWindow } from './live-log';
 import { runProbe, probeFailure, type ProbeResult, type ProbeSpec } from './probe';
 import {
@@ -59,6 +59,8 @@ export interface FlowContext {
   lock: WorldLock;
   /** Injected so a dry run can exercise the catalogue without touching the world. */
   survivalLogUrl?: string;
+  /** Injected so a test can avoid a real delay between mailRoundTrip's Inbox re-reads. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface FlowResult {
@@ -261,8 +263,9 @@ const mailRoundTrip: Flow = {
   name: 'mail-roundtrip',
   what: 'SPO_test3 sends -> Crazz receives -> delete',
   mutates: true,
-  run: async () => {
+  run: async ctx => {
     const assertions = new Assertions();
+    const sleep = ctx.sleep ?? defaultSleep;
     const subject = `e2e ${new Date().toISOString()}`;
 
     const sender = await login(PRIMARY_ACCOUNT);
@@ -316,14 +319,29 @@ const mailRoundTrip: Flow = {
           { type: WsMessageType.REQ_MAIL_DELETE, folder: 'Inbox', messageId: delivered.messageId },
           WsMessageType.RESP_MAIL_DELETED,
         );
-        const inboxAfter = await recipient.driver.request<WsRespMailFolder>(
-          { type: WsMessageType.REQ_MAIL_GET_FOLDER, folder: 'Inbox' },
-          WsMessageType.RESP_MAIL_FOLDER,
-        );
+
+        // DeleteMessage is a fire-and-forget RDO procedure (Mail Server/MailServer.pas:109) —
+        // the gateway answers before the server has necessarily removed the message's
+        // directory, and the Inbox listing is served over HTTP from IIS (MessageList.asp),
+        // not the RDO socket, so in-order delivery on the mail socket cannot put the delete
+        // ahead of the read. Re-read until the message is gone, bounded, and assert on the
+        // last read (issue #1025).
+        let stillListed = true;
+        let reads = 0;
+        for (let attempt = 1; attempt <= LIMITS.mailDeleteMaxReads; attempt++) {
+          const inboxAfter = await recipient.driver.request<WsRespMailFolder>(
+            { type: WsMessageType.REQ_MAIL_GET_FOLDER, folder: 'Inbox' },
+            WsMessageType.RESP_MAIL_FOLDER,
+          );
+          reads = attempt;
+          stillListed = inboxAfter.messages.some(m => m.messageId === delivered.messageId);
+          if (!stillListed) break;
+          if (attempt < LIMITS.mailDeleteMaxReads) await sleep(TIMEOUTS.mailDeleteReread);
+        }
         assertions.check(
           'the probe message was deleted again',
-          !inboxAfter.messages.some(m => m.messageId === delivered.messageId),
-          `messageId=${delivered.messageId}`,
+          !stillListed,
+          `messageId=${delivered.messageId} reads=${reads}`,
         );
       }
       return report('mail-roundtrip', assertions, [], recipient);
@@ -1115,6 +1133,10 @@ export function nudge(original: string): string {
   if (!Number.isFinite(parsed)) return '1';
   const next = parsed >= 50 ? parsed - 1 : parsed + 1;
   return String(Math.min(100, Math.max(0, Math.round(next))));
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function report(
