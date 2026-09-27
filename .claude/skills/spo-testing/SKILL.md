@@ -137,10 +137,13 @@ A green test that cannot go red proves nothing and still counts toward coverage.
 `toEqual` / `toStrictEqual(E)` with the same text twice), `literalExpect` (`expect(<literal>)`),
 `replicaFunction` (a local function of 8+ lines with a comment saying replicates / simulates /
 mirrors / "copy of" just above it), `tsNocheck`, and `checkTrue` (`check('…', true` in
-`src/e2e/flows.ts`). A new occurrence fails with its file and line. Each count must stay at or
-below its `BASELINE`, and the baseline only goes down. A line can opt out with
+`src/e2e/flows.ts`). A new occurrence fails with its file and line. The baseline lives in
+`src/__tests__/test-hygiene.baseline.json`, and a listed site that no longer exists (fixed or
+moved) fails too. Never edit that file by hand: `npm run hygiene:baseline` rewrites it from the
+scan, and refuses when any count would rise, so the baseline only goes down. Two branches
+conflicting on it: take either side, run the command, commit. A line can opt out with
 `// hygiene-exception: <reason>`, but exceptions are counted and ratcheted too, and their baseline
-is 0. Fix the test, never the baseline. The ratchet cannot see the other rules above (watching
+is 0. Fix the test, never raise the baseline. The ratchet cannot see the other rules above (watching
 the test fail, the non-empty loop, the resting state, wall-clock bounds, `fake.cacher` stubs).
 Those stay the author's job.
 
