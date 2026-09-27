@@ -10,7 +10,8 @@
  * Three things happen here, all of them at boot and only once:
  *
  * 1. **Fail fast** on a forbidden combination — `NODE_ENV=production` together with
- *    `LOG_LEVEL=debug`. The gateway refuses to start.
+ *    `LOG_LEVEL=debug`, or together with single-user mode (which skips the Origin check and
+ *    every per-IP ceiling). The gateway refuses to start.
  * 2. **Warn** when a production-only safety net is left unset (`TRUST_PROXY`,
  *    `ENABLE_HSTS`) — those are choices, not mistakes, so they do not block a start.
  * 3. **Report** the effective security configuration, so the running values are in
@@ -59,9 +60,14 @@ export type EnvLike = Record<string, string | undefined>;
  *
  * `effectiveLogLevel` is the level the logger actually resolved (`config.logging.level`),
  * not the raw variable: a deployment that never sets `LOG_LEVEL` inherits the `info`
- * default and is compliant, so only an explicit `debug` is a violation.
+ * default and is compliant, so only an explicit `debug` is a violation. `singleUserMode`
+ * is likewise the running value, which also carries a `startGateway` option override.
  */
-export function checkProductionConfig(env: EnvLike, effectiveLogLevel: string): ProductionConfigVerdict {
+export function checkProductionConfig(
+  env: EnvLike,
+  effectiveLogLevel: string,
+  singleUserMode: boolean = false
+): ProductionConfigVerdict {
   const production = env.NODE_ENV === 'production';
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -74,6 +80,14 @@ export function checkProductionConfig(env: EnvLike, effectiveLogLevel: string): 
     errors.push(
       'LOG_LEVEL=debug is forbidden in production — session identifiers leak at debug level ' +
         '(policy SEC-L-2). Set LOG_LEVEL to info, warn or error.'
+    );
+  }
+
+  if (singleUserMode) {
+    errors.push(
+      'SINGLE_USER_MODE is forbidden in production — it skips the Origin check, the per-IP auth ' +
+        'and /proxy-image rate limits and the per-IP WebSocket cap (policy SEC-W-1, SEC-W-3, ' +
+        'SEC-H-4). Unset SINGLE_USER_MODE.'
     );
   }
 
@@ -133,7 +147,7 @@ export function enforceProductionConfig(
   values: SecurityRuntimeValues,
   logger: StartupLogger
 ): void {
-  const verdict = checkProductionConfig(env, effectiveLogLevel);
+  const verdict = checkProductionConfig(env, effectiveLogLevel, values.singleUserMode);
 
   for (const line of buildSecurityReadout(values, env)) {
     logger.info(line);
