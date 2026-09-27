@@ -156,6 +156,25 @@ Two fields carry more weight than their size suggests:
 `/triage-report` empties the queue: every report it reads ends in `~/.spo-reports/archive/` with
 a one-line disposition beside it, whether it became a card or not.
 
+## What may reach the public board
+
+**The rule** (maintainer decision, 2026-09-27): a raw report never becomes a public issue — the
+raw render of `report-card.js` goes to the private intake repository only. A public card never
+carries the reporter's `username`, what they typed (`observed`, `expected`, `freeText`), or
+journal payloads (`ws-in` / `ws-out` payloads, `console` messages). On-screen text
+(`anchor.text`) is allowed: every player sees it.
+
+**The mechanical check:**
+`npm run report:card -- --check-public <report.json> <candidate.md>`. It compares
+case-insensitively, with whitespace collapsed, over quotes of 24 characters or more (the
+username as a whole word), and prints only `leak: username` / `leak: free-text` /
+`leak: journal` — never the matched text. Exit 0 no hit, 1 at least one hit, 2 usage error,
+unreadable file, invalid JSON or failed validation, 3 schema version mismatch.
+
+**What it does not catch:** strings shorter than 24 characters — another player's name inside a
+`ws-in` frame, for one — and paraphrase. It is a backstop behind the drafting prompt, not a
+proof. Chat and mail payloads are already dropped at deposit (07a2, issue 1038).
+
 ## F8 is not in the `SHORTCUTS` table
 
 Every other global shortcut is registered in
