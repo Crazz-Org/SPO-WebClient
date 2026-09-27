@@ -128,7 +128,7 @@ export const RDO_MEMBERS = {
   CreateObject:              { kind: 'function',  arity: 1 },                // src/server/spo_session.ts (cacherCreateObject)
   DAAddr:                    { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts (fetchWorldProperties)
   DALockPort:                { kind: 'accessor',  access: ['get'] },         // src/server/session/login-handler.ts (fetchWorldProperties)
-  DefineZone:                { kind: 'function',  arity: 6 },                // src/server/session/zone-surface-handler.ts (defineZone)
+  DefineZone:                { kind: 'function',  arity: 6 },                // Interface Server/InterfaceServer.pas:161; Voyager/URLHandlers/ServerCnxHandler.pas:2231; src/server/session/zone-surface-handler.ts (defineZone)
   DeleteMessage:             { kind: 'procedure', arity: 4 },                // src/server/session/mail-handler.ts (deleteMailMessage)
   EnableEvents:              { kind: 'accessor',  access: ['set'] },         // src/server/session/login-handler.ts (selectCompany)
   FindClients:               { kind: 'function',  arity: 9 },                // src/server/session/politics-handler.ts (searchConnections)
