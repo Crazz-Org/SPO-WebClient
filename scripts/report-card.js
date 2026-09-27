@@ -1,14 +1,28 @@
 #!/usr/bin/env node
 'use strict';
 // npm run report:card -- <report.json>
+// npm run report:card -- --check-public <report.json> <candidate.md>
 //
-// Renders ONE queued bug report (~/.spo-reports/<file>.json) into a raw, unjudged markdown card
-// — no reproduction, no category/size/area, no "confirmed" verdict. This is the mechanical half
-// of the human-first intake redesign (SPO-Pipeline's orchestrator/report-intake.js): a report
-// lands on the board as-is, a human reads it and replies "confirm"/"discard", and only THEN does
-// any LLM look at it. This script must stay pure judgement-free — the moment it infers anything
-// about whether the report is a real defect, the whole point of putting a human in front of the
-// raw evidence first is lost.
+// Render mode renders ONE queued bug report (~/.spo-reports/<file>.json) into a raw, unjudged
+// markdown card — no reproduction, no category/size/area, no "confirmed" verdict. This is the
+// mechanical half of the human-first intake redesign (SPO-Pipeline's orchestrator/report-intake.js).
+// The raw render is for the PRIVATE intake repository only (SPO-Pipeline config.reportIntakeRepo,
+// card P) and must never be posted publicly: it carries the reporter's username, their typed text
+// and the journal. A human reads it and replies "confirm"/"discard", and only THEN does any LLM
+// look at it. This script must stay pure judgement-free — the moment it infers anything about
+// whether the report is a real defect, the whole point of putting a human in front of the raw
+// evidence first is lost.
+//
+// --check-public mode is the mechanical backstop before a drafted card reaches the PUBLIC board:
+// it looks for the report's private material (username as a whole word; any MIN_QUOTE_CHARS
+// window of observed/expected/freeText not also in the on-screen anchor.text; any journal
+// ws-in/ws-out payload string or console message of MIN_QUOTE_CHARS+ chars) in the candidate,
+// case-insensitively with whitespace collapsed. It prints only the category of each hit, never
+// the matched text.
+//   exit 0 : no hit, stdout empty
+//   exit 1 : at least one hit -- stdout lines `leak: username` / `leak: free-text` / `leak: journal`
+//   exit 2 : usage error, unreadable file, invalid JSON, or failed validation
+//   exit 3 : schema version mismatch -- same found:/expected: stdout as render mode
 //
 // Schema knowledge lives beside the schema, not in the driving pipeline (SPO-Pipeline's own "one
 // rule": it never encodes product-repo knowledge, only relays opaque bytes) -- this script reads
@@ -16,6 +30,7 @@
 // bump to BUG_REPORT_SCHEMA_VERSION or a field rename is caught here automatically, never a stale
 // second copy of the contract).
 //
+// Render mode:
 //   exit 0 : stdout is
 //              anchorKey: <hex>
 //              profile: desktop|mobile
@@ -44,7 +59,7 @@ const MAX_CARD_BYTES = 60000;
 
 function usageExit(message) {
   if (message) console.error(`report-card: ${message}`);
-  console.error('usage: report-card.js <report.json>');
+  console.error('usage: report-card.js <report.json> | --check-public <report.json> <candidate.md>');
   process.exit(2);
 }
 
@@ -245,16 +260,13 @@ function buildBody(report, journalByteBudget) {
   return lines.join('\n');
 }
 
-function main() {
-  const file = process.argv[2];
-  if (!file) usageExit();
-
+function loadValidatedReport(file) {
   let raw;
   try {
     raw = fs.readFileSync(file, 'utf8');
   } catch (err) {
     usageExit(`cannot read ${file}: ${err.message}`);
-    return;
+    return undefined;
   }
 
   let parsed;
@@ -262,7 +274,7 @@ function main() {
     parsed = JSON.parse(raw);
   } catch {
     usageExit(`${file} is not valid JSON`);
-    return;
+    return undefined;
   }
 
   const schema = loadSchemaModule();
@@ -277,10 +289,99 @@ function main() {
   const validated = schema.validateBugReport(parsed);
   if (!validated.ok) {
     usageExit(`${file} failed validation: ${validated.error}`);
-    return;
+    return undefined;
+  }
+  return validated.report;
+}
+
+// Shortest quote treated as a leak. Shorter strings collide with ordinary prose too often to be
+// a useful signal; the drafting prompt, not this check, guards below it.
+const MIN_QUOTE_CHARS = 24;
+
+function normalize(s) {
+  return String(s).toLowerCase().replace(/\s+/g, ' ');
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function collectStrings(value, out) {
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) for (const v of value) collectStrings(v, out);
+  else if (value && typeof value === 'object') for (const v of Object.values(value)) collectStrings(v, out);
+  return out;
+}
+
+function findLeaks(report, candidateText) {
+  const candidate = normalize(candidateText);
+  const leaks = [];
+
+  const u = normalize(report.username || '').trim();
+  if (u) {
+    const re = new RegExp('(^|[^\\p{L}\\p{N}_])' + escapeRegExp(u) + '($|[^\\p{L}\\p{N}_])', 'u');
+    if (re.test(candidate)) leaks.push('username');
   }
 
-  const report = validated.report;
+  const windows = new Set();
+  for (let i = 0; i + MIN_QUOTE_CHARS <= candidate.length; i++) {
+    windows.add(candidate.slice(i, i + MIN_QUOTE_CHARS));
+  }
+  const anchorNorm =
+    report.anchor && report.anchor.kind === 'dom' && report.anchor.text ? normalize(report.anchor.text) : '';
+  let freeTextHit = false;
+  for (const field of [report.observed, report.expected, report.freeText]) {
+    if (typeof field !== 'string' || freeTextHit) continue;
+    const text = normalize(field);
+    for (let i = 0; i + MIN_QUOTE_CHARS <= text.length; i++) {
+      const w = text.slice(i, i + MIN_QUOTE_CHARS);
+      if (anchorNorm.includes(w)) continue;
+      if (windows.has(w)) {
+        freeTextHit = true;
+        break;
+      }
+    }
+  }
+  if (freeTextHit) leaks.push('free-text');
+
+  const journalStrings = [];
+  for (const entry of report.journal || []) {
+    if (entry.t === 'ws-in' || entry.t === 'ws-out') collectStrings(entry.payload, journalStrings);
+    else if (entry.t === 'console') collectStrings(entry.message, journalStrings);
+  }
+  const journalHit = journalStrings.some((s) => {
+    const n = normalize(s);
+    return n.length >= MIN_QUOTE_CHARS && candidate.includes(n);
+  });
+  if (journalHit) leaks.push('journal');
+
+  return leaks;
+}
+
+function checkPublic(reportFile, candidateFile) {
+  if (!reportFile || !candidateFile) usageExit('--check-public needs <report.json> <candidate.md>');
+  const report = loadValidatedReport(reportFile);
+  let candidate;
+  try {
+    candidate = fs.readFileSync(candidateFile, 'utf8');
+  } catch (err) {
+    usageExit(`cannot read ${candidateFile}: ${err.code || 'read error'}`);
+    return;
+  }
+  const leaks = findLeaks(report, candidate);
+  for (const l of leaks) process.stdout.write(`leak: ${l}\n`);
+  process.exit(leaks.length > 0 ? 1 : 0);
+}
+
+function main() {
+  if (process.argv[2] === '--check-public') {
+    checkPublic(process.argv[3], process.argv[4]);
+    return;
+  }
+  const file = process.argv[2];
+  if (!file) usageExit();
+
+  const report = loadValidatedReport(file);
   const title = buildTitle(report);
 
   // Budget the journal against everything else already rendered, so the whole card stays under
