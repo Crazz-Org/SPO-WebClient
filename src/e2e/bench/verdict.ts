@@ -183,6 +183,12 @@ export interface BenchVerdict {
   /** Capability exceptions the gate recorded (doc/E2E-POLICY.md §7) — shown on GitHub. */
   exceptions?: number;
   /**
+   * UNPROVEN flows the gate artifact recorded (doc/E2E-POLICY.md §7) — a required one
+   * already made the gate's exit code FAIL; shown on GitHub. Absent on a verdict written
+   * before this field existed (read as 0).
+   */
+  unproven?: number;
+  /**
    * What the live stage did. See {@link LiveAttestation}. Absent on a verdict written
    * before this field existed — a reader MUST treat that absence exactly like the
    * `'unknown'` member, never as "the live stage ran": that conflation is the bug this
@@ -334,8 +340,8 @@ export const STATUS_DESCRIPTION_MAX = 140;
  * Build the GitHub commit-status description for a verdict, never exceeding
  * {@link STATUS_DESCRIPTION_MAX} characters.
  *
- * The verdict word, the liveness marker, the exception count and the base sha form a
- * protected tail — always included in full. The job id is appended last, into whatever
+ * The verdict word, the liveness marker, the exception count, the unproven-flow count
+ * (rendered only when > 0) and the base sha form a protected tail — always included in full. The job id is appended last, into whatever
  * budget remains; when a long `reusedFrom`/`jobId`/`baseMain` chain would blow the
  * budget, the job id is truncated, or dropped entirely if there is no room for it at all.
  *
@@ -375,6 +381,7 @@ export function statusDescription(verdict: BenchVerdict): string {
     verdict.verdict +
     live +
     `${verdict.exceptions ? ` — ${verdict.exceptions} capability exception(s)` : ''}` +
+    `${verdict.unproven ? ` — ${verdict.unproven} unproven flow(s)` : ''}` +
     base +
     `${verdict.reusedFrom ? ` — reused ${verdict.reusedFrom.slice(0, 8)}` : ''}`;
 

@@ -217,6 +217,7 @@ distinction is the whole point:
 |---|---|---|
 | a control missing, a request refused by the gateway, a wrong frame | a **bug** | `FAIL` — diagnose, fix, iterate (§8) |
 | the server says the account does not hold the role the member needs | a **capability exception** | recorded with its evidence; the gate continues |
+| the flow ran and nothing failed, but the world held no data to exercise it on (`UNPROVEN`) | an **unproven flow** | required by routing → `FAIL`; run only because `--flows` named it → recorded, informational |
 
 The six `TPresidentialHall` members ([civic-roles-reference.md:101-106](civic-roles-reference.md))
 — `RDOSetMinSalaryValue` · `RDOSetTownTaxes` · `RDOSitMayor` · `RDOSitMinister` ·
@@ -240,6 +241,25 @@ presidential hall. `granted` follows `canGovern`; the cache flag rides along as 
 There is **no human override**: nothing a session or a developer types turns an exception
 into a verification. The only way to verify these members is an account that holds the
 capability — and then the gate demands the flow.
+
+### Unproven flows — what the world cannot show
+
+**A required flow that ends UNPROVEN fails the gate.**
+
+- Missing data is not a capability exception. The account *can* act; the world holds
+  nothing to act on, so the change was never seen working.
+- The remedy is the flow's seed step (#1009), which creates the data before the flow runs.
+  It is never an override, and never a `PASS` for a flow that exercised nothing.
+- A flow whose data cannot be seeded is either kept failing or taken out of the routed set
+  by a routing change (`src/e2e/routing.ts`), and that choice is the maintainer's.
+- A flow that no routing rule requires (for example the probes of #1004 and #1006) may end
+  UNPROVEN as information. **A card that makes such a flow required must seed its data
+  first.**
+
+`verify-gate.js` records every UNPROVEN flow in the artifact's top-level `unproven` list
+(`{ flow, required, reasons }`, §10) — outside `exclusions`, because a required entry is a
+failure, not an exclusion — and the `bench/gate` status shows the count as
+`— N unproven flow(s)`.
 
 ---
 
@@ -314,19 +334,25 @@ the same run (§5).
   "head": "<sha>", "branch": "fix/…", "verdict": "PASS|FAIL|BLOCKED",
   "createdAt": "2026-08-21T09:12:44.101Z",
   "static": { "typecheck": "PASS", "lint": "PASS", "test": "PASS" },
-  "routing": { "changed": ["src/…"], "required": ["login-spine", "politics-write"] },
+  "routing": { "changed": ["src/…"],
+               "required": ["login-spine", "politics-write", "zoning-alert-read"] },
   "live": {
     "world": "planitia", "account": "SPO_test3",
     "window": { "from": "…Z", "to": "…Z" },
     "flows": [{ "name": "politics-write", "status": "PASS",
                 "probes": [{ "member": "RDOSetTaxValue", "logLine": "Setting Tax value: 12",
-                             "restored": true, "readBack": "CONFIRMED" }] }]
+                             "restored": true, "readBack": "CONFIRMED" }] },
+              { "name": "zoning-alert-read", "status": "UNPROVEN",
+                "unproven": ["the flow's data — seed failed: …"] }]
   },
   "exclusions": { "presidentMembersTouched": ["RDOSitMayor"],
                   "capability": [{ "capability": "president", "members": ["RDOSitMayor"],
                                    "account": "SPO_test3",
                                    "checks": [{ "what": "canGovern on the Capitol (server grantAccess)", "value": "false" }],
                                    "checkedAt": "…Z" }] },
+  // Outside `exclusions`: a required entry is a failure (§7, "Unproven flows").
+  "unproven": [{ "flow": "zoning-alert-read", "required": true,
+                 "reasons": ["the flow's data — seed failed: …"] }],
   "attempt": 1
 }
 ```

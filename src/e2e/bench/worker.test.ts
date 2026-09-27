@@ -16,6 +16,7 @@ import {
   NETWORK_SUBCOMMANDS,
   classifyStage,
   countCapabilityExceptions,
+  countUnprovenFlows,
   DEADLINE_EXIT_CODE,
   downgradeUnreachable,
   liveAttestationFrom,
@@ -365,6 +366,45 @@ describe('processOldest — the queue discipline', () => {
     const bad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-art-')), 'gate.json');
     fs.writeFileSync(bad, '{not json', 'utf8');
     expect(countCapabilityExceptions(bad)).toBe(0);
+  });
+
+  it('carries the gate artifact\'s unproven flows into the attestation', async () => {
+    const h = harness();
+    deposit(h);
+    const artifactDir = path.join(h.worktree, 'report', 'e2e');
+    fs.mkdirSync(artifactDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(artifactDir, `gate-head-of-${path.basename(h.worktree)}.json`),
+      JSON.stringify({
+        exclusions: { capability: [] },
+        unproven: [{ flow: 'zoning-alert-read', required: true, reasons: ['r'] }],
+      }),
+      'utf8',
+    );
+    await processOldest(h.deps);
+    expect(listVerdicts(h.paths)[0].verdict.unproven).toBe(1);
+  });
+
+  it('counts unproven flows, and zero when the artifact is absent, unreadable or predates the field', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-art-'));
+    const write = (name: string, body: string): string => {
+      const file = path.join(dir, name);
+      fs.writeFileSync(file, body, 'utf8');
+      return file;
+    };
+    expect(countUnprovenFlows(undefined)).toBe(0);
+    expect(countUnprovenFlows('/nowhere/gate.json')).toBe(0);
+    expect(countUnprovenFlows(write('bad.json', '{not json'))).toBe(0);
+    // An artifact written before the field existed.
+    expect(countUnprovenFlows(write('old.json', JSON.stringify({ exclusions: { capability: [] } })))).toBe(0);
+    expect(countUnprovenFlows(write('odd.json', JSON.stringify({ unproven: 'two' })))).toBe(0);
+    const two = JSON.stringify({
+      unproven: [
+        { flow: 'zoning-alert-read', required: true, reasons: ['r'] },
+        { flow: 'newspaper-read', required: false, reasons: ['s'] },
+      ],
+    });
+    expect(countUnprovenFlows(write('two.json', two))).toBe(2);
   });
 
   // B2.1 — the attestation gains what the gate actually did. These are the exact class
