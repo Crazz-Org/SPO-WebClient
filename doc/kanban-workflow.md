@@ -556,7 +556,8 @@ into its final report, because a test session or a requested audit finds it agai
 where someone asked for it. Widening a session's scope is the maintainer's call.
 
 What is filed lands **as a new issue on the board**, in Todo (bottom — the human prioritises),
-with `Category` set and a synthetic body: what is wrong or missing, key `file:line` references,
+with `Category` set and a synthetic body: what is wrong or missing, key `file:line` references
+(file + symbol for in-repo code, CLAUDE.md § Code style),
 source (journey/date).
 
 **Set the matching label too**, not only the project field. The field is the board's truth;
@@ -579,7 +580,7 @@ Never post those by hand.
 
 **Before the `gh issue create`, the draft card goes to the `card-reviewer` sub-agent**
 ([.claude/agents/card-reviewer.md](../.claude/agents/card-reviewer.md)) — title, body,
-`Category`, `Size`, `Area`, verbatim, and nothing else. It is read-only, it carries none of the
+`Category`, `Size`, `Area`, its labels and its target board, verbatim, and nothing else. It is read-only, it carries none of the
 finder's context, and it does not want the work.
 
 Why: a pull request has had a second reader since #143. A card had none — the session that
@@ -599,8 +600,8 @@ Three verdicts, and what each does to the flow:
 | Verdict | The session |
 |---|---|
 | `FILE` | Files the card as written. |
-| `FILE AMENDED` | Applies the named corrections — body, `Category`, `Size`, `Area` — then files. |
-| `DO NOT FILE` | Files nothing, and says nothing of it in its final report. |
+| `FILE AMENDED` | Applies the named corrections — body, `Category`, `Size`, `Area` — then files. Any other change after the verdict goes back to the reviewer. |
+| `DO NOT FILE` | Files nothing, and says so in its final report, with the reviewer's reason. |
 
 `DO NOT FILE` names the code, the issue number or the commit that makes the finding moot — or,
 for a card whose ground truth is in another repo, the tracker to refile on. It is never about

@@ -220,6 +220,49 @@ describe('card-reviewer agent', () => {
         /a card that would "correct" a separator the client emits today from the declaration alone does not hold/
       );
     });
+
+    // The 2026-09-27 audit: on a batch of project-2 and cross-repo cards the reviewer caught a
+    // false "project 2 has no Area field" and labels missing on the target repo only by
+    // improvising. These pins make those checks part of the brief.
+    it('receives the labels and the target board, project 1 by default', () => {
+      const text = collapse(agent);
+      expect(text).toMatch(/`Area`, its labels, and its \*\*target\*\*/);
+      expect(text).toMatch(/With no target named, the target is project 1, `Crazz-Org\/SPO-WebClient`/);
+    });
+
+    it('reads a project-2 card against that board, not against project 1', () => {
+      const text = collapse(agent);
+      expect(text).toMatch(/gh project field-list 2 --owner Crazz-Org/);
+      expect(text).toMatch(/That partition is \*\*project 1's\*\*\. For a project-2 target, § The areas does not apply/);
+      expect(text).toMatch(/a card whose fix lands in SPO-WebClient → `DO NOT FILE`, refile on project 1/);
+      expect(text).toMatch(/gh issue list --repo <target>/);
+    });
+
+    it('checks the labels exist on the target repository', () => {
+      expect(collapse(agent)).toMatch(/Check the draft's labels against `gh label list --repo <target>`/);
+    });
+
+    it('amends a card landing under .claude/ that does not say it is maintainer-only', () => {
+      expect(collapse(agent)).toMatch(
+        /\*\*Maintainer-only ground\.\*\* A criterion that must change files under `\.claude\/`[^|]*maintainer-only[^|]*→ otherwise `FILE AMENDED`/
+      );
+    });
+
+    it('asks the card to name an existing test its criterion forces to change', () => {
+      expect(collapse(agent)).toMatch(/\*\*Tests it must change\.\*\*/);
+    });
+
+    it('treats caller-supplied context as claims, and an off-GitHub decision as unverified', () => {
+      const text = collapse(agent);
+      expect(text).toMatch(/\*\*Anything else the caller sends is a claim, not evidence\.\*\*/);
+      expect(text).toMatch(/marked `\[UNVERIFIED\]` where you rely on it, and it never turns a failed check into a pass/);
+    });
+
+    it('covers SPO-ASP and the ISO-8859 grep trap', () => {
+      const text = collapse(agent);
+      expect(text).toMatch(/`~\/SPO-ASP`\); cite `Five\/0\/\.\.\.`/);
+      expect(text).toMatch(/never conclude a name is absent from an unqualified `grep`/);
+    });
   });
 
   describe('the verdict contract', () => {
@@ -239,6 +282,14 @@ describe('card-reviewer agent', () => {
 
     it('keeps DO NOT FILE about the finding, never about priority', () => {
       expect(collapse(agent)).toMatch(/\*\*priority is the human's\*\*/);
+    });
+
+    it('sends a card changed after its verdict back to the reviewer', () => {
+      expect(collapse(agent)).toMatch(
+        /Any other change made after the verdict — to a claim, the criterion, the scope or a dependency, recording a maintainer decision included — sends the whole card back to you/
+      );
+      expect(collapse(rulebook)).toMatch(/Any other change after the verdict goes back to the reviewer/);
+      expect(collapse(triageCommand)).toMatch(/any other change after the verdict goes back to the reviewer/);
     });
 
     it('licenses an unchanged FILE, so the reviewer does not invent objections', () => {
@@ -261,7 +312,7 @@ describe('card-reviewer agent', () => {
   });
 });
 
-describe('the mechanism is named on all five surfaces', () => {
+describe('the mechanism is named on all four surfaces', () => {
   it('sits in the rulebook, inside the feeding rule it amends', () => {
     const feeding = rulebook.indexOf('## Feeding rule');
     const next = rulebook.indexOf('## Context discipline');
@@ -290,6 +341,15 @@ describe('the mechanism is named on all five surfaces', () => {
     expect(collapse(triageCommand)).toMatch(
       /posted verbatim as the card's first comment, dated/
     );
+  });
+
+  it('has /triage-report send Area, the field the review exists to protect', () => {
+    expect(collapse(triageCommand)).toMatch(/title, body, `Category`, `Size`, `Area` and its labels, verbatim/);
+  });
+
+  it('agrees on all surfaces that DO NOT FILE is named in the final report', () => {
+    expect(collapse(rulebook)).toMatch(/\| `DO NOT FILE` \| Files nothing, and says so in its final report/);
+    expect(collapse(agent)).toMatch(/Files nothing, and says so in its final report/);
   });
 
   it('is in the CLAUDE.md sub-agents table', () => {

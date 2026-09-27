@@ -149,8 +149,9 @@ matching `cat:` / `size:` labels: the field is the board's truth, the label is t
 ## 5 · The card review, then the filing
 
 **Every draft goes to the `card-reviewer` sub-agent before `gh issue create`** — title, body,
-`Category`, `Size`, verbatim, and nothing else. `FILE` files it; `FILE AMENDED` applies the named
-corrections first; **`DO NOT FILE` files nothing**, and the final report says what was found and
+`Category`, `Size`, `Area` and its labels, verbatim, and nothing else. `FILE` files it;
+`FILE AMENDED` applies the named corrections first; any other change after the verdict goes
+back to the reviewer; **`DO NOT FILE` files nothing**, and the final report says what was found and
 why no card exists. The verdict is posted verbatim as the card's first comment, dated
 `### Card review — <YYYY-MM-DD>`.
 
