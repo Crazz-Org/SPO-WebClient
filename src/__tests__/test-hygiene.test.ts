@@ -40,33 +40,27 @@ const BASELINE: Record<Shape | 'exceptions', { max: number; sites: string[] }> =
     sites: ['src/client/renderer/isometric-terrain-renderer.test.ts:438'],
   },
   replicaFunction: {
-    max: 9,
+    max: 5,
     sites: [
       'src/client/components/building/__tests__/resolve-rdo-command.test.ts:22',
       'src/server/__tests__/cache-sync-service.test.ts:19',
-      'src/server/__tests__/protocol-validation/build.validation.test.ts:501',
-      'src/server/__tests__/rdo/facility-set-commands.test.ts:21',
-      'src/server/__tests__/rdo/facility-set-commands.test.ts:166',
-      'src/server/__tests__/rdo/facility-set-commands.test.ts:199',
       'src/server/__tests__/rdo/tycoon-role-cache.test.ts:25',
       'src/server/__tests__/security-hardening.test.ts:59',
       'src/server/__tests__/supply-controls.test.ts:214',
     ],
   },
   tsNocheck: {
-    max: 6,
+    max: 4,
     sites: [
       'src/server/__tests__/rdo/building-operations.test.ts:1',
       'src/server/__tests__/rdo/company-session.test.ts:1',
-      'src/server/__tests__/rdo/facility-inspector-gaps.test.ts:1',
-      'src/server/__tests__/rdo/facility-set-commands.test.ts:1',
       'src/server/__tests__/rdo/login-flow.test.ts:1',
       'src/server/__tests__/rdo/rdo-value-equivalence.test.ts:1',
     ],
   },
   checkTrue: {
-    max: 4,
-    sites: ['src/e2e/flows.ts:291', 'src/e2e/flows.ts:683', 'src/e2e/flows.ts:729', 'src/e2e/flows.ts:775'],
+    max: 0,
+    sites: [],
   },
   exceptions: { max: 0, sites: [] },
 };

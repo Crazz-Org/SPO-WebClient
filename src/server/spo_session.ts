@@ -105,6 +105,7 @@ import * as buildingTemplatesHandler from './session/building-templates-handler'
 import * as buildingDetailsHandler from './session/building-details-handler';
 import * as buildingPropertyHandler from './session/building-property-handler';
 import * as researchHandler from './session/research-handler';
+import * as cacherPool from './session/cacher-object-pool';
 import { dispatchPush } from './session/push-dispatcher';
 import * as loginHandler from './session/login-handler';
 import { LatencyTracker } from './session/latency-tracker';
@@ -1463,14 +1464,10 @@ public async loadMapArea(x?: number, y?: number, w: number = 64, h: number = 64)
     }
   }
 
+  // -- CACHER OBJECT POOL (facade -> cacher-object-pool) --------------------
+
   public async cacherCreateObject(): Promise<string> {
-    if (!this.cacherId) throw new Error('Missing cacherId');
-    if (!this.currentWorldInfo?.name) throw new Error('Missing world name for CreateObject');
-    const packet = await this.sendRdoRequest('map', rdoCall(
-      'CreateObject', this.cacherId,
-      RdoValue.string(this.currentWorldInfo.name),
-    ).packet, undefined, TimeoutCategory.SLOW);
-    return cleanPayloadHelper(packet.payload || '');
+    return cacherPool.createObject(this);
   }
 
   /**
@@ -1478,76 +1475,19 @@ public async loadMapArea(x?: number, y?: number, w: number = 64, h: number = 64)
    * This method MUST be called before GetPropertyList to populate server cache
    */
   public async cacherSetObject(tempObjectId: string, x: number, y: number): Promise<void> {
-    await this.sendRdoRequest('map', rdoCall(
-      'SetObject', tempObjectId,
-      RdoValue.int(x),
-      RdoValue.int(y),
-    ).packet, undefined, TimeoutCategory.SLOW);
-    // Brief delay for server to populate cache (reduced from 100ms)
-    await new Promise(resolve => setTimeout(resolve, 30));
+    return cacherPool.setObject(this, tempObjectId, x, y);
   }
 
   public async cacherSetPath(tempObjectId: string, path: string): Promise<void> {
-    await this.sendRdoRequest('map', rdoCall(
-      'SetPath', tempObjectId,
-      RdoValue.string(path),
-    ).packet, undefined, TimeoutCategory.SLOW);
-    // No delay needed — Delphi SetPath is synchronous (loads file inline before responding)
+    return cacherPool.setPath(this, tempObjectId, path);
   }
 
   public async cacherGetPropertyList(tempObjectId: string, propertyNames: string[]): Promise<string[]> {
-    const query = propertyNames.join('\t') + '\t';
-    const packet = await this.sendRdoRequest('map', rdoCall(
-      'GetPropertyList', tempObjectId,
-      RdoValue.string(query),
-    ).packet, undefined, TimeoutCategory.NORMAL);
-    // Extract tab-delimited values WITHOUT trimming — cleanPayload's .trim()
-    // strips leading/trailing tabs, destroying empty values at the boundaries.
-    // The Delphi cache server always returns one value per requested property
-    // (empty string for unknown properties), so positional alignment is critical.
-    const rawPayload = packet.payload || '';
-    let raw: string;
-    const resMatch = rawPayload.match(/^res="((?:[^"]|"")*)"$/);
-    if (resMatch) {
-      raw = resMatch[1].replace(/""/g, '"');
-      // Strip OLE string type prefix (%) but NOT whitespace/tabs
-      if (raw.length > 0 && ['#', '%', '@', '$', '^', '!', '*'].includes(raw[0])) {
-        raw = raw.substring(1);
-      }
-    } else {
-      raw = cleanPayloadHelper(rawPayload);
-    }
-
-    // Tab-split: the Delphi server appends TAB after each value, so we get
-    // N values + 1 trailing empty from the final tab. Trim individual values
-    // (spaces only, not tabs) but preserve empty strings for missing properties.
-    const values = raw.split('\t').map(v => v.trim());
-    // Remove trailing empty element from the final TAB delimiter
-    if (values.length > 0 && values[values.length - 1] === '') {
-      values.pop();
-    }
-    if (values.length < propertyNames.length) {
-      this.log.warn(
-        `[cacherGetPropertyList] Response has ${values.length} values for ${propertyNames.length} requested properties`
-      );
-      this.log.warn(`[cacherGetPropertyList] Requested: ${propertyNames.join(', ')}`);
-      this.log.warn(`[cacherGetPropertyList] Received: ${values.map((v, i) => `[${i}]="${v}"`).join(', ')}`);
-    }
-    return values;
+    return cacherPool.getPropertyList(this, tempObjectId, propertyNames);
   }
 
   public cacherCloseObject(tempObjectId: string): void {
-    if (!this.cacherId) return;
-    const socket = this.sockets.get('map');
-    if (!socket) return;
-    // CloseObject is a Delphi procedure (void) — fire-and-forget, no QueryId.
-    // Delphi: procedure CloseObject(Obj: integer)
-    try {
-      const cmd = rdoCall('CloseObject', this.cacherId, RdoValue.int(parseInt(tempObjectId, 10))).toFrame();
-      writeRdoFrame(socket, cmd);
-    } catch (e: unknown) {
-      this.log.warn('[cacherCloseObject] Failed:', toErrorMessage(e));
-    }
+    cacherPool.closeObject(this, tempObjectId);
   }
 
 

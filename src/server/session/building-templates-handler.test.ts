@@ -28,9 +28,9 @@ import { DEFAULT_LANGUAGE_ID, withLangId } from '../../shared/language';
 // =============================================================================
 // placeBuilding / placeCapitol — M-A regression
 //
-// These call the REAL handler against a mocked RDO transport, unlike the
-// synthetic-packet suites in __tests__/protocol-validation/, which assert
-// hand-built command strings and therefore never observe the return value.
+// These call the REAL handler against a mocked RDO transport and pin the return
+// value. The __tests__/protocol-validation/ suites (capitol, build) drive the same
+// handlers through a real session and pin the frame they emit.
 // =============================================================================
 
 /** Minimal SessionContext satisfying what the two placement handlers touch. */

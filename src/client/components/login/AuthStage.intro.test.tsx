@@ -35,6 +35,10 @@ describe('AuthStage staged entrance', () => {
   it('skips on a click', () => {
     renderWithProviders(<AuthStage {...props} />);
 
+    act(() => { screen.getByPlaceholderText('Username').blur(); });
+    expect(document.activeElement).toBe(document.body);
+    expect(stageRoot().dataset.intro).toBe('playing');
+
     fireEvent.pointerDown(window);
 
     expect(stageRoot().dataset.intro).toBe('done');
@@ -44,6 +48,10 @@ describe('AuthStage staged entrance', () => {
   it('skips on a key press', () => {
     renderWithProviders(<AuthStage {...props} />);
 
+    act(() => { screen.getByPlaceholderText('Username').blur(); });
+    expect(document.activeElement).toBe(document.body);
+    expect(stageRoot().dataset.intro).toBe('playing');
+
     fireEvent.keyDown(window, { key: 'a' });
 
     expect(stageRoot().dataset.intro).toBe('done');
@@ -52,6 +60,10 @@ describe('AuthStage staged entrance', () => {
 
   it('skips on a focus event landing elsewhere', () => {
     renderWithProviders(<AuthStage {...props} />);
+
+    act(() => { screen.getByPlaceholderText('Username').blur(); });
+    expect(document.activeElement).toBe(document.body);
+    expect(stageRoot().dataset.intro).toBe('playing');
 
     fireEvent.focus(screen.getByPlaceholderText('Password'));
 

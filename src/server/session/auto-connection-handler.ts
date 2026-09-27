@@ -205,6 +205,11 @@ export async function executeAutoConnectionAction(
   const basePath = `http://${worldIp}/Five/0/Visual/Voyager/NewTycoon/`;
   const tycoonId = ctx.tycoonId || '';
 
+  // TycoonAutoConnections.asp:210-222 — the reference page never sends a delete
+  // without a chosen row. Refused before the cache lookup: a warm cached URL still
+  // carries the last page's Supplier=, which would otherwise go out unchanged.
+  if (action === 'delete' && !suppliers) return { success: false, message: 'Supplier facility ID required' };
+
   try {
     // 1. Try cached URL from last fetchAutoConnections() ASP parse
     const cached = ctx.getAspActionCache('NewTycoon/TycoonAutoConnections.asp');

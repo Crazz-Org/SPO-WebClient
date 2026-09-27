@@ -116,8 +116,8 @@ jobs:
           # Authenticates to GitHub, not to Claude. See the header: without it the action
           # takes the GitHub App path and needs `id-token: write` and an app install.
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # CLAUDE.md § Model routing: analysis goes to Fable 5, execution to Opus 5. A
-          # review is analysis. One line to change if calibration says otherwise.
+          # doc/kanban-workflow.md § Model routing: analysis goes to Fable 5, execution to
+          # Opus 5. A review is analysis. One line to change if calibration says otherwise.
           claude_args: |
             --model claude-fable-5
             --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"

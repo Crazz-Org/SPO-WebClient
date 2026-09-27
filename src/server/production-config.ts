@@ -25,7 +25,7 @@
 export interface SecurityRuntimeValues {
   /** `X-Forwarded-For` is honoured only when this is on (SEC-H-7). */
   trustProxy: boolean;
-  /** `Strict-Transport-Security` is emitted only when this is on (SEC-T-3). */
+  /** `Strict-Transport-Security` is emitted only when this is on (SEC-T-3, in SPO-Deploy's policy — transport moved there). */
   hstsEnabled: boolean;
   /** Rate-limit window, in milliseconds. */
   rateLimitWindowMs: number;
@@ -87,7 +87,7 @@ export function checkProductionConfig(env: EnvLike, effectiveLogLevel: string): 
   if (env.ENABLE_HSTS !== 'true') {
     warnings.push(
       'ENABLE_HSTS is not set to true — no Strict-Transport-Security header is emitted. ' +
-        'Set it when serving over HTTPS (policy SEC-T-3).'
+        'Set it when serving over HTTPS (SPO-Deploy policy SEC-T-3).'
     );
   }
 

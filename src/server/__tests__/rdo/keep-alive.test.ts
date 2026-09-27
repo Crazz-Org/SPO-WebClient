@@ -7,6 +7,10 @@
  * (ObjectInspectorHandleViewer.pas:1172-1180). The cacherId was the old, removed
  * target: today the frame targets the active inspector temp object, void push,
  * no arguments, no RID.
+ *
+ * assertNoViolations() is not called: the socket carries no scenario exchange
+ * (rdoScenarios: []), so the strict validator has nothing to compare a frame
+ * against; the frames are pinned by literal assertions instead.
  */
 
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';

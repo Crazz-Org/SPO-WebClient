@@ -132,6 +132,18 @@ A green test that cannot go red proves nothing and still counts toward coverage.
   a frame built by the emitter under test agrees with it by construction. Pin the separator
   the client emits today; never change a separator from a test.
 
+**Part of this is enforced.** `src/__tests__/test-hygiene.test.ts` is a ratchet that scans every
+`*.test.ts(x)` under `src/` and counts five shapes: `selfComparison` (`expect(E).toBe` /
+`toEqual` / `toStrictEqual(E)` with the same text twice), `literalExpect` (`expect(<literal>)`),
+`replicaFunction` (a local function of 8+ lines with a comment saying replicates / simulates /
+mirrors / "copy of" just above it), `tsNocheck`, and `checkTrue` (`check('…', true` in
+`src/e2e/flows.ts`). A new occurrence fails with its file and line. Each count must stay at or
+below its `BASELINE`, and the baseline only goes down. A line can opt out with
+`// hygiene-exception: <reason>`, but exceptions are counted and ratcheted too, and their baseline
+is 0. Fix the test, never the baseline. The ratchet cannot see the other rules above (watching
+the test fail, the non-empty loop, the resting state, wall-clock bounds, `fake.cacher` stubs).
+Those stay the author's job.
+
 ## Before declaring done
 
 ```bash

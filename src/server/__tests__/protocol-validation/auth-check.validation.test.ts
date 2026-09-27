@@ -72,7 +72,11 @@ describe('Protocol Validation: checkAuth()', () => {
   let harness: ProtocolTestHarness;
 
   afterEach(() => {
-    harness.cleanup();
+    try {
+      harness.assertNoViolations();
+    } finally {
+      harness.cleanup();
+    }
   });
 
   describe('success path', () => {

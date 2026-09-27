@@ -5,7 +5,6 @@
 
 import { describe, it, expect } from '@jest/globals';
 import * as path from 'path';
-import * as fs from 'fs';
 import { parseClassesBin, type BuildingClassEntry } from './classes-bin-parser';
 
 // Mock logger to prevent console spam during tests
@@ -18,12 +17,11 @@ jest.mock('../shared/logger', () => ({
   })
 }));
 
-const CLASSES_BIN_PATH = path.join(__dirname, '../../cache/BuildingClasses/CLASSES.BIN');
+// A frozen copy of the real CLASSES.BIN, committed so CI runs these tests
+// (provenance: __tests__/fixtures/classes-bin/README.md). The runtime cache/ stays gitignored.
+const CLASSES_BIN_PATH = path.join(__dirname, '__tests__/fixtures/classes-bin/BuildingClasses/CLASSES.BIN');
 
-// Skip all tests if CLASSES.BIN doesn't exist
-const binExists = fs.existsSync(CLASSES_BIN_PATH);
-
-(binExists ? describe : describe.skip)('ClassesBinParser', () => {
+describe('ClassesBinParser', () => {
   let result: ReturnType<typeof parseClassesBin>;
 
   beforeAll(() => {

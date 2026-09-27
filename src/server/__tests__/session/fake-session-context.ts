@@ -40,6 +40,7 @@ import type { AspActionUrl } from '../../asp-url-extractor';
 import type { SessionContext } from '../../session/session-context';
 import type { PushContext } from '../../session/push-dispatcher';
 import type { LoginContext } from '../../session/login-handler';
+import * as cacherPool from '../../session/cacher-object-pool';
 
 // ── What the fake records ───────────────────────────────────────────────────
 
@@ -166,6 +167,16 @@ export interface FakeSessionOptions extends Partial<SessionContext> {
    * on purpose.
    */
   sockets?: string[];
+  /**
+   * When true, the five cacher methods run the production `cacher-object-pool`
+   * module over this fake's own recording `sendRdoRequest` and `getSocket`.
+   * Every cacher frame then lands in `sent` (the `"^"` reads) or in
+   * `frames.map` (`CloseObject`, which needs `sockets: ['map']`), and a
+   * `fake.respond` + `RdoMock` scenario answers it. `setObject` keeps
+   * production's real 30 ms wait, so do not combine it with fake timers.
+   * Off by default: the cacher methods are then bare `jest.fn()`.
+   */
+  wireCacher?: boolean;
 }
 
 /**
@@ -177,18 +188,21 @@ export interface FakeSessionOptions extends Partial<SessionContext> {
  * tests your belief about the server, not its captured answer.
  *
  * The exception is the cacher (`fake.cacher.*` and the ctx methods it backs):
- * the fake's cacher emits no frame, so no scenario can answer it — stub it
- * (`fake.cacher.getPropertyList.mockResolvedValue([...])`), and in
+ * by default the fake's cacher emits no frame, so no scenario can answer it —
+ * stub it (`fake.cacher.getPropertyList.mockResolvedValue([...])`), and in
  * `src/mock-server/scenarios/` mark the line
  * `// substrate-exception: <why the capture cannot answer this>`;
- * `substrate-discipline.test.ts` enforces it.
+ * `substrate-discipline.test.ts` enforces it. Pass `wireCacher: true` to
+ * route the cacher through the production `cacher-object-pool` module
+ * instead: its frames then reach `sendRdoRequest` / `getSocket`, and a
+ * scenario can answer them.
  *
  * Prefer these handles over `overrides`: `overrides` replaces the method on
  * `ctx`, and the `cacher` / `log` handles then point at whatever the override
  * installed, which is only usable if it is itself a `jest.fn()`.
  */
 export function makeSessionCtx(overrides: FakeSessionOptions = {}): FakeSessionCtx {
-  const { sockets = [], ...rest } = overrides;
+  const { sockets = [], wireCacher = false, ...rest } = overrides;
 
   const sent: SentRequest[] = [];
   const frames: Record<string, string[]> = {};
@@ -304,7 +318,22 @@ export function makeSessionCtx(overrides: FakeSessionOptions = {}): FakeSessionC
     },
   };
 
-  const ctx: SessionContext = { ...base, ...rest };
+  // Production cacher code over this fake's transport. `ctx` is read at call
+  // time, so an override of `cacherId` / `currentWorldInfo` applies.
+  const wiredCacher: Pick<SessionContext,
+    'cacherCreateObject' | 'cacherSetObject' | 'cacherSetPath' | 'cacherGetPropertyList' | 'cacherCloseObject'
+  > = {
+    cacherCreateObject: jest.fn(() => cacherPool.createObject(ctx)),
+    cacherSetObject: jest.fn((tempObjectId: string, x: number, y: number) =>
+      cacherPool.setObject(ctx, tempObjectId, x, y)),
+    cacherSetPath: jest.fn((tempObjectId: string, path: string) =>
+      cacherPool.setPath(ctx, tempObjectId, path)),
+    cacherGetPropertyList: jest.fn((tempObjectId: string, propertyNames: string[]) =>
+      cacherPool.getPropertyList(ctx, tempObjectId, propertyNames)),
+    cacherCloseObject: jest.fn((tempObjectId: string) => cacherPool.closeObject(ctx, tempObjectId)),
+  };
+
+  const ctx: SessionContext = { ...base, ...(wireCacher ? wiredCacher : {}), ...rest };
 
   return {
     ctx,

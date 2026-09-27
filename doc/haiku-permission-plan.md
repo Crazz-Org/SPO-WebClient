@@ -85,7 +85,7 @@ npm run verdict -- <alias> [--tail=N]
   `test:smoke`, `typecheck`, `lint`, `build`, `coverage:changed`, `gate:precheck`,
   `gate:local`. Toute autre valeur (y compris un argument positionnel en trop) → usage sur
   stderr, `exit 64`. `gate` et `test:live` sont **exclus délibérément** : ce sont des jobs de
-  banc dont la forme sanctionnée est la commande nue mise en fond (CLAUDE.md § bench).
+  banc dont la forme sanctionnée est la commande nue mise en fond (CLAUDE.md § Commands).
 - `--tail=N`, défaut 40, entier 1–500.
 - Log :
   `LOG="${SPO_BENCH_DIR:-$HOME/.spo-bench}/logs/verdict-<alias avec ':' → '-'>-$(date +%Y%m%d-%H%M%S)-$$.log"`

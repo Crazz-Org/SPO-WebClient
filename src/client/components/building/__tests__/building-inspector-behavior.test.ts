@@ -59,12 +59,6 @@ function stopToggleLabel(stoppedValue: string): 'Close' | 'Open' {
   return isStopped ? 'Open' : 'Close';
 }
 
-/** Simulate hideEmpty logic: returns true if value should be hidden */
-function shouldHide(value: string, hideEmpty?: boolean): boolean {
-  if (!hideEmpty) return false;
-  return value === '' || value === '0' || value === null || value === undefined;
-}
-
 // ---------------------------------------------------------------------------
 // G5 + G6 — SrvGeneral: Trouble + SecurityId
 // ---------------------------------------------------------------------------
@@ -74,17 +68,14 @@ describe('SrvGeneral', () => {
     const prop = getProp(SRV_GENERAL_GROUP, 'Trouble');
     expect(prop).toBeDefined();
     expect(prop!.hideEmpty).toBe(true);
-    expect(shouldHide('0', prop!.hideEmpty)).toBe(true);
-    expect(shouldHide('32', prop!.hideEmpty)).toBe(false);
+    // Render-level behaviour ('0' hidden, '32' kept) is asserted in hide-empty-zero.test.tsx
   });
 
   it('SecurityId: hideEmpty=true so it does not appear in UI', () => {
     const prop = getProp(SRV_GENERAL_GROUP, 'SecurityId');
     expect(prop).toBeDefined();
     expect(prop!.hideEmpty).toBe(true);
-    // SecurityId is always populated — hide it from visible UI
-    expect(shouldHide('-132445236-', prop!.hideEmpty)).toBe(false); // non-empty = not hidden
-    expect(shouldHide('', prop!.hideEmpty)).toBe(true);
+    // Render-level behaviour is asserted in hide-empty-zero.test.tsx
   });
 
   it('Trouble: type is NUMBER (not text)', () => {
@@ -294,6 +285,12 @@ describe('unkGeneral', () => {
     const prop = UNK_GENERAL_GROUP.properties.find(p => p.actionId === 'demolish');
     expect(prop!.buttonLabel).toBe('Demolish');
   });
+
+  it('Name and Creator: both fetched by the template', () => {
+    const propNames = UNK_GENERAL_GROUP.properties.map(p => p.rdoName);
+    expect(propNames).toContain('Name');
+    expect(propNames).toContain('Creator');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -386,6 +383,10 @@ describe('HqGeneral', () => {
   it('Demolish button: buttonLabel is "Demolish"', () => {
     const prop = HQ_GENERAL_GROUP.properties.find(p => p.actionId === 'demolish');
     expect(prop!.buttonLabel).toBe('Demolish');
+  });
+
+  it('Name: fetched by the template', () => {
+    expect(HQ_GENERAL_GROUP.properties.map(p => p.rdoName)).toContain('Name');
   });
 });
 

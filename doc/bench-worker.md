@@ -280,6 +280,11 @@ the `bench/gate` description renders `merged base <sha8>` in place of the plain
 | 2 | refused at deposit: a gate on a **dirty tree**, or a duplicate of a job already queued | commit (an attestation names a sha, so the tested tree must BE that sha), then re-deposit |
 | 3 | **worker down** — nothing was queued | `systemctl --user restart spo-bench-worker`, then re-deposit |
 | 4 | the wait timed out; the job may still be queued or running | `npm run bench:status` before assuming anything |
+| 5 | refused: `npm run bench:nightly-request` from somewhere that may not make one — a Claude Code session (`CLAUDECODE`) or no terminal | nothing — a manual nightly is the maintainer's to ask for, at a real terminal (§8) |
+| 6 | `npm run bench:nightly-request` could not read `origin/main`'s tip (`git ls-remote` failed or answered no sha) | check the network and the `origin` remote, then ask again |
+
+Codes 5 and 6 come from `bench:nightly-request` only; `scripts/board-move.sh`'s own exit 5 and
+`verify-gate.js`'s 0–3 are separate namespaces.
 
 The two machine-readable surfaces are that exit code and `~/.spo-bench/verdicts/<sha>.json`
 (the file the push hook itself reads). **Never parse or grep the `=== bench job … ===`

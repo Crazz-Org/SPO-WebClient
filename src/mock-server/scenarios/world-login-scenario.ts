@@ -41,7 +41,7 @@ export function createWorldLoginScenario(
 
   const rdo: RdoScenario = {
     name: 'world-login',
-    description: 'World login RDO exchanges: idof, CanJoinWorldEx, AccountStatus, Logon, RegisterEventsById',
+    description: 'World login RDO exchanges: idof, CanJoinWorldEx, AccountStatus, Logon, RegisterEventsById, SetLanguage',
     exchanges: [
       {
         id: 'wlogin-rdo-idof',

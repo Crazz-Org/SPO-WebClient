@@ -2,6 +2,10 @@
  * RDO wire test — CloseObject, driven through the production emitter
  * (`cacherCloseObject` in spo_session.ts): void push on the cacher root,
  * one integer argument (the temp object id), no RID.
+ *
+ * assertNoViolations() is not called: the socket carries no scenario exchange
+ * (rdoScenarios: []), so the strict validator has nothing to compare a frame
+ * against; the frames are pinned by literal assertions instead.
  */
 
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';

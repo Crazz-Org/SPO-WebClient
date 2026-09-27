@@ -7,6 +7,7 @@ import { WsDriver, WsDriverError } from './ws-driver';
 import * as session from './session';
 import * as probeModule from './probe';
 import * as liveLog from './live-log';
+import * as loginHandler from '../server/session/login-handler';
 import { PRIMARY_ACCOUNT, SECONDARY_ACCOUNT } from './config';
 
 function stubSession(responder: (msg: WsMessage) => unknown): session.LiveSession {
@@ -70,6 +71,7 @@ describe('runFlow', () => {
         name: 'ok',
         status: 'PASS' as const,
         assertions: [],
+        unproven: [],
         probes: [],
         messagesSent: 1,
         messagesReceived: 1,
@@ -447,12 +449,16 @@ describe('mail-roundtrip', () => {
   function mailSession(
     inboxSubjects: string[],
     record?: (msg: WsMessage) => void,
-    opts: { unreadCount?: number; afterUnreadCount?: number } = {},
+    opts: { unreadCount?: number; afterUnreadCount?: number; ignoreDelete?: boolean } = {},
   ) {
-    const { unreadCount = 1, afterUnreadCount = 0 } = opts;
+    const { unreadCount = 1, afterUnreadCount = 0, ignoreDelete = false } = opts;
+    const deleted = new Set<string>();
     return stubSession(msg => {
       record?.(msg);
       switch (msg.type) {
+        case WsMessageType.REQ_MAIL_DELETE:
+          if (!ignoreDelete) deleted.add((msg as unknown as { messageId: string }).messageId);
+          return { type: WsMessageType.RESP_MAIL_DELETED, success: true };
         case WsMessageType.RESP_MAIL_CONNECTED:
         case WsMessageType.REQ_MAIL_CONNECT:
           return { type: WsMessageType.RESP_MAIL_CONNECTED, unreadCount };
@@ -462,7 +468,9 @@ describe('mail-roundtrip', () => {
           return {
             type: WsMessageType.RESP_MAIL_FOLDER,
             folder: 'Inbox',
-            messages: inboxSubjects.map((subject, i) => ({ messageId: String(i), subject })),
+            messages: inboxSubjects
+              .map((subject, i) => ({ messageId: String(i), subject }))
+              .filter(m => !deleted.has(m.messageId)),
           };
         case WsMessageType.REQ_MAIL_READ_MESSAGE:
           return { type: WsMessageType.RESP_MAIL_MESSAGE, message: {} };
@@ -501,6 +509,27 @@ describe('mail-roundtrip', () => {
 
     expect(result.status).toBe('PASS');
     expect(sent.some(m => m.type === WsMessageType.REQ_MAIL_DELETE)).toBe(true);
+  });
+
+  it('FAILs when the deleted message is still listed', async () => {
+    let subject = '';
+    jest.spyOn(session, 'login').mockImplementation(async () =>
+      mailSession(
+        subject ? [subject] : [],
+        msg => {
+          if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
+            subject = (msg as unknown as { subject: string }).subject;
+          }
+        },
+        { ignoreDelete: true },
+      ),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+
+    const result = await flowByName('mail-roundtrip').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/deleted again/);
   });
 
   it('FAILs when the unread count does not drop after the read', async () => {
@@ -839,21 +868,21 @@ describe('newspaper-read', () => {
 
   // A bar that parses but lists nothing is the world running no news server —
   // an environment exception. It is recorded, and no issue is opened.
-  it('records an exception, and opens no issue, when the paper keeps none', async () => {
+  it('is UNPROVEN, and opens no issue, when the paper keeps none', async () => {
     const requests = arrange({ list: { paperName: 'Helartia Herald', issues: [], error: '' } });
     const result = await flowByName('newspaper-read').run(ctx);
-    expect(result.status).toBe('PASS');
-    expect(result.assertions.find(a => /environment exception/.test(a.what))).toMatchObject({
-      ok: true,
-      detail: 'Helartia Herald: 0 issues',
-    });
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toHaveLength(1);
+    expect(result.unproven[0]).toMatch(/Helartia Herald: 0 issues/);
+    expect(result.assertions.every(a => a.ok)).toBe(true);
     expect(requests.some(m => m.type === WsMessageType.REQ_NEWSPAPER_ISSUE)).toBe(false);
   });
 
-  it('fails when the bar itself could not be read', async () => {
+  it('fails when the bar itself could not be read — a failure wins over UNPROVEN', async () => {
     arrange({ list: { paperName: 'Helartia Herald', issues: [], error: 'HTTP 500' } });
     const result = await flowByName('newspaper-read').run(ctx);
     expect(result.status).toBe('FAIL');
+    expect(result.unproven).toHaveLength(1);
     expect(result.assertions.find(a => !a.ok)?.detail).toBe('HTTP 500');
   });
 
@@ -906,8 +935,10 @@ describe('zoning-alert-read', () => {
     noHtmlBody?: boolean;
     onRequest?: (msg: WsMessage) => void;
     focusResult?: 'ok' | 'error';
+    focusBuildingId?: string;
   } = {}) {
     const {
+      focusBuildingId = '42',
       inboxSubjects = ['Zoning Alert!'],
       htmlBody = over.noHtmlBody ? undefined : `<a href="${ZONED_ANCHOR}">Demolished Building</a>`,
       onRequest,
@@ -934,7 +965,7 @@ describe('zoning-alert-read', () => {
             if (focusResult === 'error') {
               throw new WsDriverError('not found', 404, WsMessageType.REQ_BUILDING_FOCUS);
             }
-            return { type: WsMessageType.RESP_BUILDING_FOCUS, building: {} };
+            return { type: WsMessageType.RESP_BUILDING_FOCUS, building: { buildingId: focusBuildingId } };
           case WsMessageType.REQ_BUILDING_UNFOCUS:
             return { type: WsMessageType.RESP_CHAT_SUCCESS };
           default:
@@ -958,14 +989,24 @@ describe('zoning-alert-read', () => {
     expect(requests.some(m => m.type === WsMessageType.REQ_BUILDING_UNFOCUS)).toBe(true);
   });
 
-  it('an empty inbox is an environment exception, and sends no REQ_BUILDING_FOCUS', async () => {
+  it('an empty inbox is UNPROVEN, and sends no REQ_BUILDING_FOCUS', async () => {
     const requests = arrange({ inboxSubjects: [] });
 
     const result = await flowByName('zoning-alert-read').run(ctx);
 
-    expect(result.status).toBe('PASS');
-    expect(result.assertions.find(a => /nothing was zoned out/.test(a.what))).toMatchObject({ ok: true });
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toHaveLength(1);
+    expect(result.unproven[0]).toMatch(/no "Zoning Alert!" in the inbox/);
     expect(requests.some(m => m.type === WsMessageType.REQ_BUILDING_FOCUS)).toBe(false);
+  });
+
+  it('FAILs when the focus reply names no building', async () => {
+    arrange({ focusBuildingId: '' });
+
+    const result = await flowByName('zoning-alert-read').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/focus opened on a building/);
   });
 
   it('FAILs when the alert page has no htmlBody', async () => {
@@ -1221,5 +1262,220 @@ describe('directory-browse', () => {
 
     expect(result.status).toBe('FAIL');
     expect(result.assertions.find(a => !a.ok)?.what).toMatch(/three legacy forms/);
+  });
+});
+
+describe('logon-page-verdict', () => {
+  const world = { name: 'planitia', url: '', ip: '10.0.0.1', port: 8000 };
+
+  function arrange(result: Awaited<ReturnType<typeof loginHandler.fetchCompaniesViaHttp>>, withWorld = true) {
+    const stub = stubSession(() => undefined);
+    stub.world = withWorld ? world : undefined;
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    const fetch = jest.spyOn(loginHandler, 'fetchCompaniesViaHttp').mockImplementation(async c => {
+      c.log.info('i');
+      c.log.debug('d');
+      c.log.warn('w');
+      c.log.error('e');
+      return result;
+    });
+    return { off, fetch };
+  }
+
+  it('is read-only and listed', () => {
+    expect(flowByName('logon-page-verdict').mutates).toBe(false);
+  });
+
+  it('records the company count for both accounts without asserting it', async () => {
+    const { off, fetch } = arrange({
+      kind: 'companies',
+      companies: [{ id: '1', name: 'a' }, { id: '2', name: 'b' }],
+      realContextId: null,
+    });
+    const result = await flowByName('logon-page-verdict').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.assertions).toEqual([]);
+    expect(result.readings).toEqual([
+      { account: 'SPO_test3', kind: 'companies', companies: 2 },
+      { account: 'Crazz', kind: 'companies', companies: 2 },
+    ]);
+    expect(fetch).toHaveBeenCalledWith(expect.objectContaining({ currentWorldInfo: world }), '10.0.0.1', 'SPO_test3');
+    expect(fetch).toHaveBeenCalledWith(expect.anything(), '10.0.0.1', 'Crazz');
+    expect(off).toHaveBeenCalledTimes(2);
+    expect(result.messagesSent).toBe(2);
+    expect(result.messagesReceived).toBe(2);
+  });
+
+  it('records the PA value when denied, without asserting', async () => {
+    arrange({ kind: 'denied', expiresOn: '01/01/2020' });
+    const result = await flowByName('logon-page-verdict').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.assertions).toEqual([]);
+    expect(result.readings?.[0]).toEqual({ account: 'SPO_test3', kind: 'denied', expiresOn: '01/01/2020' });
+  });
+
+  it('records the error code on an error page', async () => {
+    arrange({ kind: 'error', errorCode: 'ERROR_FIVEISDOWN' });
+    const result = await flowByName('logon-page-verdict').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.readings?.[1]).toEqual({ account: 'Crazz', kind: 'error', errorCode: 'ERROR_FIVEISDOWN' });
+  });
+
+  it('reports UNPROVEN when the page is unreachable', async () => {
+    arrange({ kind: 'unreachable' });
+    const result = await flowByName('logon-page-verdict').run(ctx);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toHaveLength(2);
+    expect(result.unproven[0]).toMatch(/unreachable/);
+    expect(result.readings?.[0]).toEqual({ account: 'SPO_test3', kind: 'unreachable' });
+  });
+
+  it('fails only when the request cannot be made, and still logs off', async () => {
+    const { off, fetch } = arrange({ kind: 'unreachable' }, false);
+    const result = await flowByName('logon-page-verdict').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(off).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('warehouse-role-reading', () => {
+  type B = { x: number; y: number; visualClass: string; handler: string; props?: { name: string; value: string }[] };
+
+  function arrange(buildings: B[] | undefined, fail = false) {
+    const stub = stubSession(msg =>
+      msg.type === WsMessageType.REQ_MAP_LOAD
+        ? { type: WsMessageType.RESP_MAP_DATA, ...(buildings ? { data: { buildings } } : {}) }
+        : undefined,
+    );
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+    const read = jest.spyOn(session, 'readBuildingDetails').mockImplementation(async (_s, x, y) => {
+      if (fail) throw new Error('details timed out');
+      const b = (buildings ?? []).find(c => c.x === x && c.y === y)!;
+      return {
+        templateName: `T-${b.handler}`,
+        visualClass: b.visualClass,
+        tabs: [{ id: 'g', name: 'G', icon: '', order: 0, handlerName: b.handler }],
+        groups: { g: [{ name: 'Name', value: 'x' }], h: b.props ?? [] },
+      } as unknown as Awaited<ReturnType<typeof session.readBuildingDetails>>;
+    });
+    return { off, read, stub };
+  }
+
+  it('is read-only and listed', () => {
+    expect(flowByName('warehouse-role-reading').mutates).toBe(false);
+  });
+
+  it('records Role as absent when the read does not serve it, asserting nothing', async () => {
+    const { off, stub } = arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral' }]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.assertions).toEqual([]);
+    expect(result.readings).toEqual([
+      {
+        facility: 'warehouse', x: 101, y: 201, visualClass: '4001',
+        templateName: 'T-WHGeneral', role: 'absent', tradeRole: 'absent',
+      },
+    ]);
+    expect(stub.driver.request).toHaveBeenCalledWith(
+      expect.objectContaining({ type: WsMessageType.REQ_MAP_LOAD, x: 68, y: 168, width: 64, height: 64 }),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it("records Role = 'Warehouse' verbatim", async () => {
+    arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral', props: [{ name: 'Role', value: 'Warehouse' }] }]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.assertions).toEqual([]);
+    expect(result.readings?.[0]).toMatchObject({ role: 'Warehouse' });
+  });
+
+  it('records a numeric Role verbatim, and an empty one as empty', async () => {
+    arrange([
+      { x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral', props: [{ name: 'Role', value: '2' }, { name: 'TradeRole', value: '' }] },
+    ]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.assertions).toEqual([]);
+    expect(result.readings?.[0]).toMatchObject({ role: '2', tradeRole: '' });
+  });
+
+  it('records the nearest trading industry, skipping one whose TradeRole is not 2/5/6', async () => {
+    arrange([
+      { x: 150, y: 230, visualClass: '4001', handler: 'WHGeneral' },
+      { x: 100, y: 201, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '1' }] },
+      { x: 100, y: 202, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'Role', value: '0' }, { name: 'TradeRole', value: '5' }] },
+      { x: 100, y: 203, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '6' }] },
+    ]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(result.readings).toEqual([
+      expect.objectContaining({ facility: 'warehouse', x: 150, y: 230 }),
+      { facility: 'industry', x: 100, y: 202, visualClass: '5001', templateName: 'T-IndGeneral', role: '0', tradeRole: '5' },
+    ]);
+  });
+
+  it('does not re-read a class already known to be neither warehouse nor industry, nor a second warehouse', async () => {
+    const { read } = arrange([
+      { x: 100, y: 201, visualClass: '7', handler: 'Residential' },
+      { x: 100, y: 202, visualClass: '7', handler: 'Residential' },
+      { x: 100, y: 203, visualClass: '4001', handler: 'WHGeneral' },
+      { x: 100, y: 204, visualClass: '4001', handler: 'WHGeneral' },
+      { x: 100, y: 205, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
+      { x: 100, y: 206, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
+    ]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(result.readings).toHaveLength(2);
+  });
+
+  it('skips a known industry class once an industry is recorded', async () => {
+    const { read } = arrange([
+      { x: 100, y: 201, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
+      { x: 100, y: 202, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
+      { x: 100, y: 203, visualClass: '8', handler: '' },
+    ]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.readings).toEqual([expect.objectContaining({ facility: 'industry', x: 100, y: 201 })]);
+  });
+
+  it('reports UNPROVEN, never PASS, when no warehouse is in the window', async () => {
+    arrange([{ x: 100, y: 201, visualClass: '7', handler: 'Residential' }]);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toHaveLength(1);
+    expect(result.unproven[0]).toMatch(/WHGeneral/);
+    expect(result.unproven[0]).toMatch(/1 building\(s\).*1 inspector read/);
+    expect(result.readings).toEqual([]);
+  });
+
+  it('stops after 40 inspector reads and reports UNPROVEN', async () => {
+    const many = Array.from({ length: 45 }, (_, i) => ({ x: 100, y: 201 + i, visualClass: `c${i}`, handler: 'Other' }));
+    many.push({ x: 150, y: 250, visualClass: '4001', handler: 'WHGeneral' });
+    const { read } = arrange(many);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(read).toHaveBeenCalledTimes(40);
+    expect(result.status).toBe('UNPROVEN');
+  });
+
+  it('reports UNPROVEN with zero buildings when the map answer carries no data', async () => {
+    arrange(undefined);
+    const result = await flowByName('warehouse-role-reading').run(ctx);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/0 building\(s\)/);
+  });
+
+  it('fails when the read itself fails, and still logs off', async () => {
+    const { off } = arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral' }], true);
+    const result = await runFlow(flowByName('warehouse-role-reading'), ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.error).toMatch(/details timed out/);
+    expect(off).toHaveBeenCalledTimes(1);
   });
 });

@@ -37,8 +37,17 @@ Build touch-optimized, performant mobile experiences with proper viewport handli
 
 A new fixed HUD element takes `top`/`bottom`/`z-index` from the HUD stack block in
 `src/client/styles/design-tokens.css` (the `--hud-*`, `--command-bar-height`,
-`--context-strip-bottom`, `--world-ticker-top` and `--z-*` tokens), never a literal of its own,
-and gets an assertion for its band in `src/client/styles/design-tokens.test.ts`.
+`--context-strip-bottom`, `--chat-strip-bottom`, `--right-rail-bottom`, `--world-ticker-top`,
+`--chat-banner-top` and `--z-*` tokens), never a literal of its own.
+
+It also gets **a row in the band table**: `HUD_BANDS` in the `HUD band table (issue 931)` block
+of `src/client/styles/design-tokens.test.ts`. The table resolves each element's box from its own
+CSS at five viewports, from 390x844 to 2400x1350. It fails when two elements that are visible
+together overlap, unless a `MAY_SIT_OVER` row gives a reason and the element on top has the
+same or a higher `z-index`. It also fails when a whitelist row no longer matches a real
+overlap. The test pins the list of row names (fifteen today), so a new element goes into that
+list as well. A size set by content is a named constant in the row, with its reason. A whitelist
+row is for an overlap that is meant to happen. It is not a way to make a new overlap pass.
 
 ## Core Principles
 

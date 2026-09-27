@@ -372,6 +372,13 @@ export async function readMailMessage(
   const msgId = parsePropertyResponseHelper(openPacket.payload!, 'OpenMessage');
   ctx.log.debug(`[Mail] Opened message, msgId: ${msgId}`);
 
+  // MsgComposerHandler.pas:418-434 — `if Id <> 0` gates every read AND the CloseMessage;
+  // a 0 / empty id means the server opened nothing, so there is nothing to read or close.
+  if (!msgId || msgId === '0') {
+    ctx.log.error(`[Mail] OpenMessage failed for ${folder}/${messageId}`);
+    throw new Error('Mail message could not be opened');
+  }
+
   let message: MailMessageFull;
   try {
     // 2. Get headers (ini-style key=value text)

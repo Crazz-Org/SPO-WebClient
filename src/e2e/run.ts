@@ -173,6 +173,7 @@ export function formatSummary(result: LiveRunResult): string {
     for (const assertion of flow.assertions.filter(a => !a.ok)) {
       lines.push(`          x ${assertion.what}${assertion.detail ? ` (${assertion.detail})` : ''}`);
     }
+    for (const reason of flow.unproven) lines.push(`          ? unproven: ${reason}`);
     for (const probe of flow.probes) {
       lines.push(
         `          probe ${probe.status}: ${probe.what} — log=${probe.logLine ? 'yes' : 'NO'}, ` +

@@ -1187,6 +1187,34 @@ describe('argument construction', () => {
 // The direct property path — `set <Prop>=<value>` on CurrBlock
 // ═══════════════════════════════════════════════════════════════════════════
 
+describe('wire literals — frames production emits today', () => {
+  // Literal frames, never built with RdoCommand/RdoValue: an expectation built
+  // with the production formatter cannot catch drift in it.
+  it.each([
+    { command: 'RDOSetInputMaxPrice', value: '500', params: { metaFluid: '5' },
+      frame: 'C sel 40133512 call RDOSetInputMaxPrice "*" "%5","#500";' },
+    { command: 'RDOSetInputMinK', value: '10', params: { metaFluid: '5' },
+      frame: 'C sel 40133512 call RDOSetInputMinK "*" "%5","#10";' },
+    { command: 'RDOSitMinister', value: 'TycoonName', params: { ministryId: '1' },
+      frame: 'C sel 40133497 call RDOSitMinister "*" "#1","%";' },
+    { command: 'RDOLaunchMovie', value: '0',
+      params: { filmName: 'Test Film', budget: '2000000', months: '12', autoRel: '1', autoProd: '0' },
+      frame: 'C sel 40133497 call RDOLaunchMovie "*" "%Test Film","@2000000","#12","#1";' },
+    { command: 'RDOLaunchMovie', value: '0', params: { filmName: 'Film', budget: '1500000.50', months: '6' },
+      frame: 'C sel 40133497 call RDOLaunchMovie "*" "%Film","@1500000.5","#6","#0";' },
+    { command: 'RDOSetTaxValue', value: '-50', params: { taxId: '150' },
+      frame: 'C sel 40133497 call RDOSetTaxValue "*" "#150","%-50";' },
+    { command: 'RDOSetCompanyInputDemand', value: '50', params: undefined,
+      frame: 'C sel 40133497 call RDOSetCompanyInputDemand "*" "#0","#50";' },
+  ] as Array<{ command: string; value: string; params?: Record<string, string>; frame: string }>)('$command($value) emits $frame', async ({ command, value, params, frame }) => {
+    const fake = makeConstructionCtx();
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, command, value, params));
+
+    expect(onlyFrame(fake)).toBe(frame);
+  });
+});
+
 describe('direct property set', () => {
   it('writes an integer property with the SET verb on CurrBlock', async () => {
     const fake = makeConstructionCtx();

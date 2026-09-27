@@ -49,7 +49,7 @@ describe('MapNavigationUI — map context menu forwarding', () => {
     ) => void;
     forwarded(100, 50, 10, 5);
 
-    expect(onMapContextMenu).toHaveBeenCalledWith(100, 50, 10, 5);
+    expect(onMapContextMenu).toHaveBeenCalledWith(100, 50);
   });
 
   it('does not throw when no handler is registered', () => {

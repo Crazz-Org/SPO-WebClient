@@ -3,7 +3,7 @@
  * Tests for BuildingDataService with CLASSES.BIN as sole data source
  */
 
-import { describe, it, expect, beforeAll } from '@jest/globals';
+import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import * as fs from 'fs';
 import * as path from 'path';
 import { BuildingDataService } from './building-data-service';
@@ -20,16 +20,29 @@ jest.mock('../shared/logger', () => ({
   })
 }));
 
-const CLASSES_BIN_PATH = path.join(__dirname, '../../cache/BuildingClasses/CLASSES.BIN');
-const binExists = fs.existsSync(CLASSES_BIN_PATH);
+// A frozen copy of the real CLASSES.BIN, committed so CI runs these tests
+// (provenance: __tests__/fixtures/classes-bin/README.md). The runtime cache/ stays gitignored.
+// The service finds the file through getCacheDir(), so point SPO_CACHE_DIR at the fixture
+// for this suite and restore whatever was set before (the bench worker sets its own).
+const FIXTURE_CACHE_DIR = path.join(__dirname, '__tests__/fixtures/classes-bin');
 
-// Skip all tests if CLASSES.BIN doesn't exist
-(binExists ? describe : describe.skip)('BuildingDataService', () => {
+describe('BuildingDataService', () => {
   let service: BuildingDataService;
 
+  let previousCacheDir: string | undefined;
+
   beforeAll(async () => {
+    const binPath = path.join(FIXTURE_CACHE_DIR, 'BuildingClasses/CLASSES.BIN');
+    if (!fs.existsSync(binPath)) throw new Error(`CLASSES.BIN fixture missing: ${binPath}`);
+    previousCacheDir = process.env.SPO_CACHE_DIR;
+    process.env.SPO_CACHE_DIR = FIXTURE_CACHE_DIR;
     service = new BuildingDataService();
     await service.initialize();
+  });
+
+  afterAll(() => {
+    if (previousCacheDir === undefined) delete process.env.SPO_CACHE_DIR;
+    else process.env.SPO_CACHE_DIR = previousCacheDir;
   });
 
   describe('Initialization', () => {

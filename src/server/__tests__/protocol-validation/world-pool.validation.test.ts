@@ -160,7 +160,11 @@ describe('Protocol Validation: world connection pool', () => {
   const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 
   afterEach(() => {
-    harness?.cleanup();
+    try {
+      harness?.assertNoViolations();
+    } finally {
+      harness?.cleanup();
+    }
   });
 
   describe('population ordering — the session must bind to the primary socket', () => {

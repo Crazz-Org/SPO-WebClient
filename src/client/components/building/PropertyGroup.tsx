@@ -49,6 +49,32 @@ const UPGRADE_VALUE_NAMES = ['UpgradeLevel', 'MaxUpgrade', 'NextUpgCost', 'Upgra
  *  the chosen count, the row shows the per-level cost, so the row stays. */
 const UPGRADE_WIDGET_OWNED_NAMES = ['UpgradeLevel', 'MaxUpgrade', 'Upgrading', 'Pending'];
 
+/**
+ * hideEmpty rows that also stay hidden at '0'. For these members Voyager reads 0 as
+ * "none" and never prints it. Every other hideEmpty row is dropped only when the cache
+ * has nothing ('' / whitespace / absent); a real 0 is printed.
+ */
+const HIDDEN_AT_ZERO_NAMES: ReadonlySet<string> = new Set([
+  // A bitmask Voyager only tests, never prints — Voyager/ResidentialSheet.pas:156, SrvGeneralSheetForm.pas:142
+  'Trouble',
+  // The cost label is visible only when the cost is > 0 — Voyager/ManagementSheet.pas:198-199
+  'NextUpgCost',
+  // A flag that only decides whether the chart is drawn — Voyager/ChartSheet.pas:80
+  'MoneyGraph',
+  // Consumed as a gate string, never printed — Voyager/SupplySheetForm.pas:370
+  'GateMap',
+  // Object ids: 0 is the "no object" value — Voyager/ResidentialSheet.pas:140-142, SupplySheetForm.pas:353
+  'CurrBlock',
+  'ObjectId',
+]);
+
+/** Is this hideEmpty row dropped for this value? Absent / '' / whitespace always; '0' only for HIDDEN_AT_ZERO_NAMES. */
+export function isHiddenEmpty(def: PropertyDefinition, value: string | undefined): boolean {
+  if (!def.hideEmpty) return false;
+  if (value === undefined || value.trim() === '') return true;
+  return value.trim() === '0' && HIDDEN_AT_ZERO_NAMES.has(def.rdoName);
+}
+
 interface PropertyGroupProps {
   properties: BuildingPropertyValue[];
   buildingX: number;
@@ -707,8 +733,12 @@ function DefinedProperties({
     const value = valueMap.get(def.rdoName);
     if (value === undefined) continue;
 
-    // Skip hidden empties
-    if (def.hideEmpty && (!value || value.trim() === '' || value === '0')) continue;
+    // Skip hidden empties. Marked as rendered so the unmatched-property fallback
+    // below does not print the raw row instead.
+    if (isHiddenEmpty(def, value)) {
+      rendered.add(def.rdoName);
+      continue;
+    }
     // The UPGRADE_ACTIONS control prints level / max / pending inside itself —
     // a row here would repeat them. When the group has no control (or it were
     // hidden again) they fall through to ordinary rows instead, so no value is

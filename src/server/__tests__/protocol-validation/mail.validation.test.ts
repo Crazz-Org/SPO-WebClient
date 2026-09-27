@@ -1,31 +1,22 @@
 /**
- * Protocol Validation: Mail System RDO Commands
+ * Protocol Validation: Mail
  *
- * Validates that all mail system RDO commands produce correct protocol strings
- * matching captured mail-scenario exchanges. Tests cover:
+ * Drives the production mail handlers (mail-handler.ts, through the
+ * StarpeaceSession facade) against the mail scenario, strict validation on.
+ * The mail socket is the one `connectMailService` opens (socket 0); every
+ * frame it carries is pinned as a literal, in order.
  *
- * Compose/Save flow:
- *   1. idof "MailServer"         -> objid
- *   2. NewMail "^" args          -> res="#msgId"
- *   3. AddLine "*" body          -> (void)
- *   4. AddHeaders "*" headers    -> (void)
- *   5. Save/Post "^" args        -> res="#-1"
- *   6. CloseMessage "*" msgId    -> (void)
+ * What the literals show about separators:
+ * - `AddLine` and `CloseMessage` are procedures sent synchronously: `"*"` WITH
+ *   a QueryId (the reference client sets WaitForAnswer before the AddLine loop).
+ * - `AddHeaders` and `DeleteMessage` are void pushes: `"*"`, no QueryId.
+ * - `GetHeaders`, `GetLines`, `GetAttachmentCount`, `OpenMessage`, `NewMail`,
+ *   `Post`, `Save`, `LogServerOn`, `CheckNewMail` are functions: `"^"`.
  *
- * Read flow:
- *   1. OpenMessage "^" args      -> res="#msgObjId"
- *   2. GetHeaders "^" #0         -> res="%headers"
- *   3. GetLines "^" #0           -> res="%body"
- *   4. GetAttachmentCount "^" #0 -> res="#count"
- *   5. CloseMessage "*" msgObjId -> (void)
- *
- * Delete/Check:
- *   1. DeleteMessage "*" args    -> (void)
- *   2. CheckNewMail "^" args     -> res="#count"
- *
- * Separator rules (from Delphi source):
- *   "^" = call-with-return (published function)
- *   "*" = void procedure (fire-and-forget)
+ * `DeleteMessage`'s fourth argument travels as a `%` string: the declaration
+ * is `MessageId : widestring` (Mail Server/MailServer.pas:109). The fixture's
+ * captured request (mail-rdo-008) writes it `#`; that exchange declares no
+ * argsPattern, so the validator does not compare argument prefixes for it.
  */
 
 jest.mock('net', () => ({
@@ -36,625 +27,134 @@ jest.mock('node-fetch', () => ({
   default: jest.fn(),
 }));
 
-/// <reference path="../../__tests__/matchers/rdo-matchers.d.ts" />
-import { describe, it, expect, beforeEach } from '@jest/globals';
-import { RdoMock } from '../../../mock-server/rdo-mock';
-import { RdoStrictValidator } from '../../../mock-server/rdo-strict-validator';
-import { RdoProtocol } from '../../../server/rdo';
-import { RdoVerb, RdoAction } from '../../../shared/types/protocol-types';
-import { createMailScenario, CAPTURED_MAIL_SEND } from '../../../mock-server/scenarios/mail-scenario';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { createProtocolTestHarness, ProtocolTestHarness } from './protocol-test-harness';
+import { createMailScenario } from '../../../mock-server/scenarios/mail-scenario';
 import { DEFAULT_VARIABLES } from '../../../mock-server/scenarios/scenario-variables';
 
-describe('Protocol Validation: Mail System', () => {
-  let rdoMock: RdoMock;
-  let validator: RdoStrictValidator;
-  const scenario = createMailScenario();
-  const mailServerId = DEFAULT_VARIABLES.mailServerId;
-  const mailAccount = DEFAULT_VARIABLES.mailAccount;
-  const worldName = DEFAULT_VARIABLES.worldName;
-  const messageId = CAPTURED_MAIL_SEND.messageId;
-  const msgObjId = '30430750'; // OpenMessage returns this object ID
+describe('Protocol Validation: mail handlers', () => {
+  let harness: ProtocolTestHarness;
 
   beforeEach(() => {
-    rdoMock = new RdoMock();
-    validator = new RdoStrictValidator();
-    rdoMock.addScenario(scenario.rdo);
-    validator.addScenario(scenario.rdo);
+    const scenario = createMailScenario();
+    harness = createProtocolTestHarness({
+      socketConfigs: [{ rdoScenarios: [scenario.rdo] }],
+      httpScenarios: [scenario.http],
+    });
+    harness.session.setMailAddr('127.0.0.1');
+    harness.session.setMailPort(3000);
+    harness.session.setMailAccount(DEFAULT_VARIABLES.mailAccount);
+    harness.session.setCurrentWorldInfo({
+      name: DEFAULT_VARIABLES.worldName,
+      url: 'http://158.69.153.134/Five/',
+      ip: '158.69.153.134',
+      port: 8000,
+    });
   });
 
   afterEach(() => {
-    const errors = validator.getErrors();
-    if (errors.length > 0) {
-      throw new Error(validator.formatReport());
-    }
+    harness.session.destroy();
+    harness.cleanup();
   });
 
-  // =========================================================================
-  // COMPOSE FLOW: NewMail -> AddLine -> AddHeaders -> Save/Post -> CloseMessage
-  // =========================================================================
+  it('composeMail: connects, creates, adds the line, posts and closes', async () => {
+    const sent = await harness.session.composeMail('Mayor of Olympus@Shamba.net', 'test subjct', ['test message']);
 
-  describe('NewMail CALL command', () => {
-    it('should match NewMail scenario with from/to/subject args', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2173,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'NewMail',
-        separator: '"^"',
-        args: [`%${CAPTURED_MAIL_SEND.to}`, `%${CAPTURED_MAIL_SEND.toName}`, `%${CAPTURED_MAIL_SEND.subject}`],
-      });
-
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-002');
-    });
-
-    it('should use "^" method separator (function returns msgId)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2173,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'NewMail',
-        separator: '"^"',
-        args: [`%${CAPTURED_MAIL_SEND.to}`, `%${CAPTURED_MAIL_SEND.toName}`, `%${CAPTURED_MAIL_SEND.subject}`],
-      });
-
-      expect(command).toContain('"^"');
-      expect(command).not.toContain('"*"');
-    });
-
-    it('should pass all three args as OLE strings (% prefix)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2173,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'NewMail',
-        separator: '"^"',
-        args: [`%${CAPTURED_MAIL_SEND.to}`, `%${CAPTURED_MAIL_SEND.toName}`, `%${CAPTURED_MAIL_SEND.subject}`],
-      });
-
-      expect(command).toContain(`"%${CAPTURED_MAIL_SEND.to}"`);
-      expect(command).toContain(`"%${CAPTURED_MAIL_SEND.toName}"`);
-      expect(command).toContain(`"%${CAPTURED_MAIL_SEND.subject}"`);
-    });
-
-    it('should target mailServerId (not messageId)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2173,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'NewMail',
-        separator: '"^"',
-        args: [`%${CAPTURED_MAIL_SEND.to}`, `%${CAPTURED_MAIL_SEND.toName}`, `%${CAPTURED_MAIL_SEND.subject}`],
-      });
-
-      const parsed = RdoProtocol.parse(command);
-      expect(parsed.targetId).toBe(mailServerId);
-    });
+    expect(sent).toBe(true);
+    expect(harness.getCapturedCommands(0)).toEqual([
+      'C 1000 idof "MailServer"',
+      'C 1001 sel 30437308 call LogServerOn "^" "%Shamba"',
+      'C 1002 sel 30437308 call NewMail "^" "%SPO_test3@Shamba.net","%Mayor of Olympus@Shamba.net","%test subjct"',
+      'C 1003 sel 30430748 call AddLine "*" "%test message"',
+      'C 1004 sel 30437308 call Post "^" "%Shamba","#30430748"',
+      'C 1005 sel 30437308 call CloseMessage "*" "#30430748"',
+    ]);
+    harness.assertNoViolations();
   });
 
-  describe('AddLine CALL command', () => {
-    it('should match AddLine scenario with message body', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2174,
-        verb: RdoVerb.SEL, targetId: messageId,
-        action: RdoAction.CALL, member: 'AddLine',
-        separator: '"*"',
-        args: [`%${CAPTURED_MAIL_SEND.body}`],
-      });
+  it('composeMail with headers: adds the void AddHeaders frame before the body', async () => {
+    const sent = await harness.session.composeMail(
+      'Mayor of Olympus@Shamba.net', 'test subjct', ['test message'], 'X-Thread-Id: 12345',
+    );
 
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-003');
-    });
-
-    it('should use "*" push separator (void procedure)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2174,
-        verb: RdoVerb.SEL, targetId: messageId,
-        action: RdoAction.CALL, member: 'AddLine',
-        separator: '"*"',
-        args: [`%${CAPTURED_MAIL_SEND.body}`],
-      });
-
-      expect(command).toContain('"*"');
-    });
-
-    it('should target the messageId (not mailServerId)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2174,
-        verb: RdoVerb.SEL, targetId: messageId,
-        action: RdoAction.CALL, member: 'AddLine',
-        separator: '"*"',
-        args: [`%${CAPTURED_MAIL_SEND.body}`],
-      });
-
-      const parsed = RdoProtocol.parse(command);
-      expect(parsed.targetId).toBe(messageId);
-      expect(parsed.targetId).not.toBe(mailServerId);
-    });
+    expect(sent).toBe(true);
+    expect(harness.getCapturedCommands(0)).toEqual([
+      'C 1000 idof "MailServer"',
+      'C 1001 sel 30437308 call LogServerOn "^" "%Shamba"',
+      'C 1002 sel 30437308 call NewMail "^" "%SPO_test3@Shamba.net","%Mayor of Olympus@Shamba.net","%test subjct"',
+      'C sel 30430748 call AddHeaders "*" "%X-Thread-Id: 12345"',
+      'C 1003 sel 30430748 call AddLine "*" "%test message"',
+      'C 1004 sel 30437308 call Post "^" "%Shamba","#30430748"',
+      'C 1005 sel 30437308 call CloseMessage "*" "#30430748"',
+    ]);
+    harness.assertNoViolations();
   });
 
-  describe('AddHeaders CALL command', () => {
-    it('should match AddHeaders scenario with header text', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2187,
-        verb: RdoVerb.SEL, targetId: messageId,
-        action: RdoAction.CALL, member: 'AddHeaders',
-        separator: '"*"',
-        args: ['%X-Thread-Id: 12345'],
-      });
+  it('saveDraft: saves instead of posting', async () => {
+    const saved = await harness.session.saveDraft('Mayor of Olympus@Shamba.net', 'test subjct', ['test message']);
 
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-014');
-    });
-
-    it('should use "*" push separator (void procedure)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2187,
-        verb: RdoVerb.SEL, targetId: messageId,
-        action: RdoAction.CALL, member: 'AddHeaders',
-        separator: '"*"',
-        args: ['%X-Thread-Id: 12345'],
-      });
-
-      expect(command).toContain('"*"');
-    });
-
-    it('should target the messageId (like AddLine)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2187,
-        verb: RdoVerb.SEL, targetId: messageId,
-        action: RdoAction.CALL, member: 'AddHeaders',
-        separator: '"*"',
-        args: ['%X-Thread-Id: 12345'],
-      });
-
-      const parsed = RdoProtocol.parse(command);
-      expect(parsed.targetId).toBe(messageId);
-    });
+    expect(saved).toBe(true);
+    expect(harness.getCapturedCommands(0)).toEqual([
+      'C 1000 idof "MailServer"',
+      'C 1001 sel 30437308 call LogServerOn "^" "%Shamba"',
+      'C 1002 sel 30437308 call NewMail "^" "%SPO_test3@Shamba.net","%Mayor of Olympus@Shamba.net","%test subjct"',
+      'C 1003 sel 30430748 call AddLine "*" "%test message"',
+      'C 1004 sel 30437308 call Save "^" "%Shamba","#30430748"',
+      'C 1005 sel 30437308 call CloseMessage "*" "#30430748"',
+    ]);
+    harness.assertNoViolations();
   });
 
-  // =========================================================================
-  // SAVE / POST
-  // =========================================================================
+  it('readMailMessage: opens, reads headers, lines and attachments, then closes', async () => {
+    const message = await harness.session.readMailMessage('Inbox', '30430748');
 
-  describe('Save CALL command', () => {
-    it('should match Save scenario with worldName and messageId', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2176,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'Save',
-        separator: '"^"',
-        args: [`%${worldName}`, `#${messageId}`],
-      });
-
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-005');
+    expect(harness.getCapturedCommands(0)).toEqual([
+      'C 1000 idof "MailServer"',
+      'C 1001 sel 30437308 call LogServerOn "^" "%Shamba"',
+      'C 1002 sel 30437308 call OpenMessage "^" "%Shamba","%SPO_test3@Shamba.net","%Inbox","%30430748"',
+      'C 1003 sel 30430750 call GetHeaders "^" "#0"',
+      'C 1004 sel 30430750 call GetLines "^" "#0"',
+      'C 1005 sel 30430750 call GetAttachmentCount "^" "#0"',
+      'C 1006 sel 30437308 call CloseMessage "*" "#30430750"',
+    ]);
+    expect(message).toEqual({
+      messageId: '30430748',
+      fromAddr: 'Mayor of Olympus@Shamba.net',
+      toAddr: '',
+      from: 'Mayor of olympus',
+      to: '',
+      subject: 'test subjct',
+      date: '',
+      dateFmt: '',
+      read: false,
+      stamp: 0,
+      noReply: false,
+      body: ['test message'],
+      attachments: [],
     });
-
-    it('should use "^" separator (function returns wordbool)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2176,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'Save',
-        separator: '"^"',
-        args: [`%${worldName}`, `#${messageId}`],
-      });
-
-      expect(command).toContain('"^"');
-    });
-
-    it('should pass worldName as string (%) and messageId as integer (#)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2176,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'Save',
-        separator: '"^"',
-        args: [`%${worldName}`, `#${messageId}`],
-      });
-
-      expect(command).toContain(`"%${worldName}"`);
-      expect(command).toContain(`"#${messageId}"`);
-    });
+    harness.assertNoViolations();
   });
 
-  describe('Post CALL command', () => {
-    it('should match Post scenario with worldName and messageId', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2180,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'Post',
-        separator: '"^"',
-        args: [`%${worldName}`, `#${messageId}`],
-      });
+  it('deleteMailMessage: sends the void DeleteMessage frame', async () => {
+    await harness.session.deleteMailMessage('Inbox', '30430748');
 
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-007');
-    });
-
-    it('should use "^" separator (function returns wordbool)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2180,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'Post',
-        separator: '"^"',
-        args: [`%${worldName}`, `#${messageId}`],
-      });
-
-      expect(command).toContain('"^"');
-    });
-
-    it('should have same args as Save (worldName + messageId)', () => {
-      const postCmd = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2180,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'Post',
-        separator: '"^"',
-        args: [`%${worldName}`, `#${messageId}`],
-      });
-      const saveCmd = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2176,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'Save',
-        separator: '"^"',
-        args: [`%${worldName}`, `#${messageId}`],
-      });
-
-      // Post and Save have identical arg patterns (worldName + messageId)
-      const postArgs = postCmd.replace(/Post/, '').replace(/C 2180/, '');
-      const saveArgs = saveCmd.replace(/Save/, '').replace(/C 2176/, '');
-      expect(postArgs).toBe(saveArgs);
-    });
+    expect(harness.getCapturedCommands(0)).toEqual([
+      'C 1000 idof "MailServer"',
+      'C 1001 sel 30437308 call LogServerOn "^" "%Shamba"',
+      'C sel 30437308 call DeleteMessage "*" "%Shamba","%SPO_test3@Shamba.net","%Inbox","%30430748"',
+    ]);
+    harness.assertNoViolations();
   });
 
-  describe('CloseMessage CALL command', () => {
-    it('should match CloseMessage scenario with messageId as integer', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2177,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'CloseMessage',
-        separator: '"*"',
-        args: [`#${messageId}`],
-      });
+  it('getMailUnreadCount: asks CheckNewMail with the LogServerOn session id', async () => {
+    const count = await harness.session.getMailUnreadCount();
 
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-006');
-    });
-
-    it('should use "*" push separator (void procedure)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2177,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'CloseMessage',
-        separator: '"*"',
-        args: [`#${messageId}`],
-      });
-
-      expect(command).toContain('"*"');
-    });
-  });
-
-  // =========================================================================
-  // READ FLOW: OpenMessage -> GetHeaders -> GetLines -> GetAttachmentCount
-  // =========================================================================
-
-  describe('OpenMessage CALL command', () => {
-    it('should match OpenMessage scenario with 4 string args', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2182,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'OpenMessage',
-        separator: '"^"',
-        args: [`%${worldName}`, `%${mailAccount}`, '%Inbox', `%${messageId}`],
-      });
-
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-009');
-    });
-
-    it('should use "^" separator (function returns msgObjId)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2182,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'OpenMessage',
-        separator: '"^"',
-        args: [`%${worldName}`, `%${mailAccount}`, '%Inbox', `%${messageId}`],
-      });
-
-      expect(command).toContain('"^"');
-    });
-
-    it('should pass all 4 args as strings (worldName, account, folder, msgId)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2182,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'OpenMessage',
-        separator: '"^"',
-        args: [`%${worldName}`, `%${mailAccount}`, '%Inbox', `%${messageId}`],
-      });
-
-      expect(command).toContain(`"%${worldName}"`);
-      expect(command).toContain(`"%${mailAccount}"`);
-      expect(command).toContain('"%Inbox"');
-      expect(command).toContain(`"%${messageId}"`);
-    });
-  });
-
-  describe('GetHeaders CALL command', () => {
-    it('should match GetHeaders scenario with #0 dummy arg', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2183,
-        verb: RdoVerb.SEL, targetId: msgObjId,
-        action: RdoAction.CALL, member: 'GetHeaders',
-        separator: '"^"',
-        args: ['#0'],
-      });
-
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-010');
-    });
-
-    it('should target msgObjId (returned from OpenMessage), not mailServerId', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2183,
-        verb: RdoVerb.SEL, targetId: msgObjId,
-        action: RdoAction.CALL, member: 'GetHeaders',
-        separator: '"^"',
-        args: ['#0'],
-      });
-
-      const parsed = RdoProtocol.parse(command);
-      expect(parsed.targetId).toBe(msgObjId);
-      expect(parsed.targetId).not.toBe(mailServerId);
-    });
-  });
-
-  describe('GetLines CALL command', () => {
-    it('should match GetLines scenario with #0 dummy arg', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2184,
-        verb: RdoVerb.SEL, targetId: msgObjId,
-        action: RdoAction.CALL, member: 'GetLines',
-        separator: '"^"',
-        args: ['#0'],
-      });
-
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-011');
-    });
-
-    it('should use "^" separator (function returns body text)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2184,
-        verb: RdoVerb.SEL, targetId: msgObjId,
-        action: RdoAction.CALL, member: 'GetLines',
-        separator: '"^"',
-        args: ['#0'],
-      });
-
-      expect(command).toContain('"^"');
-    });
-  });
-
-  describe('GetAttachmentCount CALL command', () => {
-    it('should match GetAttachmentCount scenario with #0 dummy arg', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2185,
-        verb: RdoVerb.SEL, targetId: msgObjId,
-        action: RdoAction.CALL, member: 'GetAttachmentCount',
-        separator: '"^"',
-        args: ['#0'],
-      });
-
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-012');
-    });
-  });
-
-  // =========================================================================
-  // DELETE / CHECK
-  // =========================================================================
-
-  describe('DeleteMessage CALL command', () => {
-    it('should match DeleteMessage scenario with 4 args', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2181,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'DeleteMessage',
-        separator: '"*"',
-        args: [`%${worldName}`, `%${mailAccount}`, '%Inbox', `#${messageId}`],
-      });
-
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-008');
-    });
-
-    it('should use "*" push separator (void procedure)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2181,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'DeleteMessage',
-        separator: '"*"',
-        args: [`%${worldName}`, `%${mailAccount}`, '%Inbox', `#${messageId}`],
-      });
-
-      expect(command).toContain('"*"');
-    });
-
-    it('should target mailServerId', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2181,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'DeleteMessage',
-        separator: '"*"',
-        args: [`%${worldName}`, `%${mailAccount}`, '%Inbox', `#${messageId}`],
-      });
-
-      const parsed = RdoProtocol.parse(command);
-      expect(parsed.targetId).toBe(mailServerId);
-    });
-  });
-
-  describe('LogServerOn + CheckNewMail CALL commands', () => {
-    // CheckNewMail(ServerId: integer; Account) dereferences ServerId as a
-    // TInterfaceServerData POINTER (MailServer.pas:543) — it must be the id
-    // returned by LogServerOn. "#0" AV'd server-side and always returned -1.
-    const mailIntServerId = '41230990';
-
-    it('should match LogServerOn scenario with the world name arg', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2188,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'LogServerOn',
-        separator: '"^"',
-        args: [`%${worldName}`],
-      });
-
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-015');
-      expect(result!.response).toContain(`res="#${mailIntServerId}"`);
-    });
-
-    it('should match CheckNewMail scenario with LogServerOn id + account args', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2186,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'CheckNewMail',
-        separator: '"^"',
-        args: [`#${mailIntServerId}`, `%${mailAccount}`],
-      });
-
-      const result = rdoMock.match(command);
-      validator.validate(RdoProtocol.parse(command), command);
-      expect(result).not.toBeNull();
-      expect(result!.exchange.id).toBe('mail-rdo-013');
-    });
-
-    it('should use "^" separator (function returns count)', () => {
-      const command = RdoProtocol.format({
-        raw: '', type: 'REQUEST', rid: 2186,
-        verb: RdoVerb.SEL, targetId: mailServerId,
-        action: RdoAction.CALL, member: 'CheckNewMail',
-        separator: '"^"',
-        args: [`#${mailIntServerId}`, `%${mailAccount}`],
-      });
-
-      expect(command).toContain('"^"');
-    });
-  });
-
-  // =========================================================================
-  // SEPARATOR CONFORMITY (critical: wrong separator = wrong server behavior)
-  // =========================================================================
-
-  describe('Separator conformity', () => {
-    it('void procedures should use "*" separator', () => {
-      // AddLine, CloseMessage, DeleteMessage, AddHeaders are all void procedures
-      const voidCommands = [
-        { member: 'AddLine', target: messageId, args: ['%body'] },
-        { member: 'CloseMessage', target: mailServerId, args: [`#${messageId}`] },
-        { member: 'DeleteMessage', target: mailServerId, args: [`%${worldName}`, `%${mailAccount}`, '%Inbox', `#${messageId}`] },
-        { member: 'AddHeaders', target: messageId, args: ['%headers'] },
-      ];
-
-      for (const { member, target, args } of voidCommands) {
-        const command = RdoProtocol.format({
-          raw: '', type: 'REQUEST', rid: 9999,
-          verb: RdoVerb.SEL, targetId: target,
-          action: RdoAction.CALL, member,
-          separator: '"*"',
-          args,
-        });
-
-        expect(command).toContain('"*"');
-      }
-    });
-
-    it('functions with return values should use "^" separator', () => {
-      // NewMail, Save, Post, OpenMessage, GetHeaders, GetLines, GetAttachmentCount, CheckNewMail
-      const funcCommands = [
-        { member: 'NewMail', target: mailServerId, args: ['%to', '%name', '%subj'] },
-        { member: 'Save', target: mailServerId, args: [`%${worldName}`, `#${messageId}`] },
-        { member: 'Post', target: mailServerId, args: [`%${worldName}`, `#${messageId}`] },
-        { member: 'OpenMessage', target: mailServerId, args: ['%world', '%acct', '%folder', '%id'] },
-        { member: 'GetHeaders', target: msgObjId, args: ['#0'] },
-        { member: 'GetLines', target: msgObjId, args: ['#0'] },
-        { member: 'GetAttachmentCount', target: msgObjId, args: ['#0'] },
-        { member: 'CheckNewMail', target: mailServerId, args: ['#41230990', '%acct'] },
-        { member: 'LogServerOn', target: mailServerId, args: ['%world'] },
-      ];
-
-      for (const { member, target, args } of funcCommands) {
-        const command = RdoProtocol.format({
-          raw: '', type: 'REQUEST', rid: 9999,
-          verb: RdoVerb.SEL, targetId: target,
-          action: RdoAction.CALL, member,
-          separator: '"^"',
-          args,
-        });
-
-        expect(command).toContain('"^"');
-      }
-    });
-  });
-
-  // =========================================================================
-  // TARGETING RULES
-  // =========================================================================
-
-  describe('Command targeting rules', () => {
-    it('should target mailServerId for server-level operations', () => {
-      const serverOps = ['NewMail', 'Save', 'Post', 'OpenMessage', 'DeleteMessage', 'CloseMessage', 'CheckNewMail'];
-
-      for (const member of serverOps) {
-        const command = RdoProtocol.format({
-          raw: '', type: 'REQUEST', rid: 9999,
-          verb: RdoVerb.SEL, targetId: mailServerId,
-          action: RdoAction.CALL, member,
-          separator: '"^"',
-          args: ['%dummy'],
-        });
-
-        const parsed = RdoProtocol.parse(command);
-        expect(parsed.targetId).toBe(mailServerId);
-      }
-    });
-
-    it('should target messageId/msgObjId for message-level operations', () => {
-      const msgOps = ['AddLine', 'AddHeaders', 'GetHeaders', 'GetLines', 'GetAttachmentCount'];
-
-      for (const member of msgOps) {
-        const target = member.startsWith('Get') ? msgObjId : messageId;
-        const command = RdoProtocol.format({
-          raw: '', type: 'REQUEST', rid: 9999,
-          verb: RdoVerb.SEL, targetId: target,
-          action: RdoAction.CALL, member,
-          separator: '"*"',
-          args: ['%dummy'],
-        });
-
-        const parsed = RdoProtocol.parse(command);
-        expect(parsed.targetId).not.toBe(mailServerId);
-      }
-    });
+    expect(count).toBe(3);
+    expect(harness.getCapturedCommands(0)).toEqual([
+      'C 1000 idof "MailServer"',
+      'C 1001 sel 30437308 call LogServerOn "^" "%Shamba"',
+      'C 1002 sel 30437308 call CheckNewMail "^" "#41230990","%SPO_test3@Shamba.net"',
+    ]);
+    harness.assertNoViolations();
   });
 });

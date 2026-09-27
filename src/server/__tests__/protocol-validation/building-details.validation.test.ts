@@ -1,22 +1,39 @@
 /**
  * Protocol Validation Tests - Building Details Scenario
  *
- * Validates that the building-details scenario's RDO exchanges
- * correctly match commands built in the same format as
- * cacherGetPropertyList() (spo_session.ts:2396-2412).
+ * Drives production `cacherGetPropertyList` on a real StarpeaceSession through
+ * the protocol harness, loaded with the building-details scenario, strict
+ * validation on. Each test asserts the values production returns, and which
+ * scenario exchange answered (`RdoMock.getConsumedIds()`); one test pins the
+ * full emitted GetPropertyList frame as a literal. The bank's borrow box
+ * (production `requestBankLoan`: the CurrBlock lookup, then `RDOAskLoan` on
+ * that block) is driven the same way.
  *
- * Tests round-trip: build command → RdoMock.match() → parse response.
+ * Edge payloads — an all-empty answer (`res="%\t\t\t"` -> `['', '', '']`),
+ * leading empties, untyped values, bodiless answers — are pinned on the same
+ * production parser in `src/server/__tests__/spo-session-lifecycle.test.ts`,
+ * describe `cacher object pool`; they are not repeated here.
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
+jest.mock('net', () => ({
+  Socket: jest.fn(),
+}));
+jest.mock('node-fetch', () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
+
+import { describe, it, expect, afterEach } from '@jest/globals';
 import { RdoMock } from '../../../mock-server/rdo-mock';
 import { RdoStrictValidator } from '../../../mock-server/rdo-strict-validator';
 import { RdoProtocol } from '../../rdo';
-import { cleanPayload, parsePropertyResponse } from '../../rdo-helpers';
+import { parsePropertyResponse } from '../../rdo-helpers';
 import { rdoGet } from '../../../shared/rdo-frame';
 import { UPGRADE_GROUP } from '../../../shared/building-details/template-groups';
 import { collectTemplatePropertyNamesStructured } from '../../../shared/building-details';
 import type { RdoScenario } from '../../../mock-server/types/rdo-exchange-types';
+import { createProtocolTestHarness, ProtocolTestHarness } from './protocol-test-harness';
+import { createBankLoanRequestScenario } from '../../../mock-server/scenarios/bank-loan-request-scenario';
 import {
   createBuildingDetailsScenario,
   ALL_MOCK_BUILDINGS,
@@ -31,34 +48,29 @@ import {
   MOCK_MAUSOLEUM,
   type MockBuilding,
 } from '../../../mock-server/scenarios/building-details-scenario';
-import type { RdoPacket } from '../../../shared/types/protocol-types';
-import { RdoAction, RdoVerb } from '../../../shared/types/protocol-types';
 
-/**
- * Build a GetPropertyList command string matching cacherGetPropertyList format.
- * Mirrors spo_session.ts lines 2396-2412:
- *   query = propertyNames.join('\t') + '\t'
- *   → sent as: C <rid> sel <objectId> call GetPropertyList "^" "%<query>"
- */
-function buildGetPropertyListCommand(
-  rid: number,
-  objectId: string,
-  propertyNames: string[]
-): string {
-  const query = propertyNames.join('\t') + '\t';
-  const packet: RdoPacket = {
-    raw: '',
-    type: 'REQUEST',
-    rid,
-    verb: RdoVerb.SEL,
-    targetId: objectId,
-    action: RdoAction.CALL,
-    member: 'GetPropertyList',
-    separator: '"^"',
-    args: [`"%${query}"`],
-  };
-  return RdoProtocol.format(packet);
+/** The property names a mock building's group asks the cache for. */
+function groupNames(building: MockBuilding, groupId: string): string[] {
+  return (building.groups[groupId] || []).map(p => p.name);
 }
+
+let harness: ProtocolTestHarness | undefined;
+
+/** A harness whose map socket answers from the building-details scenario. */
+async function detailsHarness(): Promise<ProtocolTestHarness> {
+  const h = createProtocolTestHarness({
+    socketConfigs: [{ rdoScenarios: [createBuildingDetailsScenario().rdo] }],
+  });
+  harness = h;
+  await h.session.createSocket('map', '127.0.0.1', 7000);
+  return h;
+}
+
+afterEach(() => {
+  harness?.session.destroy();
+  harness?.cleanup();
+  harness = undefined;
+});
 
 describe('Building Details Scenario Structure', () => {
   it('should have 10 mock buildings', () => {
@@ -109,329 +121,226 @@ describe('Building Details Scenario Structure', () => {
 });
 
 describe('GetPropertyList Round-Trip Matching', () => {
-  let rdoMock: RdoMock;
-  let validator: RdoStrictValidator;
+  it.each([
+    ['Factory (IndGeneral)', MOCK_FACTORY, 'indGeneral', 'bd-rdo-0101'],
+    ['Store (SrvGeneral)', MOCK_STORE, 'srvGeneral', 'bd-rdo-0201'],
+    ['Bank (BankGeneral)', MOCK_BANK, 'bankGeneral', 'bd-rdo-0301'],
+    ['TV Station (TVGeneral)', MOCK_TV_STATION, 'tvGeneral', 'bd-rdo-0401'],
+    ['Capitol (capitolGeneral)', MOCK_CAPITOL, 'capitolGeneral', 'bd-rdo-0501'],
+    ['Town Hall (townGeneral)', MOCK_TOWN_HALL, 'townGeneral', 'bd-rdo-0601'],
+    ['Residential (ResGeneral)', MOCK_RESIDENTIAL, 'resGeneral', 'bd-rdo-0701'],
+    ['Warehouse (WHGeneral)', MOCK_WAREHOUSE, 'whGeneral', 'bd-rdo-0801'],
+    ['Mausoleum', MOCK_MAUSOLEUM, 'mausoleum', 'bd-rdo-0901'],
+  ])('answers the GetPropertyList production sends for %s', async (_label, building, groupId, exchangeId) => {
+    const h = await detailsHarness();
+    const names = groupNames(building, groupId);
 
-  beforeEach(() => {
-    rdoMock = new RdoMock();
-    validator = new RdoStrictValidator();
-    const { rdo } = createBuildingDetailsScenario();
-    rdoMock.addScenario(rdo);
-    validator.addScenario(rdo);
+    const values = await h.session.cacherGetPropertyList('99999', names);
+
+    expect(values).toHaveLength(names.length);
+    expect([...h.getRdoMock(0)!.getConsumedIds()]).toEqual([exchangeId]);
+    h.assertNoViolations();
   });
 
-  afterEach(() => {
-    const errors = validator.getErrors();
-    if (errors.length > 0) {
-      throw new Error(validator.formatReport());
-    }
+  it('emits the property names tab-joined, with a trailing tab, as one "%" argument', async () => {
+    const h = await detailsHarness();
+
+    await h.session.cacherGetPropertyList('99999', groupNames(MOCK_MAUSOLEUM, 'mausoleum'));
+
+    expect(h.getCapturedCommands(0)).toEqual([
+      'C 1000 sel 99999 call GetPropertyList "^" "%WordsOfWisdom\tOwnerName\tTranscended\t"',
+    ]);
+    h.assertNoViolations();
   });
-
-  /**
-   * Helper: extract property names from a mock building's group
-   */
-  function getGroupPropertyNames(building: MockBuilding, groupId: string): string[] {
-    return (building.groups[groupId] || []).map(p => p.name);
-  }
-
-  // Test each mock building's first group for basic round-trip
-  const buildingsToTest: Array<{ building: MockBuilding; groupId: string; label: string }> = [
-    { building: MOCK_FACTORY, groupId: 'indGeneral', label: 'Factory (IndGeneral)' },
-    { building: MOCK_STORE, groupId: 'srvGeneral', label: 'Store (SrvGeneral)' },
-    { building: MOCK_BANK, groupId: 'bankGeneral', label: 'Bank (BankGeneral)' },
-    { building: MOCK_TV_STATION, groupId: 'tvGeneral', label: 'TV Station (TVGeneral)' },
-    { building: MOCK_CAPITOL, groupId: 'capitolGeneral', label: 'Capitol (capitolGeneral)' },
-    { building: MOCK_TOWN_HALL, groupId: 'townGeneral', label: 'Town Hall (townGeneral)' },
-    { building: MOCK_RESIDENTIAL, groupId: 'resGeneral', label: 'Residential (ResGeneral)' },
-    { building: MOCK_WAREHOUSE, groupId: 'whGeneral', label: 'Warehouse (WHGeneral)' },
-    { building: MOCK_MAUSOLEUM, groupId: 'mausoleum', label: 'Mausoleum' },
-  ];
-
-  for (const { building, groupId, label } of buildingsToTest) {
-    it(`should match GetPropertyList command for ${label}`, () => {
-      const propNames = getGroupPropertyNames(building, groupId);
-      expect(propNames.length).toBeGreaterThan(0);
-
-      // Build the same command cacherGetPropertyList would send
-      const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-      const result = rdoMock.match(cmd);
-      validator.validate(RdoProtocol.parse(cmd), cmd);
-
-      expect(result).not.toBeNull();
-      expect(result!.exchange.matchKeys!.member).toBe('GetPropertyList');
-    });
-  }
 });
 
 describe('Multi-Group Building Matching', () => {
-  let rdoMock: RdoMock;
-  let validator: RdoStrictValidator;
-
-  beforeEach(() => {
-    rdoMock = new RdoMock();
-    validator = new RdoStrictValidator();
-    const { rdo } = createBuildingDetailsScenario();
-    rdoMock.addScenario(rdo);
-    validator.addScenario(rdo);
-  });
-
-  afterEach(() => {
-    const errors = validator.getErrors();
-    if (errors.length > 0) {
-      throw new Error(validator.formatReport());
+  async function consumedFor(building: MockBuilding): Promise<string[]> {
+    const h = await detailsHarness();
+    for (const groupId of Object.keys(building.groups)) {
+      await h.session.cacherGetPropertyList('99999', groupNames(building, groupId));
     }
+    h.assertNoViolations();
+    return [...h.getRdoMock(0)!.getConsumedIds()].sort();
+  }
+
+  it('differentiates Factory groups by argsPattern', async () => {
+    expect(await consumedFor(MOCK_FACTORY)).toEqual(['bd-rdo-0101', 'bd-rdo-0102', 'bd-rdo-0103', 'bd-rdo-0104']);
   });
 
-  it('should differentiate Factory groups by argsPattern', () => {
-    // MOCK_FACTORY has: indGeneral, workforce, upgrade, finances
-    const groups = Object.keys(MOCK_FACTORY.groups);
-    expect(groups.length).toBeGreaterThanOrEqual(3);
-
-    const matchedExchangeIds = new Set<string>();
-
-    for (const groupId of groups) {
-      const propNames = MOCK_FACTORY.groups[groupId].map(p => p.name);
-      const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-      const result = rdoMock.match(cmd);
-
-      expect(result).not.toBeNull();
-      matchedExchangeIds.add(result!.exchange.id);
-    }
-
-    // Each group should match a DIFFERENT exchange
-    expect(matchedExchangeIds.size).toBe(groups.length);
+  it('differentiates Bank groups (bankGeneral vs bankLoans)', async () => {
+    expect(await consumedFor(MOCK_BANK)).toEqual(['bd-rdo-0301', 'bd-rdo-0302']);
   });
 
-  it('should differentiate Bank groups (bankGeneral vs bankLoans)', () => {
-    const generalProps = MOCK_BANK.groups['bankGeneral'].map(p => p.name);
-    const loansProps = MOCK_BANK.groups['bankLoans'].map(p => p.name);
-
-    const generalCmd = buildGetPropertyListCommand(200, '99999', generalProps);
-    const loansCmd = buildGetPropertyListCommand(201, '99999', loansProps);
-
-    const generalResult = rdoMock.match(generalCmd);
-    const loansResult = rdoMock.match(loansCmd);
-
-    expect(generalResult).not.toBeNull();
-    expect(loansResult).not.toBeNull();
-    expect(generalResult!.exchange.id).not.toBe(loansResult!.exchange.id);
+  it('differentiates TV Station groups (tvGeneral vs antennas vs films vs workforce)', async () => {
+    // The TV workforce group asks for the same names as the Factory's, so the
+    // first exchange declaring that list (the Factory's, bd-rdo-0102) answers it.
+    expect(await consumedFor(MOCK_TV_STATION)).toEqual(['bd-rdo-0102', 'bd-rdo-0401', 'bd-rdo-0402', 'bd-rdo-0403']);
   });
 
-  it('should differentiate TV Station groups (tvGeneral vs antennas vs films vs workforce)', () => {
-    const groupIds = Object.keys(MOCK_TV_STATION.groups);
-    expect(groupIds.length).toBe(4);
-
-    const matchedIds = new Set<string>();
-
-    for (const groupId of groupIds) {
-      const propNames = MOCK_TV_STATION.groups[groupId].map(p => p.name);
-      const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-      const result = rdoMock.match(cmd);
-
-      expect(result).not.toBeNull();
-      matchedIds.add(result!.exchange.id);
-    }
-
-    expect(matchedIds.size).toBe(4);
-  });
-
-  it('should differentiate Capitol groups (govGeneral vs votes vs taxInfo)', () => {
-    const groupIds = Object.keys(MOCK_CAPITOL.groups);
-    expect(groupIds.length).toBeGreaterThanOrEqual(2);
-
-    const matchedIds = new Set<string>();
-
-    for (const groupId of groupIds) {
-      const propNames = MOCK_CAPITOL.groups[groupId].map(p => p.name);
-      const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-      const result = rdoMock.match(cmd);
-
-      expect(result).not.toBeNull();
-      matchedIds.add(result!.exchange.id);
-    }
-
-    expect(matchedIds.size).toBe(groupIds.length);
+  it('differentiates Capitol groups', async () => {
+    expect(await consumedFor(MOCK_CAPITOL)).toEqual(['bd-rdo-0501', 'bd-rdo-0502', 'bd-rdo-0503', 'bd-rdo-0504']);
   });
 });
 
 describe('Response Parsing', () => {
-  let rdoMock: RdoMock;
-  let validator: RdoStrictValidator;
+  it('returns the Factory indGeneral values in property order', async () => {
+    const h = await detailsHarness();
 
-  beforeEach(() => {
-    rdoMock = new RdoMock();
-    validator = new RdoStrictValidator();
-    const { rdo } = createBuildingDetailsScenario();
-    rdoMock.addScenario(rdo);
-    validator.addScenario(rdo);
-  });
+    const values = await h.session.cacherGetPropertyList('99999', groupNames(MOCK_FACTORY, 'indGeneral'));
 
-  afterEach(() => {
-    const errors = validator.getErrors();
-    if (errors.length > 0) {
-      throw new Error(validator.formatReport());
-    }
-  });
-
-  /**
-   * Extract payload from response (A<rid> <payload>) then clean it.
-   * Mirrors how spo_session parses responses:
-   *   const raw = cleanPayload(packet.payload || '');
-   */
-  function parseResponseValues(response: string): string[] {
-    // Parse the raw response to extract payload
-    const parsed = RdoProtocol.parse(response);
-    const cleaned = cleanPayload(parsed.payload || '');
-    return cleaned.split('\t');
-  }
-
-  it('should return tab-delimited property values for Factory indGeneral', () => {
-    const propNames = MOCK_FACTORY.groups['indGeneral'].map(p => p.name);
-    const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-    const result = rdoMock.match(cmd);
-
-    expect(result).not.toBeNull();
-    const values = parseResponseValues(result!.response);
-
-    // Should have same number of values as properties
-    expect(values.length).toBe(propNames.length);
-    // First value should be building name
     expect(values[0]).toBe('Chemical Plant 3');
-    // Second value should be creator
     expect(values[1]).toBe('Yellow Inc.');
+    h.assertNoViolations();
   });
 
-  it('should return correct Store service count', () => {
-    const propNames = MOCK_STORE.groups['srvGeneral'].map(p => p.name);
-    const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-    const result = rdoMock.match(cmd);
+  it('returns the Store service count', async () => {
+    const h = await detailsHarness();
 
-    expect(result).not.toBeNull();
-    const values = parseResponseValues(result!.response);
+    const values = await h.session.cacherGetPropertyList('99999', groupNames(MOCK_STORE, 'srvGeneral'));
 
-    // Find ServiceCount index
-    const serviceCountIdx = propNames.indexOf('ServiceCount');
-    expect(serviceCountIdx).toBeGreaterThanOrEqual(0);
-    expect(values[serviceCountIdx]).toBe('2');
+    // ServiceCount is the seventh name of the srvGeneral group.
+    expect(values[6]).toBe('2');
+    h.assertNoViolations();
   });
 
-  it('should return correct Bank loan data', () => {
-    const propNames = MOCK_BANK.groups['bankLoans'].map(p => p.name);
-    const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-    const result = rdoMock.match(cmd);
+  it('returns the Bank loan data', async () => {
+    const h = await detailsHarness();
 
-    expect(result).not.toBeNull();
-    const values = parseResponseValues(result!.response);
+    const values = await h.session.cacherGetPropertyList('99999', groupNames(MOCK_BANK, 'bankLoans'));
 
-    // LoanCount should be first
     expect(values[0]).toBe('3');
-    // First debtor should be Yellow Inc.
     expect(values[1]).toBe('Yellow Inc.');
+    h.assertNoViolations();
   });
 
-  it('should return response in A<rid> format', () => {
-    const propNames = MOCK_FACTORY.groups['indGeneral'].map(p => p.name);
-    const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-    const result = rdoMock.match(cmd);
+  it('returns the Mausoleum WordsOfWisdom', async () => {
+    const h = await detailsHarness();
 
-    expect(result).not.toBeNull();
-    expect(result!.response).toMatch(/^A200 res="%/);
-  });
-
-  it('should parse Mausoleum WordsOfWisdom correctly', () => {
-    const propNames = MOCK_MAUSOLEUM.groups['mausoleum'].map(p => p.name);
-    const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-    const result = rdoMock.match(cmd);
-
-    expect(result).not.toBeNull();
-    const values = parseResponseValues(result!.response);
+    const values = await h.session.cacherGetPropertyList('99999', groupNames(MOCK_MAUSOLEUM, 'mausoleum'));
 
     expect(values[0]).toBe('Build wisely, prosper greatly.');
+    h.assertNoViolations();
   });
 });
 
 describe('argsPattern Matching Accuracy', () => {
-  let rdoMock: RdoMock;
-  let validator: RdoStrictValidator;
+  it('does NOT match when the property names are completely different', () => {
+    // Driven on RdoMock directly: production would wait out its timeout on a
+    // frame no exchange answers. Every GetPropertyList exchange pins its full
+    // argsPattern and none carries a `looseMatch` reason.
+    const rdoMock = new RdoMock();
+    rdoMock.addScenario(createBuildingDetailsScenario().rdo);
 
-  beforeEach(() => {
-    rdoMock = new RdoMock();
-    validator = new RdoStrictValidator();
-    const { rdo } = createBuildingDetailsScenario();
-    rdoMock.addScenario(rdo);
-    validator.addScenario(rdo);
+    expect(rdoMock.match('C 200 sel 99999 call GetPropertyList "^" "%NonExistent\tFakeProperty\t"')).toBeNull();
   });
 
-  afterEach(() => {
-    const errors = validator.getErrors();
-    if (errors.length > 0) {
-      throw new Error(validator.formatReport());
-    }
+  it('answers the Factory workforce group from its own exchange', async () => {
+    const h = await detailsHarness();
+
+    await h.session.cacherGetPropertyList('99999', groupNames(MOCK_FACTORY, 'workforce'));
+
+    expect([...h.getRdoMock(0)!.getConsumedIds()]).toEqual(['bd-rdo-0102']);
+    h.assertNoViolations();
   });
 
-  it('should NOT match when property names are completely different', () => {
-    // Build a command with property names that don't exist in any exchange
-    const cmd = buildGetPropertyListCommand(200, '99999', ['NonExistent', 'FakeProperty']);
+  it('returns the Residential values', async () => {
+    const h = await detailsHarness();
 
-    // Every GetPropertyList exchange pins its full argsPattern and none carries a
-    // `looseMatch` reason, so a frame naming other properties answers nothing.
-    const result = rdoMock.match(cmd);
-    expect(result).toBeNull();
+    const values = await h.session.cacherGetPropertyList('99999', groupNames(MOCK_RESIDENTIAL, 'resGeneral'));
+
+    expect(values).toContain('Luxury Apartments');
+    h.assertNoViolations();
   });
 
-  it('should match argsPattern-specific exchange over wildcard', () => {
-    // Factory workforce has specific properties
-    const workforceProps = MOCK_FACTORY.groups['workforce'].map(p => p.name);
-    const cmd = buildGetPropertyListCommand(200, '99999', workforceProps);
-    const result = rdoMock.match(cmd);
+  it('returns the Warehouse TradeLevel', async () => {
+    const h = await detailsHarness();
 
-    expect(result).not.toBeNull();
-    // Verify it matched the WORKFORCE exchange, not some other one
-    const expectedPropNames = workforceProps.join('\t') + '\t';
-    expect(result!.exchange.matchKeys!.argsPattern![0]).toContain(expectedPropNames);
+    const values = await h.session.cacherGetPropertyList('99999', groupNames(MOCK_WAREHOUSE, 'whGeneral'));
+
+    // TradeLevel is the eighth name of the whGeneral group.
+    expect(values[7]).toBe('3');
+    h.assertNoViolations();
   });
 
-  it('should match Residential single-group correctly', () => {
-    const propNames = MOCK_RESIDENTIAL.groups['resGeneral'].map(p => p.name);
-    const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-    const result = rdoMock.match(cmd);
+  it('answers the same exchange whatever the target object id', async () => {
+    const h = await detailsHarness();
+    const names = groupNames(MOCK_FACTORY, 'indGeneral');
 
-    expect(result).not.toBeNull();
-    // Verify response contains "Luxury Apartments"
-    const cleaned = cleanPayload(result!.response);
-    expect(cleaned).toContain('Luxury Apartments');
-  });
+    await h.session.cacherGetPropertyList('12345', names);
+    await h.session.cacherGetPropertyList('99999', names);
 
-  it('should match Warehouse with TradeRole/TradeLevel properties', () => {
-    const propNames = MOCK_WAREHOUSE.groups['whGeneral'].map(p => p.name);
-    const cmd = buildGetPropertyListCommand(200, '99999', propNames);
-    const result = rdoMock.match(cmd);
-
-    expect(result).not.toBeNull();
-    const cleaned = cleanPayload(result!.response);
-    const values = cleaned.split('\t');
-
-    const tradeLevelIdx = propNames.indexOf('TradeLevel');
-    expect(values[tradeLevelIdx]).toBe('3');
-  });
-
-  it('should handle commands with different objectId (wildcard target)', () => {
-    // The scenario uses targetId='*' — should match any objectId
-    const propNames = MOCK_FACTORY.groups['indGeneral'].map(p => p.name);
-
-    const cmd1 = buildGetPropertyListCommand(200, '12345', propNames);
-    const cmd2 = buildGetPropertyListCommand(201, '99999', propNames);
-
-    const result1 = rdoMock.match(cmd1);
-    const result2 = rdoMock.match(cmd2);
-
-    expect(result1).not.toBeNull();
-    expect(result2).not.toBeNull();
-    // Both should match the same exchange (same argsPattern)
-    expect(result1!.exchange.id).toBe(result2!.exchange.id);
+    expect(h.getCapturedCommands(0)).toEqual([
+      'C 1000 sel 12345 call GetPropertyList "^" "%Name\tCreator\tCost\tROI\tYears\tTrouble\tRole\tTradeRole\tTradeLevel\t"',
+      'C 1001 sel 99999 call GetPropertyList "^" "%Name\tCreator\tCost\tROI\tYears\tTrouble\tRole\tTradeRole\tTradeLevel\t"',
+    ]);
+    expect([...h.getRdoMock(0)!.getConsumedIds()]).toEqual(['bd-rdo-0101']);
+    h.assertNoViolations();
   });
 });
 
+
+// ===========================================================================
+// The bank borrow box — RDOAskLoan on the bank's CurrBlock
+// ===========================================================================
+
+/** The cacher reads requestBankLoan makes to find the bank's block (inline, literal requests). */
+const bankBlockLookup: RdoScenario = {
+  name: 'bank-block-lookup',
+  description: 'CreateObject / SetObject / GetPropertyList(CurrBlock) on the cacher',
+  variables: {},
+  exchanges: [
+    {
+      id: 'bb-rdo-create',
+      request: 'C sel 40133496 call CreateObject "^" "%Shamba"',
+      response: 'A1 res="%7"',
+      matchKeys: { verb: 'sel', action: 'call', member: 'CreateObject', argsPattern: ['"%Shamba"'] },
+    },
+    {
+      id: 'bb-rdo-set',
+      request: 'C sel 7 call SetObject "^" "#118","#226"',
+      response: 'A1 res="#-1"',
+      matchKeys: { verb: 'sel', action: 'call', member: 'SetObject', argsPattern: ['"#118"', '"#226"'] },
+    },
+    {
+      id: 'bb-rdo-currblock',
+      request: 'C sel 7 call GetPropertyList "^" "%CurrBlock\t"',
+      response: 'A1 res="%130200101\t"',
+      matchKeys: { verb: 'sel', action: 'call', member: 'GetPropertyList', argsPattern: ['"%CurrBlock\t"'] },
+    },
+  ],
+};
+
+describe('Bank borrow box (requestBankLoan)', () => {
+  it('reads the bank block from the cache, then asks it for the loan with the proxy id', async () => {
+    const h = createProtocolTestHarness({
+      socketConfigs: [
+        { rdoScenarios: [bankBlockLookup] },
+        { rdoScenarios: [createBankLoanRequestScenario().rdo] },
+      ],
+    });
+    harness = h;
+    await h.session.createSocket('map', '127.0.0.1', 7000);
+    await h.session.createSocket('construction', '127.0.0.1', 7001);
+    h.session.setCacherId('40133496');
+    h.session.setCurrentWorldInfo({ name: 'Shamba', url: 'http://158.69.153.134/Five/', ip: '158.69.153.134', port: 8000 });
+    h.session.setFTycoonProxyId(30440112);
+
+    const answer = await h.session.requestBankLoan(118, 226, '$5,000,000');
+
+    expect(h.getCapturedCommands(0)).toEqual([
+      'C 1000 sel 40133496 call CreateObject "^" "%Shamba"',
+      'C 1001 sel 7 call SetObject "^" "#118","#226"',
+      'C 1002 sel 7 call GetPropertyList "^" "%CurrBlock\t"',
+      'C sel 40133496 call CloseObject "*" "#7"',
+    ]);
+    expect(h.getCapturedCommands(1)).toEqual([
+      'C 1003 sel 130200101 call RDOAskLoan "^" "#30440112","%5000000"',
+    ]);
+    expect(answer).toEqual({ result: 0 });
+    h.assertNoViolations();
+  });
+});
 
 // ===========================================================================
 // AcceptCloning — read live, never from the property list

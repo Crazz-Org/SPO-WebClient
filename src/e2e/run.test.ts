@@ -24,6 +24,7 @@ function passingFlow(name: string): flowsModule.FlowResult {
     name,
     status: 'PASS',
     assertions: [],
+    unproven: [],
     probes: [],
     messagesSent: 4,
     messagesReceived: 6,
@@ -76,6 +77,22 @@ describe('runLive', () => {
 
     expect(result.status).toBe('PASS');
     expect(result.flows.map(f => f.name)).toEqual(['login-spine']);
+  });
+
+  it('an UNPROVEN flow never fails the run, and the summary says why', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => ({
+      ...passingFlow(flow.name),
+      status: 'UNPROVEN',
+      unproven: ['x — y'],
+    }));
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+
+    expect(result.status).toBe('PASS');
+    const summary = formatSummary(result);
+    expect(summary).toContain('UNPROVEN');
+    expect(summary).toContain('? unproven: x — y');
   });
 
   it('fails the run when any flow fails', async () => {
@@ -206,6 +223,7 @@ describe('formatSummary', () => {
           name: 'permission-negative',
           status: 'FAIL',
           assertions: [{ what: 'a non-mayor is refused', ok: false, detail: 'canGovern=true' }],
+          unproven: [],
           probes: [],
           messagesSent: 1,
           messagesReceived: 1,
@@ -224,6 +242,7 @@ describe('formatSummary', () => {
           name: 'politics-write',
           status: 'FAIL',
           assertions: [],
+          unproven: [],
           probes: [
             {
               what: 'tax row 0',

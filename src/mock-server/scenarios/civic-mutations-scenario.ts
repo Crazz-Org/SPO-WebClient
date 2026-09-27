@@ -244,7 +244,7 @@ function buildPathReadExchanges(electionsOn: boolean): RdoExchange[] {
     {
       id: 'civic-rdo-town-set-path',
       request: `C sel ${CIVIC_TARGETS.tempObject} call SetPath "^" "%Towns\\Shamba.five\\";`,
-      // Delphi WordBool TRUE — the only success value (building-inspector-rdo.test.ts:721-729).
+      // Delphi WordBool TRUE — the only success value (fetchGateDetails in building-details-handler.ts).
       response: 'A0 res="#-1"',
       matchKeys: {
         verb: 'sel', action: 'call', member: 'SetPath',

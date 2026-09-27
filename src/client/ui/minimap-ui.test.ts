@@ -191,7 +191,7 @@ function resizeTo(width: number, height = 800): void {
 }
 
 function wrapperStyle(): string {
-  return allElements.find(el => el.id === 'minimap-wrapper')!.style.cssText ?? '';
+  return allElements.filter(el => el.id === 'minimap-wrapper').pop()!.style.cssText ?? '';
 }
 
 beforeEach(() => {
@@ -798,11 +798,14 @@ describe('MinimapUI', () => {
         const minimap = new MinimapUI();
         minimap.setRenderer(createMockRenderer());
 
-        const wrapper = allElements.find(el => el.id === 'minimap-wrapper');
+        const wrapper = allElements.filter(el => el.id === 'minimap-wrapper').pop();
+        expect(wrapper!.parentElement).toBe(document.body);
 
+        wrapper!.style.left = '';
         useUiStore.getState().openLeftPanel(kind);
         expect(wrapper!.style.left).toBe('12px');
 
+        wrapper!.style.left = '';
         useUiStore.getState().closeLeftPanel();
         expect(wrapper!.style.left).toBe('12px');
 

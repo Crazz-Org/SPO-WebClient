@@ -115,6 +115,7 @@ describe('login', () => {
     ]);
     expect(session.company.name).toBe('SPO_test3 - Green');
     expect(session.worlds).toBe(1);
+    expect(session.world).toEqual({ name: 'planitia' });
   });
 
   it('waits for the search menu before handing the session back', async () => {

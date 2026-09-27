@@ -26,13 +26,19 @@ import type {
   WsRespPoliticsData,
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuDirectory,
+  WsRespMapData,
 } from '../shared/types/message-types';
-import type { DirectoryRef, DirectoryPage } from '../shared/types/domain-types';
+import type {
+  BuildingPropertyValue,
+  DirectoryRef,
+  DirectoryPage,
+  MapBuilding,
+} from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
 import { WsDriverError } from './ws-driver';
-import { GOVERNED_TOWN, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
+import { GOVERNED_TOWN, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS, WORLD_NAME } from './config';
 import { findCurrentSurvivalLog, openLogWindow } from './live-log';
 import { runProbe, probeFailure, type ProbeResult, type ProbeSpec } from './probe';
 import {
@@ -48,6 +54,8 @@ import {
   type LiveSession,
 } from './session';
 import type { WorldLock } from './world-lock';
+import * as loginHandler from '../server/session/login-handler';
+import { DEFAULT_LANGUAGE_ID } from '../shared/language';
 
 export interface FlowContext {
   lock: WorldLock;
@@ -57,13 +65,44 @@ export interface FlowContext {
 
 export interface FlowResult {
   name: string;
-  status: 'PASS' | 'FAIL';
+  status: 'PASS' | 'FAIL' | 'UNPROVEN';
   assertions: { what: string; ok: boolean; detail?: string }[];
+  /** What the flow could not prove, each with its reason. */
+  unproven: string[];
   probes: ProbeResult[];
   messagesSent: number;
   messagesReceived: number;
   wireErrors: number;
   error?: string;
+  /**
+   * Values recorded, never asserted — a reading for a later card (see logonPageVerdict and
+   * warehouseRoleReading).
+   */
+  readings?: (LogonPageReading | TradeRoleReading)[];
+}
+
+/** One facility's trade fields, as the inspector's opening read served them (#1006). */
+export interface TradeRoleReading {
+  facility: 'warehouse' | 'industry';
+  x: number;
+  y: number;
+  visualClass: string;
+  templateName: string;
+  /** The raw cached `Role` value, verbatim — `'absent'` when the read did not return it. */
+  role: string;
+  /** The raw cached `TradeRole` value, verbatim — `'absent'` when the read did not return it. */
+  tradeRole: string;
+}
+
+export interface LogonPageReading {
+  account: string;
+  kind: 'companies' | 'denied' | 'error' | 'unreachable';
+  /** The `PA` query value logonNoAccess.asp carried — only when denied. */
+  expiresOn?: string;
+  /** logonError.asp's ErrorCode — only when error. */
+  errorCode?: string;
+  /** How many companies the page listed — only when companies. */
+  companies?: number;
 }
 
 export interface Flow {
@@ -79,6 +118,11 @@ class Assertions {
   readonly items: { what: string; ok: boolean; detail?: string }[] = [];
   check(what: string, ok: boolean, detail?: string): void {
     this.items.push({ what, ok, detail });
+  }
+  /** Record what the flow could not prove, and why — the world held nothing to test. */
+  readonly unprovenItems: string[] = [];
+  unproven(what: string, reason: string): void {
+    this.unprovenItems.push(`${what} — ${reason}`);
   }
   get failed(): boolean {
     return this.items.some(a => !a.ok);
@@ -288,7 +332,15 @@ const mailRoundTrip: Flow = {
           { type: WsMessageType.REQ_MAIL_DELETE, folder: 'Inbox', messageId: delivered.messageId },
           WsMessageType.RESP_MAIL_DELETED,
         );
-        assertions.check('the probe message was deleted again', true);
+        const inboxAfter = await recipient.driver.request<WsRespMailFolder>(
+          { type: WsMessageType.REQ_MAIL_GET_FOLDER, folder: 'Inbox' },
+          WsMessageType.RESP_MAIL_FOLDER,
+        );
+        assertions.check(
+          'the probe message was deleted again',
+          !inboxAfter.messages.some(m => m.messageId === delivered.messageId),
+          `messageId=${delivered.messageId}`,
+        );
       }
       return report('mail-roundtrip', assertions, [], recipient);
     } finally {
@@ -680,10 +732,9 @@ const newspaperRead: Flow = {
       } else {
         // Environment exception, not a defect — see the flow's note above. Never
         // fall through to REQ_NEWSPAPER_ISSUE with the folder `''`.
-        assertions.check(
-          'the bar kept no issue — environment exception, no news server prints on this world',
-          true,
-          `${paperName}: 0 issues`,
+        assertions.unproven(
+          'the newest issue opens with stories',
+          `${paperName}: 0 issues — no news server prints on this world`,
         );
       }
 
@@ -703,8 +754,8 @@ const ZONING_ALERT_SUBJECT = 'Zoning Alert!'; // World.pas:2721
  * through `parseLocalAspUrl` — the same translator the client's link interceptor uses —
  * and sends the very REQ_BUILDING_FOCUS the client sends on a click.
  *
- * No zoning alert in the inbox is an environment exception, not a failure — nothing was
- * zoned out of this account lately. A demolished building answering `ERROR_FacilityNotFound`
+ * No zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
+ * was zoned out of this account lately, so the flow proved nothing. A demolished building answering `ERROR_FacilityNotFound`
  * is also accepted: the whole point of the alert is that the building is gone.
  */
 const zoningAlertRead: Flow = {
@@ -726,9 +777,9 @@ const zoningAlertRead: Flow = {
       const alert = inbox.messages.find(m => m.subject === ZONING_ALERT_SUBJECT);
 
       if (!alert) {
-        assertions.check(
-          'no zoning alert in the inbox — nothing was zoned out of this account lately',
-          true,
+        assertions.unproven(
+          'a zoning alert link focuses its tile',
+          'no "Zoning Alert!" in the inbox — nothing was zoned out of this account lately',
         );
         return report('zoning-alert-read', assertions, [], session);
       }
@@ -750,13 +801,12 @@ const zoningAlertRead: Flow = {
 
       if (targets.length > 0) {
         const { x, y } = targets[0];
-        let focused = false;
+        let focus: WsRespBuildingFocus | undefined;
         try {
-          await session.driver.request<WsRespBuildingFocus>(
+          focus = await session.driver.request<WsRespBuildingFocus>(
             { type: WsMessageType.REQ_BUILDING_FOCUS, x, y },
             WsMessageType.RESP_BUILDING_FOCUS,
           );
-          focused = true;
         } catch (err: unknown) {
           // The building the alert names was, by definition, demolished — a gateway
           // "not found" for that exact tile is an accepted outcome, not a wire failure.
@@ -767,12 +817,16 @@ const zoningAlertRead: Flow = {
           );
         }
 
-        if (focused) {
+        if (focus !== undefined) {
           await session.driver.request(
             { type: WsMessageType.REQ_BUILDING_UNFOCUS },
             WsMessageType.RESP_CHAT_SUCCESS,
           );
-          assertions.check('the map centred on the demolished building tile', true, `x=${x} y=${y}`);
+          assertions.check(
+            'the focus opened on a building at the alert tile',
+            Boolean(focus.building.buildingId),
+            `x=${x} y=${y} buildingId=${focus.building.buildingId}`,
+          );
           assertions.check('no gateway errors', session.driver.errors.length === 0);
         }
       }
@@ -925,6 +979,176 @@ const directoryBrowse: Flow = {
   },
 };
 
+const SILENT_LOG = {
+  info: (): void => undefined,
+  debug: (): void => undefined,
+  warn: (): void => undefined,
+  error: (): void => undefined,
+};
+
+/**
+ * Read-only bench probe: what the world's logon page answers for each locked account.
+ * The verdict is recorded in the run artifact, never asserted; the flow fails only when the
+ * request cannot be made. It stays in FLOWS until the login "denied" card ships, which removes
+ * it — once the gateway takes the verdict at login, loginSpine exercises the same page on
+ * every gate.
+ */
+const logonPageVerdict: Flow = {
+  name: 'logon-page-verdict',
+  what: 'logonComplete.asp verdict for each locked account — recorded, never asserted',
+  mutates: false,
+  async run() {
+    const assertions = new Assertions();
+    const readings: LogonPageReading[] = [];
+    let sent = 0;
+    let received = 0;
+    let wireErrors = 0;
+    for (const account of [PRIMARY_ACCOUNT, SECONDARY_ACCOUNT]) {
+      const session = await login(account);
+      try {
+        const world = session.world;
+        if (!world?.ip) {
+          assertions.check(
+            `${account.username}: the logon page request can be made`,
+            false,
+            `no IP for ${WORLD_NAME} in the directory listing`,
+          );
+          continue;
+        }
+        const r = await loginHandler.fetchCompaniesViaHttp(
+          { log: SILENT_LOG, currentWorldInfo: world, languageId: DEFAULT_LANGUAGE_ID },
+          world.ip,
+          account.username,
+        );
+        const reading: LogonPageReading = { account: account.username, kind: r.kind };
+        if (r.kind === 'companies') reading.companies = r.companies.length;
+        else if (r.kind === 'denied') reading.expiresOn = r.expiresOn;
+        else if (r.kind === 'error') reading.errorCode = r.errorCode;
+        else assertions.unproven(`${account.username} logon page verdict`, 'logonComplete.asp unreachable');
+        readings.push(reading);
+      } finally {
+        sent += session.driver.log.filter(e => e.direction === 'sent').length;
+        received += session.driver.log.filter(e => e.direction === 'received').length;
+        wireErrors += session.driver.errors.length;
+        await logoff(session);
+      }
+    }
+    return {
+      name: 'logon-page-verdict',
+      status: assertions.failed ? 'FAIL' : assertions.unprovenItems.length > 0 ? 'UNPROVEN' : 'PASS',
+      assertions: assertions.items,
+      unproven: assertions.unprovenItems,
+      probes: [],
+      messagesSent: sent,
+      messagesReceived: received,
+      wireErrors,
+      readings,
+    };
+  },
+};
+
+/** A property's raw value from any group of an opening read, or 'absent'. */
+function rawProperty(groups: { [groupId: string]: BuildingPropertyValue[] }, name: string): string {
+  for (const group of Object.values(groups)) {
+    const hit = group.find(p => p.name === name);
+    if (hit) return hit.value;
+  }
+  return 'absent';
+}
+
+/** The gateway's default loadMapArea chunk — one window centred on the town hall. */
+const ROLE_PROBE_SPAN = 64;
+const ROLE_PROBE_MAX_READS = 40;
+const INDUSTRY_TRADE_ROLES = ['2', '5', '6'];
+
+/**
+ * Read-only bench probe (#1006): what a real WHGeneral warehouse's cached `Role` holds, and,
+ * if one exists nearby, an IndGeneral facility's `Role`/`TradeRole`. The values are recorded
+ * in the run artifact and never asserted; the flow fails only when a read fails, and reports
+ * UNPROVEN when no warehouse is found. It is removed by the follow-up card that acts on the
+ * reading.
+ */
+const warehouseRoleReading: Flow = {
+  name: 'warehouse-role-reading',
+  what: "a warehouse's cached Role / TradeRole near the governed town — recorded, never asserted",
+  mutates: false,
+  async run() {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const response = await session.driver.request<WsRespMapData>(
+        {
+          type: WsMessageType.REQ_MAP_LOAD,
+          x: Math.max(0, town.x - ROLE_PROBE_SPAN / 2),
+          y: Math.max(0, town.y - ROLE_PROBE_SPAN / 2),
+          width: ROLE_PROBE_SPAN,
+          height: ROLE_PROBE_SPAN,
+        },
+        [WsMessageType.RESP_MAP_DATA, WsMessageType.EVENT_MAP_DATA],
+        TIMEOUTS.login,
+      );
+      const buildings: MapBuilding[] = response.data?.buildings ?? [];
+      const dist = (b: MapBuilding): number => Math.abs(b.x - town.x) + Math.abs(b.y - town.y);
+      const sorted = [...buildings].sort((a, b) => dist(a) - dist(b));
+
+      const handlerByClass = new Map<string, string>();
+      let reads = 0;
+      let warehouse: TradeRoleReading | undefined;
+      let industry: TradeRoleReading | undefined;
+      for (const b of sorted) {
+        if ((warehouse && industry) || reads >= ROLE_PROBE_MAX_READS) break;
+        const known = handlerByClass.get(b.visualClass);
+        if (known !== undefined) {
+          if (known !== 'WHGeneral' && known !== 'IndGeneral') continue;
+          if (known === 'WHGeneral' && warehouse) continue;
+          if (known === 'IndGeneral' && industry) continue;
+        }
+        const details = await readBuildingDetails(session, b.x, b.y, b.visualClass);
+        reads++;
+        const handlers = details.tabs.map(t => t.handlerName);
+        const handler = handlers.includes('WHGeneral')
+          ? 'WHGeneral'
+          : handlers.includes('IndGeneral')
+            ? 'IndGeneral'
+            : (handlers[0] ?? '');
+        handlerByClass.set(b.visualClass, handler);
+        const reading: TradeRoleReading = {
+          facility: handler === 'WHGeneral' ? 'warehouse' : 'industry',
+          x: b.x,
+          y: b.y,
+          visualClass: b.visualClass,
+          templateName: details.templateName,
+          role: rawProperty(details.groups, 'Role'),
+          tradeRole: rawProperty(details.groups, 'TradeRole'),
+        };
+        if (handler === 'WHGeneral' && !warehouse) warehouse = reading;
+        else if (
+          handler === 'IndGeneral' &&
+          !industry &&
+          INDUSTRY_TRADE_ROLES.includes(reading.tradeRole)
+        ) {
+          industry = reading;
+        }
+      }
+
+      const readings: TradeRoleReading[] = [];
+      if (warehouse) readings.push(warehouse);
+      if (industry) readings.push(industry);
+      if (!warehouse) {
+        assertions.unproven(
+          `a WHGeneral warehouse's cached Role near ${GOVERNED_TOWN}`,
+          `none among ${buildings.length} building(s) in the ${ROLE_PROBE_SPAN}×${ROLE_PROBE_SPAN} ` +
+            `window (${reads} inspector read(s))`,
+        );
+      }
+      return { ...report('warehouse-role-reading', assertions, [], session), readings };
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   politicsRead,
@@ -939,6 +1163,8 @@ export const FLOWS: Flow[] = [
   zoningAlertRead,
   nearestTownHall,
   directoryBrowse,
+  logonPageVerdict,
+  warehouseRoleReading,
 ];
 
 export function flowByName(name: string): Flow {
@@ -958,6 +1184,7 @@ export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult>
       name: flow.name,
       status: 'FAIL',
       assertions: [],
+      unproven: [],
       probes: [],
       messagesSent: 0,
       messagesReceived: 0,
@@ -986,8 +1213,9 @@ function report(
   const failed = assertions.failed || probes.some(p => p.status === 'FAIL');
   return {
     name,
-    status: failed ? 'FAIL' : 'PASS',
+    status: failed ? 'FAIL' : assertions.unprovenItems.length > 0 ? 'UNPROVEN' : 'PASS',
     assertions: assertions.items,
+    unproven: assertions.unprovenItems,
     probes,
     messagesSent: sent,
     messagesReceived: received,

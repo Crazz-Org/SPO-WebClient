@@ -7,10 +7,17 @@
  * server calls us on, and the three teardown paths.
  *
  * Every test drives the REAL session through `createProtocolTestHarness`
- * (MockTcpSocket + the strict validator), because these are the paths where a
- * hand-written double would simply agree with whatever the code does. The one
- * rule that is never bent: `sendRdoRequest` is never mocked here — it is the
- * subject.
+ * (MockTcpSocket, with strict validation switched off on every socket), because
+ * these are the paths where a hand-written double would simply agree with
+ * whatever the code does. The one rule that is never bent: `sendRdoRequest` is
+ * never mocked here — it is the subject.
+ *
+ * assertNoViolations() is not called: every socket here carries only the
+ * `idof` scenario plus member fallbacks. The harness exempts every fallback
+ * member from validation and never argument-checks an `idof` frame, so the
+ * validator would have nothing to report; several tests also deliberately send
+ * refused or degraded frames that no fixture describes. The wire forms these
+ * tests care about are pinned by literal assertions instead.
  */
 
 jest.mock('net', () => ({ Socket: jest.fn() }));
@@ -1395,6 +1402,19 @@ describe('handleServerRequest', () => {
     // O-M2: silence blocks a thread of the SHARED server for its whole timeout
     // (WinSockRDOServerClientConnection.pas:252).
     expect(socket.getCapturedWrites().join('\n')).toContain('A99998 error 5');
+  });
+
+  it('answers on the map socket when the request arrived there, not on world', async () => {
+    const world = await connectWorld();
+    await harness.session.connectMapService();
+    const map = harness.getSockets()[1];
+    harness.session.setKnownObject('InterfaceEvents', '38123456');
+
+    map.emit('data', Buffer.from('C 99991 idof "InterfaceEvents";', 'latin1'));
+    await flush();
+
+    expect(map.getCapturedWrites().join('\n')).toContain('A99991 objid="38123456";');
+    expect(world.getCapturedWrites().join('\n')).not.toContain('A99991');
   });
 
   it('answers the AnswerStatus heartbeat with NOERROR', async () => {

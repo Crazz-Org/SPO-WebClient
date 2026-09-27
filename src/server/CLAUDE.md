@@ -33,14 +33,14 @@ Login sequence lives in `session/login-handler.ts`. It uses a `LoginContext` int
 
 ## Handler Extraction Pattern
 
-Handlers in `session/` receive a narrow context interface (`SessionContext` or `LoginContext`) instead of the full `StarpeaceSession` class. This prevents circular imports and keeps handlers independently testable.
+Handlers in `session/` receive a narrow context interface instead of the full `StarpeaceSession` class: most take `SessionContext`, `login-handler` takes `LoginContext`, and `abandon-role-handler` declares its own `AbandonRoleContext`. This prevents circular imports and keeps handlers independently testable.
 
 When adding a new handler:
 1. Create `session/my-handler.ts`
 2. Accept `SessionContext` as the first parameter
 3. Import it in `spo_session.ts` and wire the delegation
 
-Existing handlers: `chat-handler`, `mail-handler`, `profile-finance-handler`, `auto-connection-handler`, `politics-handler`, `building-management-handler`, `road-handler`, `zone-surface-handler`, `building-templates-handler`, `building-details-handler`, `building-property-handler`, `research-handler`, `login-handler`.
+Existing handlers: `abandon-role-handler`, `auto-connection-handler`, `building-details-handler`, `building-management-handler`, `building-property-handler`, `building-templates-handler`, `chat-handler`, `context-status-handler`, `favorites-handler`, `login-handler`, `mail-handler`, `newspaper-handler`, `politics-handler`, `profile-finance-handler`, `research-handler`, `research-status-handler`, `road-handler`, `tutorial-handler`, `world-events-handler`, `zone-surface-handler`.
 
 A function with a twin (`enrich*Tab`, `place*`, `handle*`) gets its fix in the same diff and one `it.each` over the set.
 
