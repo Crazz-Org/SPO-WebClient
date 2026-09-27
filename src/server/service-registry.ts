@@ -415,35 +415,36 @@ interface ShutdownServer {
  * Setup graceful shutdown handlers
  *
  * Shutdown behavior:
- * - First SIGINT/SIGTERM: Graceful shutdown (5s timeout)
- * - Second SIGINT: Force shutdown (kills all connections immediately)
+ * - First SIGINT/SIGTERM, or an uncaught exception: runs the injected shutdown sequence, which
+ *   owns its own deadline and the process exit
+ * - Second SIGINT: Force shutdown (kills all connections, exits after 500 ms)
  * - Third SIGINT: Immediate process.exit(1)
  */
-export function setupGracefulShutdown(registry: ServiceRegistry, server?: ShutdownServer): void {
+export function setupGracefulShutdown(
+  runShutdown: (reason: string) => Promise<void>,
+  server?: ShutdownServer,
+): void {
   let shutdownInProgress = false;
-  let forceShutdownRequested = false;
   let sigintCount = 0;
 
-  const GRACEFUL_TIMEOUT_MS = 5000; // 5 seconds max for graceful shutdown
-
-  const forceExit = () => {
-    console.log('[Shutdown] Force exit!');
-    process.exit(1);
+  const startShutdown = (reason: string): void => {
+    shutdownInProgress = true;
+    runShutdown(reason).catch(() => process.exit(1));
   };
 
-  const shutdown = async (signal: string) => {
+  const onSignal = (signal: string): void => {
     sigintCount++;
 
     // Third signal = immediate exit
     if (sigintCount >= 3) {
-      forceExit();
+      console.log('[Shutdown] Force exit!');
+      process.exit(1);
       return;
     }
 
     // Second signal = force shutdown
     if (sigintCount === 2 && shutdownInProgress) {
       console.log('\n[Shutdown] Force shutdown requested (press Ctrl+C again for immediate exit)');
-      forceShutdownRequested = true;
 
       // Force close all connections if server supports it
       if (server?.closeAllConnections) {
@@ -465,63 +466,19 @@ export function setupGracefulShutdown(registry: ServiceRegistry, server?: Shutdo
       return;
     }
 
-    shutdownInProgress = true;
     console.log(`\n[Shutdown] Received ${signal}, starting graceful shutdown...`);
     console.log('[Shutdown] Press Ctrl+C again to force shutdown');
-
-    // Set a hard timeout for graceful shutdown
-    const forceTimeout = setTimeout(() => {
-      if (!forceShutdownRequested) {
-        console.log(`[Shutdown] Graceful shutdown timeout (${GRACEFUL_TIMEOUT_MS}ms), forcing exit...`);
-        process.exit(0);
-      }
-    }, GRACEFUL_TIMEOUT_MS);
-
-    try {
-      // Close HTTP server (with timeout)
-      if (server) {
-        console.log('[Shutdown] Closing HTTP server...');
-
-        await Promise.race([
-          new Promise<void>((resolve) => {
-            server.close(() => {
-              console.log('[Shutdown] HTTP server closed');
-              resolve();
-            });
-          }),
-          new Promise<void>((resolve) => {
-            setTimeout(() => {
-              console.log('[Shutdown] HTTP server close timeout, continuing...');
-              // Force close connections if available
-              if (server.closeAllConnections) {
-                server.closeAllConnections();
-              }
-              resolve();
-            }, 2000);
-          })
-        ]);
-      }
-
-      // Shutdown all services
-      await registry.shutdown();
-
-      clearTimeout(forceTimeout);
-      console.log('[Shutdown] Graceful shutdown complete');
-      process.exit(0);
-    } catch (error: unknown) {
-      console.error('[Shutdown] Error during shutdown:', error);
-      clearTimeout(forceTimeout);
-      process.exit(1);
-    }
+    startShutdown(signal);
   };
 
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => onSignal('SIGTERM'));
+  process.on('SIGINT', () => onSignal('SIGINT'));
 
-  // Handle uncaught exceptions
+  // Handle uncaught exceptions — same sequence; never counts as a SIGINT, so a second exception
+  // thrown during the drain cannot force-exit in the middle of a logoff
   process.on('uncaughtException', (error) => {
     console.error('[Fatal] Uncaught exception:', error);
-    shutdown('uncaughtException').catch(() => process.exit(1));
+    if (!shutdownInProgress) startShutdown('uncaughtException');
   });
 
   // Handle unhandled promise rejections
