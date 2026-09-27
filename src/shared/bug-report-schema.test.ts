@@ -306,3 +306,23 @@ describe('validateBugReport — path safety', () => {
     rejects(desktopReport({ anchorKey: undefined }), 'anchorKey');
   });
 });
+
+describe('validateBugReport — appVersion', () => {
+  it('keeps a string appVersion', () => {
+    const result = validateBugReport(desktopReport({ appVersion: '1.2.3' }));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.report.appVersion).toBe('1.2.3');
+  });
+
+  it('still accepts a report without appVersion', () => {
+    const report = desktopReport();
+    expect('appVersion' in report).toBe(false);
+    expect(validateBugReport(report).ok).toBe(true);
+  });
+
+  it('rejects a non-string or over-long appVersion, accepts exactly the cap', () => {
+    rejects({ ...desktopReport(), appVersion: 123 }, 'appVersion');
+    rejects(desktopReport({ appVersion: 'x'.repeat(MAX_TEXT_LENGTH + 1) }), 'appVersion');
+    expect(validateBugReport(desktopReport({ appVersion: 'x'.repeat(MAX_TEXT_LENGTH) })).ok).toBe(true);
+  });
+});

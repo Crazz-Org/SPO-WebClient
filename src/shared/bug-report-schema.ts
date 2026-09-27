@@ -2,8 +2,8 @@
  * The bug-report contract — the one shape the capture code, the deposit endpoint and the
  * later `/triage-report` session all agree on.
  *
- * Dev-only: during a manual test session the maintainer flags an element and a JSON report
- * lands in a local queue. Both profiles (desktop and mobile) are described here from day one
+ * Serves dev/test sessions — the maintainer flags an element and a JSON report lands in a
+ * local queue — and, in `player` mode (`SPO_BUG_REPORT=player`), production players. Both profiles (desktop and mobile) are described here from day one
  * on purpose, so the mobile capture never forces a v2 of the schema.
  *
  * Validation is a hand-written type guard — no schema library, no new dependency.
@@ -145,6 +145,9 @@ export interface BugReport {
   username: string;
   world: string;
   userAgent: string;
+  /** The client build the report came from (package version). Optional — absent on reports
+   *  from builds that predate it, so no schema-version bump. */
+  appVersion?: string;
   viewport: { width: number; height: number };
   anchor: ReportAnchor;
   /** Stable dedup key: djb2 hex of componentChain+text (dom) or tile+layer (canvas). */
@@ -308,7 +311,7 @@ export function validateBugReport(
   const anchorError = checkAnchor(value.anchor);
   if (anchorError) return { ok: false, error: anchorError };
 
-  for (const field of ['observed', 'expected', 'freeText'] as const) {
+  for (const field of ['observed', 'expected', 'freeText', 'appVersion'] as const) {
     const error = checkOptionalText(value[field], field);
     if (error) return { ok: false, error };
   }
