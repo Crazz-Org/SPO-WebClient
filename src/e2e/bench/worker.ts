@@ -937,10 +937,17 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
     E2E_WORLD_STATE_DIR: deps.paths.world,
     SPO_CACHE_DIR: deps.paths.cache,
   };
+  // The bench gateway serves exactly one local client — the worker's own driver, from
+  // 127.0.0.1 — which is what single-user mode means (production-config.ts). It skips the
+  // per-IP auth / proxy / WS ceilings, so a public-deployment ceiling cannot 429 the bench's
+  // own drive. Gateway only: the body's env is unchanged, so a replayed Jest suite never sees
+  // it. A loopback exemption was rejected: behind nginx without TRUST_PROXY every public
+  // client is 127.0.0.1 too.
+  const gatewayEnv = { ...env, SINGLE_USER_MODE: 'true' };
 
   let gateway: RunningGateway;
   try {
-    gateway = await deps.gateway.start(request.worktree, deps.port, logFile, env);
+    gateway = await deps.gateway.start(request.worktree, deps.port, logFile, gatewayEnv);
   } catch (err: unknown) {
     return finish('ENVIRONMENT', `gateway never became ready: ${toErrorMessage(err)}`);
   }
