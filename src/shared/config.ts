@@ -15,6 +15,22 @@ const getEnv = (key: string): string | undefined => {
   return typeof process !== 'undefined' && process.env ? process.env[key] : undefined;
 };
 
+/** `SPO_BUG_REPORT` / `window.__SPO_BUG_REPORT__`, read once. `window` wins when defined (the
+ *  browser follows the gateway it talks to). `true` = dev/test (F8 + floating button),
+ *  `player` = production players (Support entry only); anything else = off. */
+const bugReportFlag = ((): 'off' | 'dev' | 'player' => {
+  const fromWindow = typeof window !== 'undefined'
+    ? (window as unknown as Record<string, unknown>).__SPO_BUG_REPORT__
+    : undefined;
+  if (fromWindow !== undefined) {
+    if (fromWindow === true) return 'dev';
+    return fromWindow === 'player' ? 'player' : 'off';
+  }
+  const fromEnv = getEnv('SPO_BUG_REPORT');
+  if (fromEnv === 'true') return 'dev';
+  return fromEnv === 'player' ? 'player' : 'off';
+})();
+
 export const config = {
   /**
    * Configuration du serveur WebSocket
@@ -27,10 +43,13 @@ export const config = {
     forceWorld: (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).__SPO_FORCE_WORLD__ !== undefined)
       ? (window as unknown as Record<string, unknown>).__SPO_FORCE_WORLD__ as string
       : getEnv('SPO_FORCE_WORLD') ?? undefined,
-    /** Dev-only: enables the in-app bug-report capture and the /api/bug-report deposit endpoint. */
-    bugReportMode: (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).__SPO_BUG_REPORT__ !== undefined)
-      ? (window as unknown as Record<string, unknown>).__SPO_BUG_REPORT__ === true
-      : getEnv('SPO_BUG_REPORT') === 'true',
+    /** Enables the in-app bug-report capture and the /api/bug-report deposit endpoint. On for
+     *  `SPO_BUG_REPORT=true` (dev/test: F8 and the floating mobile button) and for
+     *  `SPO_BUG_REPORT=player` (production players: Support entry only). In the browser the
+     *  value comes from `window.__SPO_BUG_REPORT__` (`true` or `"player"`). */
+    bugReportMode: bugReportFlag !== 'off',
+    /** True only for the `player` value, from either source. */
+    bugReportPlayerMode: bugReportFlag === 'player',
     /** Where deposited bug reports land — configurable so a container without a bind-mounted
      * home directory can still point it at a durable, mounted path. Server-side only: never
      * read from `window`, unlike bugReportMode/forceWorld above. */
@@ -39,10 +58,6 @@ export const config = {
      * (LogonHandlerViewer.pas:937). Server-side read; the browser gets it through
      * /spo-runtime-config.js as `window.__SPO_REGISTER_URL__`, read by AuthStage per render. */
     registerUrl: getEnv('SPO_REGISTER_URL') || '',
-    /** Where the Support entry in Settings and the mobile menu sends a stuck player. Unset lets the
-     *  client use its built-in default. Server-side read; the browser gets it through
-     *  /spo-runtime-config.js as `window.__SPO_SUPPORT_URL__`. */
-    supportUrl: getEnv('SPO_SUPPORT_URL') || '',
     reportsDir: getEnv('SPO_REPORTS_DIR') || undefined,
     /** Bearer token gating GET/POST /api/report-pull/* (see report-pull-endpoint.ts). Unset or
      * under 32 chars disables the whole surface — every route answers 404. Server-side only,
