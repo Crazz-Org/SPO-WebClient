@@ -275,6 +275,55 @@ describe('formatSummary', () => {
     expect(formatSummary({ ...base, status: 'PASS' })).toBe('L2 live drive on planitia — PASS');
   });
 
+  it('shows a seeded flow\'s seed and each cleanup, ok or FAIL', () => {
+    const summary = formatSummary({
+      ...base,
+      flows: [
+        {
+          name: 'zoning-alert-read',
+          status: 'FAIL',
+          assertions: [],
+          unproven: [],
+          probes: [],
+          messagesSent: 1,
+          messagesReceived: 1,
+          wireErrors: 0,
+          seed: { what: 'Crazz sends SPO_test3 one alert', ok: true, detail: 'hall (220,41) via 10.1.2.3' },
+          cleanup: [
+            { what: "removed from SPO_test3's Inbox", ok: true, detail: '1/1 deleted' },
+            { what: "removed from Crazz's Sent", ok: false },
+          ],
+        },
+      ],
+    });
+    expect(summary).toContain('seed ok: Crazz sends SPO_test3 one alert (hall (220,41) via 10.1.2.3)');
+    expect(summary).toContain("cleanup ok: removed from SPO_test3's Inbox (1/1 deleted)");
+    expect(summary).toContain("cleanup FAIL: removed from Crazz's Sent");
+    expect(summary).not.toContain("Crazz's Sent (");
+  });
+
+  it('shows a failed seed as FAIL', () => {
+    const summary = formatSummary({
+      ...base,
+      flows: [
+        {
+          name: 'zoning-alert-read',
+          status: 'UNPROVEN',
+          assertions: [],
+          unproven: [],
+          probes: [],
+          messagesSent: 0,
+          messagesReceived: 0,
+          wireErrors: 0,
+          seed: { what: 'the seed', ok: false },
+        },
+      ],
+    });
+    expect(summary).toContain('seed FAIL: the seed');
+    expect(summary).not.toContain('the seed (');
+    expect(summary).not.toContain('cleanup');
+  });
+
   it('surfaces failed pre-flight checks', () => {
     const summary = formatSummary({
       ...base,

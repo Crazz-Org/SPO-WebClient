@@ -170,6 +170,13 @@ export function formatSummary(result: LiveRunResult): string {
   }
   for (const flow of result.flows) {
     lines.push(`  ${flow.status.padEnd(4)}  ${flow.name}${flow.error ? ` — ${flow.error}` : ''}`);
+    if (flow.seed) {
+      const { ok, what, detail } = flow.seed;
+      lines.push(`          seed ${ok ? 'ok' : 'FAIL'}: ${what}${detail ? ` (${detail})` : ''}`);
+    }
+    for (const c of flow.cleanup ?? []) {
+      lines.push(`          cleanup ${c.ok ? 'ok' : 'FAIL'}: ${c.what}${c.detail ? ` (${c.detail})` : ''}`);
+    }
     for (const assertion of flow.assertions.filter(a => !a.ok)) {
       lines.push(`          x ${assertion.what}${assertion.detail ? ` (${assertion.detail})` : ''}`);
     }
