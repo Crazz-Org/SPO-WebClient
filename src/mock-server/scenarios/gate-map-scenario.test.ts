@@ -40,10 +40,6 @@ import {
 const { rdo } = createGateMapScenario();
 
 describe('gate-map scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('GetInputNames, SetPath and GetPropertyList are catalogued functions, so every frame carries "^"', () => {
     for (const member of ['GetInputNames', 'SetPath', 'GetPropertyList'] as const) {
       expect(RDO_MEMBERS[member].kind).toBe('function');
@@ -141,6 +137,7 @@ describe('gate-map scenario — the drive', () => {
       expect(frame).toBe(hit!.exchange.request);
     }
     expect(new Set(hits.map(h => h.hit!.exchange.id))).toEqual(new Set(['gm-rdo-inputs', 'gm-rdo-setpath-chemicals', 'gm-rdo-setpath-fuel']));
+    expect(hits.map(h => h.frame)).toPassStrictRdoValidation(rdo);
 
     const gateMapReads = fake.cacher.getPropertyList.mock.calls.filter(
       ([, names]) => names.length === 1 && names[0] === 'GateMap',

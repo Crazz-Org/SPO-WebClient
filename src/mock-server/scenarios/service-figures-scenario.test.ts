@@ -31,10 +31,6 @@ const X = 118;
 const Y = 226;
 
 describe('service-figures scenario — the catalogue and the wire', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('RDOGetDemand and RDOGetSupply are catalogued 1-argument functions', () => {
     for (const member of ['RDOGetDemand', 'RDOGetSupply'] as const) {
       expect(RDO_MEMBERS[member]).toEqual({ kind: 'function', arity: 1 });
@@ -93,6 +89,7 @@ describe('service-figures scenario — the drive', () => {
     const frames = fake.sent.map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
     expect(frames.map(f => mock.match(f)!.exchange.id)).toEqual(['sf-rdo-demand', 'sf-rdo-supply']);
     expect(frames).toEqual(frames.map(f => mock.match(f)!.exchange.request));
+    expect(frames).toPassStrictRdoValidation(rdo);
   });
 
   it('emits the "^" read form with the service index as the single argument', async () => {

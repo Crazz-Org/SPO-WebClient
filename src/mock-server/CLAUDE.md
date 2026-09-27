@@ -454,6 +454,8 @@ frame for its member.
 
 `rdo-strict-validator.ts` validates every outgoing RDO command against protocol rules. Use it in tests to catch protocol violations (wrong type prefixes, missing separators, invalid verbs) before they reach a real server. A wrong verb, action or separator is an `ERROR`, and so is an **arg count or arg type prefix** mismatch — except for a member listed in `KNOWN_PRODUCTION_DIVERGENCES`, the one allowlist of known production divergences (member, what differs, reason or `[UNKNOWN]`), which reports it as a `WARNING`. An entry is added only when a currently-working production frame would otherwise fail; the production frame is never changed to satisfy a fixture.
 
+`expect(frames).toPassStrictRdoValidation(rdo)` validates the frames the client emitted against a scenario, and fails on a member no exchange covers. A fixture is never validated against itself.
+
 ## Testing Pattern
 
 ```ts

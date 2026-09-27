@@ -5,10 +5,13 @@
  * Type declarations are in rdo-matchers.d.ts
  */
 
-import { RdoStrictValidator } from '../../../mock-server/rdo-strict-validator';
+import {
+  RdoStrictValidator,
+  ViolationSeverity,
+  ViolationType,
+} from '../../../mock-server/rdo-strict-validator';
 import { RdoProtocol } from '../../../server/rdo';
 import type { RdoScenario } from '../../../mock-server/types/rdo-exchange-types';
-import type { StrictValidatorConfig } from '../../../mock-server/rdo-strict-validator';
 
 export const rdoMatchers = {
   /**
@@ -150,35 +153,45 @@ export const rdoMatchers = {
   },
 
   /**
-   * Validates that a scenario's own request strings pass strict RDO validation.
-   * Creates a validator, loads the scenario, parses each exchange.request through
-   * RdoProtocol.parse(), and validates against the exchange's matchKeys.
+   * Validates frames the client emitted against a scenario's exchanges.
    *
-   * This catches matchKey/request inconsistencies (e.g., matchKeys say 'get' but
-   * the request string says 'call').
+   * `received` is one frame or a list of frames as production put them on the
+   * wire; each is parsed through RdoProtocol.parse() and checked by the strict
+   * validator against the scenario's matchKeys. Fails on any ERROR violation, on
+   * a frame whose member no exchange covers, and on an empty frame list. The
+   * scenario's own request strings are never validated — a fixture checked
+   * against itself proves nothing about the client.
    */
   toPassStrictRdoValidation(
-    scenario: RdoScenario,
-    config?: Partial<StrictValidatorConfig>
+    received: string | string[],
+    scenario: RdoScenario
   ) {
-    const validator = new RdoStrictValidator(config);
-    validator.addScenario(scenario);
-
-    for (const exchange of scenario.exchanges) {
-      if (exchange.pushOnly || !exchange.request) continue;
-      const parsed = RdoProtocol.parse(exchange.request);
-      validator.validate(parsed, exchange.request);
+    const frames: unknown[] = Array.isArray(received) ? received : [received];
+    if (frames.length === 0 || frames.some(f => typeof f !== 'string')) {
+      return {
+        pass: false,
+        message: () => `no emitted frame to validate against scenario '${scenario.name}'`
+      };
     }
 
-    const errors = validator.getErrors();
-    const pass = errors.length === 0;
+    const validator = new RdoStrictValidator({ reportUnrecognizedMembers: true });
+    validator.addScenario(scenario);
+    for (const frame of frames as string[]) {
+      validator.validate(RdoProtocol.parse(frame), frame);
+    }
+
+    const failures = validator.getViolations().filter(
+      v => v.severity === ViolationSeverity.ERROR || v.type === ViolationType.UNRECOGNIZED_MEMBER
+    );
+    const pass = failures.length === 0;
+    const listing = (frames as string[]).map(f => `  - ${f}`).join('\n');
 
     return {
       pass,
       message: () => pass
-        ? `Scenario '${scenario.name}' passes strict RDO validation`
-        : `Scenario '${scenario.name}' has ${errors.length} strict validation error(s):\n` +
-          validator.formatReport()
+        ? `Emitted frame(s) pass strict validation against scenario '${scenario.name}':\n${listing}`
+        : `Emitted frame(s) fail strict validation against scenario '${scenario.name}' ` +
+          `(${failures.length} violation(s)):\n${validator.formatReport()}\nFrames:\n${listing}`
     };
   }
 };

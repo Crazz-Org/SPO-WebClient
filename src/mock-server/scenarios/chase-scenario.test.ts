@@ -100,10 +100,6 @@ beforeEach(() => {
 // ===========================================================================
 
 describe('chase scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('Chase takes one argument and StopChase none, both as functions', () => {
     expect(RDO_MEMBERS.Chase).toEqual({ kind: 'function', arity: 1 });
     expect(RDO_MEMBERS.StopChase).toEqual({ kind: 'function', arity: 0 });
@@ -140,11 +136,14 @@ describe('chase scenario — start, mirror, stop', () => {
 
     await expect(serverChaseUser(server.fake.ctx, CHASED_USER)).resolves.toBeUndefined();
 
+    // The one frame production emitted, on the world context, written out.
+    expect(server.frames()).toEqual(['C sel 8161308 call Chase "^" "%Mayor of Podan";']);
     const [frame] = server.frames();
     const hit = server.rdoMock.match(frame)!;
     expect(hit.exchange.id).toBe('chase-start');
     // The fixture request is byte-for-byte the frame production emitted.
     expect(frame).toBe(hit.exchange.request);
+    expect(frame).toPassStrictRdoValidation(rdo);
 
     const { ctx } = makeClientDriver();
     await clientChaseUser(ctx, CHASED_USER);
@@ -185,11 +184,14 @@ describe('chase scenario — start, mirror, stop', () => {
 
     await expect(serverStopChase(server.fake.ctx)).resolves.toBeUndefined();
 
+    // The one frame production emitted, on the world context, written out.
+    expect(server.frames()).toEqual(['C sel 8161308 call StopChase "^";']);
     const [frame] = server.frames();
     const hit = server.rdoMock.match(frame)!;
     expect(hit.exchange.id).toBe('chase-stop');
     // The fixture request is byte-for-byte the frame production emitted.
     expect(frame).toBe(hit.exchange.request);
+    expect(frame).toPassStrictRdoValidation(rdo);
 
     const { ctx } = makeClientDriver();
     await clientStopChase(ctx);

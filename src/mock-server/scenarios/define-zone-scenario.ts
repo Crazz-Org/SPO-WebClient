@@ -19,18 +19,23 @@ import { mergeVariables } from './scenario-variables';
 /** The world context `DefineZone` is bound to (matches `FAKE_CONTEXT_IDS.worldContextId`). */
 const WORLD_CONTEXT_ID = '8161308';
 
-/** The tycoon id `defineZone` sends first (matches `FAKE_CONTEXT_IDS.tycoonId`). */
-const TYCOON_ID = 4666201923;
-
 function buildRdoExchanges(result: number): RdoExchange[] {
   return [
     {
       id: 'dz-rdo-001',
       // The literal frame production emits (QueryId stripped), captured in the
       // sibling test — never rebuilt with the emitter.
-      request: `C sel ${WORLD_CONTEXT_ID} call DefineZone "^" "#${TYCOON_ID}","#2","#100","#100","#102","#102";`,
+      // x1=100, y1=120, x2=102, y2=123: every coordinate distinct, so a swapped
+      // x/y pair lands on another frame and matches nothing.
+      request: 'C sel 8161308 call DefineZone "^" "#4666201923","#2","#100","#120","#102","#123";',
       response: `A700 res="#${result}"`,
-      matchKeys: { verb: 'sel', action: 'call', member: 'DefineZone' },
+      matchKeys: {
+        verb: 'sel',
+        targetId: WORLD_CONTEXT_ID,
+        action: 'call',
+        member: 'DefineZone',
+        argsPattern: ['"#4666201923"', '"#2"', '"#100"', '"#120"', '"#102"', '"#123"'],
+      },
     },
   ];
 }

@@ -36,10 +36,6 @@ import {
 const { rdo } = createProductOwnerScenario();
 
 describe('product-owner scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('GetOutputNames, SetPath, GetPropertyList and GetSubObjectProps are catalogued functions, so every frame carries "^"', () => {
     for (const member of ['GetOutputNames', 'SetPath', 'GetPropertyList', 'GetSubObjectProps'] as const) {
       expect(RDO_MEMBERS[member].kind).toBe('function');
@@ -124,7 +120,16 @@ describe('product-owner scenario — the drive', () => {
       y: 392,
     });
 
+    // Consumed by the drive itself, before the re-match loop below touches the mock.
     expect(mock.getConsumedIds().has('po-rdo-cnx0')).toBe(true);
+
+    // The customer row read on the gate: seven Voyager names, cnxCreatedBy0 appended last.
+    const cnxFrames = fake.sent
+      .filter(s => s.packet.member === 'GetSubObjectProps')
+      .map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
+    expect(cnxFrames).toEqual([
+      'C sel 900002 call GetSubObjectProps "^" "#0","%cnxFacilityName0\tcnxCompanyName0\tLastValueCnxInfo0\tConnectedCnxInfo0\ttCostCnxInfo0\tcnxXPos0\tcnxYPos0\tcnxCreatedBy0\t";',
+    ]);
 
     // Every frame production sent that a fixture answers equals that fixture's
     // literal byte for byte (the cacher reads emit no frame and are not here).
@@ -136,6 +141,7 @@ describe('product-owner scenario — the drive', () => {
       expect(frame).toBe(hit!.exchange.request);
     }
     expect(new Set(hits.map(h => h.hit!.exchange.id))).toEqual(new Set(['po-rdo-outputs', 'po-rdo-setpath', 'po-rdo-cnx0']));
+    expect(hits.map(h => h.frame)).toPassStrictRdoValidation(rdo);
 
     releaseInspector(fake.ctx);
   });

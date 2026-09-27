@@ -2,7 +2,7 @@
  * TypeScript type declarations for RDO matchers
  */
 
-import type { StrictValidatorConfig } from '../../../mock-server/rdo-strict-validator';
+import type { RdoScenario } from '../../../mock-server/types/rdo-exchange-types';
 
 declare global {
   namespace jest {
@@ -13,7 +13,7 @@ declare global {
       toMatchRdoSetFormat(property: string): R;
       toHaveRdoTypePrefix(prefix: string): R;
       toMatchRdoResponse(requestId?: number): R;
-      toPassStrictRdoValidation(config?: Partial<StrictValidatorConfig>): R;
+      toPassStrictRdoValidation(scenario: RdoScenario): R;
     }
   }
 }

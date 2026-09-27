@@ -37,8 +37,13 @@ import {
   parseCampaignPromise,
   parseCampaignState,
   getPoliticsData,
+  politicsSetRating,
+  politicsSetPublicity,
+  politicsSetProjectData,
 } from '@/server/session/politics-handler';
+import { setBuildingProperty } from '@/server/session/building-property-handler';
 import { makeSessionCtx } from '@/server/__tests__/session/fake-session-context';
+import type { FakeSessionCtx } from '@/server/__tests__/session/fake-session-context';
 import { RdoMock } from '../rdo-mock';
 import { HttpMock } from '../http-mock';
 import type { RdoExchange } from '../types/rdo-exchange-types';
@@ -71,10 +76,6 @@ const TEMPLATE_CIVIC_COMMANDS = Array.from(new Set(
 ));
 
 describe('civic-mutations scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('every civic mutation is a procedure, so every frame carries "*"', () => {
     for (const m of CIVIC_MUTATIONS) {
       expect(RDO_MEMBERS[m.member].kind).toBe('procedure');
@@ -117,29 +118,6 @@ describe('civic-mutations scenario — the catalogue', () => {
     for (const member of ['RDOSetRatingFrom', 'RDOSetPublicity', 'RDOSetProjectData']) {
       expect(CIVIC_MUTATION_MEMBERS).toContain(member);
     }
-  });
-
-  it('binds the three politics procedures to the political entity, not the block', () => {
-    // `TownHallId` and `CurrBlock` differ on a Capitol; binding a rating to the
-    // facility would address an object that has no such member.
-    const politics = CIVIC_MUTATIONS.filter(m =>
-      ['RDOSetRatingFrom', 'RDOSetPublicity', 'RDOSetProjectData'].includes(m.member));
-    expect(politics).toHaveLength(3);
-    for (const m of politics) {
-      expect(m.targetId).toBe(CIVIC_TARGETS.townHallId);
-    }
-  });
-
-  it('the tax write takes the account id, never the row index', () => {
-    // building-property-handler.ts:141-153 resolves `Tax0Id` first; 100 is what
-    // MOCK_TOWN_HALL serves there and 0 is the row it sits on.
-    const tax = CIVIC_MUTATIONS.find(m => m.slug === 'set-tax-value')!;
-    expect(tax.args[0].format()).toBe('"#100"');
-  });
-
-  it('a subsidy travels as the literal -10, sign included', () => {
-    const subsidy = CIVIC_MUTATIONS.find(m => m.slug === 'set-tax-value-subsidy')!;
-    expect(subsidy.args[1].format()).toBe('"%-10"');
   });
 });
 
@@ -271,6 +249,115 @@ describe('civic-mutations scenario — the Politics ASP pages', () => {
   });
 });
 
+/**
+ * A session whose cacher reads are answered by `rdoMock` through the scenario's
+ * exchanges. The cacher emits no frame of its own, so its reads are rebuilt here
+ * and matched; the frames under test are the ones production writes itself.
+ */
+function makeCivicCtx(rdoMock: RdoMock): FakeSessionCtx {
+  const fake = makeSessionCtx({
+    sockets: ['construction'],
+    currentWorldInfo: { name: 'Shamba', url: 'http://158.69.153.134', ip: '158.69.153.134', port: 7000 },
+    activeUsername: 'SPO_test3', cachedPassword: 'test3',
+    daAddr: '158.69.153.134', daPort: 7001,
+  });
+  fake.cacher.createObject.mockResolvedValue(CIVIC_TARGETS.tempObject); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
+  fake.cacher.setPath.mockImplementation(async (id, path) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
+    const frame = rdoCall('SetPath', id, RdoValue.string(path)).toFrame();
+    const result = rdoMock.match(frame);
+    if (!result) throw new Error(`L1: no exchange for SetPath ${path}`);
+  });
+  fake.cacher.getPropertyList.mockImplementation(async (id, props) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
+    // The bind ids of a Town Hall: its CurrBlock serves as its ObjectId too.
+    if (props[0] === 'CurrBlock') return [CIVIC_TARGETS.townHallBlock, CIVIC_TARGETS.townHallBlock];
+    // The tax read-back witness: its value is not what these tests judge.
+    if (props.length === 1 && /^Tax\d+Percent$/.test(props[0])) return [''];
+    const frame = rdoCall(
+      'GetPropertyList', id, RdoValue.string(props.join('\t') + '\t'),
+    ).toFrame();
+    const result = rdoMock.match(frame);
+    if (!result) throw new Error(`L1: no exchange for GetPropertyList ${props.join(',')}`);
+    const match = /res="%([^"]*)"/.exec(result.response);
+    return match ? match[1].split('\t') : [];
+  });
+  (fake.ctx.getCacherPropertyListAt as jest.Mock).mockResolvedValue([CIVIC_TARGETS.townHallId, CIVIC_TARGETS.townHallBlock]); // substrate-exception: reads the cacher, which the fake stubs and which emits no frame, so no scenario can answer it
+  return fake;
+}
+
+describe('civic-mutations scenario — the frames production emits', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  function driver() {
+    const rdoMock = new RdoMock();
+    rdoMock.addScenario(rdo);
+    return { fake: makeCivicCtx(rdoMock), rdoMock };
+  }
+
+  it.each([
+    {
+      member: 'RDOSetRatingFrom',
+      slug: 'set-rating-from',
+      emit: (ctx: FakeSessionCtx['ctx']) => politicsSetRating(ctx, 118, 226, '41123456', 75),
+      literal: 'C sel 130500777 call RDOSetRatingFrom "*" "%41123456","%SPO_test3","#75";',
+    },
+    {
+      member: 'RDOSetPublicity',
+      slug: 'set-publicity',
+      emit: (ctx: FakeSessionCtx['ctx']) => politicsSetPublicity(ctx, 118, 226, '41123456', 75),
+      literal: 'C sel 130500777 call RDOSetPublicity "*" "%41123456","#75";',
+    },
+    {
+      member: 'RDOSetProjectData',
+      slug: 'set-project-data',
+      emit: (ctx: FakeSessionCtx['ctx']) => politicsSetProjectData(ctx, 118, 226, '42007700', 'SPO_test3'),
+      literal: 'C sel 130500777 call RDOSetProjectData "*" "%SPO_test3","%42007700","%SPO_test3";',
+    },
+  ])('binds $member to the political entity (TownHallId), not the block', async ({ slug, emit, literal }) => {
+    // `TownHallId` and `CurrBlock` differ on a Capitol; binding a rating to the
+    // facility would address an object that has no such member.
+    const { fake, rdoMock } = driver();
+
+    await expect(emit(fake.ctx)).resolves.toEqual({ success: true, message: '' });
+
+    expect(fake.frames.construction).toEqual([literal]);
+    expect(fake.frames.construction[0]).not.toContain(CIVIC_TARGETS.townHallBlock);
+    expect(rdoMock.match(fake.frames.construction[0])!.exchange.id).toBe(`civic-rdo-${slug}`);
+    expect(fake.frames.construction).toPassStrictRdoValidation(rdo);
+  });
+
+  it('the tax write takes the account id, never the row index', async () => {
+    // Row 0 is account 100: the gateway resolves `Tax0Id` before it writes.
+    const { fake, rdoMock } = driver();
+
+    const pending = setBuildingProperty(fake.ctx, 118, 226, 'RDOSetTaxValue', '15', { index: '0' });
+    await jest.advanceTimersByTimeAsync(200);
+    await pending;
+
+    expect(rdoMock.getConsumedIds().has('civic-rdo-lookup-tax-id')).toBe(true);
+    expect(fake.frames.construction).toEqual(['C sel 130500401 call RDOSetTaxValue "*" "#100","%15";']);
+    expect(rdoMock.match(fake.frames.construction[0])!.exchange.id).toBe('civic-rdo-set-tax-value');
+    expect(fake.frames.construction).toPassStrictRdoValidation(rdo);
+  });
+
+  it('a subsidy travels as the literal -10, sign included', async () => {
+    const { fake, rdoMock } = driver();
+
+    const pending = setBuildingProperty(fake.ctx, 118, 226, 'RDOSetTaxValue', '-10', { taxId: '110' });
+    await jest.advanceTimersByTimeAsync(200);
+    await pending;
+
+    expect(fake.frames.construction).toEqual(['C sel 130500401 call RDOSetTaxValue "*" "#110","%-10";']);
+    expect(rdoMock.match(fake.frames.construction[0])!.exchange.id).toBe('civic-rdo-set-tax-value-subsidy');
+    expect(fake.frames.construction).toPassStrictRdoValidation(rdo);
+  });
+});
+
 describe('civic-mutations scenario — the world.five flag drives getPoliticsData', () => {
   beforeEach(() => {
     mockFetch.mockReset();
@@ -291,28 +378,7 @@ describe('civic-mutations scenario — the world.five flag drives getPoliticsDat
       return { ok: true, status: 200, text: async () => result.body } as unknown as Response;
     });
 
-    const fake = makeSessionCtx({
-      currentWorldInfo: { name: 'Shamba', url: 'http://158.69.153.134', ip: '158.69.153.134', port: 7000 },
-      activeUsername: 'SPO_test3', cachedPassword: 'test3',
-      daAddr: '158.69.153.134', daPort: 7001,
-    });
-    fake.cacher.createObject.mockResolvedValue(CIVIC_TARGETS.tempObject); // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
-    fake.cacher.setPath.mockImplementation(async (id, path) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
-      const frame = rdoCall('SetPath', id, RdoValue.string(path)).toFrame();
-      const result = rdoMock.match(frame);
-      if (!result) throw new Error(`L1: no exchange for SetPath ${path}`);
-    });
-    fake.cacher.getPropertyList.mockImplementation(async (id, props) => { // substrate-exception: the fake's cacher emits no frame, so no RdoMock scenario can answer it
-      const frame = rdoCall(
-        'GetPropertyList', id, RdoValue.string(props.join('\t') + '\t'),
-      ).toFrame();
-      const result = rdoMock.match(frame);
-      if (!result) throw new Error(`L1: no exchange for GetPropertyList ${props.join(',')}`);
-      const match = /res="%([^"]*)"/.exec(result.response);
-      return match ? match[1].split('\t') : [];
-    });
-
-    return { fake, rdoMock };
+    return { fake: makeCivicCtx(rdoMock), rdoMock };
   }
 
   it('ElectionsOn = 0: the state is noElections and the campaign page is never fetched', async () => {

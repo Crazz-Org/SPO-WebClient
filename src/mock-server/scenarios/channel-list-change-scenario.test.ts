@@ -79,10 +79,6 @@ beforeEach(() => {
 });
 
 describe('channel-list-change scenario', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('the inclusion push adds the channel to the dropdown', () => {
     useChatStore.setState({ channels: [{ name: 'Lobby', isProtected: false }], currentChannel: 'Lobby', messages: {} });
 

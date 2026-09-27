@@ -71,7 +71,7 @@ function makeGateway() {
     return sent[0] as WsRespContextStatus;
   };
 
-  return { mock, ask, fake };
+  return { mock, ask, fake, rdo };
 }
 
 /** The real browser handler, answered by the real gateway path above. */
@@ -98,13 +98,8 @@ describe('context-status scenario', () => {
     useBuildingStore.getState().clearFocus();
   });
 
-  it('passes strict RDO validation', () => {
-    const { rdo } = createContextStatusScenario();
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('the gateway answers the world sentence for a town tile and "" for a tile with no town', async () => {
-    const { mock, ask, fake } = makeGateway();
+    const { mock, ask, fake, rdo } = makeGateway();
 
     await expect(ask(TOWN_TILE.x, TOWN_TILE.y)).resolves.toMatchObject({ text: SENTENCE });
     await expect(ask(EMPTY_TILE.x, EMPTY_TILE.y)).resolves.toMatchObject({ text: '' });
@@ -115,6 +110,7 @@ describe('context-status scenario', () => {
     const frames = fake.sent.map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
     expect(frames.map(f => mock.match(f)!.exchange.id)).toEqual(['cs-rdo-001', 'cs-rdo-002']);
     expect(frames).toEqual(frames.map(f => mock.match(f)!.exchange.request));
+    expect(frames).toPassStrictRdoValidation(rdo);
   });
 
   it('the strip renders the sentence, asks again after a camera move, and disappears on the empty answer', async () => {

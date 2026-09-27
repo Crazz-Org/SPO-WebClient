@@ -41,7 +41,8 @@ async function driveGateway(result: number): Promise<WsRespDefineZone> {
   fake.respond((packet) => {
     const frame = `${RdoProtocol.format(packet as RdoPacket)};`;
     const r = mock.match(frame);
-    return r ? (RdoProtocol.parse(r.response).payload ?? '') : '';
+    if (!r) return new Error(`L1: no exchange for ${frame}`);
+    return RdoProtocol.parse(r.response).payload ?? '';
   });
 
   const sent: WsMessage[] = [];
@@ -57,15 +58,18 @@ async function driveGateway(result: number): Promise<WsRespDefineZone> {
     type: WsMessageType.REQ_DEFINE_ZONE,
     wsRequestId: 'req-1',
     zoneId: 2,
-    x1: 100, y1: 100, x2: 102, y2: 102,
+    x1: 100, y1: 120, x2: 102, y2: 123,
   } as unknown as WsMessage;
 
   await handleDefineZone(ctx, req);
 
   expect(sent).toHaveLength(1);
   expect(mock.getConsumedIds().has('dz-rdo-001')).toBe(true);
-  // The fixture request is byte-for-byte the frame production emitted.
   const frames = fake.sent.map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
+  // On the world context: tycoon, zone, then x1, y1, x2, y2 — x before y.
+  expect(frames).toEqual(['C sel 8161308 call DefineZone "^" "#4666201923","#2","#100","#120","#102","#123";']);
+  expect(frames).toPassStrictRdoValidation(rdo);
+  // The fixture request is byte-for-byte the frame production emitted.
   expect(frames.map(f => mock.match(f)!.exchange.id)).toEqual(['dz-rdo-001']);
   expect(frames).toEqual(frames.map(f => mock.match(f)!.exchange.request));
   return sent[0] as WsRespDefineZone;
@@ -106,11 +110,6 @@ async function driveBrowser(response: WsRespDefineZone) {
 }
 
 describe('define-zone scenario', () => {
-  it('passes strict RDO validation', () => {
-    const { rdo } = createDefineZoneScenario();
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('an ERROR_Unknown reply produces an error notification, not a success toast', async () => {
     const gatewayResponse = await driveGateway(ErrorCodes.ERROR_Unknown);
     expect(gatewayResponse.success).toBe(false);

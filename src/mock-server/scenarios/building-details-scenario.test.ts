@@ -18,13 +18,9 @@ import { handleBuildingDetails } from '@/server/ws-handlers/building-handlers';
 import type { WsHandlerContext } from '@/server/ws-handlers/types';
 import { ALL_MOCK_BUILDINGS, MOCK_UNKNOWN_CLASS, createBuildingDetailsScenario } from './building-details-scenario';
 
-const { ws, rdo } = createBuildingDetailsScenario();
+const { ws } = createBuildingDetailsScenario();
 
 describe('building-details scenario — the catalogue and the wire', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('every known class carries iconUrl; the unknown class carries none', () => {
     for (const exchange of ws.exchanges) {
       const details = exchange.responses[0] as unknown as { details: BuildingDetailsResponse };

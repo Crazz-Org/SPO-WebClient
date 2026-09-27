@@ -23,10 +23,6 @@ import { createBuildMenuScenario, CAPTURED_BUILD_ZONE_MISMATCH } from './build-m
 describe('build-menu scenario — zone mismatch refusal', () => {
   const { rdo } = createBuildMenuScenario(undefined, { refusal: 'zone-mismatch' });
 
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('the client notification names the zone, not the area', async () => {
     const fake = makeSessionCtx({ sockets: ['world'] });
     Object.assign(fake.ctx, { currentCompany: { id: '28', name: 'PGI' } });
@@ -37,7 +33,8 @@ describe('build-menu scenario — zone mismatch refusal', () => {
     fake.respond((packet) => {
       const frame = `${RdoProtocol.format(packet as RdoPacket)};`;
       const r = mock.match(frame);
-      return r ? (RdoProtocol.parse(r.response).payload ?? '') : '';
+      if (!r) return new Error(`L1: no exchange for ${frame}`);
+      return RdoProtocol.parse(r.response).payload ?? '';
     });
 
     const sent: WsMessage[] = [];
@@ -68,5 +65,10 @@ describe('build-menu scenario — zone mismatch refusal', () => {
     expect(getErrorMessage(resp.code)).toBe(resp.errorMessage);
 
     expect(mock.getConsumedIds().has('bm-rdo-001')).toBe(true);
+
+    // The one frame production emitted: on the world context, class, company, x, y.
+    const frames = fake.sent.map(s => `${RdoProtocol.format(s.packet as RdoPacket)};`);
+    expect(frames).toEqual(['C sel 8161308 call NewFacility "^" "%PGISupermarketC","#28","#200","#300";']);
+    expect(frames).toPassStrictRdoValidation(rdo);
   });
 });

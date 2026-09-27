@@ -55,10 +55,6 @@ async function emit(member: string): Promise<string> {
 }
 
 describe('disconnect-connections scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('both members are 2-argument procedures, so every frame carries "*"', () => {
     for (const member of ['RDODisconnectInput', 'RDODisconnectOutput'] as const) {
       expect(RDO_MEMBERS[member].kind).toBe('procedure');
@@ -110,12 +106,23 @@ describe('disconnect-connections scenario — the argument on the wire', () => {
   });
 
   const cases = [
-    { member: 'RDODisconnectInput', id: 'disconnect-input-3' },
-    { member: 'RDODisconnectOutput', id: 'disconnect-output-3' },
+    {
+      member: 'RDODisconnectInput',
+      id: 'disconnect-input-3',
+      literal: 'C sel 40133512 call RDODisconnectInput "*" "%Plastics","%10,20,30,40,50,60,";',
+    },
+    {
+      member: 'RDODisconnectOutput',
+      id: 'disconnect-output-3',
+      literal: 'C sel 40133512 call RDODisconnectOutput "*" "%Plastics","%10,20,30,40,50,60,";',
+    },
   ];
 
-  it.each(cases)('$member sends the whole selection as one frame', async ({ member, id }) => {
+  it.each(cases)('$member sends the whole selection as one frame', async ({ member, id, literal }) => {
     const frame = await emit(member);
+
+    // Bound to the ObjectId, the fluid then the whole list as one string.
+    expect(frame).toBe(literal);
 
     expect(frame).toMatchRdoFormat();
     expect(frame).toContain('"*"');
@@ -131,5 +138,6 @@ describe('disconnect-connections scenario — the argument on the wire', () => {
     expect(hit.exchange.id).toBe(id);
     // The fixture request is byte-for-byte the frame production emitted.
     expect(frame).toBe(hit.exchange.request);
+    expect(frame).toPassStrictRdoValidation(rdo);
   });
 });

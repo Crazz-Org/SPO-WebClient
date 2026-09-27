@@ -95,10 +95,6 @@ afterEach(() => {
 });
 
 describe('worker-counts scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('RDOGetWorkers is a 1-argument function, so every frame carries "^"', () => {
     expect(RDO_MEMBERS.RDOGetWorkers.kind).toBe('function');
     expect(RDO_MEMBERS.RDOGetWorkers).toHaveProperty('arity', 1);
@@ -151,6 +147,8 @@ describe('worker-counts scenario — the calls on the wire', () => {
       // The fixture request is byte-for-byte the frame production emitted.
       expect(f.frame).toBe(hit.exchange.request);
     });
+
+    expect(frames.map(f => f.frame)).toPassStrictRdoValidation(rdo);
 
     // The block is read once, from the cache, and never asked for again.
     expect(fake.cacher.getPropertyList).toHaveBeenCalledTimes(1);

@@ -50,10 +50,6 @@ async function emit(term: string, mode: 'contains' | 'prefix') {
 }
 
 describe('people-search scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('RDOSearchKey is a 2-argument function, so both search frames carry "^"', () => {
     expect(RDO_MEMBERS.RDOSearchKey.kind).toBe('function');
     expect(RDO_MEMBERS.RDOSearchKey).toHaveProperty('arity', 2);
@@ -92,6 +88,11 @@ describe('people-search scenario — the pattern on the wire', () => {
     const searches = sent.filter(s => s.packet.member === 'RDOSearchKey');
     expect(searches).toHaveLength(1);
 
+    // On the directory session: the one letter's bucket, then the bare "*".
+    expect(setKeys[0].frame).toBe('C sel 142217260 call RDOSetCurrentKey "^" "%Root/Users/C";');
+    expect(searches[0].frame).toBe('C sel 142217260 call RDOSearchKey "^" "%*","%Alias\r\n";');
+    expect(sent.map(s => s.frame)).toPassStrictRdoValidation(rdo);
+
     const mock = new RdoMock();
     mock.addScenario(rdo);
 
@@ -119,6 +120,10 @@ describe('people-search scenario — the pattern on the wire', () => {
 
     const searches = sent.filter(s => s.packet.member === 'RDOSearchKey');
     expect(searches).toHaveLength(26);
+    for (const s of searches) {
+      expect(s.frame).toBe('C sel 142217260 call RDOSearchKey "^" "%*Crazz*","%Alias\r\n";');
+    }
+    expect(sent.map(s => s.frame)).toPassStrictRdoValidation(rdo);
 
     const mock = new RdoMock();
     mock.addScenario(rdo);

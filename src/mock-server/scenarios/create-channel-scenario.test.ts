@@ -91,10 +91,6 @@ beforeEach(() => {
 // ===========================================================================
 
 describe('create-channel scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('CreateChannel is a 5-argument function, and both frames carry "^"', () => {
     expect(RDO_MEMBERS.CreateChannel).toEqual({ kind: 'function', arity: 5 });
 
@@ -160,6 +156,7 @@ describe('create-channel scenario — a free name', () => {
     expect(hit.exchange.id).toBe('create-channel-free');
     // The fixture request is byte-for-byte the frame production emitted.
     expect(frame).toBe(hit.exchange.request);
+    expect(server.frames()).toPassStrictRdoValidation(rdo);
     expect(server.fake.ctx.setCurrentChannel).toHaveBeenCalledWith(FREE_CHANNEL);
   });
 

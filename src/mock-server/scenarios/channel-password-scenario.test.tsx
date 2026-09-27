@@ -61,6 +61,7 @@ function makeServerDriver() {
 function expectLiteralFrames(matched: { id: string; frame: string; request: string }[], ids: string[]) {
   expect(matched.map(m => m.id)).toEqual(ids);
   expect(matched.map(m => m.frame)).toEqual(matched.map(m => m.request));
+  expect(matched.map(m => m.frame)).toPassStrictRdoValidation(rdo);
 }
 
 /** The browser side: a ctx whose requests can be made to resolve or reject. */
@@ -91,10 +92,6 @@ beforeEach(() => {
 // ===========================================================================
 
 describe('channel-password scenario — the catalogue', () => {
-  it('passes strict RDO validation', () => {
-    expect(rdo).toPassStrictRdoValidation();
-  });
-
   it('JoinChannel is catalogued as a 2-arg function; every frame carries "^", none carries "*"', () => {
     expect(RDO_MEMBERS.JoinChannel).toEqual({ kind: 'function', arity: 2 });
     for (const ex of rdo.exchanges) {
