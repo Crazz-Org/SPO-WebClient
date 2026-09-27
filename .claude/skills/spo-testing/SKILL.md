@@ -59,7 +59,7 @@ Defined in `src/server/__tests__/matchers/rdo-matchers.ts`, typed in the sibling
 ```
 toContainRdoCommand(method, args?)     toMatchRdoResponse(requestId?)
 toMatchRdoCallFormat(method)           toMatchRdoFormat()
-toMatchRdoSetFormat(property)          toPassStrictRdoValidation(config?)
+toMatchRdoSetFormat(property)          toPassStrictRdoValidation(scenario)
 toHaveRdoTypePrefix(prefix)
 ```
 
@@ -69,7 +69,7 @@ and fail with a protocol-aware message.
 ```ts
 expect(frame).toMatchRdoCallFormat('SetPrice');
 expect(frame).toHaveRdoTypePrefix('#');
-expect(frame).toPassStrictRdoValidation();
+expect(frames).toPassStrictRdoValidation(rdo); // the frames the client emitted, against the scenario
 ```
 
 ## L1 substrate, not hand-written frames

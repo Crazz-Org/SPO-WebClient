@@ -45,10 +45,10 @@ describe('defineZone (production) — DefineZone wire frame', () => {
     await setup();
 
     // Corners passed inverted on purpose: production normalises them.
-    const result = await harness.session.defineZone(2, 102, 102, 100, 100);
+    const result = await harness.session.defineZone(2, 102, 123, 100, 120);
 
     expect(harness.getCapturedCommands(0)).toEqual([
-      'C 1000 sel 8161308 call DefineZone "^" "#4666201923","#2","#100","#100","#102","#102"',
+      'C 1000 sel 8161308 call DefineZone "^" "#4666201923","#2","#100","#120","#102","#123"',
     ]);
     expect(result).toEqual({ success: true });
     harness.assertNoViolations();
@@ -57,10 +57,10 @@ describe('defineZone (production) — DefineZone wire frame', () => {
   it('reports the refusal code and message on ERROR_Unknown', async () => {
     await setup(1);
 
-    const result = await harness.session.defineZone(2, 100, 100, 102, 102);
+    const result = await harness.session.defineZone(2, 100, 120, 102, 123);
 
     expect(harness.getCapturedCommands(0)).toEqual([
-      'C 1000 sel 8161308 call DefineZone "^" "#4666201923","#2","#100","#100","#102","#102"',
+      'C 1000 sel 8161308 call DefineZone "^" "#4666201923","#2","#100","#120","#102","#123"',
     ]);
     expect(result).toEqual({
       success: false,
