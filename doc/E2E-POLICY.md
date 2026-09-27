@@ -280,7 +280,7 @@ ahead of zero.
 | Account | Password | Holds | Used for |
 |---|---|---|---|
 | `SPO_test3` | `test3` | Mayor of **Helartia**, Minister of Agriculture, company *SPO_test3 - Green* | Primary. Governance reads and writes, roads, zones |
-| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, rating another tycoon's term. **Read-only apart from the test mail it receives.** |
+| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, rating another tycoon's term. **Read-only apart from mail:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. |
 
 Both are **LOCKED** — never changed without explicit developer approval. Zone **Free Space**,
 world **planitia**.
@@ -295,9 +295,11 @@ Two accounts unlock four things that were structurally impossible:
 | **Roads / zones** | Mayor role removes these from the "structurally untestable" list |
 
 **Blast radius.** All mutations happen on `SPO_test3`'s own town (Helartia). The second
-account is touched **only** by `mail-roundtrip`, which sends it one message and deletes it
-in the same run — no flow reads or writes its buildings (`flows.ts`: it appears at the
-login in `permission-negative`, which does not mutate, and as the mail recipient).
+account is touched only by mail: `mail-roundtrip` sends it one message and deletes it
+in the same run, and the `zoning-alert-read` seed has it send SPO_test3 one look-alike
+`Zoning Alert!`, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run.
+No flow reads or writes its buildings (`flows.ts`: it appears at the login in
+`permission-negative`, which does not mutate, as the mail recipient, and as the seed sender).
 Never another player's assets. Never a world-scope value. Every mutation is restored in
 the same run (§5).
 

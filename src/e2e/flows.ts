@@ -17,6 +17,7 @@ import type {
   WsRespFavoriteFolderCreate,
   WsRespFavoriteMove,
   WsRespMailConnected,
+  WsRespMailDeleted,
   WsRespMailFolder,
   WsRespMailMessage,
   WsRespMailSent,
@@ -32,13 +33,14 @@ import type {
   BuildingPropertyValue,
   DirectoryRef,
   DirectoryPage,
+  MailMessageHeader,
   MapBuilding,
 } from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
 import { WsDriverError } from './ws-driver';
-import { GOVERNED_TOWN, LIMITS, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
+import { GOVERNED_TOWN, LIMITS, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS, type E2eAccount } from './config';
 import { findCurrentSurvivalLog, openLogWindow } from './live-log';
 import { runProbe, probeFailure, type ProbeResult, type ProbeSpec } from './probe';
 import {
@@ -76,6 +78,23 @@ export interface FlowResult {
   error?: string;
   /** Values recorded, never asserted — a reading for a later card (see warehouseRoleReading). */
   readings?: TradeRoleReading[];
+  /** What the flow's seed produced — only on a flow that has one. */
+  seed?: FlowCheck;
+  /** One entry per mailbox (or store) the seed's cleanup restored — only on a seeded flow. */
+  cleanup?: FlowCheck[];
+}
+
+/** One named outcome — a seed, or one mailbox's cleanup. */
+export interface FlowCheck {
+  what: string;
+  ok: boolean;
+  detail?: string;
+}
+
+/** What a seed produced, and how to undo it. */
+export interface FlowSeed {
+  outcome: FlowCheck;
+  cleanup?: () => Promise<FlowCheck[]>;
 }
 
 /** One facility's trade fields, as the inspector's opening read served them (#1006). */
@@ -97,6 +116,11 @@ export interface Flow {
   what: string;
   /** True when the flow writes to the live world — subject to the blast-radius rule. */
   mutates: boolean;
+  /**
+   * Optional: plants the data the flow reads. It runs before `run`; the cleanup it returns
+   * runs after `run`, even when `run` throws. A failed seed skips `run` (UNPROVEN).
+   */
+  seed?: (ctx: FlowContext) => Promise<FlowSeed>;
   run: (ctx: FlowContext) => Promise<FlowResult>;
 }
 
@@ -683,6 +707,8 @@ const favoritesFolders: Flow = {
  * correctly answers an empty list with no error. What still holds live is the
  * half this world can prove: the town hall names its paper, and `showbar.asp`
  * is reachable and parses. The empty-list rendering itself is covered at L0/L1.
+ *
+ * Not required by routing (#1009): it runs and reports; its UNPROVEN is informational.
  */
 const newspaperRead: Flow = {
   name: 'newspaper-read',
@@ -749,6 +775,131 @@ const newspaperRead: Flow = {
 };
 
 const ZONING_ALERT_SUBJECT = 'Zoning Alert!'; // World.pas:2721
+/** The header the server's own alert carries — Mail Server/ModelServer.pas:883. */
+const ZONING_ALERT_HEADERS = 'ContentType=text/html';
+/** Marks what the seed plants, so a reader of the mailbox knows it is not a real alert. */
+const SEED_MARKER = 'e2e-seed';
+
+function sameAccount(name: string, account: E2eAccount): boolean {
+  return name.trim().toLowerCase() === account.username.toLowerCase();
+}
+
+/**
+ * The alert page URL, shaped as `Kernel/World.pas:35-37`, `:2710-2719` build it. Its host must
+ * be the world IP — the gateway fetches the page only then — and it holds no space or quote,
+ * where the META extractor stops.
+ */
+function zoningAlertUrl(ip: string, x: number, y: number): string {
+  const query = new URLSearchParams({
+    Zoned: PRIMARY_ACCOUNT.username,
+    BuildNo: '1',
+    Zoner0: SECONDARY_ACCOUNT.username,
+    BuildName0: SEED_MARKER,
+    BuildCompany0: SEED_MARKER,
+    BuildX0: String(x),
+    BuildY0: String(y),
+  });
+  return `http://${ip}/Five/0/Visual/Voyager/Mail/SpecialMessages/MsgZoned.asp?${query.toString()}`;
+}
+
+/** The three-line body the server writes — Mail Server/ModelServer.pas:903-905. */
+function zoningAlertBody(url: string): string[] {
+  return ['<HEAD>', `<META HTTP-EQUIV="REFRESH" CONTENT="0; URL=${url}">`, '</HEAD>'];
+}
+
+/** Delete every matching alert from one mailbox. Never throws: one mailbox failing never skips the other. */
+async function purgeSeededAlerts(
+  account: E2eAccount,
+  folder: 'Inbox' | 'Sent',
+  matches: (m: MailMessageHeader) => boolean,
+): Promise<FlowCheck> {
+  const what = `seeded "${ZONING_ALERT_SUBJECT}" removed from ${account.username}'s ${folder}`;
+  try {
+    const session = await login(account);
+    try {
+      await session.driver.request({ type: WsMessageType.REQ_MAIL_CONNECT }, WsMessageType.RESP_MAIL_CONNECTED);
+      const listing = await session.driver.request<WsRespMailFolder>(
+        { type: WsMessageType.REQ_MAIL_GET_FOLDER, folder },
+        WsMessageType.RESP_MAIL_FOLDER,
+      );
+      const stale = listing.messages.filter(matches);
+      let deleted = 0;
+      for (const m of stale) {
+        const resp = await session.driver.request<WsRespMailDeleted>(
+          { type: WsMessageType.REQ_MAIL_DELETE, folder, messageId: m.messageId },
+          WsMessageType.RESP_MAIL_DELETED,
+        );
+        if (resp.success === true) deleted++;
+      }
+      return { what, ok: deleted === stale.length, detail: `${deleted}/${stale.length} deleted` };
+    } finally {
+      await logoff(session);
+    }
+  } catch (err: unknown) {
+    return { what, ok: false, detail: toErrorMessage(err) };
+  }
+}
+
+/** Crazz-sent alerts in SPO_test3's Inbox — a server-sent alert has another sender and is spared. */
+const seededInInbox = (m: MailMessageHeader): boolean =>
+  m.subject === ZONING_ALERT_SUBJECT && sameAccount(m.from, SECONDARY_ACCOUNT);
+/** Crazz's own copies in `Sent`, filed there by Post — Mail Server/MailServer.pas:802-811. */
+const seededInSent = (m: MailMessageHeader): boolean =>
+  m.subject === ZONING_ALERT_SUBJECT && sameAccount(m.to, PRIMARY_ACCOUNT);
+
+/** The seed's cleanup, and also its pre-compose sweep of any leftover from an interrupted run. */
+async function sweepSeededAlerts(): Promise<FlowCheck[]> {
+  return [
+    await purgeSeededAlerts(PRIMARY_ACCOUNT, 'Inbox', seededInInbox),
+    await purgeSeededAlerts(SECONDARY_ACCOUNT, 'Sent', seededInSent),
+  ];
+}
+
+/**
+ * Crazz sends SPO_test3 one look-alike of the server's zoning alert, pointing at the governed
+ * town hall — a building that exists, so the flow's focus lands. The cleanup deletes it from
+ * both mailboxes.
+ */
+async function seedZoningAlert(): Promise<FlowSeed> {
+  const what = `${SECONDARY_ACCOUNT.username} sends ${PRIMARY_ACCOUNT.username} one look-alike "${ZONING_ALERT_SUBJECT}"`;
+  const cleanup = sweepSeededAlerts;
+
+  const swept = await sweepSeededAlerts();
+  const bad = swept.find(c => !c.ok);
+  if (bad) {
+    return { outcome: { what, ok: false, detail: `stale sweep: ${bad.what} — ${bad.detail ?? ''}` }, cleanup };
+  }
+
+  try {
+    const sender = await login(SECONDARY_ACCOUNT);
+    try {
+      const ip = sender.world?.ip;
+      if (!ip) return { outcome: { what, ok: false, detail: 'the login carried no world IP' }, cleanup };
+      const hall = await findTown(sender, GOVERNED_TOWN);
+      await sender.driver.request({ type: WsMessageType.REQ_MAIL_CONNECT }, WsMessageType.RESP_MAIL_CONNECTED);
+      const sent = await sender.driver.request<WsRespMailSent>(
+        {
+          type: WsMessageType.REQ_MAIL_COMPOSE,
+          to: PRIMARY_ACCOUNT.username,
+          subject: ZONING_ALERT_SUBJECT,
+          body: zoningAlertBody(zoningAlertUrl(ip, hall.x, hall.y)),
+          headers: ZONING_ALERT_HEADERS,
+        },
+        WsMessageType.RESP_MAIL_SENT,
+        TIMEOUTS.login,
+      );
+      const ok = sent.success === true;
+      return {
+        outcome: { what, ok, detail: ok ? `hall (${hall.x},${hall.y}) via ${ip}` : (sent.message ?? 'compose refused') },
+        cleanup,
+      };
+    } finally {
+      await logoff(sender);
+    }
+  } catch (err: unknown) {
+    return { outcome: { what, ok: false, detail: toErrorMessage(err) }, cleanup };
+  }
+}
 
 /**
  * Opens the newest "Zoning Alert!" mail (issue #515), reads the gateway-fetched HTML page
@@ -756,14 +907,19 @@ const ZONING_ALERT_SUBJECT = 'Zoning Alert!'; // World.pas:2721
  * through `parseLocalAspUrl` — the same translator the client's link interceptor uses —
  * and sends the very REQ_BUILDING_FOCUS the client sends on a click.
  *
- * No zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
+ * The seed (`seedZoningAlert`, #1009) feeds the flow: Crazz sends SPO_test3 one look-alike
+ * alert before the run, and it is deleted from both mailboxes after. Read without the seed,
+ * no zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
  * was zoned out of this account lately, so the flow proved nothing. A demolished building answering `ERROR_FacilityNotFound`
  * is also accepted: the whole point of the alert is that the building is gone.
  */
 const zoningAlertRead: Flow = {
   name: 'zoning-alert-read',
   what: 'Inbox -> newest "Zoning Alert!" -> gateway-fetched page -> link -> tile -> REQ_BUILDING_FOCUS',
-  mutates: false, // reads the driving account's own inbox; nothing in the world changes
+  // The seed sends and deletes one mail on the two LOCKED mailboxes, like mail-roundtrip;
+  // nothing else in the world changes.
+  mutates: true,
+  seed: seedZoningAlert,
   run: async () => {
     const assertions = new Assertions();
     const session = await login(PRIMARY_ACCOUNT);
@@ -1108,8 +1264,54 @@ export function flowByName(name: string): Flow {
   return flow;
 }
 
-/** Run one flow, turning an unexpected throw into a reportable FAIL. */
+/**
+ * Run one flow, turning an unexpected throw into a reportable FAIL. A seeded flow runs
+ * seed -> run -> cleanup; the cleanup runs even when `run` throws, and a cleanup that leaves
+ * data behind turns the result FAIL (the restore rule, doc/E2E-POLICY.md §5/§9).
+ */
 export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult> {
+  if (!flow.seed) return runUnseeded(flow, ctx);
+
+  let seeded: FlowSeed;
+  try {
+    seeded = await flow.seed(ctx);
+  } catch (err: unknown) {
+    seeded = { outcome: { what: 'seed', ok: false, detail: toErrorMessage(err) } };
+  }
+
+  let result: FlowResult;
+  let cleanup: FlowCheck[] = [];
+  try {
+    if (seeded.outcome.ok) {
+      result = await runUnseeded(flow, ctx);
+    } else {
+      const { what, detail } = seeded.outcome;
+      result = {
+        name: flow.name,
+        status: 'UNPROVEN',
+        assertions: [],
+        unproven: [`the flow's data — seed failed: ${what}${detail ? ` (${detail})` : ''}`],
+        probes: [],
+        messagesSent: 0,
+        messagesReceived: 0,
+        wireErrors: 0,
+      };
+    }
+  } finally {
+    if (seeded.cleanup) {
+      try {
+        cleanup = await seeded.cleanup();
+      } catch (err: unknown) {
+        cleanup = [{ what: 'seed cleanup', ok: false, detail: toErrorMessage(err) }];
+      }
+    }
+  }
+
+  const status = cleanup.some(c => !c.ok) ? 'FAIL' : result.status;
+  return { ...result, seed: seeded.outcome, cleanup, status };
+}
+
+async function runUnseeded(flow: Flow, ctx: FlowContext): Promise<FlowResult> {
   try {
     return await flow.run(ctx);
   } catch (err: unknown) {

@@ -1,6 +1,7 @@
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage, FavoritesItem } from '@/shared/types/message-types';
-import { FLOWS, flowByName, nudge, runFlow } from './flows';
+import type { MailMessageHeader } from '@/shared/types/domain-types';
+import { FLOWS, flowByName, nudge, runFlow, type Flow, type FlowResult } from './flows';
 import { ROUTES } from './routing';
 import { WorldLock } from './world-lock';
 import { WsDriver, WsDriverError } from './ws-driver';
@@ -44,7 +45,9 @@ describe('the catalogue', () => {
 
   it('marks exactly the writing flows as mutating', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
-    expect(mutating).toEqual(['favorites-folders', 'favorites-roundtrip', 'mail-roundtrip', 'politics-write']);
+    expect(mutating).toEqual(
+      ['favorites-folders', 'favorites-roundtrip', 'mail-roundtrip', 'politics-write', 'zoning-alert-read'],
+    );
   });
 
   it('names the known flows when asked for one that does not exist', () => {
@@ -78,6 +81,120 @@ describe('runFlow', () => {
       }),
     };
     expect((await runFlow(passing, ctx)).status).toBe('PASS');
+  });
+
+  describe('a seeded flow', () => {
+    const pass = (name: string): FlowResult => ({
+      name,
+      status: 'PASS',
+      assertions: [],
+      unproven: [],
+      probes: [],
+      messagesSent: 1,
+      messagesReceived: 1,
+      wireErrors: 0,
+    });
+
+    function seeded(over: Partial<Flow> = {}): { flow: Flow; calls: string[] } {
+      const calls: string[] = [];
+      const flow: Flow = {
+        name: 'seeded',
+        what: '',
+        mutates: true,
+        seed: async () => {
+          calls.push('seed');
+          return {
+            outcome: { what: 'plant', ok: true },
+            cleanup: async () => {
+              calls.push('cleanup');
+              return [{ what: 'mailbox', ok: true }];
+            },
+          };
+        },
+        run: async () => {
+          calls.push('run');
+          return pass('seeded');
+        },
+        ...over,
+      };
+      return { flow, calls };
+    }
+
+    it('runs seed, then run, then the cleanup, and reports both', async () => {
+      const { flow, calls } = seeded();
+      const result = await runFlow(flow, ctx);
+      expect(calls).toEqual(['seed', 'run', 'cleanup']);
+      expect(result.status).toBe('PASS');
+      expect(result.seed).toEqual({ what: 'plant', ok: true });
+      expect(result.cleanup).toEqual([{ what: 'mailbox', ok: true }]);
+    });
+
+    it('still runs the cleanup when run throws', async () => {
+      const { flow, calls } = seeded();
+      flow.run = async () => {
+        calls.push('run');
+        throw new Error('socket died');
+      };
+      const result = await runFlow(flow, ctx);
+      expect(calls).toEqual(['seed', 'run', 'cleanup']);
+      expect(result).toMatchObject({ status: 'FAIL', error: 'socket died' });
+    });
+
+    it('a seed that throws is UNPROVEN, and run is never called', async () => {
+      const { flow, calls } = seeded({ seed: async () => Promise.reject(new Error('no login')) });
+      const result = await runFlow(flow, ctx);
+      expect(calls).toEqual([]);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.seed).toEqual({ what: 'seed', ok: false, detail: 'no login' });
+      expect(result.unproven[0]).toBe("the flow's data — seed failed: seed (no login)");
+      expect(result.cleanup).toEqual([]);
+    });
+
+    it('a failed seed with no detail still names what failed, and still cleans up', async () => {
+      const calls: string[] = [];
+      const { flow } = seeded({
+        seed: async () => ({
+          outcome: { what: 'plant', ok: false },
+          cleanup: async () => {
+            calls.push('cleanup');
+            return [{ what: 'mailbox', ok: true }];
+          },
+        }),
+      });
+      const result = await runFlow(flow, ctx);
+      expect(calls).toEqual(['cleanup']);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual(["the flow's data — seed failed: plant"]);
+    });
+
+    it('a cleanup that throws turns a PASS into a FAIL', async () => {
+      const { flow } = seeded({
+        seed: async () => ({
+          outcome: { what: 'plant', ok: true },
+          cleanup: async () => Promise.reject(new Error('mailbox gone')),
+        }),
+      });
+      const result = await runFlow(flow, ctx);
+      expect(result.status).toBe('FAIL');
+      expect(result.cleanup).toEqual([{ what: 'seed cleanup', ok: false, detail: 'mailbox gone' }]);
+    });
+
+    it('a cleanup that leaves data behind turns a PASS into a FAIL', async () => {
+      const { flow } = seeded({
+        seed: async () => ({
+          outcome: { what: 'plant', ok: true },
+          cleanup: async () => [{ what: 'inbox', ok: true }, { what: 'sent', ok: false, detail: '0/1 deleted' }],
+        }),
+      });
+      expect((await runFlow(flow, ctx)).status).toBe('FAIL');
+    });
+
+    it('a flow without a seed carries no seed or cleanup keys', async () => {
+      const { flow } = seeded({ seed: undefined });
+      const result = await runFlow(flow, ctx);
+      expect(result).not.toHaveProperty('seed');
+      expect(result).not.toHaveProperty('cleanup');
+    });
   });
 });
 
@@ -1116,6 +1233,255 @@ describe('zoning-alert-read', () => {
 
     expect(result.status).toBe('PASS');
     expect(result.assertions.find(a => /building is gone/.test(a.what))).toMatchObject({ ok: true });
+  });
+});
+
+describe('zoning-alert-read seed', () => {
+  const HALL = {
+    name: 'Helartia',
+    iconUrl: '',
+    mayor: 'SPO_test3',
+    population: 0,
+    unemploymentPercent: 0,
+    qualityOfLife: 0,
+    x: 220,
+    y: 41,
+    path: '',
+    classId: '512',
+  };
+  const ZONED_ANCHOR = 'http://local.asp?frame_Id=MapIsoView&frame_Action=SELECT&x=220&y=41';
+
+  function header(messageId: string, subject: string, from: string, to: string): MailMessageHeader {
+    return {
+      messageId, subject, from, to, fromAddr: '', toAddr: '', date: '', dateFmt: '', read: false, stamp: 0, noReply: false,
+    };
+  }
+
+  interface Logged { account: string; msg: WsMessage }
+
+  function arrange(over: {
+    inbox?: MailMessageHeader[];
+    sent?: MailMessageHeader[];
+    compose?: 'ok' | 'refused' | 'throws';
+    readThrows?: boolean;
+    noIp?: boolean;
+    loginRejects?: boolean;
+    refuseDeleteOf?: string;
+  } = {}) {
+    const mailboxes: Record<string, MailMessageHeader[]> = {
+      [`${PRIMARY_ACCOUNT.username}/Inbox`]: [...(over.inbox ?? [])],
+      [`${SECONDARY_ACCOUNT.username}/Sent`]: [...(over.sent ?? [])],
+    };
+    const requests: Logged[] = [];
+    let seq = 0;
+    jest.spyOn(session, 'login').mockImplementation(async account => {
+      if (over.loginRejects) throw new Error('login refused');
+      const stub = stubSession(msg => {
+        requests.push({ account: account.username, msg });
+        const m = msg as WsMessage & { folder?: string; messageId?: string; to?: string; subject?: string };
+        switch (msg.type) {
+          case WsMessageType.REQ_MAIL_CONNECT:
+            return { type: WsMessageType.RESP_MAIL_CONNECTED, unreadCount: 0 };
+          case WsMessageType.REQ_MAIL_GET_FOLDER:
+            return {
+              type: WsMessageType.RESP_MAIL_FOLDER,
+              folder: m.folder,
+              messages: [...(mailboxes[`${account.username}/${m.folder}`] ?? [])],
+            };
+          case WsMessageType.REQ_MAIL_DELETE: {
+            if (m.messageId === over.refuseDeleteOf) return { type: WsMessageType.RESP_MAIL_DELETED, success: false };
+            const box = mailboxes[`${account.username}/${m.folder}`] ?? [];
+            const i = box.findIndex(h => h.messageId === m.messageId);
+            if (i >= 0) box.splice(i, 1);
+            return { type: WsMessageType.RESP_MAIL_DELETED, success: i >= 0 };
+          }
+          case WsMessageType.REQ_MAIL_COMPOSE: {
+            if (over.compose === 'throws') throw new WsDriverError('mail socket closed', 500, msg.type);
+            if (over.compose === 'refused') {
+              return { type: WsMessageType.RESP_MAIL_SENT, success: false, message: 'Post refused' };
+            }
+            seq++;
+            mailboxes[`${m.to}/Inbox`].push(header(`seeded${seq}`, m.subject ?? '', account.username, m.to ?? ''));
+            mailboxes[`${account.username}/Sent`].push(
+              header(`seededSent${seq}`, m.subject ?? '', account.username, m.to ?? ''),
+            );
+            return { type: WsMessageType.RESP_MAIL_SENT, success: true };
+          }
+          case WsMessageType.REQ_MAIL_READ_MESSAGE:
+            if (over.readThrows) throw new Error('read blew up');
+            return {
+              type: WsMessageType.RESP_MAIL_MESSAGE,
+              message: { htmlBody: `<a href="${ZONED_ANCHOR}">e2e-seed</a>` },
+            };
+          case WsMessageType.REQ_BUILDING_FOCUS:
+            return { type: WsMessageType.RESP_BUILDING_FOCUS, building: { buildingId: '42' } };
+          case WsMessageType.REQ_BUILDING_UNFOCUS:
+            return { type: WsMessageType.RESP_CHAT_SUCCESS };
+          default:
+            return undefined;
+        }
+      });
+      return {
+        ...stub,
+        account,
+        world: over.noIp ? undefined : { name: 'planitia', url: '', ip: '10.1.2.3', port: 0 },
+      };
+    });
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'findTown').mockResolvedValue(HALL);
+    return { requests, mailboxes };
+  }
+
+  const composeOf = (requests: Logged[]): Logged | undefined =>
+    requests.find(r => r.msg.type === WsMessageType.REQ_MAIL_COMPOSE);
+  const indexOf = (requests: Logged[], pred: (r: Logged) => boolean): number => requests.findIndex(pred);
+  const isDelete = (account: string, folder: string, messageId: string) => (r: Logged): boolean =>
+    r.account === account &&
+    r.msg.type === WsMessageType.REQ_MAIL_DELETE &&
+    (r.msg as WsMessage & { folder: string }).folder === folder &&
+    (r.msg as WsMessage & { messageId: string }).messageId === messageId;
+
+  it('sends the compose as Crazz, to SPO_test3, with the server alert\'s subject and header', async () => {
+    const { requests } = arrange();
+
+    const result = await runFlow(flowByName('zoning-alert-read'), ctx);
+
+    const compose = composeOf(requests);
+    expect(compose?.account).toBe(SECONDARY_ACCOUNT.username);
+    expect(compose?.msg).toMatchObject({
+      to: 'SPO_test3',
+      subject: 'Zoning Alert!',
+      headers: 'ContentType=text/html',
+    });
+    expect(result.seed?.ok).toBe(true);
+    expect(result.status).toBe('PASS');
+  });
+
+  it('writes the three-line body, its META URL on the world IP and pointing at the hall tile', async () => {
+    const { requests } = arrange();
+
+    await runFlow(flowByName('zoning-alert-read'), ctx);
+
+    const body = (composeOf(requests)?.msg as WsMessage & { body: string[] }).body;
+    expect(body).toHaveLength(3);
+    expect(body[0]).toBe('<HEAD>');
+    expect(body[2]).toBe('</HEAD>');
+    const match = /^<META HTTP-EQUIV="REFRESH" CONTENT="0; URL=([^">\s]+)">$/.exec(body[1]);
+    expect(match).not.toBeNull();
+    const url = new URL(match?.[1] ?? '');
+    expect(url.hostname).toBe('10.1.2.3');
+    expect(url.pathname.endsWith('MsgZoned.asp')).toBe(true);
+    expect(url.searchParams.get('BuildX0')).toBe('220');
+    expect(url.searchParams.get('BuildY0')).toBe('41');
+    expect(url.searchParams.get('BuildName0')).toContain('e2e-seed');
+  });
+
+  it('sweeps stale Crazz-sent alerts from both mailboxes before the compose, sparing a server alert', async () => {
+    const { requests } = arrange({
+      inbox: [
+        header('stale', 'Zoning Alert!', 'Crazz', 'SPO_test3'),
+        header('srv', 'Zoning Alert!', 'mailer@GlobalPlanitia.net', 'SPO_test3'),
+      ],
+      sent: [header('staleSent', 'Zoning Alert!', 'Crazz', 'SPO_test3')],
+    });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), ctx);
+
+    const compose = indexOf(requests, r => r.msg.type === WsMessageType.REQ_MAIL_COMPOSE);
+    const inboxDelete = indexOf(requests, isDelete('SPO_test3', 'Inbox', 'stale'));
+    const sentDelete = indexOf(requests, isDelete('Crazz', 'Sent', 'staleSent'));
+    expect(inboxDelete).toBeGreaterThanOrEqual(0);
+    expect(sentDelete).toBeGreaterThanOrEqual(0);
+    expect(inboxDelete).toBeLessThan(compose);
+    expect(sentDelete).toBeLessThan(compose);
+    expect(requests.some(r => (r.msg as WsMessage & { messageId?: string }).messageId === 'srv'
+      && r.msg.type === WsMessageType.REQ_MAIL_DELETE)).toBe(false);
+    expect(result.seed?.ok).toBe(true);
+  });
+
+  it('deletes the seeded message from both mailboxes after the flow', async () => {
+    const { requests, mailboxes } = arrange();
+
+    const result = await runFlow(flowByName('zoning-alert-read'), ctx);
+
+    const focus = indexOf(requests, r => r.msg.type === WsMessageType.REQ_BUILDING_FOCUS);
+    expect(focus).toBeGreaterThanOrEqual(0);
+    expect(indexOf(requests, isDelete('SPO_test3', 'Inbox', 'seeded1'))).toBeGreaterThan(focus);
+    expect(indexOf(requests, isDelete('Crazz', 'Sent', 'seededSent1'))).toBeGreaterThan(focus);
+    expect(result.cleanup).toHaveLength(2);
+    expect(result.cleanup?.every(c => c.ok)).toBe(true);
+    expect(mailboxes['SPO_test3/Inbox']).toEqual([]);
+    expect(mailboxes['Crazz/Sent']).toEqual([]);
+  });
+
+  it('still deletes the seeded message from both mailboxes when the flow throws', async () => {
+    const { requests } = arrange({ readThrows: true });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.error).toBe('read blew up');
+    expect(indexOf(requests, isDelete('SPO_test3', 'Inbox', 'seeded1'))).toBeGreaterThanOrEqual(0);
+    expect(indexOf(requests, isDelete('Crazz', 'Sent', 'seededSent1'))).toBeGreaterThanOrEqual(0);
+  });
+
+  it('a refused compose fails the seed, and the flow is not PASS and never focuses', async () => {
+    const { requests } = arrange({
+      compose: 'refused',
+      inbox: [header('srv', 'Zoning Alert!', 'mailer@GlobalPlanitia.net', 'SPO_test3')],
+    });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), ctx);
+
+    expect(result.seed).toMatchObject({ ok: false, detail: 'Post refused' });
+    expect(result.status).not.toBe('PASS');
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/seed failed/);
+    expect(requests.some(r => r.msg.type === WsMessageType.REQ_BUILDING_FOCUS)).toBe(false);
+  });
+
+  it('a compose that throws fails the seed', async () => {
+    arrange({ compose: 'throws' });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), ctx);
+
+    expect(result.seed).toMatchObject({ ok: false, detail: 'mail socket closed' });
+    expect(result.status).toBe('UNPROVEN');
+  });
+
+  it('a login with no world IP fails the seed, and sends no compose', async () => {
+    const { requests } = arrange({ noIp: true });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), ctx);
+
+    expect(result.seed).toMatchObject({ ok: false, detail: 'the login carried no world IP' });
+    expect(composeOf(requests)).toBeUndefined();
+  });
+
+  it('a stale sweep that cannot log in fails the seed, and the cleanup reports it', async () => {
+    arrange({ loginRejects: true });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), ctx);
+
+    expect(result.seed?.ok).toBe(false);
+    expect(result.seed?.detail).toMatch(/stale sweep/);
+    expect(result.status).toBe('FAIL');
+    expect(result.cleanup).toEqual([
+      expect.objectContaining({ ok: false, detail: 'login refused' }),
+      expect.objectContaining({ ok: false, detail: 'login refused' }),
+    ]);
+  });
+
+  it('a delete the server refuses leaves that mailbox\'s cleanup not ok, and the flow FAILs', async () => {
+    arrange({ refuseDeleteOf: 'seededSent1' });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), ctx);
+
+    expect(result.cleanup).toEqual([
+      expect.objectContaining({ ok: true, detail: '1/1 deleted' }),
+      expect.objectContaining({ ok: false, detail: '0/1 deleted' }),
+    ]);
+    expect(result.status).toBe('FAIL');
   });
 });
 

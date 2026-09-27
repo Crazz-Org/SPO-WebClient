@@ -15,6 +15,11 @@ export interface RouteRule {
   flows: string[];
   /** True when only a browser can observe the change (renderer, layout, input). */
   needsL3?: boolean;
+  /**
+   * The path is observable live, but no flow can be required for it: the bench cannot
+   * create the data its flow reads. The spine alone rides along.
+   */
+  spineOnly?: boolean;
   why: string;
 }
 
@@ -113,10 +118,14 @@ export const ROUTES: RouteRule[] = [
   },
   {
     // Before the broad wire-level rule below: the paper is not on the RDO wire
-    // at all, so the governance flows would say nothing about it.
+    // at all, so the governance flows would say nothing about it. And no flow is
+    // required either (#1009): planitia keeps no newspaper issue and the bench cannot
+    // create one (News.pas:986), so newspaper-read could only end UNPROVEN. It still
+    // runs and reports when asked for; the spine alone rides along here.
     test: /newspaper-handlers?\.ts$|^src\/client\/components\/modals\/NewspaperModal\.tsx$|^src\/client\/store\/newspaper-store\.ts$/,
-    flows: ['newspaper-read'],
-    why: 'the town paper — the one flow that reads it',
+    flows: [],
+    spineOnly: true,
+    why: 'the town paper — observable live, but no flow is required: the bench cannot create a kept issue (News.pas:986); newspaper-read still runs and reports',
   },
   {
     test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$|^src\/server\/session\//,
@@ -198,7 +207,7 @@ export function route(changedFiles: string[], deletedFiles: string[] = []): Rout
       continue;
     }
     if (rule.needsL3) needsL3 = true;
-    if (rule.flows.length > 0 || rule.needsL3) {
+    if (rule.flows.length > 0 || rule.needsL3 || rule.spineOnly) {
       touchedCode = true;
       reasons.add(rule.why);
     }

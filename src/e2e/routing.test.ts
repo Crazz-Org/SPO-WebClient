@@ -1,5 +1,6 @@
 import { ROUTES, SPINE_FLOW, route, presidentMembersInDiff, isCallSite, launderedTests } from './routing';
 import { PRESIDENT_MEMBERS } from './config';
+import { FLOWS } from './flows';
 
 describe('route', () => {
   it('appends the login spine whenever anything observable changed', () => {
@@ -259,16 +260,33 @@ describe('launderedTests', () => {
 describe('the town paper', () => {
   // The paper is not on the RDO wire at all — it is scraped off the ASP pages —
   // so the governance flows would prove nothing about a change to it.
-  it('routes the newspaper gateway handler to newspaper-read, not to the governance flows', () => {
-    const d = route(['src/server/session/newspaper-handler.ts']);
-    expect(d.required).toEqual([SPINE_FLOW, 'newspaper-read']);
+  // And no flow is required (#1009): the bench cannot create a kept issue, so
+  // newspaper-read could only end UNPROVEN. The spine alone rides along.
+  const paperPaths = [
+    'src/server/session/newspaper-handler.ts',
+    'src/client/components/modals/NewspaperModal.tsx',
+    'src/client/store/newspaper-store.ts',
+  ];
+
+  it.each(paperPaths)('routes %s to the spine alone, and it is still observable live', file => {
+    const d = route([file]);
+    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.staticOnly).toBe(false);
   });
 
-  it('routes the modal and the store the same way', () => {
-    expect(route(['src/client/components/modals/NewspaperModal.tsx']).required)
-      .toContain('newspaper-read');
-    expect(route(['src/client/store/newspaper-store.ts']).required)
-      .toContain('newspaper-read');
+  it.each(paperPaths)('does not route %s to the governance or inspector flows', file => {
+    const { required } = route([file]);
+    for (const flow of ['politics-read', 'politics-write', 'building-details']) {
+      expect(required).not.toContain(flow);
+    }
+  });
+
+  it('routes the newspaper WS handler to the spine alone, not to the ws-handlers rule', () => {
+    expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).required).toEqual([SPINE_FLOW]);
+  });
+
+  it('keeps newspaper-read in the catalogue — it still runs and reports', () => {
+    expect(FLOWS.map(f => f.name)).toContain('newspaper-read');
   });
 });
 
