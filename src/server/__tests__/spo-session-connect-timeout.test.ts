@@ -54,9 +54,7 @@ describe('StarpeaceSession.createSocket connect timeout', () => {
     expect(settled).toBe(false);
     expect(fake.destroy).not.toHaveBeenCalled();
 
-    const assertion = expect(p).rejects.toThrow(
-      new RegExp(`world.*${HOST.replace(/\./g, '\\.')}:${PORT}.*10000 ms`),
-    );
+    const assertion = expect(p).rejects.toThrow(/world.*10\.255\.255\.1:8000.*10000 ms/);
     await jest.advanceTimersByTimeAsync(1);
     await assertion;
     expect(fake.destroy).toHaveBeenCalledTimes(1);
