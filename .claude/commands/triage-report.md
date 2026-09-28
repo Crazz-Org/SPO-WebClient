@@ -9,9 +9,15 @@ A manual test session flags what looks wrong and moves on; the report lands in a
 This command is the other half: it reads that queue and files proper kanban cards, alone.
 
 **The boundary, and it is not negotiable.** `/triage-report` **creates** cards and never
-implements one. The orchestrator (sibling SPO-Pipeline repo) **claims and implements** cards and
-never reads the queue. A session that triages a report and then starts fixing it has taken work
-nobody prioritised — file the card, move to the next report.
+implements one. The orchestrator (sibling SPO-Pipeline repo) **claims and implements** cards, and
+its daemon **also takes reports from this queue**: report intake (stage 1) runs every 15 minutes
+by default, takes the oldest top-level `*.json` files, files each as a raw issue on the private
+`Crazz-Org/SPO-Reports`, and moves it to `~/.spo-reports/pending/` (later `in-progress/`). The two
+keep apart by moving a report out of the top level before working on it — triage into
+`~/.spo-reports/triage/` (§ 1), the daemon into `pending/`. The daemon reads only the top level
+and triage never reads the daemon's folders, so whichever moves a file first owns it. A session
+that triages a report and then starts fixing it has taken work nobody prioritised — file the
+card, move to the next report.
 
 The feature itself is documented in [doc/bug-reporting.md](../../doc/bug-reporting.md); the board
 rules are [doc/kanban-workflow.md](../../doc/kanban-workflow.md). Do not restate either here.
@@ -23,10 +29,14 @@ ls -1 ~/.spo-reports/*.json 2>/dev/null | sort
 ```
 
 Oldest first — the filename begins with `createdAtUtc`, so lexical order *is* chronological.
-**Skip `~/.spo-reports/archive/`**: it holds what previous runs already disposed of. With
-`$ARGUMENTS` naming a file, triage that one and nothing else.
+**Skip `~/.spo-reports/archive/`**: it holds what previous runs already disposed of. **Never
+touch `pending/` or `in-progress/`**: those are the pipeline daemon's. A `*.json` still in
+`~/.spo-reports/triage/` was left there by an interrupted run and is already claimed — take it
+first, and skip § 1's claim step for it. With `$ARGUMENTS` naming a file, triage that one and
+nothing else.
 
-**Refuse a version mismatch rather than guessing.** Every report carries `version`; the only
+**Refuse a version mismatch rather than guessing.** Read `version` from the claimed copy, once
+§ 1's first step has moved the file. Every report carries `version`; the only
 shape this command understands is `BUG_REPORT_SCHEMA_VERSION` in
 [src/shared/bug-report-schema.ts](../../src/shared/bug-report-schema.ts), which is the authority
 for the whole shape — read it there, it is not copied here because a copy drifts. A report whose
@@ -36,6 +46,18 @@ final report. Guessing at an older shape is how a field silently changes meaning
 An empty queue is a normal outcome. Say so and stop.
 
 ## 1 · Reproduce, before anything else
+
+**First, claim the report** — take it out of the pipeline daemon's reach before any work on it:
+
+```bash
+mkdir -p ~/.spo-reports/triage
+mv ~/.spo-reports/<file>.json ~/.spo-reports/triage/
+```
+
+The daemon's intake reads only top-level files, so it never sees a report in `triage/`. **If the
+`mv` fails because the file is gone, the daemon took it first** (it is now in `pending/`): drop
+that report — no archive, no disposition — and count it as "taken by the pipeline" in the end
+report. From here on, the report is `~/.spo-reports/triage/<file>.json`.
 
 **A report that was not reproduced does not become a card.** Take a bench lease and drive the
 client yourself:
@@ -169,7 +191,7 @@ public board.
 run the check once per report merged into the card — it takes one report at a time:
 
 ```bash
-npm run report:card -- --check-public ~/.spo-reports/<file>.json /tmp/card-<anchorKey>.md
+npm run report:card -- --check-public ~/.spo-reports/triage/<file>.json /tmp/card-<anchorKey>.md
 ```
 
 Exit 0 → file. Exit 1 prints only the category (`leak: username` / `leak: free-text` /
@@ -181,11 +203,11 @@ kanban-workflow § gh CLI recipes.
 
 ## 6 · Every report leaves the queue
 
-Nothing stays behind: a queue that still holds a triaged report gets triaged again next run.
+Nothing stays behind: a report left in `~/.spo-reports/triage/` gets triaged again next run.
 
 ```bash
 mkdir -p ~/.spo-reports/archive
-mv ~/.spo-reports/<file>.json ~/.spo-reports/archive/
+mv ~/.spo-reports/triage/<file>.json ~/.spo-reports/archive/
 ```
 
 Beside it, a one-line disposition sidecar `<file>.disposition.txt`:
@@ -213,4 +235,4 @@ thin is noise; the same gap three times is a defect in what the capture asks for
 
 ## Report at the end
 
-Summary: how many filed, how many duplicates, how many skipped. Then detail only the `DO NOT FILE` cases with the reviewer's reason.
+Summary: how many filed, how many duplicates, how many skipped, how many taken by the pipeline. Then detail only the `DO NOT FILE` cases with the reviewer's reason.
