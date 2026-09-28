@@ -134,13 +134,36 @@ Requires [jq](https://jqlang.github.io/jq/).
 {"ts": "...", "level": "INFO", "ctx": "Session", "msg": "SESSION_END", "sid": "s-m1abc2d-x7k2", "player": "SPO_test3", "meta": {"ip": "1.2.3.4", "durationMs": "45230", "phase": "5"}}
 ```
 
+### CLIENT_ERROR (browser error report)
+
+A report posted by a player's browser to `POST /api/client-error` (uncaught error, unhandled
+rejection, error-boundary catch, failed lazy chunk) becomes exactly one line in `gateway.ndjson`:
+
+```json
+{"ts": "...", "level": "WARN", "ctx": "ClientError", "msg": "CLIENT_ERROR", "meta": {"sig": "3f9a1c0b7d2e", "kind": "error", "build": "1.4.2#317", "message": "x is undefined", "frames": ["main.abc.js:1:2345"], "screen": "game", "surface": "building", "ua": "firefox", "mobile": false}}
+```
+
+- `sig` is the first 12 hex characters of sha1 over `kind`, `message` and `frames`, so identical
+  errors group together.
+- The line **never** contains a client IP, a session id, a username, a world or a tycoon: the
+  endpoint is anonymous and refuses any field outside the list above. It is logged at `warn`,
+  so it never reaches the ERROR-only error file, which stays for the gateway's own failures.
+- `CLIENT_ERROR_CAP_REACHED` (`warn`, `ctx: "ClientError"`) is written at most once per minute,
+  when the gateway-wide cap of 60 accepted reports per minute is hit.
+
+Most frequent browser errors:
+
+```bash
+jq 'select(.msg=="CLIENT_ERROR") | .meta.sig' gateway.ndjson | sort | uniq -c | sort -rn
+```
+
 ### Field reference
 
 | Field            | Always present | Description                                          |
 |------------------|----------------|------------------------------------------------------|
 | `ts`             | yes            | ISO 8601 timestamp                                   |
 | `level`          | yes            | `DEBUG`, `INFO`, `WARN`, `ERROR`                     |
-| `ctx`            | yes            | Logger context (`Gateway`, `Session`, `ClientWire`)   |
+| `ctx`            | yes            | Logger context (`Gateway`, `Session`, `ClientWire`, `ClientError`) |
 | `msg`            | yes            | Human-readable message                               |
 | `sid`            | session logs   | Unique session ID per WebSocket connection             |
 | `player`         | after login    | Player username (inherited via child logger)          |

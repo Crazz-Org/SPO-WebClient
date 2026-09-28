@@ -6,6 +6,7 @@
  * ClientContext) to trigger client.ts actions.
  */
 
+import { LEGACY_SETTINGS_KEY, settingsKey } from '../store/account-settings';
 import { useGameStore, type GameSettings, type ServerStartupState, type MapLoadingState, type DisconnectReason } from '../store/game-store';
 import { useBuildingStore, type WriteVerdict } from '../store/building-store';
 import { useChatStore, type ChatUser } from '../store/chat-store';
@@ -363,6 +364,37 @@ export interface ClientCallbacks {
  * Store-pushing methods — called by client.ts message handler
  * to sync game state into Zustand stores for React consumption.
  */
+/** The active account's settings key — null until an account enters a world. */
+let activeSettingsKey: string | null = null;
+
+function settingsStorage(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readSettings(key: string): Partial<GameSettings> | null {
+  try {
+    const raw = settingsStorage()?.getItem(key);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    return parsed as Partial<GameSettings>;
+  } catch {
+    return null;
+  }
+}
+
+function writeSettings(key: string, json: string): void {
+  try {
+    settingsStorage()?.setItem(key, json);
+  } catch {
+    // Storage full or blocked — the settings stay in memory for this session.
+  }
+}
+
 export const ClientBridge = {
   // ---- Logging ----
 
@@ -372,26 +404,39 @@ export const ClientBridge = {
 
   // ---- Settings persistence ----
 
-  /** Load settings from localStorage into Zustand store (call once at init). */
+  /**
+   * Load settings from localStorage into the Zustand store. Before any account is active this
+   * reads the browser entry (`spo_settings`); afterwards it reads the active account's entry,
+   * falling back to the browser entry when the account has none.
+   */
   loadPersistedSettings(): void {
-    try {
-      const stored = localStorage.getItem('spo_settings');
-      if (stored) {
-        const parsed = JSON.parse(stored) as Partial<GameSettings>;
-        useGameStore.getState().updateSettings(parsed);
-      }
-    } catch {
-      // Ignore parse errors — defaults stay
-    }
+    const stored = readSettings(activeSettingsKey ?? LEGACY_SETTINGS_KEY)
+      ?? (activeSettingsKey ? readSettings(LEGACY_SETTINGS_KEY) : null);
+    if (stored) useGameStore.getState().updateSettings(stored);
   },
 
-  /** Persist current settings to localStorage. */
+  /**
+   * Persist settings: always to the browser entry, and to the active account's entry once one
+   * has been loaded. No account entry is written before its own load.
+   */
   persistSettings(settings: GameSettings): void {
-    try {
-      localStorage.setItem('spo_settings', JSON.stringify(settings));
-    } catch {
-      // Ignore storage errors
-    }
+    const json = JSON.stringify(settings);
+    writeSettings(LEGACY_SETTINGS_KEY, json);
+    if (activeSettingsKey) writeSettings(activeSettingsKey, json);
+  },
+
+  /**
+   * Make this account's entry the active one, load it (a missing or corrupt entry keeps what
+   * the store holds — the browser's settings), record the language the world login just carried
+   * (the form's picker wins), and persist. Loading the same account again changes nothing.
+   */
+  loadAccountSettings(username: string, languageId: string): void {
+    const key = settingsKey(username);
+    const stored = readSettings(key);
+    if (stored) useGameStore.getState().updateSettings(stored);
+    activeSettingsKey = key;
+    useGameStore.getState().updateSettings({ languageId });
+    ClientBridge.persistSettings(useGameStore.getState().settings);
   },
 
   /** Get current settings from Zustand store. */

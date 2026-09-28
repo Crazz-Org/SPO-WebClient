@@ -2,12 +2,12 @@
 
 ## Supported versions
 
-Only the latest beta is supported. Older tags receive no fixes.
+Only the latest published release is supported — see
+[the latest release](https://github.com/Crazz-Org/SPO-WebClient/releases/latest) for which
+version that is. Every older `v*` tag receives no fixes.
 
-| Version | Supported |
-|---------|-----------|
-| 1.3.x-beta | ✅ |
-| < 1.3 | ❌ |
+A new release is published on every merge to `main`, so a fix ships as the next release:
+update to it rather than expecting a patch to an older tag.
 
 ## Reporting a vulnerability
 

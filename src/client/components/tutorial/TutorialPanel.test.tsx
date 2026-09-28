@@ -10,7 +10,8 @@
  */
 
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { TutorialPanel, fillPlaceholders } from './TutorialPanel';
+import { TutorialPanel, fillPlaceholders, renderMarkers } from './TutorialPanel';
+import { TUTORIAL_CONTENT } from './tutorial-content';
 import { ClientContext } from '../../context/ClientContext';
 import type { ClientCallbacks } from '../../bridge/client-bridge';
 import { useTutorialStore } from '../../store/tutorial-store';
@@ -193,5 +194,40 @@ describe('fillPlaceholders', () => {
       .toBe('SPO_test3 / Shamba / Yellow Inc. / Shamba / $5,000,000');
     expect(fillPlaceholders(text, { ...GOAL_TASK, company: '', town: '', goal: '' }, '', ''))
       .toBe('Tycoon / this world / your company / your town / your goal');
+  });
+});
+
+describe('TutorialPanel — control-name markers', () => {
+  it('shows a marked control name in bold, without its brackets', () => {
+    act(() => {
+      useTutorialStore.getState().setAssignment({ ...WELCOME, kindId: 'YourProfile', name: 'Your Profile', stage: 0 });
+    });
+    const { container } = renderPanel();
+
+    const bold = Array.from(container.querySelectorAll('strong')).map((s) => s.textContent);
+    expect(bold).toContain('Empire');
+    expect(container.textContent).not.toContain('[[');
+    expect(container.textContent).not.toContain(']]');
+  });
+
+  it('no stage of any assignment lets a bracket reach the screen', () => {
+    for (const [kindId, stages] of Object.entries(TUTORIAL_CONTENT)) {
+      stages.forEach((_stage, stage) => {
+        act(() => { useTutorialStore.getState().setAssignment({ ...WELCOME, kindId, stage }); });
+        const { container, unmount } = renderPanel();
+        expect(`${kindId}/${stage}: ${container.textContent}`).not.toMatch(/\[\[|\]\]/);
+        unmount();
+      });
+    }
+  });
+});
+
+describe('renderMarkers', () => {
+  it('turns each [[Label]] into a <strong>, and leaves unmarked text alone', () => {
+    const { container } = render(<p>{renderMarkers('press [[Build]] then [[Map]]')}</p>);
+    expect(Array.from(container.querySelectorAll('strong')).map((s) => s.textContent)).toEqual(['Build', 'Map']);
+    expect(container.textContent).toBe('press Build then Map');
+
+    expect(renderMarkers('no marker here')).toEqual(['no marker here']);
   });
 });

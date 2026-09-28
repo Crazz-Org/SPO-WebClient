@@ -154,7 +154,12 @@ describe('road demolition asks first', () => {
     expect(ctx.showNotification).toHaveBeenLastCalledWith('Not yours', 'error');
     ctx.sendRequest.mockRejectedValueOnce(new Error('down'));
     await demolishRoadAt(ctx, 0, 0);
-    expect(ctx.showNotification).toHaveBeenLastCalledWith('Failed to demolish road: down', 'error');
+    expect(ctx.showNotification).toHaveBeenLastCalledWith('Could not demolish the road — something went wrong. Try again.', 'error');
+    ctx.sendRequest.mockRejectedValueOnce(new Error('Request Timeout'));
+    await demolishRoadArea(ctx, 0, 0, 1, 1);
+    expect(ctx.showNotification).toHaveBeenLastCalledWith(
+      'Could not demolish these roads — the server did not answer in time. Try again.', 'error',
+    );
   });
 });
 

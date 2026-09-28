@@ -10,9 +10,12 @@
  *
  * It draws no close button of its own — the Sheet supplies one
  * (`Sheet.tsx:148`), which is what "the panel can be dismissed" rests on.
+ *
+ * A control name the text marks as `[[Label]]` is shown in bold: a bold
+ * control name is the visual cue that replaces highlighting.
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, X, CheckCircle2, Sparkles } from 'lucide-react';
 import { useTutorialStore } from '../../store/tutorial-store';
 import { useUiStore } from '../../store/ui-store';
@@ -39,6 +42,13 @@ export function fillPlaceholders(
     .replace(/\{company\}/g, assignment.company || 'your company')
     .replace(/\{town\}/g, assignment.town || 'your town')
     .replace(/\{goal\}/g, assignment.goal || 'your goal');
+}
+
+/** Render `[[Label]]` as <strong>Label</strong>; brackets never reach the screen. */
+export function renderMarkers(text: string): ReactNode[] {
+  // split with a capturing group: labels land at odd indices
+  return text.split(/\[\[(.+?)\]\]/).map((part, i) =>
+    i % 2 === 1 ? <strong key={i}>{part}</strong> : part);
 }
 
 export function TutorialPanel() {
@@ -79,7 +89,7 @@ export function TutorialPanel() {
           <Sparkles size={16} className={styles.titleIcon} aria-hidden="true" />
           <h2 className={styles.title}>{assignment.name || 'Assignment'}</h2>
         </div>
-        {content && <p className={styles.heading}>{fill(content.heading)}</p>}
+        {content && <p className={styles.heading}>{renderMarkers(fill(content.heading))}</p>}
         <ProgressBar value={assignment.progress / 100} variant="gold" showLabel />
       </header>
 
@@ -93,7 +103,7 @@ export function TutorialPanel() {
       {content && content.paragraphs.length > 0 && (
         <div className={styles.body}>
           {content.paragraphs.map((p, i) => (
-            <p key={i} className={styles.paragraph}>{fill(p)}</p>
+            <p key={i} className={styles.paragraph}>{renderMarkers(fill(p))}</p>
           ))}
         </div>
       )}

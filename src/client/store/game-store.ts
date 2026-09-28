@@ -44,7 +44,7 @@ export type MinimapSize = 'small' | 'medium' | 'large';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'reconnecting' | 'connected';
 
-export type DisconnectReason = 'connection_lost' | 'session_expired' | null;
+export type DisconnectReason = 'connection_lost' | 'session_expired' | 'server_full' | null;
 
 export type ServiceStatus = 'pending' | 'running' | 'complete' | 'failed';
 
@@ -54,6 +54,8 @@ export interface ServerStartupState {
   message: string;
   services: Array<{ name: string; status: ServiceStatus; progress: number; subStep?: string }>;
   cacheSteps?: Array<{ name: string; label: string; status: 'pending' | 'running' | 'complete' }>;
+  /** True after 60 s with no open status stream, or when a service reports `failed` (issue 1048). */
+  unreachable?: boolean;
 }
 
 export interface MapLoadingState {
@@ -79,6 +81,8 @@ export interface GameSettings {
   minimapSize: MinimapSize;
   /** Docked minimap magnification, 1..8 — MapIsoHandler.pas:384. */
   minimapZoom: number;
+  /** Main-map camera zoom level, index into ZOOM_LEVELS (0..3). WebClient addition — Voyager did not save it (#1072). */
+  cameraZoom: number;
   /** A dragged docked-minimap pixel side; `null` follows the preset — MapIsoHandler.pas:372-382. */
   minimapPixelSize: number | null;
   /** The language sent to the world on login — one of the six ids in `shared/language.ts`. */
@@ -104,6 +108,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   isDebugOverlay: false,
   minimapSize: 'medium',
   minimapZoom: 1,
+  cameraZoom: 2,
   minimapPixelSize: null,
   languageId: DEFAULT_LANGUAGE_ID,
   buildingAnimations: true,
@@ -119,6 +124,8 @@ interface GameState {
   disconnectReason: DisconnectReason;
   /** True from a close with code 1012 (gateway restarting) until the session is connected or given up. In memory only. */
   serverRestarting: boolean;
+  /** True from a close with code 1013 (server full) until the session is connected or given up. In memory only. */
+  serverFull: boolean;
   username: string;
   /**
    * The player's own tycoon id, decimal, from `WsRespLoginSuccess.tycoonId`.
@@ -227,6 +234,7 @@ interface GameState {
   setStatus: (status: ConnectionStatus) => void;
   setDisconnectReason: (reason: DisconnectReason) => void;
   setServerRestarting: (restarting: boolean) => void;
+  setServerFull: (full: boolean) => void;
   setReconnectAttempt: (attempt: number) => void;
   setCredentials: (username: string, tycoonId?: string) => void;
   setWorld: (worldName: string) => void;
@@ -276,6 +284,7 @@ export const useGameStore = create<GameState>((set) => ({
   status: 'disconnected',
   disconnectReason: null,
   serverRestarting: false,
+  serverFull: false,
   username: '',
   tycoonId: '',
   worldName: '',
@@ -326,10 +335,11 @@ export const useGameStore = create<GameState>((set) => ({
   setStatus: (status) => set({
     status,
     ...(status === 'connected' ? { disconnectReason: null } : {}),
-    ...(status === 'connected' || status === 'disconnected' ? { serverRestarting: false } : {}),
+    ...(status === 'connected' || status === 'disconnected' ? { serverRestarting: false, serverFull: false } : {}),
   }),
   setDisconnectReason: (reason) => set({ disconnectReason: reason }),
   setServerRestarting: (restarting) => set({ serverRestarting: restarting }),
+  setServerFull: (full) => set({ serverFull: full }),
   setReconnectAttempt: (attempt) => set({ reconnectAttempt: attempt }),
   setCredentials: (username, tycoonId) =>
     set(tycoonId === undefined ? { username } : { username, tycoonId }),
@@ -417,6 +427,7 @@ export const useGameStore = create<GameState>((set) => ({
       status: 'disconnected',
       disconnectReason: null,
       serverRestarting: false,
+      serverFull: false,
       username: '',
       tycoonId: '',
       worldName: '',

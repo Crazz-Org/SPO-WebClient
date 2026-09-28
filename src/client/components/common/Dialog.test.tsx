@@ -124,4 +124,16 @@ describe('Dialog', () => {
     });
     expect(onPrimary).not.toHaveBeenCalled();
   });
+
+  it('singleAction renders only the primary button — no secondary, no Cancel — and Escape still closes', () => {
+    const { onClose, onPrimary } = setup({ singleAction: true, primary: { label: 'Close', onClick: jest.fn() } });
+    const dlg = screen.getByRole('dialog');
+    const buttons = Array.from(dlg.querySelectorAll('button'));
+    expect(buttons.map((b) => b.textContent)).toEqual(['Close']);
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(document.activeElement).toBe(buttons[0]);
+    fireEvent.keyDown(dlg, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onPrimary).not.toHaveBeenCalled();
+  });
 });

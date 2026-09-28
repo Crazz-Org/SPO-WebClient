@@ -99,6 +99,21 @@ describe('ChatHistoryModal — copy all', () => {
 
     await waitFor(() => expect(screen.getByRole('status').textContent).not.toBe(''));
     expect(screen.getByRole('status').textContent).not.toBe('Copied');
+    expect(screen.getByRole('status').textContent).toBe('Copying is not available in this browser');
+  });
+
+  it('shows the player sentence, not the browser refusal, when the copy is rejected', async () => {
+    const writeText = jest.fn(async (_text: string) => { throw new Error('NotAllowedError: denied'); });
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    renderWithProviders(<ChatHistoryModal />);
+    fireEvent.click(screen.getByLabelText('Copy chat history'));
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe(
+      'Could not copy the chat history — something went wrong. Try again.',
+    ));
+
+    delete (navigator as unknown as { clipboard?: unknown }).clipboard;
   });
 });
 

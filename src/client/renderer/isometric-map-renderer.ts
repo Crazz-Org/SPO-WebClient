@@ -464,6 +464,7 @@ export class IsometricMapRenderer {
   private onEmptyMapClick: (() => void) | null = null;
   private onViewportChanged: (() => void) | null = null;
   private onMapContextMenu: ((clientX: number, clientY: number, tileX: number, tileY: number) => void) | null = null;
+  private onZoomChanged: ((level: number) => void) | null = null;
 
   // Zone overlay
   private zoneOverlayEnabled: boolean = false;
@@ -872,8 +873,22 @@ export class IsometricMapRenderer {
     this.requestRender();
   }
 
+  /**
+   * The single path by which this renderer changes the zoom level. Reads the level
+   * before and after the terrain renderer's clamped setZoomLevel and fires
+   * onZoomChanged only when it actually moved.
+   */
+  private applyZoomLevel(level: number): void {
+    const before = this.terrainRenderer.getZoomLevel();
+    this.terrainRenderer.setZoomLevel(level);
+    const after = this.terrainRenderer.getZoomLevel();
+    if (after !== before && this.onZoomChanged) {
+      this.onZoomChanged(after);
+    }
+  }
+
   public zoomIn(): void {
-    this.terrainRenderer.setZoomLevel(this.terrainRenderer.getZoomLevel() + 1);
+    this.applyZoomLevel(this.terrainRenderer.getZoomLevel() + 1);
     if (this.zoneRequestManager) {
       this.zoneRequestManager.markStopped(this.terrainRenderer.getZoomLevel());
     }
@@ -881,7 +896,7 @@ export class IsometricMapRenderer {
   }
 
   public zoomOut(): void {
-    this.terrainRenderer.setZoomLevel(this.terrainRenderer.getZoomLevel() - 1);
+    this.applyZoomLevel(this.terrainRenderer.getZoomLevel() - 1);
     if (this.zoneRequestManager) {
       this.zoneRequestManager.markStopped(this.terrainRenderer.getZoomLevel());
     }
@@ -949,7 +964,7 @@ export class IsometricMapRenderer {
       onZoom: (delta) => {
         const current = this.terrainRenderer.getZoomLevel();
         const newZoom = current + delta;
-        this.terrainRenderer.setZoomLevel(newZoom);
+        this.applyZoomLevel(newZoom);
         this.terrainRenderer.clearDistantZoomCaches(newZoom);
 
         // Clear vehicles when zooming out of Z2/Z3
@@ -1845,6 +1860,11 @@ export class IsometricMapRenderer {
     this.onViewportChanged = callback;
   }
 
+  /** Called once per actual change of zoom level, with the new level (0-3). */
+  public setZoomChangedCallback(callback: ((level: number) => void) | null) {
+    this.onZoomChanged = callback;
+  }
+
   /** Convert world coordinates to screen pixel position. */
   public worldToScreen(worldX: number, worldY: number): { x: number; y: number } {
     return this.terrainRenderer.mapToScreen(worldY, worldX);
@@ -1977,7 +1997,7 @@ export class IsometricMapRenderer {
    */
   public setZoom(level: number) {
     const previousZoom = this.terrainRenderer.getZoomLevel();
-    this.terrainRenderer.setZoomLevel(level);
+    this.applyZoomLevel(level);
     this.terrainRenderer.clearDistantZoomCaches(level);
 
     // Clear vehicles when zooming out of Z2/Z3 range
@@ -5822,7 +5842,7 @@ export class IsometricMapRenderer {
       const mapPosBefore = this.terrainRenderer.screenToMap(mouseScreenX, mouseScreenY);
 
       // Change zoom (this recalculates origin for the same camera position)
-      this.terrainRenderer.setZoomLevel(newZoom);
+      this.applyZoomLevel(newZoom);
       this.terrainRenderer.clearDistantZoomCaches(newZoom);
 
       // Where does that same map position appear on screen at the new zoom?
@@ -6007,6 +6027,7 @@ export class IsometricMapRenderer {
     this.onBuildingClick = null;
     this.onEmptyMapClick = null;
     this.onViewportChanged = null;
+    this.onZoomChanged = null;
     this.onCancelPlacement = null;
     this.onPlacementConfirm = null;
     this.onFetchFacilityDimensions = null;

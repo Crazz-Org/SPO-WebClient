@@ -163,21 +163,11 @@ buildingDetails, searchMenu}` (note: `minimap` is `true` by default after login)
 `renderer.mapLoaded === true`, `renderer.buildingCount > 0`,
 `renderer.canvasHasContent === true`, `wire.errors === 0`.
 
-Keyboard (nothing focused — see rule 5): `+`/`-` zoom, `q` rotate counter-clockwise,
-`b` Build, `e` Empire, `m` Mail, `r` refresh map, `d` debug overlay (then `1`–`5`
-sub-layers: tile info, building info, concrete IDs, water grid, road info).
-
-⚠ **Two keys this file claimed until 2026-08-21 and the client does not bind.**
-
-- **No clockwise rotate on the keyboard.** `KeyAction.ROTATE_CW` names `e` in
-  `key-binding-registry.ts:38`, but that registry is a declaration nothing reads for map
-  keys: the renderer's own `keydown` binds `q` alone (`isometric-map-renderer.ts:623`), and
-  `e` is taken by the Empire panel (`useKeyboardShortcuts.ts:49`). Clockwise rotation itself
-  works — `rotateCW()` (`isometric-map-renderer.ts:723`) and the mobile rotate gesture
-  (`:805`) both reach it — it simply has no key. Press `q` until rotation cycles back to
-  NORTH.
-- **`m` opens Mail** (`useKeyboardShortcuts.ts:53`), not the minimap, which has its own
-  `Toggle Minimap` HUD button.
+Keyboard (nothing focused — see rule 5): `+`/`-` zoom, `q` / `w` rotate counter-clockwise /
+clockwise, `b` Build, `e` Empire, `m` Map, `l` Mail, `p` Government, `r` refresh map, `h` hide /
+show the interface, `?` the shortcut list, `d` debug overlay (then `1`–`5` sub-layers: tile info,
+building info, concrete IDs, water grid, road info). The reference table is `SHORTCUTS` in
+`useKeyboardShortcuts.ts`.
 
 ## Server Lifecycle
 

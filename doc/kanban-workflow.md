@@ -576,6 +576,29 @@ Pull requests are labelled by **path**, automatically (`actions/labeler`, `.gith
 — `rdo`, `gateway`, `client`, `renderer`, `e2e`, `bench`, `ci`, `documentation`.
 Never post those by hand.
 
+### Player note — the line a player-visible card carries
+
+The in-game "What's New" shows only `src/client/player-notes.json`, never commit text. The
+**card author** decides whether a player notices the change in the game; if so, the card
+carries one line:
+
+```
+Player note (fixed): Your mailbox now updates as soon as you delete a message.
+```
+
+- **Where:** the **first line of the acceptance section** (`## Done when` / `## Done means`),
+  before any blank line. The pipeline hands PLAN and IMPLEMENT only that section's first
+  paragraph, so a line placed anywhere else never reaches the implementer.
+- **Type:** `added`, `fixed` or `changed`.
+- **Wording:** one sentence of plain words, at most 200 characters. No file or function names,
+  no commit prefix (`fix:`, `feat(client):`), never a player's name or quoted report text —
+  the file is public.
+- **Internal work** (bench, e2e, ci, docs, tests, refactors a player cannot see) carries no
+  line and shows nothing in-game. That is the default.
+- **The implementer** copies it into `src/client/player-notes.json` in the same PR (CLAUDE.md
+  § Working rules): `id` = the card's number, `type` and `text` verbatim, `date` = the day it
+  is written.
+
 ### The card review — a neutral reader before the pool
 
 **Before the `gh issue create`, the draft card goes to the `card-reviewer` sub-agent**

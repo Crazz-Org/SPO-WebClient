@@ -14,7 +14,7 @@ import { X } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
 import { channelFormProblem } from '@/shared/chat-channel';
-import { toErrorMessage } from '@/shared/error-utils';
+import { playerErrorMessage } from '../../player-error';
 import styles from './CreateChannelModal.module.css';
 
 export function CreateChannelModal() {
@@ -66,7 +66,7 @@ export function CreateChannelModal() {
       // The gateway's own sentence rides on `serverMessage` (client.ts); the
       // Error's message is only the generic text for the code.
       const { serverMessage } = err as { serverMessage?: string };
-      setServerError(serverMessage || toErrorMessage(err));
+      setServerError(serverMessage || playerErrorMessage('create this channel', err));
     } finally {
       setLoading(false);
     }

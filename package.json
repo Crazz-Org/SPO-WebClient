@@ -5,7 +5,7 @@
   "main": "dist/server/server.js",
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json && tsc --noEmit -p tsconfig.e2e.json && tsc --noEmit -p tsconfig.tests.json",
-    "build:server": "tsc",
+    "build:server": "tsc -p tsconfig.build.json",
     "build:client": "vite build",
     "build:terrain-test": "esbuild src/client/terrain-test.ts --bundle --outfile=public/terrain-test.js --format=iife",
     "build": "npm run build:server && npm run build:client && npm run build:terrain-test",

@@ -11,6 +11,7 @@ import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { useProfileStore } from '../../store/profile-store';
 import { useClient } from '../../context';
+import { playerErrorMessage } from '../../player-error';
 import {
   CLUSTER_DISPLAY_NAMES,
   MAX_COMPANY_NAME_LENGTH,
@@ -123,8 +124,7 @@ export function CompanyCreationModal() {
       }
       closeModal();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to create company';
-      setError(msg);
+      setError(playerErrorMessage('create this company', err));
     } finally {
       setLoading(false);
     }

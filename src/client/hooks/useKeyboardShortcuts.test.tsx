@@ -126,7 +126,7 @@ describe('useKeyboardShortcuts', () => {
 
   it('the reference list names every handled key', () => {
     const keys = SHORTCUTS.map((s) => s.keys).join(' ');
-    for (const k of ['B', 'M', 'E', 'P', 'L', 'R', 'D', 'H', 'F1', 'Ctrl+K', 'Esc']) expect(keys).toContain(k);
+    for (const k of ['B', 'M', 'E', 'P', 'L', 'R', 'D', 'H', '?', 'F1', 'Ctrl+K', 'Esc']) expect(keys).toContain(k);
   });
 
   it('F1–F4 force the season, calling onSetSeason with 0/1/2/3', () => {
@@ -184,5 +184,54 @@ describe('useKeyboardShortcuts', () => {
     document.body.appendChild(input);
     press('h', { target: input });
     expect(useUiStore.getState().hudVisible).toBe(true);
+  });
+});
+
+describe('useKeyboardShortcuts — ? opens the shortcut list', () => {
+  let client: ClientCallbacks;
+  beforeEach(() => {
+    client = makeClient();
+    useUiStore.setState({ modal: null, commandPaletteOpen: false, hudVisible: true });
+    useUiStore.getState().clearSurfaces();
+    useGameStore.setState({ isVisitor: false, status: 'connected' });
+    document.body.innerHTML = '';
+  });
+
+  it('? (Shift held, as on every layout) opens the shortcuts modal and is prevented', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    const ev = press('?', { shiftKey: true });
+    expect(useUiStore.getState().modal).toBe('shortcuts');
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it('? also opens it while reconnecting (GameScreen is still shown)', () => {
+    useGameStore.setState({ status: 'reconnecting' });
+    renderHook(() => useKeyboardShortcuts(client));
+    press('?', { shiftKey: true });
+    expect(useUiStore.getState().modal).toBe('shortcuts');
+  });
+
+  it('? typed into a text field is left alone', () => {
+    renderHook(() => useKeyboardShortcuts(client));
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    const ev = press('?', { shiftKey: true, target: input });
+    expect(useUiStore.getState().modal).toBeNull();
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it('? while another modal is open leaves that modal in place', () => {
+    useUiStore.setState({ modal: 'settings' });
+    renderHook(() => useKeyboardShortcuts(client));
+    press('?', { shiftKey: true });
+    expect(useUiStore.getState().modal).toBe('settings');
+  });
+
+  it('? on the login screen (disconnected) does nothing and is not prevented', () => {
+    useGameStore.setState({ status: 'disconnected' });
+    renderHook(() => useKeyboardShortcuts(client));
+    const ev = press('?', { shiftKey: true });
+    expect(useUiStore.getState().modal).toBeNull();
+    expect(ev.defaultPrevented).toBe(false);
   });
 });

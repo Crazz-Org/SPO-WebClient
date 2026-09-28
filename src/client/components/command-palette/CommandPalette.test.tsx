@@ -6,6 +6,7 @@ import { useGameStore } from '../../store/game-store';
 import { useEmpireStore } from '../../store/empire-store';
 import { useSearchStore } from '../../store/search-store';
 import { CommandPalette } from './CommandPalette';
+import { SHORTCUTS } from '../../hooks/useKeyboardShortcuts';
 
 const TOWNS = {
   towns: [
@@ -142,5 +143,17 @@ describe('CommandPalette', () => {
     openPalette();
     type('zzzzqqq');
     expect(screen.getByText('No commands found')).toBeTruthy();
+  });
+
+  it('every shortcut hint the palette shows is a key in SHORTCUTS; Open Settings shows none', () => {
+    renderWithProviders(<CommandPalette />);
+    openPalette();
+    const tableKeys = SHORTCUTS.map((s) => s.keys);
+    const hints = Array.from(document.querySelectorAll('[data-palette-item] kbd')).map((k) => k.textContent ?? '');
+    expect(hints.length).toBeGreaterThan(0);
+    for (const h of hints) expect(tableKeys).toContain(h);
+    const settings = screen.getByText('Open Settings').closest('button');
+    expect(settings).toBeTruthy();
+    expect(settings?.querySelector('kbd')).toBeNull();
   });
 });

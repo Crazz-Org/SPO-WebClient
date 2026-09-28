@@ -58,7 +58,7 @@ Browser Client ──WebSocket──> Node.js Gateway ──RDO/TCP──> Game 
 
 ### Prerequisites
 
-- Node.js >= 22 (`engines` in package.json; the Dockerfiles and CI both use Node 22)
+- Node.js >= 22 (`engines` in package.json; the Dockerfile and CI both use Node 22)
 - npm >= 10
 
 ### Install & Run
@@ -145,7 +145,7 @@ src/
 │   │   ├── useResponsive.ts     # Responsive breakpoints
 │   │   ├── useCommandPalette.ts # Command palette state
 │   │   ├── useKeyboardShortcuts.ts
-│   │   └── useChangelogCheck.ts # Version change detection
+│   │   └── useChangelogCheck.ts # Opens "What's New" for unseen player notes
 │   ├── styles/                  # Design tokens, reset, typography, animations
 │   ├── layouts/                 # LoginScreen, GameScreen
 │   ├── components/              # React components (CSS Modules)

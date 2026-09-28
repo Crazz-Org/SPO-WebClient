@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: production
       network: host
     container_name: spo-webclient
     restart: unless-stopped
@@ -36,9 +37,12 @@ services:
           memory: 128M
 
   spo-cache-sync:
+    # Same Dockerfile as the gateway: both services share its builder stage,
+    # so `docker compose build` compiles the project once for both images.
     build:
       context: .
-      dockerfile: Dockerfile.cache-sync
+      dockerfile: Dockerfile
+      target: cache-sync
       network: host
     container_name: spo-cache-sync
     restart: unless-stopped

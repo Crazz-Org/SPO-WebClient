@@ -758,3 +758,28 @@ describe('ClientBridge chat channel list writers', () => {
     expect(useChatStore.getState().channels).toEqual([{ name: 'Lobby', isProtected: false }]);
   });
 });
+
+describe('ClientBridge settings persistence — camera zoom round trip (#1072)', () => {
+  it('persists cameraZoom and restores it on load', () => {
+    const store = new Map<string, string>();
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+      removeItem: (key: string) => { store.delete(key); },
+      clear: () => { store.clear(); },
+      key: () => null,
+      length: 0,
+    };
+
+    try {
+      ClientBridge.persistSettings({ ...useGameStore.getState().settings, cameraZoom: 0 });
+      useGameStore.getState().updateSettings({ cameraZoom: 2 });
+
+      ClientBridge.loadPersistedSettings();
+
+      expect(useGameStore.getState().settings.cameraZoom).toBe(0);
+    } finally {
+      delete (globalThis as unknown as { localStorage?: Storage }).localStorage;
+    }
+  });
+});
