@@ -44,6 +44,7 @@ import { connectionStats } from '../connection-stats';
 import { substituteEmoticons } from '../chat-line-format';
 import { requestBuildingRefreshProperties, requestConnectionReachability } from './building-action-handler';
 import { migrateLocalBookmarks } from './favorites-handler';
+import { onMapDataReceived } from './map-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useGameStore, delphiTDateTimeToJsDate } from '../store/game-store';
 import { useUiStore } from '../store/ui-store';
@@ -205,6 +206,7 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
       const mapMsg = msg as WsRespMapData;
       ClientBridge.log('Map', `Received area (${mapMsg.data.x}, ${mapMsg.data.y}): ${mapMsg.data.buildings.length} buildings, ${mapMsg.data.segments.length} segments`);
       ctx.getRenderer()?.updateMapData(mapMsg.data);
+      onMapDataReceived(ctx, mapMsg.data.x, mapMsg.data.y);
       break;
     }
 
