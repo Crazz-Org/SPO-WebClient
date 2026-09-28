@@ -34,6 +34,12 @@ import {
   MAX_FAILED_IMAGE_ENTRIES,
   failedImageFetches,
   recordFailedImageFetch,
+  sweepWebclientCache,
+  startWebclientCacheSweeper,
+  WEBCLIENT_CACHE_MAX_AGE_MS,
+  WEBCLIENT_CACHE_MAX_FILES,
+  WEBCLIENT_CACHE_MAX_BYTES,
+  WEBCLIENT_CACHE_SWEEP_INTERVAL_MS,
   type ProxyImageDeps,
 } from './proxy-image';
 
@@ -656,6 +662,200 @@ describe('proxy-image', () => {
       const before = new Set(proxyImageHosts);
       registerProxyImageHost(host);
       expect(proxyImageHosts).toEqual(before);
+    });
+  });
+  describe('sweepWebclientCache', () => {
+    const NOW = 1_800_000_000_000;
+    const DAY = 24 * 60 * 60 * 1000;
+    const big = { maxAgeMs: 10 * DAY, maxFiles: 1000, maxBytes: 1_000_000 };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fspModule = require('fs/promises') as typeof fsp;
+
+    function put(name: string, ageMs: number, content: string | Buffer = 'x'): string {
+      const p = path.join(webclientCacheDir, name);
+      fs.writeFileSync(p, content);
+      const t = (NOW - ageMs) / 1000;
+      fs.utimesSync(p, t, t);
+      return p;
+    }
+    const gs = (i: number, ext = 'png'): string => `${GAME_SERVER_CACHE_PREFIX}${String(i).padStart(40, '0')}.${ext}`;
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it('exports the card bounds', () => {
+      expect(WEBCLIENT_CACHE_MAX_AGE_MS).toBe(30 * DAY);
+      expect(WEBCLIENT_CACHE_MAX_FILES).toBe(20_000);
+      expect(WEBCLIENT_CACHE_MAX_BYTES).toBe(500 * 1024 * 1024);
+      expect(WEBCLIENT_CACHE_SWEEP_INTERVAL_MS).toBe(10 * 60 * 1000);
+    });
+
+    it('deletes a file older than the maximum age and keeps a younger one', async () => {
+      const old = put(gs(1), big.maxAgeMs + 1, 'aa');
+      const young = put(gs(2), big.maxAgeMs - 1000, 'bbb');
+      const r = await sweepWebclientCache(webclientCacheDir, new Map(), big, NOW);
+      expect(fs.existsSync(old)).toBe(false);
+      expect(fs.existsSync(young)).toBe(true);
+      expect(r).toEqual({ deletedFiles: 1, deletedBytes: 2, remainingFiles: 1, remainingBytes: 3 });
+    });
+
+    it('over the file limit deletes the oldest until exactly the limit remains', async () => {
+      const paths = [5, 4, 3, 2, 1].map((age, i) => put(gs(i), age * 1000));
+      const r = await sweepWebclientCache(webclientCacheDir, new Map(), { ...big, maxFiles: 3 }, NOW);
+      expect(paths.map((p) => fs.existsSync(p))).toEqual([false, false, true, true, true]);
+      expect(r.deletedFiles).toBe(2);
+      expect(r.remainingFiles).toBe(3);
+    });
+
+    it('over the byte limit deletes oldest first until the total is at or under it', async () => {
+      const a = put(gs(1), 4000, 'a'.repeat(100));
+      const b = put(gs(2), 3000, 'b'.repeat(10));
+      const c = put(gs(3), 2000, 'c'.repeat(100));
+      const d = put(gs(4), 1000, 'd'.repeat(100));
+      const r = await sweepWebclientCache(webclientCacheDir, new Map(), { ...big, maxBytes: 200 }, NOW);
+      expect([a, b, c, d].map((p) => fs.existsSync(p))).toEqual([false, false, true, true]);
+      expect(r).toEqual({ deletedFiles: 2, deletedBytes: 110, remainingFiles: 2, remainingBytes: 200 });
+    });
+
+    it('removes index entries of deleted files only, leaving kept and mirror entries', async () => {
+      const oldPath = put(gs(1), big.maxAgeMs + 1);
+      const keptPath = put(gs(2), 0);
+      const mirror = path.join(cacheRoot, 'Buildings', 'seed.png');
+      const index = new Map([[gs(1), oldPath], [gs(2), keptPath], ['seed.png', mirror]]);
+      await sweepWebclientCache(webclientCacheDir, index, big, NOW);
+      expect(index.has(gs(1))).toBe(false);
+      expect(index.get(gs(2))).toBe(keptPath);
+      expect(index.get('seed.png')).toBe(mirror);
+    });
+
+    it('never deletes subdirectories or their contents', async () => {
+      const sub = path.join(webclientCacheDir, 'textures');
+      fs.mkdirSync(sub);
+      const inner = path.join(sub, 'old.png');
+      fs.writeFileSync(inner, 'x');
+      const t = (NOW - 100 * DAY) / 1000;
+      fs.utimesSync(inner, t, t);
+      fs.utimesSync(sub, t, t);
+      const unlink = jest.spyOn(fspModule, 'unlink');
+      const r = await sweepWebclientCache(webclientCacheDir, new Map(), { maxAgeMs: 1, maxFiles: 0, maxBytes: 0 }, NOW);
+      expect(fs.existsSync(inner)).toBe(true);
+      expect(unlink).not.toHaveBeenCalled();
+      expect(r.remainingFiles).toBe(0);
+    });
+
+    it('applies the same rules to legacy and placeholder files', async () => {
+      const legacy = put('old.png', big.maxAgeMs + 1);
+      const ph = put(gs(9), big.maxAgeMs + 1, getPlaceholderImage());
+      const keptLegacy = put('new.png', 0);
+      await sweepWebclientCache(webclientCacheDir, new Map(), big, NOW);
+      expect(fs.existsSync(legacy)).toBe(false);
+      expect(fs.existsSync(ph)).toBe(false);
+      expect(fs.existsSync(keptLegacy)).toBe(true);
+    });
+
+    it('does not throw when a file vanishes before its unlink', async () => {
+      const p = put(gs(1), big.maxAgeMs + 1);
+      const real = fspModule.unlink;
+      jest.spyOn(fspModule, 'unlink').mockImplementationOnce(async (f) => {
+        await real(f);
+        await real(f);
+      });
+      const r = await sweepWebclientCache(webclientCacheDir, new Map(), big, NOW);
+      expect(fs.existsSync(p)).toBe(false);
+      expect(r).toEqual({ deletedFiles: 0, deletedBytes: 0, remainingFiles: 0, remainingBytes: 0 });
+    });
+
+    it('counts a file it could not unlink (non-ENOENT) as remaining', async () => {
+      const p = put(gs(1), big.maxAgeMs + 1, 'abc');
+      jest.spyOn(fspModule, 'unlink').mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'EACCES' }));
+      const r = await sweepWebclientCache(webclientCacheDir, new Map(), big, NOW);
+      expect(fs.existsSync(p)).toBe(true);
+      expect(r).toEqual({ deletedFiles: 0, deletedBytes: 0, remainingFiles: 1, remainingBytes: 3 });
+    });
+
+    it('skips a file whose stat fails', async () => {
+      put(gs(1), big.maxAgeMs + 1);
+      jest.spyOn(fspModule, 'stat').mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'ENOENT' }));
+      const r = await sweepWebclientCache(webclientCacheDir, new Map(), big, NOW);
+      expect(r.deletedFiles).toBe(0);
+    });
+
+    it('returns zeros for a missing directory, and uses the default limits', async () => {
+      const r = await sweepWebclientCache(path.join(webclientCacheDir, 'nope'), new Map());
+      expect(r).toEqual({ deletedFiles: 0, deletedBytes: 0, remainingFiles: 0, remainingBytes: 0 });
+      const young = put(gs(1), 0);
+      await sweepWebclientCache(webclientCacheDir, new Map());
+      expect(fs.existsSync(young)).toBe(true);
+    });
+  });
+
+  describe('proxyImage with an evicted cache file', () => {
+    it('downloads again when the indexed file is gone, without recording a failure', async () => {
+      const url = 'http://example.test/a/b/pic.png';
+      const name = gameServerCacheName(url, 'pic.png');
+      const stale = path.join(webclientCacheDir, name);
+      deps.imageFileIndex.set(name, stale);
+      mockFetch.mockResolvedValueOnce({ ok: true, arrayBuffer: async () => toArrayBuffer('fresh') });
+      const res = fakeRes();
+      await proxyImage(url, res, deps);
+      expect(res.statusCode).toBe(200);
+      expect(Buffer.from(res.body as Buffer).toString()).toBe('fresh');
+      expect(failedImageFetches.size).toBe(0);
+      expect(fs.readFileSync(stale, 'utf8')).toBe('fresh');
+      expect(deps.imageFileIndex.get(name)).toBe(stale);
+    });
+
+    it('still treats a non-ENOENT read error as a failure', async () => {
+      const url = 'http://example.test/a/b/dir.png';
+      const name = gameServerCacheName(url, 'dir.png');
+      const dirPath = path.join(webclientCacheDir, 'adir');
+      fs.mkdirSync(dirPath);
+      deps.imageFileIndex.set(name, dirPath);
+      const res = fakeRes();
+      await proxyImage(url, res, deps);
+      expect(res.body).toEqual(getPlaceholderImage());
+      expect(failedImageFetches.has(name)).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('startWebclientCacheSweeper', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+    const flush = async (): Promise<void> => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+    it('runs once at start, once per tick, never overlapping, and stops', async () => {
+      let release: (() => void) | null = null;
+      const run = jest.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+      const s = startWebclientCacheSweeper(run, 1000, jest.fn());
+      expect(run).toHaveBeenCalledTimes(1);
+      jest.advanceTimersByTime(1000);
+      await flush();
+      expect(run).toHaveBeenCalledTimes(1); // previous still running: skipped
+      release!();
+      await flush();
+      jest.advanceTimersByTime(1000);
+      await flush();
+      expect(run).toHaveBeenCalledTimes(2);
+      release!();
+      await flush();
+      s.stop();
+      s.stop();
+      jest.advanceTimersByTime(5000);
+      await flush();
+      expect(run).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports a failed run and runs again on the next tick', async () => {
+      const err = new Error('boom');
+      const run = jest.fn().mockRejectedValueOnce(err).mockResolvedValue(undefined);
+      const onError = jest.fn();
+      const s = startWebclientCacheSweeper(run, 1000, onError);
+      await flush();
+      expect(onError).toHaveBeenCalledWith(err);
+      jest.advanceTimersByTime(1000);
+      await flush();
+      expect(run).toHaveBeenCalledTimes(2);
+      s.stop();
     });
   });
 });

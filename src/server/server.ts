@@ -50,7 +50,10 @@ import { handleBugReportRequest, DEFAULT_QUEUE_DIR } from './bug-report-endpoint
 import { handleClientErrorRequest, getClientErrorCounts, CLIENT_ERROR_MAX_PER_IP } from './client-error-endpoint';
 import { handleReportPullList, handleReportPullFetch, handleReportPullAck } from './report-pull-endpoint';
 import { enforceProductionConfig } from './production-config';
-import { proxyImage, buildImageFileIndexEntries, proxyImageHosts, type ProxyImageDeps } from './proxy-image';
+import {
+  proxyImage, buildImageFileIndexEntries, proxyImageHosts, type ProxyImageDeps,
+  sweepWebclientCache, startWebclientCacheSweeper, WEBCLIENT_CACHE_SWEEP_INTERVAL_MS,
+} from './proxy-image';
 import { fetchWithTimeout } from './fetch-with-timeout';
 import {
   WsMessageGuard,
@@ -195,6 +198,7 @@ function registerServices(): void {
 // Maps key → full path on disk: update-server files by lowercase basename,
 // game-server files by their `gs1-<hash>` name
 const imageFileIndex = new Map<string, string>();
+let webclientCacheSweeper: { stop(): void } | null = null;
 
 /**
  * Build in-memory index of all image files in cache directories.
@@ -1449,6 +1453,12 @@ export async function startGateway(options?: GatewayOptions): Promise<GatewayIns
     logger.warn('Facility cache: 0 facilities (cache sync pending)');
   }
 
+  webclientCacheSweeper?.stop();
+  webclientCacheSweeper = startWebclientCacheSweeper(async () => {
+    const r = await sweepWebclientCache(WEBCLIENT_CACHE_DIR, imageFileIndex);
+    logger.info(`Image cache sweep: deleted ${r.deletedFiles} files (${r.deletedBytes} bytes), ${r.remainingFiles} files (${r.remainingBytes} bytes) remain`);
+  }, WEBCLIENT_CACHE_SWEEP_INTERVAL_MS, (err: unknown) => logger.warn(`Image cache sweep failed: ${toErrorMessage(err)}`));
+
   logger.info(`Server ready at http://${HOST}:${PORT}`);
 
   return { server, port: PORT };
@@ -1462,7 +1472,7 @@ export function installGatewayShutdown(target: http.Server): void {
     createShutdownSequence({
       server: target,
       drain: connectionDrain,
-      registry: serviceRegistry,
+      registry: { shutdown: () => { webclientCacheSweeper?.stop(); return serviceRegistry.shutdown(); } },
       closeLogTransports,
       exit: (code) => process.exit(code),
       log: logger,
