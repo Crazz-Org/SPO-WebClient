@@ -142,6 +142,17 @@ describe('createShutdownSequence', () => {
     expect(d.exit).toHaveBeenCalledTimes(1);
   });
 
+  it('stops the heartbeat once, before closing the server', async () => {
+    const stopHeartbeat = jest.fn();
+    const d = deps({ stopHeartbeat });
+    const run = createShutdownSequence(d);
+    await run('SIGTERM');
+    await run('SIGINT');
+    expect(stopHeartbeat).toHaveBeenCalledTimes(1);
+    expect(stopHeartbeat.mock.invocationCallOrder[0])
+      .toBeLessThan((d.server.close as jest.Mock).mock.invocationCallOrder[0]);
+  });
+
   it('exits 1 when a step throws, and never exits twice', async () => {
     jest.useFakeTimers();
     const d = deps({ closeLogTransports: jest.fn(() => Promise.reject(new Error('disk'))) });

@@ -455,6 +455,11 @@ export class StarpeaceSession extends EventEmitter {
   // --- GRACEFUL LOGOFF (mirrors Delphi ServerCnxHandler.Logoff) ---
   /** Delphi LogoffTimeOut = 5000 (ServerCnxHandler.pas:330) */
   private static readonly LOGOFF_TIMEOUT_MS = 5000;
+  /**
+   * Connect deadline for every named gateway→Delphi socket — same value as the pool's
+   * `connectTimeoutMs` (`rdo-connection-pool.ts`).
+   */
+  private static readonly SOCKET_CONNECT_TIMEOUT_MS = 10_000;
   /** Set once endSession() has logged off — makes it idempotent and disables auto-reconnect on the resulting socket close. */
   private loggedOff = false;
 
@@ -1579,8 +1584,18 @@ public createSocket(name: string, host: string, port: number): Promise<net.Socke
     const framer = new RdoFramer();
     // Socket stored ONLY after connect succeeds (prevents writes to unconnected socket)
     let connected = false;
+    // Connect deadline: a host that drops SYNs would otherwise leave the caller waiting for
+    // the OS to give up (~2 min).
+    let timedOut = false;
+    const connectTimer = setTimeout(() => {
+      timedOut = true;
+      socket.destroy();
+      reject(new Error(`Connect timeout: ${name} socket to ${host}:${port} not connected after ${StarpeaceSession.SOCKET_CONNECT_TIMEOUT_MS} ms`));
+    }, StarpeaceSession.SOCKET_CONNECT_TIMEOUT_MS);
 
     socket.connect(port, host, () => {
+      if (timedOut) return;
+      clearTimeout(connectTimer);
       connected = true;
       this.sockets.set(name, socket);
       this.framers.set(name, framer);
@@ -1605,7 +1620,10 @@ public createSocket(name: string, host: string, port: number): Promise<net.Socke
     socket.on('error', (err) => {
       this.log.error(`[Session] Socket error on ${name}:`, err);
       // If not yet connected, reject the creation promise
-      if (!connected) reject(err);
+      if (!connected) {
+        clearTimeout(connectTimer);
+        reject(err);
+      }
     });
 
     socket.on('close', () => {

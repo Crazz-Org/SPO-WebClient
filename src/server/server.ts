@@ -16,6 +16,7 @@ import { UpdateService } from './update-service';
 import { MapDataService } from './map-data-service';
 import { serviceRegistry, setupGracefulShutdown } from './service-registry';
 import { ConnectionDrain, createSessionTeardown, createShutdownSequence } from './gateway-shutdown';
+import { startHeartbeat, WS_HEARTBEAT_INTERVAL_MS } from './ws-hygiene';
 import { CacheWatcher } from './cache-watcher';
 import { pushCapitolCoords } from './capitol-coords';
 import { resolveClientIp } from './client-ip';
@@ -110,6 +111,7 @@ const PHASE_ALLOWED_MESSAGES: Record<SessionPhase, ReadonlySet<string> | null> =
 /** Message types suppressed from WS>> / WS<< info logs (too noisy, not useful for debugging). */
 const QUIET_WS_TYPES: ReadonlySet<string> = new Set([
   WsMessageType.REQ_MAP_LOAD,
+  WsMessageType.REQ_UPDATE_CAMERA,
 ]);
 
 /** Cache sync mode: 'inline' = UpdateService runs in-process (dev/single-user), 'external' = separate container */
@@ -1002,6 +1004,23 @@ export function mountWebSocketGateway(target: http.Server): void {
 }
 mountWebSocketGateway(server);
 
+let stopWsHeartbeat: () => void = () => undefined;
+/**
+ * Start the dead-socket heartbeat on this gateway's sockets (policy SEC-W-7), stopping any
+ * running one first. The interval parameter is the test seam; production uses the default.
+ */
+export function startWsHeartbeat(intervalMs: number = WS_HEARTBEAT_INTERVAL_MS): () => void {
+  stopWsHeartbeat();
+  stopWsHeartbeat = startHeartbeat(wss, intervalMs);
+  return stopWsHeartbeat;
+}
+startWsHeartbeat();
+
+/** Read-only view of the per-IP WebSocket count (SEC-W-3) — for tests. */
+export function getWsConnectionCount(ip: string): number {
+  return wsConnectionsPerIp.get(ip) ?? 0;
+}
+
 // GM Chat: track all connected WebSocket clients and their usernames
 const connectedClients = new Map<WebSocket, string>(); // ws → username
 /** Every live connection's teardown — drained by the shutdown sequence. */
@@ -1461,6 +1480,7 @@ export function installGatewayShutdown(target: http.Server): void {
   setupGracefulShutdown(
     createShutdownSequence({
       server: target,
+      stopHeartbeat: () => stopWsHeartbeat(),
       drain: connectionDrain,
       registry: serviceRegistry,
       closeLogTransports,
