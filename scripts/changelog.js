@@ -17,13 +17,9 @@
  *                                               set, also append `version=` and `skip=`
  *   node scripts/changelog.js --notes <file>    write the release notes for the pending
  *                                               commits (Added / Fixed / Changed / Documentation)
- *   node scripts/changelog.js --json            rewrite src/client/changelog-data.json in
- *                                               the working tree: the committed archive, one
- *                                               entry per tag newer than the archive, and the
- *                                               pending HEAD entry as the next version
  *   node scripts/changelog.js --preview         print the pending notes to stdout
  *
- * Only the workflow (.github/workflows/release.yml) runs --next/--notes/--json for
+ * Only the workflow (.github/workflows/release.yml) runs --next/--notes for
  * real; locally, --preview is the one to reach for (`npm run release:preview`).
  */
 
@@ -32,7 +28,6 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const CHANGELOG_JSON_PATH = path.join(ROOT, 'src', 'client', 'changelog-data.json');
 
 // --- Pure logic -------------------------------------------------------------
 
@@ -98,16 +93,6 @@ function nextVersion(base, subjects) {
   return { version, skip: false };
 }
 
-/** Numeric semver comparison on the MAJOR.MINOR.PATCH part only. */
-function compareVersions(a, b) {
-  const pa = baseFromTag(a).split('.').map(Number);
-  const pb = baseFromTag(b).split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if (pa[i] !== pb[i]) return pa[i] - pb[i];
-  }
-  return 0;
-}
-
 /** The section body: `### Added` … one line per commit, empty sections omitted. */
 function renderSections(categories) {
   const lines = [];
@@ -125,21 +110,6 @@ function renderSections(categories) {
 
 function generateMarkdownSection(version, date, categories) {
   return [`## [${version}] - ${date}`, '', renderSections(categories)].join('\n');
-}
-
-/** The player-facing entries: Added / Fixed / Changed only, Documentation dropped,
- *  and the squash-merge `(#NN)` suffix removed — a PR number means nothing in-game. */
-function jsonEntries(categories) {
-  const entries = [];
-  const typeMap = { Added: 'added', Fixed: 'fixed', Changed: 'changed' };
-  for (const section of SECTION_ORDER) {
-    const type = typeMap[section];
-    if (!type) continue;
-    for (const item of categories[section] || []) {
-      entries.push({ type, text: item.description.replace(/\s*\(#\d+\)$/, '') });
-    }
-  }
-  return entries;
 }
 
 // --- Git ------------------------------------------------------------------------
@@ -166,21 +136,6 @@ function subjectsBetween(from, to) {
   const range = from ? `${from}..${to}` : to;
   const log = git('log', range, '--no-merges', '--format=%s');
   return log ? log.split('\n') : [];
-}
-
-function tagDate(tag) {
-  return git('log', '-1', '--format=%cs', tag);
-}
-
-/** Every `v*` tag reachable from HEAD, oldest first (version order). */
-function versionTags() {
-  const out = git('tag', '--merged', 'HEAD', '--list', 'v*');
-  return out
-    ? out
-        .split('\n')
-        .filter((t) => baseFromTag(t) !== null)
-        .sort(compareVersions)
-    : [];
 }
 
 function today() {
@@ -234,33 +189,6 @@ function cmdPreview() {
   process.stdout.write(generateMarkdownSection(version, today(), categorize(subjects)));
 }
 
-function cmdJson() {
-  const archive = JSON.parse(fs.readFileSync(CHANGELOG_JSON_PATH, 'utf-8'));
-  const newest = archive.length > 0 ? archive[0].version : '0.0.0';
-  const tags = versionTags().filter((t) => compareVersions(t, newest) > 0);
-  const releases = [];
-  let previous = versionTags().filter((t) => compareVersions(t, newest) <= 0).pop() || null;
-  for (const tag of tags) {
-    releases.unshift({
-      version: baseFromTag(tag),
-      date: tagDate(tag),
-      entries: jsonEntries(categorize(subjectsBetween(previous, tag))),
-    });
-    previous = tag;
-  }
-  const head = pending();
-  if (!head.skip) {
-    releases.unshift({
-      version: head.version,
-      date: today(),
-      entries: jsonEntries(categorize(head.subjects)),
-    });
-  }
-  const merged = [...releases, ...archive];
-  fs.writeFileSync(CHANGELOG_JSON_PATH, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
-  console.log(`wrote ${path.relative(ROOT, CHANGELOG_JSON_PATH)} (${releases.length} generated + ${archive.length} archived)`);
-}
-
 function main(argv) {
   const [flag, arg] = argv;
   switch (flag) {
@@ -268,12 +196,10 @@ function main(argv) {
       return cmdNext();
     case '--notes':
       return cmdNotes(arg);
-    case '--json':
-      return cmdJson();
     case '--preview':
       return cmdPreview();
     default:
-      console.error('Usage: node scripts/changelog.js --next | --notes <file> | --json | --preview');
+      console.error('Usage: node scripts/changelog.js --next | --notes <file> | --preview');
       process.exit(2);
   }
 }
@@ -283,10 +209,8 @@ module.exports = {
   categorize,
   baseFromTag,
   nextVersion,
-  compareVersions,
   renderSections,
   generateMarkdownSection,
-  jsonEntries,
 };
 
 if (require.main === module) {
