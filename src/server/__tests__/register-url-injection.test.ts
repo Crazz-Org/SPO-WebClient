@@ -6,7 +6,7 @@
  *
  * Drives the endpoint over a real socket bound to 127.0.0.1:0 using the exported
  * `httpServer` rather than `startGateway()`, which boots asset-downloading services
- * unacceptable in Jest (same approach as debug-log-rate-limit.test.ts).
+ * unacceptable in Jest (same approach as client-ip-trust-proxy.test.ts).
  *
  * `SPO_REGISTER_URL` must be set BEFORE the module graph loads: `shared/config.ts` reads
  * it at evaluation.

@@ -1,7 +1,7 @@
 /**
  * /api/health, /api/metrics and the local-only guard on the two census readouts, through the
  * real HTTP server bound to 127.0.0.1:0 — never 8080 — using the exported `httpServer` rather
- * than `startGateway()` (pattern of debug-log-rate-limit.test.ts / ws-connection-cap.test.ts).
+ * than `startGateway()` (pattern of client-ip-trust-proxy.test.ts / ws-connection-cap.test.ts).
  * `startGateway()` is never called, so the directory probe never dials anything: the test sets
  * the probe state itself. Every socket here goes to 127.0.0.1.
  */

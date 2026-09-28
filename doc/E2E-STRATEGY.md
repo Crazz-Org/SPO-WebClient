@@ -116,7 +116,7 @@ Jest `unit` + `component` projects, co-located `*.test.ts(x)`, per-directory thr
 - **Stack:** Jest project `compliance` that boots the built server (`dist/server/server.js`) as a child process with `NODE_ENV=production`, `TRUST_PROXY=true`, `ENABLE_HSTS=true`, `LOG_JSON=true`, `LOG_FILE=<tmp>` and a mock RDO backend, then tests it **black-box** over real HTTP/WS sockets.
 - **Checks map 1:1 to policy items** (IDs in [production-security-policy.md](production-security-policy.md)):
   - `SEC-H-1..3`: every response carries the security header set exactly **once** (catches nginx duplication regressions); CSP string matches policy; HSTS present when `ENABLE_HSTS=true`, absent otherwise.
-  - `SEC-H-4`: auth endpoints return 429 after 10 attempts/min/IP; debug-log after 2/60s; proxy-image after 60/min.
+  - `SEC-H-4`: auth endpoints return 429 after 10 attempts/min/IP; proxy-image after 60/min.
   - `SEC-H-5/6`: path-traversal probes (`..`, `%2e%2e`, `\`, `%00`) on `/api/map-data`, `/cache/*`, `/cdn/*` → 4xx, never file contents; SSRF probes on `/proxy-image` (localhost, 10.x, 169.254, IPv6 fe80) → rejected.
   - `SEC-W-1..5`: WS handshake without/with bad Origin → 403; 6th connection from one IP → 429; >64KB frame → connection dropped; gameplay message pre-auth → `ERROR_AccessDenied`; unknown type → rejected.
   - `SEC-L-1/2`: send a real login attempt, then scan the NDJSON log file: password never appears, `[REDACTED]` does; no `debug`-level entries in production mode.
