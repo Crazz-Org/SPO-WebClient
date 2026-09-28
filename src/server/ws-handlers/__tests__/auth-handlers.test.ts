@@ -250,4 +250,27 @@ describe('handleLoginWorld', () => {
 
     expect(setLanguageId).toHaveBeenCalledWith(undefined);
   });
+
+  it('tells the bug-report ticket who the world accepted, once the login resolves', async () => {
+    const { ctx } = createWorldCtx(jest.fn(async () => ({ companies: [] })));
+    const onWorldLogin = jest.fn();
+    ctx.onWorldLogin = onWorldLogin;
+
+    await handleLoginWorld(ctx, loginRequest());
+
+    expect(onWorldLogin).toHaveBeenCalledTimes(1);
+    expect(onWorldLogin).toHaveBeenCalledWith('SPO_test3', 'planitia');
+  });
+
+  it('never records a login the world refused', async () => {
+    const { ctx } = createWorldCtx(jest.fn(async () => {
+      throw new AccountStatusError(ACCOUNT_InvalidPassword, ERROR_InvalidPassword, 'You supplied an invalid password.');
+    }));
+    const onWorldLogin = jest.fn();
+    ctx.onWorldLogin = onWorldLogin;
+
+    await handleLoginWorld(ctx, loginRequest());
+
+    expect(onWorldLogin).not.toHaveBeenCalled();
+  });
 });

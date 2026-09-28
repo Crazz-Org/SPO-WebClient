@@ -69,15 +69,28 @@ describe('buildRuntimeConfigScript', () => {
     expect(buildRuntimeConfigScript({ cdnUrl: '' })).not.toContain('__SPO_REGISTER_URL__');
   });
 
-  it('carries the support url, JSON-quoted', () => {
-    expect(buildRuntimeConfigScript({ cdnUrl: '', supportUrl: 'https://example.org/support' }))
-      .toContain('window.__SPO_SUPPORT_URL__="https://example.org/support";');
+  it('announces player mode as "player" — players reach the reporter from the Support entry only', () => {
+    expect(buildRuntimeConfigScript({ cdnUrl: '', bugReport: true, bugReportPlayerMode: true }))
+      .toContain('window.__SPO_BUG_REPORT__="player";');
   });
 
-  it('treats an empty support url as none — the client falls back to its built-in default', () => {
-    expect(buildRuntimeConfigScript({ cdnUrl: '', supportUrl: '' }))
-      .not.toContain('__SPO_SUPPORT_URL__');
-    expect(buildRuntimeConfigScript({ cdnUrl: '' })).not.toContain('__SPO_SUPPORT_URL__');
+  it('announces dev/test mode as true when player mode is off', () => {
+    const body = buildRuntimeConfigScript({ cdnUrl: '', bugReport: true, bugReportPlayerMode: false });
+    expect(body).toContain('window.__SPO_BUG_REPORT__=true;');
+    expect(body).not.toContain('"player"');
+  });
+
+  it('says nothing about player mode when the reporter itself is off', () => {
+    expect(buildRuntimeConfigScript({ cdnUrl: '', bugReport: false, bugReportPlayerMode: true }))
+      .not.toContain('__SPO_BUG_REPORT__');
+  });
+
+  it('never announces a support url — the gateway no longer carries one', () => {
+    const body = buildRuntimeConfigScript({
+      cdnUrl: 'https://x', singleUserMode: true, forceWorld: 'planitia',
+      bugReport: true, bugReportPlayerMode: true, registerUrl: 'https://example.org/signup',
+    });
+    expect(body).not.toMatch(/SUPPORT_URL/);
   });
 
   it('emits every override together, in a fixed order', () => {
@@ -87,7 +100,6 @@ describe('buildRuntimeConfigScript', () => {
       forceWorld: 'planitia',
       bugReport: true,
       registerUrl: 'https://example.org/signup',
-      supportUrl: 'https://example.org/support',
     });
     expect(body.split('\n')).toEqual([
       'window.__SPO_CDN_URL__="";',
@@ -95,7 +107,6 @@ describe('buildRuntimeConfigScript', () => {
       'window.__SPO_FORCE_WORLD__="planitia";',
       'window.__SPO_BUG_REPORT__=true;',
       'window.__SPO_REGISTER_URL__="https://example.org/signup";',
-      'window.__SPO_SUPPORT_URL__="https://example.org/support";',
     ]);
   });
 
