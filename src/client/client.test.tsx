@@ -30,6 +30,7 @@ import * as buildingActionHandler from './handlers/building-action-handler';
 import { WsMessageType, type WsMessage } from '../shared/types';
 import { useGameStore } from './store/game-store';
 import { ClientBridge } from './bridge/client-bridge';
+import { GATEWAY_UNREACHABLE_MESSAGE } from './handlers/reconnect-utils';
 
 class FakeSocket {
   onopen: (() => void) | null = null;
@@ -931,5 +932,277 @@ describe('page lifecycle listeners (issue 1043)', () => {
     document.dispatchEvent(new Event('resume'));
     pageshow(true);
     expect(internals().ws).toBe(before);
+  });
+});
+
+/**
+ * #1048 — the startup status stream is reopened after an error (the old fetch fallback could
+ * never parse the SSE body), and 60 s without an open stream shows the unreachable state.
+ */
+describe('startup status stream (issue 1048)', () => {
+  const sources: ControlledEventSource[] = [];
+
+  class ControlledEventSource extends FakeEventSource {
+    onopen: (() => void) | null = null;
+    private listeners = new Map<string, (e: { data: string }) => void>();
+    override close = jest.fn();
+    constructor() {
+      super();
+      sources.push(this);
+    }
+    override addEventListener(type?: string, fn?: (e: { data: string }) => void): void {
+      if (type && fn) this.listeners.set(type, fn);
+    }
+    open(): void { this.onopen?.(); }
+    fail(): void { this.onerror?.(); }
+    emit(type: string, data: unknown): void { this.listeners.get(type)?.({ data: JSON.stringify(data) }); }
+  }
+
+  const progress = (phase: string, services: Array<{ name: string; status: string; progress: number }> = []) => ({
+    phase, progress: 0.5, message: phase, services,
+  });
+  const startup = () => useGameStore.getState().serverStartup;
+  let fetchMock: jest.Mock;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sources.length = 0;
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    fetchMock = jest.fn();
+    (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = ControlledEventSource;
+    useGameStore.setState({
+      serverStartup: { ready: false, progress: 0, message: '', services: [], unreachable: false },
+    });
+    new StarpeaceClient();
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('an SSE error reopens the stream after 2 s, and its ready status ends the wait with no fetch', () => {
+    expect(sources).toHaveLength(1);
+    sources[0].fail();
+    expect(sources[0].close).toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1_999);
+    expect(sources).toHaveLength(1);
+    jest.advanceTimersByTime(1);
+    expect(sources).toHaveLength(2);
+
+    sources[1].emit('status', { phase: 'ready', progress: 1, message: 'Server ready', services: [] });
+
+    expect(startup().ready).toBe(true);
+    expect(startup().unreachable).toBe(false);
+    expect(sources[1].close).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(120_000);
+    expect(sources).toHaveLength(2);
+  });
+
+  it('60 s of failing streams sets unreachable; reopening goes on and a later ready still lands', () => {
+    const failLatest = () => sources[sources.length - 1].fail();
+    failLatest();
+    jest.advanceTimersByTime(58_000);
+    failLatest();
+    expect(startup().unreachable).toBeFalsy();
+
+    jest.advanceTimersByTime(2_000);
+    expect(startup().unreachable).toBe(true);
+
+    const countBefore = sources.length;
+    failLatest();
+    jest.advanceTimersByTime(2_000);
+    expect(sources.length).toBe(countBefore + 1);
+    expect(startup().unreachable).toBe(true);
+
+    sources[sources.length - 1].emit('status', { phase: 'ready', progress: 1, message: 'Server ready', services: [] });
+    expect(startup().ready).toBe(true);
+    expect(startup().unreachable).toBe(false);
+  });
+
+  it('a constructor that throws is retried like an error', () => {
+    const Throwing = function () { throw new Error('blocked'); };
+    (globalThis as unknown as { EventSource: unknown }).EventSource = Throwing;
+    sources[0].fail();
+    jest.advanceTimersByTime(60_000);
+    expect(startup().unreachable).toBe(true);
+
+    (globalThis as unknown as { EventSource: unknown }).EventSource = ControlledEventSource;
+    jest.advanceTimersByTime(2_000);
+    expect(sources).toHaveLength(2);
+  });
+
+  it('an open stream sending progress for 90 s never shows unreachable', () => {
+    sources[0].open();
+    for (let t = 0; t < 9; t++) {
+      jest.advanceTimersByTime(10_000);
+      sources[0].emit('status', progress('initializing', [{ name: 'cache', status: 'running', progress: 0.5 }]));
+    }
+    jest.advanceTimersByTime(10_000);
+    expect(startup().unreachable).toBe(false);
+    expect(startup().ready).toBe(false);
+  });
+
+  it('an open stream that stays silent for 90 s never shows unreachable', () => {
+    sources[0].open();
+    jest.advanceTimersByTime(90_000);
+    expect(startup().unreachable).toBe(false);
+  });
+
+  it('opening a stream clears unreachable and stops the clock', () => {
+    sources[0].fail();
+    jest.advanceTimersByTime(60_000);
+    expect(startup().unreachable).toBe(true);
+
+    sources[sources.length - 1].open();
+    expect(startup().unreachable).toBe(false);
+    jest.advanceTimersByTime(120_000);
+    expect(startup().unreachable).toBe(false);
+  });
+
+  it('a status listing a failed service sets unreachable at once', () => {
+    sources[0].open();
+    sources[0].emit('status', progress('initializing', [{ name: 'maps', status: 'failed', progress: 0 }]));
+    expect(startup().unreachable).toBe(true);
+  });
+});
+
+/**
+ * #1048 — a socket closed on the login screen is reopened lazily by the next sign-in, and a
+ * sign-in that cannot reach the gateway says so instead of "WebSocket not connected".
+ */
+describe('sign-in reopens a closed gateway socket (issue 1048)', () => {
+  const sockets: LoginSocket[] = [];
+
+  class LoginSocket extends FakeSocket {
+    sent: string[] = [];
+    constructor() {
+      super();
+      sockets.push(this);
+    }
+    override send(payload?: string): void {
+      if (payload !== undefined) this.sent.push(payload);
+    }
+    types(): string[] { return this.sent.map((p) => (JSON.parse(p) as { type: string }).type); }
+  }
+
+  const remembered = { username: 'u', zonePath: '', worldName: 'planitia', companyId: 'C1', companyName: 'Co' };
+  let client: StarpeaceClient;
+
+  const flush = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sockets.length = 0;
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = LoginSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    client = new StarpeaceClient();
+    useGameStore.setState({
+      status: 'disconnected', authError: null, loginLoading: false, rememberedSession: remembered,
+    });
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  const closeFirst = () => {
+    sockets[0].onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('disconnected');
+  };
+
+  it('onAuthCheck opens a new socket and sends REQ_AUTH_CHECK only after it opens', async () => {
+    closeFirst();
+
+    client.callbacks.onAuthCheck('u', 'p');
+    expect(sockets).toHaveLength(2);
+    await flush();
+    expect(sockets[1].sent).toHaveLength(0);
+
+    sockets[1].onopen?.();
+    await flush();
+    expect(sockets[1].types()).toEqual([WsMessageType.REQ_AUTH_CHECK]);
+    expect(sockets[0].sent).toHaveLength(0);
+  });
+
+  it('onResumeSession opens a new socket and sends REQ_AUTH_CHECK only after it opens', async () => {
+    closeFirst();
+
+    client.callbacks.onResumeSession(remembered, 'p');
+    expect(sockets).toHaveLength(2);
+    await flush();
+    expect(sockets[1].sent).toHaveLength(0);
+
+    sockets[1].onopen?.();
+    await flush();
+    expect(sockets[1].types()).toEqual([WsMessageType.REQ_AUTH_CHECK]);
+  });
+
+  it('a new socket that closes before opening shows the shared sentence', async () => {
+    closeFirst();
+    useGameStore.setState({ loginLoading: true });
+
+    client.callbacks.onAuthCheck('u', 'p');
+    sockets[1].onclose?.({ code: 1006 });
+    await flush();
+
+    expect(useGameStore.getState().authError?.message).toBe(GATEWAY_UNREACHABLE_MESSAGE);
+    expect(useGameStore.getState().loginLoading).toBe(false);
+    expect(sockets[1].sent).toHaveLength(0);
+  });
+
+  it('on the resume path a socket that never opens keeps the remembered session', async () => {
+    closeFirst();
+
+    client.callbacks.onResumeSession(remembered, 'p');
+    sockets[1].onclose?.({ code: 1006 });
+    await flush();
+
+    expect(useGameStore.getState().authError?.message).toBe(GATEWAY_UNREACHABLE_MESSAGE);
+    expect(useGameStore.getState().rememberedSession).toEqual(remembered);
+  });
+
+  it('no open within 10 s gives the same sentence', async () => {
+    closeFirst();
+
+    client.callbacks.onAuthCheck('u', 'p');
+    jest.advanceTimersByTime(9_999);
+    await flush();
+    expect(useGameStore.getState().authError).toBeNull();
+
+    jest.advanceTimersByTime(1);
+    await flush();
+    expect(useGameStore.getState().authError?.message).toBe(GATEWAY_UNREACHABLE_MESSAGE);
+    expect(sockets[1].sent).toHaveLength(0);
+  });
+
+  it('with the socket open, onAuthCheck constructs no socket and sends at once', async () => {
+    sockets[0].onopen?.();
+
+    client.callbacks.onAuthCheck('u', 'p');
+    await flush();
+
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].types()).toEqual([WsMessageType.REQ_AUTH_CHECK]);
+  });
+
+  it('with the first socket still connecting, onAuthCheck waits for it instead of opening another', async () => {
+    client.callbacks.onAuthCheck('u', 'p');
+    await flush();
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].sent).toHaveLength(0);
+
+    sockets[0].onopen?.();
+    await flush();
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].types()).toEqual([WsMessageType.REQ_AUTH_CHECK]);
   });
 });

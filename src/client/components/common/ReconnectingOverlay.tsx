@@ -9,12 +9,12 @@
 
 import { useGameStore } from '../../store/game-store';
 import { useClient } from '../../context';
-import { isSlowPhase, MAX_RECONNECT_ATTEMPTS } from '../../handlers/reconnect-utils';
+import { GATEWAY_UNREACHABLE_MESSAGE, isSlowPhase, MAX_RECONNECT_ATTEMPTS } from '../../handlers/reconnect-utils';
 import styles from './ReconnectingOverlay.module.css';
 import spinnerStyles from '../startup/LoadingSpinner.module.css';
 
 const REASON_MESSAGES: Record<string, string> = {
-  connection_lost: 'Unable to reach the server after multiple attempts. Please check your internet connection.',
+  connection_lost: GATEWAY_UNREACHABLE_MESSAGE,
   session_expired: 'Your session has expired. Please log in again.',
 };
 

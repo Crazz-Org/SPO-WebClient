@@ -54,6 +54,8 @@ export interface ServerStartupState {
   message: string;
   services: Array<{ name: string; status: ServiceStatus; progress: number; subStep?: string }>;
   cacheSteps?: Array<{ name: string; label: string; status: 'pending' | 'running' | 'complete' }>;
+  /** True after 60 s with no open status stream, or when a service reports `failed` (issue 1048). */
+  unreachable?: boolean;
 }
 
 export interface MapLoadingState {

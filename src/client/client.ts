@@ -47,12 +47,19 @@ import * as contextStatusHandler from './handlers/context-status-handler';
 import * as worldEventHandler from './handlers/world-event-handler';
 import * as buildMenuHandler from './handlers/build-menu-handler';
 import * as mapHandler from './handlers/map-handler';
-import { getReconnectDelay, isMaxAttempts, isSlowPhase, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
+import { GATEWAY_UNREACHABLE_MESSAGE, getReconnectDelay, isMaxAttempts, isSlowPhase, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
+import { reloadPage as reloadWindow } from './page-reload';
 import { connectionPendingKey } from './handlers/connection-pending-key';
 import { connectionStats, utf8ByteLength } from './connection-stats';
 
 /** WebSocket close code 1012 "Service Restart" (IANA registry, RFC 6455 §7.4): the gateway is restarting. */
 const WS_CLOSE_SERVICE_RESTART = 1012;
+/** Delay before reopening a failed /api/startup-status stream (issue 1048). */
+const STARTUP_RETRY_MS = 2000;
+/** Time without an open status stream after which the startup screen shows "unreachable". */
+const STARTUP_UNREACHABLE_MS = 60_000;
+/** How long a sign-in waits for a gateway socket to open before giving up (issue 1048). */
+const GATEWAY_CONNECT_TIMEOUT_MS = 10_000;
 
 // Wire-level debug tracker exposed on window.__spoDebug (permanent instrumentation)
 interface SpoDebugWire {
@@ -157,6 +164,8 @@ export class StarpeaceClient implements ClientHandlerContext {
 
   private ws: WebSocket | null = null;
   private isConnected: boolean = false;
+  /** The open attempt of the socket `openGatewaySocket` last created, until it opens or closes (issue 1048). */
+  private socketOpening: Promise<void> | null = null;
   private pendingRequests = new Map<string, { resolve: (msg: WsMessage) => void, reject: (err: unknown) => void }>();
 
   // Canvas-level UI components (owned directly)
@@ -240,8 +249,8 @@ export class StarpeaceClient implements ClientHandlerContext {
 
   // Logout state
   public isLoggingOut: boolean = false;
-  /** The reload that ends a logout — a field so jsdom tests can replace it (issue 1042). */
-  public reloadPage: () => void = () => { window.location.reload(); };
+  /** The reload that ends a logout — the shared seam from `page-reload.ts`, a field so jsdom tests can replace it (issue 1042). */
+  public reloadPage: () => void = reloadWindow;
   private logoutReloadIssued = false;
 
   // In-flight dedup
@@ -325,7 +334,9 @@ export class StarpeaceClient implements ClientHandlerContext {
       onGetChannelInfo: (channelName: string) => chatHandler.requestChannelInfo(this, channelName),
       onChaseUser: (userName: string) => chatHandler.chaseUser(this, userName),
       onStopChase: () => chatHandler.stopChase(this),
-      onAuthCheck: (username: string, password: string) => authHandler.performAuthCheck(this, username, password),
+      onAuthCheck: (username: string, password: string) => {
+        void this.signInWhenConnected(() => authHandler.performAuthCheck(this, username, password));
+      },
       onDirectoryConnect: (username: string, password: string, zonePath?: string) =>
         authHandler.performDirectoryLogin(this, username, password, zonePath),
       onWorldSelect: (worldName: string) => {
@@ -333,8 +344,9 @@ export class StarpeaceClient implements ClientHandlerContext {
         return authHandler.login(this, worldName);
       },
       onCompanySelect: (companyId: string) => authHandler.selectCompanyAndStart(this, companyId),
-      onResumeSession: (record: RememberedSession, password: string) =>
-        authHandler.resumeSession(this, record, password),
+      onResumeSession: (record: RememberedSession, password: string) => {
+        void this.signInWhenConnected(() => authHandler.resumeSession(this, record, password));
+      },
       onCreateCompany: () => ClientBridge.showCompanyCreationDialog(),
       onCreateCompanySubmit: (companyName: string, cluster: string) =>
         authHandler.handleCreateCompany(this, companyName, cluster),
@@ -992,7 +1004,10 @@ export class StarpeaceClient implements ClientHandlerContext {
     }
   }
 
-  /** Poll /api/startup-status via SSE; falls back to fetch polling if SSE unavailable. */
+  /**
+   * Follow /api/startup-status over SSE. A failed stream is reopened every 2 s; after 60 s
+   * without an open stream (or on a `failed` service) the screen shows "unreachable" (issue 1048).
+   */
   private pollServerStartup(): void {
     interface StartupData {
       phase: string;
@@ -1002,46 +1017,79 @@ export class StarpeaceClient implements ClientHandlerContext {
       cacheSteps?: Array<{ name: string; label: string; status: 'pending' | 'running' | 'complete' }>;
     }
 
-    const onReady = () => ClientBridge.setServerStartupProgress({ ready: true, progress: 1, message: 'Server ready' });
+    let done = false;
+    let unreachableTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const armUnreachable = () => {
+      if (unreachableTimer) return;
+      unreachableTimer = setTimeout(() => {
+        unreachableTimer = null;
+        ClientBridge.setServerStartupProgress({ unreachable: true });
+      }, STARTUP_UNREACHABLE_MS);
+    };
+    const disarmUnreachable = () => {
+      if (unreachableTimer) clearTimeout(unreachableTimer);
+      unreachableTimer = null;
+    };
+
+    const onReady = () => ClientBridge.setServerStartupProgress({ ready: true, progress: 1, message: 'Server ready', unreachable: false });
 
     const applyData = (data: StartupData) => {
+      const services = data.services ?? [];
       ClientBridge.setServerStartupProgress({
         ready: data.phase === 'ready',
         progress: data.progress,
         message: data.message,
-        services: data.services ?? [],
+        services,
         cacheSteps: data.cacheSteps,
+        unreachable: services.some(s => s.status === 'failed'),
       });
     };
 
-    const startFetchPoll = () => {
-      const check = () => {
-        fetch('/api/startup-status', { headers: { Accept: 'application/json' } })
-          .then(r => r.json())
-          .then((data: StartupData) => {
-            applyData(data);
-            if (data.phase !== 'ready') setTimeout(check, 2000);
-          })
-          .catch(() => setTimeout(check, 2000));
-      };
-      check();
+    const retry = () => {
+      if (done) return;
+      armUnreachable();
+      setTimeout(connect, STARTUP_RETRY_MS);
     };
 
-    try {
-      const es = new EventSource('/api/startup-status');
+    const connect = () => {
+      let es: EventSource;
+      try {
+        es = new EventSource('/api/startup-status');
+      } catch {
+        retry();
+        return;
+      }
+      es.onopen = () => {
+        disarmUnreachable();
+        ClientBridge.setServerStartupProgress({ unreachable: false });
+      };
       es.addEventListener('status', (e: MessageEvent) => {
+        disarmUnreachable();
         const data = JSON.parse(e.data) as StartupData;
         applyData(data);
-        if (data.phase === 'ready') { es.close(); onReady(); }
+        if (data.phase === 'ready') { done = true; es.close(); onReady(); }
       });
-      es.onerror = () => { es.close(); startFetchPoll(); };
-    } catch {
-      startFetchPoll();
-    }
+      es.onerror = () => { es.close(); retry(); };
+    };
+
+    armUnreachable();
+    connect();
   }
 
   private init() {
     this.pollServerStartup();
+    this.openGatewaySocket();
+    this.installPageLifecycleListeners();
+  }
+
+  /** Open the gateway socket with its handlers; used by `init()` and `ensureConnected()` (issue 1048). */
+  private openGatewaySocket(): void {
+    let resolveOpen!: () => void;
+    let rejectOpen!: (err: Error) => void;
+    const opening = new Promise<void>((resolve, reject) => { resolveOpen = resolve; rejectOpen = reject; });
+    opening.catch(() => { /* observed by ensureConnected; an unawaited failure is not an error */ });
+    this.socketOpening = opening;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${protocol}//${window.location.host}/ws`;
@@ -1052,11 +1100,15 @@ export class StarpeaceClient implements ClientHandlerContext {
     this.ws.onopen = () => {
       this.isConnected = true;
       ClientBridge.log('System', 'Gateway Connected.');
+      if (this.socketOpening === opening) this.socketOpening = null;
+      resolveOpen();
     };
 
     this.ws.onmessage = (event) => this.onWsMessage(event);
 
     this.ws.onclose = (event?: CloseEvent) => {
+      if (this.socketOpening === opening) this.socketOpening = null;
+      rejectOpen(new Error(GATEWAY_UNREACHABLE_MESSAGE));
       this.isConnected = false;
       this.cleanupTimers();
       // Drain pending requests immediately to avoid noisy 15s timeouts
@@ -1086,8 +1138,32 @@ export class StarpeaceClient implements ClientHandlerContext {
       console.error('[Client] WebSocket error:', error);
       ClientBridge.log('Error', 'WebSocket error occurred');
     };
+  }
 
-    this.installPageLifecycleListeners();
+  /** Resolves once a gateway socket is open; opens one if none is open or opening (issue 1048). */
+  public ensureConnected(): Promise<void> {
+    if (this.ws && this.isConnected) return Promise.resolve();
+    if (!this.socketOpening) this.openGatewaySocket();
+    const opening = this.socketOpening as Promise<void>;
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(GATEWAY_UNREACHABLE_MESSAGE)), GATEWAY_CONNECT_TIMEOUT_MS);
+      opening.then(
+        () => { clearTimeout(timer); resolve(); },
+        () => { clearTimeout(timer); reject(new Error(GATEWAY_UNREACHABLE_MESSAGE)); },
+      );
+    });
+  }
+
+  /** Run a sign-in once the gateway socket is open; on failure show the shared sentence instead. */
+  private async signInWhenConnected(signIn: () => Promise<unknown>): Promise<void> {
+    try {
+      await this.ensureConnected();
+    } catch (err: unknown) {
+      ClientBridge.setLoginLoading(false);
+      ClientBridge.setAuthError({ code: 0, message: toErrorMessage(err) });
+      return;
+    }
+    await signIn();
   }
 
   /**

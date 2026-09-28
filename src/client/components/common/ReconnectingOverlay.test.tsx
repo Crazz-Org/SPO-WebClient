@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useGameStore } from '../../store/game-store';
-import { MAX_RECONNECT_ATTEMPTS } from '../../handlers/reconnect-utils';
+import { GATEWAY_UNREACHABLE_MESSAGE, MAX_RECONNECT_ATTEMPTS } from '../../handlers/reconnect-utils';
 import { ReconnectingOverlay } from './ReconnectingOverlay';
 
 beforeEach(() => {
@@ -88,5 +88,16 @@ describe('ReconnectingOverlay — gateway restarting', () => {
     renderWithProviders(<ReconnectingOverlay />);
     expect(screen.getByText('Connection lost')).toBeTruthy();
     expect(screen.queryByText('Server restarting')).toBeNull();
+  });
+});
+
+describe('ReconnectingOverlay — connection lost text (issue 1048)', () => {
+  it('blames the server, not the player\'s internet connection', () => {
+    useGameStore.setState({ status: 'disconnected', disconnectReason: 'connection_lost' });
+    renderWithProviders(<ReconnectingOverlay />);
+
+    expect(screen.getByText('Connection lost')).toBeTruthy();
+    expect(screen.getByText(GATEWAY_UNREACHABLE_MESSAGE)).toBeTruthy();
+    expect(screen.queryByText(/internet connection/i)).toBeNull();
   });
 });

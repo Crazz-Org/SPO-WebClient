@@ -4,11 +4,15 @@
  */
 
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { screen, act } from '@testing-library/react';
+import { screen, act, fireEvent } from '@testing-library/react';
 import { renderWithProviders } from '../../__tests__/setup/render-helpers';
 import { useGameStore } from '../../store/game-store';
 import { ServerStartupScreen } from './ServerStartupScreen';
 import { MapLoadingScreen } from './MapLoadingScreen';
+import { reloadPage } from '../../page-reload';
+import { GATEWAY_UNREACHABLE_MESSAGE } from '../../handlers/reconnect-utils';
+
+jest.mock('../../page-reload', () => ({ reloadPage: jest.fn() }));
 
 // LoginBackground uses canvas + rAF — stub them out
 jest.mock('../login/LoginBackground', () => ({
@@ -61,6 +65,39 @@ describe('ServerStartupScreen', () => {
     });
     // exiting class should appear
     expect(container.querySelector('[class*="exiting"]') ?? container.firstChild).toBeTruthy();
+  });
+});
+
+describe('ServerStartupScreen — gateway unreachable (issue 1048)', () => {
+  beforeEach(() => {
+    resetStartupState();
+    jest.mocked(reloadPage).mockClear();
+  });
+
+  it('shows the shared sentence and a Retry button that reloads the page once', () => {
+    useGameStore.setState({
+      serverStartup: { ready: false, progress: 0, message: '', services: [], unreachable: true },
+    });
+    renderWithProviders(<ServerStartupScreen />);
+
+    expect(screen.getByRole('alert').textContent).toBe(GATEWAY_UNREACHABLE_MESSAGE);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(reloadPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no Retry button when unreachable is false', () => {
+    useGameStore.setState({
+      serverStartup: { ready: false, progress: 0, message: '', services: [], unreachable: false },
+    });
+    renderWithProviders(<ServerStartupScreen />);
+
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.queryByText(GATEWAY_UNREACHABLE_MESSAGE)).toBeNull();
+  });
+
+  it('shows no Retry button when unreachable is absent', () => {
+    renderWithProviders(<ServerStartupScreen />);
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 });
 
