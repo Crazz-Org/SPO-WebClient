@@ -143,6 +143,8 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
     // exactly this id (`ServerCnxHandler.pas:2524-2527`); without it every civic
     // control falls back to "holds office somewhere", which is not a permission.
     ClientBridge.setCredentials(ctx.storedUsername, resp.tycoonId);
+    // Settings are per account from here on; the form's language (just sent) is recorded.
+    ClientBridge.loadAccountSettings(ctx.storedUsername, normalizeLanguageId(req.languageId));
 
     if (resp.worldXSize !== undefined) ctx.worldXSize = resp.worldXSize;
     if (resp.worldYSize !== undefined) ctx.worldYSize = resp.worldYSize;
