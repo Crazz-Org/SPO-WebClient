@@ -30,6 +30,10 @@ import {
   buildImageFileIndexEntries,
   GAME_SERVER_CACHE_PREFIX,
   STORED_PLACEHOLDER_TTL_MS,
+  MAX_PROXY_IMAGE_BYTES,
+  MAX_FAILED_IMAGE_ENTRIES,
+  failedImageFetches,
+  recordFailedImageFetch,
   type ProxyImageDeps,
 } from './proxy-image';
 
@@ -71,6 +75,7 @@ describe('proxy-image', () => {
 
   beforeEach(() => {
     mockFetch.mockReset();
+    failedImageFetches.clear();
     mockLookup.mockReset();
     mockLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
     cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-cache-'));
@@ -239,10 +244,112 @@ describe('proxy-image', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers).toEqual({ 'Content-Type': 'image/png' });
+    expect(res.body).toEqual(getPlaceholderImage());
     const brokenKey = gameServerCacheName('http://example.test/dir/broken.png', 'broken.png');
-    expect(deps.imageFileIndex.get(brokenKey)).toBeDefined();
-    const target = deps.imageFileIndex.get(brokenKey) as string;
-    expect(fs.existsSync(target)).toBe(true);
+    expect(deps.imageFileIndex.has(brokenKey)).toBe(false);
+    expect(await fsp.readdir(webclientCacheDir)).toHaveLength(0);
+    expect(failedImageFetches.has(brokenKey)).toBe(true);
+  });
+
+  describe('failure memory and size cap', () => {
+    function seedMirror(): string {
+      const existingDir = path.join(cacheRoot, 'Buildings');
+      fs.mkdirSync(existingDir, { recursive: true });
+      const existingFile = path.join(existingDir, 'seed.png');
+      fs.writeFileSync(existingFile, Buffer.from('x'));
+      deps.imageFileIndex.set('seed.png', existingFile);
+      return existingDir;
+    }
+    const maxSizeError = (): Error =>
+      Object.assign(new Error('content size over limit'), { type: 'max-size', name: 'FetchError' });
+
+    it('N failed fetches of N distinct URLs create zero files', async () => {
+      mockFetch.mockRejectedValue(new Error('404'));
+      for (let i = 0; i < 5; i++) {
+        const res = fakeRes();
+        await proxyImage(`http://example.test/r/n${i}.png`, res, deps);
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toEqual(getPlaceholderImage());
+      }
+      expect(await fsp.readdir(webclientCacheDir)).toHaveLength(0);
+      expect(deps.imageFileIndex.size).toBe(0);
+      expect(failedImageFetches.size).toBe(5);
+    });
+
+    it('bounds the failure map and evicts the oldest entry first', () => {
+      for (let i = 0; i <= MAX_FAILED_IMAGE_ENTRIES; i++) recordFailedImageFetch('k' + i, i);
+      expect(failedImageFetches.size).toBe(MAX_FAILED_IMAGE_ENTRIES);
+      expect(failedImageFetches.has('k0')).toBe(false);
+      expect(failedImageFetches.has('k1')).toBe(true);
+      expect(failedImageFetches.has('k' + MAX_FAILED_IMAGE_ENTRIES)).toBe(true);
+      recordFailedImageFetch('k1', 1);
+      recordFailedImageFetch('extra', 1);
+      expect(failedImageFetches.size).toBe(MAX_FAILED_IMAGE_ENTRIES);
+      expect(failedImageFetches.has('k1')).toBe(true);
+      expect(failedImageFetches.has('k2')).toBe(false);
+    });
+
+    it('does not fetch a failed URL again within the TTL', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('404'));
+      const url = 'http://example.test/r/again.png';
+      await proxyImage(url, fakeRes(), deps);
+      const res = fakeRes();
+      await proxyImage(url, res, deps);
+      expect(res.statusCode).toBe(200);
+      expect(res.headers).toEqual({ 'Content-Type': 'image/png' });
+      expect(res.body).toEqual(getPlaceholderImage());
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('fetches a failed URL again after the TTL', async () => {
+      const url = 'http://example.test/r/later.png';
+      const key = gameServerCacheName(url, 'later.png');
+      recordFailedImageFetch(key, Date.now() - STORED_PLACEHOLDER_TTL_MS - 1000);
+      mockFetch.mockResolvedValueOnce({ ok: true, arrayBuffer: async () => toArrayBuffer('fresh') });
+      const res = fakeRes();
+      await proxyImage(url, res, deps);
+      expect(res.body).toEqual(Buffer.from('fresh'));
+      expect(mockFetch).toHaveBeenCalledWith(url, expect.anything());
+      expect(failedImageFetches.has(key)).toBe(false);
+    });
+
+    it('passes the size cap to both fetches', async () => {
+      seedMirror();
+      mockFetch
+        .mockResolvedValueOnce({ ok: false, status: 404 })
+        .mockResolvedValueOnce({ ok: true, arrayBuffer: async () => toArrayBuffer('g') });
+      const url = 'http://example.test/r/capped.png';
+      await proxyImage(url, fakeRes(), deps);
+      const init = expect.objectContaining({ redirect: 'manual', size: MAX_PROXY_IMAGE_BYTES });
+      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('update.example.test'), init);
+      expect(mockFetch).toHaveBeenCalledWith(url, init);
+      expect(MAX_PROXY_IMAGE_BYTES).toBe(2 * 1024 * 1024);
+    });
+
+    it('answers the placeholder on a max-size rejection from the game server, writing nothing', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, arrayBuffer: () => Promise.reject(maxSizeError()) });
+      const url = 'http://example.test/r/huge.png';
+      const res = fakeRes();
+      await proxyImage(url, res, deps);
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual(getPlaceholderImage());
+      expect(await fsp.readdir(webclientCacheDir)).toHaveLength(0);
+      expect(deps.imageFileIndex.has(gameServerCacheName(url, 'huge.png'))).toBe(false);
+    });
+
+    it('answers the placeholder on a max-size rejection from the update server, writing nothing', async () => {
+      const dir = seedMirror();
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, arrayBuffer: () => Promise.reject(maxSizeError()) })
+        .mockRejectedValueOnce(new Error('404'));
+      const res = fakeRes();
+      await proxyImage('http://example.test/r/hugeupd.png', res, deps);
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual(getPlaceholderImage());
+      expect(await fsp.readdir(dir)).toEqual(['seed.png']);
+      expect(await fsp.readdir(webclientCacheDir)).toHaveLength(0);
+      expect([...deps.imageFileIndex.keys()]).toEqual(['seed.png']);
+    });
   });
 
   describe('game-server cache keys', () => {
@@ -352,6 +459,33 @@ describe('proxy-image', () => {
       expect(index.get(gsName)).toBe(path.join(webclientCacheDir, gsName));
       expect(index.has('largephoto.jpg')).toBe(false);
       expect(index.has('loose.txt')).toBe(false);
+    });
+
+    it('does not index an on-disk placeholder file', async () => {
+      const ph = getPlaceholderImage();
+      const phName = gameServerCacheName('http://example.test/a/ph.png', 'ph.png');
+      const realName = gameServerCacheName('http://example.test/a/real.png', 'real.png');
+      const sameLenName = gameServerCacheName('http://example.test/a/same.png', 'same.png');
+      fs.writeFileSync(path.join(webclientCacheDir, phName), ph);
+      fs.writeFileSync(path.join(webclientCacheDir, realName), 'realimage');
+      const sameLen = Buffer.from(ph);
+      sameLen[sameLen.length - 1] ^= 0xff;
+      fs.writeFileSync(path.join(webclientCacheDir, sameLenName), sameLen);
+
+      const index = await buildImageFileIndexEntries(cacheRoot, webclientCacheDir);
+      expect(index.has(phName)).toBe(false);
+      expect(index.get(realName)).toBe(path.join(webclientCacheDir, realName));
+      expect(index.get(sameLenName)).toBe(path.join(webclientCacheDir, sameLenName));
+    });
+
+    it('skips an unreadable game-server entry and keeps indexing the rest', async () => {
+      const dirName = gameServerCacheName('http://example.test/a/d.png', 'd.png');
+      const realName = gameServerCacheName('http://example.test/a/r.png', 'r.png');
+      fs.writeFileSync(path.join(webclientCacheDir, realName), 'img');
+      fs.symlinkSync(path.join(webclientCacheDir, 'nowhere'), path.join(webclientCacheDir, dirName));
+      const index = await buildImageFileIndexEntries(cacheRoot, webclientCacheDir);
+      expect(index.has(dirName)).toBe(false);
+      expect(index.has(realName)).toBe(true);
     });
 
     it('returns an empty map when neither directory exists', async () => {
@@ -468,7 +602,7 @@ describe('proxy-image', () => {
       expect(mockLookup).toHaveBeenCalledTimes(0);
     });
 
-    it('does not follow a redirect from a registered host and caches only the placeholder', async () => {
+    it('does not follow a redirect from a registered host and writes nothing to disk', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 302,
@@ -483,12 +617,7 @@ describe('proxy-image', () => {
       expect(mockFetch).toHaveBeenCalledWith(url, expect.objectContaining({ redirect: 'manual' }));
       expect(res.body).toEqual(getPlaceholderImage());
       const files = await fsp.readdir(webclientCacheDir);
-      expect(files.length).toBeGreaterThan(0);
-      for (const file of files) {
-        const content = fs.readFileSync(path.join(webclientCacheDir, file));
-        expect(content).toEqual(getPlaceholderImage());
-        expect(content.toString('latin1')).not.toContain('SECRET');
-      }
+      expect(files).toHaveLength(0);
     });
 
     it('asks the update server not to follow redirects either', async () => {
