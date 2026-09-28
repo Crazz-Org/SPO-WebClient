@@ -1,11 +1,11 @@
 /**
- * WebSocket hygiene — the dead-socket heartbeat (policy SEC-W-6).
+ * WebSocket hygiene — the dead-socket heartbeat (policy SEC-W-7).
  *
  * Pure module: no import of server.ts or spo_session.ts. The heartbeat only ever terminates a
  * WebSocket; the gateway's own `ws.on('close')` handler does the rest (logoff, per-IP slot).
  */
 
-/** Ping interval for dead-socket detection (policy SEC-W-6, maintainer decision 2026-09-27). */
+/** Ping interval for dead-socket detection (policy SEC-W-7, maintainer decision 2026-09-27). */
 export const WS_HEARTBEAT_INTERVAL_MS = 30_000;
 
 /** The slice of a `ws` WebSocket the heartbeat touches — structural, so tests pass a fake. */

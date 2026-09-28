@@ -1,5 +1,5 @@
 /**
- * The dead-socket heartbeat (policy SEC-W-6) and the quiet camera log, driven with real `ws`
+ * The dead-socket heartbeat (policy SEC-W-7) and the quiet camera log, driven with real `ws`
  * clients against the gateway's real WebSocket upgrade wiring (`mountWebSocketGateway`),
  * mounted on this test's own `http.Server` bound to 127.0.0.1:0 — never 8080, and never
  * `startGateway()` (pattern of gateway-drain.test.ts). `StarpeaceSession` is stubbed.
@@ -30,6 +30,10 @@ jest.mock('../spo_session', () => {
     getPhase = jest.fn(() => mockPhase ?? Phase.DISCONNECTED);
     setCorrelationId = jest.fn();
     getWorldInfo = jest.fn(() => undefined);
+    // Read by the observability session registry when the connection closes.
+    getQueueStatus = jest.fn(() => ({
+      rdoMetrics: { totalSent: 0, totalTimedOut: 0, totalErrorReplies: 0, totalLateResponses: 0, totalReconnectFailures: 0 },
+    }));
     endSession = jest.fn(() => Promise.resolve());
     destroy = jest.fn();
     updateCameraPosition = jest.fn();

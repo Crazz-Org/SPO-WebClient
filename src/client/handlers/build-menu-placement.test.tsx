@@ -198,7 +198,7 @@ describe('the pending placeholder', () => {
     await sendPlaceBuilding(ctx, building, 10, 20);
     expect(layer.size).toBe(0);
     expect(ctx.loadAlignedMapArea).not.toHaveBeenCalled();
-    expect(ctx.showNotification).toHaveBeenCalledWith(expect.stringContaining('Failed to place building'), 'error');
+    expect(ctx.showNotification).toHaveBeenCalledWith(expect.stringContaining('Could not place this building'), 'error');
   });
 
   it('a timeout removes the placeholder', async () => {
@@ -290,5 +290,9 @@ describe('the Capitol pending placeholder', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(layer.size).toBe(0);
     expect(ctx.loadAlignedMapArea).not.toHaveBeenCalled();
+    expect(ctx.showNotification).toHaveBeenCalledWith(
+      'Could not place the Capitol — something went wrong. Try again.',
+      'error',
+    );
   });
 });

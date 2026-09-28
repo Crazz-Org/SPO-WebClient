@@ -144,7 +144,7 @@ describe('connect mode from the picker (Pick on map)', () => {
     cb(60, 70);
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(ctx.showNotification).toHaveBeenCalledWith('Connection failed: socket closed', 'error');
+    expect(ctx.showNotification).toHaveBeenCalledWith('Could not connect the facilities — something went wrong. Try again.', 'error');
     expect(useUiStore.getState().connectMode.active).toBe(false);
   });
 });

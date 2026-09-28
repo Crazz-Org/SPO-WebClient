@@ -985,6 +985,18 @@ describe('HUD band table (issue 931)', () => {
       }),
     },
     {
+      name: 'NewVersionBanner',
+      css: 'components/common/NewVersionBanner.module.css',
+      selector: '.banner',
+      mounted: true,
+      // Stated max band: one nowrap line, so min-height is the height.
+      band: (vp, d) => ({
+        ...centred(vp, d.num('left'), d.num('right'), d.num('max-width')),
+        y0: d.num('top'),
+        y1: d.num('top') + d.num('min-height'),
+      }),
+    },
+    {
       name: 'Toast',
       css: 'components/common/Toast.module.css',
       selector: '.container',
@@ -1163,6 +1175,11 @@ describe('HUD band table (issue 931)', () => {
       under: 'VersionBadge',
       reason: 'the build footnote is --z-dropdown, bottom-right; below about 1400 px the bar right end covers part of it (pre-existing, accepted)',
     },
+    ...['WorldEventTicker', 'ChatBanner', 'BottomSheet', 'Toast'].map((under) => ({
+      over: 'NewVersionBanner',
+      under,
+      reason: 'shown only after a reconnect finds a new deploy, until the player reloads (issue 1050); a --z-toast notice in the content-top band that sits over it by design',
+    })),
     ...['MobileInfoBar', 'WorldEventTicker', 'ContextStatusStrip', 'ChaseBadge'].map((under) => ({
       over: 'BottomSheet',
       under,
@@ -1222,12 +1239,13 @@ describe('HUD band table (issue 931)', () => {
     return out;
   }
 
-  it('names exactly the fifteen fixed HUD elements, each positioned fixed or absolute', () => {
+  it('names exactly the sixteen fixed HUD elements, each positioned fixed or absolute', () => {
     expect(HUD_BANDS.map((r) => r.name).sort()).toEqual(
       [
         'StatusPill',
         'ChaseBadge',
         'WorldEventTicker',
+        'NewVersionBanner',
         'Toast',
         'ChatBanner',
         'MobileInfoBar',

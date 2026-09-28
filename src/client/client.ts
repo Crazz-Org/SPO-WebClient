@@ -13,6 +13,7 @@ import {
 } from '../shared/types';
 import { getErrorMessage } from '../shared/error-codes';
 import { toErrorMessage } from '../shared/error-utils';
+import { REQUEST_TIMEOUT_MESSAGE, NOT_CONNECTED_MESSAGE, DISCONNECTED_MESSAGE, playerErrorMessage } from './player-error';
 import { MapNavigationUI } from './ui/map-navigation-ui';
 import { MinimapUI } from './ui/minimap-ui';
 import { useMapStore } from './store/map-store';
@@ -47,12 +48,23 @@ import * as contextStatusHandler from './handlers/context-status-handler';
 import * as worldEventHandler from './handlers/world-event-handler';
 import * as buildMenuHandler from './handlers/build-menu-handler';
 import * as mapHandler from './handlers/map-handler';
-import { getReconnectDelay, isMaxAttempts, isSlowPhase, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
+import { GATEWAY_UNREACHABLE_MESSAGE, getReconnectDelay, isMaxAttempts, isSlowPhase, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
+import { reloadPage as reloadWindow } from './page-reload';
+import { checkServedBundle } from './stale-bundle';
 import { connectionPendingKey } from './handlers/connection-pending-key';
 import { connectionStats, utf8ByteLength } from './connection-stats';
+import { ZOOM_LEVELS } from '../shared/map-config';
 
 /** WebSocket close code 1012 "Service Restart" (IANA registry, RFC 6455 §7.4): the gateway is restarting. */
 const WS_CLOSE_SERVICE_RESTART = 1012;
+/** WebSocket close code 1013 "Try Again Later" (IANA registry, RFC 6455 §7.4): the gateway is full. */
+const WS_CLOSE_TRY_AGAIN_LATER = 1013;
+/** Delay before reopening a failed /api/startup-status stream (issue 1048). */
+const STARTUP_RETRY_MS = 2000;
+/** Time without an open status stream after which the startup screen shows "unreachable". */
+const STARTUP_UNREACHABLE_MS = 60_000;
+/** How long a sign-in waits for a gateway socket to open before giving up (issue 1048). */
+const GATEWAY_CONNECT_TIMEOUT_MS = 10_000;
 
 // Wire-level debug tracker exposed on window.__spoDebug (permanent instrumentation)
 interface SpoDebugWire {
@@ -152,11 +164,20 @@ function initSpoDebug(): SpoDebugWire {
 
 // [/E2E-DEBUG]
 
+/** A saved cameraZoom is restored only if it is an integer index into ZOOM_LEVELS; anything else restores 2. */
+function restorableCameraZoom(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < ZOOM_LEVELS.length
+    ? value
+    : 2;
+}
+
 export class StarpeaceClient implements ClientHandlerContext {
   public readonly callbacks!: ClientCallbacks;
 
   private ws: WebSocket | null = null;
   private isConnected: boolean = false;
+  /** The open attempt of the socket `openGatewaySocket` last created, until it opens or closes (issue 1048). */
+  private socketOpening: Promise<void> | null = null;
   private pendingRequests = new Map<string, { resolve: (msg: WsMessage) => void, reject: (err: unknown) => void }>();
 
   // Canvas-level UI components (owned directly)
@@ -240,8 +261,8 @@ export class StarpeaceClient implements ClientHandlerContext {
 
   // Logout state
   public isLoggingOut: boolean = false;
-  /** The reload that ends a logout — a field so jsdom tests can replace it (issue 1042). */
-  public reloadPage: () => void = () => { window.location.reload(); };
+  /** The reload that ends a logout — the shared seam from `page-reload.ts`, a field so jsdom tests can replace it (issue 1042). */
+  public reloadPage: () => void = reloadWindow;
   private logoutReloadIssued = false;
 
   // In-flight dedup
@@ -255,10 +276,8 @@ export class StarpeaceClient implements ClientHandlerContext {
 
   private cameraUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private beforeUnloadHandler: (() => void) | null = null;
   private reconnectAttempt: number = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private visibilityHandler: (() => void) | null = null;
   private debugWire: SpoDebugWire; // [E2E-DEBUG]
 
   constructor() {
@@ -327,7 +346,9 @@ export class StarpeaceClient implements ClientHandlerContext {
       onGetChannelInfo: (channelName: string) => chatHandler.requestChannelInfo(this, channelName),
       onChaseUser: (userName: string) => chatHandler.chaseUser(this, userName),
       onStopChase: () => chatHandler.stopChase(this),
-      onAuthCheck: (username: string, password: string) => authHandler.performAuthCheck(this, username, password),
+      onAuthCheck: (username: string, password: string) => {
+        void this.signInWhenConnected(() => authHandler.performAuthCheck(this, username, password));
+      },
       onDirectoryConnect: (username: string, password: string, zonePath?: string) =>
         authHandler.performDirectoryLogin(this, username, password, zonePath),
       onWorldSelect: (worldName: string) => {
@@ -335,8 +356,9 @@ export class StarpeaceClient implements ClientHandlerContext {
         return authHandler.login(this, worldName);
       },
       onCompanySelect: (companyId: string) => authHandler.selectCompanyAndStart(this, companyId),
-      onResumeSession: (record: RememberedSession, password: string) =>
-        authHandler.resumeSession(this, record, password),
+      onResumeSession: (record: RememberedSession, password: string) => {
+        void this.signInWhenConnected(() => authHandler.resumeSession(this, record, password));
+      },
       onCreateCompany: () => ClientBridge.showCompanyCreationDialog(),
       onCreateCompanySubmit: (companyName: string, cluster: string) =>
         authHandler.handleCreateCompany(this, companyName, cluster),
@@ -430,7 +452,8 @@ export class StarpeaceClient implements ClientHandlerContext {
             return buildingActionHandler.refreshAfterConnectionChange(this, buildingX, buildingY);
           }
         }).catch((err: unknown) => {
-          this.showNotification(`Failed to disconnect: ${toErrorMessage(err)}`, 'error');
+          ClientBridge.log('Error', `Failed to disconnect: ${toErrorMessage(err)}`);
+          this.showNotification(playerErrorMessage('disconnect these connections', err), 'error');
         });
       },
 
@@ -658,7 +681,7 @@ export class StarpeaceClient implements ClientHandlerContext {
   // (ISProxyTimeOut = 180s) so the gateway's real error always arrives first.
   public sendRequest<T extends WsMessage>(msg: T, timeoutMs = 200000): Promise<WsMessage> {
     return new Promise((resolve, reject) => {
-      if (!this.ws || !this.isConnected) return reject(new Error('WebSocket not connected'));
+      if (!this.ws || !this.isConnected) return reject(new Error(NOT_CONNECTED_MESSAGE));
 
       const requestId = Date.now().toString(36) + Math.random().toString(36).substr(2);
       msg.wsRequestId = requestId;
@@ -676,7 +699,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       setTimeout(() => {
         if (this.pendingRequests.has(requestId)) {
           this.pendingRequests.delete(requestId);
-          reject(new Error('Request Timeout'));
+          reject(new Error(REQUEST_TIMEOUT_MESSAGE));
         }
       }, timeoutMs);
     });
@@ -888,6 +911,14 @@ export class StarpeaceClient implements ClientHandlerContext {
 
     ClientBridge.loadPersistedSettings();
     const initialSettings = ClientBridge.getSettings();
+    if (renderer) {
+      // Restore first, then subscribe, so restoring does not write the same value back.
+      renderer.setZoom(restorableCameraZoom(initialSettings.cameraZoom));
+      renderer.setZoomChangedCallback((level) => {
+        useGameStore.getState().updateSettings({ cameraZoom: level });
+        ClientBridge.persistSettings(useGameStore.getState().settings);
+      });
+    }
     this.applySettings(initialSettings);
 
     ClientBridge.log('Renderer', 'Game view initialized');
@@ -994,7 +1025,10 @@ export class StarpeaceClient implements ClientHandlerContext {
     }
   }
 
-  /** Poll /api/startup-status via SSE; falls back to fetch polling if SSE unavailable. */
+  /**
+   * Follow /api/startup-status over SSE. A failed stream is reopened every 2 s; after 60 s
+   * without an open stream (or on a `failed` service) the screen shows "unreachable" (issue 1048).
+   */
   private pollServerStartup(): void {
     interface StartupData {
       phase: string;
@@ -1004,46 +1038,79 @@ export class StarpeaceClient implements ClientHandlerContext {
       cacheSteps?: Array<{ name: string; label: string; status: 'pending' | 'running' | 'complete' }>;
     }
 
-    const onReady = () => ClientBridge.setServerStartupProgress({ ready: true, progress: 1, message: 'Server ready' });
+    let done = false;
+    let unreachableTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const armUnreachable = () => {
+      if (unreachableTimer) return;
+      unreachableTimer = setTimeout(() => {
+        unreachableTimer = null;
+        ClientBridge.setServerStartupProgress({ unreachable: true });
+      }, STARTUP_UNREACHABLE_MS);
+    };
+    const disarmUnreachable = () => {
+      if (unreachableTimer) clearTimeout(unreachableTimer);
+      unreachableTimer = null;
+    };
+
+    const onReady = () => ClientBridge.setServerStartupProgress({ ready: true, progress: 1, message: 'Server ready', unreachable: false });
 
     const applyData = (data: StartupData) => {
+      const services = data.services ?? [];
       ClientBridge.setServerStartupProgress({
         ready: data.phase === 'ready',
         progress: data.progress,
         message: data.message,
-        services: data.services ?? [],
+        services,
         cacheSteps: data.cacheSteps,
+        unreachable: services.some(s => s.status === 'failed'),
       });
     };
 
-    const startFetchPoll = () => {
-      const check = () => {
-        fetch('/api/startup-status', { headers: { Accept: 'application/json' } })
-          .then(r => r.json())
-          .then((data: StartupData) => {
-            applyData(data);
-            if (data.phase !== 'ready') setTimeout(check, 2000);
-          })
-          .catch(() => setTimeout(check, 2000));
-      };
-      check();
+    const retry = () => {
+      if (done) return;
+      armUnreachable();
+      setTimeout(connect, STARTUP_RETRY_MS);
     };
 
-    try {
-      const es = new EventSource('/api/startup-status');
+    const connect = () => {
+      let es: EventSource;
+      try {
+        es = new EventSource('/api/startup-status');
+      } catch {
+        retry();
+        return;
+      }
+      es.onopen = () => {
+        disarmUnreachable();
+        ClientBridge.setServerStartupProgress({ unreachable: false });
+      };
       es.addEventListener('status', (e: MessageEvent) => {
+        disarmUnreachable();
         const data = JSON.parse(e.data) as StartupData;
         applyData(data);
-        if (data.phase === 'ready') { es.close(); onReady(); }
+        if (data.phase === 'ready') { done = true; es.close(); onReady(); }
       });
-      es.onerror = () => { es.close(); startFetchPoll(); };
-    } catch {
-      startFetchPoll();
-    }
+      es.onerror = () => { es.close(); retry(); };
+    };
+
+    armUnreachable();
+    connect();
   }
 
   private init() {
     this.pollServerStartup();
+    this.openGatewaySocket();
+    this.installPageLifecycleListeners();
+  }
+
+  /** Open the gateway socket with its handlers; used by `init()` and `ensureConnected()` (issue 1048). */
+  private openGatewaySocket(): void {
+    let resolveOpen!: () => void;
+    let rejectOpen!: (err: Error) => void;
+    const opening = new Promise<void>((resolve, reject) => { resolveOpen = resolve; rejectOpen = reject; });
+    opening.catch(() => { /* observed by ensureConnected; an unawaited failure is not an error */ });
+    this.socketOpening = opening;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${protocol}//${window.location.host}/ws`;
@@ -1054,15 +1121,19 @@ export class StarpeaceClient implements ClientHandlerContext {
     this.ws.onopen = () => {
       this.isConnected = true;
       ClientBridge.log('System', 'Gateway Connected.');
+      if (this.socketOpening === opening) this.socketOpening = null;
+      resolveOpen();
     };
 
     this.ws.onmessage = (event) => this.onWsMessage(event);
 
     this.ws.onclose = (event?: CloseEvent) => {
+      if (this.socketOpening === opening) this.socketOpening = null;
+      rejectOpen(new Error(GATEWAY_UNREACHABLE_MESSAGE));
       this.isConnected = false;
       this.cleanupTimers();
       // Drain pending requests immediately to avoid noisy 15s timeouts
-      this.pendingRequests.forEach(({ reject }) => reject(new Error('Disconnected')));
+      this.pendingRequests.forEach(({ reject }) => reject(new Error(DISCONNECTED_MESSAGE)));
       this.pendingRequests.clear();
       this.isSelectingCompany = false;
       ClientBridge.log('System', 'Gateway Disconnected.');
@@ -1073,12 +1144,23 @@ export class StarpeaceClient implements ClientHandlerContext {
         this.reloadAfterLogout();
         return;
       }
+      if (event?.code === WS_CLOSE_TRY_AGAIN_LATER) {
+        const { companyId, status } = useGameStore.getState();
+        if (!companyId && status !== 'reconnecting') {
+          // Refused before ever reaching the game: no automatic retry, the player retries by hand.
+          ClientBridge.setDisconnected('server_full');
+          return;
+        }
+      }
       if (!this.storedUsername || !this.storedPassword) {
         ClientBridge.setDisconnected();
         return;
       }
       if (event?.code === WS_CLOSE_SERVICE_RESTART) {
         useGameStore.getState().setServerRestarting(true);
+      }
+      if (event?.code === WS_CLOSE_TRY_AGAIN_LATER) {
+        useGameStore.getState().setServerFull(true);
       }
       ClientBridge.setReconnecting();
       this.scheduleReconnect();
@@ -1088,34 +1170,66 @@ export class StarpeaceClient implements ClientHandlerContext {
       console.error('[Client] WebSocket error:', error);
       ClientBridge.log('Error', 'WebSocket error occurred');
     };
+  }
 
-    // Send logout on page close
-    this.beforeUnloadHandler = () => {
-      this.sendLogoutBeacon();
-    };
-    window.addEventListener('beforeunload', this.beforeUnloadHandler);
+  /** Resolves once a gateway socket is open; opens one if none is open or opening (issue 1048). */
+  public ensureConnected(): Promise<void> {
+    if (this.ws && this.isConnected) return Promise.resolve();
+    if (!this.socketOpening) this.openGatewaySocket();
+    const opening = this.socketOpening as Promise<void>;
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(GATEWAY_UNREACHABLE_MESSAGE)), GATEWAY_CONNECT_TIMEOUT_MS);
+      opening.then(
+        () => { clearTimeout(timer); resolve(); },
+        () => { clearTimeout(timer); reject(new Error(GATEWAY_UNREACHABLE_MESSAGE)); },
+      );
+    });
+  }
 
+  /** Run a sign-in once the gateway socket is open; on failure show the shared sentence instead. */
+  private async signInWhenConnected(signIn: () => Promise<unknown>): Promise<void> {
+    try {
+      await this.ensureConnected();
+    } catch {
+      // ensureConnected rejects only with GATEWAY_UNREACHABLE_MESSAGE, already a player sentence.
+      ClientBridge.setLoginLoading(false);
+      ClientBridge.setAuthError({ code: 0, message: GATEWAY_UNREACHABLE_MESSAGE });
+      return;
+    }
+    await signIn();
+  }
+
+  /**
+   * Page-lifecycle listeners, added once when the page starts and never removed:
+   * they must survive every dropped socket (issue 1043).
+   */
+  private installPageLifecycleListeners(): void {
     // Page Visibility API — pause heartbeat when hidden; fast-reconnect when foregrounded
-    this.visibilityHandler = () => {
+    document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         if (this.viewportHeartbeatTimer !== null) {
           clearInterval(this.viewportHeartbeatTimer);
           this.viewportHeartbeatTimer = null;
         }
-      } else {
-        const status = useGameStore.getState().status;
-        if (status === 'reconnecting' && this.storedUsername && this.storedPassword) {
-          if (this.reconnectTimer !== null) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-          }
-          this.attemptReconnect();
-        } else if (status === 'connected' && !this.viewportHeartbeatTimer) {
-          this.viewportHeartbeatTimer = setInterval(() => this.sendCameraPositionNow(), 30_000);
-        }
+        return;
       }
-    };
-    document.addEventListener('visibilitychange', this.visibilityHandler);
+      const status = useGameStore.getState().status;
+      if (status === 'reconnecting') {
+        this.reconnectNowIfForegrounded();
+      } else if (status === 'connected' && !this.viewportHeartbeatTimer) {
+        this.viewportHeartbeatTimer = setInterval(() => this.sendCameraPositionNow(), 30_000);
+      }
+    });
+    // Back/forward cache restore
+    window.addEventListener('pageshow', (e: PageTransitionEvent) => {
+      if (e.persisted) this.reconnectNowIfForegrounded();
+    });
+    // Page Lifecycle thaw after a freeze
+    document.addEventListener('resume', () => this.reconnectNowIfForegrounded());
+  }
+
+  private reconnectNowIfForegrounded(): void {
+    if (this.storedUsername && this.storedPassword) this.triggerImmediateReconnect();
   }
 
   private handleMessage(msg: WsMessage) {
@@ -1167,14 +1281,6 @@ export class StarpeaceClient implements ClientHandlerContext {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.beforeUnloadHandler) {
-      window.removeEventListener('beforeunload', this.beforeUnloadHandler);
-      this.beforeUnloadHandler = null;
-    }
-    if (this.visibilityHandler) {
-      document.removeEventListener('visibilitychange', this.visibilityHandler);
-      this.visibilityHandler = null;
-    }
   }
 
   private scheduleReconnect(): void {
@@ -1182,7 +1288,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       ClientBridge.log('System', 'Max reconnect attempts reached — returning to login.');
       this.reconnectAttempt = 0;
       useGameStore.getState().setReconnectAttempt(0);
-      ClientBridge.setDisconnected('connection_lost');
+      ClientBridge.setDisconnected(useGameStore.getState().serverFull ? 'server_full' : 'connection_lost');
       return;
     }
 
@@ -1218,17 +1324,31 @@ export class StarpeaceClient implements ClientHandlerContext {
     const url = `${protocol}//${window.location.host}/ws`;
 
     this.ws = new WebSocket(url);
+    /** The attempt counter as it stood before this socket's onopen reset it (issue 1076). */
+    let attemptBeforeOpen: number | null = null;
+    /** Set when this socket was closed with 1013; its .catch then arms nothing. */
+    let refusedServerFull = false;
 
     this.ws.onopen = () => {
       this.isConnected = true;
+      attemptBeforeOpen = this.reconnectAttempt;
       this.reconnectAttempt = 0;
       useGameStore.getState().setReconnectAttempt(0);
       ClientBridge.log('System', 'Gateway reconnected — replaying login…');
+
+      // A deploy restarts the gateway: offer a reload if it now serves another bundle (issue 1050).
+      // Fire and forget — the login replay below does not wait on it.
+      if (!useUiStore.getState().newVersionAvailable) {
+        void checkServedBundle().then((changed) => {
+          if (changed) useUiStore.getState().setNewVersionAvailable(true);
+        });
+      }
 
       authHandler.login(this, currentWorldName)
         .then(() => authHandler.selectCompanyAndStart(this, companyId))
         .catch((err: unknown) => {
           ClientBridge.log('Error', `Reconnect failed: ${toErrorMessage(err)}`);
+          if (refusedServerFull) return; // the 1013 close already armed this socket's single retry
           if (this.storedUsername && this.storedPassword) {
             ClientBridge.setReconnecting();
             this.scheduleReconnect();
@@ -1243,7 +1363,7 @@ export class StarpeaceClient implements ClientHandlerContext {
     this.ws.onclose = (event?: CloseEvent) => {
       this.isConnected = false;
       this.cleanupTimers();
-      this.pendingRequests.forEach(({ reject }) => reject(new Error('Disconnected')));
+      this.pendingRequests.forEach(({ reject }) => reject(new Error(DISCONNECTED_MESSAGE)));
       this.pendingRequests.clear();
       this.isSelectingCompany = false;
       ClientBridge.log('System', 'Reconnect attempt lost connection.');
@@ -1257,6 +1377,15 @@ export class StarpeaceClient implements ClientHandlerContext {
       if (this.storedUsername && this.storedPassword) {
         if (event?.code === WS_CLOSE_SERVICE_RESTART) {
           useGameStore.getState().setServerRestarting(true);
+        }
+        if (event?.code === WS_CLOSE_TRY_AGAIN_LATER) {
+          refusedServerFull = true;
+          useGameStore.getState().setServerFull(true);
+          if (attemptBeforeOpen !== null) {
+            // A refusal is not a successful reconnect: undo onopen's reset so the back-off keeps growing.
+            this.reconnectAttempt = attemptBeforeOpen;
+            useGameStore.getState().setReconnectAttempt(attemptBeforeOpen);
+          }
         }
         ClientBridge.setReconnecting();
         this.scheduleReconnect();
@@ -1303,17 +1432,6 @@ export class StarpeaceClient implements ClientHandlerContext {
       this.cameraUpdateTimer = null;
       this.sendCameraPositionNow();
     }, 2000);
-  }
-
-  private sendLogoutBeacon(): void {
-    if (!this.isConnected || !this.ws) return;
-
-    try {
-      const req = { type: WsMessageType.REQ_LOGOUT };
-      this.sendRaw(JSON.stringify(req));
-    } catch (_err: unknown) {
-      // Ignore errors during page unload
-    }
   }
 
   // [E2E-DEBUG] Expose full game state for programmatic E2E verification

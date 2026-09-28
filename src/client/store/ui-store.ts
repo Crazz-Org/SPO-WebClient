@@ -68,7 +68,7 @@ function legacyView(stack: Surface[]): { rightPanel: RightPanelType | null; left
     leftPanel: LEFT_KINDS.has(top.kind) ? (top.kind as LeftPanelType) : null,
   };
 }
-export type ModalType = 'buildMenu' | 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'createChannel' | 'connectionPicker' | 'zonePicker' | 'supplierSearch' | 'buildingInspector' | 'newspaper' | 'changelog' | 'chatHistory';
+export type ModalType = 'buildMenu' | 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'createChannel' | 'connectionPicker' | 'zonePicker' | 'supplierSearch' | 'buildingInspector' | 'newspaper' | 'changelog' | 'chatHistory' | 'shortcuts';
 export type MobileTab = 'map' | 'chat' | 'build' | 'more';
 
 /** The right-click map context menu — what tile it opened on, and what sits there. */
@@ -214,9 +214,15 @@ interface UiState {
 
   // Actions — Escape (close topmost layer)
   dismissTopmost: () => void;
+
+  /** Set after a reconnect finds a different served bundle; never cleared — a reload clears it. */
+  newVersionAvailable: boolean;
+  setNewVersionAvailable: (v: boolean) => void;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
+  newVersionAvailable: false,
+  setNewVersionAvailable: (v) => set({ newVersionAvailable: v }),
   rightPanel: null,
   leftPanel: null,
   modal: null,

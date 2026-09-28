@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useGameStore } from '../../store/game-store';
-import { MAX_RECONNECT_ATTEMPTS } from '../../handlers/reconnect-utils';
+import { GATEWAY_UNREACHABLE_MESSAGE, MAX_RECONNECT_ATTEMPTS } from '../../handlers/reconnect-utils';
 import { ReconnectingOverlay } from './ReconnectingOverlay';
 
 beforeEach(() => {
@@ -88,5 +88,53 @@ describe('ReconnectingOverlay — gateway restarting', () => {
     renderWithProviders(<ReconnectingOverlay />);
     expect(screen.getByText('Connection lost')).toBeTruthy();
     expect(screen.queryByText('Server restarting')).toBeNull();
+  });
+});
+
+describe('ReconnectingOverlay — connection lost text (issue 1048)', () => {
+  it('blames the server, not the player\'s internet connection', () => {
+    useGameStore.setState({ status: 'disconnected', disconnectReason: 'connection_lost' });
+    renderWithProviders(<ReconnectingOverlay />);
+
+    expect(screen.getByText('Connection lost')).toBeTruthy();
+    expect(screen.getByText(GATEWAY_UNREACHABLE_MESSAGE)).toBeTruthy();
+    expect(screen.queryByText(/internet connection/i)).toBeNull();
+  });
+});
+
+describe('ReconnectingOverlay — server full (issue 1076)', () => {
+  beforeEach(() => {
+    useGameStore.setState({ disconnectReason: null, serverFull: false, serverRestarting: false });
+  });
+  afterEach(() => {
+    useGameStore.setState({ disconnectReason: null, serverFull: false, serverRestarting: false });
+  });
+
+  it('a disconnect for server_full reads "Server full" and the try-later line', () => {
+    useGameStore.setState({ status: 'disconnected', disconnectReason: 'server_full' });
+    renderWithProviders(<ReconnectingOverlay />);
+    expect(screen.getByText('Server full')).toBeTruthy();
+    expect(screen.getByText('The server is full right now. Please try again in a few minutes.')).toBeTruthy();
+    expect(screen.queryByText('Connection lost')).toBeNull();
+    expect(screen.queryByText(/session has expired/i)).toBeNull();
+    expect(screen.getByText('Return to home page')).toBeTruthy();
+  });
+
+  it('while reconnecting with the cause, the spinner card reads "Server full"', () => {
+    useGameStore.setState({ status: 'reconnecting', reconnectAttempt: 2, serverFull: true });
+    renderWithProviders(<ReconnectingOverlay />);
+    expect(screen.getByText('Server full')).toBeTruthy();
+    expect(screen.getByText(/keeps retrying automatically/i)).toBeTruthy();
+    expect(screen.getByText(new RegExp(`attempt 2 of ${MAX_RECONNECT_ATTEMPTS}`, 'i'))).toBeTruthy();
+    expect(screen.getByText('Try now')).toBeTruthy();
+    expect(screen.queryByText('Connection lost')).toBeNull();
+  });
+
+  it('the full cause wins over the restart cause', () => {
+    useGameStore.setState({ status: 'reconnecting', reconnectAttempt: 1, serverFull: true, serverRestarting: true });
+    renderWithProviders(<ReconnectingOverlay />);
+    expect(screen.getByText('Server full')).toBeTruthy();
+    expect(screen.queryByText('Server restarting')).toBeNull();
+    expect(screen.queryByText('The game will reconnect automatically.')).toBeNull();
   });
 });

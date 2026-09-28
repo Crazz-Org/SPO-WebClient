@@ -11,6 +11,7 @@ import { fileToProxyUrl, PROXY_IMAGE_ENDPOINT } from '../shared/proxy-utils';
 import * as ErrorCodes from '../shared/error-codes';
 import { FacilityDimensionsCache } from './facility-dimensions-cache';
 import { SearchMenuService } from './search-menu-service';
+import { buildContentSecurityPolicy } from './security-headers';
 import { UpdateService } from './update-service';
 import { MapDataService } from './map-data-service';
 import { serviceRegistry, setupGracefulShutdown } from './service-registry';
@@ -32,14 +33,35 @@ import {
 import { toErrorMessage } from '../shared/error-utils';
 import { wsHandlerRegistry } from './ws-handlers';
 import { buildErrorContractReadout, buildPropertyFallbackReadout } from './session/diagnostics-readouts';
+import {
+  isLocalOnlyRequest,
+  buildHealth,
+  buildMetrics,
+  directoryProbe,
+  sessionRegistry,
+  readGatewayVersion,
+  startMetricsLog,
+  PROCESS_STARTED_AT_MS,
+  type GatewayMetrics,
+} from './observability';
 import { parseResearchDat, buildInventionIndex, type DatInventionIndex } from '../shared/research-dat-parser';
 import { getPublicDir, getCacheDir, getWebclientCacheDir } from './paths';
 import { buildRuntimeConfigScript } from './runtime-config';
 import { handleBugReportRequest, DEFAULT_QUEUE_DIR } from './bug-report-endpoint';
+import { handleClientErrorRequest, getClientErrorCounts, CLIENT_ERROR_MAX_PER_IP } from './client-error-endpoint';
 import { handleReportPullList, handleReportPullFetch, handleReportPullAck } from './report-pull-endpoint';
 import { enforceProductionConfig } from './production-config';
 import { proxyImage, buildImageFileIndexEntries, proxyImageHosts, type ProxyImageDeps } from './proxy-image';
 import { fetchWithTimeout } from './fetch-with-timeout';
+import {
+  WsMessageGuard,
+  WS_MESSAGE_RATE_PER_SECOND,
+  WS_MESSAGE_BURST,
+  WS_MAX_QUEUED_MESSAGES,
+  WS_GUARD_CLOSE_CODE,
+  WS_RATE_EXCEEDED_REASON,
+  WS_QUEUE_EXCEEDED_REASON,
+} from './ws-message-guard';
 import {
   RATE_LIMIT_WINDOW_MS,
   RATE_LIMIT_MAX_AUTH,
@@ -340,14 +362,13 @@ function sanitizePathParam(raw: string): string | null {
 }
 
 // Security headers applied to all HTTP responses
-function setSecurityHeaders(res: http.ServerResponse): void {
+function setSecurityHeaders(req: http.IncomingMessage, res: http.ServerResponse): void {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  const cdnOrigin = config.cdn.url ? ` ${config.cdn.url}` : '';
-  res.setHeader('Content-Security-Policy', `default-src 'self'; connect-src 'self' ws: wss:${cdnOrigin}; img-src 'self' data: blob:${cdnOrigin}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'`);
+  res.setHeader('Content-Security-Policy', buildContentSecurityPolicy(req.headers.host, config.cdn.url));
   if (process.env.ENABLE_HSTS === 'true') {
     res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
   }
@@ -356,9 +377,33 @@ function setSecurityHeaders(res: http.ServerResponse): void {
 // The per-IP ceilings and the limiter live in rate-limit.ts; sweep expired entries every 5 minutes.
 setInterval(() => sweepExpiredRateLimits(), 300_000);
 
+const GATEWAY_VERSION = readGatewayVersion();
+
+/** The /api/metrics object — also the payload of the periodic METRICS log line. */
+function collectMetrics(): GatewayMetrics {
+  return buildMetrics({
+    version: GATEWAY_VERSION,
+    startedAtMs: PROCESS_STARTED_AT_MS,
+    now: Date.now(),
+    memory: process.memoryUsage(),
+    websocketsOpen: wss.clients.size,
+    sessions: sessionRegistry.snapshot(),
+    directory: directoryProbe.getState(),
+    clientErrors: getClientErrorCounts(),
+  });
+}
+
+/** Answers 403 to anything but a direct loopback request; true when it refused. */
+function refuseNonLocal(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  if (isLocalOnlyRequest(req)) return false;
+  res.writeHead(403, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+  res.end('Forbidden');
+  return true;
+}
+
 // 1. HTTP Server for Static Files + Image Proxy
 const server = http.createServer(async (req, res) => {
-  setSecurityHeaders(res);
+  setSecurityHeaders(req, res);
   const safePath = req.url === '/' ? '/index.html' : req.url || '/index.html';
 
   // Runtime config script — serves CDN URL override as an external JS file (CSP-compliant).
@@ -417,6 +462,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Public health check — served from the cached directory probe; never dials Delphi.
+  // The gateway's start state is in the body only, it never sets the status.
+  if (safePath === '/api/health') {
+    const { statusCode, body } = buildHealth(directoryProbe.getState(), serviceRegistry.isInitialized(), Date.now());
+    res.writeHead(statusCode, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(body));
+    return;
+  }
+
+  // Runtime metrics — local-only (loopback peer and no X-Forwarded-For).
+  if (safePath === '/api/metrics') {
+    if (refuseNonLocal(req, res)) return;
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(collectMetrics()));
+    return;
+  }
+
   // Map data API endpoint: /api/map-data/:mapname
   if (safePath.startsWith('/api/map-data/')) {
     const mapName = sanitizePathParam(safePath.substring('/api/map-data/'.length).split('?')[0]);
@@ -461,6 +523,7 @@ const server = http.createServer(async (req, res) => {
   // list the operator is meant to triage was only ever reachable by grepping
   // `RDO-CONTRACT` out of the logs. Sorted most frequent first.
   if (safePath === '/api/rdo-error-contract') {
+    if (refuseNonLocal(req, res)) return;
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
@@ -474,6 +537,7 @@ const server = http.createServer(async (req, res) => {
   // property's text; `false` entries are the bare-value callers the fallback
   // legitimately serves. Triage the first group before touching the fallback.
   if (safePath === '/api/property-fallback') {
+    if (refuseNonLocal(req, res)) return;
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
@@ -678,6 +742,17 @@ const server = http.createServer(async (req, res) => {
       enabled: config.server.bugReportMode,
       queueDir: config.server.reportsDir || DEFAULT_QUEUE_DIR,
       allowRequest: () => checkRateLimit(getClientIp(req), 'bug-report', 10),
+    });
+    return;
+  }
+
+  // Browser error report: POST /api/client-error — anonymous by design (no session, no identity
+  // field; a closed field list and two rate limits keep it safe). Everything lives in
+  // client-error-endpoint.ts, which tests can import. 20/min per IP (checkRateLimit's 60 s window)
+  // plus a 60/min gateway-wide cap inside the module.
+  if (safePath === '/api/client-error' && req.method === 'POST') {
+    handleClientErrorRequest(req, res, {
+      allowRequest: () => checkRateLimit(getClientIp(req), 'client-error', CLIENT_ERROR_MAX_PER_IP),
     });
     return;
   }
@@ -931,7 +1006,7 @@ mountWebSocketGateway(server);
 
 let stopWsHeartbeat: () => void = () => undefined;
 /**
- * Start the dead-socket heartbeat on this gateway's sockets (policy SEC-W-6), stopping any
+ * Start the dead-socket heartbeat on this gateway's sockets (policy SEC-W-7), stopping any
  * running one first. The interval parameter is the test seam; production uses the default.
  */
 export function startWsHeartbeat(intervalMs: number = WS_HEARTBEAT_INTERVAL_MS): () => void {
@@ -959,6 +1034,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   // Create a dedicated Starpeace Session for this connection
   const spSession = new StarpeaceSession();
   spSession.log.info('SESSION_START', { ip: clientIp });
+  sessionRegistry.add(spSession);
 
   // One teardown per connection, shared by the close handler and the shutdown drain
   const teardown = createSessionTeardown(spSession, (err) =>
@@ -998,8 +1074,27 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   ]);
   let rdoQueue: Promise<void> = Promise.resolve();
 
+  // Per-socket message guard (SEC-W-6): rate bucket + RDO-queue depth, in every mode.
+  const messageGuard = new WsMessageGuard({
+    ratePerSecond: WS_MESSAGE_RATE_PER_SECOND,
+    burst: WS_MESSAGE_BURST,
+    maxQueued: WS_MAX_QUEUED_MESSAGES,
+  });
+  let closedByGuard = false;
+  function closeByGuard(reason: string): void {
+    closedByGuard = true;
+    logger.warn(`[Gateway] WebSocket closed by message guard: ${reason}`, {
+      ip: clientIp,
+      reason,
+      player: connectedClients.get(ws) ?? 'unknown',
+    });
+    ws.close(WS_GUARD_CLOSE_CODE, reason);
+  }
+
   /** Process a single WS message. Must be serialized for RDO-touching messages. */
   async function processMessage(data: string): Promise<void> {
+    // Guard close: nothing already queued (or in the close handshake) reaches a handler
+    if (closedByGuard) return;
     try {
       const msg: WsMessage = JSON.parse(data.toString());
 
@@ -1082,6 +1177,13 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   }
 
   ws.on('message', (data: string) => {
+    // Message guard first, before the lane is chosen: every message costs a token (SEC-W-6)
+    if (closedByGuard) return;
+    if (!messageGuard.takeToken()) {
+      closeByGuard(WS_RATE_EXCEEDED_REASON);
+      return;
+    }
+
     // Shutdown drain started: no message reaches a handler any more
     if (connectionDrain.isDraining()) return;
 
@@ -1099,7 +1201,17 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       });
     } else {
       // RDO lane: serialize to prevent concurrent Delphi temp-object access
-      rdoQueue = rdoQueue.then(() => processMessage(data)).catch((err: unknown) => {
+      if (!messageGuard.enqueue()) {
+        closeByGuard(WS_QUEUE_EXCEEDED_REASON);
+        return;
+      }
+      rdoQueue = rdoQueue.then(async () => {
+        try {
+          await processMessage(data);
+        } finally {
+          messageGuard.settle();
+        }
+      }).catch((err: unknown) => {
         spSession.log.error('RDO queue message error', { error: toErrorMessage(err) });
       });
     }
@@ -1127,6 +1239,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
     // destroy() runs only after it settles. The teardown is shared with the shutdown drain,
     // so it runs once however many callers await it.
     await teardown();
+    sessionRegistry.remove(spSession);
     connectionDrain.untrack(ws);
   });
 });
@@ -1269,6 +1382,10 @@ export async function startGateway(options?: GatewayOptions): Promise<GatewayIns
       resolve();
     });
   });
+
+  // Directory reachability probe and the METRICS log line — both unref()'d timers.
+  directoryProbe.start();
+  startMetricsLog(collectMetrics, createLogger('Metrics'));
 
   // Build in-memory caches with granular progress reporting via SSE
   const cacheSteps: import('./service-registry').CacheStepEntry[] = [

@@ -129,14 +129,16 @@ describe('CreateChannelModal — submitting', () => {
     await waitFor(() => expect(useUiStore.getState().modal).toBeNull());
   });
 
-  it('stays mounted and shows the server reason when the call is refused', async () => {
+  it('stays mounted and shows the player sentence when the call is refused without a gateway sentence', async () => {
     const { callbacks } = spiedCreate(new Error('Channel "Traders" already exists and its password does not match'));
     renderWithProviders(<CreateChannelModal />, { clientCallbacks: callbacks });
 
     fill('Traders', 'wrong', 'wrong');
     fireEvent.click(createBtn());
 
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('password does not match'));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(
+      'Could not create this channel — something went wrong. Try again.',
+    ));
     expect(useUiStore.getState().modal).toBe('createChannel');
   });
 
@@ -152,6 +154,19 @@ describe('CreateChannelModal — submitting', () => {
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(sentence));
     expect(screen.getByRole('alert').textContent).not.toContain('Unknown error');
+    expect(useUiStore.getState().modal).toBe('createChannel');
+  });
+
+  it('without a gateway sentence shows the player sentence, not the raw text', async () => {
+    const { callbacks } = spiedCreate(new Error('Request Timeout'));
+    renderWithProviders(<CreateChannelModal />, { clientCallbacks: callbacks });
+
+    fill('Traders', 'pw', 'pw');
+    fireEvent.click(createBtn());
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(
+      'Could not create this channel — the server did not answer in time. Try again.',
+    ));
     expect(useUiStore.getState().modal).toBe('createChannel');
   });
 

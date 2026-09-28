@@ -73,7 +73,7 @@ describe('addFavorite', () => {
 
     await addFavorite(ctx, 'Farm 1', 1, 2);
 
-    expect(showNotification).toHaveBeenCalledWith('Failed to add favourite: socket closed', 'error');
+    expect(showNotification).toHaveBeenCalledWith('Could not add this favourite — something went wrong. Try again.', 'error');
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });
@@ -109,7 +109,7 @@ describe('removeFavorite', () => {
 
     await removeFavorite(ctx, '4210', 'Farm 1');
 
-    expect(showNotification).toHaveBeenCalledWith('Failed to remove favourite: socket closed', 'error');
+    expect(showNotification).toHaveBeenCalledWith('Could not remove this favourite — something went wrong. Try again.', 'error');
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });
@@ -188,8 +188,8 @@ describe('removeFavorites', () => {
     ]);
 
     expect(sendRequest).toHaveBeenCalledTimes(2);
-    expect(showNotification).toHaveBeenCalledWith('Removed 1 of 2 — "A": socket closed', 'warning');
-    expect(outcome.failed).toEqual([{ name: 'A', message: 'socket closed' }]);
+    expect(showNotification).toHaveBeenCalledWith('Removed 1 of 2 — "A": something went wrong', 'warning');
+    expect(outcome.failed).toEqual([{ name: 'A', message: 'something went wrong' }]);
     expect(outcome.removed).toEqual(['B']);
   });
 
@@ -239,7 +239,7 @@ describe('renameFavorite', () => {
 
     await renameFavorite(ctx, '4210', 'Moulin');
 
-    expect(showNotification).toHaveBeenCalledWith('Failed to rename favourite: socket closed', 'error');
+    expect(showNotification).toHaveBeenCalledWith('Could not rename this favourite — something went wrong. Try again.', 'error');
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });
@@ -277,7 +277,7 @@ describe('createFolder', () => {
 
     await createFolder(ctx, '', 'Farms');
 
-    expect(showNotification).toHaveBeenCalledWith('Failed to create folder: socket closed', 'error');
+    expect(showNotification).toHaveBeenCalledWith('Could not create this folder — something went wrong. Try again.', 'error');
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });
@@ -315,7 +315,7 @@ describe('moveFavorite', () => {
 
     await moveFavorite(ctx, '4210', '9', 'Mill');
 
-    expect(showNotification).toHaveBeenCalledWith('Failed to move favourite: socket closed', 'error');
+    expect(showNotification).toHaveBeenCalledWith('Could not move this favourite — something went wrong. Try again.', 'error');
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });
@@ -438,7 +438,7 @@ describe('migrateLocalBookmarks', () => {
     const dead = makeCtx(new Error('socket closed'));
     await migrateLocalBookmarks(dead.ctx);
     expect(dead.showNotification).toHaveBeenCalledWith(
-      'Could not move your saved places to your account: socket closed', 'error',
+      'Could not move your saved places to your account — something went wrong. Try again.', 'error',
     );
     expect(store.has(k2)).toBe(true);
   });

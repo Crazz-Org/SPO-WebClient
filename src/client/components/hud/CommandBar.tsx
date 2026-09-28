@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { Hammer, Map, User, Landmark, Mail, MessageSquare, MoreHorizontal, Search, RotateCw, Settings, Layers, Heart, Server, Route, Eraser, Grid2x2 } from 'lucide-react';
+import { Hammer, Map, User, Landmark, Mail, MessageSquare, MoreHorizontal, Search, RotateCw, Settings, Layers, Heart, Server, Route, Eraser, Grid2x2, Keyboard } from 'lucide-react';
 import { useUiStore, type SurfaceKind } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { isPanelOffered } from '../../visitor-gating';
@@ -113,6 +113,7 @@ function MoreMenu({ onClose }: { onClose: () => void }) {
       {item('Docked minimap', <Map size={16} />, () => client.onToggleMinimap())}
       {isPanelOffered('facilities', isVisitor) && item('My facilities', <Heart size={16} />, () => toggleLeftPanel('facilities'))}
       {item('Settings', <Settings size={16} />, () => openModal('settings'))}
+      {item('Keyboard shortcuts', <Keyboard size={16} />, () => openModal('shortcuts'))}
       {item('Switch server', <Server size={16} />, () => client.onSwitchServer())}
     </div>
   );

@@ -18,10 +18,15 @@ jest.mock('./handlers/building-action-handler', () => ({
   setBuildingProperty: jest.fn(),
   refreshAfterConnectionChange: jest.fn(),
 }));
-jest.mock('./handlers/auth-handler', () => ({
-  ...(jest.requireActual('./handlers/auth-handler') as object),
-  visitWorld: jest.fn(),
-}));
+jest.mock('./handlers/auth-handler', () => {
+  const actual = jest.requireActual('./handlers/auth-handler') as typeof import('./handlers/auth-handler');
+  return {
+    ...actual,
+    visitWorld: jest.fn(),
+    // Pass-through by default; the issue-1076 block overrides it per test and puts it back.
+    login: jest.fn((...args: Parameters<typeof actual.login>) => actual.login(...args)),
+  };
+});
 
 import { StarpeaceClient } from './client';
 import * as chatHandler from './handlers/chat-handler';
@@ -29,7 +34,10 @@ import * as authHandler from './handlers/auth-handler';
 import * as buildingActionHandler from './handlers/building-action-handler';
 import { WsMessageType, type WsMessage } from '../shared/types';
 import { useGameStore } from './store/game-store';
+import { useUiStore } from './store/ui-store';
 import { ClientBridge } from './bridge/client-bridge';
+import { GATEWAY_UNREACHABLE_MESSAGE, getReconnectDelay, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
+import { REQUEST_TIMEOUT_MESSAGE, NOT_CONNECTED_MESSAGE } from './player-error';
 
 class FakeSocket {
   onopen: (() => void) | null = null;
@@ -234,7 +242,7 @@ describe('StarpeaceClient onDisconnectConnection', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(notify).toHaveBeenCalledWith('Failed to disconnect: socket gone', 'error');
+    expect(notify).toHaveBeenCalledWith('Could not disconnect these connections — something went wrong. Try again.', 'error');
   });
 });
 
@@ -273,6 +281,23 @@ describe('RESP_ERROR on a pending request', () => {
       message: 'Unknown tycoon',
       serverMessage: 'gateway sentence',
     });
+  });
+
+  it('rejects with the shared constants on a missed deadline and on a closed socket', async () => {
+    jest.useFakeTimers();
+    try {
+      (client as unknown as { isConnected: boolean }).isConnected = true;
+      const pending = client.sendRequest({ type: WsMessageType.REQ_AUTH_CHECK } as unknown as WsMessage, 5000);
+      jest.advanceTimersByTime(5000);
+      await expect(pending).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
+
+      (client as unknown as { isConnected: boolean }).isConnected = false;
+      await expect(
+        client.sendRequest({ type: WsMessageType.REQ_AUTH_CHECK } as unknown as WsMessage),
+      ).rejects.toThrow(NOT_CONNECTED_MESSAGE);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
@@ -784,5 +809,783 @@ describe('logout (issue 1042)', () => {
     jest.advanceTimersByTime(60_000);
     expect(sockets.length).toBeGreaterThan(2);
     expect(reload).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #1043 — the page-lifecycle listeners are added once, at page start, and survive every dropped
+ * socket. Earlier describes leave their own clients' listeners on the shared jsdom document, so
+ * every assertion is on THIS client's own socket identity, never on a global count.
+ */
+describe('page lifecycle listeners (issue 1043)', () => {
+  const sockets: LifecycleSocket[] = [];
+
+  class LifecycleSocket extends FakeSocket {
+    sent: string[] = [];
+    constructor() {
+      super();
+      sockets.push(this);
+    }
+    override send(payload?: string): void {
+      if (payload !== undefined) this.sent.push(payload);
+    }
+  }
+
+  type Internals = {
+    ws: LifecycleSocket;
+    storedUsername: string;
+    storedPassword: string;
+    currentWorldName: string;
+    viewportHeartbeatTimer: unknown;
+  };
+  let client: StarpeaceClient;
+  let hidden = false;
+  const internals = () => client as unknown as Internals;
+
+  const logoutFrames = () =>
+    sockets
+      .flatMap((s) => s.sent.map((p) => JSON.parse(p) as { type: string }))
+      .filter((f) => f.type === WsMessageType.REQ_LOGOUT);
+
+  const dropAndWait = () => {
+    const before = internals().ws;
+    before.onclose?.({ code: 1006 });
+    jest.advanceTimersByTime(60_000);
+    expect(internals().ws).not.toBe(before);
+  };
+
+  /** Three drops; the third leaves the client 'reconnecting' with a backoff pending. */
+  const threeDrops = () => {
+    dropAndWait();
+    dropAndWait();
+    internals().ws.onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+  };
+
+  const pageshow = (persisted: boolean) => {
+    const e = new Event('pageshow');
+    Object.defineProperty(e, 'persisted', { value: persisted });
+    window.dispatchEvent(e);
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sockets.length = 0;
+    hidden = false;
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = LifecycleSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    client = new StarpeaceClient();
+    client.reloadPage = jest.fn();
+    internals().ws.onopen?.();
+    useGameStore.setState({ status: 'connected', companyId: 'C1', serverRestarting: false, reconnectAttempt: 0 });
+    internals().storedUsername = 'u';
+    internals().storedPassword = 'p';
+    internals().currentWorldName = 'planitia';
+  });
+
+  afterEach(() => {
+    delete (document as unknown as { hidden?: boolean }).hidden;
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('regression: after three drops, returning to the tab reconnects at once', () => {
+    threeDrops();
+    const before = internals().ws;
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(internals().ws).not.toBe(before);
+  });
+
+  it('a persisted pageshow reconnects at once; a fresh one does not', () => {
+    threeDrops();
+    const before = internals().ws;
+    pageshow(false);
+    expect(internals().ws).toBe(before);
+    pageshow(true);
+    expect(internals().ws).not.toBe(before);
+  });
+
+  it('a resume reconnects at once', () => {
+    threeDrops();
+    const before = internals().ws;
+    document.dispatchEvent(new Event('resume'));
+    expect(internals().ws).not.toBe(before);
+  });
+
+  it('no immediate reconnect without stored credentials', () => {
+    threeDrops();
+    const before = internals().ws;
+    internals().storedUsername = '';
+    document.dispatchEvent(new Event('resume'));
+    expect(internals().ws).toBe(before);
+    expect(useGameStore.getState().status).toBe('reconnecting');
+  });
+
+  it('after a reconnect, hiding the tab stops the heartbeat and showing it restarts it', () => {
+    dropAndWait();
+    internals().ws.onopen?.();
+    useGameStore.setState({ status: 'connected' });
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(internals().viewportHeartbeatTimer).not.toBeNull();
+
+    hidden = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(internals().viewportHeartbeatTimer).toBeNull();
+
+    hidden = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(internals().viewportHeartbeatTimer).not.toBeNull();
+  });
+
+  it('beforeunload and pagehide send no REQ_LOGOUT; the Logout button still does', async () => {
+    window.dispatchEvent(new Event('beforeunload'));
+    window.dispatchEvent(new Event('pagehide'));
+    expect(logoutFrames()).toHaveLength(0);
+
+    client.callbacks.onLogout();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(logoutFrames()).toHaveLength(1);
+  });
+
+  it('while connected, no lifecycle event opens a second socket', () => {
+    const before = internals().ws;
+    document.dispatchEvent(new Event('visibilitychange'));
+    document.dispatchEvent(new Event('resume'));
+    pageshow(true);
+    expect(internals().ws).toBe(before);
+  });
+});
+
+/**
+ * #1048 — the startup status stream is reopened after an error (the old fetch fallback could
+ * never parse the SSE body), and 60 s without an open stream shows the unreachable state.
+ */
+describe('startup status stream (issue 1048)', () => {
+  const sources: ControlledEventSource[] = [];
+
+  class ControlledEventSource extends FakeEventSource {
+    onopen: (() => void) | null = null;
+    private listeners = new Map<string, (e: { data: string }) => void>();
+    override close = jest.fn();
+    constructor() {
+      super();
+      sources.push(this);
+    }
+    override addEventListener(type?: string, fn?: (e: { data: string }) => void): void {
+      if (type && fn) this.listeners.set(type, fn);
+    }
+    open(): void { this.onopen?.(); }
+    fail(): void { this.onerror?.(); }
+    emit(type: string, data: unknown): void { this.listeners.get(type)?.({ data: JSON.stringify(data) }); }
+  }
+
+  const progress = (phase: string, services: Array<{ name: string; status: string; progress: number }> = []) => ({
+    phase, progress: 0.5, message: phase, services,
+  });
+  const startup = () => useGameStore.getState().serverStartup;
+  let fetchMock: jest.Mock;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sources.length = 0;
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    fetchMock = jest.fn();
+    (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = ControlledEventSource;
+    useGameStore.setState({
+      serverStartup: { ready: false, progress: 0, message: '', services: [], unreachable: false },
+    });
+    new StarpeaceClient();
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('an SSE error reopens the stream after 2 s, and its ready status ends the wait with no fetch', () => {
+    expect(sources).toHaveLength(1);
+    sources[0].fail();
+    expect(sources[0].close).toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1_999);
+    expect(sources).toHaveLength(1);
+    jest.advanceTimersByTime(1);
+    expect(sources).toHaveLength(2);
+
+    sources[1].emit('status', { phase: 'ready', progress: 1, message: 'Server ready', services: [] });
+
+    expect(startup().ready).toBe(true);
+    expect(startup().unreachable).toBe(false);
+    expect(sources[1].close).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(120_000);
+    expect(sources).toHaveLength(2);
+  });
+
+  it('60 s of failing streams sets unreachable; reopening goes on and a later ready still lands', () => {
+    const failLatest = () => sources[sources.length - 1].fail();
+    failLatest();
+    jest.advanceTimersByTime(58_000);
+    failLatest();
+    expect(startup().unreachable).toBeFalsy();
+
+    jest.advanceTimersByTime(2_000);
+    expect(startup().unreachable).toBe(true);
+
+    const countBefore = sources.length;
+    failLatest();
+    jest.advanceTimersByTime(2_000);
+    expect(sources.length).toBe(countBefore + 1);
+    expect(startup().unreachable).toBe(true);
+
+    sources[sources.length - 1].emit('status', { phase: 'ready', progress: 1, message: 'Server ready', services: [] });
+    expect(startup().ready).toBe(true);
+    expect(startup().unreachable).toBe(false);
+  });
+
+  it('a constructor that throws is retried like an error', () => {
+    const Throwing = function () { throw new Error('blocked'); };
+    (globalThis as unknown as { EventSource: unknown }).EventSource = Throwing;
+    sources[0].fail();
+    jest.advanceTimersByTime(60_000);
+    expect(startup().unreachable).toBe(true);
+
+    (globalThis as unknown as { EventSource: unknown }).EventSource = ControlledEventSource;
+    jest.advanceTimersByTime(2_000);
+    expect(sources).toHaveLength(2);
+  });
+
+  it('an open stream sending progress for 90 s never shows unreachable', () => {
+    sources[0].open();
+    for (let t = 0; t < 9; t++) {
+      jest.advanceTimersByTime(10_000);
+      sources[0].emit('status', progress('initializing', [{ name: 'cache', status: 'running', progress: 0.5 }]));
+    }
+    jest.advanceTimersByTime(10_000);
+    expect(startup().unreachable).toBe(false);
+    expect(startup().ready).toBe(false);
+  });
+
+  it('an open stream that stays silent for 90 s never shows unreachable', () => {
+    sources[0].open();
+    jest.advanceTimersByTime(90_000);
+    expect(startup().unreachable).toBe(false);
+  });
+
+  it('opening a stream clears unreachable and stops the clock', () => {
+    sources[0].fail();
+    jest.advanceTimersByTime(60_000);
+    expect(startup().unreachable).toBe(true);
+
+    sources[sources.length - 1].open();
+    expect(startup().unreachable).toBe(false);
+    jest.advanceTimersByTime(120_000);
+    expect(startup().unreachable).toBe(false);
+  });
+
+  it('a status listing a failed service sets unreachable at once', () => {
+    sources[0].open();
+    sources[0].emit('status', progress('initializing', [{ name: 'maps', status: 'failed', progress: 0 }]));
+    expect(startup().unreachable).toBe(true);
+  });
+});
+
+/**
+ * #1048 — a socket closed on the login screen is reopened lazily by the next sign-in, and a
+ * sign-in that cannot reach the gateway says so instead of "WebSocket not connected".
+ */
+describe('sign-in reopens a closed gateway socket (issue 1048)', () => {
+  const sockets: LoginSocket[] = [];
+
+  class LoginSocket extends FakeSocket {
+    sent: string[] = [];
+    constructor() {
+      super();
+      sockets.push(this);
+    }
+    override send(payload?: string): void {
+      if (payload !== undefined) this.sent.push(payload);
+    }
+    types(): string[] { return this.sent.map((p) => (JSON.parse(p) as { type: string }).type); }
+  }
+
+  const remembered = { username: 'u', zonePath: '', worldName: 'planitia', companyId: 'C1', companyName: 'Co' };
+  let client: StarpeaceClient;
+
+  const flush = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sockets.length = 0;
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = LoginSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    client = new StarpeaceClient();
+    useGameStore.setState({
+      status: 'disconnected', authError: null, loginLoading: false, rememberedSession: remembered,
+    });
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  const closeFirst = () => {
+    sockets[0].onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('disconnected');
+  };
+
+  it('onAuthCheck opens a new socket and sends REQ_AUTH_CHECK only after it opens', async () => {
+    closeFirst();
+
+    client.callbacks.onAuthCheck('u', 'p');
+    expect(sockets).toHaveLength(2);
+    await flush();
+    expect(sockets[1].sent).toHaveLength(0);
+
+    sockets[1].onopen?.();
+    await flush();
+    expect(sockets[1].types()).toEqual([WsMessageType.REQ_AUTH_CHECK]);
+    expect(sockets[0].sent).toHaveLength(0);
+  });
+
+  it('onResumeSession opens a new socket and sends REQ_AUTH_CHECK only after it opens', async () => {
+    closeFirst();
+
+    client.callbacks.onResumeSession(remembered, 'p');
+    expect(sockets).toHaveLength(2);
+    await flush();
+    expect(sockets[1].sent).toHaveLength(0);
+
+    sockets[1].onopen?.();
+    await flush();
+    expect(sockets[1].types()).toEqual([WsMessageType.REQ_AUTH_CHECK]);
+  });
+
+  it('a new socket that closes before opening shows the shared sentence', async () => {
+    closeFirst();
+    useGameStore.setState({ loginLoading: true });
+
+    client.callbacks.onAuthCheck('u', 'p');
+    sockets[1].onclose?.({ code: 1006 });
+    await flush();
+
+    expect(useGameStore.getState().authError?.message).toBe(GATEWAY_UNREACHABLE_MESSAGE);
+    expect(useGameStore.getState().loginLoading).toBe(false);
+    expect(sockets[1].sent).toHaveLength(0);
+  });
+
+  it('on the resume path a socket that never opens keeps the remembered session', async () => {
+    closeFirst();
+
+    client.callbacks.onResumeSession(remembered, 'p');
+    sockets[1].onclose?.({ code: 1006 });
+    await flush();
+
+    expect(useGameStore.getState().authError?.message).toBe(GATEWAY_UNREACHABLE_MESSAGE);
+    expect(useGameStore.getState().rememberedSession).toEqual(remembered);
+  });
+
+  it('no open within 10 s gives the same sentence', async () => {
+    closeFirst();
+
+    client.callbacks.onAuthCheck('u', 'p');
+    jest.advanceTimersByTime(9_999);
+    await flush();
+    expect(useGameStore.getState().authError).toBeNull();
+
+    jest.advanceTimersByTime(1);
+    await flush();
+    expect(useGameStore.getState().authError?.message).toBe(GATEWAY_UNREACHABLE_MESSAGE);
+    expect(sockets[1].sent).toHaveLength(0);
+  });
+
+  it('with the socket open, onAuthCheck constructs no socket and sends at once', async () => {
+    sockets[0].onopen?.();
+
+    client.callbacks.onAuthCheck('u', 'p');
+    await flush();
+
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].types()).toEqual([WsMessageType.REQ_AUTH_CHECK]);
+  });
+
+  it('with the first socket still connecting, onAuthCheck waits for it instead of opening another', async () => {
+    client.callbacks.onAuthCheck('u', 'p');
+    await flush();
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].sent).toHaveLength(0);
+
+    sockets[0].onopen?.();
+    await flush();
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].types()).toEqual([WsMessageType.REQ_AUTH_CHECK]);
+  });
+});
+
+/**
+ * #1050 — a reconnect after a deploy checks whether the gateway now serves another bundle,
+ * fire and forget beside the login replay, and raises the "New version available" flag.
+ */
+describe('reconnect checks the served bundle (issue 1050)', () => {
+  const sockets: BundleSocket[] = [];
+
+  class BundleSocket extends FakeSocket {
+    sent: string[] = [];
+    constructor() {
+      super();
+      sockets.push(this);
+    }
+    override send(payload?: string): void {
+      if (payload !== undefined) this.sent.push(payload);
+    }
+  }
+
+  type Internals = {
+    ws: BundleSocket;
+    storedUsername: string;
+    storedPassword: string;
+    currentWorldName: string;
+  };
+  const g = globalThis as unknown as { fetch?: unknown };
+  const originalFetch = g.fetch;
+  let client: StarpeaceClient;
+  let fetchMock: jest.Mock;
+  const internals = () => client as unknown as Internals;
+
+  const flush = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+  const loginFrames = () =>
+    sockets
+      .flatMap((s) => s.sent.map((p) => JSON.parse(p) as { type: string }))
+      .filter((f) => f.type === WsMessageType.REQ_LOGIN_WORLD);
+  const serve = (entry: string) => {
+    fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      text: async () => `<script type="module" src="${entry}"></script>`,
+    });
+    g.fetch = fetchMock;
+  };
+
+  /** Drop the first socket, let the reconnect timer run, and open the reconnect socket. */
+  const reconnect = async () => {
+    internals().ws.onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    jest.advanceTimersByTime(60_000);
+    expect(sockets.length).toBeGreaterThan(1);
+    internals().ws.onopen?.();
+    await flush();
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sockets.length = 0;
+    document.head.innerHTML = '<script type="module" src="assets/app.OLD.js"></script>';
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = BundleSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    client = new StarpeaceClient();
+    internals().ws.onopen?.();
+    useGameStore.setState({ status: 'connected', companyId: 'C1', serverRestarting: false, reconnectAttempt: 0 });
+    internals().storedUsername = 'u';
+    internals().storedPassword = 'p';
+    internals().currentWorldName = 'planitia';
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    useUiStore.setState({ newVersionAvailable: false });
+    g.fetch = originalFetch;
+    document.head.innerHTML = '';
+  });
+
+  it('a different served entry sets the flag, and the login replay still starts', async () => {
+    serve('assets/app.NEW.js');
+    await reconnect();
+
+    expect(fetchMock).toHaveBeenCalledWith('/', { cache: 'no-store' });
+    expect(useUiStore.getState().newVersionAvailable).toBe(true);
+    expect(loginFrames().length).toBeGreaterThan(0);
+  });
+
+  it('the same served entry leaves the flag false', async () => {
+    serve('assets/app.OLD.js');
+    await reconnect();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(useUiStore.getState().newVersionAvailable).toBe(false);
+    expect(loginFrames().length).toBeGreaterThan(0);
+  });
+
+  it('once the flag is set, a later reconnect does not fetch again', async () => {
+    useUiStore.setState({ newVersionAvailable: true });
+    serve('assets/app.NEW.js');
+    await reconnect();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(loginFrames().length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * #1076 — a close with 1013 ("Try Again Later") is the gateway refusing a login at its session
+ * cap. Before the game it ends at once in a "server full" card; during a reconnect it keeps the
+ * episode going, and the refused socket does not reset the back-off counter.
+ */
+describe('close code 1013 — server full (issue 1076)', () => {
+  const sockets: TrackedSocket[] = [];
+
+  class TrackedSocket extends FakeSocket {
+    constructor() {
+      super();
+      sockets.push(this);
+    }
+  }
+
+  type Internals = {
+    ws: TrackedSocket;
+    storedUsername: string | null;
+    storedPassword: string | null;
+    currentWorldName: string;
+    reconnectAttempt: number;
+  };
+  let client: StarpeaceClient;
+  const internals = () => client as unknown as Internals;
+  const delay = (k: number) => getReconnectDelay(k, () => 0.5);
+  const loginMock = () => authHandler.login as jest.MockedFunction<typeof authHandler.login>;
+
+  const flush = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+
+  /** A promise the test settles by hand, handed to the reconnect socket's login replay. */
+  const controlledLogin = () => {
+    let reject: (e: Error) => void = () => undefined;
+    const p = new Promise<never>((_resolve, rej) => { reject = rej; });
+    p.catch(() => undefined); // a failing test that never consumed p must not crash the run
+    loginMock().mockReturnValueOnce(p);
+    return { reject: async () => { reject(new Error('refused')); await flush(); } };
+  };
+
+  /** The current reconnect socket opens, then the gateway refuses it with 1013. */
+  const refuse = async () => {
+    const ws = internals().ws;
+    ws.onopen?.();
+    await flush();
+    ws.onclose?.({ code: 1013 });
+    await flush();
+  };
+
+  /** Exactly one reconnect timer is live, and it fires at exactly `ms`. */
+  const expectOneTimerAt = (ms: number) => {
+    const n = sockets.length;
+    jest.advanceTimersByTime(ms - 1);
+    expect(sockets.length).toBe(n);
+    jest.advanceTimersByTime(1);
+    expect(sockets.length).toBe(n + 1);
+    jest.advanceTimersByTime(60_000);
+    expect(sockets.length).toBe(n + 1);
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sockets.length = 0;
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = TrackedSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    jest.spyOn(Math, 'random').mockReturnValue(0.5);
+    // A login replay that never answers, unless a test hands one over with controlledLogin().
+    loginMock().mockImplementation(() => new Promise<never>(() => undefined));
+    useUiStore.setState({ newVersionAvailable: true });
+    client = new StarpeaceClient();
+    useGameStore.setState({
+      status: 'connected', companyId: 'C1', serverRestarting: false, serverFull: false,
+      reconnectAttempt: 0, disconnectReason: null,
+    });
+    internals().storedUsername = 'u';
+    internals().storedPassword = 'p';
+    internals().currentWorldName = 'planitia';
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+    const actual = jest.requireActual('./handlers/auth-handler') as typeof authHandler;
+    loginMock().mockReset();
+    loginMock().mockImplementation((...args) => actual.login(...args));
+    useUiStore.setState({ newVersionAvailable: false });
+  });
+
+  describe('fresh login (never reached the game)', () => {
+    it.each([
+      ['with stored credentials', 'u'],
+      ['without stored credentials', null],
+    ])('a 1013 ends at once in server_full, %s, with no retry', (_label, creds) => {
+      internals().storedUsername = creds;
+      internals().storedPassword = creds;
+      useGameStore.setState({ companyId: '', status: 'disconnected' });
+      internals().ws.onclose?.({ code: 1013 });
+      expect(useGameStore.getState().status).toBe('disconnected');
+      expect(useGameStore.getState().disconnectReason).toBe('server_full');
+      jest.advanceTimersByTime(60_000);
+      expect(sockets).toHaveLength(1);
+      expect(internals().reconnectAttempt).toBe(0);
+      expect(useGameStore.getState().reconnectAttempt).toBe(0);
+    });
+  });
+
+  it('in game, consecutive refusals back off 2 s, 4 s, 8 s, 16 s — never a repeated (0)', async () => {
+    internals().ws.onclose?.({ code: 1013 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    expect(useGameStore.getState().serverFull).toBe(true);
+    expectOneTimerAt(delay(0));
+
+    const refusedDelays: number[] = [];
+    for (const k of [1, 2, 3]) {
+      await refuse();
+      expect(internals().reconnectAttempt).toBe(k + 1);
+      expect(useGameStore.getState().reconnectAttempt).toBe(k + 1);
+      expectOneTimerAt(delay(k));
+      refusedDelays.push(delay(k));
+    }
+    expect(refusedDelays).toEqual([4000, 8000, 16000]);
+    expect(refusedDelays).not.toEqual([delay(0), delay(0), delay(0)]);
+    expect(useGameStore.getState().status).toBe('reconnecting');
+  });
+
+  it('the cause survives a 1006 in the same episode and is cleared on connected', async () => {
+    internals().ws.onclose?.({ code: 1013 });
+    jest.advanceTimersByTime(delay(0));
+    internals().ws.onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    expect(useGameStore.getState().serverFull).toBe(true);
+    ClientBridge.setConnected();
+    expect(useGameStore.getState().serverFull).toBe(false);
+  });
+
+  it('.catch after a 1013 close arms no second timer', async () => {
+    internals().ws.onclose?.({ code: 1013 });
+    jest.advanceTimersByTime(delay(0));
+    const login = controlledLogin();
+    await refuse();
+    await login.reject();
+    expect(internals().reconnectAttempt).toBe(2);
+    expectOneTimerAt(delay(1));
+  });
+
+  it('.catch before a 1013 close: the close keeps one timer, at the restored counter', async () => {
+    internals().ws.onclose?.({ code: 1013 });
+    jest.advanceTimersByTime(delay(0));
+    await refuse();
+    jest.advanceTimersByTime(delay(1));
+    const login = controlledLogin();
+    const ws = internals().ws;
+    ws.onopen?.();
+    await flush();
+    await login.reject();
+    ws.onclose?.({ code: 1013 });
+    await flush();
+    expect(internals().reconnectAttempt).toBe(3);
+    expectOneTimerAt(delay(2));
+  });
+
+  describe('.catch path with another close code (unchanged)', () => {
+    it('rejection then 1006: the close supersedes the .catch timer', async () => {
+      internals().ws.onclose?.({ code: 1006 });
+      jest.advanceTimersByTime(delay(0));
+      const login = controlledLogin();
+      const ws = internals().ws;
+      ws.onopen?.();
+      await flush();
+      await login.reject();
+      ws.onclose?.({ code: 1006 });
+      await flush();
+      expect(internals().reconnectAttempt).toBe(2);
+      expectOneTimerAt(delay(1));
+    });
+
+    it('1006 then rejection: two timers are armed, as today', async () => {
+      internals().ws.onclose?.({ code: 1006 });
+      jest.advanceTimersByTime(delay(0));
+      const login = controlledLogin();
+      const ws = internals().ws;
+      ws.onopen?.();
+      await flush();
+      ws.onclose?.({ code: 1006 });
+      await flush();
+      await login.reject();
+      const n = sockets.length;
+      jest.advanceTimersByTime(60_000);
+      expect(sockets.length).toBe(n + 2);
+      expect(useGameStore.getState().serverFull).toBe(false);
+    });
+  });
+
+  it('after MAX_RECONNECT_ATTEMPTS refusals the episode ends in server_full', async () => {
+    internals().ws.onclose?.({ code: 1013 });
+    for (let i = 0; i < MAX_RECONNECT_ATTEMPTS; i++) {
+      const n = sockets.length;
+      jest.advanceTimersByTime(60_000);
+      expect(sockets.length).toBe(n + 1);
+      await refuse();
+    }
+    expect(useGameStore.getState().status).toBe('disconnected');
+    expect(useGameStore.getState().disconnectReason).toBe('server_full');
+    expect(useGameStore.getState().serverFull).toBe(false);
+    const n = sockets.length;
+    jest.advanceTimersByTime(60_000);
+    expect(sockets.length).toBe(n);
+  });
+
+  it('an exhausted episode without the cause still ends in connection_lost', async () => {
+    internals().ws.onclose?.({ code: 1006 });
+    for (let i = 0; i < MAX_RECONNECT_ATTEMPTS; i++) {
+      jest.advanceTimersByTime(60_000);
+      internals().ws.onclose?.({ code: 1006 });
+      await flush();
+    }
+    expect(useGameStore.getState().status).toBe('disconnected');
+    expect(useGameStore.getState().disconnectReason).toBe('connection_lost');
+  });
+
+  describe.each([1000, 1006, 1012])('a close with %i (unchanged)', (code) => {
+    it('in game: reconnecting, no server-full cause', () => {
+      internals().ws.onclose?.({ code });
+      expect(useGameStore.getState().status).toBe('reconnecting');
+      expect(useGameStore.getState().serverFull).toBe(false);
+      expect(useGameStore.getState().disconnectReason).not.toBe('server_full');
+    });
+
+    it('before the game: reconnecting, then session_expired after the timer', () => {
+      useGameStore.setState({ companyId: '', status: 'disconnected' });
+      internals().ws.onclose?.({ code });
+      expect(useGameStore.getState().status).toBe('reconnecting');
+      jest.advanceTimersByTime(delay(0));
+      expect(useGameStore.getState().status).toBe('disconnected');
+      expect(useGameStore.getState().disconnectReason).toBe('session_expired');
+    });
+  });
+
+  it('a reconnect socket that opens then closes with 1006 still resets the counter', async () => {
+    internals().ws.onclose?.({ code: 1006 });
+    expectOneTimerAt(delay(0));
+    const ws = internals().ws;
+    ws.onopen?.();
+    await flush();
+    ws.onclose?.({ code: 1006 });
+    await flush();
+    expect(internals().reconnectAttempt).toBe(1);
+    expectOneTimerAt(delay(0));
   });
 });

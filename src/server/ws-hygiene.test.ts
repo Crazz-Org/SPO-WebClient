@@ -33,7 +33,7 @@ describe('startHeartbeat', () => {
     jest.useRealTimers();
   });
 
-  it('pings every 30 s (policy SEC-W-6)', () => {
+  it('pings every 30 s (policy SEC-W-7)', () => {
     expect(WS_HEARTBEAT_INTERVAL_MS).toBe(30_000);
   });
 

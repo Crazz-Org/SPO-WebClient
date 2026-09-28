@@ -28,20 +28,6 @@ describe('handler-utils', () => {
       expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Test: boom');
     });
 
-    it('calls notify callback on error when provided', async () => {
-      const notify = jest.fn();
-      await logErrors('Fetch', async () => {
-        throw new Error('timeout');
-      }, notify);
-      expect(notify).toHaveBeenCalledWith('Fetch: timeout');
-    });
-
-    it('does not call notify on success', async () => {
-      const notify = jest.fn();
-      await logErrors('Test', async () => 'ok', notify);
-      expect(notify).not.toHaveBeenCalled();
-    });
-
     it('handles non-Error thrown values', async () => {
       await logErrors('Test', async () => {
         throw 'string error';

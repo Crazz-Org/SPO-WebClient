@@ -29,6 +29,7 @@ jest.mock('../bridge/client-bridge', () => ({
     setWorld: jest.fn(),
     setCompany: jest.fn(),
     setCredentials: jest.fn(),
+    loadAccountSettings: jest.fn(),
     setPublicOfficeRole: jest.fn(),
     setMapLoadingProgress: jest.fn(),
     setAuthError: jest.fn(),
@@ -126,6 +127,27 @@ describe('auth-handler', () => {
       await login(makeCtx({ sendRequest }), 'Shamba');
 
       expect(sendRequest).toHaveBeenCalledWith(expect.objectContaining({ languageId: '0' }));
+    });
+
+    it('loads the account settings with the language it just sent', async () => {
+      const sendRequest = jest.fn().mockResolvedValue({
+        type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [],
+      });
+
+      await login(makeCtx({ sendRequest }), 'Shamba');
+
+      expect(ClientBridge.loadAccountSettings).toHaveBeenCalledWith('testUser', '0');
+    });
+
+    it('records the normalised language when the store holds one the catalogue does not name', async () => {
+      mockStoreSettings.languageId = '99';
+      const sendRequest = jest.fn().mockResolvedValue({
+        type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [],
+      });
+
+      await login(makeCtx({ sendRequest }), 'Shamba');
+
+      expect(ClientBridge.loadAccountSettings).toHaveBeenCalledWith('testUser', '0');
     });
 
     it('shows companies when server returns a non-empty list', async () => {
@@ -287,7 +309,7 @@ describe('auth-handler', () => {
       await login(ctx, 'Shamba');
 
       expect(ctx.showNotification).toHaveBeenCalledWith(
-        'World login failed: Connection lost',
+        'Could not sign in to this world — something went wrong. Try again.',
         'error',
       );
       expect(ClientBridge.setLoginLoading).toHaveBeenCalledWith(false);
@@ -317,10 +339,39 @@ describe('auth-handler', () => {
 
       expect(ClientBridge.showError).toHaveBeenCalledWith('Session lost, please reconnect');
       expect(ClientBridge.showCompanies).not.toHaveBeenCalled();
+      expect(ClientBridge.loadAccountSettings).not.toHaveBeenCalled();
     });
   });
 
   describe('selectCompanyAndStart()', () => {
+    it('waits for the terrain chunks at the renderer\'s current zoom, not a fixed 2 (#1072)', async () => {
+      const awaitChunksReady = jest.fn().mockResolvedValue(undefined);
+      const getVisibleChunkCoords = jest.fn(() => [{ i: 0, j: 0 }]);
+      const rendererStub = {
+        getZoom: () => 0,
+        getVisibleChunkCoords,
+        getChunkCache: () => ({ awaitChunksReady }),
+        setSeason: jest.fn(),
+        centerOn: jest.fn(),
+      };
+      const ctx = makeCtx({
+        availableCompanies: [],
+        sendRequest: jest.fn().mockResolvedValue({ type: 'RESP_SELECT_COMPANY' }),
+        switchToGameView: jest.fn().mockResolvedValue(undefined),
+        preloadFacilityDimensions: jest.fn().mockResolvedValue(undefined),
+        connectMailService: jest.fn().mockResolvedValue(undefined),
+        getProfile: jest.fn().mockResolvedValue(undefined),
+        initChatChannels: jest.fn().mockResolvedValue(undefined),
+        sendMessage: jest.fn(),
+        getRenderer: () => rendererStub as unknown as ReturnType<ClientHandlerContext['getRenderer']>,
+      });
+
+      await selectCompanyAndStart(ctx, '0');
+
+      expect(getVisibleChunkCoords).toHaveBeenCalledWith(0);
+      expect(awaitChunksReady).toHaveBeenCalledWith(expect.anything(), 0, 15_000, expect.any(Function));
+    });
+
     it('enters as the visitor for company id "0" with an empty company list', async () => {
       const ctx = makeCtx({
         availableCompanies: [],
@@ -362,6 +413,21 @@ describe('auth-handler', () => {
       );
       expect(mockGameStoreMethods.setActiveUsername).toHaveBeenCalledWith('Mayor of Kalisz');
     });
+
+    it('a rejected selection shows the player sentence, the raw text only in the log', async () => {
+      const ctx = makeCtx({
+        availableCompanies: [],
+        sendRequest: jest.fn().mockRejectedValue(new Error('Request Timeout')),
+      });
+
+      await expect(selectCompanyAndStart(ctx, '0')).resolves.toBe(false);
+
+      expect(ctx.showNotification).toHaveBeenCalledWith(
+        'Could not start with this company — the server did not answer in time. Try again.',
+        'error',
+      );
+      expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Company selection failed: Request Timeout');
+    });
   });
 
   // #532 — the refusal the modal shows is the gateway's sentence, not the one
@@ -389,7 +455,10 @@ describe('auth-handler', () => {
 
       await performAuthCheck(ctx, 'testUser', 'badPass');
 
-      expect(ClientBridge.setAuthError).toHaveBeenCalledWith({ code: 7, message: 'Request Timeout' });
+      expect(ClientBridge.setAuthError).toHaveBeenCalledWith({
+        code: 7,
+        message: 'Could not sign in — the server did not answer in time. Try again.',
+      });
     });
 
     it('stores the credentials and raises no error on a valid logon', async () => {
@@ -457,6 +526,18 @@ describe('auth-handler', () => {
   });
 
   describe('performDirectoryLogin() — the world limit', () => {
+    it('a rejected directory login shows the player sentence, the raw text only in the log', async () => {
+      const ctx = makeCtx({ sendRequest: jest.fn().mockRejectedValue(new Error('WebSocket not connected')) });
+
+      await expect(performDirectoryLogin(ctx, 'testUser', 'testPass')).resolves.toBeNull();
+
+      expect(ClientBridge.showError).toHaveBeenCalledWith(
+        'Could not sign in — you are not connected to the game right now. Try again.',
+      );
+      expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Directory Auth Failed: WebSocket not connected');
+      expect(ClientBridge.setLoginLoading).toHaveBeenCalledWith(false);
+    });
+
     it('forwards the flag and says so in the log when the directory refused', async () => {
       const ctx = makeCtx({
         sendRequest: jest.fn().mockResolvedValue({
@@ -761,7 +842,8 @@ describe('auth-handler', () => {
 
       await profileSwitchCompany(ctx, '55', 'SPO_test3 - Green', 'SPO_test3');
 
-      expect(ClientBridge.showError).toHaveBeenCalledWith('Failed to switch company: ECONNRESET');
+      expect(ClientBridge.showError).toHaveBeenCalledWith('Could not switch company — something went wrong. Try again.');
+      expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Failed to switch company: ECONNRESET');
       expect(ClientBridge.setCompany).not.toHaveBeenCalled();
     });
   });
@@ -828,7 +910,8 @@ describe('auth-handler', () => {
 
       await abandonRole(ctx);
 
-      expect(ClientBridge.showError).toHaveBeenCalledWith('Abandon role failed: ECONNRESET');
+      expect(ClientBridge.showError).toHaveBeenCalledWith('Could not abandon this role — something went wrong. Try again.');
+      expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Abandon role failed: ECONNRESET');
       expect(mockGameStoreMethods.setSwitchingCompany).toHaveBeenLastCalledWith(false);
     });
   });

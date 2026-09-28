@@ -77,7 +77,6 @@ export function CommandPalette() {
       {
         id: 'settings',
         label: 'Open Settings',
-        shortcut: 'Cmd+,',
         category: 'navigation',
         execute: () => openModal('settings'),
       },

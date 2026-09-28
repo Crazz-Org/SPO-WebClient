@@ -23,6 +23,7 @@ import {
   type WsRespFavoriteMove,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { playerErrorMessage, playerErrorReason } from '../player-error';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useGameStore } from '../store/game-store';
 import { useEmpireStore } from '../store/empire-store';
@@ -48,7 +49,8 @@ export async function addFavorite(
     ctx.showNotification(`"${name}" added to your list`, 'success');
     refreshFacilities(ctx);
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to add favourite: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to add favourite: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('add this favourite', err), 'error');
   }
 }
 
@@ -65,7 +67,8 @@ export async function removeFavorite(
     ctx.showNotification(`"${name}" removed from your list`, 'success');
     refreshFacilities(ctx);
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to remove favourite: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to remove favourite: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('remove this favourite', err), 'error');
   }
 }
 
@@ -106,7 +109,8 @@ export async function removeFavorites(
         removed.push(item.name);
       }
     } catch (err: unknown) {
-      failed.push({ name: item.name, message: toErrorMessage(err) });
+      ClientBridge.log('Error', `Failed to remove favourite "${item.name}": ${toErrorMessage(err)}`);
+      failed.push({ name: item.name, message: playerErrorReason(err) });
     }
   }
 
@@ -142,7 +146,8 @@ export async function renameFavorite(
     }
     refreshFacilities(ctx);
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to rename favourite: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to rename favourite: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('rename this favourite', err), 'error');
   }
 }
 
@@ -159,7 +164,8 @@ export async function createFolder(
     ctx.showNotification(`"${name}" created`, 'success');
     refreshFacilities(ctx);
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to create folder: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to create folder: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('create this folder', err), 'error');
   }
 }
 
@@ -176,7 +182,8 @@ export async function moveFavorite(
     ctx.showNotification(`"${name}" moved`, 'success');
     refreshFacilities(ctx);
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to move favourite: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to move favourite: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('move this favourite', err), 'error');
   }
 }
 
@@ -217,14 +224,17 @@ export async function migrateLocalBookmarks(ctx: ClientHandlerContext): Promise<
       const req: WsReqFavoriteAdd = { type: WsMessageType.REQ_FAVORITE_ADD, name: b.name, x: b.x, y: b.y };
       const response = await ctx.sendRequest(req) as WsRespFavoriteAdd;
       if (!response.success) {
-        throw new Error(response.message || 'the server refused one of them');
+        migrationDone.delete(key);
+        ctx.showNotification(
+          `Could not move your saved places to your account: ${response.message || 'the server refused one of them'}`, 'error',
+        );
+        return;
       }
     }
   } catch (err: unknown) {
     migrationDone.delete(key);
-    ctx.showNotification(
-      `Could not move your saved places to your account: ${toErrorMessage(err)}`, 'error',
-    );
+    ClientBridge.log('Error', `Failed to move saved places: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('move your saved places to your account', err), 'error');
     return;
   }
 

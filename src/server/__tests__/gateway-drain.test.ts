@@ -33,6 +33,10 @@ jest.mock('../spo_session', () => {
     getPhase = jest.fn(() => Phase.DISCONNECTED);
     setCorrelationId = jest.fn();
     getWorldInfo = jest.fn(() => undefined);
+    // Read by the observability session registry when the connection closes.
+    getQueueStatus = jest.fn(() => ({
+      rdoMetrics: { totalSent: 0, totalTimedOut: 0, totalErrorReplies: 0, totalLateResponses: 0, totalReconnectFailures: 0 },
+    }));
     endSession = jest.fn(() => mockEndSessionImpl());
     destroy = jest.fn();
     constructor() {
