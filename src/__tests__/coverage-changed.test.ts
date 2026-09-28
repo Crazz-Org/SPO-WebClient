@@ -103,6 +103,9 @@ describe('isEligible', () => {
     'src/client/components/Foo.tsx',
     'src/e2e/flows.ts',
     'src\\server\\session.ts',
+    'src/server/__tests__/protocol-validation/protocol-test-harness.ts',
+    'src/__tests__/load/session-capacity.ts',
+    'src/client/__mocks__/audio.ts',
   ])('accepts %s', file => {
     expect(script.isEligible(file)).toBe(true);
   });
@@ -115,6 +118,9 @@ describe('isEligible', () => {
     'scripts/coverage-changed.js',
     'src/client/style.css',
     'src/__mocks__/css-module.js',
+    'src/__tests__/load/session-memory.load.ts',
+    'src/client/__tests__/render.load.tsx',
+    'src\\__tests__\\load\\session-memory.load.ts',
     'doc/BACKLOG.md',
   ])('rejects %s', file => {
     expect(script.isEligible(file)).toBe(false);

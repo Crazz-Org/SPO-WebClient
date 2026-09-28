@@ -76,7 +76,7 @@ this table is the description, not the source.
 
 | Column | Milestone | Enters when | Leaves when |
 |---|---|---|---|
-| 📨 **Intake** | A raw bug report, filed mechanically, not yet judged | `report-intake` filed the report verbatim as a card. Carries the `report:raw` label, and the claim read never sees it. | A maintainer comments `confirm` (→ triage, then Todo) or `discard`. |
+| 📨 **Intake** | A triaged bug-report card awaiting a second look | The pipeline's report triage filed a reviewed card that passed `--check-public` and moved it here instead of Todo — only when `SPO_AUTO_TRIAGE_PROMOTE_TO_TODO` is `false` (or `0`). Raw reports never appear on this board; they live in the private intake repository `Crazz-Org/SPO-Reports` (SPO-Pipeline `config.reportIntakeRepo`). The claim read never sees this column. | The maintainer moves it to Todo, or closes it. |
 | 📥 **Todo** | Unowned pool | Issue created and added to the project. **Vertical order = priority**, maintained by the human — the orchestrator always takes the topmost unowned item. | The orchestrator claims it. |
 | 🗺️ **Planning** | Owned, worktree open, change being planned | The claim handshake wrote the task's identity into `Session`; the worktree exists. | The plan is in hand and implementation starts. |
 | 🔨 **Implementing** | Owned, in development | Planning returned a plan. Branch, implementation, tests. | Local checks start. |

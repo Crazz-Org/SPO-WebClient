@@ -256,3 +256,10 @@ Roughly ten minutes, no phone required for the first half.
 `/triage-report` **creates** cards from the queue and never implements one. The orchestrator
 (sibling SPO-Pipeline repo) **claims and implements** cards and never reads the queue. A card born in the queue is an ordinary card from the moment it is filed: same
 columns, same ownership law, same [kanban rulebook](kanban-workflow.md).
+
+**Where a raw report is published.** A raw report exists only in `~/.spo-reports` (then
+`~/.spo-reports/archive/`) and in the private intake repository `Crazz-Org/SPO-Reports`
+(SPO-Pipeline `config.reportIntakeRepo`, label `report:raw`). That repository is the only place a
+raw report is ever published. The public board receives only a reviewed card that has passed
+`--check-public` (see "What may reach the public board" above), whether `/triage-report` or the
+pipeline drafted it.

@@ -34,6 +34,7 @@ Moved to [SPO-Deploy's `doc/production-security-policy.md` §1](https://github.c
 | SEC-W-4 | Messages MUST be gated by session phase (`PHASE_ALLOWED_MESSAGES`): gameplay messages before auth → `ERROR_AccessDenied`; unknown message types MUST be rejected. | Met (`server.ts:PHASE_ALLOWED_MESSAGES`) | L4 |
 | SEC-W-5 | Auth-bearing messages (`REQ_AUTH_CHECK`, `REQ_CONNECT_DIRECTORY`, `REQ_LOGIN_WORLD`) MUST be rate-limited per IP — one bucket per message type, 10 per minute per IP, so a full three-message login consumes one unit of each. | Met (`server/rate-limit.ts:checkAuthRateLimit`) | L4 |
 | SEC-W-6 | Per-socket message rate MUST be capped: 20 messages/s sustained, burst 50, and at most 100 messages queued on the RDO lane; exceeding either closes the socket with 1008 (maintainer decision, 2026-09-27). Counted before the lane is chosen, in every mode including SINGLE_USER_MODE. | Met (`server/ws-message-guard.ts:WS_MESSAGE_RATE_PER_SECOND, WS_MESSAGE_BURST, WS_MAX_QUEUED_MESSAGES`, wired in `server.ts` `ws.on('message')`; pinned by `server/ws-message-guard.test.ts` and `server/__tests__/ws-message-guard-wiring.test.ts`) | L0 |
+| SEC-W-7 | Idle or unresponsive (half-open) WebSocket connections MUST be detected: the gateway pings every open socket every 30 s and terminates one whose previous ping got no pong, so a socket that stopped answering is closed within ~60 s (maintainer decision, 2026-09-27). | Met (`server/ws-hygiene.ts:WS_HEARTBEAT_INTERVAL_MS`, pinned by `server/ws-hygiene.test.ts`) | L4 |
 
 ## 4. Gateway → Game-Server Conduct (SEC-G)
 

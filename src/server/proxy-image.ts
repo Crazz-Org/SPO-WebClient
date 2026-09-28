@@ -109,6 +109,26 @@ export const GAME_SERVER_CACHE_PREFIX = 'gs1-';
  */
 export const STORED_PLACEHOLDER_TTL_MS = 60 * 60 * 1000;
 
+/** Largest image body read from an upstream server (node-fetch `size`); larger ends in the placeholder. */
+export const MAX_PROXY_IMAGE_BYTES = 2 * 1024 * 1024;
+
+/** Most failed image fetches remembered in memory; the oldest is evicted first. */
+export const MAX_FAILED_IMAGE_ENTRIES = 10_000;
+
+/** Failed image fetches by cache name -> time of failure (ms). Memory only, never on disk. */
+export const failedImageFetches = new Map<string, number>();
+
+/** Remember a failed fetch, moving a repeat to the newest position and evicting the oldest past the bound. */
+export function recordFailedImageFetch(key: string, now: number = Date.now()): void {
+  failedImageFetches.delete(key);
+  failedImageFetches.set(key, now);
+  while (failedImageFetches.size > MAX_FAILED_IMAGE_ENTRIES) {
+    const oldest = failedImageFetches.keys().next().value;
+    if (oldest === undefined) break;
+    failedImageFetches.delete(oldest);
+  }
+}
+
 const GAME_SERVER_CACHE_NAME_RE = new RegExp(
   `^${GAME_SERVER_CACHE_PREFIX}[0-9a-f]{40}\\.(${ALLOWED_IMAGE_EXTENSIONS.map((e) => e.slice(1)).join('|')})$`,
 );
@@ -161,7 +181,26 @@ export async function buildImageFileIndexEntries(
     for (const file of files) {
       const key = file.toLowerCase();
       if (isGameServerCacheName(key) && !newIndex.has(key)) {
-        newIndex.set(key, path.join(webclientCacheDir, file));
+        const fullPath = path.join(webclientCacheDir, file);
+        try {
+          // A failure placeholder left on disk by an older build is not an image: skip it
+          // One open handle for both the size check and the read, so they see the same file
+          const placeholder = getPlaceholderImage();
+          const handle = await fsp.open(fullPath, 'r');
+          let isPlaceholder: boolean;
+          try {
+            const { size } = await handle.stat();
+            isPlaceholder = size === placeholder.length && (await handle.readFile()).equals(placeholder);
+          } finally {
+            await handle.close();
+          }
+          if (isPlaceholder) {
+            continue;
+          }
+          newIndex.set(key, fullPath);
+        } catch {
+          // Unreadable file: skip it, keep indexing the rest
+        }
       }
     }
   } catch {
@@ -261,6 +300,17 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
       imageFileIndex.delete(cacheKey);
     }
 
+    // A recent failure remembered in memory: answer the placeholder without fetching again
+    const failedAt = failedImageFetches.get(cacheName);
+    if (failedAt !== undefined) {
+      if (Date.now() - failedAt < STORED_PLACEHOLDER_TTL_MS) {
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(getPlaceholderImage());
+        return;
+      }
+      failedImageFetches.delete(cacheName);
+    }
+
     // Not in index — try downloading from update server
     const imageDirs: string[] = [];
     for (const [, filePath] of imageFileIndex) {
@@ -274,7 +324,7 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
     for (const dir of imageDirs) {
       try {
         const updateUrl = `${updateServerCacheUrl}/${dir}/${filename}`;
-        const response = await fetchWithTimeout(updateUrl, { redirect: 'manual' }, TIMEOUTS.IMAGE_DOWNLOAD);
+        const response = await fetchWithTimeout(updateUrl, { redirect: 'manual', size: MAX_PROXY_IMAGE_BYTES }, TIMEOUTS.IMAGE_DOWNLOAD);
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer();
           const buffer = Buffer.from(arrayBuffer);
@@ -306,7 +356,7 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
 
     // Not on update server, try game server (fallback). The host is allowlisted above and a
     // redirect is not followed: a 3xx is !ok and ends in the placeholder path below.
-    const response = await fetchWithTimeout(imageUrl, { redirect: 'manual' }, TIMEOUTS.IMAGE_DOWNLOAD);
+    const response = await fetchWithTimeout(imageUrl, { redirect: 'manual', size: MAX_PROXY_IMAGE_BYTES }, TIMEOUTS.IMAGE_DOWNLOAD);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -337,13 +387,9 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
 
     log.warn(`Failed to fetch image ${filename}: ${toErrorMessage(error)}`);
 
-    // Cache the placeholder to avoid repeated failed downloads
+    // Remember the failure in memory only (bounded) to avoid repeated failed downloads
+    recordFailedImageFetch(cacheName);
     const placeholder = getPlaceholderImage();
-    const webclientImagePath = resolveInside(webclientCacheDir, cacheName);
-    if (webclientImagePath) {
-      await fsp.writeFile(webclientImagePath, placeholder).catch(() => {});
-      imageFileIndex.set(cacheName, webclientImagePath);
-    }
 
     // Return placeholder image instead of 404
     res.writeHead(200, { 'Content-Type': 'image/png' });

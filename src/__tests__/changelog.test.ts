@@ -3,6 +3,9 @@
  * notes. The pure functions only; the git-facing CLI is exercised by the workflow.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
+
 interface ParsedCommit {
   prefix: string;
   breaking: boolean;
@@ -14,10 +17,8 @@ interface ChangelogModule {
   categorize(subjects: string[]): Record<string, ParsedCommit[]>;
   baseFromTag(tag: string | null): string | null;
   nextVersion(base: string, subjects: string[]): { version: string; skip: boolean };
-  compareVersions(a: string, b: string): number;
   renderSections(categories: Record<string, ParsedCommit[]>): string;
   generateMarkdownSection(version: string, date: string, categories: Record<string, ParsedCommit[]>): string;
-  jsonEntries(categories: Record<string, ParsedCommit[]>): { type: string; text: string }[];
 }
 
 const changelog: ChangelogModule = require('../../scripts/changelog.js');
@@ -88,15 +89,6 @@ describe('nextVersion', () => {
   });
 });
 
-describe('compareVersions', () => {
-  it('orders numerically, ignoring prerelease suffixes', () => {
-    expect(changelog.compareVersions('v1.4.0', '1.3.2-beta')).toBeGreaterThan(0);
-    expect(changelog.compareVersions('v1.3.2-beta', '1.3.2')).toBe(0);
-    expect(changelog.compareVersions('v1.3.10', 'v1.3.9')).toBeGreaterThan(0);
-    expect(changelog.compareVersions('v1.2.9', 'v1.10.0')).toBeLessThan(0);
-  });
-});
-
 describe('categorize + renderSections', () => {
   const subjects = [
     'docs: align the chain (#39)',
@@ -144,13 +136,24 @@ describe('categorize + renderSections', () => {
     expect(md.startsWith('## [1.4.0] - 2026-08-22\n\n### Fixed\n- y\n')).toBe(true);
   });
 
-  it('jsonEntries keeps Added/Fixed/Changed only and strips the PR suffix', () => {
-    expect(changelog.jsonEntries(changelog.categorize(subjects))).toEqual([
-      { type: 'added', text: 'refuse a dirty tree' },
-      { type: 'fixed', text: 'read Accept Cloning live' },
-      { type: 'changed', text: 'cache the chunk' },
-      { type: 'changed', text: 'derive the separators' },
-    ]);
-    expect(changelog.jsonEntries({})).toEqual([]);
+});
+
+describe('the in-app changelog generator is retired', () => {
+  const root = path.resolve(__dirname, '..', '..');
+
+  it('release.yml no longer runs --json but still runs --next and --notes', () => {
+    const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'release.yml'), 'utf-8');
+    expect(workflow).not.toMatch(/changelog\.js\s+--json/);
+    expect(workflow).toMatch(/changelog\.js\s+--next/);
+    expect(workflow).toMatch(/changelog\.js\s+--notes/);
+  });
+
+  it('the module no longer exports jsonEntries or compareVersions', () => {
+    expect(changelog).not.toHaveProperty('jsonEntries');
+    expect(changelog).not.toHaveProperty('compareVersions');
+  });
+
+  it('src/client/changelog-data.json does not exist', () => {
+    expect(fs.existsSync(path.join(root, 'src', 'client', 'changelog-data.json'))).toBe(false);
   });
 });
