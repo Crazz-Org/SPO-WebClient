@@ -1,9 +1,9 @@
 /**
  * Tests for the useChangelogCheck hook.
  *
- * A returning player whose stored version differs gets the changelog modal; a first
- * visit records the version silently with no popup (maintainer decision 2026-09-27,
- * issue 1050); a matching version, or unavailable storage, keeps it closed.
+ * The modal opens only when a player note (mocked here) has not been seen. A first visit
+ * records every id silently with no popup (maintainer decision 2026-09-27, issue 1050); every
+ * id seen, or unavailable storage, keeps it closed.
  */
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
@@ -12,8 +12,13 @@ import type { ReactNode } from 'react';
 import { ClientContext } from '../context/ClientContext';
 import { createMockClientCallbacks } from '../__tests__/setup/render-helpers';
 import { useUiStore } from '../store/ui-store';
-import { APP_VERSION } from '../version';
 import { useChangelogCheck } from './useChangelogCheck';
+
+jest.mock('../player-notes.json', () => [
+  { id: 7, date: '2026-10-01', type: 'fixed', text: 'A fix.' },
+  { id: 8, date: '2026-10-02', type: 'added', text: 'An addition.' },
+  { id: 9, date: '2026-10-02', type: 'changed', text: 'A change.' },
+]);
 
 const mockCallbacks = createMockClientCallbacks();
 
@@ -36,12 +41,13 @@ afterEach(() => {
 });
 
 describe('useChangelogCheck', () => {
-  it('does not open on a first visit, and records the version', () => {
+  it('does not open on a first visit, and records every note id', () => {
     renderHook(() => useChangelogCheck(), { wrapper });
 
     act(() => { jest.advanceTimersByTime(1000); });
     expect(useUiStore.getState().modal).toBeNull();
-    expect(localStorage.getItem('spo-last-seen-version')).toBe(APP_VERSION);
+    const stored = JSON.parse(localStorage.getItem('spo-seen-notes') ?? 'null') as number[];
+    expect(stored.slice().sort((a, b) => a - b)).toEqual([7, 8, 9]);
   });
 
   it('does not open, and does not throw, when storage is unavailable', () => {
@@ -57,19 +63,21 @@ describe('useChangelogCheck', () => {
     }
   });
 
-  it('does not open modal when version matches localStorage', () => {
-    localStorage.setItem('spo-last-seen-version', APP_VERSION);
+  it('does not open when every note id is stored', () => {
+    localStorage.setItem('spo-seen-notes', '[7,8,9]');
     renderHook(() => useChangelogCheck(), { wrapper });
 
     act(() => { jest.advanceTimersByTime(1000); });
     expect(useUiStore.getState().modal).toBeNull();
   });
 
-  it('opens modal when stored version differs from current', () => {
-    localStorage.setItem('spo-last-seen-version', '0.0.1');
+  it('opens after 500 ms when one note id is missing', () => {
+    localStorage.setItem('spo-seen-notes', '[7,9]');
     renderHook(() => useChangelogCheck(), { wrapper });
 
-    act(() => { jest.advanceTimersByTime(500); });
+    act(() => { jest.advanceTimersByTime(499); });
+    expect(useUiStore.getState().modal).toBeNull();
+    act(() => { jest.advanceTimersByTime(1); });
     expect(useUiStore.getState().modal).toBe('changelog');
   });
 });
