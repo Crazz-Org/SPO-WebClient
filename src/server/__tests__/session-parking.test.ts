@@ -604,4 +604,66 @@ describe('session parking', () => {
     await until(() => logged(session, 'SESSION_PARK'));
     expect(mod.getParkedSessionCount()).toBe(1);
   });
+
+  describe('global session cap (#1074)', () => {
+    it('a parked session is still counted after its WebSocket closed, and freed when the park timer fires', async () => {
+      const { c, session } = await enterWorld('10.0.0.1');
+      expect(mod.sessionCap.counters().admitted).toBe(1);
+      jest.useFakeTimers(FAKE_OPTS);
+      await closeAndPark(c, session);
+      await settle();
+      expect(mod.sessionCap.counters().admitted).toBe(1);
+
+      await jest.advanceTimersByTimeAsync(PARK_MS);
+      await until(() => session.destroy.mock.calls.length === 1);
+      expect(mod.sessionCap.counters().admitted).toBe(0);
+    });
+
+    it('a REQ_RESUME_SESSION with every slot taken re-attaches', async () => {
+      const { c, session, token } = await enterWorld('10.0.0.1');
+      await closeAndPark(c, session);
+      mod.sessionCap.setMax(1);
+
+      const c2 = await connect('10.0.0.2');
+      c2.send({ type: 'REQ_RESUME_SESSION', wsRequestId: 'r', username: 'SPO_test3', token });
+      expect(await c2.waitFor('RESP_RESUME_SESSION')).toMatchObject({ wsRequestId: 'r', username: 'SPO_test3' });
+      expect(mod.sessionCap.counters()).toEqual({ admitted: 1, max: 1, refusedFull: 0 });
+    });
+
+    it("a fresh login does not count the player's own parked session; another player is refused", async () => {
+      const { c, session } = await enterWorld('10.0.0.1', 'SPO_test3');
+      await closeAndPark(c, session);
+      mod.sessionCap.setMax(1);
+
+      const c2 = await connect('10.0.0.2');
+      c2.send({ type: 'REQ_CONNECT_DIRECTORY', wsRequestId: 'd', username: 'SPO_test3', password: 'test3' });
+      await c2.waitFor('RESP_CONNECT_SUCCESS');
+      c2.send({ type: 'REQ_LOGIN_WORLD', wsRequestId: 'l', username: 'SPO_test3', password: 'test3', worldName: 'Planitia' });
+      await c2.waitFor('RESP_LOGIN_SUCCESS');
+      await until(() => session.destroy.mock.calls.length === 1);
+      expect(mod.sessionCap.counters().admitted).toBe(1);
+
+      const c3 = await connect('10.0.0.3');
+      c3.send({ type: 'REQ_CONNECT_DIRECTORY', wsRequestId: 'd', username: 'Crazz', password: 'test' });
+      await c3.waitFor('RESP_CONNECT_SUCCESS');
+      c3.send({ type: 'REQ_LOGIN_WORLD', wsRequestId: 'l3', username: 'Crazz', password: 'test', worldName: 'Planitia' });
+      expect(await c3.waitFor('RESP_ERROR')).toMatchObject({
+        wsRequestId: 'l3',
+        errorMessage: 'The server is full. Please try again in a few minutes.',
+      });
+      expect(await c3.closed).toBe(1013);
+      expect(mod.sessionCap.counters()).toEqual({ admitted: 1, max: 1, refusedFull: 1 });
+    });
+
+    it('a failed world login keeps no slot', async () => {
+      const c = await connect('10.0.0.1');
+      c.send({ type: 'REQ_CONNECT_DIRECTORY', wsRequestId: 'd', username: 'SPO_test3', password: 'test3' });
+      await c.waitFor('RESP_CONNECT_SUCCESS');
+      c.send({ type: 'REQ_LOGIN_WORLD', wsRequestId: 'l', username: 'SPO_test3', password: 'test3', worldName: 'Nowhere' });
+      expect(await c.waitFor('RESP_ERROR')).toMatchObject({ wsRequestId: 'l' });
+      await settle();
+      expect(mod.sessionCap.counters().admitted).toBe(0);
+      expect(c.ws.readyState).toBe(WebSocket.OPEN);
+    });
+  });
 });

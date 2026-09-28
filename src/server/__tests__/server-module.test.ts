@@ -104,3 +104,34 @@ describe('startGateway — production configuration (SEC-R-2)', () => {
     }
   });
 });
+
+/**
+ * SPO_MAX_SESSIONS (SEC-W-3, #1074): an invalid value stops the gateway before anything binds
+ * a port — the same fail-fast as the production configuration above.
+ */
+describe('startGateway — SPO_MAX_SESSIONS', () => {
+  const savedMax = process.env.SPO_MAX_SESSIONS;
+
+  afterEach(() => {
+    if (savedMax === undefined) delete process.env.SPO_MAX_SESSIONS;
+    else process.env.SPO_MAX_SESSIONS = savedMax;
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    jest.resetModules();
+  });
+
+  it('refuses to start on SPO_MAX_SESSIONS=0, naming the variable', async () => {
+    jest.useFakeTimers();
+    jest.resetModules();
+    process.env.SPO_MAX_SESSIONS = '0';
+    const quiet = ['log', 'info', 'warn', 'error'].map(name =>
+      jest.spyOn(console, name as 'log').mockImplementation(() => {})
+    );
+    try {
+      const mod = require('../server') as typeof import('../server');
+      await expect(mod.startGateway({ port: 0 })).rejects.toThrow(/SPO_MAX_SESSIONS/);
+    } finally {
+      quiet.forEach(spy => spy.mockRestore());
+    }
+  });
+});

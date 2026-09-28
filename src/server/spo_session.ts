@@ -462,6 +462,8 @@ export class StarpeaceSession extends EventEmitter {
   private static readonly SOCKET_CONNECT_TIMEOUT_MS = 10_000;
   /** Set once endSession() has logged off — makes it idempotent and disables auto-reconnect on the resulting socket close. */
   private loggedOff = false;
+  /** Set once destroy() has emitted `destroyed` — the global session cap releases the slot on it. */
+  private destroyedEmitted = false;
 
   constructor() {
     super();
@@ -3016,6 +3018,10 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.cachedUsername = null;
 
     this.log.debug('[Session] Session destroyed successfully');
+    if (!this.destroyedEmitted) {
+      this.destroyedEmitted = true;
+      this.emit('destroyed');
+    }
   }
 
   // -- ZONE/SURFACE (facade -> zone-surface-handler) -----------------------
