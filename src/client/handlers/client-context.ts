@@ -105,6 +105,11 @@ export interface ClientHandlerContext {
 
   // ── Logout ───────────────────────────────────────────────────────────────
   isLoggingOut: boolean;
+  /**
+   * Ends a logout whatever its outcome: closes the socket if it is still open (its onclose then
+   * reloads the page), or reloads now if the socket is already gone.
+   */
+  closeAfterLogout(): void;
 
   // ── In-flight Dedup ──────────────────────────────────────────────────────
   inFlightBuildingDetails: Map<string, Promise<BuildingDetailsResponse | null>>;

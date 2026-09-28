@@ -240,6 +240,9 @@ export class StarpeaceClient implements ClientHandlerContext {
 
   // Logout state
   public isLoggingOut: boolean = false;
+  /** The reload that ends a logout — a field so jsdom tests can replace it (issue 1042). */
+  public reloadPage: () => void = () => { window.location.reload(); };
+  private logoutReloadIssued = false;
 
   // In-flight dedup
   public inFlightBuildingDetails = new Map<string, Promise<BuildingDetailsResponse | null>>();
@@ -1067,6 +1070,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       if (this.isLoggingOut) {
         this.isLoggingOut = false;
         ClientBridge.setDisconnected();
+        this.reloadAfterLogout();
         return;
       }
       if (!this.storedUsername || !this.storedPassword) {
@@ -1247,6 +1251,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       if (this.isLoggingOut) {
         this.isLoggingOut = false;
         ClientBridge.setDisconnected();
+        this.reloadAfterLogout();
         return;
       }
       if (this.storedUsername && this.storedPassword) {
@@ -1272,6 +1277,22 @@ export class StarpeaceClient implements ClientHandlerContext {
       this.reconnectTimer = null;
     }
     this.attemptReconnect();
+  }
+
+  public closeAfterLogout(): void {
+    if (this.ws && this.isConnected) {
+      // Do not wait on the gateway's 100 ms timer; onclose reloads once the close lands.
+      this.ws.close(1000, 'User logged out');
+      return;
+    }
+    // Socket already gone (the close beat the answer, or it was never open): reload now.
+    this.reloadAfterLogout();
+  }
+
+  private reloadAfterLogout(): void {
+    if (this.logoutReloadIssued) return;
+    this.logoutReloadIssued = true;
+    this.reloadPage();
   }
 
   private sendCameraPositionDebounced(): void {

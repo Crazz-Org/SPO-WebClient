@@ -521,6 +521,10 @@ export async function logout(ctx: ClientHandlerContext): Promise<void> {
   if (ctx.isLoggingOut) return;
 
   ctx.isLoggingOut = true;
+  // From here a close means "logged out", never "dropped": leave nothing for a reconnect to
+  // replay, and let the socket's onclose consume the flag (issue 1042).
+  ctx.storedUsername = '';
+  ctx.storedPassword = '';
   ClientBridge.log('System', 'Logging out...');
 
   try {
@@ -537,9 +541,9 @@ export async function logout(ctx: ClientHandlerContext): Promise<void> {
     }
   } catch (err: unknown) {
     ClientBridge.log('Error', `Logout error: ${toErrorMessage(err)}`);
-  } finally {
-    ctx.isLoggingOut = false;
   }
+
+  ctx.closeAfterLogout();
 }
 
 /**
