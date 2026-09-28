@@ -16,7 +16,7 @@ RUN npm ci
 ARG APP_VERSION
 
 # Copy source code and build configs
-COPY tsconfig.json tsconfig.client.json vite.config.ts ./
+COPY tsconfig.json tsconfig.build.json tsconfig.client.json vite.config.ts ./
 COPY src/ src/
 COPY public/ public/
 
@@ -27,7 +27,41 @@ RUN if [ -n "$APP_VERSION" ]; then npm version "${APP_VERSION#v}" --no-git-tag-v
 RUN npm run build
 
 # ============================================================
-# Stage 2: Production
+# Stage 2: Cache-sync sidecar (target: cache-sync)
+# Shares the builder above with the gateway, so one `docker compose build`
+# compiles the project once for both images.
+# ============================================================
+FROM node:22-bookworm-slim AS cache-sync
+
+# p7zip needed for CAB extraction via 7zip-min
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends p7zip-full && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r spo && useradd -r -g spo -m spo
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+# Only dist/ needed — no public/ (no HTTP serving)
+COPY --from=builder /app/dist/ ./dist/
+
+RUN mkdir -p /app/cache && chown -R spo:spo /app
+
+USER spo
+
+# No EXPOSE — this container has no HTTP port
+
+# Health check: sentinel file must exist and be less than 2 hours old
+HEALTHCHECK --interval=60s --timeout=5s --start-period=300s --retries=3 \
+    CMD node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('/app/cache/.cache-sync-status.json','utf8'));const age=Date.now()-s.timestamp;process.exit(age<7200000?0:1)"
+
+CMD ["node", "--disable-warning=DEP0040", "dist/server/cache-sync-service.js"]
+
+# ============================================================
+# Stage 3: Production (gateway, target: production — the default, last stage)
 # ============================================================
 FROM node:22-bookworm-slim AS production
 
