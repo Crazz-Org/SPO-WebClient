@@ -13,8 +13,16 @@ import { useUiStore } from './store/ui-store';
 import { useGameStore } from './store/game-store';
 import { connectionStats } from './connection-stats';
 import * as buildingActionHandler from './handlers/building-action-handler';
+import { ClientBridge } from './bridge/client-bridge';
 
-const mockOwnTycoonRenderer = { setOwnTycoonId: jest.fn(), setExploredBlocks: jest.fn() };
+const zoomState: { level: number; onChange: ((level: number) => void) | null } = { level: 2, onChange: null };
+const mockOwnTycoonRenderer = {
+  setOwnTycoonId: jest.fn(),
+  setExploredBlocks: jest.fn(),
+  setZoom: jest.fn((level: number) => { zoomState.level = level; }),
+  getZoom: jest.fn(() => zoomState.level),
+  setZoomChangedCallback: jest.fn((cb: ((level: number) => void) | null) => { zoomState.onChange = cb; }),
+};
 
 jest.mock('./ui/map-navigation-ui', () => ({
   MapNavigationUI: jest.fn().mockImplementation(() => ({
@@ -419,5 +427,95 @@ describe('refreshBuildingDetails — forwards the userInitiated flag (issue #929
     await proto.refreshBuildingDetails.call(fake, 4, 5, { userInitiated: false });
     expect(spy).toHaveBeenCalledWith(expect.anything(), 4, 5, { userInitiated: false });
     spy.mockRestore();
+  });
+});
+
+describe('switchToGameView — camera zoom (#1072)', () => {
+  function makeFake() {
+    return {
+      uiGamePanel: { style: {} },
+      mapNavigationUI: null,
+      minimapUI: null,
+      currentWorldName: 'planitia',
+      storedUsername: 'SPO_test3',
+      viewportHeartbeatTimer: undefined,
+      setupGameUICallbacks: jest.fn(),
+      sendCameraPositionNow: jest.fn(),
+      applySettings: jest.fn(),
+    };
+  }
+  async function run(): Promise<void> {
+    const fake = makeFake();
+    await (proto.switchToGameView as (this: typeof fake) => Promise<void>).call(fake);
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    useGameStore.getState().reset();
+    zoomState.level = 2;
+    zoomState.onChange = null;
+    mockOwnTycoonRenderer.setZoom.mockClear();
+    mockOwnTycoonRenderer.setZoomChangedCallback.mockClear();
+  });
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it('restores a saved cameraZoom of 0', async () => {
+    jest.spyOn(ClientBridge, 'loadPersistedSettings').mockImplementation(() => undefined);
+    useGameStore.getState().updateSettings({ cameraZoom: 0 });
+    await run();
+    expect(zoomState.level).toBe(0);
+  });
+
+  it.each([7, -1, 2.5, '3', null])('restores the default 2 for an invalid saved cameraZoom %p', async (bad) => {
+    jest.spyOn(ClientBridge, 'loadPersistedSettings').mockImplementation(() => undefined);
+    zoomState.level = 1;
+    useGameStore.getState().updateSettings({ cameraZoom: bad as unknown as number });
+    await expect(run()).resolves.toBeUndefined();
+    expect(zoomState.level).toBe(2);
+  });
+
+  it('saves and persists each zoom change, and restoring persists nothing', async () => {
+    const persist = jest.spyOn(ClientBridge, 'persistSettings').mockImplementation(() => undefined);
+    await run();
+    expect(persist).not.toHaveBeenCalled();
+    expect(zoomState.onChange).not.toBeNull();
+    zoomState.onChange?.(3);
+    expect(useGameStore.getState().settings.cameraZoom).toBe(3);
+    expect(persist).toHaveBeenCalledWith(expect.objectContaining({ cameraZoom: 3 }));
+  });
+
+  it('a later applySettings from another setting does not snap the zoom back', async () => {
+    jest.spyOn(ClientBridge, 'persistSettings').mockImplementation(() => undefined);
+    await run();
+    zoomState.onChange?.(1);
+    zoomState.level = 1;
+    mockOwnTycoonRenderer.setZoom.mockClear();
+    const renderer = {
+      ...mockOwnTycoonRenderer,
+      setHideVegetationOnMove: jest.fn(),
+      setDebugMode: jest.fn(),
+      setVehicleAnimationsEnabled: jest.fn(),
+      setAircraftAnimationsEnabled: jest.fn(),
+      setGlassForeignBuildings: jest.fn(),
+      setSignalLosingFacilities: jest.fn(),
+      setBuildingAnimationsEnabled: jest.fn(),
+      setTransparentOverlays: jest.fn(),
+      setHiddenFacIds: jest.fn(),
+    };
+    const fake2 = {
+      mapNavigationUI: { getRenderer: () => renderer },
+      soundManager: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      musicPlayer: { setEnabled: jest.fn(), setVolume: jest.fn() },
+      mapAmbience: { setEnabled: jest.fn() },
+      minimapUI: null,
+    };
+    const settings = { ...useGameStore.getState().settings, soundVolume: 0.1 };
+    (proto.applySettings as (this: typeof fake2, s: typeof settings) => void).call(fake2, settings);
+    expect(mockOwnTycoonRenderer.setZoom).not.toHaveBeenCalled();
+    expect(zoomState.level).toBe(1);
   });
 });

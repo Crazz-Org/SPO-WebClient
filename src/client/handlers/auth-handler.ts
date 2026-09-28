@@ -336,7 +336,7 @@ export async function selectCompanyAndStart(ctx: ClientHandlerContext, companyId
     // This prevents the user seeing an empty/blue canvas while chunks stream in.
     const rendererForChunks = ctx.getRenderer();
     if (rendererForChunks) {
-      const zoomLevel = 2; // Default zoom on login
+      const zoomLevel = rendererForChunks.getZoom(); // the level switchToGameView restored
       const visibleChunks = rendererForChunks.getVisibleChunkCoords(zoomLevel);
       const chunkCache = rendererForChunks.getChunkCache();
       if (chunkCache && visibleChunks.length > 0) {

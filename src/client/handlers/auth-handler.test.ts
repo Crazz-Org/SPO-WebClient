@@ -344,6 +344,34 @@ describe('auth-handler', () => {
   });
 
   describe('selectCompanyAndStart()', () => {
+    it('waits for the terrain chunks at the renderer\'s current zoom, not a fixed 2 (#1072)', async () => {
+      const awaitChunksReady = jest.fn().mockResolvedValue(undefined);
+      const getVisibleChunkCoords = jest.fn(() => [{ i: 0, j: 0 }]);
+      const rendererStub = {
+        getZoom: () => 0,
+        getVisibleChunkCoords,
+        getChunkCache: () => ({ awaitChunksReady }),
+        setSeason: jest.fn(),
+        centerOn: jest.fn(),
+      };
+      const ctx = makeCtx({
+        availableCompanies: [],
+        sendRequest: jest.fn().mockResolvedValue({ type: 'RESP_SELECT_COMPANY' }),
+        switchToGameView: jest.fn().mockResolvedValue(undefined),
+        preloadFacilityDimensions: jest.fn().mockResolvedValue(undefined),
+        connectMailService: jest.fn().mockResolvedValue(undefined),
+        getProfile: jest.fn().mockResolvedValue(undefined),
+        initChatChannels: jest.fn().mockResolvedValue(undefined),
+        sendMessage: jest.fn(),
+        getRenderer: () => rendererStub as unknown as ReturnType<ClientHandlerContext['getRenderer']>,
+      });
+
+      await selectCompanyAndStart(ctx, '0');
+
+      expect(getVisibleChunkCoords).toHaveBeenCalledWith(0);
+      expect(awaitChunksReady).toHaveBeenCalledWith(expect.anything(), 0, 15_000, expect.any(Function));
+    });
+
     it('enters as the visitor for company id "0" with an empty company list', async () => {
       const ctx = makeCtx({
         availableCompanies: [],
