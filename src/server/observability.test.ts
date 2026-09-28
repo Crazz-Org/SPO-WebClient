@@ -28,6 +28,8 @@ import {
   type ProbeSocket,
   type GatewayMetrics,
 } from './observability';
+import { handleClientErrorRequest, getClientErrorCounts } from './client-error-endpoint';
+import { Logger } from '../shared/logger';
 import { SessionPhase } from '../shared/types';
 
 afterEach(() => {
@@ -330,11 +332,13 @@ describe('buildMetrics', () => {
     memory: { rss: 100, heapUsed: 20, heapTotal: 40 },
     websocketsOpen: 7,
     sessions,
+    clientErrors: { accepted: 0, refused: 0, rateLimited: 0 },
   };
 
   it('has the documented shape', () => {
     const m = buildMetrics({ ...base, directory: state({ lastOkAt: NOW - 10_000, lastAttemptAt: NOW - 2_000, consecutiveFailures: 1, lastError: 'x' }) });
-    expect(Object.keys(m).sort()).toEqual(['directory', 'memory', 'rdo', 'sessions', 'sockets', 'startedAt', 'uptimeS', 'version']);
+    expect(Object.keys(m).sort()).toEqual(['clientErrors', 'directory', 'memory', 'rdo', 'sessions', 'sockets', 'startedAt', 'uptimeS', 'version']);
+    expect(m.clientErrors).toEqual({ accepted: 0, refused: 0, rateLimited: 0 });
     expect(m.version).toBe('1.2.3');
     expect(m.startedAt).toBe(new Date(NOW - 90_500).toISOString());
     expect(m.uptimeS).toBe(90);
@@ -350,6 +354,51 @@ describe('buildMetrics', () => {
       reachable: null, lastOkAgeS: null, lastProbeAgeS: null, consecutiveFailures: 0, lastError: null,
     });
     expect(buildMetrics({ ...base, directory: state({ lastOkAt: NOW - DIRECTORY_STALE_MS - 1, lastAttemptAt: NOW }) }).directory.reachable).toBe(false);
+  });
+
+  it('clientErrors carries the /api/client-error counters, and they move after an accepted and a refused report', () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    try {
+      const post = (contentType: string, body: string): number => {
+        const listeners: { data: Array<(c: Buffer) => void>; end: Array<() => void> } = { data: [], end: [] };
+        const req = {
+          headers: { 'content-type': contentType },
+          on(event: 'data' | 'end', listener: never) {
+            (listeners[event] as Array<unknown>).push(listener);
+            return req;
+          },
+        };
+        let status = 0;
+        const res = { writeHead: (s: number) => { status = s; }, end: () => undefined };
+        handleClientErrorRequest(req as never, res, { allowRequest: () => true });
+        for (const l of listeners.data) l(Buffer.from(body, 'utf8'));
+        for (const l of listeners.end) l();
+        return status;
+      };
+      const metricsNow = (): GatewayMetrics => buildMetrics({ ...base, directory: state({}), clientErrors: getClientErrorCounts() });
+
+      const before = metricsNow().clientErrors;
+      expect(Object.keys(before).sort()).toEqual(['accepted', 'rateLimited', 'refused']);
+
+      const valid = JSON.stringify({
+        v: 1, build: '1.0.0#1', kind: 'error', message: 'boom', frames: [],
+        screen: 'login', surface: null, ua: 'chrome', mobile: false,
+      });
+      expect(post('application/json', valid)).toBe(204);
+      const afterAccept = metricsNow().clientErrors;
+      expect(afterAccept).toEqual({ ...before, accepted: before.accepted + 1 });
+
+      expect(post('text/plain', valid)).toBe(415);
+      const afterRefuse = metricsNow().clientErrors;
+      expect(afterRefuse).toEqual({ ...afterAccept, refused: afterAccept.refused + 1 });
+
+      const input = { accepted: 1, refused: 2, rateLimited: 3 };
+      const m = buildMetrics({ ...base, directory: state({}), clientErrors: input });
+      expect(m.clientErrors).toEqual(input);
+      expect(m.clientErrors).not.toBe(input);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

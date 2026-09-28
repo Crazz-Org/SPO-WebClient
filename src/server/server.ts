@@ -47,6 +47,7 @@ import { parseResearchDat, buildInventionIndex, type DatInventionIndex } from '.
 import { getPublicDir, getCacheDir, getWebclientCacheDir } from './paths';
 import { buildRuntimeConfigScript } from './runtime-config';
 import { handleBugReportRequest, DEFAULT_QUEUE_DIR } from './bug-report-endpoint';
+import { handleClientErrorRequest, getClientErrorCounts, CLIENT_ERROR_MAX_PER_IP } from './client-error-endpoint';
 import { handleReportPullList, handleReportPullFetch, handleReportPullAck } from './report-pull-endpoint';
 import { enforceProductionConfig } from './production-config';
 import { proxyImage, buildImageFileIndexEntries, proxyImageHosts, type ProxyImageDeps } from './proxy-image';
@@ -386,6 +387,7 @@ function collectMetrics(): GatewayMetrics {
     websocketsOpen: wss.clients.size,
     sessions: sessionRegistry.snapshot(),
     directory: directoryProbe.getState(),
+    clientErrors: getClientErrorCounts(),
   });
 }
 
@@ -738,6 +740,17 @@ const server = http.createServer(async (req, res) => {
       enabled: config.server.bugReportMode,
       queueDir: config.server.reportsDir || DEFAULT_QUEUE_DIR,
       allowRequest: () => checkRateLimit(getClientIp(req), 'bug-report', 10),
+    });
+    return;
+  }
+
+  // Browser error report: POST /api/client-error — anonymous by design (no session, no identity
+  // field; a closed field list and two rate limits keep it safe). Everything lives in
+  // client-error-endpoint.ts, which tests can import. 20/min per IP (checkRateLimit's 60 s window)
+  // plus a 60/min gateway-wide cap inside the module.
+  if (safePath === '/api/client-error' && req.method === 'POST') {
+    handleClientErrorRequest(req, res, {
+      allowRequest: () => checkRateLimit(getClientIp(req), 'client-error', CLIENT_ERROR_MAX_PER_IP),
     });
     return;
   }
