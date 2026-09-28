@@ -57,15 +57,18 @@ function diffBase(cwd) {
 
 /**
  * Which files the rule applies to: source under src/, TypeScript, and not a test, a
- * fixture, the mock server or a declaration file. `__tests__/` and `__mocks__/` are
- * skipped for the same reason jest.config.js `collectCoverageFrom` skips them: they are
- * never instrumented, so a helper there could only ever read as 0 % covered.
+ * fixture, the mock server, a declaration file or a load-measurement script. A
+ * `*.load.ts(x)` is run by hand to measure the server and `npm test` never executes it
+ * (jest `testMatch` only collects `*.test.ts(x)` files), so no test can cover its lines.
+ * Every other helper under `__tests__/` or `__mocks__/` stays in: `runJest` instruments
+ * each changed file explicitly, so a helper the suite executes is measured like any
+ * other source.
  */
 function isEligible(file) {
   const normalised = file.replace(/\\/g, '/');
   if (!/^src\/.+\.tsx?$/.test(normalised)) return false;
   if (/\.test\.tsx?$/.test(normalised)) return false;
-  if (/(^|\/)__(tests|mocks)__\//.test(normalised)) return false;
+  if (/\.load\.tsx?$/.test(normalised)) return false;
   if (/\.d\.ts$/.test(normalised)) return false;
   if (normalised.startsWith('src/mock-server/')) return false;
   return true;
