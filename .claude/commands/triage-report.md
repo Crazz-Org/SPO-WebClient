@@ -158,6 +158,24 @@ why no card exists. The verdict is posted verbatim as the card's first comment, 
 **English only.** `freeText` may well be French — the capture never asked the human to switch
 language mid-test, which was the point. Translate it on the way in; never transcribe.
 
+**The card is public; the report is not.** The card never names the reporter (`username`),
+never quotes `observed`, `expected` or `freeText` — summarise them in English — and never
+pastes a journal payload (`ws-in` / `ws-out` payloads, `console` messages). Message-type names,
+`file:line` references and the on-screen `anchor.text` are fine. The rule, and what the check
+cannot catch, are in [doc/bug-reporting.md](../../doc/bug-reporting.md) § What may reach the
+public board.
+
+**Check it before filing.** Write the title, the body and the review comment to one file, then
+run the check once per report merged into the card — it takes one report at a time:
+
+```bash
+npm run report:card -- --check-public ~/.spo-reports/<file>.json /tmp/card-<anchorKey>.md
+```
+
+Exit 0 → file. Exit 1 prints only the category (`leak: username` / `leak: free-text` /
+`leak: journal`): fix the draft, send it back to the reviewer (it is a change after the verdict),
+and re-run. **Never file on a non-zero exit** — 2 or 3 means the check failed, not that it passed.
+
 Then file, comment, add to the board in Todo, and set the fields — the recipes are in
 kanban-workflow § gh CLI recipes.
 
