@@ -11,6 +11,7 @@ import { fileToProxyUrl, PROXY_IMAGE_ENDPOINT } from '../shared/proxy-utils';
 import * as ErrorCodes from '../shared/error-codes';
 import { FacilityDimensionsCache } from './facility-dimensions-cache';
 import { SearchMenuService } from './search-menu-service';
+import { buildContentSecurityPolicy } from './security-headers';
 import { UpdateService } from './update-service';
 import { MapDataService } from './map-data-service';
 import { serviceRegistry, setupGracefulShutdown } from './service-registry';
@@ -358,14 +359,13 @@ function sanitizePathParam(raw: string): string | null {
 }
 
 // Security headers applied to all HTTP responses
-function setSecurityHeaders(res: http.ServerResponse): void {
+function setSecurityHeaders(req: http.IncomingMessage, res: http.ServerResponse): void {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  const cdnOrigin = config.cdn.url ? ` ${config.cdn.url}` : '';
-  res.setHeader('Content-Security-Policy', `default-src 'self'; connect-src 'self' ws: wss:${cdnOrigin}; img-src 'self' data: blob:${cdnOrigin}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'`);
+  res.setHeader('Content-Security-Policy', buildContentSecurityPolicy(req.headers.host, config.cdn.url));
   if (process.env.ENABLE_HSTS === 'true') {
     res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
   }
@@ -399,7 +399,7 @@ function refuseNonLocal(req: http.IncomingMessage, res: http.ServerResponse): bo
 
 // 1. HTTP Server for Static Files + Image Proxy
 const server = http.createServer(async (req, res) => {
-  setSecurityHeaders(res);
+  setSecurityHeaders(req, res);
   const safePath = req.url === '/' ? '/index.html' : req.url || '/index.html';
 
   // Runtime config script — serves CDN URL override as an external JS file (CSP-compliant).
