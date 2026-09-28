@@ -29,6 +29,8 @@
 
 Phases defined in `SessionPhase` enum: `DISCONNECTED` -> `DIRECTORY_CONNECTED` -> `WORLD_CONNECTING` -> `WORLD_CONNECTED` -> `RECONNECTING`.
 
+A `WORLD_CONNECTED` session whose WebSocket closes is parked, not ended — `doc/architecture-overview.md § Session parking`.
+
 Login sequence lives in `session/login-handler.ts`. It uses a `LoginContext` interface (not the full session class).
 
 ## Handler Extraction Pattern

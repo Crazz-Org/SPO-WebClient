@@ -55,6 +55,14 @@ export function checkAuthRateLimit(ip: string, msgType: string): boolean {
   return checkRateLimit(ip, `auth:${msgType}`, RATE_LIMIT_MAX_AUTH);
 }
 
+/**
+ * A resume token is a credential too: `REQ_RESUME_SESSION` gets its own per-IP `auth:` bucket at
+ * the same ceiling. Kept out of `AUTH_RATE_LIMITED_TYPES`, whose three members are pinned.
+ */
+export function checkResumeRateLimit(ip: string): boolean {
+  return checkRateLimit(ip, `auth:${WsMessageType.REQ_RESUME_SESSION}`, RATE_LIMIT_MAX_AUTH);
+}
+
 /** Delete expired entries; returns how many were removed. */
 export function sweepExpiredRateLimits(now: number = Date.now()): number {
   let removed = 0;

@@ -132,7 +132,15 @@ Requires [jq](https://jqlang.github.io/jq/).
 ```json
 {"ts": "...", "level": "INFO", "ctx": "Session", "msg": "SESSION_START", "sid": "s-m1abc2d-x7k2", "meta": {"ip": "1.2.3.4"}}
 {"ts": "...", "level": "INFO", "ctx": "Session", "msg": "SESSION_END", "sid": "s-m1abc2d-x7k2", "player": "SPO_test3", "meta": {"ip": "1.2.3.4", "durationMs": "45230", "phase": "5"}}
+{"ts": "...", "level": "INFO", "ctx": "Session", "msg": "SESSION_PARK", "sid": "s-m1abc2d-x7k2", "player": "SPO_test3", "meta": {"ip": "1.2.3.4", "player": "SPO_test3", "parkMs": "300000"}}
+{"ts": "...", "level": "INFO", "ctx": "Session", "msg": "SESSION_RESUME", "sid": "s-m1abc2d-x7k2", "player": "SPO_test3", "meta": {"ip": "5.6.7.8", "player": "SPO_test3"}}
+{"ts": "...", "level": "INFO", "ctx": "Session", "msg": "SESSION_END", "sid": "s-m1abc2d-x7k2", "player": "SPO_test3", "meta": {"reason": "expired", "player": "SPO_test3", "durationMs": "345230", "phase": "WORLD_CONNECTED"}}
 ```
+
+`SESSION_PARK` marks a `WORLD_CONNECTED` session kept alive after its WebSocket closed;
+`SESSION_RESUME` marks its re-attach to a new WebSocket (the resume token is never logged).
+A parked session's `SESSION_END` carries a `reason`: `expired`, `evicted` (a fresh login of the
+same user) or `shutdown` (doc/architecture-overview.md § Session parking).
 
 ### CLIENT_ERROR (browser error report)
 
