@@ -40,6 +40,11 @@ kanban cards by `/triage-report` ([.claude/commands/triage-report.md](.claude/co
 - **Never modify a test to make it pass.** A failing test means the code is wrong, or the
   criterion was badly stated — in that case, ask.
 - **An ambiguous request is a question, not a guess.** Ask before implementing.
+- **A criterion carrying `Player note (<type>): <text>` adds one entry to
+  `src/client/player-notes.json` in the same PR**, at the top of the array: `id` = the card's
+  issue number (the PR number when there is no card), `type` and `text` verbatim, `date` = the
+  day it is written (`YYYY-MM-DD`). A card without that line adds nothing —
+  [kanban-workflow.md § Player note](doc/kanban-workflow.md).
 
 ## RDO — one catalogue, one emitter
 

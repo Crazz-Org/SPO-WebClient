@@ -7,7 +7,7 @@
  *
  * The client has no server-side preference store, so "never again for that account" means
  * "never again for that account in this browser" — the same scope every other client-side
- * preference here has (`spo.explored.*`, `spo.settings.*`, `spo-last-seen-version`). An
+ * preference here has (`spo.explored.*`, `spo.settings.*`, `spo-seen-notes`). An
  * unreadable or full `localStorage` degrades to explaining it again, never to a crash.
  */
 

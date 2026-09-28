@@ -146,7 +146,7 @@ src/
 │   │   ├── useResponsive.ts     # Responsive breakpoints
 │   │   ├── useCommandPalette.ts # Command palette state
 │   │   ├── useKeyboardShortcuts.ts
-│   │   └── useChangelogCheck.ts # Version change detection
+│   │   └── useChangelogCheck.ts # Opens "What's New" for unseen player notes
 │   ├── styles/                  # Design tokens, reset, typography, animations
 │   ├── layouts/                 # LoginScreen, GameScreen
 │   ├── components/              # React components (CSS Modules)
