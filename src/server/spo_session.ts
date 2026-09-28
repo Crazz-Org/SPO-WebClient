@@ -163,6 +163,7 @@ interface RdoMetrics {
   totalReconnectFailures: number;
   lastReconnectAt: number | null;
   totalServerBusyPollFailures: number;
+  totalErrorReplies: number;
 }
 
 /**
@@ -369,6 +370,7 @@ export class StarpeaceSession extends EventEmitter {
     totalReconnectFailures: 0,
     lastReconnectAt: null,
     totalServerBusyPollFailures: 0,
+    totalErrorReplies: 0,
   };
 
   // GC sweep for timed-out entries that never received a late response
@@ -2512,6 +2514,7 @@ private async executeRdoRequest(socketName: string, packetData: Partial<RdoPacke
 			this.latency.record(Date.now() - entry.sentAt);
 			// Normal path — resolve the promise
 			if (packet.errorCode && packet.errorCode > 0) {
+			  this.rdoMetrics.totalErrorReplies++;
 			  this.log.warn(`[RDO] Error response RID ${packet.rid}: ${packet.errorName} (code ${packet.errorCode})`);
 			  // Maintenance mode detection (mirrors Delphi fMSDownCount)
 			  this.checkMaintenanceMode(packet.errorCode);
