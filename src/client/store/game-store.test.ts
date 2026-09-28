@@ -761,3 +761,10 @@ describe('game-store serverRestarting', () => {
     expect(useGameStore.getState().serverRestarting).toBe(false);
   });
 });
+
+describe('game-store settings — camera zoom (#1072)', () => {
+  it('defaults cameraZoom to 2', () => {
+    useGameStore.getState().reset();
+    expect(useGameStore.getState().settings.cameraZoom).toBe(2);
+  });
+});

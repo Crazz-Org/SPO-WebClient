@@ -81,6 +81,8 @@ export interface GameSettings {
   minimapSize: MinimapSize;
   /** Docked minimap magnification, 1..8 — MapIsoHandler.pas:384. */
   minimapZoom: number;
+  /** Main-map camera zoom level, index into ZOOM_LEVELS (0..3). WebClient addition — Voyager did not save it (#1072). */
+  cameraZoom: number;
   /** A dragged docked-minimap pixel side; `null` follows the preset — MapIsoHandler.pas:372-382. */
   minimapPixelSize: number | null;
   /** The language sent to the world on login — one of the six ids in `shared/language.ts`. */
@@ -106,6 +108,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   isDebugOverlay: false,
   minimapSize: 'medium',
   minimapZoom: 1,
+  cameraZoom: 2,
   minimapPixelSize: null,
   languageId: DEFAULT_LANGUAGE_ID,
   buildingAnimations: true,

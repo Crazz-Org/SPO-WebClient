@@ -53,6 +53,7 @@ import { reloadPage as reloadWindow } from './page-reload';
 import { checkServedBundle } from './stale-bundle';
 import { connectionPendingKey } from './handlers/connection-pending-key';
 import { connectionStats, utf8ByteLength } from './connection-stats';
+import { ZOOM_LEVELS } from '../shared/map-config';
 
 /** WebSocket close code 1012 "Service Restart" (IANA registry, RFC 6455 §7.4): the gateway is restarting. */
 const WS_CLOSE_SERVICE_RESTART = 1012;
@@ -160,6 +161,13 @@ function initSpoDebug(): SpoDebugWire {
 }
 
 // [/E2E-DEBUG]
+
+/** A saved cameraZoom is restored only if it is an integer index into ZOOM_LEVELS; anything else restores 2. */
+function restorableCameraZoom(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < ZOOM_LEVELS.length
+    ? value
+    : 2;
+}
 
 export class StarpeaceClient implements ClientHandlerContext {
   public readonly callbacks!: ClientCallbacks;
@@ -901,6 +909,14 @@ export class StarpeaceClient implements ClientHandlerContext {
 
     ClientBridge.loadPersistedSettings();
     const initialSettings = ClientBridge.getSettings();
+    if (renderer) {
+      // Restore first, then subscribe, so restoring does not write the same value back.
+      renderer.setZoom(restorableCameraZoom(initialSettings.cameraZoom));
+      renderer.setZoomChangedCallback((level) => {
+        useGameStore.getState().updateSettings({ cameraZoom: level });
+        ClientBridge.persistSettings(useGameStore.getState().settings);
+      });
+    }
     this.applySettings(initialSettings);
 
     ClientBridge.log('Renderer', 'Game view initialized');
