@@ -22,6 +22,7 @@ import {
   WsReqChatStopChase
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { playerErrorMessage } from '../player-error';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useChatStore } from '../store/chat-store';
 import { loadDefaultChannel } from '../store/default-channel';
@@ -208,10 +209,9 @@ export async function joinChannel(
     // The gateway's sentence is the player-readable one; `message` has already
     // been flattened to getErrorMessage(code) by client.ts:1090-1097 (INV-8).
     const { serverMessage } = err as { serverMessage?: string };
-    const text = serverMessage || toErrorMessage(err);
     ClientBridge.setCurrentChannel(rollbackTo);
-    ClientBridge.log('Error', `Failed to join channel: ${text}`);
-    ctx.showNotification(text, 'error');
+    ClientBridge.log('Error', `Failed to join channel: ${serverMessage || toErrorMessage(err)}`);
+    ctx.showNotification(serverMessage || playerErrorMessage('join this channel', err), 'error');
   } finally {
     ctx.isJoiningChannel = false;
   }

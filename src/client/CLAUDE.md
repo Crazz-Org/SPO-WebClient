@@ -53,6 +53,8 @@ Before closing a fix on a shared component, grep every renderer (`grep -rn '<Nam
 
 Reconnection logic in `handlers/reconnect-utils.ts`. Handler utilities in `handlers/handler-utils.ts`.
 
+A failure shown to the player goes through `playerErrorMessage` / `playerErrorReason` (`player-error.ts`); the raw error text only feeds `ClientBridge.log` / `console.*`, enforced by `player-error-sites.test.ts`.
+
 New message types need a handler registered in `handlers/index.ts`.
 
 ## Lazy Loading

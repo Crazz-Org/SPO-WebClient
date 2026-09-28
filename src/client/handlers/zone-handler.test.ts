@@ -105,6 +105,19 @@ describe('defineZoneArea — reached through the renderer callback', () => {
     expect(ctx.toggleZoneOverlay).not.toHaveBeenCalled();
   });
 
+  it('a transport failure shows the player sentence, not the raw text', async () => {
+    const { ctx, renderer } = makeCtx(false, null);
+    const complete = reachCallback(ctx, renderer);
+    (ctx.sendRequest as jest.Mock).mockRejectedValue(new Error('Disconnected'));
+
+    await complete(0, 0, 2, 2);
+
+    expect(ctx.showNotification).toHaveBeenCalledWith(
+      'Could not define this zone — you are not connected to the game right now. Try again.',
+      'error',
+    );
+  });
+
   it('acceptance shows a toast naming the requested tile count, not tiles applied', async () => {
     const { ctx, renderer } = makeCtx(false, null);
     const complete = reachCallback(ctx, renderer);

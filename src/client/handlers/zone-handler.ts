@@ -11,6 +11,7 @@ import {
   SurfaceType,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { playerErrorMessage } from '../player-error';
 import { ClientBridge } from '../bridge/client-bridge';
 import type { ClientHandlerContext } from './client-context';
 import { setupEscapeHandler } from './handler-utils';
@@ -94,6 +95,6 @@ async function defineZoneArea(ctx: ClientHandlerContext, x1: number, y1: number,
     }
   } catch (err: unknown) {
     ClientBridge.log('Error', `Failed to define zone: ${toErrorMessage(err)}`);
-    ctx.showNotification(`Failed to define zone: ${toErrorMessage(err)}`, 'error');
+    ctx.showNotification(playerErrorMessage('define this zone', err), 'error');
   }
 }

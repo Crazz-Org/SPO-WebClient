@@ -14,6 +14,7 @@ import {
   WsRespDemolishRoadArea,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { playerErrorMessage } from '../player-error';
 import { ClientBridge } from '../bridge/client-bridge';
 import type { ClientHandlerContext } from './client-context';
 import { setupEscapeHandler } from './handler-utils';
@@ -239,7 +240,7 @@ async function sendDemolishRoadAt(ctx: ClientHandlerContext, x: number, y: numbe
     }
   } catch (err: unknown) {
     ClientBridge.log('Error', `Failed to demolish road: ${toErrorMessage(err)}`);
-    ctx.showNotification(`Failed to demolish road: ${toErrorMessage(err)}`, 'error');
+    ctx.showNotification(playerErrorMessage('demolish the road', err), 'error');
   }
 }
 
@@ -277,6 +278,6 @@ async function sendDemolishRoadArea(ctx: ClientHandlerContext, nx1: number, ny1:
     }
   } catch (err: unknown) {
     ClientBridge.log('Error', `Failed to demolish road area: ${toErrorMessage(err)}`);
-    ctx.showNotification(`Failed to demolish roads: ${toErrorMessage(err)}`, 'error');
+    ctx.showNotification(playerErrorMessage('demolish these roads', err), 'error');
   }
 }
