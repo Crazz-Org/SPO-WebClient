@@ -165,7 +165,7 @@ function initSpoDebug(): SpoDebugWire {
     roadSample: null,
     worldToCss: null,
   };
-  // Always expose debug wire tracker (needed for "Send Debug Report" in production)
+  // Always expose the wire tracker: E2E / L3 instrumentation (doc/E2E-TESTING.md), not a player reporting path
   (window as unknown as Record<string, unknown>).__spoDebug = debug;
   return debug;
 }

@@ -10,7 +10,6 @@ import { useGameStore, type GameSettings, type MinimapSize } from '../../store/g
 import { useChatStore } from '../../store/chat-store';
 import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
-import { showToast } from '../common/Toast';
 import { Switch, confirmLogout } from '../common';
 import { ShortcutList } from '../common/ShortcutList';
 import { connectionStats, formatByteCount } from '../../connection-stats';
@@ -24,42 +23,10 @@ export function SettingsDialog() {
   const updateSettings = useGameStore((s) => s.updateSettings);
 
   const client = useClient();
-  const username = useGameStore((s) => s.username);
   const ignored = useChatStore((s) => s.ignored);
   const unignoreUser = useChatStore((s) => s.unignoreUser);
   const clearIgnored = useChatStore((s) => s.clearIgnored);
   const requestReportMode = useUiStore((s) => s.requestReportMode);
-  const [debugSending, setDebugSending] = useState(false);
-
-  const handleSendDebugReport = useCallback(async () => {
-    const spoDebug = (window as unknown as Record<string, unknown>).__spoDebug as
-      { history?: Array<{ dir: string; type: string; ts: number; reqId?: string }> } | undefined;
-
-    if (!spoDebug?.history?.length) {
-      showToast('No debug data available', 'warning');
-      return;
-    }
-
-    setDebugSending(true);
-    try {
-      const resp = await fetch('/api/debug-log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ player: username || 'unknown', history: spoDebug.history }),
-      });
-      const result = await resp.json() as { ok?: boolean; entries?: number; error?: string };
-      if (result.ok) {
-        showToast(`Debug report sent (${result.entries} entries)`, 'success');
-      } else {
-        showToast(result.error || 'Failed to send debug report', 'error');
-      }
-    } catch {
-      showToast('Failed to send debug report', 'error');
-    } finally {
-      setDebugSending(false);
-    }
-  }, [username]);
-
   // Update store + notify client.ts to apply to renderer/sound/localStorage
   const handleSettingChange = useCallback(
     (partial: Partial<GameSettings>) => {
@@ -222,18 +189,6 @@ export function SettingsDialog() {
           <section className={styles.section}>
             <h3 className={styles.sectionTitle}>Keyboard Shortcuts</h3>
             <ShortcutList />
-          </section>
-
-          {/* Debug */}
-          <section className={styles.section}>
-            <h3 className={styles.sectionTitle}>Debug</h3>
-            <button
-              className={styles.debugBtn}
-              onClick={handleSendDebugReport}
-              disabled={debugSending}
-            >
-              {debugSending ? 'Sending...' : 'Send Debug Report'}
-            </button>
           </section>
 
           {/* Support — arms the in-app reporter; offered only where the reporter is mounted */}

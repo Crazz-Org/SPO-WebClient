@@ -265,14 +265,15 @@ log.error('again');    // recentContext: [{step 3}]
 
 ## Client-Side Debug Reports
 
-Players can submit their WebSocket wire history to the server for analysis.
+The client tracks all WebSocket messages in `window.__spoDebug.history`. That history is E2E / L3
+instrumentation, read by the test procedures; it is no longer a player reporting path.
 
 ### How it works
 
-1. The client tracks all WebSocket messages in `window.__spoDebug.history`
-2. The **Settings dialog** has a **"Send Debug Report"** button
-3. It POSTs to `POST /api/debug-log` with the player name and wire history
-4. The server writes each entry to the NDJSON log file with context `ClientWire`
+1. Players report problems through **Settings → Support → "Report a problem"**, the in-app
+   reporter — see [bug-reporting.md](bug-reporting.md).
+2. No client UI posts to `POST /api/debug-log` any more. The endpoint below remains until #1054
+   removes it; when called, the server writes each entry to the NDJSON log file with context `ClientWire`.
 
 ### Endpoint: `POST /api/debug-log`
 
