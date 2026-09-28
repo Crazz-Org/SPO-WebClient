@@ -140,7 +140,7 @@ A report posted by a player's browser to `POST /api/client-error` (uncaught erro
 rejection, error-boundary catch, failed lazy chunk) becomes exactly one line in `gateway.ndjson`:
 
 ```json
-{"ts": "...", "level": "WARN", "ctx": "ClientError", "msg": "CLIENT_ERROR", "meta": {"sig": "3f9a1c0b7d2e", "kind": "error", "build": "1.4.2#317", "message": "TypeError: x is undefined", "frames": ["main.abc.js:1:2345"], "screen": "game", "surface": "BuildingInspector", "ua": "firefox", "mobile": false}}
+{"ts": "...", "level": "WARN", "ctx": "ClientError", "msg": "CLIENT_ERROR", "meta": {"sig": "3f9a1c0b7d2e", "kind": "error", "build": "1.4.2#317", "message": "x is undefined", "frames": ["main.abc.js:1:2345"], "screen": "game", "surface": "building", "ua": "firefox", "mobile": false}}
 ```
 
 - `sig` is the first 12 hex characters of sha1 over `kind`, `message` and `frames`, so identical
