@@ -10,11 +10,15 @@ import {
   profileSwitchCompany,
   applyLocalCompanySwitch,
   abandonRole,
+  enterFromResumeSnapshot,
+  applyResumeStats,
+  logout,
 } from './auth-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import { WsMessageType } from '../../shared/types';
 import type { ClientHandlerContext } from './client-context';
 import type { RememberedSession } from '../store/remembered-session';
+import type { WsRespResumeSession, WsMessage } from '../../shared/types';
 
 jest.mock('../bridge/client-bridge', () => ({
   ClientBridge: {
@@ -33,6 +37,7 @@ jest.mock('../bridge/client-bridge', () => ({
     setPublicOfficeRole: jest.fn(),
     setMapLoadingProgress: jest.fn(),
     setAuthError: jest.fn(),
+    updateTycoonStats: jest.fn(),
   },
 }));
 
@@ -55,12 +60,19 @@ const mockGameStoreMethods = {
   serverSwitchMode: false,
   completeServerSwitch: jest.fn(),
   setActiveUsername: jest.fn(),
+  setGameDate: jest.fn(),
 };
+
+/** The remembered record the store holds for the current test — `enterFromResumeSnapshot` reads it. */
+let mockRememberedSession: RememberedSession | null = null;
 
 const gameStoreState = mockGameStoreMethods;
 
 jest.mock('../store/game-store', () => ({
-  useGameStore: { getState: () => ({ ...mockGameStoreMethods, settings: mockStoreSettings }) },
+  useGameStore: {
+    getState: () => ({ ...mockGameStoreMethods, settings: mockStoreSettings, rememberedSession: mockRememberedSession }),
+  },
+  delphiTDateTimeToJsDate: (jest.requireActual('../store/game-store') as typeof import('../store/game-store')).delphiTDateTimeToJsDate,
 }));
 
 const mockProfileStoreMethods = {
@@ -914,5 +926,189 @@ describe('auth-handler', () => {
       expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Abandon role failed: ECONNRESET');
       expect(mockGameStoreMethods.setSwitchingCompany).toHaveBeenLastCalledWith(false);
     });
+  });
+});
+
+describe('session resume from a snapshot (issue 1046)', () => {
+  const SNAPSHOT: WsRespResumeSession = {
+    type: WsMessageType.RESP_RESUME_SESSION,
+    username: 'testUser',
+    tycoonId: 'T7',
+    worldName: 'Shamba',
+    worldXSize: 1000,
+    worldYSize: 2000,
+    worldSeason: 3,
+    company: { id: '12', name: 'TestCorp' },
+    accountMoney: '5000',
+    virtualDate: 45000,
+    failureLevel: 1,
+    playerX: 0,
+    playerY: 0,
+    chatChannel: 'Lobby',
+  };
+
+  function makeEnterCtx(renderer: unknown = null, overrides: Partial<ClientHandlerContext> = {}): ClientHandlerContext {
+    return makeCtx({
+      storedUsername: '',
+      storedPassword: '',
+      switchToGameView: jest.fn().mockResolvedValue(undefined),
+      preloadFacilityDimensions: jest.fn().mockResolvedValue(undefined),
+      connectMailService: jest.fn().mockResolvedValue(undefined),
+      getProfile: jest.fn().mockResolvedValue(undefined),
+      initChatChannels: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn(),
+      getRenderer: () => renderer as ReturnType<ClientHandlerContext['getRenderer']>,
+      ...overrides,
+    });
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockRememberedSession = null;
+  });
+
+  it('sets the credentials with the tycoon id, the world and the company, and sends no request', async () => {
+    const ctx = makeEnterCtx();
+
+    await expect(enterFromResumeSnapshot(ctx, SNAPSHOT)).resolves.toBe(true);
+
+    expect(ctx.storedUsername).toBe('testUser');
+    expect(ctx.storedPassword).toBe('');
+    expect(ClientBridge.setCredentials).toHaveBeenCalledWith('testUser', 'T7');
+    expect(ClientBridge.loadAccountSettings).toHaveBeenCalledWith('testUser', '0');
+    expect(ClientBridge.setWorld).toHaveBeenCalledWith('Shamba');
+    expect(ClientBridge.setCompany).toHaveBeenCalledWith('TestCorp', '12');
+    expect(ctx.worldXSize).toBe(1000);
+    expect(ctx.worldYSize).toBe(2000);
+    expect(ctx.worldSeason).toBe(3);
+    expect(ctx.availableCompanies).toEqual([{ id: '12', name: 'TestCorp' }]);
+    expect(ClientBridge.setPublicOfficeRole).toHaveBeenCalledWith(false, '');
+    expect(ctx.switchToGameView).toHaveBeenCalledTimes(1);
+    expect(ctx.sendRequest).not.toHaveBeenCalled();
+    expect(ClientBridge.updateTycoonStats).toHaveBeenCalledWith(expect.objectContaining({ cash: '5000', failureLevel: 1 }));
+    expect(gameStoreState.setGameDate).toHaveBeenCalledWith(expect.any(Date));
+  });
+
+  it('a null tycoon id sets the credentials without one', async () => {
+    const ctx = makeEnterCtx();
+    await enterFromResumeSnapshot(ctx, { ...SNAPSHOT, tycoonId: null });
+    expect(ClientBridge.setCredentials).toHaveBeenCalledWith('testUser', undefined);
+  });
+
+  it('a mayor ownerRole sets the public-office role', async () => {
+    const ctx = makeEnterCtx();
+    await enterFromResumeSnapshot(ctx, {
+      ...SNAPSHOT, company: { id: '56', name: 'Mayor of Kalisz', ownerRole: 'Mayor of Kalisz' },
+    });
+    expect(ClientBridge.setPublicOfficeRole).toHaveBeenCalledWith(true, 'Mayor of Kalisz');
+    expect(ctx.availableCompanies).toEqual([{ id: '56', name: 'Mayor of Kalisz', ownerRole: 'Mayor of Kalisz' }]);
+  });
+
+  it('takes the zonePath from a matching remembered record, and \'\' otherwise', async () => {
+    mockRememberedSession = {
+      username: 'TESTUSER', zonePath: 'Root/Areas/Free', worldName: 'Shamba', companyId: '12', companyName: 'TestCorp',
+    };
+    const matching = makeEnterCtx();
+    await enterFromResumeSnapshot(matching, SNAPSHOT);
+    expect(matching.currentZonePath).toBe('Root/Areas/Free');
+
+    mockRememberedSession = { ...mockRememberedSession, worldName: 'Other' };
+    const otherWorld = makeEnterCtx(null, { currentZonePath: 'stale' });
+    await enterFromResumeSnapshot(otherWorld, SNAPSHOT);
+    expect(otherWorld.currentZonePath).toBe('');
+
+    mockRememberedSession = null;
+    const none = makeEnterCtx(null, { currentZonePath: 'stale' });
+    await enterFromResumeSnapshot(none, SNAPSHOT);
+    expect(none.currentZonePath).toBe('');
+  });
+
+  it('a zero position leaves the saved camera unset; a real one centres the renderer on it', async () => {
+    const centerOn = jest.fn();
+    const renderer = {
+      setSeason: jest.fn(), centerOn, getZoom: () => 2, getVisibleChunkCoords: () => [], getChunkCache: () => null,
+    };
+    const zero = makeEnterCtx(renderer);
+    await enterFromResumeSnapshot(zero, SNAPSHOT);
+    expect(zero.savedPlayerX).toBeUndefined();
+    expect(centerOn).not.toHaveBeenCalled();
+
+    const placed = makeEnterCtx(renderer);
+    await enterFromResumeSnapshot(placed, { ...SNAPSHOT, playerX: 400, playerY: 500 });
+    expect(placed.savedPlayerX).toBe(400);
+    expect(placed.savedPlayerY).toBe(500);
+    expect(centerOn).toHaveBeenCalledWith(400, 500);
+    expect(renderer.setSeason).toHaveBeenCalledWith(3);
+  });
+
+  it('a null company or world returns false and sends nothing', async () => {
+    const noCompany = makeEnterCtx();
+    await expect(enterFromResumeSnapshot(noCompany, { ...SNAPSHOT, company: null })).resolves.toBe(false);
+    const noWorld = makeEnterCtx();
+    await expect(enterFromResumeSnapshot(noWorld, { ...SNAPSHOT, worldName: null })).resolves.toBe(false);
+
+    for (const ctx of [noCompany, noWorld]) {
+      expect(ctx.sendMessage).not.toHaveBeenCalled();
+      expect(ctx.switchToGameView).not.toHaveBeenCalled();
+    }
+    expect(ClientBridge.setCredentials).not.toHaveBeenCalled();
+  });
+
+  it('a throwing switchToGameView returns false and shows the player sentence', async () => {
+    const ctx = makeEnterCtx(null, { switchToGameView: jest.fn().mockRejectedValue(new Error('boom')) });
+
+    await expect(enterFromResumeSnapshot(ctx, SNAPSHOT)).resolves.toBe(false);
+
+    expect(ctx.showNotification).toHaveBeenCalledWith(expect.stringMatching(/^Could not return to your session/), 'error');
+    expect(ctx.showNotification).not.toHaveBeenCalledWith(expect.stringContaining('boom'), 'error');
+    expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Session re-attach failed: boom');
+  });
+
+  describe('applyResumeStats()', () => {
+    it('keeps the known stats, replaces the cash, and skips the unknown fields', () => {
+      const ctx = makeCtx({
+        currentTycoonData: { cash: '1', incomePerHour: '2', ranking: 3, buildingCount: 4, maxBuildings: 5 },
+      });
+
+      applyResumeStats(ctx, { ...SNAPSHOT, accountMoney: null, failureLevel: null, virtualDate: null });
+
+      expect(ctx.currentTycoonData).toEqual({ cash: '1', incomePerHour: '2', ranking: 3, buildingCount: 4, maxBuildings: 5 });
+      const stats = (ClientBridge.updateTycoonStats as jest.Mock).mock.calls[0][0] as Record<string, unknown>;
+      expect(stats).toEqual({ username: 'testUser', cash: '1', incomePerHour: '2', ranking: 3, buildingCount: 4, maxBuildings: 5 });
+      expect(gameStoreState.setGameDate).not.toHaveBeenCalled();
+    });
+
+    it('starts from zeroes when nothing is known yet', () => {
+      const ctx = makeCtx({ currentTycoonData: null });
+      applyResumeStats(ctx, SNAPSHOT);
+      expect(ctx.currentTycoonData).toEqual({ cash: '5000', incomePerHour: '0', ranking: 0, buildingCount: 0, maxBuildings: 0 });
+    });
+  });
+
+  it('logout deletes the held resume token before REQ_LOGOUT is sent', async () => {
+    const mem = new Map<string, string>([['spo_resume_token', '{"username":"u","token":"t"}']]);
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => mem.get(k) ?? null,
+        setItem: (k: string, v: string) => { mem.set(k, v); },
+        removeItem: (k: string) => { mem.delete(k); },
+      },
+    });
+    try {
+      let heldAtSend: boolean | null = null;
+      const ctx = makeCtx({
+        sendRequest: jest.fn(async () => { heldAtSend = mem.has('spo_resume_token'); return { type: WsMessageType.RESP_LOGOUT, success: true } as WsMessage; }),
+        closeAfterLogout: jest.fn(),
+      });
+
+      await logout(ctx);
+
+      expect(heldAtSend).toBe(false);
+      expect(ctx.closeAfterLogout).toHaveBeenCalledTimes(1);
+    } finally {
+      // @ts-expect-error — removing the stub we installed
+      delete globalThis.sessionStorage;
+    }
   });
 });

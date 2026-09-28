@@ -175,6 +175,33 @@ memory only (SEC-L-1) and `destroy()` clears it when the park ends.
   sessions.
 - The WebSocket heartbeat belongs to the socket-hygiene card (#1044).
 
+### The browser side
+
+The tab keeps the latest token and hands it back on its next socket, so a dropped connection or a
+reloaded page returns to the same Delphi session instead of logging in again. Module:
+`src/client/store/resume-token.ts`; wiring: `attemptReconnect` and `resumeHeldSessionAtStartup`
+in `src/client/client.ts`, `enterFromResumeSnapshot` in `src/client/handlers/auth-handler.ts`.
+Card #1046.
+
+- **Where it lives.** The `sessionStorage` key `spo_resume_token` holds `{ username, token }`
+  (the login username the gateway parked the session under). It is written on
+  `EVENT_SESSION_RESUME_TOKEN`, replaced on each rotation, and deleted on Logout (before the
+  post-logout reload) and on any refusal. Every access is wrapped in try/catch: a storage that
+  throws reads as "no token".
+- **Socket dropped, page alive.** While a token is held, the first frame on the reconnect socket
+  is `REQ_RESUME_SESSION` — including the immediate attempt on `visibilitychange`, `pageshow` or
+  `resume`. On success the game view is kept: the stats are updated from the snapshot, and the
+  camera, the visible map area and the open building inspector are sent again. On refusal the
+  login replay runs on the same socket when the password is still in memory; otherwise the
+  status becomes `session_expired`. With no token held, the reconnect is the login replay.
+- **Page reloaded (F5 or a discarded tab).** A held token is sent at start-up, before the login
+  screen settles. On success the client enters the game from the snapshot through
+  `enterWorldWithCompany`, the same function `selectCompanyAndStart` calls after a company is
+  chosen, with no login and no company step. On refusal the normal login screen shows, with the
+  remembered session.
+- **Why `sessionStorage`.** It belongs to one tab, survives a reload and a discard, and dies with
+  the tab: a second tab must never take over the first tab's session.
+
 ### The L2 drive
 
 `logoff` in `src/e2e/session.ts` is a bare `driver.close()` with no `REQ_LOGOUT`, so every L2

@@ -9,7 +9,9 @@ import {
   BuildingDetailsResponse,
   SurfaceType,
   WsReqMailConnect,
-  WsReqGetProfile
+  WsReqGetProfile,
+  WsReqResumeSession,
+  WsRespResumeSession
 } from '../shared/types';
 import { getErrorMessage } from '../shared/error-codes';
 import { toErrorMessage } from '../shared/error-utils';
@@ -34,6 +36,7 @@ import { MapAmbience } from './audio/map-ambience';
 import type { ClientHandlerContext } from './handlers/client-context';
 import type { RememberedSession } from './store/remembered-session';
 import { ExploredBlocks } from './store/explored-blocks';
+import { loadResumeToken, clearResumeToken } from './store/resume-token';
 
 // Handler modules
 import { dispatchEvent } from './handlers/event-handler';
@@ -65,6 +68,11 @@ const STARTUP_RETRY_MS = 2000;
 const STARTUP_UNREACHABLE_MS = 60_000;
 /** How long a sign-in waits for a gateway socket to open before giving up (issue 1048). */
 const GATEWAY_CONNECT_TIMEOUT_MS = 10_000;
+/**
+ * How long a REQ_RESUME_SESSION waits for its answer (issue 1046). A resume is a lookup inside the
+ * gateway with no Delphi round trip, so it answers at once; this only bounds a stuck socket.
+ */
+const RESUME_REQUEST_TIMEOUT_MS = 15_000;
 
 // Wire-level debug tracker exposed on window.__spoDebug (permanent instrumentation)
 interface SpoDebugWire {
@@ -1102,6 +1110,7 @@ export class StarpeaceClient implements ClientHandlerContext {
     this.pollServerStartup();
     this.openGatewaySocket();
     this.installPageLifecycleListeners();
+    void this.resumeHeldSessionAtStartup();
   }
 
   /** Open the gateway socket with its handlers; used by `init()` and `ensureConnected()` (issue 1048). */
@@ -1152,7 +1161,7 @@ export class StarpeaceClient implements ClientHandlerContext {
           return;
         }
       }
-      if (!this.storedUsername || !this.storedPassword) {
+      if (!this.hasReconnectCredentials()) {
         ClientBridge.setDisconnected();
         return;
       }
@@ -1229,7 +1238,12 @@ export class StarpeaceClient implements ClientHandlerContext {
   }
 
   private reconnectNowIfForegrounded(): void {
-    if (this.storedUsername && this.storedPassword) this.triggerImmediateReconnect();
+    if (this.hasReconnectCredentials()) this.triggerImmediateReconnect();
+  }
+
+  /** A reconnect can get the session back: a password to replay the login, or a resume token (issue 1046). */
+  private hasReconnectCredentials(): boolean {
+    return Boolean(this.storedUsername) && (Boolean(this.storedPassword) || loadResumeToken() !== null);
   }
 
   private handleMessage(msg: WsMessage) {
@@ -1309,8 +1323,9 @@ export class StarpeaceClient implements ClientHandlerContext {
 
     const { storedUsername, storedPassword, currentWorldName } = this;
     const companyId = useGameStore.getState().companyId;
+    const canReplay = Boolean(storedUsername && storedPassword && currentWorldName && companyId);
 
-    if (!storedUsername || !storedPassword || !currentWorldName || !companyId) {
+    if (!canReplay && loadResumeToken() === null) {
       ClientBridge.log('System', 'Missing session data — returning to login.');
       this.reconnectAttempt = 0;
       useGameStore.getState().setReconnectAttempt(0);
@@ -1323,13 +1338,34 @@ export class StarpeaceClient implements ClientHandlerContext {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${protocol}//${window.location.host}/ws`;
 
-    this.ws = new WebSocket(url);
+    const socket = new WebSocket(url);
+    this.ws = socket;
     /** The attempt counter as it stood before this socket's onopen reset it (issue 1076). */
     let attemptBeforeOpen: number | null = null;
     /** Set when this socket was closed with 1013; its .catch then arms nothing. */
     let refusedServerFull = false;
 
-    this.ws.onopen = () => {
+    const replayLogin = (): void => {
+      authHandler.login(this, currentWorldName)
+        .then(() => authHandler.selectCompanyAndStart(this, companyId as string))
+        .catch((err: unknown) => {
+          ClientBridge.log('Error', `Reconnect failed: ${toErrorMessage(err)}`);
+          if (refusedServerFull) return; // the 1013 close already armed this socket's single retry
+          if (this.storedUsername && this.storedPassword) {
+            ClientBridge.setReconnecting();
+            this.scheduleReconnect();
+          } else {
+            ClientBridge.setDisconnected();
+          }
+        });
+    };
+    const giveUpExpired = (): void => {
+      this.reconnectAttempt = 0;
+      useGameStore.getState().setReconnectAttempt(0);
+      ClientBridge.setDisconnected('session_expired');
+    };
+
+    socket.onopen = () => {
       this.isConnected = true;
       attemptBeforeOpen = this.reconnectAttempt;
       this.reconnectAttempt = 0;
@@ -1344,23 +1380,36 @@ export class StarpeaceClient implements ClientHandlerContext {
         });
       }
 
-      authHandler.login(this, currentWorldName)
-        .then(() => authHandler.selectCompanyAndStart(this, companyId))
+      // A held token re-attaches the parked session instead of a new Delphi Logon (issue 1046).
+      // REQ_RESUME_SESSION must be the first frame on the socket.
+      const held = loadResumeToken();
+      if (!held) {
+        // Without a token this attempt was only started because the replay was possible.
+        if (canReplay) replayLogin();
+        else giveUpExpired();
+        return;
+      }
+      const req: WsReqResumeSession = {
+        type: WsMessageType.REQ_RESUME_SESSION,
+        username: held.username,
+        token: held.token,
+      };
+      this.sendRequest(req, RESUME_REQUEST_TIMEOUT_MS)
+        .then((resp) => this.applyReattach(resp as WsRespResumeSession))
         .catch((err: unknown) => {
-          ClientBridge.log('Error', `Reconnect failed: ${toErrorMessage(err)}`);
-          if (refusedServerFull) return; // the 1013 close already armed this socket's single retry
-          if (this.storedUsername && this.storedPassword) {
-            ClientBridge.setReconnecting();
-            this.scheduleReconnect();
-          } else {
-            ClientBridge.setDisconnected();
-          }
+          // The socket died under the request: its onclose armed the retry, and the token may still be good.
+          if (this.ws !== socket || !this.isConnected) return;
+          ClientBridge.log('System', `Session re-attach refused: ${toErrorMessage(err)}`);
+          clearResumeToken();
+          // After a refusal the gateway keeps this socket's fresh session, so the replay runs here.
+          if (canReplay) replayLogin();
+          else giveUpExpired();
         });
     };
 
-    this.ws.onmessage = (event) => this.onWsMessage(event);
+    socket.onmessage = (event) => this.onWsMessage(event);
 
-    this.ws.onclose = (event?: CloseEvent) => {
+    socket.onclose = (event?: CloseEvent) => {
       this.isConnected = false;
       this.cleanupTimers();
       this.pendingRequests.forEach(({ reject }) => reject(new Error(DISCONNECTED_MESSAGE)));
@@ -1374,7 +1423,7 @@ export class StarpeaceClient implements ClientHandlerContext {
         this.reloadAfterLogout();
         return;
       }
-      if (this.storedUsername && this.storedPassword) {
+      if (this.hasReconnectCredentials()) {
         if (event?.code === WS_CLOSE_SERVICE_RESTART) {
           useGameStore.getState().setServerRestarting(true);
         }
@@ -1394,9 +1443,66 @@ export class StarpeaceClient implements ClientHandlerContext {
       }
     };
 
-    this.ws.onerror = (error) => {
+    socket.onerror = (error) => {
       console.error('[Client] WebSocket error during reconnect:', error);
     };
+  }
+
+  /**
+   * The socket dropped but the page stayed alive, and the gateway re-attached the parked session
+   * (issue 1046). The game view, the camera and every open panel are still valid: bring the
+   * stats up to date and re-send what the gateway's fresh socket has not seen yet. Never rebuilds
+   * the view, never sends a login or a company selection.
+   */
+  private applyReattach(snapshot: WsRespResumeSession): void {
+    ClientBridge.log('System', 'Session re-attached.');
+    ClientBridge.setConnected();
+    authHandler.applyResumeStats(this, snapshot);
+    this.sendCameraPositionNow();
+    if (this.viewportHeartbeatTimer === null) {
+      // The socket's onclose cleared it.
+      this.viewportHeartbeatTimer = setInterval(() => this.sendCameraPositionNow(), 30_000);
+    }
+    mapHandler.refreshMapData(this);
+    const details = useBuildingStore.getState().details;
+    if (useUiStore.getState().rightPanel === 'building' && details) {
+      void buildingActionHandler.refreshBuildingDetails(this, details.x, details.y, { userInitiated: false });
+    }
+  }
+
+  /**
+   * The page was reloaded (F5 or a discarded tab) while a resume token was held: ask the gateway
+   * for the parked session before the login screen settles (issue 1046). On a refusal the token
+   * is dropped and the login screen stays as it is, remembered session included.
+   */
+  private async resumeHeldSessionAtStartup(): Promise<void> {
+    const held = loadResumeToken();
+    if (!held) return;
+    ClientBridge.setLoginLoading(true);
+    try {
+      await this.ensureConnected();
+    } catch {
+      // The socket never opened, so the gateway never saw the token: keep it.
+      ClientBridge.setLoginLoading(false);
+      return;
+    }
+    let snapshot: WsRespResumeSession;
+    try {
+      const req: WsReqResumeSession = {
+        type: WsMessageType.REQ_RESUME_SESSION,
+        username: held.username,
+        token: held.token,
+      };
+      snapshot = (await this.sendRequest(req, RESUME_REQUEST_TIMEOUT_MS)) as WsRespResumeSession;
+    } catch (err: unknown) {
+      ClientBridge.log('System', `Session re-attach refused: ${toErrorMessage(err)}`);
+      if (this.isConnected) clearResumeToken();
+      ClientBridge.setLoginLoading(false);
+      return;
+    }
+    const ok = await authHandler.enterFromResumeSnapshot(this, snapshot);
+    if (!ok) clearResumeToken();
+    ClientBridge.setLoginLoading(false);
   }
 
   public triggerImmediateReconnect(): void {

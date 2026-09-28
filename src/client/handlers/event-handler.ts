@@ -37,6 +37,7 @@ import {
   WsEventModelStatusChanged,
   WsRespTutorialState,
   WsRespTutorialAction,
+  WsEventSessionResumeToken,
 } from '../../shared/types';
 import { Season } from '../../shared/map-config';
 import { toErrorMessage } from '../../shared/error-utils';
@@ -55,6 +56,7 @@ import { useMapStore } from '../store/map-store';
 import { useTutorialStore } from '../store/tutorial-store';
 import { getFacilityDimensionsCache } from '../facility-dimensions-cache';
 import { hasSeenBackupNotice, markBackupNoticeSeen } from '../store/backup-notice';
+import { loadResumeToken, saveResumeToken } from '../store/resume-token';
 import type { ClientHandlerContext } from './client-context';
 
 // ── Refresh Throttle (R2 + R3) ────────────────────────────────────────────────
@@ -678,6 +680,17 @@ export function dispatchEvent(ctx: ClientHandlerContext, msg: WsMessage): void {
       if (!act.success) {
         ctx.showNotification(act.message || 'The assignment could not be updated', 'error');
       }
+      break;
+    }
+
+    case WsMessageType.EVENT_SESSION_RESUME_TOKEN: {
+      // A logout already deleted the token; a late push must never bring it back.
+      if (ctx.isLoggingOut) break;
+      // The login username is what the gateway parks the session under (not the role name).
+      // After a reload re-attach it is set from the snapshot; the held record covers the gap.
+      const username = ctx.storedUsername || loadResumeToken()?.username;
+      const { token } = msg as WsEventSessionResumeToken;
+      if (username && token) saveResumeToken({ username, token }); // replaces on every rotation
       break;
     }
 
