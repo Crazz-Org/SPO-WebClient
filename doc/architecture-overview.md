@@ -159,6 +159,7 @@ Module: `src/server/session-park.ts` (pure); wiring: the `wss.on('connection')` 
 |---------|---------|---------|
 | `SPO_SESSION_PARK_MS` | `300000` (5 min) | How long a parked session waits for its tab |
 | `SPO_MAX_PARKED_SESSIONS` | `100` | Global ceiling on parked sessions (SEC-W-3); over it a closing session ends at once. `0` disables parking. The number is a planner choice — the card set none |
+| `SPO_MAX_SESSIONS` | `recommendedCap` of `src/__tests__/load/session-capacity.json` (4550) | Global cap on admitted game sessions, parked ones included (SEC-W-3); a `REQ_LOGIN_WORLD` over it gets `RESP_ERROR` "server full" and a 1013 close. A resume is never capped. An invalid value stops the gateway at start |
 
 A parked session keeps its `wsConnectionsPerIp` slot under the IP that parked it until it ends or
 is re-attached; a re-attach from another IP moves the slot to the new IP. The password stays in

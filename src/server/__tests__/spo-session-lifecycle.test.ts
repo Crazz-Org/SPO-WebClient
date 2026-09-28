@@ -2102,6 +2102,16 @@ describe('cleanupWorldSession — switching servers', () => {
 });
 
 describe('destroy', () => {
+  it('emits destroyed exactly once, even when called twice', () => {
+    const onDestroyed = jest.fn();
+    harness.session.on('destroyed', onDestroyed);
+
+    harness.session.destroy();
+    harness.session.destroy();
+
+    expect(onDestroyed).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects everything in flight and everything queued', async () => {
     await connectWorld();
     const inFlight = harness.session.sendRdoRequest('world', { ...GET_TYCOON, member: 'NeverAnswered' },

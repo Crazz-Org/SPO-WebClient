@@ -45,6 +45,15 @@ import {
   type ResumeEntry,
 } from './session-park';
 import { toErrorMessage } from '../shared/error-utils';
+import {
+  SessionCap,
+  parseMaxSessions,
+  withSessionCap,
+  SERVER_FULL_MESSAGE,
+  WS_TRY_AGAIN_LATER_CLOSE_CODE,
+  SERVER_FULL_CLOSE_REASON,
+  type CappedGatewayMetrics,
+} from './session-cap';
 import { wsHandlerRegistry } from './ws-handlers';
 import { buildErrorContractReadout, buildPropertyFallbackReadout } from './session/diagnostics-readouts';
 import {
@@ -56,7 +65,6 @@ import {
   readGatewayVersion,
   startMetricsLog,
   PROCESS_STARTED_AT_MS,
-  type GatewayMetrics,
 } from './observability';
 import { parseResearchDat, buildInventionIndex, type DatInventionIndex } from '../shared/research-dat-parser';
 import { getPublicDir, getCacheDir, getWebclientCacheDir } from './paths';
@@ -403,8 +411,8 @@ setInterval(() => sweepExpiredRateLimits(), 300_000);
 const GATEWAY_VERSION = readGatewayVersion();
 
 /** The /api/metrics object — also the payload of the periodic METRICS log line. */
-function collectMetrics(): GatewayMetrics {
-  return buildMetrics({
+function collectMetrics(): CappedGatewayMetrics {
+  return withSessionCap(buildMetrics({
     version: GATEWAY_VERSION,
     startedAtMs: PROCESS_STARTED_AT_MS,
     now: Date.now(),
@@ -413,7 +421,7 @@ function collectMetrics(): GatewayMetrics {
     sessions: sessionRegistry.snapshot(),
     directory: directoryProbe.getState(),
     clientErrors: getClientErrorCounts(),
-  });
+  }), sessionCap.counters());
 }
 
 /** Answers 403 to anything but a direct loopback request; true when it refused. */
@@ -1019,6 +1027,9 @@ interface GatewaySessionHandle {
   ending: Promise<void> | null;
 }
 
+/** Global game-session cap (SEC-W-3) — exported for tests. */
+export const sessionCap = new SessionCap<StarpeaceSession>();
+
 /** Every token-holding session, attached or parked. */
 const parkRegistry = new SessionParkRegistry<GatewaySessionHandle>({
   parkMs: readParkMs(process.env),
@@ -1444,6 +1455,26 @@ async function handleClientMessage(
     return;
   }
 
+  // Global session cap (SEC-W-3): a world login takes a slot. The player's own parked session,
+  // which the login handler is about to evict, does not count. A resume never reaches here.
+  if (msg.type === WsMessageType.REQ_LOGIN_WORLD) {
+    const username = (msg as WsReqLoginWorld).username;
+    const ownParked = typeof username === 'string' ? parkRegistry.parkedFor(username).map(p => p.session) : [];
+    if (!sessionCap.tryAdmit(session, ownParked)) {
+      const { admitted, max } = sessionCap.counters();
+      logger.warn('SESSION_CAP_REFUSED', { admitted, max });
+      const errorResp: WsRespError = {
+        type: WsMessageType.RESP_ERROR,
+        wsRequestId: msg.wsRequestId,
+        errorMessage: SERVER_FULL_MESSAGE,
+        code: ErrorCodes.ERROR_RequestDenied
+      };
+      ws.send(JSON.stringify(errorResp));
+      ws.close(WS_TRY_AGAIN_LATER_CLOSE_CODE, SERVER_FULL_CLOSE_REASON);
+      return;
+    }
+  }
+
   const handler = wsHandlerRegistry[msg.type as WsMessageType];
   if (!handler) {
     logger.warn(`Unknown message type: ${msg.type}`);
@@ -1473,6 +1504,12 @@ async function handleClientMessage(
     };
     ws.send(JSON.stringify(errorResp));
   }
+
+  // A world login that did not reach the world keeps no slot (wrong password, unknown world…)
+  if (msg.type === WsMessageType.REQ_LOGIN_WORLD) {
+    const after = session.getPhase();
+    if (after === SessionPhase.DISCONNECTED || after === SessionPhase.DIRECTORY_CONNECTED) sessionCap.release(session);
+  }
 }
 
 // =============================================================================
@@ -1499,6 +1536,9 @@ export async function startGateway(options?: GatewayOptions): Promise<GatewayIns
   if (options?.host !== undefined) HOST = options.host;
   if (options?.port !== undefined) PORT = options.port;
   if (options?.singleUserMode !== undefined) SINGLE_USER_MODE = options.singleUserMode;
+
+  // Global session cap (SEC-W-3) — an invalid SPO_MAX_SESSIONS stops the gateway here.
+  sessionCap.setMax(parseMaxSessions(process.env.SPO_MAX_SESSIONS));
 
   // Validate the production configuration and report it BEFORE anything binds a port
   // (policy SEC-R-2). A forbidden combination throws, main() logs it and exits 1.
