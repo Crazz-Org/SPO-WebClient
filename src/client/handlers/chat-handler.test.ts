@@ -11,11 +11,11 @@
  */
 
 jest.mock('../bridge/client-bridge', () => ({
-  ClientBridge: { log: jest.fn(), setChannelInfo: jest.fn() },
+  ClientBridge: { log: jest.fn(), setChannelInfo: jest.fn(), setCurrentChannel: jest.fn() },
 }));
 
 import { WsMessageType } from '@/shared/types';
-import { requestChannelInfo } from './chat-handler';
+import { requestChannelInfo, joinChannel } from './chat-handler';
 import { ClientBridge } from '../bridge/client-bridge';
 import type { ClientHandlerContext } from './client-context';
 
@@ -71,5 +71,39 @@ describe('requestChannelInfo', () => {
     expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Failed to get channel info: socket closed');
     expect(ClientBridge.setChannelInfo).toHaveBeenNthCalledWith(1, 'Trade', 'Loading...');
     expect(ClientBridge.setChannelInfo).toHaveBeenNthCalledWith(2, 'Trade', '');
+  });
+});
+
+describe('joinChannel — a rejection', () => {
+  function joinCtx(err: unknown) {
+    const ctx = {
+      isJoiningChannel: false,
+      sendRequest: jest.fn(() => Promise.reject(err)),
+      showNotification: jest.fn(),
+    } as unknown as ClientHandlerContext & { showNotification: jest.Mock };
+    return ctx;
+  }
+
+  it('without a gateway sentence shows the player sentence and rolls back', async () => {
+    const ctx = joinCtx(new Error('Request Timeout'));
+
+    await joinChannel(ctx, 'Trade', undefined, 'Lobby');
+
+    expect(ctx.showNotification).toHaveBeenCalledWith(
+      'Could not join this channel — the server did not answer in time. Try again.',
+      'error',
+    );
+    expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Failed to join channel: Request Timeout');
+    expect(ClientBridge.setCurrentChannel).toHaveBeenLastCalledWith('Lobby');
+    expect(ctx.isJoiningChannel).toBe(false);
+  });
+
+  it('with a gateway sentence shows that sentence unchanged', async () => {
+    const ctx = joinCtx(Object.assign(new Error('Unknown error'), { code: 1, serverMessage: 'Wrong password.' }));
+
+    await joinChannel(ctx, 'Trade', 'x', 'Lobby');
+
+    expect(ctx.showNotification).toHaveBeenCalledWith('Wrong password.', 'error');
+    expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Failed to join channel: Wrong password.');
   });
 });

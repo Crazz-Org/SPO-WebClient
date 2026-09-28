@@ -14,7 +14,7 @@ import { X, Copy, History } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useChatStore } from '../../store/chat-store';
 import { formatTranscript, filterTranscript } from '../chat/chat-transcript';
-import { toErrorMessage } from '@/shared/error-utils';
+import { playerErrorMessage } from '../../player-error';
 import styles from './ChatHistoryModal.module.css';
 
 export function ChatHistoryModal() {
@@ -51,14 +51,15 @@ export function ChatHistoryModal() {
   }, [closeModal]);
 
   const handleCopy = useCallback(async () => {
+    if (!navigator.clipboard?.writeText) {
+      setStatus('Copying is not available in this browser');
+      return;
+    }
     try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error('Clipboard is not available');
-      }
       await navigator.clipboard.writeText(formatTranscript(shown));
       setStatus('Copied');
     } catch (err: unknown) {
-      setStatus(toErrorMessage(err));
+      setStatus(playerErrorMessage('copy the chat history', err));
     }
   }, [shown]);
 

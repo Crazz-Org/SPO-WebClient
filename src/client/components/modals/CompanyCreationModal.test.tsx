@@ -83,6 +83,23 @@ describe('CompanyCreationModal name guard', () => {
     expect(onCreateCompanySubmit).not.toHaveBeenCalled();
   });
 
+  it('a refused creation shows the player sentence, not "Unknown error"', async () => {
+    const onCreateCompanySubmit = jest.fn(async (..._args: unknown[]) => {
+      throw Object.assign(new Error('Unknown error'), { code: 1 });
+    });
+    open();
+    renderWithProviders(
+      <CompanyCreationModal />,
+      { clientCallbacks: createSpiedCallbacks({ onCreateCompanySubmit }) },
+    );
+
+    await submit('Green Co');
+
+    expect(screen.getByText('Could not create this company — the game server could not do it. Try again.')).toBeTruthy();
+    expect(screen.queryByText('Unknown error')).toBeNull();
+    expect(useUiStore.getState().modal).toBe('createCompany');
+  });
+
   it('refuses a blank name before any round-trip', async () => {
     const onCreateCompanySubmit = jest.fn(async (..._args: unknown[]) => undefined);
     open();

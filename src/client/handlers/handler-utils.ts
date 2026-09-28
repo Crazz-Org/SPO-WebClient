@@ -13,21 +13,18 @@ type Renderer = NonNullable<ReturnType<ClientHandlerContext['getRenderer']>>;
 
 /**
  * Wraps an async operation with error logging.
- * Catches errors, logs them via ClientBridge, and optionally shows a notification.
+ * Catches errors and logs them via ClientBridge.
  *
  * @returns The result of `fn`, or `undefined` if it threw.
  */
 export async function logErrors<T>(
   label: string,
   fn: () => Promise<T>,
-  notify?: (message: string) => void,
 ): Promise<T | undefined> {
   try {
     return await fn();
   } catch (err: unknown) {
-    const msg = toErrorMessage(err);
-    ClientBridge.log('Error', `${label}: ${msg}`);
-    notify?.(`${label}: ${msg}`);
+    ClientBridge.log('Error', `${label}: ${toErrorMessage(err)}`);
     return undefined;
   }
 }

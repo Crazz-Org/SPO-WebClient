@@ -32,6 +32,7 @@ import { useGameStore } from './store/game-store';
 import { useUiStore } from './store/ui-store';
 import { ClientBridge } from './bridge/client-bridge';
 import { GATEWAY_UNREACHABLE_MESSAGE } from './handlers/reconnect-utils';
+import { REQUEST_TIMEOUT_MESSAGE, NOT_CONNECTED_MESSAGE } from './player-error';
 
 class FakeSocket {
   onopen: (() => void) | null = null;
@@ -236,7 +237,7 @@ describe('StarpeaceClient onDisconnectConnection', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(notify).toHaveBeenCalledWith('Failed to disconnect: socket gone', 'error');
+    expect(notify).toHaveBeenCalledWith('Could not disconnect these connections — something went wrong. Try again.', 'error');
   });
 });
 
@@ -275,6 +276,23 @@ describe('RESP_ERROR on a pending request', () => {
       message: 'Unknown tycoon',
       serverMessage: 'gateway sentence',
     });
+  });
+
+  it('rejects with the shared constants on a missed deadline and on a closed socket', async () => {
+    jest.useFakeTimers();
+    try {
+      (client as unknown as { isConnected: boolean }).isConnected = true;
+      const pending = client.sendRequest({ type: WsMessageType.REQ_AUTH_CHECK } as unknown as WsMessage, 5000);
+      jest.advanceTimersByTime(5000);
+      await expect(pending).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
+
+      (client as unknown as { isConnected: boolean }).isConnected = false;
+      await expect(
+        client.sendRequest({ type: WsMessageType.REQ_AUTH_CHECK } as unknown as WsMessage),
+      ).rejects.toThrow(NOT_CONNECTED_MESSAGE);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 

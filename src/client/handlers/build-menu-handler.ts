@@ -20,6 +20,7 @@ import {
   FacilityDimensions,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { playerErrorMessage } from '../player-error';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useUiStore } from '../store/ui-store';
 import { useGameStore } from '../store/game-store';
@@ -234,9 +235,8 @@ async function placeCapitol(ctx: ClientHandlerContext, x: number, y: number): Pr
 
     cancelBuildingPlacement(ctx);
   } catch (err: unknown) {
-    const errorMsg = toErrorMessage(err);
-    ClientBridge.log('Error', `Failed to place Capitol: ${errorMsg}`);
-    ctx.showNotification(`Failed to place Capitol: ${errorMsg}`, 'error');
+    ClientBridge.log('Error', `Failed to place Capitol: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('place the Capitol', err), 'error');
   } finally {
     clearPending();
   }
@@ -421,9 +421,8 @@ export async function sendPlaceBuilding(ctx: ClientHandlerContext, building: Bui
       );
     }
   } catch (err: unknown) {
-    const errorMsg = toErrorMessage(err);
-    ClientBridge.log('Error', `Failed to place ${building.name}: ${errorMsg}`);
-    ctx.showNotification(`Failed to place building: ${errorMsg}`, 'error');
+    ClientBridge.log('Error', `Failed to place ${building.name}: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('place this building', err), 'error');
   } finally {
     clearPending();
   }

@@ -287,7 +287,7 @@ describe('auth-handler', () => {
       await login(ctx, 'Shamba');
 
       expect(ctx.showNotification).toHaveBeenCalledWith(
-        'World login failed: Connection lost',
+        'Could not sign in to this world — something went wrong. Try again.',
         'error',
       );
       expect(ClientBridge.setLoginLoading).toHaveBeenCalledWith(false);
@@ -362,6 +362,21 @@ describe('auth-handler', () => {
       );
       expect(mockGameStoreMethods.setActiveUsername).toHaveBeenCalledWith('Mayor of Kalisz');
     });
+
+    it('a rejected selection shows the player sentence, the raw text only in the log', async () => {
+      const ctx = makeCtx({
+        availableCompanies: [],
+        sendRequest: jest.fn().mockRejectedValue(new Error('Request Timeout')),
+      });
+
+      await expect(selectCompanyAndStart(ctx, '0')).resolves.toBe(false);
+
+      expect(ctx.showNotification).toHaveBeenCalledWith(
+        'Could not start with this company — the server did not answer in time. Try again.',
+        'error',
+      );
+      expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Company selection failed: Request Timeout');
+    });
   });
 
   // #532 — the refusal the modal shows is the gateway's sentence, not the one
@@ -389,7 +404,10 @@ describe('auth-handler', () => {
 
       await performAuthCheck(ctx, 'testUser', 'badPass');
 
-      expect(ClientBridge.setAuthError).toHaveBeenCalledWith({ code: 7, message: 'Request Timeout' });
+      expect(ClientBridge.setAuthError).toHaveBeenCalledWith({
+        code: 7,
+        message: 'Could not sign in — the server did not answer in time. Try again.',
+      });
     });
 
     it('stores the credentials and raises no error on a valid logon', async () => {
@@ -457,6 +475,18 @@ describe('auth-handler', () => {
   });
 
   describe('performDirectoryLogin() — the world limit', () => {
+    it('a rejected directory login shows the player sentence, the raw text only in the log', async () => {
+      const ctx = makeCtx({ sendRequest: jest.fn().mockRejectedValue(new Error('WebSocket not connected')) });
+
+      await expect(performDirectoryLogin(ctx, 'testUser', 'testPass')).resolves.toBeNull();
+
+      expect(ClientBridge.showError).toHaveBeenCalledWith(
+        'Could not sign in — you are not connected to the game right now. Try again.',
+      );
+      expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Directory Auth Failed: WebSocket not connected');
+      expect(ClientBridge.setLoginLoading).toHaveBeenCalledWith(false);
+    });
+
     it('forwards the flag and says so in the log when the directory refused', async () => {
       const ctx = makeCtx({
         sendRequest: jest.fn().mockResolvedValue({
@@ -761,7 +791,8 @@ describe('auth-handler', () => {
 
       await profileSwitchCompany(ctx, '55', 'SPO_test3 - Green', 'SPO_test3');
 
-      expect(ClientBridge.showError).toHaveBeenCalledWith('Failed to switch company: ECONNRESET');
+      expect(ClientBridge.showError).toHaveBeenCalledWith('Could not switch company — something went wrong. Try again.');
+      expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Failed to switch company: ECONNRESET');
       expect(ClientBridge.setCompany).not.toHaveBeenCalled();
     });
   });
@@ -828,7 +859,8 @@ describe('auth-handler', () => {
 
       await abandonRole(ctx);
 
-      expect(ClientBridge.showError).toHaveBeenCalledWith('Abandon role failed: ECONNRESET');
+      expect(ClientBridge.showError).toHaveBeenCalledWith('Could not abandon this role — something went wrong. Try again.');
+      expect(ClientBridge.log).toHaveBeenCalledWith('Error', 'Abandon role failed: ECONNRESET');
       expect(mockGameStoreMethods.setSwitchingCompany).toHaveBeenLastCalledWith(false);
     });
   });

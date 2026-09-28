@@ -13,6 +13,7 @@ import {
 } from '../shared/types';
 import { getErrorMessage } from '../shared/error-codes';
 import { toErrorMessage } from '../shared/error-utils';
+import { REQUEST_TIMEOUT_MESSAGE, NOT_CONNECTED_MESSAGE, DISCONNECTED_MESSAGE, playerErrorMessage } from './player-error';
 import { MapNavigationUI } from './ui/map-navigation-ui';
 import { MinimapUI } from './ui/minimap-ui';
 import { useMapStore } from './store/map-store';
@@ -441,7 +442,8 @@ export class StarpeaceClient implements ClientHandlerContext {
             return buildingActionHandler.refreshAfterConnectionChange(this, buildingX, buildingY);
           }
         }).catch((err: unknown) => {
-          this.showNotification(`Failed to disconnect: ${toErrorMessage(err)}`, 'error');
+          ClientBridge.log('Error', `Failed to disconnect: ${toErrorMessage(err)}`);
+          this.showNotification(playerErrorMessage('disconnect these connections', err), 'error');
         });
       },
 
@@ -669,7 +671,7 @@ export class StarpeaceClient implements ClientHandlerContext {
   // (ISProxyTimeOut = 180s) so the gateway's real error always arrives first.
   public sendRequest<T extends WsMessage>(msg: T, timeoutMs = 200000): Promise<WsMessage> {
     return new Promise((resolve, reject) => {
-      if (!this.ws || !this.isConnected) return reject(new Error('WebSocket not connected'));
+      if (!this.ws || !this.isConnected) return reject(new Error(NOT_CONNECTED_MESSAGE));
 
       const requestId = Date.now().toString(36) + Math.random().toString(36).substr(2);
       msg.wsRequestId = requestId;
@@ -687,7 +689,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       setTimeout(() => {
         if (this.pendingRequests.has(requestId)) {
           this.pendingRequests.delete(requestId);
-          reject(new Error('Request Timeout'));
+          reject(new Error(REQUEST_TIMEOUT_MESSAGE));
         }
       }, timeoutMs);
     });
@@ -1113,7 +1115,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       this.isConnected = false;
       this.cleanupTimers();
       // Drain pending requests immediately to avoid noisy 15s timeouts
-      this.pendingRequests.forEach(({ reject }) => reject(new Error('Disconnected')));
+      this.pendingRequests.forEach(({ reject }) => reject(new Error(DISCONNECTED_MESSAGE)));
       this.pendingRequests.clear();
       this.isSelectingCompany = false;
       ClientBridge.log('System', 'Gateway Disconnected.');
@@ -1159,9 +1161,10 @@ export class StarpeaceClient implements ClientHandlerContext {
   private async signInWhenConnected(signIn: () => Promise<unknown>): Promise<void> {
     try {
       await this.ensureConnected();
-    } catch (err: unknown) {
+    } catch {
+      // ensureConnected rejects only with GATEWAY_UNREACHABLE_MESSAGE, already a player sentence.
       ClientBridge.setLoginLoading(false);
-      ClientBridge.setAuthError({ code: 0, message: toErrorMessage(err) });
+      ClientBridge.setAuthError({ code: 0, message: GATEWAY_UNREACHABLE_MESSAGE });
       return;
     }
     await signIn();
@@ -1325,7 +1328,7 @@ export class StarpeaceClient implements ClientHandlerContext {
     this.ws.onclose = (event?: CloseEvent) => {
       this.isConnected = false;
       this.cleanupTimers();
-      this.pendingRequests.forEach(({ reject }) => reject(new Error('Disconnected')));
+      this.pendingRequests.forEach(({ reject }) => reject(new Error(DISCONNECTED_MESSAGE)));
       this.pendingRequests.clear();
       this.isSelectingCompany = false;
       ClientBridge.log('System', 'Reconnect attempt lost connection.');

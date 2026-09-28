@@ -26,6 +26,7 @@ import {
   WorldInfo,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { playerErrorMessage } from '../player-error';
 import { VISITOR_COMPANY_ID, VISITOR_COMPANY } from '../../shared/visitor-visa';
 import { normalizeLanguageId } from '../../shared/language';
 import { ClientBridge } from '../bridge/client-bridge';
@@ -68,7 +69,7 @@ export async function performAuthCheck(ctx: ClientHandlerContext, username: stri
     // `code` is a DIR_* code and the gateway already worded it; the client's own
     // getErrorMessage() would re-word it from the wrong table (issue 532).
     const { code = 0, serverMessage } = err as { code?: number; serverMessage?: string };
-    ClientBridge.setAuthError({ code, message: serverMessage || toErrorMessage(err) });
+    ClientBridge.setAuthError({ code, message: serverMessage || playerErrorMessage('sign in', err) });
     return false;
   } finally {
     ClientBridge.setLoginLoading(false);
@@ -100,7 +101,7 @@ export async function performDirectoryLogin(ctx: ClientHandlerContext, username:
     return resp.worlds;
   } catch (err: unknown) {
     ClientBridge.log('Error', `Directory Auth Failed: ${toErrorMessage(err)}`);
-    ClientBridge.showError('Login Failed: ' + toErrorMessage(err));
+    ClientBridge.showError(playerErrorMessage('sign in', err));
     ClientBridge.setLoginLoading(false);
     return null;
   }
@@ -179,7 +180,10 @@ export async function login(ctx: ClientHandlerContext, worldName: string): Promi
     // The gateway words a world-side refusal itself (AccountStatus); showing the
     // code's generic sentence instead would hide which credential was wrong.
     const { serverMessage } = err as { serverMessage?: string };
-    ctx.showNotification(`World login failed: ${serverMessage || toErrorMessage(err)}`, 'error');
+    ctx.showNotification(
+      serverMessage ? `World login failed: ${serverMessage}` : playerErrorMessage('sign in to this world', err),
+      'error',
+    );
     return 'refused';
   }
 }
@@ -364,7 +368,7 @@ export async function selectCompanyAndStart(ctx: ClientHandlerContext, companyId
   } catch (err: unknown) {
     ClientBridge.log('Error', `Company selection failed: ${toErrorMessage(err)}`);
     ClientBridge.setLoginLoading(false);
-    ctx.showNotification(`Company selection failed: ${toErrorMessage(err)}`, 'error');
+    ctx.showNotification(playerErrorMessage('start with this company', err), 'error');
     return false;
   } finally {
     ctx.isSelectingCompany = false;
@@ -469,7 +473,8 @@ export async function profileSwitchCompany(ctx: ClientHandlerContext, companyId:
       ownerRole,
     });
   } catch (err: unknown) {
-    ClientBridge.showError(`Failed to switch company: ${toErrorMessage(err)}`);
+    ClientBridge.log('Error', `Failed to switch company: ${toErrorMessage(err)}`);
+    ClientBridge.showError(playerErrorMessage('switch company', err));
   } finally {
     useGameStore.getState().setSwitchingCompany(false);
   }
@@ -511,7 +516,8 @@ export async function abandonRole(ctx: ClientHandlerContext): Promise<void> {
       useProfileStore.getState().incrementRefresh();
     }
   } catch (err: unknown) {
-    ClientBridge.showError(`Abandon role failed: ${toErrorMessage(err)}`);
+    ClientBridge.log('Error', `Abandon role failed: ${toErrorMessage(err)}`);
+    ClientBridge.showError(playerErrorMessage('abandon this role', err));
   } finally {
     useGameStore.getState().setSwitchingCompany(false);
   }
