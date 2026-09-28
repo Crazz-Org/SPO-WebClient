@@ -29,6 +29,7 @@ jest.mock('../bridge/client-bridge', () => ({
     setWorld: jest.fn(),
     setCompany: jest.fn(),
     setCredentials: jest.fn(),
+    loadAccountSettings: jest.fn(),
     setPublicOfficeRole: jest.fn(),
     setMapLoadingProgress: jest.fn(),
     setAuthError: jest.fn(),
@@ -126,6 +127,27 @@ describe('auth-handler', () => {
       await login(makeCtx({ sendRequest }), 'Shamba');
 
       expect(sendRequest).toHaveBeenCalledWith(expect.objectContaining({ languageId: '0' }));
+    });
+
+    it('loads the account settings with the language it just sent', async () => {
+      const sendRequest = jest.fn().mockResolvedValue({
+        type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [],
+      });
+
+      await login(makeCtx({ sendRequest }), 'Shamba');
+
+      expect(ClientBridge.loadAccountSettings).toHaveBeenCalledWith('testUser', '0');
+    });
+
+    it('records the normalised language when the store holds one the catalogue does not name', async () => {
+      mockStoreSettings.languageId = '99';
+      const sendRequest = jest.fn().mockResolvedValue({
+        type: WsMessageType.RESP_LOGIN_SUCCESS, tycoonId: '42', companies: [],
+      });
+
+      await login(makeCtx({ sendRequest }), 'Shamba');
+
+      expect(ClientBridge.loadAccountSettings).toHaveBeenCalledWith('testUser', '0');
     });
 
     it('shows companies when server returns a non-empty list', async () => {
@@ -317,6 +339,7 @@ describe('auth-handler', () => {
 
       expect(ClientBridge.showError).toHaveBeenCalledWith('Session lost, please reconnect');
       expect(ClientBridge.showCompanies).not.toHaveBeenCalled();
+      expect(ClientBridge.loadAccountSettings).not.toHaveBeenCalled();
     });
   });
 
