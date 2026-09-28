@@ -65,17 +65,15 @@ beforeAll(() => {
   binWithoutJq = scratch('nightly-check-bin-');
   fs.symlinkSync(gitPath, path.join(binWithoutJq, 'git'));
 
-  const template = scratch('nightly-check-template-');
-  git(template, 'init', '-q', '-b', 'main');
-  git(template, 'config', 'user.email', 'test@example.com');
-  git(template, 'config', 'user.name', 'test');
-  git(template, 'config', 'commit.gpgsign', 'false');
-  fs.writeFileSync(path.join(template, 'README.md'), 'seed\n', 'utf8');
-  git(template, 'add', '.');
-  git(template, 'commit', '-q', '-m', 'init');
-
+  // Git builds the repo in place: no live `.git` is ever copied (#1114, #999).
   repoWithOrigin = scratch('nightly-check-repo-');
-  fs.cpSync(template, repoWithOrigin, { recursive: true });
+  git(repoWithOrigin, 'init', '-q', '-b', 'main');
+  git(repoWithOrigin, 'config', 'user.email', 'test@example.com');
+  git(repoWithOrigin, 'config', 'user.name', 'test');
+  git(repoWithOrigin, 'config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(repoWithOrigin, 'README.md'), 'seed\n', 'utf8');
+  git(repoWithOrigin, 'add', '.');
+  git(repoWithOrigin, 'commit', '-q', '-m', 'init');
   const bareOrigin = scratch('nightly-check-origin-');
   git(bareOrigin, 'init', '-q', '--bare', '-b', 'main');
   git(repoWithOrigin, 'remote', 'add', 'origin', bareOrigin);
