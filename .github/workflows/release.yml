@@ -71,10 +71,6 @@ jobs:
         if: steps.next.outputs.skip != 'true'
         run: npm version ${{ steps.next.outputs.version }} --no-git-tag-version --allow-same-version
 
-      - name: Generate the in-app changelog
-        if: steps.next.outputs.skip != 'true'
-        run: node scripts/changelog.js --json
-
       - name: Generate the release notes
         if: steps.next.outputs.skip != 'true'
         run: node scripts/changelog.js --notes notes.md && cat notes.md
