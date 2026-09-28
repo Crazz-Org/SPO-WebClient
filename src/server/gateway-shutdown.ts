@@ -96,6 +96,11 @@ export class ConnectionDrain {
 
 export interface ShutdownSequenceDeps {
   server: { close(cb?: (err?: Error) => void): void };
+  /**
+   * Stops the dead-socket heartbeat (ws-hygiene.ts) first, so it cannot terminate a socket the
+   * drain is closing with 1012.
+   */
+  stopHeartbeat?: () => void;
   drain: ConnectionDrain;
   registry: { shutdown(): Promise<void> };
   closeLogTransports: () => Promise<void>;
@@ -130,6 +135,8 @@ export function createShutdownSequence(deps: ShutdownSequenceDeps): (reason: str
     running = (async () => {
       deps.log.info(`[Shutdown] ${reason}: draining connections`);
       try {
+        // 0. Stop the dead-socket heartbeat, so it cannot cut a socket the drain is closing.
+        deps.stopHeartbeat?.();
         // 1. Stop accepting — the listening socket closes at once; not awaited (keep-alive
         //    and upgraded sockets would hold the callback).
         deps.server.close();

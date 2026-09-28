@@ -33,6 +33,7 @@ Moved to [SPO-Deploy's `doc/production-security-policy.md` §1](https://github.c
 | SEC-W-3 | Per-IP concurrent WS connections MUST be capped → 429. **Floor: 20** (maintainer decision, 2026-09-27). A **global** session cap SHOULD be added to bound aggregate gateway→Delphi load (risk B4). | Partial — the per-IP cap of **20** is enforced (`server/rate-limit.ts:WS_MAX_CONNECTIONS_PER_IP`, pinned by `server/rate-limit.test.ts`); no global cap exists. | L4 (per-IP now; global when implemented) |
 | SEC-W-4 | Messages MUST be gated by session phase (`PHASE_ALLOWED_MESSAGES`): gameplay messages before auth → `ERROR_AccessDenied`; unknown message types MUST be rejected. | Met (`server.ts:PHASE_ALLOWED_MESSAGES`) | L4 |
 | SEC-W-5 | Auth-bearing messages (`REQ_AUTH_CHECK`, `REQ_CONNECT_DIRECTORY`, `REQ_LOGIN_WORLD`) MUST be rate-limited per IP — one bucket per message type, 10 per minute per IP, so a full three-message login consumes one unit of each. | Met (`server/rate-limit.ts:checkAuthRateLimit`) | L4 |
+| SEC-W-6 | Idle or unresponsive (half-open) WebSocket connections MUST be detected: the gateway pings every open socket every 30 s and terminates one whose previous ping got no pong, so a socket that stopped answering is closed within ~60 s (maintainer decision, 2026-09-27). | Met (`server/ws-hygiene.ts:WS_HEARTBEAT_INTERVAL_MS`, pinned by `server/ws-hygiene.test.ts`) | L4 |
 
 ## 4. Gateway → Game-Server Conduct (SEC-G)
 
