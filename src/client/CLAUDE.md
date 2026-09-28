@@ -63,7 +63,9 @@ Modals (e.g., `CompanyCreationModal`) and research inventory tabs load on demand
 
 ## Keyboard Shortcuts
 
-Global shortcuts registered in `hooks/useKeyboardShortcuts.ts` (B, E, M, R, D, F1–F4, Escape, Cmd+K). Canvas-specific input in the renderer's touch handler.
+Global shortcuts are registered in `hooks/useKeyboardShortcuts.ts`; its `SHORTCUTS` table is the single
+list, rendered by `ShortcutList` in Settings and in the `?` help dialog. `1`–`5` (debug sub-layers)
+are listed by the debug overlay's own legend. Canvas-specific input in the renderer's touch handler.
 
 ## Bug Reporting (dev-only)
 

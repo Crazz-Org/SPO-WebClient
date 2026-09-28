@@ -10,8 +10,10 @@
  *
  * H hides/shows the HUD chrome (StatusPill + CommandBar); the state is session-only (#613).
  *
- * Keys the renderer binds itself (arrows pan, + / − zoom, 1–5 debug sub-overlays) are
- * listed here for the Settings page but not handled again (one owner per key).
+ * Keys the renderer binds itself (arrows pan, + / − zoom) are listed here for reference but not
+ * handled again (one owner per key). The renderer's 1–5 debug sub-layer keys act only while the
+ * debug overlay is on and are listed by the overlay's own legend (`DEBUG [D=off 1=tile …]`), not
+ * by this table. Settings and the `?` help dialog both render this table through ShortcutList.
  */
 
 import { useEffect } from 'react';
@@ -38,9 +40,10 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: 'Q / W', action: 'Rotate view' },
   { keys: 'Arrows', action: 'Pan the map', rendererOwned: true },
   { keys: '+ / −', action: 'Zoom', rendererOwned: true },
-  { keys: 'D', action: 'Debug overlay' },
-  { keys: 'H', action: 'Hide / show the HUD' },
+  { keys: 'D', action: 'Debug overlay (tile data) — D again to hide' },
+  { keys: 'H', action: 'Hide / show the interface' },
   { keys: 'F1–F4', action: 'Force the season' },
+  { keys: '?', action: 'Show the keyboard shortcuts' },
   { keys: 'Ctrl+K', action: 'Command palette' },
   { keys: 'Esc', action: 'Back / close' },
 ];
@@ -90,6 +93,15 @@ export function useKeyboardShortcuts(client: ClientCallbacks | null): void {
 
       // Plain letters only while nothing modal owns the keyboard
       if (store.modal || store.commandPaletteOpen) return;
+
+      // `?` is Shift+/ (US) or Shift+, (AZERTY) — e.key is '?' either way, so Shift is not a guard
+      if (e.key === '?') {
+        const { status } = useGameStore.getState();
+        if (status !== 'connected' && status !== 'reconnecting') return; // same test App uses to show GameScreen
+        e.preventDefault();
+        store.openModal('shortcuts');
+        return;
+      }
 
       const forcedSeason = SEASON_KEYS[e.key];
       if (forcedSeason !== undefined) {

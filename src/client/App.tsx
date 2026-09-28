@@ -26,7 +26,7 @@ export function App() {
   const serverReady = useGameStore((s) => s.serverStartup.ready);
   const client = useClient();
 
-  // Register global keyboard shortcuts (B, E, M, R, D, Escape, Cmd+K)
+  // Register global keyboard shortcuts — the full list is SHORTCUTS in hooks/useKeyboardShortcuts.ts
   useKeyboardShortcuts(client);
 
   // Block all interaction until the server has finished initialising

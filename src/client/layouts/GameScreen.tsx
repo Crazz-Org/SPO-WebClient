@@ -11,11 +11,12 @@
  * - ChatStrip (z-150): bottom-edge persistent chat, hidden when the player closed it (#610)
  * - StatusPill / CommandBar are hidden together while the HUD is collapsed (H, #613)
  * - Sheet (z-400): the universal surface — one stack (inspector, mail, search, politics, profile…)
- * - Modals (z-400): build menu, settings
+ * - Modals (z-400): build menu, settings, keyboard shortcut help (`?`)
+ * - While the HUD is hidden, a toast says how to bring it back (H, or its "Show" action)
  * - CommandPalette (z-500)
  */
 
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { useUiStore } from '../store';
 import { StatusPill, CommandBar, ContextStatusStrip, WorldEventTicker, RightRail, VersionBadge } from '../components/hud';
 import { ChatStrip, ChaseBadge } from '../components/chat';
@@ -28,6 +29,7 @@ import { useCameraHistory } from '../hooks/useCameraHistory';
 import { CommandPalette } from '../components/command-palette';
 import { MobileShell } from '../components/mobile';
 import { ConfirmDialog, PromptDialog } from '../components/common';
+import { showToast, dismissToast } from '../components/common/Toast';
 import { Sheet } from '../components/sheet';
 
 // Lazy-loaded modals — not needed on initial render
@@ -39,6 +41,7 @@ const ConnectionPickerModal = lazy(() => import('../components/modals/Connection
 const CreateChannelModal = lazy(() => import('../components/modals/CreateChannelModal').then(m => ({ default: m.CreateChannelModal })));
 const NewspaperModal = lazy(() => import('../components/modals/NewspaperModal').then(m => ({ default: m.NewspaperModal })));
 const SettingsDialog = lazy(() => import('../components/modals/SettingsDialog').then(m => ({ default: m.SettingsDialog })));
+const ShortcutHelpDialog = lazy(() => import('../components/modals/ShortcutHelpDialog').then(m => ({ default: m.ShortcutHelpDialog })));
 const SupplierSearchModal = lazy(() => import('../components/modals/SupplierSearchModal').then(m => ({ default: m.SupplierSearchModal })));
 
 import styles from './GameScreen.module.css';
@@ -53,6 +56,16 @@ export function GameScreen() {
 
   useChangelogCheck();
   useCameraHistory();
+
+  // H hides the CommandBar — and with it the "More" menu that leads back to Settings. Tell the
+  // player how to get the interface back; the hint goes away as soon as it is back.
+  useEffect(() => {
+    if (hudVisible) return;
+    const id = showToast('Press H to show the interface', 'info', {
+      action: { label: 'Show', onClick: () => useUiStore.getState().setHudVisible(true) },
+    });
+    return () => dismissToast(id);
+  }, [hudVisible]);
 
   return (
     <div className={styles.screen}>
@@ -99,6 +112,7 @@ export function GameScreen() {
         <SupplierSearchModal />
         <NewspaperModal />
         <SettingsDialog />
+        <ShortcutHelpDialog />
         <ChangelogModal />
       </Suspense>
       <ZoneTypePicker />

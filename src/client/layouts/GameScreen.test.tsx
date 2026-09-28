@@ -4,6 +4,7 @@ import { renderWithProviders } from '../__tests__/setup/render-helpers';
 import { useUiStore } from '../store/ui-store';
 import { useChatStore } from '../store/chat-store';
 import { GameScreen } from './GameScreen';
+import { ToastContainer, resetToasts } from '../components/common/Toast';
 
 // The screen composes the HUD; stub the parts that touch the canvas or fetch on mount.
 jest.mock('../components/hud', () => ({
@@ -27,6 +28,7 @@ jest.mock('../components/sheet', () => ({ Sheet: () => <aside>SHEET</aside> }));
 
 describe('GameScreen', () => {
   beforeEach(() => {
+    resetToasts();
     useUiStore.setState({ modal: null, confirmPayload: null, promptPayload: null, hudVisible: true });
     useChatStore.setState({ chatVisible: true });
   });
@@ -94,5 +96,43 @@ describe('GameScreen', () => {
       useUiStore.getState().requestConfirm('Demolish Building', 'Sure?', () => {});
     });
     expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  describe('the hint while the interface is hidden', () => {
+    const HINT = 'Press H to show the interface';
+    const renderWithToasts = () => renderWithProviders(<><GameScreen /><ToastContainer /></>);
+
+    it('hiding the HUD shows the hint', () => {
+      renderWithToasts();
+      act(() => useUiStore.getState().setHudVisible(false));
+      expect(screen.getByText(HINT)).toBeTruthy();
+    });
+
+    it('its "Show" action brings the interface back and the hint goes away', () => {
+      renderWithToasts();
+      act(() => useUiStore.getState().setHudVisible(false));
+      act(() => { screen.getByRole('button', { name: 'Show' }).click(); });
+      expect(useUiStore.getState().hudVisible).toBe(true);
+      expect(screen.queryByText(HINT)).toBeNull();
+    });
+
+    it('showing the HUD again (H) removes the hint', () => {
+      renderWithToasts();
+      act(() => useUiStore.getState().setHudVisible(false));
+      expect(screen.getByText(HINT)).toBeTruthy();
+      act(() => useUiStore.getState().setHudVisible(true));
+      expect(screen.queryByText(HINT)).toBeNull();
+    });
+
+    it('no hint while the HUD is visible from the start', () => {
+      renderWithToasts();
+      expect(screen.queryByText(HINT)).toBeNull();
+    });
+  });
+
+  it('mounts the keyboard shortcut help dialog lazily when modal is "shortcuts"', async () => {
+    useUiStore.setState({ modal: 'shortcuts' });
+    renderWithProviders(<GameScreen />);
+    expect(await screen.findByRole('dialog', { name: 'Keyboard shortcuts' })).toBeTruthy();
   });
 });

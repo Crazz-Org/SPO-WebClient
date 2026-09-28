@@ -85,6 +85,14 @@ describe('CommandBar', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('More offers "Keyboard shortcuts", which opens the shortcut list and closes the menu', () => {
+    renderWithProviders(<CommandBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Keyboard shortcuts' }));
+    expect(useUiStore.getState().modal).toBe('shortcuts');
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
   it('public office sees zone painting in More', () => {
     useGameStore.setState({ isPublicOfficeRole: true });
     renderWithProviders(<CommandBar />);

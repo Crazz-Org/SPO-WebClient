@@ -40,6 +40,11 @@ export interface DialogProps {
   primary: { label: string; onClick: () => void; disabled?: boolean };
   /** Defaults to "Cancel". */
   secondary?: { label: string };
+  /**
+   * Renders only the primary button (no secondary / Cancel). For an informational dialog whose
+   * one action is to close it.
+   */
+  singleAction?: boolean;
   /** The user must type this exact text before the primary action is enabled. */
   typeToConfirm?: string;
   /** Shows a "Don't ask again this session" checkbox; the choice is stored under this key. */
@@ -78,6 +83,7 @@ export function Dialog({
   children,
   primary,
   secondary,
+  singleAction = false,
   typeToConfirm,
   dontAskAgainKey,
   onClose,
@@ -195,9 +201,11 @@ export function Dialog({
         )}
 
         <div className={styles.actions}>
-          <Button ref={secondaryRef} variant="ghost" onClick={onClose}>
-            {secondary?.label ?? 'Cancel'}
-          </Button>
+          {!singleAction && (
+            <Button ref={secondaryRef} variant="ghost" onClick={onClose}>
+              {secondary?.label ?? 'Cancel'}
+            </Button>
+          )}
           <Button
             ref={primaryRef}
             variant={kind === 'destructive' ? 'danger' : 'primary'}
