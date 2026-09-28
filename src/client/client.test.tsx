@@ -786,3 +786,150 @@ describe('logout (issue 1042)', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #1043 — the page-lifecycle listeners are added once, at page start, and survive every dropped
+ * socket. Earlier describes leave their own clients' listeners on the shared jsdom document, so
+ * every assertion is on THIS client's own socket identity, never on a global count.
+ */
+describe('page lifecycle listeners (issue 1043)', () => {
+  const sockets: LifecycleSocket[] = [];
+
+  class LifecycleSocket extends FakeSocket {
+    sent: string[] = [];
+    constructor() {
+      super();
+      sockets.push(this);
+    }
+    override send(payload?: string): void {
+      if (payload !== undefined) this.sent.push(payload);
+    }
+  }
+
+  type Internals = {
+    ws: LifecycleSocket;
+    storedUsername: string;
+    storedPassword: string;
+    currentWorldName: string;
+    viewportHeartbeatTimer: unknown;
+  };
+  let client: StarpeaceClient;
+  let hidden = false;
+  const internals = () => client as unknown as Internals;
+
+  const logoutFrames = () =>
+    sockets
+      .flatMap((s) => s.sent.map((p) => JSON.parse(p) as { type: string }))
+      .filter((f) => f.type === WsMessageType.REQ_LOGOUT);
+
+  const dropAndWait = () => {
+    const before = internals().ws;
+    before.onclose?.({ code: 1006 });
+    jest.advanceTimersByTime(60_000);
+    expect(internals().ws).not.toBe(before);
+  };
+
+  /** Three drops; the third leaves the client 'reconnecting' with a backoff pending. */
+  const threeDrops = () => {
+    dropAndWait();
+    dropAndWait();
+    internals().ws.onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+  };
+
+  const pageshow = (persisted: boolean) => {
+    const e = new Event('pageshow');
+    Object.defineProperty(e, 'persisted', { value: persisted });
+    window.dispatchEvent(e);
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sockets.length = 0;
+    hidden = false;
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = LifecycleSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    client = new StarpeaceClient();
+    client.reloadPage = jest.fn();
+    internals().ws.onopen?.();
+    useGameStore.setState({ status: 'connected', companyId: 'C1', serverRestarting: false, reconnectAttempt: 0 });
+    internals().storedUsername = 'u';
+    internals().storedPassword = 'p';
+    internals().currentWorldName = 'planitia';
+  });
+
+  afterEach(() => {
+    delete (document as unknown as { hidden?: boolean }).hidden;
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('regression: after three drops, returning to the tab reconnects at once', () => {
+    threeDrops();
+    const before = internals().ws;
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(internals().ws).not.toBe(before);
+  });
+
+  it('a persisted pageshow reconnects at once; a fresh one does not', () => {
+    threeDrops();
+    const before = internals().ws;
+    pageshow(false);
+    expect(internals().ws).toBe(before);
+    pageshow(true);
+    expect(internals().ws).not.toBe(before);
+  });
+
+  it('a resume reconnects at once', () => {
+    threeDrops();
+    const before = internals().ws;
+    document.dispatchEvent(new Event('resume'));
+    expect(internals().ws).not.toBe(before);
+  });
+
+  it('no immediate reconnect without stored credentials', () => {
+    threeDrops();
+    const before = internals().ws;
+    internals().storedUsername = '';
+    document.dispatchEvent(new Event('resume'));
+    expect(internals().ws).toBe(before);
+    expect(useGameStore.getState().status).toBe('reconnecting');
+  });
+
+  it('after a reconnect, hiding the tab stops the heartbeat and showing it restarts it', () => {
+    dropAndWait();
+    internals().ws.onopen?.();
+    useGameStore.setState({ status: 'connected' });
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(internals().viewportHeartbeatTimer).not.toBeNull();
+
+    hidden = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(internals().viewportHeartbeatTimer).toBeNull();
+
+    hidden = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(internals().viewportHeartbeatTimer).not.toBeNull();
+  });
+
+  it('beforeunload and pagehide send no REQ_LOGOUT; the Logout button still does', async () => {
+    window.dispatchEvent(new Event('beforeunload'));
+    window.dispatchEvent(new Event('pagehide'));
+    expect(logoutFrames()).toHaveLength(0);
+
+    client.callbacks.onLogout();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(logoutFrames()).toHaveLength(1);
+  });
+
+  it('while connected, no lifecycle event opens a second socket', () => {
+    const before = internals().ws;
+    document.dispatchEvent(new Event('visibilitychange'));
+    document.dispatchEvent(new Event('resume'));
+    pageshow(true);
+    expect(internals().ws).toBe(before);
+  });
+});

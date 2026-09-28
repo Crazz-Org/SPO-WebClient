@@ -255,10 +255,8 @@ export class StarpeaceClient implements ClientHandlerContext {
 
   private cameraUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private beforeUnloadHandler: (() => void) | null = null;
   private reconnectAttempt: number = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private visibilityHandler: (() => void) | null = null;
   private debugWire: SpoDebugWire; // [E2E-DEBUG]
 
   constructor() {
@@ -1089,33 +1087,40 @@ export class StarpeaceClient implements ClientHandlerContext {
       ClientBridge.log('Error', 'WebSocket error occurred');
     };
 
-    // Send logout on page close
-    this.beforeUnloadHandler = () => {
-      this.sendLogoutBeacon();
-    };
-    window.addEventListener('beforeunload', this.beforeUnloadHandler);
+    this.installPageLifecycleListeners();
+  }
 
+  /**
+   * Page-lifecycle listeners, added once when the page starts and never removed:
+   * they must survive every dropped socket (issue 1043).
+   */
+  private installPageLifecycleListeners(): void {
     // Page Visibility API — pause heartbeat when hidden; fast-reconnect when foregrounded
-    this.visibilityHandler = () => {
+    document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         if (this.viewportHeartbeatTimer !== null) {
           clearInterval(this.viewportHeartbeatTimer);
           this.viewportHeartbeatTimer = null;
         }
-      } else {
-        const status = useGameStore.getState().status;
-        if (status === 'reconnecting' && this.storedUsername && this.storedPassword) {
-          if (this.reconnectTimer !== null) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-          }
-          this.attemptReconnect();
-        } else if (status === 'connected' && !this.viewportHeartbeatTimer) {
-          this.viewportHeartbeatTimer = setInterval(() => this.sendCameraPositionNow(), 30_000);
-        }
+        return;
       }
-    };
-    document.addEventListener('visibilitychange', this.visibilityHandler);
+      const status = useGameStore.getState().status;
+      if (status === 'reconnecting') {
+        this.reconnectNowIfForegrounded();
+      } else if (status === 'connected' && !this.viewportHeartbeatTimer) {
+        this.viewportHeartbeatTimer = setInterval(() => this.sendCameraPositionNow(), 30_000);
+      }
+    });
+    // Back/forward cache restore
+    window.addEventListener('pageshow', (e: PageTransitionEvent) => {
+      if (e.persisted) this.reconnectNowIfForegrounded();
+    });
+    // Page Lifecycle thaw after a freeze
+    document.addEventListener('resume', () => this.reconnectNowIfForegrounded());
+  }
+
+  private reconnectNowIfForegrounded(): void {
+    if (this.storedUsername && this.storedPassword) this.triggerImmediateReconnect();
   }
 
   private handleMessage(msg: WsMessage) {
@@ -1166,14 +1171,6 @@ export class StarpeaceClient implements ClientHandlerContext {
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
-    }
-    if (this.beforeUnloadHandler) {
-      window.removeEventListener('beforeunload', this.beforeUnloadHandler);
-      this.beforeUnloadHandler = null;
-    }
-    if (this.visibilityHandler) {
-      document.removeEventListener('visibilitychange', this.visibilityHandler);
-      this.visibilityHandler = null;
     }
   }
 
@@ -1303,17 +1300,6 @@ export class StarpeaceClient implements ClientHandlerContext {
       this.cameraUpdateTimer = null;
       this.sendCameraPositionNow();
     }, 2000);
-  }
-
-  private sendLogoutBeacon(): void {
-    if (!this.isConnected || !this.ws) return;
-
-    try {
-      const req = { type: WsMessageType.REQ_LOGOUT };
-      this.sendRaw(JSON.stringify(req));
-    } catch (_err: unknown) {
-      // Ignore errors during page unload
-    }
   }
 
   // [E2E-DEBUG] Expose full game state for programmatic E2E verification
