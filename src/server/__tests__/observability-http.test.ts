@@ -108,7 +108,7 @@ describe('gateway observability endpoints (real HTTP server)', () => {
 
     it('/api/metrics carries the documented top-level keys', async () => {
       const m = await metrics();
-      expect(Object.keys(m).sort()).toEqual(['directory', 'memory', 'rdo', 'sessions', 'sockets', 'startedAt', 'uptimeS', 'version']);
+      expect(Object.keys(m).sort()).toEqual(['clientErrors', 'directory', 'memory', 'rdo', 'sessions', 'sockets', 'startedAt', 'uptimeS', 'version']);
       expect(m.version).toBe(obs.readGatewayVersion());
       expect(Object.keys(m.sessions.byPhase).sort()).toEqual(
         ['DIRECTORY_CONNECTED', 'DISCONNECTED', 'RECONNECTING', 'WORLD_CONNECTED', 'WORLD_CONNECTING'],

@@ -21,6 +21,7 @@ import * as path from 'path';
 import { config } from '../shared/config';
 import { toErrorMessage } from '../shared/error-utils';
 import { SessionPhase } from '../shared/types';
+import type { ClientErrorCounts } from './client-error-endpoint';
 
 export const DIRECTORY_PROBE_INTERVAL_MS = 60_000;
 export const DIRECTORY_PROBE_TIMEOUT_MS = 5_000;
@@ -285,6 +286,8 @@ export interface GatewayMetrics {
     consecutiveFailures: number;
     lastError: string | null;
   };
+  /** Browser error reports on `/api/client-error` since process start. */
+  clientErrors: ClientErrorCounts;
 }
 
 export function buildMetrics(input: {
@@ -295,6 +298,7 @@ export function buildMetrics(input: {
   websocketsOpen: number;
   sessions: SessionsSnapshot;
   directory: DirectoryProbeState;
+  clientErrors: ClientErrorCounts;
 }): GatewayMetrics {
   const { now, directory } = input;
   return {
@@ -318,6 +322,7 @@ export function buildMetrics(input: {
       consecutiveFailures: directory.consecutiveFailures,
       lastError: directory.lastError,
     },
+    clientErrors: { ...input.clientErrors },
   };
 }
 

@@ -62,6 +62,7 @@ returns `nil`), so there was never a route-management screen to port; the panel,
 | `GET /api/metrics` | Runtime metrics JSON (**local-only**: loopback peer and no `X-Forwarded-For`; also logged as `METRICS` every 60 s at `info`) |
 | `GET /api/rdo-error-contract` | P-M3 `errorCode` contract census readout (**local-only**) |
 | `GET /api/property-fallback` | P-M3 property-fallback census readout (**local-only**) |
+| `POST /api/client-error` | Anonymous browser error report (no identity fields), 20/min/IP, 60/min gateway-wide; logged as `CLIENT_ERROR` at `warn`, counted in `/api/metrics` `clientErrors` |
 | `GET /api/debug-log` | Debug log output (dev mode only) |
 | `GET /cache/:category/:filename` | Object texture (BuildingImages served locally) |
 | `GET /cdn/*` | Static asset delivery (CSS, JS, images) |
