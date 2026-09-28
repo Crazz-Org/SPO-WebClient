@@ -7,6 +7,7 @@ import { analyzeGeometry } from './geometry';
 import { reportJournal } from './journal';
 import { QuickPickGrid, kindFromPicks } from './QuickPickGrid';
 import { BugReportRoot } from './index';
+import { useGameStore } from '../store/game-store';
 
 const anchor: DomAnchor = {
   kind: 'dom',
@@ -164,9 +165,12 @@ describe('the mobile profile, end to end through BugReportRoot', () => {
     (document as unknown as { elementFromPoint: unknown }).elementFromPoint = () => target;
     reportJournal.disarm();
     reportJournal.reset();
+    // The floating button exists only in-game.
+    useGameStore.setState({ status: 'connected' });
   });
 
   afterEach(() => {
+    useGameStore.setState({ status: 'disconnected' });
     (globalThis as unknown as { fetch?: unknown }).fetch = originalFetch;
     delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
     window.localStorage.clear();

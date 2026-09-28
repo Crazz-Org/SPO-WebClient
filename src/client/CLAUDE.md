@@ -67,15 +67,21 @@ Global shortcuts are registered in `hooks/useKeyboardShortcuts.ts`; its `SHORTCU
 list, rendered by `ShortcutList` in Settings and in the `?` help dialog. `1`–`5` (debug sub-layers)
 are listed by the debug overlay's own legend. Canvas-specific input in the renderer's touch handler.
 
-## Bug Reporting (dev-only)
+## Bug Reporting
 
-`report/` holds the in-app capture: `SPO_BUG_REPORT=true` mounts `BugReportRoot` lazily from
-`main.tsx`, and nothing in the directory runs without it. Desktop arms on **F8** — its own
-listener, deliberately outside the `SHORTCUTS` table above; mobile arms on a floating button.
+`report/` holds the in-app capture, mounted lazily from `main.tsx` as `BugReportRoot` only when
+`SPO_BUG_REPORT` is on; nothing in the directory runs without it. Two values:
 
-The rolling journal is a module singleton armed at mount and running continuously, tapped from
-`client.ts` at `:568`, `:592` (ws-out) and `:980` (ws-in). The taps are no-ops when it is not
-armed, so leave them where they are rather than guarding them at the call site.
+- `SPO_BUG_REPORT=true` — dev/test. Desktop arms on **F8** (its own listener, deliberately outside
+  the `SHORTCUTS` table above), mobile on a floating button, and Settings/menu → Support works too.
+- `SPO_BUG_REPORT=player` — players. No F8, no floating button: Settings → Support → "Report a
+  problem" (desktop) or menu → Support (mobile) is the only way in. Both raise
+  `requestReportMode` in the UI store, which `BugReportRoot` answers — they never import the lazy chunk.
+
+Every entry point acts only in game (status `connected` / `reconnecting`). The rolling journal
+is a module singleton armed at mount and running continuously, tapped from `client.ts` in
+`sendRequest` and `sendMessage` (ws-out) and `handleMessage` (ws-in). The taps are no-ops when it
+is not armed, so leave them where they are rather than guarding them at the call site.
 
 Reports POST to `/api/bug-report` and queue outside the worktree; a `/triage-report` session
 turns them into kanban cards. Full picture: [doc/bug-reporting.md](../../doc/bug-reporting.md).

@@ -6,6 +6,10 @@ import { validateBugReport } from '../../shared/bug-report-schema';
 import { reportJournal } from './journal';
 import { useGameStore } from '../store/game-store';
 import { useUiStore } from '../store/ui-store';
+import { config } from '../../shared/config';
+import * as ToastModule from '../components/common/Toast';
+import { SettingsDialog } from '../components/modals/SettingsDialog';
+import { MobileMenu } from '../components/mobile/MobileMenu';
 // Through the barrel: that is the module main.tsx lazy-imports, so it is the surface that
 // must actually resolve.
 import { BugReportRoot } from './index';
@@ -13,10 +17,11 @@ import { BugReportRoot } from './index';
 let posted: string[] = [];
 const originalFetch = (globalThis as unknown as { fetch?: unknown }).fetch;
 
-function mockFetch(response: { ok: boolean; body: unknown } = { ok: true, body: { ok: true, file: 'r.json' } }): void {
+function mockFetch(response: { ok: boolean; status?: number; body: unknown } = { ok: true, body: { ok: true, file: 'r.json' } }): void {
   (globalThis as unknown as { fetch: unknown }).fetch = ((_url: string, init: { body: string }) => {
     posted.push(init.body);
-    return Promise.resolve({ ok: response.ok, status: response.ok ? 200 : 400, json: () => Promise.resolve(response.body) });
+    const status = response.status ?? (response.ok ? 200 : 400);
+    return Promise.resolve({ ok: response.ok, status, json: () => Promise.resolve(response.body) });
   }) as unknown as typeof fetch;
 }
 
@@ -62,9 +67,12 @@ beforeEach(() => {
   stubElementFromPoint(target);
   reportJournal.disarm();
   reportJournal.reset();
+  // Every entry point acts only in-game (the same test App.tsx uses for the game screen).
+  useGameStore.setState({ status: 'connected' });
 });
 
 afterEach(() => {
+  useGameStore.setState({ status: 'disconnected' });
   (globalThis as unknown as { fetch?: unknown }).fetch = originalFetch;
   delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
   reportJournal.disarm();
@@ -258,5 +266,180 @@ describe('BugReportRoot — the keys it does not claim', () => {
     expect(seen).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('report-mode-overlay')).toBeNull();
     window.removeEventListener('keydown', seen);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Entry points: Support, player mode, and the login screen
+// ---------------------------------------------------------------------------
+
+const flags = config.server as { bugReportMode: boolean; bugReportPlayerMode: boolean };
+const savedFlags = { mode: flags.bugReportMode, player: flags.bugReportPlayerMode };
+const savedWidth = window.innerWidth;
+const HINT = 'Report mode — click what is wrong · Esc to cancel';
+
+function setWidth(width: number): void {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+}
+
+function setMode(player: boolean): void {
+  flags.bugReportMode = true;
+  flags.bugReportPlayerMode = player;
+}
+
+function renderWith(ui: React.ReactNode) {
+  const callbacks = createSpiedCallbacks({ onGetUsername: () => 'SPO_test3', onGetWorld: () => 'planitia' });
+  return render(
+    <ClientContext.Provider value={callbacks}>
+      {ui}
+      <BugReportRoot />
+    </ClientContext.Provider>
+  );
+}
+
+function tapFab(): void {
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+  const el = screen.getByTestId('report-fab');
+  const down = new MouseEvent('pointerdown', { clientX: 300, clientY: 700, bubbles: true }) as unknown as PointerEvent;
+  const up = new MouseEvent('pointerup', { clientX: 300, clientY: 700, bubbles: true }) as unknown as PointerEvent;
+  (down as unknown as { pointerId: number }).pointerId = 1;
+  (up as unknown as { pointerId: number }).pointerId = 1;
+  act(() => { el.dispatchEvent(down); el.dispatchEvent(up); });
+}
+
+describe('BugReportRoot — entry points', () => {
+  afterEach(() => {
+    flags.bugReportMode = savedFlags.mode;
+    flags.bugReportPlayerMode = savedFlags.player;
+    setWidth(savedWidth);
+    useUiStore.setState({ modal: null, mobileTab: 'map' });
+    window.localStorage.clear();
+    jest.restoreAllMocks();
+  });
+
+  describe.each([
+    ['dev/test', false],
+    ['player', true],
+  ])('Support entry (%s mode)', (_label, player) => {
+    it('Settings → "Report a problem" closes the modal and arms the reporter', () => {
+      setMode(player);
+      setWidth(1280);
+      useUiStore.getState().openModal('settings');
+      renderWith(<SettingsDialog />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Report a problem' }));
+
+      expect(useUiStore.getState().modal).toBeNull();
+      expect(screen.getByTestId('report-mode-overlay').textContent).toContain(HINT);
+    });
+
+    it('menu → Support arms the reporter and returns to the map', () => {
+      setMode(player);
+      setWidth(375);
+      useUiStore.setState({ mobileTab: 'more' });
+      renderWith(<MobileMenu />);
+
+      fireEvent.click(screen.getByRole('button', { name: /Support/ }));
+
+      expect(useUiStore.getState().mobileTab).toBe('map');
+      expect(screen.getByTestId('report-mode-overlay').textContent).toContain(HINT);
+    });
+
+    it('a second Support request keeps it armed rather than toggling it off', () => {
+      setMode(player);
+      setWidth(1280);
+      renderRoot();
+      act(() => { useUiStore.getState().requestReportMode(); });
+      act(() => { useUiStore.getState().requestReportMode(); });
+      expect(screen.getByTestId('report-mode-overlay')).toBeTruthy();
+    });
+  });
+
+  describe('player mode — Support is the only way in', () => {
+    it('F8 does not arm the reporter', () => {
+      setMode(true);
+      setWidth(1280);
+      renderRoot();
+      pressF8();
+      expect(screen.queryByTestId('report-mode-overlay')).toBeNull();
+    });
+
+    it('renders no floating button on mobile', () => {
+      setMode(true);
+      setWidth(375);
+      renderRoot();
+      expect(screen.queryByTestId('report-fab')).toBeNull();
+    });
+  });
+
+  describe('dev/test mode — F8 and the floating button still work', () => {
+    it('F8 arms the reporter', () => {
+      setMode(false);
+      setWidth(1280);
+      renderRoot();
+      pressF8();
+      expect(screen.getByTestId('report-mode-overlay')).toBeTruthy();
+    });
+
+    it('the floating button is rendered on mobile, and a tap arms', () => {
+      setMode(false);
+      setWidth(375);
+      renderRoot();
+      tapFab();
+      expect(screen.getByTestId('report-mode-overlay')).toBeTruthy();
+    });
+  });
+
+  describe('not in game (login screen)', () => {
+    beforeEach(() => {
+      useGameStore.setState({ status: 'disconnected' });
+    });
+
+    it('F8 does not arm, but the journal is already recording', () => {
+      setMode(false);
+      setWidth(1280);
+      renderRoot();
+      pressF8();
+      expect(screen.queryByTestId('report-mode-overlay')).toBeNull();
+      expect(reportJournal.isArmed).toBe(true);
+    });
+
+    it('the floating button is not rendered on mobile', () => {
+      setMode(false);
+      setWidth(375);
+      renderRoot();
+      expect(screen.queryByTestId('report-fab')).toBeNull();
+    });
+
+    it('a Support request does not arm', () => {
+      setMode(false);
+      setWidth(1280);
+      renderRoot();
+      act(() => { useUiStore.getState().requestReportMode(); });
+      expect(screen.queryByTestId('report-mode-overlay')).toBeNull();
+    });
+
+    it('arms once the game is reached (reconnecting counts as in-game)', () => {
+      setMode(false);
+      setWidth(1280);
+      renderRoot();
+      act(() => { useGameStore.setState({ status: 'reconnecting' }); });
+      pressF8();
+      expect(screen.getByTestId('report-mode-overlay')).toBeTruthy();
+    });
+  });
+
+  it('a 403 refusal surfaces the gateway\'s own reason in the error toast', async () => {
+    setMode(true);
+    setWidth(1280);
+    const toast = jest.spyOn(ToastModule, 'showToast');
+    mockFetch({ ok: false, status: 403, body: { error: 'Log in to a world to send a report' } });
+    renderRoot();
+    act(() => { useUiStore.getState().requestReportMode(); });
+    clickAt();
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }));
+
+    await waitFor(() => expect(toast).toHaveBeenCalledWith('Report not sent: Log in to a world to send a report', 'error'));
   });
 });

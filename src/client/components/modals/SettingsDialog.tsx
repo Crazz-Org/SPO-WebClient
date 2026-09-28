@@ -14,7 +14,7 @@ import { showToast } from '../common/Toast';
 import { Switch, confirmLogout } from '../common';
 import { ShortcutList } from '../common/ShortcutList';
 import { connectionStats, formatByteCount } from '../../connection-stats';
-import { buildSupportUrl, getSupportUrl } from '../../support-link';
+import { config } from '@/shared/config';
 import styles from './SettingsDialog.module.css';
 
 export function SettingsDialog() {
@@ -28,8 +28,7 @@ export function SettingsDialog() {
   const ignored = useChatStore((s) => s.ignored);
   const unignoreUser = useChatStore((s) => s.unignoreUser);
   const clearIgnored = useChatStore((s) => s.clearIgnored);
-  const worldName = useGameStore((s) => s.worldName);
-  const supportHref = buildSupportUrl(getSupportUrl(), worldName, username);
+  const requestReportMode = useUiStore((s) => s.requestReportMode);
   const [debugSending, setDebugSending] = useState(false);
 
   const handleSendDebugReport = useCallback(async () => {
@@ -237,13 +236,22 @@ export function SettingsDialog() {
             </button>
           </section>
 
-          {/* Support */}
-          <section className={styles.section}>
-            <h3 className={styles.sectionTitle}>Support</h3>
-            <a className={styles.supportLink} href={supportHref} target="_blank" rel="noopener noreferrer">
-              Contact Support
-            </a>
-          </section>
+          {/* Support — arms the in-app reporter; offered only where the reporter is mounted */}
+          {config.server.bugReportMode && (
+            <section className={styles.section}>
+              <h3 className={styles.sectionTitle}>Support</h3>
+              <button
+                type="button"
+                className={styles.supportBtn}
+                onClick={() => {
+                  closeModal();
+                  requestReportMode();
+                }}
+              >
+                Report a problem
+              </button>
+            </section>
+          )}
 
           {/* Logout */}
           <section className={styles.section}>

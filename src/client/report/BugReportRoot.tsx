@@ -4,8 +4,11 @@
  * Mounted from `main.tsx` rather than `App.tsx` so it survives the Login → Game transition,
  * and lazily so that a build without `SPO_BUG_REPORT` never fetches the chunk at all.
  *
- * It owns three things and nothing else: arming the journal, the F8 listener, and the
- * armed → captured → submitted walk between the overlay and the modal.
+ * It owns four things and nothing else: arming the journal, the F8 listener and floating
+ * button (dev/test only — absent when `SPO_BUG_REPORT=player`), the Support request raised
+ * through the UI store (`requestReportMode`), and the armed → captured → submitted walk
+ * between the overlay and the modal. Every entry point acts only in-game; the journal runs
+ * from mount regardless.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -14,6 +17,7 @@ import { useResponsive } from '../hooks/useResponsive';
 import { useUiStore } from '../store/ui-store';
 import { useGameStore } from '../store/game-store';
 import { showToast } from '../components/common/Toast';
+import { config } from '../../shared/config';
 import type { GeometryCapture, ReportAnchor, SessionContext } from '../../shared/bug-report-schema';
 import { reportJournal } from './journal';
 import { resolveDomAnchor } from './dom-anchor';
@@ -57,6 +61,11 @@ export function BugReportRoot() {
   const [armed, setArmed] = useState(false);
   const [captured, setCaptured] = useState<Captured | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Read at render, never at module scope: in `player` mode the Support entry is the only way in.
+  const playerMode = config.server.bugReportPlayerMode;
+  // In-game only — the same test App.tsx uses to show the game screen. A report from the login
+  // screen has no session to be deposited against.
+  const live = useGameStore((s) => s.status === 'connected' || s.status === 'reconnecting');
 
   // The journal runs from mount, not from arming: nobody arms a mode *before* noticing a
   // problem, and the 60 seconds that led up to F8 are the evidence.
@@ -69,7 +78,7 @@ export function BugReportRoot() {
   }, []);
 
   useEffect(() => {
-    if (isMobile) return;
+    if (isMobile || playerMode || !live) return;
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'F8') return;
       event.preventDefault();
@@ -77,7 +86,16 @@ export function BugReportRoot() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isMobile]);
+  }, [isMobile, playerMode, live]);
+
+  // Settings / menu → Support: the components raising it cannot import this lazy chunk, so the
+  // request travels through the UI store. It arms; it never toggles.
+  useEffect(() => {
+    if (!live) return;
+    return useUiStore.subscribe((state, prev) => {
+      if (state.reportModeRequest !== prev.reportModeRequest) setArmed(true);
+    });
+  }, [live]);
 
   const onCapture = useCallback((element: Element, clientX: number, clientY: number) => {
     setArmed(false);
@@ -142,7 +160,7 @@ export function BugReportRoot() {
 
   return (
     <>
-      {isMobile && !captured && (
+      {isMobile && !playerMode && live && !captured && (
         <ReportFab armed={armed} onToggleArmed={() => setArmed(current => !current)} />
       )}
       {armed && !captured && (

@@ -5,15 +5,9 @@ import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { MobileMenu } from './MobileMenu';
 import { VISITOR_GATED_PANELS } from '../../visitor-gating';
+import { config } from '../../../shared/config';
 
-function setSupportUrl(value: string | undefined): void {
-  const w = window as unknown as Record<string, unknown>;
-  if (value === undefined) {
-    delete w.__SPO_SUPPORT_URL__;
-  } else {
-    w.__SPO_SUPPORT_URL__ = value;
-  }
-}
+const flags = config.server as { bugReportMode: boolean; bugReportPlayerMode: boolean };
 
 describe('MobileMenu', () => {
   beforeEach(() => {
@@ -82,28 +76,30 @@ describe('MobileMenu', () => {
   });
 
   describe('Support', () => {
-    afterEach(() => setSupportUrl(undefined));
-
-    it('opens the configured support destination, carrying world and player, in a new tab', () => {
-      setSupportUrl('https://support.example.org/support.asp');
-      useGameStore.setState({ worldName: 'planitia', username: 'Crazz' });
-      renderWithProviders(<MobileMenu />);
-
-      const link = screen.getByRole('link', { name: /Support/ }) as HTMLAnchorElement;
-      expect(link.href).toContain('https://support.example.org/support.asp');
-      expect(link.href).toContain('WorldName=planitia');
-      expect(link.href).toContain('UserName=Crazz');
-      expect(link.target).toBe('_blank');
-      expect(link.rel).toContain('noopener');
+    const saved = { mode: flags.bugReportMode, player: flags.bugReportPlayerMode };
+    afterEach(() => {
+      flags.bugReportMode = saved.mode;
+      flags.bugReportPlayerMode = saved.player;
     });
 
-    it('falls back to the built-in default when no destination is configured', () => {
-      setSupportUrl(undefined);
-      useGameStore.setState({ worldName: 'planitia', username: 'Crazz' });
+    it('is not offered when the bug reporter is off, and no link leaves the game', () => {
+      flags.bugReportMode = false;
+      const { container } = renderWithProviders(<MobileMenu />);
+      expect(screen.queryByRole('button', { name: /Support/ })).toBeNull();
+      expect(container.querySelectorAll('a[href*="github.com"]')).toHaveLength(0);
+      expect(container.querySelectorAll('a')).toHaveLength(0);
+    });
+
+    it.each([false, true])('requests report mode and returns to the map (player mode: %s)', (player) => {
+      flags.bugReportMode = true;
+      flags.bugReportPlayerMode = player;
+      const before = useUiStore.getState().reportModeRequest;
       renderWithProviders(<MobileMenu />);
 
-      const link = screen.getByRole('link', { name: /Support/ }) as HTMLAnchorElement;
-      expect(link.href).toContain('github.com/Crazz-Org/SPO-WebClient/issues');
+      fireEvent.click(screen.getByRole('button', { name: /Support/ }));
+
+      expect(useUiStore.getState().reportModeRequest).toBe(before + 1);
+      expect(useUiStore.getState().mobileTab).toBe('map');
     });
   });
 });

@@ -3,7 +3,7 @@
  *
  * Grouped menu covering ALL desktop features not available via bottom tabs:
  * Communication (Mail), Exploration (Search, Command palette, Profile, My facilities, Government),
- * Map Controls (Zoom, Rotate, Overlays, Refresh), System (Settings, Server Switch, Debug, Logout).
+ * Map Controls (Zoom, Rotate, Overlays, Refresh), System (Settings, Support — when the bug reporter is on, Server Switch, Debug, Logout).
  */
 
 import {
@@ -17,7 +17,7 @@ import { useGameStore } from '../../store/game-store';
 import { isPanelOffered } from '../../visitor-gating';
 import { useClient } from '../../context';
 import { Badge, confirmLogout } from '../common';
-import { buildSupportUrl, getSupportUrl } from '../../support-link';
+import { config } from '@/shared/config';
 import styles from './MobileMenu.module.css';
 
 interface MenuGroup {
@@ -29,7 +29,6 @@ interface MenuItem {
   label: string;
   icon: typeof Mail;
   action?: () => void;
-  href?: string;
   badge?: number;
   /** The panel this item opens — checked against the visitor-gating list. */
   panel?: SurfaceKind;
@@ -42,9 +41,8 @@ export function MobileMenu() {
   const openLeftPanel = useUiStore((s) => s.openLeftPanel);
   const openCommandPalette = useUiStore((s) => s.openCommandPalette);
   const setMobileTab = useUiStore((s) => s.setMobileTab);
+  const requestReportMode = useUiStore((s) => s.requestReportMode);
   const unreadCount = useMailStore((s) => s.unreadCount);
-  const worldName = useGameStore((s) => s.worldName);
-  const username = useGameStore((s) => s.username);
   const isVisitor = useGameStore((s) => s.isVisitor);
   const client = useClient();
 
@@ -91,7 +89,10 @@ export function MobileMenu() {
       label: 'System',
       items: [
         { label: 'Settings', icon: Settings, action: () => doAction(() => openModal('settings')) },
-        { label: 'Support', icon: LifeBuoy, href: buildSupportUrl(getSupportUrl(), worldName, username) },
+        // Arms the in-app reporter; offered only where the reporter is mounted.
+        ...(config.server.bugReportMode
+          ? [{ label: 'Support', icon: LifeBuoy, action: () => doAction(() => requestReportMode()) }]
+          : []),
         { label: 'Switch Server', icon: Globe, action: () => doAction(() => client.onSwitchServer()) },
         { label: 'Debug Overlay', icon: Bug, action: () => doAction(() => client.onToggleDebugOverlay()) },
         { label: 'Logout', icon: LogOut, action: () => doAction(() => confirmLogout(client.onLogout)) },
@@ -104,35 +105,17 @@ export function MobileMenu() {
       {groups.map(({ label, items }) => (
         <div key={label} className={styles.group}>
           <span className={styles.groupLabel}>{label}</span>
-          {items.filter((i) => !i.panel || isPanelOffered(i.panel, isVisitor)).map(({ label: itemLabel, icon: Icon, action, href, badge }) => {
-            const children = (
-              <>
-                <Icon size={18} className={styles.icon} />
-                <span className={styles.label}>{itemLabel}</span>
-                {badge != null && badge > 0 && (
-                  <Badge variant="danger" className={styles.badge}>
-                    {badge > 9 ? '9+' : badge}
-                  </Badge>
-                )}
-              </>
-            );
-            return href ? (
-              <a
-                key={itemLabel}
-                className={styles.item}
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setMobileTab('map')}
-              >
-                {children}
-              </a>
-            ) : (
-              <button key={itemLabel} className={styles.item} onClick={action}>
-                {children}
-              </button>
-            );
-          })}
+          {items.filter((i) => !i.panel || isPanelOffered(i.panel, isVisitor)).map(({ label: itemLabel, icon: Icon, action, badge }) => (
+            <button key={itemLabel} className={styles.item} onClick={action}>
+              <Icon size={18} className={styles.icon} />
+              <span className={styles.label}>{itemLabel}</span>
+              {badge != null && badge > 0 && (
+                <Badge variant="danger" className={styles.badge}>
+                  {badge > 9 ? '9+' : badge}
+                </Badge>
+              )}
+            </button>
+          ))}
         </div>
       ))}
     </div>

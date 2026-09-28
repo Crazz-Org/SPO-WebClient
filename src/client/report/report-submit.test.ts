@@ -10,6 +10,7 @@ import {
 } from '../../shared/bug-report-schema';
 import { reportJournal } from './journal';
 import { buildReport, submitReport, BUG_REPORT_ENDPOINT, type ReportDraft } from './report-submit';
+import { APP_VERSION, BUILD_NUMBER } from '../version';
 
 const anchor: DomAnchor = {
   kind: 'dom',
@@ -68,6 +69,12 @@ describe('buildReport', () => {
 
   it('computes the anchor key from the anchor, not from the caller', () => {
     expect(buildReport(draft).anchorKey).toBe(computeAnchorKey(anchor));
+  });
+
+  it('records the client build it came from, and still validates', () => {
+    const report = buildReport(draft);
+    expect(report.appVersion).toBe(`${APP_VERSION}#${BUILD_NUMBER}`);
+    expect(validateBugReport(report).ok).toBe(true);
   });
 
   it('gives every report its own id', () => {

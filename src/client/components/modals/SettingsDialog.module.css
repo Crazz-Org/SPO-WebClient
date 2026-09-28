@@ -370,7 +370,7 @@
 }
 
 /* Support */
-.supportLink {
+.supportBtn {
   display: block;
   width: 100%;
   padding: var(--space-3);
@@ -389,7 +389,7 @@
     color var(--duration-fast) var(--ease-default);
 }
 
-.supportLink:hover {
+.supportBtn:hover {
   background: var(--accent-gold);
   color: var(--bg-primary);
 }

@@ -29,8 +29,10 @@ installErrorReporter();
 // A tab loaded before a deploy reloads once when a lazy chunk 404s (issue 1050).
 installStaleBundleReload();
 
-// Dev-only bug reporting. Lazy so a build without SPO_BUG_REPORT never fetches the chunk,
-// and mounted here rather than in App.tsx so it survives the Login → Game transition.
+// In-app bug reporting, mounted only when SPO_BUG_REPORT is on: `=true` (dev/test) arms it on
+// F8, the floating mobile button or Settings/menu → Support; `=player` (players) on the Support
+// entry only. Lazy so a build without SPO_BUG_REPORT never fetches the chunk, and mounted here
+// rather than in App.tsx so it survives the Login → Game transition.
 const BugReportRoot = lazy(() =>
   import('./report').then(m => ({ default: m.BugReportRoot }))
 );

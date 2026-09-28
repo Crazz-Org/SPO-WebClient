@@ -116,6 +116,13 @@ interface UiState {
   // Command palette
   commandPaletteOpen: boolean;
 
+  /**
+   * One-shot request to arm the bug reporter (Settings / menu → Support). A counter so each
+   * request is distinct and nothing has to reset it; consumed by `BugReportRoot`, which the
+   * requesting components cannot import (it is a lazy chunk).
+   */
+  reportModeRequest: number;
+
   /** The HUD chrome (StatusPill + CommandBar) is shown; session-only, never persisted, so a reload always comes back visible (#613). */
   hudVisible: boolean;
 
@@ -189,6 +196,9 @@ interface UiState {
   closeCommandPalette: () => void;
   toggleCommandPalette: () => void;
 
+  // Actions — Bug reporter
+  requestReportMode: () => void;
+
   // Actions — HUD visibility
   setHudVisible: (v: boolean) => void;
   toggleHudVisible: () => void;
@@ -235,6 +245,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   buildMenuFacilities: [],
   capitolIconUrl: '',
   commandPaletteOpen: false,
+  reportModeRequest: 0,
   hudVisible: true,
   mobileTab: 'map',
   mobileSheetSnap: 'half' as SnapPoint,
@@ -351,6 +362,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   openCommandPalette: () => set({ commandPaletteOpen: true }),
   closeCommandPalette: () => set({ commandPaletteOpen: false }),
   toggleCommandPalette: () => set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
+
+  // Bug reporter
+  requestReportMode: () => set((s) => ({ reportModeRequest: s.reportModeRequest + 1 })),
 
   // HUD visibility
   setHudVisible: (v) => set({ hudVisible: v }),
