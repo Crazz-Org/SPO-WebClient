@@ -51,6 +51,15 @@ import { enforceProductionConfig } from './production-config';
 import { proxyImage, buildImageFileIndexEntries, proxyImageHosts, type ProxyImageDeps } from './proxy-image';
 import { fetchWithTimeout } from './fetch-with-timeout';
 import {
+  WsMessageGuard,
+  WS_MESSAGE_RATE_PER_SECOND,
+  WS_MESSAGE_BURST,
+  WS_MAX_QUEUED_MESSAGES,
+  WS_GUARD_CLOSE_CODE,
+  WS_RATE_EXCEEDED_REASON,
+  WS_QUEUE_EXCEEDED_REASON,
+} from './ws-message-guard';
+import {
   RATE_LIMIT_WINDOW_MS,
   RATE_LIMIT_MAX_AUTH,
   RATE_LIMIT_MAX_PROXY,
@@ -1033,8 +1042,27 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   ]);
   let rdoQueue: Promise<void> = Promise.resolve();
 
+  // Per-socket message guard (SEC-W-6): rate bucket + RDO-queue depth, in every mode.
+  const messageGuard = new WsMessageGuard({
+    ratePerSecond: WS_MESSAGE_RATE_PER_SECOND,
+    burst: WS_MESSAGE_BURST,
+    maxQueued: WS_MAX_QUEUED_MESSAGES,
+  });
+  let closedByGuard = false;
+  function closeByGuard(reason: string): void {
+    closedByGuard = true;
+    logger.warn(`[Gateway] WebSocket closed by message guard: ${reason}`, {
+      ip: clientIp,
+      reason,
+      player: connectedClients.get(ws) ?? 'unknown',
+    });
+    ws.close(WS_GUARD_CLOSE_CODE, reason);
+  }
+
   /** Process a single WS message. Must be serialized for RDO-touching messages. */
   async function processMessage(data: string): Promise<void> {
+    // Guard close: nothing already queued (or in the close handshake) reaches a handler
+    if (closedByGuard) return;
     try {
       const msg: WsMessage = JSON.parse(data.toString());
 
@@ -1117,6 +1145,13 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   }
 
   ws.on('message', (data: string) => {
+    // Message guard first, before the lane is chosen: every message costs a token (SEC-W-6)
+    if (closedByGuard) return;
+    if (!messageGuard.takeToken()) {
+      closeByGuard(WS_RATE_EXCEEDED_REASON);
+      return;
+    }
+
     // Shutdown drain started: no message reaches a handler any more
     if (connectionDrain.isDraining()) return;
 
@@ -1134,7 +1169,17 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       });
     } else {
       // RDO lane: serialize to prevent concurrent Delphi temp-object access
-      rdoQueue = rdoQueue.then(() => processMessage(data)).catch((err: unknown) => {
+      if (!messageGuard.enqueue()) {
+        closeByGuard(WS_QUEUE_EXCEEDED_REASON);
+        return;
+      }
+      rdoQueue = rdoQueue.then(async () => {
+        try {
+          await processMessage(data);
+        } finally {
+          messageGuard.settle();
+        }
+      }).catch((err: unknown) => {
         spSession.log.error('RDO queue message error', { error: toErrorMessage(err) });
       });
     }
