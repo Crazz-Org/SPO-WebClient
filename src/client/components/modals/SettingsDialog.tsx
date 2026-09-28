@@ -12,7 +12,7 @@ import { useUiStore } from '../../store/ui-store';
 import { useClient } from '../../context';
 import { showToast } from '../common/Toast';
 import { Switch, confirmLogout } from '../common';
-import { SHORTCUTS } from '../../hooks/useKeyboardShortcuts';
+import { ShortcutList } from '../common/ShortcutList';
 import { connectionStats, formatByteCount } from '../../connection-stats';
 import { buildSupportUrl, getSupportUrl } from '../../support-link';
 import styles from './SettingsDialog.module.css';
@@ -222,11 +222,7 @@ export function SettingsDialog() {
           {/* Keyboard shortcuts reference */}
           <section className={styles.section}>
             <h3 className={styles.sectionTitle}>Keyboard Shortcuts</h3>
-            <div className={styles.shortcutGrid}>
-              {SHORTCUTS.map((sc) => (
-                <ShortcutRow key={sc.keys} keys={sc.keys} action={sc.action} />
-              ))}
-            </div>
+            <ShortcutList />
           </section>
 
           {/* Debug */}
@@ -345,14 +341,5 @@ function ConnectionSection() {
         </span>
       </div>
     </>
-  );
-}
-
-function ShortcutRow({ keys, action }: { keys: string; action: string }) {
-  return (
-    <div className={styles.shortcutRow}>
-      <kbd className={styles.kbd}>{keys}</kbd>
-      <span className={styles.shortcutAction}>{action}</span>
-    </div>
   );
 }
