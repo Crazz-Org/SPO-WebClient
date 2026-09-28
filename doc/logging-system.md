@@ -171,7 +171,7 @@ jq 'select(.msg=="CLIENT_ERROR") | .meta.sig' gateway.ndjson | sort | uniq -c | 
 |------------------|----------------|------------------------------------------------------|
 | `ts`             | yes            | ISO 8601 timestamp                                   |
 | `level`          | yes            | `DEBUG`, `INFO`, `WARN`, `ERROR`                     |
-| `ctx`            | yes            | Logger context (`Gateway`, `Session`, `ClientWire`, `ClientError`) |
+| `ctx`            | yes            | Logger context (`Gateway`, `Session`, `ClientError`) |
 | `msg`            | yes            | Human-readable message                               |
 | `sid`            | session logs   | Unique session ID per WebSocket connection             |
 | `player`         | after login    | Player username (inherited via child logger)          |
@@ -263,48 +263,6 @@ log.info('step 3');    // buffer was drained, starts fresh
 log.error('again');    // recentContext: [{step 3}]
 ```
 
-## Client-Side Debug Reports
-
-The client tracks all WebSocket messages in `window.__spoDebug.history`. That history is E2E / L3
-instrumentation, read by the test procedures; it is no longer a player reporting path.
-
-### How it works
-
-1. Players report problems through **Settings → Support → "Report a problem"**, the in-app
-   reporter — see [bug-reporting.md](bug-reporting.md).
-2. No client UI posts to `POST /api/debug-log` any more. The endpoint below remains until #1054
-   removes it; when called, the server writes each entry to the NDJSON log file with context `ClientWire`.
-
-### Endpoint: `POST /api/debug-log`
-
-**Request:**
-```json
-{
-  "player": "SPO_test3",
-  "history": [
-    { "dir": "SEND", "type": "TycoonGetMain", "ts": 1743676670123, "reqId": "ws-42" },
-    { "dir": "RECV", "type": "TycoonMain", "ts": 1743676670456 }
-  ]
-}
-```
-
-**Response:**
-```json
-{ "ok": true, "entries": 2 }
-```
-
-**Constraints:**
-- Requires `LOG_FILE` to be set (returns 503 otherwise)
-- Rate limited: 2 reports per IP per 60 seconds (429)
-- Max payload: 512 KB (413)
-- Max entries per report: 200 (capped silently)
-
-### Querying client wire logs
-
-```bash
-cat logs/gateway.ndjson | jq 'select(.ctx == "ClientWire" and .player == "SPO_test3")'
-```
-
 ## File Locations
 
 | File | Purpose |
@@ -313,6 +271,6 @@ cat logs/gateway.ndjson | jq 'select(.ctx == "ClientWire" and .player == "SPO_te
 | `src/shared/log-transport.ts` | FileTransport with size-based rotation |
 | `src/shared/config.ts` | `config.logging.*` — env var parsing |
 | `src/server/spo_session.ts` | Session with sid, startedAt, child loggers |
-| `src/server/server.ts` | SESSION_START/END markers, `POST /api/debug-log` |
+| `src/server/server.ts` | SESSION_START/END markers |
 | `logs/gateway.ndjson` | All log entries (git-ignored) |
 | `logs/errors.ndjson` | Error entries with context (git-ignored) |

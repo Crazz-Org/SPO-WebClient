@@ -2,7 +2,7 @@
  * The per-IP WebSocket cap (SEC-W-3) and the per-type auth refusal, over a real socket bound to
  * 127.0.0.1:0 — never 8080 — using the exported `httpServer` rather than `startGateway()`,
  * which boots asset-downloading services unacceptable in Jest (pattern of
- * debug-log-rate-limit.test.ts).
+ * client-ip-trust-proxy.test.ts).
  *
  * SINGLE_USER_MODE and TRUST_PROXY are cleared BEFORE the module graph loads: single-user mode
  * skips every per-IP ceiling, and the cap is keyed on the socket address here.

@@ -1,7 +1,7 @@
 /**
  * SEC-H-7 through the real HTTP server: with TRUST_PROXY=true the rate-limit bucket is
  * keyed by the RIGHTMOST X-Forwarded-For entry (the one our nginx appended), so a forged
- * leftmost entry cannot buy a fresh bucket. Same harness as debug-log-rate-limit.test.ts:
+ * leftmost entry cannot buy a fresh bucket. Harness:
  * exported `httpServer` on 127.0.0.1:0 — never 8080. LOG_FILE and TRUST_PROXY are read at
  * module load, so both are set before the require.
  */
@@ -13,6 +13,7 @@ import * as path from 'path';
 describe('client IP behind a trusted proxy — rightmost X-Forwarded-For entry', () => {
   let httpServer: http.Server;
   let port: number;
+  let maxPerIp: number;
   const savedLogFile = process.env.LOG_FILE;
   const savedTrustProxy = process.env.TRUST_PROXY;
 
@@ -26,6 +27,7 @@ describe('client IP behind a trusted proxy — rightmost X-Forwarded-For entry',
     jest.useRealTimers();
 
     httpServer = mod.httpServer;
+    maxPerIp = (require('../client-error-endpoint') as typeof import('../client-error-endpoint')).CLIENT_ERROR_MAX_PER_IP;
     return new Promise<void>(resolve => {
       httpServer.listen(0, '127.0.0.1', () => {
         const addr = httpServer.address();
@@ -44,14 +46,14 @@ describe('client IP behind a trusted proxy — rightmost X-Forwarded-For entry',
     jest.resetModules();
   });
 
-  function postDebugLog(xff: string): Promise<number> {
+  function postClientError(xff: string): Promise<number> {
     return new Promise((resolve, reject) => {
-      const body = JSON.stringify({ player: 'test', history: [] });
+      const body = JSON.stringify({});
       const req = http.request(
         {
           host: '127.0.0.1',
           port,
-          path: '/api/debug-log',
+          path: '/api/client-error',
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -71,13 +73,14 @@ describe('client IP behind a trusted proxy — rightmost X-Forwarded-For entry',
   }
 
   it('a different spoofed leftmost entry does not buy a fresh bucket', async () => {
-    expect(await postDebugLog('1.1.1.1, 198.51.100.10')).not.toBe(429);
-    expect(await postDebugLog('2.2.2.2, 198.51.100.10')).not.toBe(429);
-    expect(await postDebugLog('3.3.3.3, 198.51.100.10')).toBe(429);
+    for (let i = 0; i < maxPerIp; i++) {
+      expect(await postClientError(`1.1.1.${i + 1}, 198.51.100.10`)).not.toBe(429);
+    }
+    expect(await postClientError('3.3.3.3, 198.51.100.10')).toBe(429);
   });
 
   it('different rightmost entries land in separate buckets', async () => {
-    expect(await postDebugLog('9.9.9.9, 198.51.100.20')).not.toBe(429);
-    expect(await postDebugLog('9.9.9.9, 198.51.100.21')).not.toBe(429);
+    expect(await postClientError('9.9.9.9, 198.51.100.20')).not.toBe(429);
+    expect(await postClientError('9.9.9.9, 198.51.100.21')).not.toBe(429);
   });
 });
