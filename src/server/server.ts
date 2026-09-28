@@ -31,6 +31,17 @@ import {
 import { toErrorMessage } from '../shared/error-utils';
 import { wsHandlerRegistry } from './ws-handlers';
 import { buildErrorContractReadout, buildPropertyFallbackReadout } from './session/diagnostics-readouts';
+import {
+  isLocalOnlyRequest,
+  buildHealth,
+  buildMetrics,
+  directoryProbe,
+  sessionRegistry,
+  readGatewayVersion,
+  startMetricsLog,
+  PROCESS_STARTED_AT_MS,
+  type GatewayMetrics,
+} from './observability';
 import { parseResearchDat, buildInventionIndex, type DatInventionIndex } from '../shared/research-dat-parser';
 import { getPublicDir, getCacheDir, getWebclientCacheDir } from './paths';
 import { buildRuntimeConfigScript } from './runtime-config';
@@ -354,6 +365,29 @@ function setSecurityHeaders(res: http.ServerResponse): void {
 // The per-IP ceilings and the limiter live in rate-limit.ts; sweep expired entries every 5 minutes.
 setInterval(() => sweepExpiredRateLimits(), 300_000);
 
+const GATEWAY_VERSION = readGatewayVersion();
+
+/** The /api/metrics object — also the payload of the periodic METRICS log line. */
+function collectMetrics(): GatewayMetrics {
+  return buildMetrics({
+    version: GATEWAY_VERSION,
+    startedAtMs: PROCESS_STARTED_AT_MS,
+    now: Date.now(),
+    memory: process.memoryUsage(),
+    websocketsOpen: wss.clients.size,
+    sessions: sessionRegistry.snapshot(),
+    directory: directoryProbe.getState(),
+  });
+}
+
+/** Answers 403 to anything but a direct loopback request; true when it refused. */
+function refuseNonLocal(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  if (isLocalOnlyRequest(req)) return false;
+  res.writeHead(403, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+  res.end('Forbidden');
+  return true;
+}
+
 // 1. HTTP Server for Static Files + Image Proxy
 const server = http.createServer(async (req, res) => {
   setSecurityHeaders(res);
@@ -415,6 +449,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Public health check — served from the cached directory probe; never dials Delphi.
+  // The gateway's start state is in the body only, it never sets the status.
+  if (safePath === '/api/health') {
+    const { statusCode, body } = buildHealth(directoryProbe.getState(), serviceRegistry.isInitialized(), Date.now());
+    res.writeHead(statusCode, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(body));
+    return;
+  }
+
+  // Runtime metrics — local-only (loopback peer and no X-Forwarded-For).
+  if (safePath === '/api/metrics') {
+    if (refuseNonLocal(req, res)) return;
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(collectMetrics()));
+    return;
+  }
+
   // Map data API endpoint: /api/map-data/:mapname
   if (safePath.startsWith('/api/map-data/')) {
     const mapName = sanitizePathParam(safePath.substring('/api/map-data/'.length).split('?')[0]);
@@ -459,6 +510,7 @@ const server = http.createServer(async (req, res) => {
   // list the operator is meant to triage was only ever reachable by grepping
   // `RDO-CONTRACT` out of the logs. Sorted most frequent first.
   if (safePath === '/api/rdo-error-contract') {
+    if (refuseNonLocal(req, res)) return;
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
@@ -472,6 +524,7 @@ const server = http.createServer(async (req, res) => {
   // property's text; `false` entries are the bare-value callers the fallback
   // legitimately serves. Triage the first group before touching the fallback.
   if (safePath === '/api/property-fallback') {
+    if (refuseNonLocal(req, res)) return;
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
@@ -940,6 +993,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   // Create a dedicated Starpeace Session for this connection
   const spSession = new StarpeaceSession();
   spSession.log.info('SESSION_START', { ip: clientIp });
+  sessionRegistry.add(spSession);
 
   // One teardown per connection, shared by the close handler and the shutdown drain
   const teardown = createSessionTeardown(spSession, (err) =>
@@ -1108,6 +1162,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
     // destroy() runs only after it settles. The teardown is shared with the shutdown drain,
     // so it runs once however many callers await it.
     await teardown();
+    sessionRegistry.remove(spSession);
     connectionDrain.untrack(ws);
   });
 });
@@ -1250,6 +1305,10 @@ export async function startGateway(options?: GatewayOptions): Promise<GatewayIns
       resolve();
     });
   });
+
+  // Directory reachability probe and the METRICS log line — both unref()'d timers.
+  directoryProbe.start();
+  startMetricsLog(collectMetrics, createLogger('Metrics'));
 
   // Build in-memory caches with granular progress reporting via SSE
   const cacheSteps: import('./service-registry').CacheStepEntry[] = [
