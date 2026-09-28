@@ -11,12 +11,19 @@ COPY package.json package-lock.json ./
 # Install all dependencies (including devDependencies for build)
 RUN npm ci
 
+# Release version (e.g. v1.80.0), passed by the deploy as a build argument.
+# Declared after npm ci so the dependency layer stays cached across releases.
+ARG APP_VERSION
+
 # Copy source code and build configs
 COPY tsconfig.json tsconfig.client.json vite.config.ts ./
 COPY src/ src/
 COPY public/ public/
 
 # Build server (TypeScript -> dist/) and client (Vite -> public/app.js + app.css)
+# Stamp the version into package.json (the same stamp release.yml uses); vite reads it
+# into __APP_VERSION__. With no argument the manifest keeps its committed version.
+RUN if [ -n "$APP_VERSION" ]; then npm version "${APP_VERSION#v}" --no-git-tag-version --allow-same-version; fi
 RUN npm run build
 
 # ============================================================
@@ -37,6 +44,8 @@ WORKDIR /app
 # Copy package files and install production dependencies only
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
+# The stamped manifest, so the server reads the release version at runtime
+COPY --from=builder /app/package.json ./package.json
 
 # Copy built artifacts from builder stage
 COPY --from=builder /app/dist/ ./dist/
