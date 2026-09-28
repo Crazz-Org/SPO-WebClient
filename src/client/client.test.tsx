@@ -578,3 +578,211 @@ describe('close code 1012 — gateway restarting', () => {
     expect(useGameStore.getState().serverRestarting).toBe(false);
   });
 });
+
+/**
+ * #1042 — a logout must land on a fresh login screen, never on a reconnect. The gateway answers
+ * RESP_LOGOUT first and closes the socket 100 ms later (`handleLogout`); the close used to fall
+ * through to the dropped-connection branch and replay login + company selection.
+ */
+describe('logout (issue 1042)', () => {
+  const sockets: TrackedSocket[] = [];
+
+  class TrackedSocket extends FakeSocket {
+    sent: string[] = [];
+    override close = jest.fn();
+    constructor() {
+      super();
+      sockets.push(this);
+    }
+    override send(payload?: string): void {
+      if (payload !== undefined) this.sent.push(payload);
+    }
+  }
+
+  type Internals = {
+    ws: TrackedSocket;
+    isConnected: boolean;
+    storedUsername: string;
+    storedPassword: string;
+    currentWorldName: string;
+    reconnectAttempt: number;
+  };
+  let client: StarpeaceClient;
+  let reload: jest.Mock;
+  const internals = () => client as unknown as Internals;
+
+  const frames = (): Array<{ type: string; wsRequestId?: string }> =>
+    sockets.flatMap((s) => s.sent.map((p) => JSON.parse(p) as { type: string; wsRequestId?: string }));
+  const framesOf = (type: string) => frames().filter((f) => f.type === type);
+
+  const flush = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  const answerLogout = async (success: boolean) => {
+    const logoutFrames = framesOf(WsMessageType.REQ_LOGOUT);
+    const wsRequestId = logoutFrames[logoutFrames.length - 1].wsRequestId;
+    (client as unknown as { handleMessage(m: WsMessage): void }).handleMessage({
+      type: WsMessageType.RESP_LOGOUT,
+      wsRequestId,
+      success,
+    } as unknown as WsMessage);
+    await flush();
+  };
+
+  const expectNoReconnect = () => {
+    jest.advanceTimersByTime(60_000);
+    expect(framesOf(WsMessageType.REQ_LOGIN_WORLD)).toHaveLength(0);
+    expect(framesOf(WsMessageType.REQ_SELECT_COMPANY)).toHaveLength(0);
+    expect(internals().reconnectAttempt).toBe(0);
+    expect(useGameStore.getState().reconnectAttempt).toBe(0);
+    expect(internals().storedUsername).toBe('');
+    expect(internals().storedPassword).toBe('');
+    expect(useGameStore.getState().status).toBe('disconnected');
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sockets.length = 0;
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = TrackedSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    client = new StarpeaceClient();
+    reload = jest.fn();
+    client.reloadPage = reload;
+    internals().ws.onopen?.();
+    useGameStore.setState({ status: 'connected', companyId: 'C1', serverRestarting: false, reconnectAttempt: 0 });
+    internals().storedUsername = 'u';
+    internals().storedPassword = 'p';
+    internals().currentWorldName = 'planitia';
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('success: the gateway close after the answer reloads once and never reconnects', async () => {
+    const ws = internals().ws;
+    client.callbacks.onLogout();
+    await answerLogout(true);
+
+    expect(ws.close).toHaveBeenCalledWith(1000, expect.any(String));
+    expect(reload).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(100);
+    ws.onclose?.({ code: 1000 });
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(sockets).toHaveLength(1);
+    expectNoReconnect();
+    expect(sockets).toHaveLength(1);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('refusal: the client closes the socket itself and reloads once', async () => {
+    const ws = internals().ws;
+    client.callbacks.onLogout();
+    await answerLogout(false);
+
+    expect(ws.close).toHaveBeenCalledWith(1000, expect.any(String));
+    expect(reload).not.toHaveBeenCalled();
+
+    ws.onclose?.({ code: 1000 });
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(sockets).toHaveLength(1);
+    expectNoReconnect();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('a close before the answer reloads once, and the rejected request adds no second reload', async () => {
+    const ws = internals().ws;
+    client.callbacks.onLogout();
+    await flush();
+
+    ws.onclose?.({ code: 1000 });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(sockets).toHaveLength(1);
+
+    await flush();
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(ws.close).not.toHaveBeenCalled();
+    expectNoReconnect();
+    expect(sockets).toHaveLength(1);
+  });
+
+  it('logging out from a reconnect socket reloads once and opens no third socket', async () => {
+    internals().ws.onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    jest.advanceTimersByTime(5_000);
+    expect(sockets).toHaveLength(2);
+
+    const second = internals().ws;
+    // The reconnect socket opens (resetting the attempt counter) and replays login; drop
+    // those replay frames so only what follows the logout is judged.
+    second.onopen?.();
+    await flush();
+    second.sent.length = 0;
+    useGameStore.setState({ status: 'connected' });
+
+    client.callbacks.onLogout();
+    await answerLogout(true);
+    expect(second.close).toHaveBeenCalledWith(1000, expect.any(String));
+    expect(reload).not.toHaveBeenCalled();
+
+    second.onclose?.({ code: 1000 });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expectNoReconnect();
+    expect(sockets).toHaveLength(2);
+  });
+
+  it('with no socket at all, the refused request reloads directly', async () => {
+    internals().isConnected = false;
+    const ws = internals().ws;
+
+    client.callbacks.onLogout();
+    await flush();
+
+    expect(framesOf(WsMessageType.REQ_LOGOUT)).toHaveLength(0);
+    expect(ws.close).not.toHaveBeenCalled();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('a second onLogout while one is in flight sends a single REQ_LOGOUT', async () => {
+    client.callbacks.onLogout();
+    client.callbacks.onLogout();
+    await flush();
+    expect(framesOf(WsMessageType.REQ_LOGOUT)).toHaveLength(1);
+  });
+
+  it('no double logout: beforeunload after a completed logout sends nothing, remembered session kept', async () => {
+    const remembered = {
+      username: 'u', zonePath: '', worldName: 'planitia', companyId: 'C1', companyName: 'Co',
+    };
+    useGameStore.setState({ rememberedSession: remembered });
+    const ws = internals().ws;
+
+    client.callbacks.onLogout();
+    await answerLogout(true);
+    ws.onclose?.({ code: 1000 });
+
+    window.dispatchEvent(new Event('beforeunload'));
+
+    expect(framesOf(WsMessageType.REQ_LOGOUT)).toHaveLength(1);
+    expect(useGameStore.getState().rememberedSession).toEqual(remembered);
+  });
+
+  it('an unexpected close with no logout still reconnects, from the first and from a reconnect socket', () => {
+    internals().ws.onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    jest.advanceTimersByTime(5_000);
+    expect(sockets).toHaveLength(2);
+
+    internals().ws.onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    jest.advanceTimersByTime(60_000);
+    expect(sockets.length).toBeGreaterThan(2);
+    expect(reload).not.toHaveBeenCalled();
+  });
+});
