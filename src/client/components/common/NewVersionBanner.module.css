@@ -1,0 +1,48 @@
+/* NewVersionBanner — top-band notice after a reconnect finds a new deploy (issue 1050) */
+
+.banner {
+  position: fixed;
+  top: var(--content-top);
+  left: var(--space-4);
+  right: var(--space-4);
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 44px; /* stated max band: one nowrap line (36px button + 2 × --space-1) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-4);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  z-index: var(--z-toast);
+}
+
+.text {
+  font-weight: var(--font-medium);
+}
+
+.reloadBtn {
+  height: 36px;
+  padding: 0 var(--space-4);
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.reloadBtn:hover {
+  background: var(--primary-light);
+}
+
+.reloadBtn:active {
+  background: var(--primary-dark);
+}

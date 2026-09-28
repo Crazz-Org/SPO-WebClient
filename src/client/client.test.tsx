@@ -29,6 +29,7 @@ import * as authHandler from './handlers/auth-handler';
 import * as buildingActionHandler from './handlers/building-action-handler';
 import { WsMessageType, type WsMessage } from '../shared/types';
 import { useGameStore } from './store/game-store';
+import { useUiStore } from './store/ui-store';
 import { ClientBridge } from './bridge/client-bridge';
 import { GATEWAY_UNREACHABLE_MESSAGE } from './handlers/reconnect-utils';
 
@@ -1204,5 +1205,111 @@ describe('sign-in reopens a closed gateway socket (issue 1048)', () => {
     await flush();
     expect(sockets).toHaveLength(1);
     expect(sockets[0].types()).toEqual([WsMessageType.REQ_AUTH_CHECK]);
+  });
+});
+
+/**
+ * #1050 — a reconnect after a deploy checks whether the gateway now serves another bundle,
+ * fire and forget beside the login replay, and raises the "New version available" flag.
+ */
+describe('reconnect checks the served bundle (issue 1050)', () => {
+  const sockets: BundleSocket[] = [];
+
+  class BundleSocket extends FakeSocket {
+    sent: string[] = [];
+    constructor() {
+      super();
+      sockets.push(this);
+    }
+    override send(payload?: string): void {
+      if (payload !== undefined) this.sent.push(payload);
+    }
+  }
+
+  type Internals = {
+    ws: BundleSocket;
+    storedUsername: string;
+    storedPassword: string;
+    currentWorldName: string;
+  };
+  const g = globalThis as unknown as { fetch?: unknown };
+  const originalFetch = g.fetch;
+  let client: StarpeaceClient;
+  let fetchMock: jest.Mock;
+  const internals = () => client as unknown as Internals;
+
+  const flush = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+  const loginFrames = () =>
+    sockets
+      .flatMap((s) => s.sent.map((p) => JSON.parse(p) as { type: string }))
+      .filter((f) => f.type === WsMessageType.REQ_LOGIN_WORLD);
+  const serve = (entry: string) => {
+    fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      text: async () => `<script type="module" src="${entry}"></script>`,
+    });
+    g.fetch = fetchMock;
+  };
+
+  /** Drop the first socket, let the reconnect timer run, and open the reconnect socket. */
+  const reconnect = async () => {
+    internals().ws.onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    jest.advanceTimersByTime(60_000);
+    expect(sockets.length).toBeGreaterThan(1);
+    internals().ws.onopen?.();
+    await flush();
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sockets.length = 0;
+    document.head.innerHTML = '<script type="module" src="assets/app.OLD.js"></script>';
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = BundleSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    client = new StarpeaceClient();
+    internals().ws.onopen?.();
+    useGameStore.setState({ status: 'connected', companyId: 'C1', serverRestarting: false, reconnectAttempt: 0 });
+    internals().storedUsername = 'u';
+    internals().storedPassword = 'p';
+    internals().currentWorldName = 'planitia';
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    useUiStore.setState({ newVersionAvailable: false });
+    g.fetch = originalFetch;
+    document.head.innerHTML = '';
+  });
+
+  it('a different served entry sets the flag, and the login replay still starts', async () => {
+    serve('assets/app.NEW.js');
+    await reconnect();
+
+    expect(fetchMock).toHaveBeenCalledWith('/', { cache: 'no-store' });
+    expect(useUiStore.getState().newVersionAvailable).toBe(true);
+    expect(loginFrames().length).toBeGreaterThan(0);
+  });
+
+  it('the same served entry leaves the flag false', async () => {
+    serve('assets/app.OLD.js');
+    await reconnect();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(useUiStore.getState().newVersionAvailable).toBe(false);
+    expect(loginFrames().length).toBeGreaterThan(0);
+  });
+
+  it('once the flag is set, a later reconnect does not fetch again', async () => {
+    useUiStore.setState({ newVersionAvailable: true });
+    serve('assets/app.NEW.js');
+    await reconnect();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(loginFrames().length).toBeGreaterThan(0);
   });
 });

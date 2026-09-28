@@ -418,3 +418,13 @@ describe('ui-store map context menu', () => {
     expect(useUiStore.getState().stack).toEqual([]);
   });
 });
+
+describe('ui-store newVersionAvailable (issue 1050)', () => {
+  afterEach(() => useUiStore.setState({ newVersionAvailable: false }));
+
+  it('defaults to false, and setNewVersionAvailable(true) sets it', () => {
+    expect(useUiStore.getState().newVersionAvailable).toBe(false);
+    useUiStore.getState().setNewVersionAvailable(true);
+    expect(useUiStore.getState().newVersionAvailable).toBe(true);
+  });
+});

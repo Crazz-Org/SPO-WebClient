@@ -49,6 +49,7 @@ import * as buildMenuHandler from './handlers/build-menu-handler';
 import * as mapHandler from './handlers/map-handler';
 import { GATEWAY_UNREACHABLE_MESSAGE, getReconnectDelay, isMaxAttempts, isSlowPhase, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
 import { reloadPage as reloadWindow } from './page-reload';
+import { checkServedBundle } from './stale-bundle';
 import { connectionPendingKey } from './handlers/connection-pending-key';
 import { connectionStats, utf8ByteLength } from './connection-stats';
 
@@ -1297,6 +1298,14 @@ export class StarpeaceClient implements ClientHandlerContext {
       this.reconnectAttempt = 0;
       useGameStore.getState().setReconnectAttempt(0);
       ClientBridge.log('System', 'Gateway reconnected — replaying login…');
+
+      // A deploy restarts the gateway: offer a reload if it now serves another bundle (issue 1050).
+      // Fire and forget — the login replay below does not wait on it.
+      if (!useUiStore.getState().newVersionAvailable) {
+        void checkServedBundle().then((changed) => {
+          if (changed) useUiStore.getState().setNewVersionAvailable(true);
+        });
+      }
 
       authHandler.login(this, currentWorldName)
         .then(() => authHandler.selectCompanyAndStart(this, companyId))

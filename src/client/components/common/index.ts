@@ -27,4 +27,5 @@ export { DataTable } from './DataTable';
 export { MiniBar } from './MiniBar';
 export { StatCard } from './StatCard';
 export { ReconnectingOverlay } from './ReconnectingOverlay';
+export { NewVersionBanner } from './NewVersionBanner';
 export { confirmLogout } from './logout-confirm';
