@@ -1,6 +1,6 @@
 ---
 name: e2e-test
-description: Run E2E tests with Playwright MCP (complete workflow from server start to cleanup)
+description: Run the L3 browser smoke with Playwright MCP on a gateway leased from the bench (same procedure as /e2e)
 user-invokable: true
 disable-model-invocation: true
 ---
@@ -16,7 +16,7 @@ Drives the live game client in a real browser via Playwright MCP.
      **SPO_test3 - Green** (never change without explicit developer approval)
    - Verified selectors (post-React, a11y-based) and the child-frame login quirk
    - `window.__spoDebug` programmatic verification API
-   - Server start/stop lifecycle
+   - The gateway lease (`npm run dev` / `npm run dev:release`) — never started or stopped by hand
    - Screenshot policy (sub-agent delegation only)
    The ordered Phase 0–8 smoke script and report format now live in the same file.
 2. **[doc/E2E-POLICY.md](../../../doc/E2E-POLICY.md)** — the gate: which layer a change
@@ -24,9 +24,13 @@ Drives the live game client in a real browser via Playwright MCP.
    mobile) and pre-release; everything below the pixel is L2,
    `npm run test:live`.
 
+**Before running, read the "Target" and "⚠ Known stale" sections of
+[.claude/commands/e2e.md](../../commands/e2e.md)** — what the leased gateway cannot show, and
+how to adapt the phases that predate `CommandBar`.
+
 ## Scenario argument
 
-`/e2e-test <scenario>`: `login` (Phases 0–2 only), `smoke` (full Phases 0–8, default),
+`/e2e-test <scenario>` (same as `/e2e <scenario>`): `login` (Phases 0–2 only), `smoke` (full Phases 0–8, default),
 `custom` (user describes the flow — still read-only, still the locked account).
 
 ## Hard rules
