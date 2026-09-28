@@ -1,8 +1,9 @@
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage } from '@/shared/types/message-types';
 import type { CompanyInfo, TownInfo } from '@/shared/types/domain-types';
-import { WsDriver } from './ws-driver';
+import { WsDriver, WsDriverError } from './ws-driver';
 import {
+  awaitResumeToken,
   findTown,
   resolveVisualClass,
   listTowns,
@@ -11,6 +12,7 @@ import {
   pickCompany,
   propertyValue,
   readBuildingDetails,
+  resumeSession,
   setBuildingProperty,
   type LiveSession,
 } from './session';
@@ -137,10 +139,30 @@ describe('login', () => {
     await expect(login(PRIMARY_ACCOUNT)).rejects.toThrow(/got: aries/);
   });
 
-  it('logoff closes the socket so the gateway issues its Logoff', async () => {
-    const session = sessionWith(() => undefined);
+  it('logoff sends REQ_LOGOUT, awaits RESP_LOGOUT, and only then closes', async () => {
+    const order: string[] = [];
+    const session = sessionWith(() => {
+      order.push('request');
+      return { type: WsMessageType.RESP_LOGOUT, success: true };
+    });
+    (session.driver.close as jest.Mock).mockImplementation(async () => {
+      order.push('close');
+    });
     await logoff(session);
-    expect(session.driver.close).toHaveBeenCalled();
+    expect(session.driver.request).toHaveBeenCalledWith(
+      { type: WsMessageType.REQ_LOGOUT },
+      WsMessageType.RESP_LOGOUT,
+      expect.any(Number),
+    );
+    expect(order).toEqual(['request', 'close']);
+  });
+
+  it('logoff still closes, and does not throw, when the logout request fails', async () => {
+    const session = sessionWith(() => {
+      throw new Error('Cannot send REQ_LOGOUT: driver is closed');
+    });
+    await expect(logoff(session)).resolves.toBeUndefined();
+    expect(session.driver.close).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -242,5 +264,52 @@ describe('propertyValue', () => {
 
   it('is undefined for an absent group rather than throwing', () => {
     expect(propertyValue(groups, 'townJobs', 'hiMinSalary')).toBeUndefined();
+  });
+});
+
+describe('awaitResumeToken', () => {
+  it('returns the token of the EVENT_SESSION_RESUME_TOKEN push', async () => {
+    const driver = stubDriver(() => undefined);
+    driver.waitFor.mockResolvedValue({
+      type: WsMessageType.EVENT_SESSION_RESUME_TOKEN,
+      token: 'tok-1',
+    } as unknown as { type: WsMessageType.RESP_CAPITOL_COORDS });
+    expect(await awaitResumeToken(driver as unknown as WsDriver)).toBe('tok-1');
+    const match = driver.waitFor.mock.calls[0][0];
+    expect(match({ type: WsMessageType.EVENT_SESSION_RESUME_TOKEN })).toBe(true);
+    expect(match({ type: WsMessageType.RESP_CAPITOL_COORDS })).toBe(false);
+  });
+});
+
+describe('resumeSession', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('sends REQ_RESUME_SESSION first on a fresh socket and returns the driver and snapshot', async () => {
+    const snapshot = { type: WsMessageType.RESP_RESUME_SESSION, company: { id: '1', name: 'SPO_test3 - Green' } };
+    const driver = stubDriver(() => snapshot);
+    jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
+
+    const resumed = await resumeSession(PRIMARY_ACCOUNT, 'tok-1');
+
+    expect(resumed.driver).toBe(driver);
+    expect(resumed.snapshot).toBe(snapshot);
+    expect(driver.request).toHaveBeenCalledTimes(1);
+    expect(driver.request).toHaveBeenCalledWith(
+      { type: WsMessageType.REQ_RESUME_SESSION, username: 'SPO_test3', token: 'tok-1' },
+      WsMessageType.RESP_RESUME_SESSION,
+      expect.any(Number),
+    );
+    expect(driver.close).not.toHaveBeenCalled();
+  });
+
+  it('closes the socket and rethrows the refusal', async () => {
+    const refusal = new WsDriverError('refused', 15, WsMessageType.REQ_RESUME_SESSION);
+    const driver = stubDriver(() => {
+      throw refusal;
+    });
+    jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
+
+    await expect(resumeSession(PRIMARY_ACCOUNT, 'old')).rejects.toBe(refusal);
+    expect(driver.close).toHaveBeenCalledTimes(1);
   });
 });

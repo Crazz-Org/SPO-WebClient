@@ -56,6 +56,9 @@ export const HTTP_BASE = GATEWAY_URL.replace(/^ws/, 'http');
 export const LIVE_LOG_BASE =
   process.env.E2E_LOG_BASE || 'http://158.69.153.134/logs/FIVEMODELSERVER/';
 
+/** The Interface Server's Survival logs, beside the model server's — where a ClientView's teardown is logged. */
+export const INTERFACE_LOG_BASE = new URL('../FIVEINTERFACESERVER/', LIVE_LOG_BASE).href;
+
 /**
  * President-only members. A diff touching one of these makes the gate read, from the
  * server, whether the test account holds the presidency (doc/E2E-POLICY.md §7): granted
@@ -87,6 +90,8 @@ export const TIMEOUTS = {
    * procedure — to remove the message before the next `MessageList.asp` fetch (issue #1025).
    */
   mailDeleteReread: 1_000,
+  /** How long session-resume keeps the WebSocket closed before resuming the parked session. */
+  resumeGap: 20_000,
 } as const;
 
 export const LIMITS = {

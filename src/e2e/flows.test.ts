@@ -1,5 +1,5 @@
 import { WsMessageType } from '@/shared/types/message-types';
-import type { WsMessage, FavoritesItem } from '@/shared/types/message-types';
+import type { WsMessage, FavoritesItem, WsRespResumeSession } from '@/shared/types/message-types';
 import type { MailMessageHeader } from '@/shared/types/domain-types';
 import { FLOWS, flowByName, nudge, runFlow, type Flow, type FlowResult } from './flows';
 import { ROUTES } from './routing';
@@ -1859,5 +1859,166 @@ describe('warehouse-role-reading', () => {
     expect(result.status).toBe('FAIL');
     expect(result.error).toMatch(/details timed out/);
     expect(off).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('session-resume', () => {
+  const MARKER = 'Start Disconnecting SPO_test3';
+  const window = { url: 'http://logs/FIVEINTERFACESERVER/S.log', offset: 100, openedAt: '' };
+
+  function driver(responder: (msg: WsMessage) => unknown = () => ({ type: WsMessageType.RESP_CHAT_USER_LIST, users: [{}, {}] })) {
+    return {
+      close: jest.fn(async () => undefined),
+      log: [{ direction: 'sent' }, { direction: 'received' }],
+      errors: [] as WsMessage[],
+      send: jest.fn(),
+      seen: jest.fn(() => []),
+      request: jest.fn(async (msg: WsMessage) => responder(msg)),
+    } as unknown as WsDriver;
+  }
+
+  const refusal = () => new WsDriverError('resume refused', 15, WsMessageType.REQ_RESUME_SESSION);
+
+  interface Setup {
+    snapshotCompany?: { id: string; name: string } | null;
+    firstResume?: 'ok' | Error;
+    secondResume?: 'refused' | 'accepted' | Error;
+    read?: (msg: WsMessage) => unknown;
+    gap?: string;
+    after?: string | null;
+  }
+
+  function setup(over: Setup = {}) {
+    const calls: string[] = [];
+    const first = stubSession(() => undefined);
+    (first.driver.close as jest.Mock).mockImplementation(async () => {
+      calls.push('close');
+    });
+    const resumedDriver = driver(over.read);
+    const thirdDriver = driver();
+    const company = over.snapshotCompany === undefined ? first.company : over.snapshotCompany;
+
+    jest.spyOn(session, 'login').mockResolvedValue(first);
+    const off = jest.spyOn(session, 'logoff').mockImplementation(async () => {
+      calls.push('logoff');
+    });
+    jest.spyOn(session, 'awaitResumeToken').mockResolvedValue('tok-1');
+    let resumes = 0;
+    const resume = jest.spyOn(session, 'resumeSession').mockImplementation(async () => {
+      calls.push('resume');
+      resumes += 1;
+      if (resumes === 1) {
+        const outcome = over.firstResume ?? 'ok';
+        if (outcome instanceof Error) throw outcome;
+        return {
+          driver: resumedDriver,
+          snapshot: { type: WsMessageType.RESP_RESUME_SESSION, company } as unknown as WsRespResumeSession,
+        };
+      }
+      const outcome = over.secondResume ?? 'refused';
+      if (outcome === 'refused') throw refusal();
+      if (outcome instanceof Error) throw outcome;
+      return {
+        driver: thirdDriver,
+        snapshot: { type: WsMessageType.RESP_RESUME_SESSION, company } as unknown as WsRespResumeSession,
+      };
+    });
+    const find = jest.spyOn(liveLog, 'findCurrentSurvivalLog').mockResolvedValue(window.url);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(window);
+    jest.spyOn(liveLog, 'readSince').mockResolvedValue(over.gap ?? '12:00 - some other line\r\n');
+    const marker = jest
+      .spyOn(liveLog, 'awaitMarker')
+      .mockResolvedValue(over.after === undefined ? `12:01 - ${MARKER}` : over.after);
+    const sleep = jest.fn(async () => undefined);
+    return { calls, first, resumedDriver, thirdDriver, off, resume, find, marker, sleep };
+  }
+
+  const run = (sleep: jest.Mock) => runFlow(flowByName('session-resume'), { ...ctx, sleep });
+  const assertion = (r: FlowResult, what: RegExp) => r.assertions.find(a => what.test(a.what));
+
+  it('is catalogued and changes no game state', () => {
+    expect(flowByName('session-resume').mutates).toBe(false);
+  });
+
+  it('passes when the parked session resumes, answers, keeps its view and refuses the old token', async () => {
+    const s = setup();
+    const result = await run(s.sleep);
+
+    expect(result.status).toBe('PASS');
+    expect(s.calls).toEqual(['close', 'resume', 'resume', 'logoff']);
+    expect(s.sleep).toHaveBeenCalledWith(20_000);
+    expect(s.find.mock.calls[0][0]).toMatch(/\/FIVEINTERFACESERVER\/$/);
+    expect(s.off).toHaveBeenCalledTimes(1);
+    expect(s.off.mock.calls[0][0].driver).toBe(s.resumedDriver);
+    expect(s.marker.mock.calls[0][1]).toBe(MARKER);
+    expect(assertion(result, /no Interface Server teardown/)?.detail).toMatch(/bytes appended since the close, no "Start Disconnecting SPO_test3" line/);
+    expect(assertion(result, /explicit logout tears/)?.detail).toBe(`12:01 - ${MARKER}`);
+    expect(assertion(result, /read answers/)?.detail).toBe('2 user(s)');
+    expect(assertion(result, /used token is refused/)?.ok).toBe(true);
+  });
+
+  it('fails when the resumed snapshot names another company', async () => {
+    const s = setup({ snapshotCompany: { id: '9', name: 'Someone Else' } });
+    const result = await run(s.sleep);
+    expect(result.status).toBe('FAIL');
+    expect(assertion(result, /names the same company/)?.ok).toBe(false);
+  });
+
+  it('fails when the resume is refused, and still logs off', async () => {
+    const s = setup({ firstResume: refusal() });
+    const result = await run(s.sleep);
+    expect(result.status).toBe('FAIL');
+    expect(assertion(result, /parked session resumes/)).toMatchObject({ ok: false, detail: 'resume refused' });
+    expect(s.off).toHaveBeenCalledTimes(1);
+    expect(s.off.mock.calls[0][0].driver).toBe(s.first.driver);
+  });
+
+  it('fails when the read does not answer on the resumed session', async () => {
+    const s = setup({
+      read: () => {
+        throw new Error('read timed out');
+      },
+    });
+    const result = await run(s.sleep);
+    expect(result.status).toBe('FAIL');
+    expect(assertion(result, /read answers/)).toMatchObject({ ok: false, detail: 'read timed out' });
+  });
+
+  it('fails when the read answers without a user list', async () => {
+    const s = setup({ read: () => ({ type: WsMessageType.RESP_CHAT_USER_LIST }) });
+    const result = await run(s.sleep);
+    expect(result.status).toBe('FAIL');
+    expect(assertion(result, /read answers/)).toMatchObject({ ok: false, detail: 'no user list' });
+  });
+
+  it('fails when the Interface Server logged a teardown between close and resume', async () => {
+    const s = setup({ gap: `12:00 - other\r\n12:00 - ${MARKER}\r\n` });
+    const result = await run(s.sleep);
+    expect(result.status).toBe('FAIL');
+    expect(assertion(result, /no Interface Server teardown/)).toMatchObject({ ok: false, detail: `12:00 - ${MARKER}` });
+  });
+
+  it('fails when the used token is accepted again, and logs off the socket that now holds the session', async () => {
+    const s = setup({ secondResume: 'accepted' });
+    const result = await run(s.sleep);
+    expect(result.status).toBe('FAIL');
+    expect(assertion(result, /used token is refused/)?.ok).toBe(false);
+    expect(s.off.mock.calls[0][0].driver).toBe(s.thirdDriver);
+  });
+
+  it('fails when the used token is rejected for another reason than access denied', async () => {
+    const s = setup({ secondResume: new WsDriverError('boom', 3, WsMessageType.REQ_RESUME_SESSION) });
+    const result = await run(s.sleep);
+    expect(result.status).toBe('FAIL');
+    expect(assertion(result, /used token is refused/)).toMatchObject({ ok: false, detail: 'boom' });
+  });
+
+  it('fails when an explicit logout leaves no teardown line', async () => {
+    const s = setup({ after: null });
+    const result = await run(s.sleep);
+    expect(result.status).toBe('FAIL');
+    expect(assertion(result, /explicit logout tears/)).toMatchObject({ ok: false });
+    expect(assertion(result, /explicit logout tears/)?.detail).toMatch(/no "Start Disconnecting SPO_test3" within/);
+    expect(s.off).toHaveBeenCalledTimes(1);
   });
 });

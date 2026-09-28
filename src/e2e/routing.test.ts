@@ -31,6 +31,22 @@ describe('route', () => {
     ]));
   });
 
+  it.each([
+    'src/server/server.ts',
+    'src/server/spo_session.ts',
+    'src/server/ws-handlers/auth-handlers.ts',
+  ])('routes %s — a session-lifecycle file — to session-resume, plus the ws-handlers flows', file => {
+    const d = route([file]);
+    expect(d.required).toEqual([SPINE_FLOW, 'building-details', 'politics-read', 'session-resume']);
+  });
+
+  it.each([
+    'src/server/ws-handlers/building-handlers.ts',
+    'src/server/ws-handlers/chat-handlers.ts',
+  ])('still routes %s through the ws-handlers rule, without session-resume', file => {
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'building-details', 'politics-read']);
+  });
+
   it('routes mail-handler.ts to mail-roundtrip and zoning-alert-read, not to the governance flows', () => {
     const d = route(['src/server/session/mail-handler.ts']);
     expect(d.required).toEqual([SPINE_FLOW, 'mail-roundtrip', 'zoning-alert-read']);

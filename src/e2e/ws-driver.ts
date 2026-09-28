@@ -173,7 +173,7 @@ export class WsDriver {
       }
       this.socket.once('close', () => resolve());
       this.socket.close();
-      // The gateway's ClientNotAware -> Logoff path needs the close to land; do not hang on it.
+      // Do not hang on a close that never lands: the gateway parks or ends the session either way.
       setTimeout(() => resolve(), 5_000).unref?.();
     });
   }

@@ -28,6 +28,7 @@ import type {
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuDirectory,
   WsRespMapData,
+  WsRespChatUserList,
 } from '../shared/types/message-types';
 import type {
   BuildingPropertyValue,
@@ -38,12 +39,22 @@ import type {
 } from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
+import { ERROR_AccessDenied } from '../shared/error-codes';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
 import { WsDriverError } from './ws-driver';
-import { GOVERNED_TOWN, LIMITS, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS, type E2eAccount } from './config';
-import { findCurrentSurvivalLog, openLogWindow } from './live-log';
+import {
+  GOVERNED_TOWN,
+  INTERFACE_LOG_BASE,
+  LIMITS,
+  PRIMARY_ACCOUNT,
+  SECONDARY_ACCOUNT,
+  TIMEOUTS,
+  type E2eAccount,
+} from './config';
+import { awaitMarker, findCurrentSurvivalLog, openLogWindow, readSince } from './live-log';
 import { runProbe, probeFailure, type ProbeResult, type ProbeSpec } from './probe';
 import {
+  awaitResumeToken,
   findTown,
   listTowns,
   resolveVisualClass,
@@ -53,6 +64,7 @@ import {
   readBuildingTabData,
   readSectionGroups,
   propertyValue,
+  resumeSession,
   type LiveSession,
 } from './session';
 import type { WorldLock } from './world-lock';
@@ -162,6 +174,110 @@ const loginSpine: Flow = {
       return report('login-spine', assertions, [], session);
     } finally {
       await logoff(session);
+    }
+  },
+};
+
+/**
+ * Live proof of gateway session parking (#1045): a WebSocket dropped without `REQ_LOGOUT`
+ * keeps its Interface Server ClientView, and an explicit logout still tears it down.
+ *
+ * The evidence is the Interface Server's Survival log. `TClientView.OnDisconnect` logs
+ * `Start Disconnecting <user>` when its TCP connection drops (`Interface Server/
+ * InterfaceServer.pas:1803`) — so the line must be absent between close and resume, and
+ * present after the logout. Retirement by a later login is a different path with a different
+ * line (`[OJO!] Retiring the old Client View..`, `:3145-3146`). The flow changes no game state.
+ */
+const sessionResume: Flow = {
+  name: 'session-resume',
+  what:
+    'close the WebSocket without logout -> 20 s -> resume -> read -> old token refused -> ' +
+    'logout tears the ClientView down',
+  mutates: false,
+  run: async ctx => {
+    const sleep = ctx.sleep ?? defaultSleep;
+    const marker = `Start Disconnecting ${PRIMARY_ACCOUNT.username}`;
+    const assertions = new Assertions();
+    const first = await login(PRIMARY_ACCOUNT);
+    let live: LiveSession = first;
+    let loggedOff = false;
+    try {
+      const token = await awaitResumeToken(first.driver);
+      const window = await openLogWindow(await findCurrentSurvivalLog(INTERFACE_LOG_BASE));
+
+      // Deliberately not logoff: a bare close is what parks the session.
+      await first.driver.close();
+      await sleep(TIMEOUTS.resumeGap);
+
+      try {
+        const resumed = await resumeSession(PRIMARY_ACCOUNT, token);
+        live = { ...first, driver: resumed.driver };
+        const company = resumed.snapshot.company;
+        assertions.check(
+          'the resume succeeds and its snapshot names the same company',
+          company?.id === first.company.id && company?.name === first.company.name,
+          `resumed ${company?.name ?? '(none)'}, logged in as ${first.company.name}`,
+        );
+      } catch (err: unknown) {
+        // The parked session stays parked; its park timer (or the next login's eviction)
+        // ends it. The finally's logoff tolerates the closed driver.
+        assertions.check('the parked session resumes', false, toErrorMessage(err));
+        return report('session-resume', assertions, [], first);
+      }
+
+      try {
+        const users = await live.driver.request<WsRespChatUserList>(
+          { type: WsMessageType.REQ_CHAT_GET_USERS },
+          WsMessageType.RESP_CHAT_USER_LIST,
+        );
+        assertions.check(
+          'a read answers on the resumed session (GetUserList, answered by the Interface Server ClientView)',
+          Array.isArray(users.users),
+          Array.isArray(users.users) ? `${users.users.length} user(s)` : 'no user list',
+        );
+      } catch (err: unknown) {
+        assertions.check(
+          'a read answers on the resumed session (GetUserList, answered by the Interface Server ClientView)',
+          false,
+          toErrorMessage(err),
+        );
+      }
+
+      try {
+        const again = await resumeSession(PRIMARY_ACCOUNT, token);
+        // Accepted: the gateway moved the session to this socket, so the logout must use it.
+        live = { ...first, driver: again.driver };
+        assertions.check('the used token is refused when presented again', false, 'the old token was accepted');
+      } catch (err: unknown) {
+        assertions.check(
+          'the used token is refused when presented again',
+          err instanceof WsDriverError && err.code === ERROR_AccessDenied,
+          toErrorMessage(err),
+        );
+      }
+
+      // Read last before the logout: the window covers close -> gap -> resume -> read -> old token.
+      const gap = await readSince(window);
+      const line = gap.split(/\r?\n/).find(l => l.includes(marker));
+      assertions.check(
+        'no Interface Server teardown between close and resume',
+        line === undefined,
+        line?.trim() ?? `${gap.length} bytes appended since the close, no "${marker}" line`,
+      );
+
+      await logoff(live);
+      loggedOff = true;
+      const after = await awaitMarker(window, marker, TIMEOUTS.logSettle);
+      assertions.check(
+        'an explicit logout tears the ClientView down',
+        after !== null,
+        after ?? `no "${marker}" within ${TIMEOUTS.logSettle} ms`,
+      );
+
+      assertions.check('no gateway errors', live.driver.errors.length === 0);
+      return report('session-resume', assertions, [], live);
+    } finally {
+      if (!loggedOff) await logoff(live);
     }
   },
 };
@@ -1241,6 +1357,7 @@ const warehouseRoleReading: Flow = {
 
 export const FLOWS: Flow[] = [
   loginSpine,
+  sessionResume,
   politicsRead,
   politicsWrite,
   buildingDetails,
