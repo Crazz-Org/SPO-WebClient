@@ -14,7 +14,8 @@ what a socket cannot observe: rendering, layout, input, mobile, or a pre-release
 **This command is a pointer — the procedure is maintained in one place:**
 
 - **[doc/E2E-TESTING.md](../../doc/E2E-TESTING.md)** — locked credentials (SPO_test3 /
-  test3 and Crazz / test, Free Space / planitia — NEVER change), verified selectors
+  test3 primary; Crazz / test optional, only for a flow that needs a second account; Free
+  Space / planitia — NEVER change), verified selectors
   (a11y-based; login stages live in a child frame — use snapshot refs, not
   `document.querySelectorAll`), the `__spoDebug` verification API, the gateway lease, and
   the ordered Phase 0–8 smoke script with its report table.
@@ -32,7 +33,9 @@ The gateway leased from the bench (`npm run dev`, then `http://localhost:8080`):
 **this worktree** and talks to planitia. It runs in single-user mode and loads no production
 `.env`, so it cannot show what only the production configuration turns on — the Support /
 bug-reporter entry (`SPO_BUG_REPORT`), the "Create an account" link (`SPO_REGISTER_URL`), and
-nginx, TLS and the Content-Security-Policy as deployed. This command does not cover those.
+nginx, TLS and the Content-Security-Policy as deployed. A pass on the production URL
+(https://starpeace.zz.works) runs **only when the maintainer asks for one** — never as a
+routine step of this command.
 
 ## ⚠ Known stale in doc/E2E-TESTING.md (audit of 2026-09-29)
 
@@ -48,8 +51,6 @@ report the adaptation — do not fail a phase on these alone:
 - There **is** a Logout: Settings → Logout → confirm "Log out". End Phase 8 with it — the
   page must land on the login screen with no reconnect overlay — then `npm run dev:release`.
   Never stop the server yourself.
-- Phase 5 posts a message to a public chat channel, which conflicts with the read-only rule
-  below: ask the maintainer before running it.
 
 ## Rules
 
@@ -58,7 +59,8 @@ Execute the scenario phases in order, assert programmatically via
 next phase on failure. Report: on green, one summary line; on failure, which phases failed with brief reason.
 
 Rules that always apply: credentials are LOCKED; this browser pass stays **read-only**
-(mutations belong to L2's round-trip probe, which restores what it writes); the gateway is
+(mutations belong to L2's round-trip probe, which restores what it writes) — the one
+exception is Phase 5's chat ping, kept by maintainer decision (2026-09-29); the gateway is
 **leased** from the bench worker (`npm run dev`), never started or stopped by hand
 ([doc/bench-worker.md](../../doc/bench-worker.md)); delegate any screenshot reads to a
 sub-agent.
