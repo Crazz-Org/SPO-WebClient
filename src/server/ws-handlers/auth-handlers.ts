@@ -10,6 +10,7 @@ import {
   type WsReqConnectDirectory,
   type WsReqLoginWorld,
   type WsReqLogout,
+  type WsReqResumeSession,
   type WsReqSelectCompany,
   type WsReqSwitchCompany,
   type WsRespAuthSuccess,
@@ -20,6 +21,7 @@ import {
 } from '../../shared/types';
 import type { WsHandlerContext, WsHandler } from './types';
 import { sendResponse, sendError } from './ws-utils';
+import { RESUME_REFUSED_CODE, RESUME_REFUSED_MESSAGE } from '../session-park';
 
 export const handleAuthCheck: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
   const req = msg as WsReqAuthCheck;
@@ -64,6 +66,9 @@ export const handleConnectDirectory: WsHandler = async (ctx: WsHandlerContext, m
 
 export const handleLoginWorld: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
   const req = msg as WsReqLoginWorld;
+  // A parked session of this user would be retired underneath us by AccountStatus
+  // (InterfaceServer.pas:3141-3146): end it, and wait for its Logoff, before anything is sent.
+  if (typeof req.username === 'string') await ctx.evictParkedSession?.(req.username);
   console.log(`[Gateway] Logging into world: ${req.worldName}`);
 
   // Server switch: cleanup previous world session if still connected
@@ -174,4 +179,14 @@ export const handleLogout: WsHandler = async (ctx: WsHandlerContext, msg: WsMess
     };
     sendResponse(ctx.ws, response);
   }
+};
+
+/** Re-attach a parked session (session-park.ts). Without a gateway callback, refuse like any bad token. */
+export const handleResumeSession: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  const req = msg as WsReqResumeSession;
+  if (!ctx.resumeSession) {
+    sendError(ctx.ws, msg.wsRequestId, RESUME_REFUSED_MESSAGE, RESUME_REFUSED_CODE);
+    return;
+  }
+  await ctx.resumeSession(req);
 };

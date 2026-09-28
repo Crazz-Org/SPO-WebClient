@@ -9,7 +9,7 @@ import { WsMessageType } from '../../shared/types';
 import type { WsHandler } from './types';
 
 // Auth & session
-import { handleAuthCheck, handleConnectDirectory, handleLoginWorld, handleSelectCompany, handleSwitchCompany, handleLogout } from './auth-handlers';
+import { handleAuthCheck, handleConnectDirectory, handleLoginWorld, handleSelectCompany, handleSwitchCompany, handleLogout, handleResumeSession } from './auth-handlers';
 
 // Map & camera
 import { handleMapLoad, handleUpdateCamera, handleGetSurface, handleContextStatus, handleGetAllFacilityDimensions } from './map-handlers';
@@ -52,6 +52,7 @@ export const wsHandlerRegistry: Partial<Record<WsMessageType, WsHandler>> = {
   [WsMessageType.REQ_SELECT_COMPANY]: handleSelectCompany,
   [WsMessageType.REQ_SWITCH_COMPANY]: handleSwitchCompany,
   [WsMessageType.REQ_LOGOUT]: handleLogout,
+  [WsMessageType.REQ_RESUME_SESSION]: handleResumeSession,
 
   // Map & camera
   [WsMessageType.REQ_MAP_LOAD]: handleMapLoad,

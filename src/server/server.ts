@@ -28,8 +28,22 @@ import {
   type WsReqLoginWorld,
   type WsReqSelectCompany,
   type WsReqSwitchCompany,
+  type WsReqResumeSession,
   type WsRespError,
+  type WsRespResumeSession,
+  type WsEventSessionResumeToken,
 } from '../shared/types';
+import type { WsHandlerContext } from './ws-handlers/types';
+import {
+  SessionBinding,
+  SessionParkRegistry,
+  readParkMs,
+  readMaxParked,
+  buildResumeSnapshot,
+  RESUME_REFUSED_CODE,
+  RESUME_REFUSED_MESSAGE,
+  type ResumeEntry,
+} from './session-park';
 import { toErrorMessage } from '../shared/error-utils';
 import { wsHandlerRegistry } from './ws-handlers';
 import { buildErrorContractReadout, buildPropertyFallbackReadout } from './session/diagnostics-readouts';
@@ -72,6 +86,7 @@ import {
   WS_MAX_CONNECTIONS_PER_IP,
   checkRateLimit,
   checkAuthRateLimit,
+  checkResumeRateLimit,
   sweepExpiredRateLimits,
 } from './rate-limit';
 
@@ -80,7 +95,9 @@ import {
  * ------------------------
  * 1. Serves static UI files (index.html, client.js).
  * 2. Manages WebSocket connections.
- * 3. Maps 1 WebSocket <-> 1 StarpeaceSession.
+ * 3. Binds each StarpeaceSession to its *current* WebSocket. A WORLD_CONNECTED session whose
+ *    WebSocket closes is parked with none, and a new WebSocket can re-attach it with a token
+ *    (see doc/architecture-overview.md § Session parking).
  */
 
 const logger = createLogger('Gateway');
@@ -93,6 +110,7 @@ const PHASE_ALLOWED_MESSAGES: Record<SessionPhase, ReadonlySet<string> | null> =
   [SessionPhase.DISCONNECTED]: new Set([
     WsMessageType.REQ_AUTH_CHECK,
     WsMessageType.REQ_CONNECT_DIRECTORY,
+    WsMessageType.REQ_RESUME_SESSION,
   ]),
   [SessionPhase.DIRECTORY_CONNECTED]: new Set([
     WsMessageType.REQ_AUTH_CHECK,
@@ -1031,43 +1049,130 @@ const connectedClients = new Map<WebSocket, string>(); // ws → username
 export const connectionDrain = new ConnectionDrain();
 const GM_USERNAMES = new Set((process.env.SPO_GM_USERS || '').split(',').map(s => s.trim()).filter(Boolean));
 
-wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
-  const clientIp = getClientIp(req);
-  logger.info('Client connected', { ip: clientIp });
+/** Give back one per-IP WebSocket slot (SEC-W-3). */
+function releaseWsSlot(ip: string): void {
+  const count = wsConnectionsPerIp.get(ip) || 0;
+  if (count <= 1) {
+    wsConnectionsPerIp.delete(ip);
+  } else {
+    wsConnectionsPerIp.set(ip, count - 1);
+  }
+}
 
-  // Create a dedicated Starpeace Session for this connection
-  const spSession = new StarpeaceSession();
-  spSession.log.info('SESSION_START', { ip: clientIp });
-  sessionRegistry.add(spSession);
+interface LoginCredentials {
+  username: string;
+  worldName: string;
+  worldInfo: WorldInfo | undefined;
+  companyId: string;
+}
 
-  // One teardown per connection, shared by the close handler and the shutdown drain
-  const teardown = createSessionTeardown(spSession, (err) =>
+/**
+ * Everything that belongs to one gateway session rather than to one WebSocket — the unit a
+ * resume moves from a dead connection to a new one (doc/architecture-overview.md § Session parking).
+ */
+interface GatewaySessionHandle {
+  session: StarpeaceSession;
+  /** endSession() then destroy(), memoized — shared by close, drain, expiry and eviction. */
+  teardown: () => Promise<void>;
+  /** The session's current WebSocket (none while parked) and its replay FIFO. */
+  binding: SessionBinding<WebSocket>;
+  searchMenuService: SearchMenuService | null;
+  loginCredentials: LoginCredentials | null;
+  /** Resume registry entry — set once the world is entered. */
+  entry: ResumeEntry | null;
+  /** The WebSocket the shutdown drain tracks this session under. */
+  trackedWs: WebSocket;
+  ending: Promise<void> | null;
+}
+
+/** Every token-holding session, attached or parked. */
+const parkRegistry = new SessionParkRegistry<GatewaySessionHandle>({
+  parkMs: readParkMs(process.env),
+  maxParked: readMaxParked(process.env),
+  onExpire: h => void endParkedSession(h, 'expired'),
+});
+
+/**
+ * End a parked session for good: its park expired, a fresh login of the same user evicts it,
+ * or the gateway shuts down. Same teardown as a closing session — `ClientNotAware`, `Logoff`,
+ * then `destroy()`. Runs once however many callers await it.
+ */
+function endParkedSession(h: GatewaySessionHandle, reason: 'expired' | 'evicted' | 'shutdown'): Promise<void> {
+  if (!h.ending) {
+    h.ending = (async () => {
+      const ip = h.entry ? parkRegistry.end(h.entry) : null;
+      h.entry = null;
+      if (ip !== null) releaseWsSlot(ip);
+      h.session.log.info('SESSION_END', {
+        reason,
+        player: h.loginCredentials?.username ?? 'unknown',
+        durationMs: String(Date.now() - h.session.startedAt),
+        phase: String(h.session.getPhase()),
+      });
+      await h.teardown();
+      sessionRegistry.remove(h.session);
+      connectionDrain.untrack(h.trackedWs);
+    })();
+  }
+  return h.ending;
+}
+
+/** End every parked session of this username and wait for each Logoff (acknowledged or timed out). */
+async function evictParkedSessions(username: string): Promise<void> {
+  await Promise.all(parkRegistry.parkedFor(username).map(h => endParkedSession(h, 'evicted')));
+}
+
+/** How many sessions are parked right now — for tests. */
+export function getParkedSessionCount(): number {
+  return parkRegistry.parkedCount();
+}
+
+/** A new session for a new WebSocket, its events routed through a movable binding. */
+function createSessionHandle(ws: WebSocket, clientIp: string): GatewaySessionHandle {
+  const session = new StarpeaceSession();
+  session.log.info('SESSION_START', { ip: clientIp });
+  sessionRegistry.add(session);
+
+  // One teardown per session, shared by the close handler, the shutdown drain and the park
+  const teardown = createSessionTeardown(session, (err) =>
     logger.error(`Error sending Logoff on close: ${toErrorMessage(err)}`),
   );
   connectionDrain.track(ws, teardown);
 
-  // Search Menu Service (will be initialized after login)
-  let searchMenuService: SearchMenuService | null = null;
-  let loginCredentials: { username: string; worldName: string; worldInfo: WorldInfo | undefined; companyId: string } | null = null;
-
-  // -- Forward Events: Gateway -> Browser --
-  spSession.on('ws_event', (payload: WsMessage) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(payload));
-    }
-  });
-
+  const binding = new SessionBinding<WebSocket>(ws);
+  // -- Forward Events: Gateway -> Browser (the session's current WebSocket) --
+  session.on('ws_event', (payload: WsMessage) => binding.deliver(payload));
   // -- World socket reconnection notifications --
-  spSession.on('worldReconnected', () => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: WsMessageType.EVENT_WORLD_RECONNECTED }));
-    }
-  });
-  spSession.on('worldDisconnected', () => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: WsMessageType.EVENT_WORLD_DISCONNECTED }));
-    }
-  });
+  session.on('worldReconnected', () => binding.deliver({ type: WsMessageType.EVENT_WORLD_RECONNECTED }));
+  session.on('worldDisconnected', () => binding.deliver({ type: WsMessageType.EVENT_WORLD_DISCONNECTED }));
+
+  return {
+    session,
+    teardown,
+    binding,
+    searchMenuService: null,
+    loginCredentials: null,
+    entry: null,
+    trackedWs: ws,
+    ending: null,
+  };
+}
+
+function sendIfOpen(ws: WebSocket, payload: WsMessage): void {
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+}
+
+wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+  const clientIp = getClientIp(req);
+  logger.info('Client connected', { ip: clientIp });
+
+  // A dedicated Starpeace Session for this connection — replaced by a parked one on resume
+  const freshHandle = createSessionHandle(ws, clientIp);
+  let handle = freshHandle;
+  // A REQ_LOGOUT was received: this connection's close never parks
+  let logoutRequested = false;
+  // Messages processed so far: a resume is only valid as the first one
+  let processedCount = 0;
 
   // -- Handle Requests: Browser -> Gateway --
   // Two-lane queue: stateless messages (camera updates) execute immediately,
@@ -1099,14 +1204,21 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   async function processMessage(data: string): Promise<void> {
     // Guard close: nothing already queued (or in the close handshake) reaches a handler
     if (closedByGuard) return;
+    processedCount++;
+    const h = handle;
     try {
       const msg: WsMessage = JSON.parse(data.toString());
 
       // Capture login credentials for SearchMenuService
       if (msg.type === WsMessageType.REQ_LOGIN_WORLD) {
+        // A new identity gets a new token once its world is entered
+        if (h.entry) {
+          parkRegistry.end(h.entry);
+          h.entry = null;
+        }
         const loginMsg = msg as WsReqLoginWorld;
-        const worldInfo = spSession.getWorldInfo(loginMsg.worldName);
-        loginCredentials = {
+        const worldInfo = h.session.getWorldInfo(loginMsg.worldName);
+        h.loginCredentials = {
           username: loginMsg.username,
           worldName: loginMsg.worldName,
           worldInfo: worldInfo,
@@ -1119,49 +1231,65 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       // Capture company selection
       if (msg.type === WsMessageType.REQ_SELECT_COMPANY) {
         const companyMsg = msg as WsReqSelectCompany;
-        if (loginCredentials) {
-          loginCredentials.companyId = companyMsg.companyId;
+        if (h.loginCredentials) {
+          h.loginCredentials.companyId = companyMsg.companyId;
         }
       } else if (msg.type === WsMessageType.REQ_SWITCH_COMPANY) {
         const switchMsg = msg as WsReqSwitchCompany;
-        if (loginCredentials) {
-          loginCredentials.companyId = switchMsg.company.id;
+        if (h.loginCredentials) {
+          h.loginCredentials.companyId = switchMsg.company.id;
         }
       }
 
       // Correlation ID: trace this WS request through all RDO calls
       const corrId = `ws-${Date.now()}-${msg.wsRequestId || 'noid'}`;
-      spSession.setCorrelationId(corrId);
+      h.session.setCorrelationId(corrId);
       const isQuietMsg = QUIET_WS_TYPES.has(msg.type);
-      if (!isQuietMsg) spSession.log.info(`WS>> ${msg.type}`, { wsRequestId: msg.wsRequestId });
+      if (!isQuietMsg) h.session.log.info(`WS>> ${msg.type}`, { wsRequestId: msg.wsRequestId });
 
-      await handleClientMessage(ws, spSession, searchMenuService, msg, clientIp);
-      spSession.setCorrelationId(null);
+      await handleClientMessage(ws, h.session, h.searchMenuService, msg, clientIp, {
+        resumeSession,
+        evictParkedSession: evictParkedSessions,
+      });
+      h.session.setCorrelationId(null);
+
+      const isCompanySelection = msg.type === WsMessageType.REQ_SELECT_COMPANY || msg.type === WsMessageType.REQ_SWITCH_COMPANY;
+
+      // World entered: issue a resume token (session-park.ts), rotated on every company change
+      if (isCompanySelection && h.loginCredentials && h.session.getPhase() === SessionPhase.WORLD_CONNECTED) {
+        h.entry ??= parkRegistry.register(h.loginCredentials.username, h);
+        const tokenEvent: WsEventSessionResumeToken = {
+          type: WsMessageType.EVENT_SESSION_RESUME_TOKEN,
+          token: parkRegistry.issueToken(h.entry),
+        };
+        sendIfOpen(ws, tokenEvent);
+      }
 
       // Initialize SearchMenuService after successful login response
-      const isCompanySelection = msg.type === WsMessageType.REQ_SELECT_COMPANY || msg.type === WsMessageType.REQ_SWITCH_COMPANY;
-      if (isCompanySelection && !searchMenuService && loginCredentials && loginCredentials.worldInfo) {
+      if (isCompanySelection && !h.searchMenuService && h.loginCredentials && h.loginCredentials.worldInfo) {
         setTimeout(() => {
-          if (loginCredentials && loginCredentials.worldInfo && spSession) {
-            const daAddr = spSession.getDAAddr();
-            const daPort = spSession.getDAPort();
+          const creds = h.loginCredentials;
+          if (creds && creds.worldInfo) {
+            const daAddr = h.session.getDAAddr();
+            const daPort = h.session.getDAPort();
 
             if (daAddr && daPort) {
-              searchMenuService = new SearchMenuService(
-                loginCredentials.worldInfo.ip,
-                loginCredentials.worldInfo.port || 80,
-                loginCredentials.worldName,
-                loginCredentials.username,
-                loginCredentials.companyId, // Using companyId as companyName for now
+              const searchMenuService = new SearchMenuService(
+                creds.worldInfo.ip,
+                creds.worldInfo.port || 80,
+                creds.worldName,
+                creds.username,
+                creds.companyId, // Using companyId as companyName for now
                 daAddr, // Use real DAAddr from session
                 daPort, // the InterfaceServer's DALockPort, as Voyager sends it
-                spSession.languageId
+                h.session.languageId
               );
+              h.searchMenuService = searchMenuService;
               logger.info(`SearchMenuService initialized with DAAddr: ${daAddr}:${daPort}`);
 
               // Fetch Capitol coordinates from DirectoryMain.asp and push to client.
               // Answers even on a rejection — see capitol-coords.ts.
-              void pushCapitolCoords(searchMenuService, ws, spSession);
+              void pushCapitolCoords(searchMenuService, ws, h.session);
             } else {
               logger.error('Failed to initialize SearchMenuService: DAAddr or DAPort not available');
             }
@@ -1169,14 +1297,80 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
         }, 500);
       }
     } catch (err: unknown) {
-      spSession.log.error('WS<< PARSE_ERROR', { error: toErrorMessage(err) });
-      spSession.setCorrelationId(null);
+      // A JSON.parse message can quote the input — never for a request that carries a token
+      const error = data.toString().includes(WsMessageType.REQ_RESUME_SESSION)
+        ? 'unparseable resume request'
+        : toErrorMessage(err);
+      h.session.log.error('WS<< PARSE_ERROR', { error });
+      h.session.setCorrelationId(null);
       const errorResp: WsRespError = {
         type: WsMessageType.RESP_ERROR,
         errorMessage: 'Invalid Message Format',
         code: ErrorCodes.ERROR_InvalidParameter
       };
       ws.send(JSON.stringify(errorResp));
+    }
+  }
+
+  /**
+   * Re-attach a parked session to this WebSocket (REQ_RESUME_SESSION, first message only).
+   * Every refusal answers the same and leaves the parked session untouched.
+   */
+  async function resumeSession(req: WsReqResumeSession): Promise<void> {
+    const refuse = (): void => {
+      const errorResp: WsRespError = {
+        type: WsMessageType.RESP_ERROR,
+        wsRequestId: req.wsRequestId,
+        errorMessage: RESUME_REFUSED_MESSAGE,
+        code: RESUME_REFUSED_CODE,
+      };
+      sendIfOpen(ws, errorResp);
+    };
+    if (processedCount !== 1 || handle !== freshHandle || handle.session.getPhase() !== SessionPhase.DISCONNECTED) {
+      refuse();
+      return;
+    }
+    const claimed = parkRegistry.claim(req.username, req.token);
+    if (!claimed) {
+      logger.warn('[Gateway] Session resume refused', { ip: clientIp });
+      refuse();
+      return;
+    }
+    const target = claimed.value;
+
+    // Retire this connection's empty session
+    sessionRegistry.remove(freshHandle.session);
+    freshHandle.session.destroy();
+    connectionDrain.untrack(ws);
+
+    // Bind the parked session to this WebSocket; a still-open previous one is half-open
+    const previous = target.binding.current;
+    target.binding.attach(ws);
+    handle = target;
+    connectionDrain.untrack(target.trackedWs);
+    target.trackedWs = ws;
+    connectionDrain.track(ws, target.teardown);
+    // The parked slot moves to this socket's IP: this socket already holds the one verifyClient gave it
+    if (claimed.parkIp !== null) releaseWsSlot(claimed.parkIp);
+    if (previous && previous !== ws && previous.readyState !== WebSocket.CLOSED) previous.terminate();
+
+    const username = target.loginCredentials?.username ?? req.username;
+    connectedClients.set(ws, username);
+    target.session.log.info('SESSION_RESUME', { ip: clientIp, player: username });
+
+    const response: WsRespResumeSession = {
+      type: WsMessageType.RESP_RESUME_SESSION,
+      wsRequestId: req.wsRequestId,
+      ...buildResumeSnapshot(username, target.session),
+    };
+    sendIfOpen(ws, response);
+    for (const event of target.binding.takeBuffered()) sendIfOpen(ws, event);
+    if (target.entry) {
+      const tokenEvent: WsEventSessionResumeToken = {
+        type: WsMessageType.EVENT_SESSION_RESUME_TOKEN,
+        token: parkRegistry.issueToken(target.entry),
+      };
+      sendIfOpen(ws, tokenEvent);
     }
   }
 
@@ -1197,11 +1391,12 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       const typeMatch = data.toString().match(/"type"\s*:\s*"([^"]+)"/);
       msgType = typeMatch?.[1];
     } catch { /* fall through to RDO lane */ }
+    if (msgType === WsMessageType.REQ_LOGOUT) logoutRequested = true;
 
     if (msgType && FAST_LANE.has(msgType)) {
       // Fast lane: execute immediately, no serialization needed
       processMessage(data).catch((err: unknown) => {
-        spSession.log.error('Fast-lane message error', { error: toErrorMessage(err) });
+        handle.session.log.error('Fast-lane message error', { error: toErrorMessage(err) });
       });
     } else {
       // RDO lane: serialize to prevent concurrent Delphi temp-object access
@@ -1216,34 +1411,56 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
           messageGuard.settle();
         }
       }).catch((err: unknown) => {
-        spSession.log.error('RDO queue message error', { error: toErrorMessage(err) });
+        handle.session.log.error('RDO queue message error', { error: toErrorMessage(err) });
       });
     }
   });
 
   ws.on('close', async () => {
-    const durationMs = Date.now() - spSession.startedAt;
-    spSession.log.info('SESSION_END', {
-      ip: clientIp,
-      player: connectedClients.get(ws) ?? 'unknown',
-      durationMs: String(durationMs),
-      phase: String(spSession.getPhase()),
-    });
+    const h = handle;
+    const player = connectedClients.get(ws) ?? 'unknown';
     connectedClients.delete(ws);
 
-    // Decrement per-IP connection count
-    const count = wsConnectionsPerIp.get(clientIp) || 0;
-    if (count <= 1) {
-      wsConnectionsPerIp.delete(clientIp);
-    } else {
-      wsConnectionsPerIp.set(clientIp, count - 1);
+    // A resume moved the session to another WebSocket: this one only gives back its slot
+    if (h.binding.current !== ws) {
+      releaseWsSlot(clientIp);
+      connectionDrain.untrack(ws);
+      return;
+    }
+    h.binding.detach();
+
+    // Park a WORLD_CONNECTED session instead of ending it — unless logout, shutdown or the cap.
+    // Nothing is sent upstream: to the world it stays a connected, idle player. The IP slot is kept.
+    if (
+      !connectionDrain.isDraining() &&
+      !logoutRequested &&
+      h.session.getPhase() === SessionPhase.WORLD_CONNECTED &&
+      h.entry !== null &&
+      parkRegistry.park(h.entry, clientIp)
+    ) {
+      connectionDrain.track(ws, () => endParkedSession(h, 'shutdown'));
+      h.session.log.info('SESSION_PARK', { ip: clientIp, player, parkMs: String(parkRegistry.parkMs) });
+      return;
+    }
+
+    const durationMs = Date.now() - h.session.startedAt;
+    h.session.log.info('SESSION_END', {
+      ip: clientIp,
+      player,
+      durationMs: String(durationMs),
+      phase: String(h.session.getPhase()),
+    });
+    releaseWsSlot(clientIp);
+    if (h.entry) {
+      parkRegistry.end(h.entry);
+      h.entry = null;
     }
     // Send Logoff before cleanup to gracefully close the game server session.
     // endSession() ends the world socket itself once Logoff is acknowledged or times out (5 s);
     // destroy() runs only after it settles. The teardown is shared with the shutdown drain,
     // so it runs once however many callers await it.
-    await teardown();
-    sessionRegistry.remove(spSession);
+    await h.teardown();
+    sessionRegistry.remove(h.session);
     connectionDrain.untrack(ws);
   });
 });
@@ -1251,9 +1468,20 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
 /**
  * Message Router — dispatches to handler modules in ws-handlers/
  */
-async function handleClientMessage(ws: WebSocket, session: StarpeaceSession, searchMenuService: SearchMenuService | null, msg: WsMessage, clientIp: string) {
-  // Rate limit authentication attempts — one per-IP bucket per auth-bearing message type
-  if (!SINGLE_USER_MODE && !checkAuthRateLimit(clientIp, msg.type)) {
+async function handleClientMessage(
+  ws: WebSocket,
+  session: StarpeaceSession,
+  searchMenuService: SearchMenuService | null,
+  msg: WsMessage,
+  clientIp: string,
+  extras: Pick<WsHandlerContext, 'resumeSession' | 'evictParkedSession'> = {},
+) {
+  // Rate limit authentication attempts — one per-IP bucket per auth-bearing message type,
+  // and one for the resume token, which is a credential too
+  const authLimited =
+    !checkAuthRateLimit(clientIp, msg.type) ||
+    (msg.type === WsMessageType.REQ_RESUME_SESSION && !checkResumeRateLimit(clientIp));
+  if (!SINGLE_USER_MODE && authLimited) {
     const errorResp: WsRespError = {
       type: WsMessageType.RESP_ERROR,
       wsRequestId: msg.wsRequestId,
@@ -1294,7 +1522,7 @@ async function handleClientMessage(ws: WebSocket, session: StarpeaceSession, sea
 
   try {
     await handler(
-      { ws, session, searchMenuService, facilityDimensionsCache, inventionIndex, connectedClients, gmUsernames: GM_USERNAMES },
+      { ws, session, searchMenuService, facilityDimensionsCache, inventionIndex, connectedClients, gmUsernames: GM_USERNAMES, ...extras },
       msg,
     );
     if (!QUIET_WS_TYPES.has(msg.type)) session.log.info(`WS<< ${msg.type} OK`, { wsRequestId: msg.wsRequestId });

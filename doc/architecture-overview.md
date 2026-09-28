@@ -80,6 +80,107 @@ Service files live flat in `src/server/` (no subdirectory).
 | `facilities` | Building dimensions | update |
 | `mapData` | Map data caching | update |
 
+## Session parking
+
+A browser tab that sleeps or reloads drops its WebSocket. The gateway, not the browser, holds the
+TCP connection to the Interface Server, so the gateway keeps that connection open while the tab is
+away ("parks" the session) and lets the returning tab re-attach it with a single-use token.
+Module: `src/server/session-park.ts` (pure); wiring: the `wss.on('connection')` closure in
+`src/server/server.ts`. Card #1045; the browser side is #1046, the live proof #1047.
+
+### Why the gateway must keep the connection (Delphi facts, `~/SPO-Original`)
+
+- A ClientView lives exactly as long as its TCP connection: `TClientView.OnDisconnect` →
+  `DoLogOff` (`Interface Server/InterfaceServer.pas:1799`, `:1949`) → `TInterfaceServer.Logoff`
+  (`:3296`), which sends `RDOSleepTycoon` (`:3304`) and removes the view from `fClients` (`:3314`).
+- Nothing ends a view whose connection stays open: the idle check (`CheckState`, `:2458`) and its
+  `fSentinel` timer (`:2676`) are commented out, and the published `TClientView.Logoff` is a
+  no-op (`:2019`). The transport only reacts to a real disconnect
+  (`Rdo/Server/WinSockRDOConnectionsServer.pas:707`).
+- There is no re-attach. `AccountStatus` (`:3131`) looks up an existing view by name (`:3138`)
+  and, on a matching password, retires it (`[OJO!] Retiring the old Client View`, `:3145`,
+  `PreviousClient.DoLogoff`, `:3146`) before answering `ACCOUNT_Valid` (`:3151`); on a wrong
+  password it answers `ACCOUNT_InvalidName` (`:3153`). `Logon` refuses a name that still has a
+  view (`:3192`). Voyager never re-attached either: `OnSocketDisconnect`
+  (`Voyager/URLHandlers/ServerCnxHandler.pas:3482`) ends in a brand-new `Logon` (`:3439`).
+- The name match is case-insensitive (`GetClientByName`, `InterfaceServer.pas:3508-3511`), so the
+  gateway keys parked sessions by the upper-cased username.
+- Voyager sends `ClientNotAware` only inside `Logoff` (`ServerCnxHandler.pas:2043`), and
+  `TClientView.ClientNotAware` broadcasts a "user left" message (`InterfaceServer.pas:1704`).
+
+### Lifecycle
+
+- **Park.** When a WebSocket closes and its session is `WORLD_CONNECTED` and holds a token, the
+  session keeps its world / map / mail sockets, its timers (ServerBusy poll, KeepAlive) and its
+  state; it is detached from the dead WebSocket and a park timer starts. **Nothing is sent
+  upstream** — no `ClientNotAware`, no `get Logoff`: to the world it is a connected, idle player.
+  A close that follows `REQ_LOGOUT`, a close during the shutdown drain, a close over the cap and a
+  close in any other phase end the session exactly as before (`endSession()` then `destroy()`).
+  A WebSocket cut by the heartbeat (`ws-hygiene.ts`) parks like any other close; a parked session
+  has no WebSocket, so the heartbeat cannot reach it.
+- **While parked.** Server pushes keep arriving. Events go to the session's *current*
+  WebSocket; with none they are dropped, except a FIFO of at most 100 events that nothing can
+  re-read later: `EVENT_CHAT_MSG`, `EVENT_SHOW_NOTIFICATION`, `EVENT_NEW_MAIL`,
+  `EVENT_TYCOON_RETIRED`. Everything else is state the session tracks or map data the client asks
+  for again.
+- **Re-attach.** `REQ_RESUME_SESSION { username, token }`, as the first message on a new
+  WebSocket: the new connection's empty session is dropped, the parked session is bound to the
+  new WebSocket, its park timer is cleared, a still-open previous WebSocket (the phone that slept)
+  is terminated, and the gateway answers `RESP_RESUME_SESSION` with a snapshot (username,
+  `tycoonId`, world name / size / season, company `{id, name, ownerRole}`, money, virtual date,
+  failure level, camera, chat channel), replays the FIFO in order, then pushes a new token.
+  Every refusal — unknown token, used token, token for another username, expired park — answers
+  the same `ERROR_AccessDenied` "Session cannot be resumed" and leaves the parked session alone.
+- **Expiry.** When the park timer fires: `endSession()` + `destroy()`, the path a close took
+  before parking existed.
+- **Eviction.** `REQ_LOGIN_WORLD` first ends every *parked* session of the same username and
+  waits for its `get Logoff` to be acknowledged or to time out (`LOGOFF_TIMEOUT_MS`), and only
+  then sends `AccountStatus`. Otherwise `AccountStatus` would retire the parked view underneath
+  the gateway (a zombie session polling a dead context), or answer `ACCOUNT_InvalidName` to a
+  wrong password for as long as the view lives.
+- **Shutdown.** The shutdown drain ends parked sessions along with attached ones.
+
+### Token rules
+
+- `EVENT_SESSION_RESUME_TOKEN { token }` is pushed once the world is entered (after
+  `REQ_SELECT_COMPANY` / `REQ_SWITCH_COMPANY`) and again after every re-attach.
+- 32 random bytes from `crypto.randomBytes`, base64url. The gateway keeps only its SHA-256,
+  bound to the username (**not** to the IP), and compares with `crypto.timingSafeEqual`.
+- Single-use: every re-attach consumes it and issues a new one. It dies with the park.
+- It travels only as the first message on a new WebSocket, never in a URL, and is never logged.
+- Residual risk: anyone who reads the token from the tab (XSS on the origin, a shared browser
+  profile) before its next use can take over the parked session from any IP, for at most
+  `SPO_SESSION_PARK_MS`.
+- `REQ_RESUME_SESSION` is allowed before authentication and has its own per-IP `auth:` rate-limit
+  bucket at `RATE_LIMIT_MAX_AUTH` (`checkResumeRateLimit`, `rate-limit.ts`).
+
+### Limits
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `SPO_SESSION_PARK_MS` | `300000` (5 min) | How long a parked session waits for its tab |
+| `SPO_MAX_PARKED_SESSIONS` | `100` | Global ceiling on parked sessions (SEC-W-3); over it a closing session ends at once. `0` disables parking. The number is a planner choice — the card set none |
+
+A parked session keeps its `wsConnectionsPerIp` slot under the IP that parked it until it ends or
+is re-attached; a re-attach from another IP moves the slot to the new IP. The password stays in
+memory only (SEC-L-1) and `destroy()` clears it when the park ends.
+
+### Maintainer decisions (2026-09-27)
+
+- Park duration `SPO_SESSION_PARK_MS`, default 5 minutes — about the client's reconnect window.
+  While parked the player still appears online and holds a Delphi ClientView.
+- The resume token is not bound to the IP (mobile players switch between Wi-Fi and mobile data);
+  it is high-entropy, single-use, rotated on every re-attach, bound to the username.
+- "Newest login wins" for *attached* sessions is out of scope: a fresh login evicts only parked
+  sessions.
+- The WebSocket heartbeat belongs to the socket-hygiene card (#1044).
+
+### The L2 drive
+
+`logoff` in `src/e2e/session.ts` is a bare `driver.close()` with no `REQ_LOGOUT`, so every L2
+flow's close now parks the account's session, and the next flow's login evicts it live. Changing
+that helper is card 3/3's ground (#1047).
+
 ## SkillsMP
 
 Search SkillsMP API before creating custom skills. Prefer skills with 1,000+ stars.

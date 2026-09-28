@@ -101,6 +101,11 @@ const UNWIRED: ReadonlyArray<{ type: string; reason: string }> = [
     reason: 'handleGetRoadCost exists; the client prices the road itself with ' +
       'estimateRoadCost. This is the gateway-side door bridge pricing needs. Issue #99.',
   },
+  {
+    type: 'REQ_RESUME_SESSION',
+    reason: 'handleResumeSession re-attaches a parked gateway session; the browser-side ' +
+      'emitter is card 2/3, issue #1046.',
+  },
 ];
 
 function declaredRequestTypes(): string[] {

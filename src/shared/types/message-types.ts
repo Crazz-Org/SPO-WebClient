@@ -233,6 +233,11 @@ export enum WsMessageType {
   REQ_LOGOUT = 'REQ_LOGOUT',
   RESP_LOGOUT = 'RESP_LOGOUT',
 
+  // Session resume
+  REQ_RESUME_SESSION = 'REQ_RESUME_SESSION',
+  RESP_RESUME_SESSION = 'RESP_RESUME_SESSION',
+  EVENT_SESSION_RESUME_TOKEN = 'EVENT_SESSION_RESUME_TOKEN',
+
   // Mail
   REQ_MAIL_CONNECT = 'REQ_MAIL_CONNECT',
   REQ_MAIL_GET_FOLDER = 'REQ_MAIL_GET_FOLDER',
@@ -1366,6 +1371,47 @@ export interface WsRespLogout extends WsMessage {
   type: WsMessageType.RESP_LOGOUT;
   success: boolean;
   message?: string;
+}
+
+// =============================================================================
+// SESSION RESUME MESSAGES
+// =============================================================================
+
+/** First message on a new WebSocket: re-attach the parked gateway session this token names. */
+export interface WsReqResumeSession extends WsMessage {
+  type: WsMessageType.REQ_RESUME_SESSION;
+  username: string;
+  token: string;
+}
+
+export interface WsResumeCompany {
+  id: string;
+  name: string;
+  ownerRole?: string;
+}
+
+/** The snapshot a re-attached client rebuilds its screen from. */
+export interface WsRespResumeSession extends WsMessage {
+  type: WsMessageType.RESP_RESUME_SESSION;
+  username: string;
+  tycoonId: string | null;
+  worldName: string | null;
+  worldXSize: number | null;
+  worldYSize: number | null;
+  worldSeason: number | null;
+  company: WsResumeCompany | null;
+  accountMoney: string | null;
+  virtualDate: number | null;
+  failureLevel: number | null;
+  playerX: number;
+  playerY: number;
+  chatChannel: string;
+}
+
+/** A single-use resume token, pushed once the world is entered and after every re-attach. */
+export interface WsEventSessionResumeToken extends WsMessage {
+  type: WsMessageType.EVENT_SESSION_RESUME_TOKEN;
+  token: string;
 }
 
 // =============================================================================

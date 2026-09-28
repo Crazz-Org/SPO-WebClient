@@ -109,3 +109,20 @@ describe('sweepExpiredRateLimits', () => {
     expect(rl.sweepExpiredRateLimits()).toBe(1);
   });
 });
+
+describe('checkResumeRateLimit', () => {
+  it('counts REQ_RESUME_SESSION in its own per-IP auth bucket at the auth ceiling', () => {
+    for (let i = 0; i < rl.RATE_LIMIT_MAX_AUTH; i++) expect(rl.checkResumeRateLimit(IP)).toBe(true);
+    expect(rl.checkResumeRateLimit(IP)).toBe(false);
+    // Separate from the three login buckets, and from another IP
+    expect(rl.checkAuthRateLimit(IP, 'REQ_LOGIN_WORLD')).toBe(true);
+    expect(rl.checkResumeRateLimit('198.51.100.2')).toBe(true);
+  });
+
+  it('refills after the window', () => {
+    for (let i = 0; i <= rl.RATE_LIMIT_MAX_AUTH; i++) rl.checkResumeRateLimit(IP);
+    expect(rl.checkResumeRateLimit(IP)).toBe(false);
+    jest.advanceTimersByTime(rl.RATE_LIMIT_WINDOW_MS + 1);
+    expect(rl.checkResumeRateLimit(IP)).toBe(true);
+  });
+});

@@ -263,6 +263,11 @@ export type {
   // Logout messages
   WsReqLogout,
   WsRespLogout,
+  // Session resume messages
+  WsReqResumeSession,
+  WsResumeCompany,
+  WsRespResumeSession,
+  WsEventSessionResumeToken,
   // Mail messages
   WsReqMailConnect,
   WsReqMailGetFolder,

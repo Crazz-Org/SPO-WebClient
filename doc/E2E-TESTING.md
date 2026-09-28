@@ -94,7 +94,9 @@ Buttons are found by `title` attribute (main document, `evaluate`-friendly):
 `Toggle Minimap`, `Debug (D)`, `Refresh (R)`.
 
 - **There is no "Logout" button.** Leaving a world = **"Switch Server"** or closing the
-  page/WS (the gateway then performs the canonical `ClientNotAware` → `get Logoff`).
+  page/WS. Closing the page **parks** the gateway session (no `ClientNotAware`, no `get Logoff`
+  yet); the canonical `ClientNotAware` → `get Logoff` follows when the park expires, when the
+  same user logs in again, or when the gateway shuts down (architecture-overview.md § Session parking).
 - The **"Lobby" button in the chat strip is the channel picker**, not a lobby/logout
   control — clicking it lists channels (Lobby, Plano, …); clicking a channel joins it.
 - Chat: textbox placeholder **"Type a message..."**, button **"Send message"** (disabled
@@ -307,8 +309,9 @@ and sampling earlier shows an empty drawer that fills a moment later.
 **Assert:** `wire.sent > 10`, `wire.received > 10`, `wire.errors === 0`.
 
 ### Phase 8 — Clean exit
-Close the browser page (triggers the gateway's `ClientNotAware` → `get Logoff`), stop the
-server (only the PID you started), confirm your port is free again.
+Close the browser page (this parks the gateway session), stop the server (only the PID you
+started) — the shutdown drain ends the parked session with `ClientNotAware` → `get Logoff`, so the
+logoff stays clean (SEC-N-2) — and confirm your port is free again.
 
 ### Report
 
