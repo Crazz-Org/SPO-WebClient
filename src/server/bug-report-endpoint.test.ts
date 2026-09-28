@@ -509,6 +509,16 @@ describe('depositBugReport — the scrub', () => {
     expect(scrubbed[0].t === 'ws-in' && scrubbed[0].payload).toEqual([{ password: '[redacted]' }, 7, null, '{"PASSWORD" : "[redacted]", "k":1}']);
   });
 
+  it('keeps a sent __proto__ key as plain data, never as the copy\'s prototype', () => {
+    const payload: unknown = JSON.parse('{"__proto__":{"password":"leak","polluted":true},"k":1}');
+    const scrubbed = scrubJournal([{ t: 'ws-in', ts: 1, msgType: 'X', payload }]);
+    const out = scrubbed[0].t === 'ws-in' ? scrubbed[0].payload : undefined;
+
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(out, '__proto__')).toBe(true);
+    expect(JSON.stringify(out)).toBe('{"__proto__":{"password":"[redacted]","polluted":true},"k":1}');
+  });
+
   it('drops the payload of every chat and mail frame, keeping msgType and ts', () => {
     const types = ['EVENT_CHAT_MSG', 'REQ_CHAT_SEND_MESSAGE', 'RESP_MAIL_MESSAGE', 'REQ_MAIL_COMPOSE', 'REQ_MAIL_SAVE_DRAFT', 'EVENT_NEW_MAIL', 'REQ_GM_CHAT_SEND'];
     const scrubbed = scrubJournal(types.map((msgType, ts): JournalEntry => ({ t: 'ws-out', ts, msgType, payload: { text: 'private' } })));

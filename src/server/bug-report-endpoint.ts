@@ -55,11 +55,14 @@ function redact(value: unknown): unknown {
   if (typeof value === 'string') return value.replace(PASSWORD_IN_TEXT, `$1${REDACTED}"`);
   if (Array.isArray(value)) return value.map(redact);
   if (isPlainObject(value)) {
-    const out: Record<string, unknown> = {};
-    for (const [key, inner] of Object.entries(value)) {
-      out[key] = key.toLowerCase() === 'password' ? REDACTED : redact(inner);
-    }
-    return out;
+    // Object.fromEntries defines each key as an own property — a player-sent `__proto__`
+    // key stays plain data and never reaches the copy's prototype, as `out[key] = …` would.
+    return Object.fromEntries(
+      Object.entries(value).map(([key, inner]) => [
+        key,
+        key.toLowerCase() === 'password' ? REDACTED : redact(inner),
+      ]),
+    );
   }
   return value;
 }
