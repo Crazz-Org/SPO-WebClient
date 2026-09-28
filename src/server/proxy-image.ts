@@ -105,7 +105,8 @@ export function getImageContentType(filename: string): string {
 export const GAME_SERVER_CACHE_PREFIX = 'gs1-';
 
 /**
- * How long a stored failure placeholder is trusted before the image is fetched again.
+ * How long a remembered failure (`failedImageFetches`) is answered with the placeholder
+ * before the image is fetched again.
  */
 export const STORED_PLACEHOLDER_TTL_MS = 60 * 60 * 1000;
 
@@ -298,23 +299,13 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
         if (!isEnoent(readErr)) throw readErr;
         imageFileIndex.delete(cacheKey);
       }
-      if (content && !content.equals(getPlaceholderImage())) {
+      if (content) {
         res.writeHead(200, {
           'Content-Type': getImageContentType(cachedPath),
           'Cache-Control': 'public, max-age=31536000'
         });
         res.end(content);
         return;
-      }
-      if (content) {
-        // A stored failure placeholder: never cached by the browser, and re-fetched once stale
-        const { mtimeMs } = await fsp.stat(cachedPath);
-        if (Date.now() - mtimeMs < STORED_PLACEHOLDER_TTL_MS) {
-          res.writeHead(200, { 'Content-Type': 'image/png' });
-          res.end(content);
-          return;
-        }
-        imageFileIndex.delete(cacheKey);
       }
     }
 

@@ -366,14 +366,6 @@ describe('proxy-image', () => {
       return { ok: true, arrayBuffer: async () => toArrayBuffer(text) };
     }
 
-    function storePlaceholder(url: string): string {
-      const cacheName = gameServerCacheName(url, 'largephoto.jpg');
-      const filePath = path.join(webclientCacheDir, cacheName);
-      fs.writeFileSync(filePath, getPlaceholderImage());
-      deps.imageFileIndex.set(cacheName, filePath);
-      return filePath;
-    }
-
     it('derives distinct, versioned names from the full path', () => {
       const alpha = gameServerCacheName(alphaUrl, 'largephoto.jpg');
       const beta = gameServerCacheName(betaUrl, 'largephoto.jpg');
@@ -418,29 +410,6 @@ describe('proxy-image', () => {
       await proxyImage(alphaUrl, res, deps);
       expect(mockFetch).toHaveBeenCalled();
       expect(res.body).toEqual(Buffer.from('alpha'));
-    });
-
-    it('serves a fresh stored placeholder without a long-lived cache header', async () => {
-      storePlaceholder(alphaUrl);
-      const res = fakeRes();
-      await proxyImage(alphaUrl, res, deps);
-      expect(res.statusCode).toBe(200);
-      expect(res.headers).toEqual({ 'Content-Type': 'image/png' });
-      expect(res.body).toEqual(getPlaceholderImage());
-      expect(mockFetch).not.toHaveBeenCalled();
-    });
-
-    it('re-fetches the image once a stored placeholder is past its TTL', async () => {
-      const filePath = storePlaceholder(alphaUrl);
-      const stale = (Date.now() - STORED_PLACEHOLDER_TTL_MS - 60_000) / 1000;
-      fs.utimesSync(filePath, stale, stale);
-
-      mockFetch.mockResolvedValueOnce(okFetch('fresh'));
-      const res = fakeRes();
-      await proxyImage(alphaUrl, res, deps);
-      expect(res.body).toEqual(Buffer.from('fresh'));
-      expect(mockFetch.mock.calls.some((call: unknown[]) => call[0] === alphaUrl)).toBe(true);
-      expect(fs.readFileSync(filePath)).toEqual(Buffer.from('fresh'));
     });
   });
 

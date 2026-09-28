@@ -16,12 +16,12 @@ export interface RuntimeConfigInput {
   singleUserMode?: boolean;
   /** Skips the world picker and logs straight into this world. */
   forceWorld?: string;
-  /** Dev-only: turns on the in-app bug-reporting capture. */
+  /** Turns on the in-app bug reporter (`SPO_BUG_REPORT=true` or `player`). */
   bugReport?: boolean;
+  /** `SPO_BUG_REPORT=player`: players reach the reporter from the Support entry only. */
+  bugReportPlayerMode?: boolean;
   /** Registration page for "Create an account" on the sign-in screen; empty renders no action. */
   registerUrl?: string;
-  /** Destination of the Support entry in Settings and the mobile menu; empty lets the client use its built-in default. */
-  supportUrl?: string;
 }
 
 export function buildRuntimeConfigScript(input: RuntimeConfigInput): string {
@@ -33,13 +33,10 @@ export function buildRuntimeConfigScript(input: RuntimeConfigInput): string {
     lines.push(`window.__SPO_FORCE_WORLD__=${JSON.stringify(input.forceWorld)};`);
   }
   if (input.bugReport) {
-    lines.push(`window.__SPO_BUG_REPORT__=true;`);
+    lines.push(`window.__SPO_BUG_REPORT__=${input.bugReportPlayerMode ? '"player"' : 'true'};`);
   }
   if (input.registerUrl) {
     lines.push(`window.__SPO_REGISTER_URL__=${JSON.stringify(input.registerUrl)};`);
-  }
-  if (input.supportUrl) {
-    lines.push(`window.__SPO_SUPPORT_URL__=${JSON.stringify(input.supportUrl)};`);
   }
   return lines.join('\n');
 }

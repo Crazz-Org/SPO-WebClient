@@ -62,6 +62,7 @@ import { parseResearchDat, buildInventionIndex, type DatInventionIndex } from '.
 import { getPublicDir, getCacheDir, getWebclientCacheDir } from './paths';
 import { buildRuntimeConfigScript } from './runtime-config';
 import { handleBugReportRequest, DEFAULT_QUEUE_DIR } from './bug-report-endpoint';
+import { ReportTicketRegistry } from './bug-report-tickets';
 import { handleClientErrorRequest, getClientErrorCounts, CLIENT_ERROR_MAX_PER_IP } from './client-error-endpoint';
 import { handleReportPullList, handleReportPullFetch, handleReportPullAck } from './report-pull-endpoint';
 import { enforceProductionConfig } from './production-config';
@@ -437,6 +438,7 @@ const server = http.createServer(async (req, res) => {
       singleUserMode: SINGLE_USER_MODE,
       forceWorld: config.server.forceWorld,
       bugReport: config.server.bugReportMode,
+      bugReportPlayerMode: config.server.bugReportPlayerMode,
       registerUrl: config.server.registerUrl,
     });
     res.writeHead(200, {
@@ -756,7 +758,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Bug report deposit: POST /api/bug-report — dev-only, 404 unless SPO_BUG_REPORT=true.
+  // Bug report deposit: POST /api/bug-report — 404 unless SPO_BUG_REPORT is true or player;
+  // 403 without a logged-in session's ticket.
   // Everything, transport included, lives in bug-report-endpoint.ts, which tests can import.
   // checkRateLimit's window is fixed at RATE_LIMIT_WINDOW_MS (60 s) — this is 10 per minute.
   if (safePath === '/api/bug-report' && req.method === 'POST') {
@@ -764,6 +767,8 @@ const server = http.createServer(async (req, res) => {
       enabled: config.server.bugReportMode,
       queueDir: config.server.reportsDir || DEFAULT_QUEUE_DIR,
       allowRequest: () => checkRateLimit(getClientIp(req), 'bug-report', 10),
+      tickets: reportTickets,
+      warn: (message) => logger.warn(message),
     });
     return;
   }
@@ -1026,6 +1031,10 @@ export function mountWebSocketGateway(target: http.Server): void {
 }
 mountWebSocketGateway(server);
 
+// Bug-report tickets: one cookie per WebSocket upgrade ties a report deposit to its session.
+const reportTickets = new ReportTicketRegistry();
+if (config.server.bugReportMode) reportTickets.listenForUpgrades(wss, TRUST_PROXY);
+
 let stopWsHeartbeat: () => void = () => undefined;
 /**
  * Start the dead-socket heartbeat on this gateway's sockets (policy SEC-W-7), stopping any
@@ -1169,6 +1178,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   // A dedicated Starpeace Session for this connection — replaced by a parked one on resume
   const freshHandle = createSessionHandle(ws, clientIp);
   let handle = freshHandle;
+  const reportTicket = reportTickets.bindConnection(req, freshHandle.session);
   // A REQ_LOGOUT was received: this connection's close never parks
   let logoutRequested = false;
   // Messages processed so far: a resume is only valid as the first one
@@ -1250,6 +1260,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       await handleClientMessage(ws, h.session, h.searchMenuService, msg, clientIp, {
         resumeSession,
         evictParkedSession: evictParkedSessions,
+        onWorldLogin: (username, worldName) => reportTickets.recordWorldLogin(reportTicket, { username, world: worldName }),
       });
       h.session.setCorrelationId(null);
 
@@ -1420,6 +1431,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
     const h = handle;
     const player = connectedClients.get(ws) ?? 'unknown';
     connectedClients.delete(ws);
+    reportTickets.revoke(reportTicket);
 
     // A resume moved the session to another WebSocket: this one only gives back its slot
     if (h.binding.current !== ws) {
@@ -1474,7 +1486,7 @@ async function handleClientMessage(
   searchMenuService: SearchMenuService | null,
   msg: WsMessage,
   clientIp: string,
-  extras: Pick<WsHandlerContext, 'resumeSession' | 'evictParkedSession'> = {},
+  extras: Pick<WsHandlerContext, 'resumeSession' | 'evictParkedSession' | 'onWorldLogin'> = {},
 ) {
   // Rate limit authentication attempts — one per-IP bucket per auth-bearing message type,
   // and one for the resume token, which is a credential too

@@ -17,6 +17,8 @@ export interface WsHandlerContext {
   resumeSession?: (req: WsReqResumeSession) => Promise<void>;
   /** End every parked session of this username and wait for its Logoff, before a fresh login. */
   evictParkedSession?: (username: string) => Promise<void>;
+  /** Called once the world accepted a REQ_LOGIN_WORLD; the bug-report ticket records who logged in. */
+  onWorldLogin?: (username: string, worldName: string) => void;
 }
 
 export type WsHandler = (ctx: WsHandlerContext, msg: WsMessage) => Promise<void>;

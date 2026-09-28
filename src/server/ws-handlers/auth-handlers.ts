@@ -102,6 +102,7 @@ export const handleLoginWorld: WsHandler = async (ctx: WsHandlerContext, msg: Ws
     }
     throw err;
   }
+  ctx.onWorldLogin?.(req.username, worldInfo.name);
   const response: WsRespLoginSuccess = {
     type: WsMessageType.RESP_LOGIN_SUCCESS,
     wsRequestId: msg.wsRequestId,
