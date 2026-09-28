@@ -9,6 +9,8 @@ import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { ClientContext } from './context';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { AppErrorBoundary } from './components/common/CrashScreen';
 import { StarpeaceClient } from './client';
 import { config } from '../shared/config';
 import './styles/design-tokens.css';
@@ -32,11 +34,15 @@ if (rootElement) {
   createRoot(rootElement).render(
     <StrictMode>
       <ClientContext.Provider value={client.callbacks}>
-        <App />
+        <AppErrorBoundary>
+          <App />
+        </AppErrorBoundary>
         {config.server.bugReportMode && (
-          <Suspense fallback={null}>
-            <BugReportRoot />
-          </Suspense>
+          <ErrorBoundary fallback={null}>
+            <Suspense fallback={null}>
+              <BugReportRoot />
+            </Suspense>
+          </ErrorBoundary>
         )}
       </ClientContext.Provider>
     </StrictMode>
