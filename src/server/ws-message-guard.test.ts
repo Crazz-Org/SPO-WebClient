@@ -60,6 +60,24 @@ describe('WsMessageGuard token bucket', () => {
     expect(guard.takeToken()).toBe(false);
   });
 
+  it('does not empty the bucket when the wall clock steps backwards', () => {
+    // Nightly 2026-09-28 on 17cd60be: the host clock stepped back ~2.6 s and a socket that had
+    // sent 7 messages was closed as "Message rate exceeded".
+    const { guard, advance } = makeGuard();
+    advance(-2_600);
+    expect(guard.takeToken()).toBe(true);
+  });
+
+  it('refills from the stepped-back time on, at the usual rate', () => {
+    const { guard, advance } = makeGuard();
+    for (let i = 0; i < 50; i++) guard.takeToken();
+    advance(-1_000);
+    expect(guard.takeToken()).toBe(false);
+    advance(50);
+    expect(guard.takeToken()).toBe(true);
+    expect(guard.takeToken()).toBe(false);
+  });
+
   it('defaults to Date.now for the clock', () => {
     const guard = new WsMessageGuard({ ratePerSecond: 20, burst: 1, maxQueued: 1 });
     expect(guard.takeToken()).toBe(true);

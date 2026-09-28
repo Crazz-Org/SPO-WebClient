@@ -60,12 +60,16 @@ export class WsMessageGuard {
     this.last = now();
   }
 
-  /** Refills the bucket for the time elapsed, then takes one token. `false` = bucket empty. */
+  /**
+   * Refills the bucket for the time elapsed, then takes one token. `false` = bucket empty.
+   * A wall clock that steps backwards counts as no time elapsed, never as negative time.
+   */
   takeToken(): boolean {
     const t = this.now();
+    const elapsed = Math.max(0, t - this.last);
     this.tokens = Math.min(
       this.limits.burst,
-      this.tokens + ((t - this.last) * this.limits.ratePerSecond) / 1000,
+      this.tokens + (elapsed * this.limits.ratePerSecond) / 1000,
     );
     this.last = t;
     if (this.tokens >= 1) {
