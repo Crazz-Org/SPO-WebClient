@@ -3,8 +3,10 @@
  *
  * Two modes:
  * 1. Reconnecting: spinner + attempt counter + "Try now" button — titled "Server restarting"
- *    after a close with code 1012, otherwise "Connection lost"
- * 2. Disconnected with reason: error icon + explanation + "Return to home page" button
+ *    after a close with code 1013, "Server restarting" after a close with code 1012,
+ *    otherwise "Connection lost"
+ * 2. Disconnected with reason: error icon + explanation + "Return to home page" button —
+ *    titled "Server full" for the `server_full` reason, otherwise "Connection lost"
  */
 
 import { useGameStore } from '../../store/game-store';
@@ -16,6 +18,7 @@ import spinnerStyles from '../startup/LoadingSpinner.module.css';
 const REASON_MESSAGES: Record<string, string> = {
   connection_lost: GATEWAY_UNREACHABLE_MESSAGE,
   session_expired: 'Your session has expired. Please log in again.',
+  server_full: 'The server is full right now. Please try again in a few minutes.',
 };
 
 function handleReturnHome() {
@@ -27,6 +30,7 @@ export function ReconnectingOverlay() {
   const attempt = useGameStore((s) => s.reconnectAttempt);
   const disconnectReason = useGameStore((s) => s.disconnectReason);
   const serverRestarting = useGameStore((s) => s.serverRestarting);
+  const serverFull = useGameStore((s) => s.serverFull);
   const client = useClient();
 
   const isReconnecting = status === 'reconnecting';
@@ -48,7 +52,7 @@ export function ReconnectingOverlay() {
             <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
             <line x1="12" y1="20" x2="12.01" y2="20" />
           </svg>
-          <p className={styles.title}>Connection lost</p>
+          <p className={styles.title}>{disconnectReason === 'server_full' ? 'Server full' : 'Connection lost'}</p>
           <p className={styles.errorMessage}>
             {REASON_MESSAGES[disconnectReason] ?? REASON_MESSAGES.connection_lost}
           </p>
@@ -69,8 +73,11 @@ export function ReconnectingOverlay() {
           <div className={spinnerStyles.dot} />
           <div className={spinnerStyles.dot} />
         </div>
-        <p className={styles.title}>{serverRestarting ? 'Server restarting' : 'Connection lost'}</p>
-        {serverRestarting && (
+        <p className={styles.title}>{serverFull ? 'Server full' : serverRestarting ? 'Server restarting' : 'Connection lost'}</p>
+        {serverFull && (
+          <p className={styles.attempt}>The server is full right now. The game keeps retrying automatically.</p>
+        )}
+        {!serverFull && serverRestarting && (
           <p className={styles.attempt}>The game will reconnect automatically.</p>
         )}
         <p className={styles.attempt}>

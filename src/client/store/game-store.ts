@@ -44,7 +44,7 @@ export type MinimapSize = 'small' | 'medium' | 'large';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'reconnecting' | 'connected';
 
-export type DisconnectReason = 'connection_lost' | 'session_expired' | null;
+export type DisconnectReason = 'connection_lost' | 'session_expired' | 'server_full' | null;
 
 export type ServiceStatus = 'pending' | 'running' | 'complete' | 'failed';
 
@@ -124,6 +124,8 @@ interface GameState {
   disconnectReason: DisconnectReason;
   /** True from a close with code 1012 (gateway restarting) until the session is connected or given up. In memory only. */
   serverRestarting: boolean;
+  /** True from a close with code 1013 (server full) until the session is connected or given up. In memory only. */
+  serverFull: boolean;
   username: string;
   /**
    * The player's own tycoon id, decimal, from `WsRespLoginSuccess.tycoonId`.
@@ -232,6 +234,7 @@ interface GameState {
   setStatus: (status: ConnectionStatus) => void;
   setDisconnectReason: (reason: DisconnectReason) => void;
   setServerRestarting: (restarting: boolean) => void;
+  setServerFull: (full: boolean) => void;
   setReconnectAttempt: (attempt: number) => void;
   setCredentials: (username: string, tycoonId?: string) => void;
   setWorld: (worldName: string) => void;
@@ -281,6 +284,7 @@ export const useGameStore = create<GameState>((set) => ({
   status: 'disconnected',
   disconnectReason: null,
   serverRestarting: false,
+  serverFull: false,
   username: '',
   tycoonId: '',
   worldName: '',
@@ -331,10 +335,11 @@ export const useGameStore = create<GameState>((set) => ({
   setStatus: (status) => set({
     status,
     ...(status === 'connected' ? { disconnectReason: null } : {}),
-    ...(status === 'connected' || status === 'disconnected' ? { serverRestarting: false } : {}),
+    ...(status === 'connected' || status === 'disconnected' ? { serverRestarting: false, serverFull: false } : {}),
   }),
   setDisconnectReason: (reason) => set({ disconnectReason: reason }),
   setServerRestarting: (restarting) => set({ serverRestarting: restarting }),
+  setServerFull: (full) => set({ serverFull: full }),
   setReconnectAttempt: (attempt) => set({ reconnectAttempt: attempt }),
   setCredentials: (username, tycoonId) =>
     set(tycoonId === undefined ? { username } : { username, tycoonId }),
@@ -422,6 +427,7 @@ export const useGameStore = create<GameState>((set) => ({
       status: 'disconnected',
       disconnectReason: null,
       serverRestarting: false,
+      serverFull: false,
       username: '',
       tycoonId: '',
       worldName: '',

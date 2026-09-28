@@ -57,6 +57,8 @@ import { ZOOM_LEVELS } from '../shared/map-config';
 
 /** WebSocket close code 1012 "Service Restart" (IANA registry, RFC 6455 §7.4): the gateway is restarting. */
 const WS_CLOSE_SERVICE_RESTART = 1012;
+/** WebSocket close code 1013 "Try Again Later" (IANA registry, RFC 6455 §7.4): the gateway is full. */
+const WS_CLOSE_TRY_AGAIN_LATER = 1013;
 /** Delay before reopening a failed /api/startup-status stream (issue 1048). */
 const STARTUP_RETRY_MS = 2000;
 /** Time without an open status stream after which the startup screen shows "unreachable". */
@@ -1142,12 +1144,23 @@ export class StarpeaceClient implements ClientHandlerContext {
         this.reloadAfterLogout();
         return;
       }
+      if (event?.code === WS_CLOSE_TRY_AGAIN_LATER) {
+        const { companyId, status } = useGameStore.getState();
+        if (!companyId && status !== 'reconnecting') {
+          // Refused before ever reaching the game: no automatic retry, the player retries by hand.
+          ClientBridge.setDisconnected('server_full');
+          return;
+        }
+      }
       if (!this.storedUsername || !this.storedPassword) {
         ClientBridge.setDisconnected();
         return;
       }
       if (event?.code === WS_CLOSE_SERVICE_RESTART) {
         useGameStore.getState().setServerRestarting(true);
+      }
+      if (event?.code === WS_CLOSE_TRY_AGAIN_LATER) {
+        useGameStore.getState().setServerFull(true);
       }
       ClientBridge.setReconnecting();
       this.scheduleReconnect();
@@ -1275,7 +1288,7 @@ export class StarpeaceClient implements ClientHandlerContext {
       ClientBridge.log('System', 'Max reconnect attempts reached — returning to login.');
       this.reconnectAttempt = 0;
       useGameStore.getState().setReconnectAttempt(0);
-      ClientBridge.setDisconnected('connection_lost');
+      ClientBridge.setDisconnected(useGameStore.getState().serverFull ? 'server_full' : 'connection_lost');
       return;
     }
 
@@ -1311,9 +1324,14 @@ export class StarpeaceClient implements ClientHandlerContext {
     const url = `${protocol}//${window.location.host}/ws`;
 
     this.ws = new WebSocket(url);
+    /** The attempt counter as it stood before this socket's onopen reset it (issue 1076). */
+    let attemptBeforeOpen: number | null = null;
+    /** Set when this socket was closed with 1013; its .catch then arms nothing. */
+    let refusedServerFull = false;
 
     this.ws.onopen = () => {
       this.isConnected = true;
+      attemptBeforeOpen = this.reconnectAttempt;
       this.reconnectAttempt = 0;
       useGameStore.getState().setReconnectAttempt(0);
       ClientBridge.log('System', 'Gateway reconnected — replaying login…');
@@ -1330,6 +1348,7 @@ export class StarpeaceClient implements ClientHandlerContext {
         .then(() => authHandler.selectCompanyAndStart(this, companyId))
         .catch((err: unknown) => {
           ClientBridge.log('Error', `Reconnect failed: ${toErrorMessage(err)}`);
+          if (refusedServerFull) return; // the 1013 close already armed this socket's single retry
           if (this.storedUsername && this.storedPassword) {
             ClientBridge.setReconnecting();
             this.scheduleReconnect();
@@ -1358,6 +1377,15 @@ export class StarpeaceClient implements ClientHandlerContext {
       if (this.storedUsername && this.storedPassword) {
         if (event?.code === WS_CLOSE_SERVICE_RESTART) {
           useGameStore.getState().setServerRestarting(true);
+        }
+        if (event?.code === WS_CLOSE_TRY_AGAIN_LATER) {
+          refusedServerFull = true;
+          useGameStore.getState().setServerFull(true);
+          if (attemptBeforeOpen !== null) {
+            // A refusal is not a successful reconnect: undo onopen's reset so the back-off keeps growing.
+            this.reconnectAttempt = attemptBeforeOpen;
+            useGameStore.getState().setReconnectAttempt(attemptBeforeOpen);
+          }
         }
         ClientBridge.setReconnecting();
         this.scheduleReconnect();

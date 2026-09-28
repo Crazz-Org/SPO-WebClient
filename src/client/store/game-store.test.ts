@@ -768,3 +768,34 @@ describe('game-store settings — camera zoom (#1072)', () => {
     expect(useGameStore.getState().settings.cameraZoom).toBe(2);
   });
 });
+
+describe('game-store serverFull', () => {
+  beforeEach(() => useGameStore.getState().reset());
+
+  it('survives reconnecting, clears on connected', () => {
+    useGameStore.getState().setServerFull(true);
+    useGameStore.getState().setStatus('reconnecting');
+    expect(useGameStore.getState().serverFull).toBe(true);
+    useGameStore.getState().setStatus('connected');
+    expect(useGameStore.getState().serverFull).toBe(false);
+  });
+
+  it('clears on disconnected', () => {
+    useGameStore.getState().setServerFull(true);
+    useGameStore.getState().setStatus('disconnected');
+    expect(useGameStore.getState().serverFull).toBe(false);
+  });
+
+  it('clears on reset', () => {
+    useGameStore.getState().setServerFull(true);
+    useGameStore.getState().reset();
+    expect(useGameStore.getState().serverFull).toBe(false);
+  });
+
+  it('stores the server_full reason until connected', () => {
+    useGameStore.getState().setDisconnectReason('server_full');
+    expect(useGameStore.getState().disconnectReason).toBe('server_full');
+    useGameStore.getState().setStatus('connected');
+    expect(useGameStore.getState().disconnectReason).toBeNull();
+  });
+});
