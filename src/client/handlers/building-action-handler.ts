@@ -41,6 +41,7 @@ import {
   WorkerCount,
 } from '../../shared/types';
 import { toErrorMessage } from '../../shared/error-utils';
+import { playerErrorMessage, playerErrorReason } from '../player-error';
 import { showToast, dismissToast } from '../components/common/Toast';
 import { ClientBridge } from '../bridge/client-bridge';
 import { useBuildingStore, gateKey, REFRESH_BUILDING_ACTION } from '../store/building-store';
@@ -122,7 +123,7 @@ export async function refreshBuildingDetails(ctx: ClientHandlerContext, x: numbe
     if (opts.userInitiated) ctx.showNotification('Failed to refresh building details', 'error');
   } catch (err: unknown) {
     ClientBridge.log('Error', `Failed to refresh building details: ${toErrorMessage(err)}`);
-    if (opts.userInitiated) ctx.showNotification(`Failed to refresh building details: ${toErrorMessage(err)}`, 'error');
+    if (opts.userInitiated) ctx.showNotification(playerErrorMessage('refresh the building details', err), 'error');
   } finally {
     useBuildingStore.getState().removeInFlightAction(REFRESH_BUILDING_ACTION);
   }
@@ -492,7 +493,7 @@ async function setBuildingPropertyImpl(
       return false;
     }
   } catch (err: unknown) {
-    ClientBridge.failPendingUpdate(pendingKey, value, toErrorMessage(err));
+    ClientBridge.failPendingUpdate(pendingKey, value, playerErrorReason(err));
     ClientBridge.log('Error', `Failed to set property: ${toErrorMessage(err)}`);
     return false;
   }
@@ -587,7 +588,7 @@ export async function renameFacility(ctx: ClientHandlerContext, x: number, y: nu
       return false;
     }
   } catch (err: unknown) {
-    ClientBridge.failPendingUpdate(RENAME_PENDING_KEY, newName, toErrorMessage(err));
+    ClientBridge.failPendingUpdate(RENAME_PENDING_KEY, newName, playerErrorReason(err));
     ClientBridge.log('Error', `Failed to rename building: ${toErrorMessage(err)}`);
     return false;
   }
@@ -761,7 +762,8 @@ async function tradeConnect(ctx: ClientHandlerContext, buildingDetails: Building
     }
   } catch (err: unknown) {
     dismissToast(pendingToastId);
-    ctx.showNotification(`Connection failed: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Connection failed: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage(`connect the ${kindLabel}`, err), 'error');
   } finally {
     useBuildingStore.getState().removeInFlightAction(actionId);
   }
@@ -784,7 +786,8 @@ async function tradeDisconnect(ctx: ClientHandlerContext, buildingDetails: Build
     }
   } catch (err: unknown) {
     dismissToast(pendingToastId);
-    ctx.showNotification(`Disconnection failed: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Disconnection failed: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage(`disconnect the ${kindLabel}`, err), 'error');
   } finally {
     useBuildingStore.getState().removeInFlightAction(actionId);
   }
@@ -878,7 +881,8 @@ async function executeConnectFacilities(ctx: ClientHandlerContext, targetX: numb
 
     refreshBuildingDetails(ctx, source.x, source.y, { userInitiated: false });
   } catch (err: unknown) {
-    ctx.showNotification(`Connection failed: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Connection failed: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('connect the facilities', err), 'error');
   } finally {
     cancelConnectMode(ctx);
   }
@@ -931,7 +935,8 @@ async function launchMovie(ctx: ClientHandlerContext, buildingDetails: BuildingD
       ctx.showNotification('Failed to launch movie', 'error');
     }
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to launch movie: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to launch movie: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('launch the movie', err), 'error');
   }
 }
 
@@ -946,7 +951,8 @@ async function cancelMovie(ctx: ClientHandlerContext, buildingDetails: BuildingD
       ctx.showNotification('Failed to cancel movie', 'error');
     }
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to cancel movie: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to cancel movie: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('cancel the movie', err), 'error');
   }
 }
 
@@ -960,7 +966,8 @@ async function releaseMovie(ctx: ClientHandlerContext, buildingDetails: Building
       ctx.showNotification('Failed to release movie', 'error');
     }
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to release movie: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to release movie: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('release the movie', err), 'error');
   }
 }
 
@@ -1020,7 +1027,8 @@ async function banMinister(ctx: ClientHandlerContext, buildingDetails: BuildingD
     ctx.showNotification('Minister deposed', 'success');
     refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to depose minister: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to depose minister: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('depose the minister', err), 'error');
   }
 }
 
@@ -1037,7 +1045,8 @@ async function sitMinister(ctx: ClientHandlerContext, buildingDetails: BuildingD
     ctx.showNotification(`${ministerName} appointed as minister`, 'success');
     refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to appoint minister: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to appoint minister: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('appoint the minister', err), 'error');
   }
 }
 
@@ -1063,7 +1072,8 @@ function electMayorInline(ctx: ClientHandlerContext, buildingDetails: BuildingDe
           ctx.showNotification(`Failed to elect mayor of ${townName}`, 'error');
         }
       } catch (err: unknown) {
-        ctx.showNotification(`Failed to elect mayor: ${toErrorMessage(err)}`, 'error');
+        ClientBridge.log('Error', `Failed to elect mayor: ${toErrorMessage(err)}`);
+        ctx.showNotification(playerErrorMessage('elect the mayor', err), 'error');
       }
     },
   );
@@ -1093,7 +1103,8 @@ function electMinisterInline(ctx: ClientHandlerContext, buildingDetails: Buildin
           ctx.showNotification(`Failed to appoint ${playerName}`, 'error');
         }
       } catch (err: unknown) {
-        ctx.showNotification(`Failed to appoint minister: ${toErrorMessage(err)}`, 'error');
+        ClientBridge.log('Error', `Failed to appoint minister: ${toErrorMessage(err)}`);
+        ctx.showNotification(playerErrorMessage('appoint the minister', err), 'error');
       }
     },
   );
@@ -1117,7 +1128,8 @@ async function deposeMinisterInline(ctx: ClientHandlerContext, buildingDetails: 
       ctx.showNotification('Failed to depose minister', 'error');
     }
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to depose minister: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to depose minister: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('depose the minister', err), 'error');
   }
 }
 
@@ -1149,7 +1161,8 @@ async function voteForCandidateInline(ctx: ClientHandlerContext, buildingDetails
     // frame was written, which is all anyone downstream can know.
     ctx.showNotification(`Vote sent for ${candidateName}`, 'success');
   } catch (err: unknown) {
-    ctx.showNotification(`Vote failed: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Vote failed: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('cast the vote', err), 'error');
     return;
   }
   // Delay refresh to allow void push ("*") to be processed by the server
@@ -1164,7 +1177,8 @@ async function startRepair(ctx: ClientHandlerContext, buildingDetails: BuildingD
     ctx.showNotification('Repair started', 'success');
     refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to start repair: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to start repair: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('start the repair', err), 'error');
   }
 }
 
@@ -1174,7 +1188,8 @@ async function stopRepair(ctx: ClientHandlerContext, buildingDetails: BuildingDe
     ctx.showNotification('Repair stopped', 'success');
     refreshBuildingDetails(ctx, buildingDetails.x, buildingDetails.y, { userInitiated: false });
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to stop repair: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to stop repair: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('stop the repair', err), 'error');
   }
 }
 
@@ -1215,7 +1230,8 @@ async function queueResearch(ctx: ClientHandlerContext, buildingDetails: Buildin
     const activeCat = useBuildingStore.getState().research?.activeCategoryIndex ?? 0;
     loadResearchInventory(ctx, buildingDetails.x, buildingDetails.y, activeCat);
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to queue research: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to queue research: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('queue the research', err), 'error');
   }
 }
 
@@ -1233,7 +1249,8 @@ async function cancelResearch(ctx: ClientHandlerContext, buildingDetails: Buildi
     const activeCat = useBuildingStore.getState().research?.activeCategoryIndex ?? 0;
     loadResearchInventory(ctx, buildingDetails.x, buildingDetails.y, activeCat);
   } catch (err: unknown) {
-    ctx.showNotification(`Failed to cancel research: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to cancel research: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('cancel the research', err), 'error');
   }
 }
 
@@ -1251,7 +1268,8 @@ export async function queueResearchDirect(ctx: ClientHandlerContext, buildingX: 
     loadResearchInventory(ctx, buildingX, buildingY, activeCat);
   } catch (err: unknown) {
     useBuildingStore.getState().clearResearchPending(inventionId);
-    ctx.showNotification(`Failed to queue research: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to queue research: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('queue the research', err), 'error');
   }
 }
 
@@ -1269,7 +1287,8 @@ export async function cancelResearchDirect(ctx: ClientHandlerContext, buildingX:
     loadResearchInventory(ctx, buildingX, buildingY, activeCat);
   } catch (err: unknown) {
     useBuildingStore.getState().clearResearchPending(inventionId);
-    ctx.showNotification(`Failed to cancel research: ${toErrorMessage(err)}`, 'error');
+    ClientBridge.log('Error', `Failed to cancel research: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('cancel the research', err), 'error');
   }
 }
 

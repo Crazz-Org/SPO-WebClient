@@ -24,12 +24,6 @@ interface Exemption { file: string; rule: Rule | 'all'; reason: string }
 
 export const EXEMPTIONS: Exemption[] = [
   {
-    file: 'handlers/building-action-handler.ts',
-    rule: 'all',
-    reason: 'Its 21 raw-text sites are card 2/2 ("Raw error text (2/2): building-action-handler"), '
-      + 'which switches them to the helper and removes this exemption.',
-  },
-  {
     file: 'components/empire/PortraitUploader.tsx',
     rule: 'b',
     reason: 'The errors it shows are the client\'s own sentences for the player, thrown by '

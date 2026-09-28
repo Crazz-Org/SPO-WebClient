@@ -220,8 +220,9 @@ describe('refreshBuildingDetails', () => {
     await refreshBuildingDetails(ctx, 10, 20, { userInitiated: true });
 
     expect(ctx.showNotification).toHaveBeenCalledWith(
-      'Failed to refresh building details: store write failed', 'error',
+      'Could not refresh the building details — something went wrong. Try again.', 'error',
     );
+    expect(JSON.stringify((ctx.showNotification as jest.Mock).mock.calls)).not.toContain('store write failed');
     expect(useBuildingStore.getState().inFlightActions.has(REFRESH_BUILDING_ACTION)).toBe(false);
   });
 
@@ -532,14 +533,14 @@ describe('the SaveIndicator key of a write (B6)', () => {
     expect(ClientBridge.failPendingUpdate).toHaveBeenCalledWith(RENAME_PENDING_KEY, 'North Mill', 'Name already taken');
   });
 
-  it('a rename that never reaches the server fails with the transport error', async () => {
+  it('a rename that never reaches the server fails with the class of the error, not its raw text', async () => {
     const { renameFacility, RENAME_PENDING_KEY } = await import('./building-action-handler');
     const ctx = {
       ...makeCtx(),
       sendRequest: jest.fn().mockRejectedValue(new Error('socket closed')),
     } as unknown as ClientHandlerContext;
     await expect(renameFacility(ctx, 10, 20, 'North Mill')).resolves.toBe(false);
-    expect(ClientBridge.failPendingUpdate).toHaveBeenCalledWith(RENAME_PENDING_KEY, 'North Mill', 'socket closed');
+    expect(ClientBridge.failPendingUpdate).toHaveBeenCalledWith(RENAME_PENDING_KEY, 'North Mill', 'something went wrong');
   });
 });
 
@@ -747,5 +748,126 @@ describe('requestWorkerCounts', () => {
 
     await expect(requestWorkerCounts(ctx, 472, 392, [1])).resolves.toBeNull();
     expect(ClientBridge.log).toHaveBeenCalledWith('Error', expect.stringContaining('timeout'));
+  });
+});
+
+describe('a transport error shows the player a sentence, never the raw text (#1066)', () => {
+  const drain = () => new Promise<void>((resolve) => setImmediate(resolve));
+  const RAW = 'Request Timeout';
+  const sentence = (verb: string) => `Could not ${verb} — the server did not answer in time. Try again.`;
+  type GlobalDialogs = { confirm?: (msg?: string) => boolean; prompt?: (msg?: string) => string | null };
+  const g = global as GlobalDialogs;
+  let originalConfirm: GlobalDialogs['confirm'];
+  let originalPrompt: GlobalDialogs['prompt'];
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useBuildingStore.getState().clearDetails();
+    originalConfirm = g.confirm;
+    originalPrompt = g.prompt;
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    g.confirm = originalConfirm;
+    g.prompt = originalPrompt;
+    warnSpy.mockRestore();
+  });
+
+  /** Every SET the action makes rejects with the transport error (the in-flight entry is handed back as-is). */
+  function makeRejectingCtx() {
+    const rejected = Promise.reject(new Error(RAW));
+    rejected.catch(() => {});
+    const ctx = {
+      currentFocusedVisualClass: '1234',
+      inFlightSetProperty: { get: () => rejected, set: jest.fn(), delete: jest.fn() },
+      inFlightBuildingDetails: new Map(),
+      showNotification: jest.fn(),
+      sendMessage: jest.fn(),
+      sendRequest: jest.fn().mockRejectedValue(new Error(RAW)),
+    } as unknown as ClientHandlerContext;
+    return { ctx, details: makeDetails(10, 20) };
+  }
+
+  function expectSentence(ctx: ClientHandlerContext, verb: string): void {
+    expect(ctx.showNotification).toHaveBeenCalledWith(sentence(verb), 'error');
+    expect(JSON.stringify((ctx.showNotification as jest.Mock).mock.calls)).not.toContain(RAW);
+  }
+
+  it.each([
+    ['launchMovie', 'launch the movie', { filmName: 'Epic', budget: '2500000', months: '18', autoRel: '0', autoProd: '1' }],
+    ['cancelMovie', 'cancel the movie', undefined],
+    ['releaseMovie', 'release the movie', undefined],
+    ['voteCandidate', 'cast the vote', { Candidate: 'Alice' }],
+    ['deposeMinister', 'depose the minister', { MinistryId: '1' }],
+    ['banMinister', 'depose the minister', undefined],
+    ['sitMinister', 'appoint the minister', undefined],
+    ['startRepair', 'start the repair', undefined],
+    ['stopRepair', 'stop the repair', undefined],
+    ['tradeConnect:4', 'connect the stores', undefined],
+    ['tradeDisconnect:4', 'disconnect the stores', undefined],
+  ] as Array<[string, string, Record<string, string> | undefined]>)('%s', async (actionId, verb, rowData) => {
+    g.confirm = jest.fn(() => true);
+    g.prompt = jest.fn(() => '1');
+    const { ctx, details } = makeRejectingCtx();
+
+    handleBuildingAction(ctx, actionId, details, rowData);
+    await drain();
+
+    expectSentence(ctx, verb);
+  });
+
+  it('the trade toast still dismisses its pending toast', async () => {
+    const { dismissToast } = jest.requireMock('../components/common/Toast') as { dismissToast: jest.Mock };
+    const { ctx, details } = makeRejectingCtx();
+    handleBuildingAction(ctx, 'tradeConnect:4', details);
+    await drain();
+    expect(dismissToast).toHaveBeenCalledWith('toast-id');
+  });
+
+  it.each([
+    ['electMayor', 'elect the mayor', { Town: 'Helartia' }],
+    ['electMinister', 'appoint the minister', { MinistryId: '1' }],
+  ])('%s, once the prompt is submitted', async (actionId, verb, rowData) => {
+    const { ctx, details } = makeRejectingCtx();
+    handleBuildingAction(ctx, actionId, details, rowData);
+    useUiStore.getState().promptPayload?.onSubmit('Bob');
+    await drain();
+    expectSentence(ctx, verb);
+  });
+
+  it.each([
+    ['queueResearch', 'queue the research'],
+    ['cancelResearch', 'cancel the research'],
+  ])('%s', async (actionId, verb) => {
+    useBuildingStore.getState().setResearchSelectedInvention('INV1');
+    const { ctx, details } = makeRejectingCtx();
+    handleBuildingAction(ctx, actionId, details);
+    await drain();
+    expectSentence(ctx, verb);
+  });
+
+  it('queueResearchDirect and cancelResearchDirect clear the pending op and show the sentence', async () => {
+    const { queueResearchDirect, cancelResearchDirect } = await import('./building-action-handler');
+    const { ctx } = makeRejectingCtx();
+    await queueResearchDirect(ctx, 10, 20, 'A1');
+    expect(useBuildingStore.getState().research?.pendingOps.has('A1') ?? false).toBe(false);
+    expectSentence(ctx, 'queue the research');
+    await cancelResearchDirect(ctx, 10, 20, 'A1');
+    expect(useBuildingStore.getState().research?.pendingOps.has('A1') ?? false).toBe(false);
+    expectSentence(ctx, 'cancel the research');
+  });
+
+  it('setBuildingProperty fails the pending mark with the reason, not the raw text', async () => {
+    const { setBuildingProperty } = await import('./building-action-handler');
+    const ctx = {
+      ...makeCtx(),
+      inFlightSetProperty: new Map(),
+      sendRequest: jest.fn().mockRejectedValue(new Error(RAW)),
+    } as unknown as ClientHandlerContext;
+    await expect(setBuildingProperty(ctx, 10, 20, 'RDOSetPrice', '5', { index: '0' })).resolves.toBe(false);
+    expect(ClientBridge.failPendingUpdate)
+      .toHaveBeenCalledWith('RDOSetPrice:{"index":"0"}', '5', 'the server did not answer in time');
   });
 });
