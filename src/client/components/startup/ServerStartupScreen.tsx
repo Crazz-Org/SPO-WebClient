@@ -4,7 +4,8 @@
  * Fades out automatically once the server reports ready.
  *
  * Shows rotating funny quotes and an orbiting-dots spinner so the user
- * knows the app isn't stuck.
+ * knows the app isn't stuck. When the gateway is unreachable (issue 1048) the
+ * quote gives way to an error sentence and a Retry button that reloads the page.
  */
 
 import { useState, useEffect } from 'react';
@@ -13,9 +14,13 @@ import { LoginBackground } from '../login/LoginBackground';
 import { useRotatingQuote } from '../../hooks/useRotatingQuote';
 import styles from './ServerStartupScreen.module.css';
 import spinnerStyles from './LoadingSpinner.module.css';
+import overlayStyles from '../common/ReconnectingOverlay.module.css';
+import { GATEWAY_UNREACHABLE_MESSAGE } from '../../handlers/reconnect-utils';
+import { reloadPage } from '../../page-reload';
 
 export function ServerStartupScreen() {
   const { ready } = useGameStore((s) => s.serverStartup);
+  const unreachable = useGameStore((s) => s.serverStartup.unreachable === true);
   const [exiting, setExiting] = useState(false);
   const [unmounted, setUnmounted] = useState(false);
   const quote = useRotatingQuote('startup', 2500);
@@ -43,9 +48,16 @@ export function ServerStartupScreen() {
           <div className={spinnerStyles.dot} />
         </div>
 
-        <div className={spinnerStyles.quoteWrap}>
-          <p className={spinnerStyles.quote} key={quote}>{quote}</p>
-        </div>
+        {unreachable ? (
+          <>
+            <p className={overlayStyles.errorMessage} role="alert">{GATEWAY_UNREACHABLE_MESSAGE}</p>
+            <button type="button" className={overlayStyles.retryBtn} onClick={() => reloadPage()}>Retry</button>
+          </>
+        ) : (
+          <div className={spinnerStyles.quoteWrap}>
+            <p className={spinnerStyles.quote} key={quote}>{quote}</p>
+          </div>
+        )}
       </div>
     </div>
   );

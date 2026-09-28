@@ -48,3 +48,6 @@ export function isMaxAttempts(attempt: number): boolean {
 export function isSlowPhase(attempt: number): boolean {
   return attempt >= FAST_PHASE_DELAYS_MS.length;
 }
+
+/** Shown whenever the gateway cannot be reached: startup screen, final overlay, sign-in (issue 1048). */
+export const GATEWAY_UNREACHABLE_MESSAGE = 'The game server is not responding. Try again in a few minutes.';
