@@ -38,6 +38,9 @@ import { useUiStore } from './store/ui-store';
 import { ClientBridge } from './bridge/client-bridge';
 import { GATEWAY_UNREACHABLE_MESSAGE, getReconnectDelay, MAX_RECONNECT_ATTEMPTS } from './handlers/reconnect-utils';
 import { REQUEST_TIMEOUT_MESSAGE, NOT_CONNECTED_MESSAGE } from './player-error';
+import { useBuildingStore } from './store/building-store';
+import { RESUME_TOKEN_KEY } from './store/resume-token';
+import * as ErrorCodes from '../shared/error-codes';
 
 class FakeSocket {
   onopen: (() => void) | null = null;
@@ -1587,5 +1590,420 @@ describe('close code 1013 — server full (issue 1076)', () => {
     await flush();
     expect(internals().reconnectAttempt).toBe(1);
     expectOneTimerAt(delay(0));
+  });
+});
+
+/**
+ * #1046 — session resume, client side. A held resume token (sessionStorage) makes the first frame
+ * on a new socket a REQ_RESUME_SESSION; a success re-attaches without a login or a rebuilt view,
+ * a refusal falls back to the login replay or to session_expired. Earlier describes leave their
+ * clients' lifecycle listeners on the shared document and those clients open sockets too, so every
+ * assertion reads THIS client's own socket.
+ */
+describe('session resume (issue 1046)', () => {
+  class ResumeSocket extends FakeSocket {
+    sent: string[] = [];
+    override close = jest.fn();
+    override send(payload?: string): void {
+      if (payload !== undefined) this.sent.push(payload);
+    }
+  }
+
+  type Frame = { type: string; wsRequestId?: string; username?: string; token?: string };
+  type Internals = {
+    ws: ResumeSocket;
+    isConnected: boolean;
+    isLoggingOut: boolean;
+    storedUsername: string;
+    storedPassword: string;
+    currentWorldName: string;
+    mapNavigationUI: unknown;
+    handleMessage(m: WsMessage): void;
+  };
+  let client: StarpeaceClient;
+  let hidden = false;
+  let fakeNav: { destroy: jest.Mock; getRenderer: () => typeof fakeRenderer };
+  let fakeRenderer: Record<string, jest.Mock>;
+  const internals = (c: StarpeaceClient = client) => c as unknown as Internals;
+
+  const flush = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+  const framesOn = (ws: ResumeSocket): Frame[] => ws.sent.map((p) => JSON.parse(p) as Frame);
+  const typesOn = (ws: ResumeSocket) => framesOn(ws).map((f) => f.type);
+  const holdToken = (username = 'u', token = 'tok-1') =>
+    sessionStorage.setItem(RESUME_TOKEN_KEY, JSON.stringify({ username, token }));
+  const heldToken = () => {
+    const raw = sessionStorage.getItem(RESUME_TOKEN_KEY);
+    return raw === null ? null : JSON.parse(raw) as { username: string; token: string };
+  };
+
+  const snapshot = (over: Record<string, unknown> = {}) => ({
+    type: WsMessageType.RESP_RESUME_SESSION,
+    username: 'u',
+    tycoonId: 'T42',
+    worldName: 'planitia',
+    worldXSize: 1000,
+    worldYSize: 1000,
+    worldSeason: 2,
+    company: { id: 'C1', name: 'Co' },
+    accountMoney: '123456',
+    virtualDate: null,
+    failureLevel: 0,
+    playerX: 400,
+    playerY: 500,
+    chatChannel: 'Lobby',
+    ...over,
+  });
+
+  /** Answer the REQ_RESUME_SESSION recorded on `ws` with `msg`. */
+  const answerResume = async (ws: ResumeSocket, msg: Record<string, unknown>) => {
+    const req = framesOn(ws).find((f) => f.type === WsMessageType.REQ_RESUME_SESSION);
+    expect(req).toBeDefined();
+    internals().handleMessage({ ...msg, wsRequestId: req?.wsRequestId } as unknown as WsMessage);
+    await flush();
+  };
+  const refusal = {
+    type: WsMessageType.RESP_ERROR,
+    code: ErrorCodes.ERROR_AccessDenied,
+    errorMessage: 'Session cannot be resumed',
+  };
+
+  /** In game, then the socket drops and the backoff opens a new one; returns it, not yet open. */
+  const dropAndReopen = (): ResumeSocket => {
+    const before = internals().ws;
+    before.onclose?.({ code: 1006 });
+    expect(useGameStore.getState().status).toBe('reconnecting');
+    jest.advanceTimersByTime(60_000);
+    expect(internals().ws).not.toBe(before);
+    return internals().ws;
+  };
+
+  const inGame = () => {
+    internals().ws.onopen?.();
+    useGameStore.setState({ status: 'connected', companyId: 'C1', serverRestarting: false, reconnectAttempt: 0 });
+    internals().storedUsername = 'u';
+    internals().storedPassword = 'p';
+    internals().currentWorldName = 'planitia';
+    internals().mapNavigationUI = fakeNav;
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sessionStorage.clear();
+    hidden = false;
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = ResumeSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    useUiStore.setState({ newVersionAvailable: true, rightPanel: null });
+    useGameStore.setState({
+      status: 'disconnected', companyId: '', worldName: '', tycoonId: '', serverRestarting: false,
+      serverFull: false, reconnectAttempt: 0, disconnectReason: null, loginLoading: false,
+      rememberedSession: null, tycoonStats: null,
+    });
+    fakeRenderer = {
+      getCameraPosition: jest.fn(() => ({ x: 10, y: 20 })),
+      getVisibleTileBounds: jest.fn(() => ({ minI: 0, maxI: 10, minJ: 0, maxJ: 10 })),
+      invalidateArea: jest.fn(),
+      triggerZoneCheck: jest.fn(),
+      getLoadedZoneKeys: jest.fn(() => []),
+      centerOn: jest.fn(),
+      setSeason: jest.fn(),
+      getZoom: jest.fn(() => 2),
+      getVisibleChunkCoords: jest.fn(() => []),
+      getChunkCache: jest.fn(() => null),
+    };
+    fakeNav = { destroy: jest.fn(), getRenderer: () => fakeRenderer };
+    (chatHandler.initChatChannels as jest.Mock).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    delete (document as unknown as { hidden?: boolean }).hidden;
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+    sessionStorage.clear();
+    useUiStore.setState({ newVersionAvailable: false });
+  });
+
+  describe('with a client already running', () => {
+    beforeEach(() => {
+      client = new StarpeaceClient();
+      client.reloadPage = jest.fn();
+    });
+
+    it('the token event writes sessionStorage, a rotation replaces it, a logout in progress writes nothing', () => {
+      inGame();
+      internals().handleMessage({ type: WsMessageType.EVENT_SESSION_RESUME_TOKEN, token: 't1' } as unknown as WsMessage);
+      expect(heldToken()).toEqual({ username: 'u', token: 't1' });
+
+      internals().handleMessage({ type: WsMessageType.EVENT_SESSION_RESUME_TOKEN, token: 't2' } as unknown as WsMessage);
+      expect(heldToken()).toEqual({ username: 'u', token: 't2' });
+
+      sessionStorage.clear();
+      internals().isLoggingOut = true;
+      internals().handleMessage({ type: WsMessageType.EVENT_SESSION_RESUME_TOKEN, token: 't3' } as unknown as WsMessage);
+      expect(heldToken()).toBeNull();
+    });
+
+    it('Logout deletes the token before the reload, and the reloaded page sends no REQ_RESUME_SESSION', async () => {
+      inGame();
+      holdToken();
+      let tokenAtReload: unknown = 'not reloaded';
+      client.reloadPage = jest.fn(() => { tokenAtReload = heldToken(); });
+      const ws = internals().ws;
+
+      client.callbacks.onLogout();
+      await flush();
+      const logoutReq = framesOn(ws).find((f) => f.type === WsMessageType.REQ_LOGOUT);
+      internals().handleMessage({ type: WsMessageType.RESP_LOGOUT, wsRequestId: logoutReq?.wsRequestId, success: true } as unknown as WsMessage);
+      await flush();
+      ws.onclose?.({ code: 1000 });
+
+      expect(client.reloadPage).toHaveBeenCalledTimes(1);
+      expect(tokenAtReload).toBeNull();
+
+      const reloaded = new StarpeaceClient();
+      const reloadedWs = internals(reloaded).ws;
+      reloadedWs.onopen?.();
+      await flush();
+      expect(typesOn(reloadedWs)).not.toContain(WsMessageType.REQ_RESUME_SESSION);
+      expect(useGameStore.getState().loginLoading).toBe(false);
+    });
+
+    it('visibilitychange to visible while reconnecting, token only, sends REQ_RESUME_SESSION first', async () => {
+      inGame();
+      internals().storedPassword = '';
+      holdToken('u', 'tok-vis');
+      const before = internals().ws;
+      before.onclose?.({ code: 1006 });
+      expect(useGameStore.getState().status).toBe('reconnecting');
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      const ws = internals().ws;
+      expect(ws).not.toBe(before);
+      ws.onopen?.();
+      await flush();
+
+      expect(framesOn(ws)[0]).toEqual(expect.objectContaining({
+        type: WsMessageType.REQ_RESUME_SESSION, username: 'u', token: 'tok-vis',
+      }));
+    });
+
+    it('socket drop with a valid token re-attaches: no login, no company step, no rebuilt view, camera re-sent', async () => {
+      inGame();
+      holdToken();
+      const ws = dropAndReopen();
+      ws.onopen?.();
+      await flush();
+      expect(framesOn(ws)[0].type).toBe(WsMessageType.REQ_RESUME_SESSION);
+
+      await answerResume(ws, snapshot());
+
+      const types = typesOn(ws);
+      expect(types).not.toContain(WsMessageType.REQ_LOGIN_WORLD);
+      expect(types).not.toContain(WsMessageType.REQ_SELECT_COMPANY);
+      expect(types).toContain(WsMessageType.REQ_UPDATE_CAMERA);
+      expect(fakeNav.destroy).not.toHaveBeenCalled();
+      expect(fakeRenderer.invalidateArea).toHaveBeenCalled();
+      expect(useGameStore.getState().status).toBe('connected');
+      expect(useGameStore.getState().tycoonStats?.cash).toBe('123456');
+
+      internals().handleMessage({ type: WsMessageType.EVENT_SESSION_RESUME_TOKEN, token: 'tok-2' } as unknown as WsMessage);
+      expect(heldToken()).toEqual({ username: 'u', token: 'tok-2' });
+    });
+
+    it('a re-attach refreshes the open building inspector', async () => {
+      inGame();
+      holdToken();
+      useUiStore.setState({ rightPanel: 'building' });
+      useBuildingStore.setState({ details: { x: 7, y: 9 } as never });
+      const ws = dropAndReopen();
+      ws.onopen?.();
+      await flush();
+      await answerResume(ws, snapshot());
+
+      const detailsReq = framesOn(ws).find((f) => f.type === WsMessageType.REQ_BUILDING_DETAILS);
+      expect(detailsReq).toEqual(expect.objectContaining({ x: 7, y: 9 }));
+      useBuildingStore.setState({ details: null });
+      useUiStore.setState({ rightPanel: null });
+    });
+
+    it('socket drop and refusal with a password in memory: the token is deleted and the login replays', async () => {
+      inGame();
+      holdToken();
+      const ws = dropAndReopen();
+      ws.onopen?.();
+      await flush();
+
+      await answerResume(ws, refusal);
+
+      expect(heldToken()).toBeNull();
+      const types = typesOn(ws);
+      expect(types[0]).toBe(WsMessageType.REQ_RESUME_SESSION);
+      expect(types).toContain(WsMessageType.REQ_LOGIN_WORLD);
+    });
+
+    it('socket drop and refusal without a password: disconnected with session_expired', async () => {
+      inGame();
+      internals().storedPassword = '';
+      holdToken();
+      const ws = dropAndReopen();
+      ws.onopen?.();
+      await flush();
+
+      await answerResume(ws, refusal);
+
+      expect(heldToken()).toBeNull();
+      expect(useGameStore.getState().status).toBe('disconnected');
+      expect(useGameStore.getState().disconnectReason).toBe('session_expired');
+      expect(typesOn(ws)).not.toContain(WsMessageType.REQ_LOGIN_WORLD);
+    });
+
+    it('a token gone by the time the socket opens, and no password: session_expired, nothing sent', async () => {
+      inGame();
+      internals().storedPassword = '';
+      holdToken();
+      const ws = dropAndReopen();
+      sessionStorage.clear();
+      ws.onopen?.();
+      await flush();
+
+      expect(ws.sent).toHaveLength(0);
+      expect(useGameStore.getState().disconnectReason).toBe('session_expired');
+    });
+
+    it('the socket closing while the resume is in flight keeps the token and keeps reconnecting', async () => {
+      inGame();
+      holdToken();
+      const ws = dropAndReopen();
+      ws.onopen?.();
+      await flush();
+
+      ws.onclose?.({ code: 1006 });
+      await flush();
+
+      expect(heldToken()).toEqual({ username: 'u', token: 'tok-1' });
+      expect(useGameStore.getState().status).toBe('reconnecting');
+      expect(typesOn(ws)).not.toContain(WsMessageType.REQ_LOGIN_WORLD);
+    });
+
+    it('with no token held, a drop replays the login exactly as before', async () => {
+      inGame();
+      const ws = dropAndReopen();
+      ws.onopen?.();
+      await flush();
+      const types = typesOn(ws);
+      expect(types).not.toContain(WsMessageType.REQ_RESUME_SESSION);
+      expect(types[0]).toBe(WsMessageType.REQ_LOGIN_WORLD);
+    });
+  });
+
+  describe('start-up with a token (the page was reloaded)', () => {
+    it('sends REQ_RESUME_SESSION before any login and enters the game from the snapshot', async () => {
+      holdToken();
+      client = new StarpeaceClient();
+      const switchSpy = jest.spyOn(client, 'switchToGameView').mockImplementation(async () => {
+        internals().mapNavigationUI = fakeNav;
+      });
+      jest.spyOn(client, 'preloadFacilityDimensions').mockResolvedValue(undefined);
+      expect(useGameStore.getState().loginLoading).toBe(true);
+
+      const ws = internals().ws;
+      ws.onopen?.();
+      await flush();
+      expect(framesOn(ws)[0]).toEqual(expect.objectContaining({
+        type: WsMessageType.REQ_RESUME_SESSION, username: 'u', token: 'tok-1',
+      }));
+
+      await answerResume(ws, snapshot());
+      await flush();
+
+      const state = useGameStore.getState();
+      expect(switchSpy).toHaveBeenCalledTimes(1);
+      expect(state.worldName).toBe('planitia');
+      expect(state.companyId).toBe('C1');
+      expect(state.tycoonId).toBe('T42');
+      expect(state.loginLoading).toBe(false);
+      expect(fakeRenderer.centerOn).toHaveBeenCalledWith(400, 500);
+      const types = typesOn(ws);
+      expect(types).not.toContain(WsMessageType.REQ_AUTH_CHECK);
+      expect(types).not.toContain(WsMessageType.REQ_LOGIN_WORLD);
+      expect(types).not.toContain(WsMessageType.REQ_SELECT_COMPANY);
+      expect(heldToken()).toEqual({ username: 'u', token: 'tok-1' });
+    });
+
+    it('a refusal deletes the token and leaves the login screen with the remembered session', async () => {
+      const remembered = { username: 'u', zonePath: '', worldName: 'planitia', companyId: 'C1', companyName: 'Co' };
+      useGameStore.setState({ rememberedSession: remembered });
+      holdToken();
+      client = new StarpeaceClient();
+      const ws = internals().ws;
+      ws.onopen?.();
+      await flush();
+
+      await answerResume(ws, refusal);
+
+      expect(heldToken()).toBeNull();
+      const state = useGameStore.getState();
+      expect(state.status).toBe('disconnected');
+      expect(state.loginLoading).toBe(false);
+      expect(state.rememberedSession).toEqual(remembered);
+    });
+
+    it('a snapshot outside a world is not entered and drops the token', async () => {
+      holdToken();
+      client = new StarpeaceClient();
+      const ws = internals().ws;
+      ws.onopen?.();
+      await flush();
+
+      await answerResume(ws, snapshot({ company: null }));
+
+      expect(heldToken()).toBeNull();
+      expect(useGameStore.getState().loginLoading).toBe(false);
+      expect(useGameStore.getState().status).toBe('disconnected');
+    });
+
+    it('a socket that never opens keeps the token for the next page', async () => {
+      holdToken();
+      client = new StarpeaceClient();
+      internals().ws.onclose?.({ code: 1006 });
+      await flush();
+
+      expect(heldToken()).toEqual({ username: 'u', token: 'tok-1' });
+      expect(useGameStore.getState().loginLoading).toBe(false);
+    });
+
+    it('the socket closing under the resume request keeps the token', async () => {
+      holdToken();
+      client = new StarpeaceClient();
+      const ws = internals().ws;
+      ws.onopen?.();
+      await flush();
+      ws.onclose?.({ code: 1006 });
+      await flush();
+
+      expect(heldToken()).toEqual({ username: 'u', token: 'tok-1' });
+      expect(useGameStore.getState().loginLoading).toBe(false);
+    });
+  });
+
+  it('a sessionStorage that throws breaks neither start-up, the token event, nor the sign-in', async () => {
+    jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('denied'); });
+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('denied'); });
+
+    expect(() => { client = new StarpeaceClient(); }).not.toThrow();
+    const ws = internals().ws;
+    ws.onopen?.();
+    internals().storedUsername = 'u';
+    expect(() => internals().handleMessage(
+      { type: WsMessageType.EVENT_SESSION_RESUME_TOKEN, token: 't' } as unknown as WsMessage,
+    )).not.toThrow();
+
+    expect(() => client.callbacks.onAuthCheck('u', 'p')).not.toThrow();
+    await flush();
+    expect(typesOn(ws)).toContain(WsMessageType.REQ_AUTH_CHECK);
   });
 });

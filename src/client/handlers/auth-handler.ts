@@ -22,6 +22,7 @@ import {
   WsRespLogout,
   WsReqProfileCurriculumAction,
   WsRespProfileCurriculumAction,
+  WsRespResumeSession,
   CompanyInfo,
   WorldInfo,
 } from '../../shared/types';
@@ -30,12 +31,13 @@ import { playerErrorMessage } from '../player-error';
 import { VISITOR_COMPANY_ID, VISITOR_COMPANY } from '../../shared/visitor-visa';
 import { normalizeLanguageId } from '../../shared/language';
 import { ClientBridge } from '../bridge/client-bridge';
-import { useGameStore } from '../store/game-store';
+import { useGameStore, delphiTDateTimeToJsDate } from '../store/game-store';
 import { useProfileStore } from '../store/profile-store';
 import { useBuildingStore } from '../store/building-store';
 import { useUiStore } from '../store/ui-store';
 import type { ClientHandlerContext } from './client-context';
 import type { RememberedSession } from '../store/remembered-session';
+import { clearResumeToken } from '../store/resume-token';
 
 /**
  * The name the gateway speaks as after entering `company` — `switchCompany`
@@ -214,6 +216,113 @@ export async function visitWorld(ctx: ClientHandlerContext): Promise<void> {
   await selectCompanyAndStart(ctx, VISITOR_COMPANY_ID);
 }
 
+/**
+ * Everything that follows a successful company select/switch: role, store, remembered record,
+ * mail, profile, facility dimensions, the game view, season, camera and chat. Both
+ * `selectCompanyAndStart` and the reload re-attach (`enterFromResumeSnapshot`) call this one
+ * function, so the two ways into the world cannot drift apart. Throws what those steps throw.
+ */
+export async function enterWorldWithCompany(ctx: ClientHandlerContext, company: CompanyInfo): Promise<void> {
+  ctx.currentCompanyName = company.name;
+
+  const roleRaw = company.ownerRole ?? '';
+  const roleLower = roleRaw.toLowerCase();
+  const isPublicOffice = roleLower.includes('president') || roleLower.includes('minister') || roleLower.includes('mayor');
+  ClientBridge.setPublicOfficeRole(isPublicOffice, roleRaw);
+  useGameStore.getState().setActiveUsername(activeUsernameFor(company, ctx.storedUsername));
+
+  if (ctx.storedUsername) {
+    ctx.sendMessage({ type: WsMessageType.REQ_TYCOON_ROLE, tycoonName: ctx.storedUsername });
+  }
+
+  // Signal map loading start — overlay appears before GameScreen transitions in
+  ClientBridge.setMapLoadingProgress({ active: true, progress: 0, message: 'Loading game data...' });
+
+  // Transition to connected so GameScreen renders (MapLoadingScreen overlays it)
+  ClientBridge.setConnected();
+  ClientBridge.setWorld(ctx.currentWorldName);
+  ClientBridge.setCompany(company.name, company.id);
+
+  useGameStore.getState().rememberSession({
+    username: ctx.storedUsername,
+    zonePath: ctx.currentZonePath,
+    worldName: ctx.currentWorldName,
+    companyId: company.id,
+    companyName: company.name,
+    ownerRole: company.ownerRole,
+  });
+
+  if (useGameStore.getState().serverSwitchMode) {
+    useGameStore.getState().completeServerSwitch();
+  }
+
+  // Fire-and-forget safe: connectMailService + getProfile use sendMessage (no timeout)
+  ctx.connectMailService().catch((err: unknown) => {
+    ClientBridge.log('Mail', `Mail service connection failed: ${toErrorMessage(err)}`);
+  });
+  ctx.getProfile().catch((err: unknown) => {
+    ClientBridge.log('Profile', `Profile fetch failed: ${toErrorMessage(err)}`);
+  });
+
+  // Parallel: facility dimensions + terrain load are independent — run concurrently
+  await Promise.all([
+    ctx.preloadFacilityDimensions().then(() => {
+      ClientBridge.setMapLoadingProgress({ progress: 0.3, message: 'Building data ready...' });
+    }),
+    ctx.switchToGameView().then(() => {
+      ClientBridge.setMapLoadingProgress({ progress: 0.9, message: 'Entering world...' });
+    }),
+  ]);
+
+  if (ctx.worldSeason !== null) {
+    const renderer = ctx.getRenderer();
+    if (renderer) {
+      renderer.setSeason(ctx.worldSeason as import('../../shared/map-config').Season);
+    }
+  }
+
+  if (ctx.savedPlayerX !== undefined && ctx.savedPlayerY !== undefined) {
+    const renderer = ctx.getRenderer();
+    if (renderer) {
+      renderer.centerOn(ctx.savedPlayerX, ctx.savedPlayerY);
+    }
+  }
+
+  // Wait for visible viewport chunks to load before dismissing the overlay.
+  // This prevents the user seeing an empty/blue canvas while chunks stream in.
+  const rendererForChunks = ctx.getRenderer();
+  if (rendererForChunks) {
+    const zoomLevel = rendererForChunks.getZoom(); // the level switchToGameView restored
+    const visibleChunks = rendererForChunks.getVisibleChunkCoords(zoomLevel);
+    const chunkCache = rendererForChunks.getChunkCache();
+    if (chunkCache && visibleChunks.length > 0) {
+      const chunkTotal = visibleChunks.length;
+      ClientBridge.setMapLoadingProgress({
+        progress: 0.95,
+        message: `Loading terrain: 0/${chunkTotal} chunks`,
+      });
+      await chunkCache.awaitChunksReady(visibleChunks, zoomLevel, 15_000, (done: number, total: number) => {
+        const pct = 0.95 + (total > 0 ? (done / total) * 0.04 : 0);
+        ClientBridge.setMapLoadingProgress({
+          progress: pct,
+          message: `Loading terrain: ${done}/${total} chunks`,
+        });
+      });
+    }
+  }
+
+  // Chat init runs AFTER terrain + facility dims are loaded.
+  // initChatChannels() makes 3 sequential sendRequest() calls internally — launching
+  // it concurrently with preloadFacilityDimensions() overwhelmed the RDO connection
+  // and caused timeouts.  Fire-and-forget here so it doesn't block the overlay dismiss.
+  ctx.initChatChannels().catch((err: unknown) => {
+    ClientBridge.log('Chat', `Chat init failed: ${toErrorMessage(err)}`);
+  });
+
+  // Map is fully ready — dismiss the loading overlay
+  ClientBridge.setMapLoadingProgress({ active: false, progress: 1, message: '' });
+}
+
 export async function selectCompanyAndStart(ctx: ClientHandlerContext, companyId: string): Promise<boolean> {
   if (ctx.isSelectingCompany) return false;
 
@@ -267,104 +376,7 @@ export async function selectCompanyAndStart(ctx: ClientHandlerContext, companyId
       }
     }
 
-    ctx.currentCompanyName = company.name;
-
-    const roleRaw = company.ownerRole ?? '';
-    const roleLower = roleRaw.toLowerCase();
-    const isPublicOffice = roleLower.includes('president') || roleLower.includes('minister') || roleLower.includes('mayor');
-    ClientBridge.setPublicOfficeRole(isPublicOffice, roleRaw);
-    useGameStore.getState().setActiveUsername(activeUsernameFor(company, ctx.storedUsername));
-
-    if (ctx.storedUsername) {
-      ctx.sendMessage({ type: WsMessageType.REQ_TYCOON_ROLE, tycoonName: ctx.storedUsername });
-    }
-
-    // Signal map loading start — overlay appears before GameScreen transitions in
-    ClientBridge.setMapLoadingProgress({ active: true, progress: 0, message: 'Loading game data...' });
-
-    // Transition to connected so GameScreen renders (MapLoadingScreen overlays it)
-    ClientBridge.setConnected();
-    ClientBridge.setWorld(ctx.currentWorldName);
-    ClientBridge.setCompany(company.name, company.id);
-
-    useGameStore.getState().rememberSession({
-      username: ctx.storedUsername,
-      zonePath: ctx.currentZonePath,
-      worldName: ctx.currentWorldName,
-      companyId: company.id,
-      companyName: company.name,
-      ownerRole: company.ownerRole,
-    });
-
-    if (useGameStore.getState().serverSwitchMode) {
-      useGameStore.getState().completeServerSwitch();
-    }
-
-    // Fire-and-forget safe: connectMailService + getProfile use sendMessage (no timeout)
-    ctx.connectMailService().catch((err: unknown) => {
-      ClientBridge.log('Mail', `Mail service connection failed: ${toErrorMessage(err)}`);
-    });
-    ctx.getProfile().catch((err: unknown) => {
-      ClientBridge.log('Profile', `Profile fetch failed: ${toErrorMessage(err)}`);
-    });
-
-    // Parallel: facility dimensions + terrain load are independent — run concurrently
-    await Promise.all([
-      ctx.preloadFacilityDimensions().then(() => {
-        ClientBridge.setMapLoadingProgress({ progress: 0.3, message: 'Building data ready...' });
-      }),
-      ctx.switchToGameView().then(() => {
-        ClientBridge.setMapLoadingProgress({ progress: 0.9, message: 'Entering world...' });
-      }),
-    ]);
-
-    if (ctx.worldSeason !== null) {
-      const renderer = ctx.getRenderer();
-      if (renderer) {
-        renderer.setSeason(ctx.worldSeason as import('../../shared/map-config').Season);
-      }
-    }
-
-    if (ctx.savedPlayerX !== undefined && ctx.savedPlayerY !== undefined) {
-      const renderer = ctx.getRenderer();
-      if (renderer) {
-        renderer.centerOn(ctx.savedPlayerX, ctx.savedPlayerY);
-      }
-    }
-
-    // Wait for visible viewport chunks to load before dismissing the overlay.
-    // This prevents the user seeing an empty/blue canvas while chunks stream in.
-    const rendererForChunks = ctx.getRenderer();
-    if (rendererForChunks) {
-      const zoomLevel = rendererForChunks.getZoom(); // the level switchToGameView restored
-      const visibleChunks = rendererForChunks.getVisibleChunkCoords(zoomLevel);
-      const chunkCache = rendererForChunks.getChunkCache();
-      if (chunkCache && visibleChunks.length > 0) {
-        const chunkTotal = visibleChunks.length;
-        ClientBridge.setMapLoadingProgress({
-          progress: 0.95,
-          message: `Loading terrain: 0/${chunkTotal} chunks`,
-        });
-        await chunkCache.awaitChunksReady(visibleChunks, zoomLevel, 15_000, (done: number, total: number) => {
-          const pct = 0.95 + (total > 0 ? (done / total) * 0.04 : 0);
-          ClientBridge.setMapLoadingProgress({
-            progress: pct,
-            message: `Loading terrain: ${done}/${total} chunks`,
-          });
-        });
-      }
-    }
-
-    // Chat init runs AFTER terrain + facility dims are loaded.
-    // initChatChannels() makes 3 sequential sendRequest() calls internally — launching
-    // it concurrently with preloadFacilityDimensions() overwhelmed the RDO connection
-    // and caused timeouts.  Fire-and-forget here so it doesn't block the overlay dismiss.
-    ctx.initChatChannels().catch((err: unknown) => {
-      ClientBridge.log('Chat', `Chat init failed: ${toErrorMessage(err)}`);
-    });
-
-    // Map is fully ready — dismiss the loading overlay
-    ClientBridge.setMapLoadingProgress({ active: false, progress: 1, message: '' });
+    await enterWorldWithCompany(ctx, company);
     return true;
 
   } catch (err: unknown) {
@@ -533,6 +545,9 @@ export async function logout(ctx: ClientHandlerContext): Promise<void> {
   // replay, and let the socket's onclose consume the flag (issue 1042).
   ctx.storedUsername = '';
   ctx.storedPassword = '';
+  // The resume token goes too, before the request and so before the reload that ends a logout:
+  // the reloaded page must not re-attach the session the player just left (issue 1046).
+  clearResumeToken();
   ClientBridge.log('System', 'Logging out...');
 
   try {
@@ -599,4 +614,68 @@ export async function resumeSession(ctx: ClientHandlerContext, record: Remembere
   if (!ctx.availableCompanies.some(c => c.id === record.companyId)) { giveUp(`the company "${record.companyName}" is no longer there`); return; }
   if (!(await selectCompanyAndStart(ctx, record.companyId))) { giveUp('the company could not be selected'); return; }
   useGameStore.getState().setResumeTarget(null);
+}
+
+/**
+ * Bring the tycoon stats up to a re-attach snapshot: the cash the gateway last saw, the failure
+ * level and the game date. Unknown fields keep what the client already showed.
+ */
+export function applyResumeStats(ctx: ClientHandlerContext, snapshot: WsRespResumeSession): void {
+  const base = ctx.currentTycoonData ?? { cash: '0', incomePerHour: '0', ranking: 0, buildingCount: 0, maxBuildings: 0 };
+  ctx.currentTycoonData = snapshot.accountMoney !== null ? { ...base, cash: snapshot.accountMoney } : { ...base };
+  ClientBridge.updateTycoonStats({
+    username: ctx.storedUsername,
+    ...ctx.currentTycoonData,
+    ...(snapshot.failureLevel !== null ? { failureLevel: snapshot.failureLevel } : {}),
+  });
+  if (snapshot.virtualDate !== null) {
+    // The same double the gateway sends as EVENT_REFRESH_DATE.dateDouble.
+    useGameStore.getState().setGameDate(delphiTDateTimeToJsDate(snapshot.virtualDate));
+  }
+}
+
+/**
+ * The reload re-attach (F5 or a discarded tab): the page lost everything but the resume token,
+ * and the gateway answered with the parked session's snapshot. Enter the game from it with no
+ * login and no company step — the Delphi session is the one the tab had before. Returns `false`
+ * when the snapshot is not in a world, or when entering it fails.
+ */
+export async function enterFromResumeSnapshot(ctx: ClientHandlerContext, snapshot: WsRespResumeSession): Promise<boolean> {
+  if (!snapshot.worldName || !snapshot.company) return false;
+  ctx.storedUsername = snapshot.username;
+  try {
+    ClientBridge.setCredentials(snapshot.username, snapshot.tycoonId ?? undefined);
+    ClientBridge.loadAccountSettings(snapshot.username, normalizeLanguageId(useGameStore.getState().settings.languageId));
+
+    ctx.currentWorldName = snapshot.worldName;
+    if (snapshot.worldXSize !== null) ctx.worldXSize = snapshot.worldXSize;
+    if (snapshot.worldYSize !== null) ctx.worldYSize = snapshot.worldYSize;
+    if (snapshot.worldSeason !== null) ctx.worldSeason = snapshot.worldSeason;
+
+    const remembered = useGameStore.getState().rememberedSession;
+    ctx.currentZonePath = remembered
+      && remembered.username.toLowerCase() === snapshot.username.toLowerCase()
+      && remembered.worldName === snapshot.worldName
+      ? remembered.zonePath
+      : '';
+
+    // Same rule as selectCompanyAndStart: (0, 0) means "no saved position".
+    if (snapshot.playerX !== 0 || snapshot.playerY !== 0) {
+      ctx.savedPlayerX = snapshot.playerX;
+      ctx.savedPlayerY = snapshot.playerY;
+    }
+
+    const { id, name, ownerRole } = snapshot.company;
+    const company: CompanyInfo = { id, name, ...(ownerRole !== undefined ? { ownerRole } : {}) };
+    ctx.availableCompanies = [company];
+
+    await enterWorldWithCompany(ctx, company);
+    // After the game view: switchToGameView zeroes the stats.
+    applyResumeStats(ctx, snapshot);
+    return true;
+  } catch (err: unknown) {
+    ClientBridge.log('Error', `Session re-attach failed: ${toErrorMessage(err)}`);
+    ctx.showNotification(playerErrorMessage('return to your session', err), 'error');
+    return false;
+  }
 }
