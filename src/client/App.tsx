@@ -10,7 +10,7 @@ import { lazy, Suspense } from 'react';
 import { useGameStore } from './store';
 import { LoginScreen } from './layouts/LoginScreen';
 import { GameScreen } from './layouts/GameScreen';
-import { ToastContainer, ReconnectingOverlay } from './components/common';
+import { ToastContainer, ReconnectingOverlay, NewVersionBanner } from './components/common';
 import { ServerStartupScreen } from './components/startup/ServerStartupScreen';
 import { MapLoadingScreen } from './components/startup/MapLoadingScreen';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -35,6 +35,7 @@ export function App() {
       <>
         <ServerStartupScreen />
         <ReconnectingOverlay />
+        <NewVersionBanner />
         <ToastContainer />
       </>
     );
@@ -48,6 +49,7 @@ export function App() {
         <CompanyCreationModal />
       </Suspense>
       <ReconnectingOverlay />
+      <NewVersionBanner />
       <ToastContainer />
     </>
   );

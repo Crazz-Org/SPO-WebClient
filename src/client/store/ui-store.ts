@@ -214,9 +214,15 @@ interface UiState {
 
   // Actions — Escape (close topmost layer)
   dismissTopmost: () => void;
+
+  /** Set after a reconnect finds a different served bundle; never cleared — a reload clears it. */
+  newVersionAvailable: boolean;
+  setNewVersionAvailable: (v: boolean) => void;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
+  newVersionAvailable: false,
+  setNewVersionAvailable: (v) => set({ newVersionAvailable: v }),
   rightPanel: null,
   leftPanel: null,
   modal: null,

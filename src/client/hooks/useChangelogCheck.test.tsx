@@ -1,8 +1,9 @@
 /**
  * Tests for the useChangelogCheck hook.
  *
- * Verifies that the changelog modal auto-opens when the user hasn't seen the
- * current version, and stays closed when the version matches.
+ * A returning player whose stored version differs gets the changelog modal; a first
+ * visit records the version silently with no popup (maintainer decision 2026-09-27,
+ * issue 1050); a matching version, or unavailable storage, keeps it closed.
  */
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
@@ -35,12 +36,25 @@ afterEach(() => {
 });
 
 describe('useChangelogCheck', () => {
-  it('opens changelog modal when version has not been seen', () => {
+  it('does not open on a first visit, and records the version', () => {
     renderHook(() => useChangelogCheck(), { wrapper });
-    expect(useUiStore.getState().modal).toBeNull();
 
-    act(() => { jest.advanceTimersByTime(500); });
-    expect(useUiStore.getState().modal).toBe('changelog');
+    act(() => { jest.advanceTimersByTime(1000); });
+    expect(useUiStore.getState().modal).toBeNull();
+    expect(localStorage.getItem('spo-last-seen-version')).toBe(APP_VERSION);
+  });
+
+  it('does not open, and does not throw, when storage is unavailable', () => {
+    const spy = jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    try {
+      expect(() => renderHook(() => useChangelogCheck(), { wrapper })).not.toThrow();
+      act(() => { jest.advanceTimersByTime(1000); });
+      expect(useUiStore.getState().modal).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('does not open modal when version matches localStorage', () => {
