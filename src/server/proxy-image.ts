@@ -112,6 +112,15 @@ export const STORED_PLACEHOLDER_TTL_MS = 60 * 60 * 1000;
 /** Largest image body read from an upstream server (node-fetch `size`); larger ends in the placeholder. */
 export const MAX_PROXY_IMAGE_BYTES = 2 * 1024 * 1024;
 
+/** A game-server cache file older than this (by mtime = download time) is deleted by the sweep. */
+export const WEBCLIENT_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+/** Most top-level files the sweep leaves in webclient-cache. */
+export const WEBCLIENT_CACHE_MAX_FILES = 20_000;
+/** Largest total size (bytes) of the top-level files the sweep leaves in webclient-cache. */
+export const WEBCLIENT_CACHE_MAX_BYTES = 500 * 1024 * 1024;
+/** How often the gateway sweeps webclient-cache. */
+export const WEBCLIENT_CACHE_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+
 /** Most failed image fetches remembered in memory; the oldest is evicted first. */
 export const MAX_FAILED_IMAGE_ENTRIES = 10_000;
 
@@ -281,8 +290,15 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
     const cacheKey = imageFileIndex.has(basenameKey) ? basenameKey : cacheName;
     const cachedPath = imageFileIndex.get(cacheKey);
     if (cachedPath) {
-      const content = await fsp.readFile(cachedPath);
-      if (!content.equals(getPlaceholderImage())) {
+      let content: Buffer | null = null;
+      try {
+        content = await fsp.readFile(cachedPath);
+      } catch (readErr: unknown) {
+        // Swept away between the index lookup and the read: not a failure, download it again
+        if (!isEnoent(readErr)) throw readErr;
+        imageFileIndex.delete(cacheKey);
+      }
+      if (content && !content.equals(getPlaceholderImage())) {
         res.writeHead(200, {
           'Content-Type': getImageContentType(cachedPath),
           'Cache-Control': 'public, max-age=31536000'
@@ -290,14 +306,16 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
         res.end(content);
         return;
       }
-      // A stored failure placeholder: never cached by the browser, and re-fetched once stale
-      const { mtimeMs } = await fsp.stat(cachedPath);
-      if (Date.now() - mtimeMs < STORED_PLACEHOLDER_TTL_MS) {
-        res.writeHead(200, { 'Content-Type': 'image/png' });
-        res.end(content);
-        return;
+      if (content) {
+        // A stored failure placeholder: never cached by the browser, and re-fetched once stale
+        const { mtimeMs } = await fsp.stat(cachedPath);
+        if (Date.now() - mtimeMs < STORED_PLACEHOLDER_TTL_MS) {
+          res.writeHead(200, { 'Content-Type': 'image/png' });
+          res.end(content);
+          return;
+        }
+        imageFileIndex.delete(cacheKey);
       }
-      imageFileIndex.delete(cacheKey);
     }
 
     // A recent failure remembered in memory: answer the placeholder without fetching again
@@ -395,4 +413,102 @@ export async function proxyImage(imageUrl: string, res: http.ServerResponse, dep
     res.writeHead(200, { 'Content-Type': 'image/png' });
     res.end(placeholder);
   }
+}
+
+function isEnoent(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === 'ENOENT';
+}
+
+export interface WebclientCacheLimits { maxAgeMs: number; maxFiles: number; maxBytes: number }
+export interface WebclientCacheSweepResult { deletedFiles: number; deletedBytes: number; remainingFiles: number; remainingBytes: number }
+
+interface CacheFile { name: string; fullPath: string; size: number; mtimeMs: number }
+
+/**
+ * Bound the game-server image cache: delete top-level files older than `maxAgeMs`, then the
+ * oldest (by mtime) until at most `maxFiles` files and `maxBytes` bytes remain. Subdirectories
+ * are never touched. A deleted file's index entry is removed before the file is unlinked.
+ */
+export async function sweepWebclientCache(
+  dir: string,
+  imageFileIndex: Map<string, string>,
+  limits: WebclientCacheLimits = { maxAgeMs: WEBCLIENT_CACHE_MAX_AGE_MS, maxFiles: WEBCLIENT_CACHE_MAX_FILES, maxBytes: WEBCLIENT_CACHE_MAX_BYTES },
+  now: number = Date.now(),
+): Promise<WebclientCacheSweepResult> {
+  const result: WebclientCacheSweepResult = { deletedFiles: 0, deletedBytes: 0, remainingFiles: 0, remainingBytes: 0 };
+  let entries;
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return result;
+  }
+
+  const files: CacheFile[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const fullPath = path.join(dir, entry.name);
+    try {
+      const st = await fsp.stat(fullPath);
+      files.push({ name: entry.name, fullPath, size: st.size, mtimeMs: st.mtimeMs });
+    } catch {
+      // Vanished or unreadable: skip it
+    }
+  }
+  files.sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+  const survivors: CacheFile[] = [];
+  const evict = async (file: CacheFile): Promise<void> => {
+    const key = file.name.toLowerCase();
+    if (imageFileIndex.get(key) === file.fullPath) imageFileIndex.delete(key);
+    try {
+      await fsp.unlink(file.fullPath);
+      result.deletedFiles++;
+      result.deletedBytes += file.size;
+    } catch (err: unknown) {
+      if (!isEnoent(err)) survivors.push(file);
+    }
+  };
+
+  const kept: CacheFile[] = [];
+  let keptBytes = 0;
+  for (const file of files) {
+    if (now - file.mtimeMs > limits.maxAgeMs) {
+      await evict(file);
+    } else {
+      kept.push(file);
+      keptBytes += file.size;
+    }
+  }
+  while (kept.length > limits.maxFiles || keptBytes > limits.maxBytes) {
+    const oldest = kept.shift();
+    if (!oldest) break;
+    keptBytes -= oldest.size;
+    await evict(oldest);
+  }
+
+  for (const file of [...survivors, ...kept]) {
+    result.remainingFiles++;
+    result.remainingBytes += file.size;
+  }
+  return result;
+}
+
+/** Run `runSweep` now and every `intervalMs`, never two at once. `stop()` clears the interval. */
+export function startWebclientCacheSweeper(
+  runSweep: () => Promise<void>,
+  intervalMs: number,
+  onError: (err: unknown) => void,
+): { stop(): void } {
+  let running = false;
+  const tick = (): void => {
+    if (running) return;
+    running = true;
+    runSweep()
+      .catch(onError)
+      .finally(() => { running = false; });
+  };
+  tick();
+  const timer = setInterval(tick, intervalMs);
+  timer.unref();
+  return { stop: () => clearInterval(timer) };
 }
