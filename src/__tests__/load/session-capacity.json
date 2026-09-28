@@ -1,0 +1,13 @@
+{
+  "measuredAt": "2026-09-28T04:35:51.784Z",
+  "node": "v22.23.2",
+  "sessions": 100,
+  "perSessionHeapBytes": 58873,
+  "perSessionRssBytes": 2622,
+  "perSessionBytes": 58873,
+  "baselineRssBytes": 134217728,
+  "baselineSource": "assumed",
+  "containerLimitBytes": 536870912,
+  "reserve": 0.25,
+  "recommendedCap": 4550
+}

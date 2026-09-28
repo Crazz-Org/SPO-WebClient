@@ -30,8 +30,10 @@ export const ROUTES: RouteRule[] = [
   // Order matters: the first matching rule wins, so the paths that need no live drive
   // are matched before the broad source rules that would otherwise swallow them.
   {
-    test: /^doc\/|\.md$|^src\/mock-server\/|\.test\.tsx?$|^src\/__tests__\/[^/]+\.baseline\.json$/,
+    test: /^doc\/|\.md$|^src\/mock-server\/|\.test\.tsx?$|^src\/__tests__\//,
     flows: [],
+    // `src/__tests__/` holds only test code and its data (baselines, the load measurement
+    // and its committed output) — none of it ships in the built tree.
     why: 'documentation, L1 substrate or tests — static verification only',
   },
   {

@@ -50,7 +50,8 @@
     "report:card": "node scripts/report-card.js",
     "e2e:unlock": "npm run build:e2e && node dist/e2e/unlock.js",
     "verdict": "bash scripts/run-verdict.sh",
-    "hygiene:baseline": "HYGIENE_BASELINE_WRITE=1 jest src/__tests__/test-hygiene.test.ts --selectProjects unit"
+    "hygiene:baseline": "HYGIENE_BASELINE_WRITE=1 jest src/__tests__/test-hygiene.test.ts --selectProjects unit",
+    "load:sessions": "node --expose-gc node_modules/jest/bin/jest.js --selectProjects unit --runInBand --testTimeout=600000 --testMatch '**/src/__tests__/load/*.load.ts'"
   },
   "keywords": [
     "starpeace",
