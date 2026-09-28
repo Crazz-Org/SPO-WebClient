@@ -58,7 +58,7 @@ Browser Client ──WebSocket──> Node.js Gateway ──RDO/TCP──> Game 
 
 ### Prerequisites
 
-- Node.js >= 22 (`engines` in package.json; the Dockerfiles and CI both use Node 22)
+- Node.js >= 22 (`engines` in package.json; the Dockerfile and CI both use Node 22)
 - npm >= 10
 
 ### Install & Run
