@@ -90,6 +90,17 @@ describe('route', () => {
     expect(decision.staticOnly).toBe(true);
   });
 
+  it('does not require a live drive for test helpers and data under src/__tests__/ subdirectories', () => {
+    const decision = route([
+      'src/__tests__/load/session-capacity.ts',
+      'src/__tests__/load/session-memory.load.ts',
+      'src/__tests__/load/session-capacity.json',
+    ]);
+    expect(decision.unmapped).toEqual([]);
+    expect(decision.staticOnly).toBe(true);
+    expect(decision.required).toEqual([]);
+  });
+
   it('treats repo-root config and generated output as static-only', () => {
     const decision = route(['.gitignore', '.editorconfig', 'tsconfig.json', 'report/x.html', 'coverage/lcov.info']);
     expect(decision.unmapped).toEqual([]);
