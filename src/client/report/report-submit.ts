@@ -24,6 +24,7 @@ import {
   type SessionContext,
 } from '../../shared/bug-report-schema';
 import { reportJournal } from './journal';
+import { APP_VERSION, BUILD_NUMBER } from '../version';
 
 export const BUG_REPORT_ENDPOINT = '/api/bug-report';
 
@@ -128,6 +129,7 @@ export function buildReport(draft: ReportDraft): BugReport {
     username: draft.username,
     world: draft.world,
     userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
+    appVersion: `${APP_VERSION}#${BUILD_NUMBER}`,
     viewport,
     anchor: draft.anchor,
     anchorKey: computeAnchorKey(draft.anchor),

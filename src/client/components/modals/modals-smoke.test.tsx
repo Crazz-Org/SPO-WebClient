@@ -5,12 +5,13 @@
  * Tests verify they render nothing when inactive, and mount without crashing when active.
  */
 
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { connectionStats } from '../../connection-stats';
+import { config } from '../../../shared/config';
 import { BuildMenu } from './BuildMenu';
 import { SettingsDialog } from './SettingsDialog';
 import { ZoneTypePicker } from './ZoneTypePicker';
@@ -202,21 +203,36 @@ describe('SettingsDialog', () => {
     expect(onLogout).toHaveBeenCalledTimes(1);
   });
 
-  it('offers a Support link to the configured destination, carrying world and player, in a new tab', () => {
-    const w = window as unknown as Record<string, unknown>;
-    w.__SPO_SUPPORT_URL__ = 'https://support.example.org/support.asp';
-    useGameStore.setState({ worldName: 'planitia', username: 'Crazz' });
-    useUiStore.getState().openModal('settings');
-    renderWithProviders(<SettingsDialog />);
+  describe('Support', () => {
+    const flags = config.server as { bugReportMode: boolean; bugReportPlayerMode: boolean };
+    const saved = { mode: flags.bugReportMode, player: flags.bugReportPlayerMode };
+    afterEach(() => {
+      flags.bugReportMode = saved.mode;
+      flags.bugReportPlayerMode = saved.player;
+    });
 
-    const link = screen.getByRole('link', { name: 'Contact Support' }) as HTMLAnchorElement;
-    expect(link.href).toContain('https://support.example.org/support.asp');
-    expect(link.href).toContain('WorldName=planitia');
-    expect(link.href).toContain('UserName=Crazz');
-    expect(link.target).toBe('_blank');
-    expect(link.rel).toContain('noopener');
+    it('is not offered when the bug reporter is off, and no link leaves the game', () => {
+      flags.bugReportMode = false;
+      useUiStore.getState().openModal('settings');
+      const { container } = renderWithProviders(<SettingsDialog />);
 
-    delete w.__SPO_SUPPORT_URL__;
+      expect(screen.queryByRole('heading', { name: 'Support' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Report a problem' })).toBeNull();
+      expect(container.querySelectorAll('a[href*="github.com"]')).toHaveLength(0);
+    });
+
+    it('"Report a problem" closes Settings and requests report mode', () => {
+      flags.bugReportMode = true;
+      useUiStore.getState().openModal('settings');
+      const before = useUiStore.getState().reportModeRequest;
+      const { container } = renderWithProviders(<SettingsDialog />);
+      expect(container.querySelectorAll('a[href*="github.com"]')).toHaveLength(0);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Report a problem' }));
+
+      expect(useUiStore.getState().modal).toBeNull();
+      expect(useUiStore.getState().reportModeRequest).toBe(before + 1);
+    });
   });
 
   it('cancelling the Logout confirm leaves the session untouched and returns to Settings', () => {

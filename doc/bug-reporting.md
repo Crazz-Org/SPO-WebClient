@@ -86,8 +86,8 @@ Leaving it on between test sessions is safe but not free of effect. On the gatew
 `<script src="/spo-runtime-config.js">` tag to `index.html`
 ([the `index.html` injection in the `http.createServer` handler of `server.ts`](../src/server/server.ts)) — the L2 live drive is a headless `ws` client that
 never loads the HTML, so gates and nightly runs are untouched. A browser, though, gets the
-capture UI: nothing visible on desktop until F8, but on mobile the floating button is there,
-which is a distraction during an L3 pass. Turn it off when you are done.
+capture UI once in game: nothing visible on desktop until F8, but on mobile the floating button
+is there, which is a distraction during an L3 pass. Turn it off when you are done.
 
 The queue lands in the **worker's** `~/.spo-reports`. Same machine, same user, so a triage
 session finds it where it expects to.
@@ -112,7 +112,7 @@ different questions.
 | | `desktop` | `mobile` |
 |---|---|---|
 | Answers | **is this number right?** | **is this usable?** |
-| Arm | `F8` | tap the floating button |
+| Arm | `F8`, or Settings → Support | tap the floating button, or menu → Support |
 | Capture | the next click | the next tap |
 | Describe | *observed* (pre-filled) and *expected*, typed | six one-tap picks, free text optional |
 | Extra evidence | canvas screenshot on a map target | a `geometry` block — numbers, no screenshot |
@@ -121,9 +121,17 @@ different questions.
 Both capture the same anchor and the same journal; they differ in what they ask the human for and
 what they measure.
 
+In `player` mode (`SPO_BUG_REPORT=player`) the Support entry — Settings → Support → "Report a
+problem" on desktop, menu → Support on mobile — is the **only** way in: F8 and the floating button
+do not exist there. The entry raises `requestReportMode` in the UI store, which `BugReportRoot`
+answers by arming report mode; the settings and menu components never import the lazy reporter
+chunk. Every entry point acts only in game (status `connected` or `reconnecting`); on the login
+screen none of them arms anything, though the journal is already running.
+
 ### Desktop — F8, then click
 
-`F8` arms report mode and `F8` again disarms it. The next click is intercepted in the capture
+`F8` arms report mode and `F8` again disarms it. The key exists only with `SPO_BUG_REPORT=true`
+(dev/test), and only in game; players arm the same mode through Settings → Support. The next click is intercepted in the capture
 phase, so the control never fires: flagging a button does not press it.
 
 A click on the map canvas takes a different path — the DOM cannot describe a tile — and is
@@ -135,7 +143,8 @@ for you to type. Typing is affordable here; it is the profile where the exact nu
 
 ### Mobile — the button, then tap
 
-A 56 px floating button, draggable, its position kept in `localStorage` under
+A 56 px floating button — dev/test only (`SPO_BUG_REPORT=true`), absent in `player` mode, and
+shown only in game; players arm through menu → Support instead. It is draggable, its position kept in `localStorage` under
 `spo-report-fab-pos`. A movement under 8 px is a tap and arms report mode; more is a drag. It
 paints on `--z-hud` (350), above the shell and the info bar and below the nav bar and every
 sheet — it must never sit on top of the sheet it just opened. Being outside the canvas and
@@ -165,7 +174,8 @@ are the evidence.
 
 It records clicks, surface pushes and pops, every WebSocket frame in and out **verbatim**, and
 any `console` error or warning — the last especially, because a phone has no devtools. The taps
-are in [`src/client/client.ts`](../src/client/client.ts) (`:568`, `:592`, `:980`) and cost
+are in [`src/client/client.ts`](../src/client/client.ts) — `sendRequest` and `sendMessage`
+(ws-out), `handleMessage` (ws-in) — and cost
 nothing when the journal is not armed.
 
 ## The queue
@@ -218,8 +228,9 @@ there. It has its own `window` listener in
 [`BugReportRoot.tsx`](../src/client/report/BugReportRoot.tsx).
 
 That is deliberate, and it is the one exception. `SHORTCUTS` describes the shortcuts a *player*
-has; F8 exists only when `SPO_BUG_REPORT` is on, and listing it would put a key in the Settings
-dialog that does nothing in every build a player will ever run. The mount point is lazy for the
+has; F8 exists only in dev/test mode (`SPO_BUG_REPORT=true`), never in `player` mode, so listing
+it would put a key in the Settings dialog that does nothing in every build a player will ever run.
+Players reach the reporter through Settings → Support instead. The mount point is lazy for the
 same reason — a build without the flag never fetches the chunk.
 
 ## Proving it end to end

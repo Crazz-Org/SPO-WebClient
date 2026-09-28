@@ -428,3 +428,13 @@ describe('ui-store newVersionAvailable (issue 1050)', () => {
     expect(useUiStore.getState().newVersionAvailable).toBe(true);
   });
 });
+
+describe('requestReportMode', () => {
+  it('increments reportModeRequest by one on every call, so each request is distinct', () => {
+    const start = useUiStore.getState().reportModeRequest;
+    useUiStore.getState().requestReportMode();
+    expect(useUiStore.getState().reportModeRequest).toBe(start + 1);
+    useUiStore.getState().requestReportMode();
+    expect(useUiStore.getState().reportModeRequest).toBe(start + 2);
+  });
+});
