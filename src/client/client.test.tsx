@@ -67,6 +67,12 @@ describe('StarpeaceClient callback wiring', () => {
     client = new StarpeaceClient();
   });
 
+  it('still exposes window.__spoDebug with its getState reader (E2E instrumentation)', () => {
+    const w = window as unknown as Record<string, unknown>;
+    expect(w.__spoDebug).toBeDefined();
+    expect(typeof (w.__spoDebug as { getState: unknown }).getState).toBe('function');
+  });
+
   it('onGetChannelInfo forwards to chatHandler.requestChannelInfo with the client and the channel name', () => {
     client.callbacks.onGetChannelInfo('Trade');
 
