@@ -115,6 +115,11 @@ describe('isEligible', () => {
     'scripts/coverage-changed.js',
     'src/client/style.css',
     'src/__mocks__/css-module.js',
+    'src/__tests__/load/session-memory.load.ts',
+    'src/__tests__/load/session-capacity.ts',
+    'src/server/__tests__/protocol-validation/protocol-test-harness.ts',
+    'src/client/__mocks__/audio.ts',
+    'src\\__tests__\\load\\session-capacity.ts',
     'doc/BACKLOG.md',
   ])('rejects %s', file => {
     expect(script.isEligible(file)).toBe(false);
