@@ -1,9 +1,12 @@
 import {
   GOVERNED_TOWN,
+  INTERFACE_LOG_BASE,
   LIMITS,
+  LIVE_LOG_BASE,
   PRESIDENT_MEMBERS,
   PRIMARY_ACCOUNT,
   SECONDARY_ACCOUNT,
+  TIMEOUTS,
   WORLD_NAME,
   ZONE_PATH,
 } from './config';
@@ -40,5 +43,14 @@ describe('locked configuration', () => {
 
   it('keeps a positive gate attestation window', () => {
     expect(LIMITS.gateMaxAgeMinutes).toBeGreaterThan(0);
+  });
+
+  it('reads the Interface Server logs beside the model server ones', () => {
+    expect(INTERFACE_LOG_BASE).toMatch(/\/FIVEINTERFACESERVER\/$/);
+    expect(new URL('..', INTERFACE_LOG_BASE).href).toBe(new URL('..', LIVE_LOG_BASE).href);
+  });
+
+  it('keeps the WebSocket closed 20 s before session-resume resumes', () => {
+    expect(TIMEOUTS.resumeGap).toBe(20_000);
   });
 });

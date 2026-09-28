@@ -15,6 +15,9 @@ import type {
   WsRespBuildingSetProperty,
   WsRespSearchMenuTowns,
   WsRespMapData,
+  WsRespLogout,
+  WsRespResumeSession,
+  WsEventSessionResumeToken,
 } from '../shared/types/message-types';
 import type {
   CompanyInfo,
@@ -136,9 +139,65 @@ export function pickCompany(companies: CompanyInfo[], username: string): Company
   return named ?? own[0] ?? companies[0];
 }
 
-/** Close cleanly — the gateway's ClientNotAware path issues the world `Logoff`. */
+/**
+ * Log out for real, then close.
+ *
+ * `REQ_LOGOUT` is what ends the world session: the gateway runs `endSession` (the world
+ * `ClientNotAware`, `get Logoff`, the socket end), answers `RESP_LOGOUT` and closes the
+ * WebSocket itself. A bare close no longer logs off — since gateway session parking (#1045)
+ * it **parks** the session and keeps the Interface Server ClientView open, so the next login
+ * would have to evict it.
+ *
+ * Resolves only after `RESP_LOGOUT` (or its timeout) and the close. It never throws: every
+ * flow calls it from a `finally`, where a throw would replace the flow's own result.
+ */
 export async function logoff(session: LiveSession): Promise<void> {
+  try {
+    await session.driver.request<WsRespLogout>(
+      { type: WsMessageType.REQ_LOGOUT },
+      WsMessageType.RESP_LOGOUT,
+      TIMEOUTS.request,
+    );
+  } catch {
+    // A timeout, a RESP_ERROR, or a driver already closed: the close below still runs.
+  }
   await session.driver.close();
+}
+
+/**
+ * The resume token the gateway pushes once the world is entered — normally already
+ * buffered when `login` returns, since it follows the company-selection reply.
+ */
+export async function awaitResumeToken(driver: WsDriver): Promise<string> {
+  const msg = await driver.waitFor(
+    m => m.type === WsMessageType.EVENT_SESSION_RESUME_TOKEN,
+    TIMEOUTS.login,
+    'EVENT_SESSION_RESUME_TOKEN (the resume token)',
+  );
+  return (msg as WsEventSessionResumeToken).token;
+}
+
+/**
+ * Re-attach a parked session on a fresh WebSocket. A resume is only valid as a socket's
+ * first message, so each call opens its own. A refusal arrives as a `WsDriverError` with
+ * `ERROR_AccessDenied`; the socket is closed before the error is rethrown.
+ */
+export async function resumeSession(
+  account: E2eAccount,
+  token: string,
+): Promise<{ driver: WsDriver; snapshot: WsRespResumeSession }> {
+  const driver = await WsDriver.connect(GATEWAY_URL, GATEWAY_ORIGIN);
+  try {
+    const snapshot = await driver.request<WsRespResumeSession>(
+      { type: WsMessageType.REQ_RESUME_SESSION, username: account.username, token },
+      WsMessageType.RESP_RESUME_SESSION,
+      TIMEOUTS.login,
+    );
+    return { driver, snapshot };
+  } catch (err: unknown) {
+    await driver.close();
+    throw err;
+  }
 }
 
 /** Every town the world lists, with mayor, coordinates and town-hall class. */

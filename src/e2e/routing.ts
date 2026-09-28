@@ -140,6 +140,13 @@ export const ROUTES: RouteRule[] = [
     why: 'the client/gateway message contract changed',
   },
   {
+    // Before the ws-handlers rule below: these three files implement session parking and
+    // resume (#1045), which only session-resume drives live.
+    test: /^src\/server\/server\.ts$|^src\/server\/spo_session\.ts$|^src\/server\/ws-handlers\/auth-handlers\.ts$/,
+    flows: ['building-details', 'politics-read', 'session-resume'],
+    why: 'gateway session lifecycle changed — parking, resume and logout',
+  },
+  {
     test: /^src\/server\/ws-handlers\/|^src\/server\/server\.ts$/,
     flows: ['building-details', 'politics-read'],
     why: 'gateway request handling changed',
