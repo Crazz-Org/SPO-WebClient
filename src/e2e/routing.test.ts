@@ -706,3 +706,27 @@ describe('route — world readers (#1139)', () => {
     expect(d.needsL3).toBe(false);
   });
 });
+
+describe('route — profile & finance reads (#1141)', () => {
+  it.each([
+    'src/server/ws-handlers/profile-handlers.ts',
+    'src/server/session/profile-finance-handler.ts',
+    'src/server/session/auto-connection-handler.ts',
+    'src/client/store/profile-store.ts',
+  ])('%s requires profile-read', file => {
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'profile-read']);
+    expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it('routes an Empire panel file to the favorites flows and profile-read', () => {
+    expect(route(['src/client/components/empire/ProfilePanel.tsx']).required).toEqual([
+      SPINE_FLOW, 'favorites-roundtrip', 'favorites-folders', 'profile-read',
+    ]);
+  });
+
+  it('keeps an Empire panel stylesheet L3-only', () => {
+    const d = route(['src/client/components/empire/ProfilePanel.module.css']);
+    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.needsL3).toBe(true);
+  });
+});
