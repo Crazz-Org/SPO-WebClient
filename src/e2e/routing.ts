@@ -190,7 +190,7 @@ export const ROUTES: RouteRule[] = [
     // (ws-handlers/mail-handlers.ts) is here too: the later mail rule's `^src\/server\/mail`
     // does not match it, so it used to fall to the ws-handlers fallback.
     test: /^src\/server\/session\/mail-handler\.ts$|^src\/server\/ws-handlers\/mail-handlers\.ts$/,
-    flows: ['mail-roundtrip', 'zoning-alert-read'],
+    flows: ['mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply'],
     why: 'the mail handlers changed — the flows that drive them',
   },
   {
@@ -297,7 +297,7 @@ export const ROUTES: RouteRule[] = [
   },
   {
     test: /^src\/client\/components\/mail\/|^src\/server\/mail/,
-    flows: ['mail-roundtrip', 'zoning-alert-read'],
+    flows: ['mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply'],
     why: 'mail path',
   },
   {

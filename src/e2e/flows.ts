@@ -18,6 +18,7 @@ import type {
   WsRespFavoriteMove,
   WsRespMailConnected,
   WsRespMailDeleted,
+  WsRespMailDraftSaved,
   WsRespMailFolder,
   WsRespMailMessage,
   WsRespMailSent,
@@ -60,6 +61,8 @@ import type {
   BuildingPropertyValue,
   DirectoryRef,
   DirectoryPage,
+  MailFolder,
+  MailMessageFull,
   MailMessageHeader,
   MapBuilding,
   RankingCategory,
@@ -94,6 +97,7 @@ import {
   propertyValue,
   resumeSession,
   type LiveSession,
+  type SecondaryLogin,
 } from './session';
 import type { WorldLock } from './world-lock';
 
@@ -1163,6 +1167,499 @@ const zoningAlertRead: Flow = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Drafts, send-from-draft and reply (#1144)
+//
+// Mail is served by the Mail Server, not the model server: there is no Survival line, and the
+// proof is the mailbox read back through the account that should hold the message (the
+// mail-roundtrip precedent). `Post` files a Sent copy for the sender
+// (Mail Server/MailServer.pas:809-811), which is why each sender's `Sent` is swept too.
+// ---------------------------------------------------------------------------
+
+const MAIL_DRAFTS_MARKER = 'e2e-mail-drafts ';
+const MAIL_SEND_FROM_DRAFT_MARKER = 'e2e-mail-send-from-draft ';
+const MAIL_REPLY_MARKER = 'e2e-mail-reply ';
+const MAIL_PROBE_BODY = 'Automated L2 probe. Safe to delete.';
+const DRAFT_FIRST_TEXT = 'Automated L2 draft probe, first save. Safe to delete.';
+const DRAFT_SECOND_TEXT = 'Automated L2 draft probe, second save. Safe to delete.';
+
+/** Matches a message whose subject starts with `marker` — also once answered (`Re: <marker>…`). */
+function hasMarker(marker: string): (m: MailMessageHeader) => boolean {
+  return m => m.subject.replace(/^re:\s*/i, '').startsWith(marker);
+}
+
+/**
+ * The reply headers the client's Reply sends — the same four lines, in the same order, as
+ * `buildReplyHeaders` in `src/client/store/mail-store.ts`. A copy, because the e2e build
+ * (`tsconfig.e2e.json`) includes only `src/e2e/**` and `src/shared/**`, and that store imports
+ * `zustand`; a unit test pins the two equal.
+ */
+export function replyHeaders(message: MailMessageFull): string {
+  return [
+    `In-Reply-To=${message.messageId}`,
+    `In-Reply-To-From=${message.fromAddr}`,
+    `In-Reply-To-Subject=${message.subject}`,
+    `In-Reply-To-Date=${message.date}`,
+  ].join('\n');
+}
+
+async function mailConnect(session: LiveSession): Promise<void> {
+  await session.driver.request({ type: WsMessageType.REQ_MAIL_CONNECT }, WsMessageType.RESP_MAIL_CONNECTED);
+}
+
+async function listFolder(session: LiveSession, folder: MailFolder): Promise<MailMessageHeader[]> {
+  const listing = await session.driver.request<WsRespMailFolder>(
+    { type: WsMessageType.REQ_MAIL_GET_FOLDER, folder },
+    WsMessageType.RESP_MAIL_FOLDER,
+  );
+  return listing.messages;
+}
+
+interface MailOut {
+  to: string;
+  subject: string;
+  body: string[];
+  headers?: string;
+  existingDraftId?: string;
+}
+
+function saveDraft(session: LiveSession, mail: MailOut): Promise<WsRespMailDraftSaved> {
+  return session.driver.request<WsRespMailDraftSaved>(
+    { type: WsMessageType.REQ_MAIL_SAVE_DRAFT, ...mail },
+    WsMessageType.RESP_MAIL_DRAFT_SAVED,
+    TIMEOUTS.login,
+  );
+}
+
+function sendMail(session: LiveSession, mail: MailOut): Promise<WsRespMailSent> {
+  return session.driver.request<WsRespMailSent>(
+    { type: WsMessageType.REQ_MAIL_COMPOSE, ...mail },
+    WsMessageType.RESP_MAIL_SENT,
+    TIMEOUTS.login,
+  );
+}
+
+interface Reread {
+  /** The last listing read — the one every assertion is judged on. */
+  messages: MailMessageHeader[];
+  reads: number;
+  settled: boolean;
+}
+
+/**
+ * The bounded re-read of #1025: the listing is IIS-served and deletes are fire-and-forget, so
+ * one read can lag in either direction. Reads until `settled`, at most
+ * `LIMITS.mailDeleteMaxReads` times, `TIMEOUTS.mailDeleteReread` apart (never after the last).
+ */
+async function rereadUntil(
+  session: LiveSession,
+  folder: MailFolder,
+  settled: (messages: MailMessageHeader[]) => boolean,
+  sleep: (ms: number) => Promise<void>,
+): Promise<Reread> {
+  let messages: MailMessageHeader[] = [];
+  let reads = 0;
+  let done = false;
+  for (let attempt = 1; attempt <= LIMITS.mailDeleteMaxReads; attempt++) {
+    messages = await listFolder(session, folder);
+    reads = attempt;
+    done = settled(messages);
+    if (done) break;
+    if (attempt < LIMITS.mailDeleteMaxReads) await sleep(TIMEOUTS.mailDeleteReread);
+  }
+  return { messages, reads, settled: done };
+}
+
+/** Delete every match from one folder, judged on the last bounded re-read. Never throws. */
+async function purgeFolder(
+  session: LiveSession,
+  folder: MailFolder,
+  matches: (m: MailMessageHeader) => boolean,
+  sleep: (ms: number) => Promise<void>,
+  label: string,
+): Promise<FlowCheck> {
+  const what = `${label} removed from ${session.account.username}'s ${folder}`;
+  try {
+    const stale = (await listFolder(session, folder)).filter(matches);
+    for (const m of stale) {
+      await session.driver.request<WsRespMailDeleted>(
+        { type: WsMessageType.REQ_MAIL_DELETE, folder, messageId: m.messageId },
+        WsMessageType.RESP_MAIL_DELETED,
+      );
+    }
+    const after = await rereadUntil(session, folder, msgs => !msgs.some(matches), sleep);
+    const left = after.messages.filter(matches).length;
+    return {
+      what,
+      ok: left === 0,
+      detail: `${stale.length} deleted, ${left} still listed after ${after.reads} read(s)`,
+    };
+  } catch (err: unknown) {
+    return { what, ok: false, detail: toErrorMessage(err) };
+  }
+}
+
+/**
+ * The cleanup of one mailbox: a fresh login — the cleanup matters most after a failure, which
+ * is when the drive's socket may be dead — then `purgeFolder` on each folder. One check per
+ * folder; never throws. A Crazz refusal here comes after the flow's first write, so its checks
+ * are not ok and name the leftover.
+ */
+async function purgeMailbox(
+  account: E2eAccount,
+  folders: MailFolder[],
+  matches: (m: MailMessageHeader) => boolean,
+  sleep: (ms: number) => Promise<void>,
+  label: string,
+): Promise<FlowCheck[]> {
+  const whatOf = (folder: MailFolder): string => `${label} removed from ${account.username}'s ${folder}`;
+  const failAll = (detail: string): FlowCheck[] => folders.map(f => ({ what: whatOf(f), ok: false, detail }));
+  let opened: SecondaryLogin;
+  try {
+    opened = account === SECONDARY_ACCOUNT ? await loginSecondary() : await login(account);
+  } catch (err: unknown) {
+    return failAll(toErrorMessage(err));
+  }
+  if ('skipped' in opened) {
+    const reason = opened.skipped;
+    return folders.map(f => ({
+      what: whatOf(f),
+      ok: false,
+      skipped: reason,
+      detail: `${account.username} refused at login (${reason}) — any ${label} is left in ${account.username}'s ${f}`,
+    }));
+  }
+  const session = opened;
+  try {
+    await mailConnect(session);
+    const checks: FlowCheck[] = [];
+    for (const f of folders) checks.push(await purgeFolder(session, f, matches, sleep, label));
+    return checks;
+  } catch (err: unknown) {
+    return failAll(toErrorMessage(err));
+  } finally {
+    await logoff(session);
+  }
+}
+
+/**
+ * Sweep every folder the flow writes for its marker before anything is composed — a run killed
+ * between send and cleanup leaves nothing the next run cannot remove. Each sweep is recorded as
+ * a `pre-sweep:` assertion; returns false when one could not clear its folder.
+ */
+async function preSweep(
+  assertions: Assertions,
+  targets: [LiveSession, MailFolder][],
+  matches: (m: MailMessageHeader) => boolean,
+  sleep: (ms: number) => Promise<void>,
+  label: string,
+): Promise<boolean> {
+  for (const [session, folder] of targets) {
+    const check = await purgeFolder(session, folder, matches, sleep, label);
+    assertions.check(`pre-sweep: ${check.what}`, check.ok, check.detail);
+  }
+  return !assertions.failed;
+}
+
+/** The drive's result with the cleanup attached; a cleanup that left anything turns it FAIL. */
+function withCleanup(result: FlowResult, cleanup: FlowCheck[]): FlowResult {
+  return { ...result, cleanup, status: cleanup.some(c => !c.ok) ? 'FAIL' : result.status };
+}
+
+/** The same FAIL shape `runUnseeded` builds for a drive that threw. */
+function failedResult(name: string, err: unknown): FlowResult {
+  return {
+    name,
+    status: 'FAIL',
+    assertions: [],
+    unproven: [],
+    probes: [],
+    messagesSent: 0,
+    messagesReceived: 0,
+    wireErrors: 0,
+    error: toErrorMessage(err),
+  };
+}
+
+const markerLabel = (marker: string): string => `"${marker.trim()}" mail`;
+
+async function driveDrafts(subject: string, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
+  const name = 'mail-drafts';
+  const assertions = new Assertions();
+  const bySubject = (m: MailMessageHeader): boolean => m.subject === subject;
+  const session = await login(PRIMARY_ACCOUNT);
+  try {
+    await mailConnect(session);
+    const swept = await preSweep(
+      assertions, [[session, 'Draft']], hasMarker(MAIL_DRAFTS_MARKER), sleep, markerLabel(MAIL_DRAFTS_MARKER),
+    );
+    if (!swept) return report(name, assertions, [], session);
+
+    // Addressed to itself: a draft is never delivered, and if a regression ever posted it,
+    // it could not land in another player's mailbox.
+    const mail = { to: PRIMARY_ACCOUNT.username, subject };
+    const first = await saveDraft(session, { ...mail, body: [DRAFT_FIRST_TEXT] });
+    assertions.check('the first save was accepted', first.success === true, first.message);
+
+    const listed = await rereadUntil(session, 'Draft', msgs => msgs.some(bySubject), sleep);
+    const firstCopy = listed.messages.find(bySubject);
+    assertions.check('the Draft folder lists the saved draft', Boolean(firstCopy), `${subject} reads=${listed.reads}`);
+    if (!firstCopy) return report(name, assertions, [], session);
+
+    const second = await saveDraft(session, { ...mail, body: [DRAFT_SECOND_TEXT], existingDraftId: firstCopy.messageId });
+    assertions.check('the save over the draft was accepted', second.success === true, second.message);
+
+    const replaced = await rereadUntil(
+      session,
+      'Draft',
+      msgs => {
+        const copies = msgs.filter(bySubject);
+        return copies.length === 1 && copies[0].messageId !== firstCopy.messageId;
+      },
+      sleep,
+    );
+    const copies = replaced.messages.filter(bySubject);
+    assertions.check(
+      'Draft holds exactly one copy, not the old one',
+      replaced.settled,
+      `old=${firstCopy.messageId} listed=[${copies.map(m => m.messageId).join(',')}] reads=${replaced.reads}`,
+    );
+    if (!replaced.settled) return report(name, assertions, [], session);
+
+    const kept = copies[0];
+    const opened = await session.driver.request<WsRespMailMessage>(
+      { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder: 'Draft', messageId: kept.messageId },
+      WsMessageType.RESP_MAIL_MESSAGE,
+    );
+    const text = (opened.message.body ?? []).join('\n');
+    assertions.check('the kept copy carries the new text', text.includes(DRAFT_SECOND_TEXT), text);
+
+    await session.driver.request(
+      { type: WsMessageType.REQ_MAIL_DELETE, folder: 'Draft', messageId: kept.messageId },
+      WsMessageType.RESP_MAIL_DELETED,
+    );
+    const gone = await rereadUntil(session, 'Draft', msgs => !msgs.some(bySubject), sleep);
+    assertions.check('the draft was deleted', gone.settled, `messageId=${kept.messageId} reads=${gone.reads}`);
+    return report(name, assertions, [], session);
+  } finally {
+    await logoff(session);
+  }
+}
+
+/**
+ * Save draft (`REQ_MAIL_SAVE_DRAFT`), then save again over it (`existingDraftId`): the Draft
+ * folder must end with exactly one copy, carrying the new text; the draft is then deleted.
+ * SPO_test3 only — no second account.
+ */
+const mailDrafts: Flow = {
+  name: 'mail-drafts',
+  what: 'save draft -> Draft lists it -> save again over it -> one copy, new text -> delete -> gone',
+  mutates: true,
+  run: async ctx => {
+    const sleep = ctx.sleep ?? defaultSleep;
+    const subject = `${MAIL_DRAFTS_MARKER}${new Date().toISOString()}`;
+    let result: FlowResult;
+    try {
+      result = await driveDrafts(subject, sleep);
+    } catch (err: unknown) {
+      result = failedResult('mail-drafts', err);
+    }
+    const cleanup = await purgeMailbox(
+      PRIMARY_ACCOUNT, ['Draft'], hasMarker(MAIL_DRAFTS_MARKER), sleep, markerLabel(MAIL_DRAFTS_MARKER),
+    );
+    return withCleanup(result, cleanup);
+  },
+};
+
+async function driveSendFromDraft(
+  crazz: LiveSession,
+  subject: string,
+  sleep: (ms: number) => Promise<void>,
+): Promise<FlowResult> {
+  const name = 'mail-send-from-draft';
+  const assertions = new Assertions();
+  const bySubject = (m: MailMessageHeader): boolean => m.subject === subject;
+  try {
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      await mailConnect(crazz);
+      await mailConnect(session);
+      const swept = await preSweep(
+        assertions,
+        [[session, 'Draft'], [session, 'Sent'], [crazz, 'Inbox']],
+        hasMarker(MAIL_SEND_FROM_DRAFT_MARKER),
+        sleep,
+        markerLabel(MAIL_SEND_FROM_DRAFT_MARKER),
+      );
+      if (!swept) return report(name, assertions, [], session);
+
+      const mail = { to: SECONDARY_ACCOUNT.username, subject, body: [MAIL_PROBE_BODY] };
+      const saved = await saveDraft(session, mail);
+      assertions.check('the draft save was accepted', saved.success === true, saved.message);
+
+      const listed = await rereadUntil(session, 'Draft', msgs => msgs.some(bySubject), sleep);
+      const draft = listed.messages.find(bySubject);
+      assertions.check('the Draft folder lists the saved draft', Boolean(draft), `${subject} reads=${listed.reads}`);
+      if (!draft) return report(name, assertions, [], session);
+
+      const sent = await sendMail(session, { ...mail, existingDraftId: draft.messageId });
+      assertions.check('the send from the draft was accepted', sent.success === true, sent.message);
+
+      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      assertions.check(
+        `${SECONDARY_ACCOUNT.username}'s Inbox holds it`,
+        delivered.settled,
+        `${subject} reads=${delivered.reads}`,
+      );
+
+      const draftGone = await rereadUntil(session, 'Draft', msgs => !msgs.some(bySubject), sleep);
+      assertions.check(
+        `${PRIMARY_ACCOUNT.username}'s Draft no longer holds it (#510)`,
+        draftGone.settled,
+        `draftId=${draft.messageId} reads=${draftGone.reads}`,
+      );
+      return report(name, assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  } finally {
+    await logoff(crazz);
+  }
+}
+
+/**
+ * Send from an opened draft: `REQ_MAIL_COMPOSE` with `existingDraftId`, which deletes the Draft
+ * copy once `Post` succeeds (#510). Crazz logs in first, so a refusal writes nothing (SKIPPED);
+ * a refusal at the cleanup, after the send, is a FAIL naming the leftover.
+ */
+const mailSendFromDraft: Flow = {
+  name: 'mail-send-from-draft',
+  what: 'Crazz first -> SPO_test3 saves a draft to Crazz -> sends it from the draft -> Crazz receives it, Draft copy gone',
+  mutates: true,
+  run: async ctx => {
+    const name = 'mail-send-from-draft';
+    const sleep = ctx.sleep ?? defaultSleep;
+    const subject = `${MAIL_SEND_FROM_DRAFT_MARKER}${new Date().toISOString()}`;
+    // Crazz first, before any write: a refused login then leaves nothing behind.
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    let result: FlowResult;
+    try {
+      result = await driveSendFromDraft(crazz, subject, sleep);
+    } catch (err: unknown) {
+      result = failedResult(name, err);
+    }
+    const matches = hasMarker(MAIL_SEND_FROM_DRAFT_MARKER);
+    const label = markerLabel(MAIL_SEND_FROM_DRAFT_MARKER);
+    const cleanup = [
+      ...(await purgeMailbox(PRIMARY_ACCOUNT, ['Draft', 'Sent'], matches, sleep, label)),
+      ...(await purgeMailbox(SECONDARY_ACCOUNT, ['Inbox'], matches, sleep, label)),
+    ];
+    return withCleanup(result, cleanup);
+  },
+};
+
+async function driveReply(
+  crazz: LiveSession,
+  subject: string,
+  sleep: (ms: number) => Promise<void>,
+): Promise<FlowResult> {
+  const name = 'mail-reply';
+  const assertions = new Assertions();
+  const bySubject = (m: MailMessageHeader): boolean => m.subject === subject;
+  const replySubject = `Re: ${subject}`;
+  try {
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      await mailConnect(crazz);
+      await mailConnect(session);
+      const swept = await preSweep(
+        assertions,
+        [[session, 'Inbox'], [session, 'Sent'], [crazz, 'Inbox'], [crazz, 'Sent']],
+        hasMarker(MAIL_REPLY_MARKER),
+        sleep,
+        markerLabel(MAIL_REPLY_MARKER),
+      );
+      if (!swept) return report(name, assertions, [], session);
+
+      const sent = await sendMail(session, { to: SECONDARY_ACCOUNT.username, subject, body: [MAIL_PROBE_BODY] });
+      assertions.check('the compose was accepted', sent.success === true, sent.message);
+
+      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      const received = delivered.messages.find(bySubject);
+      assertions.check(
+        `${SECONDARY_ACCOUNT.username}'s Inbox holds the message`,
+        Boolean(received),
+        `${subject} reads=${delivered.reads}`,
+      );
+      if (!received) return report(name, assertions, [], session);
+
+      const { message } = await crazz.driver.request<WsRespMailMessage>(
+        { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder: 'Inbox', messageId: received.messageId },
+        WsMessageType.RESP_MAIL_MESSAGE,
+      );
+      assertions.check('the read message carries a sender address', Boolean(message.fromAddr), message.fromAddr);
+      if (!message.fromAddr) return report(name, assertions, [], session);
+
+      // The client's Reply (`startReply` in mail-store.ts): to the sender, `Re: ` subject, and
+      // the four In-Reply-To* lines as headers. Crazz's one write — a pair the flow undoes.
+      const reply = await sendMail(crazz, {
+        to: message.fromAddr,
+        subject: `Re: ${message.subject}`,
+        body: ['Automated L2 reply probe. Safe to delete.'],
+        headers: replyHeaders(message),
+      });
+      assertions.check('the reply was accepted', reply.success === true, reply.message);
+
+      const answered = await rereadUntil(session, 'Inbox', msgs => msgs.some(m => m.subject === replySubject), sleep);
+      assertions.check(
+        `${PRIMARY_ACCOUNT.username}'s Inbox holds the reply with a Re: subject`,
+        answered.settled,
+        `${replySubject} reads=${answered.reads}`,
+      );
+      return report(name, assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  } finally {
+    await logoff(crazz);
+  }
+}
+
+/**
+ * Reply, the way the client's Reply does it: `Re: <subject>` and the `In-Reply-To*` headers
+ * (`replyHeaders`). What it does NOT prove: `RESP_MAIL_MESSAGE` carries only the fixed header
+ * keys (`parseMailHeaders` in `session/mail-handler.ts`) and `AddHeaders` is fire-and-forget, so
+ * whether the `In-Reply-To*` lines landed is not observable over the WS contract. It proves a
+ * compose carrying `headers` is still posted and delivered with its `Re:` subject.
+ */
+const mailReply: Flow = {
+  name: 'mail-reply',
+  what: 'Crazz first -> SPO_test3 sends -> Crazz reads and replies (Re:, In-Reply-To* headers) -> SPO_test3 receives the reply',
+  mutates: true,
+  run: async ctx => {
+    const name = 'mail-reply';
+    const sleep = ctx.sleep ?? defaultSleep;
+    const subject = `${MAIL_REPLY_MARKER}${new Date().toISOString()}`;
+    // Crazz first, before any write: a refused login then leaves nothing behind.
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    let result: FlowResult;
+    try {
+      result = await driveReply(crazz, subject, sleep);
+    } catch (err: unknown) {
+      result = failedResult(name, err);
+    }
+    const matches = hasMarker(MAIL_REPLY_MARKER);
+    const label = markerLabel(MAIL_REPLY_MARKER);
+    const cleanup = [
+      ...(await purgeMailbox(PRIMARY_ACCOUNT, ['Inbox', 'Sent'], matches, sleep, label)),
+      ...(await purgeMailbox(SECONDARY_ACCOUNT, ['Inbox', 'Sent'], matches, sleep, label)),
+    ];
+    return withCleanup(result, cleanup);
+  },
+};
+
 /**
  * The map surface's "Nearest Town Hall" jump, end to end: the local Manhattan approximation
  * (`@/shared/nearest-town`) picks a town, then the arrival goes through the same
@@ -1915,6 +2412,9 @@ export const FLOWS: Flow[] = [
   peopleSearch,
   newspaperRead,
   zoningAlertRead,
+  mailDrafts,
+  mailSendFromDraft,
+  mailReply,
   nearestTownHall,
   worldReaders,
   directoryBrowse,

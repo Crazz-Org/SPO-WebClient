@@ -374,7 +374,7 @@ ahead of zero.
 | Account | Password | Holds | Used for |
 |---|---|---|---|
 | `SPO_test3` | `test3` | Mayor of **Helartia**, Minister of Agriculture, company *SPO_test3 - Green* | Primary. Governance reads and writes, roads, zones |
-| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. |
+| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. |
 
 Both are **LOCKED** — never changed without explicit developer approval. Zone **Free Space**,
 world **planitia**.
@@ -392,8 +392,10 @@ Two accounts unlock four things that were structurally impossible:
 account is touched only by mail: `mail-roundtrip` sends it one message and deletes it
 in the same run, and the `zoning-alert-read` seed has it send SPO_test3 one look-alike
 `Zoning Alert!`, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run.
+`mail-send-from-draft` sends it one message, and in `mail-reply` it sends SPO_test3 one
+reply; each flow sweeps and deletes every copy it created in the same run.
 No flow reads or writes its buildings (`flows.ts`: it appears at the login in
-`permission-negative`, which does not mutate, as the mail recipient, and as the seed sender).
+`permission-negative`, which does not mutate, as the mail recipient, as the reply sender, and as the seed sender).
 Never another player's assets. Never a world-scope value. Every mutation is restored in
 the same run (§5).
 

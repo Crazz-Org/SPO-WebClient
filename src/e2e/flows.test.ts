@@ -3,11 +3,12 @@ import * as os from 'os';
 import * as path from 'path';
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage, FavoritesItem, WsRespResumeSession } from '@/shared/types/message-types';
-import type { MailMessageHeader } from '@/shared/types/domain-types';
+import type { MailMessageFull, MailMessageHeader } from '@/shared/types/domain-types';
 import {
-  FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum,
+  FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum, replyHeaders,
   type Flow, type FlowResult,
 } from './flows';
+import { buildReplyHeaders } from '@/client/store/mail-store';
 import { ROUTES } from './routing';
 import { WorldLock } from './world-lock';
 import { WsDriver, WsDriverError } from './ws-driver';
@@ -59,7 +60,10 @@ describe('the catalogue', () => {
   it('marks exactly the writing flows as mutating', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
     expect(mutating).toEqual(
-      ['favorites-folders', 'favorites-roundtrip', 'mail-roundtrip', 'politics-write', 'zoning-alert-read'],
+      [
+        'favorites-folders', 'favorites-roundtrip', 'mail-drafts', 'mail-reply', 'mail-roundtrip',
+        'mail-send-from-draft', 'politics-write', 'zoning-alert-read',
+      ],
     );
   });
 
@@ -2660,5 +2664,557 @@ describe('profile-read', () => {
     await expect(read(stubSession(() => base))).resolves.toEqual(base.data);
     await expect(read(stubSession(() => ({ data: { ...base.data, cacheUnavailable: true } }))))
       .rejects.toThrow(/cacheUnavailable/);
+  });
+});
+
+describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
+  const P = PRIMARY_ACCOUNT.username;
+  const C = SECONDARY_ACCOUNT.username;
+
+  type Stored = MailMessageHeader & { body: string[] };
+  type Req = WsMessage & {
+    folder?: string; messageId?: string; to?: string; subject?: string; body?: string[];
+    headers?: string; existingDraftId?: string;
+  };
+  interface Logged { account: string; login: number; msg: Req }
+
+  function stored(messageId: string, subject: string, from = P, to = C, body: string[] = []): Stored {
+    return {
+      messageId, subject, from, to, fromAddr: `${from}@planitia.net`, toAddr: `${to}@planitia.net`,
+      date: '45000.5', dateFmt: '', read: false, stamp: 0, noReply: false, body,
+    };
+  }
+
+  interface Over {
+    boxes?: Record<string, Stored[]>;
+    /** Folder reads after a REQ_MAIL_DELETE before it lands (1 = on the next read). */
+    deleteLag?: number;
+    /** Folder reads after a save/send's delete of `existingDraftId` before it lands; 'never' = it never does. */
+    draftDeleteLag?: number | 'never';
+    /** Box keys where a REQ_MAIL_DELETE never lands. */
+    ignoreDeleteIn?: string[];
+    /** Which loginSecondary calls answer `{ skipped }` (1-based). */
+    refuseSecondaryOn?: number[];
+    /** Which login calls reject (1-based, counting every login). */
+    loginRejectsOn?: number[];
+    throwWhen?: (l: Logged) => boolean;
+    saveFails?: boolean;
+    composeFails?: boolean;
+    /** A compose that reports success but delivers nothing to the recipient's Inbox. */
+    dropDelivery?: boolean;
+    noFromAddr?: boolean;
+  }
+
+  function arrange(over: Over = {}) {
+    const boxes: Record<string, Stored[]> = {};
+    for (const [k, v] of Object.entries(over.boxes ?? {})) boxes[k] = [...v];
+    const box = (key: string): Stored[] => (boxes[key] ??= []);
+    const pending: { key: string; id: string; left: number }[] = [];
+    const requests: Logged[] = [];
+    let seq = 0;
+    let logins = 0;
+    const scheduleDelete = (key: string, id: string, lag: number | 'never'): void => {
+      if (lag === 'never') return;
+      pending.push({ key, id, left: lag });
+    };
+
+    jest.spyOn(session, 'login').mockImplementation(async account => {
+      logins++;
+      const loginNo = logins;
+      if (over.loginRejectsOn?.includes(loginNo)) throw new Error('login refused');
+      const me = account.username;
+      const stub = stubSession(raw => {
+        const msg = raw as Req;
+        const logged = { account: me, login: loginNo, msg };
+        requests.push(logged);
+        if (over.throwWhen?.(logged)) throw new Error('socket died');
+        switch (msg.type) {
+          case WsMessageType.REQ_MAIL_CONNECT:
+            return { type: WsMessageType.RESP_MAIL_CONNECTED, unreadCount: 0 };
+          case WsMessageType.REQ_MAIL_GET_FOLDER: {
+            const key = `${me}/${msg.folder}`;
+            for (const p of pending.filter(q => q.key === key)) {
+              p.left--;
+              if (p.left <= 0) {
+                const list = box(key);
+                const i = list.findIndex(h => h.messageId === p.id);
+                if (i >= 0) list.splice(i, 1);
+                pending.splice(pending.indexOf(p), 1);
+              }
+            }
+            return {
+              type: WsMessageType.RESP_MAIL_FOLDER,
+              folder: msg.folder,
+              messages: box(key).map(({ body: _body, ...h }) => h),
+            };
+          }
+          case WsMessageType.REQ_MAIL_DELETE: {
+            const key = `${me}/${msg.folder}`;
+            if (!over.ignoreDeleteIn?.includes(key)) scheduleDelete(key, msg.messageId ?? '', over.deleteLag ?? 1);
+            return { type: WsMessageType.RESP_MAIL_DELETED, success: true };
+          }
+          case WsMessageType.REQ_MAIL_SAVE_DRAFT: {
+            if (over.saveFails) return { type: WsMessageType.RESP_MAIL_DRAFT_SAVED, success: false, message: 'no' };
+            if (msg.existingDraftId) scheduleDelete(`${me}/Draft`, msg.existingDraftId, over.draftDeleteLag ?? 1);
+            seq++;
+            box(`${me}/Draft`).push(stored(`d${seq}`, msg.subject ?? '', me, msg.to ?? '', msg.body ?? []));
+            return { type: WsMessageType.RESP_MAIL_DRAFT_SAVED, success: true };
+          }
+          case WsMessageType.REQ_MAIL_COMPOSE: {
+            if (over.composeFails) return { type: WsMessageType.RESP_MAIL_SENT, success: false, message: 'Post refused' };
+            const to = (msg.to ?? '').replace(/@.*/, '');
+            seq++;
+            if (!over.dropDelivery) box(`${to}/Inbox`).push(stored(`m${seq}`, msg.subject ?? '', me, to, msg.body ?? []));
+            box(`${me}/Sent`).push(stored(`s${seq}`, msg.subject ?? '', me, to, msg.body ?? []));
+            if (msg.existingDraftId) scheduleDelete(`${me}/Draft`, msg.existingDraftId, over.draftDeleteLag ?? 1);
+            return { type: WsMessageType.RESP_MAIL_SENT, success: true };
+          }
+          case WsMessageType.REQ_MAIL_READ_MESSAGE: {
+            const found = box(`${me}/${msg.folder}`).find(h => h.messageId === msg.messageId);
+            const message = { ...found, attachments: [], ...(over.noFromAddr ? { fromAddr: '' } : {}) };
+            return { type: WsMessageType.RESP_MAIL_MESSAGE, message };
+          }
+          default:
+            return undefined;
+        }
+      });
+      return { ...stub, account };
+    });
+    let secondaryCalls = 0;
+    jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
+      secondaryCalls++;
+      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `Crazz refused (call ${secondaryCalls})` };
+      return session.login(SECONDARY_ACCOUNT);
+    });
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    return { boxes, requests, logins: () => logins };
+  }
+
+  const run = (name: string, over: Over = {}) => {
+    const arranged = arrange(over);
+    const result = runFlow(flowByName(name), { lock: cleanLock(), sleep: async () => {} });
+    return { ...arranged, result };
+  };
+  const ofType = (requests: Logged[], type: WsMessageType): Logged[] => requests.filter(r => r.msg.type === type);
+  const writes = (requests: Logged[]): Logged[] =>
+    requests.filter(r => r.msg.type === WsMessageType.REQ_MAIL_SAVE_DRAFT || r.msg.type === WsMessageType.REQ_MAIL_COMPOSE);
+  const nonEmpty = (boxes: Record<string, Stored[]>): string[] =>
+    Object.entries(boxes).filter(([, v]) => v.length > 0).map(([k]) => k);
+  const assertion = (result: FlowResult, what: string) => result.assertions.find(a => a.what === what);
+
+  it('replyHeaders builds the same lines as the client store\'s buildReplyHeaders', () => {
+    const message: MailMessageFull = { ...stored('m7', 'e2e-mail-reply x', P, C), attachments: [] };
+    expect(replyHeaders(message)).toBe(buildReplyHeaders(message));
+  });
+
+  describe('mail-drafts', () => {
+    it('saves, saves over it, keeps one copy with the new text, deletes it — and leaves Draft empty', async () => {
+      const { result, requests, boxes } = run('mail-drafts');
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: true })]);
+      expect(nonEmpty(boxes)).toEqual([]);
+      const saves = ofType(requests, WsMessageType.REQ_MAIL_SAVE_DRAFT);
+      expect(saves).toHaveLength(2);
+      expect(saves[0].msg).toMatchObject({ to: P });
+      expect(saves[0].msg.subject).toMatch(/^e2e-mail-drafts /);
+      expect(saves[1].msg.existingDraftId).toBe('d1');
+      expect(assertion(r, 'the kept copy carries the new text')?.ok).toBe(true);
+      expect(r.assertions.some(a => a.what.startsWith('pre-sweep: ') && a.ok)).toBe(true);
+    });
+
+    it('passes when the old copy still shows on the first re-read and is gone on the second', async () => {
+      const { result } = run('mail-drafts', { draftDeleteLag: 2 });
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      expect(assertion(r, 'Draft holds exactly one copy, not the old one')?.detail).toMatch(/reads=2$/);
+    });
+
+    it('fails when the old copy shows on every re-read, and the cleanup still clears Draft', async () => {
+      const { result, boxes } = run('mail-drafts', { draftDeleteLag: 'never' });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      const check = assertion(r, 'Draft holds exactly one copy, not the old one');
+      expect(check).toMatchObject({ ok: false });
+      expect(check?.detail).toMatch(new RegExp(`reads=${LIMITS.mailDeleteMaxReads}$`));
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: true })]);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('pre-sweeps a stale prefixed draft before the first save, and spares an unmarked one', async () => {
+      const { result, requests, boxes } = run('mail-drafts', {
+        boxes: { [`${P}/Draft`]: [stored('old', 'e2e-mail-drafts 2020', P, P), stored('keep', 'my own draft', P, P)] },
+      });
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      const staleDelete = requests.findIndex(x => x.msg.type === WsMessageType.REQ_MAIL_DELETE && x.msg.messageId === 'old');
+      const firstSave = requests.findIndex(x => x.msg.type === WsMessageType.REQ_MAIL_SAVE_DRAFT);
+      expect(staleDelete).toBeGreaterThanOrEqual(0);
+      expect(staleDelete).toBeLessThan(firstSave);
+      expect(boxes[`${P}/Draft`].map(m => m.messageId)).toEqual(['keep']);
+    });
+
+    it('FAILs and saves nothing when the pre-sweep cannot clear Draft', async () => {
+      const { result, requests } = run('mail-drafts', {
+        boxes: { [`${P}/Draft`]: [stored('old', 'e2e-mail-drafts 2020', P, P)] },
+        ignoreDeleteIn: [`${P}/Draft`],
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.assertions[0]).toMatchObject({ ok: false, detail: expect.stringMatching(/1 still listed/) });
+      expect(r.assertions[0].what).toMatch(/^pre-sweep: /);
+      expect(writes(requests)).toEqual([]);
+      expect(r.cleanup?.[0].ok).toBe(false);
+    });
+
+    it('FAILs when the save is refused and the Draft never lists it', async () => {
+      const { result } = run('mail-drafts', { saveFails: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the first save was accepted')).toMatchObject({ ok: false, detail: 'no' });
+      expect(assertion(r, 'the Draft folder lists the saved draft')?.ok).toBe(false);
+    });
+
+    it('FAILs when the kept copy does not carry the new text', async () => {
+      const { result } = run('mail-drafts', {
+        throwWhen: l => {
+          if (l.msg.type === WsMessageType.REQ_MAIL_SAVE_DRAFT && l.msg.existingDraftId) l.msg.body = ['stale'];
+          return false;
+        },
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the kept copy carries the new text')?.ok).toBe(false);
+    });
+
+    it('FAILs when the final delete never lands, and the cleanup reports the leftover', async () => {
+      const { result } = run('mail-drafts', { ignoreDeleteIn: [`${P}/Draft`] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the draft was deleted')?.ok).toBe(false);
+      expect(r.cleanup?.[0]).toMatchObject({ ok: false, detail: expect.stringMatching(/1 still listed/) });
+    });
+
+    it('turns a throw mid-drive into a FAIL with its error, and still cleans up', async () => {
+      const { result, boxes } = run('mail-drafts', {
+        throwWhen: l => l.msg.type === WsMessageType.REQ_MAIL_READ_MESSAGE,
+      });
+      const r = await result;
+
+      expect(r).toMatchObject({ status: 'FAIL', error: 'socket died' });
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: true })]);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('a cleanup whose login is rejected is not ok, and the flow FAILs', async () => {
+      const { result } = run('mail-drafts', { loginRejectsOn: [2] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: false, detail: 'login refused' })]);
+    });
+
+    it('a cleanup whose mail connect throws is not ok', async () => {
+      const { result } = run('mail-drafts', {
+        throwWhen: l => l.login === 2 && l.msg.type === WsMessageType.REQ_MAIL_CONNECT,
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: false, detail: 'socket died' })]);
+    });
+
+    it('a cleanup whose folder read throws is not ok', async () => {
+      const { result } = run('mail-drafts', {
+        throwWhen: l => l.login === 2 && l.msg.type === WsMessageType.REQ_MAIL_GET_FOLDER,
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: false, detail: 'socket died' })]);
+    });
+
+    it('waits the real re-read gap when no sleep is injected', async () => {
+      jest.useFakeTimers();
+      try {
+        arrange({ draftDeleteLag: 2 });
+        const resultPromise = flowByName('mail-drafts').run({ lock: cleanLock() });
+        await jest.advanceTimersByTimeAsync(TIMEOUTS.mailDeleteReread);
+        const r = await resultPromise;
+        expect(r.status).toBe('PASS');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  describe('mail-send-from-draft', () => {
+    it('sends the draft with its id, Crazz receives it, the Draft copy is gone, and every box is empty after', async () => {
+      const { result, requests, boxes } = run('mail-send-from-draft');
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      const compose = ofType(requests, WsMessageType.REQ_MAIL_COMPOSE);
+      expect(compose).toHaveLength(1);
+      expect(compose[0]).toMatchObject({ account: P, msg: { to: C, existingDraftId: 'd1' } });
+      expect(assertion(r, `${C}'s Inbox holds it`)?.ok).toBe(true);
+      expect(assertion(r, `${P}'s Draft no longer holds it (#510)`)?.ok).toBe(true);
+      expect(r.cleanup).toHaveLength(3);
+      expect(r.cleanup?.every(c => c.ok)).toBe(true);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('judges the Draft copy gone on the last re-read', async () => {
+      const { result } = run('mail-send-from-draft', { draftDeleteLag: 3 });
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      expect(assertion(r, `${P}'s Draft no longer holds it (#510)`)?.detail).toMatch(/reads=3$/);
+    });
+
+    it('FAILs when the Draft copy is never removed after the send', async () => {
+      const { result, boxes } = run('mail-send-from-draft', { draftDeleteLag: 'never' });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, `${P}'s Draft no longer holds it (#510)`)?.ok).toBe(false);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('ends SKIPPED when Crazz is refused before the first write, and SPO_test3 sends nothing', async () => {
+      const { result, requests, logins } = run('mail-send-from-draft', { refuseSecondaryOn: [1] });
+      const r = await result;
+
+      expect(r).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
+      expect(logins()).toBe(0);
+      expect(writes(requests)).toEqual([]);
+    });
+
+    it('FAILs naming the leftover when Crazz is refused at the cleanup, after the send', async () => {
+      const { result, boxes } = run('mail-send-from-draft', { refuseSecondaryOn: [2] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      const crazz = r.cleanup?.find(c => c.skipped !== undefined);
+      expect(crazz).toMatchObject({ ok: false, skipped: 'Crazz refused (call 2)' });
+      expect(crazz?.detail).toMatch(/left in Crazz's Inbox/);
+      expect(boxes[`${C}/Inbox`]).toHaveLength(1);
+    });
+
+    it('pre-sweeps SPO_test3\'s Draft and Sent and Crazz\'s Inbox before the first write', async () => {
+      const stale = 'e2e-mail-send-from-draft 2020';
+      const { result, requests, boxes } = run('mail-send-from-draft', {
+        boxes: {
+          [`${P}/Draft`]: [stored('x1', stale, P, C)],
+          [`${P}/Sent`]: [stored('x2', stale, P, C)],
+          [`${C}/Inbox`]: [stored('x3', stale, P, C), stored('real', 'hello', P, C)],
+        },
+      });
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      const firstWrite = requests.indexOf(writes(requests)[0]);
+      for (const id of ['x1', 'x2', 'x3']) {
+        const i = requests.findIndex(x => x.msg.type === WsMessageType.REQ_MAIL_DELETE && x.msg.messageId === id);
+        expect(i).toBeGreaterThanOrEqual(0);
+        expect(i).toBeLessThan(firstWrite);
+      }
+      expect(boxes[`${C}/Inbox`].map(m => m.messageId)).toEqual(['real']);
+    });
+
+    it('FAILs and writes nothing when a pre-sweep cannot clear Crazz\'s Inbox', async () => {
+      const { result, requests } = run('mail-send-from-draft', {
+        boxes: { [`${C}/Inbox`]: [stored('x3', 'e2e-mail-send-from-draft 2020', P, C)] },
+        ignoreDeleteIn: [`${C}/Inbox`],
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(writes(requests)).toEqual([]);
+    });
+
+    it('a leftover in Crazz\'s Inbox after the cleanup turns the flow FAIL', async () => {
+      const { result } = run('mail-send-from-draft', { ignoreDeleteIn: [`${C}/Inbox`] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.assertions.every(a => a.ok)).toBe(true);
+      expect(r.cleanup?.find(c => c.what.includes(`${C}'s Inbox`))?.ok).toBe(false);
+    });
+
+    it('stops when the Draft never lists the saved draft, sends nothing, and still cleans up', async () => {
+      const { result, requests } = run('mail-send-from-draft', { saveFails: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(ofType(requests, WsMessageType.REQ_MAIL_COMPOSE)).toEqual([]);
+      expect(r.cleanup).toHaveLength(3);
+    });
+
+    it('FAILs when the send is refused', async () => {
+      const { result } = run('mail-send-from-draft', { composeFails: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the send from the draft was accepted')).toMatchObject({ ok: false, detail: 'Post refused' });
+    });
+
+    it('turns a throw mid-drive into a FAIL and still cleans up both mailboxes', async () => {
+      const { result, boxes } = run('mail-send-from-draft', {
+        throwWhen: l => l.msg.type === WsMessageType.REQ_MAIL_COMPOSE,
+      });
+      const r = await result;
+
+      expect(r).toMatchObject({ status: 'FAIL', error: 'socket died' });
+      expect(r.cleanup?.every(c => c.ok)).toBe(true);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+  });
+
+  describe('mail-reply', () => {
+    it('replies as the client does, SPO_test3 receives the Re:, and all four copies are deleted', async () => {
+      const { result, requests, boxes } = run('mail-reply');
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      const [sent, reply] = ofType(requests, WsMessageType.REQ_MAIL_COMPOSE);
+      expect(sent).toMatchObject({ account: P, msg: { to: C } });
+      expect(sent.msg.subject).toMatch(/^e2e-mail-reply /);
+      expect(reply).toMatchObject({
+        account: C,
+        msg: { to: `${P}@planitia.net`, subject: `Re: ${sent.msg.subject}` },
+      });
+      const original: MailMessageFull = {
+        ...stored('m1', sent.msg.subject ?? '', P, C), attachments: [],
+      };
+      expect(reply.msg.headers).toBe(buildReplyHeaders(original));
+      expect(r.cleanup).toHaveLength(4);
+      expect(r.cleanup?.every(c => c.ok)).toBe(true);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('ends SKIPPED when Crazz is refused before the first write, and SPO_test3 sends nothing', async () => {
+      const { result, requests, logins } = run('mail-reply', { refuseSecondaryOn: [1] });
+      const r = await result;
+
+      expect(r).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
+      expect(logins()).toBe(0);
+      expect(writes(requests)).toEqual([]);
+    });
+
+    it('FAILs naming the leftover when Crazz is refused at the cleanup, after the writes', async () => {
+      const { result, boxes } = run('mail-reply', { refuseSecondaryOn: [2] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      const refused = r.cleanup?.filter(c => c.skipped !== undefined) ?? [];
+      expect(refused).toHaveLength(2);
+      expect(refused[0].detail).toMatch(/left in Crazz's Inbox/);
+      expect(refused[1].detail).toMatch(/left in Crazz's Sent/);
+      expect(boxes[`${P}/Inbox`]).toEqual([]);
+    });
+
+    it('pre-sweeps a stale marker and a stale Re: marker in all four folders before the first write', async () => {
+      const stale = 'e2e-mail-reply 2020';
+      const { result, requests, boxes } = run('mail-reply', {
+        boxes: {
+          [`${P}/Inbox`]: [stored('a', `Re: ${stale}`, C, P), stored('keep', 'Re: something else', C, P)],
+          [`${P}/Sent`]: [stored('b', stale, P, C)],
+          [`${C}/Inbox`]: [stored('c', stale, P, C)],
+          [`${C}/Sent`]: [stored('d', `RE: ${stale}`, C, P)],
+        },
+      });
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      const firstWrite = requests.indexOf(writes(requests)[0]);
+      for (const id of ['a', 'b', 'c', 'd']) {
+        const i = requests.findIndex(x => x.msg.type === WsMessageType.REQ_MAIL_DELETE && x.msg.messageId === id);
+        expect(i).toBeGreaterThanOrEqual(0);
+        expect(i).toBeLessThan(firstWrite);
+      }
+      expect(r.assertions.filter(a => a.what.startsWith('pre-sweep: '))).toHaveLength(4);
+      expect(boxes[`${P}/Inbox`].map(m => m.messageId)).toEqual(['keep']);
+    });
+
+    it('FAILs and writes nothing when a pre-sweep folder read throws', async () => {
+      const { result, requests } = run('mail-reply', {
+        // Login 1 is Crazz's drive session; the cleanup logs in afresh and is spared.
+        throwWhen: l => l.login === 1 && l.msg.type === WsMessageType.REQ_MAIL_GET_FOLDER && l.msg.folder === 'Sent',
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.assertions.find(a => !a.ok)).toMatchObject({ detail: 'socket died' });
+      expect(writes(requests)).toEqual([]);
+    });
+
+    it('fails, and still cleans up, when the message never reaches Crazz', async () => {
+      const { result, requests, boxes } = run('mail-reply', { dropDelivery: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, `${C}'s Inbox holds the message`)?.ok).toBe(false);
+      expect(ofType(requests, WsMessageType.REQ_MAIL_COMPOSE)).toHaveLength(1);
+      expect(r.cleanup).toHaveLength(4);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('stops before replying when the read message carries no sender address', async () => {
+      const { result, requests } = run('mail-reply', { noFromAddr: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the read message carries a sender address')?.ok).toBe(false);
+      expect(ofType(requests, WsMessageType.REQ_MAIL_COMPOSE)).toHaveLength(1);
+    });
+
+    it('FAILs when the composes are refused', async () => {
+      const { result } = run('mail-reply', { composeFails: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the compose was accepted')).toMatchObject({ ok: false, detail: 'Post refused' });
+    });
+
+    it('turns a throw on the read into a FAIL and still deletes every copy', async () => {
+      const { result, boxes } = run('mail-reply', {
+        throwWhen: l => l.msg.type === WsMessageType.REQ_MAIL_READ_MESSAGE,
+      });
+      const r = await result;
+
+      expect(r).toMatchObject({ status: 'FAIL', error: 'socket died' });
+      expect(r.cleanup?.every(c => c.ok)).toBe(true);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('a leftover in SPO_test3\'s Inbox after the cleanup turns the flow FAIL', async () => {
+      const { result } = run('mail-reply', { ignoreDeleteIn: [`${P}/Inbox`] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.cleanup?.find(c => c.what.includes(`${P}'s Inbox`))?.ok).toBe(false);
+    });
+
+    it('FAILs when the reply never shows in SPO_test3\'s Inbox', async () => {
+      const { result } = run('mail-reply', {
+        throwWhen: l => {
+          if (l.account === C && l.msg.type === WsMessageType.REQ_MAIL_COMPOSE) l.msg.to = 'Nobody';
+          return false;
+        },
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, `${P}'s Inbox holds the reply with a Re: subject`)?.ok).toBe(false);
+    });
   });
 });
