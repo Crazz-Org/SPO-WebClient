@@ -92,6 +92,15 @@ export const TIMEOUTS = {
   mailDeleteReread: 1_000,
   /** How long session-resume keeps the WebSocket closed before resuming the parked session. */
   resumeGap: 20_000,
+  /**
+   * How long a round trip polls its read-back for the written value. The town-hall
+   * facility's object-cache entry lives two minutes (`Kernel/Population.pas:1192`,
+   * `CreateTTL(0, 0, 2, 0)`, OB-29), plus a 30 s margin. Never widen it past TTL + margin:
+   * a read-back that outlasts it FAILs.
+   */
+  readBack: 150_000,
+  /** Gap between read-back polls. */
+  readBackPoll: 5_000,
 } as const;
 
 export const LIMITS = {

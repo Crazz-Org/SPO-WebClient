@@ -137,7 +137,7 @@ describe('runLive', () => {
 
     const lock = tempLock();
     lock.acquire('fix/a', 1, () => false);
-    lock.addPendingRestore({ what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
+    lock.addPendingRestore({ key: 'k', what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
     expect(() => lock.release()).toThrow();
 
     const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock });
@@ -154,7 +154,7 @@ describe('runLive', () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
     const lock = tempLock();
     jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => {
-      lock.addPendingRestore({ what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
+      lock.addPendingRestore({ key: 'k', what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
       return passingFlow(flow.name);
     });
 

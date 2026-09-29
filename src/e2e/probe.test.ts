@@ -4,7 +4,7 @@ import * as path from 'path';
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage } from '@/shared/types/message-types';
 import { WsDriver } from './ws-driver';
-import { runProbe, probeFailure, type ProbeSpec } from './probe';
+import { runProbe, runRoundTrip, probeFailure, type ProbeSpec, type RoundTripSpec } from './probe';
 import { WorldLock } from './world-lock';
 import type { LiveSession } from './session';
 import { PRIMARY_ACCOUNT } from './config';
@@ -26,8 +26,13 @@ const spec: ProbeSpec = {
 const window = { url: 'http://logs/S.log', offset: 0, openedAt: 'now' };
 const factory = async () => window;
 
-/** A session whose reads return `values.shift()` and whose writes are recorded. */
+/**
+ * A session whose reads return `values.shift()` while any remain, then the world's state —
+ * the last value written — and whose writes are recorded. An explicit `undefined` in
+ * `values` still reads as absent.
+ */
 function sessionReading(values: (string | undefined)[], onWrite?: (value: string) => void): LiveSession {
+  let lastWritten: string | undefined;
   const driver = {
     close: jest.fn(),
     log: [],
@@ -45,13 +50,14 @@ function sessionReading(values: (string | undefined)[], onWrite?: (value: string
         };
       }
       if (msg.type === WsMessageType.REQ_BUILDING_TAB_DATA) {
-        const value = values.shift();
+        const value = values.length > 0 ? values.shift() : lastWritten;
         return {
           type: WsMessageType.RESP_BUILDING_TAB_DATA,
           groups: value === undefined ? {} : { townTaxes: [{ name: 'Tax0Percent', value }] },
         };
       }
-      onWrite?.((msg as unknown as { value: string }).value);
+      lastWritten = (msg as unknown as { value: string }).value;
+      onWrite?.(lastWritten);
       return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: '' };
     }),
   };
@@ -103,12 +109,30 @@ describe('runProbe', () => {
     expect(writes).toEqual(['8', '7']);
   });
 
-  it('downgrades a lagging read-back instead of failing the probe', async () => {
+  it('fails when a lagging read-back outlasts its bound, even with the log line present', async () => {
     jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: 8');
-    const result = await runProbe(sessionReading(['7', '7']), spec, tempLock(), factory, window.url);
-    expect(result.status).toBe('PASS');
+    const result = await runProbe(sessionReading(['7', '7', '7']), spec, tempLock(), factory, window.url, {
+      readBackBoundMs: 50,
+      now: clock([0, 0, 100]),
+      sleep: noSleep,
+    });
+    expect(result.status).toBe('FAIL');
     expect(result.readBack).toBe('UNCONFIRMED');
-    expect(result.note).toMatch(/OB-29/);
+    expect(result.note).toMatch(/read-back never showed/);
+    expect(result.restored).toBe(true);
+  });
+
+  it('waits out a lagging read-back that reaches the value on a later poll', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: 8');
+    const result = await runProbe(sessionReading(['7', '7', '7', '8']), spec, tempLock(), factory, window.url, {
+      readBackBoundMs: 1_000,
+      now: clock([0]),
+      sleep: noSleep,
+    });
+    expect(result.status).toBe('PASS');
+    expect(result.readBack).toBe('CONFIRMED');
+    expect(result.restoreReadBack).toBe('CONFIRMED');
+    expect(result.note).toBeUndefined();
   });
 
   it('registers the pending restore before issuing the write', async () => {
@@ -163,6 +187,284 @@ describe('runProbe', () => {
     expect(result.note).toBe('log host vanished');
     expect(result.restored).toBe(true);
     expect(writes).toEqual(['8', '7']);
+  });
+});
+
+/** A clock returning `values` in turn, then the last one forever. */
+function clock(values: number[]): () => number {
+  let index = 0;
+  return () => values[Math.min(index++, values.length - 1)];
+}
+
+function noSleep(): Promise<void> {
+  return Promise.resolve();
+}
+
+/** A world holding one value, with fake read / write over it. */
+function world(initial: string | undefined) {
+  const state = { value: initial, writes: [] as string[], restores: [] as string[] };
+  const read = jest.fn(async () => state.value);
+  const write = jest.fn(async (v: string) => {
+    state.writes.push(v);
+    state.value = v;
+  });
+  return { state, read, write };
+}
+
+function roundTrip(w: ReturnType<typeof world>, overrides: Partial<RoundTripSpec> = {}): RoundTripSpec {
+  return {
+    what: 'Helartia tax row 0',
+    member: 'RDOSetTaxValue',
+    read: w.read,
+    write: w.write,
+    testValue: () => '8',
+    proof: {
+      log: { marker: 'Setting Tax value:', match: (line, written) => line.includes(`Helartia, 0, ${written}`) },
+      readBack: { source: 'fake', why: 'test', read: w.read, boundMs: 50, pollMs: 0 },
+    },
+    ...overrides,
+  };
+}
+
+/** A fresh clock that moves 100 ms per reading, so a 50 ms bound runs out after one poll. */
+function timed() {
+  let t = -100;
+  return { now: () => (t += 100), sleep: noSleep };
+}
+
+describe('runRoundTrip', () => {
+  it('passes when the log line matches and both read-backs confirm', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    const w = world('7');
+    const lock = tempLock();
+    const result = await runRoundTrip(roundTrip(w), lock, factory, window.url);
+    expect(result).toMatchObject({
+      status: 'PASS',
+      readBack: 'CONFIRMED',
+      restoreReadBack: 'CONFIRMED',
+      restored: true,
+      logLine: 'Setting Tax value: Helartia, 0, 8',
+    });
+    expect(result.note).toBeUndefined();
+    expect(w.state.writes).toEqual(['8', '7']);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('restores after a write that throws', async () => {
+    const w = world('7');
+    const write = jest.fn(async (v: string) => {
+      if (v === '8') throw new Error('write rejected');
+      await w.write(v);
+    });
+    const lock = tempLock();
+    const result = await runRoundTrip(roundTrip(w, { write }), lock, factory, window.url);
+    expect(result.status).toBe('FAIL');
+    expect(result.note).toBe('write rejected');
+    expect(write).toHaveBeenLastCalledWith('7');
+    expect(result.restored).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('restores after a proof that fails', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue(null);
+    const w = world('7');
+    const lock = tempLock();
+    const result = await runRoundTrip(roundTrip(w), lock, factory, window.url);
+    expect(result.status).toBe('FAIL');
+    expect(result.note).toMatch(/never reached the object/);
+    expect(w.state.writes).toEqual(['8', '7']);
+    expect(result.restored).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails a log line that contains the prefix but fails match', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Elsewhere, 0, 8');
+    const result = await runRoundTrip(roundTrip(world('7')), tempLock(), factory, window.url);
+    expect(result.status).toBe('FAIL');
+    expect(result.logLine).toBeNull();
+    expect(result.note).toMatch(/never reached the object/);
+  });
+
+  it('hands awaitMarker a proof that requires both the marker and the match', async () => {
+    const spy = jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    await runRoundTrip(roundTrip(world('7')), tempLock(), factory, window.url);
+    const proof = spy.mock.calls[0][1] as liveLog.LogProof;
+    expect(proof.marker).toBe('Setting Tax value:');
+    expect(proof.match?.('Setting Tax value: Helartia, 0, 8')).toBe(true);
+    expect(proof.match?.('Setting Tax value: Elsewhere, 0, 8')).toBe(false);
+    expect(proof.match?.('Setting Min Wage: Helartia, 0, 8')).toBe(false);
+  });
+
+  it('fails when the log line is present but the read-back never shows the written value within boundMs', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    const w = world('7');
+    // The server logs the line, then refuses the write: the value never moves.
+    const write = jest.fn(async () => undefined);
+    const lock = tempLock();
+    const result = await runRoundTrip(roundTrip(w, { write }), lock, factory, window.url, timed());
+    expect(result.status).toBe('FAIL');
+    expect(result.readBack).toBe('UNCONFIRMED');
+    expect(result.logLine).toBe('Setting Tax value: Helartia, 0, 8');
+    expect(result.note).toMatch(/read-back never showed "8" within 50 ms \(last "7", fake\)/);
+    expect(result.restored).toBe(true);
+  });
+
+  it('passes when the read-back reaches the value on a later poll', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    const w = world('7');
+    const lagging = ['7', '7'];
+    const read = jest.fn(async () => (lagging.length > 0 && w.state.writes.length === 1 ? lagging.shift() : w.state.value));
+    const sleep = jest.fn(noSleep);
+    const spec = roundTrip(w);
+    spec.proof.readBack = { ...spec.proof.readBack, read, boundMs: 1_000, pollMs: 7 };
+    const result = await runRoundTrip(spec, tempLock(), factory, window.url, { now: clock([0]), sleep });
+    expect(result.status).toBe('PASS');
+    expect(result.readBack).toBe('CONFIRMED');
+    expect(sleep).toHaveBeenCalledWith(7);
+  });
+
+  it('refuses a spec whose member has a marker but no log part, before any write', async () => {
+    const w = world('7');
+    const lock = tempLock();
+    const spec = roundTrip(w);
+    spec.proof = { readBack: spec.proof.readBack };
+    await expect(runRoundTrip(spec, lock, factory, window.url)).rejects.toThrow(/no log part/);
+    expect(w.write).not.toHaveBeenCalled();
+    expect(w.read).not.toHaveBeenCalled();
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('refuses a log marker that differs from LOG_MARKERS, before any write', async () => {
+    const w = world('7');
+    const spec = roundTrip(w);
+    spec.proof = { ...spec.proof, log: { marker: 'Setting' } };
+    await expect(runRoundTrip(spec, tempLock(), factory, window.url)).rejects.toThrow(/cited marker/);
+    expect(w.write).not.toHaveBeenCalled();
+  });
+
+  it('refuses to write when the original is unreadable', async () => {
+    const w = world(undefined);
+    const lock = tempLock();
+    await expect(runRoundTrip(roundTrip(w), lock, factory, window.url)).rejects.toThrow(/nothing to restore to/);
+    expect(w.write).not.toHaveBeenCalled();
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('accepts a member with no marker on read-back alone', async () => {
+    const spy = jest.spyOn(liveLog, 'awaitMarker');
+    const opened = jest.fn(factory);
+    const w = world('7');
+    const spec = roundTrip(w, { member: 'RDOPayOff' });
+    spec.proof = { readBack: spec.proof.readBack };
+    const result = await runRoundTrip(spec, tempLock(), opened, window.url);
+    expect(result.status).toBe('PASS');
+    expect(result.logLine).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+    expect(opened).not.toHaveBeenCalled();
+  });
+
+  it('records the pending restore before the write and clears it only after the restore read-back matched', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    const w = world('7');
+    const lock = tempLock();
+    const seen: { key?: string; what: string }[][] = [];
+    const write = jest.fn(async (v: string) => {
+      seen.push(lock.read().pendingRestores.map(p => ({ key: p.key, what: p.what })));
+      await w.write(v);
+    });
+    await runRoundTrip(roundTrip(w, { write, restoreRecord: { x: 1, y: 2 } }), lock, factory, window.url);
+    expect(seen[0]).toHaveLength(1);
+    expect(seen[0][0].key).toMatch(/^RDOSetTaxValue:[0-9a-f-]{36}$/);
+    expect(seen[0][0].what).toBe('Helartia tax row 0 — put back "7"');
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('keeps the pending restore when the restore read-back never reaches the original', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    const w = world('7');
+    // The restore is acknowledged but the value stays at the test value.
+    const restore = jest.fn(async () => undefined);
+    const lock = tempLock();
+    const result = await runRoundTrip(roundTrip(w, { restore }), lock, factory, window.url, timed());
+    expect(restore).toHaveBeenCalledWith('7');
+    expect(result.status).toBe('FAIL');
+    expect(result.restored).toBe(false);
+    expect(result.restoreReadBack).toBe('UNCONFIRMED');
+    expect(result.note).toMatch(/restore not confirmed: read-back still shows "8" — the world is left dirty/);
+    expect(lock.read().pendingRestores).toHaveLength(1);
+    expect(lock.read().pendingRestores[0].originalValue).toBe('7');
+  });
+
+  it('keeps the pending restore when the restore read-back throws', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    const w = world('7');
+    const read = jest.fn(async () => {
+      if (w.state.writes.length === 2) throw new Error('read failed');
+      return w.state.value;
+    });
+    const spec = roundTrip(w);
+    spec.proof.readBack = { ...spec.proof.readBack, read };
+    const lock = tempLock();
+    const result = await runRoundTrip(spec, lock, factory, window.url);
+    expect(result.restored).toBe(false);
+    expect(result.note).toMatch(/restore not confirmed: read-back still shows "\(absent\)"/);
+    expect(lock.read().pendingRestores).toHaveLength(1);
+  });
+
+  it('reports a restore that throws as failed and keeps the pending restore', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    const restore = jest.fn(async () => {
+      throw new Error('restore rejected');
+    });
+    const lock = tempLock();
+    const result = await runRoundTrip(roundTrip(world('7'), { restore }), lock, factory, window.url);
+    expect(result.status).toBe('FAIL');
+    expect(result.restoreReadBack).toBe('UNCONFIRMED');
+    expect(result.note).toMatch(/restore failed — the world is left dirty/);
+    expect(lock.read().pendingRestores).toHaveLength(1);
+  });
+
+  it('uses spec.restore when given', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    const w = world('7');
+    const restore = jest.fn(async (v: string) => {
+      w.state.restores.push(v);
+      w.state.value = v;
+    });
+    const result = await runRoundTrip(roundTrip(w, { restore }), tempLock(), factory, window.url);
+    expect(result.status).toBe('PASS');
+    expect(w.state.writes).toEqual(['8']);
+    expect(w.state.restores).toEqual(['7']);
+  });
+
+  it('compares through normalise, for a documented server quantisation', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8.4');
+    const w = world('7');
+    const write = jest.fn(async (v: string) => {
+      w.state.writes.push(v);
+      w.state.value = String(Math.round(Number(v)));
+    });
+    const spec = roundTrip(w, { write, testValue: () => '8.4' });
+    spec.proof.readBack = { ...spec.proof.readBack, normalise: v => String(Math.round(Number(v))) };
+    const result = await runRoundTrip(spec, tempLock(), factory, window.url);
+    expect(result.status).toBe('PASS');
+    expect(result.written).toBe('8.4');
+  });
+
+  it('truncates a long original in the pending restore label but keeps it whole in originalValue', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    const long = 'A'.repeat(200);
+    const w = world(long);
+    const lock = tempLock();
+    const labels: { what: string; originalValue: string }[] = [];
+    const write = jest.fn(async (v: string) => {
+      labels.push(...lock.read().pendingRestores);
+      await w.write(v);
+    });
+    await runRoundTrip(roundTrip(w, { write }), lock, factory, window.url);
+    expect(labels[0].what.length).toBeLessThan(120);
+    expect(labels[0].what.endsWith('…"')).toBe(true);
+    expect(labels[0].originalValue).toBe(long);
   });
 });
 

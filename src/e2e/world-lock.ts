@@ -16,19 +16,29 @@ import * as path from 'path';
 import { WORLD_STATE_DIR } from './config';
 
 export interface PendingRestore {
-  /** Human description used in the dirty-world report. */
+  /** Unique per round trip — what `clearPendingRestore` keys on. */
+  key: string;
+  /**
+   * Names the literal undo a human can perform: the town or facility, the id / row /
+   * rating, and the original value. Used in the dirty-world report.
+   */
   what: string;
-  x: number;
-  y: number;
-  propertyName: string;
+  /** Anything the restore needs; a binary original is base64-encoded. */
   originalValue: string;
+  // Building-property entries keep these so the dirty-world report reads as before.
+  x?: number;
+  y?: number;
+  propertyName?: string;
   additionalParams?: Record<string, string>;
 }
+
+/** What a lock file may hold — an entry written before `key` existed has none. */
+export type StoredPendingRestore = Omit<PendingRestore, 'key'> & { key?: string };
 
 export interface WorldLockFile {
   holder: { pid: number; branch: string; startedAt: string } | null;
   /** Writes issued but not yet restored. Non-empty on release means the world is dirty. */
-  pendingRestores: PendingRestore[];
+  pendingRestores: StoredPendingRestore[];
   /** Set when a run ended with pending restores. Only a human clears this. */
   dirty: boolean;
   dirtySince?: string;
@@ -112,12 +122,13 @@ export class WorldLock {
     this.write(lock);
   }
 
-  /** Drop a pending restore once the value is back where it started. */
-  clearPendingRestore(x: number, y: number, propertyName: string): void {
+  /**
+   * Drop a pending restore once the value is back where it started. A keyless legacy entry
+   * is never cleared here — it only exists on a dirty lock, which a human clears.
+   */
+  clearPendingRestore(key: string): void {
     const lock = this.read();
-    lock.pendingRestores = lock.pendingRestores.filter(
-      p => !(p.x === x && p.y === y && p.propertyName === propertyName),
-    );
+    lock.pendingRestores = lock.pendingRestores.filter(p => p.key !== key);
     this.write(lock);
   }
 

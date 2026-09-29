@@ -249,10 +249,10 @@ L3  LIVE browser smoke        Playwright MCP, SPO_test3 / Crazz       pixels onl
 `ci.yml` triggers on `pull_request`, so a branch with no PR has no CI run for its sha and the
 worker replays the entire Jest suite on the exclusive bench — the slowest path, which has
 already killed a gateway mid-job. **Only the worker attests**; `npm run gate:local` is evidence
-for reading, never a merge unblock. **A crash is a failure, but silence is not a pass**: a
-mutation is proven by the `FIVEMODELSERVER/Survival` log line, not by a `success: true`
-response (`OB-28`); a lagging read-back is expected (`OB-29`) and does not fail a probe, a
-missing log line does. Three attempts maximum, each naming a different root cause. Full rules:
+for reading, never a merge unblock. **A crash is a failure, but silence is not a pass**: the
+`FIVEMODELSERVER/Survival` log line proves receipt, not a `success: true` response (`OB-28`),
+and the read-back proves the change; a lag (`OB-29`) is waited out up to the spec's bound, and
+a read-back that never shows the value FAILs, as does a missing log line. Three attempts maximum, each naming a different root cause. Full rules:
 [doc/E2E-POLICY.md](doc/E2E-POLICY.md), [doc/bench-worker.md](doc/bench-worker.md). Live server
 logs (open IIS listing, `http://158.69.153.134/logs/`) prove what happened; reading one is not
 probing the server — `doc/E2E-POLICY.md` §5.
