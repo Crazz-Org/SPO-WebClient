@@ -6,6 +6,7 @@ import type { WsMessage, FavoritesItem, WsRespResumeSession } from '@/shared/typ
 import type { MailMessageFull, MailMessageHeader, NewspaperBoard } from '@/shared/types/domain-types';
 import {
   FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum, replyHeaders,
+  otherPublicityLevel, publicityLogMatches, taxLogMatches,
   type Flow, type FlowResult,
 } from './flows';
 import { buildReplyHeaders } from '@/client/store/mail-store';
@@ -62,7 +63,8 @@ describe('the catalogue', () => {
     expect(mutating).toEqual(
       [
         'autoconnection-roundtrip', 'favorites-folders', 'favorites-roundtrip', 'mail-drafts', 'mail-reply',
-        'mail-roundtrip', 'mail-send-from-draft', 'policy-roundtrip', 'politics-write', 'zoning-alert-read',
+        'mail-roundtrip', 'mail-send-from-draft', 'policy-roundtrip', 'politics-write', 'publicity-roundtrip',
+        'town-min-wage', 'vote-roundtrip', 'zoning-alert-read',
       ],
     );
   });
@@ -530,6 +532,46 @@ describe('the politics-read flow', () => {
     const result = await flowByName('politics-read').run(ctx);
     expect(result.status).toBe('FAIL');
   });
+
+  function politicsPayload(mayorName: string, ratings: number) {
+    jest.spyOn(session, 'login').mockResolvedValue(
+      stubSession(msg =>
+        msg.type === WsMessageType.REQ_POLITICS_DATA
+          ? {
+              type: WsMessageType.RESP_POLITICS_DATA,
+              data: {
+                mayorName,
+                popularRatings: Array.from({ length: ratings }, (_, i) => ({ name: `r${i}`, value: 50 })),
+                ifelRatings: [],
+                tycoonsRatings: [],
+              },
+            }
+          : undefined,
+      ),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+  }
+
+  it.each(['Mayor of Helartia', 'spo_test3', 'SPO_test3'])("accepts %s as SPO_test3's office", async name => {
+    politicsPayload(name, 2);
+    const result = await flowByName('politics-read').run(ctx);
+    expect(result.status).toBe('PASS');
+  });
+
+  it('fails when the ruler is someone else', async () => {
+    politicsPayload('Crazz', 2);
+    const result = await flowByName('politics-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)).toMatchObject({ what: "mayorName names SPO_test3's office", detail: 'Crazz' });
+  });
+
+  it('fails when no rating is listed', async () => {
+    politicsPayload('SPO_test3', 0);
+    const result = await flowByName('politics-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toBe('ratings are listed');
+  });
 });
 
 const helartia = {
@@ -587,7 +629,7 @@ describe('politics-write', () => {
     const result = await flowByName('politics-write').run(ctx);
 
     expect(result.status).toBe('PASS');
-    expect(result.probes).toHaveLength(1);
+    expect(result.probes).toHaveLength(2);
     const spec = runProbe.mock.calls[0][1];
     expect(spec).toMatchObject({
       x: 100,
@@ -597,6 +639,75 @@ describe('politics-write', () => {
       additionalParams: { index: '0' },
     });
     expect(spec.testValue('7')).toBe('8');
+    const subsidy = runProbe.mock.calls[1][1];
+    expect(subsidy).toMatchObject({ original: '7', writeProperty: 'RDOSetTaxValue', additionalParams: { index: '0' } });
+    expect(subsidy.testValue('7')).toBe('-10');
+  });
+
+  it('does not attempt the subsidy when the rate probe did not restore', async () => {
+    governedTownHall(true, '7');
+    jest.spyOn(liveLog, 'findCurrentSurvivalLog').mockResolvedValue('http://logs/S.log');
+    const runProbe = jest
+      .spyOn(probeModule, 'runProbe')
+      .mockResolvedValue({ ...passingProbe, status: 'FAIL', restored: false });
+
+    const result = await flowByName('politics-write').run(ctx);
+
+    expect(runProbe).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('FAIL');
+    expect(result.unproven.join()).toMatch(/subsidy probe — not attempted/);
+  });
+
+  it('records a subsidy probe that threw', async () => {
+    governedTownHall(true, '7');
+    jest.spyOn(liveLog, 'findCurrentSurvivalLog').mockResolvedValue('http://logs/S.log');
+    jest
+      .spyOn(probeModule, 'runProbe')
+      .mockResolvedValueOnce(passingProbe)
+      .mockRejectedValueOnce(new Error('socket died'));
+
+    const result = await flowByName('politics-write').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[1]).toMatchObject({ what: 'Helartia tax row 0 subsidy', status: 'FAIL', note: 'socket died' });
+  });
+
+  it("restores the subsidy to the rate probe's original even when the cache still shows the test value", async () => {
+    governedTownHall(true, '7');
+    // The flow's own read, then the rate probe (original, poll, restore poll), then a stale
+    // '8' the facility cache still serves — then whatever was written last.
+    const scripted = ['7', '7', '8', '7', '8'];
+    let last = '7';
+    jest.spyOn(session, 'readSectionGroups').mockImplementation(async () => ({
+      townTaxes: [
+        { name: 'Tax0Id', value: '3' },
+        { name: 'Tax0Percent', value: scripted.length > 0 ? (scripted.shift() as string) : last },
+      ],
+    }));
+    const writes: string[] = [];
+    jest.spyOn(session, 'setBuildingProperty').mockImplementation(async (_s, _x, _y, _p, value) => {
+      writes.push(value);
+      last = value;
+      return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: value } as never;
+    });
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue({ url: 'u', offset: 0, openedAt: 'now' });
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      const line = `12:00:00 Setting Tax value: Helartia, 3, ${last}`;
+      return typeof proof === 'object' && (proof.match?.(line) ?? true) ? line : null;
+    });
+    const lock = cleanLock();
+
+    const result = await flowByName('politics-write').run({
+      lock,
+      survivalLogUrl: 'u',
+      now: () => 0,
+      sleep: async () => undefined,
+    });
+
+    expect(writes).toEqual(['8', '7', '-10', '7']);
+    expect(result.probes.map(p => p.status)).toEqual(['PASS', 'PASS']);
+    expect(result.status).toBe('PASS');
+    expect(lock.read().pendingRestores).toEqual([]);
   });
 
   it('refuses to write when the account cannot govern the town hall', async () => {
@@ -639,6 +750,357 @@ describe('politics-write', () => {
 
     expect(find).not.toHaveBeenCalled();
     expect(runProbe.mock.calls[0][4]).toBe('http://given/S.log');
+  });
+});
+
+describe('taxLogMatches', () => {
+  it('requires the town, the TaxId and the value when the TaxId is known', () => {
+    expect(taxLogMatches('1:00 Setting Tax value: Helartia, 3, -10', 'Helartia', '3', '-10')).toBe(true);
+    expect(taxLogMatches('1:00 Setting Tax value: Helartia, 4, -10', 'Helartia', '3', '-10')).toBe(false);
+    expect(taxLogMatches('1:00 Setting Tax value: Helartia, 3, -100', 'Helartia', '3', '-10')).toBe(false);
+  });
+
+  it('requires the town and the value when the TaxId is unknown', () => {
+    expect(taxLogMatches('1:00 Setting Tax value: Helartia, 9, -10', 'Helartia', undefined, '-10')).toBe(true);
+    expect(taxLogMatches('1:00 Setting Tax value: Other, 9, -10', 'Helartia', undefined, '-10')).toBe(false);
+    expect(taxLogMatches('1:00 Setting Tax value: Helartia, 9, 7', 'Helartia', undefined, '-10')).toBe(false);
+  });
+});
+
+/** Time that jumps past any read-back bound on every look, and a sleep that returns at once. */
+function fastClock(): { now: () => number; sleep: () => Promise<void> } {
+  let t = 0;
+  return { now: () => (t += 1_000_000_000), sleep: async () => undefined };
+}
+
+const logWindow = { url: 'u', offset: 0, openedAt: 'now' };
+
+describe('town-min-wage', () => {
+  /** A town hall whose `hiMinSalary` is `wage`; `apply` decides whether a write moves it. */
+  function minWageHall(opts: {
+    canGovern?: boolean;
+    wage?: string;
+    apply?: (value: string, call: number) => boolean;
+    failWrite?: number;
+    logLine?: (written: string) => string | null;
+  }) {
+    governedTownHall(opts.canGovern ?? true, undefined);
+    let wage = opts.wage;
+    jest.spyOn(session, 'readSectionGroups').mockImplementation(async () =>
+      wage === undefined ? {} : { townJobs: [{ name: 'hiMinSalary', value: wage }] },
+    );
+    const writes: { value: string; params?: Record<string, string>; property: string }[] = [];
+    jest.spyOn(session, 'setBuildingProperty').mockImplementation(async (_s, _x, _y, property, value, params) => {
+      writes.push({ value, params, property });
+      if (opts.failWrite === writes.length) throw new Error('write rejected');
+      if (opts.apply?.(value, writes.length) ?? true) wage = value;
+      return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: value } as never;
+    });
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      const line = opts.logLine ? opts.logLine(wage ?? '') : `12:00:00 Setting Min Wage: Helartia, 0, ${wage ?? ''}`;
+      if (line === null) return null;
+      return typeof proof === 'object' && (proof.match?.(line) ?? true) ? line : null;
+    });
+    return writes;
+  }
+
+  const run = (lock = cleanLock()) =>
+    flowByName('town-min-wage').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+  it('drives kind 0 of the town hall and passes on the log line and the read-back', async () => {
+    const writes = minWageHall({ wage: '40' });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(writes).toEqual([
+      { value: '41', params: { levelIndex: '0' }, property: 'RDOSetMinSalaryValue' },
+      { value: '40', params: { levelIndex: '0' }, property: 'RDOSetMinSalaryValue' },
+    ]);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('passes the nudge and a log match on town, kind and value to the probe', async () => {
+    governedTownHall(true, undefined);
+    jest.spyOn(session, 'readSectionGroups').mockResolvedValue({ townJobs: [{ name: 'hiMinSalary', value: '40' }] });
+    const runProbe = jest.spyOn(probeModule, 'runProbe').mockRejectedValue(new Error('socket died'));
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toBe('socket died');
+    const spec = runProbe.mock.calls[0][1];
+    expect(spec).toMatchObject({ groupId: 'townJobs', readProperty: 'hiMinSalary', additionalParams: { levelIndex: '0' } });
+    expect(spec.testValue('40')).toBe(nudge('40'));
+    const match = spec.logMatch as (line: string, written: string) => boolean;
+    expect(match('1:00 Setting Min Wage: Helartia, 0, 8', '8')).toBe(true);
+    expect(match('1:00 Setting Min Wage: Other, 0, 8', '8')).toBe(false);
+    expect(match('1:00 Setting Min Wage: Helartia, 1, 8', '8')).toBe(false);
+    expect(match('1:00 Setting Min Wage: Helartia, 0, 9', '8')).toBe(false);
+  });
+
+  it('writes nothing when the account cannot govern the town hall', async () => {
+    const writes = minWageHall({ canGovern: false, wage: '40' });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(writes).toEqual([]);
+  });
+
+  it('writes nothing when the minimum wage is unreadable', async () => {
+    const writes = minWageHall({ wage: undefined });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(writes).toEqual([]);
+  });
+
+  it('fails a log line with no matching read-back, and still restores', async () => {
+    // The line is there, but the value never moves.
+    const writes = minWageHall({ wage: '40', apply: () => false, logLine: () => '1:00 Setting Min Wage: Helartia, 0, 41' });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/read-back never showed "41"/);
+    expect(writes.map(w => w.value)).toEqual(['41', '40']);
+  });
+
+  it('restores after a failed write', async () => {
+    const writes = minWageHall({ wage: '40', failWrite: 1 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(writes.map(w => w.value)).toEqual(['41', '40']);
+    expect(result.probes[0].restored).toBe(true);
+  });
+
+  it('restores after a failed proof (no log line)', async () => {
+    const writes = minWageHall({ wage: '40', logLine: () => null });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/no model-server log line/);
+    expect(writes.map(w => w.value)).toEqual(['41', '40']);
+  });
+});
+
+describe('publicity-roundtrip', () => {
+  it('writes another multiple of 25 in 0..100 for every level the client emits', () => {
+    for (const original of ['0', '25', '50', '75', '100']) {
+      const next = otherPublicityLevel(original);
+      expect(next).not.toBe(original);
+      expect([0, 25, 50, 75, 100]).toContain(Number(next));
+    }
+  });
+
+  it.each(['30', '', 'abc', '125', '-25'])('refuses to pick a level from "%s"', original => {
+    expect(() => otherPublicityLevel(original)).toThrow(/not one of 0\/25\/50\/75\/100/);
+  });
+
+  it('matches only the line carrying the RatingId and the value', () => {
+    expect(publicityLogMatches('1:00 Setting town politics publicity: 5, 25', '5', '25')).toBe(true);
+    expect(publicityLogMatches('1:00 Setting town politics publicity: 6, 25', '5', '25')).toBe(false);
+    expect(publicityLogMatches('1:00 Setting town politics publicity: 15, 25', '5', '25')).toBe(false);
+    expect(publicityLogMatches('1:00 Setting town politics publicity: 5, 50', '5', '25')).toBe(false);
+  });
+
+  function publicityHall(opts: {
+    rows?: { id: string; name: string; level: number }[];
+    refuse?: number;
+    logRatingId?: string;
+  }) {
+    const rows = opts.rows ?? [{ id: '5', name: 'Education', level: 50 }];
+    const writes: { ratingId: string; value: number }[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(
+      stubSession(msg => {
+        if (msg.type === WsMessageType.REQ_POLITICS_DATA) {
+          return { type: WsMessageType.RESP_POLITICS_DATA, data: { publicity: rows.map(r => ({ ...r })) } };
+        }
+        if (msg.type === WsMessageType.REQ_POLITICS_SET_PUBLICITY) {
+          const m = msg as unknown as { ratingId: string; value: number };
+          writes.push({ ratingId: m.ratingId, value: m.value });
+          if (opts.refuse === writes.length) {
+            return { type: WsMessageType.RESP_POLITICS_SET_PUBLICITY, success: false, message: 'no' };
+          }
+          const row = rows.find(r => r.id === m.ratingId);
+          if (row) row.level = m.value;
+          return { type: WsMessageType.RESP_POLITICS_SET_PUBLICITY, success: true };
+        }
+        return undefined;
+      }),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      const last = writes[writes.length - 1];
+      const line = `12:00:00 Setting town politics publicity: ${opts.logRatingId ?? last?.ratingId}, ${last?.value}`;
+      return typeof proof === 'object' && (proof.match?.(line) ?? true) ? line : null;
+    });
+    return writes;
+  }
+
+  const run = (lock = cleanLock()) =>
+    flowByName('publicity-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+  it('writes another level, proves it, and restores the original', async () => {
+    const writes = publicityHall({});
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(writes).toEqual([
+      { ratingId: '5', value: 25 },
+      { ratingId: '5', value: 50 },
+    ]);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails a line that carries another RatingId, and still restores', async () => {
+    const writes = publicityHall({ logRatingId: '6' });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/no model-server log line/);
+    expect(writes.map(w => w.value)).toEqual([25, 50]);
+  });
+
+  it('fails a refused write, and still writes the restore', async () => {
+    const writes = publicityHall({ refuse: 1 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/SET_PUBLICITY refused/);
+    expect(writes.map(w => w.value)).toEqual([25, 50]);
+  });
+
+  it('writes nothing when the original is not a level the client emits', async () => {
+    const lock = cleanLock();
+    const writes = publicityHall({ rows: [{ id: '5', name: 'Education', level: 30 }] });
+    const result = await run(lock);
+    expect(result.status).toBe('FAIL');
+    expect(writes).toEqual([]);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails when no publicity row is listed', async () => {
+    const writes = publicityHall({ rows: [] });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions[0]).toMatchObject({ what: 'a publicity row is listed', ok: false });
+    expect(writes).toEqual([]);
+  });
+});
+
+describe('vote-roundtrip', () => {
+  function voteHall(opts: {
+    prior?: string;
+    candidates?: string[];
+    mayor?: string;
+    /** Whether the server applies the n-th vote (1-based). */
+    apply?: (call: number) => boolean;
+    /** Whether the n-th vote prints its log line. */
+    logs?: (call: number) => boolean;
+  }) {
+    let current = opts.prior;
+    const votes: string[] = [];
+    const lines: string[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(
+      stubSession(msg => {
+        if (msg.type === WsMessageType.REQ_POLITICS_DATA) {
+          return {
+            type: WsMessageType.RESP_POLITICS_DATA,
+            data: {
+              mayorName: opts.mayor ?? 'SPO_test3',
+              campaigns: (opts.candidates ?? []).map(candidateName => ({ candidateName, rating: 0, prestige: 0, photoUrl: '' })),
+            },
+          };
+        }
+        if (msg.type === WsMessageType.REQ_POLITICS_VOTE) {
+          const choice = (msg as unknown as { candidateName: string }).candidateName;
+          votes.push(choice);
+          if (opts.logs?.(votes.length) ?? true) lines.push(`1/1/2026 12:00:00 Voting: SPO_test3 by ${choice}`);
+          if (opts.apply?.(votes.length) ?? true) current = choice;
+          return { type: WsMessageType.RESP_POLITICS_VOTE, success: true };
+        }
+        return undefined;
+      }),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+    jest.spyOn(session, 'resolveVisualClass').mockResolvedValue('7010');
+    jest.spyOn(session, 'readSectionGroups').mockImplementation(async () => ({
+      votes: current === undefined ? [] : [{ name: 'VoteOf', value: current }],
+    }));
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(
+      async (_w, proof) => lines.find(l => typeof proof === 'object' && (proof.match?.(l) ?? true)) ?? null,
+    );
+    return votes;
+  }
+
+  const run = (lock = cleanLock()) => flowByName('vote-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+  it('votes for another candidate, then re-votes the prior choice', async () => {
+    const votes = voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'] });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(votes).toEqual(['Bob', 'Alice']);
+    expect(result.assertions.find(a => a.what === 'the restore vote reached the object')?.ok).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('accepts the current mayor as the prior choice, compared case-insensitively', async () => {
+    const votes = voteHall({ prior: 'spo_test3', candidates: ['Bob'], mayor: 'SPO_test3' });
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(votes).toEqual(['Bob', 'spo_test3']);
+  });
+
+  it('never votes without a prior vote', async () => {
+    const votes = voteHall({ prior: undefined, candidates: ['Alice', 'Bob'] });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/no readable prior vote.*CurrBlock/);
+    expect(votes).toEqual([]);
+  });
+
+  it('never votes when the prior is stale — no campaign now and not the mayor', async () => {
+    const votes = voteHall({ prior: 'Carol', candidates: ['Alice', 'Bob'], mayor: 'SPO_test3' });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/stale prior vote "Carol"/);
+    expect(votes).toEqual([]);
+  });
+
+  it('never votes when no other candidate exists', async () => {
+    const votes = voteHall({ prior: 'SPO_test3', candidates: [], mayor: 'SPO_test3' });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/no other candidate/);
+    expect(votes).toEqual([]);
+  });
+
+  it('fails when RDOVoteOf still shows the prior after the change vote, and still re-votes', async () => {
+    const votes = voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'], apply: () => false });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/read-back never showed "Bob"/);
+    expect(votes).toEqual(['Bob', 'Alice']);
+  });
+
+  it('fails when the restore vote prints no log line', async () => {
+    const votes = voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'], logs: call => call === 1 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => a.what === 'the restore vote reached the object')?.ok).toBe(false);
+    expect(votes).toEqual(['Bob', 'Alice']);
+  });
+
+  it('fails when the change vote prints no log line', async () => {
+    voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'], logs: () => false });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/no model-server log line/);
+  });
+
+  it('records a round trip that threw', async () => {
+    voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'] });
+    jest.spyOn(liveLog, 'openLogWindow').mockRejectedValue(new Error('log host vanished'));
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0]).toMatchObject({ member: 'RDOVote', note: 'log host vanished' });
   });
 });
 

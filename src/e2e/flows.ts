@@ -27,6 +27,8 @@ import type {
   WsRespNewspaperIssue,
   WsRespNewspaperIssues,
   WsRespPoliticsData,
+  WsRespPoliticsSetPublicity,
+  WsRespPoliticsVote,
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuDirectory,
   WsRespSearchMenuHome,
@@ -72,6 +74,7 @@ import type {
   MailMessageFull,
   MailMessageHeader,
   MapBuilding,
+  PoliticsData,
   RankingCategory,
 } from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
@@ -347,16 +350,13 @@ const politicsRead: Flow = {
       const town = await findTown(session, GOVERNED_TOWN);
       assertions.check('the governed town is still listed', town.name === GOVERNED_TOWN, town.name);
 
-      const politics = await session.driver.request<WsRespPoliticsData>(
-        {
-          type: WsMessageType.REQ_POLITICS_DATA,
-          townName: town.name,
-          buildingX: town.x,
-          buildingY: town.y,
-        },
-        WsMessageType.RESP_POLITICS_DATA,
-      );
-      assertions.check('politics data returned', Boolean(politics.data));
+      const data = await readPolitics(session, town);
+      assertions.check('politics data returned', Boolean(data));
+      const ratingCount =
+        (data?.popularRatings ?? []).length + (data?.ifelRatings ?? []).length + (data?.tycoonsRatings ?? []).length;
+      assertions.check('ratings are listed', ratingCount > 0, `${ratingCount} rating row(s)`);
+      const mayorName = data?.mayorName ?? '';
+      assertions.check("mayorName names SPO_test3's office", holdsGovernedOffice(mayorName), mayorName);
       assertions.check('no gateway errors', session.driver.errors.length === 0);
       return report('politics-read', assertions, [], session);
     } finally {
@@ -371,7 +371,7 @@ const politicsRead: Flow = {
  */
 const politicsWrite: Flow = {
   name: 'politics-write',
-  what: 'round-trip probe on RDOSetTaxValue at the governed town hall',
+  what: 'round-trip probes on RDOSetTaxValue at the governed town hall: row-0 rate, then row-0 subsidy',
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -412,7 +412,356 @@ const politicsWrite: Flow = {
         probes.push(probeFailure(spec, err));
       }
       assertions.check('the probe proved the write reached the object', probes[0]?.status === 'PASS', probes[0]?.note);
+
+      // The subsidy restores to the rate probe's original, never to a value re-read now: the
+      // facility's cache (two-minute TTL, Kernel/Population.pas:1192) can still hand back the
+      // rate probe's test value. So it runs only when that original was confirmed.
+      const rate = probes[0];
+      if (rate?.restored === true) {
+        const taxId = propertyValue(taxes, 'townTaxes', 'Tax0Id');
+        const subsidy: ProbeSpec = {
+          ...spec,
+          what: `${town.name} tax row 0 subsidy`,
+          testValue: () => SUBSIDY_VALUE,
+          original: rate.original,
+          // Kernel/Population.pas:1254 — "Setting Tax value: <town>, <TaxId>, <value>".
+          logMatch: (line, written) => taxLogMatches(line, town.name, taxId, written),
+        };
+        try {
+          probes.push(
+            await runProbe(session, subsidy, ctx.lock, openLogWindow, url, { now: ctx.now, sleep: ctx.sleep }),
+          );
+        } catch (err: unknown) {
+          probes.push(probeFailure(subsidy, err));
+        }
+        assertions.check(
+          "the subsidy probe proved the write and restored the rate probe's original",
+          probes[1]?.status === 'PASS',
+          probes[1]?.note,
+        );
+      } else {
+        assertions.unproven(
+          'the subsidy probe',
+          "not attempted — the rate probe's restore did not read back, so its original is unconfirmed",
+        );
+      }
       return report('politics-write', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * What a subsidy writes: `TaxesTab.tsx` sends the literal `'-10'`, as Voyager does, and
+ * `Kernel/BasicTaxes.pas:247-250` stores it (`StoreToCache` then writes `Tax0Percent = -10`).
+ */
+const SUBSIDY_VALUE = '-10';
+
+/** The tax line's identifying fields — the town, the TaxId when the section served it, the value. */
+export function taxLogMatches(line: string, town: string, taxId: string | undefined, written: string): boolean {
+  const trimmed = line.trim();
+  if (taxId !== undefined) return trimmed.endsWith(`Setting Tax value: ${town}, ${taxId}, ${written}`);
+  return trimmed.includes(`Setting Tax value: ${town}, `) && trimmed.endsWith(`, ${written}`);
+}
+
+/** `REQ_POLITICS_DATA` for a town hall — the payload the Politics panel reads. */
+async function readPolitics(
+  session: LiveSession,
+  town: { name: string; x: number; y: number },
+): Promise<PoliticsData> {
+  const politics = await session.driver.request<WsRespPoliticsData>(
+    {
+      type: WsMessageType.REQ_POLITICS_DATA,
+      townName: town.name,
+      buildingX: town.x,
+      buildingY: town.y,
+    },
+    WsMessageType.RESP_POLITICS_DATA,
+  );
+  return politics.data;
+}
+
+/**
+ * Whether a ruler name is SPO_test3's office: the login name, or the role name a company
+ * switch installs — the two prongs `holdsOffice` (politics-handler.ts) applies, case-insensitively.
+ */
+export function holdsGovernedOffice(mayorName: string): boolean {
+  const name = mayorName.trim().toLowerCase();
+  return name === PRIMARY_ACCOUNT.username.toLowerCase() || name === `mayor of ${GOVERNED_TOWN}`.toLowerCase();
+}
+
+/**
+ * The town minimum wage — `TTownHall.RDOSetMinSalaryValue` (`Kernel/Population.pas:167`,
+ * body `:1292`, log `:1294`). The Capitol's variant (`Kernel/WorldPolitics.pas:265`) stays a
+ * capability exception (`PRESIDENT_MEMBERS`); this drives the town hall's.
+ */
+const townMinWage: Flow = {
+  name: 'town-min-wage',
+  what: 'round-trip probe on RDOSetMinSalaryValue (population kind 0) at the governed town hall',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const visualClass = await resolveVisualClass(session, town.x, town.y);
+      const details = await readBuildingDetails(session, town.x, town.y, visualClass);
+      assertions.check('the town hall is governable by this account', details.canGovern === true);
+      if (!details.canGovern) return report('town-min-wage', assertions, probes, session);
+
+      const jobs = await readSectionGroups(session, town.x, town.y, 'townJobs', visualClass);
+      const current = propertyValue(jobs, 'townJobs', 'hiMinSalary');
+      assertions.check('the minimum wage is readable', current !== undefined, current);
+      if (current === undefined) return report('town-min-wage', assertions, probes, session);
+
+      const spec: ProbeSpec = {
+        what: `${town.name} minimum wage, population kind 0 (hi)`,
+        member: 'RDOSetMinSalaryValue',
+        x: town.x,
+        y: town.y,
+        visualClass,
+        // hiMinSalary is MayorMinSalary, the town's own figure (Kernel/Population.pas:1219);
+        // the write invalidates the facility (:1300), so the read-back does not lag.
+        groupId: 'townJobs',
+        readProperty: 'hiMinSalary',
+        writeProperty: 'RDOSetMinSalaryValue',
+        // TOWN_JOBS_GROUP's mapping; building-property-handler.ts builds (levelIndex, value).
+        additionalParams: { levelIndex: '0' },
+        // 0..100 — inside the 255 clamp of Kernel/Population.pas:1299.
+        testValue: original => nudge(original),
+        logMatch: (line, written) => minWageLogMatches(line, town.name, written),
+      };
+
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      try {
+        probes.push(await runProbe(session, spec, ctx.lock, openLogWindow, url, { now: ctx.now, sleep: ctx.sleep }));
+      } catch (err: unknown) {
+        probes.push(probeFailure(spec, err));
+      }
+      assertions.check('the probe proved the write reached the object', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report('town-min-wage', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** `Kernel/Population.pas:1294` — "Setting Min Wage: <town>, <PopKind>, <value>"; kind 0 here. */
+export function minWageLogMatches(line: string, town: string, written: string): boolean {
+  return line.trim().endsWith(`Setting Min Wage: ${town}, 0, ${written}`);
+}
+
+const PUBLICITY_LEVELS = [0, 25, 50, 75, 100];
+
+/**
+ * Another publicity level than `original`. The reference client emits only 0/25/50/75/100
+ * (`mayorpub.asp:182-186`) and the default is 0 (`Kernel/Politics.pas:453`), so any other
+ * original is refused — before the round trip records or writes anything.
+ */
+export function otherPublicityLevel(original: string): string {
+  const parsed = Number(original);
+  if (original.trim() === '' || !PUBLICITY_LEVELS.includes(parsed)) {
+    throw new Error(
+      `publicity "${original}" is not one of 0/25/50/75/100 — the restore could not be exact, so nothing is written`,
+    );
+  }
+  return String(parsed >= 50 ? parsed - 25 : parsed + 25);
+}
+
+/** `Kernel/TownPolitics.pas:224` — "Setting town politics publicity: <RatingId>, <value>". */
+export function publicityLogMatches(line: string, ratingId: string, written: string): boolean {
+  return line.trim().endsWith(`Setting town politics publicity: ${ratingId}, ${written}`);
+}
+
+/** `TPoliticalTownHall.RDOSetPublicity` (`Kernel/TownPolitics.pas:220`) — town-scoped. */
+const publicityRoundTrip: Flow = {
+  name: 'publicity-roundtrip',
+  what: 'round trip on RDOSetPublicity for one rating at the governed town hall',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const data = await readPolitics(session, town);
+      const row = (data?.publicity ?? [])[0];
+      assertions.check('a publicity row is listed', row !== undefined, row ? `${row.name} (${row.id})` : 'none');
+      if (!row) return report('publicity-roundtrip', assertions, probes, session);
+
+      const ratingId = row.id;
+      const read = async (): Promise<string | undefined> => {
+        const level = (await readPolitics(session, town))?.publicity?.find(p => p.id === ratingId)?.level;
+        return level === undefined ? undefined : String(level);
+      };
+      const what = `${town.name} publicity for rating ${row.name} (${ratingId})`;
+      const member = 'RDOSetPublicity';
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      try {
+        probes.push(
+          await runRoundTrip(
+            {
+              what,
+              member,
+              read,
+              testValue: otherPublicityLevel,
+              write: async value => {
+                const resp = await session.driver.request<WsRespPoliticsSetPublicity>(
+                  {
+                    type: WsMessageType.REQ_POLITICS_SET_PUBLICITY,
+                    buildingX: town.x,
+                    buildingY: town.y,
+                    ratingId,
+                    value: Number(value),
+                  },
+                  WsMessageType.RESP_POLITICS_SET_PUBLICITY,
+                );
+                if (!resp.success) throw new Error(`SET_PUBLICITY refused: ${resp.message ?? 'no message'}`);
+              },
+              proof: {
+                log: {
+                  marker: LOG_MARKERS.RDOSetPublicity,
+                  match: (line, written) => publicityLogMatches(line, ratingId, written),
+                },
+                readBack: {
+                  source: `publicity[${ratingId}].level via REQ_POLITICS_DATA (mayorpub.asp's selected option)`,
+                  why:
+                    'the page reads 25*(RulerPublicity \\ 25) (mayorpub.asp:169) and the write ' +
+                    'invalidates the town hall cache (Kernel/TownPolitics.pas:231-232)',
+                  read,
+                  boundMs: TIMEOUTS.readBack,
+                },
+              },
+            },
+            ctx.lock,
+            openLogWindow,
+            url,
+            { now: ctx.now, sleep: ctx.sleep },
+          ),
+        );
+      } catch (err: unknown) {
+        probes.push(probeFailure({ what, member }, err));
+      }
+      assertions.check('the round trip proved the write and restored it', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report('publicity-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+const sameName = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * `TPoliticalTownHall.RDOVote` (`Kernel/TownPolitics.pas:395`, log `:400`). Data-gated: it
+ * votes only when a prior vote exists and still names a current candidate or the mayor, so
+ * the restore is a real vote and not a silent no-op (`Kernel/Politics.pas:916-933`).
+ */
+const voteRoundTrip: Flow = {
+  name: 'vote-roundtrip',
+  what: 'vote for another candidate, then re-vote the prior choice, at the governed town hall',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const voter = PRIMARY_ACCOUNT.username;
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const visualClass = await resolveVisualClass(session, town.x, town.y);
+      const data = await readPolitics(session, town);
+      const candidates = (data?.campaigns ?? []).map(c => c.candidateName).filter(n => n.trim() !== '');
+      const mayor = data?.mayorName ?? '';
+      const readVoteOf = async (): Promise<string | undefined> =>
+        propertyValue(await readSectionGroups(session, town.x, town.y, 'votes', visualClass), 'votes', 'VoteOf');
+
+      const prior = await readVoteOf();
+      if (prior === undefined || prior.trim() === '') {
+        assertions.unproven(
+          'the vote round trip',
+          `${voter} has no readable prior vote at ${town.name} — RDOVoteOf answered nothing, or the ` +
+            'gateway did not serve VoteOf (enrichVotesTab binds to CurrBlock, which no Town Hall ' +
+            'template requests); nothing written',
+        );
+        return report('vote-roundtrip', assertions, probes, session);
+      }
+      const choices = [...candidates, mayor].filter(n => n.trim() !== '');
+      if (!choices.some(n => sameName(n, prior))) {
+        assertions.unproven(
+          'the vote round trip',
+          `stale prior vote "${prior}": no campaign now and not the mayor (a town election deletes ` +
+            'campaigns but keeps Voter.Votes — Kernel/TownPolitics.pas:690, :744; ' +
+            'Kernel/Politics.pas:916-933); nothing written',
+        );
+        return report('vote-roundtrip', assertions, probes, session);
+      }
+      const other = choices.find(n => !sameName(n, prior));
+      if (other === undefined) {
+        assertions.unproven('the vote round trip', `no other candidate to vote for than "${prior}"; nothing written`);
+        return report('vote-roundtrip', assertions, probes, session);
+      }
+
+      const what = `${town.name} vote of ${voter} — prior choice ${prior}`;
+      const member = 'RDOVote';
+      // The choice ends the line (TownPolitics.pas:400), so "by Bob" never matches "by Bobby".
+      const votedBy = (line: string, choice: string): boolean =>
+        line.trim().toLowerCase().endsWith(`voting: ${voter} by ${choice}`.toLowerCase());
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      let restoreLine: string | null = null;
+      try {
+        // Opened before the change vote: the restore's line is the one naming the prior choice.
+        const restoreWindow = await openLogWindow(url);
+        const result = await runRoundTrip(
+          {
+            what,
+            member,
+            read: async () => prior,
+            testValue: () => other,
+            write: async value => {
+              const resp = await session.driver.request<WsRespPoliticsVote>(
+                {
+                  type: WsMessageType.REQ_POLITICS_VOTE,
+                  buildingX: town.x,
+                  buildingY: town.y,
+                  candidateName: value,
+                },
+                WsMessageType.RESP_POLITICS_VOTE,
+              );
+              if (resp.success === false) throw new Error(`VOTE refused: ${resp.message ?? 'no message'}`);
+            },
+            proof: {
+              // The voter in the match excludes the Capitol's identical line (WorldPolitics.pas:1822).
+              log: { marker: LOG_MARKERS.RDOVote, match: votedBy },
+              readBack: {
+                source: 'votes.VoteOf via the section read (enrichVotesTab, RDOVoteOf)',
+                why: 'RDOVoteOf is a live function (Kernel/TownPolitics.pas:47) with no cache in between',
+                read: readVoteOf,
+                normalise: v => v.trim().toLowerCase(),
+                boundMs: TIMEOUTS.logSettle,
+              },
+            },
+          },
+          ctx.lock,
+          openLogWindow,
+          url,
+          { now: ctx.now, sleep: ctx.sleep },
+        );
+        probes.push(result);
+        if (result.restored) {
+          restoreLine = await awaitMarker(
+            restoreWindow,
+            { marker: LOG_MARKERS.RDOVote, match: line => votedBy(line, prior) },
+            TIMEOUTS.logSettle,
+          );
+          assertions.check('the restore vote reached the object', restoreLine !== null, restoreLine ?? undefined);
+        }
+      } catch (err: unknown) {
+        probes.push(probeFailure({ what, member }, err));
+      }
+      assertions.check('the round trip proved the vote and restored it', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report('vote-roundtrip', assertions, probes, session);
     } finally {
       await logoff(session);
     }
@@ -2773,6 +3122,9 @@ export const FLOWS: Flow[] = [
   sessionResume,
   politicsRead,
   politicsWrite,
+  townMinWage,
+  publicityRoundTrip,
+  voteRoundTrip,
   buildingDetails,
   permissionNegative,
   mailRoundTrip,

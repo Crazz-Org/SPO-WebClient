@@ -35,6 +35,8 @@ export const NIGHTLY_ONLY: Record<string, string> = {
   'newspaper-read':
     'data-gated: planitia keeps no newspaper issue and the bench cannot create one (News.pas:986, #1009) — a required run could only end UNPROVEN, which fails the gate',
   'warehouse-role-reading': 'a reading, recorded and never asserted (#1006) — nothing a gate could require',
+  'vote-roundtrip':
+    'data-gated: a prior vote cannot be seeded (a vote with no prior cannot be retracted) and goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
 };
 
 /**
@@ -210,8 +212,8 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.
     test: /^src\/server\/session\/politics-handler\.ts$|^src\/server\/ws-handlers\/politics-handlers\.ts$/,
-    flows: ['politics-read', 'politics-write'],
-    why: 'the governance handlers changed — the flows that read and write the town hall',
+    flows: ['politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip'],
+    why: 'the governance handlers changed — the flows that read and write the town hall (tax, minimum wage, publicity)',
   },
   {
     // Before the fallbacks below: the Empire panel's profile & finance reads.
@@ -223,8 +225,8 @@ export const ROUTES: RouteRule[] = [
     // Before the fallbacks below. permission-negative's one request is REQ_BUILDING_DETAILS,
     // and it asserts the canGovern that grantAccess in building-details-handler.ts computes.
     test: /^src\/server\/session\/building-(details|property)-handler\.ts$/,
-    flows: ['building-details', 'politics-write', 'permission-negative'],
-    why: 'the facility details/property handlers changed — the flows that read and write a facility, and the one that asserts canGovern (grantAccess)',
+    flows: ['building-details', 'politics-write', 'permission-negative', 'town-min-wage'],
+    why: 'the facility details/property handlers changed — the flows that read and write a facility (including the minimum-wage argument builder), and the one that asserts canGovern (grantAccess)',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
@@ -282,13 +284,13 @@ export const ROUTES: RouteRule[] = [
   },
   {
     test: /^src\/client\/components\/politics\//,
-    flows: ['politics-read', 'politics-write', 'permission-negative'],
+    flows: ['politics-read', 'politics-write', 'permission-negative', 'town-min-wage', 'publicity-roundtrip'],
     why: 'governance UI — including who is offered the controls',
   },
   {
     test: /^src\/client\/components\/building\/|^src\/shared\/building-details\//,
-    flows: ['building-details'],
-    why: 'facility inspector and its template groups',
+    flows: ['building-details', 'town-min-wage'],
+    why: "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in template-groups.ts",
   },
   {
     test: /^src\/client\/components\/mail\/|^src\/server\/mail/,

@@ -190,6 +190,37 @@ describe('runProbe', () => {
     expect(result.restored).toBe(true);
     expect(writes).toEqual(['8', '7']);
   });
+
+  it('restores a given original, never a value re-read now', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: 8');
+    const lock = tempLock();
+    const writes: string[] = [];
+    const pendingOriginals: (string | undefined)[] = [];
+    const testValue = jest.fn(() => '8');
+    // The live read would say '9'; the spec's original says '7'.
+    const session = sessionReading(['9'], v => {
+      writes.push(v);
+      pendingOriginals.push(lock.read().pendingRestores[0]?.originalValue);
+    });
+    const result = await runProbe(session, { ...spec, testValue, original: '7' }, lock, factory, window.url, {
+      now: clock([0]),
+      sleep: noSleep,
+    });
+    expect(testValue).toHaveBeenCalledWith('7');
+    expect(writes).toEqual(['8', '7']);
+    expect(pendingOriginals[0]).toBe('7');
+    expect(result.original).toBe('7');
+    expect(result.status).toBe('PASS');
+  });
+
+  it('fails a log line that holds the marker but fails logMatch', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Elsewhere, 3, 8');
+    const logMatch = (line: string, written: string): boolean =>
+      line.includes(`Setting Tax value: Helartia, 3, ${written}`);
+    const result = await runProbe(sessionReading(['7', '8']), { ...spec, logMatch }, tempLock(), factory, window.url);
+    expect(result.status).toBe('FAIL');
+    expect(result.note).toMatch(/no model-server log line/);
+  });
 });
 
 /** A clock returning `values` in turn, then the last one forever. */
