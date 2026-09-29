@@ -1,6 +1,6 @@
 ---
 name: e2e-test
-description: Run the L3 browser smoke with Playwright MCP on a gateway leased from the bench (same procedure as /e2e)
+description: Run the L3 browser walkthrough with Playwright MCP on a gateway leased from the bench (same procedure as /e2e)
 user-invokable: true
 disable-model-invocation: true
 ---
@@ -18,20 +18,21 @@ Drives the live game client in a real browser via Playwright MCP.
    - `window.__spoDebug` programmatic verification API
    - The gateway lease (`npm run dev` / `npm run dev:release`) — never started or stopped by hand
    - Screenshot policy (sub-agent delegation only)
-   The ordered Phase 0–8 smoke script and report format now live in the same file.
+   The ordered Phase 0–9 walkthrough (every screen and panel once) and its report format live
+   in the same file.
 2. **[doc/E2E-POLICY.md](../../../doc/E2E-POLICY.md)** — the gate: which layer a change
-   must reach, and what counts as proof. L3 is required only for pixels (renderer, layout,
-   mobile) and pre-release; everything below the pixel is L2,
+   must reach, and what counts as proof. L3 opens every screen once and is required for pixels
+   (renderer, layout, mobile) and pre-release; every player action is L2,
    `npm run test:live`.
 
-**Before running, read the "Target" and "⚠ Known stale" sections of
-[.claude/commands/e2e.md](../../commands/e2e.md)** — what the leased gateway cannot show, and
-how to adapt the phases that predate `CommandBar`.
+**Before running, read the "Target" section of [.claude/commands/e2e.md](../../commands/e2e.md)**
+— what the leased gateway cannot show (bug reporter, "Create an account", nginx/TLS/CSP).
 
 ## Scenario argument
 
-`/e2e-test <scenario>` (same as `/e2e <scenario>`): `login` (Phases 0–2 only), `smoke` (full Phases 0–8, default),
-`custom` (user describes the flow — still read-only, still the locked account).
+`/e2e-test <scenario>` (same as `/e2e <scenario>`): `login` (Phases 0, 1 and 9), `smoke` (full
+Phases 0–9, default), `custom` (user describes the flow — still read-only, still the locked
+account, still ending with Phase 9).
 
 ## Hard rules
 
@@ -42,8 +43,9 @@ how to adapt the phases that predate `CommandBar`.
   president — recorded by the gate, never overridden by hand (doc/E2E-POLICY.md §7).
 - **Never start the gateway yourself — lease it.** `npm run dev` queues a bench lease: the
   worker builds this worktree, starts its gateway on 8080 and holds it for you (30 min by
-  default, `-- --lease-minutes=N` up to 120). Navigate to `http://localhost:8080`. When
+  default; the walkthrough's Phase 0 asks `-- --lease-minutes=60`, up to 120). Navigate to `http://localhost:8080`. When
   the pass is over, `npm run dev:release` — the worker tears the gateway down; you never
   kill anything (doc/bench-worker.md). An unreleased lease expires on its own.
-- Always run login first; report per-phase PASS/FAIL.
+- Always run login first and always end with Phase 9 (Logout, then `npm run dev:release`);
+  report per-phase PASS/FAIL, a screen with no data in the world as *absent*.
 - Never load screenshots into the main context — delegate to a sub-agent.
