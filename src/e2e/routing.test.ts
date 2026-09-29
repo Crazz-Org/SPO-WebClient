@@ -353,9 +353,10 @@ describe('route — nearest town hall (#592)', () => {
 });
 
 describe('route — the directory tree (#526)', () => {
-  it('routes the parser and the service to the one flow that walks the tree', () => {
+  // #1140: the directory rule now also requires search-menu-read, which reads the same pages.
+  it('routes the parser and the service to the two flows that read the tree', () => {
     const d = route(['src/server/search-menu-service.ts', 'src/server/search-menu-parser.ts']);
-    expect(d.required).toEqual([SPINE_FLOW, 'directory-browse']);
+    expect(d.required).toEqual([SPINE_FLOW, 'directory-browse', 'search-menu-read']);
   });
 
   it('routes the directory page, its ref helper and the search store the same way', () => {
@@ -364,8 +365,31 @@ describe('route — the directory tree (#526)', () => {
       'src/client/components/search/directory-refs.ts',
       'src/client/store/search-store.ts',
     ]);
-    expect(d.required).toEqual([SPINE_FLOW, 'directory-browse']);
+    expect(d.required).toEqual([SPINE_FLOW, 'directory-browse', 'search-menu-read']);
   });
+
+  it.each([
+    'src/server/ws-handlers/search-handlers.ts',
+    'src/server/search-menu-service.ts',
+    'src/server/session/login-handler.ts',
+  ])('%s requires search-menu-read', (file) => {
+    expect(route([file]).required).toContain('search-menu-read');
+  });
+
+  it.each([
+    'SearchPanel.tsx', 'MediaPage.tsx', 'TycoonFullProfileView.tsx', 'TycoonProfileView.tsx',
+    'DirectoryPage.tsx', 'directory-refs.ts', 'home-tiles.ts', 'index.ts',
+  ])('routes the search screen file %s to both search flows, with a browser look', (name) => {
+    const d = route([`src/client/components/search/${name}`]);
+    expect(d.required).toEqual([SPINE_FLOW, 'directory-browse', 'search-menu-read']);
+    expect(d.needsL3).toBe(true);
+  });
+
+  it.each(['src/client/store/search-store.ts', 'src/server/search-menu-parser.ts'])(
+    '%s needs no browser look', (file) => {
+      expect(route([file]).needsL3).toBe(false);
+    },
+  );
 
   it('leaves the search WS handler routing as it was', () => {
     const d = route(['src/server/ws-handlers/search-handlers.ts']);
