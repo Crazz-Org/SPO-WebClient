@@ -14,6 +14,7 @@ import {
   nudgeWithin, evenPriceNudge, roundHalfEven, servicePriceQuantised, facLineMatches, servicePriceLineMatches,
   salariesLineMatches, clientLinksDiff, outputPriceRefusal, stoppedBit, workerCountsProblem, refreshMissingKeys,
   fixtureKind,
+  pickPlacement, ownsPlacement, delFacilityLineMatches,
   type Flow, type FlowResult,
 } from './flows';
 import { buildReplyHeaders } from '@/client/store/mail-store';
@@ -76,6 +77,7 @@ describe('the catalogue', () => {
         'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'facility-open-close',
         'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
         'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
+        'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
         'road-roundtrip', 'store-price-salaries', 'town-min-wage', 'vote-roundtrip', 'zone-roundtrip', 'zoning-alert-read',
       ],
@@ -6070,6 +6072,423 @@ describe('inspector flows (#1152)', () => {
       arrange(world, { industry: false });
       expect((await run('industry-auto-buy')).status).toBe('UNPROVEN');
       expect(setProps(world)).toEqual([]);
+    });
+  });
+});
+
+describe('build & demolish (#1150)', () => {
+  const OWN_TYCOON = '555';
+  const MAYOR_TYCOON = '777';
+  const LOT = { x: 40, y: 50 };
+  const CONSTRUCTION_VC = '99';
+  const DIMS = {
+    [CONSTRUCTION_VC]: { visualClass: CONSTRUCTION_VC, name: 'site', facid: '', xsize: 2, ysize: 2, level: 0, textureFilename: 'Construction64.bmp' },
+    '4600': { visualClass: '4600', name: 'store', facid: '', xsize: 2, ysize: 2, level: 0, textureFilename: 'Store.bmp' },
+  } as unknown as Record<string, import('@/shared/types/domain-types').FacilityDimensions>;
+
+  const info = (facilityClass: string, cost: number, extra: Partial<import('@/shared/types/domain-types').BuildingInfo> = {}) => ({
+    name: facilityClass, facilityClass, visualClassId: '4600', cost, area: 0, description: '', zoneRequirement: '',
+    iconPath: '', available: true, ...extra,
+  });
+  const STORE = info('PGIFoodStore', 1_000_000);
+
+  interface World {
+    cash?: number | null;
+    buildable?: ReturnType<typeof info>[];
+    lot?: { x: number; y: number } | null;
+    code?: number;
+    /** What stands at the lot after NewFacility answered 0 — null: nothing. */
+    placedAs?: { visualClass: string; tycoonId: number } | null;
+    /** The object at the lot changes to this before the cleanup reads it. */
+    swapBeforeCleanup?: { visualClass: string; tycoonId: number };
+    newLine?: string | null;
+    placeThrows?: boolean;
+    delSilent?: boolean;
+    delIgnored?: boolean;
+    renameRefused?: boolean;
+    renameIgnored?: boolean;
+  }
+
+  let lines: string[];
+  let lock: WorldLock;
+  let sent: WsMessage[];
+  let pendingAtPlace: string[] | undefined;
+  let building: { x: number; y: number; visualClass: string; tycoonId: number } | undefined;
+  let name: string;
+  let place: jest.SpyInstance;
+
+  function jumpingClock(): () => number {
+    let t = 0;
+    return () => (t += TIMEOUTS.readBack + 1);
+  }
+  const flowCtx = () => ({ lock, survivalLogUrl: 'http://logs/S.log', sleep: jest.fn(async () => undefined), now: jumpingClock() });
+
+  beforeEach(() => {
+    lines = [];
+    sent = [];
+    pendingAtPlace = undefined;
+    building = undefined;
+    name = 'Food Store 12';
+    lock = cleanLock();
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue({ url: 'http://logs/S.log', offset: 0, openedAt: 't' });
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, spec) =>
+      lines.find(l => l.includes(spec.marker) && (spec.match?.(l) ?? true)) ?? null,
+    );
+  });
+
+  function drive(world: World = {}): void {
+    let cleanupSwap = false;
+    jest.spyOn(fixtures, 'readCash').mockResolvedValue(world.cash === undefined ? 100_000_000 : world.cash);
+    jest.spyOn(fixtures, 'listBuildable').mockResolvedValue(world.buildable ?? [STORE]);
+    jest.spyOn(fixtures, 'facilityDimensions').mockResolvedValue(DIMS);
+    jest.spyOn(fixtures, 'findFreeLot').mockResolvedValue(world.lot === undefined ? LOT : world.lot);
+    jest.spyOn(fixtures, 'ownTycoonId').mockReturnValue(OWN_TYCOON);
+    place = jest.spyOn(fixtures, 'placeFacility').mockImplementation(async (_s, cls, x, y) => {
+      pendingAtPlace = lock.read().pendingRestores.map(p => p.what);
+      if (world.placeThrows) {
+        building = { x, y, visualClass: CONSTRUCTION_VC, tycoonId: Number(OWN_TYCOON) };
+        throw new Error('REQ_MAP_LOAD died');
+      }
+      const code = world.code ?? 0;
+      if (code !== 0) return { code, readBack: null, confirmed: false };
+      lines.push(world.newLine === undefined ? `12:00:00 New Facility: ${cls} Company: 1 x: ${x} y: ${y}` : world.newLine ?? '');
+      const as = world.placedAs === undefined ? { visualClass: CONSTRUCTION_VC, tycoonId: Number(OWN_TYCOON) } : world.placedAs;
+      if (!as) return { code, readBack: null, confirmed: false };
+      building = { x, y, ...as };
+      const construction = as.visualClass === CONSTRUCTION_VC;
+      const confirmed = String(as.tycoonId) === OWN_TYCOON && (construction || as.visualClass === '4600' || as.visualClass === '4601');
+      cleanupSwap = true;
+      return { code, readBack: { visualClass: as.visualClass, tycoonId: String(as.tycoonId), construction }, confirmed };
+    });
+    const stub = stubSession(raw => {
+      sent.push(raw);
+      const msg = raw as unknown as Record<string, number> & { newName: string };
+      switch (raw.type) {
+        case WsMessageType.REQ_MAP_LOAD: {
+          if (cleanupSwap && world.swapBeforeCleanup && building && sent.filter(m => m.type === WsMessageType.REQ_BUILDING_DETAILS).length === 0) {
+            building = { ...building, ...world.swapBeforeCleanup };
+          }
+          const inside = building && building.x >= msg.x && building.x < msg.x + msg.width && building.y >= msg.y && building.y < msg.y + msg.height;
+          return { data: { buildings: inside ? [building] : [], segments: [] } };
+        }
+        case WsMessageType.REQ_BUILDING_DETAILS:
+          return { details: { buildingName: name } };
+        case WsMessageType.REQ_RENAME_FACILITY:
+          if (world.renameRefused) return { success: false, newName: msg.newName, message: 'refused' };
+          if (!world.renameIgnored) name = msg.newName;
+          return { success: true, newName: msg.newName };
+        case WsMessageType.REQ_DELETE_FACILITY:
+          if (!world.delSilent) lines.push(`12:00:05 Del Facility, x: ${msg.x} y: ${msg.y}`);
+          if (!world.delIgnored) building = undefined;
+          return { success: true };
+        default:
+          throw new Error(`unexpected ${raw.type}`);
+      }
+    });
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+  }
+
+  const sentOf = (type: WsMessageType) =>
+    sent.filter(m => m.type === type).map(m => {
+      const { type: _t, wsRequestId: _r, ...rest } = m as unknown as Record<string, unknown>;
+      return rest;
+    });
+  const check = (r: FlowResult, what: RegExp) => r.assertions.find(a => what.test(a.what));
+  const run = () => runFlow(flowByName('place-rename-demolish'), flowCtx());
+
+  describe('pickPlacement', () => {
+    it('never returns a Mausoleum nor the Capitol, even when it is the cheapest', () => {
+      const pick = pickPlacement(
+        [info('ParadigmMausoleum', 1), info('Capitol', 2), info('LegendMausoleum', 3), info('PGIFoodStore', 50), info('PGIBank', 40)],
+        1_000,
+      );
+      expect(pick.info?.facilityClass).toBe('PGIBank');
+    });
+
+    it('names the reason when nothing is left, or when the cheapest costs more than the budget', () => {
+      expect(pickPlacement([info('LegendMausoleum', 1), info('Capitol', 1)], 1_000)).toEqual({ reason: 'nothing buildable offered' });
+      expect(pickPlacement([info('PGIFoodStore', 5_000)], 4_999).reason).toMatch(/PGIFoodStore costs 5000, above cash minus FIXTURE_CASH_FLOOR \(4999\)/);
+      expect(pickPlacement([info('PGIFoodStore', 5_000)], 5_000).info?.facilityClass).toBe('PGIFoodStore');
+    });
+  });
+
+  describe('the matchers', () => {
+    it('matches Del Facility on both coordinates exactly', () => {
+      expect(delFacilityLineMatches('1:00 Del Facility, x: 1 y: 2', 1, 2)).toBe(true);
+      expect(delFacilityLineMatches('1:00 Del Facility, x: 1 y: 23', 1, 2)).toBe(false);
+      expect(delFacilityLineMatches('1:00 Del Facility, x: 11 y: 2', 1, 2)).toBe(false);
+    });
+
+    it('owns only the placed class or its construction state, owned by the tycoon', () => {
+      const b = (visualClass: string, tycoonId: number) => ({ visualClass, tycoonId, x: 0, y: 0, options: 0, level: 0, alert: false, attack: 0 });
+      expect(ownsPlacement(b('4600', 555), DIMS, '4600', OWN_TYCOON)).toBe(true);
+      expect(ownsPlacement(b('4601', 555), DIMS, '4600', OWN_TYCOON)).toBe(true);
+      expect(ownsPlacement(b(CONSTRUCTION_VC, 555), DIMS, '4600', OWN_TYCOON)).toBe(true);
+      expect(ownsPlacement(b('4602', 555), DIMS, '4600', OWN_TYCOON)).toBe(false);
+      expect(ownsPlacement(b('4600', 777), DIMS, '4600', OWN_TYCOON)).toBe(false);
+      expect(ownsPlacement(undefined, DIMS, '4600', OWN_TYCOON)).toBe(false);
+    });
+  });
+
+  describe('place-rename-demolish', () => {
+    it('is mutating', () => {
+      expect(flowByName('place-rename-demolish').mutates).toBe(true);
+    });
+
+    it('PASSes on a construction-state read-back: pending restore first, rename and back, demolish, lock clean', async () => {
+      drive();
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(pendingAtPlace).toHaveLength(1);
+      expect(pendingAtPlace?.[0]).toMatch(/^demolish the PGIFoodStore at \(40,50\), company 1 \(SPO_test3 - Green\)/);
+      const renames = sentOf(WsMessageType.REQ_RENAME_FACILITY).map(r => r.newName as string);
+      expect(renames).toHaveLength(2);
+      expect(renames[0]).toMatch(/^e2e-rename-/);
+      expect(renames[1]).toBe('Food Store 12');
+      expect(name).toBe('Food Store 12');
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([{ x: 40, y: 50 }]);
+      expect(check(result, /New Facility:/)?.detail).toContain('New Facility: PGIFoodStore Company: 1 x: 40 y: 50');
+      expect(check(result, /Del Facility/)?.detail).toContain('Del Facility, x: 40 y: 50');
+      expect(lock.read().pendingRestores).toEqual([]);
+      expect(place).toHaveBeenCalledWith(expect.anything(), 'PGIFoodStore', 40, 50, expect.objectContaining({ visualClassId: '4600' }));
+    });
+
+    it('PASSes on a finished-class read-back (visual class + 1)', async () => {
+      drive({ placedAs: { visualClass: '4601', tycoonId: 555 } });
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('never places a Mausoleum or the Capitol even when it is the cheapest', async () => {
+      drive({ buildable: [info('ParadigmMausoleum', 1), info('Capitol', 1), STORE] });
+      await run();
+      expect(place.mock.calls.map(c => c[1])).toEqual(['PGIFoodStore']);
+    });
+
+    it('FAILs a result code 0 with nothing at the lot: no demolish, pending restore kept', async () => {
+      drive({ placedAs: null });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /reads back the placed class/)?.ok).toBe(false);
+      expect(check(result, /stands at the lot/)?.detail).toMatch(/pending restore kept/);
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([]);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it.each([
+      ['another company', '12:00:00 New Facility: PGIFoodStore Company: 2 x: 40 y: 50'],
+      ['other coordinates', '12:00:00 New Facility: PGIFoodStore Company: 1 x: 40 y: 501'],
+      ['no line at all', null],
+    ])('FAILs a result code 0 and a read-back with no matching New Facility: line (%s), and still demolishes', async (_l, newLine) => {
+      drive({ newLine });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /New Facility:/)?.ok).toBe(false);
+      expect(sentOf(WsMessageType.REQ_RENAME_FACILITY)).toEqual([]);
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([{ x: 40, y: 50 }]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each([
+      ['another class', { visualClass: '9000', tycoonId: 555 }],
+      ['the Mayor role', { visualClass: CONSTRUCTION_VC, tycoonId: Number(MAYOR_TYCOON) }],
+      ['another player', { visualClass: '4600', tycoonId: 888 }],
+    ])('the cleanup demolishes nothing when the lot holds %s, and FAILs keeping the pending restore', async (_l, placedAs) => {
+      drive({ placedAs });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /the one this run placed/)?.ok).toBe(false);
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([]);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('the cleanup re-reads the lot: an object swapped in after the placement is not demolished', async () => {
+      drive({ newLine: null, swapBeforeCleanup: { visualClass: '4600', tycoonId: Number(MAYOR_TYCOON) } });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([]);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a demolish with no Del Facility line, keeping the pending restore', async () => {
+      drive({ delSilent: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /Del Facility/)?.ok).toBe(false);
+      expect(check(result, /Del Facility/)?.detail).toMatch(/pending restore kept/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a demolish whose line is logged but whose object still stands, keeping the pending restore', async () => {
+      drive({ delIgnored: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /Del Facility/)?.ok).toBe(true);
+      expect(check(result, /nothing stands at the lot/)?.ok).toBe(false);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('is UNPROVEN on ERROR_TooManyFacilities: nothing demolished, pending restore cleared', async () => {
+      drive({ code: 33 });
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/ERROR_TooManyFacilities for PGIFoodStore/);
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([]);
+      expect(pendingAtPlace).toHaveLength(1);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs any other non-zero result code', async () => {
+      drive({ code: 3 });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /NewFacility answered 0/)?.detail).toMatch(/answered 3 for PGIFoodStore at \(40,50\)/);
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each([
+      ['cash is unknown', { cash: null }, /cash unknown/],
+      ['the cheapest costs more than cash minus the floor', { cash: fixtures.FIXTURE_CASH_FLOOR + 999_999 }, /above cash minus FIXTURE_CASH_FLOOR/],
+      ['nothing is buildable', { buildable: [] }, /nothing buildable offered \(SPO_test3 - Green\)/],
+      ['no free lot', { lot: null }, /no free lot in Helartia for PGIFoodStore \(2×2, no zone\)/],
+      ['the footprint is unknown', { buildable: [info('PGIFoodStore', 1, { visualClassId: '1234' })] }, /footprint unknown for PGIFoodStore/],
+    ] as [string, World, RegExp][])('is UNPROVEN when %s: nothing placed, nothing recorded', async (_l, world, reason) => {
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(reason);
+      expect(place).not.toHaveBeenCalled();
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('takes the footprint from the facility row when it carries one', async () => {
+      drive({ buildable: [info('PGIFoodStore', 1, { visualClassId: '1234', xsize: 3, ysize: 4 })], lot: null });
+      const result = await run();
+      expect(result.unproven[0]).toMatch(/\(3×4, no zone\)/);
+    });
+
+    it('FAILs when placeFacility throws after the pending restore, and the cleanup still demolishes', async () => {
+      drive({ placeThrows: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /without a throw/)?.detail).toMatch(/REQ_MAP_LOAD died/);
+      expect(pendingAtPlace).toHaveLength(1);
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([{ x: 40, y: 50 }]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each([
+      ['refused', { renameRefused: true }, /accepted the rename to the marker/],
+      ['never read back', { renameIgnored: true }, /read the marker name/],
+    ] as [string, World, RegExp][])('FAILs a rename %s, and still demolishes and clears the lock', async (_l, world, what) => {
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, what)?.ok).toBe(false);
+      expect(sentOf(WsMessageType.REQ_RENAME_FACILITY)).toHaveLength(1);
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([{ x: 40, y: 50 }]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs when the rename steps throw, and when the cleanup throws it keeps the pending restore', async () => {
+      drive();
+      jest.spyOn(session, 'readBuildingDetails').mockRejectedValue(new Error('details died'));
+      const r1 = await run();
+      expect(check(r1, /rename steps ran without a throw/)?.detail).toBe('details died');
+      expect(lock.read().pendingRestores).toEqual([]);
+
+      drive({ delIgnored: true });
+      jest.spyOn(liveLog, 'openLogWindow')
+        .mockResolvedValueOnce({ url: 'u', offset: 0, openedAt: 't' })
+        .mockRejectedValueOnce(new Error('log gone'));
+      const r2 = await run();
+      expect(r2.status).toBe('FAIL');
+      expect(check(r2, /cleanup ran without a throw/)?.detail).toMatch(/log gone — pending restore kept/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('logs off even when a step before the placement throws', async () => {
+      drive();
+      jest.spyOn(fixtures, 'listBuildable').mockRejectedValue(new Error('menu died'));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.error).toBe('menu died');
+      expect(session.logoff).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('build-menu-read', () => {
+    const CATEGORIES = [
+      { kindName: 'Commerce', kind: 'MoabServiceFacilities', cluster: 'Moab', folder: 'f1', tycoonLevel: 1, iconPath: '' },
+      { kindName: 'Commerce', kind: 'PGIServiceFacilities', cluster: 'PGI', folder: 'f2', tycoonLevel: 1, iconPath: '' },
+    ];
+
+    function menu(opts: { categories?: unknown[]; facilities?: unknown[]; cluster?: string } = {}) {
+      const stub = stubSession(raw => {
+        sent.push(raw);
+        if (raw.type === WsMessageType.REQ_GET_BUILDING_CATEGORIES) return { categories: opts.categories ?? CATEGORIES };
+        if (raw.type === WsMessageType.REQ_GET_BUILDING_FACILITIES) return { facilities: opts.facilities ?? [STORE] };
+        throw new Error(`unexpected ${raw.type}`);
+      });
+      stub.company = { ...stub.company, cluster: 'cluster' in opts ? opts.cluster : 'pgi' };
+      jest.spyOn(session, 'login').mockResolvedValue(stub);
+    }
+    const runMenu = () => runFlow(flowByName('build-menu-read'), { lock: cleanLock() });
+
+    it('is read-only', () => {
+      expect(flowByName('build-menu-read').mutates).toBe(false);
+    });
+
+    it("PASSes, reading the facilities of the own company's cluster, and logs off", async () => {
+      menu();
+      const result = await runMenu();
+      expect(result.status).toBe('PASS');
+      expect(sentOf(WsMessageType.REQ_GET_BUILDING_FACILITIES)).toEqual([
+        { companyName: 'SPO_test3 - Green', cluster: 'PGI', kind: 'PGIServiceFacilities', kindName: 'Commerce', folder: 'f2', tycoonLevel: 1 },
+      ]);
+      expect(session.logoff).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes the first category when the company carries no cluster', async () => {
+      menu({ cluster: undefined });
+      const result = await runMenu();
+      expect(result.status).toBe('PASS');
+      expect(sentOf(WsMessageType.REQ_GET_BUILDING_FACILITIES)[0].cluster).toBe('Moab');
+    });
+
+    it('FAILs on an empty category list', async () => {
+      menu({ categories: [] });
+      const result = await runMenu();
+      expect(result.status).toBe('FAIL');
+      expect(sentOf(WsMessageType.REQ_GET_BUILDING_FACILITIES)).toEqual([]);
+    });
+
+    it("FAILs when no category of the own company's cluster is listed", async () => {
+      menu({ cluster: 'Mariko' });
+      const result = await runMenu();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /own company's cluster/)?.detail).toMatch(/cluster Mariko; listed: Moab, PGI/);
+    });
+
+    it('FAILs on an empty facility list', async () => {
+      menu({ facilities: [] });
+      const result = await runMenu();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /at least one facility/)?.ok).toBe(false);
+    });
+
+    it.each([
+      ['no class', info(' ', 1)],
+      ['no cost', { ...STORE, cost: undefined }],
+      ['a non-finite cost', { ...STORE, cost: Number.NaN }],
+    ])('FAILs on a row with %s', async (_l, row) => {
+      menu({ facilities: [STORE, row] });
+      const result = await runMenu();
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /class and a cost/)?.ok).toBe(false);
     });
   });
 });
