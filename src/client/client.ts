@@ -30,6 +30,9 @@ import { getFacilityDimensionsCache } from './facility-dimensions-cache';
 import { useMailStore } from './store/mail-store';
 import { useNewspaperStore } from './store/newspaper-store';
 import { usePoliticsStore } from './store/politics-store';
+import { useProfileStore } from './store/profile-store';
+import { useSearchStore } from './store/search-store';
+import { useTutorialStore } from './store/tutorial-store';
 import { SoundManager } from './audio/sound-manager';
 import { MusicPlayer } from './audio/music-player';
 import { MapAmbience } from './audio/map-ambience';
@@ -100,7 +103,7 @@ interface SpoDebugTileProbe {
   isWater: boolean;
 }
 
-interface SpoDebugState {
+export interface SpoDebugState {
   session: {
     connected: boolean;
     worldName: string;
@@ -119,12 +122,58 @@ interface SpoDebugState {
     canvasSize: { width: number; height: number };
     canvasHasContent: boolean;
   } | null;
+  /**
+   * Panel flags. `panels.chat` means the chat strip is EXPANDED (not merely shown — see
+   * `chat.shown`); `panels.buildMenu` means the top of the surface stack is the `build` surface.
+   */
   panels: Record<string, boolean>;
   tycoonStats: Record<string, string>;
   chat: {
+    /** The chat strip is expanded (useChatStore.isExpanded). Same value as panels.chat. */
     visible: boolean;
+    /** The chat strip is shown at all (useChatStore.chatVisible, desktop toggle). */
+    shown: boolean;
     messageCount: number;
     lastMessage: string;
+  };
+  /** Surface stack and modal state (values only, never surface params). */
+  ui: {
+    /** Surface kinds, bottom first, top LAST. */
+    stack: string[];
+    modal: string | null;
+    modalBeneath: string | null;
+    pinned: boolean;
+    commandPaletteOpen: boolean;
+    /** mapContextMenu !== null */
+    contextMenuOpen: boolean;
+    hudVisible: boolean;
+    /** Read from useGameStore, not ui-store. */
+    serverSwitchMode: boolean;
+    mobileTab: string;
+    mobileSheetSnap: string;
+  };
+  modes: {
+    placingBuilding: boolean;
+    roadBuilding: boolean;
+    roadDemolish: boolean;
+    zonePainting: boolean;
+    connecting: boolean;
+  };
+  login: {
+    stage: string;
+    /** authError !== null — never the message text. */
+    authError: boolean;
+    isVisitor: boolean;
+    isPublicOfficeRole: boolean;
+  };
+  subViews: {
+    profileTab: string | null;
+    searchPage: string;
+    mailFolder: string;
+    mailView: string;
+    tutorialAssigned: boolean;
+    /** useBuildingStore.isOverlayMode */
+    buildingPreview: boolean;
   };
   buildingDetails: {
     buildingName: string;
@@ -1559,20 +1608,21 @@ export class StarpeaceClient implements ClientHandlerContext {
     }
 
     const uiState = useUiStore.getState();
+    const gameState = useGameStore.getState();
     const panels: Record<string, boolean> = {
-      login: useGameStore.getState().status !== 'connected',
+      login: gameState.status !== 'connected',
       chat: useChatStore.getState().isExpanded,
       mail: uiState.rightPanel === 'mail',
       profile: uiState.leftPanel === 'empire',
       politics: uiState.rightPanel === 'politics',
       settings: uiState.modal === 'settings',
       minimap: this.minimapUI?.isVisible() ?? false,
-      buildMenu: uiState.modal === 'buildMenu',
+      buildMenu: uiState.stack[uiState.stack.length - 1]?.kind === 'build',
       buildingDetails: uiState.rightPanel === 'building',
       searchMenu: uiState.rightPanel === 'search',
     };
 
-    const rawStats = useGameStore.getState().tycoonStats;
+    const rawStats = gameState.tycoonStats;
     const tycoonStats: Record<string, string> = {
       ranking:  rawStats ? `#${rawStats.ranking}` : '',
       buildings: rawStats ? `${rawStats.buildingCount}/${rawStats.maxBuildings}` : '',
@@ -1606,6 +1656,7 @@ export class StarpeaceClient implements ClientHandlerContext {
     } : null;
 
     const settingsValues = ClientBridge.getSettings();
+    const mailState = useMailStore.getState();
 
     return {
       session: {
@@ -1630,8 +1681,42 @@ export class StarpeaceClient implements ClientHandlerContext {
       tycoonStats,
       chat: {
         visible: chatStoreState.isExpanded,
+        shown: chatStoreState.chatVisible,
         messageCount: channelMsgs.length,
         lastMessage: lastMsg,
+      },
+      ui: {
+        stack: uiState.stack.map(s => s.kind),
+        modal: uiState.modal,
+        modalBeneath: uiState.modalBeneath,
+        pinned: uiState.pinned,
+        commandPaletteOpen: uiState.commandPaletteOpen,
+        contextMenuOpen: uiState.mapContextMenu !== null,
+        hudVisible: uiState.hudVisible,
+        serverSwitchMode: gameState.serverSwitchMode,
+        mobileTab: uiState.mobileTab,
+        mobileSheetSnap: uiState.mobileSheetSnap,
+      },
+      modes: {
+        placingBuilding: uiState.isPlacingBuilding,
+        roadBuilding: gameState.isRoadBuildingMode,
+        roadDemolish: gameState.isRoadDemolishMode,
+        zonePainting: gameState.isZonePaintingMode,
+        connecting: uiState.connectMode.active,
+      },
+      login: {
+        stage: gameState.loginStage,
+        authError: gameState.authError !== null,
+        isVisitor: gameState.isVisitor,
+        isPublicOfficeRole: gameState.isPublicOfficeRole,
+      },
+      subViews: {
+        profileTab: useProfileStore.getState().currentTab,
+        searchPage: useSearchStore.getState().currentPage,
+        mailFolder: mailState.currentFolder,
+        mailView: mailState.currentView,
+        tutorialAssigned: useTutorialStore.getState().assignment !== null,
+        buildingPreview: bldState.isOverlayMode,
       },
       buildingDetails,
       settings: settingsValues,

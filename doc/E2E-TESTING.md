@@ -157,7 +157,17 @@ window.__spoDebug.getState()                         // full snapshot, see below
 mapDimensions, debugMode, canvasSize, canvasHasContent}`,
 `panels {login, chat, mail, profile, politics, settings, minimap, buildMenu,
 buildingDetails, searchMenu}` (note: `minimap` is `true` by default after login),
-`tycoonStats`, `chat {visible, messageCount, lastMessage}`, `wire`.
+`tycoonStats`, `wire`. `panels.buildMenu` = the top surface of the stack is `build`;
+`panels.chat` = the chat strip is expanded.
+
+Unit-tested in `client.test.tsx` (not yet verified live):
+`chat {visible (expanded), shown (strip shown at all), messageCount, lastMessage}`,
+`ui {stack (surface kinds, top last), modal, modalBeneath, pinned, commandPaletteOpen,
+contextMenuOpen, hudVisible, serverSwitchMode, mobileTab, mobileSheetSnap}`,
+`modes {placingBuilding, roadBuilding, roadDemolish, zonePainting, connecting}`,
+`login {stage, authError (boolean only), isVisitor, isPublicOfficeRole}`,
+`subViews {profileTab, searchPage, mailFolder, mailView, tutorialAssigned, buildingPreview}`.
+Values only — never a player name, message text beyond `chat.lastMessage`, or error text.
 
 **Standard post-login assertion set:**
 `session.connected === true`, `session.worldName === "planitia"`,
