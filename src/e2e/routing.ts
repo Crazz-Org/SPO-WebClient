@@ -67,8 +67,6 @@ export const FALLBACK_ONLY: Record<string, string> = {
     'excluded: abandoning a role is never driven (maintainer, 2026-09-29 — recorded in card #1134)',
   'src/server/session/tutorial-handler.ts':
     'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
-  'src/server/session/building-management-handler.ts': 'awaiting card #1150 (C10)',
-  'src/server/session/building-templates-handler.ts': 'awaiting card #1150 (C10)',
   'src/server/session/chat-handler.ts': CHAT_AWAITING,
   'src/server/ws-handlers/chat-handlers.ts': CHAT_AWAITING,
   'src/server/session/research-handler.ts': 'awaiting card #1154 (C11c)',
@@ -241,8 +239,10 @@ export const ROUTES: RouteRule[] = [
     // zoning-alert-read is left out: its one REQ_BUILDING_FOCUS is incidental to reading the
     // alert, it needs Crazz, and the mail rules route it.
     test: /^src\/server\/ws-handlers\/building-handlers\.ts$/,
-    flows: ['building-details', 'politics-write', 'permission-negative', 'nearest-town-hall'],
-    why: 'the building WS handlers changed — the flows sending its REQ_BUILDING_DETAILS / TAB_DATA / SET_PROPERTY / FOCUS',
+    flows: ['building-details', 'politics-write', 'permission-negative', 'nearest-town-hall', 'build-menu-read', 'place-rename-demolish'],
+    why:
+      'the building WS handlers changed — the flows sending its REQ_BUILDING_DETAILS / TAB_DATA / SET_PROPERTY / FOCUS, ' +
+      'REQ_GET_BUILDING_CATEGORIES / _FACILITIES / REQ_PLACE_BUILDING / REQ_RENAME_FACILITY / REQ_DELETE_FACILITY',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
@@ -267,6 +267,14 @@ export const ROUTES: RouteRule[] = [
     test: /^src\/server\/ws-handlers\/road-handlers\.ts$|^src\/server\/session\/road-handler\.ts$/,
     flows: ['road-roundtrip'],
     why: 'the road handlers changed — the flow that builds, breaks and wipes a road as the Mayor of the governed town',
+  },
+  {
+    // Before the fallbacks below: the build menu, placement, rename and demolition (#1150).
+    test: /^src\/server\/session\/building-(templates|management)-handler\.ts$|^src\/client\/handlers\/build-menu-handler\.ts$/,
+    flows: ['build-menu-read', 'place-rename-demolish'],
+    why:
+      'the build menu, placement, rename and demolition handlers — the flow that reads the build menu and the one that ' +
+      'places, renames and demolishes a facility on a free Helartia lot',
   },
   {
     test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$/,

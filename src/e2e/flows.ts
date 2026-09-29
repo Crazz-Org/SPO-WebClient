@@ -67,6 +67,10 @@ import type {
   WsRespDemolishRoad,
   WsRespDemolishRoadArea,
   WsRespDefineZone,
+  WsRespBuildingCategories,
+  WsRespBuildingFacilities,
+  WsRespRenameFacility,
+  WsRespDeleteFacility,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
 import { CLUSTER_IDS } from '../shared/cluster-data';
@@ -75,6 +79,7 @@ import type {
   AutoConnectionFluid,
   AutoConnectionsData,
   BankAccountData,
+  BuildingInfo,
   CompaniesData,
   CurriculumData,
   PolicyData,
@@ -83,6 +88,7 @@ import type {
   CompanyInfo,
   DirectoryRef,
   DirectoryPage,
+  FacilityDimensions,
   LoanInfo,
   MailFolder,
   MailMessageFull,
@@ -95,7 +101,7 @@ import type {
 } from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
-import { ERROR_AccessDenied } from '../shared/error-codes';
+import { ERROR_AccessDenied, ERROR_TooManyFacilities } from '../shared/error-codes';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
 import { WsDriverError } from './ws-driver';
 import {
@@ -136,7 +142,20 @@ import {
   type SecondaryLogin,
 } from './session';
 import type { WorldLock } from './world-lock';
-import { ensureFixtures, type FixtureOutcome } from './fixtures';
+import {
+  ensureFixtures,
+  facilityDimensions,
+  findFreeLot,
+  isConstructionClass,
+  isRefusedClass,
+  listBuildable,
+  newFacilityLineMatches,
+  ownTycoonId,
+  placeFacility,
+  readCash,
+  FIXTURE_CASH_FLOOR,
+  type FixtureOutcome,
+} from './fixtures';
 
 export interface FlowContext {
   lock: WorldLock;
@@ -4429,6 +4448,381 @@ const fixturesEnsure: Flow = {
   },
 };
 
+// ---------------------------------------------------------------------------------------------
+// Build menu, placement, rename, demolition (#1150)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The facility place-rename-demolish places: the cheapest one offered, never a refused class
+ * (a transcendence block or the Capitol, `isRefusedClass`) even when it is the cheapest, and
+ * only when it costs no more than `budget` (cash minus `FIXTURE_CASH_FLOOR`).
+ */
+export function pickPlacement(buildable: BuildingInfo[], budget: number): { info?: BuildingInfo; reason?: string } {
+  const allowed = buildable.filter(b => !isRefusedClass(b.facilityClass)).sort((a, b) => a.cost - b.cost);
+  const cheapest = allowed[0];
+  if (!cheapest) return { reason: 'nothing buildable offered' };
+  if (cheapest.cost > budget) {
+    return {
+      reason: `the cheapest buildable ${cheapest.facilityClass} costs ${cheapest.cost}, above cash minus FIXTURE_CASH_FLOOR (${budget})`,
+    };
+  }
+  return { info: cheapest };
+}
+
+/**
+ * The object at the lot is the one this run placed: owned by SPO_test3's tycoon id
+ * (`MapBuilding.tycoonId` is `Company.Owner.Id`, `Kernel/World.pas:3295-3300` — a role company's
+ * owner is the role tycoon, so the Mayor's facilities never match), and a construction-state
+ * class or the placed class's own visual class (registered, or completed = registered + 1,
+ * `Kernel/KernelCache.pas:291`) — the rule `placeFacility` confirms with.
+ */
+export function ownsPlacement(
+  b: MapBuilding | undefined,
+  dims: Record<string, FacilityDimensions>,
+  visualClassId: string,
+  tycoonId: string,
+): boolean {
+  if (!b || String(b.tycoonId) !== tycoonId) return false;
+  return (
+    isConstructionClass(dims, b.visualClass) ||
+    b.visualClass === visualClassId ||
+    b.visualClass === String(Number(visualClassId) + 1)
+  );
+}
+
+/** `Del Facility, x: <x> y: <y>` (`Kernel/World.pas:3575`), on both coordinates. */
+export function delFacilityLineMatches(line: string, x: number, y: number): boolean {
+  return new RegExp(`${escapeRegExp(LOG_MARKERS.RDODelFacility)} ${x} y: ${y}(\\s|$)`).test(line);
+}
+
+/** The building anchored exactly at (x, y), read from a ±8 window around it. */
+async function lotBuilding(session: LiveSession, x: number, y: number): Promise<MapBuilding | undefined> {
+  const { buildings } = await loadMap(session, { x1: Math.max(0, x - 8), y1: Math.max(0, y - 8), x2: x + 8, y2: y + 8 });
+  return buildings.find(b => b.x === x && b.y === y);
+}
+
+/** Read at least once, then every `readBackPoll` until `done` holds or `readBack` has elapsed. */
+async function pollUntil<T>(
+  read: () => Promise<T>,
+  done: (v: T) => boolean,
+  ctx: FlowContext,
+): Promise<{ ok: boolean; last: T }> {
+  const now = ctx.now ?? Date.now;
+  const sleep = ctx.sleep ?? defaultSleep;
+  const deadline = now() + TIMEOUTS.readBack;
+  for (;;) {
+    const last = await read();
+    if (done(last)) return { ok: true, last };
+    if (now() >= deadline) return { ok: false, last };
+    await sleep(TIMEOUTS.readBackPoll);
+  }
+}
+
+/**
+ * The build menu, read only (#1150): the categories the own company is offered, then the
+ * facilities of the first category of its cluster — the two reads the client's build menu makes.
+ */
+const buildMenuRead: Flow = {
+  name: 'build-menu-read',
+  what: "build menu: categories -> the first category of the own company's cluster -> its facilities, each with a class and a cost",
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const companyName = session.company.name;
+      const { categories } = await session.driver.request<WsRespBuildingCategories>(
+        { type: WsMessageType.REQ_GET_BUILDING_CATEGORIES, companyName },
+        WsMessageType.RESP_BUILDING_CATEGORIES,
+      );
+      assertions.check('the build menu lists at least one category', categories.length > 0, `${categories.length} categories`);
+      if (categories.length === 0) return report('build-menu-read', assertions, [], session);
+
+      const cluster = session.company.cluster;
+      const category = cluster
+        ? categories.find(c => c.cluster.toLowerCase() === cluster.toLowerCase())
+        : categories[0];
+      assertions.check(
+        "a category of the own company's cluster is listed",
+        category !== undefined,
+        `cluster ${cluster ?? '(unset)'}; listed: ${[...new Set(categories.map(c => c.cluster))].join(', ')}`,
+      );
+      if (!category) return report('build-menu-read', assertions, [], session);
+
+      const { facilities } = await session.driver.request<WsRespBuildingFacilities>(
+        {
+          type: WsMessageType.REQ_GET_BUILDING_FACILITIES,
+          companyName,
+          cluster: category.cluster,
+          kind: category.kind,
+          kindName: category.kindName,
+          folder: category.folder,
+          tycoonLevel: category.tycoonLevel,
+        },
+        WsMessageType.RESP_BUILDING_FACILITIES,
+      );
+      assertions.check(
+        'the category lists at least one facility',
+        facilities.length > 0,
+        `${facilities.length} facilities in ${category.kindName}`,
+      );
+      const bad = facilities.filter(
+        f => !(f.facilityClass ?? '').trim() || typeof f.cost !== 'number' || !Number.isFinite(f.cost),
+      );
+      assertions.check(
+        'every facility carries a class and a cost',
+        bad.length === 0,
+        bad.map(f => `${f.name}: class "${f.facilityClass ?? ''}", cost ${String(f.cost)}`).join('; ') || undefined,
+      );
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('build-menu-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+interface Placement {
+  x: number;
+  y: number;
+  facilityClass: string;
+  visualClassId: string;
+  tycoonId: string;
+  key: string;
+  /** NewFacility answered non-zero: every such branch returns before a facility exists (`Kernel/World.pas:3180-3195`). */
+  refused: boolean;
+  url: string;
+  dims: Record<string, FacilityDimensions>;
+}
+
+/**
+ * Place, rename and demolish one facility on a free Helartia lot, as SPO_test3's own company
+ * (#1150). The cheapest buildable class is placed — never a transcendence block nor the Capitol
+ * (`isRefusedClass`; `placeFacility` refuses them again before sending). The pending restore is
+ * recorded before `NewFacility` is sent. The placement is proven by its `New Facility:` line
+ * (`Kernel/World.pas:3565`, logged on entry — receipt), result code 0 and a lot read-back of
+ * the placed class or its construction state (`StdBlocks/Construction.pas:55`) owned by
+ * SPO_test3; the demolition by its `Del Facility` line (`:3575`) and an empty lot. The cleanup
+ * demolishes only what this run placed. The construction cost is spent each run — accepted by
+ * the maintainer (2026-09-29).
+ */
+const placeRenameDemolish: Flow = {
+  name: 'place-rename-demolish',
+  what:
+    'place the cheapest non-refused buildable facility on a free Helartia lot -> New Facility: line + result 0 + ' +
+    'owned read-back -> rename to a marker and back -> demolish -> Del Facility line + empty lot',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      await placeRenameDemolishSteps(session, ctx, assertions);
+      return report('place-rename-demolish', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+async function placeRenameDemolishSteps(session: LiveSession, ctx: FlowContext, assertions: Assertions): Promise<void> {
+  const what = `a place-rename-demolish round trip in ${GOVERNED_TOWN}`;
+  const cash = await readCash(session);
+  if (cash === null) {
+    assertions.unproven(what, 'cash unknown — no EVENT_TYCOON_UPDATE received');
+    return;
+  }
+  const pick = pickPlacement(await listBuildable(session), cash - FIXTURE_CASH_FLOOR);
+  const info = pick.info;
+  if (!info) {
+    assertions.unproven(what, `${pick.reason ?? 'nothing picked'} (${session.company.name})`);
+    return;
+  }
+  const cls = info.facilityClass;
+  const dims = await facilityDimensions(session);
+  const d = dims[info.visualClassId];
+  const footprint =
+    info.xsize && info.ysize ? { xsize: info.xsize, ysize: info.ysize } : d ? { xsize: d.xsize, ysize: d.ysize } : null;
+  if (!footprint) {
+    assertions.unproven(what, `footprint unknown for ${cls}`);
+    return;
+  }
+  const lot = await findFreeLot(session, footprint, info.zoneRequirement);
+  if (!lot) {
+    assertions.unproven(
+      what,
+      `no free lot in ${GOVERNED_TOWN} for ${cls} (${footprint.xsize}×${footprint.ysize}, ${info.zoneRequirement || 'no zone'})`,
+    );
+    return;
+  }
+
+  const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+  const newWindow = await openLogWindow(url);
+  const tycoonId = ownTycoonId(session);
+  const companyId = session.company.id;
+  const where = `(${lot.x},${lot.y})`;
+
+  // Recorded before NewFacility is sent: a crash after the send cannot leave an unmarked building.
+  const key = `place-rename-demolish:${randomUUID()}`;
+  ctx.lock.addPendingRestore({
+    key,
+    x: lot.x,
+    y: lot.y,
+    what:
+      `demolish the ${cls} at ${where}, company ${companyId} (${session.company.name}) — place-rename-demolish ` +
+      `placed it in ${GOVERNED_TOWN}; demolish it as ${PRIMARY_ACCOUNT.username}, then npm run e2e:unlock`,
+    originalValue: 'no facility',
+  });
+
+  let refused = false;
+  try {
+    const placed = await placeFacility(session, cls, lot.x, lot.y, {
+      visualClassId: info.visualClassId,
+      now: ctx.now,
+      sleep: ctx.sleep,
+    });
+    refused = placed.code !== 0;
+    if (placed.code === ERROR_TooManyFacilities) {
+      assertions.unproven(
+        what,
+        `NewFacility answered ERROR_TooManyFacilities for ${cls} — facility limit or company uniqueness (Kernel/World.pas:3195)`,
+      );
+    } else {
+      assertions.check('NewFacility answered 0', !refused, `answered ${placed.code} for ${cls} at ${where}`);
+    }
+    if (!refused) {
+      const line = await awaitMarker(
+        newWindow,
+        { marker: LOG_MARKERS.RDONewFacility, match: l => newFacilityLineMatches(l, cls, companyId, lot.x, lot.y) },
+        TIMEOUTS.logSettle,
+        undefined,
+        ctx.now,
+        ctx.sleep,
+      );
+      assertions.check(
+        'the placement logged its New Facility: line (class, company, x, y)',
+        line !== null,
+        line ?? `(no New Facility: line for ${cls}, company ${companyId}, ${where})`,
+      );
+      const rb = placed.readBack;
+      assertions.check(
+        'the lot reads back the placed class or its construction state, owned by SPO_test3',
+        placed.confirmed,
+        rb ? `visual class ${rb.visualClass}, owner ${rb.tycoonId}${rb.construction ? ', construction' : ''}` : 'nothing at the lot',
+      );
+      if (line !== null && placed.confirmed && rb) await renameSteps(session, ctx, lot, rb.visualClass, assertions);
+    }
+  } catch (err: unknown) {
+    assertions.check('the place-rename-demolish steps ran without a throw', false, toErrorMessage(err));
+  }
+
+  await removePlacement(
+    session,
+    ctx,
+    { ...lot, facilityClass: cls, visualClassId: info.visualClassId, tycoonId, key, refused, url, dims },
+    assertions,
+  );
+}
+
+/**
+ * Rename to a marker, read it back, rename back to the original, read it back. Not a pending
+ * restore of its own: the facility is demolished next, and the placement's entry covers it.
+ */
+async function renameSteps(
+  session: LiveSession,
+  ctx: FlowContext,
+  lot: { x: number; y: number },
+  vc: string,
+  assertions: Assertions,
+): Promise<void> {
+  const { x, y } = lot;
+  const nameAt = (): Promise<string> => readBuildingDetails(session, x, y, vc).then(d => d.buildingName ?? '');
+  const rename = (newName: string): Promise<WsRespRenameFacility> =>
+    session.driver.request<WsRespRenameFacility>(
+      { type: WsMessageType.REQ_RENAME_FACILITY, x, y, newName },
+      WsMessageType.RESP_RENAME_FACILITY,
+      TIMEOUTS.login,
+    );
+  try {
+    const original = await nameAt();
+    const marker = `e2e-rename-${randomUUID().slice(0, 8)}`;
+    const toMarker = await rename(marker);
+    assertions.check('the gateway accepted the rename to the marker', toMarker.success === true, toMarker.message);
+    const readMarker = await pollUntil(nameAt, n => n.trim() === marker, ctx);
+    assertions.check('the details read the marker name', readMarker.ok, `"${readMarker.last}" (expected "${marker}")`);
+    if (!readMarker.ok) return;
+
+    const back = await rename(original);
+    assertions.check('the gateway accepted the rename back', back.success === true, back.message);
+    const readBack = await pollUntil(nameAt, n => n.trim() === original.trim(), ctx);
+    assertions.check('the details read the original name back', readBack.ok, `"${readBack.last}" (expected "${original}")`);
+  } catch (err: unknown) {
+    assertions.check('the rename steps ran without a throw', false, toErrorMessage(err));
+  }
+}
+
+/**
+ * The single demolition path, happy or not: demolishes only what this run placed — the lot
+ * holds the placed class (or its construction state) owned by SPO_test3's tycoon id. Anything
+ * else is left alone and FAILs, keeping the pending restore; the lock then goes dirty and a
+ * human demolishes and runs `npm run e2e:unlock` (E2E-POLICY §6). The pending restore is cleared
+ * only after a `Del Facility` line and an empty lot, or after a refused placement that left the
+ * lot empty.
+ */
+async function removePlacement(session: LiveSession, ctx: FlowContext, p: Placement, assertions: Assertions): Promise<void> {
+  const where = `(${p.x},${p.y})`;
+  try {
+    const b = await lotBuilding(session, p.x, p.y);
+    if (!b) {
+      if (p.refused) {
+        ctx.lock.clearPendingRestore(p.key);
+        assertions.check('nothing was placed at the lot', b === undefined, `NewFacility refused; ${where} is empty`);
+      } else {
+        assertions.check(
+          'the placed facility stands at the lot for the demolition',
+          false,
+          `nothing at ${where} — nothing demolished, pending restore kept`,
+        );
+      }
+      return;
+    }
+    if (!ownsPlacement(b, p.dims, p.visualClassId, p.tycoonId)) {
+      assertions.check(
+        'the object at the lot is the one this run placed',
+        false,
+        `visual class ${b.visualClass}, owner ${b.tycoonId} at ${where} — nothing demolished, pending restore kept`,
+      );
+      return;
+    }
+
+    const delWindow = await openLogWindow(p.url);
+    const deleted = await session.driver.request<WsRespDeleteFacility>(
+      { type: WsMessageType.REQ_DELETE_FACILITY, x: p.x, y: p.y },
+      WsMessageType.RESP_DELETE_FACILITY,
+      TIMEOUTS.login,
+    );
+    assertions.check('the gateway accepted the demolition', deleted.success === true, deleted.message);
+    const delLine = await awaitMarker(
+      delWindow,
+      { marker: LOG_MARKERS.RDODelFacility, match: l => delFacilityLineMatches(l, p.x, p.y) },
+      TIMEOUTS.logSettle,
+      undefined,
+      ctx.now,
+      ctx.sleep,
+    );
+    const gone = await pollUntil(() => lotBuilding(session, p.x, p.y), v => v === undefined, ctx);
+    const kept = delLine !== null && gone.ok ? '' : ' — pending restore kept';
+    assertions.check('the demolition logged its Del Facility line', delLine !== null, (delLine ?? `(no Del Facility line for ${where})`) + kept);
+    assertions.check(
+      'nothing stands at the lot on REQ_MAP_LOAD',
+      gone.ok,
+      (gone.last ? `visual class ${gone.last.visualClass} still at ${where}` : `${where} is empty`) + kept,
+    );
+    if (delLine !== null && gone.ok) ctx.lock.clearPendingRestore(p.key);
+  } catch (err: unknown) {
+    assertions.check('the demolition cleanup ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+  }
+}
+
 export const FLOWS: Flow[] = [
   loginSpine,
   sessionResume,
@@ -4465,6 +4859,8 @@ export const FLOWS: Flow[] = [
   zoneRoundTrip,
   warehouseRoleReading,
   fixturesEnsure,
+  buildMenuRead,
+  placeRenameDemolish,
 ];
 
 export function flowByName(name: string): Flow {

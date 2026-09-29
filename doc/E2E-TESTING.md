@@ -36,7 +36,8 @@ pointers to this file.
 - **Blast radius** ([E2E-POLICY.md](E2E-POLICY.md) §9): mutations only on Helartia. The
   second account is touched only by the mail round-trip, which deletes what it sent in the
   same run — no flow touches its buildings. Never another player's assets, never a
-  world-scope value, never demolish or create-company.
+  world-scope value, never demolish anything but the facility `place-rename-demolish` placed in
+  the same run (#1150), never create-company.
 
 ## Interaction Rules (React UI reality)
 
