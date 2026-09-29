@@ -66,6 +66,11 @@ export const INTERFACE_LOG_BASE = new URL('../FIVEINTERFACESERVER/', LIVE_LOG_BA
  *
  * Source: TPresidentialHall, Kernel/WorldPolitics.pas:261-266, indexed in
  * doc/civic-roles-reference.md:101-106.
+ *
+ * `RDOSetMinSalaryValue` has two declarations behind one client path: `TTownHall`
+ * (Kernel/Population.pas:167, the town) and `TPresidentialHall` (Kernel/WorldPolitics.pas:265,
+ * the Capitol), plus the `TPoliticalWorld` twins (Kernel/WorldPolitics.pas:219-220). It stays
+ * listed for its Capitol variant; the `town-min-wage` flow drives the town variant.
  */
 export const PRESIDENT_MEMBERS = [
   'RDOSetMinSalaryValue',

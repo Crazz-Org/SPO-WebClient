@@ -106,6 +106,19 @@ export const LOG_MARKERS: Record<string, string> = {
   RDOAskLoan: 'AskLoan:',
   // Kernel/Kernel.pas:11772 (log :11777) — "Setting policy status: <tycoon>, <to>, <status>"
   RDOSetPolicyStatus: 'Setting policy status:',
+  // Kernel/Kernel.pas:11679 (log :11681) — "Adding initial suppliers: <tycoon>, <fluid>, <suppliers>"
+  RDOAddAutoConnection: 'Adding initial suppliers:',
+  // Kernel/Kernel.pas:11689 (log :11691) — "Deleting initial suppliers: <tycoon>, <fluid>, <suppliers>"
+  RDODelAutoConnection: 'Deleting initial suppliers:',
+  // Kernel/Kernel.pas:11699 (log :11703) — "Initial suppliers, include Trade Center: <tycoon>, <fluid>"
+  RDOHireTradeCenter: 'Initial suppliers, include Trade Center:',
+  // Kernel/Kernel.pas:11717 (log :11721) — "Initial suppliers, excluding Trade Center: <tycoon>, <fluid>"
+  RDODontHireTradeCenter: 'Initial suppliers, excluding Trade Center:',
+  // Kernel/Kernel.pas:11735 (log :11739) — "Initial suppliers, hire only warehouses: <tycoon>, <fluid>"
+  RDOHireOnlyFromWarehouse: 'Initial suppliers, hire only warehouses:',
+  // Kernel/Kernel.pas:11753 (log :11757) — "Initial suppliers, hire all: <tycoon>, <fluid>" (the later
+  // "hire all OK!" line, :11766, does not contain "hire all:")
+  RDODontHireOnlyFromWarehouse: 'Initial suppliers, hire all:',
   // Kernel/PoliticsCache.pas:139 — kept; not a write, no flow's proof
   CacheTown: 'Caching Town..',
 };

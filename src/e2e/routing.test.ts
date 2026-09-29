@@ -27,8 +27,27 @@ describe('route', () => {
   // rule keeps the frames and RDO members.
   it('routes the governance handler to its own flows', () => {
     const decision = route(['src/server/session/politics-handler.ts']);
-    expect(decision.required).toEqual(['login-spine', 'politics-read', 'politics-write']);
+    expect(decision.required).toEqual([
+      'login-spine', 'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
+    ]);
     expect(decision.staticOnly).toBe(false);
+  });
+
+  // #1145: the politics files also own the flows that drive their minimum-wage and publicity paths.
+  it.each([
+    'src/server/session/politics-handler.ts',
+    'src/server/ws-handlers/politics-handlers.ts',
+    'src/client/components/politics/JobsTab.tsx',
+  ])('routes %s to town-min-wage and publicity-roundtrip', file => {
+    const required = route([file]).required;
+    expect(required).toContain('town-min-wage');
+    expect(required).toContain('publicity-roundtrip');
+  });
+
+  it("routes template-groups.ts to town-min-wage (TOWN_JOBS_GROUP's min-wage mapping)", () => {
+    expect(route(['src/shared/building-details/template-groups.ts']).required).toEqual([
+      SPINE_FLOW, 'building-details', 'town-min-wage',
+    ]);
   });
 
   it('routes a wire-level change to the governance and inspector flows', () => {
@@ -67,9 +86,20 @@ describe('route', () => {
     expect(route([file]).required).toEqual([SPINE_FLOW, 'building-details', 'politics-read']);
   });
 
-  it('routes mail-handler.ts to mail-roundtrip and zoning-alert-read, not to the governance flows', () => {
+  it('routes mail-handler.ts to mail-roundtrip, zoning-alert-read, mail-drafts, mail-send-from-draft and mail-reply, not to the governance flows', () => {
     const d = route(['src/server/session/mail-handler.ts']);
-    expect(d.required).toEqual([SPINE_FLOW, 'mail-roundtrip', 'zoning-alert-read']);
+    expect(d.required).toEqual([
+      SPINE_FLOW, 'mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply',
+    ]);
+  });
+
+  it.each([
+    'src/client/components/mail/MailPanel.tsx',
+    'src/server/mail-list-parser.ts',
+  ])('routes the mail path %s to the drafts, send-from-draft and reply flows', file => {
+    expect(route([file]).required).toEqual(
+      expect.arrayContaining(['mail-drafts', 'mail-send-from-draft', 'mail-reply']),
+    );
   });
 
   it('routes the local.asp translator to the one flow that reads a link through it', () => {
@@ -308,17 +338,17 @@ describe('launderedTests', () => {
 describe('the town paper', () => {
   // The paper is not on the RDO wire at all — it is scraped off the ASP pages —
   // so the governance flows would prove nothing about a change to it.
-  // And no flow is required (#1009): the bench cannot create a kept issue, so
-  // newspaper-read could only end UNPROVEN. The spine alone rides along.
+  // newspaper-read stays nightly-only (#1009): the bench cannot create a kept issue,
+  // so it could only end UNPROVEN. The columns board read is required instead.
   const paperPaths = [
     'src/server/session/newspaper-handler.ts',
     'src/client/components/modals/NewspaperModal.tsx',
     'src/client/store/newspaper-store.ts',
   ];
 
-  it.each(paperPaths)('routes %s to the spine alone, and it is still observable live', file => {
+  it.each(paperPaths)('routes %s to the spine and the board read, and it is observable live', file => {
     const d = route([file]);
-    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
     expect(d.staticOnly).toBe(false);
   });
 
@@ -329,8 +359,13 @@ describe('the town paper', () => {
     }
   });
 
-  it('routes the newspaper WS handler to the spine alone, not to the ws-handlers rule', () => {
-    expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).required).toEqual([SPINE_FLOW]);
+  it('routes the newspaper WS handler to the board read, not to the ws-handlers rule', () => {
+    expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).required)
+      .toEqual([SPINE_FLOW, 'newspaper-board-read']);
+  });
+
+  it('leaves no rule with a spine-alone option', () => {
+    expect(ROUTES.some(r => 'spine' + 'Only' in r)).toBe(false);
   });
 
   it('keeps newspaper-read in the catalogue — it still runs and reports', () => {
@@ -522,6 +557,14 @@ describe('routing invariants (#1134)', () => {
     expect(Object.keys(GATE_ONLY)).toContain('politics-write');
   });
 
+  // #1145: the vote is data-gated — never required, never nightly-excluded by GATE_ONLY.
+  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write and policy-roundtrip alone', () => {
+    expect(NIGHTLY_ONLY['vote-roundtrip']).toMatch(/Kernel\/TownPolitics\.pas:690/);
+    expect(uncited({ 'vote-roundtrip': NIGHTLY_ONLY['vote-roundtrip'] })).toEqual([]);
+    expect(ROUTES.some(r => r.flows.includes('vote-roundtrip'))).toBe(false);
+    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip']);
+  });
+
   it('cites a reason for every exemption', () => {
     expect(uncited(NIGHTLY_ONLY)).toEqual([]);
     expect(uncited(GATE_ONLY)).toEqual([]);
@@ -618,9 +661,9 @@ describe('route — L3 on the component folders (#1134)', () => {
     expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).needsL3).toBe(false);
   });
 
-  it('flags the paper modal, still spine-only', () => {
+  it('flags the paper modal, on the board read', () => {
     const d = route(['src/client/components/modals/NewspaperModal.tsx']);
-    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
     expect(d.needsL3).toBe(true);
   });
 });
@@ -641,19 +684,21 @@ describe('route — handler rules seeded by #1134', () => {
   it.each(['src/server/session/building-details-handler.ts', 'src/server/session/building-property-handler.ts'])(
     'routes %s to the inspector, the write and the permission flows',
     file => {
-      expect(route([file]).required).toEqual([SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative']);
+      expect(route([file]).required).toEqual([
+        SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'town-min-wage',
+      ]);
     },
   );
 
   it('routes the politics WS handlers like the session one', () => {
     expect(route(['src/server/ws-handlers/politics-handlers.ts']).required).toEqual([
-      SPINE_FLOW, 'politics-read', 'politics-write',
+      SPINE_FLOW, 'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
     ]);
   });
 
   it('routes the mail WS handlers to the mail flows', () => {
     expect(route(['src/server/ws-handlers/mail-handlers.ts']).required).toEqual([
-      SPINE_FLOW, 'mail-roundtrip', 'zoning-alert-read',
+      SPINE_FLOW, 'mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply',
     ]);
   });
 
@@ -738,5 +783,39 @@ describe('route — session & company (#1142)', () => {
   it('neither flow is nightly-only', () => {
     expect(NIGHTLY_ONLY).not.toHaveProperty('company-switch');
     expect(NIGHTLY_ONLY).not.toHaveProperty('cluster-info-read');
+  });
+});
+
+describe('route — profile & finance reads (#1141)', () => {
+  it.each([
+    'src/server/ws-handlers/profile-handlers.ts',
+    'src/server/session/profile-finance-handler.ts',
+    'src/server/session/auto-connection-handler.ts',
+    'src/client/store/profile-store.ts',
+  ])('%s requires profile-read and the two profile write flows', file => {
+    expect(route([file]).required).toEqual([
+      SPINE_FLOW, 'profile-read', 'policy-roundtrip', 'autoconnection-roundtrip',
+    ]);
+    expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it('auto-connection-handler.ts requires both write flows; only policy-roundtrip is gate-only (#1146)', () => {
+    const required = route(['src/server/session/auto-connection-handler.ts']).required;
+    expect(required).toContain('policy-roundtrip');
+    expect(required).toContain('autoconnection-roundtrip');
+    expect(GATE_ONLY['policy-roundtrip']).toMatch(/Kernel\/Kernel\.pas:11790-11800/);
+    expect('autoconnection-roundtrip' in GATE_ONLY).toBe(false);
+  });
+
+  it('routes an Empire panel file to the favorites flows and profile-read', () => {
+    expect(route(['src/client/components/empire/ProfilePanel.tsx']).required).toEqual([
+      SPINE_FLOW, 'favorites-roundtrip', 'favorites-folders', 'profile-read',
+    ]);
+  });
+
+  it('keeps an Empire panel stylesheet L3-only', () => {
+    const d = route(['src/client/components/empire/ProfilePanel.module.css']);
+    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.needsL3).toBe(true);
   });
 });

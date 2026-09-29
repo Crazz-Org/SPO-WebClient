@@ -3,8 +3,13 @@ import * as os from 'os';
 import * as path from 'path';
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage, FavoritesItem, WsRespResumeSession } from '@/shared/types/message-types';
-import type { MailMessageHeader } from '@/shared/types/domain-types';
-import { FLOWS, flowByName, nudge, runFlow, type Flow, type FlowResult } from './flows';
+import type { MailMessageFull, MailMessageHeader, NewspaperBoard } from '@/shared/types/domain-types';
+import {
+  FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum, replyHeaders,
+  otherPublicityLevel, publicityLogMatches, taxLogMatches,
+  type Flow, type FlowResult,
+} from './flows';
+import { buildReplyHeaders } from '@/client/store/mail-store';
 import { ROUTES, NIGHTLY_ONLY, GATE_ONLY } from './routing';
 import { CLUSTER_IDS } from '@/shared/cluster-data';
 import { WorldLock } from './world-lock';
@@ -57,7 +62,11 @@ describe('the catalogue', () => {
   it('marks exactly the writing flows as mutating', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
     expect(mutating).toEqual(
-      ['favorites-folders', 'favorites-roundtrip', 'mail-roundtrip', 'politics-write', 'zoning-alert-read'],
+      [
+        'autoconnection-roundtrip', 'favorites-folders', 'favorites-roundtrip', 'mail-drafts', 'mail-reply',
+        'mail-roundtrip', 'mail-send-from-draft', 'policy-roundtrip', 'politics-write', 'publicity-roundtrip',
+        'town-min-wage', 'vote-roundtrip', 'zoning-alert-read',
+      ],
     );
   });
 
@@ -524,6 +533,46 @@ describe('the politics-read flow', () => {
     const result = await flowByName('politics-read').run(ctx);
     expect(result.status).toBe('FAIL');
   });
+
+  function politicsPayload(mayorName: string, ratings: number) {
+    jest.spyOn(session, 'login').mockResolvedValue(
+      stubSession(msg =>
+        msg.type === WsMessageType.REQ_POLITICS_DATA
+          ? {
+              type: WsMessageType.RESP_POLITICS_DATA,
+              data: {
+                mayorName,
+                popularRatings: Array.from({ length: ratings }, (_, i) => ({ name: `r${i}`, value: 50 })),
+                ifelRatings: [],
+                tycoonsRatings: [],
+              },
+            }
+          : undefined,
+      ),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+  }
+
+  it.each(['Mayor of Helartia', 'spo_test3', 'SPO_test3'])("accepts %s as SPO_test3's office", async name => {
+    politicsPayload(name, 2);
+    const result = await flowByName('politics-read').run(ctx);
+    expect(result.status).toBe('PASS');
+  });
+
+  it('fails when the ruler is someone else', async () => {
+    politicsPayload('Crazz', 2);
+    const result = await flowByName('politics-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)).toMatchObject({ what: "mayorName names SPO_test3's office", detail: 'Crazz' });
+  });
+
+  it('fails when no rating is listed', async () => {
+    politicsPayload('SPO_test3', 0);
+    const result = await flowByName('politics-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toBe('ratings are listed');
+  });
 });
 
 const helartia = {
@@ -581,7 +630,7 @@ describe('politics-write', () => {
     const result = await flowByName('politics-write').run(ctx);
 
     expect(result.status).toBe('PASS');
-    expect(result.probes).toHaveLength(1);
+    expect(result.probes).toHaveLength(2);
     const spec = runProbe.mock.calls[0][1];
     expect(spec).toMatchObject({
       x: 100,
@@ -591,6 +640,75 @@ describe('politics-write', () => {
       additionalParams: { index: '0' },
     });
     expect(spec.testValue('7')).toBe('8');
+    const subsidy = runProbe.mock.calls[1][1];
+    expect(subsidy).toMatchObject({ original: '7', writeProperty: 'RDOSetTaxValue', additionalParams: { index: '0' } });
+    expect(subsidy.testValue('7')).toBe('-10');
+  });
+
+  it('does not attempt the subsidy when the rate probe did not restore', async () => {
+    governedTownHall(true, '7');
+    jest.spyOn(liveLog, 'findCurrentSurvivalLog').mockResolvedValue('http://logs/S.log');
+    const runProbe = jest
+      .spyOn(probeModule, 'runProbe')
+      .mockResolvedValue({ ...passingProbe, status: 'FAIL', restored: false });
+
+    const result = await flowByName('politics-write').run(ctx);
+
+    expect(runProbe).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('FAIL');
+    expect(result.unproven.join()).toMatch(/subsidy probe — not attempted/);
+  });
+
+  it('records a subsidy probe that threw', async () => {
+    governedTownHall(true, '7');
+    jest.spyOn(liveLog, 'findCurrentSurvivalLog').mockResolvedValue('http://logs/S.log');
+    jest
+      .spyOn(probeModule, 'runProbe')
+      .mockResolvedValueOnce(passingProbe)
+      .mockRejectedValueOnce(new Error('socket died'));
+
+    const result = await flowByName('politics-write').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[1]).toMatchObject({ what: 'Helartia tax row 0 subsidy', status: 'FAIL', note: 'socket died' });
+  });
+
+  it("restores the subsidy to the rate probe's original even when the cache still shows the test value", async () => {
+    governedTownHall(true, '7');
+    // The flow's own read, then the rate probe (original, poll, restore poll), then a stale
+    // '8' the facility cache still serves — then whatever was written last.
+    const scripted = ['7', '7', '8', '7', '8'];
+    let last = '7';
+    jest.spyOn(session, 'readSectionGroups').mockImplementation(async () => ({
+      townTaxes: [
+        { name: 'Tax0Id', value: '3' },
+        { name: 'Tax0Percent', value: scripted.length > 0 ? (scripted.shift() as string) : last },
+      ],
+    }));
+    const writes: string[] = [];
+    jest.spyOn(session, 'setBuildingProperty').mockImplementation(async (_s, _x, _y, _p, value) => {
+      writes.push(value);
+      last = value;
+      return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: value } as never;
+    });
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue({ url: 'u', offset: 0, openedAt: 'now' });
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      const line = `12:00:00 Setting Tax value: Helartia, 3, ${last}`;
+      return typeof proof === 'object' && (proof.match?.(line) ?? true) ? line : null;
+    });
+    const lock = cleanLock();
+
+    const result = await flowByName('politics-write').run({
+      lock,
+      survivalLogUrl: 'u',
+      now: () => 0,
+      sleep: async () => undefined,
+    });
+
+    expect(writes).toEqual(['8', '7', '-10', '7']);
+    expect(result.probes.map(p => p.status)).toEqual(['PASS', 'PASS']);
+    expect(result.status).toBe('PASS');
+    expect(lock.read().pendingRestores).toEqual([]);
   });
 
   it('refuses to write when the account cannot govern the town hall', async () => {
@@ -633,6 +751,357 @@ describe('politics-write', () => {
 
     expect(find).not.toHaveBeenCalled();
     expect(runProbe.mock.calls[0][4]).toBe('http://given/S.log');
+  });
+});
+
+describe('taxLogMatches', () => {
+  it('requires the town, the TaxId and the value when the TaxId is known', () => {
+    expect(taxLogMatches('1:00 Setting Tax value: Helartia, 3, -10', 'Helartia', '3', '-10')).toBe(true);
+    expect(taxLogMatches('1:00 Setting Tax value: Helartia, 4, -10', 'Helartia', '3', '-10')).toBe(false);
+    expect(taxLogMatches('1:00 Setting Tax value: Helartia, 3, -100', 'Helartia', '3', '-10')).toBe(false);
+  });
+
+  it('requires the town and the value when the TaxId is unknown', () => {
+    expect(taxLogMatches('1:00 Setting Tax value: Helartia, 9, -10', 'Helartia', undefined, '-10')).toBe(true);
+    expect(taxLogMatches('1:00 Setting Tax value: Other, 9, -10', 'Helartia', undefined, '-10')).toBe(false);
+    expect(taxLogMatches('1:00 Setting Tax value: Helartia, 9, 7', 'Helartia', undefined, '-10')).toBe(false);
+  });
+});
+
+/** Time that jumps past any read-back bound on every look, and a sleep that returns at once. */
+function fastClock(): { now: () => number; sleep: () => Promise<void> } {
+  let t = 0;
+  return { now: () => (t += 1_000_000_000), sleep: async () => undefined };
+}
+
+const logWindow = { url: 'u', offset: 0, openedAt: 'now' };
+
+describe('town-min-wage', () => {
+  /** A town hall whose `hiMinSalary` is `wage`; `apply` decides whether a write moves it. */
+  function minWageHall(opts: {
+    canGovern?: boolean;
+    wage?: string;
+    apply?: (value: string, call: number) => boolean;
+    failWrite?: number;
+    logLine?: (written: string) => string | null;
+  }) {
+    governedTownHall(opts.canGovern ?? true, undefined);
+    let wage = opts.wage;
+    jest.spyOn(session, 'readSectionGroups').mockImplementation(async () =>
+      wage === undefined ? {} : { townJobs: [{ name: 'hiMinSalary', value: wage }] },
+    );
+    const writes: { value: string; params?: Record<string, string>; property: string }[] = [];
+    jest.spyOn(session, 'setBuildingProperty').mockImplementation(async (_s, _x, _y, property, value, params) => {
+      writes.push({ value, params, property });
+      if (opts.failWrite === writes.length) throw new Error('write rejected');
+      if (opts.apply?.(value, writes.length) ?? true) wage = value;
+      return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: value } as never;
+    });
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      const line = opts.logLine ? opts.logLine(wage ?? '') : `12:00:00 Setting Min Wage: Helartia, 0, ${wage ?? ''}`;
+      if (line === null) return null;
+      return typeof proof === 'object' && (proof.match?.(line) ?? true) ? line : null;
+    });
+    return writes;
+  }
+
+  const run = (lock = cleanLock()) =>
+    flowByName('town-min-wage').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+  it('drives kind 0 of the town hall and passes on the log line and the read-back', async () => {
+    const writes = minWageHall({ wage: '40' });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(writes).toEqual([
+      { value: '41', params: { levelIndex: '0' }, property: 'RDOSetMinSalaryValue' },
+      { value: '40', params: { levelIndex: '0' }, property: 'RDOSetMinSalaryValue' },
+    ]);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('passes the nudge and a log match on town, kind and value to the probe', async () => {
+    governedTownHall(true, undefined);
+    jest.spyOn(session, 'readSectionGroups').mockResolvedValue({ townJobs: [{ name: 'hiMinSalary', value: '40' }] });
+    const runProbe = jest.spyOn(probeModule, 'runProbe').mockRejectedValue(new Error('socket died'));
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toBe('socket died');
+    const spec = runProbe.mock.calls[0][1];
+    expect(spec).toMatchObject({ groupId: 'townJobs', readProperty: 'hiMinSalary', additionalParams: { levelIndex: '0' } });
+    expect(spec.testValue('40')).toBe(nudge('40'));
+    const match = spec.logMatch as (line: string, written: string) => boolean;
+    expect(match('1:00 Setting Min Wage: Helartia, 0, 8', '8')).toBe(true);
+    expect(match('1:00 Setting Min Wage: Other, 0, 8', '8')).toBe(false);
+    expect(match('1:00 Setting Min Wage: Helartia, 1, 8', '8')).toBe(false);
+    expect(match('1:00 Setting Min Wage: Helartia, 0, 9', '8')).toBe(false);
+  });
+
+  it('writes nothing when the account cannot govern the town hall', async () => {
+    const writes = minWageHall({ canGovern: false, wage: '40' });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(writes).toEqual([]);
+  });
+
+  it('writes nothing when the minimum wage is unreadable', async () => {
+    const writes = minWageHall({ wage: undefined });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(writes).toEqual([]);
+  });
+
+  it('fails a log line with no matching read-back, and still restores', async () => {
+    // The line is there, but the value never moves.
+    const writes = minWageHall({ wage: '40', apply: () => false, logLine: () => '1:00 Setting Min Wage: Helartia, 0, 41' });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/read-back never showed "41"/);
+    expect(writes.map(w => w.value)).toEqual(['41', '40']);
+  });
+
+  it('restores after a failed write', async () => {
+    const writes = minWageHall({ wage: '40', failWrite: 1 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(writes.map(w => w.value)).toEqual(['41', '40']);
+    expect(result.probes[0].restored).toBe(true);
+  });
+
+  it('restores after a failed proof (no log line)', async () => {
+    const writes = minWageHall({ wage: '40', logLine: () => null });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/no model-server log line/);
+    expect(writes.map(w => w.value)).toEqual(['41', '40']);
+  });
+});
+
+describe('publicity-roundtrip', () => {
+  it('writes another multiple of 25 in 0..100 for every level the client emits', () => {
+    for (const original of ['0', '25', '50', '75', '100']) {
+      const next = otherPublicityLevel(original);
+      expect(next).not.toBe(original);
+      expect([0, 25, 50, 75, 100]).toContain(Number(next));
+    }
+  });
+
+  it.each(['30', '', 'abc', '125', '-25'])('refuses to pick a level from "%s"', original => {
+    expect(() => otherPublicityLevel(original)).toThrow(/not one of 0\/25\/50\/75\/100/);
+  });
+
+  it('matches only the line carrying the RatingId and the value', () => {
+    expect(publicityLogMatches('1:00 Setting town politics publicity: 5, 25', '5', '25')).toBe(true);
+    expect(publicityLogMatches('1:00 Setting town politics publicity: 6, 25', '5', '25')).toBe(false);
+    expect(publicityLogMatches('1:00 Setting town politics publicity: 15, 25', '5', '25')).toBe(false);
+    expect(publicityLogMatches('1:00 Setting town politics publicity: 5, 50', '5', '25')).toBe(false);
+  });
+
+  function publicityHall(opts: {
+    rows?: { id: string; name: string; level: number }[];
+    refuse?: number;
+    logRatingId?: string;
+  }) {
+    const rows = opts.rows ?? [{ id: '5', name: 'Education', level: 50 }];
+    const writes: { ratingId: string; value: number }[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(
+      stubSession(msg => {
+        if (msg.type === WsMessageType.REQ_POLITICS_DATA) {
+          return { type: WsMessageType.RESP_POLITICS_DATA, data: { publicity: rows.map(r => ({ ...r })) } };
+        }
+        if (msg.type === WsMessageType.REQ_POLITICS_SET_PUBLICITY) {
+          const m = msg as unknown as { ratingId: string; value: number };
+          writes.push({ ratingId: m.ratingId, value: m.value });
+          if (opts.refuse === writes.length) {
+            return { type: WsMessageType.RESP_POLITICS_SET_PUBLICITY, success: false, message: 'no' };
+          }
+          const row = rows.find(r => r.id === m.ratingId);
+          if (row) row.level = m.value;
+          return { type: WsMessageType.RESP_POLITICS_SET_PUBLICITY, success: true };
+        }
+        return undefined;
+      }),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      const last = writes[writes.length - 1];
+      const line = `12:00:00 Setting town politics publicity: ${opts.logRatingId ?? last?.ratingId}, ${last?.value}`;
+      return typeof proof === 'object' && (proof.match?.(line) ?? true) ? line : null;
+    });
+    return writes;
+  }
+
+  const run = (lock = cleanLock()) =>
+    flowByName('publicity-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+  it('writes another level, proves it, and restores the original', async () => {
+    const writes = publicityHall({});
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(writes).toEqual([
+      { ratingId: '5', value: 25 },
+      { ratingId: '5', value: 50 },
+    ]);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails a line that carries another RatingId, and still restores', async () => {
+    const writes = publicityHall({ logRatingId: '6' });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/no model-server log line/);
+    expect(writes.map(w => w.value)).toEqual([25, 50]);
+  });
+
+  it('fails a refused write, and still writes the restore', async () => {
+    const writes = publicityHall({ refuse: 1 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/SET_PUBLICITY refused/);
+    expect(writes.map(w => w.value)).toEqual([25, 50]);
+  });
+
+  it('writes nothing when the original is not a level the client emits', async () => {
+    const lock = cleanLock();
+    const writes = publicityHall({ rows: [{ id: '5', name: 'Education', level: 30 }] });
+    const result = await run(lock);
+    expect(result.status).toBe('FAIL');
+    expect(writes).toEqual([]);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails when no publicity row is listed', async () => {
+    const writes = publicityHall({ rows: [] });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions[0]).toMatchObject({ what: 'a publicity row is listed', ok: false });
+    expect(writes).toEqual([]);
+  });
+});
+
+describe('vote-roundtrip', () => {
+  function voteHall(opts: {
+    prior?: string;
+    candidates?: string[];
+    mayor?: string;
+    /** Whether the server applies the n-th vote (1-based). */
+    apply?: (call: number) => boolean;
+    /** Whether the n-th vote prints its log line. */
+    logs?: (call: number) => boolean;
+  }) {
+    let current = opts.prior;
+    const votes: string[] = [];
+    const lines: string[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(
+      stubSession(msg => {
+        if (msg.type === WsMessageType.REQ_POLITICS_DATA) {
+          return {
+            type: WsMessageType.RESP_POLITICS_DATA,
+            data: {
+              mayorName: opts.mayor ?? 'SPO_test3',
+              campaigns: (opts.candidates ?? []).map(candidateName => ({ candidateName, rating: 0, prestige: 0, photoUrl: '' })),
+            },
+          };
+        }
+        if (msg.type === WsMessageType.REQ_POLITICS_VOTE) {
+          const choice = (msg as unknown as { candidateName: string }).candidateName;
+          votes.push(choice);
+          if (opts.logs?.(votes.length) ?? true) lines.push(`1/1/2026 12:00:00 Voting: SPO_test3 by ${choice}`);
+          if (opts.apply?.(votes.length) ?? true) current = choice;
+          return { type: WsMessageType.RESP_POLITICS_VOTE, success: true };
+        }
+        return undefined;
+      }),
+    );
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+    jest.spyOn(session, 'resolveVisualClass').mockResolvedValue('7010');
+    jest.spyOn(session, 'readSectionGroups').mockImplementation(async () => ({
+      votes: current === undefined ? [] : [{ name: 'VoteOf', value: current }],
+    }));
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(
+      async (_w, proof) => lines.find(l => typeof proof === 'object' && (proof.match?.(l) ?? true)) ?? null,
+    );
+    return votes;
+  }
+
+  const run = (lock = cleanLock()) => flowByName('vote-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+  it('votes for another candidate, then re-votes the prior choice', async () => {
+    const votes = voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'] });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(votes).toEqual(['Bob', 'Alice']);
+    expect(result.assertions.find(a => a.what === 'the restore vote reached the object')?.ok).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('accepts the current mayor as the prior choice, compared case-insensitively', async () => {
+    const votes = voteHall({ prior: 'spo_test3', candidates: ['Bob'], mayor: 'SPO_test3' });
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(votes).toEqual(['Bob', 'spo_test3']);
+  });
+
+  it('never votes without a prior vote', async () => {
+    const votes = voteHall({ prior: undefined, candidates: ['Alice', 'Bob'] });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/no readable prior vote.*CurrBlock/);
+    expect(votes).toEqual([]);
+  });
+
+  it('never votes when the prior is stale — no campaign now and not the mayor', async () => {
+    const votes = voteHall({ prior: 'Carol', candidates: ['Alice', 'Bob'], mayor: 'SPO_test3' });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/stale prior vote "Carol"/);
+    expect(votes).toEqual([]);
+  });
+
+  it('never votes when no other candidate exists', async () => {
+    const votes = voteHall({ prior: 'SPO_test3', candidates: [], mayor: 'SPO_test3' });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/no other candidate/);
+    expect(votes).toEqual([]);
+  });
+
+  it('fails when RDOVoteOf still shows the prior after the change vote, and still re-votes', async () => {
+    const votes = voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'], apply: () => false });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/read-back never showed "Bob"/);
+    expect(votes).toEqual(['Bob', 'Alice']);
+  });
+
+  it('fails when the restore vote prints no log line', async () => {
+    const votes = voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'], logs: call => call === 1 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => a.what === 'the restore vote reached the object')?.ok).toBe(false);
+    expect(votes).toEqual(['Bob', 'Alice']);
+  });
+
+  it('fails when the change vote prints no log line', async () => {
+    voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'], logs: () => false });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0].note).toMatch(/no model-server log line/);
+  });
+
+  it('records a round trip that threw', async () => {
+    voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'] });
+    jest.spyOn(liveLog, 'openLogWindow').mockRejectedValue(new Error('log host vanished'));
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0]).toMatchObject({ member: 'RDOVote', note: 'log host vanished' });
   });
 });
 
@@ -1239,6 +1708,100 @@ describe('newspaper-read', () => {
     });
     const opened = requests.find(m => m.type === WsMessageType.REQ_NEWSPAPER_ISSUE);
     expect(opened).toMatchObject({ folder: '002147483640@3-1-2027' });
+  });
+});
+
+describe('newspaper-board-read', () => {
+  const TOWN = {
+    name: 'Helartia', iconUrl: '', mayor: 'SPO_test3', population: 0,
+    unemploymentPercent: 0, qualityOfLife: 0, x: 1, y: 2, path: '', classId: '512',
+  };
+  const ROOT = 'boards\\Planitia\\Helartia Herald\\';
+  const COLUMN = { author: 'Crazz', subject: 'Hello', path: ROOT + '1\\', summary: '' };
+
+  function arrange(over: { paper?: string; board?: Partial<NewspaperBoard> } = {}) {
+    const { paper = 'Helartia Herald' } = over;
+    const board: NewspaperBoard = {
+      paperName: paper, root: ROOT, path: ROOT, columns: [], tree: [], article: null, error: '',
+      ...over.board,
+    };
+    const requests: WsMessage[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+      requests.push(msg);
+      if (msg.type === WsMessageType.REQ_NEWSPAPER_BOARD) return { board };
+      return undefined;
+    }));
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'resolveVisualClass').mockResolvedValue('7010');
+    jest.spyOn(session, 'findTown').mockResolvedValue(TOWN);
+    jest.spyOn(session, 'readBuildingDetails').mockResolvedValue({
+      tabs: [{ id: 'townGeneral' }],
+      groups: paper === ''
+        ? { townGeneral: [{ name: 'Town', value: 'Helartia' }] }
+        : { townGeneral: [{ name: 'NewspaperName', value: paper }] },
+    } as unknown as Awaited<ReturnType<typeof session.readBuildingDetails>>);
+    return requests;
+  }
+
+  const wellFormed = (r: { assertions: { what: string; detail?: string }[] }) =>
+    r.assertions.find(a => /well-formed/.test(a.what));
+
+  it('passes on an empty board, its detail naming both counts', async () => {
+    arrange();
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(wellFormed(result)?.detail).toBe('0 columns, 0 tree entries');
+  });
+
+  it('passes on a populated board and counts it', async () => {
+    arrange({ board: {
+      columns: [COLUMN],
+      tree: [{ ...COLUMN, depth: 0 }, { ...COLUMN, path: ROOT + '1\\2\\', depth: 1 }],
+    } });
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(wellFormed(result)?.detail).toBe('1 columns, 2 tree entries');
+  });
+
+  it('fails when the board answers with an error', async () => {
+    arrange({ board: { error: 'The newspaper answered HTTP 500.' } });
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    const failed = result.assertions.find(a => !a.ok);
+    expect(failed?.what).toMatch(/columns board was read/);
+    expect(failed?.detail).toBe('The newspaper answered HTTP 500.');
+  });
+
+  it('fails when a column has no path', async () => {
+    arrange({ board: { columns: [{ ...COLUMN, path: '' }] } });
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/well-formed/);
+  });
+
+  it('fails when a tree entry has no path', async () => {
+    arrange({ board: { tree: [{ ...COLUMN, path: '', depth: 0 }] } });
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/well-formed/);
+  });
+
+  it('fails, and asks for no board, when the town hall names no paper', async () => {
+    const requests = arrange({ paper: '' });
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/names its paper/);
+    expect(requests.some(m => m.type === WsMessageType.REQ_NEWSPAPER_BOARD)).toBe(false);
+  });
+
+  it('asks for the index of the paper the town hall named', async () => {
+    const requests = arrange();
+    await flowByName('newspaper-board-read').run(ctx);
+    const req = requests.find(m => m.type === WsMessageType.REQ_NEWSPAPER_BOARD);
+    expect(req).toMatchObject({
+      paperName: 'Helartia Herald', townName: 'Helartia', isCapitol: false, buildingX: 1, buildingY: 2,
+    });
+    expect((req as { path?: string }).path).toBeUndefined();
   });
 });
 
@@ -2699,5 +3262,1009 @@ describe('cluster-info-read', () => {
     expect(result.status).toBe('FAIL');
     expect(result.assertions.find(a => /facility category/.test(a.what))?.detail).toBe('0 categories');
     expect(requests.some(m => m.type === WsMessageType.REQ_CLUSTER_FACILITIES)).toBe(false);
+  });
+});
+
+describe('profile-read', () => {
+  const T = WsMessageType;
+  const tree = (children: unknown[]) => ({ root: { label: 'Net', level: 0, amount: '0', children } });
+  type Pages = Record<string, unknown>;
+  const healthy = (): Pages => ({
+    [T.REQ_GET_PROFILE]: { profile: { name: 'SPO_test3', levelName: 'Apprentice' } },
+    [T.REQ_PROFILE_CURRICULUM]: { data: { currentLevel: 0, currentLevelName: 'Apprentice' } },
+    [T.REQ_PROFILE_BANK]: { data: { balance: '1000' } },
+    [T.REQ_PROFILE_PROFITLOSS]: { data: tree([{ label: 'Sales', level: 1, amount: '5' }]) },
+    [T.REQ_PROFILE_COMPANIES]: {
+      data: { companies: [{ name: 'SPO_test3 - Green', cluster: 'PGI', companyId: 1 }], currentCompany: '', worldName: 'planitia' },
+    },
+    [T.REQ_PROFILE_COMPANY_PROFITLOSS]: { companyName: 'SPO_test3 - Green', data: tree([{ label: 'Sales', level: 1, amount: '5' }]) },
+    [T.REQ_PROFILE_AUTOCONNECTIONS]: { data: { fluids: [{ fluidId: 'Food', fluidName: 'Food', suppliers: [] }] } },
+    [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: 'Crazz', yourPolicy: 1, theirPolicy: 1 }], alliesAllowed: true } },
+  });
+
+  function arrange(over: Pages = {}) {
+    const pages = { ...healthy(), ...over };
+    const sent: Record<string, unknown>[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+      sent.push(msg as unknown as Record<string, unknown>);
+      const page = pages[msg.type];
+      if (page instanceof Error) throw page;
+      return page;
+    }));
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    return { sent, off };
+  }
+
+  const run = () => flowByName('profile-read').run(ctx);
+  const failed = (r: FlowResult) => r.assertions.filter(a => !a.ok);
+
+  it('passes on healthy pages, sends all eight reads, logs off, and is read-only', async () => {
+    const { sent, off } = arrange();
+    const result = await run();
+    expect(failed(result)).toEqual([]);
+    expect(result.status).toBe('PASS');
+    expect(result.unproven).toEqual([]);
+    expect(off).toHaveBeenCalled();
+    expect(flowByName('profile-read').mutates).toBe(false);
+    expect(sent.map(m => m.type)).toEqual([
+      T.REQ_GET_PROFILE, T.REQ_PROFILE_CURRICULUM, T.REQ_PROFILE_BANK, T.REQ_PROFILE_PROFITLOSS,
+      T.REQ_PROFILE_COMPANIES, T.REQ_PROFILE_COMPANY_PROFITLOSS, T.REQ_PROFILE_AUTOCONNECTIONS, T.REQ_PROFILE_POLICY,
+    ]);
+    expect(sent[5]).toMatchObject({ companyName: 'SPO_test3 - Green', cluster: 'PGI' });
+  });
+
+  it.each([
+    [T.REQ_PROFILE_CURRICULUM, 'TycoonCurriculum.asp'],
+    [T.REQ_PROFILE_BANK, 'TycoonBankAccount.asp'],
+    [T.REQ_PROFILE_PROFITLOSS, 'TycoonProfitAndLoses.asp'],
+    [T.REQ_PROFILE_COMPANIES, 'chooseCompany.asp'],
+    [T.REQ_PROFILE_AUTOCONNECTIONS, 'TycoonAutoConnections.asp'],
+    [T.REQ_PROFILE_POLICY, 'TycoonPolicy.asp'],
+  ])('fails when %s answers cacheUnavailable, naming %s', async (type, page) => {
+    const base = healthy()[type] as { data: Record<string, unknown> };
+    arrange({ [type]: { data: { ...base.data, cacheUnavailable: true } } });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    const bad = failed(result);
+    expect(bad.some(a => a.what.includes(page) && /cacheUnavailable/.test(a.detail ?? ''))).toBe(true);
+  });
+
+  it('fails on an empty levelName even though the profile name is set', async () => {
+    arrange({ [T.REQ_GET_PROFILE]: { profile: { name: 'SPO_test3', levelName: '' } } });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result).map(a => a.what)).toEqual(['the profile carries a level name parsed from NewTycoon/TycoonCurriculum.asp']);
+  });
+
+  it.each<[string, Pages, string]>([
+    ['an Unknown curriculum level', { [T.REQ_PROFILE_CURRICULUM]: { data: { currentLevel: 0, currentLevelName: 'Unknown' } } }, 'the curriculum names a level'],
+    ['an unparsable bank balance', { [T.REQ_PROFILE_BANK]: { data: { balance: 'abc' } } }, 'the bank page has a balance'],
+    ['a P&L with no line', { [T.REQ_PROFILE_PROFITLOSS]: { data: tree([]) } }, 'profit & loss has at least one line'],
+    ['a company P&L that failed', { [T.REQ_PROFILE_COMPANY_PROFITLOSS]: { companyName: 'x', data: null, error: 'x' } }, 'the company P&L parses'],
+    ['a response without data', { [T.REQ_PROFILE_BANK]: {} }, 'NewTycoon/TycoonBankAccount.asp answered without cacheUnavailable'],
+    ['a rejected request', { [T.REQ_PROFILE_POLICY]: new WsDriverError('boom', 1, 'REQ_PROFILE_POLICY') }, 'NewTycoon/TycoonPolicy.asp answered without cacheUnavailable'],
+    ['an out-of-range Crazz status', { [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: 'Crazz', yourPolicy: 7, theirPolicy: 1 }] } } }, 'the Crazz strategy row carries a status'],
+  ])('fails on %s', async (_label, over, what) => {
+    arrange(over);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result).map(a => a.what)).toEqual([what]);
+  });
+
+  it('fails the company checks when the session company is not listed', async () => {
+    const { sent } = arrange({ [T.REQ_PROFILE_COMPANIES]: { data: { companies: [{ name: 'Other', cluster: 'PGI' }] } } });
+    const result = await run();
+    expect(failed(result).map(a => [a.what, a.detail])).toEqual([
+      ['the companies list holds SPO_test3 - Green', '1 companies'],
+      ['the company P&L parses', 'no company to read'],
+    ]);
+    expect(sent.some(m => m.type === T.REQ_PROFILE_COMPANY_PROFITLOSS)).toBe(false);
+  });
+
+  it('passes with no Crazz strategy row, never unproven', async () => {
+    arrange({ [T.REQ_PROFILE_POLICY]: { data: { policies: [], alliesAllowed: true } } });
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(result.unproven).toEqual([]);
+    expect(result.assertions.find(a => a.what === 'no Crazz strategy row')?.detail).toMatch(/Kernel\.pas:11348/);
+  });
+
+  it('passes on an empty initial-suppliers list', async () => {
+    arrange({ [T.REQ_PROFILE_AUTOCONNECTIONS]: { data: { fluids: [] } } });
+    const result = await run();
+    expect(result.status).toBe('PASS');
+  });
+
+  it.each([
+    ['readBank', readBank, T.REQ_PROFILE_BANK],
+    ['readAutoConnections', readAutoConnections, T.REQ_PROFILE_AUTOCONNECTIONS],
+    ['readPolicy', readPolicy, T.REQ_PROFILE_POLICY],
+    ['readCurriculum', readCurriculum, T.REQ_PROFILE_CURRICULUM],
+  ] as const)('%s resolves the data and rejects on cacheUnavailable', async (_name, read, type) => {
+    const base = healthy()[type] as { data: Record<string, unknown> };
+    await expect(read(stubSession(() => base))).resolves.toEqual(base.data);
+    await expect(read(stubSession(() => ({ data: { ...base.data, cacheUnavailable: true } }))))
+      .rejects.toThrow(/cacheUnavailable/);
+  });
+});
+
+describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
+  const P = PRIMARY_ACCOUNT.username;
+  const C = SECONDARY_ACCOUNT.username;
+
+  type Stored = MailMessageHeader & { body: string[] };
+  type Req = WsMessage & {
+    folder?: string; messageId?: string; to?: string; subject?: string; body?: string[];
+    headers?: string; existingDraftId?: string;
+  };
+  interface Logged { account: string; login: number; msg: Req }
+
+  function stored(messageId: string, subject: string, from = P, to = C, body: string[] = []): Stored {
+    return {
+      messageId, subject, from, to, fromAddr: `${from}@planitia.net`, toAddr: `${to}@planitia.net`,
+      date: '45000.5', dateFmt: '', read: false, stamp: 0, noReply: false, body,
+    };
+  }
+
+  interface Over {
+    boxes?: Record<string, Stored[]>;
+    /** Folder reads after a REQ_MAIL_DELETE before it lands (1 = on the next read). */
+    deleteLag?: number;
+    /** Folder reads after a save/send's delete of `existingDraftId` before it lands; 'never' = it never does. */
+    draftDeleteLag?: number | 'never';
+    /** Box keys where a REQ_MAIL_DELETE never lands. */
+    ignoreDeleteIn?: string[];
+    /** Which loginSecondary calls answer `{ skipped }` (1-based). */
+    refuseSecondaryOn?: number[];
+    /** Which login calls reject (1-based, counting every login). */
+    loginRejectsOn?: number[];
+    throwWhen?: (l: Logged) => boolean;
+    saveFails?: boolean;
+    composeFails?: boolean;
+    /** A compose that reports success but delivers nothing to the recipient's Inbox. */
+    dropDelivery?: boolean;
+    noFromAddr?: boolean;
+  }
+
+  function arrange(over: Over = {}) {
+    const boxes: Record<string, Stored[]> = {};
+    for (const [k, v] of Object.entries(over.boxes ?? {})) boxes[k] = [...v];
+    const box = (key: string): Stored[] => (boxes[key] ??= []);
+    const pending: { key: string; id: string; left: number }[] = [];
+    const requests: Logged[] = [];
+    let seq = 0;
+    let logins = 0;
+    const scheduleDelete = (key: string, id: string, lag: number | 'never'): void => {
+      if (lag === 'never') return;
+      pending.push({ key, id, left: lag });
+    };
+
+    jest.spyOn(session, 'login').mockImplementation(async account => {
+      logins++;
+      const loginNo = logins;
+      if (over.loginRejectsOn?.includes(loginNo)) throw new Error('login refused');
+      const me = account.username;
+      const stub = stubSession(raw => {
+        const msg = raw as Req;
+        const logged = { account: me, login: loginNo, msg };
+        requests.push(logged);
+        if (over.throwWhen?.(logged)) throw new Error('socket died');
+        switch (msg.type) {
+          case WsMessageType.REQ_MAIL_CONNECT:
+            return { type: WsMessageType.RESP_MAIL_CONNECTED, unreadCount: 0 };
+          case WsMessageType.REQ_MAIL_GET_FOLDER: {
+            const key = `${me}/${msg.folder}`;
+            for (const p of pending.filter(q => q.key === key)) {
+              p.left--;
+              if (p.left <= 0) {
+                const list = box(key);
+                const i = list.findIndex(h => h.messageId === p.id);
+                if (i >= 0) list.splice(i, 1);
+                pending.splice(pending.indexOf(p), 1);
+              }
+            }
+            return {
+              type: WsMessageType.RESP_MAIL_FOLDER,
+              folder: msg.folder,
+              messages: box(key).map(({ body: _body, ...h }) => h),
+            };
+          }
+          case WsMessageType.REQ_MAIL_DELETE: {
+            const key = `${me}/${msg.folder}`;
+            if (!over.ignoreDeleteIn?.includes(key)) scheduleDelete(key, msg.messageId ?? '', over.deleteLag ?? 1);
+            return { type: WsMessageType.RESP_MAIL_DELETED, success: true };
+          }
+          case WsMessageType.REQ_MAIL_SAVE_DRAFT: {
+            if (over.saveFails) return { type: WsMessageType.RESP_MAIL_DRAFT_SAVED, success: false, message: 'no' };
+            if (msg.existingDraftId) scheduleDelete(`${me}/Draft`, msg.existingDraftId, over.draftDeleteLag ?? 1);
+            seq++;
+            box(`${me}/Draft`).push(stored(`d${seq}`, msg.subject ?? '', me, msg.to ?? '', msg.body ?? []));
+            return { type: WsMessageType.RESP_MAIL_DRAFT_SAVED, success: true };
+          }
+          case WsMessageType.REQ_MAIL_COMPOSE: {
+            if (over.composeFails) return { type: WsMessageType.RESP_MAIL_SENT, success: false, message: 'Post refused' };
+            const to = (msg.to ?? '').replace(/@.*/, '');
+            seq++;
+            if (!over.dropDelivery) box(`${to}/Inbox`).push(stored(`m${seq}`, msg.subject ?? '', me, to, msg.body ?? []));
+            box(`${me}/Sent`).push(stored(`s${seq}`, msg.subject ?? '', me, to, msg.body ?? []));
+            if (msg.existingDraftId) scheduleDelete(`${me}/Draft`, msg.existingDraftId, over.draftDeleteLag ?? 1);
+            return { type: WsMessageType.RESP_MAIL_SENT, success: true };
+          }
+          case WsMessageType.REQ_MAIL_READ_MESSAGE: {
+            const found = box(`${me}/${msg.folder}`).find(h => h.messageId === msg.messageId);
+            const message = { ...found, attachments: [], ...(over.noFromAddr ? { fromAddr: '' } : {}) };
+            return { type: WsMessageType.RESP_MAIL_MESSAGE, message };
+          }
+          default:
+            return undefined;
+        }
+      });
+      return { ...stub, account };
+    });
+    let secondaryCalls = 0;
+    jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
+      secondaryCalls++;
+      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `Crazz refused (call ${secondaryCalls})` };
+      return session.login(SECONDARY_ACCOUNT);
+    });
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    return { boxes, requests, logins: () => logins };
+  }
+
+  const run = (name: string, over: Over = {}) => {
+    const arranged = arrange(over);
+    const result = runFlow(flowByName(name), { lock: cleanLock(), sleep: async () => {} });
+    return { ...arranged, result };
+  };
+  const ofType = (requests: Logged[], type: WsMessageType): Logged[] => requests.filter(r => r.msg.type === type);
+  const writes = (requests: Logged[]): Logged[] =>
+    requests.filter(r => r.msg.type === WsMessageType.REQ_MAIL_SAVE_DRAFT || r.msg.type === WsMessageType.REQ_MAIL_COMPOSE);
+  const nonEmpty = (boxes: Record<string, Stored[]>): string[] =>
+    Object.entries(boxes).filter(([, v]) => v.length > 0).map(([k]) => k);
+  const assertion = (result: FlowResult, what: string) => result.assertions.find(a => a.what === what);
+
+  it('replyHeaders builds the same lines as the client store\'s buildReplyHeaders', () => {
+    const message: MailMessageFull = { ...stored('m7', 'e2e-mail-reply x', P, C), attachments: [] };
+    expect(replyHeaders(message)).toBe(buildReplyHeaders(message));
+  });
+
+  describe('mail-drafts', () => {
+    it('saves, saves over it, keeps one copy with the new text, deletes it — and leaves Draft empty', async () => {
+      const { result, requests, boxes } = run('mail-drafts');
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: true })]);
+      expect(nonEmpty(boxes)).toEqual([]);
+      const saves = ofType(requests, WsMessageType.REQ_MAIL_SAVE_DRAFT);
+      expect(saves).toHaveLength(2);
+      expect(saves[0].msg).toMatchObject({ to: P });
+      expect(saves[0].msg.subject).toMatch(/^e2e-mail-drafts /);
+      expect(saves[1].msg.existingDraftId).toBe('d1');
+      expect(assertion(r, 'the kept copy carries the new text')?.ok).toBe(true);
+      expect(r.assertions.some(a => a.what.startsWith('pre-sweep: ') && a.ok)).toBe(true);
+    });
+
+    it('passes when the old copy still shows on the first re-read and is gone on the second', async () => {
+      const { result } = run('mail-drafts', { draftDeleteLag: 2 });
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      expect(assertion(r, 'Draft holds exactly one copy, not the old one')?.detail).toMatch(/reads=2$/);
+    });
+
+    it('fails when the old copy shows on every re-read, and the cleanup still clears Draft', async () => {
+      const { result, boxes } = run('mail-drafts', { draftDeleteLag: 'never' });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      const check = assertion(r, 'Draft holds exactly one copy, not the old one');
+      expect(check).toMatchObject({ ok: false });
+      expect(check?.detail).toMatch(new RegExp(`reads=${LIMITS.mailDeleteMaxReads}$`));
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: true })]);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('pre-sweeps a stale prefixed draft before the first save, and spares an unmarked one', async () => {
+      const { result, requests, boxes } = run('mail-drafts', {
+        boxes: { [`${P}/Draft`]: [stored('old', 'e2e-mail-drafts 2020', P, P), stored('keep', 'my own draft', P, P)] },
+      });
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      const staleDelete = requests.findIndex(x => x.msg.type === WsMessageType.REQ_MAIL_DELETE && x.msg.messageId === 'old');
+      const firstSave = requests.findIndex(x => x.msg.type === WsMessageType.REQ_MAIL_SAVE_DRAFT);
+      expect(staleDelete).toBeGreaterThanOrEqual(0);
+      expect(staleDelete).toBeLessThan(firstSave);
+      expect(boxes[`${P}/Draft`].map(m => m.messageId)).toEqual(['keep']);
+    });
+
+    it('FAILs and saves nothing when the pre-sweep cannot clear Draft', async () => {
+      const { result, requests } = run('mail-drafts', {
+        boxes: { [`${P}/Draft`]: [stored('old', 'e2e-mail-drafts 2020', P, P)] },
+        ignoreDeleteIn: [`${P}/Draft`],
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.assertions[0]).toMatchObject({ ok: false, detail: expect.stringMatching(/1 still listed/) });
+      expect(r.assertions[0].what).toMatch(/^pre-sweep: /);
+      expect(writes(requests)).toEqual([]);
+      expect(r.cleanup?.[0].ok).toBe(false);
+    });
+
+    it('FAILs when the save is refused and the Draft never lists it', async () => {
+      const { result } = run('mail-drafts', { saveFails: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the first save was accepted')).toMatchObject({ ok: false, detail: 'no' });
+      expect(assertion(r, 'the Draft folder lists the saved draft')?.ok).toBe(false);
+    });
+
+    it('FAILs when the kept copy does not carry the new text', async () => {
+      const { result } = run('mail-drafts', {
+        throwWhen: l => {
+          if (l.msg.type === WsMessageType.REQ_MAIL_SAVE_DRAFT && l.msg.existingDraftId) l.msg.body = ['stale'];
+          return false;
+        },
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the kept copy carries the new text')?.ok).toBe(false);
+    });
+
+    it('FAILs when the final delete never lands, and the cleanup reports the leftover', async () => {
+      const { result } = run('mail-drafts', { ignoreDeleteIn: [`${P}/Draft`] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the draft was deleted')?.ok).toBe(false);
+      expect(r.cleanup?.[0]).toMatchObject({ ok: false, detail: expect.stringMatching(/1 still listed/) });
+    });
+
+    it('turns a throw mid-drive into a FAIL with its error, and still cleans up', async () => {
+      const { result, boxes } = run('mail-drafts', {
+        throwWhen: l => l.msg.type === WsMessageType.REQ_MAIL_READ_MESSAGE,
+      });
+      const r = await result;
+
+      expect(r).toMatchObject({ status: 'FAIL', error: 'socket died' });
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: true })]);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('a cleanup whose login is rejected is not ok, and the flow FAILs', async () => {
+      const { result } = run('mail-drafts', { loginRejectsOn: [2] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: false, detail: 'login refused' })]);
+    });
+
+    it('a cleanup whose mail connect throws is not ok', async () => {
+      const { result } = run('mail-drafts', {
+        throwWhen: l => l.login === 2 && l.msg.type === WsMessageType.REQ_MAIL_CONNECT,
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: false, detail: 'socket died' })]);
+    });
+
+    it('a cleanup whose folder read throws is not ok', async () => {
+      const { result } = run('mail-drafts', {
+        throwWhen: l => l.login === 2 && l.msg.type === WsMessageType.REQ_MAIL_GET_FOLDER,
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.cleanup).toEqual([expect.objectContaining({ ok: false, detail: 'socket died' })]);
+    });
+
+    it('waits the real re-read gap when no sleep is injected', async () => {
+      jest.useFakeTimers();
+      try {
+        arrange({ draftDeleteLag: 2 });
+        const resultPromise = flowByName('mail-drafts').run({ lock: cleanLock() });
+        await jest.advanceTimersByTimeAsync(TIMEOUTS.mailDeleteReread);
+        const r = await resultPromise;
+        expect(r.status).toBe('PASS');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  describe('mail-send-from-draft', () => {
+    it('sends the draft with its id, Crazz receives it, the Draft copy is gone, and every box is empty after', async () => {
+      const { result, requests, boxes } = run('mail-send-from-draft');
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      const compose = ofType(requests, WsMessageType.REQ_MAIL_COMPOSE);
+      expect(compose).toHaveLength(1);
+      expect(compose[0]).toMatchObject({ account: P, msg: { to: C, existingDraftId: 'd1' } });
+      expect(assertion(r, `${C}'s Inbox holds it`)?.ok).toBe(true);
+      expect(assertion(r, `${P}'s Draft no longer holds it (#510)`)?.ok).toBe(true);
+      expect(r.cleanup).toHaveLength(3);
+      expect(r.cleanup?.every(c => c.ok)).toBe(true);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('judges the Draft copy gone on the last re-read', async () => {
+      const { result } = run('mail-send-from-draft', { draftDeleteLag: 3 });
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      expect(assertion(r, `${P}'s Draft no longer holds it (#510)`)?.detail).toMatch(/reads=3$/);
+    });
+
+    it('FAILs when the Draft copy is never removed after the send', async () => {
+      const { result, boxes } = run('mail-send-from-draft', { draftDeleteLag: 'never' });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, `${P}'s Draft no longer holds it (#510)`)?.ok).toBe(false);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('ends SKIPPED when Crazz is refused before the first write, and SPO_test3 sends nothing', async () => {
+      const { result, requests, logins } = run('mail-send-from-draft', { refuseSecondaryOn: [1] });
+      const r = await result;
+
+      expect(r).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
+      expect(logins()).toBe(0);
+      expect(writes(requests)).toEqual([]);
+    });
+
+    it('FAILs naming the leftover when Crazz is refused at the cleanup, after the send', async () => {
+      const { result, boxes } = run('mail-send-from-draft', { refuseSecondaryOn: [2] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      const crazz = r.cleanup?.find(c => c.skipped !== undefined);
+      expect(crazz).toMatchObject({ ok: false, skipped: 'Crazz refused (call 2)' });
+      expect(crazz?.detail).toMatch(/left in Crazz's Inbox/);
+      expect(boxes[`${C}/Inbox`]).toHaveLength(1);
+    });
+
+    it('pre-sweeps SPO_test3\'s Draft and Sent and Crazz\'s Inbox before the first write', async () => {
+      const stale = 'e2e-mail-send-from-draft 2020';
+      const { result, requests, boxes } = run('mail-send-from-draft', {
+        boxes: {
+          [`${P}/Draft`]: [stored('x1', stale, P, C)],
+          [`${P}/Sent`]: [stored('x2', stale, P, C)],
+          [`${C}/Inbox`]: [stored('x3', stale, P, C), stored('real', 'hello', P, C)],
+        },
+      });
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      const firstWrite = requests.indexOf(writes(requests)[0]);
+      for (const id of ['x1', 'x2', 'x3']) {
+        const i = requests.findIndex(x => x.msg.type === WsMessageType.REQ_MAIL_DELETE && x.msg.messageId === id);
+        expect(i).toBeGreaterThanOrEqual(0);
+        expect(i).toBeLessThan(firstWrite);
+      }
+      expect(boxes[`${C}/Inbox`].map(m => m.messageId)).toEqual(['real']);
+    });
+
+    it('FAILs and writes nothing when a pre-sweep cannot clear Crazz\'s Inbox', async () => {
+      const { result, requests } = run('mail-send-from-draft', {
+        boxes: { [`${C}/Inbox`]: [stored('x3', 'e2e-mail-send-from-draft 2020', P, C)] },
+        ignoreDeleteIn: [`${C}/Inbox`],
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(writes(requests)).toEqual([]);
+    });
+
+    it('a leftover in Crazz\'s Inbox after the cleanup turns the flow FAIL', async () => {
+      const { result } = run('mail-send-from-draft', { ignoreDeleteIn: [`${C}/Inbox`] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.assertions.every(a => a.ok)).toBe(true);
+      expect(r.cleanup?.find(c => c.what.includes(`${C}'s Inbox`))?.ok).toBe(false);
+    });
+
+    it('stops when the Draft never lists the saved draft, sends nothing, and still cleans up', async () => {
+      const { result, requests } = run('mail-send-from-draft', { saveFails: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(ofType(requests, WsMessageType.REQ_MAIL_COMPOSE)).toEqual([]);
+      expect(r.cleanup).toHaveLength(3);
+    });
+
+    it('FAILs when the send is refused', async () => {
+      const { result } = run('mail-send-from-draft', { composeFails: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the send from the draft was accepted')).toMatchObject({ ok: false, detail: 'Post refused' });
+    });
+
+    it('turns a throw mid-drive into a FAIL and still cleans up both mailboxes', async () => {
+      const { result, boxes } = run('mail-send-from-draft', {
+        throwWhen: l => l.msg.type === WsMessageType.REQ_MAIL_COMPOSE,
+      });
+      const r = await result;
+
+      expect(r).toMatchObject({ status: 'FAIL', error: 'socket died' });
+      expect(r.cleanup?.every(c => c.ok)).toBe(true);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+  });
+
+  describe('mail-reply', () => {
+    it('replies as the client does, SPO_test3 receives the Re:, and all four copies are deleted', async () => {
+      const { result, requests, boxes } = run('mail-reply');
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      const [sent, reply] = ofType(requests, WsMessageType.REQ_MAIL_COMPOSE);
+      expect(sent).toMatchObject({ account: P, msg: { to: C } });
+      expect(sent.msg.subject).toMatch(/^e2e-mail-reply /);
+      expect(reply).toMatchObject({
+        account: C,
+        msg: { to: `${P}@planitia.net`, subject: `Re: ${sent.msg.subject}` },
+      });
+      const original: MailMessageFull = {
+        ...stored('m1', sent.msg.subject ?? '', P, C), attachments: [],
+      };
+      expect(reply.msg.headers).toBe(buildReplyHeaders(original));
+      expect(r.cleanup).toHaveLength(4);
+      expect(r.cleanup?.every(c => c.ok)).toBe(true);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('ends SKIPPED when Crazz is refused before the first write, and SPO_test3 sends nothing', async () => {
+      const { result, requests, logins } = run('mail-reply', { refuseSecondaryOn: [1] });
+      const r = await result;
+
+      expect(r).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
+      expect(logins()).toBe(0);
+      expect(writes(requests)).toEqual([]);
+    });
+
+    it('FAILs naming the leftover when Crazz is refused at the cleanup, after the writes', async () => {
+      const { result, boxes } = run('mail-reply', { refuseSecondaryOn: [2] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      const refused = r.cleanup?.filter(c => c.skipped !== undefined) ?? [];
+      expect(refused).toHaveLength(2);
+      expect(refused[0].detail).toMatch(/left in Crazz's Inbox/);
+      expect(refused[1].detail).toMatch(/left in Crazz's Sent/);
+      expect(boxes[`${P}/Inbox`]).toEqual([]);
+    });
+
+    it('pre-sweeps a stale marker and a stale Re: marker in all four folders before the first write', async () => {
+      const stale = 'e2e-mail-reply 2020';
+      const { result, requests, boxes } = run('mail-reply', {
+        boxes: {
+          [`${P}/Inbox`]: [stored('a', `Re: ${stale}`, C, P), stored('keep', 'Re: something else', C, P)],
+          [`${P}/Sent`]: [stored('b', stale, P, C)],
+          [`${C}/Inbox`]: [stored('c', stale, P, C)],
+          [`${C}/Sent`]: [stored('d', `RE: ${stale}`, C, P)],
+        },
+      });
+      const r = await result;
+
+      expect(r.status).toBe('PASS');
+      const firstWrite = requests.indexOf(writes(requests)[0]);
+      for (const id of ['a', 'b', 'c', 'd']) {
+        const i = requests.findIndex(x => x.msg.type === WsMessageType.REQ_MAIL_DELETE && x.msg.messageId === id);
+        expect(i).toBeGreaterThanOrEqual(0);
+        expect(i).toBeLessThan(firstWrite);
+      }
+      expect(r.assertions.filter(a => a.what.startsWith('pre-sweep: '))).toHaveLength(4);
+      expect(boxes[`${P}/Inbox`].map(m => m.messageId)).toEqual(['keep']);
+    });
+
+    it('FAILs and writes nothing when a pre-sweep folder read throws', async () => {
+      const { result, requests } = run('mail-reply', {
+        // Login 1 is Crazz's drive session; the cleanup logs in afresh and is spared.
+        throwWhen: l => l.login === 1 && l.msg.type === WsMessageType.REQ_MAIL_GET_FOLDER && l.msg.folder === 'Sent',
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.assertions.find(a => !a.ok)).toMatchObject({ detail: 'socket died' });
+      expect(writes(requests)).toEqual([]);
+    });
+
+    it('fails, and still cleans up, when the message never reaches Crazz', async () => {
+      const { result, requests, boxes } = run('mail-reply', { dropDelivery: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, `${C}'s Inbox holds the message`)?.ok).toBe(false);
+      expect(ofType(requests, WsMessageType.REQ_MAIL_COMPOSE)).toHaveLength(1);
+      expect(r.cleanup).toHaveLength(4);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('stops before replying when the read message carries no sender address', async () => {
+      const { result, requests } = run('mail-reply', { noFromAddr: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the read message carries a sender address')?.ok).toBe(false);
+      expect(ofType(requests, WsMessageType.REQ_MAIL_COMPOSE)).toHaveLength(1);
+    });
+
+    it('FAILs when the composes are refused', async () => {
+      const { result } = run('mail-reply', { composeFails: true });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, 'the compose was accepted')).toMatchObject({ ok: false, detail: 'Post refused' });
+    });
+
+    it('turns a throw on the read into a FAIL and still deletes every copy', async () => {
+      const { result, boxes } = run('mail-reply', {
+        throwWhen: l => l.msg.type === WsMessageType.REQ_MAIL_READ_MESSAGE,
+      });
+      const r = await result;
+
+      expect(r).toMatchObject({ status: 'FAIL', error: 'socket died' });
+      expect(r.cleanup?.every(c => c.ok)).toBe(true);
+      expect(nonEmpty(boxes)).toEqual([]);
+    });
+
+    it('a leftover in SPO_test3\'s Inbox after the cleanup turns the flow FAIL', async () => {
+      const { result } = run('mail-reply', { ignoreDeleteIn: [`${P}/Inbox`] });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(r.cleanup?.find(c => c.what.includes(`${P}'s Inbox`))?.ok).toBe(false);
+    });
+
+    it('FAILs when the reply never shows in SPO_test3\'s Inbox', async () => {
+      const { result } = run('mail-reply', {
+        throwWhen: l => {
+          if (l.account === C && l.msg.type === WsMessageType.REQ_MAIL_COMPOSE) l.msg.to = 'Nobody';
+          return false;
+        },
+      });
+      const r = await result;
+
+      expect(r.status).toBe('FAIL');
+      expect(assertion(r, `${P}'s Inbox holds the reply with a Re: subject`)?.ok).toBe(false);
+    });
+  });
+});
+
+describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
+  const ME = PRIMARY_ACCOUNT.username;
+  const HIM = SECONDARY_ACCOUNT.username;
+  let lines: string[];
+  let lock: WorldLock;
+  let sent: WsMessage[];
+
+  /** A clock that jumps past the read-back bound on every call: each poll reads once. */
+  function jumpingClock(): () => number {
+    let t = 0;
+    return () => (t += TIMEOUTS.readBack + 1);
+  }
+  function flowCtx() {
+    return { lock, survivalLogUrl: 'http://logs/S.log', sleep: jest.fn(async () => undefined), now: jumpingClock() };
+  }
+
+  beforeEach(() => {
+    lines = [];
+    sent = [];
+    lock = cleanLock();
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue({ url: 'http://logs/S.log', offset: 0, openedAt: 't' });
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, spec) =>
+      lines.find(l => l.includes(spec.marker) && (spec.match?.(l) ?? true)) ?? null,
+    );
+  });
+
+  const sentOf = (type: WsMessageType) => sent.filter(m => m.type === type) as unknown as Record<string, unknown>[];
+
+  describe('policy-roundtrip', () => {
+    interface PolicyWorld {
+      row: { yours: number; theirs: number } | null;
+      cacheUnavailable?: boolean;
+      /** The server leaves a neutral row instead of dropping it. */
+      keepNeutralRow?: boolean;
+      /** Writes after this many are ignored by the model (a failed proof). */
+      ignoreWrites?: boolean;
+      /** The first write's request rejects. */
+      failFirstWrite?: boolean;
+      silentLog?: boolean;
+    }
+    function drive(world: PolicyWorld): void {
+      let writes = 0;
+      jest.spyOn(session, 'login').mockResolvedValue(
+        stubSession(msg => {
+          sent.push(msg);
+          if (msg.type === WsMessageType.REQ_PROFILE_POLICY) {
+            return {
+              data: {
+                policies: world.row
+                  ? [{ tycoonName: HIM.toUpperCase(), yourPolicy: world.row.yours, theirPolicy: world.row.theirs }]
+                  : [],
+                alliesAllowed: true,
+                cacheUnavailable: world.cacheUnavailable,
+              },
+            };
+          }
+          if (msg.type === WsMessageType.REQ_PROFILE_POLICY_SET) {
+            writes++;
+            if (world.failFirstWrite && writes === 1) throw new Error('socket died');
+            const status = (msg as unknown as { status: number }).status;
+            if (!world.silentLog) lines.push(` Setting policy status: ${ME}, ${HIM}, ${status}`);
+            if (!world.ignoreWrites) {
+              const theirs = world.row?.theirs ?? 1;
+              world.row = status === 1 && theirs === 1 && !world.keepNeutralRow ? null : { yours: status, theirs };
+            }
+            return { success: false };
+          }
+          throw new Error(`unexpected ${msg.type}`);
+        }),
+      );
+    }
+    const statuses = () => sentOf(WsMessageType.REQ_PROFILE_POLICY_SET).map(m => m.status);
+    const run = () => flowByName('policy-roundtrip').run(flowCtx());
+
+    it('mutates, and from "no row" sets enemy, then neutral, and expects the row gone', async () => {
+      expect(flowByName('policy-roundtrip').mutates).toBe(true);
+      const world: PolicyWorld = { row: null };
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(statuses()).toEqual([2, 1]);
+      expect(sentOf(WsMessageType.REQ_PROFILE_POLICY_SET)[0].tycoonName).toBe(HIM);
+      expect(result.probes[0]).toMatchObject({ original: 'none', written: `2:1`, restored: true });
+      expect(result.probes[0].logLine).toContain(`${ME}, ${HIM}, 2`);
+      expect(world.row).toBeNull();
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs when the restore from "no row" leaves a neutral row behind, and keeps the pending restore', async () => {
+      drive({ row: null, keepNeutralRow: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].restored).toBe(false);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+      expect(lock.read().pendingRestores[0].what).toMatch(/strategy towards Crazz.*put back "none"/);
+    });
+
+    it('from enemy writes neutral and restores enemy', async () => {
+      drive({ row: { yours: 2, theirs: 2 } });
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(statuses()).toEqual([1, 2]);
+      expect(result.probes[0].written).toBe('1:2');
+    });
+
+    it('still restores after a failed write', async () => {
+      drive({ row: null, failFirstWrite: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(statuses()).toEqual([2, 1]);
+    });
+
+    it('still restores after a failed proof — a Survival line with no matching read-back FAILs', async () => {
+      drive({ row: { yours: 0, theirs: 1 }, ignoreWrites: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].logLine).not.toBeNull();
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(statuses()).toEqual([2, 0]);
+    });
+
+    it('FAILs a read-back with no Survival line', async () => {
+      drive({ row: null, silentLog: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('CONFIRMED');
+      expect(result.probes[0].logLine).toBeNull();
+    });
+
+    it('refuses to write when the original read carries cacheUnavailable', async () => {
+      drive({ row: null, cacheUnavailable: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/cacheUnavailable/);
+      expect(statuses()).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('looks the Survival log up when the run did not resolve one', async () => {
+      drive({ row: null });
+      const find = jest.spyOn(liveLog, 'findCurrentSurvivalLog').mockResolvedValue('http://found/S.log');
+      const result = await flowByName('policy-roundtrip').run({ ...flowCtx(), survivalLogUrl: undefined });
+      expect(find).toHaveBeenCalled();
+      expect(result.status).toBe('PASS');
+    });
+  });
+
+  describe('autoconnection-roundtrip', () => {
+    interface Fluid {
+      fluidId: string;
+      fluidName: string;
+      suppliers: { facilityName: string; facilityId: string; companyName: string }[];
+      hireTradeCenter: boolean;
+      onlyWarehouses: boolean;
+      storable?: boolean;
+    }
+    interface AcWorld {
+      fluids: Fluid[];
+      search: Record<string, { facilityName: string; companyName: string; x: number; y: number }[]>;
+      cacheUnavailable?: boolean;
+      /** The first action request rejects. */
+      failFirstAction?: boolean;
+      /** No `Deleting initial suppliers:` line is logged. */
+      silentDelete?: boolean;
+      /** Reads after the first throw — a dead page mid-poll. */
+      deadAfterFirstRead?: boolean;
+    }
+    const ACTION_LINES: Record<string, string> = {
+      add: 'Adding initial suppliers:',
+      delete: 'Deleting initial suppliers:',
+      hireTradeCenter: 'Initial suppliers, include Trade Center:',
+      dontHireTradeCenter: 'Initial suppliers, excluding Trade Center:',
+      onlyWarehouses: 'Initial suppliers, hire only warehouses:',
+      dontOnlyWarehouses: 'Initial suppliers, hire all:',
+    };
+    function drive(world: AcWorld): void {
+      let actions = 0;
+      let reads = 0;
+      jest.spyOn(session, 'login').mockResolvedValue(
+        stubSession(msg => {
+          sent.push(msg);
+          if (msg.type === WsMessageType.REQ_PROFILE_AUTOCONNECTIONS) {
+            reads++;
+            if (world.deadAfterFirstRead && reads > 1) throw new Error('page died');
+            return { data: { fluids: structuredClone(world.fluids), cacheUnavailable: world.cacheUnavailable } };
+          }
+          if (msg.type === WsMessageType.REQ_SEARCH_CONNECTIONS) {
+            const fluidId = (msg as unknown as { fluidId: string }).fluidId;
+            return { results: world.search[fluidId] ?? [], fluidId, direction: 'input' };
+          }
+          if (msg.type === WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION) {
+            actions++;
+            if (world.failFirstAction && actions === 1) throw new Error('socket died');
+            const { action, fluidId, suppliers } = msg as unknown as { action: string; fluidId: string; suppliers?: string };
+            const fluid = world.fluids.find(f => f.fluidId === fluidId);
+            if (!fluid) throw new Error(`no fluid ${fluidId}`);
+            if (!(action === 'delete' && world.silentDelete)) {
+              lines.push(`${ACTION_LINES[action]} ${ME}, ${fluidId}${suppliers ? `, ${suppliers}` : ''}`);
+            }
+            if (action === 'hireTradeCenter') fluid.hireTradeCenter = true;
+            if (action === 'dontHireTradeCenter') fluid.hireTradeCenter = false;
+            if (action === 'onlyWarehouses') fluid.onlyWarehouses = true;
+            if (action === 'dontOnlyWarehouses') fluid.onlyWarehouses = false;
+            if (action === 'add') fluid.suppliers.push({ facilityName: 'F', facilityId: suppliers ?? '', companyName: 'C' });
+            if (action === 'delete') fluid.suppliers = fluid.suppliers.filter(s => s.facilityId !== suppliers);
+            return { success: true };
+          }
+          throw new Error(`unexpected ${msg.type}`);
+        }),
+      );
+    }
+    const fluid = (fluidId: string, over: Partial<Fluid> = {}): Fluid => ({
+      fluidId,
+      fluidName: fluidId,
+      suppliers: [],
+      hireTradeCenter: false,
+      onlyWarehouses: false,
+      ...over,
+    });
+    const actions = () =>
+      sentOf(WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION).map(m => `${m.action} ${m.fluidId}${m.suppliers ? ` ${m.suppliers}` : ''}`);
+    const run = () => flowByName('autoconnection-roundtrip').run(flowCtx());
+
+    it('mutates, flips both switches, adds a supplier and deletes it — PASS', async () => {
+      expect(flowByName('autoconnection-roundtrip').mutates).toBe(true);
+      drive({
+        fluids: [
+          fluid('Chemicals', { hireTradeCenter: true, suppliers: [{ facilityName: 'A', facilityId: '1,2,', companyName: 'C' }] }),
+          fluid('Food', { storable: true }),
+        ],
+        search: {
+          Chemicals: [
+            { facilityName: 'A', companyName: 'C', x: 1, y: 2 },
+            { facilityName: 'Trade Center', companyName: 'Gov', x: 9, y: 9 },
+            { facilityName: 'B', companyName: 'C', x: 5, y: 6 },
+          ],
+        },
+      });
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(actions()).toEqual([
+        'dontHireTradeCenter Chemicals',
+        'hireTradeCenter Chemicals',
+        'onlyWarehouses Food',
+        'dontOnlyWarehouses Food',
+        'add Chemicals 5,6,',
+        'delete Chemicals 5,6,',
+      ]);
+      const search = sentOf(WsMessageType.REQ_SEARCH_CONNECTIONS)[0];
+      expect(search).toMatchObject({ buildingX: 0, buildingY: 0, direction: 'input', filters: { maxResults: 50, roles: 22 } }); // producer 2 + distributer 4 + importer 16
+      expect(result.probes.map(p => p.member)).toEqual([
+        'RDODontHireTradeCenter', 'RDOHireOnlyFromWarehouse', 'RDOAddAutoConnection',
+      ]);
+      expect(result.assertions.find(a => a.what.startsWith('the delete reached'))?.ok).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('runs the warehouse flip only on the storable fluid', async () => {
+      drive({ fluids: [fluid('Chemicals'), fluid('Food', { storable: true })], search: {} });
+      await run();
+      expect(actions().filter(a => /OnlyWarehouses|onlyWarehouses/.test(a))).toEqual([
+        'onlyWarehouses Food', 'dontOnlyWarehouses Food',
+      ]);
+    });
+
+    it('with no storable fluid, ends the warehouse flip unproven and writes nothing for it', async () => {
+      drive({ fluids: [fluid('Chemicals')], search: { Chemicals: [{ facilityName: 'B', companyName: 'C', x: 5, y: 6 }] } });
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(/only-warehouses flip — no storable fluid/);
+      expect(actions().some(a => /nlyWarehouses/.test(a))).toBe(false);
+    });
+
+    it('with every result already listed (or a Trade Center), ends the add half unproven with no add', async () => {
+      drive({
+        fluids: [fluid('Chemicals', { storable: true, suppliers: [{ facilityName: 'A', facilityId: '1,2,', companyName: 'C' }] })],
+        search: {
+          Chemicals: [
+            { facilityName: 'A', companyName: 'C', x: 1, y: 2 },
+            { facilityName: 'Trade Center', companyName: 'Gov', x: 9, y: 9 },
+          ],
+        },
+      });
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(/add\/delete supplier half/);
+      expect(actions().some(a => a.startsWith('add') || a.startsWith('delete'))).toBe(false);
+    });
+
+    it('refuses to write when the initial read carries cacheUnavailable', async () => {
+      drive({ fluids: [fluid('Chemicals')], search: {}, cacheUnavailable: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(actions()).toEqual([]);
+    });
+
+    it('ends every half unproven when the page lists no fluid', async () => {
+      drive({ fluids: [], search: {} });
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toHaveLength(3);
+      expect(actions()).toEqual([]);
+    });
+
+    it('FAILs when the delete leaves no Deleting initial suppliers: line', async () => {
+      drive({ fluids: [fluid('Chemicals')], search: { Chemicals: [{ facilityName: 'B', companyName: 'C', x: 5, y: 6 }] }, silentDelete: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what.startsWith('the delete reached'))?.ok).toBe(false);
+    });
+
+    it('still restores a flip whose write failed', async () => {
+      drive({ fluids: [fluid('Chemicals')], search: {}, failFirstAction: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(actions().slice(0, 2)).toEqual(['hireTradeCenter Chemicals', 'dontHireTradeCenter Chemicals']);
+    });
+
+    it('keeps polling through a dead page and FAILs the unproven read-backs', async () => {
+      drive({ fluids: [fluid('Chemicals')], search: { Chemicals: [{ facilityName: 'B', companyName: 'C', x: 5, y: 6 }] }, deadAfterFirstRead: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      // Each round trip's original read throws on the dead page: nothing is written.
+      expect(actions()).toEqual([]);
+    });
   });
 });

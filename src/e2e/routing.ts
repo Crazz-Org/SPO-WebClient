@@ -16,11 +16,6 @@ export interface RouteRule {
   /** True when only a browser can observe the change (renderer, layout, input). */
   needsL3?: boolean;
   /**
-   * The path is observable live, but no flow can be required for it: the bench cannot
-   * create the data its flow reads. The spine alone rides along.
-   */
-  spineOnly?: boolean;
-  /**
    * A broad catch-all: it routes whatever no specific rule claimed. A handler file whose first
    * matching rule is a fallback must be a FALLBACK_ONLY key (routing.test.ts ratchet).
    */
@@ -40,6 +35,8 @@ export const NIGHTLY_ONLY: Record<string, string> = {
   'newspaper-read':
     'data-gated: planitia keeps no newspaper issue and the bench cannot create one (News.pas:986, #1009) — a required run could only end UNPROVEN, which fails the gate',
   'warehouse-role-reading': 'a reading, recorded and never asserted (#1006) — nothing a gate could require',
+  'vote-roundtrip':
+    'data-gated: a prior vote cannot be seeded (a vote with no prior cannot be retracted) and goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
 };
 
 /**
@@ -49,6 +46,8 @@ export const NIGHTLY_ONLY: Record<string, string> = {
 export const GATE_ONLY: Record<string, string> = {
   'politics-write':
     'each RDOSetTaxValue by the mayor posts a world event every online player sees (Kernel/Population.pas:1264-1284, WorldLocator.SendEvent) — driven only at the gate, when its code changes',
+  'policy-roundtrip':
+    'RDOSetPolicyStatus broadcasts a world event naming Crazz to every online tycoon, twice per run (Kernel/Kernel.pas:11790-11800, Kernel/World.pas:5179-5196, texts Kernel/Kernel.pas:13495-13497); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly',
 };
 
 const CHAT_AWAITING =
@@ -64,13 +63,10 @@ export const FALLBACK_ONLY: Record<string, string> = {
     'excluded: abandoning a role is never driven (maintainer, 2026-09-29 — recorded in card #1134)',
   'src/server/session/tutorial-handler.ts':
     'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
-  'src/server/session/auto-connection-handler.ts': 'awaiting card #1141 (C6)',
   'src/server/session/building-management-handler.ts': 'awaiting card #1150 (C10)',
   'src/server/session/building-templates-handler.ts': 'awaiting card #1150 (C10)',
   'src/server/session/chat-handler.ts': CHAT_AWAITING,
   'src/server/ws-handlers/chat-handlers.ts': CHAT_AWAITING,
-  'src/server/session/profile-finance-handler.ts': 'awaiting card #1141 (C6)',
-  'src/server/ws-handlers/profile-handlers.ts': 'awaiting card #1141 (C6)',
   'src/server/session/research-handler.ts': 'awaiting card #1154 (C11c)',
   'src/server/session/research-status-handler.ts': 'awaiting card #1154 (C11c)',
   'src/server/session/road-handler.ts': 'awaiting card #1151 (C9)',
@@ -140,10 +136,16 @@ export const ROUTES: RouteRule[] = [
     why: 'pixels — a WebSocket drive cannot see a rendered frame',
   },
   {
+    // Before the favorites rule: the Empire panel shows the Favorites tree and the profile tabs.
+    test: /^src\/client\/components\/empire\//,
+    flows: ['favorites-roundtrip', 'favorites-folders', 'profile-read'],
+    why: 'the Empire panel — the Favorites tree it shows and the profile & finance pages it reads',
+  },
+  {
     // Before the broad wire-level rule below, which would otherwise swallow
     // `session/favorites-handler.ts` and drive the politics flows instead of
     // the one flow that actually exercises the Favorites tree.
-    test: /favorites-handler\.ts$|^src\/client\/components\/empire\/|^src\/shared\/favorites-tree\.ts$/,
+    test: /favorites-handler\.ts$|^src\/shared\/favorites-tree\.ts$/,
     flows: ['favorites-roundtrip', 'favorites-folders'],
     why: 'the Favorites tree — the two flows that write to it',
   },
@@ -187,40 +189,44 @@ export const ROUTES: RouteRule[] = [
     // (ws-handlers/mail-handlers.ts) is here too: the later mail rule's `^src\/server\/mail`
     // does not match it, so it used to fall to the ws-handlers fallback.
     test: /^src\/server\/session\/mail-handler\.ts$|^src\/server\/ws-handlers\/mail-handlers\.ts$/,
-    flows: ['mail-roundtrip', 'zoning-alert-read'],
+    flows: ['mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply'],
     why: 'the mail handlers changed — the flows that drive them',
   },
   {
-    // The paper modal: the same spine-only routing as the rule below, plus a browser look.
+    // The paper modal: the board read the modal shows, plus a browser look at the modal.
     test: /^src\/client\/components\/modals\/NewspaperModal\.tsx$/,
-    flows: [],
-    spineOnly: true,
+    flows: ['newspaper-board-read'],
     needsL3: true,
-    why: 'the town paper modal — observable live, but no flow is required (News.pas:986); a browser look at the modal',
+    why: 'the town paper modal — newspaper-board-read reads the columns board it shows; a browser look at the modal',
   },
   {
     // Before the broad wire-level rule below: the paper is not on the RDO wire
-    // at all, so the governance flows would say nothing about it. And no flow is
-    // required either (#1009): planitia keeps no newspaper issue and the bench cannot
-    // create one (News.pas:986), so newspaper-read could only end UNPROVEN. It still
-    // runs and reports when asked for; the spine alone rides along here.
+    // at all, so the governance flows would say nothing about it. newspaper-read itself is
+    // not required (#1009): planitia keeps no newspaper issue and the bench cannot create
+    // one (News.pas:986), so it could only end UNPROVEN. The columns board read is required
+    // instead: it answers with or without columns.
     test: /newspaper-handlers?\.ts$|^src\/client\/store\/newspaper-store\.ts$/,
-    flows: [],
-    spineOnly: true,
-    why: 'the town paper — observable live, but no flow is required: the bench cannot create a kept issue (News.pas:986); newspaper-read still runs and reports',
+    flows: ['newspaper-board-read'],
+    why: 'the town paper — newspaper-board-read reads the columns board, which answers with or without columns; newspaper-read stays nightly-only (News.pas:986, #1009)',
   },
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.
     test: /^src\/server\/session\/politics-handler\.ts$|^src\/server\/ws-handlers\/politics-handlers\.ts$/,
-    flows: ['politics-read', 'politics-write'],
-    why: 'the governance handlers changed — the flows that read and write the town hall',
+    flows: ['politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip'],
+    why: 'the governance handlers changed — the flows that read and write the town hall (tax, minimum wage, publicity)',
+  },
+  {
+    // Before the fallbacks below: the Empire panel's profile & finance reads.
+    test: /^src\/server\/ws-handlers\/profile-handlers\.ts$|^src\/server\/session\/(profile-finance|auto-connection)-handler\.ts$|^src\/client\/store\/profile-store\.ts$/,
+    flows: ['profile-read', 'policy-roundtrip', 'autoconnection-roundtrip'],
+    why: 'the profile & finance handlers — the flow that reads every Empire panel tab, and the two that write the strategy and the initial suppliers',
   },
   {
     // Before the fallbacks below. permission-negative's one request is REQ_BUILDING_DETAILS,
     // and it asserts the canGovern that grantAccess in building-details-handler.ts computes.
     test: /^src\/server\/session\/building-(details|property)-handler\.ts$/,
-    flows: ['building-details', 'politics-write', 'permission-negative'],
-    why: 'the facility details/property handlers changed — the flows that read and write a facility, and the one that asserts canGovern (grantAccess)',
+    flows: ['building-details', 'politics-write', 'permission-negative', 'town-min-wage'],
+    why: 'the facility details/property handlers changed — the flows that read and write a facility (including the minimum-wage argument builder), and the one that asserts canGovern (grantAccess)',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
@@ -278,17 +284,17 @@ export const ROUTES: RouteRule[] = [
   },
   {
     test: /^src\/client\/components\/politics\//,
-    flows: ['politics-read', 'politics-write', 'permission-negative'],
+    flows: ['politics-read', 'politics-write', 'permission-negative', 'town-min-wage', 'publicity-roundtrip'],
     why: 'governance UI — including who is offered the controls',
   },
   {
     test: /^src\/client\/components\/building\/|^src\/shared\/building-details\//,
-    flows: ['building-details'],
-    why: 'facility inspector and its template groups',
+    flows: ['building-details', 'town-min-wage'],
+    why: "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in template-groups.ts",
   },
   {
     test: /^src\/client\/components\/mail\/|^src\/server\/mail/,
-    flows: ['mail-roundtrip', 'zoning-alert-read'],
+    flows: ['mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply'],
     why: 'mail path',
   },
   {
@@ -387,7 +393,7 @@ export function route(changedFiles: string[], deletedFiles: string[] = []): Rout
       continue;
     }
     if (rule.needsL3) needsL3 = true;
-    if (rule.flows.length > 0 || rule.needsL3 || rule.spineOnly) {
+    if (rule.flows.length > 0 || rule.needsL3) {
       touchedCode = true;
       reasons.add(rule.why);
     }

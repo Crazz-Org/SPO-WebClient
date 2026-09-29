@@ -108,7 +108,7 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 |---|---|
 | `src/shared/rdo-*.ts`, `src/server/session/**`, `src/server/rdo.ts` | L1 + **L2 login spine + every flow touching the changed members** |
 | `src/shared/types/message-types.ts`, `src/server/session/*-handler.ts` | L2 flows for the affected message types |
-| `src/client/components/politics/**` | L2 `politics-read`, `politics-write` |
+| `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `town-min-wage`, `publicity-roundtrip` |
 | `src/client/components/building/**` | L2 `building-details` |
 | `src/client/renderer/**`, `src/client/components/{mobile,hud,sheet,modals,map}/**`, `*.module.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
@@ -128,7 +128,8 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
   fails the gate) or a reading that asserts nothing. The nightly still runs them; every other
   flow must be reached by some tracked path.
 - **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
-  (`politics-write`, `Kernel/Population.pas:1264-1284`). The nightly leaves them out and prints
+  (`politics-write`, `Kernel/Population.pas:1264-1284`; `policy-roundtrip`,
+  `Kernel/Kernel.pas:11790-11800`). The nightly leaves them out and prints
   them as `gate-only, not driven`; the gate still runs them when their code changes.
 - **`FALLBACK_ONLY`** lists the handler files only a broad fallback rule routes, each `awaiting
   card #<n>` or `excluded: <reason>`. An area card adds its rule before the fallbacks and removes
@@ -300,6 +301,9 @@ touches one, the live stage reads two server facts for `SPO_test3` (`src/e2e/cap
 `IsPresident` from the tycoon cache (`Tycoons\<name>.five\`, written by `StoreRoleInfoToCache`)
 and `canGovern` on the Capitol itself — the server's own `grantAccess` decision on the
 presidential hall. `granted` follows `canGovern`; the cache flag rides along as evidence.
+`RDOSetMinSalaryValue` stays in that list for its Capitol variant (`Kernel/WorldPolitics.pas:265`);
+its town variant (`Kernel/Population.pas:167`) is driven by `town-min-wage`, so a gate that routes
+it drives the town hall and still records the Capitol variant as a capability exception.
 
 - **Granted** → the members *can* be driven, so they *must* be: the gate **fails closed**
   until a flow exercises the changed member (`src/e2e/flows.ts`) and the routing table
@@ -374,7 +378,7 @@ ahead of zero.
 | Account | Password | Holds | Used for |
 |---|---|---|---|
 | `SPO_test3` | `test3` | Mayor of **Helartia**, Minister of Agriculture, company *SPO_test3 - Green* | Primary. Governance reads and writes, roads, zones |
-| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. |
+| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. |
 
 Both are **LOCKED** — never changed without explicit developer approval. Zone **Free Space**,
 world **planitia**.
@@ -392,8 +396,10 @@ Two accounts unlock four things that were structurally impossible:
 account is touched only by mail: `mail-roundtrip` sends it one message and deletes it
 in the same run, and the `zoning-alert-read` seed has it send SPO_test3 one look-alike
 `Zoning Alert!`, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run.
+`mail-send-from-draft` sends it one message, and in `mail-reply` it sends SPO_test3 one
+reply; each flow sweeps and deletes every copy it created in the same run.
 No flow reads or writes its buildings (`flows.ts`: it appears at the login in
-`permission-negative`, which does not mutate, as the mail recipient, and as the seed sender).
+`permission-negative`, which does not mutate, as the mail recipient, as the reply sender, and as the seed sender).
 Never another player's assets. Never a world-scope value. Every mutation is restored in
 the same run (§5).
 
