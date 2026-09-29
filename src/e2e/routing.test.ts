@@ -67,9 +67,20 @@ describe('route', () => {
     expect(route([file]).required).toEqual([SPINE_FLOW, 'building-details', 'politics-read']);
   });
 
-  it('routes mail-handler.ts to mail-roundtrip and zoning-alert-read, not to the governance flows', () => {
+  it('routes mail-handler.ts to mail-roundtrip, zoning-alert-read, mail-drafts, mail-send-from-draft and mail-reply, not to the governance flows', () => {
     const d = route(['src/server/session/mail-handler.ts']);
-    expect(d.required).toEqual([SPINE_FLOW, 'mail-roundtrip', 'zoning-alert-read']);
+    expect(d.required).toEqual([
+      SPINE_FLOW, 'mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply',
+    ]);
+  });
+
+  it.each([
+    'src/client/components/mail/MailPanel.tsx',
+    'src/server/mail-list-parser.ts',
+  ])('routes the mail path %s to the drafts, send-from-draft and reply flows', file => {
+    expect(route([file]).required).toEqual(
+      expect.arrayContaining(['mail-drafts', 'mail-send-from-draft', 'mail-reply']),
+    );
   });
 
   it('routes the local.asp translator to the one flow that reads a link through it', () => {
@@ -658,7 +669,7 @@ describe('route — handler rules seeded by #1134', () => {
 
   it('routes the mail WS handlers to the mail flows', () => {
     expect(route(['src/server/ws-handlers/mail-handlers.ts']).required).toEqual([
-      SPINE_FLOW, 'mail-roundtrip', 'zoning-alert-read',
+      SPINE_FLOW, 'mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply',
     ]);
   });
 
