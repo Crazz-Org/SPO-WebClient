@@ -16,6 +16,16 @@ import {
   NETWORK_SUBCOMMANDS,
   classifyStage,
   countCapabilityExceptions,
+  flowCountFromArgs,
+  GATE_BASE_MS,
+  LIVE_RUN_BASE_MS,
+  LIVE_RUN_FLOW_CEILING,
+  LIVE_RUN_PER_FLOW_MS,
+  liveRunFlowCount,
+  PLANNED_MAX_ROUTED_FLOWS,
+  readCheckoutFlowCount,
+  stageDeadlineFor,
+  VERIFY_GATE_DEADLINE_MS,
   countUnprovenFlows,
   DEADLINE_EXIT_CODE,
   downgradeUnreachable,
@@ -34,6 +44,7 @@ import {
   workerLoop,
   type WorkerDeps,
 } from './worker';
+import { ROUTES, SPINE_FLOW } from '../routing';
 
 interface Harness {
   deps: WorkerDeps;
@@ -2415,20 +2426,110 @@ describe('classifyStage', () => {
     expect(full.deadlineMs).toBeGreaterThan(classifyStage('npm', ['run', 'build:server']).deadlineMs);
   });
 
-  it('classifies verify-gate.js on its own bound (20 min), well above the measured max (329.2s)', () => {
+  it('classifies verify-gate.js on a derived bound (gate base + planned max routed flows), never tighter than the old 20 min', () => {
     const gate = classifyStage('node', ['scripts/verify-gate.js', '--live', '--deposited-sha=x']);
-    expect(gate.deadlineMs).toBe(1_200_000);
-    expect(gate.deadlineMs).toBeGreaterThan(329_200 * 3); // margin over the measured corpus max
+    expect(gate.stage).toBe('verify-gate.js');
+    expect(gate.deadlineMs).toBe(GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS * LIVE_RUN_PER_FLOW_MS);
+    expect(gate.deadlineMs).toBe(VERIFY_GATE_DEADLINE_MS);
+    expect(gate.deadlineMs).toBeGreaterThanOrEqual(1_200_000);
   });
 
-  it('classifies run.js (live/nightly) on its own bound (15 min)', () => {
-    expect(classifyStage('node', ['dist/e2e/run.js', '--flag'])).toMatchObject({ deadlineMs: 900_000, stage: 'run.js' });
+  it('classifies run.js (live/nightly) on base + flows × per-flow', () => {
+    expect(classifyStage('node', ['dist/e2e/run.js', '--flows=a,b,c'], 3)).toEqual({
+      stage: 'run.js',
+      deadlineMs: LIVE_RUN_BASE_MS + 3 * LIVE_RUN_PER_FLOW_MS,
+    });
+  });
+
+  it('gives today\'s 15 flows no less than the old 900 s bound', () => {
+    expect(classifyStage('node', ['dist/e2e/run.js'], 15).deadlineMs).toBeGreaterThanOrEqual(900_000);
+  });
+
+  it('falls back to the flow ceiling, a finite bound, when the count is missing or not a count', () => {
+    const ceiling = LIVE_RUN_BASE_MS + LIVE_RUN_FLOW_CEILING * LIVE_RUN_PER_FLOW_MS;
+    for (const count of [undefined, Number.NaN, -1, Number.POSITIVE_INFINITY]) {
+      const d = classifyStage('node', ['dist/e2e/run.js', '--flag'], count).deadlineMs;
+      expect(d).toBe(ceiling);
+      expect(Number.isFinite(d)).toBe(true);
+    }
   });
 
   it('falls back to a bounded default for anything unrecognised, rather than leaving it unbounded', () => {
     const unknown = classifyStage('some-unclassified-tool', ['--flag']);
     expect(unknown.deadlineMs).toBe(660_000);
     expect(unknown.stage).toContain('some-unclassified-tool');
+  });
+});
+
+describe('the live-drive bound follows the checkout being driven', () => {
+  const ceiling = LIVE_RUN_BASE_MS + LIVE_RUN_FLOW_CEILING * LIVE_RUN_PER_FLOW_MS;
+  const dirs: string[] = [];
+  function checkout(flowsJs?: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-bench-flows-'));
+    dirs.push(dir);
+    if (flowsJs !== undefined) writeFlows(dir, flowsJs);
+    return dir;
+  }
+  function writeFlows(dir: string, body: string): void {
+    fs.mkdirSync(path.join(dir, 'dist', 'e2e'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'dist', 'e2e', 'flows.js'), body, 'utf8');
+  }
+  afterAll(() => {
+    for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('counts --flows= the way run.ts reads it', () => {
+    expect(flowCountFromArgs(['--branch=main', '--flows=a,b'])).toBe(2);
+    expect(flowCountFromArgs(['--flows='])).toBe(0);
+    expect(flowCountFromArgs(['--flows=a', '--flows=b,c'])).toBe(1);
+    expect(flowCountFromArgs(['--branch=main'])).toBeUndefined();
+  });
+
+  it('uses the --flows= count when given, without reading the checkout', () => {
+    const d = stageDeadlineFor('node', ['dist/e2e/run.js', '--branch=main', '--sha=x', '--flows=a,b,c'], '/nonexistent');
+    expect(d).toEqual({ stage: 'run.js', deadlineMs: LIVE_RUN_BASE_MS + 3 * LIVE_RUN_PER_FLOW_MS });
+  });
+
+  it('reads FLOWS.length from the checkout\'s dist/e2e/flows.js, and follows a change to it (no module cache)', () => {
+    const dir = checkout("exports.FLOWS = [{name:'a'},{name:'b'}];");
+    expect(stageDeadlineFor('node', ['dist/e2e/run.js', '--branch=main'], dir).deadlineMs).toBe(
+      LIVE_RUN_BASE_MS + 2 * LIVE_RUN_PER_FLOW_MS,
+    );
+    writeFlows(dir, "exports.FLOWS = [{name:'a'},{name:'b'},{name:'c'},{name:'d'},{name:'e'}];");
+    expect(stageDeadlineFor('node', ['dist/e2e/run.js', '--branch=main'], dir).deadlineMs).toBe(
+      LIVE_RUN_BASE_MS + 5 * LIVE_RUN_PER_FLOW_MS,
+    );
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['throwing on load', "throw new Error('boom');"],
+    ['exporting no FLOWS', 'exports.OTHER = [];'],
+    ['exporting a non-array FLOWS', "exports.FLOWS = 'x';"],
+  ])('uses the flow ceiling, a finite bound, when dist/e2e/flows.js is %s', (_label, body) => {
+    const dir = checkout(body);
+    expect(readCheckoutFlowCount(dir)).toBeUndefined();
+    const d = stageDeadlineFor('node', ['dist/e2e/run.js', '--branch=main'], dir).deadlineMs;
+    expect(d).toBe(ceiling);
+    expect(Number.isFinite(d)).toBe(true);
+  });
+
+  it('takes the reader as a parameter, and falls back to the ceiling when it reads nothing', () => {
+    expect(liveRunFlowCount(['--branch=main'], '/unused', () => 7)).toBe(7);
+    expect(liveRunFlowCount(['--branch=main'], '/unused', () => undefined)).toBe(LIVE_RUN_FLOW_CEILING);
+  });
+
+  it('classifies every other command exactly as classifyStage does', () => {
+    expect(stageDeadlineFor('git', ['fetch', 'origin'], '/unused')).toEqual(classifyStage('git', ['fetch', 'origin']));
+    expect(stageDeadlineFor('git', ['fetch', 'origin'], '/unused').deadlineMs).toBe(120_000);
+    expect(stageDeadlineFor('node', ['scripts/verify-gate.js', '--live'], '/unused')).toEqual(
+      classifyStage('node', ['scripts/verify-gate.js', '--live']),
+    );
+  });
+
+  it('tripwire: no ROUTES rule requires more flows (spine included) than PLANNED_MAX_ROUTED_FLOWS — an e2e card that trips this stops; a bench card raises the bound', () => {
+    const largest = Math.max(...ROUTES.map(r => new Set([SPINE_FLOW, ...r.flows]).size));
+    expect(largest).toBeLessThanOrEqual(PLANNED_MAX_ROUTED_FLOWS);
   });
 });
 
