@@ -182,6 +182,17 @@ function parseAutoConnectionsHtml(ctx: SessionContext, html: string, baseUrl: st
  * TycoonAutoConnections.asp** with `Connect=YES&Fluid=&Suppliers=`, which is
  * what drives `RDOAddAutoConnection` (:18-33). The old target 404'd, so the
  * feature never worked once.
+ *
+ * The three text pages bind to `CLng(Request("TycoonId"))`
+ * (DeleteDefaultSupplier.asp:11, ModifyTradeCenterStatus.asp:23,
+ * ModifyWarehouseStatus.asp:22), and the reference page fills it with
+ * `Obj.ObjectId` — the tycoon's model-server object (TycoonAutoConnections.asp:214,
+ * :273, :291). `ctx.tycoonId` is NOT that: it is the Interface Server's
+ * `fTycoonProxy.Id` (InterfaceServer.pas:3236-3237), the tycoon's index. Sent as
+ * TycoonId it binds nothing real, the RDO call raises and IIS answers HTTP 500 —
+ * no `Deleting initial suppliers:` line is ever logged (Kernel.pas:11689-11691).
+ * So the page's own URL is the only source of TycoonId: it is never overwritten,
+ * and a cold cache is warmed by fetching the page rather than rebuilt.
  */
 export async function executeAutoConnectionAction(
   ctx: SessionContext,
@@ -203,7 +214,6 @@ export async function executeAutoConnectionAction(
   };
 
   const basePath = `http://${worldIp}/Five/0/Visual/Voyager/NewTycoon/`;
-  const tycoonId = ctx.tycoonId || '';
 
   // TycoonAutoConnections.asp:210-222 — the reference page never sends a delete
   // without a chosen row. Refused before the cache lookup: a warm cached URL still
@@ -211,17 +221,44 @@ export async function executeAutoConnectionAction(
   if (action === 'delete' && !suppliers) return { success: false, message: 'Supplier facility ID required' };
 
   try {
-    // 1. Try cached URL from last fetchAutoConnections() ASP parse
-    const cached = ctx.getAspActionCache('NewTycoon/TycoonAutoConnections.asp');
-    const aspKey = actionToAsp[action];
-    const cachedAction = aspKey ? cached?.get(aspKey) : undefined;
-
     let url: string;
 
-    if (cachedAction) {
-      // Use cached base URL, replace dynamic per-action query params
+    if (action === 'add') {
+      if (!suppliers) return { success: false, message: 'Supplier facility coordinates required' };
+      // TycoonAutoConnections.asp:16-33 — the add branch needs FullAccess
+      // (Tycoon + Password + WorldName feed `Obj.Password` at :16) and the
+      // directory address for the RDO proxy; the target object is
+      // `Obj.ObjectId`, resolved server-side (:26), never a TycoonId param.
+      const params = new URLSearchParams({
+        Tycoon: ctx.activeUsername || ctx.cachedUsername || '',
+        Password: ctx.cachedPassword || '',
+        WorldName: ctx.currentWorldInfo?.name || '',
+        ...requireDaParams(ctx),
+        Connect: 'YES',
+        Fluid: fluidId,
+        Suppliers: suppliers,
+        RIWS: '',
+      });
+      url = `${basePath}TycoonAutoConnections.asp?${params.toString().replace(/\+/g, '%20')}`;
+    } else {
+      const aspKey = actionToAsp[action];
+      if (!aspKey) return { success: false, message: `Unknown action: ${action}` };
+
+      // The URL — and the TycoonId only it carries — comes from the page itself.
+      // A cold cache is warmed by one fetch of the page (which re-fills it).
+      let cachedAction = ctx.getAspActionCache('NewTycoon/TycoonAutoConnections.asp')?.get(aspKey);
+      if (!cachedAction) {
+        requireDaParams(ctx);
+        ctx.log.debug(`[AutoConnections] No cached URL for ${action}, fetching the page`);
+        await fetchAutoConnections(ctx);
+        cachedAction = ctx.getAspActionCache('NewTycoon/TycoonAutoConnections.asp')?.get(aspKey);
+      }
+      if (!cachedAction) {
+        return { success: false, message: `${action} failed: the auto-connections page offered no ${aspKey} URL` };
+      }
+
+      // Only the per-action params change; TycoonId stays the page's Obj.ObjectId.
       const cachedUrl = new URL(cachedAction.url);
-      cachedUrl.searchParams.set('TycoonId', tycoonId);
       cachedUrl.searchParams.set('FluidId', fluidId);
       if (suppliers) cachedUrl.searchParams.set('Supplier', suppliers);
       if (action === 'hireTradeCenter' || action === 'dontHireTradeCenter') {
@@ -232,71 +269,6 @@ export async function executeAutoConnectionAction(
       }
       url = cachedUrl.toString();
       ctx.log.debug(`[AutoConnections] Using cached URL for ${action}`);
-    } else {
-      // Fallback: reconstruct URL from session state
-      switch (action) {
-        case 'add': {
-          if (!suppliers) return { success: false, message: 'Supplier facility coordinates required' };
-          // TycoonAutoConnections.asp:16-33 — the add branch needs FullAccess
-          // (Tycoon + Password + WorldName feed `Obj.Password` at :16) and the
-          // directory address for the RDO proxy; the target object is
-          // `Obj.ObjectId`, resolved server-side (:26), never a TycoonId param.
-          const params = new URLSearchParams({
-            Tycoon: ctx.activeUsername || ctx.cachedUsername || '',
-            Password: ctx.cachedPassword || '',
-            WorldName: ctx.currentWorldInfo?.name || '',
-            ...requireDaParams(ctx),
-            Connect: 'YES',
-            Fluid: fluidId,
-            Suppliers: suppliers,
-            RIWS: '',
-          });
-          url = `${basePath}TycoonAutoConnections.asp?${params.toString().replace(/\+/g, '%20')}`;
-          break;
-        }
-        case 'delete': {
-          if (!suppliers) return { success: false, message: 'Supplier facility ID required' };
-          const params = new URLSearchParams({
-            TycoonId: tycoonId,
-            FluidId: fluidId,
-            ...requireDaParams(ctx),
-            Supplier: suppliers,
-          });
-          url = `${basePath}DeleteDefaultSupplier.asp?${params.toString().replace(/\+/g, '%20')}`;
-          break;
-        }
-        case 'hireTradeCenter':
-        case 'dontHireTradeCenter': {
-          const params = new URLSearchParams({
-            TycoonId: tycoonId,
-            FluidId: fluidId,
-            WorldName: ctx.currentWorldInfo?.name || '',
-            Tycoon: ctx.activeUsername || ctx.cachedUsername || '',
-            Password: ctx.cachedPassword || '',
-            ...requireDaParams(ctx),
-            Hire: action === 'hireTradeCenter' ? 'YES' : 'NO',
-          });
-          url = `${basePath}ModifyTradeCenterStatus.asp?${params.toString().replace(/\+/g, '%20')}`;
-          break;
-        }
-        case 'onlyWarehouses':
-        case 'dontOnlyWarehouses': {
-          const params = new URLSearchParams({
-            TycoonId: tycoonId,
-            FluidId: fluidId,
-            WorldName: ctx.currentWorldInfo?.name || '',
-            Tycoon: ctx.activeUsername || ctx.cachedUsername || '',
-            Password: ctx.cachedPassword || '',
-            ...requireDaParams(ctx),
-            Hire: action === 'onlyWarehouses' ? 'YES' : 'NO',
-          });
-          url = `${basePath}ModifyWarehouseStatus.asp?${params.toString().replace(/\+/g, '%20')}`;
-          break;
-        }
-        default:
-          return { success: false, message: `Unknown action: ${action}` };
-      }
-      ctx.log.debug(`[AutoConnections] No cached URL for ${action}, reconstructing`);
     }
 
     ctx.log.debug(`[AutoConnections] Executing ${action}: ${url}`);
