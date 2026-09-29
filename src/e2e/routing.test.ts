@@ -308,17 +308,17 @@ describe('launderedTests', () => {
 describe('the town paper', () => {
   // The paper is not on the RDO wire at all — it is scraped off the ASP pages —
   // so the governance flows would prove nothing about a change to it.
-  // And no flow is required (#1009): the bench cannot create a kept issue, so
-  // newspaper-read could only end UNPROVEN. The spine alone rides along.
+  // newspaper-read stays nightly-only (#1009): the bench cannot create a kept issue,
+  // so it could only end UNPROVEN. The columns board read is required instead.
   const paperPaths = [
     'src/server/session/newspaper-handler.ts',
     'src/client/components/modals/NewspaperModal.tsx',
     'src/client/store/newspaper-store.ts',
   ];
 
-  it.each(paperPaths)('routes %s to the spine alone, and it is still observable live', file => {
+  it.each(paperPaths)('routes %s to the spine and the board read, and it is observable live', file => {
     const d = route([file]);
-    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
     expect(d.staticOnly).toBe(false);
   });
 
@@ -329,8 +329,13 @@ describe('the town paper', () => {
     }
   });
 
-  it('routes the newspaper WS handler to the spine alone, not to the ws-handlers rule', () => {
-    expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).required).toEqual([SPINE_FLOW]);
+  it('routes the newspaper WS handler to the board read, not to the ws-handlers rule', () => {
+    expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).required)
+      .toEqual([SPINE_FLOW, 'newspaper-board-read']);
+  });
+
+  it('leaves no rule with a spine-alone option', () => {
+    expect(ROUTES.some(r => 'spine' + 'Only' in r)).toBe(false);
   });
 
   it('keeps newspaper-read in the catalogue — it still runs and reports', () => {
@@ -618,9 +623,9 @@ describe('route — L3 on the component folders (#1134)', () => {
     expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).needsL3).toBe(false);
   });
 
-  it('flags the paper modal, still spine-only', () => {
+  it('flags the paper modal, on the board read', () => {
     const d = route(['src/client/components/modals/NewspaperModal.tsx']);
-    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
     expect(d.needsL3).toBe(true);
   });
 });

@@ -22,6 +22,7 @@ import type {
   WsRespMailMessage,
   WsRespMailSent,
   WsRespMailUnreadCount,
+  WsRespNewspaperBoard,
   WsRespNewspaperIssue,
   WsRespNewspaperIssues,
   WsRespPoliticsData,
@@ -920,6 +921,62 @@ const newspaperRead: Flow = {
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);
       return report('newspaper-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * The paper's columns board: the town hall names its paper, then the board index
+ * (`boardmsg.asp?top=TRUE` + `boardlist.asp`) is read. Read-only — the read branch of
+ * `boardmsg.asp` only opens `NewsBoard.NewsObject`; `action=post` is the only write branch
+ * and is never sent (posting is excluded, maintainer 2026-09-29: no member deletes a post,
+ * `News Server/NewsObject.pas:11-53`). An empty board is a pass, not UNPROVEN: the page
+ * answering is what is proven, and the detail records the counts. Unlike `newspaper-read`
+ * it is not data-gated, so routing requires it.
+ */
+const newspaperBoardRead: Flow = {
+  name: 'newspaper-board-read',
+  what: 'town hall -> its paper -> the columns board',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const visualClass = await resolveVisualClass(session, town.x, town.y);
+      const details = await readBuildingDetails(session, town.x, town.y, visualClass);
+      const paperName = propertyValue(details.groups, 'townGeneral', 'NewspaperName') ?? '';
+      assertions.check('the town hall names its paper', paperName !== '', paperName || '(none)');
+      // Never ask for the board of a paper with no name.
+      if (paperName === '') return report('newspaper-board-read', assertions, [], session);
+
+      const { board } = await session.driver.request<WsRespNewspaperBoard>(
+        {
+          type: WsMessageType.REQ_NEWSPAPER_BOARD,
+          paperName,
+          townName: town.name,
+          isCapitol: false,
+          buildingX: town.x,
+          buildingY: town.y,
+        },
+        WsMessageType.RESP_NEWSPAPER_BOARD,
+      );
+      assertions.check('the columns board was read', board.error === '', board.error);
+      const wellFormed =
+        Array.isArray(board.columns) &&
+        Array.isArray(board.tree) &&
+        board.columns.every(c => c.path !== '') &&
+        board.tree.every(e => e.path !== '');
+      assertions.check(
+        'the board lists are well-formed',
+        wellFormed,
+        `${board.columns.length} columns, ${board.tree.length} tree entries`,
+      );
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('newspaper-board-read', assertions, [], session);
     } finally {
       await logoff(session);
     }
@@ -1914,6 +1971,7 @@ export const FLOWS: Flow[] = [
   favoritesFolders,
   peopleSearch,
   newspaperRead,
+  newspaperBoardRead,
   zoningAlertRead,
   nearestTownHall,
   worldReaders,
