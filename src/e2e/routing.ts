@@ -39,6 +39,8 @@ export const NIGHTLY_ONLY: Record<string, string> = {
     'data-gated: a prior vote cannot be seeded (a vote with no prior cannot be retracted) and goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
   'fixtures-ensure':
     'builds only when a fixture is missing — the one sanctioned permanent mutation (#1149); the nightly re-creates a fixture that disappeared, no gate requires it',
+  'industry-supply-limits':
+    "data-gated: every industry fixture candidate is a farm (#1149), whose supply gate is a plain TPullInput (StdBlocks/Farms.pas:76-82) that never caches a sort mode (Kernel/Kernel.pas:7169-7171; only Kernel/MediaGates.pas:388-389 does), and a fixture built fresh has no supplier row for the overprice write — RDOSetInputSortMode / RDOSetInputOverPrice end UNPROVEN, which fails a gate (E2E-POLICY §7)",
 };
 
 /**
@@ -233,16 +235,25 @@ export const ROUTES: RouteRule[] = [
     // Before the fallbacks below. permission-negative's one request is REQ_BUILDING_DETAILS,
     // and it asserts the canGovern that grantAccess in building-details-handler.ts computes.
     test: /^src\/server\/session\/building-(details|property)-handler\.ts$/,
-    flows: ['building-details', 'politics-write', 'permission-negative', 'town-min-wage'],
-    why: 'the facility details/property handlers changed — the flows that read and write a facility (including the minimum-wage argument builder), and the one that asserts canGovern (grantAccess)',
+    flows: [
+      'building-details', 'politics-write', 'permission-negative', 'town-min-wage',
+      'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
+    ],
+    why:
+      'the facility details/property handlers changed — the flows that read and write a facility (including the ' +
+      'minimum-wage argument builder), the one that asserts canGovern (grantAccess), the inspector reads no other ' +
+      "flow sends (gate connections, service figures, worker counts, refresh), and the owner setters on SPO_test3's " +
+      'store and industry fixtures (#1152)',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
     // zoning-alert-read is left out: its one REQ_BUILDING_FOCUS is incidental to reading the
     // alert, it needs Crazz, and the mail rules route it.
     test: /^src\/server\/ws-handlers\/building-handlers\.ts$/,
-    flows: ['building-details', 'politics-write', 'permission-negative', 'nearest-town-hall'],
-    why: 'the building WS handlers changed — the flows sending its REQ_BUILDING_DETAILS / TAB_DATA / SET_PROPERTY / FOCUS',
+    flows: ['building-details', 'politics-write', 'permission-negative', 'nearest-town-hall', 'inspector-reads'],
+    why:
+      'the building WS handlers changed — the flows sending its REQ_BUILDING_DETAILS / TAB_DATA / SET_PROPERTY / FOCUS, ' +
+      'and the one sending GATE_CONNECTIONS / SERVICE_FIGURES / WORKER_COUNTS / REFRESH_PROPERTIES',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
@@ -304,8 +315,13 @@ export const ROUTES: RouteRule[] = [
   },
   {
     test: /^src\/client\/components\/building\/|^src\/shared\/building-details\//,
-    flows: ['building-details', 'town-min-wage'],
-    why: "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in template-groups.ts",
+    flows: [
+      'building-details', 'town-min-wage',
+      'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
+    ],
+    why:
+      "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in " +
+      'template-groups.ts, and the store and industry owner setters the panels send (#1152)',
   },
   {
     test: /^src\/client\/components\/mail\/|^src\/server\/mail/,

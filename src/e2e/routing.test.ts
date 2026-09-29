@@ -47,6 +47,8 @@ describe('route', () => {
   it("routes template-groups.ts to town-min-wage (TOWN_JOBS_GROUP's min-wage mapping)", () => {
     expect(route(['src/shared/building-details/template-groups.ts']).required).toEqual([
       SPINE_FLOW, 'building-details', 'town-min-wage',
+      // #1152: the store and industry owner setters the panels send.
+      'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
     ]);
   });
 
@@ -686,7 +688,8 @@ describe('route — handler rules seeded by #1134', () => {
 
   it('routes the building WS handlers to the flows that send their messages', () => {
     expect(route(['src/server/ws-handlers/building-handlers.ts']).required).toEqual([
-      SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall',
+      // #1152: inspector-reads sends GATE_CONNECTIONS / SERVICE_FIGURES / WORKER_COUNTS / REFRESH_PROPERTIES.
+      SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall', 'inspector-reads',
     ]);
   });
 
@@ -695,6 +698,8 @@ describe('route — handler rules seeded by #1134', () => {
     file => {
       expect(route([file]).required).toEqual([
         SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'town-min-wage',
+        // #1152: the inspector reads and the owner setters on SPO_test3's fixtures.
+        'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
       ]);
     },
   );
@@ -878,5 +883,38 @@ describe('route — roads & zones (#1151)', () => {
       expect(NIGHTLY_ONLY).not.toHaveProperty(name);
       expect(GATE_ONLY).not.toHaveProperty(name);
     }
+  });
+});
+
+describe('route — inspector flows (#1152)', () => {
+  const ROUTED = ['inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy'];
+  const ALL = [...ROUTED, 'industry-supply-limits'];
+
+  it.each([
+    'src/server/session/building-property-handler.ts',
+    'src/server/session/building-details-handler.ts',
+    'src/client/components/building/SuppliesGroup.tsx',
+    'src/shared/building-details/template-groups.ts',
+  ])('%s requires the five routed inspector flows', file => {
+    const { required } = route([file]);
+    for (const flow of ROUTED) expect(required).toContain(flow);
+    expect(required).not.toContain('industry-supply-limits');
+  });
+
+  it('building-handlers.ts requires inspector-reads, the one flow sending its four inspector reads', () => {
+    const { required } = route(['src/server/ws-handlers/building-handlers.ts']);
+    expect(required).toContain('inspector-reads');
+    expect(required).not.toContain('store-price-salaries');
+  });
+
+  it('keeps industry-supply-limits nightly-only with a cited reason, named by no rule', () => {
+    expect(NIGHTLY_ONLY['industry-supply-limits']).toMatch(/Kernel\/Kernel\.pas:7169-7171/);
+    expect(uncited({ 'industry-supply-limits': NIGHTLY_ONLY['industry-supply-limits'] })).toEqual([]);
+    expect(ROUTES.some(r => r.flows.includes('industry-supply-limits'))).toBe(false);
+  });
+
+  it('none of the six is gate-only, and only industry-supply-limits is nightly-only', () => {
+    for (const flow of ALL) expect(GATE_ONLY).not.toHaveProperty(flow);
+    for (const flow of ROUTED) expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
   });
 });
