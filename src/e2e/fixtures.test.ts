@@ -18,9 +18,11 @@ import {
   findFixture,
   findFreeLot,
   isRefusedClass,
+  listTycoonFacilities,
   loadTerrain,
   missingGroups,
   newFacilityLineMatches,
+  ownLotRefusal,
   parseTerrainBmp,
   placeFacility,
   readCash,
@@ -589,6 +591,74 @@ describe('findFixture', () => {
     w.own('industry', 120, 220);
     w.companies = [ROLE_COMPANY];
     expect((await findFixture(w.session(), kind('industry'))).found).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// ownLotRefusal and listTycoonFacilities (#1153)
+// ---------------------------------------------------------------------------------------------
+
+describe('ownLotRefusal', () => {
+  it("is null for SPO_test3's own facility in Helartia", async () => {
+    const w = new World();
+    w.own('warehouse', 120, 220);
+    expect(await ownLotRefusal(w.session(), 120, 220)).toBeNull();
+  });
+
+  it('refuses a lot outside Helartia, before reading the map', async () => {
+    const w = new World();
+    w.own('warehouse', 60, 60);
+    expect(await ownLotRefusal(w.session(), 60, 60)).toBe(`(60,60) is not in Helartia (TOWNS ${OTHER_TOWN}, Helartia ${HELARTIA})`);
+    expect(w.requests.some(r => r.type === WsMessageType.REQ_MAP_LOAD)).toBe(false);
+  });
+
+  it('refuses a lot with no building anchored at it', async () => {
+    const w = new World();
+    expect(await ownLotRefusal(w.session(), 121, 221)).toBe('no building anchored at (121,221)');
+  });
+
+  it("refuses another player's facility, naming its owner", async () => {
+    const w = new World();
+    w.own('warehouse', 120, 220, { owner: 77 });
+    expect(await ownLotRefusal(w.session(), 120, 220)).toBe(`(120,220) is owned by tycoon 77, not SPO_test3 (${OWN})`);
+  });
+});
+
+describe('listTycoonFacilities', () => {
+  it('walks every company the directory lists, in any town, with every facility row', async () => {
+    const w = new World();
+    w.own('industry', 120, 220);
+    w.own('warehouse', 60, 60);
+    w.own('store', 124, 224, { company: ROLE_COMPANY });
+    expect(await listTycoonFacilities(w.session())).toEqual({
+      companies: [OWN_COMPANY, ROLE_COMPANY],
+      facilities: [
+        { company: OWN_COMPANY, x: 120, y: 220, name: 'industry 120,220' },
+        { company: OWN_COMPANY, x: 60, y: 60, name: 'warehouse 60,60' },
+        { company: ROLE_COMPANY, x: 124, y: 224, name: 'store 124,224' },
+      ],
+    });
+  });
+
+  it('returns nothing when the tycoon page is not a folder', async () => {
+    const w = new World();
+    const s = w.session();
+    (s.driver.request as jest.Mock).mockImplementation(async () => ({ page: { kind: 'facility', facility: null } }));
+    expect(await listTycoonFacilities(s)).toEqual({ companies: [], facilities: [] });
+  });
+
+  it('skips a company or a kind whose page is not the expected shape', async () => {
+    const w = new World();
+    w.own('industry', 120, 220);
+    const s = w.session();
+    const respond = w.respond.bind(w);
+    (s.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
+      const ref = (msg as unknown as { ref: DirectoryRef }).ref;
+      if (ref.kind === 'tycoon-company' && ref.company === ROLE_COMPANY) return { page: { kind: 'facility', facility: null } };
+      if (ref.kind === 'tycoon-facility-kind') return { page: { kind: 'folder', items: [], ownedBy: null } };
+      return respond(msg);
+    });
+    expect(await listTycoonFacilities(s)).toEqual({ companies: [OWN_COMPANY, ROLE_COMPANY], facilities: [] });
   });
 });
 

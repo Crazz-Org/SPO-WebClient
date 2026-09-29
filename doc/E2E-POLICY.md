@@ -109,7 +109,7 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 | `src/shared/rdo-*.ts`, `src/server/session/**`, `src/server/rdo.ts` | L1 + **L2 login spine + every flow touching the changed members** |
 | `src/shared/types/message-types.ts`, `src/server/session/*-handler.ts` | L2 flows for the affected message types |
 | `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `town-min-wage`, `publicity-roundtrip` |
-| `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy` |
+| `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings` |
 | `src/client/renderer/**`, `src/client/components/{mobile,hud,sheet,modals,map}/**`, `*.module.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
 | `doc/**`, `*.md`, CI config, tooling | static only |
@@ -430,6 +430,18 @@ pending restore (the lot, the class, the company id and the literal undo) is rec
 state) whose owner tycoon id is SPO_test3's — never the Mayor role's, never another player's;
 anything else is left in place, the flow FAILs and the lock goes dirty (§6). The construction
 cost is spent each run — accepted by the maintainer on 2026-09-29.
+
+**Supplier and client links (#1153).** A link is written on **both** gates (`TGate.ConnectTo`,
+`Kernel/Kernel.pas:6784-6785`), so a hire is another player's asset the moment the counterpart
+is theirs. `supplier-hire-fire`, `client-hire-remove` and `connect-on-map` link the industry
+fixture only to a facility of *SPO_test3 - Green* in Helartia (search filtered by town and
+company, the row's company checked, the lot's owner read back), snapshot every gate they can
+touch, and undo every new link in the same run. `quick-trade-roundtrip` runs only when its undo
+cannot reach beyond the test: no SPO_test3 facility already a client of the fixture
+(`Kernel/Kernel.pas:4593-4600`), the fixture not an initial supplier (`:4564-4565`,
+`:4606-4607`), and no SPO_test3 warehouse outside Helartia (`:4537-4553`) — otherwise `UNPROVEN`,
+nothing sent. Clone facility is never driven: it overwrites every same-type facility in scope
+with no snapshot (maintainer, 2026-09-29).
 
 ---
 

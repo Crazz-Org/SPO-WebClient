@@ -49,6 +49,8 @@ describe('route', () => {
       SPINE_FLOW, 'building-details', 'town-min-wage',
       // #1152: the store and industry owner setters the panels send.
       'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
+      // #1153: the trade role and level (trade-settings.ts).
+      'trade-settings',
     ]);
   });
 
@@ -701,6 +703,8 @@ describe('route — handler rules seeded by #1134', () => {
         SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'town-min-wage',
         // #1152: the inspector reads and the owner setters on SPO_test3's fixtures.
         'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
+        // #1153: the trade role and level on the warehouse and industry fixtures.
+        'trade-settings',
       ]);
     },
   );
@@ -917,6 +921,51 @@ describe('route — inspector flows (#1152)', () => {
   it('none of the six is gate-only, and only industry-supply-limits is nightly-only', () => {
     for (const flow of ALL) expect(GATE_ONLY).not.toHaveProperty(flow);
     for (const flow of ROUTED) expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
+  });
+});
+
+describe('route — inspector connections & trade (#1153)', () => {
+  const NIGHTLY = [
+    'supplier-hire-fire', 'client-hire-remove', 'connect-on-map', 'company-input-demand', 'warehouse-wares',
+    'quick-trade-roundtrip',
+  ];
+  const ROUTED = ['trade-settings', 'supplier-search-read'];
+
+  it.each([
+    'src/server/session/building-property-handler.ts',
+    'src/server/session/building-details-handler.ts',
+    'src/client/components/building/PropertyGroup.tsx',
+    'src/shared/building-details/template-groups.ts',
+  ])('%s requires trade-settings', file => {
+    expect(route([file]).required).toContain('trade-settings');
+  });
+
+  it('misc-handlers.ts (the REQ_SEARCH_CONNECTIONS / REQ_CONNECTION_REACHABILITY sender) requires supplier-search-read', () => {
+    const { required } = route(['src/server/ws-handlers/misc-handlers.ts']);
+    expect(required).toContain('supplier-search-read');
+    expect(required).not.toContain('trade-settings');
+  });
+
+  it.each(NIGHTLY)('keeps %s nightly-only with a cited reason, named by no rule, never gate-only', flow => {
+    expect(NIGHTLY_ONLY[flow]).toBeDefined();
+    expect(uncited({ [flow]: NIGHTLY_ONLY[flow] })).toEqual([]);
+    expect(ROUTES.some(r => r.flows.includes(flow))).toBe(false);
+    expect(GATE_ONLY).not.toHaveProperty(flow);
+  });
+
+  it('keeps the two routed flows out of NIGHTLY_ONLY and GATE_ONLY', () => {
+    for (const flow of ROUTED) {
+      expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
+      expect(GATE_ONLY).not.toHaveProperty(flow);
+    }
+  });
+
+  it('cites the kernel lines each nightly-only reason rests on', () => {
+    expect(NIGHTLY_ONLY['supplier-hire-fire']).toMatch(/Kernel\/Kernel\.pas:6784-6785/);
+    expect(NIGHTLY_ONLY['connect-on-map']).toMatch(/Kernel\/World\.pas:3710-3726/);
+    expect(NIGHTLY_ONLY['company-input-demand']).toMatch(/Kernel\/Kernel\.pas:5887/);
+    expect(NIGHTLY_ONLY['warehouse-wares']).toMatch(/StdBlocks\/MegaWarehouse\.pas:25/);
+    expect(NIGHTLY_ONLY['quick-trade-roundtrip']).toMatch(/Kernel\/Kernel\.pas:4593-4600/);
   });
 });
 
