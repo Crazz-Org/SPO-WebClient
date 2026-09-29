@@ -1,4 +1,18 @@
-import { ROUTES, SPINE_FLOW, route, presidentMembersInDiff, isCallSite, launderedTests } from './routing';
+import { execFileSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import {
+  ROUTES,
+  SPINE_FLOW,
+  NIGHTLY_ONLY,
+  GATE_ONLY,
+  FALLBACK_ONLY,
+  route,
+  presidentMembersInDiff,
+  isCallSite,
+  launderedTests,
+  type RouteRule,
+} from './routing';
 import { PRESIDENT_MEMBERS } from './config';
 import { FLOWS } from './flows';
 
@@ -9,12 +23,18 @@ describe('route', () => {
     expect(decision.required).toContain('building-details');
   });
 
-  it('routes a wire-level change to the governance and inspector flows', () => {
+  // #1134: politics-handler.ts now has its own rule (the flows that drive it); the wire-level
+  // rule keeps the frames and RDO members.
+  it('routes the governance handler to its own flows', () => {
     const decision = route(['src/server/session/politics-handler.ts']);
-    expect(decision.required).toEqual(
-      expect.arrayContaining([SPINE_FLOW, 'politics-read', 'politics-write', 'building-details']),
-    );
+    expect(decision.required).toEqual(['login-spine', 'politics-read', 'politics-write']);
     expect(decision.staticOnly).toBe(false);
+  });
+
+  it('routes a wire-level change to the governance and inspector flows', () => {
+    expect(route(['src/shared/rdo-frame.ts']).required).toEqual([
+      SPINE_FLOW, 'politics-read', 'politics-write', 'building-details',
+    ]);
   });
 
   it('routes login-handler.ts through the people-search flow, plus the wire-level flows', () => {
@@ -40,8 +60,8 @@ describe('route', () => {
     expect(d.required).toEqual([SPINE_FLOW, 'building-details', 'politics-read', 'session-resume']);
   });
 
+  // #1134: building-handlers.ts left this list — it now has its own rule.
   it.each([
-    'src/server/ws-handlers/building-handlers.ts',
     'src/server/ws-handlers/chat-handlers.ts',
   ])('still routes %s through the ws-handlers rule, without session-resume', file => {
     expect(route([file]).required).toEqual([SPINE_FLOW, 'building-details', 'politics-read']);
@@ -185,9 +205,10 @@ describe('route', () => {
     expect(counts).toHaveLength(1);
   });
 
+  // #1134: the governance handler's reason is now its own rule's `why`.
   it('reports why the live drive was required', () => {
-    const decision = route(['src/server/session/politics-handler.ts']);
-    expect(decision.reasons.join(' ')).toMatch(/wire-level/);
+    expect(route(['src/server/session/politics-handler.ts']).reasons.join(' ')).toMatch(/governance handlers/);
+    expect(route(['src/shared/rdo-frame.ts']).reasons.join(' ')).toMatch(/wire-level/);
   });
 
   it('has a rule for every flow name it references', () => {
@@ -352,5 +373,276 @@ describe('route — the directory tree (#526)', () => {
       SPINE_FLOW, 'people-search', 'building-details', 'politics-read',
     ]));
     expect(d.required).not.toContain('directory-browse');
+  });
+});
+
+// ---- #1134: reachability, gate-only flows, dead rules, the handler ratchet ----------------
+
+const ROOT = path.resolve(__dirname, '../..');
+const tracked = execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+  .split('\n')
+  .filter(Boolean);
+const flowNames = FLOWS.map(f => f.name);
+const GENERATED_OUTPUT_SOURCE = '^report\\/|^coverage\\/|^dist\\/|^logs\\/';
+
+/** The rule `route()` picks — first match wins. */
+function firstRule(routes: RouteRule[], p: string): RouteRule | undefined {
+  return routes.find(r => r.test.test(p));
+}
+
+/** Every flow some path's first matching rule requires. */
+function reached(routes: RouteRule[], paths: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const p of paths) for (const f of firstRule(routes, p)?.flows ?? []) out.add(f);
+  return out;
+}
+
+function unreachable(routes: RouteRule[], paths: string[], names: string[], exempt: Record<string, string>): string[] {
+  const hit = reached(routes, paths);
+  return names.filter(n => n !== SPINE_FLOW && !hit.has(n) && !(n in exempt));
+}
+
+/** Split a regex source on `|` at depth 0 (outside groups and classes). */
+function topLevelAlternatives(source: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let inClass = false;
+  let current = '';
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === '\\') {
+      current += c + (source[i + 1] ?? '');
+      i++;
+      continue;
+    }
+    if (inClass) {
+      if (c === ']') inClass = false;
+    } else if (c === '[') inClass = true;
+    else if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (c === '|' && depth === 0) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += c;
+  }
+  parts.push(current);
+  return parts;
+}
+
+/** Directory-anchored alternatives (`^src\/…\/`) that match no path. */
+function deadAlternatives(routes: RouteRule[], paths: string[]): string[] {
+  const dead: string[] = [];
+  for (const rule of routes) {
+    if (rule.test.source === GENERATED_OUTPUT_SOURCE) continue;
+    for (const alt of topLevelAlternatives(rule.test.source)) {
+      if (!/^\^.*\\\/$/.test(alt)) continue;
+      const re = new RegExp(alt);
+      if (!paths.some(p => re.test(p))) dead.push(alt);
+    }
+  }
+  return dead;
+}
+
+const CITATION = /[\w-]+\.pas:\d+(-\d+)?|[\w-]+\.asp:\d+(-\d+)?|#\d+/;
+function uncited(set: Record<string, string>): string[] {
+  return Object.keys(set).filter(k => !CITATION.test(set[k]));
+}
+
+function handlerFiles(): string[] {
+  const list = (dir: string, re: RegExp) =>
+    fs.readdirSync(path.join(ROOT, dir)).filter(f => re.test(f)).map(f => `${dir}/${f}`);
+  return [...list('src/server/session', /-handler\.ts$/), ...list('src/server/ws-handlers', /-handlers\.ts$/)];
+}
+
+function ratchetViolations(routes: RouteRule[], handlers: string[], fallbackOnly: Record<string, string>): string[] {
+  const out: string[] = [];
+  for (const h of handlers) {
+    const rule = firstRule(routes, h);
+    if ((!rule || rule.fallback) && !(h in fallbackOnly)) out.push(`unrouted: ${h}`);
+  }
+  for (const key of Object.keys(fallbackOnly)) {
+    if (!handlers.includes(key)) out.push(`not a handler: ${key}`);
+    else if (!firstRule(routes, key)?.fallback) out.push(`has its own rule: ${key}`);
+  }
+  return out;
+}
+
+describe('routing invariants (#1134)', () => {
+  it('reaches every flow from some tracked path, or records it as nightly-only', () => {
+    expect(unreachable(ROUTES, tracked, flowNames, NIGHTLY_ONLY)).toEqual([]);
+  });
+
+  it('agrees with route() on what a path reaches', () => {
+    for (const p of ['src/server/session/politics-handler.ts', 'src/client/components/map/MapSurface.tsx']) {
+      expect(route([p]).required.slice(1)).toEqual(firstRule(ROUTES, p)?.flows);
+    }
+  });
+
+  it('keeps NIGHTLY_ONLY honest: real flows no path reaches', () => {
+    const hit = reached(ROUTES, tracked);
+    for (const key of Object.keys(NIGHTLY_ONLY)) {
+      expect(flowNames).toContain(key);
+      expect(hit.has(key)).toBe(false);
+    }
+  });
+
+  it('keeps GATE_ONLY honest: real flows, reached by some gate, never nightly-only', () => {
+    const hit = reached(ROUTES, tracked);
+    for (const key of Object.keys(GATE_ONLY)) {
+      expect(flowNames).toContain(key);
+      expect(hit.has(key)).toBe(true);
+      expect(key in NIGHTLY_ONLY).toBe(false);
+    }
+    expect(Object.keys(GATE_ONLY)).toContain('politics-write');
+  });
+
+  it('cites a reason for every exemption', () => {
+    expect(uncited(NIGHTLY_ONLY)).toEqual([]);
+    expect(uncited(GATE_ONLY)).toEqual([]);
+    for (const value of Object.values(FALLBACK_ONLY)) expect(value).toMatch(/^(awaiting card #\d+|excluded: \S)/);
+  });
+
+  it('has no dead directory-anchored alternative in any rule', () => {
+    expect(deadAlternatives(ROUTES, tracked)).toEqual([]);
+  });
+
+  it('routes every handler file by a dedicated rule, or lists it in FALLBACK_ONLY', () => {
+    const handlers = handlerFiles();
+    expect(handlers).toContain('src/server/session/chat-handler.ts');
+    expect(handlers.some(h => h.endsWith('.test.ts'))).toBe(false);
+    expect(ratchetViolations(ROUTES, handlers, FALLBACK_ONLY)).toEqual([]);
+    expect(ROUTES.filter(r => r.fallback)).toHaveLength(3);
+  });
+
+  describe('each invariant fails when its set is broken', () => {
+    it('catches a rule shadowed by an earlier one, though a rule still names its flow', () => {
+      const shadowed = [ROUTES[ROUTES.length - 1], ...ROUTES];
+      expect(shadowed.some(r => r.flows.includes('nearest-town-hall'))).toBe(true);
+      expect(unreachable(shadowed, tracked, flowNames, NIGHTLY_ONLY)).toContain('nearest-town-hall');
+    });
+
+    it('catches an unlisted, unreached flow', () => {
+      expect(unreachable(ROUTES, tracked, [...flowNames, 'brand-new-flow'], NIGHTLY_ONLY)).toEqual(['brand-new-flow']);
+    });
+
+    it('catches a dead directory alternative, and exempts the generated-output rule', () => {
+      const dead: RouteRule = { test: /^src\/client\/no-such-dir\/|^src\/client\//, flows: [], why: 'x' };
+      expect(deadAlternatives([dead], tracked)).toEqual(['^src\\/client\\/no-such-dir\\/']);
+      const generated = ROUTES.filter(r => r.test.source === GENERATED_OUTPUT_SOURCE);
+      expect(generated).toHaveLength(1);
+      expect(deadAlternatives(generated, [])).toEqual([]);
+    });
+
+    it('splits only on top-level alternation', () => {
+      expect(topLevelAlternatives('^a\\/(b|c)\\/|[|]x|\\|y')).toEqual(['^a\\/(b|c)\\/', '[|]x', '\\|y']);
+    });
+
+    it('catches an unlisted handler file', () => {
+      const handlers = [...handlerFiles(), 'src/server/session/brand-new-handler.ts'];
+      expect(ratchetViolations(ROUTES, handlers, FALLBACK_ONLY)).toEqual([
+        'unrouted: src/server/session/brand-new-handler.ts',
+      ]);
+    });
+
+    it('catches a handler rule placed after a fallback', () => {
+      const own = ROUTES.find(r => r.test.test('src/server/session/politics-handler.ts') && !r.fallback) as RouteRule;
+      const moved = [...ROUTES.filter(r => r !== own), own];
+      expect(ratchetViolations(moved, handlerFiles(), FALLBACK_ONLY)).toContain(
+        'unrouted: src/server/session/politics-handler.ts',
+      );
+    });
+
+    it('catches a stale FALLBACK_ONLY key and one that is no handler', () => {
+      const stale = { ...FALLBACK_ONLY, 'src/server/session/politics-handler.ts': 'awaiting card #1' };
+      expect(ratchetViolations(ROUTES, handlerFiles(), stale)).toEqual([
+        'has its own rule: src/server/session/politics-handler.ts',
+      ]);
+      const ghost = { ...FALLBACK_ONLY, 'src/server/session/gone-handler.ts': 'awaiting card #1' };
+      expect(ratchetViolations(ROUTES, handlerFiles(), ghost)).toEqual(['not a handler: src/server/session/gone-handler.ts']);
+    });
+
+    it('catches a reason with no citation', () => {
+      expect(uncited({ x: 'noisy' })).toEqual(['x']);
+      expect(uncited({ x: 'see #12' })).toEqual([]);
+      expect(uncited({ x: 'News.pas:986' })).toEqual([]);
+      expect(uncited({ x: 'tycoonratings.asp:24-25' })).toEqual([]);
+    });
+  });
+});
+
+describe('route — L3 on the component folders (#1134)', () => {
+  it.each([
+    'src/client/components/mobile/BottomNav.tsx',
+    'src/client/components/hud/CommandBar.tsx',
+    'src/client/components/sheet/Sheet.tsx',
+    'src/client/components/modals/BuildMenu.tsx',
+    'src/client/components/map/MapContextMenu.tsx',
+  ])('flags %s as needing the browser layer', file => {
+    expect(route([file]).needsL3).toBe(true);
+  });
+
+  it('keeps the map surface on its flow, now with a browser look', () => {
+    const d = route(['src/client/components/map/MapSurface.tsx']);
+    expect(d.required).toEqual([SPINE_FLOW, 'nearest-town-hall']);
+    expect(d.needsL3).toBe(true);
+  });
+
+  it('does not flag the server or shared halves of a split rule', () => {
+    expect(route(['src/shared/nearest-town.ts']).needsL3).toBe(false);
+    expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).needsL3).toBe(false);
+  });
+
+  it('flags the paper modal, still spine-only', () => {
+    const d = route(['src/client/components/modals/NewspaperModal.tsx']);
+    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.needsL3).toBe(true);
+  });
+});
+
+describe('route — handler rules seeded by #1134', () => {
+  it('routes the misc WS handlers to the favourites flows', () => {
+    const d = route(['src/server/ws-handlers/misc-handlers.ts']);
+    expect(d.required).toContain('favorites-roundtrip');
+    expect(d.required).toContain('favorites-folders');
+  });
+
+  it('routes the building WS handlers to the flows that send their messages', () => {
+    expect(route(['src/server/ws-handlers/building-handlers.ts']).required).toEqual([
+      SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall',
+    ]);
+  });
+
+  it.each(['src/server/session/building-details-handler.ts', 'src/server/session/building-property-handler.ts'])(
+    'routes %s to the inspector, the write and the permission flows',
+    file => {
+      expect(route([file]).required).toEqual([SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative']);
+    },
+  );
+
+  it('routes the politics WS handlers like the session one', () => {
+    expect(route(['src/server/ws-handlers/politics-handlers.ts']).required).toEqual([
+      SPINE_FLOW, 'politics-read', 'politics-write',
+    ]);
+  });
+
+  it('routes the mail WS handlers to the mail flows', () => {
+    expect(route(['src/server/ws-handlers/mail-handlers.ts']).required).toEqual([
+      SPINE_FLOW, 'mail-roundtrip', 'zoning-alert-read',
+    ]);
+  });
+
+  it('still routes a FALLBACK_ONLY handler, through the fallback', () => {
+    expect(route(['src/server/session/chat-handler.ts']).required).toEqual([
+      SPINE_FLOW, 'politics-read', 'politics-write', 'building-details',
+    ]);
+    expect('src/server/session/chat-handler.ts' in FALLBACK_ONLY).toBe(true);
+  });
+
+  it('keeps cross-cutting session helpers on the fallback, by design', () => {
+    expect(route(['src/server/session/push-dispatcher.ts']).required).toEqual([
+      SPINE_FLOW, 'politics-read', 'politics-write', 'building-details',
+    ]);
   });
 });

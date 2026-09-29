@@ -12,6 +12,7 @@ import { REPORT_DIR, WORLD_NAME } from './config';
 import { CAPABILITIES, checkCapability, type Capability, type CapabilityEvidence } from './capability';
 import { FLOWS, flowByName, runFlow, type FlowResult } from './flows';
 import { preflight, type PreflightResult } from './preflight';
+import { GATE_ONLY } from './routing';
 import { WorldLock } from './world-lock';
 
 /**
@@ -137,7 +138,13 @@ export async function main(
   const flagged = (name: string): string | undefined =>
     argv.find(a => a.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
 
-  const flows = flagged('flows')?.split(',').filter(Boolean) ?? FLOWS.map(f => f.name);
+  const named = flagged('flows')?.split(',').filter(Boolean);
+  // The nightly calls with no --flows (`args: []` in bench/nightly.ts): every flow but the
+  // gate-only ones, whose action posts a message every online player sees. An explicit list
+  // (the gate, `test:live --flows=`) runs exactly what it names, gate-only flows included.
+  const gateOnly = new Set(Object.keys(GATE_ONLY));
+  const skipped = named ? [] : FLOWS.map(f => f.name).filter(n => gateOnly.has(n));
+  const flows = named ?? FLOWS.map(f => f.name).filter(n => !gateOnly.has(n));
   const branch = flagged('branch') ?? 'local';
   const sha = flagged('sha');
   const capabilities = (flagged('capabilities')?.split(',').filter(Boolean) ?? []).map(name => {
@@ -152,7 +159,8 @@ export async function main(
   fs.mkdirSync(REPORT_DIR, { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
 
-  out.write(`${formatSummary(result)}\nArtifact: ${file}\n`);
+  const notDriven = skipped.map(n => `  gate-only, not driven: ${n} — ${GATE_ONLY[n]}`);
+  out.write(`${[formatSummary(result), ...notDriven].join('\n')}\nArtifact: ${file}\n`);
   return EXIT[result.status];
 }
 
