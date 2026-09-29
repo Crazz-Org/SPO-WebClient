@@ -126,14 +126,17 @@ export class WsDriver {
 
   /**
    * Wait for any message satisfying `match`, including one already received — pushes
-   * that arrive before the wait starts must not be missed.
+   * that arrive before the wait starts must not be missed. Only messages at or after
+   * `fromIndex` count — a caller that must ignore an earlier identical echo records
+   * `receivedCount()` before its push.
    */
   waitFor(
     match: (msg: WsMessage) => boolean,
     timeoutMs: number = TIMEOUTS.request,
     label = 'message',
+    fromIndex = 0,
   ): Promise<WsMessage> {
-    const buffered = this.received.find(match);
+    const buffered = this.received.find((m, i) => i >= fromIndex && match(m));
     if (buffered) return Promise.resolve(buffered);
 
     return new Promise<WsMessage>((resolve, reject) => {
@@ -156,6 +159,11 @@ export class WsDriver {
       };
       this.waiters.add(waiter);
     });
+  }
+
+  /** How many messages have been received so far — the start index of a later `waitFor`. */
+  receivedCount(): number {
+    return this.received.length;
   }
 
   /** Every message of a type seen so far — for assertions after a flow. */

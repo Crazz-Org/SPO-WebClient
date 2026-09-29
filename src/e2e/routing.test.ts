@@ -83,13 +83,6 @@ describe('route', () => {
     expect(d.required).toEqual([SPINE_FLOW, 'building-details', 'politics-read', 'session-resume', 'company-switch']);
   });
 
-  // #1134: building-handlers.ts left this list — it now has its own rule.
-  it.each([
-    'src/server/ws-handlers/chat-handlers.ts',
-  ])('still routes %s through the ws-handlers rule, without session-resume', file => {
-    expect(route([file]).required).toEqual([SPINE_FLOW, 'building-details', 'politics-read']);
-  });
-
   it('routes mail-handler.ts to mail-roundtrip, zoning-alert-read, mail-drafts, mail-send-from-draft and mail-reply, not to the governance flows', () => {
     const d = route(['src/server/session/mail-handler.ts']);
     expect(d.required).toEqual([
@@ -562,11 +555,11 @@ describe('routing invariants (#1134)', () => {
   });
 
   // #1145: the vote is data-gated — never required, never nightly-excluded by GATE_ONLY.
-  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip and bank-borrow-payoff alone', () => {
+  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip, chat-private-channel and bank-borrow-payoff alone', () => {
     expect(NIGHTLY_ONLY['vote-roundtrip']).toMatch(/Kernel\/TownPolitics\.pas:690/);
     expect(uncited({ 'vote-roundtrip': NIGHTLY_ONLY['vote-roundtrip'] })).toEqual([]);
     expect(ROUTES.some(r => r.flows.includes('vote-roundtrip'))).toBe(false);
-    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip', 'bank-borrow-payoff']);
+    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip', 'chat-private-channel', 'bank-borrow-payoff']);
   });
 
   // #1149: the fixture builder is the one permanent mutation — nightly only, no gate requires it.
@@ -723,11 +716,19 @@ describe('route — handler rules seeded by #1134', () => {
     ]);
   });
 
-  it('still routes a FALLBACK_ONLY handler, through the fallback', () => {
+  // #1148: chat-handler.ts left FALLBACK_ONLY — its own rule is now the first match.
+  it('routes the former FALLBACK_ONLY chat handler through its own rule', () => {
     expect(route(['src/server/session/chat-handler.ts']).required).toEqual([
+      SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase',
+    ]);
+    expect('src/server/session/chat-handler.ts' in FALLBACK_ONLY).toBe(false);
+  });
+
+  it('still routes a FALLBACK_ONLY handler, through the fallback', () => {
+    expect(route(['src/server/session/abandon-role-handler.ts']).required).toEqual([
       SPINE_FLOW, 'politics-read', 'politics-write', 'building-details',
     ]);
-    expect('src/server/session/chat-handler.ts' in FALLBACK_ONLY).toBe(true);
+    expect('src/server/session/abandon-role-handler.ts' in FALLBACK_ONLY).toBe(true);
   });
 
   it('keeps cross-cutting session helpers on the fallback, by design', () => {
@@ -854,6 +855,45 @@ describe('route — profile & finance reads (#1141)', () => {
     const d = route(['src/client/components/empire/ProfilePanel.module.css']);
     expect(d.required).toEqual([SPINE_FLOW]);
     expect(d.needsL3).toBe(true);
+  });
+});
+
+describe('route — chat (#1148)', () => {
+  const CHAT = [SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase'];
+
+  it.each([
+    'src/server/session/chat-handler.ts',
+    'src/server/ws-handlers/chat-handlers.ts',
+    'src/client/store/chat-store.ts',
+  ])('%s requires the three chat flows, and is not fallback-only', file => {
+    const d = route([file]);
+    expect(d.required).toEqual(CHAT);
+    expect(d.needsL3).toBe(false);
+    expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it.each(['src/client/components/chat/ChatStrip.tsx', 'src/client/components/chat/ChaseBadge.tsx'])(
+    '%s routes to the chat flows with a browser look',
+    file => {
+      const d = route([file]);
+      expect(d.required).toEqual(CHAT);
+      expect(d.needsL3).toBe(true);
+    },
+  );
+
+  it('keeps a chat stylesheet L3-only', () => {
+    const d = route(['src/client/components/chat/ChatStrip.module.css']);
+    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.needsL3).toBe(true);
+  });
+
+  it('keeps chat-private-channel gate-only with its broadcast cited, and the other two on both', () => {
+    expect(GATE_ONLY['chat-private-channel']).toMatch(/InterfaceServer\.pas:4594/);
+    expect(GATE_ONLY['chat-private-channel']).toMatch(/:3968-3980/);
+    for (const name of ['chat-read', 'chat-chase']) {
+      expect(name in GATE_ONLY).toBe(false);
+      expect(name in NIGHTLY_ONLY).toBe(false);
+    }
   });
 });
 

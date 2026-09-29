@@ -430,8 +430,12 @@ describe('main', () => {
     expect(flows).not.toContain('politics-write');
     expect(flows).not.toContain('policy-roundtrip');
     expect(flows).toContain('autoconnection-roundtrip');
+    expect(flows).not.toContain('chat-private-channel');
+    expect(flows).toContain('chat-read');
+    expect(flows).toContain('chat-chase');
     expect(out.text()).toMatch(/gate-only, not driven: politics-write/);
     expect(out.text()).toMatch(/gate-only, not driven: policy-roundtrip/);
+    expect(out.text()).toMatch(/gate-only, not driven: chat-private-channel/);
     expect(flows).not.toContain('bank-borrow-payoff');
     expect(flows).toContain('bank-send-return');
     expect(flows).toContain('portrait-roundtrip');

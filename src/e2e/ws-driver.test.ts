@@ -137,6 +137,67 @@ describe('WsDriver', () => {
     await driver.close();
   });
 
+  describe('start-index wait (#1148)', () => {
+    const typing = (isTyping: boolean) => (m: { type: string; isTyping?: unknown }) =>
+      m.type === WsMessageType.EVENT_CHAT_USER_TYPING && m.isTyping === isTyping;
+
+    it('counts received frames, and not the ones it cannot parse', async () => {
+      onMessage = (_incoming, socket) => {
+        socket.send('<html>proxy error</html>');
+        send(socket, { type: WsMessageType.EVENT_CHAT_USER_TYPING, username: 'a', isTyping: false });
+        send(socket, { type: WsMessageType.EVENT_CHAT_USER_TYPING, username: 'a', isTyping: true });
+      };
+      const driver = await WsDriver.connect(url, 'http://localhost:8080');
+      expect(driver.receivedCount()).toBe(0);
+      driver.send({ type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: false });
+      await driver.waitFor(typing(true), 2_000);
+      expect(driver.receivedCount()).toBe(2);
+      await driver.close();
+    });
+
+    it('ignores a buffered match received before the start index', async () => {
+      onMessage = (_incoming, socket) =>
+        send(socket, { type: WsMessageType.EVENT_CHAT_USER_TYPING, username: 'a', isTyping: false });
+      const driver = await WsDriver.connect(url, 'http://localhost:8080');
+      driver.send({ type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: false });
+      await driver.waitFor(typing(false), 2_000);
+      const from = driver.receivedCount();
+      await expect(driver.waitFor(typing(false), 50, 'the away self-echo', from)).rejects.toThrow(
+        /the away self-echo/,
+      );
+      await driver.close();
+    });
+
+    it('resolves on an identical message arriving after the start index', async () => {
+      onMessage = (_incoming, socket) =>
+        send(socket, { type: WsMessageType.EVENT_CHAT_USER_TYPING, username: 'a', isTyping: false });
+      const driver = await WsDriver.connect(url, 'http://localhost:8080');
+      driver.send({ type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: false });
+      await driver.waitFor(typing(false), 2_000);
+      const from = driver.receivedCount();
+      driver.send({ type: WsMessageType.REQ_CHAT_AWAY });
+      const second = driver.waitFor(typing(false), 2_000, 'second echo', from);
+      await expect(second).resolves.toMatchObject({ isTyping: false });
+      expect(driver.receivedCount()).toBe(2);
+      await driver.close();
+    });
+
+    it('resolves at once from a buffered match at or after the start index', async () => {
+      onMessage = (_incoming, socket) => {
+        send(socket, { type: WsMessageType.EVENT_CHAT_USER_TYPING, username: 'a', isTyping: true });
+        send(socket, { type: WsMessageType.EVENT_CHAT_USER_TYPING, username: 'a', isTyping: false });
+      };
+      const driver = await WsDriver.connect(url, 'http://localhost:8080');
+      driver.send({ type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: true });
+      await driver.waitFor(typing(false), 2_000);
+      await expect(driver.waitFor(typing(false), 10, 'buffered', 1)).resolves.toMatchObject({
+        isTyping: false,
+      });
+      await expect(driver.waitFor(typing(true), 10, 'too early', 1)).rejects.toThrow(/too early/);
+      await driver.close();
+    });
+  });
+
   it('logs both directions with the correlation id', async () => {
     onMessage = (incoming, socket) =>
       send(socket, { type: WsMessageType.RESP_AUTH_SUCCESS, wsRequestId: incoming.wsRequestId });
