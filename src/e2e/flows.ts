@@ -76,6 +76,10 @@ import type {
   WsRespBuildingFacilities,
   WsRespRenameFacility,
   WsRespDeleteFacility,
+  WsRespResearchInventory,
+  WsRespResearchDetails,
+  WsRespBuildingUpgrade,
+  ResearchCategoryData,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
 import { CLUSTER_IDS } from '../shared/cluster-data';
@@ -5614,6 +5618,749 @@ async function removePlacement(session: LiveSession, ctx: FlowContext, p: Placem
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Inspector flows (#1154) — residential, bank, TV and research settings, repair, upgrades and
+// accept-cloning on SPO_test3's own fixtures. Every write is set back: a setting to its original,
+// a repair by its stop, a queued research by its cancel, an upgrade by its stop.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A boolean as the gateway compares it — by truthiness: `1`, `255` and `-1` are all `'1'`
+ * (`wanted` / `held` in building-property-handler.ts). `undefined` when absent or blank.
+ */
+export function truthyFlag(value: string | undefined): '1' | '0' | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  return Number(value) !== 0 ? '1' : '0';
+}
+
+/**
+ * `Repairing: <name>` (Kernel/PopulatedBlock.pas:773) — never `Stop Repairing: <name>` (:781),
+ * which carries the same marker.
+ */
+export function repairLineMatches(line: string, name: string): boolean {
+  return new RegExp(`(?<!Stop )${escapeRegExp(`Repairing: ${name}`)}(?=\\s|$)`).test(line);
+}
+
+/** `Queue Research: <id>, <priority>` (Kernel/ResearchCenter.pas:384). */
+export function queueResearchLineMatches(line: string, id: string): boolean {
+  return line.includes(`Queue Research: ${id}, `);
+}
+
+/** `Cancel Research: <id>` (Kernel/ResearchCenter.pas:396). */
+export function cancelResearchLineMatches(line: string, id: string): boolean {
+  return new RegExp(`${escapeRegExp(`Cancel Research: ${id}`)}(?=\\s|$)`).test(line);
+}
+
+/** `Facility Start Upgrade count: <count>` (Kernel/Kernel.pas:4675). */
+export function startUpgradeLineMatches(line: string, count: number): boolean {
+  return new RegExp(`${escapeRegExp(`Facility Start Upgrade count: ${count}`)}(?=\\s|$)`).test(line);
+}
+
+export type ResearchState = 'developing' | 'owned' | 'available' | 'absent';
+
+/**
+ * Where an invention stands in one category's inventory. The three lists are mutually exclusive
+ * by construction (`TResearchCenter.StoreToCache`, Kernel/ResearchCenter.pas:797-817).
+ */
+export function researchState(data: ResearchCategoryData, id: string): ResearchState {
+  const has = (list: { inventionId: string }[]): boolean => list.some(i => i.inventionId === id);
+  if (has(data.developing)) return 'developing';
+  if (has(data.completed)) return 'owned';
+  if (has(data.available)) return 'available';
+  return 'absent';
+}
+
+/**
+ * The test interest: strictly below the original, never above, never negative (the flow drives
+ * `Interest` only when it reads above 0). A loan granted during the window keeps its rate for
+ * life (Kernel/Kernel.pas:8837), so a lower test rate never worsens another player's debt.
+ */
+export function lowerInterest(original: string): string {
+  return String(Math.ceil(Number(original)) - 1);
+}
+
+/** One setting of a composite round trip. */
+interface SettingMember {
+  /** The key the section read carries. */
+  key: string;
+  /** The member's name in the report. */
+  label: string;
+  testValue: (original: string) => string;
+  write: (value: string) => Promise<void>;
+}
+
+/**
+ * Several settings of one tab in ONE round trip: write them all, wait once for the object-cache
+ * refresh, read them all, restore them all, wait once more. None of these setters logs a Survival
+ * line, so the read-back alone proves them — every member must read back the value written.
+ */
+function settingsRoundTrip(
+  ctx: FlowContext,
+  url: string,
+  session: LiveSession,
+  fx: OwnFixture,
+  tabId: string,
+  members: SettingMember[],
+  why: string,
+): Promise<ProbeResult> {
+  const read = async (): Promise<string | undefined> => {
+    const groups = await readSectionGroups(session, fx.x, fx.y, tabId, fx.visualClass);
+    const values = members.map(m => propertyValue(groups, tabId, m.key));
+    return values.some(v => v === undefined) ? undefined : values.join(',');
+  };
+  const label = members.map(m => m.label).join('+');
+  return roundTripProbe(ctx, url, {
+    what: `${fixtureLabel(fx)} ${label}`,
+    member: label,
+    read,
+    write: async value => {
+      const parts = value.split(',');
+      for (const [i, m] of members.entries()) await m.write(parts[i]);
+    },
+    testValue: original => original.split(',').map((v, i) => members[i].testValue(v)).join(','),
+    proof: {
+      readBack: readBackOn(
+        `${tabId}.${members.map(m => m.key).join(',')} at (${fx.x},${fx.y}) via the gateway's section read`,
+        why,
+        read,
+      ),
+    },
+    restoreRecord: { x: fx.x, y: fx.y, propertyName: label },
+  });
+}
+
+/** A `property` set of one published member, the way the inspector's sliders send it. */
+function propertyWriter(session: LiveSession, fx: OwnFixture, propertyName: string): (value: string) => Promise<void> {
+  return async value => {
+    await setBuildingProperty(session, fx.x, fx.y, 'property', value, { propertyName });
+  };
+}
+
+/** Whether the fixture's template carries the tab — otherwise `member` is unproven, nothing sent. */
+async function hasTab(
+  session: LiveSession,
+  fx: OwnFixture,
+  tabId: string,
+  member: string,
+  assertions: Assertions,
+): Promise<boolean> {
+  const details = await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+  if (details.tabs.some(t => t.id === tabId)) return true;
+  assertions.unproven(member, `${fixtureLabel(fx)} carries no ${tabId} tab — its template does not offer it`);
+  return false;
+}
+
+type FixtureSteps = (
+  session: LiveSession,
+  ctx: FlowContext,
+  fx: OwnFixture,
+  assertions: Assertions,
+  probes: ProbeResult[],
+) => Promise<void>;
+
+/** A flow on one fixture's tab: no fixture or no tab → unproven, nothing sent. */
+function fixtureFlow(
+  name: string,
+  what: string,
+  kind: FixtureKindId,
+  tabId: string,
+  member: string,
+  steps: FixtureSteps,
+): Flow {
+  return {
+    name,
+    what,
+    mutates: true,
+    run: async ctx => {
+      const assertions = new Assertions();
+      const probes: ProbeResult[] = [];
+      const session = await login(PRIMARY_ACCOUNT);
+      try {
+        const fx = await ownFixture(session, kind, assertions);
+        if (fx && (await hasTab(session, fx, tabId, member, assertions))) {
+          await steps(session, ctx, fx, assertions, probes);
+        }
+        return report(name, assertions, probes, session);
+      } finally {
+        await logoff(session);
+      }
+    },
+  };
+}
+
+/** Rent and maintenance (`TPopulatedBlock.SetRent` / `SetMaintenance`, Kernel/PopulatedBlock.pas:722-758). */
+const residentialSettings = fixtureFlow(
+  'residential-settings',
+  "Rent + Maintenance on SPO_test3's residential fixture — written together, read back, restored, read back",
+  'residential',
+  'resGeneral',
+  'Rent+Maintenance',
+  async (session, ctx, fx, assertions, probes) => {
+    const probe = await settingsRoundTrip(
+      ctx,
+      await survivalUrl(ctx),
+      session,
+      fx,
+      'resGeneral',
+      [
+        { key: 'Rent', label: 'Rent', testValue: v => nudgeWithin(v, 0, 200), write: propertyWriter(session, fx, 'Rent') },
+        {
+          key: 'Maintenance',
+          label: 'Maintenance',
+          testValue: v => nudgeWithin(v, 0, 200),
+          write: propertyWriter(session, fx, 'Maintenance'),
+        },
+      ],
+      `${FACILITY_CACHE_WHY} (Kernel/PopulatedBlock.pas:921-922 caches both verbatim)`,
+    );
+    probes.push(probe);
+    checkProbe(assertions, probe);
+  },
+);
+
+/**
+ * Repair → stop repair on the residential fixture. `Repair` is a 0..100 progress, not a flag
+ * (Kernel/PopulatedBlock.pas:623-638): "reads > 0" proves the repair, "reads 0" the stop (:783).
+ * Driven only from 0 — a stop would cancel a repair the owner started. The repair's spend
+ * between the two is the accepted cost (maintainer, 2026-09-29).
+ */
+const residentialRepair = fixtureFlow(
+  'residential-repair',
+  "RdoRepair on SPO_test3's residential fixture, only when Repair reads 0 — Repairing: line + Repair > 0, " +
+    'then RdoStopRepair → Repair reads 0',
+  'residential',
+  'resGeneral',
+  'RdoRepair',
+  async (session, ctx, fx, assertions, probes) => {
+    const groups = await readSectionGroups(session, fx.x, fx.y, 'resGeneral', fx.visualClass);
+    const raw = propertyValue(groups, 'resGeneral', 'Repair');
+    if (raw === undefined) {
+      assertions.check('Repair is readable on the resGeneral tab', false, `${fixtureLabel(fx)}: no Repair — nothing sent`);
+      return;
+    }
+    if (Number(raw) !== 0) {
+      assertions.unproven(
+        'RdoRepair',
+        `Repair reads ${raw} — a repair of the owner's own is running; RdoStopRepair would cancel it (Kernel/PopulatedBlock.pas:783)`,
+      );
+      return;
+    }
+    const name = propertyValue(groups, 'resGeneral', 'Name') ?? fx.name;
+    const readRepairing = async (): Promise<string | undefined> => {
+      const value = propertyValue(
+        await readSectionGroups(session, fx.x, fx.y, 'resGeneral', fx.visualClass),
+        'resGeneral',
+        'Repair',
+      );
+      return value === undefined ? undefined : Number(value) > 0 ? '1' : '0';
+    };
+    const probe = await roundTripProbe(ctx, await survivalUrl(ctx), {
+      what: `${fixtureLabel(fx)} repair ("1" = Repair reads > 0)`,
+      member: 'RdoRepair',
+      read: readRepairing,
+      testValue: () => '1',
+      write: async value => {
+        await setBuildingProperty(session, fx.x, fx.y, value === '1' ? 'RdoRepair' : 'RdoStopRepair', '0');
+      },
+      proof: {
+        log: { marker: LOG_MARKERS.RdoRepair, match: line => repairLineMatches(line, name) },
+        readBack: readBackOn(
+          `resGeneral.Repair at (${fx.x},${fx.y}) via the gateway's section read, > 0 while repairing`,
+          `${FACILITY_CACHE_WHY}; fRepair runs 0..100 (Kernel/PopulatedBlock.pas:623-638) and RdoStopRepair sets it to 0 (:783)`,
+          readRepairing,
+        ),
+      },
+      restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RdoStopRepair' },
+    });
+    probes.push(probe);
+    checkProbe(assertions, probe);
+  },
+);
+
+/**
+ * The bank's interest, term and budget percentage — three live gets (`enrichBankTab`). Interest
+ * only ever goes down (`lowerInterest`); an original of 0 leaves it unsent and unproven.
+ */
+const bankSettings = fixtureFlow(
+  'bank-settings',
+  "Interest (down only) + Term + RDOSetLoanPerc on SPO_test3's bank fixture — written together, read back, " +
+    'restored, read back',
+  'bank',
+  'bankGeneral',
+  'Interest+Term+RDOSetLoanPerc',
+  async (session, ctx, fx, assertions, probes) => {
+    const groups = await readSectionGroups(session, fx.x, fx.y, 'bankGeneral', fx.visualClass);
+    const interest = propertyValue(groups, 'bankGeneral', 'Interest');
+    const members: SettingMember[] = [];
+    // An unreadable Interest stays in, so the round trip refuses to write and FAILs.
+    if (interest === undefined || Number(interest) > 0) {
+      members.push({ key: 'Interest', label: 'Interest', testValue: lowerInterest, write: propertyWriter(session, fx, 'Interest') });
+    } else {
+      assertions.unproven(
+        'Interest',
+        `reads ${interest} — the flow only nudges it down: a loan granted during the window keeps its rate for life (Kernel/Kernel.pas:8837)`,
+      );
+    }
+    members.push(
+      { key: 'Term', label: 'Term', testValue: v => nudgeWithin(v, 1, 100), write: propertyWriter(session, fx, 'Term') },
+      {
+        key: 'BudgetPerc',
+        label: 'RDOSetLoanPerc',
+        testValue: v => nudgeWithin(v, 0, 100),
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetLoanPerc', value);
+        },
+      },
+    );
+    const probe = await settingsRoundTrip(
+      ctx,
+      await survivalUrl(ctx),
+      session,
+      fx,
+      'bankGeneral',
+      members,
+      'Interest, Term and BudgetPerc are live gets on the block (enrichBankTab), no object cache between',
+    );
+    probes.push(probe);
+    checkProbe(assertions, probe);
+  },
+);
+
+/** Hours on air and commercials, stored verbatim (StdBlocks/Broadcast.pas:51-53). */
+const tvSettings = fixtureFlow(
+  'tv-settings',
+  "HoursOnAir + Commercials on SPO_test3's TV fixture — written together, read back, restored, read back",
+  'tv',
+  'tvGeneral',
+  'HoursOnAir+Commercials',
+  async (session, ctx, fx, assertions, probes) => {
+    const probe = await settingsRoundTrip(
+      ctx,
+      await survivalUrl(ctx),
+      session,
+      fx,
+      'tvGeneral',
+      [
+        { key: 'HoursOnAir', label: 'HoursOnAir', testValue: v => nudgeWithin(v, 0, 24), write: propertyWriter(session, fx, 'HoursOnAir') },
+        // Read under the template's one-m key, written under the published two-m name (enrichTvTab).
+        {
+          key: 'Comercials',
+          label: 'Commercials',
+          testValue: v => nudgeWithin(v, 0, 100),
+          write: propertyWriter(session, fx, 'Commercials'),
+        },
+      ],
+      'HoursOnAir and Commercials are live gets on the block (enrichTvTab), stored verbatim (StdBlocks/Broadcast.pas:51-53)',
+    );
+    probes.push(probe);
+    checkProbe(assertions, probe);
+  },
+);
+
+/**
+ * `RDOAcceptCloning` toggled and toggled back. Its read is the live get `enrichUpgradeTab` makes
+ * — no object cache between — and each write must come back `confirmed: true` from the gateway's
+ * own live get. Every comparison is by truthiness (`truthyFlag`).
+ */
+const acceptCloning = fixtureFlow(
+  'accept-cloning',
+  "RDOAcceptCloning on SPO_test3's industry fixture — toggled (confirmed + read back by truthiness), toggled back",
+  'industry',
+  'upgrade',
+  'RDOAcceptCloning',
+  async (session, ctx, fx, assertions, probes) => {
+    const readCloning = async (): Promise<string | undefined> =>
+      truthyFlag(propertyValue(await readSectionGroups(session, fx.x, fx.y, 'upgrade', fx.visualClass), 'upgrade', 'AcceptCloning'));
+    const probe = await roundTripProbe(ctx, await survivalUrl(ctx), {
+      what: `${fixtureLabel(fx)} accepts cloning ("1" = true)`,
+      member: 'RDOAcceptCloning',
+      read: readCloning,
+      testValue: original => (original === '1' ? '0' : '1'),
+      write: async value => {
+        const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', value);
+        if (r.confirmed !== true) {
+          throw new Error(`RDOAcceptCloning ${value}: the gateway's live get did not confirm it (holds "${r.newValue}")`);
+        }
+      },
+      proof: {
+        readBack: readBackOn(
+          `upgrade.AcceptCloning at (${fx.x},${fx.y}), by truthiness`,
+          'the live RDOAcceptCloning get enrichUpgradeTab makes — no object cache between; the member prints no Survival line',
+          readCloning,
+        ),
+      },
+      restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOAcceptCloning' },
+    });
+    probes.push(probe);
+    checkProbe(assertions, probe);
+  },
+);
+
+/**
+ * Queue one invention, prove it is in development, cancel it. Queueing can buy on the spot —
+ * an invention with `Time = 0` is paid for and declared at once (Kernel/ResearchCenter.pas:319-334)
+ * — and a cancel on an owned invention reaches `RetireInvention` (:372), the excluded sell. So the
+ * cancel is sent only on an invention that reads in development right before it.
+ */
+const researchRoundTrip = fixtureFlow(
+  'research-roundtrip',
+  "REQ_RESEARCH_INVENTORY + DETAILS on SPO_test3's research fixture → RDOQueueResearch (Queue Research: line, " +
+    'in development) → RDOCancelResearch (Cancel Research: line, no longer queued)',
+  'research',
+  'hqInventions',
+  'RDOQueueResearch',
+  async (session, ctx, fx, assertions) => {
+    try {
+      await researchSteps(session, ctx, fx, assertions);
+    } catch (err: unknown) {
+      assertions.check('the research steps ran without a throw', false, toErrorMessage(err));
+    }
+  },
+);
+
+function researchInventory(session: LiveSession, fx: OwnFixture, categoryIndex: number): Promise<WsRespResearchInventory> {
+  return session.driver.request<WsRespResearchInventory>(
+    { type: WsMessageType.REQ_RESEARCH_INVENTORY, buildingX: fx.x, buildingY: fx.y, categoryIndex },
+    WsMessageType.RESP_RESEARCH_INVENTORY,
+  );
+}
+
+async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixture, assertions: Assertions): Promise<void> {
+  // CatCount is the highest category index, not a count (Kernel/ResearchCenter.pas:820).
+  const groups = await readSectionGroups(session, fx.x, fx.y, 'hqInventions', fx.visualClass);
+  const parsed = Number(propertyValue(groups, 'hqInventions', 'CatCount') ?? '0');
+  const catMax = Number.isFinite(parsed) ? parsed : 0;
+
+  let pick: { id: string; name: string; category: number } | undefined;
+  for (let category = 0; category <= catMax && !pick; category++) {
+    const { data } = await researchInventory(session, fx, category);
+    const held = new Set([...data.developing, ...data.completed].map(i => i.inventionId));
+    const hit = data.available.find(i => i.enabled === true && !held.has(i.inventionId));
+    if (hit) pick = { id: hit.inventionId, name: hit.name, category };
+  }
+  if (!pick) {
+    assertions.unproven('RDOQueueResearch', `no enabled invention available to queue in categories 0..${catMax}`);
+    return;
+  }
+  const { id, category } = pick;
+
+  const { details } = await session.driver.request<WsRespResearchDetails>(
+    { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: id },
+    WsMessageType.RESP_RESEARCH_DETAILS,
+  );
+  const properties = details.properties.trim().replace(/\s+/g, ' ');
+  assertions.check(
+    `REQ_RESEARCH_DETAILS answers for ${id} with its properties`,
+    details.inventionId === id && properties !== '',
+    `${details.inventionId}: ${properties || '(no properties)'}`,
+  );
+
+  const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
+  const url = await survivalUrl(ctx);
+  const key = `research-roundtrip:${randomUUID()}`;
+  ctx.lock.addPendingRestore({
+    key,
+    x: fx.x,
+    y: fx.y,
+    propertyName: 'RDOCancelResearch',
+    what:
+      `cancel research ${id} at (${fx.x},${fx.y}) — queued by research-roundtrip; if it reads owned it was bought at ` +
+      'once and must NOT be cancelled (RDOCancelResearch on an owned invention sells it, Kernel/ResearchCenter.pas:372)',
+    originalValue: 'available',
+  });
+
+  let queued = false;
+  try {
+    const window = await openLogWindow(url);
+    queued = true;
+    await setBuildingProperty(session, fx.x, fx.y, 'RDOQueueResearch', '0', { inventionId: id, priority: '10' });
+    const line = await awaitMarker(
+      window,
+      { marker: LOG_MARKERS.RDOQueueResearch, match: l => queueResearchLineMatches(l, id) },
+      TIMEOUTS.logSettle,
+      undefined,
+      ctx.now,
+      ctx.sleep,
+    );
+    assertions.check('the queue logged its Queue Research: line', line !== null, line ?? `(no Queue Research: line for ${id})`);
+    const listed = await pollUntil(stateOf, s => s !== 'available' && s !== 'absent', ctx);
+    if (listed.last === 'owned') {
+      assertions.check(
+        `${id} is listed in development, not owned`,
+        false,
+        `bought at once: ${id} (${properties}) — an invention with Time = 0 is bought on the spot ` +
+          '(Kernel/ResearchCenter.pas:319-334); not cancelled: cancel would sell it',
+      );
+    } else {
+      assertions.check(
+        `${id} is listed in development, not owned`,
+        listed.ok,
+        listed.ok ? `${id} in development` : `never listed in development — reads ${listed.last}; not cancelled`,
+      );
+    }
+  } catch (err: unknown) {
+    assertions.check('the queue steps ran without a throw', false, toErrorMessage(err));
+  }
+  if (queued) await cancelQueuedResearch(session, ctx, fx, { id, key, url, stateOf }, assertions);
+}
+
+/**
+ * The cancel, only on an invention that reads in development right before it — never one that
+ * reads owned (a sell) or one the flow never saw queued. Anything else keeps the pending restore.
+ */
+async function cancelQueuedResearch(
+  session: LiveSession,
+  ctx: FlowContext,
+  fx: OwnFixture,
+  q: { id: string; key: string; url: string; stateOf: () => Promise<ResearchState> },
+  assertions: Assertions,
+): Promise<void> {
+  try {
+    const state = await q.stateOf();
+    if (state !== 'developing') {
+      assertions.check(
+        `${q.id} is cancelled`,
+        false,
+        `reads ${state}, not in development — not cancelled (RDOCancelResearch on an owned invention sells it, ` +
+          'Kernel/ResearchCenter.pas:372); pending restore kept',
+      );
+      return;
+    }
+    const window = await openLogWindow(q.url);
+    await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: q.id });
+    const line = await awaitMarker(
+      window,
+      { marker: LOG_MARKERS.RDOCancelResearch, match: l => cancelResearchLineMatches(l, q.id) },
+      TIMEOUTS.logSettle,
+      undefined,
+      ctx.now,
+      ctx.sleep,
+    );
+    const gone = await pollUntil(q.stateOf, s => s !== 'developing' && s !== 'owned', ctx);
+    const kept = line !== null && gone.ok ? '' : ' — pending restore kept';
+    assertions.check('the cancel logged its Cancel Research: line', line !== null, (line ?? `(no Cancel Research: line for ${q.id})`) + kept);
+    assertions.check(`the inventory no longer lists ${q.id} as queued`, gone.ok, `reads ${gone.last}${kept}`);
+    if (line !== null && gone.ok) ctx.lock.clearPendingRestore(q.key);
+  } catch (err: unknown) {
+    assertions.check('the research cancel ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+  }
+}
+
+/** The upgrade tab's cached counters (Kernel/Kernel.pas:5896-5899) and the live AcceptCloning. */
+interface UpgradeState {
+  level: number;
+  upgrading: number;
+  pending: number;
+  max: number;
+  cloning: '1' | '0' | undefined;
+}
+
+async function readUpgrade(session: LiveSession, fx: OwnFixture): Promise<UpgradeState> {
+  const groups = await readSectionGroups(session, fx.x, fx.y, 'upgrade', fx.visualClass);
+  const num = (name: string): number => {
+    const raw = propertyValue(groups, 'upgrade', name);
+    return raw === undefined || raw.trim() === '' ? NaN : Number(raw);
+  };
+  return {
+    level: num('UpgradeLevel'),
+    upgrading: num('Upgrading'),
+    pending: num('Pending'),
+    max: num('MaxUpgrade'),
+    cloning: truthyFlag(propertyValue(groups, 'upgrade', 'AcceptCloning')),
+  };
+}
+
+const upgradeText = (u: UpgradeState): string =>
+  `level ${u.level}/${u.max}, Upgrading ${u.upgrading}, Pending ${u.pending}, AcceptCloning ${u.cloning ?? '(unread)'}`;
+
+/** What the upgrade flow must undo, and whether its START went out. */
+interface UpgradeRun {
+  key: string;
+  url: string;
+  level0: number;
+  cloning0: '1' | '0';
+  startSent: boolean;
+}
+
+function requestUpgrade(
+  session: LiveSession,
+  fx: OwnFixture,
+  action: 'START_UPGRADE' | 'STOP_UPGRADE',
+): Promise<WsRespBuildingUpgrade> {
+  return session.driver.request<WsRespBuildingUpgrade>(
+    { type: WsMessageType.REQ_BUILDING_UPGRADE, x: fx.x, y: fx.y, action, ...(action === 'START_UPGRADE' ? { count: 1 } : {}) },
+    WsMessageType.RESP_BUILDING_UPGRADE,
+  );
+}
+
+/**
+ * Start one upgrade and stop it (`manageConstructionImpl`, building-management-handler.ts). The
+ * handler refuses unless AcceptCloning reads true, writes `-1` itself and never restores it — so
+ * the flow sets AcceptCloning back to its original's truthiness after the STOP. Driven only on a
+ * fixture below MaxUpgrade with nothing upgrading or pending: `TBlock.StartUpgrading` is a no-op
+ * while `fUpgradeHours > 0` (Kernel/Kernel.pas:6525), and the STOP would cancel an upgrade the
+ * flow did not start. A level that completes before the STOP cannot be undone (downgrade is
+ * excluded) and FAILs.
+ */
+const upgradeStop = fixtureFlow(
+  'upgrade-stop',
+  "REQ_BUILDING_UPGRADE START (count 1) on SPO_test3's industry fixture → Start Upgrade line + Upgrading/Pending " +
+    '→ STOP → Stop Upgrade line + zeros + level unchanged → AcceptCloning back to its original',
+  'industry',
+  'upgrade',
+  'REQ_BUILDING_UPGRADE',
+  async (session, ctx, fx, assertions) => {
+    try {
+      await upgradeSteps(session, ctx, fx, assertions);
+    } catch (err: unknown) {
+      assertions.check('the upgrade pre-checks ran without a throw', false, toErrorMessage(err));
+    }
+  },
+);
+
+async function upgradeSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixture, assertions: Assertions): Promise<void> {
+  const before = await readUpgrade(session, fx);
+  const counters = [before.level, before.upgrading, before.pending, before.max];
+  if (counters.some(n => !Number.isFinite(n)) || before.cloning === undefined) {
+    assertions.check('the upgrade tab reads UpgradeLevel, Upgrading, Pending, MaxUpgrade and AcceptCloning', false, upgradeText(before));
+    return;
+  }
+  if (before.level >= before.max) {
+    assertions.unproven('REQ_BUILDING_UPGRADE', `${fixtureLabel(fx)} is at MaxUpgrade (${before.level}/${before.max}) — nothing to start`);
+    return;
+  }
+  if (before.upgrading > 0 || before.pending > 0) {
+    assertions.unproven(
+      'REQ_BUILDING_UPGRADE',
+      `${fixtureLabel(fx)} is already upgrading (Upgrading ${before.upgrading}, Pending ${before.pending}) — ` +
+        'TBlock.StartUpgrading is a no-op while fUpgradeHours > 0 (Kernel/Kernel.pas:6525), and the STOP would cancel ' +
+        'an upgrade the flow did not start; nothing sent',
+    );
+    return;
+  }
+
+  const run: UpgradeRun = {
+    key: `upgrade-stop:${randomUUID()}`,
+    url: await survivalUrl(ctx),
+    level0: before.level,
+    cloning0: before.cloning,
+    startSent: false,
+  };
+  ctx.lock.addPendingRestore({
+    key: run.key,
+    x: fx.x,
+    y: fx.y,
+    propertyName: 'RDOStopUpgrade+RDOAcceptCloning',
+    what:
+      `stop the upgrade at (${fx.x},${fx.y}) of ${fixtureLabel(fx)}, set AcceptCloning back to ` +
+      `${run.cloning0 === '1' ? 'true' : 'false'} — upgrade-stop started one upgrade from level ${run.level0}; ` +
+      `do both as ${PRIMARY_ACCOUNT.username}, then npm run e2e:unlock`,
+    originalValue: `level ${run.level0}, AcceptCloning ${run.cloning0}`,
+  });
+
+  try {
+    await startUpgrade(session, ctx, fx, run, assertions);
+  } catch (err: unknown) {
+    assertions.check('the upgrade steps ran without a throw', false, toErrorMessage(err));
+  }
+  await undoUpgrade(session, ctx, fx, run, assertions);
+}
+
+async function startUpgrade(
+  session: LiveSession,
+  ctx: FlowContext,
+  fx: OwnFixture,
+  run: UpgradeRun,
+  assertions: Assertions,
+): Promise<void> {
+  if (run.cloning0 === '0') {
+    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', '1');
+    assertions.check(
+      'AcceptCloning set true before the START (manageConstructionImpl refuses otherwise)',
+      r.confirmed === true,
+      `live get holds "${r.newValue}"`,
+    );
+    if (r.confirmed !== true) return;
+  }
+  const window = await openLogWindow(run.url);
+  run.startSent = true;
+  const started = await requestUpgrade(session, fx, 'START_UPGRADE');
+  assertions.check('the gateway accepted START_UPGRADE', started.success === true, started.message);
+  const line = await awaitMarker(
+    window,
+    { marker: LOG_MARKERS.RDOStartUpgrades, match: l => startUpgradeLineMatches(l, 1) },
+    TIMEOUTS.logSettle,
+    undefined,
+    ctx.now,
+    ctx.sleep,
+  );
+  assertions.check('the START logged Facility Start Upgrade count: 1', line !== null, line ?? '(no Facility Start Upgrade count: 1 line)');
+  const moved = await pollUntil(() => readUpgrade(session, fx), u => u.upgrading > 0 || u.pending >= 1, ctx);
+  assertions.check(
+    'Upgrading or Pending moved after the START',
+    moved.ok,
+    moved.ok ? upgradeText(moved.last) : `neither Upgrading nor Pending moved — ${upgradeText(moved.last)}`,
+  );
+}
+
+/**
+ * The STOP when the START went out, then — always — AcceptCloning back to its original's
+ * truthiness, which also undoes the handler's own `-1`. The pending restore is cleared only when
+ * the STOP is proven (line + zeros + the original level) and AcceptCloning reads its original.
+ */
+async function undoUpgrade(
+  session: LiveSession,
+  ctx: FlowContext,
+  fx: OwnFixture,
+  run: UpgradeRun,
+  assertions: Assertions,
+): Promise<void> {
+  let stopped = !run.startSent;
+  if (run.startSent) {
+    try {
+      const window = await openLogWindow(run.url);
+      const r = await requestUpgrade(session, fx, 'STOP_UPGRADE');
+      assertions.check('the gateway accepted STOP_UPGRADE', r.success === true, r.message);
+      // The line carries no coordinates (Kernel/Kernel.pas:4689): the read-back attributes it.
+      const line = await awaitMarker(window, { marker: LOG_MARKERS.RDOStopUpgrade }, TIMEOUTS.logSettle, undefined, ctx.now, ctx.sleep);
+      assertions.check('the STOP logged Facility Stop Upgrade..', line !== null, line ?? '(no Facility Stop Upgrade.. line)');
+      const idle = await pollUntil(() => readUpgrade(session, fx), u => u.upgrading === 0 && u.pending === 0, ctx);
+      assertions.check('Upgrading and Pending read 0 after the STOP', idle.ok, upgradeText(idle.last));
+      const sameLevel = idle.last.level === run.level0;
+      assertions.check(
+        'UpgradeLevel equals its original after the STOP',
+        sameLevel,
+        sameLevel
+          ? `level ${run.level0}`
+          : `a level completed before the STOP — downgrade is excluded, level ${run.level0}→${idle.last.level} kept`,
+      );
+      stopped = line !== null && idle.ok && sameLevel;
+    } catch (err: unknown) {
+      assertions.check('the upgrade STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+    }
+  }
+
+  let cloningBack = false;
+  try {
+    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', run.cloning0);
+    assertions.check(
+      `AcceptCloning set back to ${run.cloning0 === '1' ? 'true' : 'false'}, confirmed by the gateway's live get`,
+      r.confirmed === true,
+      `live get holds "${r.newValue}"`,
+    );
+    const after = await readUpgrade(session, fx);
+    assertions.check(
+      'AcceptCloning reads its original truthiness',
+      after.cloning === run.cloning0,
+      `reads ${after.cloning ?? '(unread)'}, original ${run.cloning0}`,
+    );
+    cloningBack = r.confirmed === true && after.cloning === run.cloning0;
+  } catch (err: unknown) {
+    assertions.check('the AcceptCloning restore ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+  }
+  if (stopped && cloningBack) ctx.lock.clearPendingRestore(run.key);
+}
+
 export const FLOWS: Flow[] = [
   loginSpine,
   sessionResume,
@@ -5658,6 +6405,13 @@ export const FLOWS: Flow[] = [
   industryAutoBuy,
   buildMenuRead,
   placeRenameDemolish,
+  residentialSettings,
+  residentialRepair,
+  bankSettings,
+  tvSettings,
+  researchRoundTrip,
+  acceptCloning,
+  upgradeStop,
 ];
 
 export function flowByName(name: string): Flow {
