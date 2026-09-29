@@ -18,6 +18,7 @@ import type {
   WsRespLogout,
   WsRespResumeSession,
   WsEventSessionResumeToken,
+  WsRespRdoResult,
 } from '../shared/types/message-types';
 import type {
   CompanyInfo,
@@ -50,6 +51,12 @@ export interface LiveSession {
   companies: CompanyInfo[];
   /** The planitia entry from the directory listing — its IP reaches the world's ASP pages. */
   world?: WorldInfo;
+  /**
+   * The saved login spot (the `LastX.0`/`LastY.0` cookie) the select-company reply carried;
+   * `0,0` when absent, which `savePlayerPosition` (`spo_session.ts`) skips at logoff.
+   */
+  playerX: number;
+  playerY: number;
 }
 
 /**
@@ -98,7 +105,7 @@ export async function login(account: E2eAccount): Promise<LiveSession> {
 
     const companies = loggedIn.companies ?? [];
     const company = pickCompany(companies, account.username);
-    await driver.request(
+    const selected = await driver.request<WsRespRdoResult & { playerX?: number; playerY?: number }>(
       { type: WsMessageType.REQ_SELECT_COMPANY, companyId: company.id },
       WsMessageType.RESP_RDO_RESULT,
       TIMEOUTS.login,
@@ -107,7 +114,16 @@ export async function login(account: E2eAccount): Promise<LiveSession> {
     await awaitSearchMenu(driver);
 
     const world = directory.worlds.find(w => w.name === WORLD_NAME);
-    return { driver, account, company, worlds: directory.worlds.length, companies, world };
+    return {
+      driver,
+      account,
+      company,
+      worlds: directory.worlds.length,
+      companies,
+      world,
+      playerX: selected.playerX ?? 0,
+      playerY: selected.playerY ?? 0,
+    };
   } catch (err: unknown) {
     // A refused login must not leave its socket open for the rest of the run.
     await driver.close();

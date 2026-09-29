@@ -29,7 +29,12 @@ import type {
   WsRespSearchMenuDirectory,
   WsRespMapData,
   WsRespChatUserList,
+  WsRespContextStatus,
+  WsRespWorldEvent,
+  WsRespSurfaceData,
+  WsRespAllFacilityDimensions,
 } from '../shared/types/message-types';
+import { SurfaceType } from '../shared/types/domain-types';
 import type {
   BuildingPropertyValue,
   DirectoryRef,
@@ -1190,6 +1195,142 @@ const nearestTownHall: Flow = {
   },
 };
 
+/** One `REQ_CONTEXT_STATUS` read at (x, y). */
+async function contextStatusAt(session: LiveSession, x: number, y: number): Promise<string> {
+  const response = await session.driver.request<WsRespContextStatus>(
+    { type: WsMessageType.REQ_CONTEXT_STATUS, x, y },
+    WsMessageType.RESP_CONTEXT_STATUS,
+  );
+  return response.text;
+}
+
+/**
+ * The context status at (x, y), re-read a bounded number of times: `ContextStatusText`
+ * answers `''` while the ClientView is `fServerBusy` (`Interface Server/InterfaceServer.pas:837-839`).
+ */
+async function readContextStatus(
+  session: LiveSession,
+  x: number,
+  y: number,
+  sleep: (ms: number) => Promise<void>,
+): Promise<{ text: string; reads: number }> {
+  let text = '';
+  let reads = 0;
+  while (reads < LIMITS.contextStatusMaxReads) {
+    if (reads > 0) await sleep(TIMEOUTS.contextStatusReread);
+    text = await contextStatusAt(session, x, y);
+    reads++;
+    if (text !== '') break;
+  }
+  return { text, reads };
+}
+
+interface Rect { x1: number; y1: number; x2: number; y2: number }
+
+/**
+ * Whether a surface grid covers the inclusive rectangle (`Kernel/MapCompress.pas:45-50`):
+ * `y2-y1+1` rows of `x2-x1+1` cells. Reads the rows only, never the `width`/`height`
+ * labels — `CompressMap` writes the row count first (`MapCompress.pas:44`) while
+ * `parseRLEResponse` labels it `width`, so a label check fails on correct data.
+ */
+function surfaceShape(rows: number[][], rect: Rect): { ok: boolean; detail: string } {
+  const w = rect.x2 - rect.x1 + 1;
+  const h = rect.y2 - rect.y1 + 1;
+  const ok = rows.length === h && rows.every(r => r.length === w);
+  return { ok, detail: `${rows.length} rows × ${rows[0]?.length ?? 0} cells (expected ${h} × ${w})` };
+}
+
+/**
+ * The map & world readers: context status, world event, two surfaces, the facility
+ * dimensions and the camera update.
+ *
+ * Two persistent effects, both bounded. The world event is **consumed** — `PickEvent`
+ * extracts and frees the head of SPO_test3's event queue (`Kernel/Kernel.pas:11255-11271`,
+ * `Kernel/World.pas:4840-4871`), the same pop every login's `selectCompany` makes, so the
+ * flow costs one more login's worth. The camera is sent **to the saved position** the
+ * select-company reply carried, so `savePlayerPosition` rewrites the same cookie values at
+ * logoff. Nothing in the world is written: `mutates: false`.
+ */
+const worldReaders: Flow = {
+  name: 'world-readers',
+  what: 'context status -> world event -> ZONES + Beauty surfaces -> facility dimensions -> camera',
+  mutates: false,
+  run: async ctx => {
+    const sleep = ctx.sleep ?? defaultSleep;
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const here = (await listTowns(session)).find(t => t.name === GOVERNED_TOWN);
+      assertions.check('the governed town is still listed', here !== undefined);
+      if (!here) return report('world-readers', assertions, [], session);
+
+      const status = await readContextStatus(session, here.x, here.y, sleep);
+      assertions.check(
+        'the context status at the town hall is non-empty',
+        status.text !== '',
+        `${status.reads} read(s): ${status.text || "''"}`,
+      );
+
+      const { event } = await session.driver.request<WsRespWorldEvent>(
+        { type: WsMessageType.REQ_WORLD_EVENT },
+        WsMessageType.RESP_WORLD_EVENT,
+      );
+      assertions.check(
+        'the world event answer is well-formed',
+        event === null ||
+          (typeof event.date === 'string' && typeof event.kind === 'number' && typeof event.text === 'string'),
+        event === null ? 'no event queued' : `kind ${event.kind}: ${event.text}`,
+      );
+
+      // Non-square on purpose: a transposed grid cannot pass (13 cells × 7 rows).
+      const rect: Rect = {
+        x1: Math.max(0, here.x - 6),
+        y1: Math.max(0, here.y - 3),
+        x2: here.x + 6,
+        y2: here.y + 3,
+      };
+      for (const surfaceType of [SurfaceType.ZONES, SurfaceType.BEAUTY]) {
+        const { data } = await session.driver.request<WsRespSurfaceData>(
+          { type: WsMessageType.REQ_GET_SURFACE, surfaceType, ...rect },
+          WsMessageType.RESP_SURFACE_DATA,
+        );
+        const shape = surfaceShape(data.rows, rect);
+        assertions.check(`the ${surfaceType} surface covers the requested rectangle`, shape.ok, shape.detail);
+      }
+
+      // Answered from the gateway's own facilityDimensionsCache (src/server/facility-dimensions-cache.ts),
+      // not the world — holding the hall's class is all this proves.
+      const visualClass = await resolveVisualClass(session, here.x, here.y);
+      const { dimensions } = await session.driver.request<WsRespAllFacilityDimensions>(
+        { type: WsMessageType.REQ_GET_ALL_FACILITY_DIMENSIONS },
+        WsMessageType.RESP_ALL_FACILITY_DIMENSIONS,
+      );
+      const count = Object.keys(dimensions).length;
+      assertions.check('the facility dimensions are not empty', count > 0, String(count));
+      assertions.check('the facility dimensions hold the town hall class', visualClass in dimensions, visualClass);
+
+      // Fire-and-forget: handleUpdateCamera answers nothing. With the view fields,
+      // updateCameraPosition emits SetViewedArea (session-only).
+      session.driver.send({
+        type: WsMessageType.REQ_UPDATE_CAMERA,
+        x: session.playerX,
+        y: session.playerY,
+        viewX: Math.max(0, session.playerX - 16),
+        viewY: Math.max(0, session.playerY - 16),
+        viewW: 32,
+        viewH: 32,
+      });
+      const after = await contextStatusAt(session, here.x, here.y);
+      assertions.check('the gateway still answers after the camera update', typeof after === 'string');
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('world-readers', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 /** One page of the directory tree, by ref — the gateway rebuilds the legacy URL itself. */
 async function readDirectory(session: LiveSession, ref: DirectoryRef): Promise<DirectoryPage> {
   const response = await session.driver.request<WsRespSearchMenuDirectory>(
@@ -1393,6 +1534,7 @@ export const FLOWS: Flow[] = [
   newspaperRead,
   zoningAlertRead,
   nearestTownHall,
+  worldReaders,
   directoryBrowse,
   warehouseRoleReading,
 ];

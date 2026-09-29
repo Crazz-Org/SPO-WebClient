@@ -69,10 +69,6 @@ export const FALLBACK_ONLY: Record<string, string> = {
   'src/server/session/building-templates-handler.ts': 'awaiting card #1150 (C10)',
   'src/server/session/chat-handler.ts': CHAT_AWAITING,
   'src/server/ws-handlers/chat-handlers.ts': CHAT_AWAITING,
-  'src/server/session/context-status-handler.ts': 'awaiting card #1139 (C2)',
-  'src/server/session/world-events-handler.ts': 'awaiting card #1139 (C2)',
-  'src/server/session/zone-surface-handler.ts': 'awaiting card #1139 (C2)',
-  'src/server/ws-handlers/map-handlers.ts': 'awaiting card #1139 (C2)',
   'src/server/session/profile-finance-handler.ts': 'awaiting card #1141 (C6)',
   'src/server/ws-handlers/profile-handlers.ts': 'awaiting card #1141 (C6)',
   'src/server/session/research-handler.ts': 'awaiting card #1154 (C11c)',
@@ -230,11 +226,19 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
     test: /^src\/server\/ws-handlers\/misc-handlers\.ts$/,
-    flows: ['favorites-roundtrip', 'favorites-folders'],
+    flows: ['favorites-roundtrip', 'favorites-folders', 'world-readers'],
     why:
-      'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_*; ' +
+      'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_* / REQ_WORLD_EVENT; ' +
       'not driven by any flow yet: REQ_DEFINE_ZONE, REQ_CREATE_COMPANY, REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES, ' +
-      'the research requests, REQ_WORLD_EVENT, REQ_SEARCH_CONNECTIONS, REQ_CONNECTION_REACHABILITY',
+      'the research requests, REQ_SEARCH_CONNECTIONS, REQ_CONNECTION_REACHABILITY',
+  },
+  {
+    // Before the fallbacks below. A shared rule: #1151 (C9) appends zone-roundtrip here.
+    test: /^src\/server\/ws-handlers\/map-handlers\.ts$|^src\/server\/session\/(context-status|world-events|zone-surface)-handler\.ts$/,
+    flows: ['world-readers', 'building-details'],
+    why:
+      'the map & world readers changed — context status, world event, surfaces, facility dimensions, camera (world-readers), ' +
+      'and the map load the inspector flow sends',
   },
   {
     test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$/,
@@ -292,6 +296,18 @@ export const ROUTES: RouteRule[] = [
     test: /^src\/shared\/nearest-town\.ts$/,
     flows: ['nearest-town-hall'],
     why: 'the nearest-town-hall jump — the one flow that drives it',
+  },
+  {
+    // Before the hud/ rule below: these three send the map & world readers' requests.
+    test: /^src\/client\/components\/hud\/(ContextStatusStrip|WorldEventTicker|OverlayMenu)\.tsx$/,
+    flows: ['world-readers'],
+    needsL3: true,
+    why: 'the context strip, world ticker and overlay menu — the flow that drives their requests, plus a browser look',
+  },
+  {
+    test: /^src\/client\/handlers\/(context-status|world-event|map)-handler\.ts$/,
+    flows: ['world-readers'],
+    why: 'the client halves of the map & world readers — the flow that drives their requests',
   },
   {
     // Before the broad src/ rule below: the rest of these component folders gets the same

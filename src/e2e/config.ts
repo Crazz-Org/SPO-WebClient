@@ -101,6 +101,11 @@ export const TIMEOUTS = {
   readBack: 150_000,
   /** Gap between read-back polls. */
   readBackPoll: 5_000,
+  /**
+   * Gap between context-status re-reads: `ContextStatusText` answers `''` while the
+   * ClientView is `fServerBusy` (`Interface Server/InterfaceServer.pas:837-839`).
+   */
+  contextStatusReread: 3_000,
 } as const;
 
 export const LIMITS = {
@@ -110,6 +115,8 @@ export const LIMITS = {
   maxAttempts: 3,
   /** Inbox re-reads mail-roundtrip takes after REQ_MAIL_DELETE before it gives up (issue #1025). */
   mailDeleteMaxReads: 5,
+  /** Context-status reads world-readers takes before FAIL (`''` while `fServerBusy`, `Interface Server/InterfaceServer.pas:837-839`). */
+  contextStatusMaxReads: 3,
 } as const;
 
 /** Where run artifacts live. Gitignored — evidence is per-machine, per-worktree. */

@@ -47,6 +47,8 @@ function sessionWith(responder: Responder): LiveSession {
     company: { id: '1', name: 'SPO_test3 - Green' },
     worlds: 3,
     companies: [],
+    playerX: 0,
+    playerY: 0,
   };
 }
 
@@ -121,6 +123,27 @@ describe('login', () => {
     expect(session.company.name).toBe('SPO_test3 - Green');
     expect(session.worlds).toBe(1);
     expect(session.world).toEqual({ name: 'planitia' });
+  });
+
+  it('keeps the saved position the select-company reply carried', async () => {
+    const base = loginResponder();
+    const driver = stubDriver(msg =>
+      msg.type === WsMessageType.REQ_SELECT_COMPANY
+        ? { type: WsMessageType.RESP_RDO_RESULT, result: '', playerX: 321, playerY: 654 }
+        : base(msg),
+    );
+    jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
+
+    const session = await login(PRIMARY_ACCOUNT);
+    expect([session.playerX, session.playerY]).toEqual([321, 654]);
+  });
+
+  it('defaults the saved position to 0,0 when the reply carries none', async () => {
+    const driver = stubDriver(loginResponder());
+    jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
+
+    const session = await login(PRIMARY_ACCOUNT);
+    expect([session.playerX, session.playerY]).toEqual([0, 0]);
   });
 
   it('waits for the search menu before handing the session back', async () => {
