@@ -48,6 +48,8 @@ export const GATE_ONLY: Record<string, string> = {
     'each RDOSetTaxValue by the mayor posts a world event every online player sees (Kernel/Population.pas:1264-1284, WorldLocator.SendEvent) — driven only at the gate, when its code changes',
   'policy-roundtrip':
     'RDOSetPolicyStatus broadcasts a world event naming Crazz to every online tycoon, twice per run (Kernel/Kernel.pas:11790-11800, Kernel/World.pas:5179-5196, texts Kernel/Kernel.pas:13495-13497); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly',
+  'bank-borrow-payoff':
+    "TBank.AskLoan broadcasts 'SPO_test3 borrowed $X from the <bank>.' to every online tycoon (Kernel/Kernel.pas:8849-8859, text Kernel/Kernel.pas:13487); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly",
 };
 
 const CHAT_AWAITING =
@@ -216,10 +218,16 @@ export const ROUTES: RouteRule[] = [
     why: 'the governance handlers changed — the flows that read and write the town hall (tax, minimum wage, publicity)',
   },
   {
-    // Before the fallbacks below: the Empire panel's profile & finance reads.
-    test: /^src\/server\/ws-handlers\/profile-handlers\.ts$|^src\/server\/session\/(profile-finance|auto-connection)-handler\.ts$|^src\/client\/store\/profile-store\.ts$/,
-    flows: ['profile-read', 'policy-roundtrip', 'autoconnection-roundtrip'],
-    why: 'the profile & finance handlers — the flow that reads every Empire panel tab, and the two that write the strategy and the initial suppliers',
+    // Before the fallbacks below: the Empire panel's profile & finance reads and writes.
+    // picture-transfer.ts is not a *-handler.ts, so it was never in FALLBACK_ONLY.
+    test: /^src\/server\/ws-handlers\/profile-handlers\.ts$|^src\/server\/session\/(profile-finance|auto-connection)-handler\.ts$|^src\/client\/store\/profile-store\.ts$|^src\/server\/session\/picture-transfer\.ts$/,
+    flows: [
+      'profile-read', 'policy-roundtrip', 'autoconnection-roundtrip',
+      'bank-borrow-payoff', 'bank-send-return', 'portrait-roundtrip',
+    ],
+    why:
+      'the profile & finance handlers — the flow that reads every Empire panel tab, the two that write the strategy ' +
+      'and the initial suppliers, the loan and the money transfer round trips, and the portrait upload',
   },
   {
     // Before the fallbacks below. permission-negative's one request is REQ_BUILDING_DETAILS,
