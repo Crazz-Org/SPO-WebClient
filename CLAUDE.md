@@ -283,7 +283,7 @@ with `node .claude/generate-skills-manifest.js` (`--check` in CI fails if stale)
 | `delphi-archaeologist` | Reverse-engineering SPO-Original (`~/SPO-Original`), tracing RDO handlers |
 | `spo-testing` | Tests, coverage, fixtures, L1 substrate, RDO matchers |
 | `dependencies` | Vulnerability audit, licences, package updates |
-| `e2e-test` | L3 live browser smoke (user-invoked only) |
+| `e2e-test` | L3 live browser walkthrough — every screen once (user-invoked only) |
 
 **Auto-load only** (not slash-invokable): `web-games` (Canvas 2D renderer, frame budget),
 `zustand-store-ts` (stores, selector stability), `mobile-ux-optimizer`
