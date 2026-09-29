@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage, FavoritesItem, WsRespResumeSession } from '@/shared/types/message-types';
-import type { MailMessageFull, MailMessageHeader } from '@/shared/types/domain-types';
+import type { MailMessageFull, MailMessageHeader, NewspaperBoard } from '@/shared/types/domain-types';
 import {
   FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum, replyHeaders,
   type Flow, type FlowResult,
@@ -1245,6 +1245,100 @@ describe('newspaper-read', () => {
     });
     const opened = requests.find(m => m.type === WsMessageType.REQ_NEWSPAPER_ISSUE);
     expect(opened).toMatchObject({ folder: '002147483640@3-1-2027' });
+  });
+});
+
+describe('newspaper-board-read', () => {
+  const TOWN = {
+    name: 'Helartia', iconUrl: '', mayor: 'SPO_test3', population: 0,
+    unemploymentPercent: 0, qualityOfLife: 0, x: 1, y: 2, path: '', classId: '512',
+  };
+  const ROOT = 'boards\\Planitia\\Helartia Herald\\';
+  const COLUMN = { author: 'Crazz', subject: 'Hello', path: ROOT + '1\\', summary: '' };
+
+  function arrange(over: { paper?: string; board?: Partial<NewspaperBoard> } = {}) {
+    const { paper = 'Helartia Herald' } = over;
+    const board: NewspaperBoard = {
+      paperName: paper, root: ROOT, path: ROOT, columns: [], tree: [], article: null, error: '',
+      ...over.board,
+    };
+    const requests: WsMessage[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+      requests.push(msg);
+      if (msg.type === WsMessageType.REQ_NEWSPAPER_BOARD) return { board };
+      return undefined;
+    }));
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(session, 'resolveVisualClass').mockResolvedValue('7010');
+    jest.spyOn(session, 'findTown').mockResolvedValue(TOWN);
+    jest.spyOn(session, 'readBuildingDetails').mockResolvedValue({
+      tabs: [{ id: 'townGeneral' }],
+      groups: paper === ''
+        ? { townGeneral: [{ name: 'Town', value: 'Helartia' }] }
+        : { townGeneral: [{ name: 'NewspaperName', value: paper }] },
+    } as unknown as Awaited<ReturnType<typeof session.readBuildingDetails>>);
+    return requests;
+  }
+
+  const wellFormed = (r: { assertions: { what: string; detail?: string }[] }) =>
+    r.assertions.find(a => /well-formed/.test(a.what));
+
+  it('passes on an empty board, its detail naming both counts', async () => {
+    arrange();
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(wellFormed(result)?.detail).toBe('0 columns, 0 tree entries');
+  });
+
+  it('passes on a populated board and counts it', async () => {
+    arrange({ board: {
+      columns: [COLUMN],
+      tree: [{ ...COLUMN, depth: 0 }, { ...COLUMN, path: ROOT + '1\\2\\', depth: 1 }],
+    } });
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('PASS');
+    expect(wellFormed(result)?.detail).toBe('1 columns, 2 tree entries');
+  });
+
+  it('fails when the board answers with an error', async () => {
+    arrange({ board: { error: 'The newspaper answered HTTP 500.' } });
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    const failed = result.assertions.find(a => !a.ok);
+    expect(failed?.what).toMatch(/columns board was read/);
+    expect(failed?.detail).toBe('The newspaper answered HTTP 500.');
+  });
+
+  it('fails when a column has no path', async () => {
+    arrange({ board: { columns: [{ ...COLUMN, path: '' }] } });
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/well-formed/);
+  });
+
+  it('fails when a tree entry has no path', async () => {
+    arrange({ board: { tree: [{ ...COLUMN, path: '', depth: 0 }] } });
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/well-formed/);
+  });
+
+  it('fails, and asks for no board, when the town hall names no paper', async () => {
+    const requests = arrange({ paper: '' });
+    const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/names its paper/);
+    expect(requests.some(m => m.type === WsMessageType.REQ_NEWSPAPER_BOARD)).toBe(false);
+  });
+
+  it('asks for the index of the paper the town hall named', async () => {
+    const requests = arrange();
+    await flowByName('newspaper-board-read').run(ctx);
+    const req = requests.find(m => m.type === WsMessageType.REQ_NEWSPAPER_BOARD);
+    expect(req).toMatchObject({
+      paperName: 'Helartia Herald', townName: 'Helartia', isCapitol: false, buildingX: 1, buildingY: 2,
+    });
+    expect((req as { path?: string }).path).toBeUndefined();
   });
 });
 
