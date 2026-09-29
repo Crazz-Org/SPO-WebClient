@@ -687,6 +687,7 @@ describe('route — handler rules seeded by #1134', () => {
   it('routes the building WS handlers to the flows that send their messages', () => {
     expect(route(['src/server/ws-handlers/building-handlers.ts']).required).toEqual([
       SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall',
+      'build-menu-read', 'place-rename-demolish',
     ]);
   });
 
@@ -875,6 +876,24 @@ describe('route — roads & zones (#1151)', () => {
 
   it('neither flow is nightly-only or gate-only', () => {
     for (const name of ['road-roundtrip', 'zone-roundtrip']) {
+      expect(NIGHTLY_ONLY).not.toHaveProperty(name);
+      expect(GATE_ONLY).not.toHaveProperty(name);
+    }
+  });
+});
+
+describe('route — build & demolish (#1150)', () => {
+  it.each([
+    'src/server/session/building-templates-handler.ts',
+    'src/server/session/building-management-handler.ts',
+    'src/client/handlers/build-menu-handler.ts',
+  ])('%s requires build-menu-read and place-rename-demolish', file => {
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'build-menu-read', 'place-rename-demolish']);
+    expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it('neither flow is nightly-only or gate-only', () => {
+    for (const name of ['build-menu-read', 'place-rename-demolish']) {
       expect(NIGHTLY_ONLY).not.toHaveProperty(name);
       expect(GATE_ONLY).not.toHaveProperty(name);
     }

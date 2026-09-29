@@ -421,6 +421,16 @@ the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a
 (placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
 and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
 
+**Build → demolish (#1150).** `place-rename-demolish` places the cheapest buildable facility —
+never a mausoleum, never the Capitol (`isRefusedClass`) — on a free Helartia lot as
+*SPO_test3 - Green*, renames it to a marker and back, and demolishes it in the same run. Its
+pending restore (the lot, the class, the company id and the literal undo) is recorded **before**
+`NewFacility` is sent, and cleared only after the `Del Facility` line and an empty lot on
+`REQ_MAP_LOAD`. The cleanup demolishes only a lot holding the placed class (or its construction
+state) whose owner tycoon id is SPO_test3's — never the Mayor role's, never another player's;
+anything else is left in place, the flow FAILs and the lock goes dirty (§6). The construction
+cost is spent each run — accepted by the maintainer on 2026-09-29.
+
 ---
 
 ## 10. Artifact format
