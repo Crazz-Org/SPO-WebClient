@@ -16,11 +16,6 @@ export interface RouteRule {
   /** True when only a browser can observe the change (renderer, layout, input). */
   needsL3?: boolean;
   /**
-   * The path is observable live, but no flow can be required for it: the bench cannot
-   * create the data its flow reads. The spine alone rides along.
-   */
-  spineOnly?: boolean;
-  /**
    * A broad catch-all: it routes whatever no specific rule claimed. A handler file whose first
    * matching rule is a fallback must be a FALLBACK_ONLY key (routing.test.ts ratchet).
    */
@@ -194,23 +189,21 @@ export const ROUTES: RouteRule[] = [
     why: 'the mail handlers changed — the flows that drive them',
   },
   {
-    // The paper modal: the same spine-only routing as the rule below, plus a browser look.
+    // The paper modal: the board read the modal shows, plus a browser look at the modal.
     test: /^src\/client\/components\/modals\/NewspaperModal\.tsx$/,
-    flows: [],
-    spineOnly: true,
+    flows: ['newspaper-board-read'],
     needsL3: true,
-    why: 'the town paper modal — observable live, but no flow is required (News.pas:986); a browser look at the modal',
+    why: 'the town paper modal — newspaper-board-read reads the columns board it shows; a browser look at the modal',
   },
   {
     // Before the broad wire-level rule below: the paper is not on the RDO wire
-    // at all, so the governance flows would say nothing about it. And no flow is
-    // required either (#1009): planitia keeps no newspaper issue and the bench cannot
-    // create one (News.pas:986), so newspaper-read could only end UNPROVEN. It still
-    // runs and reports when asked for; the spine alone rides along here.
+    // at all, so the governance flows would say nothing about it. newspaper-read itself is
+    // not required (#1009): planitia keeps no newspaper issue and the bench cannot create
+    // one (News.pas:986), so it could only end UNPROVEN. The columns board read is required
+    // instead: it answers with or without columns.
     test: /newspaper-handlers?\.ts$|^src\/client\/store\/newspaper-store\.ts$/,
-    flows: [],
-    spineOnly: true,
-    why: 'the town paper — observable live, but no flow is required: the bench cannot create a kept issue (News.pas:986); newspaper-read still runs and reports',
+    flows: ['newspaper-board-read'],
+    why: 'the town paper — newspaper-board-read reads the columns board, which answers with or without columns; newspaper-read stays nightly-only (News.pas:986, #1009)',
   },
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.
@@ -377,7 +370,7 @@ export function route(changedFiles: string[], deletedFiles: string[] = []): Rout
       continue;
     }
     if (rule.needsL3) needsL3 = true;
-    if (rule.flows.length > 0 || rule.needsL3 || rule.spineOnly) {
+    if (rule.flows.length > 0 || rule.needsL3) {
       touchedCode = true;
       reasons.add(rule.why);
     }
