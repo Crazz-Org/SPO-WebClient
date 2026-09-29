@@ -436,6 +436,10 @@ describe('main', () => {
     expect(out.text()).toMatch(/gate-only, not driven: politics-write/);
     expect(out.text()).toMatch(/gate-only, not driven: policy-roundtrip/);
     expect(out.text()).toMatch(/gate-only, not driven: chat-private-channel/);
+    expect(flows).not.toContain('bank-borrow-payoff');
+    expect(flows).toContain('bank-send-return');
+    expect(flows).toContain('portrait-roundtrip');
+    expect(out.text()).toMatch(/gate-only, not driven: bank-borrow-payoff/);
     const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
     if (fs.existsSync(written)) fs.unlinkSync(written);
   });

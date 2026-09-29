@@ -15,6 +15,7 @@ import {
   readBuildingDetails,
   resumeSession,
   setBuildingProperty,
+  switchToMayor,
   type LiveSession,
 } from './session';
 import { PRIMARY_ACCOUNT } from './config';
@@ -84,6 +85,53 @@ describe('pickCompany', () => {
 
   it('refuses when the world returned no company at all', () => {
     expect(() => pickCompany([], 'SPO_test3')).toThrow(/No company/);
+  });
+});
+
+describe('switchToMayor', () => {
+  const own: CompanyInfo = { id: '1', name: 'SPO_test3 - Green' };
+  const minister: CompanyInfo = { id: '9', name: 'Ministry', ownerRole: 'Minister of Agriculture' };
+  const mayor: CompanyInfo = { id: '7', name: 'Helartia Town', ownerRole: 'Mayor of Helartia' };
+
+  function withCompanies(companies: CompanyInfo[], responder: Responder = () => ({ result: '' })) {
+    const s = sessionWith(responder);
+    s.companies = companies;
+    return s;
+  }
+
+  it('sends REQ_SWITCH_COMPANY with the Mayor entry, not a Minister listed first, and returns it', async () => {
+    const s = withCompanies([own, minister, mayor]);
+    await expect(switchToMayor(s)).resolves.toBe(mayor);
+    expect(s.driver.request).toHaveBeenCalledTimes(1);
+    expect(s.driver.request).toHaveBeenCalledWith(
+      { type: WsMessageType.REQ_SWITCH_COMPANY, company: mayor },
+      WsMessageType.RESP_RDO_RESULT,
+      expect.any(Number),
+    );
+  });
+
+  it('matches the ownerRole case-insensitively', async () => {
+    const lower = { ...mayor, ownerRole: 'MAYOR OF helartia' };
+    await expect(switchToMayor(withCompanies([minister, lower]))).resolves.toBe(lower);
+  });
+
+  it('throws naming the entries, having sent nothing, when there is no Mayor entry', async () => {
+    const s = withCompanies([own, minister]);
+    await expect(switchToMayor(s)).rejects.toThrow(
+      'No Mayor of Helartia entry in the company list: SPO_test3 - Green [], Ministry [Minister of Agriculture]',
+    );
+    expect(s.driver.request).not.toHaveBeenCalled();
+  });
+
+  it('names an empty list (empty)', async () => {
+    await expect(switchToMayor(withCompanies([]))).rejects.toThrow(/company list: \(empty\)$/);
+  });
+
+  it('propagates a RESP_ERROR from the switch', async () => {
+    const s = withCompanies([mayor], msg => {
+      throw new WsDriverError('refused', 42, msg.type);
+    });
+    await expect(switchToMayor(s)).rejects.toBeInstanceOf(WsDriverError);
   });
 });
 

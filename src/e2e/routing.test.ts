@@ -47,6 +47,10 @@ describe('route', () => {
   it("routes template-groups.ts to town-min-wage (TOWN_JOBS_GROUP's min-wage mapping)", () => {
     expect(route(['src/shared/building-details/template-groups.ts']).required).toEqual([
       SPINE_FLOW, 'building-details', 'town-min-wage',
+      // #1152: the store and industry owner setters the panels send.
+      'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
+      // #1154: the residential, bank, TV, accept-cloning and research controls.
+      'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
     ]);
   });
 
@@ -76,7 +80,7 @@ describe('route', () => {
     'src/server/ws-handlers/auth-handlers.ts',
   ])('routes %s — a session-lifecycle file — to session-resume, plus the ws-handlers flows', file => {
     const d = route([file]);
-    expect(d.required).toEqual([SPINE_FLOW, 'building-details', 'politics-read', 'session-resume']);
+    expect(d.required).toEqual([SPINE_FLOW, 'building-details', 'politics-read', 'session-resume', 'company-switch']);
   });
 
   it('routes mail-handler.ts to mail-roundtrip, zoning-alert-read, mail-drafts, mail-send-from-draft and mail-reply, not to the governance flows', () => {
@@ -551,11 +555,20 @@ describe('routing invariants (#1134)', () => {
   });
 
   // #1145: the vote is data-gated — never required, never nightly-excluded by GATE_ONLY.
-  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip and chat-private-channel alone', () => {
+  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip, chat-private-channel and bank-borrow-payoff alone', () => {
     expect(NIGHTLY_ONLY['vote-roundtrip']).toMatch(/Kernel\/TownPolitics\.pas:690/);
     expect(uncited({ 'vote-roundtrip': NIGHTLY_ONLY['vote-roundtrip'] })).toEqual([]);
     expect(ROUTES.some(r => r.flows.includes('vote-roundtrip'))).toBe(false);
-    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip', 'chat-private-channel']);
+    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip', 'chat-private-channel', 'bank-borrow-payoff']);
+  });
+
+  // #1149: the fixture builder is the one permanent mutation — nightly only, no gate requires it.
+  it('keeps fixtures-ensure nightly-only with its card cited, never gate-only, named by no route', () => {
+    expect(NIGHTLY_ONLY['fixtures-ensure']).toMatch(/#1149/);
+    expect(uncited({ 'fixtures-ensure': NIGHTLY_ONLY['fixtures-ensure'] })).toEqual([]);
+    expect('fixtures-ensure' in GATE_ONLY).toBe(false);
+    expect(ROUTES.some(r => r.flows.includes('fixtures-ensure'))).toBe(false);
+    expect(flowNames).toContain('fixtures-ensure');
   });
 
   it('cites a reason for every exemption', () => {
@@ -670,7 +683,11 @@ describe('route — handler rules seeded by #1134', () => {
 
   it('routes the building WS handlers to the flows that send their messages', () => {
     expect(route(['src/server/ws-handlers/building-handlers.ts']).required).toEqual([
+      // #1152: inspector-reads sends GATE_CONNECTIONS / SERVICE_FIGURES / WORKER_COUNTS / REFRESH_PROPERTIES.
       SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall',
+      'build-menu-read', 'place-rename-demolish', 'inspector-reads',
+      // #1154: upgrade-stop sends REQ_BUILDING_UPGRADE.
+      'upgrade-stop',
     ]);
   });
 
@@ -679,6 +696,10 @@ describe('route — handler rules seeded by #1134', () => {
     file => {
       expect(route([file]).required).toEqual([
         SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'town-min-wage',
+        // #1152: the inspector reads and the owner setters on SPO_test3's fixtures.
+        'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
+        // #1154: the residential, bank, TV, accept-cloning and research setters.
+        'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
       ]);
     },
   );
@@ -753,17 +774,67 @@ describe('route — world readers (#1139)', () => {
   });
 });
 
+describe('route — session & company (#1142)', () => {
+  it('misc-handlers requires cluster-info-read beside the favorites flows', () => {
+    expect(route(['src/server/ws-handlers/misc-handlers.ts']).required)
+      .toEqual(expect.arrayContaining(['cluster-info-read', 'favorites-roundtrip', 'favorites-folders']));
+  });
+
+  it('login-handler requires company-switch', () => {
+    expect(route(['src/server/session/login-handler.ts']).required).toContain('company-switch');
+  });
+
+  it('CompanyStage routes to company-switch, no browser look', () => {
+    const d = route(['src/client/components/login/CompanyStage.tsx']);
+    expect(d.required).toEqual([SPINE_FLOW, 'company-switch']);
+    expect(d.needsL3).toBe(false);
+  });
+
+  it('CompanyCreationModal routes to cluster-info-read with a browser look', () => {
+    const d = route(['src/client/components/modals/CompanyCreationModal.tsx']);
+    expect(d.required).toEqual([SPINE_FLOW, 'cluster-info-read']);
+    expect(d.needsL3).toBe(true);
+  });
+
+  it('the client auth handler routes to both flows', () => {
+    const d = route(['src/client/handlers/auth-handler.ts']);
+    expect(d.required).toEqual([SPINE_FLOW, 'company-switch', 'cluster-info-read']);
+    expect(d.needsL3).toBe(false);
+  });
+
+  it('neither flow is nightly-only', () => {
+    expect(NIGHTLY_ONLY).not.toHaveProperty('company-switch');
+    expect(NIGHTLY_ONLY).not.toHaveProperty('cluster-info-read');
+  });
+});
+
 describe('route — profile & finance reads (#1141)', () => {
   it.each([
     'src/server/ws-handlers/profile-handlers.ts',
     'src/server/session/profile-finance-handler.ts',
     'src/server/session/auto-connection-handler.ts',
     'src/client/store/profile-store.ts',
-  ])('%s requires profile-read and the two profile write flows', file => {
+    'src/server/session/picture-transfer.ts',
+  ])('%s requires profile-read and the profile write flows', file => {
     expect(route([file]).required).toEqual([
       SPINE_FLOW, 'profile-read', 'policy-roundtrip', 'autoconnection-roundtrip',
+      'bank-borrow-payoff', 'bank-send-return', 'portrait-roundtrip',
     ]);
     expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it('profile-finance-handler.ts requires both bank flows and picture-transfer.ts the portrait flow (#1147)', () => {
+    const bank = route(['src/server/session/profile-finance-handler.ts']).required;
+    expect(bank).toContain('bank-borrow-payoff');
+    expect(bank).toContain('bank-send-return');
+    expect(route(['src/server/session/picture-transfer.ts']).required).toContain('portrait-roundtrip');
+  });
+
+  it('keeps bank-borrow-payoff gate-only with its cited broadcast, and the other two nightly (#1147)', () => {
+    expect(GATE_ONLY['bank-borrow-payoff']).toMatch(/Kernel\/Kernel\.pas:8849-8859/);
+    expect(uncited({ 'bank-borrow-payoff': GATE_ONLY['bank-borrow-payoff'] })).toEqual([]);
+    expect('bank-send-return' in GATE_ONLY).toBe(false);
+    expect('portrait-roundtrip' in GATE_ONLY).toBe(false);
   });
 
   it('auto-connection-handler.ts requires both write flows; only policy-roundtrip is gate-only (#1146)', () => {
@@ -822,6 +893,133 @@ describe('route — chat (#1148)', () => {
     for (const name of ['chat-read', 'chat-chase']) {
       expect(name in GATE_ONLY).toBe(false);
       expect(name in NIGHTLY_ONLY).toBe(false);
+    }
+  });
+});
+
+describe('route — roads & zones (#1151)', () => {
+  it.each([
+    'src/server/ws-handlers/road-handlers.ts',
+    'src/server/session/road-handler.ts',
+  ])('%s requires road-roundtrip and is no longer fallback-only', file => {
+    const d = route([file]);
+    expect(d.required).toContain('road-roundtrip');
+    expect(d.required).not.toContain('politics-write');
+    expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it.each([
+    'src/server/session/zone-surface-handler.ts',
+    'src/server/ws-handlers/map-handlers.ts',
+  ])('%s requires zone-roundtrip and still world-readers', file => {
+    const { required } = route([file]);
+    expect(required).toContain('zone-roundtrip');
+    expect(required).toContain('world-readers');
+  });
+
+  it('misc-handlers.ts (the REQ_DEFINE_ZONE sender) requires zone-roundtrip', () => {
+    expect(route(['src/server/ws-handlers/misc-handlers.ts']).required).toContain('zone-roundtrip');
+  });
+
+  it('src/shared/road-circuits.ts is connection reachability, not road-roundtrip', () => {
+    expect(route(['src/shared/road-circuits.ts']).required).not.toContain('road-roundtrip');
+  });
+
+  it('neither flow is nightly-only or gate-only', () => {
+    for (const name of ['road-roundtrip', 'zone-roundtrip']) {
+      expect(NIGHTLY_ONLY).not.toHaveProperty(name);
+      expect(GATE_ONLY).not.toHaveProperty(name);
+    }
+  });
+});
+
+describe('route — inspector flows (#1152)', () => {
+  const ROUTED = ['inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy'];
+  const ALL = [...ROUTED, 'industry-supply-limits'];
+
+  it.each([
+    'src/server/session/building-property-handler.ts',
+    'src/server/session/building-details-handler.ts',
+    'src/client/components/building/SuppliesGroup.tsx',
+    'src/shared/building-details/template-groups.ts',
+  ])('%s requires the five routed inspector flows', file => {
+    const { required } = route([file]);
+    for (const flow of ROUTED) expect(required).toContain(flow);
+    expect(required).not.toContain('industry-supply-limits');
+  });
+
+  it('building-handlers.ts requires inspector-reads, the one flow sending its four inspector reads', () => {
+    const { required } = route(['src/server/ws-handlers/building-handlers.ts']);
+    expect(required).toContain('inspector-reads');
+    expect(required).not.toContain('store-price-salaries');
+  });
+
+  it('keeps industry-supply-limits nightly-only with a cited reason, named by no rule', () => {
+    expect(NIGHTLY_ONLY['industry-supply-limits']).toMatch(/Kernel\/Kernel\.pas:7169-7171/);
+    expect(uncited({ 'industry-supply-limits': NIGHTLY_ONLY['industry-supply-limits'] })).toEqual([]);
+    expect(ROUTES.some(r => r.flows.includes('industry-supply-limits'))).toBe(false);
+  });
+
+  it('none of the six is gate-only, and only industry-supply-limits is nightly-only', () => {
+    for (const flow of ALL) expect(GATE_ONLY).not.toHaveProperty(flow);
+    for (const flow of ROUTED) expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
+  });
+});
+
+describe('route — build & demolish (#1150)', () => {
+  it.each([
+    'src/server/session/building-templates-handler.ts',
+    'src/server/session/building-management-handler.ts',
+    'src/client/handlers/build-menu-handler.ts',
+  ])('%s requires build-menu-read and place-rename-demolish', file => {
+    // #1154: the rule gains upgrade-stop (manageConstruction).
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'build-menu-read', 'place-rename-demolish', 'upgrade-stop']);
+    expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it('neither flow is nightly-only or gate-only', () => {
+    for (const name of ['build-menu-read', 'place-rename-demolish']) {
+      expect(NIGHTLY_ONLY).not.toHaveProperty(name);
+      expect(GATE_ONLY).not.toHaveProperty(name);
+    }
+  });
+});
+
+describe('route — inspector flows (#1154)', () => {
+  const SETTERS = ['residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip'];
+  const ALL = [...SETTERS, 'upgrade-stop'];
+  const RESEARCH = ['src/server/session/research-handler.ts', 'src/server/session/research-status-handler.ts'];
+
+  it.each([
+    'src/server/session/building-property-handler.ts',
+    'src/server/session/building-details-handler.ts',
+    'src/client/components/building/ResearchPanel.tsx',
+    'src/shared/building-details/template-groups.ts',
+  ])('%s requires the six setter flows', file => {
+    const { required } = route([file]);
+    for (const flow of SETTERS) expect(required).toContain(flow);
+  });
+
+  it.each(RESEARCH)('%s requires research-roundtrip and is no longer fallback-only', file => {
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'research-roundtrip']);
+    expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it.each(['src/server/session/building-management-handler.ts', 'src/server/ws-handlers/building-handlers.ts'])(
+    '%s requires upgrade-stop',
+    file => {
+      expect(route([file]).required).toContain('upgrade-stop');
+    },
+  );
+
+  it('misc-handlers.ts (the REQ_RESEARCH_* sender) requires research-roundtrip', () => {
+    expect(route(['src/server/ws-handlers/misc-handlers.ts']).required).toContain('research-roundtrip');
+  });
+
+  it('none of the seven is gate-only or nightly-only', () => {
+    for (const flow of ALL) {
+      expect(GATE_ONLY).not.toHaveProperty(flow);
+      expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
     }
   });
 });

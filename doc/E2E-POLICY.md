@@ -109,7 +109,7 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 | `src/shared/rdo-*.ts`, `src/server/session/**`, `src/server/rdo.ts` | L1 + **L2 login spine + every flow touching the changed members** |
 | `src/shared/types/message-types.ts`, `src/server/session/*-handler.ts` | L2 flows for the affected message types |
 | `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `town-min-wage`, `publicity-roundtrip` |
-| `src/client/components/building/**` | L2 `building-details` |
+| `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip` |
 | `src/client/renderer/**`, `src/client/components/{mobile,hud,sheet,modals,map}/**`, `*.module.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
 | `doc/**`, `*.md`, CI config, tooling | static only |
@@ -125,13 +125,15 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
 `src/e2e/routing.test.ts` holds all three.
 
 - **`NIGHTLY_ONLY`** lists the flows no gate requires — a data-gated flow (a required `UNPROVEN`
-  fails the gate) or a reading that asserts nothing. The nightly still runs them; every other
+  fails the gate), a reading that asserts nothing, or the fixture builder `fixtures-ensure`,
+  which builds only when a fixture is missing (§9). The nightly still runs them; every other
   flow must be reached by some tracked path.
 - **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
   (`politics-write`, `Kernel/Population.pas:1264-1284`; `policy-roundtrip`,
   `Kernel/Kernel.pas:11790-11800`; `chat-private-channel`,
-  `Interface Server/InterfaceServer.pas:4594`, `:3968-3980`). The nightly leaves them out and prints
-  them as `gate-only, not driven`; the gate still runs them when their code changes.
+  `Interface Server/InterfaceServer.pas:4594`, `:3968-3980`; `bank-borrow-payoff`,
+  `Kernel/Kernel.pas:8849-8859`). The nightly leaves them out and prints them as
+  `gate-only, not driven`; the gate still runs them when their code changes.
 - **`FALLBACK_ONLY`** lists the handler files only a broad fallback rule routes, each `awaiting
   card #<n>` or `excluded: <reason>`. An area card adds its rule before the fallbacks and removes
   its file from the set, so a new handler cannot land unrouted.
@@ -151,8 +153,13 @@ read original -> record the pending restore -> write test value
               -> clear the pending restore
 ```
 
-`runRoundTrip` in `src/e2e/probe.ts` carries this shape for any mutation (politics, profile,
-road, zone, building); `runProbe` is its building-property adapter.
+`runRoundTrip` in `src/e2e/probe.ts` carries this shape for politics, profile, zone and building
+mutations; `runProbe` is its building-property adapter. `road-roundtrip` drives the same shape
+step by step, because a road's undo is two proven writes of its own — a break, then a wipe —
+each shown by its Survival line and a `SegmentsInArea` read-back.
+
+The one mutation left in place is the permanent fixture build (`fixtures-ensure`, §9), proven by
+its line, its result code and the lot read-back.
 
 **The line proves receipt; the read-back proves the change.** Most handlers log before their
 owner check (e.g. `Kernel/Kernel.pas:4336` -> `:4337`), so a refused write prints its line.
@@ -403,6 +410,28 @@ No flow reads or writes its buildings (`flows.ts`: it appears at the login in
 `permission-negative`, which does not mutate, as the mail recipient, as the reply sender, and as the seed sender).
 Never another player's assets. Never a world-scope value. Every mutation is restored in
 the same run (§5).
+
+**Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29, the
+nightly-only flow `fixtures-ensure` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
+kind the owner-setter flows need — `industry`, `store`, `warehouse`, `residential`, `research`,
+`bank`, `tv` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
+missing, once, and keeps it. Fixtures are found **by kind at run time** (`findFixture`: the
+directory's tycoon branch, then the lot's owner and the inspector's template groups), never by
+coordinates committed to the tree — the world moves. A build is proven by its `New Facility:`
+line, result code 0 and the lot read-back. While SPO_test3 owns a construction site in Helartia,
+the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
+(placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
+and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
+
+**Build → demolish (#1150).** `place-rename-demolish` places the cheapest buildable facility —
+never a mausoleum, never the Capitol (`isRefusedClass`) — on a free Helartia lot as
+*SPO_test3 - Green*, renames it to a marker and back, and demolishes it in the same run. Its
+pending restore (the lot, the class, the company id and the literal undo) is recorded **before**
+`NewFacility` is sent, and cleared only after the `Del Facility` line and an empty lot on
+`REQ_MAP_LOAD`. The cleanup demolishes only a lot holding the placed class (or its construction
+state) whose owner tycoon id is SPO_test3's — never the Mayor role's, never another player's;
+anything else is left in place, the flow FAILs and the lock goes dirty (§6). The construction
+cost is spent each run — accepted by the maintainer on 2026-09-29.
 
 ---
 
