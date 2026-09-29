@@ -150,8 +150,10 @@ read original -> record the pending restore -> write test value
               -> clear the pending restore
 ```
 
-`runRoundTrip` in `src/e2e/probe.ts` carries this shape for any mutation (politics, profile,
-road, zone, building); `runProbe` is its building-property adapter.
+`runRoundTrip` in `src/e2e/probe.ts` carries this shape for politics, profile, zone and building
+mutations; `runProbe` is its building-property adapter. `road-roundtrip` drives the same shape
+step by step, because a road's undo is two proven writes of its own — a break, then a wipe —
+each shown by its Survival line and a `SegmentsInArea` read-back.
 
 **The line proves receipt; the read-back proves the change.** Most handlers log before their
 owner check (e.g. `Kernel/Kernel.pas:4336` -> `:4337`), so a refused write prints its line.

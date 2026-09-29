@@ -36,6 +36,7 @@ import { WsDriver, WsDriverError } from './ws-driver';
 import {
   GATEWAY_ORIGIN,
   GATEWAY_URL,
+  GOVERNED_TOWN,
   SECONDARY_ACCOUNT,
   TIMEOUTS,
   WORLD_NAME,
@@ -211,6 +212,27 @@ export function pickCompany(companies: CompanyInfo[], username: string): Company
   const own = companies.filter(c => !c.ownerRole || c.ownerRole === username);
   const named = own.find(c => c.name.startsWith(`${username} `));
   return named ?? own[0] ?? companies[0];
+}
+
+/**
+ * Switch to the Mayor of GOVERNED_TOWN role company: the entry whose `ownerRole` equals
+ * `Mayor of <town>` case-insensitively (the ASP compares with Ucase, see politics-handler.ts).
+ * Throws when the list holds no such entry (naming the entries) or when the switch answers
+ * RESP_ERROR. The caller switches back in a `finally`.
+ */
+export async function switchToMayor(session: LiveSession): Promise<CompanyInfo> {
+  const wanted = `Mayor of ${GOVERNED_TOWN}`.toLowerCase();
+  const role = session.companies.find(c => (c.ownerRole ?? '').toLowerCase() === wanted);
+  if (!role) {
+    const listed = session.companies.map(c => `${c.name} [${c.ownerRole ?? ''}]`).join(', ') || '(empty)';
+    throw new Error(`No Mayor of ${GOVERNED_TOWN} entry in the company list: ${listed}`);
+  }
+  await session.driver.request<WsRespRdoResult>(
+    { type: WsMessageType.REQ_SWITCH_COMPANY, company: role },
+    WsMessageType.RESP_RDO_RESULT,
+    TIMEOUTS.login,
+  );
+  return role;
 }
 
 /**

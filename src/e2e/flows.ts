@@ -63,6 +63,10 @@ import type {
   PictureUploadFailure,
   WsRespSearchConnections,
   ConnectionSearchResult,
+  WsRespBuildRoad,
+  WsRespDemolishRoad,
+  WsRespDemolishRoadArea,
+  WsRespDefineZone,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
 import { CLUSTER_IDS } from '../shared/cluster-data';
@@ -84,6 +88,7 @@ import type {
   MailMessageFull,
   MailMessageHeader,
   MapBuilding,
+  MapSegment,
   PoliticsData,
   RankingCategory,
   TycoonProfileFull,
@@ -126,6 +131,7 @@ import {
   readSectionGroups,
   propertyValue,
   resumeSession,
+  switchToMayor,
   type LiveSession,
   type SecondaryLogin,
 } from './session';
@@ -3710,6 +3716,576 @@ const portraitRoundTrip: Flow = {
   },
 };
 
+// ---------------------------------------------------------------------------------------------
+// Roads & zones as the Mayor of the governed town (#1151)
+// ---------------------------------------------------------------------------------------------
+
+/** Circuit id of roads — the gateway's `circuitId = 1` in `buildRoad` (road-handler.ts). */
+const ROAD_CIRCUIT = 1;
+/** Tiles in the test road: an end break then keeps two tiles as one segment (Circuits/Circuits.pas:582). */
+const ROAD_SPAN = 3;
+/** Candidates lie within the town hall ± this many tiles. */
+const SEARCH_RADIUS = 12;
+/** The map load grows the search window by this much, so a footprint anchored outside it is seen. */
+const FOOTPRINT_MARGIN = 10;
+/** Non-square on purpose: a transposed surface read cannot pass. */
+const ZONE_W = 3;
+const ZONE_H = 2;
+/**
+ * Every rectangle tile needs a road tile within this Chebyshev distance. `RDODefineZone` writes a
+ * non-None zone only where the road reach matrix marks the tile (Kernel/World.pas:4527-4528,
+ * tolerance 7 in Circuits/MatrixCircuits.pas:205-244); 3 is conservative, because the client
+ * cannot see whether a road belongs to a valid circuit.
+ */
+const ZONE_REACH = 3;
+/**
+ * The zones the reference client offered the mayor (Five/0/Visual/Voyager/Build/MayorOptions.asp:134-224,
+ * :388). Reserved (1) is commented out (:234-249); Residential (2) was never offered (#606).
+ */
+const MAYOR_ZONE_IDS = [0, 3, 4, 5, 6, 7, 8, 9];
+/** The ids the flow may paint over the original. */
+const PAINT_ZONE_IDS = [3, 4, 5, 6, 7, 8, 9];
+
+/** What `readArea` saw around the town hall. Grids are indexed `rows[y - rect.y1][x - rect.x1]`. */
+export interface AreaRead {
+  rect: Rect;
+  towns: number[][];
+  zones?: number[][];
+  /** `x,y` of every tile a facility footprint covers. */
+  occupied: Set<string>;
+  /** `x,y` of every tile a road segment covers. */
+  road: Set<string>;
+  /** The TOWNS value at the town-hall tile — the server's "inside the town" test. */
+  hallTown: number;
+}
+
+const tileKey = (x: number, y: number): string => `${x},${y}`;
+const rectText = (r: Rect): string => `(${r.x1},${r.y1})-(${r.x2},${r.y2})`;
+
+function cell(grid: number[][] | undefined, rect: Rect, x: number, y: number): number | undefined {
+  return grid?.[y - rect.y1]?.[x - rect.x1];
+}
+
+function inside(rect: Rect, x: number, y: number): boolean {
+  return x >= rect.x1 && x <= rect.x2 && y >= rect.y1 && y <= rect.y2;
+}
+
+/** The min/max box of a segment; a tile is covered when it lies inside the box. */
+function segmentBox(s: MapSegment): Rect {
+  return {
+    x1: Math.min(s.x1, s.x2),
+    y1: Math.min(s.y1, s.y2),
+    x2: Math.max(s.x1, s.x2),
+    y2: Math.max(s.y1, s.y2),
+  };
+}
+
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x1 <= b.x2 && b.x1 <= a.x2 && a.y1 <= b.y2 && b.y1 <= a.y2;
+}
+
+async function loadMap(session: LiveSession, rect: Rect): Promise<{ buildings: MapBuilding[]; segments: MapSegment[] }> {
+  const response = await session.driver.request<WsRespMapData>(
+    {
+      type: WsMessageType.REQ_MAP_LOAD,
+      x: rect.x1,
+      y: rect.y1,
+      width: rect.x2 - rect.x1 + 1,
+      height: rect.y2 - rect.y1 + 1,
+    },
+    [WsMessageType.RESP_MAP_DATA, WsMessageType.EVENT_MAP_DATA],
+    TIMEOUTS.login,
+  );
+  return { buildings: response.data?.buildings ?? [], segments: response.data?.segments ?? [] };
+}
+
+async function readSurface(session: LiveSession, surfaceType: SurfaceType, rect: Rect): Promise<number[][]> {
+  const { data } = await session.driver.request<WsRespSurfaceData>(
+    { type: WsMessageType.REQ_GET_SURFACE, surfaceType, ...rect },
+    WsMessageType.RESP_SURFACE_DATA,
+  );
+  const shape = surfaceShape(data.rows, rect);
+  if (!shape.ok) throw new Error(`the ${surfaceType} surface does not cover ${rectText(rect)}: ${shape.detail}`);
+  return data.rows;
+}
+
+/**
+ * The TOWNS surface (and ZONES when asked) over the town hall ± SEARCH_RADIUS, the facilities and
+ * roads over that window grown by FOOTPRINT_MARGIN, and the facility sizes. `GetSurface` compresses
+ * the world live (Kernel/World.pas:4461-4470) — no object-cache lag.
+ */
+async function readArea(session: LiveSession, hall: { x: number; y: number }, withZones: boolean): Promise<AreaRead> {
+  const rect: Rect = {
+    x1: Math.max(0, hall.x - SEARCH_RADIUS),
+    y1: Math.max(0, hall.y - SEARCH_RADIUS),
+    x2: hall.x + SEARCH_RADIUS,
+    y2: hall.y + SEARCH_RADIUS,
+  };
+  const towns = await readSurface(session, SurfaceType.TOWNS, rect);
+  const zones = withZones ? await readSurface(session, SurfaceType.ZONES, rect) : undefined;
+  const loaded: Rect = {
+    x1: Math.max(0, rect.x1 - FOOTPRINT_MARGIN),
+    y1: Math.max(0, rect.y1 - FOOTPRINT_MARGIN),
+    x2: rect.x2 + FOOTPRINT_MARGIN,
+    y2: rect.y2 + FOOTPRINT_MARGIN,
+  };
+  const map = await loadMap(session, loaded);
+  const { dimensions } = await session.driver.request<WsRespAllFacilityDimensions>(
+    { type: WsMessageType.REQ_GET_ALL_FACILITY_DIMENSIONS },
+    WsMessageType.RESP_ALL_FACILITY_DIMENSIONS,
+  );
+
+  // A footprint covers (x .. x+xsize-1, y .. y+ysize-1) from its origin — the renderer's
+  // occupied-tile rule (isometric-map-renderer.ts). An unknown class counts as one tile.
+  const occupied = new Set<string>();
+  for (const b of map.buildings) {
+    const dims = dimensions[b.visualClass];
+    const w = dims?.xsize ?? 1;
+    const h = dims?.ysize ?? 1;
+    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) occupied.add(tileKey(b.x + dx, b.y + dy));
+  }
+  const road = new Set<string>();
+  for (const s of map.segments) {
+    const box = segmentBox(s);
+    for (let y = Math.max(box.y1, loaded.y1); y <= Math.min(box.y2, loaded.y2); y++) {
+      for (let x = Math.max(box.x1, loaded.x1); x <= Math.min(box.x2, loaded.x2); x++) road.add(tileKey(x, y));
+    }
+  }
+  const hallTown = cell(towns, rect, hall.x, hall.y);
+  if (hallTown === undefined) throw new Error(`the town hall (${hall.x},${hall.y}) is outside ${rectText(rect)}`);
+  return { rect, towns, zones, occupied, road, hallTown };
+}
+
+/** Every tile of the area, nearest the town hall first: Chebyshev distance, then y, then x. */
+function tilesByDistance(area: AreaRead, hall: { x: number; y: number }): { x: number; y: number }[] {
+  const tiles: { x: number; y: number; d: number }[] = [];
+  for (let y = area.rect.y1; y <= area.rect.y2; y++) {
+    for (let x = area.rect.x1; x <= area.rect.x2; x++) {
+      tiles.push({ x, y, d: Math.max(Math.abs(x - hall.x), Math.abs(y - hall.y)) });
+    }
+  }
+  return tiles.sort((a, b) => a.d - b.d || a.y - b.y || a.x - b.x);
+}
+
+/**
+ * The nearest straight ROAD_SPAN-tile span inside the town (every tile reads the hall's TOWNS
+ * value) with no facility and no road on it or on its 8-neighbour halo, span and halo inside the
+ * read window. Horizontal before vertical. `undefined` when nothing fits.
+ */
+export function findRoadSpan(area: AreaRead, hall: { x: number; y: number }): Rect | undefined {
+  for (const { x, y } of tilesByDistance(area, hall)) {
+    for (const span of [
+      { x1: x, y1: y, x2: x + ROAD_SPAN - 1, y2: y },
+      { x1: x, y1: y, x2: x, y2: y + ROAD_SPAN - 1 },
+    ]) {
+      if (roadSpanFits(area, span)) return span;
+    }
+  }
+  return undefined;
+}
+
+function roadSpanFits(area: AreaRead, span: Rect): boolean {
+  for (let y = span.y1 - 1; y <= span.y2 + 1; y++) {
+    for (let x = span.x1 - 1; x <= span.x2 + 1; x++) {
+      if (!inside(area.rect, x, y)) return false;
+      if (area.occupied.has(tileKey(x, y)) || area.road.has(tileKey(x, y))) return false;
+    }
+  }
+  return spanTiles(span).every(t => cell(area.towns, area.rect, t.x, t.y) === area.hallTown);
+}
+
+/**
+ * The nearest ZONE_W × ZONE_H rectangle inside the town whose tiles all hold one zone id the mayor
+ * was offered, that no facility footprint overlaps, and whose every tile has a road within
+ * ZONE_REACH. `undefined` when nothing fits.
+ */
+export function findZoneRect(area: AreaRead, hall: { x: number; y: number }): Rect | undefined {
+  for (const { x, y } of tilesByDistance(area, hall)) {
+    const rect = { x1: x, y1: y, x2: x + ZONE_W - 1, y2: y + ZONE_H - 1 };
+    if (zoneRectFits(area, rect)) return rect;
+  }
+  return undefined;
+}
+
+function zoneRectFits(area: AreaRead, rect: Rect): boolean {
+  if (!inside(area.rect, rect.x2, rect.y2)) return false;
+  const zone = cell(area.zones, area.rect, rect.x1, rect.y1);
+  if (zone === undefined || !MAYOR_ZONE_IDS.includes(zone)) return false;
+  for (let y = rect.y1; y <= rect.y2; y++) {
+    for (let x = rect.x1; x <= rect.x2; x++) {
+      if (cell(area.towns, area.rect, x, y) !== area.hallTown) return false;
+      if (cell(area.zones, area.rect, x, y) !== zone) return false;
+      if (area.occupied.has(tileKey(x, y))) return false;
+      if (!roadWithin(area, x, y)) return false;
+    }
+  }
+  return true;
+}
+
+function roadWithin(area: AreaRead, x: number, y: number): boolean {
+  for (let dy = -ZONE_REACH; dy <= ZONE_REACH; dy++) {
+    for (let dx = -ZONE_REACH; dx <= ZONE_REACH; dx++) {
+      if (area.road.has(tileKey(x + dx, y + dy))) return true;
+    }
+  }
+  return false;
+}
+
+/** The tiles of a straight span, from (x1,y1) to (x2,y2). */
+function spanTiles(span: Rect): { x: number; y: number }[] {
+  const tiles: { x: number; y: number }[] = [];
+  for (let y = span.y1; y <= span.y2; y++) for (let x = span.x1; x <= span.x2; x++) tiles.push({ x, y });
+  return tiles;
+}
+
+interface SpanRead {
+  /** Span tiles, in span order, covered by a segment lying wholly inside the span — and by no foreign one. */
+  covered: string[];
+  /** Segments that touch the span but extend beyond it. */
+  foreign: number;
+}
+
+const spanReadText = (r: SpanRead): string => `covered=[${r.covered.join(' ')}] foreign=${r.foreign}`;
+
+/** `SegmentsInArea` over the span grown by 2 tiles. */
+async function readSpan(session: LiveSession, span: Rect): Promise<SpanRead> {
+  const { segments } = await loadMap(session, {
+    x1: Math.max(0, span.x1 - 2),
+    y1: Math.max(0, span.y1 - 2),
+    x2: span.x2 + 2,
+    y2: span.y2 + 2,
+  });
+  const own: Rect[] = [];
+  const foreign: Rect[] = [];
+  for (const s of segments) {
+    const box = segmentBox(s);
+    if (!overlaps(box, span)) continue;
+    const wholly = box.x1 >= span.x1 && box.x2 <= span.x2 && box.y1 >= span.y1 && box.y2 <= span.y2;
+    (wholly ? own : foreign).push(box);
+  }
+  const covered = spanTiles(span)
+    .filter(t => own.some(b => inside(b, t.x, t.y)) && !foreign.some(b => inside(b, t.x, t.y)))
+    .map(t => tileKey(t.x, t.y));
+  return { covered, foreign: foreign.length };
+}
+
+/** Read at least once, then every `readBackPoll` until `done` holds or `readBack` has elapsed. */
+async function pollSpan(
+  session: LiveSession,
+  span: Rect,
+  done: (r: SpanRead) => boolean,
+  ctx: FlowContext,
+): Promise<{ ok: boolean; last: SpanRead }> {
+  const now = ctx.now ?? Date.now;
+  const sleep = ctx.sleep ?? defaultSleep;
+  const deadline = now() + TIMEOUTS.readBack;
+  for (;;) {
+    const last = await readSpan(session, span);
+    if (done(last)) return { ok: true, last };
+    if (now() >= deadline) return { ok: false, last };
+    await sleep(TIMEOUTS.readBackPoll);
+  }
+}
+
+/** The span reads exactly these tiles, and no foreign segment touches it. */
+const exactly = (expected: string[]) => (r: SpanRead): boolean =>
+  r.foreign === 0 && r.covered.length === expected.length && r.covered.every((t, i) => t === expected[i]);
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * A circuit Survival line (Kernel/World.pas:4263, :4320, :4366): `<marker> <CircuitId>, <TycoonRef>, <coords>`.
+ * The tycoon field is the gateway's object reference, which no WS message exposes — so the line
+ * is matched on the road circuit id and the coordinates as sent.
+ */
+export function circuitLogMatches(line: string, marker: string, coords: number[]): boolean {
+  return new RegExp(`${escapeRegExp(marker)} ${ROAD_CIRCUIT}, -?\\d+, ${coords.join(', ')}(?!\\d)`).test(line);
+}
+
+/** `Defining Zone: <ZoneId>, <TycoonId>, <x1>, <y1>, <x2>, <y2>` (Kernel/World.pas:4526), rectangle normalised. */
+export function zoneLogMatches(line: string, zoneId: number, rect: Rect): boolean {
+  const coords = [rect.x1, rect.y1, rect.x2, rect.y2].join(', ');
+  return new RegExp(`${escapeRegExp(LOG_MARKERS.RDODefineZone)} ${zoneId}, -?\\d+, ${coords}(?!\\d)`).test(line);
+}
+
+/** The ZONES value of the rectangle when every tile holds the same mayor-offered id, else `undefined`. */
+async function readZone(session: LiveSession, rect: Rect): Promise<string | undefined> {
+  const { data } = await session.driver.request<WsRespSurfaceData>(
+    { type: WsMessageType.REQ_GET_SURFACE, surfaceType: SurfaceType.ZONES, ...rect },
+    WsMessageType.RESP_SURFACE_DATA,
+  );
+  if (!surfaceShape(data.rows, rect).ok) return undefined;
+  const first = data.rows[0][0];
+  if (!data.rows.every(r => r.every(v => v === first)) || !MAYOR_ZONE_IDS.includes(first)) return undefined;
+  return String(first);
+}
+
+/**
+ * Log in, find the governed town (the search menu belongs to the own session), switch to the
+ * Mayor role company, run the body, and switch back in a `finally` — including when the switch
+ * itself threw. A throw still propagates, so `runFlow` turns it into FAIL.
+ */
+async function asMayor(
+  name: string,
+  ctx: FlowContext,
+  body: (
+    session: LiveSession,
+    town: { x: number; y: number },
+    url: string,
+    assertions: Assertions,
+    probes: ProbeResult[],
+  ) => Promise<void>,
+): Promise<FlowResult> {
+  const assertions = new Assertions();
+  const probes: ProbeResult[] = [];
+  const session = await login(PRIMARY_ACCOUNT);
+  try {
+    const town = await findTown(session, GOVERNED_TOWN);
+    const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+    try {
+      await switchToMayor(session);
+      await body(session, town, url, assertions, probes);
+    } finally {
+      const back = await trySwitch(session, session.company);
+      assertions.check('the switch back to the own company answers RESP_RDO_RESULT', back.ok, back.detail);
+    }
+    assertions.check('no gateway errors', session.driver.errors.length === 0);
+    return report(name, assertions, probes, session);
+  } finally {
+    await logoff(session);
+  }
+}
+
+/**
+ * Build a 3-tile road, break its start tile, wipe the two tiles left — as the Mayor of the
+ * governed town (#1151).
+ *
+ * Roads need the Mayor role: as the plain player `CreateCircuitSeg` answers `#22`
+ * (`ERROR_CannotCreateSeg`, Protocol/Protocol.pas:51; the guard at Kernel/World.pas:4273). The
+ * mayor may break any segment in the town (`TWorld.OnAuthorizeBreak`, Kernel/World.pas:5593-5608),
+ * so the span choice — empty tiles, no road on or next to them — and the cleanup rule are the only
+ * guards: the cleanup re-reads the span and breaks only tiles of a segment lying wholly inside it,
+ * one tile at a time, never with `REQ_DEMOLISH_ROAD_AREA`.
+ *
+ * `TSegment.MakeHole` on the start tile moves the node in and keeps the other two tiles as one
+ * segment (Circuits/Circuits.pas:582-598); a break within one tile of both ends deletes the whole
+ * segment (:556-577), which is why the span is 3. Each run spends two road blocks of a tier-<2
+ * identity's yearly quota (`tiles := abs(x2-x1)+abs(y2-y1)`, Kernel/World.pas:4271, :4290;
+ * Kernel/Kernel.pas:13180-13187) and the road's construction cost — accepted by the maintainer.
+ * Each write is proven by its Survival line (Kernel/World.pas:4263, :4320, :4366 —
+ * `CreateCircuitSeg: OK!` at :4307 is unconditional and proves nothing) and a `SegmentsInArea`
+ * read-back.
+ */
+const roadRoundTrip: Flow = {
+  name: 'road-roundtrip',
+  what: 'as Mayor: find an empty 3-tile span -> build a road -> break its start tile -> wipe the other two -> no segment left',
+  mutates: true,
+  run: ctx =>
+    asMayor('road-roundtrip', ctx, async (session, town, url, assertions) => {
+      let span: Rect | undefined;
+      let key: string | undefined;
+      try {
+        const area = await readArea(session, town, false);
+        span = findRoadSpan(area, town);
+        if (!span) {
+          assertions.unproven(
+            `a road round trip in ${GOVERNED_TOWN}`,
+            `no straight ${ROAD_SPAN}-tile span inside ${GOVERNED_TOWN} with no object and no road on or next to it ` +
+              `in the ±${SEARCH_RADIUS} window`,
+          );
+          return;
+        }
+        key = `road-roundtrip:${randomUUID()}`;
+        ctx.lock.addPendingRestore({
+          key,
+          what: `break the road on ${rectText(span)} as Mayor of ${GOVERNED_TOWN} — road-roundtrip built it`,
+          originalValue: 'no road',
+        });
+        await roadSteps(session, span, url, assertions, ctx);
+      } catch (err: unknown) {
+        assertions.check('the road steps ran without a throw', false, toErrorMessage(err));
+      }
+      if (span && key) await roadCleanup(session, span, key, assertions, ctx);
+    }),
+};
+
+async function roadSteps(
+  session: LiveSession,
+  span: Rect,
+  url: string,
+  assertions: Assertions,
+  ctx: FlowContext,
+): Promise<void> {
+  const tiles = spanTiles(span).map(t => tileKey(t.x, t.y));
+  const [, second, third] = spanTiles(span);
+  const window = await openLogWindow(url);
+  const line = (marker: string, coords: number[]): Promise<string | null> =>
+    awaitMarker(window, { marker, match: l => circuitLogMatches(l, marker, coords) }, TIMEOUTS.logSettle);
+
+  // Build.
+  const built = await session.driver.request<WsRespBuildRoad>(
+    { type: WsMessageType.REQ_BUILD_ROAD, ...span },
+    WsMessageType.RESP_BUILD_ROAD,
+    TIMEOUTS.login,
+  );
+  assertions.check(
+    'the gateway accepted the road build',
+    built.success === true && !built.partial,
+    `success=${built.success} partial=${built.partial ?? false} ${built.message ?? ''}`.trim(),
+  );
+  if (built.success !== true) return;
+  const afterBuild = await pollSpan(session, span, exactly(tiles), ctx);
+  assertions.check('the map shows segments covering exactly the span', afterBuild.ok, spanReadText(afterBuild.last));
+  const buildLine = await line(LOG_MARKERS.RDOCreateCircuitSeg, [span.x1, span.y1, span.x2, span.y2]);
+  assertions.check('the build logged its CreateCircuitSeg: line', buildLine !== null, buildLine ?? '(no line)');
+  if (!afterBuild.ok) return;
+
+  // Break the start tile: the node moves in, the other two tiles stay as one segment.
+  const broken = await session.driver.request<WsRespDemolishRoad>(
+    { type: WsMessageType.REQ_DEMOLISH_ROAD, x: span.x1, y: span.y1 },
+    WsMessageType.RESP_DEMOLISH_ROAD,
+    TIMEOUTS.login,
+  );
+  assertions.check('the gateway accepted the break', broken.success === true, broken.message);
+  const afterBreak = await pollSpan(session, span, exactly(tiles.slice(1)), ctx);
+  assertions.check('the map shows exactly the other two tiles left', afterBreak.ok, spanReadText(afterBreak.last));
+  const breakLine = await line(LOG_MARKERS.RDOBreakCircuitAt, [span.x1, span.y1]);
+  assertions.check('the break logged its BreakCircuit: line', breakLine !== null, breakLine ?? '(no line)');
+  // A break that removed everything goes on to the wipe step, which FAILs for it.
+  if (!afterBreak.ok && afterBreak.last.covered.length > 0) return;
+
+  // Wipe the two tiles left — the undo.
+  const before = await readSpan(session, span);
+  if (before.covered.length === 0 || before.foreign > 0) {
+    assertions.check(
+      'a segment remained on the span for the wipe',
+      false,
+      before.foreign > 0 ? `a segment extends beyond the span — nothing wiped (${spanReadText(before)})` : 'the break removed the whole road',
+    );
+    return;
+  }
+  const wiped = await session.driver.request<WsRespDemolishRoadArea>(
+    { type: WsMessageType.REQ_DEMOLISH_ROAD_AREA, x1: second.x, y1: second.y, x2: third.x, y2: third.y },
+    WsMessageType.RESP_DEMOLISH_ROAD_AREA,
+    TIMEOUTS.login,
+  );
+  assertions.check('the gateway accepted the wipe', wiped.success === true, wiped.message);
+  const afterWipe = await pollSpan(session, span, exactly([]), ctx);
+  assertions.check('the map shows no segment left on the span', afterWipe.ok, spanReadText(afterWipe.last));
+  const wipeLine = await line(LOG_MARKERS.RDOWipeCircuit, [second.x, second.y, third.x, third.y]);
+  assertions.check('the wipe logged its WipingCircuit: line', wipeLine !== null, wipeLine ?? '(no line)');
+}
+
+/**
+ * Leave the span as found. Breaks, one tile at a time, only tiles of a segment lying wholly inside
+ * the span; stops without touching anything when a segment extends beyond it. The pending restore
+ * is cleared only when the span reads clean.
+ */
+async function roadCleanup(
+  session: LiveSession,
+  span: Rect,
+  key: string,
+  assertions: Assertions,
+  ctx: FlowContext,
+): Promise<void> {
+  let last: SpanRead | undefined;
+  let clean = false;
+  try {
+    for (let breaks = 0; ; breaks++) {
+      last = await readSpan(session, span);
+      if (last.covered.length === 0 && last.foreign === 0) {
+        clean = true;
+        break;
+      }
+      if (last.foreign > 0 || breaks >= ROAD_SPAN) break;
+      const target = last.covered[0];
+      const [x, y] = target.split(',').map(Number);
+      await session.driver.request<WsRespDemolishRoad>(
+        { type: WsMessageType.REQ_DEMOLISH_ROAD, x, y },
+        WsMessageType.RESP_DEMOLISH_ROAD,
+        TIMEOUTS.login,
+      );
+      await pollSpan(session, span, r => !r.covered.includes(target), ctx);
+    }
+  } catch (err: unknown) {
+    assertions.check('the road cleanup ran without a throw', false, toErrorMessage(err));
+  }
+  if (clean) ctx.lock.clearPendingRestore(key);
+  assertions.check(
+    'no segment is left on the span',
+    clean,
+    clean ? rectText(span) : `${rectText(span)}: ${last ? spanReadText(last) : 'unread'} — pending restore kept`,
+  );
+}
+
+/**
+ * Paint a small uniform rectangle in the town with another zone, then repaint the original — as
+ * the Mayor of the governed town (#1151).
+ *
+ * The rectangle holds one zone id the reference client offered the mayor, so one call restores it
+ * exactly, and no facility footprint overlaps it: rezoning under a private facility schedules its
+ * demolition and mails its owner a Zoning Alert (`ReportZoning`, Kernel/World.pas:4546-4561 ->
+ * :7908-7916), which a repaint cannot unsend. Each write is proven by its `Defining Zone:` line
+ * (Kernel/World.pas:4526) and the ZONES surface read back live from `fZones` (:4461-4464).
+ */
+const zoneRoundTrip: Flow = {
+  name: 'zone-roundtrip',
+  what: 'as Mayor: find a uniform unbuilt rectangle -> paint another zone -> read back -> repaint the original -> read back',
+  mutates: true,
+  run: ctx =>
+    asMayor('zone-roundtrip', ctx, async (session, town, url, assertions, probes) => {
+      const area = await readArea(session, town, true);
+      const rect = findZoneRect(area, town);
+      if (!rect) {
+        assertions.unproven(
+          `a zone round trip in ${GOVERNED_TOWN}`,
+          `no ${ZONE_W}×${ZONE_H} rectangle inside ${GOVERNED_TOWN} in the ±${SEARCH_RADIUS} window holding one zone id ` +
+            `of {${MAYOR_ZONE_IDS.join(', ')}}, overlapped by no facility footprint, with a road within ${ZONE_REACH} tiles`,
+        );
+        return;
+      }
+      const window = await openLogWindow(url);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `the zone of ${rectText(rect)} in ${GOVERNED_TOWN} — repaint it as Mayor of ${GOVERNED_TOWN} with REQ_DEFINE_ZONE`,
+        member: 'RDODefineZone',
+        read: () => readZone(session, rect),
+        testValue: original => String(PAINT_ZONE_IDS.find(z => String(z) !== original)),
+        write: async value => {
+          const answer = await session.driver.request<WsRespDefineZone>(
+            { type: WsMessageType.REQ_DEFINE_ZONE, zoneId: Number(value), ...rect },
+            WsMessageType.RESP_DEFINE_ZONE,
+            TIMEOUTS.login,
+          );
+          if (answer.success !== true) throw new Error(`REQ_DEFINE_ZONE refused: ${answer.message ?? ''}`.trim());
+        },
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDODefineZone,
+            match: (line, written) => zoneLogMatches(line, Number(written), rect),
+          },
+          readBack: {
+            source: 'the ZONES surface over the rectangle (REQ_GET_SURFACE)',
+            why: 'GetSurface compresses fZones live — no object cache (Kernel/World.pas:4461-4464)',
+            read: tolerantRead(() => readZone(session, rect)),
+            boundMs: TIMEOUTS.readBack,
+          },
+        },
+      });
+      probes.push(probe);
+      assertions.check('the zone round trip proved the paint and the repaint', probe.status === 'PASS', probe.note);
+      if (probe.written !== '') {
+        const repaint = await awaitMarker(
+          window,
+          { marker: LOG_MARKERS.RDODefineZone, match: l => zoneLogMatches(l, Number(probe.original), rect) },
+          TIMEOUTS.logSettle,
+        );
+        assertions.check('the repaint to the original logged its Defining Zone: line', repaint !== null, repaint ?? '(no line)');
+      }
+    }),
+};
+
 /** A property's raw value from any group of an opening read, or 'absent'. */
 function rawProperty(groups: { [groupId: string]: BuildingPropertyValue[] }, name: string): string {
   for (const group of Object.values(groups)) {
@@ -3844,6 +4420,8 @@ export const FLOWS: Flow[] = [
   bankBorrowPayoff,
   bankSendReturn,
   portraitRoundTrip,
+  roadRoundTrip,
+  zoneRoundTrip,
   warehouseRoleReading,
 ];
 

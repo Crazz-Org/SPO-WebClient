@@ -71,8 +71,6 @@ export const FALLBACK_ONLY: Record<string, string> = {
   'src/server/ws-handlers/chat-handlers.ts': CHAT_AWAITING,
   'src/server/session/research-handler.ts': 'awaiting card #1154 (C11c)',
   'src/server/session/research-status-handler.ts': 'awaiting card #1154 (C11c)',
-  'src/server/session/road-handler.ts': 'awaiting card #1151 (C9)',
-  'src/server/ws-handlers/road-handlers.ts': 'awaiting card #1151 (C9)',
 };
 
 export const ROUTES: RouteRule[] = [
@@ -247,19 +245,26 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
     test: /^src\/server\/ws-handlers\/misc-handlers\.ts$/,
-    flows: ['favorites-roundtrip', 'favorites-folders', 'world-readers', 'cluster-info-read'],
+    flows: ['favorites-roundtrip', 'favorites-folders', 'world-readers', 'cluster-info-read', 'zone-roundtrip'],
     why:
       'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_* / REQ_WORLD_EVENT / ' +
-      'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES; not driven by any flow yet: REQ_DEFINE_ZONE, REQ_CREATE_COMPANY, ' +
+      'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES / REQ_DEFINE_ZONE; not driven by any flow yet: REQ_CREATE_COMPANY, ' +
       'the research requests, REQ_SEARCH_CONNECTIONS, REQ_CONNECTION_REACHABILITY',
   },
   {
-    // Before the fallbacks below. A shared rule: #1151 (C9) appends zone-roundtrip here.
+    // Before the fallbacks below. A shared rule: later area cards only APPEND flows here.
     test: /^src\/server\/ws-handlers\/map-handlers\.ts$|^src\/server\/session\/(context-status|world-events|zone-surface)-handler\.ts$/,
-    flows: ['world-readers', 'building-details'],
+    flows: ['world-readers', 'building-details', 'zone-roundtrip'],
     why:
       'the map & world readers changed — context status, world event, surfaces, facility dimensions, camera (world-readers), ' +
-      'and the map load the inspector flow sends',
+      'the map load the inspector flow sends, and the zone paint round trip (zone-roundtrip)',
+  },
+  {
+    // Before the fallbacks below. src/shared/road-circuits.ts is deliberately not here: it is
+    // connection-candidate reachability (NearCircuits), which road-roundtrip never sends.
+    test: /^src\/server\/ws-handlers\/road-handlers\.ts$|^src\/server\/session\/road-handler\.ts$/,
+    flows: ['road-roundtrip'],
+    why: 'the road handlers changed — the flow that builds, breaks and wipes a road as the Mayor of the governed town',
   },
   {
     test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$/,
