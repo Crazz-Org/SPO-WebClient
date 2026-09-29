@@ -430,8 +430,12 @@ describe('main', () => {
     expect(flows).not.toContain('politics-write');
     expect(flows).not.toContain('policy-roundtrip');
     expect(flows).toContain('autoconnection-roundtrip');
+    expect(flows).not.toContain('chat-private-channel');
+    expect(flows).toContain('chat-read');
+    expect(flows).toContain('chat-chase');
     expect(out.text()).toMatch(/gate-only, not driven: politics-write/);
     expect(out.text()).toMatch(/gate-only, not driven: policy-roundtrip/);
+    expect(out.text()).toMatch(/gate-only, not driven: chat-private-channel/);
     const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
     if (fs.existsSync(written)) fs.unlinkSync(written);
   });

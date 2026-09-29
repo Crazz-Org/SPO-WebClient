@@ -62,7 +62,7 @@ describe('the catalogue', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
     expect(mutating).toEqual(
       [
-        'autoconnection-roundtrip', 'favorites-folders', 'favorites-roundtrip', 'mail-drafts', 'mail-reply',
+        'autoconnection-roundtrip', 'chat-private-channel', 'favorites-folders', 'favorites-roundtrip', 'mail-drafts', 'mail-reply',
         'mail-roundtrip', 'mail-send-from-draft', 'policy-roundtrip', 'politics-write', 'publicity-roundtrip',
         'town-min-wage', 'vote-roundtrip', 'zoning-alert-read',
       ],
@@ -4100,6 +4100,327 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
       expect(result.status).toBe('FAIL');
       // Each round trip's original read throws on the dead page: nothing is written.
       expect(actions()).toEqual([]);
+    });
+  });
+});
+
+describe('chat flows (#1148)', () => {
+  interface ChatWorldOptions {
+    /** Whether the n-th composition push (1-based: on, off, away, cleanup idle) is echoed. */
+    typingEcho?: (n: number) => boolean;
+    channelChange?: boolean;
+    createFails?: boolean;
+    sendFails?: boolean;
+    /** A third party stays in the channel: the Lobby join does not delete it. */
+    keepChannel?: boolean;
+    channels?: unknown;
+    chaseFails?: boolean;
+  }
+
+  interface ChatWorld {
+    session: session.LiveSession;
+    sent: Record<string, unknown>[];
+    channels: Set<string>;
+  }
+
+  function chatWorld(options: ChatWorldOptions = {}): ChatWorld {
+    const sent: Record<string, unknown>[] = [];
+    const received: WsMessage[] = [];
+    const channels = new Set<string>();
+    let current = '';
+    let pushes = 0;
+    const push = (msg: Record<string, unknown>): void => {
+      received.push(msg as unknown as WsMessage);
+    };
+    const driver = {
+      log: [] as unknown[],
+      errors: [] as WsMessage[],
+      close: jest.fn(),
+      receivedCount: () => received.length,
+      send: (msg: Record<string, unknown>) => {
+        sent.push(msg);
+        if (msg.type === WsMessageType.REQ_CHAT_TYPING_STATUS || msg.type === WsMessageType.REQ_CHAT_AWAY) {
+          pushes += 1;
+          if (options.typingEcho?.(pushes) ?? true) {
+            push({
+              type: WsMessageType.EVENT_CHAT_USER_TYPING,
+              username: 'SPO_test3',
+              isTyping: msg.type === WsMessageType.REQ_CHAT_TYPING_STATUS && msg.isTyping === true,
+            });
+          }
+        }
+        return `e2e-${sent.length}`;
+      },
+      waitFor: async (match: (m: WsMessage) => boolean, _t?: number, label = 'message', from = 0) => {
+        const hit = received.slice(from).find(match);
+        if (!hit) throw new Error(`Timed out waiting for ${label}`);
+        return hit;
+      },
+      request: async (msg: Record<string, unknown>) => {
+        sent.push(msg);
+        switch (msg.type) {
+          case WsMessageType.REQ_CHAT_GET_CHANNELS:
+            return {
+              type: WsMessageType.RESP_CHAT_CHANNEL_LIST,
+              channels: options.channels ?? [
+                { name: 'Lobby', isProtected: false },
+                ...[...channels].map(name => ({ name, isProtected: true })),
+              ],
+            };
+          case WsMessageType.REQ_CHAT_GET_CHANNEL_INFO:
+            return { type: WsMessageType.RESP_CHAT_CHANNEL_INFO, info: 'Lobby: 3 users' };
+          case WsMessageType.REQ_CHAT_CREATE_CHANNEL:
+            if (options.createFails) throw new WsDriverError('channel exists', 1, String(msg.type));
+            channels.add(String(msg.channelName));
+            current = String(msg.channelName);
+            if (options.channelChange ?? true) {
+              push({ type: WsMessageType.EVENT_CHAT_CHANNEL_CHANGE, channelName: current });
+            }
+            return { type: WsMessageType.RESP_CHAT_SUCCESS };
+          case WsMessageType.REQ_CHAT_SEND_MESSAGE:
+            if (options.sendFails) throw new WsDriverError('send failed', 1, String(msg.type));
+            push({ type: WsMessageType.EVENT_CHAT_MSG, channel: current, from: 'SPO_test3', message: msg.message });
+            return { type: WsMessageType.RESP_CHAT_SUCCESS };
+          case WsMessageType.REQ_CHAT_JOIN_CHANNEL:
+            if (!options.keepChannel) channels.delete(current);
+            current = String(msg.channelName);
+            return { type: WsMessageType.RESP_CHAT_SUCCESS };
+          case WsMessageType.REQ_CHAT_CHASE:
+            if (options.chaseFails) throw new WsDriverError('invalid user', 12, String(msg.type));
+            return { type: WsMessageType.RESP_CHAT_SUCCESS };
+          case WsMessageType.REQ_CHAT_STOP_CHASE:
+            return { type: WsMessageType.RESP_CHAT_SUCCESS };
+          default:
+            throw new Error(`unexpected ${String(msg.type)}`);
+        }
+      },
+    };
+    return {
+      sent,
+      channels,
+      session: {
+        driver: driver as unknown as WsDriver,
+        account: PRIMARY_ACCOUNT,
+        company: { id: '1', name: 'SPO_test3 - Green' },
+        worlds: 3,
+        companies: [],
+        playerX: 0,
+        playerY: 0,
+      },
+    };
+  }
+
+  function chatCtx(lock: WorldLock = cleanLock()) {
+    let t = 0;
+    return { lock, sleep: async () => undefined, now: () => (t += 1_000_000_000) };
+  }
+
+  const types = (w: ChatWorld): string[] => w.sent.map(m => String(m.type));
+  const typingPushes = (w: ChatWorld): Record<string, unknown>[] =>
+    w.sent.filter(m => m.type === WsMessageType.REQ_CHAT_TYPING_STATUS || m.type === WsMessageType.REQ_CHAT_AWAY);
+  const failedWhats = (r: FlowResult): string[] => r.assertions.filter(a => !a.ok).map(a => a.what);
+
+  async function runChannel(options: ChatWorldOptions, lock?: WorldLock): Promise<{ world: ChatWorld; result: FlowResult; lock: WorldLock }> {
+    const world = chatWorld(options);
+    jest.spyOn(session, 'login').mockResolvedValue(world.session);
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    const context = chatCtx(lock);
+    const result = await runFlow(flowByName('chat-private-channel'), context);
+    return { world, result, lock: context.lock };
+  }
+
+  describe('chat-read', () => {
+    it('passes on a well-formed list, and reads the Lobby by its server name ""', async () => {
+      const world = chatWorld();
+      jest.spyOn(session, 'login').mockResolvedValue(world.session);
+      const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-read'), { lock: cleanLock() });
+      expect(result.status).toBe('PASS');
+      expect(world.sent.find(m => m.type === WsMessageType.REQ_CHAT_GET_CHANNEL_INFO)).toMatchObject({ channelName: '' });
+      expect(off).toHaveBeenCalledWith(world.session);
+      expect(flowByName('chat-read').mutates).toBe(false);
+    });
+
+    it.each([
+      ['an entry without isProtected', [{ name: 'Lobby', isProtected: false }, { name: 'x' }]],
+      ['an entry with an empty name', [{ name: '', isProtected: false }]],
+      ['a list that is not a list', 'Lobby'],
+    ])('fails on %s', async (_label, channels) => {
+      const world = chatWorld({ channels });
+      jest.spyOn(session, 'login').mockResolvedValue(world.session);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-read'), { lock: cleanLock() });
+      expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toEqual(['the channel list is well-formed (each entry a name and isProtected)']);
+    });
+  });
+
+  describe('chat-private-channel', () => {
+    it('is a mutating flow', () => {
+      expect(flowByName('chat-private-channel').mutates).toBe(true);
+    });
+
+    it('creates, lists, sends, types, goes away, then idles before the Lobby join, and the channel is gone', async () => {
+      const { world, result, lock } = await runChannel({});
+      expect(result.status).toBe('PASS');
+      expect(types(world)).toEqual([
+        WsMessageType.REQ_CHAT_GET_CHANNELS,
+        WsMessageType.REQ_CHAT_CREATE_CHANNEL,
+        WsMessageType.REQ_CHAT_GET_CHANNELS,
+        WsMessageType.REQ_CHAT_SEND_MESSAGE,
+        WsMessageType.REQ_CHAT_TYPING_STATUS,
+        WsMessageType.REQ_CHAT_TYPING_STATUS,
+        WsMessageType.REQ_CHAT_AWAY,
+        WsMessageType.REQ_CHAT_TYPING_STATUS,
+        WsMessageType.REQ_CHAT_JOIN_CHANNEL,
+        WsMessageType.REQ_CHAT_GET_CHANNELS,
+      ]);
+      const create = world.sent[1];
+      expect(create.channelName).toMatch(/^e2e-[0-9a-f]{8}$/);
+      expect(String(create.password).length).toBeGreaterThan(0);
+      expect(typingPushes(world).map(m => m.isTyping)).toEqual([true, false, undefined, false]);
+      expect(world.sent[8]).toMatchObject({ channelName: '' });
+      expect(world.channels.size).toBe(0);
+      expect(result.probes[0]).toMatchObject({ readBack: 'CONFIRMED', restoreReadBack: 'CONFIRMED' });
+      expect(lock.read().pendingRestores).toHaveLength(0);
+    });
+
+    it('runs the cleanup after a failed send: idle pushed before the Lobby join, joined with ""', async () => {
+      const { world, result } = await runChannel({ sendFails: true });
+      expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toContain('the message was sent in the marker channel');
+      const order = types(world);
+      const join = order.indexOf(WsMessageType.REQ_CHAT_JOIN_CHANNEL);
+      expect(join).toBeGreaterThan(-1);
+      expect(world.sent[join]).toMatchObject({ channelName: '' });
+      expect(world.sent[join - 1]).toMatchObject({ type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: false });
+      expect(world.channels.size).toBe(0);
+    });
+
+    it('fails when the typing-on push is never echoed', async () => {
+      const { result } = await runChannel({ typingEcho: n => n !== 1 });
+      expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toEqual(['the typing-on self-echo (isTyping: true)']);
+    });
+
+    it('does not let the buffered typing-off echo satisfy the AWAY wait', async () => {
+      const { result } = await runChannel({ typingEcho: n => n !== 3 });
+      expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toEqual([
+        'a self-echo for SPO_test3 after AWAY (away reads as isTyping: false)',
+      ]);
+    });
+
+    it('sends no Lobby join when the cleanup idle push is never echoed, though earlier idle echoes are buffered', async () => {
+      const { world, result, lock } = await runChannel({ typingEcho: n => n !== 4 });
+      expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toContain('the cleanup idle self-echo');
+      expect(types(world)).not.toContain(WsMessageType.REQ_CHAT_JOIN_CHANNEL);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('fails when the marker channel is still listed after the cleanup, naming a third party', async () => {
+      const { result } = await runChannel({ keepChannel: true });
+      expect(result.status).toBe('FAIL');
+      const gone = result.assertions.find(a => a.what === 'the marker channel is gone after the cleanup');
+      expect(gone?.ok).toBe(false);
+      expect(gone?.detail).toMatch(/third party/);
+      expect(gone?.detail).toMatch(/InterfaceServer\.pas:4594/);
+    });
+
+    it('sends nothing in a channel it never entered, and still cleans up', async () => {
+      const { world, result } = await runChannel({ channelChange: false });
+      expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toContain('the session is in the marker channel');
+      const order = types(world);
+      expect(order).not.toContain(WsMessageType.REQ_CHAT_SEND_MESSAGE);
+      expect(order).not.toContain(WsMessageType.REQ_CHAT_AWAY);
+      expect(typingPushes(world)).toEqual([{ type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: false }]);
+      expect(order).toContain(WsMessageType.REQ_CHAT_JOIN_CHANNEL);
+    });
+
+    it('still cleans up when the create is refused', async () => {
+      const { world, result } = await runChannel({ createFails: true });
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].status).toBe('FAIL');
+      const order = types(world);
+      expect(order).not.toContain(WsMessageType.REQ_CHAT_SEND_MESSAGE);
+      expect(order.slice(-3)).toEqual([
+        WsMessageType.REQ_CHAT_TYPING_STATUS,
+        WsMessageType.REQ_CHAT_JOIN_CHANNEL,
+        WsMessageType.REQ_CHAT_GET_CHANNELS,
+      ]);
+    });
+
+    it('reports a probe that throws before any write as a FAIL', async () => {
+      jest.spyOn(probeModule, 'runRoundTrip').mockRejectedValue(new Error('boom'));
+      const { result } = await runChannel({});
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', note: 'boom', member: 'CreateChannel' });
+    });
+  });
+
+  describe('chat-chase', () => {
+    it('ends SKIPPED when Crazz is refused, before any login or chase', async () => {
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+      const login = jest.spyOn(session, 'login');
+      const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
+      expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+      expect(login).not.toHaveBeenCalled();
+    });
+
+    it('chases Crazz then stops, and logs both off', async () => {
+      const primary = chatWorld();
+      const crazz = chatWorld();
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz.session);
+      jest.spyOn(session, 'login').mockResolvedValue(primary.session);
+      const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
+      expect(result.status).toBe('PASS');
+      expect(primary.sent).toEqual([
+        { type: WsMessageType.REQ_CHAT_CHASE, userName: SECONDARY_ACCOUNT.username },
+        { type: WsMessageType.REQ_CHAT_STOP_CHASE },
+      ]);
+      expect(crazz.sent).toEqual([]);
+      expect(off).toHaveBeenCalledWith(primary.session);
+      expect(off).toHaveBeenCalledWith(crazz.session);
+      expect(flowByName('chat-chase').mutates).toBe(false);
+    });
+
+    it('still sends STOP_CHASE when the chase is refused, and fails', async () => {
+      const primary = chatWorld({ chaseFails: true });
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(chatWorld().session);
+      jest.spyOn(session, 'login').mockResolvedValue(primary.session);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
+      expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toEqual([`CHASE ${SECONDARY_ACCOUNT.username} answered without error`]);
+      expect(types(primary)).toEqual([WsMessageType.REQ_CHAT_CHASE, WsMessageType.REQ_CHAT_STOP_CHASE]);
+    });
+
+    it('fails when STOP_CHASE is not answered', async () => {
+      const primary = chatWorld();
+      const request = (primary.session.driver as unknown as { request: (m: Record<string, unknown>) => Promise<unknown> }).request;
+      (primary.session.driver as unknown as { request: unknown }).request = async (m: Record<string, unknown>) => {
+        if (m.type === WsMessageType.REQ_CHAT_STOP_CHASE) throw new Error('timed out');
+        return request(m);
+      };
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(chatWorld().session);
+      jest.spyOn(session, 'login').mockResolvedValue(primary.session);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
+      expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toEqual(['STOP_CHASE answered']);
+    });
+
+    it('logs Crazz off even when the primary login throws', async () => {
+      const crazz = chatWorld();
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz.session);
+      jest.spyOn(session, 'login').mockRejectedValue(new Error('login refused'));
+      const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
+      expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
+      expect(off).toHaveBeenCalledWith(crazz.session);
     });
   });
 });

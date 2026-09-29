@@ -129,7 +129,8 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
   flow must be reached by some tracked path.
 - **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
   (`politics-write`, `Kernel/Population.pas:1264-1284`; `policy-roundtrip`,
-  `Kernel/Kernel.pas:11790-11800`). The nightly leaves them out and prints
+  `Kernel/Kernel.pas:11790-11800`; `chat-private-channel`,
+  `Interface Server/InterfaceServer.pas:4594`, `:3968-3980`). The nightly leaves them out and prints
   them as `gate-only, not driven`; the gate still runs them when their code changes.
 - **`FALLBACK_ONLY`** lists the handler files only a broad fallback rule routes, each `awaiting
   card #<n>` or `excluded: <reason>`. An area card adds its rule before the fallbacks and removes
