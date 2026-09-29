@@ -558,11 +558,11 @@ describe('routing invariants (#1134)', () => {
   });
 
   // #1145: the vote is data-gated — never required, never nightly-excluded by GATE_ONLY.
-  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write and policy-roundtrip alone', () => {
+  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip and bank-borrow-payoff alone', () => {
     expect(NIGHTLY_ONLY['vote-roundtrip']).toMatch(/Kernel\/TownPolitics\.pas:690/);
     expect(uncited({ 'vote-roundtrip': NIGHTLY_ONLY['vote-roundtrip'] })).toEqual([]);
     expect(ROUTES.some(r => r.flows.includes('vote-roundtrip'))).toBe(false);
-    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip']);
+    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip', 'bank-borrow-payoff']);
   });
 
   it('cites a reason for every exemption', () => {
@@ -792,11 +792,27 @@ describe('route — profile & finance reads (#1141)', () => {
     'src/server/session/profile-finance-handler.ts',
     'src/server/session/auto-connection-handler.ts',
     'src/client/store/profile-store.ts',
-  ])('%s requires profile-read and the two profile write flows', file => {
+    'src/server/session/picture-transfer.ts',
+  ])('%s requires profile-read and the profile write flows', file => {
     expect(route([file]).required).toEqual([
       SPINE_FLOW, 'profile-read', 'policy-roundtrip', 'autoconnection-roundtrip',
+      'bank-borrow-payoff', 'bank-send-return', 'portrait-roundtrip',
     ]);
     expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it('profile-finance-handler.ts requires both bank flows and picture-transfer.ts the portrait flow (#1147)', () => {
+    const bank = route(['src/server/session/profile-finance-handler.ts']).required;
+    expect(bank).toContain('bank-borrow-payoff');
+    expect(bank).toContain('bank-send-return');
+    expect(route(['src/server/session/picture-transfer.ts']).required).toContain('portrait-roundtrip');
+  });
+
+  it('keeps bank-borrow-payoff gate-only with its cited broadcast, and the other two nightly (#1147)', () => {
+    expect(GATE_ONLY['bank-borrow-payoff']).toMatch(/Kernel\/Kernel\.pas:8849-8859/);
+    expect(uncited({ 'bank-borrow-payoff': GATE_ONLY['bank-borrow-payoff'] })).toEqual([]);
+    expect('bank-send-return' in GATE_ONLY).toBe(false);
+    expect('portrait-roundtrip' in GATE_ONLY).toBe(false);
   });
 
   it('auto-connection-handler.ts requires both write flows; only policy-roundtrip is gate-only (#1146)', () => {
