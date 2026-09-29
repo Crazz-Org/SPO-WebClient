@@ -729,9 +729,19 @@ describe('route — profile & finance reads (#1141)', () => {
     'src/server/session/profile-finance-handler.ts',
     'src/server/session/auto-connection-handler.ts',
     'src/client/store/profile-store.ts',
-  ])('%s requires profile-read', file => {
-    expect(route([file]).required).toEqual([SPINE_FLOW, 'profile-read']);
+  ])('%s requires profile-read and the two profile write flows', file => {
+    expect(route([file]).required).toEqual([
+      SPINE_FLOW, 'profile-read', 'policy-roundtrip', 'autoconnection-roundtrip',
+    ]);
     expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it('auto-connection-handler.ts requires both write flows; only policy-roundtrip is gate-only (#1146)', () => {
+    const required = route(['src/server/session/auto-connection-handler.ts']).required;
+    expect(required).toContain('policy-roundtrip');
+    expect(required).toContain('autoconnection-roundtrip');
+    expect(GATE_ONLY['policy-roundtrip']).toMatch(/Kernel\/Kernel\.pas:11790-11800/);
+    expect('autoconnection-roundtrip' in GATE_ONLY).toBe(false);
   });
 
   it('routes an Empire panel file to the favorites flows and profile-read', () => {

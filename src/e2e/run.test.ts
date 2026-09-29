@@ -7,6 +7,7 @@ import { WorldLock } from './world-lock';
 import * as preflightModule from './preflight';
 import * as flowsModule from './flows';
 import * as capabilityModule from './capability';
+import { GATE_ONLY } from './routing';
 
 function tempLock(): WorldLock {
   return new WorldLock(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-run-')));
@@ -425,9 +426,12 @@ describe('main', () => {
     const out = sink();
     await main([], runner, out.stream);
     const flows = runner.mock.calls[0][0].flows;
-    expect(flows).toEqual(flowsModule.FLOWS.map(f => f.name).filter(n => n !== 'politics-write'));
+    expect(flows).toEqual(flowsModule.FLOWS.map(f => f.name).filter(n => !(n in GATE_ONLY)));
     expect(flows).not.toContain('politics-write');
+    expect(flows).not.toContain('policy-roundtrip');
+    expect(flows).toContain('autoconnection-roundtrip');
     expect(out.text()).toMatch(/gate-only, not driven: politics-write/);
+    expect(out.text()).toMatch(/gate-only, not driven: policy-roundtrip/);
     const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
     if (fs.existsSync(written)) fs.unlinkSync(written);
   });
