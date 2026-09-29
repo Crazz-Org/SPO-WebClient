@@ -2,10 +2,10 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { WsMessageType } from '@/shared/types/message-types';
-import type { WsMessage, FavoritesItem, WsRespResumeSession } from '@/shared/types/message-types';
+import type { WsMessage, FavoritesItem, WsRespResumeSession, ConnectionSearchResult } from '@/shared/types/message-types';
 import type {
-  BuildingConnectionData, BuildingProductData, BuildingPropertyValue, BuildingSupplyData, MailMessageFull,
-  MailMessageHeader, NewspaperBoard,
+  AutoConnectionsData, BuildingConnectionData, BuildingProductData, BuildingPropertyValue, BuildingSupplyData,
+  CompInputData, FacilityDimensions, MailMessageFull, MailMessageHeader, NewspaperBoard, WarehouseWareData,
 } from '@/shared/types/domain-types';
 import {
   FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum, replyHeaders,
@@ -15,9 +15,11 @@ import {
   salariesLineMatches, clientLinksDiff, outputPriceRefusal, stoppedBit, workerCountsProblem, refreshMissingKeys,
   fixtureKind,
   pickPlacement, ownsPlacement, delFacilityLineMatches,
+  linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
+  companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, lowerInterest,
-  type Flow, type FlowResult,
+  type Flow, type FlowResult, type GateLinks,
 } from './flows';
 import { buildReplyHeaders } from '@/client/store/mail-store';
 import { validatePicture } from '@/server/session/picture-transfer';
@@ -77,13 +79,26 @@ describe('the catalogue', () => {
     expect(mutating).toEqual(
       [
         'accept-cloning', 'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'bank-settings',
-        'chat-private-channel', 'facility-open-close',
+        'chat-private-channel',
+        // #1153
+        'client-hire-remove', 'company-input-demand', 'connect-on-map',
+        'facility-open-close',
         'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
         'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
         'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
+        // #1153
+        'quick-trade-roundtrip',
         'research-roundtrip', 'residential-repair', 'residential-settings',
-        'road-roundtrip', 'store-price-salaries', 'town-min-wage', 'tv-settings', 'upgrade-stop', 'vote-roundtrip',
+        'road-roundtrip', 'store-price-salaries',
+        // #1153
+        'supplier-hire-fire',
+        'town-min-wage',
+        // #1153
+        'trade-settings',
+        'tv-settings', 'upgrade-stop', 'vote-roundtrip',
+        // #1153
+        'warehouse-wares',
         'zone-roundtrip', 'zoning-alert-read',
       ],
     );
@@ -6494,6 +6509,1030 @@ describe('build & demolish (#1150)', () => {
       const result = await runMenu();
       expect(result.status).toBe('FAIL');
       expect(check(result, /class and a cost/)?.ok).toBe(false);
+    });
+  });
+});
+
+describe('inspector connections & trade (#1153)', () => {
+  const OWN_CO = 'SPO_test3 - Green';
+  const HELARTIA_TOWNS = 5;
+
+  interface Fac {
+    x: number;
+    y: number;
+    name: string;
+    company: string;
+    visualClass: string;
+    tabs: string[];
+    supplies: BuildingSupplyData[];
+    products: BuildingProductData[];
+    role?: string;
+    tradeLevel?: string;
+    compInputs?: CompInputData[];
+    wares?: WarehouseWareData[];
+  }
+
+  interface Write {
+    x: number;
+    y: number;
+    property: string;
+    value: string;
+    params: Record<string, string>;
+  }
+
+  const sg = (fluid: string): BuildingSupplyData => ({ path: `in:${fluid}`, name: fluid, metaFluid: fluid, connectionCount: 0, connections: [] });
+  const pg = (fluid: string): BuildingProductData => ({ path: `out:${fluid}`, name: fluid, metaFluid: fluid, pricePc: '100', connectionCount: 0, connections: [] });
+
+  function makeFacilities(): { industry: Fac; warehouse: Fac; store: Fac } {
+    return {
+      industry: {
+        x: 30, y: 40, name: 'Farm', company: OWN_CO, visualClass: '4116', tabs: ['indGeneral', 'supplies', 'products'],
+        supplies: [sg('Water')], products: [pg('Chemicals')], role: '2', tradeLevel: '3',
+      },
+      warehouse: {
+        x: 50, y: 60, name: 'Storage', company: OWN_CO, visualClass: '532', tabs: ['whGeneral', 'supplies', 'products'],
+        supplies: [sg('Chemicals')], products: [pg('Water')], role: '2', tradeLevel: '0',
+        wares: [{ name: 'Chemicals', enabled: true, index: 0 }, { name: 'Water', enabled: false, index: 1 }],
+      },
+      store: {
+        x: 10, y: 20, name: 'Food Store', company: OWN_CO, visualClass: '4601', tabs: ['srvGeneral', 'compInputs'],
+        supplies: [], products: [],
+        compInputs: [{ name: 'Advertisement', supplied: 0, demanded: 50, ratio: 0, maxDemand: 100, editable: true, units: 'hits' }],
+      },
+    };
+  }
+
+  class ConnWorld {
+    facs = makeFacilities();
+    found: Partial<Record<'industry' | 'warehouse' | 'store', boolean>> = {};
+    search: (direction: string, fluid: string) => ConnectionSearchResult[] = (direction, fluid) => {
+      const w = this.facs.warehouse;
+      const carries = direction === 'input' ? w.products.some(p => p.metaFluid === fluid) : w.supplies.some(s => s.metaFluid === fluid);
+      return carries ? [{ facilityName: w.name, companyName: OWN_CO, x: w.x, y: w.y, town: 'Helartia' }] : [];
+    };
+    reach: (c: { x: number; y: number }) => string | undefined = () => 'connected';
+    ownLots = new Set(['50,60', '30,40', '10,20']);
+    tycoon: fixtures.TycoonFacility[] = [
+      { company: OWN_CO, x: 30, y: 40, name: 'Farm' },
+      { company: OWN_CO, x: 50, y: 60, name: 'Storage' },
+    ];
+    tycoonCompanies = [OWN_CO, 'Mayor of Helartia'];
+    towns: Record<string, number> = {};
+    outsideTabs: Record<string, string[]> = {};
+    unreadable = new Set<string>();
+    dims: Record<string, FacilityDimensions> = {};
+    auto: AutoConnectionsData = {
+      fluids: [{
+        fluidName: 'Water', fluidId: 'Water', hireTradeCenter: false, onlyWarehouses: false, storable: true,
+        suppliers: [{ facilityName: 'Well', facilityId: '7,8,', companyName: 'Other' }],
+      }],
+    };
+    /** Members that are acknowledged but change nothing. */
+    inert = new Set<string>();
+    /** Members whose Survival line never appears. */
+    silent = new Set<string>();
+    /** A disconnect removes the link on the named side only. */
+    oneSided = false;
+    connectAnswer = { success: true, resultMessage: 'ok' };
+    onUndoTycoon?: () => void;
+    writes: Write[] = [];
+    lines: string[] = [];
+    requests: WsMessage[] = [];
+
+    all(): Fac[] {
+      return [this.facs.industry, this.facs.warehouse, this.facs.store];
+    }
+
+    at(x: number, y: number): Fac | undefined {
+      return this.all().find(f => f.x === x && f.y === y);
+    }
+
+    private static sync(g: { connections: BuildingConnectionData[]; connectionCount?: number }): void {
+      g.connectionCount = g.connections.length;
+    }
+
+    private addOne(f: Fac, tab: 'supplies' | 'products', fluid: string, other: { x: number; y: number; name: string; company: string }): void {
+      const gate = (tab === 'supplies' ? f.supplies : f.products).find(g => g.metaFluid === fluid);
+      if (!gate || gate.connections.some(c => c.x === other.x && c.y === other.y)) return;
+      gate.connections.push(conn(other.name, other.company, other.x, other.y));
+      ConnWorld.sync(gate);
+    }
+
+    private dropOne(f: Fac, tab: 'supplies' | 'products', fluid: string, x: number, y: number): void {
+      const gate = (tab === 'supplies' ? f.supplies : f.products).find(g => g.metaFluid === fluid);
+      if (!gate) return;
+      gate.connections = gate.connections.filter(c => !(c.x === x && c.y === y));
+      ConnWorld.sync(gate);
+    }
+
+    /** `TGate.ConnectTo`: both sides. */
+    link(f: Fac, tab: 'supplies' | 'products', fluid: string, other: Fac | { x: number; y: number; name: string; company: string }): void {
+      this.addOne(f, tab, fluid, other);
+      const o = this.at(other.x, other.y);
+      if (o) this.addOne(o, tab === 'supplies' ? 'products' : 'supplies', fluid, f);
+    }
+
+    unlink(f: Fac, tab: 'supplies' | 'products', fluid: string, x: number, y: number): void {
+      this.dropOne(f, tab, fluid, x, y);
+      const o = this.at(x, y);
+      if (o && !this.oneSided) this.dropOne(o, tab === 'supplies' ? 'products' : 'supplies', fluid, f.x, f.y);
+    }
+
+    private pairs(list: string): { x: number; y: number }[] {
+      const n = list.split(',').filter(Boolean).map(Number);
+      const out: { x: number; y: number }[] = [];
+      for (let i = 0; i + 1 < n.length; i += 2) out.push({ x: n[i], y: n[i + 1] });
+      return out;
+    }
+
+    private connectBoth(a: Fac, b: Fac): void {
+      for (const s of a.supplies) if (b.products.some(p => p.metaFluid === s.metaFluid)) this.link(a, 'supplies', s.metaFluid as string, b);
+      for (const p of a.products) if (b.supplies.some(s => s.metaFluid === p.metaFluid)) this.link(a, 'products', p.metaFluid as string, b);
+    }
+
+    private line(w: Write): string {
+      const fac = (text: string) => `12:00 - Fac(${w.x},${w.y}) ${text}`;
+      const p = w.params;
+      switch (w.property) {
+        case 'RDOConnectInput': return fac(`Input connected: ${p.fluidId} to ${p.connectionList}`);
+        case 'RDOConnectOutput': return fac(`Output connected: ${p.fluidId} to ${p.connectionList}`);
+        case 'RDODisconnectInput': return fac(`Input disconnect: ${p.fluidId} from ${p.connectionList}`);
+        case 'RDODisconnectOutput': return fac(`Output disconnect: ${p.fluidId} from ${p.connectionList}`);
+        case 'RDOConnectToTycoon': return fac('Connect to Tycoon: 123456');
+        case 'RDOSetCompanyInputDemand': return fac('SetCompanyInputDemand');
+        case 'RDOSetTradeLevel': return fac('SetTradeLevel');
+        default: return '';
+      }
+    }
+
+    private apply(w: Write): void {
+      const f = this.at(w.x, w.y) as Fac;
+      const p = w.params;
+      switch (w.property) {
+        case 'RDOConnectInput':
+          for (const c of this.pairs(p.connectionList)) {
+            const o = this.at(c.x, c.y);
+            this.link(f, 'supplies', p.fluidId, o ?? { ...c, name: 'Elsewhere', company: 'Other Co' });
+          }
+          break;
+        case 'RDOConnectOutput':
+          for (const c of this.pairs(p.connectionList)) {
+            const o = this.at(c.x, c.y);
+            this.link(f, 'products', p.fluidId, o ?? { ...c, name: 'Elsewhere', company: 'Other Co' });
+          }
+          break;
+        case 'RDODisconnectInput':
+          for (const c of this.pairs(p.connectionList)) this.unlink(f, 'supplies', p.fluidId, c.x, c.y);
+          break;
+        case 'RDODisconnectOutput':
+          for (const c of this.pairs(p.connectionList)) this.unlink(f, 'products', p.fluidId, c.x, c.y);
+          break;
+        case 'RDOConnectToTycoon':
+          for (const g of f.products) {
+            if (this.facs.warehouse.supplies.some(s => s.metaFluid === g.metaFluid)) this.link(f, 'products', g.metaFluid as string, this.facs.warehouse);
+          }
+          break;
+        case 'RDODisconnectFromTycoon':
+          for (const g of f.products) this.unlink(f, 'products', g.metaFluid as string, this.facs.warehouse.x, this.facs.warehouse.y);
+          this.onUndoTycoon?.();
+          break;
+        case 'RDOSetCompanyInputDemand': {
+          const input = (f.compInputs ?? [])[Number(p.index)];
+          input.demanded = Math.ceil((Math.min(Number(w.value), 100) * input.maxDemand) / 100);
+          break;
+        }
+        case 'RDOSetTradeLevel': f.tradeLevel = w.value; break;
+        case 'RDOSetRole': f.role = w.value; break;
+        case 'RDOSelectWare': (f.wares ?? [])[Number(p.index)].enabled = w.value === '-1'; break;
+      }
+    }
+
+    respond(msg: WsMessage): unknown {
+      this.requests.push(msg);
+      const m = msg as WsMessage & Record<string, unknown>;
+      const f = this.at(m.x as number, m.y as number);
+      const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+      switch (msg.type) {
+        case WsMessageType.REQ_BUILDING_DETAILS: {
+          const tabs = f ? f.tabs : (this.outsideTabs[`${String(m.x)},${String(m.y)}`] ?? []);
+          return { details: { tabs: tabs.map(id => ({ id })), groups: {}, ...(f?.wares ? { warehouseWares: clone(f.wares) } : {}) } };
+        }
+        case WsMessageType.REQ_BUILDING_TAB_DATA: {
+          const fac = f as Fac;
+          if (m.tabId === 'supplies') return { supplies: fac.supplies.map(s => ({ path: s.path, name: s.name, connections: [] })) };
+          if (m.tabId === 'products') return { products: fac.products.map(o => ({ path: o.path, name: o.name, connections: [] })) };
+          if (m.tabId === 'compInputs') return fac.compInputs ? { compInputs: clone(fac.compInputs) } : {};
+          const g: BuildingPropertyValue[] = [];
+          if (fac.role !== undefined) g.push(pv('Role', fac.role));
+          if (fac.tradeLevel !== undefined) g.push(pv('TradeLevel', fac.tradeLevel));
+          return { groups: { [String(m.tabId)]: g } };
+        }
+        case WsMessageType.REQ_BUILDING_GATE_CONNECTIONS: {
+          const fac = f as Fac;
+          if (m.tabId === 'supplies') return { supply: clone(fac.supplies.find(s => s.path === m.path)) };
+          return { product: clone(fac.products.find(o => o.path === m.path)) };
+        }
+        case WsMessageType.REQ_SEARCH_CONNECTIONS:
+          return { results: this.search(String(m.direction), String(m.fluidId)), fluidId: m.fluidId, direction: m.direction };
+        case WsMessageType.REQ_CONNECTION_REACHABILITY: {
+          const candidates = m.candidates as { x: number; y: number }[];
+          const entries = candidates
+            .map(c => ({ ...c, reachability: this.reach(c) }))
+            .filter(e => e.reachability !== undefined);
+          return { entries };
+        }
+        case WsMessageType.REQ_CONNECT_FACILITIES: {
+          const a = this.at(m.sourceX as number, m.sourceY as number) as Fac;
+          const b = this.at(m.targetX as number, m.targetY as number) as Fac;
+          if (this.connectAnswer.success && !this.inert.has('ConnectFacilities')) this.connectBoth(a, b);
+          return this.connectAnswer;
+        }
+        case WsMessageType.REQ_PROFILE_AUTOCONNECTIONS:
+          return { data: clone(this.auto) };
+        case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
+          const w: Write = {
+            x: m.x as number, y: m.y as number, property: String(m.propertyName), value: String(m.value),
+            params: (m.additionalParams ?? {}) as Record<string, string>,
+          };
+          this.writes.push(w);
+          const line = this.line(w);
+          if (line && !this.silent.has(w.property)) this.lines.push(line);
+          if (!this.inert.has(w.property)) this.apply(w);
+          return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: '' };
+        }
+        default:
+          throw new Error(`unexpected request ${msg.type}`);
+      }
+    }
+  }
+
+  function arrange(world: ConnWorld) {
+    const stub = stubSession(msg => world.respond(msg));
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(fixtures, 'findFixture').mockImplementation(async (_s, kind) => {
+      const id = kind.id as 'industry' | 'warehouse' | 'store';
+      const fac = world.facs[id];
+      if (!fac || world.found[id] === false) return { kind: kind.id, reason: 'none in Helartia' };
+      return { kind: kind.id, found: { x: fac.x, y: fac.y, visualClass: fac.visualClass, name: fac.name } };
+    });
+    const refusal = jest.spyOn(fixtures, 'ownLotRefusal').mockImplementation(async (_s, x, y) =>
+      world.ownLots.has(`${x},${y}`) ? null : `(${x},${y}) is not in Helartia`);
+    jest.spyOn(fixtures, 'listTycoonFacilities').mockImplementation(async () => ({
+      companies: world.tycoonCompanies, facilities: world.tycoon,
+    }));
+    jest.spyOn(fixtures, 'helartiaValue').mockResolvedValue(HELARTIA_TOWNS);
+    jest.spyOn(fixtures, 'townValueAt').mockImplementation(async (_s, x, y) => world.towns[`${x},${y}`] ?? HELARTIA_TOWNS);
+    jest.spyOn(fixtures, 'facilityDimensions').mockImplementation(async () => world.dims);
+    jest.spyOn(session, 'resolveVisualClass').mockImplementation(async (_s, x, y) => {
+      if (world.unreadable.has(`${x},${y}`)) throw new Error(`No building at (${x},${y})`);
+      return '999';
+    });
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      if (typeof proof !== 'object') return null;
+      return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+    });
+    return { stub, off, refusal };
+  }
+
+  const run = (name: string, lock = cleanLock()) => flowByName(name).run({ lock, survivalLogUrl: 'u', ...fastClock() });
+  const setProps = (world: ConnWorld) => world.requests.filter(r => r.type === WsMessageType.REQ_BUILDING_SET_PROPERTY);
+  const keysOf = (g: { connections: BuildingConnectionData[] }) => g.connections.map(c => `${c.x},${c.y}`);
+
+  describe('the pure helpers', () => {
+    it('linkSet sorts and de-duplicates x,y keys', () => {
+      expect(linkSet([conn('b', 'c', 9, 9), conn('a', 'c', 1, 2), conn('a2', 'c', 1, 2)])).toBe('1,2 9,9');
+      expect(linkSet([])).toBe('');
+    });
+
+    it('hireCandidates keeps only own-company, Helartia (or unnamed town), unconnected results that are not the fixture', () => {
+      const r = (x: number, y: number, companyName: string, town?: string): ConnectionSearchResult =>
+        ({ facilityName: `f${x}`, companyName, x, y, ...(town !== undefined ? { town } : {}) });
+      const results = [
+        r(1, 1, OWN_CO, 'Helartia'), r(2, 2, 'Other Co', 'Helartia'), r(3, 3, OWN_CO, 'Elsewhere'),
+        r(4, 4, OWN_CO), r(5, 5, OWN_CO, 'Helartia'), r(30, 40, OWN_CO, 'Helartia'),
+      ];
+      expect(hireCandidates(results, [conn('x', OWN_CO, 5, 5)], OWN_CO, { x: 30, y: 40 }).map(c => c.x)).toEqual([1, 4]);
+    });
+
+    it('linkState: snapshot, new links, or the lost links by gate', () => {
+      const snap: GateLinks = { 'supplies:Water': { fluid: 'Water', keys: ['1,1'], complete: true } };
+      expect(linkState(snap, { 'supplies:Water': { fluid: 'Water', keys: ['1,1'], complete: true } })).toBe('snapshot');
+      expect(linkState(snap, { 'supplies:Water': { fluid: 'Water', keys: ['1,1', '2,2'], complete: true } })).toBe('new-links');
+      expect(linkState(snap, { 'supplies:Water': { fluid: 'Water', keys: ['2,2'], complete: true } })).toBe('lost supplies:Water: 1,1');
+      expect(linkState(snap, {})).toBe('lost supplies:Water: 1,1');
+    });
+
+    it('gainedLinks names the tab, fluid and keys of each gate that gained', () => {
+      const snap: GateLinks = { 'supplies:Water': { fluid: 'Water', keys: ['1,1'], complete: true } };
+      expect(gainedLinks(snap, {
+        'supplies:Water': { fluid: 'Water', keys: ['1,1', '2,2'], complete: true },
+        'products:Chemicals': { fluid: 'Chemicals', keys: ['3,3'], complete: true },
+      })).toEqual([
+        { gate: 'supplies:Water', tab: 'supplies', fluid: 'Water', keys: ['2,2'] },
+        { gate: 'products:Chemicals', tab: 'products', fluid: 'Chemicals', keys: ['3,3'] },
+      ]);
+    });
+
+    it('tradeRoleNudge always answers another of TRADE_MODE_VALUES', () => {
+      expect(tradeRoleNudge('2')).toBe('5');
+      expect(tradeRoleNudge('5')).toBe('2');
+      expect(tradeRoleNudge('6')).toBe('2');
+    });
+
+    it('tradeLevelNudge moves between Anyone (3) and Allies only (2)', () => {
+      expect(tradeLevelNudge('3')).toBe('2');
+      expect(tradeLevelNudge('0')).toBe('3');
+      expect(tradeLevelNudge('2')).toBe('3');
+    });
+
+    it('isMegaStorage is facId 125 or 126', () => {
+      const d = (facId?: number): FacilityDimensions => ({ visualClass: 'v', name: 'n', facid: '', xsize: 1, ysize: 1, level: 0, facId });
+      expect(isMegaStorage({ a: d(125), b: d(126), c: d(122), e: d() }, 'a')).toBe(true);
+      expect(isMegaStorage({ b: d(126) }, 'b')).toBe(true);
+      expect(isMegaStorage({ c: d(122) }, 'c')).toBe(false);
+      expect(isMegaStorage({}, 'x')).toBe(false);
+    });
+
+    it('company demand: percent, target and the ceil units', () => {
+      expect(companyDemandPercent(32, 70)).toBe(46);
+      expect(companyDemandTarget(46)).toBe(66);
+      expect(companyDemandTarget(50)).toBe(30);
+      expect(companyDemandUnits(46, 70)).toBe(33);
+    });
+
+    it('initialSupplierAt and initialSuppliersKey read the "x,y," facility ids', () => {
+      const data: AutoConnectionsData = {
+        fluids: [
+          { fluidName: 'W', fluidId: 'Water', hireTradeCenter: false, onlyWarehouses: false, storable: true, suppliers: [{ facilityName: 'a', facilityId: '30,40,', companyName: 'c' }] },
+          { fluidName: 'C', fluidId: 'Chem', hireTradeCenter: false, onlyWarehouses: false, storable: true, suppliers: [{ facilityName: 'b', facilityId: '1,2,', companyName: 'c' }] },
+        ],
+      };
+      expect(initialSupplierAt(data, 30, 40)).toBe(true);
+      expect(initialSupplierAt(data, 30, 4)).toBe(false);
+      expect(initialSuppliersKey(data)).toBe('Chem:1,2, Water:30,40,');
+    });
+  });
+
+  describe('supplier-search-read', () => {
+    it('searches one input fluid in Helartia for its own company, asks reachability per candidate, and writes nothing', async () => {
+      const world = new ConnWorld();
+      const { off } = arrange(world);
+      const result = await run('supplier-search-read');
+      expect(result.status).toBe('PASS');
+      expect(world.requests).toContainEqual(expect.objectContaining({
+        type: WsMessageType.REQ_SEARCH_CONNECTIONS, fluidId: 'Water', direction: 'input', buildingX: 30, buildingY: 40,
+        filters: { town: 'Helartia', company: OWN_CO },
+      }));
+      expect(world.requests).toContainEqual(expect.objectContaining({
+        type: WsMessageType.REQ_CONNECTION_REACHABILITY, candidates: [{ x: 50, y: 60 }],
+      }));
+      expect(result.assertions.find(a => a.what === 'REQ_CONNECTION_REACHABILITY answered each candidate')?.detail).toBe('(50,60) connected');
+      expect(setProps(world)).toEqual([]);
+      expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports an empty candidate list without failing, and sends no reachability request', async () => {
+      const world = new ConnWorld();
+      world.search = () => [];
+      arrange(world);
+      const result = await run('supplier-search-read');
+      expect(result.status).toBe('PASS');
+      expect(result.assertions).toContainEqual({ what: 'REQ_CONNECTION_REACHABILITY', ok: true, detail: 'not sent: no candidate' });
+      expect(result.assertions.find(a => a.what.startsWith('REQ_SEARCH_CONNECTIONS'))?.detail).toBe('0 candidate(s)');
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_CONNECTION_REACHABILITY)).toBe(false);
+    });
+
+    it('FAILs when a reachability request went out for an empty list', async () => {
+      const world = new ConnWorld();
+      world.search = () => [];
+      const { stub } = arrange(world);
+      stub.driver.log.push({ direction: 'sent', type: WsMessageType.REQ_CONNECTION_REACHABILITY, at: 'now' });
+      const result = await run('supplier-search-read');
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)).toMatchObject({ what: 'REQ_CONNECTION_REACHABILITY', detail: 'sent for an empty list' });
+    });
+
+    it('asks about the first five candidates only, and FAILs a candidate left unanswered', async () => {
+      const world = new ConnWorld();
+      world.search = () => Array.from({ length: 7 }, (_, i) => ({ facilityName: `f${i}`, companyName: OWN_CO, x: i, y: i }));
+      world.reach = c => (c.x === 3 ? undefined : 'isolated');
+      arrange(world);
+      const result = await run('supplier-search-read');
+      expect(result.status).toBe('FAIL');
+      const reach = world.requests.find(r => r.type === WsMessageType.REQ_CONNECTION_REACHABILITY) as unknown as { candidates: unknown[] };
+      expect(reach.candidates).toHaveLength(5);
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('no answer for (3,3)');
+    });
+
+    it('FAILs when the search answers no results array', async () => {
+      const world = new ConnWorld();
+      world.search = () => undefined as unknown as ConnectionSearchResult[];
+      arrange(world);
+      const result = await run('supplier-search-read');
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('no results array');
+    });
+
+    it('FAILs an industry with no supply gate carrying a fluid', async () => {
+      const world = new ConnWorld();
+      world.facs.industry.supplies = [{ ...sg('Water'), metaFluid: undefined }];
+      arrange(world);
+      const result = await run('supplier-search-read');
+      expect(result.status).toBe('FAIL');
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_SEARCH_CONNECTIONS)).toBe(false);
+    });
+
+    it('is UNPROVEN when the industry fixture is missing', async () => {
+      const world = new ConnWorld();
+      world.found.industry = false;
+      arrange(world);
+      expect((await run('supplier-search-read')).status).toBe('UNPROVEN');
+    });
+  });
+
+  describe('supplier-hire-fire', () => {
+    it('hires the own warehouse on the Water input, proves the line and the link, fires it, and reads back the snapshot', async () => {
+      const world = new ConnWorld();
+      const lock = cleanLock();
+      const { stub } = arrange(world);
+      const result = await run('supplier-hire-fire', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => [w.x, w.y, w.property, w.params])).toEqual([
+        [30, 40, 'RDOConnectInput', { fluidId: 'Water', connectionList: '50,60,' }],
+        [30, 40, 'RDODisconnectInput', { fluidId: 'Water', connectionList: '50,60,' }],
+      ]);
+      expect(result.probes[0]).toMatchObject({
+        original: '', written: '50,60', logLine: '12:00 - Fac(30,40) Input connected: Water to 50,60,',
+        readBack: 'CONFIRMED', restoreReadBack: 'CONFIRMED',
+      });
+      expect(result.assertions.find(a => a.what.startsWith('the undo'))?.detail).toBe('12:00 - Fac(30,40) Input disconnect: Water from 50,60,');
+      expect(keysOf(world.facs.industry.supplies[0])).toEqual([]);
+      expect(keysOf(world.facs.warehouse.products[0])).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+      // The connect is synchronous at the gateway: it gets the long bound.
+      const connectCall = (stub.driver.request as jest.Mock).mock.calls.find(c => (c[0] as { propertyName?: string }).propertyName === 'RDOConnectInput');
+      expect(connectCall?.[2]).toBe(TIMEOUTS.login);
+    });
+
+    it('never hires a candidate already connected, of another company, or refused by its lot — and writes nothing when none is left', async () => {
+      const world = new ConnWorld();
+      world.facs.industry.supplies[0].connections = [conn('Own Well', OWN_CO, 70, 80)];
+      world.facs.industry.supplies[0].connectionCount = 1;
+      world.search = () => [
+        { facilityName: 'Own Well', companyName: OWN_CO, x: 70, y: 80, town: 'Helartia' },
+        { facilityName: 'Their Well', companyName: 'Other Co', x: 90, y: 90, town: 'Helartia' },
+        { facilityName: 'Far Well', companyName: OWN_CO, x: 95, y: 95, town: 'Elsewhere' },
+        { facilityName: 'Odd Well', companyName: OWN_CO, x: 97, y: 97, town: 'Helartia' },
+      ];
+      const { refusal } = arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('UNPROVEN');
+      expect(setProps(world)).toEqual([]);
+      expect(refusal.mock.calls.map(c => [c[1], c[2]])).toEqual([[97, 97]]);
+      expect(result.unproven[0]).toMatch(/^RDOConnectInput — .*Kernel\/Kernel\.pas:6784-6785.*Odd Well \(97,97\) — \(97,97\) is not in Helartia/);
+    });
+
+    it('takes the next own candidate when the first is refused by its lot', async () => {
+      const world = new ConnWorld();
+      world.search = () => [
+        { facilityName: 'Odd Well', companyName: OWN_CO, x: 97, y: 97, town: 'Helartia' },
+        { facilityName: 'Storage', companyName: OWN_CO, x: 50, y: 60, town: 'Helartia' },
+      ];
+      arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.params.connectionList)).toEqual(['50,60,', '50,60,']);
+    });
+
+    it('keeps an existing supplier: the snapshot holds it before and after', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', { x: 70, y: 80, name: 'Own Well', company: OWN_CO });
+      arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('PASS');
+      expect(result.probes[0]).toMatchObject({ original: '70,80', written: '50,60 70,80' });
+      expect(keysOf(world.facs.industry.supplies[0])).toEqual(['70,80']);
+    });
+
+    it('FAILs when the fire leaves the link, and keeps the pending restore', async () => {
+      const world = new ConnWorld();
+      world.inert.add('RDODisconnectInput');
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('supplier-hire-fire', lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ restored: false, restoreReadBack: 'UNCONFIRMED' });
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a connect whose gate never lists the candidate, even with its line present', async () => {
+      const world = new ConnWorld();
+      world.inert.add('RDOConnectInput');
+      arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].logLine).toBe('12:00 - Fac(30,40) Input connected: Water to 50,60,');
+      expect(result.probes[0].note).toMatch(/read-back never showed "50,60"/);
+    });
+
+    it('FAILs when the fire prints no Input disconnect: line', async () => {
+      const world = new ConnWorld();
+      world.silent.add('RDODisconnectInput');
+      arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].status).toBe('PASS');
+      expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/no "Input disconnect:" line for Fac\(30,40\) Water from 50,60,/);
+    });
+
+    it('skips a gate whose links were not all read, and one with no header', async () => {
+      const world = new ConnWorld();
+      world.facs.industry.supplies = [{ ...sg('Water'), connectionCount: 3 }, { ...sg('Ore'), path: 'in:none', name: 'None', metaFluid: undefined }];
+      arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Water: 3 link\(s\) listed but 0 read.*None: its header was not read/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+      const world = new ConnWorld();
+      world.found.industry = false;
+      arrange(world);
+      expect((await run('supplier-hire-fire')).status).toBe('UNPROVEN');
+      expect(setProps(world)).toEqual([]);
+    });
+  });
+
+  describe('client-hire-remove', () => {
+    it('adds the own warehouse as a client of Chemicals, proves it, removes it, and reads back the snapshot', async () => {
+      const world = new ConnWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('client-hire-remove', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => [w.property, w.params])).toEqual([
+        ['RDOConnectOutput', { fluidId: 'Chemicals', connectionList: '50,60,' }],
+        ['RDODisconnectOutput', { fluidId: 'Chemicals', connectionList: '50,60,' }],
+      ]);
+      expect(result.probes[0].logLine).toBe('12:00 - Fac(30,40) Output connected: Chemicals to 50,60,');
+      expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_SEARCH_CONNECTIONS, direction: 'output', fluidId: 'Chemicals' }));
+      expect(keysOf(world.facs.industry.products[0])).toEqual([]);
+      expect(keysOf(world.facs.warehouse.supplies[0])).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('writes nothing when no own client exists (UNPROVEN, cited)', async () => {
+      const world = new ConnWorld();
+      world.search = () => [{ facilityName: 'Their Shop', companyName: 'Other Co', x: 5, y: 6, town: 'Helartia' }];
+      arrange(world);
+      const result = await run('client-hire-remove');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^RDOConnectOutput — no client .*Kernel\/Kernel\.pas:6784-6785/);
+      expect(setProps(world)).toEqual([]);
+    });
+  });
+
+  describe('connect-on-map', () => {
+    it("links the industry and the warehouse, then undoes every new link on both facilities' inputs and outputs", async () => {
+      const world = new ConnWorld();
+      world.oneSided = true;
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('connect-on-map', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.requests).toContainEqual(expect.objectContaining({
+        type: WsMessageType.REQ_CONNECT_FACILITIES, sourceX: 30, sourceY: 40, targetX: 50, targetY: 60,
+      }));
+      expect(world.writes.map(w => [w.x, w.y, w.property, w.params])).toEqual([
+        [30, 40, 'RDODisconnectInput', { fluidId: 'Water', connectionList: '50,60,' }],
+        [30, 40, 'RDODisconnectOutput', { fluidId: 'Chemicals', connectionList: '50,60,' }],
+        [50, 60, 'RDODisconnectInput', { fluidId: 'Chemicals', connectionList: '30,40,' }],
+        [50, 60, 'RDODisconnectOutput', { fluidId: 'Water', connectionList: '30,40,' }],
+      ]);
+      for (const g of [...world.facs.industry.supplies, ...world.facs.industry.products, ...world.facs.warehouse.supplies, ...world.facs.warehouse.products]) {
+        expect(keysOf(g)).toEqual([]);
+      }
+      expect(result.probes[0]).toMatchObject({ original: 'snapshot', written: 'new-links', restored: true, logLine: null });
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('keeps the links both facilities had before', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', { x: 70, y: 80, name: 'Own Well', company: OWN_CO });
+      arrange(world);
+      const result = await run('connect-on-map');
+      expect(result.status).toBe('PASS');
+      expect(keysOf(world.facs.industry.supplies[0])).toEqual(['70,80']);
+      expect(world.writes.every(w => w.params.connectionList !== '70,80,')).toBe(true);
+    });
+
+    it('FAILs when the undo misses a gained link, and keeps the pending restore', async () => {
+      const world = new ConnWorld();
+      world.inert.add('RDODisconnectInput');
+      world.inert.add('RDODisconnectOutput');
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('connect-on-map', lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ readBack: 'CONFIRMED', restored: false });
+      expect(result.probes[0].note).toMatch(/restore not confirmed: read-back still shows "new-links"/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a connect that links nothing', async () => {
+      const world = new ConnWorld();
+      world.inert.add('ConnectFacilities');
+      arrange(world);
+      const result = await run('connect-on-map');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/read-back never showed "new-links"/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('FAILs an answer of success=false', async () => {
+      const world = new ConnWorld();
+      world.connectAnswer = { success: false, resultMessage: 'too far' };
+      arrange(world);
+      const result = await run('connect-on-map');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/success=false: too far/);
+    });
+
+    it('sends nothing when the two facilities share no fluid on opposite gates (UNPROVEN)', async () => {
+      const world = new ConnWorld();
+      world.facs.warehouse.supplies = [sg('Ore')];
+      world.facs.warehouse.products = [pg('Fruit')];
+      arrange(world);
+      const result = await run('connect-on-map');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/share no fluid.*Kernel\/Kernel\.pas:5470-5513/);
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_CONNECT_FACILITIES)).toBe(false);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('sends nothing when a gate of either facility was not read in full (UNPROVEN)', async () => {
+      const world = new ConnWorld();
+      world.facs.warehouse.products[0].connectionCount = 4;
+      arrange(world);
+      const result = await run('connect-on-map');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Storage \(50,60\) products:Water/);
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_CONNECT_FACILITIES)).toBe(false);
+    });
+
+    it('is UNPROVEN and writes nothing when the warehouse fixture is missing', async () => {
+      const world = new ConnWorld();
+      world.found.warehouse = false;
+      arrange(world);
+      expect((await run('connect-on-map')).status).toBe('UNPROVEN');
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_CONNECT_FACILITIES)).toBe(false);
+    });
+  });
+
+  describe('company-input-demand', () => {
+    it("moves the store's editable input 20 points, proves the line and cInputDem, and restores it", async () => {
+      const world = new ConnWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('company-input-demand', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => [w.x, w.y, w.property, w.value, w.params])).toEqual([
+        [10, 20, 'RDOSetCompanyInputDemand', '30', { index: '0' }],
+        [10, 20, 'RDOSetCompanyInputDemand', '50', { index: '0' }],
+      ]);
+      expect(result.probes[0].logLine).toBe('12:00 - Fac(10,20) SetCompanyInputDemand');
+      expect(world.facs.store.compInputs?.[0].demanded).toBe(50);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('accepts a restore that reads back within the one unit the ceil introduces', async () => {
+      const world = new ConnWorld();
+      (world.facs.store.compInputs as CompInputData[])[0] = { ...(world.facs.store.compInputs as CompInputData[])[0], demanded: 32, maxDemand: 70 };
+      arrange(world);
+      const result = await run('company-input-demand');
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.value)).toEqual(['66', '46']);
+      expect(world.facs.store.compInputs?.[0].demanded).toBe(33);
+    });
+
+    it('never writes a non-editable input, and takes the next editable one', async () => {
+      const world = new ConnWorld();
+      const base = (world.facs.store.compInputs as CompInputData[])[0];
+      world.facs.store.compInputs = [{ ...base, name: 'Locked', editable: false }, { ...base, name: 'Free' }];
+      arrange(world);
+      const result = await run('company-input-demand');
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.params.index)).toEqual(['1', '1']);
+    });
+
+    it('refuses a non-editable input: UNPROVEN, cited, nothing written', async () => {
+      const world = new ConnWorld();
+      world.facs.store.compInputs = [{ ...(world.facs.store.compInputs as CompInputData[])[0], editable: false }];
+      world.found.warehouse = false;
+      arrange(world);
+      const result = await run('company-input-demand');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^RDOSetCompanyInputDemand — .*Kernel\/Kernel\.pas:5887.*"Advertisement": not editable.*industry Farm \(30,40\): no company input.*warehouse fixture: none in Helartia/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('refuses a zero-capacity input', async () => {
+      const world = new ConnWorld();
+      world.facs.store.compInputs = [{ ...(world.facs.store.compInputs as CompInputData[])[0], maxDemand: 0 }];
+      arrange(world);
+      const result = await run('company-input-demand');
+      expect(result.unproven[0]).toMatch(/capacity 0/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('is UNPROVEN when the capacity is too small to tell a move from the ceil', async () => {
+      const world = new ConnWorld();
+      world.facs.store.compInputs = [{ ...(world.facs.store.compInputs as CompInputData[])[0], demanded: 2, maxDemand: 4 }];
+      arrange(world);
+      const result = await run('company-input-demand');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/capacity 4 is too small.*Kernel\/Kernel\.pas:5878/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('FAILs a demand that never moves, even with its line present', async () => {
+      const world = new ConnWorld();
+      world.inert.add('RDOSetCompanyInputDemand');
+      arrange(world);
+      const result = await run('company-input-demand');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ readBack: 'UNCONFIRMED', logLine: '12:00 - Fac(10,20) SetCompanyInputDemand' });
+    });
+
+    it('FAILs a read-back of the wrong input (renamed row)', async () => {
+      const world = new ConnWorld();
+      arrange(world);
+      const original = world.respond.bind(world);
+      jest.spyOn(world, 'respond').mockImplementation(msg => {
+        const answer = original(msg) as { compInputs?: CompInputData[] };
+        if (world.writes.length > 0 && answer?.compInputs) answer.compInputs[0].name = 'Renamed';
+        return answer;
+      });
+      const result = await run('company-input-demand');
+      expect(result.status).toBe('FAIL');
+    });
+  });
+
+  describe('trade-settings', () => {
+    const atIndustry = (world: ConnWorld) => world.writes.filter(w => w.x === 30 && w.y === 40);
+
+    it('nudges the warehouse role and both trade levels, proves each, restores each — and never sends RDOSetRole to the industry', async () => {
+      const world = new ConnWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('trade-settings', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => [w.x, w.y, w.property, w.value])).toEqual([
+        [50, 60, 'RDOSetRole', '5'],
+        [50, 60, 'RDOSetRole', '2'],
+        [50, 60, 'RDOSetTradeLevel', '3'],
+        [50, 60, 'RDOSetTradeLevel', '0'],
+        [30, 40, 'RDOSetTradeLevel', '2'],
+        [30, 40, 'RDOSetTradeLevel', '3'],
+      ]);
+      expect(result.probes.map(p => p.logLine)).toEqual([
+        null, '12:00 - Fac(50,60) SetTradeLevel', '12:00 - Fac(30,40) SetTradeLevel',
+      ]);
+      expect(atIndustry(world).some(w => w.property === 'RDOSetRole')).toBe(false);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each(['2', '5', '6'])('never writes a role outside TRADE_MODE_VALUES (from %s)', async role => {
+      const world = new ConnWorld();
+      world.facs.warehouse.role = role;
+      arrange(world);
+      await run('trade-settings');
+      for (const w of world.writes.filter(x => x.property === 'RDOSetRole')) expect(['2', '5', '6']).toContain(w.value);
+      expect(world.writes.filter(x => x.property === 'RDOSetRole').map(w => w.value)[1]).toBe(role);
+    });
+
+    it('writes no role when the current one is not offered, and still drives the trade levels', async () => {
+      const world = new ConnWorld();
+      world.facs.warehouse.role = '1';
+      arrange(world);
+      const result = await run('trade-settings');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetRole — .*Role "1".*isTradeModeValue.*StdBlocks\/Warehouses\.pas:527/)]);
+      expect(world.writes.some(w => w.property === 'RDOSetRole')).toBe(false);
+      expect(world.writes.filter(w => w.property === 'RDOSetTradeLevel')).toHaveLength(4);
+    });
+
+    it('writes no trade level the client could not send back', async () => {
+      const world = new ConnWorld();
+      world.facs.industry.tradeLevel = '1';
+      arrange(world);
+      const result = await run('trade-settings');
+      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetTradeLevel on Farm \(30,40\) — its TradeLevel "1".*TRADE_LEVEL_VALUES 0\/2\/3/)]);
+      expect(atIndustry(world)).toEqual([]);
+    });
+
+    it('FAILs a trade level that never moves, even with its line present', async () => {
+      const world = new ConnWorld();
+      world.inert.add('RDOSetTradeLevel');
+      arrange(world);
+      const result = await run('trade-settings');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[1]).toMatchObject({ status: 'FAIL', logLine: '12:00 - Fac(50,60) SetTradeLevel' });
+    });
+
+    it('runs the industry half when the warehouse fixture is missing, and writes nothing when both are', async () => {
+      const world = new ConnWorld();
+      world.found.warehouse = false;
+      arrange(world);
+      const result = await run('trade-settings');
+      expect(result.status).toBe('UNPROVEN');
+      expect(world.writes.map(w => [w.x, w.property])).toEqual([[30, 'RDOSetTradeLevel'], [30, 'RDOSetTradeLevel']]);
+
+      const none = new ConnWorld();
+      none.found = { warehouse: false, industry: false };
+      arrange(none);
+      expect((await run('trade-settings')).status).toBe('UNPROVEN');
+      expect(setProps(none)).toEqual([]);
+    });
+  });
+
+  describe('warehouse-wares', () => {
+    const mega = (facId: number): Record<string, FacilityDimensions> => ({
+      '532': { visualClass: '532', name: 'Storage', facid: '', xsize: 4, ysize: 4, level: 0, facId },
+    });
+
+    it('sends nothing to a warehouse that is not a MegaStorage, and records it unproven', async () => {
+      const world = new ConnWorld();
+      world.dims = mega(122);
+      arrange(world);
+      const result = await run('warehouse-wares');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^RDOSelectWare — .*facId 122.*StdBlocks\/MegaWarehouse\.pas:25.*StdBlocks\/Warehouses\.pas:95/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('toggles the first disabled ware on and back off on a MegaStorage', async () => {
+      const world = new ConnWorld();
+      world.dims = mega(125);
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('warehouse-wares', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => [w.property, w.value, w.params])).toEqual([
+        ['RDOSelectWare', '-1', { index: '1' }],
+        ['RDOSelectWare', '0', { index: '1' }],
+      ]);
+      expect(world.facs.warehouse.wares?.[1].enabled).toBe(false);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('toggles the first ware off and back on when every ware is enabled', async () => {
+      const world = new ConnWorld();
+      world.dims = mega(126);
+      (world.facs.warehouse.wares as WarehouseWareData[])[1].enabled = true;
+      arrange(world);
+      const result = await run('warehouse-wares');
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => [w.value, w.params.index])).toEqual([['0', '0'], ['-1', '0']]);
+    });
+
+    it('FAILs a toggle that never reads back', async () => {
+      const world = new ConnWorld();
+      world.dims = mega(125);
+      world.inert.add('RDOSelectWare');
+      arrange(world);
+      expect((await run('warehouse-wares')).status).toBe('FAIL');
+    });
+
+    it('is UNPROVEN when the storage lists no ware, or the fixture is missing', async () => {
+      const world = new ConnWorld();
+      world.dims = mega(125);
+      world.facs.warehouse.wares = [];
+      arrange(world);
+      expect((await run('warehouse-wares')).unproven[0]).toMatch(/lists no ware/);
+
+      const gone = new ConnWorld();
+      gone.found.warehouse = false;
+      arrange(gone);
+      expect((await run('warehouse-wares')).status).toBe('UNPROVEN');
+      expect(setProps(gone)).toEqual([]);
+    });
+  });
+
+  describe('quick-trade-roundtrip', () => {
+    it('connects to the own warehouses, proves the line and the new links, undoes it, and checks the initial suppliers', async () => {
+      const world = new ConnWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('quick-trade-roundtrip', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => [w.x, w.y, w.property, w.params])).toEqual([
+        [30, 40, 'RDOConnectToTycoon', { kind: '1' }],
+        [30, 40, 'RDODisconnectFromTycoon', { kind: '1' }],
+      ]);
+      expect(result.probes[0]).toMatchObject({
+        original: 'snapshot', written: 'new-links', logLine: '12:00 - Fac(30,40) Connect to Tycoon: 123456', restored: true,
+      });
+      expect(result.assertions.find(a => a.what === 'the initial-supplier list equals its snapshot')?.ok).toBe(true);
+      expect(keysOf(world.facs.industry.products[0])).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('does nothing when an SPO_test3 facility is already a client — by company or by lot', async () => {
+      const byCompany = new ConnWorld();
+      byCompany.link(byCompany.facs.industry, 'products', 'Chemicals', { x: 90, y: 91, name: 'Mayor Shop', company: 'Mayor of Helartia' });
+      arrange(byCompany);
+      const r1 = await run('quick-trade-roundtrip');
+      expect(r1.status).toBe('UNPROVEN');
+      expect(r1.unproven[0]).toMatch(/^RDOConnectToTycoon — .*Kernel\/Kernel\.pas:4593-4600.*Mayor Shop \(90,91\)/);
+      expect(setProps(byCompany)).toEqual([]);
+
+      const byLot = new ConnWorld();
+      byLot.tycoon.push({ company: 'Renamed Co', x: 92, y: 93, name: 'Shop' });
+      byLot.link(byLot.facs.industry, 'products', 'Chemicals', { x: 92, y: 93, name: 'Shop', company: 'Unlisted Co' });
+      arrange(byLot);
+      expect((await run('quick-trade-roundtrip')).status).toBe('UNPROVEN');
+      expect(setProps(byLot)).toEqual([]);
+    });
+
+    it('does nothing when a product gate lists more clients than it read', async () => {
+      const world = new ConnWorld();
+      world.facs.industry.products[0].connectionCount = 5;
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.unproven[0]).toMatch(/5 client\(s\) listed but 0 read/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('does nothing when the fixture is an initial supplier', async () => {
+      const world = new ConnWorld();
+      world.auto.fluids[0].suppliers.push({ facilityName: 'Farm', facilityId: '30,40,', companyName: OWN_CO });
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual([expect.stringMatching(/initial suppliers.*Kernel\/Kernel\.pas:4564-4565, :4606-4607/)]);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('does nothing when an SPO_test3 warehouse lies outside Helartia, or cannot be read', async () => {
+      const world = new ConnWorld();
+      world.tycoon.push({ company: OWN_CO, x: 200, y: 200, name: 'Far Storage' }, { company: OWN_CO, x: 210, y: 210, name: 'Far Farm' }, { company: OWN_CO, x: 220, y: 220, name: 'Gone' });
+      world.towns = { '200,200': 6, '210,210': 6, '220,220': 6 };
+      world.outsideTabs = { '200,200': ['whGeneral'], '210,210': ['indGeneral'] };
+      world.unreadable.add('220,220');
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual([
+        expect.stringMatching(/outside Helartia.*Kernel\/Kernel\.pas:4537-4553.*Far Storage \(200,200\) of SPO_test3 - Green \| Gone \(220,220\) could not be read/),
+      ]);
+      expect(result.unproven[0]).not.toMatch(/Far Farm/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('FAILs when the initial-supplier list differs after the undo', async () => {
+      const world = new ConnWorld();
+      world.onUndoTycoon = () => {
+        world.auto.fluids[0].suppliers = [];
+      };
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].status).toBe('PASS');
+      expect(result.assertions.find(a => !a.ok)).toMatchObject({
+        what: 'the initial-supplier list equals its snapshot', detail: 'before: Water:7,8, — after: (none)',
+      });
+    });
+
+    it('FAILs a connect whose new links never show, even with its line present', async () => {
+      const world = new ConnWorld();
+      world.inert.add('RDOConnectToTycoon');
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ readBack: 'UNCONFIRMED', logLine: '12:00 - Fac(30,40) Connect to Tycoon: 123456' });
+    });
+
+    it('reports an unreadable initial-supplier page after the undo as a difference', async () => {
+      const world = new ConnWorld();
+      world.onUndoTycoon = () => {
+        world.auto = { fluids: [], cacheUnavailable: true };
+      };
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/after: \(unreadable: .*cacheUnavailable/);
+    });
+
+    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+      const world = new ConnWorld();
+      world.found.industry = false;
+      arrange(world);
+      expect((await run('quick-trade-roundtrip')).status).toBe('UNPROVEN');
+      expect(setProps(world)).toEqual([]);
     });
   });
 });

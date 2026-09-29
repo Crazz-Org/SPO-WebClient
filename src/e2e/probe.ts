@@ -77,6 +77,12 @@ export interface ReadBackProof {
   pollMs?: number;
   /** A documented server quantisation, applied to both sides of the comparison. */
   normalise?: (value: string) => string;
+  /**
+   * A documented server rounding that equality cannot express (e.g. a `ceil` on the read side).
+   * When set it replaces the equality (and `normalise`) in both polls; `expected` is the value
+   * written, or the original on the restore poll.
+   */
+  matches?: (last: string, expected: string) => boolean;
 }
 
 /** The log line proving receipt: it must contain `marker` and satisfy `match` when given. */
@@ -249,7 +255,9 @@ async function pollReadBack(
   const deadline = now() + proof.boundMs;
   for (;;) {
     const last = await proof.read();
-    if (last !== undefined && normalise(last) === target) return { verdict: 'CONFIRMED', last };
+    const confirmed =
+      last !== undefined && (proof.matches ? proof.matches(last, expected) : normalise(last) === target);
+    if (confirmed) return { verdict: 'CONFIRMED', last };
     if (now() >= deadline) return { verdict: 'UNCONFIRMED', last };
     await sleep(proof.pollMs ?? TIMEOUTS.readBackPoll);
   }

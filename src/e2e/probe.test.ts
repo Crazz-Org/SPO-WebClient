@@ -484,6 +484,56 @@ describe('runRoundTrip', () => {
     expect(result.written).toBe('8.4');
   });
 
+  describe('matches — a rounding equality cannot express (#1153)', () => {
+    // The server stores a percent and publishes ceil(units): 30% of 7 units reads back 3.
+    const units = (p: string): string => String(Math.ceil((Number(p) * 7) / 100));
+
+    it('confirms the forward poll through matches where plain equality would fail', async () => {
+      jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 30');
+      const w = world('50');
+      const shown = { value: '4' };
+      const write = jest.fn(async (v: string) => {
+        w.state.writes.push(v);
+        shown.value = units(v);
+      });
+      const spec = roundTrip(w, { write, testValue: () => '30' });
+      spec.proof.readBack = {
+        ...spec.proof.readBack,
+        read: async () => shown.value,
+        matches: (last, expected) => Math.abs(Number(last) - Number(units(expected))) <= 1,
+      };
+      const result = await runRoundTrip(spec, tempLock(), factory, window.url, timed());
+      expect(result).toMatchObject({ status: 'PASS', readBack: 'CONFIRMED', restoreReadBack: 'CONFIRMED' });
+      expect(w.state.writes).toEqual(['30', '50']);
+    });
+
+    it('hands the restore poll the original as expected', async () => {
+      jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+      const w = world('7');
+      const seen: string[] = [];
+      const spec = roundTrip(w);
+      spec.proof.readBack = {
+        ...spec.proof.readBack,
+        matches: (last, expected) => {
+          seen.push(expected);
+          return last === expected;
+        },
+      };
+      const result = await runRoundTrip(spec, tempLock(), factory, window.url, timed());
+      expect(result.status).toBe('PASS');
+      expect(seen).toEqual(['8', '7']);
+    });
+
+    it('FAILs UNCONFIRMED when matches refuses, even though equality would pass', async () => {
+      jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+      const w = world('7');
+      const spec = roundTrip(w);
+      spec.proof.readBack = { ...spec.proof.readBack, matches: () => false };
+      const result = await runRoundTrip(spec, tempLock(), factory, window.url, timed());
+      expect(result).toMatchObject({ status: 'FAIL', readBack: 'UNCONFIRMED', restoreReadBack: 'UNCONFIRMED', restored: false });
+    });
+  });
+
   it('truncates a long original in the pending restore label but keeps it whole in originalValue', async () => {
     jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
     const long = 'A'.repeat(200);

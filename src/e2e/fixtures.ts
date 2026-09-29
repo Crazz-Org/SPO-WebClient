@@ -630,6 +630,58 @@ export async function findFixture(session: LiveSession, kind: FixtureKind): Prom
   return pickFixture(holdings, sites, kind);
 }
 
+/**
+ * `null` when (x, y) is SPO_test3's own facility in Helartia, else why not — the checks
+ * `scanHoldings` applies to each directory row: TOWNS reads Helartia, a building is anchored
+ * there, and its lot carries SPO_test3's tycoon id (#1153: a counterpart is never another
+ * player's, since a link is written on both gates, `Kernel/Kernel.pas:6784-6785`).
+ */
+export async function ownLotRefusal(session: LiveSession, x: number, y: number): Promise<string | null> {
+  const helartia = await helartiaValue(session);
+  const town = await townValueAt(session, x, y);
+  if (helartia === undefined || town !== helartia) {
+    return `(${x},${y}) is not in ${GOVERNED_TOWN} (TOWNS ${String(town)}, ${GOVERNED_TOWN} ${String(helartia)})`;
+  }
+  const b = await buildingAt(session, x, y);
+  if (!b) return `no building anchored at (${x},${y})`;
+  const tycoonId = ownTycoonId(session);
+  if (!ownedBy(b, tycoonId)) return `(${x},${y}) is owned by tycoon ${String(b.tycoonId)}, not ${PRIMARY_ACCOUNT.username} (${tycoonId})`;
+  return null;
+}
+
+/** One facility row of SPO_test3's directory branch. */
+export interface TycoonFacility {
+  company: string;
+  x: number;
+  y: number;
+  name: string;
+}
+
+/**
+ * Every company the directory lists for SPO_test3 and every facility row under each, in any town
+ * — no Helartia filter. Quick Trade's disconnect reaches every facility of the tycoon's companies
+ * (`Kernel/Kernel.pas:4537-4553`), so its guards need the whole list.
+ */
+export async function listTycoonFacilities(
+  session: LiveSession,
+): Promise<{ companies: string[]; facilities: TycoonFacility[] }> {
+  const tycoon = PRIMARY_ACCOUNT.username;
+  const out: { companies: string[]; facilities: TycoonFacility[] } = { companies: [], facilities: [] };
+  const companies = await readDirectory(session, { kind: 'tycoon-companies', tycoon });
+  if (companies.kind !== 'folder') return out;
+  for (const company of companies.items) {
+    out.companies.push(company);
+    const kinds = await readDirectory(session, { kind: 'tycoon-company', tycoon, company });
+    if (kinds.kind !== 'folder') continue;
+    for (const facKind of kinds.items) {
+      const page = await readDirectory(session, { kind: 'tycoon-facility-kind', tycoon, company, facKind });
+      if (page.kind !== 'facility-list') continue;
+      for (const row of page.facilities) out.facilities.push({ company, x: row.x, y: row.y, name: row.name });
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------
 // 5. ensureFixtures
 // ---------------------------------------------------------------------------------------------

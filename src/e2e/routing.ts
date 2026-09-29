@@ -41,6 +41,18 @@ export const NIGHTLY_ONLY: Record<string, string> = {
     'builds only when a fixture is missing — the one sanctioned permanent mutation (#1149); the nightly re-creates a fixture that disappeared, no gate requires it',
   'industry-supply-limits':
     "data-gated: every industry fixture candidate is a farm (#1149), whose supply gate is a plain TPullInput (StdBlocks/Farms.pas:76-82) that never caches a sort mode (Kernel/Kernel.pas:7169-7171; only Kernel/MediaGates.pas:388-389 does), and a fixture built fresh has no supplier row for the overprice write — RDOSetInputSortMode / RDOSetInputOverPrice end UNPROVEN, which fails a gate (E2E-POLICY §7)",
+  'supplier-hire-fire':
+    "data-gated: it needs a supplier of SPO_test3's own company, in Helartia, on an input fluid of the industry fixture; none ends UNPROVEN, which fails a gate. Hiring anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
+  'client-hire-remove':
+    "data-gated: it needs a client of SPO_test3's own company, in Helartia, on an output fluid of the industry fixture; none ends UNPROVEN, which fails a gate. Adding anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
+  'connect-on-map':
+    'data-gated: it needs an own counterpart that shares a tradeable fluid with the industry fixture. ConnectFacilities hires every matching fluid in both directions (Kernel/World.pas:3710-3726, Kernel/Kernel.pas:5470-5513), on both gates (Kernel/Kernel.pas:6784-6785)',
+  'company-input-demand':
+    'data-gated: an editable company input is data, not guaranteed — cEditable is written only for a meta input flagged Editable (Kernel/Kernel.pas:5887); none ends UNPROVEN, which fails a gate',
+  'warehouse-wares':
+    'data-gated: only a MegaStorage publishes RDOSelectWare (StdBlocks/MegaWarehouse.pas:25; a TWarehouse publishes RDOSetRole only, StdBlocks/Warehouses.pas:95), and findFixture takes the first holding that carries whGeneral (#1149), which need not be one',
+  'quick-trade-roundtrip':
+    "data-gated by three guards: the disconnect drops the fixture's outputs from every SPO_test3 facility's matching input, whatever its type (Kernel/Kernel.pas:4593-4600), across all its companies and towns (Kernel/Kernel.pas:4537-4553), and unregisters the fixture as an initial supplier (Kernel/Kernel.pas:4564-4565, :4606-4607); a guard that holds ends UNPROVEN, which fails a gate",
 };
 
 /**
@@ -231,14 +243,16 @@ export const ROUTES: RouteRule[] = [
     flows: [
       'building-details', 'politics-write', 'permission-negative', 'town-min-wage',
       'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
+      'trade-settings',
       'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
     ],
     why:
       'the facility details/property handlers changed — the flows that read and write a facility (including the ' +
       'minimum-wage argument builder), the one that asserts canGovern (grantAccess), the inspector reads no other ' +
-      "flow sends (gate connections, service figures, worker counts, refresh), and the owner setters on SPO_test3's " +
-      'store and industry fixtures (#1152) and its residential, bank, TV, industry and research fixtures — including ' +
-      'the RDOQueueResearch / RDOCancelResearch cases of buildRdoCommandArgs (#1154)',
+      "flow sends (gate connections, service figures, worker counts, refresh), the owner setters on SPO_test3's " +
+      'store and industry fixtures (#1152), the trade role and level on its warehouse and industry (#1153), and its ' +
+      'residential, bank, TV, industry and research fixtures — including the RDOQueueResearch / RDOCancelResearch ' +
+      'cases of buildRdoCommandArgs (#1154)',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
@@ -258,11 +272,15 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
     test: /^src\/server\/ws-handlers\/misc-handlers\.ts$/,
-    flows: ['favorites-roundtrip', 'favorites-folders', 'world-readers', 'cluster-info-read', 'zone-roundtrip', 'research-roundtrip'],
+    flows: [
+      'favorites-roundtrip', 'favorites-folders', 'world-readers', 'cluster-info-read', 'zone-roundtrip',
+      'supplier-search-read', 'research-roundtrip',
+    ],
     why:
       'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_* / REQ_WORLD_EVENT / ' +
-      'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES / REQ_DEFINE_ZONE / REQ_RESEARCH_INVENTORY / REQ_RESEARCH_DETAILS; ' +
-      'not driven by any flow yet: REQ_CREATE_COMPANY, REQ_SEARCH_CONNECTIONS, REQ_CONNECTION_REACHABILITY',
+      'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES / REQ_DEFINE_ZONE, REQ_SEARCH_CONNECTIONS / ' +
+      'REQ_CONNECTION_REACHABILITY (supplier-search-read, #1153) and REQ_RESEARCH_INVENTORY / REQ_RESEARCH_DETAILS ' +
+      '(research-roundtrip, #1154); not driven by any flow yet: REQ_CREATE_COMPANY',
   },
   {
     // Before the fallbacks below. A shared rule: later area cards only APPEND flows here.
@@ -348,12 +366,14 @@ export const ROUTES: RouteRule[] = [
     flows: [
       'building-details', 'town-min-wage',
       'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
+      'trade-settings',
       'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
     ],
     why:
       "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in " +
-      'template-groups.ts, the store and industry owner setters the panels send (#1152), and the residential, bank, ' +
-      'TV, accept-cloning and research controls (ResearchPanel.tsx, HQ_INVENTIONS_GROUP) (#1154)',
+      'template-groups.ts, the store and industry owner setters the panels send (#1152), the trade role and ' +
+      'level (trade-settings.ts, #1153), and the residential, bank, TV, accept-cloning and research controls ' +
+      '(ResearchPanel.tsx, HQ_INVENTIONS_GROUP) (#1154)',
   },
   {
     test: /^src\/client\/components\/mail\/|^src\/server\/mail/,

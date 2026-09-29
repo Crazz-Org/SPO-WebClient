@@ -63,6 +63,9 @@ import type {
   PictureUploadFailure,
   WsRespSearchConnections,
   ConnectionSearchResult,
+  WsRespConnectionReachability,
+  WsRespConnectFacilities,
+  WsRespBuildingSetProperty,
   WsRespBuildRoad,
   WsRespDemolishRoad,
   WsRespDemolishRoadArea,
@@ -99,6 +102,7 @@ import type {
   BuildingSupplyData,
   BuildingInfo,
   CompaniesData,
+  CompInputData,
   CurriculumData,
   PolicyData,
   ProfitLossData,
@@ -142,6 +146,7 @@ import {
   type RoundTripSpec,
 } from './probe';
 import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
+import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES, isTradeModeValue } from '../shared/building-details/trade-settings';
 import {
   awaitResumeToken,
   findTown,
@@ -167,13 +172,17 @@ import {
   facilityDimensions,
   findFixture,
   findFreeLot,
+  helartiaValue,
   isConstructionClass,
   isRefusedClass,
   listBuildable,
+  listTycoonFacilities,
   newFacilityLineMatches,
+  ownLotRefusal,
   ownTycoonId,
   placeFacility,
   readCash,
+  townValueAt,
   FIXTURE_CASH_FLOOR,
   type FixtureKind,
   type FixtureKindId,
@@ -5250,6 +5259,1015 @@ const industryAutoBuy: Flow = {
 };
 
 // ---------------------------------------------------------------------------------------------
+// Inspector flows (#1153) — suppliers, clients, Connect on the map, Quick Trade, trade settings,
+// warehouse wares, company input demand
+// ---------------------------------------------------------------------------------------------
+//
+// Every counterpart is SPO_test3's own: a link is written on both gates (`TGate.ConnectTo`,
+// Kernel/Kernel.pas:6784-6785), so hiring anyone else would write their facility
+// (doc/E2E-POLICY.md §9). A Survival line proves receipt only; the read-back decides.
+
+/** How many search results the reachability read asks about — below REACHABILITY_BATCH_SIZE (10), so one push. */
+const REACHABILITY_CANDIDATES = 5;
+
+/** A gate's links as sorted, de-duplicated `x,y` keys joined by a space — its identity for a snapshot. */
+export function linkSet(connections: BuildingConnectionData[]): string {
+  return [...new Set(connections.map(c => `${c.x},${c.y}`))].sort().join(' ');
+}
+
+/** `set` with `key` added, in `linkSet` form. */
+function withLink(set: string, key: string): string {
+  return [...new Set([...set.split(' ').filter(Boolean), key])].sort().join(' ');
+}
+
+/** `ParseGateList` (Kernel/Kernel.pas:4277) reads `x1,y1,x2,y2,` — a trailing comma after each pair. */
+function connectionList(keys: string[]): string {
+  return keys.map(k => `${k},`).join('');
+}
+
+/**
+ * The search results a hire may pick: SPO_test3's own company, in Helartia (or no town given),
+ * not already connected to the gate, and not the fixture itself.
+ */
+export function hireCandidates(
+  results: ConnectionSearchResult[],
+  connected: BuildingConnectionData[],
+  ownCompany: string,
+  fx: { x: number; y: number },
+): ConnectionSearchResult[] {
+  const linked = new Set(connected.map(c => `${c.x},${c.y}`));
+  return results.filter(
+    r =>
+      r.companyName === ownCompany &&
+      (!r.town || r.town === GOVERNED_TOWN) &&
+      !linked.has(`${r.x},${r.y}`) &&
+      !(r.x === fx.x && r.y === fx.y),
+  );
+}
+
+/** Every gate of a facility, keyed `supplies:<name>` / `products:<name>`. */
+export type GateLinks = Record<string, { fluid: string; keys: string[]; complete: boolean }>;
+
+/**
+ * `'snapshot'` when every gate equals its snapshot, `'new-links'` when nothing was lost and at
+ * least one link was gained, otherwise the lost links by gate.
+ */
+export function linkState(snapshot: GateLinks, now: GateLinks): string {
+  const lost: string[] = [];
+  for (const [gate, before] of Object.entries(snapshot)) {
+    const after = new Set(now[gate]?.keys ?? []);
+    const missing = before.keys.filter(k => !after.has(k));
+    if (missing.length > 0) lost.push(`lost ${gate}: ${missing.join(' ')}`);
+  }
+  if (lost.length > 0) return lost.join('; ');
+  return gainedLinks(snapshot, now).length > 0 ? 'new-links' : 'snapshot';
+}
+
+/** The links each gate shows that its snapshot did not. */
+export function gainedLinks(
+  snapshot: GateLinks,
+  now: GateLinks,
+): { gate: string; tab: 'supplies' | 'products'; fluid: string; keys: string[] }[] {
+  const out: { gate: string; tab: 'supplies' | 'products'; fluid: string; keys: string[] }[] = [];
+  for (const [gate, after] of Object.entries(now)) {
+    const before = new Set(snapshot[gate]?.keys ?? []);
+    const keys = after.keys.filter(k => !before.has(k));
+    if (keys.length > 0) out.push({ gate, tab: gate.startsWith('supplies:') ? 'supplies' : 'products', fluid: after.fluid, keys });
+  }
+  return out;
+}
+
+/** Several facilities' `linkState`s as one: any loss wins, then any gain. */
+function combinedState(states: string[]): string {
+  const lost = states.filter(s => s !== 'snapshot' && s !== 'new-links');
+  if (lost.length > 0) return lost.join('; ');
+  return states.includes('new-links') ? 'new-links' : 'snapshot';
+}
+
+/** The first `RDOSetRole` argument the client offers that differs from the original (TRADE_MODE_VALUES). */
+export function tradeRoleNudge(original: string): string {
+  const current = parseInt(original, 10);
+  return String(TRADE_MODE_VALUES.find(v => v !== current) ?? TRADE_MODE_VALUES[0]);
+}
+
+/** Another trade level the client offers (TRADE_LEVEL_VALUES): 3 (Anyone) <-> 2 (Allies only). */
+export function tradeLevelNudge(original: string): string {
+  return original === '3' ? '2' : '3';
+}
+
+/** A value the trade-level combo can send back (TRADE_LEVEL_VALUES, trade-settings.ts). */
+function isTradeLevelValue(raw: string | undefined): boolean {
+  return raw !== undefined && /^\d+$/.test(raw.trim()) && TRADE_LEVEL_VALUES.includes(Number(raw));
+}
+
+/**
+ * The class is an Import or Export Storage: `FID_MegaWarehouseImp` / `FID_MegaWarehouseExp`
+ * (Model Extensions/FacIds.pas:109-110), both `TMegaStorage` (General/GeneralPack1.dpr:711-715,
+ * :746-750) — the only block publishing `RDOSelectWare` (StdBlocks/MegaWarehouse.pas:25).
+ */
+export function isMegaStorage(dims: Record<string, FacilityDimensions>, visualClass: string): boolean {
+  const facId = dims[visualClass]?.facId;
+  return facId === 125 || facId === 126;
+}
+
+/** The demand as the slider shows it: `round(100 * cInputDem / cInputMax)`. */
+export function companyDemandPercent(dem: number, max: number): number {
+  return Math.round((100 * dem) / max);
+}
+
+/** The percent to write: 20 points toward the middle. */
+export function companyDemandTarget(p0: number): number {
+  return p0 >= 50 ? p0 - 20 : p0 + 20;
+}
+
+/** The units a percent reads back as: `cInputDem = ceil(units(Max))` (Kernel/Kernel.pas:5878). */
+export function companyDemandUnits(p: number, max: number): number {
+  return Math.ceil((p * max) / 100);
+}
+
+/** (x, y) is one of the tycoon's initial suppliers — `facilityId` is `"x,y,"` (auto-connection-handler.ts). */
+export function initialSupplierAt(data: AutoConnectionsData, x: number, y: number): boolean {
+  return data.fluids.some(f =>
+    f.suppliers.some(s => {
+      const [sx, sy] = s.facilityId.split(',');
+      return Number(sx) === x && Number(sy) === y;
+    }),
+  );
+}
+
+/** The initial-supplier list's identity: sorted `fluidId:facilityId` entries. */
+export function initialSuppliersKey(data: AutoConnectionsData): string {
+  return data.fluids
+    .flatMap(f => f.suppliers.map(s => `${f.fluidId}:${s.facilityId}`))
+    .sort()
+    .join(' ');
+}
+
+/**
+ * A set-property the gateway waits on: `RDOConnectInput` / `RDOConnectOutput` are synchronous
+ * (`SYNCHRONOUS_RDO_COMMANDS`, building-property-handler.ts, 5–30 s by its own comment), past
+ * the default request bound.
+ */
+async function setPropertySlow(
+  session: LiveSession,
+  fx: OwnFixture,
+  propertyName: string,
+  additionalParams: Record<string, string>,
+): Promise<void> {
+  await session.driver.request<WsRespBuildingSetProperty>(
+    { type: WsMessageType.REQ_BUILDING_SET_PROPERTY, x: fx.x, y: fx.y, propertyName, value: '0', additionalParams },
+    WsMessageType.RESP_BUILDING_SET_PROPERTY,
+    TIMEOUTS.login,
+  );
+}
+
+/** A connection search the way the hire dialogs send it, restricted to Helartia and SPO_test3's own company. */
+async function searchOwn(
+  session: LiveSession,
+  fx: OwnFixture,
+  fluidId: string,
+  direction: 'input' | 'output',
+): Promise<WsRespSearchConnections> {
+  return session.driver.request<WsRespSearchConnections>(
+    {
+      type: WsMessageType.REQ_SEARCH_CONNECTIONS,
+      buildingX: fx.x,
+      buildingY: fx.y,
+      fluidId,
+      direction,
+      filters: { town: GOVERNED_TOWN, company: session.company.name },
+    },
+    WsMessageType.RESP_SEARCH_CONNECTIONS,
+  );
+}
+
+/** Every listed gate of the given tabs, read fresh. A gate that answers nothing is incomplete. */
+async function readGateLinks(
+  session: LiveSession,
+  fx: OwnFixture,
+  tabs: readonly ('supplies' | 'products')[],
+): Promise<GateLinks> {
+  const out: GateLinks = {};
+  for (const tabId of tabs) {
+    for (const stub of await gateStubs(session, fx, tabId)) {
+      const response = await gateConnections(session, fx, tabId, stub);
+      const gate = tabId === 'supplies' ? response.supply : response.product;
+      out[`${tabId}:${stub.name}`] = gate
+        ? {
+            fluid: gate.metaFluid ?? '',
+            keys: linkSet(gate.connections).split(' ').filter(Boolean),
+            complete: gate.connectionCount === gate.connections.length,
+          }
+        : { fluid: '', keys: [], complete: false };
+    }
+  }
+  return out;
+}
+
+const BOTH_TABS = ['supplies', 'products'] as const;
+const LINK_WHY = `${GATE_CACHE_WHY}; a link is written on both gates (Kernel/Kernel.pas:6784-6785)`;
+const FOREIGN_WHY = 'hiring anyone else writes their gate (Kernel/Kernel.pas:6784-6785, E2E-POLICY §9)';
+
+/**
+ * The connection searches the hire dialogs send, read only: one input fluid of the industry
+ * fixture, Helartia and SPO_test3's own company, then the road reachability of the first results.
+ */
+const supplierSearchRead: Flow = {
+  name: 'supplier-search-read',
+  what:
+    "REQ_SEARCH_CONNECTIONS for one input fluid of SPO_test3's industry fixture (Helartia, own company) -> " +
+    'REQ_CONNECTION_REACHABILITY for the first candidates — no write',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('supplier-search-read', assertions, [], session);
+      let fluid: string | undefined;
+      for (const stub of await gateStubs(session, fx, 'supplies')) {
+        const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
+        if (supply?.metaFluid) {
+          fluid = supply.metaFluid;
+          break;
+        }
+      }
+      assertions.check('the industry fixture lists a supply gate with a fluid', fluid !== undefined, fluid ?? 'none');
+      if (fluid !== undefined) {
+        const search = await searchOwn(session, fx, fluid, 'input');
+        const results = Array.isArray(search.results) ? search.results : undefined;
+        // An empty list is an answer: SPO_test3 may own no supplier of that fluid in Helartia.
+        assertions.check(
+          `REQ_SEARCH_CONNECTIONS answered a candidate list for ${fluid}`,
+          results !== undefined,
+          results ? `${results.length} candidate(s)` : 'no results array',
+        );
+        const batch = (results ?? []).slice(0, REACHABILITY_CANDIDATES);
+        if (batch.length === 0) {
+          // The gateway pushes nothing for an empty list (resolveConnectionReachability): a request
+          // sent here would wait for an answer that never comes.
+          const sent = session.driver.log.some(
+            e => e.direction === 'sent' && e.type === WsMessageType.REQ_CONNECTION_REACHABILITY,
+          );
+          assertions.check('REQ_CONNECTION_REACHABILITY', !sent, sent ? 'sent for an empty list' : 'not sent: no candidate');
+        } else {
+          const answer = await session.driver.request<WsRespConnectionReachability>(
+            {
+              type: WsMessageType.REQ_CONNECTION_REACHABILITY,
+              buildingX: fx.x,
+              buildingY: fx.y,
+              fluidId: fluid,
+              direction: 'input',
+              candidates: batch.map(r => ({ x: r.x, y: r.y })),
+            },
+            WsMessageType.RESP_CONNECTION_REACHABILITY,
+          );
+          const entries = answer.entries ?? [];
+          const missing = batch.filter(
+            r =>
+              !entries.some(
+                e => e.x === r.x && e.y === r.y && ['connected', 'isolated', 'unknown'].includes(e.reachability),
+              ),
+          );
+          assertions.check(
+            'REQ_CONNECTION_REACHABILITY answered each candidate',
+            missing.length === 0,
+            missing.length === 0
+              ? entries.map(e => `(${e.x},${e.y}) ${e.reachability}`).join(' ')
+              : `no answer for ${missing.map(r => `(${r.x},${r.y})`).join(' ')}`,
+          );
+        }
+      }
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('supplier-search-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** One side of a hire: a supplier on an input gate, or a client on an output gate. */
+interface HireSide {
+  flow: string;
+  tab: 'supplies' | 'products';
+  direction: 'input' | 'output';
+  connect: 'RDOConnectInput' | 'RDOConnectOutput';
+  disconnect: 'RDODisconnectInput' | 'RDODisconnectOutput';
+  role: string;
+  /** `Kernel/Kernel.pas:4304` / `:4311` */
+  connected: string;
+  /** `Kernel/Kernel.pas:4320` / `:4327` */
+  disconnected: string;
+}
+
+/**
+ * Hire one own counterpart on a gate of the industry fixture, then fire it. The candidate is
+ * SPO_test3's own facility in Helartia and not already connected; the gate must list exactly its
+ * snapshot again after the undo.
+ */
+async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
+  const assertions = new Assertions();
+  const probes: ProbeResult[] = [];
+  const session = await login(PRIMARY_ACCOUNT);
+  try {
+    const fx = await ownFixture(session, 'industry', assertions);
+    if (!fx) return report(side.flow, assertions, probes, session);
+
+    const refusals: string[] = [];
+    let target: { name: string; fluid: string; candidate: ConnectionSearchResult } | undefined;
+    for (const stub of await gateStubs(session, fx, side.tab)) {
+      const response = await gateConnections(session, fx, side.tab, stub);
+      const gate = side.tab === 'supplies' ? response.supply : response.product;
+      if (!gate?.metaFluid) {
+        refusals.push(`${stub.name}: its header was not read`);
+        continue;
+      }
+      if (gate.connectionCount !== gate.connections.length) {
+        refusals.push(
+          `${stub.name}: ${String(gate.connectionCount)} link(s) listed but ${gate.connections.length} read — ` +
+            'an unread link cannot be told from a candidate',
+        );
+        continue;
+      }
+      const search = await searchOwn(session, fx, gate.metaFluid, side.direction);
+      const results = search.results ?? [];
+      const candidates = hireCandidates(results, gate.connections, session.company.name, fx);
+      if (candidates.length === 0) {
+        refusals.push(`${stub.name}: no own ${side.role} in ${GOVERNED_TOWN} not already connected (${results.length} result(s))`);
+        continue;
+      }
+      for (const candidate of candidates) {
+        const refusal = await ownLotRefusal(session, candidate.x, candidate.y);
+        if (refusal === null) {
+          target = { name: stub.name, fluid: gate.metaFluid, candidate };
+          break;
+        }
+        refusals.push(`${stub.name}: ${candidate.facilityName} (${candidate.x},${candidate.y}) — ${refusal}`);
+      }
+      if (target) break;
+    }
+    if (!target) {
+      assertions.unproven(
+        side.connect,
+        `no ${side.role} of SPO_test3's own company in ${GOVERNED_TOWN} for any ${side.tab} gate of the industry ` +
+          `fixture — ${FOREIGN_WHY}: ${refusals.length > 0 ? refusals.join(' | ') : `the fixture lists no ${side.tab} gate`}`,
+      );
+      return report(side.flow, assertions, probes, session);
+    }
+
+    const { name, fluid, candidate } = target;
+    const key = `${candidate.x},${candidate.y}`;
+    const list = connectionList([key]);
+    const read = async (): Promise<string | undefined> => {
+      const gate = side.tab === 'supplies' ? await readSupply(session, fx, name) : await readProduct(session, fx, name);
+      return gate ? linkSet(gate.connections) : undefined;
+    };
+    const url = await survivalUrl(ctx);
+    const undoWindow = await openLogWindow(url);
+    const probe = await roundTripProbe(ctx, url, {
+      what: `${fixtureLabel(fx)} ${name}: ${side.role} ${candidate.facilityName} (${key})`,
+      member: side.connect,
+      read,
+      testValue: original => withLink(original, key),
+      write: async () => {
+        await setPropertySlow(session, fx, side.connect, { fluidId: fluid, connectionList: list });
+      },
+      restore: async () => {
+        await setBuildingProperty(session, fx.x, fx.y, side.disconnect, '0', { fluidId: fluid, connectionList: list });
+      },
+      proof: {
+        log: {
+          marker: LOG_MARKERS[side.connect],
+          match: line => facLineMatches(line, fx.x, fx.y, `${side.connected} ${fluid} to ${list}`),
+        },
+        readBack: readBackOn(
+          `the ${name} ${side.tab} gate's links (x,y) via REQ_BUILDING_GATE_CONNECTIONS`,
+          LINK_WHY,
+          tolerantRead(read),
+        ),
+      },
+      restoreRecord: {
+        x: fx.x,
+        y: fx.y,
+        propertyName: side.disconnect,
+        additionalParams: { fluidId: fluid, connectionList: list },
+      },
+    });
+    probes.push(probe);
+    assertions.check(
+      `${side.connect}: the gate listed the ${side.role}, and exactly its snapshot again after ${side.disconnect}`,
+      probe.status === 'PASS',
+      probe.note,
+    );
+    // `written` is empty only when the round trip never reached its write (probeFailure);
+    // `original` is legitimately empty — a gate with no link.
+    if (probe.written !== '') {
+      const marker = LOG_MARKERS[side.disconnect];
+      const undoLine = await awaitMarker(
+        undoWindow,
+        {
+          marker,
+          match: line => line.includes(marker) && facLineMatches(line, fx.x, fx.y, `${side.disconnected} ${fluid} from ${list}`),
+        },
+        TIMEOUTS.logSettle,
+      );
+      assertions.check(
+        `the undo reached the model server (${marker} line)`,
+        undoLine !== null,
+        undoLine ?? `no "${marker}" line for Fac(${fx.x},${fx.y}) ${fluid} from ${list}`,
+      );
+    }
+    return report(side.flow, assertions, probes, session);
+  } finally {
+    await logoff(session);
+  }
+}
+
+/** Hire an own supplier on an input gate of the industry fixture, then fire it. NIGHTLY_ONLY (routing.ts). */
+const supplierHireFire: Flow = {
+  name: 'supplier-hire-fire',
+  what:
+    "hire an own supplier (Helartia, SPO_test3's company) on an input of the industry fixture -> Input connected: " +
+    'line + the gate lists it -> fire it -> the gate lists exactly its snapshot',
+  mutates: true,
+  run: ctx =>
+    runHire(
+      {
+        flow: 'supplier-hire-fire',
+        tab: 'supplies',
+        direction: 'input',
+        connect: 'RDOConnectInput',
+        disconnect: 'RDODisconnectInput',
+        role: 'supplier',
+        connected: 'Input connected:',
+        disconnected: 'Input disconnect:',
+      },
+      ctx,
+    ),
+};
+
+/** Add an own client on an output gate of the industry fixture, then remove it. NIGHTLY_ONLY (routing.ts). */
+const clientHireRemove: Flow = {
+  name: 'client-hire-remove',
+  what:
+    "add an own client (Helartia, SPO_test3's company) on an output of the industry fixture -> Output connected: " +
+    'line + the gate lists it -> remove it -> the gate lists exactly its snapshot',
+  mutates: true,
+  run: ctx =>
+    runHire(
+      {
+        flow: 'client-hire-remove',
+        tab: 'products',
+        direction: 'output',
+        connect: 'RDOConnectOutput',
+        disconnect: 'RDODisconnectOutput',
+        role: 'client',
+        connected: 'Output connected:',
+        disconnected: 'Output disconnect:',
+      },
+      ctx,
+    ),
+};
+
+/** The fluids of `from`'s tab that `to` carries on the opposite tab. */
+function sharedFluids(from: GateLinks, to: GateLinks): string[] {
+  const opposite = (gate: string): string => (gate.startsWith('supplies:') ? 'products:' : 'supplies:');
+  const shared = new Set<string>();
+  for (const [gate, g] of Object.entries(from)) {
+    if (!g.fluid) continue;
+    const prefix = opposite(gate);
+    if (Object.entries(to).some(([other, o]) => other.startsWith(prefix) && o.fluid === g.fluid)) shared.add(g.fluid);
+  }
+  return [...shared];
+}
+
+/**
+ * Connect on the map (`TWorld.RDOConnectFacilities`, Kernel/World.pas:3710-3726): the industry and
+ * warehouse fixtures, both SPO_test3's own. It hires every matching fluid in both directions
+ * (Kernel/Kernel.pas:5470-5513), so every gate of both facilities is snapshotted and every new
+ * link is undone. NIGHTLY_ONLY (routing.ts).
+ */
+const connectOnMap: Flow = {
+  name: 'connect-on-map',
+  what:
+    'REQ_CONNECT_FACILITIES between the industry and warehouse fixtures -> a new link read back -> every new link ' +
+    'disconnected -> both facilities\' inputs and outputs equal their snapshot',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const industry = await ownFixture(session, 'industry', assertions);
+      const warehouse = industry ? await ownFixture(session, 'warehouse', assertions) : undefined;
+      if (!industry || !warehouse) return report('connect-on-map', assertions, probes, session);
+
+      const snapIndustry = await readGateLinks(session, industry, BOTH_TABS);
+      const snapWarehouse = await readGateLinks(session, warehouse, BOTH_TABS);
+      const incomplete = [
+        ...Object.entries(snapIndustry).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(industry)} ${gate}`),
+        ...Object.entries(snapWarehouse).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(warehouse)} ${gate}`),
+      ];
+      if (incomplete.length > 0) {
+        assertions.unproven(
+          'ConnectFacilities',
+          `gate(s) whose links were not all read — the undo could not tell a new link from an unread one: ${incomplete.join(' | ')}`,
+        );
+        return report('connect-on-map', assertions, probes, session);
+      }
+      const shared = sharedFluids(snapIndustry, snapWarehouse);
+      if (shared.length === 0) {
+        assertions.unproven(
+          'ConnectFacilities',
+          `${fixtureLabel(industry)} and ${fixtureLabel(warehouse)} share no fluid on opposite gates — ConnectFacilities ` +
+            'hires only a matching fluid (Kernel/Kernel.pas:5470-5513), so nothing is sent',
+        );
+        return report('connect-on-map', assertions, probes, session);
+      }
+
+      const read = async (): Promise<string> =>
+        combinedState([
+          linkState(snapIndustry, await readGateLinks(session, industry, BOTH_TABS)),
+          linkState(snapWarehouse, await readGateLinks(session, warehouse, BOTH_TABS)),
+        ]);
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `Connect ${fixtureLabel(industry)} with ${fixtureLabel(warehouse)} (shared: ${shared.join(', ')})`,
+        member: 'ConnectFacilities',
+        read,
+        testValue: () => 'new-links',
+        write: async () => {
+          const answer = await session.driver.request<WsRespConnectFacilities>(
+            {
+              type: WsMessageType.REQ_CONNECT_FACILITIES,
+              sourceX: industry.x,
+              sourceY: industry.y,
+              targetX: warehouse.x,
+              targetY: warehouse.y,
+            },
+            WsMessageType.RESP_CONNECT_FACILITIES,
+            TIMEOUTS.login,
+          );
+          if (answer.success !== true) throw new Error(`REQ_CONNECT_FACILITIES answered success=false: ${answer.resultMessage}`);
+        },
+        restore: async () => {
+          for (const [fx, snap] of [
+            [industry, snapIndustry],
+            [warehouse, snapWarehouse],
+          ] as const) {
+            for (const g of gainedLinks(snap, await readGateLinks(session, fx, BOTH_TABS))) {
+              await setBuildingProperty(
+                session,
+                fx.x,
+                fx.y,
+                g.tab === 'supplies' ? 'RDODisconnectInput' : 'RDODisconnectOutput',
+                '0',
+                { fluidId: g.fluid, connectionList: connectionList(g.keys) },
+              );
+            }
+          }
+        },
+        // The `Connect Facilities` line carries no coordinates (Kernel/World.pas:3713): read-back alone.
+        proof: {
+          readBack: readBackOn(
+            'every input and output gate of both facilities via REQ_BUILDING_GATE_CONNECTIONS',
+            LINK_WHY,
+            tolerantRead(read),
+          ),
+        },
+        restoreRecord: { x: industry.x, y: industry.y, propertyName: 'ConnectFacilities' },
+      });
+      probes.push(probe);
+      assertions.check(
+        'ConnectFacilities: a new link read back, and both facilities equal their snapshot after the undo',
+        probe.status === 'PASS',
+        probe.note,
+      );
+      return report('connect-on-map', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+const COMPANY_INPUT_KINDS: readonly FixtureKindId[] = ['store', 'industry', 'warehouse'];
+
+async function readCompInputs(session: LiveSession, fx: OwnFixture): Promise<CompInputData[]> {
+  await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+  const tab = await readBuildingTabData(session, fx.x, fx.y, 'compInputs', fx.visualClass);
+  return tab.compInputs ?? [];
+}
+
+/**
+ * A company input's demand (`TBlock.RDOSetCompanyInputDemand`, Kernel/Kernel.pas:6371): written as
+ * a percent, cached in units (`cInputDem = ceil(units(Max))`, :5878), so the read-back allows the
+ * one unit the `ceil` introduces. Only an editable input is written. NIGHTLY_ONLY (routing.ts).
+ */
+const companyInputDemand: Flow = {
+  name: 'company-input-demand',
+  what:
+    "RDOSetCompanyInputDemand on an editable company input of SPO_test3's fixtures — SetCompanyInputDemand line + " +
+    'cInputDem moves, restored within one unit',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const refusals: string[] = [];
+      let chosen: { fx: OwnFixture; index: number; input: CompInputData } | undefined;
+      for (const kindId of COMPANY_INPUT_KINDS) {
+        const lookup = await findFixture(session, fixtureKind(kindId));
+        if (!lookup.found) {
+          refusals.push(`${kindId} fixture: ${lookup.reason ?? 'not found'}`);
+          continue;
+        }
+        const fx = lookup.found;
+        const inputs = await readCompInputs(session, fx);
+        if (inputs.length === 0) refusals.push(`${kindId} ${fixtureLabel(fx)}: no company input`);
+        inputs.forEach((input, index) => {
+          if (chosen) return;
+          if (!input.editable) refusals.push(`${kindId} ${fixtureLabel(fx)} input ${index} "${input.name}": not editable`);
+          else if (!(input.maxDemand > 0)) refusals.push(`${kindId} ${fixtureLabel(fx)} input ${index} "${input.name}": capacity ${input.maxDemand}`);
+          else chosen = { fx, index, input };
+        });
+        if (chosen) break;
+      }
+      if (!chosen) {
+        assertions.unproven(
+          'RDOSetCompanyInputDemand',
+          'no editable company input on any fixture — cEditable is written only for a meta input flagged Editable ' +
+            `(Kernel/Kernel.pas:5887): ${refusals.join(' | ')}`,
+        );
+        return report('company-input-demand', assertions, probes, session);
+      }
+
+      const { fx, index, input } = chosen;
+      const dem0 = input.demanded;
+      const max = input.maxDemand;
+      const p0 = companyDemandPercent(dem0, max);
+      const p1 = companyDemandTarget(p0);
+      if (Math.abs(companyDemandUnits(p1, max) - dem0) < 3) {
+        assertions.unproven(
+          'RDOSetCompanyInputDemand',
+          `${fixtureLabel(fx)} input ${index} "${input.name}": capacity ${max} is too small to tell a move from the one ` +
+            'unit the ceil introduces (Kernel/Kernel.pas:5878)',
+        );
+        return report('company-input-demand', assertions, probes, session);
+      }
+
+      const readDemand = async (): Promise<string | undefined> => {
+        const hit = (await readCompInputs(session, fx))[index];
+        return hit && hit.name === input.name ? String(hit.demanded) : undefined;
+      };
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} company input ${index} "${input.name}" demand (percent; ${dem0} of ${max} units)`,
+        member: 'RDOSetCompanyInputDemand',
+        // Pinned like runProbe's fixed original: the percent is derived, never read back as such.
+        read: async () => String(p0),
+        testValue: () => String(p1),
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetCompanyInputDemand', value, { index: String(index) });
+        },
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDOSetCompanyInputDemand,
+            match: line => facLineMatches(line, fx.x, fx.y, 'SetCompanyInputDemand'),
+          },
+          readBack: {
+            ...readBackOn(
+              `compInputs[${index}].demanded (cInputDem) via REQ_BUILDING_TAB_DATA`,
+              `${FACILITY_CACHE_WHY}; cInputDem = ceil(units(Max)) and cInputMax is the capacity (Kernel/Kernel.pas:5878, :5888)`,
+              tolerantRead(readDemand),
+            ),
+            matches: (last, expected) => {
+              const got = Number(last);
+              if (last.trim() === '' || !Number.isFinite(got)) return false;
+              if (expected === String(p0)) return Math.abs(got - dem0) <= 1;
+              return Math.abs(got - companyDemandUnits(Number(expected), max)) <= 1 && last !== String(dem0);
+            },
+          },
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetCompanyInputDemand', additionalParams: { index: String(index) } },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+      return report('company-input-demand', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * The trade role (warehouse only — `RDOSetRole` is published by `TWarehouse`,
+ * StdBlocks/Warehouses.pas:95) and the trade level (warehouse and industry,
+ * `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408). Only values the client offers are written.
+ */
+const tradeSettings: Flow = {
+  name: 'trade-settings',
+  what:
+    "RDOSetRole on SPO_test3's warehouse fixture (a role the client offers, read-back) and RDOSetTradeLevel on the " +
+    'warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const warehouse = await ownFixture(session, 'warehouse', assertions);
+      const industry = await ownFixture(session, 'industry', assertions);
+      if (!warehouse && !industry) return report('trade-settings', assertions, probes, session);
+      const url = await survivalUrl(ctx);
+      const readField = (fx: OwnFixture, groupId: string, name: string) => async (): Promise<string | undefined> =>
+        propertyValue(await readSectionGroups(session, fx.x, fx.y, groupId, fx.visualClass), groupId, name);
+
+      const tradeLevel = async (fx: OwnFixture, groupId: string): Promise<void> => {
+        const read = readField(fx, groupId, 'TradeLevel');
+        const original = await read();
+        if (!isTradeLevelValue(original)) {
+          assertions.unproven(
+            `RDOSetTradeLevel on ${fixtureLabel(fx)}`,
+            `its TradeLevel "${original ?? 'absent'}" is not one the client sends (TRADE_LEVEL_VALUES ` +
+              `${TRADE_LEVEL_VALUES.join('/')}, trade-settings.ts) — the restore would need a value the client never writes`,
+          );
+          return;
+        }
+        const probe = await roundTripProbe(ctx, url, {
+          what: `${fixtureLabel(fx)} trade level`,
+          member: 'RDOSetTradeLevel',
+          read,
+          testValue: tradeLevelNudge,
+          write: async value => {
+            await setBuildingProperty(session, fx.x, fx.y, 'RDOSetTradeLevel', value);
+          },
+          proof: {
+            // The Fac(x,y) match excludes ' Error in SetTradeLevel..' (Kernel/Kernel.pas:6404).
+            log: { marker: LOG_MARKERS.RDOSetTradeLevel, match: line => facLineMatches(line, fx.x, fx.y, 'SetTradeLevel') },
+            readBack: readBackOn(`${groupId}.TradeLevel at (${fx.x},${fx.y}) via the gateway's section read`, FACILITY_CACHE_WHY, tolerantRead(read)),
+          },
+          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetTradeLevel' },
+        });
+        probes.push(probe);
+        checkProbe(assertions, probe);
+      };
+
+      if (warehouse) {
+        const readRole = readField(warehouse, 'whGeneral', 'Role');
+        const role = await readRole();
+        if (role !== undefined && isTradeModeValue(role)) {
+          const probe = await roundTripProbe(ctx, url, {
+            what: `${fixtureLabel(warehouse)} trade role`,
+            member: 'RDOSetRole',
+            read: readRole,
+            testValue: tradeRoleNudge,
+            write: async value => {
+              await setBuildingProperty(session, warehouse.x, warehouse.y, 'RDOSetRole', value);
+            },
+            // RDOSetRole logs nothing (StdBlocks/Warehouses.pas:527): the read-back alone proves it.
+            proof: {
+              readBack: readBackOn(
+                `whGeneral.Role at (${warehouse.x},${warehouse.y}) via the gateway's section read`,
+                `RDOSetRole prints no Survival line; ${FACILITY_CACHE_WHY}`,
+                tolerantRead(readRole),
+              ),
+            },
+            restoreRecord: { x: warehouse.x, y: warehouse.y, propertyName: 'RDOSetRole' },
+          });
+          probes.push(probe);
+          checkProbe(assertions, probe);
+        } else {
+          assertions.unproven(
+            'RDOSetRole',
+            `${fixtureLabel(warehouse)}'s Role "${role ?? 'absent'}" is not one the client offers (isTradeModeValue, ` +
+              `TRADE_MODE_VALUES ${TRADE_MODE_VALUES.join('/')}; Voyager/IndustryGeneralSheet.pas:189-235) — RDOSetRole ` +
+              'range-checks nothing (StdBlocks/Warehouses.pas:527), so nothing is sent',
+          );
+        }
+        await tradeLevel(warehouse, 'whGeneral');
+      }
+      // RDOSetRole is never sent to the industry: only TWarehouse publishes it (StdBlocks/Warehouses.pas:95).
+      if (industry) await tradeLevel(industry, 'indGeneral');
+      return report('trade-settings', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * Toggle one ware of the warehouse's checklist (`TMegaStorage.RDOSelectWare`,
+ * StdBlocks/MegaWarehouse.pas:94) and toggle it back — only on a MegaStorage. NIGHTLY_ONLY (routing.ts).
+ */
+const warehouseWares: Flow = {
+  name: 'warehouse-wares',
+  what: "toggle one ware of SPO_test3's warehouse fixture when it is a MegaStorage (RDOSelectWare) — read-back, toggled back",
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'warehouse', assertions);
+      if (!fx) return report('warehouse-wares', assertions, probes, session);
+      const dims = await facilityDimensions(session);
+      if (!isMegaStorage(dims, fx.visualClass)) {
+        assertions.unproven(
+          'RDOSelectWare',
+          `${fixtureLabel(fx)} (facId ${String(dims[fx.visualClass]?.facId ?? 'absent')}) is not an Import/Export Storage — ` +
+            'only a TMegaStorage publishes RDOSelectWare (StdBlocks/MegaWarehouse.pas:25); a TWarehouse publishes ' +
+            'RDOSetRole only (StdBlocks/Warehouses.pas:95)',
+        );
+        return report('warehouse-wares', assertions, probes, session);
+      }
+      const wares = (await readBuildingDetails(session, fx.x, fx.y, fx.visualClass)).warehouseWares ?? [];
+      const ware = wares.find(w => !w.enabled) ?? wares[0];
+      if (!ware) {
+        assertions.unproven('RDOSelectWare', `${fixtureLabel(fx)} lists no ware (GateMap)`);
+        return report('warehouse-wares', assertions, probes, session);
+      }
+      const read = async (): Promise<string | undefined> => {
+        const hit = (await readBuildingDetails(session, fx.x, fx.y, fx.visualClass)).warehouseWares?.find(
+          w => w.index === ware.index && w.name === ware.name,
+        );
+        return hit ? (hit.enabled ? '1' : '0') : undefined;
+      };
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ware ${ware.index} "${ware.name}"`,
+        member: 'RDOSelectWare',
+        read,
+        testValue: original => (original === '1' ? '0' : '1'),
+        write: async value => {
+          // A WordBool, as WarehouseWares sends it: #-1 selects, #0 clears.
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSelectWare', value === '1' ? '-1' : '0', { index: String(ware.index) });
+        },
+        // RDOSelectWare logs nothing: the read-back alone proves it.
+        proof: {
+          readBack: readBackOn(
+            `warehouseWares[${ware.index}] (GateMap) via REQ_BUILDING_DETAILS`,
+            `RDOSelectWare prints no Survival line; ${FACILITY_CACHE_WHY}`,
+            tolerantRead(read),
+          ),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSelectWare', additionalParams: { index: String(ware.index) } },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+      return report('warehouse-wares', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** `ftpWarehouses` (Kernel/Kernel.pas:2760) — the facility types Quick Trade connects to. */
+const QUICK_TRADE_KIND = '1';
+
+/**
+ * Quick Trade (`TFacility.RDOConnectToTycoon`, Kernel/Kernel.pas:4521) and its undo
+ * (`RDODisconnectFromTycoon`), which reaches every SPO_test3 facility (:4537-4553, :4593-4600) and
+ * unregisters the fixture as an initial supplier (:4564-4565, :4606-4607) — so it runs only
+ * behind three data guards. NIGHTLY_ONLY (routing.ts).
+ */
+const quickTradeRoundTrip: Flow = {
+  name: 'quick-trade-roundtrip',
+  what:
+    "RDOConnectToTycoon on SPO_test3's industry fixture (warehouses) behind three guards -> Connect to Tycoon: line + " +
+    'new links -> RDODisconnectFromTycoon -> the output links and the initial-supplier list equal their snapshots',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('quick-trade-roundtrip', assertions, probes, session);
+      const own = await listTycoonFacilities(session);
+      const ownCompanies = new Set(own.companies);
+      const ownLots = new Set(own.facilities.map(f => `${f.x},${f.y}`));
+      let refused = false;
+
+      // Guard 1: the undo drops the fixture's outputs from every SPO_test3 facility's matching input.
+      const clients: string[] = [];
+      for (const stub of await gateStubs(session, fx, 'products')) {
+        const product = (await gateConnections(session, fx, 'products', stub)).product;
+        if (!product || product.connectionCount !== product.connections.length) {
+          clients.push(`${stub.name}: ${String(product?.connectionCount)} client(s) listed but ${product?.connections.length ?? 0} read`);
+          continue;
+        }
+        for (const c of product.connections) {
+          if (ownCompanies.has(c.companyName) || ownLots.has(`${c.x},${c.y}`)) clients.push(`${stub.name}: ${linkLabel(c)}`);
+        }
+      }
+      if (clients.length > 0) {
+        refused = true;
+        assertions.unproven(
+          'RDOConnectToTycoon',
+          'an SPO_test3 facility is already a client of the fixture (or a client could not be read) — the undo would ' +
+            `drop it, whatever its type (Kernel/Kernel.pas:4593-4600): ${clients.join(' | ')}`,
+        );
+      }
+
+      // Guard 2: the undo unregisters the fixture as an initial supplier.
+      const auto = await readAutoConnections(session);
+      if (initialSupplierAt(auto, fx.x, fx.y)) {
+        refused = true;
+        assertions.unproven(
+          'RDOConnectToTycoon',
+          `${fixtureLabel(fx)} is one of SPO_test3's initial suppliers — the undo would remove it for good ` +
+            '(Kernel/Kernel.pas:4564-4565, :4606-4607)',
+        );
+      }
+
+      // Guard 3: the connect and its undo reach every company and town of the tycoon.
+      const helartia = await helartiaValue(session);
+      const outside: string[] = [];
+      for (const f of own.facilities) {
+        if (helartia !== undefined && (await townValueAt(session, f.x, f.y)) === helartia) continue;
+        try {
+          const vc = await resolveVisualClass(session, f.x, f.y);
+          const details = await readBuildingDetails(session, f.x, f.y, vc);
+          if (details.tabs.some(t => t.id === 'whGeneral')) outside.push(`${f.name} (${f.x},${f.y}) of ${f.company}`);
+        } catch (err: unknown) {
+          outside.push(`${f.name} (${f.x},${f.y}) could not be read: ${toErrorMessage(err)}`);
+        }
+      }
+      if (outside.length > 0) {
+        refused = true;
+        assertions.unproven(
+          'RDOConnectToTycoon',
+          `an SPO_test3 warehouse lies outside ${GOVERNED_TOWN} — Quick Trade reaches every company and town of the ` +
+            `tycoon (Kernel/Kernel.pas:4537-4553): ${outside.join(' | ')}`,
+        );
+      }
+      if (refused) return report('quick-trade-roundtrip', assertions, probes, session);
+
+      const snapshot = await readGateLinks(session, fx, ['products']);
+      const suppliersKey = initialSuppliersKey(auto);
+      const read = async (): Promise<string> => linkState(snapshot, await readGateLinks(session, fx, ['products']));
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} Quick Trade with SPO_test3's warehouses`,
+        member: 'RDOConnectToTycoon',
+        read,
+        testValue: () => 'new-links',
+        write: async () => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOConnectToTycoon', '0', { kind: QUICK_TRADE_KIND });
+        },
+        restore: async () => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: QUICK_TRADE_KIND });
+        },
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDOConnectToTycoon,
+            match: line => facLineMatches(line, fx.x, fx.y, 'Connect to Tycoon:'),
+          },
+          readBack: readBackOn(
+            "the fixture's product gates' links via REQ_BUILDING_GATE_CONNECTIONS",
+            LINK_WHY,
+            tolerantRead(read),
+          ),
+        },
+        restoreRecord: {
+          x: fx.x,
+          y: fx.y,
+          propertyName: 'RDODisconnectFromTycoon',
+          additionalParams: { kind: QUICK_TRADE_KIND },
+        },
+      });
+      probes.push(probe);
+      assertions.check(
+        'RDOConnectToTycoon: new links read back, and the output links equal their snapshot after the undo',
+        probe.status === 'PASS',
+        probe.note,
+      );
+
+      const suppliers = await pollUntil(
+        async () => {
+          try {
+            return initialSuppliersKey(await readAutoConnections(session));
+          } catch (err: unknown) {
+            return `(unreadable: ${toErrorMessage(err)})`;
+          }
+        },
+        k => k === suppliersKey,
+        ctx,
+      );
+      assertions.check(
+        'the initial-supplier list equals its snapshot',
+        suppliers.ok,
+        suppliers.ok ? `${suppliersKey || '(none)'}` : `before: ${suppliersKey || '(none)'} — after: ${suppliers.last || '(none)'}`,
+      );
+      return report('quick-trade-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
 // Build menu, placement, rename, demolition (#1150)
 // ---------------------------------------------------------------------------------------------
 
@@ -6713,6 +7731,14 @@ export const FLOWS: Flow[] = [
   industrySupplyLimits,
   facilityOpenClose,
   industryAutoBuy,
+  supplierSearchRead,
+  supplierHireFire,
+  clientHireRemove,
+  connectOnMap,
+  companyInputDemand,
+  tradeSettings,
+  warehouseWares,
+  quickTradeRoundTrip,
   buildMenuRead,
   placeRenameDemolish,
   residentialSettings,
