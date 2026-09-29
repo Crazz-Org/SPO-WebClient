@@ -646,3 +646,39 @@ describe('route — handler rules seeded by #1134', () => {
     ]);
   });
 });
+
+describe('route — world readers (#1139)', () => {
+  it.each([
+    'src/server/ws-handlers/map-handlers.ts',
+    'src/server/session/context-status-handler.ts',
+    'src/server/session/world-events-handler.ts',
+    'src/server/session/zone-surface-handler.ts',
+  ])('%s requires world-readers and building-details, and is no longer fallback-only', file => {
+    const required = route([file]).required;
+    expect(required).toEqual(expect.arrayContaining(['world-readers', 'building-details']));
+    expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it('misc-handlers gains world-readers', () => {
+    expect(route(['src/server/ws-handlers/misc-handlers.ts']).required)
+      .toEqual(expect.arrayContaining(['world-readers', 'favorites-roundtrip', 'favorites-folders']));
+  });
+
+  it.each(['ContextStatusStrip', 'WorldEventTicker', 'OverlayMenu'])('hud/%s routes to world-readers with a browser look', name => {
+    const d = route([`src/client/components/hud/${name}.tsx`]);
+    expect(d.required).toEqual([SPINE_FLOW, 'world-readers']);
+    expect(d.needsL3).toBe(true);
+  });
+
+  it('other hud files keep the building-details rule', () => {
+    const d = route(['src/client/components/hud/CommandBar.tsx']);
+    expect(d.required).toEqual([SPINE_FLOW, 'building-details']);
+    expect(d.needsL3).toBe(true);
+  });
+
+  it.each(['context-status', 'world-event', 'map'])('client handlers/%s-handler routes to world-readers', name => {
+    const d = route([`src/client/handlers/${name}-handler.ts`]);
+    expect(d.required).toEqual([SPINE_FLOW, 'world-readers']);
+    expect(d.needsL3).toBe(false);
+  });
+});

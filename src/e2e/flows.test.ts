@@ -11,7 +11,7 @@ import { WsDriver, WsDriverError } from './ws-driver';
 import * as session from './session';
 import * as probeModule from './probe';
 import * as liveLog from './live-log';
-import { PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
+import { LIMITS, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
 
 function stubSession(responder: (msg: WsMessage) => unknown): session.LiveSession {
   return {
@@ -27,6 +27,8 @@ function stubSession(responder: (msg: WsMessage) => unknown): session.LiveSessio
     company: { id: '1', name: 'SPO_test3 - Green' },
     worlds: 3,
     companies: [],
+    playerX: 0,
+    playerY: 0,
   };
 }
 
@@ -2176,5 +2178,155 @@ describe('session-resume', () => {
     expect(assertion(result, /explicit logout tears/)).toMatchObject({ ok: false });
     expect(assertion(result, /explicit logout tears/)?.detail).toMatch(/no "Start Disconnecting SPO_test3" within/);
     expect(s.off).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('world-readers', () => {
+  const HELARTIA = { name: 'Helartia', iconUrl: '', mayor: null, population: 1, unemploymentPercent: 0, qualityOfLife: 0, x: 100, y: 50, path: '', classId: '' };
+  type SurfaceReq = { x1: number; y1: number; x2: number; y2: number };
+  const grid = (rows: number, cells: number) => Array.from({ length: rows }, () => new Array<number>(cells).fill(0));
+
+  function arrange(over: {
+    towns?: typeof HELARTIA[];
+    statuses?: string[];
+    event?: unknown;
+    surface?: (r: SurfaceReq) => { width: number; height: number; rows: number[][] };
+    dimensions?: Record<string, unknown>;
+  } = {}) {
+    const {
+      towns = [HELARTIA],
+      statuses = ['Helartia: 1000 inhabitants'],
+      event = null,
+      surface = (r: SurfaceReq) => ({ width: r.y2 - r.y1 + 1, height: r.x2 - r.x1 + 1, rows: grid(r.y2 - r.y1 + 1, r.x2 - r.x1 + 1) }),
+      dimensions = { '5': { visualClass: '5' } },
+    } = over;
+    const requests: WsMessage[] = [];
+    let statusReads = 0;
+    const stub = { ...stubSession(msg => {
+      requests.push(msg);
+      switch (msg.type) {
+        case WsMessageType.REQ_SEARCH_MENU_TOWNS:
+          return { type: WsMessageType.RESP_SEARCH_MENU_TOWNS, towns };
+        case WsMessageType.REQ_MAP_LOAD:
+          return { type: WsMessageType.RESP_MAP_DATA, data: { buildings: [{ x: HELARTIA.x, y: HELARTIA.y, visualClass: '5' }] } };
+        case WsMessageType.REQ_CONTEXT_STATUS:
+          return { type: WsMessageType.RESP_CONTEXT_STATUS, text: statuses[Math.min(statusReads++, statuses.length - 1)] };
+        case WsMessageType.REQ_WORLD_EVENT:
+          return { type: WsMessageType.RESP_WORLD_EVENT, event };
+        case WsMessageType.REQ_GET_SURFACE:
+          return { type: WsMessageType.RESP_SURFACE_DATA, data: surface(msg as unknown as SurfaceReq) };
+        case WsMessageType.REQ_GET_ALL_FACILITY_DIMENSIONS:
+          return { type: WsMessageType.RESP_ALL_FACILITY_DIMENSIONS, dimensions, civicVisualClassIds: [] };
+        default:
+          return undefined;
+      }
+    }), playerX: 120, playerY: 80 };
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    const sleep = jest.fn(async (_ms: number) => undefined);
+    const run = () => runFlow(flowByName('world-readers'), { ...ctx, sleep });
+    return { requests, sleep, run, driver: stub.driver as unknown as { send: jest.Mock; request: jest.Mock } };
+  }
+  const detail = (r: FlowResult, what: RegExp) => r.assertions.find(a => what.test(a.what));
+
+  it('is read-only', () => {
+    expect(flowByName('world-readers').mutates).toBe(false);
+  });
+
+  it('PASSes, and a null world event passes with "no event queued"', async () => {
+    const { run, requests, sleep } = arrange();
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(detail(result, /context status at/)?.detail).toBe('1 read(s): Helartia: 1000 inhabitants');
+    expect(sleep).not.toHaveBeenCalled();
+    expect(detail(result, /world event/)).toMatchObject({ ok: true, detail: 'no event queued' });
+    expect(requests.filter(m => m.type === WsMessageType.REQ_GET_SURFACE).map(m => (m as unknown as { surfaceType: string }).surfaceType))
+      .toEqual(['ZONES', 'Beauty']);
+    expect(detail(result, /ZONES surface/)?.detail).toBe('7 rows × 13 cells (expected 7 × 13)');
+  });
+
+  it('names the kind of a queued event', async () => {
+    const { run } = arrange({ event: { date: '2026', kind: 3, text: 'A fire' } });
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(detail(result, /world event/)?.detail).toBe('kind 3: A fire');
+  });
+
+  it('FAILs a malformed event', async () => {
+    const { run } = arrange({ event: { date: 1, kind: 3, text: 'x' } });
+    expect((await run()).status).toBe('FAIL');
+  });
+
+  it('FAILs a surface one row short', async () => {
+    const { run } = arrange({ surface: r => ({ width: 0, height: 0, rows: grid(r.y2 - r.y1, r.x2 - r.x1 + 1) }) });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(detail(result, /ZONES surface/)?.ok).toBe(false);
+  });
+
+  it('FAILs a surface whose rows are one cell short', async () => {
+    const { run } = arrange({ surface: r => ({ width: 0, height: 0, rows: grid(r.y2 - r.y1 + 1, r.x2 - r.x1) }) });
+    expect((await run()).status).toBe('FAIL');
+  });
+
+  it('FAILs a transposed grid on the non-square rectangle', async () => {
+    const { run } = arrange({ surface: r => ({ width: 0, height: 0, rows: grid(r.x2 - r.x1 + 1, r.y2 - r.y1 + 1) }) });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(detail(result, /Beauty surface/)?.detail).toBe('13 rows × 7 cells (expected 7 × 13)');
+  });
+
+  it('ignores the width/height labels of a correct grid', async () => {
+    const { run } = arrange({ surface: r => ({ width: 999, height: 1, rows: grid(r.y2 - r.y1 + 1, r.x2 - r.x1 + 1) }) });
+    expect((await run()).status).toBe('PASS');
+  });
+
+  it('re-reads an empty context status and PASSes on the third read', async () => {
+    const { run, sleep, requests } = arrange({ statuses: ['', '', 'Helartia'] });
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(detail(result, /context status/)?.detail).toBe('3 read(s): Helartia');
+    expect(sleep.mock.calls).toEqual([[TIMEOUTS.contextStatusReread], [TIMEOUTS.contextStatusReread]]);
+    // 3 bounded reads + the one after the camera update
+    expect(requests.filter(m => m.type === WsMessageType.REQ_CONTEXT_STATUS)).toHaveLength(4);
+  });
+
+  it('FAILs when every context status read is empty', async () => {
+    const { run, requests } = arrange({ statuses: [''] });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(detail(result, /context status at/)).toMatchObject({ ok: false, detail: `${LIMITS.contextStatusMaxReads} read(s): ''` });
+    expect(requests.filter(m => m.type === WsMessageType.REQ_CONTEXT_STATUS)).toHaveLength(LIMITS.contextStatusMaxReads + 1);
+  });
+
+  it('FAILs when the dimensions miss the town hall class', async () => {
+    const { run } = arrange({ dimensions: { '9': {} } });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/town hall class/);
+  });
+
+  it('FAILs empty dimensions', async () => {
+    const { run } = arrange({ dimensions: {} });
+    expect((await run()).status).toBe('FAIL');
+  });
+
+  it('sends the camera to the saved position with a view, then reads again', async () => {
+    const { run, driver, requests } = arrange();
+    await run();
+    expect(driver.send).toHaveBeenCalledWith({
+      type: WsMessageType.REQ_UPDATE_CAMERA, x: 120, y: 80, viewX: 104, viewY: 64, viewW: 32, viewH: 32,
+    });
+    const sendOrder = driver.send.mock.invocationCallOrder[0];
+    const lastStatus = driver.request.mock.invocationCallOrder[driver.request.mock.calls.length - 1];
+    expect(lastStatus).toBeGreaterThan(sendOrder);
+    expect(requests[requests.length - 1].type).toBe(WsMessageType.REQ_CONTEXT_STATUS);
+  });
+
+  it('FAILs when the governed town is missing', async () => {
+    const { run } = arrange({ towns: [] });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/still listed/);
   });
 });
