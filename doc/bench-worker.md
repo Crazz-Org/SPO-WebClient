@@ -297,9 +297,9 @@ already mistaken a readable line for an API and drawn the wrong verdict from it.
 that finds nothing is indistinguishable from a `grep` that ran against a changed heading —
 the exit code cannot fail that way.
 
-The same reflex applies one level down, inside the live drive: a mutation is proven by the
-`FIVEMODELSERVER/Survival` log line, never by a `success: true` in a response
-(E2E-POLICY.md, `OB-28`).
+The same reflex applies one level down, inside the live drive: a mutation's receipt is proven by the
+`FIVEMODELSERVER/Survival` log line and the read-back proves the change — never a
+`success: true` in a response (E2E-POLICY.md, `OB-28`).
 
 #### The session-side rules
 

@@ -1,22 +1,26 @@
 /**
- * The round-trip probe — doc/E2E-POLICY.md §5.
+ * The round trip — doc/E2E-POLICY.md §5.
  *
- *   read original -> write test value
- *                 -> assert the model-server log line
- *                 -> read back
- *                 -> restore original
- *                 -> assert the restore landed
+ *   read original -> record the pending restore -> write test value
+ *                 -> poll the read-back until it shows the value (up to the spec's bound)
+ *                 -> assert the model-server log line (marker + match)
+ *                 -> restore original (always, even after a throw)
+ *                 -> poll the read-back until it shows the original
+ *                 -> clear the pending restore
  *
  * A crash is a failure, but silence is not a pass. `OB-28` is a write reported confirmed
  * when it was discarded, so "the response said success" proves nothing on its own. The log
- * line is the only evidence that is not the client agreeing with itself.
+ * line proves receipt only — most handlers log before their owner check, so a refused write
+ * prints its line too. The read-back proves the change: one that never shows the written
+ * value within its bound FAILs, even with the line present.
  */
 
+import { randomUUID } from 'crypto';
 import { toErrorMessage } from '../shared/error-utils';
 import { TIMEOUTS } from './config';
 import { LOG_MARKERS, awaitMarker, openLogWindow, type LogWindow } from './live-log';
 import { readSectionGroups, setBuildingProperty, propertyValue, type LiveSession } from './session';
-import type { WorldLock } from './world-lock';
+import type { PendingRestore, WorldLock } from './world-lock';
 
 export interface ProbeSpec {
   /** Human label for the report. */
@@ -47,13 +51,206 @@ export interface ProbeResult {
   /** The proving line from FIVEMODELSERVER's Survival log, or null if it never appeared. */
   logLine: string | null;
   readBack: ReadBackVerdict;
+  /** Whether the restore's own read-back reached the original. */
+  restoreReadBack?: ReadBackVerdict;
   restored: boolean;
   note?: string;
 }
 
+/** The channel that proves the change. Required on every round trip. */
+export interface ReadBackProof {
+  /** The channel, e.g. "townTaxes.Tax0Percent via the gateway's section read". */
+  source: string;
+  /** Why that channel is authoritative. */
+  why: string;
+  read: () => Promise<string | undefined>;
+  /** How long the poll may wait for the value before the round trip FAILs. */
+  boundMs: number;
+  /** Gap between polls; defaults to `TIMEOUTS.readBackPoll`. */
+  pollMs?: number;
+  /** A documented server quantisation, applied to both sides of the comparison. */
+  normalise?: (value: string) => string;
+}
+
+/** The log line proving receipt: it must contain `marker` and satisfy `match` when given. */
+export interface RoundTripLogProof {
+  marker: string;
+  match?: (line: string, written: string) => boolean;
+}
+
+export interface RoundTripSpec {
+  /** The target — town or facility, and the id / row / rating. */
+  what: string;
+  member: string;
+  read: () => Promise<string | undefined>;
+  write: (value: string) => Promise<void>;
+  /** Defaults to `write(original)`. */
+  restore?: (original: string) => Promise<void>;
+  testValue: (original: string) => string;
+  /** `readBack` is required by the type; `log` is required when the member has a marker. */
+  proof: { readBack: ReadBackProof; log?: RoundTripLogProof };
+  /** Building fields folded into the pending restore, so the dirty report reads as before. */
+  restoreRecord?: Pick<PendingRestore, 'x' | 'y' | 'propertyName' | 'additionalParams'>;
+}
+
+export interface RoundTripClock {
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** Longest original shown in the pending restore's `what` — a base64 portrait is not. */
+const SHOWN_ORIGINAL_MAX = 64;
+
 /**
- * Run one probe. Always attempts the restore, including after a failed assertion — a
- * failing probe must not be the reason the world is left dirty.
+ * Run one round trip. Always attempts the restore, including after a failed proof or a
+ * throw — a failing round trip must not be the reason the world is left dirty.
+ */
+export async function runRoundTrip(
+  spec: RoundTripSpec,
+  lock: WorldLock,
+  logWindowFactory: (url: string) => Promise<LogWindow>,
+  logUrl: string,
+  clock: RoundTripClock = {},
+): Promise<ProbeResult> {
+  const known = LOG_MARKERS[spec.member];
+  const log = spec.proof.log;
+  if (known && !log) {
+    throw new Error(
+      `${spec.member} has a model-server log marker but the spec has no log part — a round ` +
+        `trip cannot pick read-back alone to dodge the log line.`,
+    );
+  }
+  if (known && log && log.marker !== known) {
+    throw new Error(
+      `${spec.member}'s log marker is "${known}" (LOG_MARKERS) but the spec asks for ` +
+        `"${log.marker}" — the proof must use the cited marker.`,
+    );
+  }
+
+  const original = await spec.read();
+  if (original === undefined) {
+    throw new Error(
+      `Cannot read the original value of ${spec.what} — nothing to restore to, so the probe ` +
+        `refuses to write.`,
+    );
+  }
+
+  const written = spec.testValue(original);
+  const window = log ? await logWindowFactory(logUrl) : null;
+
+  const key = `${spec.member}:${randomUUID()}`;
+  const shown =
+    original.length > SHOWN_ORIGINAL_MAX ? `${original.slice(0, SHOWN_ORIGINAL_MAX)}…` : original;
+  lock.addPendingRestore({
+    key,
+    what: `${spec.what} — put back "${shown}"`,
+    originalValue: original,
+    ...spec.restoreRecord,
+  });
+
+  const readBack = spec.proof.readBack;
+  let logLine: string | null = null;
+  let poll: PollOutcome = { verdict: 'UNCONFIRMED', last: undefined };
+  let thrown: unknown = null;
+
+  try {
+    await spec.write(written);
+    // Read-back first: the log window is by byte offset, so the line is still there after
+    // the poll, and the poll is what decides the change.
+    poll = await pollReadBack(readBack, written, clock);
+    if (log && window) {
+      const matches = (line: string): boolean =>
+        line.includes(log.marker) && (log.match?.(line, written) ?? true);
+      const line = await awaitMarker(window, { marker: log.marker, match: matches }, TIMEOUTS.logSettle);
+      // Re-checked here so the rule holds whatever awaitMarker returned.
+      logLine = line !== null && matches(line) ? line : null;
+    }
+  } catch (err: unknown) {
+    thrown = err;
+  }
+
+  // The restore runs whatever happened above.
+  let restoreWriteFailed = false;
+  let restorePoll: PollOutcome = { verdict: 'UNCONFIRMED', last: undefined };
+  try {
+    await (spec.restore ?? spec.write)(original);
+  } catch {
+    restoreWriteFailed = true;
+  }
+  if (!restoreWriteFailed) {
+    try {
+      restorePoll = await pollReadBack(readBack, original, clock);
+    } catch {
+      restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
+    }
+  }
+  const restored = restorePoll.verdict === 'CONFIRMED';
+  const restoreReadBack = restorePoll.verdict;
+  if (restored) lock.clearPendingRestore(key);
+
+  if (thrown !== null) {
+    return { ...probeFailure(spec, thrown), original, written, restored, restoreReadBack };
+  }
+
+  const failures: string[] = [];
+  if (poll.verdict === 'UNCONFIRMED') {
+    failures.push(
+      `read-back never showed "${written}" within ${readBack.boundMs} ms (last ` +
+        `"${poll.last ?? '(absent)'}", ${readBack.source}) — the write did not change the value`,
+    );
+  }
+  if (log && !logLine) failures.push('no model-server log line — the write never reached the object');
+  if (restoreWriteFailed) {
+    failures.push('restore failed — the world is left dirty');
+  } else if (!restored) {
+    failures.push(
+      `restore not confirmed: read-back still shows "${restorePoll.last ?? '(absent)'}" — ` +
+        `the world is left dirty`,
+    );
+  }
+
+  const result: ProbeResult = {
+    what: spec.what,
+    member: spec.member,
+    status: failures.length === 0 ? 'PASS' : 'FAIL',
+    original,
+    written,
+    logLine,
+    readBack: poll.verdict,
+    restoreReadBack,
+    restored,
+  };
+  if (failures.length > 0) result.note = failures.join('; ');
+  return result;
+}
+
+interface PollOutcome {
+  verdict: ReadBackVerdict;
+  last: string | undefined;
+}
+
+/** Read at least once, then every `pollMs` until the value matches or the bound runs out. */
+async function pollReadBack(
+  proof: ReadBackProof,
+  expected: string,
+  clock: RoundTripClock,
+): Promise<PollOutcome> {
+  const now = clock.now ?? Date.now;
+  const sleep = clock.sleep ?? defaultSleep;
+  const normalise = proof.normalise ?? ((v: string) => v);
+  const target = normalise(expected);
+  const deadline = now() + proof.boundMs;
+  for (;;) {
+    const last = await proof.read();
+    if (last !== undefined && normalise(last) === target) return { verdict: 'CONFIRMED', last };
+    if (now() >= deadline) return { verdict: 'UNCONFIRMED', last };
+    await sleep(proof.pollMs ?? TIMEOUTS.readBackPoll);
+  }
+}
+
+/**
+ * Run one building-property probe — a thin adapter over `runRoundTrip`, reading through the
+ * gateway's section read and writing through `setBuildingProperty`.
  */
 export async function runProbe(
   session: LiveSession,
@@ -61,6 +258,7 @@ export async function runProbe(
   lock: WorldLock,
   logWindowFactory: (url: string) => Promise<LogWindow>,
   survivalLogUrl: string,
+  options: RoundTripClock & { readBackBoundMs?: number } = {},
 ): Promise<ProbeResult> {
   const marker = LOG_MARKERS[spec.member];
   if (!marker) {
@@ -70,116 +268,50 @@ export async function runProbe(
     );
   }
 
-  const before = await readSectionGroups(session, spec.x, spec.y, spec.groupId, spec.visualClass);
-  const original = propertyValue(before, spec.groupId, spec.readProperty);
-  if (original === undefined) {
-    throw new Error(
-      `Cannot read ${spec.groupId}.${spec.readProperty} at (${spec.x},${spec.y}) — ` +
-        `nothing to restore to, so the probe refuses to write.`,
+  const read = async (): Promise<string | undefined> =>
+    propertyValue(
+      await readSectionGroups(session, spec.x, spec.y, spec.groupId, spec.visualClass),
+      spec.groupId,
+      spec.readProperty,
     );
-  }
-
-  const written = spec.testValue(original);
-  const restoreEntry = {
-    what: spec.what,
-    x: spec.x,
-    y: spec.y,
-    propertyName: spec.writeProperty,
-    originalValue: original,
-    additionalParams: spec.additionalParams,
+  const write = async (value: string): Promise<void> => {
+    await setBuildingProperty(session, spec.x, spec.y, spec.writeProperty, value, spec.additionalParams);
   };
 
-  const window = await logWindowFactory(survivalLogUrl);
-  lock.addPendingRestore(restoreEntry);
-
-  let logLine: string | null = null;
-  let readBack: ReadBackVerdict = 'UNCONFIRMED';
-  let note: string | undefined;
-  let thrown: unknown = null;
-
-  try {
-    await setBuildingProperty(
-      session,
-      spec.x,
-      spec.y,
-      spec.writeProperty,
-      written,
-      spec.additionalParams,
-    );
-    logLine = await awaitMarker(window, marker, TIMEOUTS.logSettle);
-
-    const after = await readSectionGroups(session, spec.x, spec.y, spec.groupId, spec.visualClass);
-    const current = propertyValue(after, spec.groupId, spec.readProperty);
-    if (current === written) {
-      readBack = 'CONFIRMED';
-    } else {
-      // Expected on the Town Hall: the tax rate is written onto the facility, whose cache
-      // entry carries a two-minute TTL (Kernel/Population.pas:1192), while the write
-      // invalidates the TOWN. That is OB-29 — a lagging read, not a lost write.
-      note =
-        `read-back still shows "${current ?? '(absent)'}" — cached copy lags the write ` +
-        `(OB-29, 2 min facility TTL)`;
-    }
-  } catch (err: unknown) {
-    thrown = err;
-  }
-
-  // The restore runs whatever happened above: a failing probe must never be the reason
-  // the world is left dirty.
-  const restored = await restore(session, spec, original);
-  if (restored) lock.clearPendingRestore(spec.x, spec.y, spec.writeProperty);
-
-  if (thrown !== null) {
-    return { ...probeFailure(spec, thrown), original, written, restored };
-  }
-  return finish({ spec, original, written, logLine, readBack, note, restored });
-}
-
-async function restore(session: LiveSession, spec: ProbeSpec, original: string): Promise<boolean> {
-  try {
-    await setBuildingProperty(
-      session,
-      spec.x,
-      spec.y,
-      spec.writeProperty,
-      original,
-      spec.additionalParams,
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function finish(input: {
-  spec: ProbeSpec;
-  original: string;
-  written: string;
-  logLine: string | null;
-  readBack: ReadBackVerdict;
-  note?: string;
-  restored: boolean;
-}): ProbeResult {
-  const { spec, logLine, restored } = input;
-  const failures: string[] = [];
-  if (!logLine) failures.push('no model-server log line — the write never reached the object');
-  if (!restored) failures.push('restore failed — the world is left dirty');
-
-  return {
-    what: spec.what,
-    member: spec.member,
-    status: failures.length === 0 ? 'PASS' : 'FAIL',
-    original: input.original,
-    written: input.written,
-    logLine,
-    readBack: input.readBack,
-    restored,
-    note: failures.length > 0 ? failures.join('; ') : input.note,
-  };
+  return runRoundTrip(
+    {
+      what: spec.what,
+      member: spec.member,
+      read,
+      write,
+      testValue: spec.testValue,
+      proof: {
+        log: { marker },
+        readBack: {
+          source: `${spec.groupId}.${spec.readProperty} at (${spec.x},${spec.y}) via the gateway's section read`,
+          why:
+            "the facility's object-cache entry refreshes within its two-minute TTL " +
+            '(Kernel/Population.pas:1192, OB-29); the poll waits the lag out',
+          read,
+          boundMs: options.readBackBoundMs ?? TIMEOUTS.readBack,
+        },
+      },
+      restoreRecord: {
+        x: spec.x,
+        y: spec.y,
+        propertyName: spec.writeProperty,
+        additionalParams: spec.additionalParams,
+      },
+    },
+    lock,
+    logWindowFactory,
+    survivalLogUrl,
+    options,
+  );
 }
 
 /** Wrap an unexpected throw into a reportable failure without losing the reason. */
-export function probeFailure(spec: ProbeSpec, err: unknown): ProbeResult {
+export function probeFailure(spec: { what: string; member: string }, err: unknown): ProbeResult {
   return {
     what: spec.what,
     member: spec.member,
@@ -191,6 +323,12 @@ export function probeFailure(spec: ProbeSpec, err: unknown): ProbeResult {
     restored: false,
     note: toErrorMessage(err),
   };
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms).unref?.();
+  });
 }
 
 export { openLogWindow };

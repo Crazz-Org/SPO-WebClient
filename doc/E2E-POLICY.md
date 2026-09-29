@@ -141,24 +141,77 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
 Every mutation exercised live uses this shape, and nothing else counts as verification:
 
 ```
-read original -> write test value
-              -> assert the FIVEMODELSERVER/Survival log line inside the run's UTC window
-              -> read back
-              -> restore original
-              -> assert restored
+read original -> record the pending restore -> write test value
+              -> poll the read-back until it shows the value (up to the spec's boundMs)
+              -> assert the FIVEMODELSERVER/Survival log line (marker + the flow's match)
+              -> restore original (always, even after a throw)
+              -> poll the read-back until it shows the original
+              -> clear the pending restore
 ```
 
-The log line is the only evidence that is not the client agreeing with itself. Civic RDO
-members log on entry, *before* their `try`, so a line proves the frame reached the object:
+`runRoundTrip` in `src/e2e/probe.ts` carries this shape for any mutation (politics, profile,
+road, zone, building); `runProbe` is its building-property adapter.
 
-| Member | Log marker |
-|---|---|
-| `RDOSetTaxValue` | `Setting Tax value:` |
-| `RDOSetMinSalaryValue` | `Setting Min Wage:` |
-| town cache load | `Caching Town..` |
+**The line proves receipt; the read-back proves the change.** Most handlers log before their
+owner check (e.g. `Kernel/Kernel.pas:4336` -> `:4337`), so a refused write prints its line.
+A lag (`OB-29`) is polled out up to the spec's `boundMs`; a read-back that never shows the
+value FAILs, as does a missing line. A member with a marker must carry a log part; a member
+with none (e.g. `RDOPayOff`, `RDOSendMoney`) is proven by the read-back alone. The restore is
+proven the same way: its read-back must reach the original, or the pending restore is kept.
 
-Read-back may legitimately lag the write (`OB-29`) — so a read-back mismatch **downgrades**
-to `UNCONFIRMED`, it does not by itself fail the probe. A missing log line **fails**.
+The read-back is any authoritative channel, named in the spec with why it is authoritative —
+an object-cache property re-read after its refresh, a live RDO `get`, a server-generated mail
+read from the recipient's mailbox, or a direct HTTP re-fetch compared byte for byte. For
+`C7b` (#1147): the money transfer is proven by the transfer notification in the receiver's
+Inbox, the portrait upload by a direct re-fetch of the stored image compared byte for byte;
+the cache server's `OK` reply alone proves nothing.
+
+The markers (`LOG_MARKERS` in `src/e2e/live-log.ts`, the citation beside each entry). A
+`Fac(<x>,<y>)` line is keyed by the text after the coordinates; the identifying fields —
+town, `Fac(x,y)`, voter, circuit id, the value — go in each flow's `match`:
+
+| Member | Line contains | Cited at |
+|---|---|---|
+| `RDOSetTaxValue` | `Setting Tax value: <town>, <TaxId>, <value>` | `Kernel/Population.pas:1250` |
+| `RDOSetMinSalaryValue` (town hall) | `Setting Min Wage: <town>, <PopKind>, <value>` | `Kernel/Population.pas:1292` |
+| `RDOSetPublicity` | `Setting town politics publicity:` | `Kernel/TownPolitics.pas:220` |
+| `RDOSetRatingFrom` | `Setting town politics Tycoon rating:` | `Kernel/TownPolitics.pas:186` |
+| `RDOVote` | `Voting: <voter> by <choice>` — `TPresidentialHall.RDOVote` logs the identical text (`Kernel/WorldPolitics.pas:1822`), so a vote's `match` carries the voter | `Kernel/TownPolitics.pas:395` |
+| `RDOSetPrice` | `Service SetPrice: <index>, <value>` | `StdBlocks/ServiceBlock.pas:1578` |
+| `RDOSetSalaries` | `Setting salaries: <hi>, <mid>, <lo>` | `Kernel/WorkCenterBlock.pas:582` |
+| `RDOSetOutputPrice` | `Fac(<x>,<y>) Output price set:` | `Kernel/Kernel.pas:4332` |
+| `RDOSetInputOverPrice` | `Fac(<x>,<y>) Input overprice set:` | `Kernel/Kernel.pas:4358` |
+| `RDOSetInputMaxPrice` | `Fac(<x>,<y>) Input max price set:` | `Kernel/Kernel.pas:4390` |
+| `RDOSetInputMinK` | `Fac(<x>,<y>) Input min K set:` | `Kernel/Kernel.pas:4416` |
+| `RDOSetInputSortMode` | `Changing Sort Mode..` | `Kernel/Kernel.pas:4442` |
+| `RDOConnectInput` / `RDOConnectOutput` | `Fac(<x>,<y>) Input connected:` / `Output connected:` | `Kernel/Kernel.pas:4304` / `:4311` |
+| `RDODisconnectInput` / `RDODisconnectOutput` | `Fac(<x>,<y>) Input disconnect:` / `Output disconnect:` | `Kernel/Kernel.pas:4320` / `:4327` |
+| `RDOConnectToTycoon` | `Fac(<x>,<y>) Connect to Tycoon:` | `Kernel/Kernel.pas:4521` |
+| `RDOSetCompanyInputDemand` | `Fac(<x>,<y>) SetCompanyInputDemand` | `Kernel/Kernel.pas:6371` |
+| `RDOSetTradeLevel` | `Fac(<x>,<y>) SetTradeLevel` | `Kernel/Kernel.pas:6395` (in `TBlock.SetTradeLevel`, called by `RDOSetTradeLevel` `:6408` after its owner check) |
+| `Stopped` (property `set`, `TFacility.SetStopped`) | `Stopping Facility.` — no coordinates, so the read-back attributes it | `Kernel/Kernel.pas:3948` (log `:3950`) |
+| `RDOStartUpgrades` / `RDOStopUpgrade` | `Facility Start Upgrade count:` / `Facility Stop Upgrade..` | `Kernel/Kernel.pas:4668` (inside its `CheckOpAuthenticity` guard) / `:4685` |
+| `RDOQueueResearch` / `RDOCancelResearch` | `Queue Research:` / `Cancel Research:` | `Kernel/ResearchCenter.pas:382` / `:394` |
+| `RdoRepair` | `Repairing: <facility name>` | `Kernel/PopulatedBlock.pas:771` |
+| `RDONewFacility` | `New Facility: <class> Company: <id> x: <x> y: <y>` | `Kernel/World.pas:3560` (log `:3565`) |
+| `RDODelFacility` | `Del Facility, x: <x> y: <y>` | `Kernel/World.pas:3571` |
+| `RDOCreateCircuitSeg` | `CreateCircuitSeg: <CircuitId>, <TycoonId>, <x1>, <y1>, <x2>, <y2>` | `Kernel/World.pas:4252` (log `:4263`) |
+| `RDOBreakCircuitAt` | `BreakCircuit: <CircuitId>, <TycoonId>, <x>, <y>` | `Kernel/World.pas:4311` (log `:4320`) |
+| `RDOWipeCircuit` | `WipingCircuit: <CircuitId>, <TycoonId>, <x1>, <y1>, <x2>, <y2>` | `Kernel/World.pas:4356` (log `:4366`) |
+| `RDODefineZone` | `Defining Zone: <ZoneId>, <TycoonId>, <x1>, <y1>, <x2>, <y2>` | `Kernel/World.pas:4502` (log `:4526`) |
+| `RDOAskLoan` | `AskLoan: <tycoon>, $<amount>` | `Kernel/Kernel.pas:11451` |
+| `RDOSetPolicyStatus` | `Setting policy status: <tycoon>, <to>, <status>` | `Kernel/Kernel.pas:11772` |
+| `CacheTown` (not a write, no flow's proof) | `Caching Town..` | `Kernel/PoliticsCache.pas:139` |
+
+- The three circuit lines log the gateway's tycoon **object reference**, not the tycoon id
+  (`TTycoon(TycoonId)`, `Kernel/World.pas:4270`), which no WS message exposes — their `match`
+  uses the circuit id and the coordinates. `CreateCircuitSeg: OK!` (`Kernel/World.pas:4307`)
+  is logged unconditionally and is never a proof.
+- `TPresidentialHall.RDOSetMinSalaryValue` logs `Setting Ministry Salary.` instead
+  (`Kernel/WorldPolitics.pas:1772`), so the town marker can never be satisfied by the Capitol
+  variant. `RDOPayOff` (`Kernel/Kernel.pas:11555`) logs nothing, and `RDOSendMoney` logs to a
+  `Money` log (`Kernel/Kernel.pas:11491`) the public listing does not carry — both are proven
+  by the read-back alone.
 
 ### The live server logs — http://158.69.153.134/logs/
 
@@ -170,7 +223,7 @@ MB/day, too big for context.
 
 | Path | Carries |
 |------|---------|
-| `FIVEMODELSERVER/Survival <YY-MM-DD>.log` | **the one that matters** — civic RDO members log on entry, *before* their `try`, so a line here proves the frame reached the object (`Setting Tax value: …`, `Setting Min Wage: …`, `Caching Town..`) |
+| `FIVEMODELSERVER/Survival <YY-MM-DD>.log` | **the one that matters** — RDO members log on entry, *before* their `try`, so a line here proves receipt; the change is proven by the read-back (`Setting Tax value: …`, `Setting Min Wage: …`, `Caching Town..`) |
 | `FIVEMODELSERVER/TimeWarp <date>.log` | a periodic world snapshot — who holds each ministry, per-town vacancies and average salaries. Small (~20 KB), good for checking model state without replaying a session |
 | `FIVEINTERFACESERVER/Survival <date>.log` | `LOGON ATTEMPT: User=<name>` / `Start Disconnecting <name>` — which identity (human vs role company) was active at a given second |
 | `FIVECACHESERVER/`, `FIVEMAILSERVER/` | near-empty, rarely useful |
@@ -192,7 +245,11 @@ An autonomous loop mutating a production game world needs two rails a human run 
   B5.5: `acquire()` taking over a dead holder silently dropped its pending restores and never
   marked the lock dirty, so this guarantee held only for a clean unwind — a hard crash left
   `Helartia` mutated with nothing to block the next run or tell a human to look. Fixed; a
-  takeover now always preserves or flags what was owed.)
+  takeover now always preserves or flags what was owed.) Each pending restore carries a
+  unique `key` and a `what` that names the literal undo a human can perform (the town or
+  facility, the id or rating, the original value); `npm run e2e:unlock` prints both. A binary
+  original is stored base64 in `originalValue`, so an interrupted run's restore uses the
+  saved bytes.
 - **Single-flight.** Mechanical since 2026-08-22: the bench worker executes one job at a
   time ([bench-worker.md](bench-worker.md)). The lock file remains as the world-dirty
   carrier and as a belt-and-braces refusal for `gate:local` runs.
@@ -357,7 +414,8 @@ the same run (§5).
     "window": { "from": "…Z", "to": "…Z" },
     "flows": [{ "name": "politics-write", "status": "PASS",
                 "probes": [{ "member": "RDOSetTaxValue", "logLine": "Setting Tax value: 12",
-                             "restored": true, "readBack": "CONFIRMED" }] },
+                             "restored": true, "readBack": "CONFIRMED",
+                             "restoreReadBack": "CONFIRMED" }] },
               { "name": "zoning-alert-read", "status": "UNPROVEN",
                 "unproven": ["the flow's data — seed failed: …"] }]
   },
