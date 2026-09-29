@@ -122,7 +122,7 @@ function declarationsOf(file: string, source: string): Declaration[] {
 }
 
 function escapeRegExp(name: string): string {
-  return name.replace(/[$]/g, '\\$');
+  return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** The names of `seeds` plus every declaration whose text references one, to a fixpoint. */

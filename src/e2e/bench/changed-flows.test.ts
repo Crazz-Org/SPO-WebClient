@@ -131,6 +131,14 @@ describe('changedFlows — helpers', () => {
     expect(run(hunk('src/e2e/flows.ts', '@@ -7 +7 @@')).required).toEqual(['alpha', 'beta']);
   });
 
+  it('a helper whose name holds a `$` is matched literally', () => {
+    const dollar = FLOWS_TS.replace(/\bouter\b/g, 'out$er');
+    expect(run(hunk('src/e2e/flows.ts', '@@ -11 +11 @@'), {}, dollar).required).toEqual([
+      'alpha',
+      'beta',
+    ]);
+  });
+
   it('a helper in another flow source requires the flows that reference it', () => {
     const result = run(hunk('src/e2e/session.ts', '@@ -4 +4 @@'));
     expect(result.required).toEqual(['beta']);
