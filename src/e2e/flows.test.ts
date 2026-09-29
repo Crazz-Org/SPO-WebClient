@@ -1,3 +1,6 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage, FavoritesItem, WsRespResumeSession } from '@/shared/types/message-types';
 import type { MailMessageHeader } from '@/shared/types/domain-types';
@@ -28,6 +31,11 @@ function stubSession(responder: (msg: WsMessage) => unknown): session.LiveSessio
 }
 
 const ctx = { lock: new WorldLock('report/e2e') };
+
+/** A lock in a fresh temp dir — the shared report/e2e lock is not deterministic. */
+function cleanLock(): WorldLock {
+  return new WorldLock(fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-lock-')));
+}
 
 afterEach(() => jest.restoreAllMocks());
 
@@ -189,12 +197,66 @@ describe('runFlow', () => {
       expect((await runFlow(flow, ctx)).status).toBe('FAIL');
     });
 
+    it('a seed skipped by a login refusal ends SKIPPED, and run is never called', async () => {
+      const { flow, calls } = seeded({
+        seed: async () => ({
+          outcome: { what: 'plant', ok: false, skipped: 'Crazz refused' },
+          cleanup: async () => [{ what: 'mailbox', ok: true }],
+        }),
+      });
+      const result = await runFlow(flow, { lock: cleanLock() });
+      expect(calls).toEqual([]);
+      expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused', unproven: [] });
+    });
+
     it('a flow without a seed carries no seed or cleanup keys', async () => {
       const { flow } = seeded({ seed: undefined });
       const result = await runFlow(flow, ctx);
       expect(result).not.toHaveProperty('seed');
       expect(result).not.toHaveProperty('cleanup');
     });
+  });
+});
+
+describe('runFlow and a SKIPPED flow', () => {
+  const skipping: Flow = {
+    name: 'needs-crazz',
+    what: '',
+    mutates: true,
+    run: async () => ({
+      name: 'needs-crazz',
+      status: 'SKIPPED',
+      skipped: 'Crazz refused',
+      assertions: [],
+      unproven: [],
+      probes: [],
+      messagesSent: 0,
+      messagesReceived: 0,
+      wireErrors: 0,
+    }),
+  };
+
+  it('passes a skip through as SKIPPED when the lock holds no pending restore', async () => {
+    const result = await runFlow(skipping, { lock: cleanLock() });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+  });
+
+  it('turns a skip into a FAIL while the lock holds a pending restore', async () => {
+    const lock = cleanLock();
+    lock.addPendingRestore({ what: 'tax', x: 1, y: 2, propertyName: 'Tax0', originalValue: '5' });
+    const result = await runFlow(skipping, { lock });
+    expect(result.status).toBe('FAIL');
+    expect(result.error).toMatch(/skipped after a write \(Crazz refused\) — 1 pending restore/);
+  });
+
+  it('turns a seeded flow\'s skip into a FAIL while the lock holds a pending restore', async () => {
+    const lock = cleanLock();
+    lock.addPendingRestore({ what: 'tax', x: 1, y: 2, propertyName: 'Tax0', originalValue: '5' });
+    const result = await runFlow(
+      { ...skipping, seed: async () => ({ outcome: { what: 'plant', ok: false, skipped: 'Crazz refused' } }) },
+      { lock },
+    );
+    expect(result.status).toBe('FAIL');
   });
 });
 
@@ -249,6 +311,7 @@ describe('permission-negative', () => {
 
   function arrange(canGovern: boolean) {
     jest.spyOn(session, 'login').mockResolvedValue(stubSession(() => undefined));
+    jest.spyOn(session, 'loginSecondary').mockImplementation(async () => session.login(SECONDARY_ACCOUNT));
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
     jest.spyOn(session, 'findTown').mockResolvedValue(town);
   jest.spyOn(session, 'resolveVisualClass').mockResolvedValue('7010');
@@ -270,6 +333,15 @@ describe('permission-negative', () => {
     const result = await flowByName('permission-negative').run(ctx);
     expect(result.status).toBe('FAIL');
     expect(result.assertions.find(a => !a.ok)?.detail).toBe('canGovern=true');
+  });
+
+  it('ends SKIPPED, not FAIL, when the second account is refused at login', async () => {
+    arrange(false);
+    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+    const result = await runFlow(flowByName('permission-negative'), { lock: cleanLock() });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+    expect(session.findTown).not.toHaveBeenCalled();
+    expect(session.logoff).not.toHaveBeenCalled();
   });
 });
 
@@ -567,8 +639,13 @@ describe('mail-roundtrip', () => {
   // in-memory speed.
   const mailCtx = { ...ctx, sleep: async () => {} };
 
+  // Crazz logs in first (before the compose), through the same stub `login` as SPO_test3.
+  beforeEach(() => {
+    jest.spyOn(session, 'loginSecondary').mockImplementation(async () => session.login(SECONDARY_ACCOUNT));
+  });
+
   function mailSession(
-    inboxSubjects: string[],
+    inboxSubjects: string[] | (() => string[]),
     record?: (msg: WsMessage) => void,
     opts: {
       unreadCount?: number;
@@ -601,7 +678,7 @@ describe('mail-roundtrip', () => {
           return {
             type: WsMessageType.RESP_MAIL_FOLDER,
             folder: 'Inbox',
-            messages: inboxSubjects
+            messages: (typeof inboxSubjects === 'function' ? inboxSubjects() : inboxSubjects)
               .map((subject, i) => ({ messageId: String(i), subject }))
               .filter(m => !deleted.has(m.messageId)),
           };
@@ -629,7 +706,7 @@ describe('mail-roundtrip', () => {
     const sent: WsMessage[] = [];
     let subject = '';
     jest.spyOn(session, 'login').mockImplementation(async () =>
-      mailSession(subject ? [subject] : [], msg => {
+      mailSession(() => (subject ? [subject] : []), msg => {
         sent.push(msg);
         if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
           subject = (msg as unknown as { subject: string }).subject;
@@ -648,7 +725,7 @@ describe('mail-roundtrip', () => {
     let subject = '';
     jest.spyOn(session, 'login').mockImplementation(async () =>
       mailSession(
-        subject ? [subject] : [],
+        () => (subject ? [subject] : []),
         msg => {
           if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
             subject = (msg as unknown as { subject: string }).subject;
@@ -670,7 +747,7 @@ describe('mail-roundtrip', () => {
     let subject = '';
     jest.spyOn(session, 'login').mockImplementation(async () =>
       mailSession(
-        subject ? [subject] : [],
+        () => (subject ? [subject] : []),
         msg => {
           if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
             subject = (msg as unknown as { subject: string }).subject;
@@ -692,7 +769,7 @@ describe('mail-roundtrip', () => {
     let subject = '';
     jest.spyOn(session, 'login').mockImplementation(async () =>
       mailSession(
-        subject ? [subject] : [],
+        () => (subject ? [subject] : []),
         msg => {
           if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
             subject = (msg as unknown as { subject: string }).subject;
@@ -717,7 +794,7 @@ describe('mail-roundtrip', () => {
       let subject = '';
       jest.spyOn(session, 'login').mockImplementation(async () =>
         mailSession(
-          subject ? [subject] : [],
+          () => (subject ? [subject] : []),
           msg => {
             if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
               subject = (msg as unknown as { subject: string }).subject;
@@ -745,7 +822,7 @@ describe('mail-roundtrip', () => {
     let subject = '';
     jest.spyOn(session, 'login').mockImplementation(async () =>
       mailSession(
-        subject ? [subject] : [],
+        () => (subject ? [subject] : []),
         msg => {
           sent.push(msg);
           if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) {
@@ -763,6 +840,34 @@ describe('mail-roundtrip', () => {
     const failed = result.assertions.find(a => !a.ok);
     expect(failed?.what).toMatch(/lowered CheckNewMail by one/);
     expect(failed?.detail).toMatch(/messageId=\d+ before=1 after=1/);
+  });
+
+  it('ends SKIPPED with no compose sent when the second account is refused at login', async () => {
+    const sent: WsMessage[] = [];
+    const primary = jest.spyOn(session, 'login').mockResolvedValue(mailSession([], msg => sent.push(msg)));
+    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+
+    const result = await flowByName('mail-roundtrip').run(mailCtx);
+
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+    expect(sent.some(m => m.type === WsMessageType.REQ_MAIL_COMPOSE)).toBe(false);
+    expect(primary).not.toHaveBeenCalled();
+  });
+
+  it('logs Crazz in before the compose', async () => {
+    const order: string[] = [];
+    jest.spyOn(session, 'login').mockImplementation(async account => {
+      order.push(`login ${account.username}`);
+      return mailSession([], msg => {
+        if (msg.type === WsMessageType.REQ_MAIL_COMPOSE) order.push('compose');
+      });
+    });
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+
+    await flowByName('mail-roundtrip').run(mailCtx);
+
+    expect(order.slice(0, 3)).toEqual(['login Crazz', 'login SPO_test3', 'compose']);
   });
 
   it('addresses the probe message to the second account', async () => {
@@ -1267,6 +1372,8 @@ describe('zoning-alert-read seed', () => {
     noIp?: boolean;
     loginRejects?: boolean;
     refuseDeleteOf?: string;
+    /** Which loginSecondary calls answer `{ skipped }`: 1 pre-sweep, 2 seed, 3 cleanup. */
+    refuseSecondaryOn?: number[];
   } = {}) {
     const mailboxes: Record<string, MailMessageHeader[]> = {
       [`${PRIMARY_ACCOUNT.username}/Inbox`]: [...(over.inbox ?? [])],
@@ -1326,6 +1433,13 @@ describe('zoning-alert-read seed', () => {
         account,
         world: over.noIp ? undefined : { name: 'planitia', url: '', ip: '10.1.2.3', port: 0 },
       };
+    });
+    // Crazz goes through loginSecondary; call N (1-based) of it is refused when listed.
+    let secondaryCalls = 0;
+    jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
+      secondaryCalls++;
+      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `Crazz refused (call ${secondaryCalls})` };
+      return session.login(SECONDARY_ACCOUNT);
     });
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
     jest.spyOn(session, 'findTown').mockResolvedValue(HALL);
@@ -1456,6 +1570,48 @@ describe('zoning-alert-read seed', () => {
 
     expect(result.seed).toMatchObject({ ok: false, detail: 'the login carried no world IP' });
     expect(composeOf(requests)).toBeUndefined();
+  });
+
+  it('ends SKIPPED when Crazz is refused in the pre-sweep, and sends no compose', async () => {
+    const { requests } = arrange({ refuseSecondaryOn: [1] });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
+
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
+    expect(result.seed).toMatchObject({ ok: false, skipped: 'Crazz refused (call 1)' });
+    expect(composeOf(requests)).toBeUndefined();
+    expect(result.cleanup?.every(c => c.ok)).toBe(true);
+  });
+
+  it('ends SKIPPED when Crazz is refused at the seed login, and sends no compose', async () => {
+    const { requests } = arrange({ refuseSecondaryOn: [2] });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
+
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 2)' });
+    expect(composeOf(requests)).toBeUndefined();
+    expect(requests.some(r => r.msg.type === WsMessageType.REQ_BUILDING_FOCUS)).toBe(false);
+  });
+
+  it('stays SKIPPED when the seed was skipped and the cleanup is refused too', async () => {
+    arrange({ refuseSecondaryOn: [2, 3] });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
+
+    expect(result.status).toBe('SKIPPED');
+    expect(result.cleanup?.[1]).toMatchObject({ ok: false, skipped: 'Crazz refused (call 3)' });
+  });
+
+  it('FAILs, naming the leftover, when Crazz is refused in the cleanup after a successful seed', async () => {
+    const { mailboxes } = arrange({ refuseSecondaryOn: [3] });
+
+    const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
+
+    expect(result.seed?.ok).toBe(true);
+    expect(result.status).toBe('FAIL');
+    expect(result.cleanup?.[1]).toMatchObject({ ok: false, skipped: 'Crazz refused (call 3)' });
+    expect(result.cleanup?.[1].detail).toMatch(/left in Crazz's Sent/);
+    expect(mailboxes['Crazz/Sent']).toHaveLength(1);
   });
 
   it('a stale sweep that cannot log in fails the seed, and the cleanup reports it', async () => {

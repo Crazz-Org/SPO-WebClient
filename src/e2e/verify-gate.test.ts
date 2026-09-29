@@ -432,6 +432,24 @@ describe('stage 4 — live', () => {
     expect(run.artifact).toMatchObject({ verdict: 'BLOCKED' });
   });
 
+  it('never passes a live result BLOCKED by a skipped flow', () => {
+    const live = {
+      status: 'BLOCKED',
+      error: 'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused)',
+      flows: [
+        { name: 'login-spine', status: 'PASS' },
+        { name: 'permission-negative', status: 'SKIPPED', skipped: 'Crazz refused' },
+      ],
+    };
+    const run = runGate(scratchRepo(), ['--live'], {
+      FAKE_ROUTING: needsLive,
+      FAKE_LIVE: JSON.stringify(live),
+    });
+    expect(run.code).not.toBe(0);
+    expect(run.code).toBe(2);
+    expect(run.artifact).toMatchObject({ verdict: 'BLOCKED', live });
+  });
+
   it('exits 3 on an ENVIRONMENT abort, keeps the verdict, and says it is not an attempt', () => {
     // The exit code is what the bench worker reads. Collapsed to 1 it arrived there as
     // FAIL, and the worker then attested a sha whose code was never judged.

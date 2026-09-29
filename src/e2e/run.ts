@@ -18,7 +18,8 @@ import { WorldLock } from './world-lock';
 /**
  * Exit codes — matches `EXIT` in scripts/verify-gate.js, and read the same way by
  * `worker.ts`'s `GATE_EXIT_VERDICT`: 0 PASS, 1 FAIL, 2 BLOCKED (refused before driving
- * anything — a dirty world or another live run already in flight), 3 ENVIRONMENT (a
+ * anything — a dirty world or another live run already in flight — or a flow ended SKIPPED,
+ * the second account refused at login), 3 ENVIRONMENT (a
  * preflight abort; does not consume an attempt, doc/E2E-POLICY.md §8).
  */
 const EXIT: Readonly<Record<LiveRunResult['status'], number>> = {
@@ -118,14 +119,20 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
   }
 
   const failed = releaseError !== undefined || results.some(r => r.status === 'FAIL');
+  // A flow that did not run is not a pass: a skip BLOCKS, and verify-gate.js maps that to a
+  // BLOCKED gate (doc/E2E-POLICY.md §7).
+  const skippedFlows = results.filter(r => r.status === 'SKIPPED');
+  const skipError = skippedFlows.length
+    ? `skipped — a flow that did not run is not a pass: ${skippedFlows.map(f => `${f.name} (${f.skipped ?? ''})`).join('; ')}`
+    : undefined;
   return {
     ...base,
     finishedAt: new Date().toISOString(),
-    status: failed ? 'FAIL' : 'PASS',
+    status: failed ? 'FAIL' : skippedFlows.length > 0 ? 'BLOCKED' : 'PASS',
     preflight: checks,
     flows: results,
     capabilities,
-    error: releaseError,
+    error: releaseError ?? skipError,
   };
 }
 
@@ -155,13 +162,21 @@ export async function main(
   });
 
   const result = await runner({ flows, branch, sha, capabilities });
-  const file = path.join(REPORT_DIR, `live-${result.startedAt.replace(/[:.]/g, '-')}.json`);
+  // The nightly (no --flows) records a skip and does not fail on it: a run BLOCKED only by
+  // SKIPPED flows is reported PASS, the skips listed. An explicit --flows — a card's proof —
+  // stays BLOCKED: a card cannot prove a flow that did not run. The lock-refusal BLOCK carries
+  // no flows, and a skip beside a failure is already FAIL, so this test is exact.
+  const reported: LiveRunResult =
+    named === undefined && result.status === 'BLOCKED' && result.flows.some(f => f.status === 'SKIPPED')
+      ? { ...result, status: 'PASS' }
+      : result;
+  const file = path.join(REPORT_DIR, `live-${reported.startedAt.replace(/[:.]/g, '-')}.json`);
   fs.mkdirSync(REPORT_DIR, { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(file, `${JSON.stringify(reported, null, 2)}\n`, 'utf8');
 
   const notDriven = skipped.map(n => `  gate-only, not driven: ${n} — ${GATE_ONLY[n]}`);
-  out.write(`${[formatSummary(result), ...notDriven].join('\n')}\nArtifact: ${file}\n`);
-  return EXIT[result.status];
+  out.write(`${[formatSummary(reported), ...notDriven].join('\n')}\nArtifact: ${file}\n`);
+  return EXIT[reported.status];
 }
 
 export function formatSummary(result: LiveRunResult): string {
@@ -177,7 +192,11 @@ export function formatSummary(result: LiveRunResult): string {
     for (const check of cap.checks) lines.push(`          ${check.what} = ${check.value}`);
   }
   for (const flow of result.flows) {
-    lines.push(`  ${flow.status.padEnd(4)}  ${flow.name}${flow.error ? ` — ${flow.error}` : ''}`);
+    lines.push(
+      flow.status === 'SKIPPED'
+        ? `  SKIP  ${flow.name} — ${flow.skipped ?? ''}`
+        : `  ${flow.status.padEnd(4)}  ${flow.name}${flow.error ? ` — ${flow.error}` : ''}`,
+    );
     if (flow.seed) {
       const { ok, what, detail } = flow.seed;
       lines.push(`          seed ${ok ? 'ok' : 'FAIL'}: ${what}${detail ? ` (${detail})` : ''}`);

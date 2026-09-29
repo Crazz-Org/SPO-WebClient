@@ -234,6 +234,7 @@ distinction is the whole point:
 | a control missing, a request refused by the gateway, a wrong frame | a **bug** | `FAIL` — diagnose, fix, iterate (§8) |
 | the server says the account does not hold the role the member needs | a **capability exception** | recorded with its evidence; the gate continues |
 | the flow ran and nothing failed, but the world held no data to exercise it on (`UNPROVEN`) | an **unproven flow** | required by routing → `FAIL`; run only because `--flows` named it → recorded, informational |
+| the flow needs the optional second account, which was refused at login before the flow's first write (`SKIPPED`) | a **skipped flow** | never a gate `PASS` — `runLive` returns `BLOCKED`, and so does an explicit `--flows`; the no-`--flows` nightly records it and reports `PASS` with the skip listed. A skip after a write is `FAIL` |
 
 The six `TPresidentialHall` members ([civic-roles-reference.md:101-106](civic-roles-reference.md))
 — `RDOSetMinSalaryValue` · `RDOSetTownTaxes` · `RDOSitMayor` · `RDOSitMinister` ·
@@ -316,7 +317,7 @@ ahead of zero.
 | Account | Password | Holds | Used for |
 |---|---|---|---|
 | `SPO_test3` | `test3` | Mayor of **Helartia**, Minister of Agriculture, company *SPO_test3 - Green* | Primary. Governance reads and writes, roads, zones |
-| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, rating another tycoon's term. **Read-only apart from mail:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. |
+| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. |
 
 Both are **LOCKED** — never changed without explicit developer approval. Zone **Free Space**,
 world **planitia**.

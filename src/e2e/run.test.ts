@@ -105,6 +105,42 @@ describe('runLive', () => {
     expect(result.status).toBe('FAIL');
   });
 
+  it('BLOCKS a run whose flows all pass but one ended SKIPPED, and names it', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow =>
+      flow.name === 'permission-negative'
+        ? { ...passingFlow(flow.name), status: 'SKIPPED', skipped: 'Crazz refused at REQ_AUTH_CHECK (code 7)' }
+        : passingFlow(flow.name),
+    );
+
+    const result = await runLive({
+      flows: ['login-spine', 'permission-negative'],
+      branch: 'fix/a',
+      lock: tempLock(),
+    });
+
+    expect(result.status).toBe('BLOCKED');
+    expect(result.error).toBe(
+      'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused at REQ_AUTH_CHECK (code 7))',
+    );
+  });
+
+  it('a skip beside a failure is still a FAIL', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => ({
+      ...passingFlow(flow.name),
+      status: flow.name === 'login-spine' ? 'FAIL' : 'SKIPPED',
+    }));
+
+    const result = await runLive({
+      flows: ['login-spine', 'permission-negative'],
+      branch: 'fix/a',
+      lock: tempLock(),
+    });
+
+    expect(result.status).toBe('FAIL');
+  });
+
   it('reports an ENVIRONMENT abort without running a single flow', async () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue({
       ok: false,
@@ -324,6 +360,28 @@ describe('formatSummary', () => {
     expect(summary).not.toContain('cleanup');
   });
 
+  it('prints a skipped flow as SKIP with its reason', () => {
+    const summary = formatSummary({
+      ...base,
+      status: 'BLOCKED',
+      flows: [
+        {
+          name: 'permission-negative',
+          status: 'SKIPPED',
+          skipped: 'Crazz refused',
+          assertions: [],
+          unproven: [],
+          probes: [],
+          messagesSent: 0,
+          messagesReceived: 0,
+          wireErrors: 0,
+        },
+      ],
+    });
+    expect(summary).toContain('  SKIP  permission-negative — Crazz refused');
+    expect(summary).not.toContain('SKIPPED  permission-negative');
+  });
+
   it('surfaces failed pre-flight checks', () => {
     const summary = formatSummary({
       ...base,
@@ -447,6 +505,52 @@ describe('main', () => {
     expect(await main(['--flows=login-spine'], async () => failed, sink().stream)).toBe(1);
     const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
     if (fs.existsSync(written)) fs.unlinkSync(written);
+  });
+
+  describe('a run BLOCKED only by skipped flows', () => {
+    const skippedRun: LiveRunResult = {
+      ...result,
+      status: 'BLOCKED',
+      error: 'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused)',
+      flows: [
+        {
+          name: 'permission-negative',
+          status: 'SKIPPED',
+          skipped: 'Crazz refused',
+          assertions: [],
+          unproven: [],
+          probes: [],
+          messagesSent: 0,
+          messagesReceived: 0,
+          wireErrors: 0,
+        },
+      ],
+    };
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    afterEach(() => {
+      if (fs.existsSync(written)) fs.unlinkSync(written);
+    });
+
+    it('is reported PASS by the nightly (no --flows), the skip listed, and the artifact agrees', async () => {
+      const out = sink();
+      expect(await main([], async () => skippedRun, out.stream)).toBe(0);
+      expect(out.text()).toContain('L2 live drive on planitia — PASS');
+      expect(out.text()).toContain('  SKIP  permission-negative — Crazz refused');
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('PASS');
+      expect(artifact.flows[0]).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+    });
+
+    it('stays BLOCKED, exit 2, when the caller named the flows', async () => {
+      const out = sink();
+      expect(await main(['--flows=permission-negative'], async () => skippedRun, out.stream)).toBe(2);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('BLOCKED');
+    });
+
+    it('a lock-refusal BLOCK (no flows) stays BLOCKED for the nightly too', async () => {
+      const refused = { ...result, status: 'BLOCKED' as const, error: 'world dirty' };
+      expect(await main([], async () => refused, sink().stream)).toBe(2);
+    });
   });
 
   it.each([

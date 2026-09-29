@@ -8,6 +8,7 @@ import {
   resolveVisualClass,
   listTowns,
   login,
+  loginSecondary,
   logoff,
   pickCompany,
   propertyValue,
@@ -17,6 +18,8 @@ import {
   type LiveSession,
 } from './session';
 import { PRIMARY_ACCOUNT } from './config';
+import { DIR_ERROR_InvalidPassword, DIR_ERROR_Unknown } from '@/shared/directory-error-codes';
+import { ERROR_InvalidLogonData, ERROR_InvalidPassword, ERROR_Unknown } from '@/shared/error-codes';
 
 type Responder = (msg: WsMessage) => unknown;
 
@@ -137,6 +140,13 @@ describe('login', () => {
     const driver = stubDriver(loginResponder([{ name: 'aries' }]));
     jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
     await expect(login(PRIMARY_ACCOUNT)).rejects.toThrow(/got: aries/);
+  });
+
+  it('closes the driver and rethrows when the spine fails', async () => {
+    const driver = stubDriver(loginResponder([{ name: 'aries' }]));
+    jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
+    await expect(login(PRIMARY_ACCOUNT)).rejects.toThrow(/got: aries/);
+    expect(driver.close).toHaveBeenCalledTimes(1);
   });
 
   it('logoff sends REQ_LOGOUT, awaits RESP_LOGOUT, and only then closes', async () => {
@@ -311,5 +321,72 @@ describe('resumeSession', () => {
 
     await expect(resumeSession(PRIMARY_ACCOUNT, 'old')).rejects.toBe(refusal);
     expect(driver.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('loginSecondary', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  /** A spine that answers every step, except `refuseOn`, which fails with `err`. */
+  function refusing(refuseOn: string | null, err: (msg: WsMessage) => Error) {
+    const driver = stubDriver(msg => {
+      if (msg.type === refuseOn) throw err(msg);
+      switch (msg.type) {
+        case WsMessageType.REQ_AUTH_CHECK:
+          return { type: WsMessageType.RESP_AUTH_SUCCESS };
+        case WsMessageType.REQ_CONNECT_DIRECTORY:
+          return { type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: 'planitia' }] };
+        case WsMessageType.REQ_LOGIN_WORLD:
+          return { type: WsMessageType.RESP_LOGIN_SUCCESS, companies: [{ id: '5', name: 'Crazz - Red' }] };
+        default:
+          return { type: WsMessageType.RESP_RDO_RESULT, result: '' };
+      }
+    });
+    jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
+    return driver;
+  }
+  const typed = (code: number) => (msg: WsMessage) => new WsDriverError('refused', code, msg.type);
+
+  it('logs the second account in when nothing refuses it', async () => {
+    const driver = refusing(null, typed(0));
+    const result = await loginSecondary();
+    expect('skipped' in result).toBe(false);
+    expect(driver.request.mock.calls[0][0]).toMatchObject({
+      type: WsMessageType.REQ_AUTH_CHECK,
+      username: 'Crazz',
+    });
+  });
+
+  it('skips on a named directory refusal at REQ_AUTH_CHECK, and closes the socket', async () => {
+    const driver = refusing(WsMessageType.REQ_AUTH_CHECK, typed(DIR_ERROR_InvalidPassword));
+    const result = await loginSecondary();
+    expect(result).toEqual({
+      skipped: expect.stringMatching(/^Crazz refused at REQ_AUTH_CHECK \(code 7\): refused$/),
+    });
+    expect(driver.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips on ERROR_InvalidPassword at REQ_LOGIN_WORLD', async () => {
+    refusing(WsMessageType.REQ_LOGIN_WORLD, typed(ERROR_InvalidPassword));
+    expect(await loginSecondary()).toEqual({ skipped: expect.stringMatching(/REQ_LOGIN_WORLD \(code 13\)/) });
+  });
+
+  it.each([
+    ['DIR_ERROR_Unknown', WsMessageType.REQ_AUTH_CHECK, DIR_ERROR_Unknown],
+    ['ERROR_InvalidLogonData', WsMessageType.REQ_AUTH_CHECK, ERROR_InvalidLogonData],
+    ['ERROR_Unknown', WsMessageType.REQ_CONNECT_DIRECTORY, ERROR_Unknown],
+    ['a named refusal', WsMessageType.REQ_CONNECT_DIRECTORY, DIR_ERROR_InvalidPassword],
+    ['missing credentials', WsMessageType.REQ_CONNECT_DIRECTORY, ERROR_InvalidLogonData],
+    ['ERROR_Unknown', WsMessageType.REQ_LOGIN_WORLD, ERROR_Unknown],
+    ['a code outside the credential refusals', WsMessageType.REQ_SELECT_COMPANY, ERROR_InvalidPassword],
+  ])('rethrows %s on %s', async (_label, type, code) => {
+    const refusal = new WsDriverError('refused', code, type);
+    refusing(type, () => refusal);
+    await expect(loginSecondary()).rejects.toBe(refusal);
+  });
+
+  it('rethrows a timeout', async () => {
+    refusing(WsMessageType.REQ_AUTH_CHECK, () => new Error('Timed out waiting for RESP_AUTH_SUCCESS'));
+    await expect(loginSecondary()).rejects.toThrow(/Timed out/);
   });
 });
