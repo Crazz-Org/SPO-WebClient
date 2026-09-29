@@ -45,6 +45,9 @@ import type {
   WsRespWorldEvent,
   WsRespSurfaceData,
   WsRespAllFacilityDimensions,
+  WsRespClusterInfo,
+  WsRespClusterFacilities,
+  WsRespRdoResult,
   WsRespGetProfile,
   WsRespProfileCurriculum,
   WsRespProfileBank,
@@ -62,6 +65,7 @@ import type {
   ConnectionSearchResult,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
+import { CLUSTER_IDS } from '../shared/cluster-data';
 import type {
   AutoConnectionActionType,
   AutoConnectionFluid,
@@ -72,6 +76,7 @@ import type {
   PolicyData,
   ProfitLossData,
   BuildingPropertyValue,
+  CompanyInfo,
   DirectoryRef,
   DirectoryPage,
   LoanInfo,
@@ -2535,6 +2540,94 @@ const searchMenuRead: Flow = {
   },
 };
 
+/** Send `REQ_SWITCH_COMPANY`; never throws — a `RESP_ERROR` or timeout becomes `ok: false`. */
+async function trySwitch(session: LiveSession, company: CompanyInfo): Promise<{ ok: boolean; detail: string }> {
+  try {
+    await session.driver.request<WsRespRdoResult>(
+      { type: WsMessageType.REQ_SWITCH_COMPANY, company },
+      WsMessageType.RESP_RDO_RESULT,
+      TIMEOUTS.login,
+    );
+    return { ok: true, detail: 'RESP_RDO_RESULT' };
+  } catch (err: unknown) {
+    const prefix = err instanceof WsDriverError ? `RESP_ERROR (code ${err.code}): ` : '';
+    return { ok: false, detail: prefix + toErrorMessage(err) };
+  }
+}
+
+/** One town-hall read recorded as a check; never throws. */
+async function hallRead(
+  session: LiveSession,
+  town: { x: number; y: number },
+  visualClass: string,
+  assertions: Assertions,
+  label: string,
+): Promise<void> {
+  try {
+    const details = await readBuildingDetails(session, town.x, town.y, visualClass);
+    assertions.check(label, details !== undefined, details?.templateName ?? '(no details)');
+  } catch (err: unknown) {
+    assertions.check(label, false, toErrorMessage(err));
+  }
+}
+
+/**
+ * Live drive of the company list's Political Offices half (#1142): switch into the Mayor of
+ * the governed town, read the world, switch back, read again.
+ *
+ * Side effects are session-only: the Interface Server drops a ClientView when its socket
+ * closes (`TClientView.OnDisconnect`, `Interface Server/InterfaceServer.pas:1799-1813`). The
+ * proof is the gateway answering `RESP_RDO_RESULT` only after `loginWorld` under the role
+ * name and `selectCompany` succeeded. No check claims the reads answer "as the role":
+ * `TTycoon.GetAllCompaniesCount` / `GetAllCompanies` walk the MasterRole
+ * (`Kernel/Kernel.pas:10972-10992`), so neither can tell the identities apart.
+ */
+const companySwitch: Flow = {
+  name: 'company-switch',
+  what: 'company list -> switch to Mayor of <town> -> town hall read -> switch back -> town hall read',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const wanted = `Mayor of ${GOVERNED_TOWN}`.toLowerCase();
+      const role = session.companies.find(c => (c.ownerRole ?? '').toLowerCase() === wanted);
+      const listed = session.companies.map(c => `${c.name} [${c.ownerRole ?? ''}]`).join(', ') || '(empty)';
+      assertions.check(`the company list holds the Mayor of ${GOVERNED_TOWN} entry`, role !== undefined, listed);
+      if (!role) return report('company-switch', assertions, [], session);
+
+      const town = await findTown(session, GOVERNED_TOWN);
+      const visualClass = await resolveVisualClass(session, town.x, town.y);
+
+      let back: { ok: boolean; detail: string };
+      try {
+        const there = await trySwitch(session, role);
+        assertions.check('the switch to the role answers RESP_RDO_RESULT, not RESP_ERROR', there.ok, there.detail);
+        if (there.ok) {
+          await hallRead(
+            session,
+            town,
+            visualClass,
+            assertions,
+            'a world read answers on the role ClientView (REQ_BUILDING_DETAILS at the town hall)',
+          );
+        }
+      } finally {
+        back = await trySwitch(session, session.company);
+      }
+      assertions.check('the switch back to the own company answers RESP_RDO_RESULT', back.ok, back.detail);
+      if (back.ok) {
+        await hallRead(session, town, visualClass, assertions, 'the same world read answers after switching back');
+      }
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('company-switch', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 /**
  * One Empire panel tab read. A dead page does not throw at the gateway — it answers the neutral
  * default with `cacheUnavailable: true` — so this helper throws on it, and on a missing `data`.
@@ -2829,6 +2922,51 @@ const policyRoundTrip: Flow = {
       );
       assertions.check('the policy round trip proved the write and the restore', probes[0]?.status === 'PASS', probes[0]?.note);
       return report('policy-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** The company-creation dialog's cluster reads (#1142) — class-cache ASP reads, no write. */
+const clusterInfoRead: Flow = {
+  name: 'cluster-info-read',
+  what: 'REQ_CLUSTER_INFO (first cluster) -> REQ_CLUSTER_FACILITIES (its first category)',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const cluster = CLUSTER_IDS[0];
+      const { clusterInfo } = await session.driver.request<WsRespClusterInfo>(
+        { type: WsMessageType.REQ_CLUSTER_INFO, clusterName: cluster },
+        WsMessageType.RESP_CLUSTER_INFO,
+      );
+      assertions.check(
+        'the cluster description is non-empty',
+        clusterInfo.description.trim() !== '',
+        `${cluster}: ${clusterInfo.description.length} chars`,
+      );
+      const folder = clusterInfo.categories[0]?.folder ?? '';
+      assertions.check(
+        'the cluster lists a facility category',
+        folder !== '',
+        folder || `${clusterInfo.categories.length} categories`,
+      );
+      if (folder !== '') {
+        const { facilities } = await session.driver.request<WsRespClusterFacilities>(
+          { type: WsMessageType.REQ_CLUSTER_FACILITIES, cluster, folder },
+          WsMessageType.RESP_CLUSTER_FACILITIES,
+        );
+        assertions.check(
+          'the category lists at least one facility',
+          facilities.length > 0,
+          `${facilities.length} facilities in ${folder}`,
+        );
+      }
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('cluster-info-read', assertions, [], session);
     } finally {
       await logoff(session);
     }
@@ -3698,6 +3836,8 @@ export const FLOWS: Flow[] = [
   worldReaders,
   directoryBrowse,
   searchMenuRead,
+  companySwitch,
+  clusterInfoRead,
   profileRead,
   policyRoundTrip,
   autoConnectionRoundTrip,

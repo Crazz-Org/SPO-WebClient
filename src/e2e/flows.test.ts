@@ -13,7 +13,8 @@ import {
 import { buildReplyHeaders } from '@/client/store/mail-store';
 import { validatePicture } from '@/server/session/picture-transfer';
 import type { LoanInfo, TycoonProfileFull } from '@/shared/types/domain-types';
-import { ROUTES } from './routing';
+import { ROUTES, NIGHTLY_ONLY, GATE_ONLY } from './routing';
+import { CLUSTER_IDS } from '@/shared/cluster-data';
 import { WorldLock, WorldDirtyError } from './world-lock';
 import { WsDriver, WsDriverError } from './ws-driver';
 import * as session from './session';
@@ -3101,6 +3102,170 @@ describe('world-readers', () => {
     const result = await run();
     expect(result.status).toBe('FAIL');
     expect(result.assertions.find(a => !a.ok)?.what).toMatch(/still listed/);
+  });
+});
+
+describe('company-switch', () => {
+  const HELARTIA = { name: 'Helartia', iconUrl: '', mayor: null, population: 1, unemploymentPercent: 0, qualityOfLife: 0, x: 100, y: 50, path: '', classId: '' };
+  const OWN = { id: '1', name: 'SPO_test3 - Green' };
+  const MINISTRY = { id: '9', name: 'Ministry', ownerRole: 'Minister of Agriculture' };
+  const MAYOR = { id: '7', name: 'Helartia Town', ownerRole: 'Mayor of Helartia' };
+  const rdoError = (msg: WsMessage) => new WsDriverError('refused', 42, msg.type);
+
+  function arrange(over: {
+    companies?: { id: string; name: string; ownerRole?: string }[];
+    switchFails?: (n: number) => boolean;
+    readFails?: (n: number) => boolean;
+  } = {}) {
+    const { companies = [OWN, MINISTRY, MAYOR], switchFails = () => false, readFails = () => false } = over;
+    const requests: WsMessage[] = [];
+    let switches = 0;
+    let reads = 0;
+    const stub = { ...stubSession(msg => {
+      requests.push(msg);
+      switch (msg.type) {
+        case WsMessageType.REQ_SEARCH_MENU_TOWNS:
+          return { type: WsMessageType.RESP_SEARCH_MENU_TOWNS, towns: [HELARTIA] };
+        case WsMessageType.REQ_MAP_LOAD:
+          return { type: WsMessageType.RESP_MAP_DATA, data: { buildings: [{ x: HELARTIA.x, y: HELARTIA.y, visualClass: '5' }] } };
+        case WsMessageType.REQ_BUILDING_DETAILS:
+          if (readFails(++reads)) throw new Error('read timed out');
+          return { type: WsMessageType.RESP_BUILDING_DETAILS, details: { templateName: 'TownHall', tabs: [] } };
+        case WsMessageType.REQ_SWITCH_COMPANY:
+          if (switchFails(++switches)) throw rdoError(msg);
+          return { type: WsMessageType.RESP_RDO_RESULT, result: '' };
+        default:
+          return undefined;
+      }
+    }), companies, company: OWN };
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const logoff = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    const run = () => runFlow(flowByName('company-switch'), ctx);
+    const switched = () => requests
+      .filter(m => m.type === WsMessageType.REQ_SWITCH_COMPANY)
+      .map(m => (m as unknown as { company: { id: string } }).company.id);
+    const detailReads = () => requests.filter(m => m.type === WsMessageType.REQ_BUILDING_DETAILS).length;
+    return { run, switched, detailReads, logoff };
+  }
+
+  it('is read-only and required', () => {
+    expect(flowByName('company-switch').mutates).toBe(false);
+    expect(NIGHTLY_ONLY).not.toHaveProperty('company-switch');
+    expect(GATE_ONLY).not.toHaveProperty('company-switch');
+  });
+
+  it('PASSes: switches to the Mayor entry (not the Minister listed first), reads, switches back, reads', async () => {
+    const { run, switched, detailReads, logoff } = arrange();
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(switched()).toEqual(['7', '1']);
+    expect(detailReads()).toBe(2);
+    expect(logoff).toHaveBeenCalled();
+  });
+
+  it('matches the Mayor entry case-insensitively', async () => {
+    const { run, switched } = arrange({ companies: [OWN, MINISTRY, { ...MAYOR, ownerRole: 'mayor of helartia' }] });
+    expect((await run()).status).toBe('PASS');
+    expect(switched()).toEqual(['7', '1']);
+  });
+
+  it('FAILs without switching when the list holds no Mayor entry, naming the entries', async () => {
+    const { run, switched, logoff } = arrange({ companies: [OWN, MINISTRY] });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(switched()).toEqual([]);
+    expect(result.assertions[0].detail).toBe('SPO_test3 - Green [], Ministry [Minister of Agriculture]');
+    expect(logoff).toHaveBeenCalled();
+  });
+
+  it('renders an empty list as (empty)', async () => {
+    const { run } = arrange({ companies: [] });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions[0].detail).toBe('(empty)');
+  });
+
+  it('FAILs when the first switch answers RESP_ERROR, and still switches back', async () => {
+    const { run, switched, detailReads, logoff } = arrange({ switchFails: n => n === 1 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(switched()).toEqual(['7', '1']);
+    expect(detailReads()).toBe(1);
+    expect(result.assertions.find(a => /switch to the role/.test(a.what))?.detail).toMatch(/^RESP_ERROR \(code 42\): refused/);
+    expect(logoff).toHaveBeenCalled();
+  });
+
+  it('switches back even when the world read after the first switch throws', async () => {
+    const { run, switched, logoff } = arrange({ readFails: n => n === 1 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(switched()).toEqual(['7', '1']);
+    expect(result.assertions.find(a => /role ClientView/.test(a.what))).toMatchObject({ ok: false, detail: 'read timed out' });
+    expect(logoff).toHaveBeenCalled();
+  });
+
+  it('FAILs when the switch back answers RESP_ERROR, sending no second read', async () => {
+    const { run, detailReads } = arrange({ switchFails: n => n === 2 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(detailReads()).toBe(1);
+    expect(result.assertions.find(a => /switch back/.test(a.what))?.ok).toBe(false);
+  });
+});
+
+describe('cluster-info-read', () => {
+  function arrange(over: { description?: string; categories?: { name: string; folder: string }[]; facilities?: unknown[] } = {}) {
+    const {
+      description = 'The Dissidents.',
+      categories = [{ name: 'Farms', folder: '00000003.DissidentsFarms.five' }],
+      facilities = [{ name: 'Farm' }],
+    } = over;
+    const requests: WsMessage[] = [];
+    const stub = stubSession(msg => {
+      requests.push(msg);
+      switch (msg.type) {
+        case WsMessageType.REQ_CLUSTER_INFO:
+          return { type: WsMessageType.RESP_CLUSTER_INFO, clusterInfo: { id: 'Dissidents', displayName: 'D', description, categories } };
+        case WsMessageType.REQ_CLUSTER_FACILITIES:
+          return { type: WsMessageType.RESP_CLUSTER_FACILITIES, facilities };
+        default:
+          return undefined;
+      }
+    });
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const logoff = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    return { requests, logoff, run: () => runFlow(flowByName('cluster-info-read'), ctx) };
+  }
+
+  it('is read-only', () => {
+    expect(flowByName('cluster-info-read').mutates).toBe(false);
+  });
+
+  it('PASSes, reading the first cluster and its first category', async () => {
+    const { run, requests, logoff } = arrange();
+    expect((await run()).status).toBe('PASS');
+    expect(requests.find(m => m.type === WsMessageType.REQ_CLUSTER_INFO)).toMatchObject({ clusterName: CLUSTER_IDS[0] });
+    expect(requests.find(m => m.type === WsMessageType.REQ_CLUSTER_FACILITIES))
+      .toMatchObject({ cluster: CLUSTER_IDS[0], folder: '00000003.DissidentsFarms.five' });
+    expect(logoff).toHaveBeenCalled();
+  });
+
+  it('FAILs on an empty description', async () => {
+    const { run } = arrange({ description: '  ' });
+    expect((await run()).status).toBe('FAIL');
+  });
+
+  it('FAILs on an empty facility list', async () => {
+    const { run } = arrange({ facilities: [] });
+    expect((await run()).status).toBe('FAIL');
+  });
+
+  it('FAILs without a facility request when no category is listed', async () => {
+    const { run, requests } = arrange({ categories: [] });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => /facility category/.test(a.what))?.detail).toBe('0 categories');
+    expect(requests.some(m => m.type === WsMessageType.REQ_CLUSTER_FACILITIES)).toBe(false);
   });
 });
 
