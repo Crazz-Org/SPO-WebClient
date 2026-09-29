@@ -20,15 +20,82 @@ export interface RouteRule {
    * create the data its flow reads. The spine alone rides along.
    */
   spineOnly?: boolean;
+  /**
+   * A broad catch-all: it routes whatever no specific rule claimed. A handler file whose first
+   * matching rule is a fallback must be a FALLBACK_ONLY key (routing.test.ts ratchet).
+   */
+  fallback?: boolean;
   why: string;
 }
 
 /** Always appended — the spine is the cheapest regression detector there is. */
 export const SPINE_FLOW = 'login-spine';
 
+/**
+ * Flow -> why no gate requires it (data-gated, or a reading). The nightly still runs it.
+ * A data-gated flow ends UNPROVEN when the world holds no data, and a required UNPROVEN flow
+ * fails the gate (scripts/verify-gate.js, stage 6) — so routing must never require it.
+ */
+export const NIGHTLY_ONLY: Record<string, string> = {
+  'newspaper-read':
+    'data-gated: planitia keeps no newspaper issue and the bench cannot create one (News.pas:986, #1009) — a required run could only end UNPROVEN, which fails the gate',
+  'warehouse-role-reading': 'a reading, recorded and never asserted (#1006) — nothing a gate could require',
+};
+
+/**
+ * Flow -> why the nightly never runs it: its action posts a message every online player sees.
+ * The gate still runs it when its code changes (an explicit --flows list names it).
+ */
+export const GATE_ONLY: Record<string, string> = {
+  'politics-write':
+    'each RDOSetTaxValue by the mayor posts a world event every online player sees (Kernel/Population.pas:1264-1284, WorldLocator.SendEvent) — driven only at the gate, when its code changes',
+};
+
+const CHAT_AWAITING =
+  "awaiting card #1148 (C5) — session-resume's one REQ_CHAT_GET_USERS is its liveness read after the resume, not a drive of any chat action";
+
+/**
+ * Handler file (repo-relative) -> why only a fallback rule routes it:
+ * `awaiting card #<n>` or `excluded: <reason>`. An area card that gives a file its own rule
+ * (placed before the fallbacks) removes it from here.
+ */
+export const FALLBACK_ONLY: Record<string, string> = {
+  'src/server/session/abandon-role-handler.ts':
+    'excluded: abandoning a role is never driven (maintainer, 2026-09-29 — recorded in card #1134)',
+  'src/server/session/tutorial-handler.ts':
+    'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
+  'src/server/session/auto-connection-handler.ts': 'awaiting card #1141 (C6)',
+  'src/server/session/building-management-handler.ts': 'awaiting card #1150 (C10)',
+  'src/server/session/building-templates-handler.ts': 'awaiting card #1150 (C10)',
+  'src/server/session/chat-handler.ts': CHAT_AWAITING,
+  'src/server/ws-handlers/chat-handlers.ts': CHAT_AWAITING,
+  'src/server/session/context-status-handler.ts': 'awaiting card #1139 (C2)',
+  'src/server/session/world-events-handler.ts': 'awaiting card #1139 (C2)',
+  'src/server/session/zone-surface-handler.ts': 'awaiting card #1139 (C2)',
+  'src/server/ws-handlers/map-handlers.ts': 'awaiting card #1139 (C2)',
+  'src/server/session/profile-finance-handler.ts': 'awaiting card #1141 (C6)',
+  'src/server/ws-handlers/profile-handlers.ts': 'awaiting card #1141 (C6)',
+  'src/server/session/research-handler.ts': 'awaiting card #1154 (C11c)',
+  'src/server/session/research-status-handler.ts': 'awaiting card #1154 (C11c)',
+  'src/server/session/road-handler.ts': 'awaiting card #1151 (C9)',
+  'src/server/ws-handlers/road-handlers.ts': 'awaiting card #1151 (C9)',
+};
+
 export const ROUTES: RouteRule[] = [
   // Order matters: the first matching rule wins, so the paths that need no live drive
   // are matched before the broad source rules that would otherwise swallow them.
+  //
+  // How an E2E area card routes its flows: its rule goes BEFORE THE FALLBACKS (the rules
+  // with `fallback: true`) — a rule placed after a fallback is shadowed and never matches —
+  // and it removes its handler files from FALLBACK_ONLY. A data-gated flow (it ends UNPROVEN
+  // when the world holds no data, and a required UNPROVEN fails the gate, verify-gate.js
+  // stage 6) goes in NIGHTLY_ONLY; a flow whose action posts a message every online player
+  // sees goes in GATE_ONLY (the card states the maintainer accepts the broadcast at the gate
+  // on that basis). Each exemption carries a cited reason: `File.pas:Line`, `file.asp:Line`
+  // or `#<issue>`. A diff under src/e2e/ routes to no flow, so the area card's own gate is
+  // static: it proves its flows ran with `npm run test:live -- --flows=login-spine,<new flows>`
+  // exiting 0 — never `npm run gate -- --flows=…`, which verify-gate.js stage 3 BLOCKs on a
+  // static-only diff.
   {
     test: /^doc\/|\.md$|^src\/mock-server\/|\.test\.tsx?$|^src\/__tests__\//,
     flows: [],
@@ -71,7 +138,7 @@ export const ROUTES: RouteRule[] = [
     why: 'container image — the live drive runs the built tree, not the image',
   },
   {
-    test: /^src\/client\/renderer\/|\.module\.css$|^src\/client\/layouts\/|^src\/client\/mobile\/|\.css$/,
+    test: /^src\/client\/renderer\/|\.module\.css$|^src\/client\/layouts\/|^src\/client\/components\/mobile\/|\.css$/,
     flows: [],
     needsL3: true,
     why: 'pixels — a WebSocket drive cannot see a rendered frame',
@@ -113,10 +180,20 @@ export const ROUTES: RouteRule[] = [
   },
   {
     // Before the broad wire-level rule below, which would otherwise route a
-    // mail-handler change through flows that never open the mail socket.
-    test: /^src\/server\/session\/mail-handler\.ts$/,
+    // mail-handler change through flows that never open the mail socket. The WS side
+    // (ws-handlers/mail-handlers.ts) is here too: the later mail rule's `^src\/server\/mail`
+    // does not match it, so it used to fall to the ws-handlers fallback.
+    test: /^src\/server\/session\/mail-handler\.ts$|^src\/server\/ws-handlers\/mail-handlers\.ts$/,
     flows: ['mail-roundtrip', 'zoning-alert-read'],
-    why: 'the mail-socket handler changed — the flows that drive it',
+    why: 'the mail handlers changed — the flows that drive them',
+  },
+  {
+    // The paper modal: the same spine-only routing as the rule below, plus a browser look.
+    test: /^src\/client\/components\/modals\/NewspaperModal\.tsx$/,
+    flows: [],
+    spineOnly: true,
+    needsL3: true,
+    why: 'the town paper modal — observable live, but no flow is required (News.pas:986); a browser look at the modal',
   },
   {
     // Before the broad wire-level rule below: the paper is not on the RDO wire
@@ -124,15 +201,51 @@ export const ROUTES: RouteRule[] = [
     // required either (#1009): planitia keeps no newspaper issue and the bench cannot
     // create one (News.pas:986), so newspaper-read could only end UNPROVEN. It still
     // runs and reports when asked for; the spine alone rides along here.
-    test: /newspaper-handlers?\.ts$|^src\/client\/components\/modals\/NewspaperModal\.tsx$|^src\/client\/store\/newspaper-store\.ts$/,
+    test: /newspaper-handlers?\.ts$|^src\/client\/store\/newspaper-store\.ts$/,
     flows: [],
     spineOnly: true,
     why: 'the town paper — observable live, but no flow is required: the bench cannot create a kept issue (News.pas:986); newspaper-read still runs and reports',
   },
   {
-    test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$|^src\/server\/session\//,
+    // Before the fallbacks below: the governance handlers are driven by these two flows.
+    test: /^src\/server\/session\/politics-handler\.ts$|^src\/server\/ws-handlers\/politics-handlers\.ts$/,
+    flows: ['politics-read', 'politics-write'],
+    why: 'the governance handlers changed — the flows that read and write the town hall',
+  },
+  {
+    // Before the fallbacks below. permission-negative's one request is REQ_BUILDING_DETAILS,
+    // and it asserts the canGovern that grantAccess in building-details-handler.ts computes.
+    test: /^src\/server\/session\/building-(details|property)-handler\.ts$/,
+    flows: ['building-details', 'politics-write', 'permission-negative'],
+    why: 'the facility details/property handlers changed — the flows that read and write a facility, and the one that asserts canGovern (grantAccess)',
+  },
+  {
+    // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
+    // zoning-alert-read is left out: its one REQ_BUILDING_FOCUS is incidental to reading the
+    // alert, it needs Crazz, and the mail rules route it.
+    test: /^src\/server\/ws-handlers\/building-handlers\.ts$/,
+    flows: ['building-details', 'politics-write', 'permission-negative', 'nearest-town-hall'],
+    why: 'the building WS handlers changed — the flows sending its REQ_BUILDING_DETAILS / TAB_DATA / SET_PROPERTY / FOCUS',
+  },
+  {
+    // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
+    test: /^src\/server\/ws-handlers\/misc-handlers\.ts$/,
+    flows: ['favorites-roundtrip', 'favorites-folders'],
+    why:
+      'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_*; ' +
+      'not driven by any flow yet: REQ_DEFINE_ZONE, REQ_CREATE_COMPANY, REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES, ' +
+      'the research requests, REQ_WORLD_EVENT, REQ_SEARCH_CONNECTIONS, REQ_CONNECTION_REACHABILITY',
+  },
+  {
+    test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$/,
     flows: ['politics-read', 'politics-write', 'building-details'],
-    why: 'wire-level change: frames, session phases or RDO members',
+    why: 'wire-level change: frames or RDO members',
+  },
+  {
+    test: /^src\/server\/session\//,
+    flows: ['politics-read', 'politics-write', 'building-details'],
+    fallback: true,
+    why: 'session layer (fallback): session phases, cross-cutting helpers, or a handler still awaiting its own rule — see FALLBACK_ONLY',
   },
   {
     test: /^src\/shared\/types\/message-types\.ts$/,
@@ -149,7 +262,8 @@ export const ROUTES: RouteRule[] = [
   {
     test: /^src\/server\/ws-handlers\/|^src\/server\/server\.ts$/,
     flows: ['building-details', 'politics-read'],
-    why: 'gateway request handling changed',
+    fallback: true,
+    why: 'gateway request handling (fallback) — see FALLBACK_ONLY',
   },
   {
     test: /^src\/client\/components\/politics\//,
@@ -169,13 +283,28 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the broad src/ rule below: the map surface's Town Hall button and the
     // shared metric it uses are exercised by this flow and by nothing else.
-    test: /^src\/client\/components\/map\/MapSurface\.tsx$|^src\/shared\/nearest-town\.ts$/,
+    test: /^src\/client\/components\/map\/MapSurface\.tsx$/,
+    flows: ['nearest-town-hall'],
+    needsL3: true,
+    why: 'the nearest-town-hall jump — the one flow that drives it, plus a browser look at the map surface',
+  },
+  {
+    test: /^src\/shared\/nearest-town\.ts$/,
     flows: ['nearest-town-hall'],
     why: 'the nearest-town-hall jump — the one flow that drives it',
   },
   {
+    // Before the broad src/ rule below: the rest of these component folders gets the same
+    // flows that rule gives, plus a browser look.
+    test: /^src\/client\/components\/hud\/|^src\/client\/components\/sheet\/|^src\/client\/components\/modals\/|^src\/client\/components\/map\//,
+    flows: ['building-details'],
+    needsL3: true,
+    why: 'HUD, sheets, modals and map surface — the gateway contract, plus a browser look',
+  },
+  {
     test: /^src\/client\/|^src\/shared\/|^src\/server\//,
     flows: ['building-details'],
+    fallback: true,
     why: 'code reached through the gateway contract',
   },
 ];

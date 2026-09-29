@@ -109,7 +109,7 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 | `src/shared/types/message-types.ts`, `src/server/session/*-handler.ts` | L2 flows for the affected message types |
 | `src/client/components/politics/**` | L2 `politics-read`, `politics-write` |
 | `src/client/components/building/**` | L2 `building-details` |
-| `src/client/renderer/**`, mobile layout, `*.module.css` | **L3** browser smoke (a WS drive cannot see a pixel) |
+| `src/client/renderer/**`, `src/client/components/{mobile,hud,sheet,modals,map}/**`, `*.module.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
 | `doc/**`, `*.md`, CI config, tooling | static only |
 
@@ -118,6 +118,20 @@ logoff) is appended to every L2 run regardless of routing. It is the cheapest po
 regression detector and it is where session-lifecycle breakage surfaces first.
 
 Unmapped path -> the gate fails closed and asks for a routing entry. Silence is never a pass.
+
+Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`File.pas:Line`,
+`file.asp:Line` or `#<issue>`), where a flow or a handler departs from that table;
+`src/e2e/routing.test.ts` holds all three.
+
+- **`NIGHTLY_ONLY`** lists the flows no gate requires — a data-gated flow (a required `UNPROVEN`
+  fails the gate) or a reading that asserts nothing. The nightly still runs them; every other
+  flow must be reached by some tracked path.
+- **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
+  (`politics-write`, `Kernel/Population.pas:1264-1284`). The nightly leaves them out and prints
+  them as `gate-only, not driven`; the gate still runs them when their code changes.
+- **`FALLBACK_ONLY`** lists the handler files only a broad fallback rule routes, each `awaiting
+  card #<n>` or `excluded: <reason>`. An area card adds its rule before the fallbacks and removes
+  its file from the set, so a new handler cannot land unrouted.
 
 ---
 

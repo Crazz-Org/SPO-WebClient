@@ -361,11 +361,27 @@ describe('main', () => {
     return { stream, text: () => text };
   }
 
-  it('runs every flow when none are named', async () => {
+  // The no --flows default (the nightly's own call) now leaves out the GATE_ONLY keys (#1134).
+  it('runs every flow but the gate-only ones when none are named, and says which it left out', async () => {
     const runner = jest.fn(async (_options: LiveRunOptions) => result);
     const out = sink();
     await main([], runner, out.stream);
-    expect(runner.mock.calls[0][0].flows.length).toBeGreaterThan(1);
+    const flows = runner.mock.calls[0][0].flows;
+    expect(flows).toEqual(flowsModule.FLOWS.map(f => f.name).filter(n => n !== 'politics-write'));
+    expect(flows).not.toContain('politics-write');
+    expect(out.text()).toMatch(/gate-only, not driven: politics-write/);
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    if (fs.existsSync(written)) fs.unlinkSync(written);
+  });
+
+  it('runs a gate-only flow when the caller names it — the gate drives it', async () => {
+    const runner = jest.fn(async (_options: LiveRunOptions) => result);
+    const out = sink();
+    await main(['--flows=login-spine,politics-write'], runner, out.stream);
+    expect(runner.mock.calls[0][0].flows).toEqual(['login-spine', 'politics-write']);
+    expect(out.text()).not.toContain('gate-only');
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    if (fs.existsSync(written)) fs.unlinkSync(written);
   });
 
   it('runs only the flows the caller asked for', async () => {
