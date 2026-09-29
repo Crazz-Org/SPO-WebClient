@@ -478,6 +478,16 @@ never deletes those.
 `main` counts as red only while the failing `sha` is *still* `origin/main`; `ENVIRONMENT` and
 `INTERRUPTED` are not red, because the run learned nothing about `main` either way.
 
+**What a long nightly costs.** The nightly holds the exclusive bench for its whole run. Its
+live drive is bounded by `LIVE_RUN_BASE_MS + flows × LIVE_RUN_PER_FLOW_MS` (`classifyStage` in
+`worker.ts`), the flow count read from the checkout's own freshly built `dist/e2e/flows.js` in a
+child process (`readCheckoutFlowCount`; `LIVE_RUN_FLOW_CEILING` when it cannot be read) — so its
+duration, and its bound, grow with every flow added to `FLOWS`, with no change to the worker. A
+gate deposited while it runs waits in the queue until it ends. A deadline kill still reads
+`ENVIRONMENT` and leaves `latest.json` untouched, `main` unproven that night — which is why the
+bound is sized from the measured per-flow cost with a 4× margin, so that only a genuine hang
+reaches it.
+
 **The mapping, and its discriminator.** `dist/e2e/run.js`'s exit code is read through
 `GATE_EXIT_VERDICT` (`worker.ts`): a night refused for a dirty world lock (exit 2) reads
 `BLOCKED`, a pre-flight abort (exit 3) reads `ENVIRONMENT`. What stayed wrong was the fourth

@@ -1222,7 +1222,8 @@ const NPM_CI_DEADLINE_MS = 600_000;
  * SPO-Pipeline's generic `commandTimeoutsMs['npm-run']` bound (660 s / 11 min, "the default
  * for every OTHER `npm run <alias>`") — comfortably above what a single `tsc` compile needs
  * even cold: the SLOWEST full `ref` job observed end to end (fetch-refresh + this build +
- * verify-gate.js together) was 329.2 s, well under this bound alone.
+ * verify-gate.js together, its live drive included) was 676.9 s (`~/.spo-bench/jobs.jsonl`,
+ * 2026-09-29) — a whole job, not one `tsc`, which alone needs a small fraction of this bound.
  */
 const BUILD_STEP_DEADLINE_MS = 660_000;
 
@@ -1235,28 +1236,64 @@ const BUILD_STEP_DEADLINE_MS = 660_000;
 const FULL_BUILD_DEADLINE_MS = 900_000;
 
 /**
+ * Per-flow share of the live drive (`node dist/e2e/run.js ...`, live/nightly jobs, and the
+ * live half of verify-gate.js). Measured 2026-09-29 from the nightly live artifacts
+ * `~/.spo-bench/nightly/checkout/report/e2e/live-*.json` (313 files), filtered to
+ * `branch === "main"` and `status === "PASS"` — 235 samples. The artifacts record NO per-flow
+ * timing, so each sample is that run's whole-run average `(finishedAt − startedAt) /
+ * flows.length`: min 10.6 s, median 14.3 s, max 40.0 s (`live-2026-09-28T05-48-49-201Z.json`,
+ * 14 flows, 560.0 s). The recent 15-flow runs sit at 467.7-521.0 s (31-35 s a flow). Set at
+ * 4x the max, the same margin as the neighbouring bounds. It replaces a fixed 15-flow figure
+ * sized from 5 nightly jobs at 202.9-221.3 s total, stale by 2-2.5x by then.
+ */
+export const LIVE_RUN_PER_FLOW_MS = 160_000;
+
+/**
+ * Fixed share of the live drive ahead of the flows: the login and the preflight (two network
+ * checks, one round-trip each). Not separately timed in the artifacts — it is already inside
+ * each run's average above — so this is pure margin, the same order as GIT_DEADLINE_MS's
+ * one-round-trip bound.
+ */
+export const LIVE_RUN_BASE_MS = 120_000;
+
+/**
+ * The flow count used when the checkout's own count cannot be read (`dist/e2e/flows.js`
+ * missing, throwing on load, or exporting no `FLOWS` array): the E2E coverage census' planned
+ * ≈60 flows (2026-09-29). An upper bound for the nightly, which leaves out the gate-only flows —
+ * the safe side. It exists because an `undefined`/`NaN` deadline fires at once and would kill
+ * every run as ENVIRONMENT.
+ */
+export const LIVE_RUN_FLOW_CEILING = 60;
+
+/**
+ * The fixed share of a `ref` job: the re-measured max `ref` job wall time in
+ * `~/.spo-bench/jobs.jsonl` (2026-09-29, n = 499: min 0.8 s, median 230.7 s, max 676.9 s,
+ * `job-01789022403403-554778`). That is TOTAL job wall time — fetch-refresh + BUILD_STEPS +
+ * verify-gate.js, that job's own live drive included — so adding the per-flow share on top
+ * over-counts, on the safe side.
+ */
+export const GATE_BASE_MS = 677_000;
+
+/**
+ * The largest flow set a single routing rule is planned to require: the
+ * `building-property-handler.ts` rule after #1152-#1154, ~26 flows plus the spine. That rule is
+ * not in ROUTES yet (#1134 seeds it), so this is a PLANNED ceiling, not a measurement — a
+ * `worker.test.ts` tripwire checks every rule of ROUTES against it. An `e2e` card that trips the
+ * tripwire stops; a new `bench` card raises this. No `e2e` card edits it.
+ */
+export const PLANNED_MAX_ROUTED_FLOWS = 27;
+
+/**
  * `node scripts/verify-gate.js --live ...` (ref jobs) — one opaque child process running
  * typecheck + lint + unit/component tests + build:e2e + the L2 live drive internally; none of
  * those sub-stages are separate `runCommand` calls, so none can be bounded individually from
- * here. Measured directly: 34 real `ref` jobs, total job wall time (git-fetch-refresh +
- * BUILD_STEPS + this call) — min 31.5 s, median 128.0 s, mean 98.0 s, max 329.2 s
- * (job-01788423584035-c921fa, a full static replay with a merge). The ~30 s cluster is the
- * `--skip-static` fast path (CI already proved the static half — see ciStaticProof above); the
- * 124-329 s cluster is a full replay. Set at roughly 3.6x the observed max, since this bound
- * also has to absorb whatever the fetch-refresh and BUILD_STEPS steps ahead of it in the same
- * job actually took, and a legitimately larger diff (more files, more tests) can push a genuine
- * replay past anything sampled in 37 jobs.
+ * here. Derived: GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS × LIVE_RUN_PER_FLOW_MS =
+ * 677 s + 27 × 160 s = 4 997 s ≈ 83 min. This is a KILL bound, not an expectation: the
+ * expected duration of the largest planned gate is ~20 min (maintainer decision 2026-09-29).
+ * For comparison the live-drive bound (classifyStage below) gives 120 s + 15 × 160 s = 42 min
+ * for today's 15-flow nightly and 120 s + 60 × 160 s ≈ 2.7 h for a 60-flow one.
  */
-const VERIFY_GATE_DEADLINE_MS = 1_200_000;
-
-/**
- * `node dist/e2e/run.js ...` (live/nightly jobs) — the live drive itself. Measured directly: 5
- * real `nightly` jobs, total job wall time (build:server + build:e2e + this call) 202.9-221.3 s
- * — tight, because the nightly always drives the same fixed flow set against `main`. Set at
- * roughly 4x the observed max for margin on a slower or busier live world (a session's `live`
- * job type can route more flows than the nightly's fixed set).
- */
-const LIVE_RUN_DEADLINE_MS = 900_000;
+export const VERIFY_GATE_DEADLINE_MS = GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS * LIVE_RUN_PER_FLOW_MS;
 
 /**
  * Fallback for a `runCommand` call this classifier does not recognise. Every real call site is
@@ -1271,9 +1308,11 @@ const DEFAULT_STAGE_DEADLINE_MS = 660_000;
  * Classify a call by (cmd, args) into the stage it represents and how long it gets. Structural
  * matching only — no knowledge of WHICH job type is running, because the same `git`/`npm ci`
  * call serves every job type identically (checkout.ts's `prepareCheckout` has no job-type
- * concept at all).
+ * concept at all). The live drive's bound grows with `flowCount`, which the CALLER hands in
+ * (stageDeadlineFor below) — this function never reads the disk; a missing or non-finite count
+ * falls back to LIVE_RUN_FLOW_CEILING, never a NaN deadline.
  */
-export function classifyStage(cmd: string, args: string[]): StageDeadline {
+export function classifyStage(cmd: string, args: string[], flowCount?: number): StageDeadline {
   if (cmd === 'git') return { stage: `git ${args[0] ?? ''}`.trim(), deadlineMs: GIT_DEADLINE_MS };
   if (cmd === 'npm' && args[0] === 'ci') return { stage: 'npm ci', deadlineMs: NPM_CI_DEADLINE_MS };
   if (cmd === 'npm' && args[0] === 'run' && args[1] === 'build') {
@@ -1286,7 +1325,9 @@ export function classifyStage(cmd: string, args: string[]): StageDeadline {
     return { stage: 'verify-gate.js', deadlineMs: VERIFY_GATE_DEADLINE_MS };
   }
   if (cmd === 'node' && args[0] === 'dist/e2e/run.js') {
-    return { stage: 'run.js', deadlineMs: LIVE_RUN_DEADLINE_MS };
+    const n =
+      flowCount !== undefined && Number.isFinite(flowCount) && flowCount >= 0 ? flowCount : LIVE_RUN_FLOW_CEILING;
+    return { stage: 'run.js', deadlineMs: LIVE_RUN_BASE_MS + LIVE_RUN_PER_FLOW_MS * n };
   }
   return { stage: `${cmd} ${args.join(' ')}`.trim().slice(0, 80), deadlineMs: DEFAULT_STAGE_DEADLINE_MS };
 }
@@ -1396,12 +1437,66 @@ export function runWithDeadline(
   });
 }
 
+/** The `--flows=` count, read the way `run.ts` reads it (first flag wins); undefined when absent. */
+export function flowCountFromArgs(args: string[]): number | undefined {
+  const flag = args.find(a => a.startsWith('--flows='));
+  if (flag === undefined) return undefined;
+  return flag.split('=').slice(1).join('=').split(',').filter(Boolean).length;
+}
+
+/** Bounds the child that loads `dist/e2e/flows.js` — a module load, so a hang cannot wedge the worker. */
+const FLOW_COUNT_READ_TIMEOUT_MS = 30_000;
+
+const READ_FLOWS_SCRIPT =
+  "const m = require(require('path').resolve('dist/e2e/flows.js'));" +
+  " process.stdout.write(Array.isArray(m.FLOWS) ? String(m.FLOWS.length) : '');";
+
+/**
+ * `FLOWS.length` of the checkout at `cwd`, read from its own `dist/e2e/flows.js` in a CHILD
+ * process — never an import here. The worker runs `~/SPO-WebClient/dist/e2e/bench/worker.js`,
+ * rebuilt only when a merge touches `src/e2e/bench/` or `scripts/bench-` (`finish.sh`), and it
+ * caches its modules until restart, so an imported count would freeze at the last bench install;
+ * a child also keeps an unmerged branch's code out of the long-lived worker. The live/nightly
+ * branch of runJob has already run `build:e2e` in that checkout (BUILD_STEPS), so the file is
+ * fresh. Undefined when it is missing, throws, or exports no `FLOWS` array.
+ */
+export function readCheckoutFlowCount(cwd: string): number | undefined {
+  try {
+    const out = execFileSync(process.execPath, ['-e', READ_FLOWS_SCRIPT], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: FLOW_COUNT_READ_TIMEOUT_MS,
+    }).trim();
+    return /^\d+$/.test(out) ? Number(out) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Flows the live drive will run: `--flows=` when given, else the checkout's count, else the ceiling. */
+export function liveRunFlowCount(
+  args: string[],
+  cwd: string,
+  read: (cwd: string) => number | undefined = readCheckoutFlowCount,
+): number {
+  return flowCountFromArgs(args) ?? read(cwd) ?? LIVE_RUN_FLOW_CEILING;
+}
+
+/** classifyStage, with the live drive's flow count computed from the checkout being driven. */
+export function stageDeadlineFor(cmd: string, args: string[], cwd: string): StageDeadline {
+  if (cmd === 'node' && args[0] === 'dist/e2e/run.js') {
+    return classifyStage(cmd, args, liveRunFlowCount(args.slice(1), cwd));
+  }
+  return classifyStage(cmd, args);
+}
+
 export function realRunCommand(
   cmd: string,
   args: string[],
   options: RunCommandOptions,
 ): Promise<number> {
-  return runWithDeadline(cmd, args, options, classifyStage(cmd, args));
+  return runWithDeadline(cmd, args, options, stageDeadlineFor(cmd, args, options.cwd));
 }
 
 /**
