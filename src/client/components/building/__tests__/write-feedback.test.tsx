@@ -18,6 +18,7 @@ import { CompInputsPanel } from '../InputsGroup';
 import { ProductsPanel } from '../ProductsGroup';
 import { useBuildingStore } from '../../../store/building-store';
 import { connectionPendingKey } from '../../../handlers/connection-pending-key';
+import { pendingKeyFor } from '../property-utils';
 import type { BuildingSupplyData, BuildingProductData, BuildingConnectionData, CompInputData } from '@/shared/types';
 
 const X = 10;
@@ -85,7 +86,7 @@ describe('a connection change says so on its own gate', () => {
     expect(screen.getByText('Saving…')).toBeTruthy();
     act(() => {
       useBuildingStore.getState().confirmPending(connectionPendingKey('RDOConnectOutput', 'Fabric'), 'confirmed');
-      useBuildingStore.getState().setPending('PricePc:{"fluidId":"Fabric"}', '110');
+      useBuildingStore.getState().setPending(pendingKeyFor('RDOSetOutputPrice', { fluidId: 'Fabric' }), '110');
     });
     expect(screen.getByText('Saved')).toBeTruthy();
     expect(screen.getByText('Saving…')).toBeTruthy();
