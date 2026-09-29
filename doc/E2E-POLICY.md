@@ -108,7 +108,7 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 |---|---|
 | `src/shared/rdo-*.ts`, `src/server/session/**`, `src/server/rdo.ts` | L1 + **L2 login spine + every flow touching the changed members** |
 | `src/shared/types/message-types.ts`, `src/server/session/*-handler.ts` | L2 flows for the affected message types |
-| `src/client/components/politics/**` | L2 `politics-read`, `politics-write` |
+| `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `town-min-wage`, `publicity-roundtrip` |
 | `src/client/components/building/**` | L2 `building-details` |
 | `src/client/renderer/**`, `src/client/components/{mobile,hud,sheet,modals,map}/**`, `*.module.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
@@ -300,6 +300,9 @@ touches one, the live stage reads two server facts for `SPO_test3` (`src/e2e/cap
 `IsPresident` from the tycoon cache (`Tycoons\<name>.five\`, written by `StoreRoleInfoToCache`)
 and `canGovern` on the Capitol itself — the server's own `grantAccess` decision on the
 presidential hall. `granted` follows `canGovern`; the cache flag rides along as evidence.
+`RDOSetMinSalaryValue` stays in that list for its Capitol variant (`Kernel/WorldPolitics.pas:265`);
+its town variant (`Kernel/Population.pas:167`) is driven by `town-min-wage`, so a gate that routes
+it drives the town hall and still records the Capitol variant as a capability exception.
 
 - **Granted** → the members *can* be driven, so they *must* be: the gate **fails closed**
   until a flow exercises the changed member (`src/e2e/flows.ts`) and the routing table
