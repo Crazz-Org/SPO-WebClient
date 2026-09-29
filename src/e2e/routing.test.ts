@@ -27,8 +27,27 @@ describe('route', () => {
   // rule keeps the frames and RDO members.
   it('routes the governance handler to its own flows', () => {
     const decision = route(['src/server/session/politics-handler.ts']);
-    expect(decision.required).toEqual(['login-spine', 'politics-read', 'politics-write']);
+    expect(decision.required).toEqual([
+      'login-spine', 'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
+    ]);
     expect(decision.staticOnly).toBe(false);
+  });
+
+  // #1145: the politics files also own the flows that drive their minimum-wage and publicity paths.
+  it.each([
+    'src/server/session/politics-handler.ts',
+    'src/server/ws-handlers/politics-handlers.ts',
+    'src/client/components/politics/JobsTab.tsx',
+  ])('routes %s to town-min-wage and publicity-roundtrip', file => {
+    const required = route([file]).required;
+    expect(required).toContain('town-min-wage');
+    expect(required).toContain('publicity-roundtrip');
+  });
+
+  it("routes template-groups.ts to town-min-wage (TOWN_JOBS_GROUP's min-wage mapping)", () => {
+    expect(route(['src/shared/building-details/template-groups.ts']).required).toEqual([
+      SPINE_FLOW, 'building-details', 'town-min-wage',
+    ]);
   });
 
   it('routes a wire-level change to the governance and inspector flows', () => {
@@ -538,6 +557,14 @@ describe('routing invariants (#1134)', () => {
     expect(Object.keys(GATE_ONLY)).toContain('politics-write');
   });
 
+  // #1145: the vote is data-gated — never required, never nightly-excluded by GATE_ONLY.
+  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write alone', () => {
+    expect(NIGHTLY_ONLY['vote-roundtrip']).toMatch(/Kernel\/TownPolitics\.pas:690/);
+    expect(uncited({ 'vote-roundtrip': NIGHTLY_ONLY['vote-roundtrip'] })).toEqual([]);
+    expect(ROUTES.some(r => r.flows.includes('vote-roundtrip'))).toBe(false);
+    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write']);
+  });
+
   it('cites a reason for every exemption', () => {
     expect(uncited(NIGHTLY_ONLY)).toEqual([]);
     expect(uncited(GATE_ONLY)).toEqual([]);
@@ -657,13 +684,15 @@ describe('route — handler rules seeded by #1134', () => {
   it.each(['src/server/session/building-details-handler.ts', 'src/server/session/building-property-handler.ts'])(
     'routes %s to the inspector, the write and the permission flows',
     file => {
-      expect(route([file]).required).toEqual([SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative']);
+      expect(route([file]).required).toEqual([
+        SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'town-min-wage',
+      ]);
     },
   );
 
   it('routes the politics WS handlers like the session one', () => {
     expect(route(['src/server/ws-handlers/politics-handlers.ts']).required).toEqual([
-      SPINE_FLOW, 'politics-read', 'politics-write',
+      SPINE_FLOW, 'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
     ]);
   });
 

@@ -38,6 +38,13 @@ export interface ProbeSpec {
   additionalParams?: Record<string, string>;
   /** Test value derived from the original, so the probe never hardcodes world state. */
   testValue: (original: string) => string;
+  /**
+   * Restore to this value, never to a value re-read now. When set, the round trip's original
+   * is this fixed string; the read-back polls still read the live value.
+   */
+  original?: string;
+  /** Extra condition on the proving log line — its identifying fields (town, id, value). */
+  logMatch?: (line: string, written: string) => boolean;
 }
 
 export type ReadBackVerdict = 'CONFIRMED' | 'UNCONFIRMED';
@@ -278,15 +285,16 @@ export async function runProbe(
     await setBuildingProperty(session, spec.x, spec.y, spec.writeProperty, value, spec.additionalParams);
   };
 
+  const fixedOriginal = spec.original;
   return runRoundTrip(
     {
       what: spec.what,
       member: spec.member,
-      read,
+      read: fixedOriginal !== undefined ? async () => fixedOriginal : read,
       write,
       testValue: spec.testValue,
       proof: {
-        log: { marker },
+        log: { marker, match: spec.logMatch },
         readBack: {
           source: `${spec.groupId}.${spec.readProperty} at (${spec.x},${spec.y}) via the gateway's section read`,
           why:
