@@ -83,8 +83,6 @@ export const FALLBACK_ONLY: Record<string, string> = {
     'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
   'src/server/session/chat-handler.ts': CHAT_AWAITING,
   'src/server/ws-handlers/chat-handlers.ts': CHAT_AWAITING,
-  'src/server/session/research-handler.ts': 'awaiting card #1154 (C11c)',
-  'src/server/session/research-status-handler.ts': 'awaiting card #1154 (C11c)',
 };
 
 export const ROUTES: RouteRule[] = [
@@ -249,12 +247,15 @@ export const ROUTES: RouteRule[] = [
       'building-details', 'politics-write', 'permission-negative', 'town-min-wage',
       'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
       'trade-settings',
+      'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
     ],
     why:
       'the facility details/property handlers changed — the flows that read and write a facility (including the ' +
       'minimum-wage argument builder), the one that asserts canGovern (grantAccess), the inspector reads no other ' +
       "flow sends (gate connections, service figures, worker counts, refresh), the owner setters on SPO_test3's " +
-      'store and industry fixtures (#1152), and the trade role and level on its warehouse and industry (#1153)',
+      'store and industry fixtures (#1152), the trade role and level on its warehouse and industry (#1153), and its ' +
+      'residential, bank, TV, industry and research fixtures — including the RDOQueueResearch / RDOCancelResearch ' +
+      'cases of buildRdoCommandArgs (#1154)',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
@@ -263,25 +264,26 @@ export const ROUTES: RouteRule[] = [
     test: /^src\/server\/ws-handlers\/building-handlers\.ts$/,
     flows: [
       'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall',
-      'build-menu-read', 'place-rename-demolish', 'inspector-reads',
+      'build-menu-read', 'place-rename-demolish', 'inspector-reads', 'upgrade-stop',
     ],
     why:
       'the building WS handlers changed — the flows sending its REQ_BUILDING_DETAILS / TAB_DATA / SET_PROPERTY / FOCUS, ' +
       'REQ_GET_BUILDING_CATEGORIES / _FACILITIES / REQ_PLACE_BUILDING / REQ_RENAME_FACILITY / REQ_DELETE_FACILITY, ' +
-      'and the one sending GATE_CONNECTIONS / SERVICE_FIGURES / WORKER_COUNTS / REFRESH_PROPERTIES',
+      'the one sending GATE_CONNECTIONS / SERVICE_FIGURES / WORKER_COUNTS / REFRESH_PROPERTIES, and the one sending ' +
+      'REQ_BUILDING_UPGRADE (#1154)',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
     test: /^src\/server\/ws-handlers\/misc-handlers\.ts$/,
     flows: [
       'favorites-roundtrip', 'favorites-folders', 'world-readers', 'cluster-info-read', 'zone-roundtrip',
-      'supplier-search-read',
+      'supplier-search-read', 'research-roundtrip',
     ],
     why:
       'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_* / REQ_WORLD_EVENT / ' +
-      'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES / REQ_DEFINE_ZONE, and REQ_SEARCH_CONNECTIONS / ' +
-      'REQ_CONNECTION_REACHABILITY (supplier-search-read, #1153); not driven by any flow yet: REQ_CREATE_COMPANY, ' +
-      'the research requests',
+      'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES / REQ_DEFINE_ZONE, REQ_SEARCH_CONNECTIONS / ' +
+      'REQ_CONNECTION_REACHABILITY (supplier-search-read, #1153) and REQ_RESEARCH_INVENTORY / REQ_RESEARCH_DETAILS ' +
+      '(research-roundtrip, #1154); not driven by any flow yet: REQ_CREATE_COMPANY',
   },
   {
     // Before the fallbacks below. A shared rule: later area cards only APPEND flows here.
@@ -301,10 +303,19 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below: the build menu, placement, rename and demolition (#1150).
     test: /^src\/server\/session\/building-(templates|management)-handler\.ts$|^src\/client\/handlers\/build-menu-handler\.ts$/,
-    flows: ['build-menu-read', 'place-rename-demolish'],
+    flows: ['build-menu-read', 'place-rename-demolish', 'upgrade-stop'],
     why:
-      'the build menu, placement, rename and demolition handlers — the flow that reads the build menu and the one that ' +
-      'places, renames and demolishes a facility on a free Helartia lot',
+      'the build menu, placement, rename, demolition and upgrade handlers — the flow that reads the build menu, the one ' +
+      'that places, renames and demolishes a facility on a free Helartia lot, and the upgrade → stop round trip on ' +
+      "SPO_test3's industry fixture (manageConstruction, #1154)",
+  },
+  {
+    // Before the fallbacks below: the research inventory / details reads and the queue → cancel round trip (#1154).
+    test: /^src\/server\/session\/research(-status)?-handler\.ts$/,
+    flows: ['research-roundtrip'],
+    why:
+      "the research handlers — the flow that reads the research fixture's inventory and an invention's details, then " +
+      'queues it and cancels it (#1154)',
   },
   {
     test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$/,
@@ -346,11 +357,13 @@ export const ROUTES: RouteRule[] = [
       'building-details', 'town-min-wage',
       'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
       'trade-settings',
+      'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
     ],
     why:
       "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in " +
-      'template-groups.ts, the store and industry owner setters the panels send (#1152), and the trade role and ' +
-      'level (trade-settings.ts, #1153)',
+      'template-groups.ts, the store and industry owner setters the panels send (#1152), the trade role and ' +
+      'level (trade-settings.ts, #1153), and the residential, bank, TV, accept-cloning and research controls ' +
+      '(ResearchPanel.tsx, HQ_INVENTIONS_GROUP) (#1154)',
   },
   {
     test: /^src\/client\/components\/mail\/|^src\/server\/mail/,

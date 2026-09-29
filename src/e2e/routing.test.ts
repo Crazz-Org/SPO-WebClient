@@ -51,6 +51,8 @@ describe('route', () => {
       'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
       // #1153: the trade role and level (trade-settings.ts).
       'trade-settings',
+      // #1154: the residential, bank, TV, accept-cloning and research controls.
+      'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
     ]);
   });
 
@@ -693,6 +695,8 @@ describe('route — handler rules seeded by #1134', () => {
       // #1152: inspector-reads sends GATE_CONNECTIONS / SERVICE_FIGURES / WORKER_COUNTS / REFRESH_PROPERTIES.
       SPINE_FLOW, 'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall',
       'build-menu-read', 'place-rename-demolish', 'inspector-reads',
+      // #1154: upgrade-stop sends REQ_BUILDING_UPGRADE.
+      'upgrade-stop',
     ]);
   });
 
@@ -705,6 +709,8 @@ describe('route — handler rules seeded by #1134', () => {
         'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
         // #1153: the trade role and level on the warehouse and industry fixtures.
         'trade-settings',
+        // #1154: the residential, bank, TV, accept-cloning and research setters.
+        'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
       ]);
     },
   );
@@ -975,7 +981,8 @@ describe('route — build & demolish (#1150)', () => {
     'src/server/session/building-management-handler.ts',
     'src/client/handlers/build-menu-handler.ts',
   ])('%s requires build-menu-read and place-rename-demolish', file => {
-    expect(route([file]).required).toEqual([SPINE_FLOW, 'build-menu-read', 'place-rename-demolish']);
+    // #1154: the rule gains upgrade-stop (manageConstruction).
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'build-menu-read', 'place-rename-demolish', 'upgrade-stop']);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
 
@@ -983,6 +990,45 @@ describe('route — build & demolish (#1150)', () => {
     for (const name of ['build-menu-read', 'place-rename-demolish']) {
       expect(NIGHTLY_ONLY).not.toHaveProperty(name);
       expect(GATE_ONLY).not.toHaveProperty(name);
+    }
+  });
+});
+
+describe('route — inspector flows (#1154)', () => {
+  const SETTERS = ['residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip'];
+  const ALL = [...SETTERS, 'upgrade-stop'];
+  const RESEARCH = ['src/server/session/research-handler.ts', 'src/server/session/research-status-handler.ts'];
+
+  it.each([
+    'src/server/session/building-property-handler.ts',
+    'src/server/session/building-details-handler.ts',
+    'src/client/components/building/ResearchPanel.tsx',
+    'src/shared/building-details/template-groups.ts',
+  ])('%s requires the six setter flows', file => {
+    const { required } = route([file]);
+    for (const flow of SETTERS) expect(required).toContain(flow);
+  });
+
+  it.each(RESEARCH)('%s requires research-roundtrip and is no longer fallback-only', file => {
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'research-roundtrip']);
+    expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it.each(['src/server/session/building-management-handler.ts', 'src/server/ws-handlers/building-handlers.ts'])(
+    '%s requires upgrade-stop',
+    file => {
+      expect(route([file]).required).toContain('upgrade-stop');
+    },
+  );
+
+  it('misc-handlers.ts (the REQ_RESEARCH_* sender) requires research-roundtrip', () => {
+    expect(route(['src/server/ws-handlers/misc-handlers.ts']).required).toContain('research-roundtrip');
+  });
+
+  it('none of the seven is gate-only or nightly-only', () => {
+    for (const flow of ALL) {
+      expect(GATE_ONLY).not.toHaveProperty(flow);
+      expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
     }
   });
 });
