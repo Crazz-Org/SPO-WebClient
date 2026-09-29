@@ -241,7 +241,7 @@ L1  Protocol conformance      Jest + src/mock-server/ (rdo-mock, strict   CI: ev
                               validator) — NOT a mock backend for E2E
 L2  LIVE WS drive  <- gate    src/e2e/, headless `ws` -> gateway ->       PRE-MERGE: every code change
                               planitia. `npm run test:live`
-L3  LIVE browser smoke        Playwright MCP, SPO_test3 / Crazz       pixels only, + pre-release
+L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / Crazz       every screen once, pixels only, + pre-release
 ```
 
 **The gate.** The bench gates a **pushed commit**, not your worktree, so the order is

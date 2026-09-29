@@ -42,11 +42,12 @@ the absence of an exception.
 L0  Unit + component          Jest node/jsdom, coverage ratchet             CI: every PR
 L1  Protocol conformance      Jest + rdo-mock + RdoStrictValidator          CI: every PR
 L2  LIVE WS drive  ← the gate headless `ws` client -> gateway -> planitia   PRE-PUSH: every code change
-L3  LIVE browser smoke        Playwright MCP, SPO_test3 / Crazz         UI/render/mobile diffs, + pre-release
+L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / Crazz         every screen once, pixels only, + pre-release
 ```
 
 L2 replaces both the abandoned mock-E2E plan and most of the browser smoke. L3 survives only
-for what a WebSocket cannot observe: rendering, layout, input, mobile.
+for what a WebSocket cannot observe: rendering, layout, input, mobile. It is a **walkthrough**
+that opens every screen and panel once, pixels only; every player action belongs to L2.
 
 `src/mock-server/` is **not** a mock backend for L2 — it is the substrate of L1
 (`rdo-mock`, `rdo-strict-validator`, `scenarios/`, `types/`, consumed by 19 suites under
