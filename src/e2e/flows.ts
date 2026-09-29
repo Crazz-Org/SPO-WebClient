@@ -27,6 +27,13 @@ import type {
   WsRespPoliticsData,
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuDirectory,
+  WsRespSearchMenuHome,
+  WsRespSearchMenuRankings,
+  WsRespSearchMenuRankingDetail,
+  WsRespSearchMenuTycoonProfile,
+  WsRespSearchMenuTycoonFullProfile,
+  WsRespSearchMenuBanks,
+  WsRespSearchMenuNewspapers,
   WsRespMapData,
   WsRespChatUserList,
 } from '../shared/types/message-types';
@@ -36,6 +43,7 @@ import type {
   DirectoryPage,
   MailMessageHeader,
   MapBuilding,
+  RankingCategory,
 } from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
@@ -1201,7 +1209,9 @@ async function readDirectory(session: LiveSession, ref: DirectoryRef): Promise<D
 
 /**
  * The directory descent below the town list: town page -> Facilities -> a kind -> a
- * facility card. Read-only, so no Survival-log probe (doc/E2E-POLICY.md §5 scopes the probe
+ * facility card, then on into the company and tycoon branches — the first row's company
+ * in the town, its owner's companies, that company's facility kinds, the first kind. Each
+ * step follows a row the previous page listed, so none is empty by construction. Read-only, so no Survival-log probe (doc/E2E-POLICY.md §5 scopes the probe
  * to mutations).
  *
  * An empty kind list or an empty facility list fails here rather than being excused as an
@@ -1210,7 +1220,7 @@ async function readDirectory(session: LiveSession, ref: DirectoryRef): Promise<D
  */
 const directoryBrowse: Flow = {
   name: 'directory-browse',
-  what: 'town list -> town page -> Facilities -> first kind -> first facility card',
+  what: 'town list -> town page -> Facilities -> first kind -> first facility card -> the company\'s town page -> its owner\'s companies -> that company\'s kinds -> first kind',
   mutates: false,
   run: async () => {
     const assertions = new Assertions();
@@ -1269,8 +1279,175 @@ const directoryBrowse: Flow = {
         );
       }
 
+      const company = rows[0].company;
+      if (company !== null) {
+        const townCompanies = await readDirectory(session, { kind: 'town-companies', town: town.name });
+        const listed = townCompanies.kind === 'folder' ? townCompanies.items : [];
+        assertions.check(
+          `${town.name}'s companies list "${company}" — InTownCompanies.asp`,
+          listed.includes(company),
+          `${listed.length} companies`,
+        );
+        if (!listed.includes(company)) return report('directory-browse', assertions, [], session);
+
+        const companyPage = await readDirectory(session, { kind: 'town-company', town: town.name, company });
+        const owner = companyPage.kind === 'folder' ? companyPage.ownedBy : null;
+        assertions.check(`"${company}" names its owner — InTownCompany.asp:63-71`, owner !== null, owner ?? '(none)');
+        if (owner === null) return report('directory-browse', assertions, [], session);
+
+        const ownerCompanies = await readDirectory(session, { kind: 'tycoon-companies', tycoon: owner });
+        const owned = ownerCompanies.kind === 'folder' ? ownerCompanies.items : [];
+        assertions.check(
+          `${owner}'s companies list "${company}" — TycoonCompanies.asp`,
+          owned.includes(company),
+          `${owned.length} companies`,
+        );
+        if (!owned.includes(company)) return report('directory-browse', assertions, [], session);
+
+        const tycoonCompany = await readDirectory(session, { kind: 'tycoon-company', tycoon: owner, company });
+        const facKinds = tycoonCompany.kind === 'folder' ? tycoonCompany.items : [];
+        assertions.check(
+          `"${company}" lists at least one facility kind — TycoonCompany.asp:7, :13`,
+          facKinds.length > 0,
+          `${facKinds.length} kinds`,
+        );
+        if (facKinds.length === 0) return report('directory-browse', assertions, [], session);
+
+        const tycoonFacs = await readDirectory(session, {
+          kind: 'tycoon-facility-kind', tycoon: owner, company, facKind: facKinds[0],
+        });
+        const ownedRows = tycoonFacs.kind === 'facility-list' ? tycoonFacs.facilities : [];
+        assertions.check(
+          `"${company}" lists at least one "${facKinds[0]}" facility — TycoonFacilities.asp`,
+          ownedRows.length > 0,
+          `${ownedRows.length} rows`,
+        );
+        if (ownedRows.length === 0) return report('directory-browse', assertions, [], session);
+      }
+
       assertions.check('no gateway errors', session.driver.errors.length === 0);
       return report('directory-browse', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** The first ranking that can be opened — depth-first, because RankingCategory nests children. */
+function firstOpenableRanking(categories: RankingCategory[]): RankingCategory | undefined {
+  for (const c of categories) {
+    if (c.url !== '') return c;
+    const hit = firstOpenableRanking(c.children ?? []);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * The search menu's read-only pages: home, rankings, one ranking, a tycoon card and its
+ * full profile, banks, newspapers, and the people index by letter (the one-bucket prefix
+ * path in `searchPeople`). Read-only, so no Survival-log probe.
+ *
+ * The profiles are read for a tycoon other than the session's own — the own branch of
+ * `resolveTycoon` answers with the gateway's name — and never assert the echoed name
+ * (`RenderTycoon.asp:55` renders the request's `Tycoon`). Banks and newspapers prove
+ * reachability only: an empty list passes and its count is in the detail.
+ */
+const searchMenuRead: Flow = {
+  name: 'search-menu-read',
+  what: 'search home -> rankings -> one ranking -> a tycoon card and full profile -> banks -> newspapers -> people by letter',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const home = await session.driver.request<WsRespSearchMenuHome>(
+        { type: WsMessageType.REQ_SEARCH_MENU_HOME },
+        WsMessageType.RESP_SEARCH_MENU_HOME,
+      );
+      assertions.check('the search home lists at least one tile', home.categories.length > 0, `${home.categories.length} tiles`);
+
+      const rankings = await session.driver.request<WsRespSearchMenuRankings>(
+        { type: WsMessageType.REQ_SEARCH_MENU_RANKINGS },
+        WsMessageType.RESP_SEARCH_MENU_RANKINGS,
+      );
+      assertions.check(
+        'the rankings list at least one ranking',
+        rankings.categories.length > 0,
+        `${rankings.categories.length} rankings`,
+      );
+
+      const ranking = firstOpenableRanking(rankings.categories);
+      assertions.check('some ranking carries a url', ranking !== undefined, ranking?.label ?? '(none)');
+      if (ranking) {
+        const detail = await session.driver.request<WsRespSearchMenuRankingDetail>(
+          { type: WsMessageType.REQ_SEARCH_MENU_RANKING_DETAIL, rankingPath: ranking.url },
+          WsMessageType.RESP_SEARCH_MENU_RANKING_DETAIL,
+        );
+        assertions.check('the ranking detail has a title', detail.title.trim() !== '', detail.title || '(empty)');
+        assertions.check(
+          'the ranking detail lists at least one row',
+          detail.entries.length > 0,
+          `${detail.entries.length} rows`,
+        );
+
+        const tycoon = detail.entries.find(e => !sameAccount(e.name, PRIMARY_ACCOUNT))?.name;
+        assertions.check(`the ranking lists a tycoon other than ${PRIMARY_ACCOUNT.username}`, tycoon !== undefined, tycoon ?? '(none)');
+        if (tycoon !== undefined) {
+          const card = await session.driver.request<WsRespSearchMenuTycoonProfile>(
+            { type: WsMessageType.REQ_SEARCH_MENU_TYCOON_PROFILE, tycoonName: tycoon },
+            WsMessageType.RESP_SEARCH_MENU_TYCOON_PROFILE,
+          );
+          assertions.check(
+            `the ${tycoon} card carries a level — RenderTycoon.asp:103`,
+            card.profile.level !== 'Unknown',
+            card.profile.level,
+          );
+          const full = await session.driver.request<WsRespSearchMenuTycoonFullProfile>(
+            { type: WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE, tycoonName: tycoon },
+            WsMessageType.RESP_SEARCH_MENU_TYCOON_FULL_PROFILE,
+          );
+          assertions.check(
+            `the ${tycoon} full profile names a current level`,
+            full.data.currentLevelName.trim() !== '',
+            full.data.currentLevelName || '(empty)',
+          );
+        }
+      }
+
+      const banks = await session.driver.request<WsRespSearchMenuBanks>(
+        { type: WsMessageType.REQ_SEARCH_MENU_BANKS },
+        WsMessageType.RESP_SEARCH_MENU_BANKS,
+      );
+      assertions.check(
+        'the banks list is well-formed (reachability only)',
+        Array.isArray(banks.banks) && banks.banks.every(b => b.name !== ''),
+        `${banks.banks.length} banks`,
+      );
+
+      const papers = await session.driver.request<WsRespSearchMenuNewspapers>(
+        { type: WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS },
+        WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS,
+      );
+      assertions.check(
+        'the newspapers list is well-formed (reachability only) — Newspapers.asp:61-62',
+        Array.isArray(papers.newspapers) && papers.newspapers.every(p => p.paperName !== ''),
+        `${papers.newspapers.length} newspapers`,
+      );
+
+      const letter = PRIMARY_ACCOUNT.username.charAt(0).toUpperCase();
+      const people = await session.driver.request<WsRespSearchMenuPeopleSearch>(
+        { type: WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH, searchStr: letter, mode: 'prefix' },
+        WsMessageType.RESP_SEARCH_MENU_PEOPLE_SEARCH,
+      );
+      assertions.check(
+        `the "${letter}" index lists ${PRIMARY_ACCOUNT.username}`,
+        people.results.some(r => sameAccount(r, PRIMARY_ACCOUNT)),
+        `${people.results.length} results`,
+      );
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('search-menu-read', assertions, [], session);
     } finally {
       await logoff(session);
     }
@@ -1394,6 +1571,7 @@ export const FLOWS: Flow[] = [
   zoningAlertRead,
   nearestTownHall,
   directoryBrowse,
+  searchMenuRead,
   warehouseRoleReading,
 ];
 

@@ -1767,6 +1767,11 @@ describe('directory-browse', () => {
     kinds?: string[];
     rows?: (typeof ROW)[];
     card?: typeof CARD | null;
+    townCompanies?: string[];
+    ownedBy?: string | null;
+    ownerCompanies?: string[];
+    companyKinds?: string[];
+    tycoonRows?: (typeof ROW)[];
   } = {}) {
     const {
       town = TOWN,
@@ -1774,6 +1779,11 @@ describe('directory-browse', () => {
       kinds = ['Residentials'],
       rows = [ROW],
       card = CARD,
+      townCompanies = ['Crazz Ltd'],
+      ownedBy = 'Crazz',
+      ownerCompanies = ['Crazz Ltd'],
+      companyKinds = ['Residentials'],
+      tycoonRows = [ROW],
     } = over;
 
     const refs: { kind: string }[] = [];
@@ -1788,8 +1798,20 @@ describe('directory-browse', () => {
           return { ref, page: { kind: 'folder', items: kinds, ownedBy: null } };
         case 'town-facility-kind':
           return { ref, page: { kind: 'facility-list', facilities: rows } };
-        default:
+        case 'facility':
           return { ref, page: { kind: 'facility', facility: card } };
+        case 'town-companies':
+          return { ref, page: { kind: 'folder', items: townCompanies, ownedBy: null } };
+        case 'town-company':
+          return { ref, page: { kind: 'folder', items: ['Residentials'], ownedBy } };
+        case 'tycoon-companies':
+          return { ref, page: { kind: 'folder', items: ownerCompanies, ownedBy: null } };
+        case 'tycoon-company':
+          return { ref, page: { kind: 'folder', items: companyKinds, ownedBy: null } };
+        case 'tycoon-facility-kind':
+          return { ref, page: { kind: 'facility-list', facilities: tycoonRows } };
+        default:
+          throw new Error(`unexpected ref ${ref.kind}`);
       }
     }));
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
@@ -1798,14 +1820,46 @@ describe('directory-browse', () => {
     return refs;
   }
 
-  it('walks town -> Facilities -> a kind -> a card, in that order', async () => {
+  // #1140: the walk now continues past the card into the company and tycoon branches.
+  it('walks town -> Facilities -> a kind -> a card -> the company and tycoon branches, in that order', async () => {
     const refs = arrange();
 
     const result = await flowByName('directory-browse').run(ctx);
 
     expect(result.status).toBe('PASS');
-    expect(refs.map(r => r.kind)).toEqual(['town', 'town-facilities', 'town-facility-kind', 'facility']);
+    expect(refs.map(r => r.kind)).toEqual([
+      'town', 'town-facilities', 'town-facility-kind', 'facility',
+      'town-companies', 'town-company', 'tycoon-companies', 'tycoon-company', 'tycoon-facility-kind',
+    ]);
     expect(refs[3]).toEqual({ kind: 'facility', path: ROW.path, name: ROW.itemName });
+    expect(refs[5]).toEqual({ kind: 'town-company', town: 'Helartia', company: 'Crazz Ltd' });
+    expect(refs[6]).toEqual({ kind: 'tycoon-companies', tycoon: 'Crazz' });
+    expect(refs[8]).toEqual(expect.objectContaining({ facKind: 'Residentials', tycoon: 'Crazz', company: 'Crazz Ltd' }));
+    expect(result.assertions.some(a => a.what.includes('"Crazz Ltd"'))).toBe(true);
+  });
+
+  it.each([
+    ['town companies without the row\'s company', { townCompanies: ['Other Co'] }, 'town-companies'],
+    ['no owner', { ownedBy: null }, 'town-company'],
+    ['owner companies without it', { ownerCompanies: [] }, 'tycoon-companies'],
+    ['no facility kind', { companyKinds: [] }, 'tycoon-company'],
+    ['no facility row', { tycoonRows: [] }, 'tycoon-facility-kind'],
+  ] as const)('fails, and stops there, on %s', async (_label, over, last) => {
+    const refs = arrange(over as Parameters<typeof arrange>[0]);
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(refs[refs.length - 1].kind).toBe(last);
+    expect(result.assertions.some(a => a.what === 'no gateway errors')).toBe(false);
+  });
+
+  it('opens no company page when the row names no company', async () => {
+    const refs = arrange({ rows: [{ ...ROW, company: null as unknown as string }] });
+
+    await flowByName('directory-browse').run(ctx);
+
+    expect(refs[refs.length - 1].kind).toBe('facility');
   });
 
   it('is read-only', () => {
@@ -1875,6 +1929,158 @@ describe('directory-browse', () => {
 
     expect(result.status).toBe('FAIL');
     expect(result.assertions.find(a => !a.ok)?.what).toMatch(/three legacy forms/);
+  });
+});
+
+describe('search-menu-read', () => {
+  type Over = {
+    categories?: { id: string; label: string; enabled?: boolean }[];
+    rankings?: { id: string; label: string; url: string; level: number; children?: unknown[] }[];
+    title?: string;
+    entries?: { rank: number; name: string; valueText: string }[];
+    level?: string;
+    currentLevelName?: string;
+    banks?: { name: string; company: string }[];
+    newspapers?: { paperName: string; townName: string }[];
+    results?: string[];
+  };
+
+  function arrange(over: Over = {}) {
+    const {
+      categories = [{ id: 'rankings', label: 'Rankings', enabled: true }],
+      rankings = [{ id: 'nta', label: 'NTA', url: 'Rankings/NTA', level: 0 }],
+      title = 'NTA',
+      entries = [{ rank: 1, name: 'Crazz', valueText: '1' }],
+      level = 'Apprentice',
+      currentLevelName = 'Apprentice',
+      banks = [{ name: 'Bank 1', company: 'Crazz Ltd' }],
+      newspapers = [{ paperName: 'Herald', townName: 'Helartia' }],
+      results = ['SPO_test3'],
+    } = over;
+    const sent: Record<string, unknown>[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+      sent.push(msg as unknown as Record<string, unknown>);
+      switch (msg.type) {
+        case WsMessageType.REQ_SEARCH_MENU_HOME: return { categories };
+        case WsMessageType.REQ_SEARCH_MENU_RANKINGS: return { categories: rankings };
+        case WsMessageType.REQ_SEARCH_MENU_RANKING_DETAIL: return { title, entries };
+        case WsMessageType.REQ_SEARCH_MENU_TYCOON_PROFILE: return { profile: { level } };
+        case WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE:
+          return { tycoonName: 'x', data: { currentLevelName } as unknown as Record<string, unknown> };
+        case WsMessageType.REQ_SEARCH_MENU_BANKS: return { banks };
+        case WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS: return { newspapers };
+        case WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH: return { results };
+        default: return undefined;
+      }
+    }));
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    return { sent, off };
+  }
+
+  const run = () => flowByName('search-menu-read').run(ctx);
+  const failed = (r: Awaited<ReturnType<typeof run>>) => r.assertions.filter(a => !a.ok).map(a => a.what);
+  const byType = (sent: Record<string, unknown>[], t: WsMessageType) => sent.filter(m => m.type === t);
+
+  it('passes on a well-formed world, logs off, and is read-only', async () => {
+    const { off } = arrange();
+    const result = await run();
+    expect(failed(result)).toEqual([]);
+    expect(result.status).toBe('PASS');
+    expect(off).toHaveBeenCalled();
+    expect(flowByName('search-menu-read').mutates).toBe(false);
+  });
+
+  it('passes on an empty newspaper list and records the counts', async () => {
+    arrange({ newspapers: [] });
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(result.assertions.find(a => a.what.includes('newspapers'))?.detail).toBe('0 newspapers');
+    expect(result.assertions.find(a => a.what.includes('banks'))?.detail).toBe('1 banks');
+  });
+
+  it('fails on a malformed bank or newspaper row', async () => {
+    arrange({ banks: [{ name: '', company: '' }], newspapers: [{ paperName: '', townName: '' }] });
+    expect(failed(await run())).toHaveLength(2);
+  });
+
+  it('fails on an empty home and an empty ranking list', async () => {
+    arrange({ categories: [], rankings: [] });
+    const result = await run();
+    expect(failed(result)).toEqual(expect.arrayContaining([
+      'the search home lists at least one tile', 'the rankings list at least one ranking', 'some ranking carries a url',
+    ]));
+  });
+
+  it('fails when the tycoon card level is Unknown', async () => {
+    arrange({ level: 'Unknown' });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toEqual([expect.stringMatching(/card carries a level/)]);
+  });
+
+  it('fails when the full profile has an empty current level', async () => {
+    arrange({ currentLevelName: '  ' });
+    const result = await run();
+    expect(failed(result)).toEqual([expect.stringMatching(/full profile names a current level/)]);
+  });
+
+  it('opens the first ranking with a url, depth-first', async () => {
+    const { sent } = arrange({
+      rankings: [
+        { id: 'a', label: 'A', url: '', level: 0, children: [
+          { id: 'a1', label: 'A1', url: '', level: 1 },
+          { id: 'a2', label: 'A2', url: 'Rankings/A2', level: 1 },
+        ] },
+        { id: 'b', label: 'B', url: 'Rankings/B', level: 0 },
+      ],
+    });
+    await run();
+    expect(byType(sent, WsMessageType.REQ_SEARCH_MENU_RANKING_DETAIL)).toEqual([
+      expect.objectContaining({ rankingPath: 'Rankings/A2' }),
+    ]);
+  });
+
+  it('fails with no openable ranking, and still reads banks, newspapers and people', async () => {
+    const { sent } = arrange({ rankings: [{ id: 'a', label: 'A', url: '', level: 0 }] });
+    const result = await run();
+    expect(failed(result)).toEqual(['some ranking carries a url']);
+    expect(byType(sent, WsMessageType.REQ_SEARCH_MENU_RANKING_DETAIL)).toEqual([]);
+    expect(byType(sent, WsMessageType.REQ_SEARCH_MENU_BANKS)).toHaveLength(1);
+    expect(byType(sent, WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS)).toHaveLength(1);
+    expect(byType(sent, WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH)).toHaveLength(1);
+  });
+
+  it('fails on a ranking detail with no title and no rows', async () => {
+    const { sent } = arrange({ title: '', entries: [] });
+    const result = await run();
+    expect(failed(result)).toEqual(expect.arrayContaining([
+      'the ranking detail has a title', 'the ranking detail lists at least one row',
+    ]));
+    expect(byType(sent, WsMessageType.REQ_SEARCH_MENU_TYCOON_PROFILE)).toEqual([]);
+  });
+
+  it('reads the profiles of the first tycoon that is not the session\'s own', async () => {
+    const { sent } = arrange({ entries: [
+      { rank: 1, name: 'SPO_test3', valueText: '1' }, { rank: 2, name: 'Crazz', valueText: '2' },
+    ] });
+    await run();
+    expect(byType(sent, WsMessageType.REQ_SEARCH_MENU_TYCOON_PROFILE)).toEqual([expect.objectContaining({ tycoonName: 'Crazz' })]);
+    expect(byType(sent, WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE)).toEqual([expect.objectContaining({ tycoonName: 'Crazz' })]);
+  });
+
+  it('fails when the ranking lists only the session\'s own tycoon', async () => {
+    arrange({ entries: [{ rank: 1, name: 'SPO_test3', valueText: '1' }] });
+    const result = await run();
+    expect(failed(result)).toEqual([expect.stringMatching(/a tycoon other than/)]);
+  });
+
+  it('searches the people index by prefix and fails when the account is absent', async () => {
+    const { sent } = arrange({ results: ['Someone'] });
+    const result = await run();
+    expect(byType(sent, WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH)).toEqual([
+      expect.objectContaining({ searchStr: 'S', mode: 'prefix' }),
+    ]);
+    expect(failed(result)).toEqual([expect.stringMatching(/"S" index lists SPO_test3/)]);
   });
 });
 

@@ -155,20 +155,27 @@ export const ROUTES: RouteRule[] = [
     // Before the broad wire-level rule below, which would otherwise route
     // login-handler.ts's people-search sweep through flows that never drive it.
     test: /^src\/server\/session\/login-handler\.ts$/,
-    flows: ['people-search', 'politics-read', 'politics-write', 'building-details'],
-    why: 'the directory login/search path changed — including the Root/Users sweep',
+    flows: ['people-search', 'politics-read', 'politics-write', 'building-details', 'search-menu-read'],
+    why: 'the directory login/search path changed — including the Root/Users sweep and the one-bucket prefix path search-menu-read drives',
   },
   {
     // Before the search-handlers rule and the broad src/ rules below: the directory tree
     // (town page, folders, facility card) is read by this flow and by nothing else.
-    test: /^src\/server\/search-menu-(service|parser)\.ts$|^src\/client\/components\/search\/(DirectoryPage|SearchPanel|TycoonProfileView)\.tsx$|^src\/client\/components\/search\/directory-refs\.ts$|^src\/client\/store\/search-store\.ts$/,
-    flows: ['directory-browse'],
-    why: 'the directory browse tree — the one flow that walks it',
+    test: /^src\/server\/search-menu-(service|parser)\.ts$|^src\/client\/store\/search-store\.ts$/,
+    flows: ['directory-browse', 'search-menu-read'],
+    why: 'the search menu service and parser — the two flows that read its pages',
+  },
+  {
+    // Every search screen, after the test and pixel rules that claim its tests and CSS.
+    test: /^src\/client\/components\/search\//,
+    flows: ['directory-browse', 'search-menu-read'],
+    needsL3: true,
+    why: 'the search screens — the two flows that read what they show, plus a browser look',
   },
   {
     // Same reason, one rule earlier than the ws-handlers rule below.
     test: /^src\/server\/ws-handlers\/search-handlers\.ts$/,
-    flows: ['people-search', 'building-details', 'politics-read'],
+    flows: ['people-search', 'building-details', 'politics-read', 'search-menu-read'],
     why: 'the search WS handler changed — including the people-search request path',
   },
   {
