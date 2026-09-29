@@ -62,9 +62,9 @@ describe('the catalogue', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
     expect(mutating).toEqual(
       [
-        'favorites-folders', 'favorites-roundtrip', 'mail-drafts', 'mail-reply', 'mail-roundtrip',
-        'mail-send-from-draft', 'politics-write', 'publicity-roundtrip', 'town-min-wage', 'vote-roundtrip',
-        'zoning-alert-read',
+        'autoconnection-roundtrip', 'favorites-folders', 'favorites-roundtrip', 'mail-drafts', 'mail-reply',
+        'mail-roundtrip', 'mail-send-from-draft', 'policy-roundtrip', 'politics-write', 'publicity-roundtrip',
+        'town-min-wage', 'vote-roundtrip', 'zoning-alert-read',
       ],
     );
   });
@@ -3771,6 +3771,335 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
 
       expect(r.status).toBe('FAIL');
       expect(assertion(r, `${P}'s Inbox holds the reply with a Re: subject`)?.ok).toBe(false);
+    });
+  });
+});
+
+describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
+  const ME = PRIMARY_ACCOUNT.username;
+  const HIM = SECONDARY_ACCOUNT.username;
+  let lines: string[];
+  let lock: WorldLock;
+  let sent: WsMessage[];
+
+  /** A clock that jumps past the read-back bound on every call: each poll reads once. */
+  function jumpingClock(): () => number {
+    let t = 0;
+    return () => (t += TIMEOUTS.readBack + 1);
+  }
+  function flowCtx() {
+    return { lock, survivalLogUrl: 'http://logs/S.log', sleep: jest.fn(async () => undefined), now: jumpingClock() };
+  }
+
+  beforeEach(() => {
+    lines = [];
+    sent = [];
+    lock = cleanLock();
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue({ url: 'http://logs/S.log', offset: 0, openedAt: 't' });
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, spec) =>
+      lines.find(l => l.includes(spec.marker) && (spec.match?.(l) ?? true)) ?? null,
+    );
+  });
+
+  const sentOf = (type: WsMessageType) => sent.filter(m => m.type === type) as unknown as Record<string, unknown>[];
+
+  describe('policy-roundtrip', () => {
+    interface PolicyWorld {
+      row: { yours: number; theirs: number } | null;
+      cacheUnavailable?: boolean;
+      /** The server leaves a neutral row instead of dropping it. */
+      keepNeutralRow?: boolean;
+      /** Writes after this many are ignored by the model (a failed proof). */
+      ignoreWrites?: boolean;
+      /** The first write's request rejects. */
+      failFirstWrite?: boolean;
+      silentLog?: boolean;
+    }
+    function drive(world: PolicyWorld): void {
+      let writes = 0;
+      jest.spyOn(session, 'login').mockResolvedValue(
+        stubSession(msg => {
+          sent.push(msg);
+          if (msg.type === WsMessageType.REQ_PROFILE_POLICY) {
+            return {
+              data: {
+                policies: world.row
+                  ? [{ tycoonName: HIM.toUpperCase(), yourPolicy: world.row.yours, theirPolicy: world.row.theirs }]
+                  : [],
+                alliesAllowed: true,
+                cacheUnavailable: world.cacheUnavailable,
+              },
+            };
+          }
+          if (msg.type === WsMessageType.REQ_PROFILE_POLICY_SET) {
+            writes++;
+            if (world.failFirstWrite && writes === 1) throw new Error('socket died');
+            const status = (msg as unknown as { status: number }).status;
+            if (!world.silentLog) lines.push(` Setting policy status: ${ME}, ${HIM}, ${status}`);
+            if (!world.ignoreWrites) {
+              const theirs = world.row?.theirs ?? 1;
+              world.row = status === 1 && theirs === 1 && !world.keepNeutralRow ? null : { yours: status, theirs };
+            }
+            return { success: false };
+          }
+          throw new Error(`unexpected ${msg.type}`);
+        }),
+      );
+    }
+    const statuses = () => sentOf(WsMessageType.REQ_PROFILE_POLICY_SET).map(m => m.status);
+    const run = () => flowByName('policy-roundtrip').run(flowCtx());
+
+    it('mutates, and from "no row" sets enemy, then neutral, and expects the row gone', async () => {
+      expect(flowByName('policy-roundtrip').mutates).toBe(true);
+      const world: PolicyWorld = { row: null };
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(statuses()).toEqual([2, 1]);
+      expect(sentOf(WsMessageType.REQ_PROFILE_POLICY_SET)[0].tycoonName).toBe(HIM);
+      expect(result.probes[0]).toMatchObject({ original: 'none', written: `2:1`, restored: true });
+      expect(result.probes[0].logLine).toContain(`${ME}, ${HIM}, 2`);
+      expect(world.row).toBeNull();
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs when the restore from "no row" leaves a neutral row behind, and keeps the pending restore', async () => {
+      drive({ row: null, keepNeutralRow: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].restored).toBe(false);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+      expect(lock.read().pendingRestores[0].what).toMatch(/strategy towards Crazz.*put back "none"/);
+    });
+
+    it('from enemy writes neutral and restores enemy', async () => {
+      drive({ row: { yours: 2, theirs: 2 } });
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(statuses()).toEqual([1, 2]);
+      expect(result.probes[0].written).toBe('1:2');
+    });
+
+    it('still restores after a failed write', async () => {
+      drive({ row: null, failFirstWrite: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(statuses()).toEqual([2, 1]);
+    });
+
+    it('still restores after a failed proof — a Survival line with no matching read-back FAILs', async () => {
+      drive({ row: { yours: 0, theirs: 1 }, ignoreWrites: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].logLine).not.toBeNull();
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(statuses()).toEqual([2, 0]);
+    });
+
+    it('FAILs a read-back with no Survival line', async () => {
+      drive({ row: null, silentLog: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('CONFIRMED');
+      expect(result.probes[0].logLine).toBeNull();
+    });
+
+    it('refuses to write when the original read carries cacheUnavailable', async () => {
+      drive({ row: null, cacheUnavailable: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/cacheUnavailable/);
+      expect(statuses()).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('looks the Survival log up when the run did not resolve one', async () => {
+      drive({ row: null });
+      const find = jest.spyOn(liveLog, 'findCurrentSurvivalLog').mockResolvedValue('http://found/S.log');
+      const result = await flowByName('policy-roundtrip').run({ ...flowCtx(), survivalLogUrl: undefined });
+      expect(find).toHaveBeenCalled();
+      expect(result.status).toBe('PASS');
+    });
+  });
+
+  describe('autoconnection-roundtrip', () => {
+    interface Fluid {
+      fluidId: string;
+      fluidName: string;
+      suppliers: { facilityName: string; facilityId: string; companyName: string }[];
+      hireTradeCenter: boolean;
+      onlyWarehouses: boolean;
+      storable?: boolean;
+    }
+    interface AcWorld {
+      fluids: Fluid[];
+      search: Record<string, { facilityName: string; companyName: string; x: number; y: number }[]>;
+      cacheUnavailable?: boolean;
+      /** The first action request rejects. */
+      failFirstAction?: boolean;
+      /** No `Deleting initial suppliers:` line is logged. */
+      silentDelete?: boolean;
+      /** Reads after the first throw — a dead page mid-poll. */
+      deadAfterFirstRead?: boolean;
+    }
+    const ACTION_LINES: Record<string, string> = {
+      add: 'Adding initial suppliers:',
+      delete: 'Deleting initial suppliers:',
+      hireTradeCenter: 'Initial suppliers, include Trade Center:',
+      dontHireTradeCenter: 'Initial suppliers, excluding Trade Center:',
+      onlyWarehouses: 'Initial suppliers, hire only warehouses:',
+      dontOnlyWarehouses: 'Initial suppliers, hire all:',
+    };
+    function drive(world: AcWorld): void {
+      let actions = 0;
+      let reads = 0;
+      jest.spyOn(session, 'login').mockResolvedValue(
+        stubSession(msg => {
+          sent.push(msg);
+          if (msg.type === WsMessageType.REQ_PROFILE_AUTOCONNECTIONS) {
+            reads++;
+            if (world.deadAfterFirstRead && reads > 1) throw new Error('page died');
+            return { data: { fluids: structuredClone(world.fluids), cacheUnavailable: world.cacheUnavailable } };
+          }
+          if (msg.type === WsMessageType.REQ_SEARCH_CONNECTIONS) {
+            const fluidId = (msg as unknown as { fluidId: string }).fluidId;
+            return { results: world.search[fluidId] ?? [], fluidId, direction: 'input' };
+          }
+          if (msg.type === WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION) {
+            actions++;
+            if (world.failFirstAction && actions === 1) throw new Error('socket died');
+            const { action, fluidId, suppliers } = msg as unknown as { action: string; fluidId: string; suppliers?: string };
+            const fluid = world.fluids.find(f => f.fluidId === fluidId);
+            if (!fluid) throw new Error(`no fluid ${fluidId}`);
+            if (!(action === 'delete' && world.silentDelete)) {
+              lines.push(`${ACTION_LINES[action]} ${ME}, ${fluidId}${suppliers ? `, ${suppliers}` : ''}`);
+            }
+            if (action === 'hireTradeCenter') fluid.hireTradeCenter = true;
+            if (action === 'dontHireTradeCenter') fluid.hireTradeCenter = false;
+            if (action === 'onlyWarehouses') fluid.onlyWarehouses = true;
+            if (action === 'dontOnlyWarehouses') fluid.onlyWarehouses = false;
+            if (action === 'add') fluid.suppliers.push({ facilityName: 'F', facilityId: suppliers ?? '', companyName: 'C' });
+            if (action === 'delete') fluid.suppliers = fluid.suppliers.filter(s => s.facilityId !== suppliers);
+            return { success: true };
+          }
+          throw new Error(`unexpected ${msg.type}`);
+        }),
+      );
+    }
+    const fluid = (fluidId: string, over: Partial<Fluid> = {}): Fluid => ({
+      fluidId,
+      fluidName: fluidId,
+      suppliers: [],
+      hireTradeCenter: false,
+      onlyWarehouses: false,
+      ...over,
+    });
+    const actions = () =>
+      sentOf(WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION).map(m => `${m.action} ${m.fluidId}${m.suppliers ? ` ${m.suppliers}` : ''}`);
+    const run = () => flowByName('autoconnection-roundtrip').run(flowCtx());
+
+    it('mutates, flips both switches, adds a supplier and deletes it — PASS', async () => {
+      expect(flowByName('autoconnection-roundtrip').mutates).toBe(true);
+      drive({
+        fluids: [
+          fluid('Chemicals', { hireTradeCenter: true, suppliers: [{ facilityName: 'A', facilityId: '1,2,', companyName: 'C' }] }),
+          fluid('Food', { storable: true }),
+        ],
+        search: {
+          Chemicals: [
+            { facilityName: 'A', companyName: 'C', x: 1, y: 2 },
+            { facilityName: 'Trade Center', companyName: 'Gov', x: 9, y: 9 },
+            { facilityName: 'B', companyName: 'C', x: 5, y: 6 },
+          ],
+        },
+      });
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(actions()).toEqual([
+        'dontHireTradeCenter Chemicals',
+        'hireTradeCenter Chemicals',
+        'onlyWarehouses Food',
+        'dontOnlyWarehouses Food',
+        'add Chemicals 5,6,',
+        'delete Chemicals 5,6,',
+      ]);
+      const search = sentOf(WsMessageType.REQ_SEARCH_CONNECTIONS)[0];
+      expect(search).toMatchObject({ buildingX: 0, buildingY: 0, direction: 'input', filters: { maxResults: 50, roles: 22 } }); // producer 2 + distributer 4 + importer 16
+      expect(result.probes.map(p => p.member)).toEqual([
+        'RDODontHireTradeCenter', 'RDOHireOnlyFromWarehouse', 'RDOAddAutoConnection',
+      ]);
+      expect(result.assertions.find(a => a.what.startsWith('the delete reached'))?.ok).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('runs the warehouse flip only on the storable fluid', async () => {
+      drive({ fluids: [fluid('Chemicals'), fluid('Food', { storable: true })], search: {} });
+      await run();
+      expect(actions().filter(a => /OnlyWarehouses|onlyWarehouses/.test(a))).toEqual([
+        'onlyWarehouses Food', 'dontOnlyWarehouses Food',
+      ]);
+    });
+
+    it('with no storable fluid, ends the warehouse flip unproven and writes nothing for it', async () => {
+      drive({ fluids: [fluid('Chemicals')], search: { Chemicals: [{ facilityName: 'B', companyName: 'C', x: 5, y: 6 }] } });
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(/only-warehouses flip — no storable fluid/);
+      expect(actions().some(a => /nlyWarehouses/.test(a))).toBe(false);
+    });
+
+    it('with every result already listed (or a Trade Center), ends the add half unproven with no add', async () => {
+      drive({
+        fluids: [fluid('Chemicals', { storable: true, suppliers: [{ facilityName: 'A', facilityId: '1,2,', companyName: 'C' }] })],
+        search: {
+          Chemicals: [
+            { facilityName: 'A', companyName: 'C', x: 1, y: 2 },
+            { facilityName: 'Trade Center', companyName: 'Gov', x: 9, y: 9 },
+          ],
+        },
+      });
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(/add\/delete supplier half/);
+      expect(actions().some(a => a.startsWith('add') || a.startsWith('delete'))).toBe(false);
+    });
+
+    it('refuses to write when the initial read carries cacheUnavailable', async () => {
+      drive({ fluids: [fluid('Chemicals')], search: {}, cacheUnavailable: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(actions()).toEqual([]);
+    });
+
+    it('ends every half unproven when the page lists no fluid', async () => {
+      drive({ fluids: [], search: {} });
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toHaveLength(3);
+      expect(actions()).toEqual([]);
+    });
+
+    it('FAILs when the delete leaves no Deleting initial suppliers: line', async () => {
+      drive({ fluids: [fluid('Chemicals')], search: { Chemicals: [{ facilityName: 'B', companyName: 'C', x: 5, y: 6 }] }, silentDelete: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what.startsWith('the delete reached'))?.ok).toBe(false);
+    });
+
+    it('still restores a flip whose write failed', async () => {
+      drive({ fluids: [fluid('Chemicals')], search: {}, failFirstAction: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(actions().slice(0, 2)).toEqual(['hireTradeCenter Chemicals', 'dontHireTradeCenter Chemicals']);
+    });
+
+    it('keeps polling through a dead page and FAILs the unproven read-backs', async () => {
+      drive({ fluids: [fluid('Chemicals')], search: { Chemicals: [{ facilityName: 'B', companyName: 'C', x: 5, y: 6 }] }, deadAfterFirstRead: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      // Each round trip's original read throws on the dead page: nothing is written.
+      expect(actions()).toEqual([]);
     });
   });
 });

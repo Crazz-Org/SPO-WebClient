@@ -52,9 +52,15 @@ import type {
   WsRespProfileCompanyProfitLoss,
   WsRespProfileAutoConnections,
   WsRespProfilePolicy,
+  WsRespProfilePolicySet,
+  WsRespProfileAutoConnectionAction,
+  WsRespSearchConnections,
+  ConnectionSearchResult,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
 import type {
+  AutoConnectionActionType,
+  AutoConnectionFluid,
   AutoConnectionsData,
   BankAccountData,
   CompaniesData,
@@ -86,7 +92,15 @@ import {
   type E2eAccount,
 } from './config';
 import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, readSince } from './live-log';
-import { runProbe, runRoundTrip, probeFailure, type ProbeResult, type ProbeSpec } from './probe';
+import {
+  runProbe,
+  runRoundTrip,
+  probeFailure,
+  type ProbeResult,
+  type ProbeSpec,
+  type RoundTripSpec,
+} from './probe';
+import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
 import {
   awaitResumeToken,
   findTown,
@@ -111,7 +125,7 @@ export interface FlowContext {
   survivalLogUrl?: string;
   /** Injected so a test can avoid a real delay between mailRoundTrip's Inbox re-reads. */
   sleep?: (ms: number) => Promise<void>;
-  /** Injected so a test can run a read-back bound without real time. */
+  /** Injected so a test can bound a round trip's read-back poll without waiting. */
   now?: () => number;
 }
 
@@ -2705,6 +2719,302 @@ const profileRead: Flow = {
   },
 };
 
+/** `TPolicyStatus = (pstAlly, pstNeutral, pstEnemy)` — Kernel/Kernel.pas:2267. */
+const PST_NEUTRAL = 1;
+const PST_ENEMY = 2;
+
+/** The read-back half of a round trip: a transient dead page keeps the bounded poll going. */
+function tolerantRead(read: () => Promise<string | undefined>): () => Promise<string | undefined> {
+  return async () => {
+    try {
+      return await read();
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+/** The Survival line carries the server's spelling of the tycoon, so compare case-insensitively. */
+function lineHas(line: string, expected: string): boolean {
+  return line.toLowerCase().includes(expected.toLowerCase());
+}
+
+/** One round trip, a throw (unreadable original, `cacheUnavailable`) folded into a FAIL. */
+async function roundTripProbe(
+  ctx: FlowContext,
+  url: string,
+  spec: RoundTripSpec,
+): Promise<ProbeResult> {
+  try {
+    return await runRoundTrip(spec, ctx.lock, openLogWindow, url, { now: ctx.now, sleep: ctx.sleep });
+  } catch (err: unknown) {
+    return probeFailure(spec, err);
+  }
+}
+
+/** SPO_test3's row towards Crazz as `"<yours>:<theirs>"`, or `"none"` — no row, both neutral. */
+async function policyTowardsSecondary(session: LiveSession): Promise<string> {
+  const policy = await readPolicy(session);
+  const row = policy.policies.find(p => sameAccount(p.tycoonName, SECONDARY_ACCOUNT));
+  return row ? `${row.yourPolicy}:${row.theirPolicy}` : 'none';
+}
+
+/** The status a policy value asks SPO_test3 to hold: `"none"` is neutral. */
+function policyStatus(value: string): number {
+  return value === 'none' ? PST_NEUTRAL : Number(value.split(':')[0]);
+}
+
+/**
+ * The strategy towards Crazz, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
+ * broadcasts a world event naming Crazz (Kernel/Kernel.pas:11790-11800). The restore from "no
+ * row" expects the row gone — a neutral row left behind is not the original.
+ */
+const policyRoundTrip: Flow = {
+  name: 'policy-roundtrip',
+  what: "strategy towards Crazz: read -> set another status -> read back -> restore -> read back",
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      const read = (): Promise<string> => policyTowardsSecondary(session);
+      probes.push(
+        await roundTripProbe(ctx, url, {
+          what: `${PRIMARY_ACCOUNT.username}'s strategy towards ${SECONDARY_ACCOUNT.username} ("none" = no row, both neutral)`,
+          member: 'RDOSetPolicyStatus',
+          read,
+          testValue: original => {
+            const [yours, theirs] =
+              original === 'none' ? [PST_NEUTRAL, PST_NEUTRAL] : original.split(':').map(Number);
+            const next = yours === PST_ENEMY ? PST_NEUTRAL : PST_ENEMY;
+            return next === PST_NEUTRAL && theirs === PST_NEUTRAL ? 'none' : `${next}:${theirs}`;
+          },
+          write: async value => {
+            // `success` is ignored: the gateway answers false whenever the row disappears — every
+            // restore to neutral against a neutral counterpart. The read-back is the judge.
+            await session.driver.request<WsRespProfilePolicySet>(
+              {
+                type: WsMessageType.REQ_PROFILE_POLICY_SET,
+                tycoonName: SECONDARY_ACCOUNT.username,
+                status: policyStatus(value),
+              },
+              WsMessageType.RESP_PROFILE_POLICY_SET,
+            );
+          },
+          proof: {
+            log: {
+              marker: LOG_MARKERS.RDOSetPolicyStatus,
+              match: (line, written) =>
+                lineHas(line, `${PRIMARY_ACCOUNT.username}, ${SECONDARY_ACCOUNT.username}, ${policyStatus(written)}`),
+            },
+            readBack: {
+              source: `the ${SECONDARY_ACCOUNT.username} row of ${PAGE_POLICY}`,
+              why:
+                'the page reads the object cache, refreshed after the write (Kernel/Kernel.pas:11787-11788) ' +
+                '— OB-29 lag, so the poll is bounded',
+              read: tolerantRead(read),
+              boundMs: TIMEOUTS.readBack,
+            },
+          },
+        }),
+      );
+      assertions.check('the policy round trip proved the write and the restore', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report('policy-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+type AutoConnectionSwitch = 'hireTradeCenter' | 'onlyWarehouses';
+
+const SWITCHES: Record<
+  AutoConnectionSwitch,
+  { on: 'hireTradeCenter' | 'onlyWarehouses'; off: 'dontHireTradeCenter' | 'dontOnlyWarehouses'; onMember: string; offMember: string }
+> = {
+  hireTradeCenter: {
+    on: 'hireTradeCenter',
+    off: 'dontHireTradeCenter',
+    onMember: 'RDOHireTradeCenter',
+    offMember: 'RDODontHireTradeCenter',
+  },
+  onlyWarehouses: {
+    on: 'onlyWarehouses',
+    off: 'dontOnlyWarehouses',
+    onMember: 'RDOHireOnlyFromWarehouse',
+    offMember: 'RDODontHireOnlyFromWarehouse',
+  },
+};
+
+/** `ParseGateList` (Kernel/Kernel.pas:4277, called at :11653) needs the trailing comma. */
+function supplierGate(r: ConnectionSearchResult): string {
+  return `${r.x},${r.y},`;
+}
+
+/**
+ * The initial suppliers, change-then-undo (#1146): flip the Trade Center switch, flip the
+ * only-warehouses switch on a storable fluid, then add one default supplier not already listed
+ * and delete it. None of these members broadcasts (Kernel/Kernel.pas:11679-11766).
+ */
+const autoConnectionRoundTrip: Flow = {
+  name: 'autoconnection-roundtrip',
+  what: 'initial suppliers: flip Trade Center -> flip only-warehouses -> add a supplier -> delete it',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      let initial: AutoConnectionsData;
+      try {
+        initial = await readAutoConnections(session);
+      } catch (err: unknown) {
+        assertions.check(`${PAGE_AUTOCONNECTIONS} answered without cacheUnavailable`, false, toErrorMessage(err));
+        return report('autoconnection-roundtrip', assertions, probes, session);
+      }
+      if (initial.fluids.length === 0) {
+        for (const half of ['the Trade Center flip', 'the only-warehouses flip', 'the add/delete supplier half']) {
+          assertions.unproven(half, 'the initial suppliers page lists no fluid');
+        }
+        return report('autoconnection-roundtrip', assertions, probes, session);
+      }
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      const fluidOf = async (fluidId: string) =>
+        (await readAutoConnections(session)).fluids.find(f => f.fluidId === fluidId);
+      const act = async (action: AutoConnectionActionType, fluidId: string, suppliers?: string): Promise<void> => {
+        // `success` is ignored; the page read-back is the judge (doc/E2E-POLICY.md §5).
+        await session.driver.request<WsRespProfileAutoConnectionAction>(
+          { type: WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION, action, fluidId, suppliers },
+          WsMessageType.RESP_PROFILE_AUTOCONNECTION_ACTION,
+        );
+      };
+      const readBackWhy =
+        `${PAGE_AUTOCONNECTIONS} reads the object cache (NewTycoon/TycoonAutoConnections.asp:3,12,29), ` +
+        'refreshed by the member with BackgroundInvalidateCache — OB-29 lag, so the poll is bounded';
+
+      const flip = async (fluid: AutoConnectionFluid, key: AutoConnectionSwitch): Promise<void> => {
+        const sw = SWITCHES[key];
+        const read = async (): Promise<string | undefined> => {
+          const f = await fluidOf(fluid.fluidId);
+          return f ? String(f[key]) : undefined;
+        };
+        const probe = await roundTripProbe(ctx, url, {
+          what: `${PRIMARY_ACCOUNT.username}'s ${key} switch on ${fluid.fluidId}`,
+          member: fluid[key] ? sw.offMember : sw.onMember,
+          read,
+          testValue: original => (original === 'true' ? 'false' : 'true'),
+          write: value => act(value === 'true' ? sw.on : sw.off, fluid.fluidId),
+          proof: {
+            log: {
+              marker: LOG_MARKERS[fluid[key] ? sw.offMember : sw.onMember],
+              match: line => lineHas(line, `${PRIMARY_ACCOUNT.username}, ${fluid.fluidId}`),
+            },
+            readBack: {
+              source: `${fluid.fluidId}.${key} on ${PAGE_AUTOCONNECTIONS}`,
+              why: readBackWhy,
+              read: tolerantRead(read),
+              boundMs: TIMEOUTS.readBack,
+            },
+          },
+        });
+        probes.push(probe);
+        assertions.check(`the ${key} flip proved the write and the restore`, probe.status === 'PASS', probe.note);
+      };
+
+      await flip(initial.fluids[0], 'hireTradeCenter');
+
+      // The checkbox is rendered only under Storable (TycoonAutoConnections.asp:103-104): a
+      // non-storable fluid could never read the flag back.
+      const storable = initial.fluids.find(f => f.storable === true);
+      if (storable) {
+        await flip(storable, 'onlyWarehouses');
+      } else {
+        assertions.unproven(
+          'the only-warehouses flip',
+          'no storable fluid listed — the checkbox is rendered only under Storable (TycoonAutoConnections.asp:103-104)',
+        );
+      }
+
+      // A supplier found the way the Add Supplier dialog finds one (SupplierSearchModal.tsx):
+      // profile-level coords 0,0, the ASP default roles (TycoonSuppliesSearch.asp:29), no Trade
+      // Center (:43-44), and not already listed for that fluid.
+      let target: { fluid: AutoConnectionFluid; gate: string } | undefined;
+      for (const fluid of initial.fluids) {
+        const search = await session.driver.request<WsRespSearchConnections>(
+          {
+            type: WsMessageType.REQ_SEARCH_CONNECTIONS,
+            buildingX: 0,
+            buildingY: 0,
+            fluidId: fluid.fluidId,
+            direction: 'input',
+            filters: { maxResults: 50, roles: rolesToMask('input', { ...ALL_CONNECTION_ROLES, exporter: false }) },
+          },
+          WsMessageType.RESP_SEARCH_CONNECTIONS,
+        );
+        const listed = new Set(fluid.suppliers.map(s => s.facilityId));
+        const hit = (search.results ?? []).find(
+          r => r.facilityName !== 'Trade Center' && !listed.has(supplierGate(r)),
+        );
+        if (hit) {
+          target = { fluid, gate: supplierGate(hit) };
+          break;
+        }
+      }
+      if (!target) {
+        assertions.unproven('the add/delete supplier half', 'no search result not already listed for any fluid');
+        return report('autoconnection-roundtrip', assertions, probes, session);
+      }
+
+      const { fluid, gate } = target;
+      const identity = `${PRIMARY_ACCOUNT.username}, ${fluid.fluidId}, ${gate}`;
+      const delWindow = await openLogWindow(url);
+      const read = async (): Promise<string | undefined> => {
+        const f = await fluidOf(fluid.fluidId);
+        if (!f) return undefined;
+        return f.suppliers.some(s => s.facilityId === gate) ? 'listed' : 'absent';
+      };
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${PRIMARY_ACCOUNT.username}'s default supplier ${gate} for ${fluid.fluidId}`,
+        member: 'RDOAddAutoConnection',
+        read,
+        testValue: () => 'listed',
+        write: value => act(value === 'listed' ? 'add' : 'delete', fluid.fluidId, gate),
+        proof: {
+          log: { marker: LOG_MARKERS.RDOAddAutoConnection, match: line => lineHas(line, identity) },
+          readBack: {
+            source: `${fluid.fluidId}'s supplier list on ${PAGE_AUTOCONNECTIONS}`,
+            why: readBackWhy,
+            read: tolerantRead(read),
+            boundMs: TIMEOUTS.readBack,
+          },
+        },
+      });
+      probes.push(probe);
+      assertions.check('the supplier add proved the write and the delete', probe.status === 'PASS', probe.note);
+      if (probe.original !== '') {
+        const deleted = await awaitMarker(
+          delWindow,
+          {
+            marker: LOG_MARKERS.RDODelAutoConnection,
+            match: line => line.includes(LOG_MARKERS.RDODelAutoConnection) && lineHas(line, identity),
+          },
+          TIMEOUTS.logSettle,
+        );
+        assertions.check(
+          'the delete reached the model server (Deleting initial suppliers: line)',
+          deleted !== null,
+          deleted ?? `no "${LOG_MARKERS.RDODelAutoConnection}" line for ${identity}`,
+        );
+      }
+      return report('autoconnection-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 /** A property's raw value from any group of an opening read, or 'absent'. */
 function rawProperty(groups: { [groupId: string]: BuildingPropertyValue[] }, name: string): string {
   for (const group of Object.values(groups)) {
@@ -2832,6 +3142,8 @@ export const FLOWS: Flow[] = [
   directoryBrowse,
   searchMenuRead,
   profileRead,
+  policyRoundTrip,
+  autoConnectionRoundTrip,
   warehouseRoleReading,
 ];
 

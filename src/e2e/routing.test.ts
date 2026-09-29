@@ -558,11 +558,11 @@ describe('routing invariants (#1134)', () => {
   });
 
   // #1145: the vote is data-gated — never required, never nightly-excluded by GATE_ONLY.
-  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write alone', () => {
+  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write and policy-roundtrip alone', () => {
     expect(NIGHTLY_ONLY['vote-roundtrip']).toMatch(/Kernel\/TownPolitics\.pas:690/);
     expect(uncited({ 'vote-roundtrip': NIGHTLY_ONLY['vote-roundtrip'] })).toEqual([]);
     expect(ROUTES.some(r => r.flows.includes('vote-roundtrip'))).toBe(false);
-    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write']);
+    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip']);
   });
 
   it('cites a reason for every exemption', () => {
@@ -758,9 +758,19 @@ describe('route — profile & finance reads (#1141)', () => {
     'src/server/session/profile-finance-handler.ts',
     'src/server/session/auto-connection-handler.ts',
     'src/client/store/profile-store.ts',
-  ])('%s requires profile-read', file => {
-    expect(route([file]).required).toEqual([SPINE_FLOW, 'profile-read']);
+  ])('%s requires profile-read and the two profile write flows', file => {
+    expect(route([file]).required).toEqual([
+      SPINE_FLOW, 'profile-read', 'policy-roundtrip', 'autoconnection-roundtrip',
+    ]);
     expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it('auto-connection-handler.ts requires both write flows; only policy-roundtrip is gate-only (#1146)', () => {
+    const required = route(['src/server/session/auto-connection-handler.ts']).required;
+    expect(required).toContain('policy-roundtrip');
+    expect(required).toContain('autoconnection-roundtrip');
+    expect(GATE_ONLY['policy-roundtrip']).toMatch(/Kernel\/Kernel\.pas:11790-11800/);
+    expect('autoconnection-roundtrip' in GATE_ONLY).toBe(false);
   });
 
   it('routes an Empire panel file to the favorites flows and profile-read', () => {

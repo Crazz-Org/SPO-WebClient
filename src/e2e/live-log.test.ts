@@ -67,6 +67,12 @@ describe('LOG_MARKERS', () => {
       RDODefineZone: 'Defining Zone:',
       RDOAskLoan: 'AskLoan:',
       RDOSetPolicyStatus: 'Setting policy status:',
+      RDOAddAutoConnection: 'Adding initial suppliers:',
+      RDODelAutoConnection: 'Deleting initial suppliers:',
+      RDOHireTradeCenter: 'Initial suppliers, include Trade Center:',
+      RDODontHireTradeCenter: 'Initial suppliers, excluding Trade Center:',
+      RDOHireOnlyFromWarehouse: 'Initial suppliers, hire only warehouses:',
+      RDODontHireOnlyFromWarehouse: 'Initial suppliers, hire all:',
       CacheTown: 'Caching Town..',
     });
   });

@@ -46,6 +46,8 @@ export const NIGHTLY_ONLY: Record<string, string> = {
 export const GATE_ONLY: Record<string, string> = {
   'politics-write':
     'each RDOSetTaxValue by the mayor posts a world event every online player sees (Kernel/Population.pas:1264-1284, WorldLocator.SendEvent) — driven only at the gate, when its code changes',
+  'policy-roundtrip':
+    'RDOSetPolicyStatus broadcasts a world event naming Crazz to every online tycoon, twice per run (Kernel/Kernel.pas:11790-11800, Kernel/World.pas:5179-5196, texts Kernel/Kernel.pas:13495-13497); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly',
 };
 
 const CHAT_AWAITING =
@@ -216,8 +218,8 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below: the Empire panel's profile & finance reads.
     test: /^src\/server\/ws-handlers\/profile-handlers\.ts$|^src\/server\/session\/(profile-finance|auto-connection)-handler\.ts$|^src\/client\/store\/profile-store\.ts$/,
-    flows: ['profile-read'],
-    why: 'the profile & finance handlers — the flow that reads every Empire panel tab',
+    flows: ['profile-read', 'policy-roundtrip', 'autoconnection-roundtrip'],
+    why: 'the profile & finance handlers — the flow that reads every Empire panel tab, and the two that write the strategy and the initial suppliers',
   },
   {
     // Before the fallbacks below. permission-negative's one request is REQ_BUILDING_DETAILS,
