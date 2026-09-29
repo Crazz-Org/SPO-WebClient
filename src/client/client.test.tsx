@@ -41,6 +41,12 @@ import { REQUEST_TIMEOUT_MESSAGE, NOT_CONNECTED_MESSAGE } from './player-error';
 import { useBuildingStore } from './store/building-store';
 import { RESUME_TOKEN_KEY } from './store/resume-token';
 import * as ErrorCodes from '../shared/error-codes';
+import type { SpoDebugState } from './client';
+import { useChatStore, type ChatMessage } from './store/chat-store';
+import { useProfileStore } from './store/profile-store';
+import { useSearchStore } from './store/search-store';
+import { useMailStore } from './store/mail-store';
+import { useTutorialStore } from './store/tutorial-store';
 
 class FakeSocket {
   onopen: (() => void) | null = null;
@@ -2011,5 +2017,119 @@ describe('session resume (issue 1046)', () => {
     expect(() => client.callbacks.onAuthCheck('u', 'p')).not.toThrow();
     await flush();
     expect(typesOn(ws)).toContain(WsMessageType.REQ_AUTH_CHECK);
+  });
+});
+
+describe('window.__spoDebug.getState() (issue 1133)', () => {
+  const initialUi = useUiStore.getState();
+  const initialGame = useGameStore.getState();
+  const initialChat = useChatStore.getState();
+  const initialProfile = useProfileStore.getState();
+  const initialSearch = useSearchStore.getState();
+  const initialMail = useMailStore.getState();
+  const initialTutorial = useTutorialStore.getState();
+  const initialBuilding = useBuildingStore.getState();
+
+  const snap = (): SpoDebugState =>
+    (window as unknown as { __spoDebug: { getState: () => SpoDebugState } }).__spoDebug.getState();
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-panel"></div>';
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    new StarpeaceClient();
+  });
+
+  afterEach(() => {
+    useUiStore.setState(initialUi, true);
+    useGameStore.setState(initialGame, true);
+    useChatStore.setState(initialChat, true);
+    useProfileStore.setState(initialProfile, true);
+    useSearchStore.setState(initialSearch, true);
+    useMailStore.setState(initialMail, true);
+    useTutorialStore.setState(initialTutorial, true);
+    useBuildingStore.setState(initialBuilding, true);
+  });
+
+  it('panels.buildMenu is true only while the build surface is on top of the stack', () => {
+    expect(snap().panels.buildMenu).toBe(false);
+    useUiStore.getState().pushSurface({ kind: 'build' });
+    expect(snap().panels.buildMenu).toBe(true);
+    useUiStore.setState({ stack: [{ kind: 'build' }, { kind: 'mail' }] });
+    expect(snap().panels.buildMenu).toBe(false);
+    useUiStore.setState({ stack: [], modal: 'buildMenu' });
+    expect(snap().panels.buildMenu).toBe(false);
+  });
+
+  it('chat.shown follows chatVisible independently of chat.visible (expanded)', () => {
+    useChatStore.setState({ chatVisible: false, isExpanded: true });
+    let s = snap();
+    expect(s.chat.shown).toBe(false);
+    expect(s.chat.visible).toBe(true);
+    expect(s.panels.chat).toBe(s.chat.visible);
+    useChatStore.setState({ chatVisible: true, isExpanded: false });
+    s = snap();
+    expect(s.chat.shown).toBe(true);
+    expect(s.chat.visible).toBe(false);
+    expect(s.panels.chat).toBe(s.chat.visible);
+  });
+
+  type Row = [string, () => void, () => void, (s: SpoDebugState) => unknown, unknown, unknown];
+  const ui = (p: Parameters<typeof useUiStore.setState>[0]) => () => useUiStore.setState(p);
+  const game = (p: Parameters<typeof useGameStore.setState>[0]) => () => useGameStore.setState(p);
+  const rows: Row[] = [
+    ['ui.stack', ui({ stack: [{ kind: 'mail' }, { kind: 'build' }] }), ui({ stack: [] }), s => s.ui.stack, ['mail', 'build'], []],
+    ['ui.modal', ui({ modal: 'settings' }), ui({ modal: null }), s => s.ui.modal, 'settings', null],
+    ['ui.modalBeneath', ui({ modalBeneath: 'buildingInspector' }), ui({ modalBeneath: null }), s => s.ui.modalBeneath, 'buildingInspector', null],
+    ['ui.pinned', ui({ pinned: true }), ui({ pinned: false }), s => s.ui.pinned, true, false],
+    ['ui.commandPaletteOpen', ui({ commandPaletteOpen: true }), ui({ commandPaletteOpen: false }), s => s.ui.commandPaletteOpen, true, false],
+    ['ui.contextMenuOpen', ui({ mapContextMenu: { clientX: 1, clientY: 2, tileX: 3, tileY: 4, layer: 'terrain' } }), ui({ mapContextMenu: null }), s => s.ui.contextMenuOpen, true, false],
+    ['ui.hudVisible', ui({ hudVisible: false }), ui({ hudVisible: true }), s => s.ui.hudVisible, false, true],
+    ['ui.serverSwitchMode', game({ serverSwitchMode: true }), game({ serverSwitchMode: false }), s => s.ui.serverSwitchMode, true, false],
+    ['ui.mobileTab', ui({ mobileTab: 'chat' }), ui({ mobileTab: 'map' }), s => s.ui.mobileTab, 'chat', 'map'],
+    ['ui.mobileSheetSnap', ui({ mobileSheetSnap: 'full' }), ui({ mobileSheetSnap: 'half' }), s => s.ui.mobileSheetSnap, 'full', 'half'],
+    ['modes.placingBuilding', ui({ isPlacingBuilding: true }), ui({ isPlacingBuilding: false }), s => s.modes.placingBuilding, true, false],
+    ['modes.roadBuilding', game({ isRoadBuildingMode: true }), game({ isRoadBuildingMode: false }), s => s.modes.roadBuilding, true, false],
+    ['modes.roadDemolish', game({ isRoadDemolishMode: true }), game({ isRoadDemolishMode: false }), s => s.modes.roadDemolish, true, false],
+    ['modes.zonePainting', game({ isZonePaintingMode: true }), game({ isZonePaintingMode: false }), s => s.modes.zonePainting, true, false],
+    ['modes.connecting', ui({ connectMode: { active: true, subject: 'Water' } }), ui({ connectMode: { active: false, subject: '' } }), s => s.modes.connecting, true, false],
+    ['login.stage', game({ loginStage: 'worlds' }), game({ loginStage: 'auth' }), s => s.login.stage, 'worlds', 'auth'],
+    ['login.authError', game({ authError: { code: 3, message: 'x' } }), game({ authError: null }), s => s.login.authError, true, false],
+    ['login.isVisitor', game({ isVisitor: true }), game({ isVisitor: false }), s => s.login.isVisitor, true, false],
+    ['login.isPublicOfficeRole', game({ isPublicOfficeRole: true }), game({ isPublicOfficeRole: false }), s => s.login.isPublicOfficeRole, true, false],
+    ['subViews.profileTab', () => useProfileStore.setState({ currentTab: 'bank' }), () => useProfileStore.setState({ currentTab: null }), s => s.subViews.profileTab, 'bank', null],
+    ['subViews.searchPage', () => useSearchStore.setState({ currentPage: 'towns' }), () => useSearchStore.setState({ currentPage: 'home' }), s => s.subViews.searchPage, 'towns', 'home'],
+    ['subViews.mailFolder', () => useMailStore.setState({ currentFolder: 'Sent' }), () => useMailStore.setState({ currentFolder: 'Inbox' }), s => s.subViews.mailFolder, 'Sent', 'Inbox'],
+    ['subViews.mailView', () => useMailStore.setState({ currentView: 'compose' }), () => useMailStore.setState({ currentView: 'list' }), s => s.subViews.mailView, 'compose', 'list'],
+    ['subViews.tutorialAssigned',
+      () => useTutorialStore.setState({ assignment: {} as unknown as NonNullable<ReturnType<typeof useTutorialStore.getState>['assignment']> }),
+      () => useTutorialStore.setState({ assignment: null }), s => s.subViews.tutorialAssigned, true, false],
+    ['subViews.buildingPreview', () => useBuildingStore.setState({ isOverlayMode: true }), () => useBuildingStore.setState({ isOverlayMode: false }), s => s.subViews.buildingPreview, true, false],
+  ];
+
+  it.each(rows)('%s follows its store field (set, then cleared)', (_name, set, clear, read, setValue, clearedValue) => {
+    set();
+    expect(read(snap())).toEqual(setValue);
+    clear();
+    expect(read(snap())).toEqual(clearedValue);
+  });
+
+  it('serialises to JSON without the authError text or any chat text beyond lastMessage', () => {
+    const msg = (id: string, text: string): ChatMessage =>
+      ({ id, from: 'someone', text, timestamp: 1, isSystem: false, isGM: false });
+    useGameStore.setState({ authError: { code: 3, message: 'AUTH-SECRET-1133' } });
+    useChatStore.setState({
+      currentChannel: 'Lobby',
+      messages: {
+        Lobby: [msg('1', 'OLDER-MSG-1133'), msg('2', 'LAST-MSG-1133')],
+        Other: [msg('3', 'OTHER-CHAN-1133')],
+      },
+    });
+    const json = JSON.stringify(snap());
+    expect(json).not.toContain('AUTH-SECRET-1133');
+    expect(json).not.toContain('OLDER-MSG-1133');
+    expect(json).not.toContain('OTHER-CHAN-1133');
+    expect(json.split('LAST-MSG-1133').length - 1).toBe(1);
+    expect(snap().chat.lastMessage).toBe('LAST-MSG-1133');
   });
 });
