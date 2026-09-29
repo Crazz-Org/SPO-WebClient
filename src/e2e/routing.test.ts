@@ -835,3 +835,39 @@ describe('route — profile & finance reads (#1141)', () => {
     expect(d.needsL3).toBe(true);
   });
 });
+
+describe('route — roads & zones (#1151)', () => {
+  it.each([
+    'src/server/ws-handlers/road-handlers.ts',
+    'src/server/session/road-handler.ts',
+  ])('%s requires road-roundtrip and is no longer fallback-only', file => {
+    const d = route([file]);
+    expect(d.required).toContain('road-roundtrip');
+    expect(d.required).not.toContain('politics-write');
+    expect(file in FALLBACK_ONLY).toBe(false);
+  });
+
+  it.each([
+    'src/server/session/zone-surface-handler.ts',
+    'src/server/ws-handlers/map-handlers.ts',
+  ])('%s requires zone-roundtrip and still world-readers', file => {
+    const { required } = route([file]);
+    expect(required).toContain('zone-roundtrip');
+    expect(required).toContain('world-readers');
+  });
+
+  it('misc-handlers.ts (the REQ_DEFINE_ZONE sender) requires zone-roundtrip', () => {
+    expect(route(['src/server/ws-handlers/misc-handlers.ts']).required).toContain('zone-roundtrip');
+  });
+
+  it('src/shared/road-circuits.ts is connection reachability, not road-roundtrip', () => {
+    expect(route(['src/shared/road-circuits.ts']).required).not.toContain('road-roundtrip');
+  });
+
+  it('neither flow is nightly-only or gate-only', () => {
+    for (const name of ['road-roundtrip', 'zone-roundtrip']) {
+      expect(NIGHTLY_ONLY).not.toHaveProperty(name);
+      expect(GATE_ONLY).not.toHaveProperty(name);
+    }
+  });
+});

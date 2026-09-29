@@ -6,7 +6,7 @@ import type { WsMessage, FavoritesItem, WsRespResumeSession } from '@/shared/typ
 import type { MailMessageFull, MailMessageHeader, NewspaperBoard } from '@/shared/types/domain-types';
 import {
   FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum, replyHeaders,
-  otherPublicityLevel, publicityLogMatches, taxLogMatches,
+  otherPublicityLevel, publicityLogMatches, taxLogMatches, circuitLogMatches, zoneLogMatches,
   loanDelta, newLoan, receiverLimitRefusal, pictureCheck, testPortraitJpeg, portraitUrl, PROFILE_LEVEL_NAMES,
   type Flow, type FlowResult,
 } from './flows';
@@ -69,7 +69,7 @@ describe('the catalogue', () => {
         'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'favorites-folders',
         'favorites-roundtrip', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
-        'town-min-wage', 'vote-roundtrip', 'zoning-alert-read',
+        'road-roundtrip', 'town-min-wage', 'vote-roundtrip', 'zone-roundtrip', 'zoning-alert-read',
       ],
     );
   });
@@ -4889,6 +4889,422 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
     it('refuses an empty or unmapped level name', () => {
       expect(receiverLimitRefusal(SECONDARY_ACCOUNT, profile({ levelName: '  ' }))).toMatch(/Crazz's profile has no level name/);
       expect(receiverLimitRefusal(SECONDARY_ACCOUNT, profile({ levelName: 'Unknown' }))).toMatch(/not one parseCurriculumHtml/);
+    });
+  });
+});
+
+describe('road-roundtrip and zone-roundtrip (#1151)', () => {
+  const HALL = { name: 'Helartia', iconUrl: '', mayor: null, population: 1, unemploymentPercent: 0, qualityOfLife: 0, x: 100, y: 50, path: '', classId: '' };
+  const OWN = { id: '1', name: 'SPO_test3 - Green' };
+  const MINISTRY = { id: '9', name: 'Ministry', ownerRole: 'Minister of Agriculture' };
+  const MAYOR = { id: '7', name: 'Helartia Town', ownerRole: 'Mayor of Helartia' };
+  /** Helartia, besides the hall tile: 95..97 × 44..45. The one road span is (95,45)-(97,45), the one zone rectangle (95,44)-(97,45). */
+  const REGION = (x: number, y: number): boolean => x >= 95 && x <= 97 && y >= 44 && y <= 45;
+  /** An existing road two rows above the region: every rectangle tile is within 3 of it, no span halo touches it. */
+  const STREET = { x1: 90, y1: 42, x2: 110, y2: 42 };
+
+  interface Seg { x1: number; y1: number; x2: number; y2: number }
+  interface World {
+    helartia?: (x: number, y: number) => boolean;
+    zone?: (x: number, y: number) => number;
+    buildings?: { x: number; y: number; visualClass: string }[];
+    segments?: Seg[];
+    switchFails?: (n: number) => boolean;
+    throwOn?: WsMessageType;
+    buildRefused?: boolean;
+    ignoreBuild?: boolean;
+    /** The first n breaks change nothing. */
+    ignoreBreaks?: number;
+    ignoreWipe?: boolean;
+    breakDeletesWhole?: boolean;
+    /** The build also leaves a segment reaching two tiles past the span's start. */
+    foreignAfterBuild?: boolean;
+    silent?: { build?: boolean; break?: boolean; wipe?: boolean };
+    /** 1-based DefineZone writes whose line is never logged / that change nothing. */
+    silentZone?: number[];
+    ignoreZone?: number[];
+  }
+
+  let lines: string[];
+  let lock: WorldLock;
+  let sent: WsMessage[];
+  let pendingAtFirstWrite: string[] | undefined;
+
+  function jumpingClock(): () => number {
+    let t = 0;
+    return () => (t += TIMEOUTS.readBack + 1);
+  }
+  function flowCtx() {
+    return { lock, survivalLogUrl: 'http://logs/S.log', sleep: jest.fn(async () => undefined), now: jumpingClock() };
+  }
+
+  beforeEach(() => {
+    lines = [];
+    sent = [];
+    pendingAtFirstWrite = undefined;
+    lock = cleanLock();
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue({ url: 'http://logs/S.log', offset: 0, openedAt: 't' });
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, spec) =>
+      lines.find(l => l.includes(spec.marker) && (spec.match?.(l) ?? true)) ?? null,
+    );
+  });
+
+  const box = (s: Seg): Seg => ({
+    x1: Math.min(s.x1, s.x2), y1: Math.min(s.y1, s.y2), x2: Math.max(s.x1, s.x2), y2: Math.max(s.y1, s.y2),
+  });
+  const touches = (a: Seg, b: Seg): boolean => a.x1 <= b.x2 && b.x1 <= a.x2 && a.y1 <= b.y2 && b.y1 <= a.y2;
+
+  function drive(world: World = {}): void {
+    const helartia = world.helartia ?? REGION;
+    const zones = new Map<string, number>();
+    const zoneAt = (x: number, y: number) => zones.get(`${x},${y}`) ?? world.zone?.(x, y) ?? 0;
+    let segments: Seg[] = (world.segments ?? [STREET]).map(box);
+    const buildings = world.buildings ?? [{ x: HALL.x, y: HALL.y, visualClass: '5' }];
+    let switches = 0;
+    let breaks = 0;
+    let zoneWrites = 0;
+    const firstWrite = () => {
+      pendingAtFirstWrite ??= lock.read().pendingRestores.map(p => p.what);
+    };
+    const stub = { ...stubSession(raw => {
+      sent.push(raw);
+      if (raw.type === world.throwOn) throw new Error(`${raw.type} died`);
+      const msg = raw as unknown as Record<string, number> & { surfaceType: string };
+      switch (raw.type) {
+        case WsMessageType.REQ_SEARCH_MENU_TOWNS:
+          return { towns: [HALL] };
+        case WsMessageType.REQ_SWITCH_COMPANY:
+          if (world.switchFails?.(++switches)) throw new WsDriverError('refused', 42, raw.type);
+          return { result: '' };
+        case WsMessageType.REQ_GET_SURFACE: {
+          const rows: number[][] = [];
+          for (let y = msg.y1; y <= msg.y2; y++) {
+            const row: number[] = [];
+            for (let x = msg.x1; x <= msg.x2; x++) {
+              if (msg.surfaceType === 'TOWNS') row.push((x === HALL.x && y === HALL.y) || helartia(x, y) ? 1 : 2);
+              else row.push(zoneAt(x, y));
+            }
+            rows.push(row);
+          }
+          return { data: { width: 0, height: 0, rows } };
+        }
+        case WsMessageType.REQ_MAP_LOAD: {
+          const area = { x1: msg.x, y1: msg.y, x2: msg.x + msg.width - 1, y2: msg.y + msg.height - 1 };
+          return {
+            data: {
+              buildings: buildings.filter(b => b.x >= area.x1 && b.x <= area.x2 && b.y >= area.y1 && b.y <= area.y2),
+              segments: segments.filter(s => touches(s, area)),
+            },
+          };
+        }
+        case WsMessageType.REQ_GET_ALL_FACILITY_DIMENSIONS:
+          return { dimensions: { '5': { xsize: 3, ysize: 3 }, W: { xsize: 3, ysize: 2 } }, civicVisualClassIds: [] };
+        case WsMessageType.REQ_BUILD_ROAD: {
+          firstWrite();
+          if (world.buildRefused) return { success: false, cost: 0, tileCount: 0, message: 'refused' };
+          if (!world.silent?.build) lines.push(`12:00:00 CreateCircuitSeg: 1, 87654321, ${msg.x1}, ${msg.y1}, ${msg.x2}, ${msg.y2}`);
+          if (!world.ignoreBuild) segments.push(box(msg as unknown as Seg));
+          if (world.foreignAfterBuild) segments.push({ x1: msg.x1 - 2, y1: msg.y1, x2: msg.x1, y2: msg.y1 });
+          return { success: true, cost: 1, tileCount: 3 };
+        }
+        case WsMessageType.REQ_DEMOLISH_ROAD: {
+          const { x, y } = msg;
+          if (!world.silent?.break) lines.push(`12:00:01 BreakCircuit: 1, 87654321, ${x}, ${y}`);
+          if (++breaks <= (world.ignoreBreaks ?? 0)) return { success: true };
+          const hit = segments.find(s => x >= s.x1 && x <= s.x2 && y >= s.y1 && y <= s.y2);
+          if (!hit) return { success: false };
+          segments = segments.filter(s => s !== hit);
+          const horizontal = hit.y1 === hit.y2;
+          const [a, b, p] = horizontal ? [hit.x1, hit.x2, x] : [hit.y1, hit.y2, y];
+          const part = (from: number, to: number): Seg => (horizontal ? { ...hit, x1: from, x2: to } : { ...hit, y1: from, y2: to });
+          // TSegment.MakeHole: within one tile of both ends deletes, an end tile trims, a middle tile splits.
+          if (world.breakDeletesWhole || (p - a <= 1 && b - p <= 1)) return { success: true };
+          if (p - a <= 1) segments.push(part(p + 1, b));
+          else if (b - p <= 1) segments.push(part(a, p - 1));
+          else segments.push(part(a, p - 1), part(p + 1, b));
+          return { success: true };
+        }
+        case WsMessageType.REQ_DEMOLISH_ROAD_AREA: {
+          if (!world.silent?.wipe) lines.push(`12:00:02 WipingCircuit: 1, 87654321, ${msg.x1}, ${msg.y1}, ${msg.x2}, ${msg.y2}`);
+          const area = msg as unknown as Seg;
+          if (!world.ignoreWipe) {
+            segments = segments.filter(s => !(s.x1 >= area.x1 && s.x2 <= area.x2 && s.y1 >= area.y1 && s.y2 <= area.y2));
+          }
+          return { success: true };
+        }
+        case WsMessageType.REQ_DEFINE_ZONE: {
+          firstWrite();
+          const n = ++zoneWrites;
+          if (!world.silentZone?.includes(n)) {
+            lines.push(`12:00:03 Defining Zone: ${msg.zoneId}, 12345678, ${msg.x1}, ${msg.y1}, ${msg.x2}, ${msg.y2}`);
+          }
+          if (!world.ignoreZone?.includes(n)) {
+            for (let y = msg.y1; y <= msg.y2; y++) for (let x = msg.x1; x <= msg.x2; x++) zones.set(`${x},${y}`, msg.zoneId);
+          }
+          return { success: true };
+        }
+        default:
+          throw new Error(`unexpected ${raw.type}`);
+      }
+    }), companies: [OWN, MINISTRY, MAYOR], company: OWN };
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+  }
+
+  const sentOf = (type: WsMessageType) =>
+    sent.filter(m => m.type === type).map(m => {
+      const { type: _t, wsRequestId: _r, ...rest } = m as unknown as Record<string, unknown>;
+      return rest;
+    });
+  const switched = () => sent
+    .filter(m => m.type === WsMessageType.REQ_SWITCH_COMPANY)
+    .map(m => (m as unknown as { company: { id: string } }).company.id);
+  const check = (r: FlowResult, what: RegExp) => r.assertions.find(a => what.test(a.what));
+  const run = (name: string) => runFlow(flowByName(name), flowCtx());
+
+  describe('the log matchers', () => {
+    it('matches a circuit line on circuit 1, any tycoon ref, and the coordinates as sent', () => {
+      expect(circuitLogMatches('1:00 BreakCircuit: 1, -4521, 95, 45', 'BreakCircuit:', [95, 45])).toBe(true);
+      expect(circuitLogMatches('1:00 BreakCircuit: 1, 4521, 95, 451', 'BreakCircuit:', [95, 45])).toBe(false);
+      expect(circuitLogMatches('1:00 BreakCircuit: 2, 4521, 95, 45', 'BreakCircuit:', [95, 45])).toBe(false);
+      expect(circuitLogMatches('1:00 WipingCircuit: 1, 4521, 95, 45', 'BreakCircuit:', [95, 45])).toBe(false);
+    });
+
+    it('matches a zone line on the zone id and the rectangle', () => {
+      const rect = { x1: 95, y1: 44, x2: 97, y2: 45 };
+      expect(zoneLogMatches('Defining Zone: 3, -77, 95, 44, 97, 45', 3, rect)).toBe(true);
+      expect(zoneLogMatches('Defining Zone: 3, 77, 95, 44, 97, 451', 3, rect)).toBe(false);
+      expect(zoneLogMatches('Defining Zone: 3, 77, 95, 44, 97, 45', 4, rect)).toBe(false);
+      expect(zoneLogMatches('Defining Zone: 31, 77, 95, 44, 97, 45', 3, rect)).toBe(false);
+    });
+  });
+
+  describe('road-roundtrip', () => {
+    it('PASSes: builds the span as the mayor, breaks its start tile, wipes the other two, and switches back', async () => {
+      drive();
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('PASS');
+      expect(switched()).toEqual(['7', '1']);
+      expect(pendingAtFirstWrite).toHaveLength(1);
+      expect(pendingAtFirstWrite?.[0]).toMatch(/^break the road on \(95,45\)-\(97,45\) as Mayor of Helartia/);
+      expect(sentOf(WsMessageType.REQ_BUILD_ROAD)).toEqual([{ x1: 95, y1: 45, x2: 97, y2: 45 }]);
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD)).toEqual([{ x: 95, y: 45 }]);
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD_AREA)).toEqual([{ x1: 96, y1: 45, x2: 97, y2: 45 }]);
+      expect(check(result, /CreateCircuitSeg/)?.detail).toContain('CreateCircuitSeg: 1, 87654321, 95, 45, 97, 45');
+      expect(check(result, /BreakCircuit/)?.detail).toContain('BreakCircuit: 1, 87654321, 95, 45');
+      expect(check(result, /WipingCircuit/)?.detail).toContain('WipingCircuit: 1, 87654321, 96, 45, 97, 45');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('takes a vertical span when no horizontal one fits', async () => {
+      drive({ helartia: (x, y) => x === 95 && y >= 44 && y <= 46 });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('PASS');
+      expect(sentOf(WsMessageType.REQ_BUILD_ROAD)).toEqual([{ x1: 95, y1: 44, x2: 95, y2: 46 }]);
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD)).toEqual([{ x: 95, y: 44 }]);
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD_AREA)).toEqual([{ x1: 95, y1: 45, x2: 95, y2: 46 }]);
+    });
+
+    it.each([
+      ['no tile of the town', () => false],
+      ['a span next to a road', (x: number, y: number) => x >= 95 && x <= 97 && y === 43],
+    ])('is UNPROVEN with %s — writes nothing, records nothing, still switches back', async (_label, helartia) => {
+      drive({ helartia });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/no straight 3-tile span inside Helartia/);
+      expect(sentOf(WsMessageType.REQ_BUILD_ROAD)).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+      expect(switched()).toEqual(['7', '1']);
+    });
+
+    it('is UNPROVEN when a facility footprint covers the span halo', async () => {
+      drive({ buildings: [{ x: HALL.x, y: HALL.y, visualClass: '5' }, { x: 92, y: 44, visualClass: 'W' }] });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('UNPROVEN');
+      expect(sentOf(WsMessageType.REQ_BUILD_ROAD)).toEqual([]);
+    });
+
+    it('FAILs on a throw after the switch, and still switches back', async () => {
+      drive({ throwOn: WsMessageType.REQ_MAP_LOAD });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /without a throw/)?.detail).toMatch(/REQ_MAP_LOAD died/);
+      expect(switched()).toEqual(['7', '1']);
+    });
+
+    it('FAILs when the switch to the mayor is refused, and still sends the switch back', async () => {
+      drive({ switchFails: n => n === 1 });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.error).toMatch(/refused/);
+      expect(switched()).toEqual(['7', '1']);
+      expect(sentOf(WsMessageType.REQ_BUILD_ROAD)).toEqual([]);
+    });
+
+    it('FAILs a build whose line is present but whose read-back never shows the road', async () => {
+      drive({ ignoreBuild: true });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /covering exactly the span/)?.ok).toBe(false);
+      expect(check(result, /CreateCircuitSeg/)?.ok).toBe(true);
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD)).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each([
+      ['build', /CreateCircuitSeg/],
+      ['break', /BreakCircuit/],
+      ['wipe', /WipingCircuit/],
+    ] as const)('FAILs a %s whose read-back holds but whose Survival line never appears', async (step, line) => {
+      drive({ silent: { [step]: true } });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(check(result, line)?.ok).toBe(false);
+      expect(result.assertions.filter(a => !a.ok)).toHaveLength(1);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a break whose read-back never shows it, and the cleanup breaks the leftover tile by tile', async () => {
+      drive({ ignoreBreaks: 1 });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /other two tiles left/)?.ok).toBe(false);
+      expect(check(result, /BreakCircuit/)?.ok).toBe(true);
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD)).toEqual([{ x: 95, y: 45 }, { x: 95, y: 45 }, { x: 96, y: 45 }]);
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD_AREA)).toEqual([]);
+      expect(check(result, /no segment is left/)?.ok).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a wipe whose read-back never shows it, and the cleanup breaks what is left', async () => {
+      drive({ ignoreWipe: true });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /no segment left on the span/)?.ok).toBe(false);
+      expect(check(result, /WipingCircuit/)?.ok).toBe(true);
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD)).toEqual([{ x: 95, y: 45 }, { x: 96, y: 45 }]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs the wipe step when the break removed the whole road, sending no wipe', async () => {
+      drive({ breakDeletesWhole: true });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /a segment remained on the span for the wipe/)).toMatchObject({
+        ok: false,
+        detail: 'the break removed the whole road',
+      });
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD_AREA)).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('never touches a segment extending beyond the span, and keeps the pending restore', async () => {
+      drive({ foreignAfterBuild: true });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD)).toEqual([]);
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD_AREA)).toEqual([]);
+      expect(check(result, /no segment is left/)).toMatchObject({ ok: false });
+      expect(check(result, /no segment is left/)?.detail).toMatch(/foreign=1 — pending restore kept/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+      expect(lock.read().pendingRestores[0].what).toMatch(/\(95,45\)-\(97,45\)/);
+    });
+
+    it('FAILs a refused build and leaves the lock clean', async () => {
+      drive({ buildRefused: true });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /accepted the road build/)).toMatchObject({ ok: false, detail: 'success=false partial=false refused' });
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD)).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('keeps the pending restore when the cleanup itself throws', async () => {
+      drive({ throwOn: WsMessageType.REQ_DEMOLISH_ROAD });
+      const result = await run('road-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(check(result, /cleanup ran without a throw/)?.ok).toBe(false);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+  });
+
+  describe('zone-roundtrip', () => {
+    const zonesSent = () => sentOf(WsMessageType.REQ_DEFINE_ZONE).map(m => m.zoneId);
+
+    it.each([
+      [0, [3, 0]],
+      [3, [4, 3]],
+    ])('PASSes from zone %i as the mayor: paints %j, both lines matched', async (original, writes) => {
+      drive({ zone: () => original });
+      const result = await run('zone-roundtrip');
+      expect(result.status).toBe('PASS');
+      expect(switched()).toEqual(['7', '1']);
+      expect(zonesSent()).toEqual(writes);
+      expect(sentOf(WsMessageType.REQ_DEFINE_ZONE)[0]).toMatchObject({ x1: 95, y1: 44, x2: 97, y2: 45 });
+      expect(pendingAtFirstWrite).toHaveLength(1);
+      expect(pendingAtFirstWrite?.[0]).toMatch(new RegExp(`\\(95,44\\)-\\(97,45\\) in Helartia .* put back "${original}"$`));
+      expect(result.probes[0].logLine).toContain(`Defining Zone: ${writes[0]}, 12345678, 95, 44, 97, 45`);
+      expect(check(result, /repaint to the original logged/)?.detail).toContain(`Defining Zone: ${original}, 12345678, 95, 44, 97, 45`);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each<[string, World]>([
+      ['a non-uniform rectangle', { zone: (x, y) => (x === 97 && y === 45 ? 4 : 0) }],
+      ['a footprint whose origin lies outside the rectangle', {
+        buildings: [{ x: HALL.x, y: HALL.y, visualClass: '5' }, { x: 93, y: 43, visualClass: 'W' }],
+      }],
+      ['a rectangle reaching outside Helartia', { helartia: (x, y) => REGION(x, y) && !(x === 97 && y === 45) }],
+      ['original zone 1 (Reserved)', { zone: () => 1 }],
+      ['original zone 2 (Residential)', { zone: () => 2 }],
+      ['no road within reach', { segments: [] }],
+    ])('is UNPROVEN on %s — no REQ_DEFINE_ZONE, still switches back', async (_label, world) => {
+      drive(world);
+      const result = await run('zone-roundtrip');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/no 3×2 rectangle inside Helartia/);
+      expect(zonesSent()).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+      expect(switched()).toEqual(['7', '1']);
+    });
+
+    it('FAILs when the surface never returns to the original, keeping the pending restore', async () => {
+      drive({ ignoreZone: [2] });
+      const result = await run('zone-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].restored).toBe(false);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a paint whose line is present but whose surface never changes', async () => {
+      drive({ ignoreZone: [1] });
+      const result = await run('zone-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ readBack: 'UNCONFIRMED', restored: true });
+      expect(result.probes[0].logLine).not.toBeNull();
+    });
+
+    it('FAILs a paint whose surface changes but whose line is missing', async () => {
+      drive({ silentZone: [1] });
+      const result = await run('zone-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ readBack: 'CONFIRMED', logLine: null });
+    });
+
+    it('FAILs when the repaint never logs its line', async () => {
+      drive({ silentZone: [2] });
+      const result = await run('zone-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].status).toBe('PASS');
+      expect(check(result, /repaint to the original logged/)).toMatchObject({ ok: false, detail: '(no line)' });
+    });
+
+    it('FAILs on a throw after the switch, and still switches back', async () => {
+      drive({ throwOn: WsMessageType.REQ_GET_SURFACE });
+      const result = await run('zone-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.error).toMatch(/REQ_GET_SURFACE died/);
+      expect(switched()).toEqual(['7', '1']);
     });
   });
 });
