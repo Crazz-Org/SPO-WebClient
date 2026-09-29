@@ -6,6 +6,7 @@
  * drifts and eventually tests nothing that changed.
  */
 
+import { createHash, randomUUID } from 'crypto';
 import { WsMessageType } from '../shared/types/message-types';
 import { nearestTown } from '../shared/nearest-town';
 import type {
@@ -54,6 +55,9 @@ import type {
   WsRespProfilePolicy,
   WsRespProfilePolicySet,
   WsRespProfileAutoConnectionAction,
+  WsRespProfileBankAction,
+  WsRespProfileUploadPicture,
+  PictureUploadFailure,
   WsRespSearchConnections,
   ConnectionSearchResult,
 } from '../shared/types/message-types';
@@ -70,12 +74,14 @@ import type {
   BuildingPropertyValue,
   DirectoryRef,
   DirectoryPage,
+  LoanInfo,
   MailFolder,
   MailMessageFull,
   MailMessageHeader,
   MapBuilding,
   PoliticsData,
   RankingCategory,
+  TycoonProfileFull,
 } from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
@@ -89,6 +95,7 @@ import {
   PRIMARY_ACCOUNT,
   SECONDARY_ACCOUNT,
   TIMEOUTS,
+  WORLD_NAME,
   type E2eAccount,
 } from './config';
 import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, readSince } from './live-log';
@@ -3015,6 +3022,556 @@ const autoConnectionRoundTrip: Flow = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Borrow → pay off, send → send back, and the portrait upload (#1147)
+// ---------------------------------------------------------------------------
+
+/** The session's own profile. `handleGetProfile` calls `fetchTycoonProfile()` with no name. */
+async function readProfile(session: LiveSession): Promise<TycoonProfileFull> {
+  const answer = await session.driver.request<WsRespGetProfile>(
+    { type: WsMessageType.REQ_GET_PROFILE },
+    WsMessageType.RESP_GET_PROFILE,
+  );
+  return answer.profile;
+}
+
+/**
+ * The level names `parseCurriculumHtml` (`profile-finance-handler.ts`) maps to a tier. A copy:
+ * the e2e build includes only `src/e2e/**` and `src/shared/**`.
+ */
+export const PROFILE_LEVEL_NAMES = [
+  'apprentice', 'entrepreneur', 'tycoon', 'master', 'paradigm', 'legend', 'beyondlegend', 'legendx',
+];
+
+/**
+ * Why `RDOSendMoney` could refuse `account` as a receiver, or `null`. The limits are
+ * `NobPoints < 50` and `Level.Tier < 6` (Kernel/Kernel.pas:11499). The parser leaves
+ * `levelTier` 0 on a missing or unmapped level image and `fetchTycoonProfile` carries no
+ * `cacheUnavailable`, so a profile without a known level name proves nothing.
+ */
+export function receiverLimitRefusal(account: E2eAccount, profile: TycoonProfileFull): string | null {
+  const who = account.username;
+  const level = (profile.levelName ?? '').trim().toLowerCase();
+  if (level === '') return `${who}'s profile has no level name — the page was not read`;
+  if (!PROFILE_LEVEL_NAMES.includes(level)) {
+    return `${who}'s level "${profile.levelName}" is not one parseCurriculumHtml maps to a tier`;
+  }
+  if (profile.nobPoints >= 50) return `${who} has ${profile.nobPoints} nobility points (≥ 50, Kernel/Kernel.pas:11499)`;
+  if (profile.levelTier >= 6) return `${who} is at level tier ${profile.levelTier} (≥ 6, Kernel/Kernel.pas:11499)`;
+  return null;
+}
+
+const BORROW_AMOUNT = '1';
+
+/**
+ * Pair the listed loans with the baseline, as a multiset: first on bank, date and amount, then
+ * on bank and date alone — a yearly slice lowers an old loan's amount without making it new.
+ */
+function matchLoans(baseline: LoanInfo[], now: LoanInfo[]): { added: LoanInfo[]; gone: number } {
+  const left = [...baseline];
+  const take = (key: (l: LoanInfo) => string, loan: LoanInfo): boolean => {
+    const i = left.findIndex(b => key(b) === key(loan));
+    if (i < 0) return false;
+    left.splice(i, 1);
+    return true;
+  };
+  const exact = (l: LoanInfo): string => `${l.bank}|${l.date}|${l.amount}`;
+  const loose = (l: LoanInfo): string => `${l.bank}|${l.date}`;
+  const unmatched = now.filter(l => !take(exact, l));
+  const added = unmatched.filter(l => !take(loose, l));
+  return { added, gone: left.length };
+}
+
+/** `new=<amounts of loans not in the baseline, or none> gone=<baseline loans no longer listed>`. */
+export function loanDelta(baseline: LoanInfo[], now: LoanInfo[]): string {
+  const { added, gone } = matchLoans(baseline, now);
+  const amounts = added.map(l => l.amount).sort();
+  return `new=${amounts.length > 0 ? amounts.join(',') : 'none'} gone=${gone}`;
+}
+
+/** The loan the flow took: not in the baseline, and of the borrowed amount. */
+export function newLoan(baseline: LoanInfo[], now: LoanInfo[]): LoanInfo | undefined {
+  return matchLoans(baseline, now).added.find(l => l.amount === BORROW_AMOUNT);
+}
+
+/**
+ * Borrow $1, then pay that loan off (#1147). GATE_ONLY: `TBank.AskLoan` broadcasts the loan to
+ * every online tycoon (Kernel/Kernel.pas:8849-8859). `RDOPayOff` pays only when
+ * `Loan.Amount < Budget - AprFee` (Kernel/Kernel.pas:11572), so the flow borrows nothing unless
+ * the balance is above 0. A refused payoff throws in the restore: the pending restore is kept.
+ */
+const bankBorrowPayoff: Flow = {
+  name: 'bank-borrow-payoff',
+  what: 'bank: balance > 0 -> borrow $1 -> AskLoan: line + the loan listed -> pay it off -> the loan list as before',
+  mutates: true,
+  run: async ctx => {
+    const name = 'bank-borrow-payoff';
+    const ME = PRIMARY_ACCOUNT.username;
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const baseline = await readBank(session);
+      if (!(Number(baseline.balance) > 0)) {
+        assertions.unproven(
+          'the borrow → pay off round trip',
+          `balance ${baseline.balance} is not > 0 — RDOPayOff pays only if Loan.Amount < Budget - AprFee ` +
+            '(Kernel/Kernel.pas:11572); nothing borrowed',
+        );
+        return report(name, assertions, probes, session);
+      }
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      const n = baseline.loans.length;
+      const bankAction = (msg: { action: 'borrow' | 'payoff'; amount?: string; loanIndex?: number }) =>
+        session.driver.request<WsRespProfileBankAction>(
+          { type: WsMessageType.REQ_PROFILE_BANK_ACTION, ...msg },
+          WsMessageType.RESP_PROFILE_BANK_ACTION,
+          TIMEOUTS.login,
+        );
+      const read = async (): Promise<string> => loanDelta(baseline.loans, (await readBank(session)).loans);
+      probes.push(
+        await roundTripProbe(ctx, url, {
+          what:
+            `${ME}'s $${BORROW_AMOUNT} loan from the main bank — pay off the $${BORROW_AMOUNT} loan not among ` +
+            `the ${n} loans listed before (baseline indices 0..${n - 1})`,
+          member: 'RDOAskLoan',
+          read: tolerantRead(read),
+          testValue: original => {
+            if (original !== 'new=none gone=0') throw new Error(`the loan list moved before the borrow: ${original}`);
+            return `new=${BORROW_AMOUNT} gone=0`;
+          },
+          write: async () => {
+            // TBank.LoanApproved (Kernel/Kernel.pas:8909) accepts any Amount > 0 within EstimateLoan.
+            const answer = await bankAction({ action: 'borrow', amount: BORROW_AMOUNT });
+            if (answer.result?.success !== true) throw new Error(`borrow refused: ${answer.result?.message ?? '(no result)'}`);
+          },
+          restore: async () => {
+            const loan = newLoan(baseline.loans, (await readBank(session)).loans);
+            if (!loan) return;
+            const answer = await bankAction({ action: 'payoff', loanIndex: loan.loanIndex });
+            if (answer.result?.success !== true) {
+              throw new Error(`payoff of loan ${loan.loanIndex} refused: ${answer.result?.message ?? '(no result)'}`);
+            }
+          },
+          proof: {
+            log: {
+              marker: LOG_MARKERS.RDOAskLoan,
+              // ' AskLoan: ' + Name + ', $' + AmountStr (Kernel/Kernel.pas:11455); endsWith keeps $1 from matching $10.
+              match: line => line.trim().toLowerCase().endsWith(`askloan: ${ME}, $${BORROW_AMOUNT}`.toLowerCase()),
+            },
+            readBack: {
+              source: `the loan list on ${PAGE_BANK}`,
+              why:
+                'the page re-reads the tycoon cache that RDOAskLoan / RDOPayOff invalidate ' +
+                '(Kernel/Kernel.pas:11466, :11593) — OB-29 lag, so the poll is bounded',
+              read: tolerantRead(read),
+              boundMs: TIMEOUTS.readBack,
+            },
+          },
+        }),
+      );
+      assertions.check('the loan round trip proved the borrow and the payoff', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report(name, assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** Every transfer marker the flow writes starts with this — the sweep and the cleanup match it. */
+const TRANSFER_MARKER = 'e2e-send-';
+
+/**
+ * The ids of the transfer notices in `folder` from (Inbox) or to (Sent) `counterpart` whose body
+ * carries `needle`. The subject is localised (`mtidMsgMoneyTransfer`) and the same for every
+ * transfer, so only the body's refresh URL — `…&Reason=<reason>&Amount=…`
+ * (Kernel/Kernel.pas:11521-11529) — tells one transfer from another.
+ */
+async function noticeIds(
+  session: LiveSession,
+  folder: MailFolder,
+  counterpart: string,
+  needle: string,
+): Promise<Set<string>> {
+  const who = counterpart.toLowerCase();
+  const ids = new Set<string>();
+  for (const m of await listFolder(session, folder)) {
+    const party = folder === 'Sent' ? m.to : m.from;
+    if (!party.toLowerCase().includes(who)) continue;
+    const { message } = await session.driver.request<WsRespMailMessage>(
+      { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder, messageId: m.messageId },
+      WsMessageType.RESP_MAIL_MESSAGE,
+    );
+    if ((message.body ?? []).join('\n').includes(needle)) ids.add(m.messageId);
+  }
+  return ids;
+}
+
+const transferLabel = `"Reason=${TRANSFER_MARKER}" transfer notice`;
+
+/** Delete every flow transfer notice from one folder. Never throws. */
+async function purgeTransferFolder(
+  session: LiveSession,
+  folder: MailFolder,
+  counterpart: string,
+  sleep: (ms: number) => Promise<void>,
+): Promise<FlowCheck> {
+  let ids: Set<string>;
+  try {
+    ids = await noticeIds(session, folder, counterpart, `Reason=${TRANSFER_MARKER}`);
+  } catch (err: unknown) {
+    return { what: `${transferLabel} removed from ${session.account.username}'s ${folder}`, ok: false, detail: toErrorMessage(err) };
+  }
+  return purgeFolder(session, folder, m => ids.has(m.messageId), sleep, transferLabel);
+}
+
+/** The cleanup of one mailbox, as `purgeMailbox`: a fresh login, one check per folder, never throws. */
+async function purgeTransferMailbox(
+  account: E2eAccount,
+  counterpart: string,
+  folders: MailFolder[],
+  sleep: (ms: number) => Promise<void>,
+): Promise<FlowCheck[]> {
+  const whatOf = (folder: MailFolder): string => `${transferLabel} removed from ${account.username}'s ${folder}`;
+  const failAll = (detail: string): FlowCheck[] => folders.map(f => ({ what: whatOf(f), ok: false, detail }));
+  let opened: SecondaryLogin;
+  try {
+    opened = account === SECONDARY_ACCOUNT ? await loginSecondary() : await login(account);
+  } catch (err: unknown) {
+    return failAll(toErrorMessage(err));
+  }
+  if ('skipped' in opened) {
+    const reason = opened.skipped;
+    return folders.map(f => ({
+      what: whatOf(f),
+      ok: false,
+      skipped: reason,
+      detail: `${account.username} refused at login (${reason}) — any ${transferLabel} is left in ${account.username}'s ${f}`,
+    }));
+  }
+  const session = opened;
+  try {
+    await mailConnect(session);
+    const checks: FlowCheck[] = [];
+    for (const f of folders) checks.push(await purgeTransferFolder(session, f, counterpart, sleep));
+    return checks;
+  } catch (err: unknown) {
+    return failAll(toErrorMessage(err));
+  } finally {
+    await logoff(session);
+  }
+}
+
+/** Why `bank` cannot send $1, or `null` — the page mirrors `RDOSendMoney`'s clip as `maxTransfer`. */
+function transferRefusal(bank: BankAccountData): string | null {
+  if (bank.transferDenied) return `the page denies the transfer (${bank.transferDenied})`;
+  if (bank.maxTransfer === undefined) return 'the page offers no transfer (no "You can transfer up to $…" note)';
+  if (!(Number(bank.maxTransfer) >= 1)) return `the page offers at most $${bank.maxTransfer}`;
+  return null;
+}
+
+async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
+  const name = 'bank-send-return';
+  const ME = PRIMARY_ACCOUNT.username;
+  const HIM = SECONDARY_ACCOUNT.username;
+  const what = 'the send → send back round trip';
+  const assertions = new Assertions();
+  const probes: ProbeResult[] = [];
+  const me = await login(PRIMARY_ACCOUNT);
+  try {
+    await mailConnect(me);
+    await mailConnect(crazz);
+
+    // RDOSendMoney clips the amount to fBudget - LoanAmount - AprFee and answers
+    // ERROR_InvalidMoneyValue when that is ≤ 0 (Kernel/Kernel.pas:11507-11512, :11535); the page
+    // mirrors it as "You can transfer up to $…" (NewTycoon/TycoonBankAccount.asp:116-122).
+    const mine = transferRefusal(await readBank(me));
+    if (mine) {
+      assertions.unproven(what, `${ME} cannot send $1: ${mine}; nothing sent`);
+      return report(name, assertions, probes, me);
+    }
+    const theirs = transferRefusal(await readBank(crazz));
+    if (theirs) {
+      assertions.unproven(what, `${HIM} cannot send $1 back: ${theirs}; nothing sent`);
+      return report(name, assertions, probes, me);
+    }
+    // The :11499 receiver limits, each profile read through its own session.
+    for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, crazz]] as const) {
+      const refusal = receiverLimitRefusal(account, await readProfile(s));
+      if (refusal) {
+        assertions.unproven(what, `${refusal}; nothing sent`);
+        return report(name, assertions, probes, me);
+      }
+    }
+
+    for (const [s, folder, counterpart] of [
+      [me, 'Inbox', HIM], [me, 'Sent', HIM], [crazz, 'Inbox', ME], [crazz, 'Sent', ME],
+    ] as const) {
+      const check = await purgeTransferFolder(s, folder, counterpart, sleep);
+      assertions.check(`pre-sweep: ${check.what}`, check.ok, check.detail);
+    }
+    if (assertions.failed) return report(name, assertions, probes, me);
+
+    // Reason is concatenated into the URL unencoded (:11528): letters, digits and '-' only.
+    const stamp = new Date().toISOString().replace(/[^0-9]/g, '');
+    const out = `${TRANSFER_MARKER}${stamp}-out`;
+    const back = `${TRANSFER_MARKER}${stamp}-back`;
+    const has = async (s: LiveSession, from: string, marker: string): Promise<boolean> =>
+      (await noticeIds(s, 'Inbox', from, `Reason=${marker}&`)).size > 0;
+    const owed = async (): Promise<string> =>
+      String((await has(crazz, ME, out) ? 1 : 0) - (await has(me, HIM, back) ? 1 : 0));
+    const send = (s: LiveSession, toTycoon: string, reason: string) =>
+      s.driver.request<WsRespProfileBankAction>(
+        { type: WsMessageType.REQ_PROFILE_BANK_ACTION, action: 'send', amount: '1', toTycoon, reason },
+        WsMessageType.RESP_PROFILE_BANK_ACTION,
+        TIMEOUTS.login,
+      );
+    let firstLegSent = false;
+
+    probes.push(
+      await roundTripProbe(ctx, ctx.survivalLogUrl ?? '', {
+        what: `$1 sent by ${ME} to ${HIM} (reason ${out}) — ${HIM} owes ${ME} $1 back`,
+        // No LOG_MARKERS entry: RDOSendMoney logs to a Money log the listing does not publish (:11491).
+        member: 'RDOSendMoney',
+        read: tolerantRead(owed),
+        testValue: original => {
+          if (original !== '0') throw new Error(`a transfer notice was already listed before the send: ${original}`);
+          return '1';
+        },
+        write: async () => {
+          const answer = await send(me, HIM, out);
+          if (answer.result?.success !== true) throw new Error(`send refused: ${answer.result?.message ?? '(no result)'}`);
+          firstLegSent = true;
+        },
+        restore: async () => {
+          // Crazz writes only to complete the pair: nothing to send back unless the $1 arrived.
+          if (!firstLegSent && !(await has(crazz, ME, out))) return;
+          const answer = await send(crazz, ME, back);
+          if (answer.result?.success !== true) throw new Error(`send back refused: ${answer.result?.message ?? '(no result)'}`);
+        },
+        proof: {
+          readBack: {
+            source:
+              `the transfer notification (Reason=<marker> in its refresh URL, Kernel/Kernel.pas:11521-11529) in ` +
+              `${HIM}'s Inbox for the send and ${ME}'s Inbox for the return, each read through the receiver's own login`,
+            why: 'the Money log is not published; the server mails the receiver only after GenMoney moved the $1 (:11514-11529)',
+            read: tolerantRead(owed),
+            boundMs: TIMEOUTS.readBack,
+          },
+        },
+      }),
+    );
+    assertions.check('the transfer round trip proved the send and the send back', probes[0]?.status === 'PASS', probes[0]?.note);
+    return report(name, assertions, probes, me);
+  } finally {
+    await logoff(me);
+  }
+}
+
+/**
+ * Send $1 to Crazz, and Crazz sends it back (#1147). Both accounts log in before the first send;
+ * a refusal of Crazz then is SKIPPED with nothing sent. Nothing is sent unless both bank pages
+ * offer the transfer and both profiles are under the receiver limits (Kernel/Kernel.pas:11499).
+ * Two residual risks remain, each a FAIL with the pending restore kept ($1 stays with Crazz): a
+ * Transcended item (not readable over the WS contract), and a nobility of 0 that cannot be told
+ * from "Nobility label not found". Any failure after the first send is a FAIL, never SKIPPED.
+ */
+const bankSendReturn: Flow = {
+  name: 'bank-send-return',
+  what: 'both log in -> both pages offer $1 -> receiver limits -> send $1 to Crazz -> notice -> Crazz sends $1 back -> notice',
+  mutates: true,
+  run: async ctx => {
+    const name = 'bank-send-return';
+    const sleep = ctx.sleep ?? defaultSleep;
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    let result: FlowResult;
+    try {
+      result = await driveSendReturn(crazz, ctx, sleep);
+    } catch (err: unknown) {
+      result = failedResult(name, err);
+    } finally {
+      await logoff(crazz);
+    }
+    const cleanup = [
+      ...(await purgeTransferMailbox(PRIMARY_ACCOUNT, SECONDARY_ACCOUNT.username, ['Inbox', 'Sent'], sleep)),
+      ...(await purgeTransferMailbox(SECONDARY_ACCOUNT, PRIMARY_ACCOUNT.username, ['Inbox', 'Sent'], sleep)),
+    ];
+    return withCleanup(result, cleanup);
+  },
+};
+
+const PORTRAIT_WIDTH = 150;
+const PORTRAIT_HEIGHT = 200;
+const PORTRAIT_MAX_BYTES = 32 * 1024;
+
+/**
+ * The committed test portrait: a 150×200 baseline grayscale JPEG, flat mid-grey, built from
+ * constants so its bytes are fixed by the source. One quantisation table, one DC and one AC
+ * Huffman table each holding the single code `0` for symbol 0, then 19×25 = 475 blocks of two
+ * zero bits (DC diff 0, EOB) — 950 bits, the last byte padded with ones.
+ */
+export function testPortraitJpeg(): Buffer {
+  const dht = (tableClass: number): number[] => [0xff, 0xc4, 0x00, 0x14, tableClass, 0x01, ...new Array<number>(15).fill(0), 0x00];
+  return Buffer.from([
+    0xff, 0xd8,
+    0xff, 0xdb, 0x00, 0x43, 0x00, ...new Array<number>(64).fill(0x01),
+    0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0xc8, 0x00, 0x96, 0x01, 0x01, 0x11, 0x00,
+    ...dht(0x00),
+    ...dht(0x10),
+    0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00,
+    ...new Array<number>(118).fill(0x00), 0x03,
+    0xff, 0xd9,
+  ]);
+}
+
+/** The JPEG marker walk `readJpegDimensions` (`picture-transfer.ts`) does — a copy, see below. */
+function jpegDimensions(bytes: Buffer): { width: number; height: number } | null {
+  let offset = 2;
+  while (offset < bytes.length) {
+    if (bytes[offset] !== 0xff) return null;
+    offset++;
+    while (offset < bytes.length && bytes[offset] === 0xff) offset++;
+    if (offset >= bytes.length) return null;
+    const marker = bytes[offset];
+    offset++;
+    if (marker === 0xda) return null;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) continue;
+    if (offset + 1 >= bytes.length) return null;
+    const segmentLength = bytes.readUInt16BE(offset);
+    const isStartOfFrame = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isStartOfFrame) {
+      if (offset + 7 >= bytes.length) return null;
+      return { height: bytes.readUInt16BE(offset + 3), width: bytes.readUInt16BE(offset + 5) };
+    }
+    offset += segmentLength;
+  }
+  return null;
+}
+
+/**
+ * The checks `validatePicture` (`picture-transfer.ts`) applies, in its order — the gateway
+ * refuses any upload that fails them, the restore included. A copy, because the e2e build does
+ * not include gateway code; a unit test pins the two equal.
+ */
+export function pictureCheck(bytes: Buffer): PictureUploadFailure | null {
+  if (bytes.length === 0) return 'NOT_A_JPEG';
+  if (bytes.length > PORTRAIT_MAX_BYTES) return 'TOO_LARGE';
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return 'NOT_A_JPEG';
+  const dims = jpegDimensions(bytes);
+  if (!dims) return 'NOT_A_JPEG';
+  if (dims.width !== PORTRAIT_WIDTH || dims.height !== PORTRAIT_HEIGHT) return 'WRONG_DIMENSIONS';
+  return null;
+}
+
+function sha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+/**
+ * The portrait on the world web server — the path `RenderTycoon.asp:58` emits and
+ * `fetchTycoonProfile` reads. Never the gateway's `/proxy-image`: it answers a missing image
+ * with a 1×1 placeholder and caches for up to 30 days.
+ */
+export function portraitUrl(ip: string, world: string, tycoon: string): string {
+  return `http://${ip}/fivedata/userinfo/${encodeURIComponent(world)}/${encodeURIComponent(tycoon)}/largephoto.jpg`;
+}
+
+async function fetchPortrait(url: string): Promise<{ status: number; bytes?: Buffer }> {
+  const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(TIMEOUTS.request) });
+  if (!res.ok) return { status: res.status };
+  return { status: res.status, bytes: Buffer.from(await res.arrayBuffer()) };
+}
+
+/**
+ * Upload the committed test portrait, then the original back (#1147). The original is fetched
+ * directly from the world web server and must pass the gateway's picture checks, or nothing is
+ * uploaded — the restore upload would be refused after the test image is stored. An original
+ * that already is the test image means an earlier run died after its upload: FAIL, world dirty.
+ * The pending restore holds the original bytes (base64) before the test upload; the restore
+ * uploads those bytes, never a fresh download.
+ */
+const portraitRoundTrip: Flow = {
+  name: 'portrait-roundtrip',
+  what: 'fetch largephoto.jpg directly -> picture checks -> upload the test JPEG -> byte-identical re-fetch -> upload the original -> byte-identical re-fetch',
+  mutates: true,
+  run: async ctx => {
+    const name = 'portrait-roundtrip';
+    const ME = PRIMARY_ACCOUNT.username;
+    const what = 'the portrait round trip';
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const ip = session.world?.ip;
+      if (!ip) {
+        assertions.check('the login carried the world IP', false, 'no world IP — the portrait URL cannot be built');
+        return report(name, assertions, probes, session);
+      }
+      const url = portraitUrl(ip, session.world?.name ?? WORLD_NAME, ME);
+      const first = await fetchPortrait(url);
+      if (!first.bytes) {
+        assertions.unproven(what, `no readable original portrait at ${url} (HTTP ${first.status}) — nothing to restore to; nothing uploaded`);
+        return report(name, assertions, probes, session);
+      }
+      const refused = pictureCheck(first.bytes);
+      if (refused) {
+        assertions.unproven(
+          what,
+          `the original at ${url} fails the picture checks (${refused}) — the gateway would refuse the restore ` +
+            'upload after the test image is stored; nothing uploaded',
+        );
+        return report(name, assertions, probes, session);
+      }
+      const test = testPortraitJpeg();
+      if (sha256(first.bytes) === sha256(test)) {
+        ctx.lock.addPendingRestore({
+          key: `portrait-leftover:${randomUUID()}`,
+          what:
+            `${ME}'s largephoto.jpg (${url}) is the e2e test image — an earlier run died after its upload; ` +
+            "put the real portrait back from that run's saved originalValue",
+          originalValue: '',
+        });
+        assertions.check('the original portrait is not the e2e test image', false, `${url} — nothing uploaded, world marked dirty`);
+        return report(name, assertions, probes, session);
+      }
+      const originalB64 = first.bytes.toString('base64');
+      const testB64 = test.toString('base64');
+      probes.push(
+        await roundTripProbe(ctx, ctx.survivalLogUrl ?? '', {
+          what: `${ME}'s portrait ${url} — the original JPEG is this entry's originalValue (base64) in the world lock file; re-upload it`,
+          // The cache server's picture socket: no Survival line, so the read-back alone.
+          member: 'PictureUpload',
+          read: async () => originalB64,
+          testValue: () => testB64,
+          write: async value => {
+            const answer = await session.driver.request<WsRespProfileUploadPicture>(
+              { type: WsMessageType.REQ_PROFILE_UPLOAD_PICTURE, pictureBase64: value },
+              WsMessageType.RESP_PROFILE_UPLOAD_PICTURE,
+              TIMEOUTS.login,
+            );
+            if (answer.success !== true) throw new Error(`upload refused: ${answer.reason ?? ''} ${answer.message ?? ''}`.trim());
+          },
+          proof: {
+            readBack: {
+              source: `a direct re-fetch of ${url}, compared byte for byte`,
+              why:
+                'the cache server writes the uploaded bytes verbatim and answers OK only then ' +
+                '(Cache Server/CacheServerReportForm.pas:548-549, :574-600); its OK alone proves nothing',
+              read: tolerantRead(async () => (await fetchPortrait(url)).bytes?.toString('base64')),
+              boundMs: TIMEOUTS.readBack,
+            },
+          },
+        }),
+      );
+      assertions.check('the portrait round trip proved the upload and the restore', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report(name, assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 /** A property's raw value from any group of an opening read, or 'absent'. */
 function rawProperty(groups: { [groupId: string]: BuildingPropertyValue[] }, name: string): string {
   for (const group of Object.values(groups)) {
@@ -3144,6 +3701,9 @@ export const FLOWS: Flow[] = [
   profileRead,
   policyRoundTrip,
   autoConnectionRoundTrip,
+  bankBorrowPayoff,
+  bankSendReturn,
+  portraitRoundTrip,
   warehouseRoleReading,
 ];
 

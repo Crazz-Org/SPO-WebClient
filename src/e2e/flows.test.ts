@@ -7,11 +7,14 @@ import type { MailMessageFull, MailMessageHeader, NewspaperBoard } from '@/share
 import {
   FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum, replyHeaders,
   otherPublicityLevel, publicityLogMatches, taxLogMatches,
+  loanDelta, newLoan, receiverLimitRefusal, pictureCheck, testPortraitJpeg, portraitUrl, PROFILE_LEVEL_NAMES,
   type Flow, type FlowResult,
 } from './flows';
 import { buildReplyHeaders } from '@/client/store/mail-store';
+import { validatePicture } from '@/server/session/picture-transfer';
+import type { LoanInfo, TycoonProfileFull } from '@/shared/types/domain-types';
 import { ROUTES } from './routing';
-import { WorldLock } from './world-lock';
+import { WorldLock, WorldDirtyError } from './world-lock';
 import { WsDriver, WsDriverError } from './ws-driver';
 import * as session from './session';
 import * as probeModule from './probe';
@@ -62,8 +65,9 @@ describe('the catalogue', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
     expect(mutating).toEqual(
       [
-        'autoconnection-roundtrip', 'favorites-folders', 'favorites-roundtrip', 'mail-drafts', 'mail-reply',
-        'mail-roundtrip', 'mail-send-from-draft', 'policy-roundtrip', 'politics-write', 'publicity-roundtrip',
+        'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'favorites-folders',
+        'favorites-roundtrip', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
+        'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
         'town-min-wage', 'vote-roundtrip', 'zoning-alert-read',
       ],
     );
@@ -4100,6 +4104,626 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
       expect(result.status).toBe('FAIL');
       // Each round trip's original read throws on the dead page: nothing is written.
       expect(actions()).toEqual([]);
+    });
+  });
+});
+
+describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', () => {
+  const ME = PRIMARY_ACCOUNT.username;
+  const HIM = SECONDARY_ACCOUNT.username;
+  let lines: string[];
+  let lock: WorldLock;
+  let sent: { account: string; msg: Record<string, unknown> }[];
+
+  /** A clock that jumps past the read-back bound on every call: each poll reads once. */
+  function jumpingClock(): () => number {
+    let t = 0;
+    return () => (t += TIMEOUTS.readBack + 1);
+  }
+  function flowCtx() {
+    return { lock, survivalLogUrl: 'http://logs/S.log', sleep: jest.fn(async () => undefined), now: jumpingClock() };
+  }
+  /** A stub session for `account`, recording every request with the account that sent it. */
+  function stubFor(account: typeof PRIMARY_ACCOUNT, responder: (msg: WsMessage) => unknown): session.LiveSession {
+    return {
+      ...stubSession(msg => {
+        sent.push({ account: account.username, msg: msg as unknown as Record<string, unknown> });
+        return responder(msg);
+      }),
+      account,
+      world: { name: 'planitia', url: '', ip: '10.0.0.7', port: 0 },
+    };
+  }
+  const sentOf = (type: WsMessageType) => sent.filter(e => e.msg.type === type);
+
+  beforeEach(() => {
+    lines = [];
+    sent = [];
+    lock = cleanLock();
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue({ url: 'http://logs/S.log', offset: 0, openedAt: 't' });
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, spec) =>
+      lines.find(l => l.includes(spec.marker) && (spec.match?.(l) ?? true)) ?? null,
+    );
+  });
+
+  const loan = (over: Partial<LoanInfo> = {}): LoanInfo => ({
+    bank: 'Main Bank', date: '1/1/2100', amount: '500', interest: 3, term: 10, slice: '50', loanIndex: 0, ...over,
+  });
+
+  describe('loanDelta and newLoan', () => {
+    it('reads an unchanged list as nothing new and nothing gone', () => {
+      expect(loanDelta([loan()], [loan()])).toBe('new=none gone=0');
+    });
+
+    it('does not read a yearly slice lowering an old loan as a new loan', () => {
+      expect(loanDelta([loan()], [loan({ amount: '450' })])).toBe('new=none gone=0');
+      expect(newLoan([loan()], [loan({ amount: '450' })])).toBeUndefined();
+    });
+
+    it('finds a new $1 loan sharing an old loan\'s bank and date', () => {
+      const now = [loan(), loan({ amount: '1', loanIndex: 1 })];
+      expect(loanDelta([loan()], now)).toBe('new=1 gone=0');
+      expect(newLoan([loan()], now)).toMatchObject({ amount: '1', loanIndex: 1 });
+    });
+
+    it('counts a baseline loan no longer listed as gone, and ignores a new loan of another amount', () => {
+      expect(loanDelta([loan(), loan({ date: '2/2/2100' })], [loan()])).toBe('new=none gone=1');
+      expect(newLoan([], [loan({ amount: '7', date: 'x' })])).toBeUndefined();
+    });
+  });
+
+  describe('bank-borrow-payoff', () => {
+    interface BankWorld {
+      balance: string;
+      loans: LoanInfo[];
+      borrowRefused?: boolean;
+      /** The borrow answers success but the loan never shows up (a failed proof). */
+      borrowIgnored?: boolean;
+      payoffRefused?: boolean;
+      /** The Survival line the borrow logs, if not the real one. */
+      logLine?: string;
+      /** A loan appears between the baseline read and the round trip's original read. */
+      driftOnSecondRead?: boolean;
+    }
+    function drive(world: BankWorld): void {
+      let reads = 0;
+      jest.spyOn(session, 'login').mockResolvedValue(
+        stubFor(PRIMARY_ACCOUNT, msg => {
+          if (msg.type === WsMessageType.REQ_PROFILE_BANK) {
+            reads++;
+            if (world.driftOnSecondRead && reads === 2) world.loans.push(loan({ bank: 'Other', loanIndex: world.loans.length }));
+            return { data: { balance: world.balance, maxLoan: '0', totalLoans: '0', totalNextPayment: '0', loans: structuredClone(world.loans), defaultInterest: 0, defaultTerm: 0 } };
+          }
+          if (msg.type === WsMessageType.REQ_PROFILE_BANK_ACTION) {
+            const { action, amount, loanIndex } = msg as unknown as { action: string; amount?: string; loanIndex?: number };
+            if (action === 'borrow') {
+              if (world.borrowRefused) return { result: { success: false, message: 'refused' } };
+              lines.push(world.logLine ?? ` AskLoan: ${ME}, $${amount}`);
+              if (!world.borrowIgnored) {
+                world.loans.push(loan({ date: '3/3/2100', amount: amount ?? '', loanIndex: world.loans.length }));
+              }
+              return { result: { success: true, message: 'ok' } };
+            }
+            if (world.payoffRefused) return { result: { success: false, message: 'payoff was not applied' } };
+            world.loans = world.loans.filter(l => l.loanIndex !== loanIndex).map((l, i) => ({ ...l, loanIndex: i }));
+            return { result: { success: true, message: 'ok' } };
+          }
+          throw new Error(`unexpected ${msg.type}`);
+        }),
+      );
+    }
+    const actions = () =>
+      sentOf(WsMessageType.REQ_PROFILE_BANK_ACTION).map(e => `${e.msg.action} ${e.msg.amount ?? e.msg.loanIndex}`);
+    const run = () => flowByName('bank-borrow-payoff').run(flowCtx());
+
+    it('mutates, borrows $1, proves it by the AskLoan: line and the list, pays that loan off — PASS', async () => {
+      expect(flowByName('bank-borrow-payoff').mutates).toBe(true);
+      const world: BankWorld = { balance: '1000', loans: [loan(), loan({ bank: 'B2', loanIndex: 1 })] };
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(actions()).toEqual(['borrow 1', 'payoff 2']);
+      expect(result.probes[0]).toMatchObject({ member: 'RDOAskLoan', original: 'new=none gone=0', written: 'new=1 gone=0', restored: true });
+      expect(result.probes[0].logLine).toContain(`AskLoan: ${ME}, $1`);
+      expect(world.loans).toHaveLength(2);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each(['0', '-250'])('borrows nothing when the balance is %s — UNPROVEN', async balance => {
+      drive({ balance, loans: [] });
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(/Kernel\/Kernel\.pas:11572/);
+      expect(actions()).toEqual([]);
+    });
+
+    it('still runs the restore after a failed write: nothing to pay off, pending cleared', async () => {
+      drive({ balance: '1000', loans: [], borrowRefused: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/borrow refused/);
+      expect(result.probes[0].restored).toBe(true);
+      expect(actions()).toEqual(['borrow 1']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a borrow that is never listed (a failed proof), after trying the restore', async () => {
+      drive({ balance: '1000', loans: [], borrowIgnored: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(result.probes[0].restoreReadBack).toBe('CONFIRMED');
+    });
+
+    it('FAILs a refused payoff and keeps the pending restore naming the loan', async () => {
+      drive({ balance: '1000', loans: [loan()], payoffRefused: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(actions()).toEqual(['borrow 1', 'payoff 1']);
+      expect(result.probes[0].restored).toBe(false);
+      expect(result.probes[0].note).toMatch(/restore failed — the world is left dirty/);
+      const pending = lock.read().pendingRestores;
+      expect(pending).toHaveLength(1);
+      expect(pending[0].what).toMatch(/\$1 loan from the main bank — pay off the \$1 loan not among the 1 loans/);
+    });
+
+    it('does not take "AskLoan: SPO_test3, $10" for the $1 borrow', async () => {
+      drive({ balance: '1000', loans: [], logLine: ` AskLoan: ${ME}, $10` });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].logLine).toBeNull();
+    });
+
+    it('refuses to borrow when the loan list moved between the baseline and the round trip', async () => {
+      drive({ balance: '1000', loans: [], driftOnSecondRead: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/moved before the borrow/);
+      expect(actions()).toEqual([]);
+    });
+
+    it('looks the Survival log up when the run did not resolve one', async () => {
+      drive({ balance: '1000', loans: [] });
+      const find = jest.spyOn(liveLog, 'findCurrentSurvivalLog').mockResolvedValue('http://found/S.log');
+      const result = await flowByName('bank-borrow-payoff').run({ ...flowCtx(), survivalLogUrl: undefined });
+      expect(find).toHaveBeenCalled();
+      expect(result.status).toBe('PASS');
+    });
+  });
+
+  describe('bank-send-return', () => {
+    interface Notice { header: MailMessageHeader; body: string[] }
+    type Box = Record<'Inbox' | 'Sent', Notice[]>;
+    interface SendWorld {
+      banks: Record<string, { maxTransfer?: string; transferDenied?: 'loans' }>;
+      profiles: Record<string, Partial<TycoonProfileFull>>;
+      boxes: Record<string, Box>;
+      /** Which loginSecondary calls (1-based) are refused. */
+      refuseSecondary?: number[];
+      refuseOut?: boolean;
+      refuseBack?: boolean;
+      /** The send answers success, but no notice ever reaches Crazz. */
+      dropOutNotice?: boolean;
+      /** REQ_MAIL_DELETE is a no-op. */
+      deletesIgnored?: boolean;
+    }
+    let seq = 0;
+    function notice(from: string, to: string, reason: string, box: 'Inbox' | 'Sent'): Notice {
+      seq++;
+      return {
+        header: {
+          messageId: `${box}-${seq}`, fromAddr: `${from}@x`, toAddr: `${to}@x`, from, to,
+          subject: '$1 successfully transferred.', date: '1', dateFmt: '', read: false, stamp: 0, noReply: true,
+        },
+        body: [
+          '<HEAD>',
+          `<META HTTP-EQUIV="REFRESH" CONTENT="0; URL=http://10.0.0.7/msgs/MoneySendNotification.asp?From=${from}&To=${to}&Reason=${reason}&Amount=1">`,
+          '</HEAD>',
+        ],
+      };
+    }
+    const emptyBox = (): Box => ({ Inbox: [], Sent: [] });
+    const goodProfile: Partial<TycoonProfileFull> = { nobPoints: 10, levelTier: 1, levelName: 'Entrepreneur' };
+    function world(over: Partial<SendWorld> = {}): SendWorld {
+      return {
+        banks: { [ME]: { maxTransfer: '5000' }, [HIM]: { maxTransfer: '300' } },
+        profiles: { [ME]: goodProfile, [HIM]: goodProfile },
+        boxes: { [ME]: emptyBox(), [HIM]: emptyBox() },
+        ...over,
+      };
+    }
+    function responder(w: SendWorld, account: typeof PRIMARY_ACCOUNT): (msg: WsMessage) => unknown {
+      const who = account.username;
+      return msg => {
+        const m = msg as unknown as Record<string, string>;
+        switch (msg.type) {
+          case WsMessageType.REQ_MAIL_CONNECT: return {};
+          case WsMessageType.REQ_PROFILE_BANK:
+            return { data: { balance: '9', maxLoan: '0', totalLoans: '0', totalNextPayment: '0', loans: [], defaultInterest: 0, defaultTerm: 0, ...w.banks[who] } };
+          case WsMessageType.REQ_GET_PROFILE:
+            return { profile: { name: who, ...w.profiles[who] } };
+          case WsMessageType.REQ_MAIL_GET_FOLDER:
+            return { messages: w.boxes[who][m.folder as 'Inbox' | 'Sent'].map(n => n.header) };
+          case WsMessageType.REQ_MAIL_READ_MESSAGE: {
+            const n = w.boxes[who][m.folder as 'Inbox' | 'Sent'].find(x => x.header.messageId === m.messageId);
+            if (!n) throw new Error('no such message');
+            return { message: { ...n.header, body: n.body, attachments: [] } };
+          }
+          case WsMessageType.REQ_MAIL_DELETE: {
+            const box = w.boxes[who];
+            const f = m.folder as 'Inbox' | 'Sent';
+            if (!w.deletesIgnored) box[f] = box[f].filter(x => x.header.messageId !== m.messageId);
+            return { success: true };
+          }
+          case WsMessageType.REQ_PROFILE_BANK_ACTION: {
+            const to = m.toTycoon;
+            if ((who === ME && w.refuseOut) || (who === HIM && w.refuseBack)) {
+              return { result: { success: false, message: 'refused' } };
+            }
+            w.boxes[who].Sent.push(notice(who, to, m.reason, 'Sent'));
+            if (!(who === ME && w.dropOutNotice)) w.boxes[to].Inbox.push(notice(who, to, m.reason, 'Inbox'));
+            return { result: { success: true, message: 'ok' } };
+          }
+        }
+        throw new Error(`unexpected ${msg.type}`);
+      };
+    }
+    function drive(w: SendWorld): void {
+      let secondary = 0;
+      jest.spyOn(session, 'login').mockImplementation(async account => stubFor(account, responder(w, account)));
+      jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
+        secondary++;
+        if (w.refuseSecondary?.includes(secondary)) return { skipped: 'Crazz refused' };
+        return stubFor(SECONDARY_ACCOUNT, responder(w, SECONDARY_ACCOUNT));
+      });
+    }
+    const sends = () =>
+      sentOf(WsMessageType.REQ_PROFILE_BANK_ACTION).map(e => `${e.account}->${e.msg.toTycoon} ${e.msg.amount} ${e.msg.reason}`);
+    const run = () => flowByName('bank-send-return').run(flowCtx());
+
+    it('mutates; sends $1 to Crazz and back, matched by Reason=<marker>, and the cleanup deletes four notices — PASS', async () => {
+      expect(flowByName('bank-send-return').mutates).toBe(true);
+      const w = world();
+      // A decoy with the same subject and another reason: never matched, never deleted.
+      w.boxes[ME].Inbox.push(notice(HIM, ME, 'birthday', 'Inbox'));
+      drive(w);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      const s = sends();
+      expect(s).toHaveLength(2);
+      expect(s[0]).toMatch(new RegExp(`^${ME}->${HIM} 1 e2e-send-\\d+-out$`));
+      expect(s[1]).toMatch(new RegExp(`^${HIM}->${ME} 1 e2e-send-\\d+-back$`));
+      expect(result.probes[0]).toMatchObject({ member: 'RDOSendMoney', original: '0', written: '1', restored: true, logLine: null });
+      expect(sentOf(WsMessageType.REQ_MAIL_DELETE)).toHaveLength(4);
+      expect(w.boxes[ME].Inbox.map(n => n.body[1])).toEqual([expect.stringContaining('Reason=birthday&')]);
+      expect(result.cleanup?.every(c => c.ok)).toBe(true);
+      expect(result.cleanup).toHaveLength(4);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('ends SKIPPED with nothing sent when Crazz is refused before the first send', async () => {
+      drive(world({ refuseSecondary: [1] }));
+      const result = await runFlow(flowByName('bank-send-return'), flowCtx());
+      expect(result.status).toBe('SKIPPED');
+      expect(result.skipped).toBe('Crazz refused');
+      expect(sends()).toEqual([]);
+    });
+
+    it.each([
+      ['a denied transfer', { transferDenied: 'loans' as const }],
+      ['no transfer note', {}],
+      ['a $0 ceiling', { maxTransfer: '0' }],
+    ])('sends nothing when SPO_test3\'s own page offers %s — UNPROVEN', async (_label, bank) => {
+      const w = world();
+      w.banks[ME] = bank;
+      drive(w);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(new RegExp(`${ME} cannot send \\$1`));
+      expect(sends()).toEqual([]);
+    });
+
+    it('sends nothing when Crazz\'s page does not offer the transfer back — UNPROVEN', async () => {
+      const w = world();
+      w.banks[HIM] = { transferDenied: 'loans' };
+      drive(w);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(new RegExp(`${HIM} cannot send \\$1 back`));
+      expect(sends()).toEqual([]);
+    });
+
+    it.each([
+      [ME, { nobPoints: 50 }, /50 nobility points/],
+      [HIM, { levelTier: 6, levelName: 'BeyondLegend' }, /level tier 6/],
+      [ME, { levelName: '' }, /no level name/],
+      [HIM, { levelName: 'Baron' }, /"Baron" is not one/],
+    ])('sends nothing when %s\'s profile reads %o — UNPROVEN', async (who, profile, reason) => {
+      const w = world();
+      w.profiles[who] = { ...goodProfile, ...profile };
+      drive(w);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(reason);
+      expect(sends()).toEqual([]);
+      // Each profile is read through that account's own session.
+      const reads = sentOf(WsMessageType.REQ_GET_PROFILE).map(e => e.account);
+      expect(reads).toEqual(who === ME ? [ME] : [ME, HIM]);
+    });
+
+    it('FAILs, never SKIPPED, with the pending restore kept when the notice never reaches Crazz', async () => {
+      drive(world({ dropOutNotice: true }));
+      const result = await runFlow(flowByName('bank-send-return'), flowCtx());
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(lock.read().pendingRestores).toHaveLength(1);
+      expect(lock.read().pendingRestores[0].what).toMatch(/\$1 sent by SPO_test3 to Crazz .* owes SPO_test3 \$1 back/);
+    });
+
+    it('FAILs with the pending restore kept when Crazz\'s send back is refused', async () => {
+      drive(world({ refuseBack: true }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].restored).toBe(false);
+      expect(sends()).toHaveLength(2);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a refused first send and sends nothing back', async () => {
+      drive(world({ refuseOut: true }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/send refused/);
+      expect(sends()).toHaveLength(1);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('sends nothing when the pre-sweep cannot clear a leftover notice', async () => {
+      const w = world({ deletesIgnored: true });
+      w.boxes[HIM].Inbox.push(notice(ME, HIM, 'e2e-send-1-out', 'Inbox'));
+      drive(w);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what.startsWith('pre-sweep:') && !a.ok)?.what).toMatch(/Crazz's Inbox/);
+      expect(sends()).toEqual([]);
+    });
+
+    it('FAILs when Crazz is refused at the cleanup, after the pair', async () => {
+      drive(world({ refuseSecondary: [2] }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.cleanup?.filter(c => c.skipped === 'Crazz refused')).toHaveLength(2);
+    });
+
+    it('turns a drive that throws into a FAIL, and a cleanup login that throws into failed checks', async () => {
+      const w = world();
+      drive(w);
+      jest.spyOn(session, 'login').mockRejectedValue(new Error('gateway down'));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.error).toBe('gateway down');
+      expect(result.cleanup?.filter(c => !c.ok && c.detail === 'gateway down')).toHaveLength(2);
+    });
+
+    it('fails a cleanup check whose mailbox cannot be listed', async () => {
+      const w = world();
+      drive(w);
+      const base = responder(w, SECONDARY_ACCOUNT);
+      let secondary = 0;
+      jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
+        secondary++;
+        return stubFor(SECONDARY_ACCOUNT, msg => {
+          if (secondary > 1 && msg.type === WsMessageType.REQ_MAIL_GET_FOLDER) throw new Error('folder died');
+          return base(msg);
+        });
+      });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.cleanup?.filter(c => !c.ok && c.detail === 'folder died')).toHaveLength(2);
+    });
+
+    it('fails every cleanup check of a mailbox whose mail connect throws', async () => {
+      const w = world();
+      drive(w);
+      const base = responder(w, SECONDARY_ACCOUNT);
+      let secondary = 0;
+      jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
+        secondary++;
+        return stubFor(SECONDARY_ACCOUNT, msg => {
+          if (secondary > 1 && msg.type === WsMessageType.REQ_MAIL_CONNECT) throw new Error('mail died');
+          return base(msg);
+        });
+      });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.cleanup?.filter(c => !c.ok && c.detail === 'mail died')).toHaveLength(2);
+    });
+  });
+
+  describe('portrait-roundtrip', () => {
+    const IP = '10.0.0.7';
+    /** A valid 150×200 JPEG that is not the test image. */
+    function original(): Buffer {
+      const b = Buffer.from(testPortraitJpeg());
+      b[10] = 0x02; // one DQT entry
+      return b;
+    }
+    interface PortraitWorld {
+      stored: Buffer | null;
+      /** The first upload is stored with its last byte flipped. */
+      corruptFirst?: boolean;
+      failFirstUpload?: boolean;
+      noIp?: boolean;
+    }
+    let urls: string[];
+    let uploads: Buffer[];
+    let pendingAtUpload: string[][];
+    function drive(w: PortraitWorld): void {
+      urls = [];
+      uploads = [];
+      pendingAtUpload = [];
+      jest.spyOn(global, 'fetch').mockImplementation(async input => {
+        urls.push(String(input));
+        const bytes = w.stored;
+        return {
+          ok: bytes !== null,
+          status: bytes !== null ? 200 : 404,
+          arrayBuffer: async () => Uint8Array.from(bytes ?? []).buffer,
+        } as unknown as Response;
+      });
+      jest.spyOn(session, 'login').mockImplementation(async account => {
+        const s = stubFor(account, msg => {
+          if (msg.type === WsMessageType.REQ_PROFILE_UPLOAD_PICTURE) {
+            pendingAtUpload.push(lock.read().pendingRestores.map(p => p.originalValue));
+            const bytes = Buffer.from((msg as unknown as { pictureBase64: string }).pictureBase64, 'base64');
+            uploads.push(bytes);
+            if (w.failFirstUpload && uploads.length === 1) return { success: false, reason: 'SERVER_ERROR', message: 'save failed' };
+            const copy = Buffer.from(bytes);
+            if (w.corruptFirst && uploads.length === 1) copy[copy.length - 1] ^= 0x01;
+            w.stored = copy;
+            return { success: true };
+          }
+          throw new Error(`unexpected ${msg.type}`);
+        });
+        return w.noIp ? { ...s, world: undefined } : s;
+      });
+    }
+    const run = () => flowByName('portrait-roundtrip').run(flowCtx());
+
+    it('mutates; fetches the original directly, uploads the test JPEG then the original — PASS', async () => {
+      expect(flowByName('portrait-roundtrip').mutates).toBe(true);
+      const orig = original();
+      const w: PortraitWorld = { stored: orig };
+      drive(w);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(urls.length).toBeGreaterThan(0);
+      expect(urls.every(u => u === `http://${IP}/fivedata/userinfo/planitia/${ME}/largephoto.jpg`)).toBe(true);
+      expect(urls.some(u => u.includes('proxy-image'))).toBe(false);
+      expect(uploads).toEqual([testPortraitJpeg(), orig]);
+      expect(w.stored).toEqual(orig);
+      expect(result.probes[0]).toMatchObject({ member: 'PictureUpload', restored: true, logLine: null });
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('saves the original bytes in the pending restore before the test upload', async () => {
+      const orig = original();
+      drive({ stored: orig });
+      await run();
+      expect(pendingAtUpload[0]).toEqual([orig.toString('base64')]);
+    });
+
+    it('uploads nothing when the original is missing (HTTP 404) — UNPROVEN', async () => {
+      drive({ stored: null });
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(/HTTP 404/);
+      expect(uploads).toEqual([]);
+    });
+
+    it.each([
+      ['wrong dimensions', (() => { const b = original(); b[78] = 0x00; b[79] = 0x97; return b; })(), 'WRONG_DIMENSIONS'],
+      ['not a JPEG', Buffer.from('\x89PNG\r\n\x1a\n'), 'NOT_A_JPEG'],
+      ['too large', Buffer.concat([original(), Buffer.alloc(33 * 1024)]), 'TOO_LARGE'],
+    ])('uploads nothing when the original fails the picture checks (%s) — UNPROVEN', async (_label, bytes, reason) => {
+      drive({ stored: bytes });
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toContain(reason);
+      expect(uploads).toEqual([]);
+    });
+
+    it('FAILs without uploading, world marked dirty, when the original is the test JPEG', async () => {
+      drive({ stored: testPortraitJpeg() });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(uploads).toEqual([]);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+      expect(lock.read().pendingRestores[0].what).toMatch(/is the e2e test image/);
+      expect(() => lock.release()).toThrow(WorldDirtyError);
+    });
+
+    it('FAILs when the re-fetch differs by one byte from the upload, and still uploads the original', async () => {
+      const orig = original();
+      const w: PortraitWorld = { stored: orig, corruptFirst: true };
+      drive(w);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(uploads).toEqual([testPortraitJpeg(), orig]);
+      expect(w.stored).toEqual(orig);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a refused upload and still restores', async () => {
+      const orig = original();
+      drive({ stored: orig, failFirstUpload: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/upload refused: SERVER_ERROR save failed/);
+      expect(uploads).toHaveLength(2);
+    });
+
+    it('FAILs when the login carried no world IP', async () => {
+      drive({ stored: original(), noIp: true });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(urls).toEqual([]);
+    });
+  });
+
+  describe('the picture check', () => {
+    const test = testPortraitJpeg();
+    function withSof(width: number, height: number): Buffer {
+      const b = Buffer.from(test);
+      b.writeUInt16BE(height, 76);
+      b.writeUInt16BE(width, 78);
+      return b;
+    }
+    it.each([
+      ['the test JPEG', test],
+      ['an empty buffer', Buffer.alloc(0)],
+      ['text', Buffer.from('hello')],
+      ['151×200', withSof(151, 200)],
+      ['150×201', withSof(150, 201)],
+      ['a DHT-only JPEG', Buffer.from([0xff, 0xd8, 0xff, 0xc4, 0x00, 0x03, 0x00])],
+      ['a JPEG padded past 32 KiB', Buffer.concat([test, Buffer.alloc(32 * 1024)])],
+      ['a truncated header', test.subarray(0, 75)],
+      ['scan data before any frame', Buffer.from([0xff, 0xd8, 0xff, 0xda, 0x00, 0x02])],
+      ['a standalone marker then garbage', Buffer.from([0xff, 0xd8, 0xff, 0xd0, 0x12])],
+      ['a fill-byte run to the end', Buffer.from([0xff, 0xd8, 0xff, 0xff])],
+      ['a marker with no length', Buffer.from([0xff, 0xd8, 0xff, 0xc0])],
+    ])('agrees with validatePicture on %s', (_label, bytes) => {
+      expect(pictureCheck(bytes)).toBe(validatePicture(bytes)?.reason ?? null);
+    });
+
+    it('builds the same 150×200 test JPEG every time, under 32 KiB', () => {
+      expect(testPortraitJpeg()).toEqual(test);
+      expect(pictureCheck(test)).toBeNull();
+      expect(test.length).toBeLessThanOrEqual(32 * 1024);
+    });
+
+    it('never builds a proxy-image URL', () => {
+      expect(portraitUrl('1.2.3.4', 'planitia', 'A B')).toBe('http://1.2.3.4/fivedata/userinfo/planitia/A%20B/largephoto.jpg');
+    });
+  });
+
+  describe('receiverLimitRefusal', () => {
+    const profile = (over: Partial<TycoonProfileFull>): TycoonProfileFull =>
+      ({ nobPoints: 0, levelTier: 0, levelName: 'Apprentice', ...over }) as TycoonProfileFull;
+    it('accepts every mapped level name, any case, under the limits', () => {
+      for (const name of PROFILE_LEVEL_NAMES) {
+        expect(receiverLimitRefusal(PRIMARY_ACCOUNT, profile({ levelName: name.toUpperCase(), nobPoints: 49, levelTier: 5 }))).toBeNull();
+      }
+    });
+    it('refuses at 50 nobility points and at tier 6', () => {
+      expect(receiverLimitRefusal(PRIMARY_ACCOUNT, profile({ nobPoints: 50 }))).toMatch(/≥ 50/);
+      expect(receiverLimitRefusal(PRIMARY_ACCOUNT, profile({ levelTier: 6 }))).toMatch(/≥ 6/);
+    });
+    it('refuses an empty or unmapped level name', () => {
+      expect(receiverLimitRefusal(SECONDARY_ACCOUNT, profile({ levelName: '  ' }))).toMatch(/Crazz's profile has no level name/);
+      expect(receiverLimitRefusal(SECONDARY_ACCOUNT, profile({ levelName: 'Unknown' }))).toMatch(/not one parseCurriculumHtml/);
     });
   });
 });
