@@ -21,6 +21,7 @@ import { TIMEOUTS } from './config';
 import { LOG_MARKERS, awaitMarker, openLogWindow, type LogWindow } from './live-log';
 import { readSectionGroups, setBuildingProperty, propertyValue, type LiveSession } from './session';
 import type { PendingRestore, WorldLock } from './world-lock';
+import { sleep as defaultSleep } from './sleep';
 
 export interface ProbeSpec {
   /** Human label for the report. */
@@ -339,12 +340,6 @@ export function probeFailure(spec: { what: string; member: string }, err: unknow
     restored: false,
     note: toErrorMessage(err),
   };
-}
-
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise(resolve => {
-    setTimeout(resolve, ms).unref?.();
-  });
 }
 
 export { openLogWindow };
