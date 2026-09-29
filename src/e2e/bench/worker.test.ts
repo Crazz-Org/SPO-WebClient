@@ -142,20 +142,26 @@ function writeBodyArtifact(h: Harness, cmd: string, args: string[], cwd: string,
   } else if (args[0] === 'scripts/verify-gate.js') {
     const head = `head-of-${path.basename(cwd)}`;
     const file = path.join(dir, `gate-${head}.json`);
-    if (fs.existsSync(file)) return;
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        head,
-        depositedSha: argValue(args, 'deposited-sha'),
-        gatedSha: head,
-        attempt: Number(argValue(args, 'attempt')),
-        verdict: 'PASS',
-        routing: { required: [] },
-        live: { skipped: true, why: 'nothing in this diff is observable over the wire' },
-      }),
-    );
+    // Exclusive create ('wx'): a gate artifact the test seeded itself is kept, atomically —
+    // no check-then-write window.
+    try {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          head,
+          depositedSha: argValue(args, 'deposited-sha'),
+          gatedSha: head,
+          attempt: Number(argValue(args, 'attempt')),
+          verdict: 'PASS',
+          routing: { required: [] },
+          live: { skipped: true, why: 'nothing in this diff is observable over the wire' },
+        }),
+        { flag: 'wx' },
+      );
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
   }
 }
 
