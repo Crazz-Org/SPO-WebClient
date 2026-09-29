@@ -15,6 +15,8 @@ import {
   salariesLineMatches, clientLinksDiff, outputPriceRefusal, stoppedBit, workerCountsProblem, refreshMissingKeys,
   fixtureKind,
   pickPlacement, ownsPlacement, delFacilityLineMatches,
+  truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
+  researchState, lowerInterest,
   type Flow, type FlowResult,
 } from './flows';
 import { buildReplyHeaders } from '@/client/store/mail-store';
@@ -74,12 +76,15 @@ describe('the catalogue', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
     expect(mutating).toEqual(
       [
-        'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'facility-open-close',
+        'accept-cloning', 'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'bank-settings',
+        'facility-open-close',
         'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
         'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
         'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
-        'road-roundtrip', 'store-price-salaries', 'town-min-wage', 'vote-roundtrip', 'zone-roundtrip', 'zoning-alert-read',
+        'research-roundtrip', 'residential-repair', 'residential-settings',
+        'road-roundtrip', 'store-price-salaries', 'town-min-wage', 'tv-settings', 'upgrade-stop', 'vote-roundtrip',
+        'zone-roundtrip', 'zoning-alert-read',
       ],
     );
   });
@@ -6489,6 +6494,708 @@ describe('build & demolish (#1150)', () => {
       const result = await runMenu();
       expect(result.status).toBe('FAIL');
       expect(check(result, /class and a cost/)?.ok).toBe(false);
+    });
+  });
+});
+
+describe('inspector helpers (#1154)', () => {
+  it('truthyFlag compares by truthiness: 1, 255 and -1 are all true', () => {
+    expect(['1', '255', '-1'].map(truthyFlag)).toEqual(['1', '1', '1']);
+    expect(truthyFlag('0')).toBe('0');
+    expect(truthyFlag(undefined)).toBeUndefined();
+    expect(truthyFlag('  ')).toBeUndefined();
+  });
+
+  it('repairLineMatches takes Repairing: <name> and never Stop Repairing: <name>', () => {
+    expect(repairLineMatches('12:00:01 Repairing: Home', 'Home')).toBe(true);
+    expect(repairLineMatches('12:00:01 Repairing: Home ', 'Home')).toBe(true);
+    expect(repairLineMatches('12:00:01 Stop Repairing: Home', 'Home')).toBe(false);
+    expect(repairLineMatches('12:00:01 Repairing: Homestead', 'Home')).toBe(false);
+    expect(repairLineMatches('12:00:01 Repairing: A (1)', 'A (1)')).toBe(true);
+  });
+
+  it('queueResearchLineMatches needs the id followed by its priority', () => {
+    expect(queueResearchLineMatches('12:00 Queue Research: R1, 10', 'R1')).toBe(true);
+    expect(queueResearchLineMatches('12:00 Queue Research: R10, 10', 'R1')).toBe(false);
+    expect(queueResearchLineMatches('12:00 Cancel Research: R1', 'R1')).toBe(false);
+  });
+
+  it('cancelResearchLineMatches needs the exact id', () => {
+    expect(cancelResearchLineMatches('12:00 Cancel Research: R1', 'R1')).toBe(true);
+    expect(cancelResearchLineMatches('12:00 Cancel Research: R1.Level2', 'R1')).toBe(false);
+    expect(cancelResearchLineMatches('12:00 Queue Research: R1, 10', 'R1')).toBe(false);
+  });
+
+  it('startUpgradeLineMatches needs the exact count', () => {
+    expect(startUpgradeLineMatches('12:00 Facility Start Upgrade count: 1', 1)).toBe(true);
+    expect(startUpgradeLineMatches('12:00 Facility Start Upgrade count: 10', 1)).toBe(false);
+    expect(startUpgradeLineMatches('12:00 Facility Start Upgrade OK!', 1)).toBe(false);
+  });
+
+  it('researchState looks the id up in developing, then completed, then available', () => {
+    const data = {
+      categoryIndex: 0,
+      available: [{ inventionId: 'A', name: 'A' }],
+      developing: [{ inventionId: 'D', name: 'D' }],
+      completed: [{ inventionId: 'C', name: 'C' }],
+    };
+    expect(researchState(data, 'A')).toBe('available');
+    expect(researchState(data, 'D')).toBe('developing');
+    expect(researchState(data, 'C')).toBe('owned');
+    expect(researchState(data, 'Z')).toBe('absent');
+    expect(researchState({ ...data, available: [{ inventionId: 'D', name: 'D' }] }, 'D')).toBe('developing');
+  });
+
+  it('lowerInterest is strictly below the original and never negative', () => {
+    expect(lowerInterest('5')).toBe('4');
+    expect(lowerInterest('1')).toBe('0');
+    expect(lowerInterest('3.5')).toBe('3');
+    expect(lowerInterest('0.4')).toBe('0');
+  });
+});
+
+describe('inspector flows (#1154)', () => {
+  const LOTS = {
+    residential: { x: 1, y: 2, visualClass: '100', name: 'Home' },
+    bank: { x: 3, y: 4, visualClass: '200', name: 'Bank' },
+    tv: { x: 5, y: 6, visualClass: '300', name: 'Channel' },
+    industry: { x: 7, y: 8, visualClass: '400', name: 'Farm' },
+    research: { x: 9, y: 10, visualClass: '500', name: 'HQ' },
+  } as const;
+  type Kind = keyof typeof LOTS;
+  const TAB: Record<Kind, string> = {
+    residential: 'resGeneral', bank: 'bankGeneral', tv: 'tvGeneral', industry: 'upgrade', research: 'hqInventions',
+  };
+
+  interface Write {
+    property: string;
+    value: string;
+    params?: Record<string, string>;
+  }
+  interface Category {
+    available: { id: string; enabled?: boolean }[];
+    developing: string[];
+    completed: string[];
+  }
+  interface World {
+    res: Record<string, string>;
+    bank: Record<string, string>;
+    tv: Record<string, string>;
+    upgrade: Record<string, string>;
+    hq: Record<string, string>;
+    categories: Category[];
+    missingKind?: Kind;
+    missingTab?: Kind;
+    /** Whether a set-property moves the world; default yes. */
+    apply: (w: Write) => boolean;
+    /** The gateway's `confirmed` for RDOAcceptCloning; default: the held flag's truthiness equals the write's. */
+    confirm?: (w: Write) => boolean;
+    /** Throw on this set-property, after it applied. */
+    throwAfter?: (w: Write) => boolean;
+    /** Properties whose Survival line never appears. */
+    silent: Set<string>;
+    /** A queued invention is bought at once (Time = 0). */
+    queueBuys?: boolean;
+    /** The START moves Pending; default yes. */
+    upgradeMoves?: boolean;
+    /** A level completes before the STOP. */
+    levelUpOnStop?: boolean;
+    startThrows?: boolean;
+    events: string[];
+    writes: Write[];
+    lines: string[];
+    requests: WsMessage[];
+  }
+
+  function makeWorld(over: Partial<World> = {}): World {
+    return {
+      res: { Name: 'Home', Rent: '100', Maintenance: '50', Repair: '0' },
+      bank: { Interest: '5', Term: '10', BudgetPerc: '40' },
+      tv: { HoursOnAir: '12', Comercials: '30' },
+      upgrade: { UpgradeLevel: '1', Upgrading: '0', Pending: '0', MaxUpgrade: '5', AcceptCloning: '1' },
+      hq: { CatCount: '1' },
+      categories: [
+        { available: [{ id: 'OFF', enabled: false }, { id: 'D1', enabled: true }], developing: ['D1'], completed: ['C1'] },
+        { available: [{ id: 'R1', enabled: true }, { id: 'R2', enabled: true }], developing: [], completed: [] },
+      ],
+      apply: () => true,
+      silent: new Set(),
+      events: [],
+      writes: [],
+      lines: [],
+      requests: [],
+      ...over,
+    };
+  }
+
+  const kindAt = (m: Record<string, unknown>): Kind => {
+    const x = m.x ?? m.buildingX;
+    const y = m.y ?? m.buildingY;
+    const hit = (Object.keys(LOTS) as Kind[]).find(k => LOTS[k].x === x && LOTS[k].y === y);
+    if (!hit) throw new Error(`no lot at ${String(x)},${String(y)}`);
+    return hit;
+  };
+
+  function groupOf(world: World, kind: Kind): Record<string, string> {
+    return { residential: world.res, bank: world.bank, tv: world.tv, industry: world.upgrade, research: world.hq }[kind];
+  }
+
+  const move = (list: string[], id: string): string[] => list.filter(i => i !== id);
+
+  function applyWrite(world: World, kind: Kind, w: Write): string {
+    const p = w.params ?? {};
+    const cat = world.categories.find(c => c.available.some(i => i.id === p.inventionId) || c.developing.includes(p.inventionId));
+    switch (w.property) {
+      case 'property': {
+        const key = p.propertyName === 'Commercials' ? 'Comercials' : p.propertyName;
+        groupOf(world, kind)[key] = w.value;
+        return '';
+      }
+      case 'RDOSetLoanPerc': world.bank.BudgetPerc = w.value; return '';
+      case 'RdoRepair': world.res.Repair = '5'; return `12:00 Repairing: ${world.res.Name}`;
+      case 'RdoStopRepair': world.res.Repair = '0'; return `12:00 Stop Repairing: ${world.res.Name}`;
+      case 'RDOAcceptCloning': world.upgrade.AcceptCloning = Number(w.value) !== 0 ? '255' : '0'; return '';
+      case 'RDOQueueResearch':
+        if (cat) {
+          cat.available = cat.available.filter(i => i.id !== p.inventionId);
+          if (world.queueBuys) cat.completed.push(p.inventionId);
+          else cat.developing.push(p.inventionId);
+        }
+        return `12:00 Queue Research: ${p.inventionId}, ${p.priority}`;
+      case 'RDOCancelResearch':
+        if (cat) {
+          cat.developing = move(cat.developing, p.inventionId);
+          cat.available.push({ id: p.inventionId, enabled: true });
+        }
+        return `12:00 Cancel Research: ${p.inventionId}`;
+      default:
+        throw new Error(`unexpected property ${w.property}`);
+    }
+  }
+
+  function upgrade(world: World, action: string, count: unknown): unknown {
+    world.events.push(`upgrade:${action}`);
+    world.upgrade.AcceptCloning = '255'; // manageConstructionImpl writes -1 and never restores it
+    if (action === 'START_UPGRADE') {
+      world.lines.push(`12:00 Facility Start Upgrade count: ${String(count)}`);
+      if (world.startThrows) throw new Error('socket died after START');
+      if (world.upgradeMoves !== false) world.upgrade.Pending = '1';
+    } else {
+      world.lines.push('12:00 Facility Stop Upgrade..');
+      world.upgrade.Upgrading = '0';
+      world.upgrade.Pending = '0';
+      if (world.levelUpOnStop) world.upgrade.UpgradeLevel = String(Number(world.upgrade.UpgradeLevel) + 1);
+    }
+    return { type: WsMessageType.RESP_BUILDING_UPGRADE, success: true, action };
+  }
+
+  function arrange(world: World) {
+    const stub = stubSession(msg => {
+      world.requests.push(msg);
+      const m = msg as WsMessage & Record<string, unknown>;
+      switch (msg.type) {
+        case WsMessageType.REQ_BUILDING_DETAILS: {
+          const kind = kindAt(m);
+          return { details: { tabs: world.missingTab === kind ? [{ id: 'other' }] : [{ id: TAB[kind] }], groups: {} } };
+        }
+        case WsMessageType.REQ_BUILDING_TAB_DATA: {
+          const kind = kindAt(m);
+          if (m.tabId !== TAB[kind]) throw new Error(`unexpected tab ${String(m.tabId)}`);
+          return { groups: { [TAB[kind]]: Object.entries(groupOf(world, kind)).map(([k, v]) => pv(k, v)) } };
+        }
+        case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
+          const kind = kindAt(m);
+          const w: Write = { property: String(m.propertyName), value: String(m.value) };
+          if (m.additionalParams) w.params = m.additionalParams as Record<string, string>;
+          world.writes.push(w);
+          world.events.push(`set:${w.property}${w.params?.propertyName ? `.${w.params.propertyName}` : ''}=${w.value}`);
+          if (world.apply(w)) {
+            const line = applyWrite(world, kind, w);
+            if (line && !world.silent.has(w.property)) world.lines.push(line);
+          }
+          if (world.throwAfter?.(w)) throw new Error(`${w.property} lost its answer`);
+          const held = world.upgrade.AcceptCloning;
+          const confirmed = w.property === 'RDOAcceptCloning'
+            ? (world.confirm ? world.confirm(w) : truthyFlag(held) === truthyFlag(w.value))
+            : undefined;
+          return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: w.property === 'RDOAcceptCloning' ? held : '', confirmed };
+        }
+        case WsMessageType.REQ_RESEARCH_INVENTORY: {
+          const index = Number(m.categoryIndex);
+          const c = world.categories[index] ?? { available: [], developing: [], completed: [] };
+          const item = (id: string) => ({ inventionId: id, name: id });
+          return {
+            data: {
+              categoryIndex: index,
+              available: c.available.map(i => ({ ...item(i.id), enabled: i.enabled })),
+              developing: c.developing.map(item),
+              completed: c.completed.map(item),
+            },
+          };
+        }
+        case WsMessageType.REQ_RESEARCH_DETAILS:
+          return { details: { inventionId: m.inventionId, properties: 'Price: $1,000\nLicence: $0', description: '' } };
+        case WsMessageType.REQ_BUILDING_UPGRADE:
+          return upgrade(world, String(m.action), m.count);
+        default:
+          throw new Error(`unexpected request ${msg.type}`);
+      }
+    });
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(fixtures, 'findFixture').mockImplementation(async (_s, kind) =>
+      kind.id === world.missingKind ? { kind: kind.id, reason: 'none in Helartia' } : { kind: kind.id, found: LOTS[kind.id as Kind] },
+    );
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      if (typeof proof !== 'object') return null;
+      return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+    });
+    return { stub, off };
+  }
+
+  const run = (name: string, lock = cleanLock()) => flowByName(name).run({ lock, survivalLogUrl: 'u', ...fastClock() });
+  const setProps = (world: World) => world.requests.filter(r => r.type === WsMessageType.REQ_BUILDING_SET_PROPERTY);
+  const upgrades = (world: World) => world.requests.filter(r => r.type === WsMessageType.REQ_BUILDING_UPGRADE);
+  const pending = (lock: WorldLock) => lock.read().pendingRestores;
+  const failed = (r: FlowResult) => r.assertions.filter(a => !a.ok).map(a => a.what);
+
+  const SEVEN: [string, Kind][] = [
+    ['residential-settings', 'residential'],
+    ['residential-repair', 'residential'],
+    ['bank-settings', 'bank'],
+    ['tv-settings', 'tv'],
+    ['research-roundtrip', 'research'],
+    ['accept-cloning', 'industry'],
+    ['upgrade-stop', 'industry'],
+  ];
+
+  it.each(SEVEN)('%s PASSes in the happy world and leaves the lock clean', async name => {
+    const world = makeWorld();
+    const lock = cleanLock();
+    const { off } = arrange(world);
+    const result = await run(name, lock);
+    expect(result.status).toBe('PASS');
+    expect(result.unproven).toEqual([]);
+    expect(pending(lock)).toEqual([]);
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(SEVEN)('%s is UNPROVEN and sends nothing when its fixture is missing', async (name, kind) => {
+    const world = makeWorld({ missingKind: kind });
+    arrange(world);
+    const result = await run(name);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toEqual([`${kind} fixture — none in Helartia`]);
+    expect(setProps(world)).toEqual([]);
+    expect(upgrades(world)).toEqual([]);
+  });
+
+  it.each(SEVEN)('%s is UNPROVEN and sends nothing when its template lacks the tab', async (name, kind) => {
+    const world = makeWorld({ missingTab: kind });
+    arrange(world);
+    const result = await run(name);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(new RegExp(`carries no ${TAB[kind]} tab`));
+    expect(setProps(world)).toEqual([]);
+    expect(upgrades(world)).toEqual([]);
+  });
+
+  describe('residential-settings', () => {
+    it('writes Rent and Maintenance together, reads both back, and restores both', async () => {
+      const world = makeWorld();
+      arrange(world);
+      const result = await run('residential-settings');
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual([
+        'set:property.Rent=99', 'set:property.Maintenance=51', 'set:property.Rent=100', 'set:property.Maintenance=50',
+      ]);
+      expect(result.probes[0]).toMatchObject({ member: 'Rent+Maintenance', original: '100,50', written: '99,51', restored: true });
+      expect(world.res).toMatchObject({ Rent: '100', Maintenance: '50' });
+    });
+
+    it('FAILs when one member does not read back, and still restores both', async () => {
+      const world = makeWorld({ apply: w => !(w.params?.propertyName === 'Maintenance' && w.value === '51') });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('residential-settings', lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/read-back never showed "99,51"/);
+      expect(world.events.slice(2)).toEqual(['set:property.Rent=100', 'set:property.Maintenance=50']);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('restores after a failed write', async () => {
+      const world = makeWorld({ throwAfter: w => w.value === '99' });
+      arrange(world);
+      const result = await run('residential-settings');
+      expect(result.status).toBe('FAIL');
+      expect(world.events).toContain('set:property.Rent=100');
+      expect(world.events).toContain('set:property.Maintenance=50');
+    });
+  });
+
+  describe('residential-repair', () => {
+    it('repairs, proves the Repairing: line and Repair > 0, then stops the repair', async () => {
+      const world = makeWorld();
+      arrange(world);
+      const result = await run('residential-repair');
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual(['set:RdoRepair=0', 'set:RdoStopRepair=0']);
+      expect(result.probes[0].logLine).toBe('12:00 Repairing: Home');
+      expect(world.res.Repair).toBe('0');
+    });
+
+    it('does nothing when Repair reads non-zero — the owner is repairing', async () => {
+      const world = makeWorld({ res: { Name: 'Home', Repair: '40' } });
+      arrange(world);
+      const result = await run('residential-repair');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Repair reads 40/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('FAILs, sending nothing, when Repair is not readable', async () => {
+      const world = makeWorld({ res: { Name: 'Home' } });
+      arrange(world);
+      const result = await run('residential-repair');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['Repair is readable on the resGeneral tab']);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('FAILs when Repair stays 0 after RdoRepair, even with its line present — and still stops', async () => {
+      const world = makeWorld({ apply: w => w.property !== 'RdoRepair' });
+      world.lines.push('12:00 Repairing: Home');
+      arrange(world);
+      const result = await run('residential-repair');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/read-back never showed "1"/);
+      expect(result.probes[0].logLine).toBe('12:00 Repairing: Home');
+      expect(world.events).toEqual(['set:RdoRepair=0', 'set:RdoStopRepair=0']);
+    });
+
+    it('does not take a Stop Repairing: line as the proof', async () => {
+      const world = makeWorld({ silent: new Set(['RdoRepair']) });
+      world.lines.push('12:00 Stop Repairing: Home');
+      arrange(world);
+      const result = await run('residential-repair');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].logLine).toBeNull();
+      expect(world.events).toContain('set:RdoStopRepair=0');
+    });
+  });
+
+  describe('bank-settings', () => {
+    it('nudges Interest down, never up, with Term and the loan percentage, and restores all three', async () => {
+      const world = makeWorld();
+      arrange(world);
+      const result = await run('bank-settings');
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual([
+        'set:property.Interest=4', 'set:property.Term=11', 'set:RDOSetLoanPerc=41',
+        'set:property.Interest=5', 'set:property.Term=10', 'set:RDOSetLoanPerc=40',
+      ]);
+      const interest = world.writes.filter(w => w.params?.propertyName === 'Interest').map(w => Number(w.value));
+      expect(Math.max(...interest)).toBeLessThanOrEqual(5);
+      expect(interest[0]).toBeLessThan(5);
+      expect(world.bank).toEqual({ Interest: '5', Term: '10', BudgetPerc: '40' });
+    });
+
+    it('never sends Interest when it reads 0 — unproven — and still drives Term and RDOSetLoanPerc', async () => {
+      const world = makeWorld({ bank: { Interest: '0', Term: '10', BudgetPerc: '40' } });
+      arrange(world);
+      const result = await run('bank-settings');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^Interest — reads 0 .*Kernel\/Kernel\.pas:8837/);
+      expect(world.writes.some(w => w.params?.propertyName === 'Interest')).toBe(false);
+      expect(world.events).toEqual([
+        'set:property.Term=11', 'set:RDOSetLoanPerc=41', 'set:property.Term=10', 'set:RDOSetLoanPerc=40',
+      ]);
+      expect(result.probes[0]).toMatchObject({ member: 'Term+RDOSetLoanPerc', status: 'PASS' });
+    });
+
+    it('FAILs, writing nothing, when Interest is unreadable', async () => {
+      const world = makeWorld({ bank: { Term: '10', BudgetPerc: '40' } });
+      arrange(world);
+      const result = await run('bank-settings');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/Cannot read the original/);
+      expect(setProps(world)).toEqual([]);
+    });
+  });
+
+  describe('tv-settings', () => {
+    it('reads Comercials (one m) and writes Commercials (two m)', async () => {
+      const world = makeWorld();
+      arrange(world);
+      const result = await run('tv-settings');
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual([
+        'set:property.HoursOnAir=11', 'set:property.Commercials=31', 'set:property.HoursOnAir=12', 'set:property.Commercials=30',
+      ]);
+    });
+  });
+
+  describe('accept-cloning', () => {
+    it('toggles off and back on, each write confirmed, compared by truthiness (255 reads true)', async () => {
+      const world = makeWorld();
+      arrange(world);
+      const result = await run('accept-cloning');
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual(['set:RDOAcceptCloning=0', 'set:RDOAcceptCloning=1']);
+      expect(world.upgrade.AcceptCloning).toBe('255');
+      expect(result.probes[0]).toMatchObject({ original: '1', written: '0' });
+    });
+
+    it('toggles a falsy original on and back off', async () => {
+      const world = makeWorld({ upgrade: { AcceptCloning: '0' } });
+      arrange(world);
+      const result = await run('accept-cloning');
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual(['set:RDOAcceptCloning=1', 'set:RDOAcceptCloning=0']);
+    });
+
+    it('FAILs a read-back that disagrees with the write, though the gateway said confirmed', async () => {
+      const world = makeWorld({ apply: w => !(w.property === 'RDOAcceptCloning' && w.value === '0'), confirm: () => true });
+      arrange(world);
+      const result = await run('accept-cloning');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/read-back never showed "0"/);
+    });
+
+    it('FAILs an unconfirmed toggle, and still toggles back', async () => {
+      const world = makeWorld({ confirm: w => w.value !== '0' });
+      arrange(world);
+      const result = await run('accept-cloning');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/did not confirm it/);
+      expect(world.events).toEqual(['set:RDOAcceptCloning=0', 'set:RDOAcceptCloning=1']);
+    });
+  });
+
+  describe('research-roundtrip', () => {
+    it('scans CatCount inclusively, reads the details, queues then cancels the one invention it chose', async () => {
+      const world = makeWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('PASS');
+      const cats = world.requests
+        .filter(r => r.type === WsMessageType.REQ_RESEARCH_INVENTORY)
+        .map(r => (r as WsMessage & { categoryIndex: number }).categoryIndex);
+      expect(cats.slice(0, 2)).toEqual([0, 1]);
+      expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_RESEARCH_DETAILS, inventionId: 'R1' }));
+      expect(world.writes).toEqual([
+        { property: 'RDOQueueResearch', value: '0', params: { inventionId: 'R1', priority: '10' } },
+        { property: 'RDOCancelResearch', value: '0', params: { inventionId: 'R1' } },
+      ]);
+      expect(world.categories[1].developing).toEqual([]);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('is UNPROVEN and sends nothing when no enabled invention is free to queue', async () => {
+      const world = makeWorld({
+        hq: { CatCount: '0' },
+        categories: [{ available: [{ id: 'OFF', enabled: false }, { id: 'D1', enabled: true }], developing: ['D1'], completed: [] }],
+      });
+      arrange(world);
+      const result = await run('research-roundtrip');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual(['RDOQueueResearch — no enabled invention available to queue in categories 0..0']);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('FAILs loudly and never cancels an invention bought at once', async () => {
+      const world = makeWorld({ queueBuys: true });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => /in development, not owned/.test(a.what))?.detail).toMatch(/^bought at once: R1 \(Price: \$1,000 Licence: \$0\)/);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
+      expect(pending(lock)).toHaveLength(1);
+      expect(pending(lock)[0].what).toMatch(/must NOT be cancelled/);
+    });
+
+    it('FAILs, with no cancel, when the queue never shows in development', async () => {
+      const world = makeWorld({ apply: w => w.property !== 'RDOQueueResearch' });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(expect.arrayContaining(['R1 is listed in development, not owned']));
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
+      expect(pending(lock)).toHaveLength(1);
+    });
+
+    it('still cancels after a throw that follows the queue', async () => {
+      const world = makeWorld({ throwAfter: w => w.property === 'RDOQueueResearch' });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['the queue steps ran without a throw']);
+      expect(world.writes.map(w => `${w.property}:${w.params?.inventionId}`)).toEqual(['RDOQueueResearch:R1', 'RDOCancelResearch:R1']);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('keeps the pending restore when the cancel logs no line', async () => {
+      const world = makeWorld({ silent: new Set(['RDOCancelResearch']) });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['the cancel logged its Cancel Research: line']);
+      expect(pending(lock)).toHaveLength(1);
+    });
+
+    it('FAILs details that do not answer for the chosen invention', async () => {
+      const world = makeWorld();
+      const { stub } = arrange(world);
+      const request = stub.driver.request as jest.Mock;
+      const base = request.getMockImplementation() as (m: WsMessage) => Promise<unknown>;
+      request.mockImplementation(async (m: WsMessage) =>
+        m.type === WsMessageType.REQ_RESEARCH_DETAILS ? { details: { inventionId: 'R1', properties: ' ', description: '' } } : base(m),
+      );
+      const result = await run('research-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['REQ_RESEARCH_DETAILS answers for R1 with its properties']);
+    });
+
+    it('turns a throw before the queue into a FAIL, sending nothing', async () => {
+      const world = makeWorld();
+      const { stub } = arrange(world);
+      const request = stub.driver.request as jest.Mock;
+      const base = request.getMockImplementation() as (m: WsMessage) => Promise<unknown>;
+      request.mockImplementation(async (m: WsMessage) => {
+        if (m.type === WsMessageType.REQ_RESEARCH_INVENTORY) throw new Error('inventory timed out');
+        return base(m);
+      });
+      const result = await run('research-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('inventory timed out');
+      expect(setProps(world)).toEqual([]);
+    });
+  });
+
+  describe('upgrade-stop', () => {
+    it('starts one upgrade, stops it, and sets AcceptCloning back after the STOP — 255 reads true', async () => {
+      const world = makeWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual(['upgrade:START_UPGRADE', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=1']);
+      expect(upgrades(world)[0]).toMatchObject({ action: 'START_UPGRADE', count: 1 });
+      expect(upgrades(world)[1]).not.toHaveProperty('count');
+      expect(world.upgrade.AcceptCloning).toBe('255');
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('sets a falsy AcceptCloning true before the START and back to false after the STOP', async () => {
+      const world = makeWorld({ upgrade: { UpgradeLevel: '1', Upgrading: '0', Pending: '0', MaxUpgrade: '5', AcceptCloning: '0' } });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual([
+        'set:RDOAcceptCloning=1', 'upgrade:START_UPGRADE', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=0',
+      ]);
+      expect(world.upgrade.AcceptCloning).toBe('0');
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('sends no START when AcceptCloning cannot be set true, and still sets it back', async () => {
+      const world = makeWorld({
+        upgrade: { UpgradeLevel: '1', Upgrading: '0', Pending: '0', MaxUpgrade: '5', AcceptCloning: '0' },
+        confirm: w => w.value === '0',
+      });
+      arrange(world);
+      const result = await run('upgrade-stop');
+      expect(result.status).toBe('FAIL');
+      expect(upgrades(world)).toEqual([]);
+      expect(world.events).toEqual(['set:RDOAcceptCloning=1', 'set:RDOAcceptCloning=0']);
+    });
+
+    it('is UNPROVEN at MaxUpgrade, sending nothing', async () => {
+      const world = makeWorld({ upgrade: { UpgradeLevel: '5', Upgrading: '0', Pending: '0', MaxUpgrade: '5', AcceptCloning: '1' } });
+      arrange(world);
+      const result = await run('upgrade-stop');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/at MaxUpgrade \(5\/5\)/);
+      expect(upgrades(world)).toEqual([]);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it.each([
+      ['Upgrading', { Upgrading: '3', Pending: '0' }],
+      ['Pending', { Upgrading: '0', Pending: '1' }],
+    ])('is UNPROVEN, sending nothing, when %s is already non-zero', async (_name, busy) => {
+      const world = makeWorld({ upgrade: { UpgradeLevel: '1', MaxUpgrade: '5', AcceptCloning: '1', ...busy } });
+      arrange(world);
+      const result = await run('upgrade-stop');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Kernel\/Kernel\.pas:6525/);
+      expect(upgrades(world)).toEqual([]);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('FAILs, sending nothing, when a counter is unreadable', async () => {
+      const world = makeWorld({ upgrade: { UpgradeLevel: '1', Upgrading: '0', MaxUpgrade: '5', AcceptCloning: '1' } });
+      arrange(world);
+      const result = await run('upgrade-stop');
+      expect(result.status).toBe('FAIL');
+      expect(upgrades(world)).toEqual([]);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('FAILs when neither Upgrading nor Pending moves after the START — and still stops and restores', async () => {
+      const world = makeWorld({ upgradeMoves: false });
+      arrange(world);
+      const result = await run('upgrade-stop');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['Upgrading or Pending moved after the START']);
+      expect(world.events).toEqual(['upgrade:START_UPGRADE', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=1']);
+    });
+
+    it('FAILs loudly when UpgradeLevel differs from its original after the STOP, keeping the pending restore', async () => {
+      const world = makeWorld({ levelUpOnStop: true });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'UpgradeLevel equals its original after the STOP')?.detail)
+        .toMatch(/downgrade is excluded, level 1→2 kept/);
+      expect(pending(lock)).toHaveLength(1);
+    });
+
+    it('sends the STOP after a throw that follows the START, then restores AcceptCloning', async () => {
+      const world = makeWorld({ startThrows: true });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['the upgrade steps ran without a throw']);
+      expect(world.events).toEqual(['upgrade:START_UPGRADE', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=1']);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('FAILs and keeps the pending restore when AcceptCloning does not come back', async () => {
+      const world = makeWorld({
+        upgrade: { UpgradeLevel: '1', Upgrading: '0', Pending: '0', MaxUpgrade: '5', AcceptCloning: '0' },
+        apply: w => !(w.property === 'RDOAcceptCloning' && w.value === '0'),
+        confirm: w => w.value === '1',
+      });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual([
+        "AcceptCloning set back to false, confirmed by the gateway's live get",
+        'AcceptCloning reads its original truthiness',
+      ]);
+      expect(pending(lock)).toHaveLength(1);
     });
   });
 });
