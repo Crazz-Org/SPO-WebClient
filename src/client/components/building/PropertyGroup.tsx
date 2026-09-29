@@ -195,6 +195,7 @@ export function PropertyGroup({ properties, buildingX, buildingY }: PropertyGrou
           canEdit={canEdit}
           buildingX={buildingX}
           buildingY={buildingY}
+          onProductPropertyChange={handleProductPropertyChange}
         />
       ) : (
         // Fallback: render raw name/value pairs
@@ -218,6 +219,8 @@ interface DefinedPropertiesProps {
   canEdit: boolean;
   buildingX: number;
   buildingY: number;
+  /** PropertyGroup's product price handler — passed down, never recreated here. */
+  onProductPropertyChange: (propertyName: string, value: number, params?: Record<string, string>) => void;
 }
 
 function DefinedProperties({
@@ -228,6 +231,7 @@ function DefinedProperties({
   canEdit,
   buildingX,
   buildingY,
+  onProductPropertyChange,
 }: DefinedPropertiesProps) {
   const client = useClient();
   const details = useBuildingStore((s) => s.details);
@@ -775,7 +779,7 @@ function DefinedProperties({
         key="product-summary"
         products={products}
         canEdit={canEdit}
-        onPropertyChange={handlePropertyChange}
+        onPropertyChange={onProductPropertyChange}
       />,
     );
   }

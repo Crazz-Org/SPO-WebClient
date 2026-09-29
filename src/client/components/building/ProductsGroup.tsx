@@ -16,6 +16,7 @@ import { PRICE_PERCENT_MAX } from './trade-constants';
 import { useGateConnections } from './useGateConnections';
 import { connectionPendingKey } from '../../handlers/connection-pending-key';
 import { SaveIndicator } from './SaveIndicator';
+import { pendingKeyFor } from './property-utils';
 import styles from './PropertyGroup.module.css';
 
 /** A connection the server never positioned reads back as 0,0 — there is nothing to centre on. */
@@ -205,7 +206,7 @@ const ProductCard = memo(function ProductCard({
               {dollarPrice > 0 && (
                 <span className={styles.productDollarPrice}>{formatCurrency(dollarPrice)}</span>
               )}
-              {fluidId && <SaveIndicator propertyKey={`PricePc:${JSON.stringify({ fluidId })}`} />}
+              {fluidId && <SaveIndicator propertyKey={pendingKeyFor('RDOSetOutputPrice', { fluidId })} />}
             </div>
           ) : (
             pricePc > 0 && dollarPrice > 0 && (

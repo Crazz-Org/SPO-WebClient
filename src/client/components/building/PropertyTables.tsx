@@ -19,7 +19,8 @@ import {
   formatPercentage,
   formatNumber,
 } from '@/shared/building-details';
-import { computePendingKey } from './property-utils';
+import { computePendingKey, pendingKeyFor } from './property-utils';
+import { SaveIndicator } from './SaveIndicator';
 import { useServiceFigures } from './useServiceFigures';
 import { SliderInput, CurrencyInput } from './PropertyInputs';
 import { PRICE_PERCENT_MAX } from './trade-constants';
@@ -314,7 +315,7 @@ export function ProductSummaryCards({
 }: {
   products: BuildingProductData[];
   canEdit: boolean;
-  onPropertyChange: (name: string, value: number) => void;
+  onPropertyChange: (name: string, value: number, params?: Record<string, string>) => void;
 }) {
   if (products.length === 0) return null;
 
@@ -333,6 +334,9 @@ export function ProductSummaryCards({
       {priced.map((product, i) => {
         const pricePc = parseFloat(product.pricePc ?? '') || 0;
         const marketPrice = parseFloat(product.marketPrice ?? '') || 0;
+        // The price write addresses the gate by its fluid; without one the
+        // gateway refuses it, so the slider is disabled instead of sending it.
+        const fluidId = product.metaFluid;
 
         return (
           <ProductSaleCard
@@ -345,8 +349,11 @@ export function ProductSummaryCards({
             priceStep={1}
             canEdit={canEdit}
             rdoName={`PricePc`}
-            productPath={product.path}
-            onPropertyChange={onPropertyChange}
+            disabled={!fluidId}
+            pendingKey={fluidId ? pendingKeyFor('RDOSetOutputPrice', { fluidId }) : undefined}
+            onPropertyChange={(name, value) => {
+              if (fluidId) onPropertyChange(name, value, { fluidId });
+            }}
           />
         );
       })}
@@ -372,7 +379,8 @@ function ProductSaleCard({
   priceStep,
   canEdit,
   rdoName,
-  productPath: _productPath,
+  disabled,
+  pendingKey,
   onPropertyChange,
 }: {
   name: string;
@@ -389,7 +397,9 @@ function ProductSaleCard({
   priceStep: number;
   canEdit: boolean;
   rdoName: string;
-  productPath?: string;
+  disabled?: boolean;
+  /** Pending-write key of the price, when the card shows its save feedback. */
+  pendingKey?: string;
   onPropertyChange: (name: string, value: number) => void;
 }) {
   const supplyColor =
@@ -450,6 +460,7 @@ function ProductSaleCard({
       <span className={styles.pscPrice}>
         {dollarPrice > 0 ? `${formatCurrency(dollarPrice)} (${livePricePc}%)` : `${livePricePc}%`}
       </span>
+      {pendingKey && <SaveIndicator propertyKey={pendingKey} />}
 
       <PriceSliderWithMarker
         value={pricePc}
@@ -458,6 +469,7 @@ function ProductSaleCard({
         step={priceStep}
         canEdit={canEdit}
         rdoName={rdoName}
+        disabled={disabled}
         onPropertyChange={onPropertyChange}
         onValueChange={setLivePricePc}
       />
@@ -476,6 +488,7 @@ export function PriceSliderWithMarker({
   step,
   canEdit,
   rdoName,
+  disabled,
   onPropertyChange,
   onValueChange,
 }: {
@@ -485,6 +498,7 @@ export function PriceSliderWithMarker({
   step: number;
   canEdit: boolean;
   rdoName: string;
+  disabled?: boolean;
   onPropertyChange: (name: string, value: number) => void;
   /** The thumb's own value, reported on every move — for a label that has to
    *  follow the drag. Not debounced: the debounce below is for the wire. */
@@ -495,6 +509,7 @@ export function PriceSliderWithMarker({
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (disabled) return;
       const newVal = parseFloat(e.target.value);
       setLocalVal(newVal);
       onValueChange?.(newVal);
@@ -504,7 +519,7 @@ export function PriceSliderWithMarker({
         onPropertyChange(rdoName, newVal);
       }, 300);
     },
-    [rdoName, onPropertyChange, onValueChange],
+    [rdoName, disabled, onPropertyChange, onValueChange],
   );
 
   const markerPct = max > 0 ? Math.min(100, (avgPrice / max) * 100) : 0;
@@ -523,6 +538,7 @@ export function PriceSliderWithMarker({
           max={max}
           step={step}
           value={localVal}
+          disabled={disabled}
           onChange={handleChange}
         />
         <div
