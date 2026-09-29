@@ -155,7 +155,7 @@ Verdicts: `PASS` (possibly with capability exceptions listed — §7 of the poli
 (including a required flow that ended UNPROVEN — §7 of the policy; the `bench/gate` status
 then shows `— N unproven flow(s)`) ·
 `BLOCKED` (the live stage was refused before running: dirty world or another run already
-in flight) · `ENVIRONMENT` (does not consume an attempt) · `STALE` · `DIRTY` (gate on
+in flight — or a flow ended `SKIPPED`, the second account refused at login) · `ENVIRONMENT` (does not consume an attempt) · `STALE` · `DIRTY` (gate on
 uncommitted changes — commit first) · `ABANDONED` ·
 `INTERRUPTED` (worker died mid-job — check the world lock before resubmitting) · `LEASED`.
 

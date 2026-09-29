@@ -59,6 +59,7 @@ import {
   listTowns,
   resolveVisualClass,
   login,
+  loginSecondary,
   logoff,
   readBuildingDetails,
   readBuildingTabData,
@@ -79,7 +80,9 @@ export interface FlowContext {
 
 export interface FlowResult {
   name: string;
-  status: 'PASS' | 'FAIL' | 'UNPROVEN';
+  status: 'PASS' | 'FAIL' | 'UNPROVEN' | 'SKIPPED';
+  /** Why the flow did not run — only on `SKIPPED`: the second account was refused at login. */
+  skipped?: string;
   assertions: { what: string; ok: boolean; detail?: string }[];
   /** What the flow could not prove, each with its reason. */
   unproven: string[];
@@ -101,6 +104,8 @@ export interface FlowCheck {
   what: string;
   ok: boolean;
   detail?: string;
+  /** The check could not run: the second account was refused at login (the reason). */
+  skipped?: string;
 }
 
 /** What a seed produced, and how to undo it. */
@@ -377,7 +382,8 @@ const permissionNegative: Flow = {
   mutates: false,
   run: async () => {
     const assertions = new Assertions();
-    const session = await login(SECONDARY_ACCOUNT);
+    const session = await loginSecondary();
+    if ('skipped' in session) return skippedResult('permission-negative', session.skipped);
     try {
       const town = await findTown(session, GOVERNED_TOWN);
       const visualClass = await resolveVisualClass(session, town.x, town.y);
@@ -408,26 +414,29 @@ const mailRoundTrip: Flow = {
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `e2e ${new Date().toISOString()}`;
 
-    const sender = await login(PRIMARY_ACCOUNT);
+    // Crazz first, before the compose: a refused login then leaves no mail behind.
+    const recipient = await loginSecondary();
+    if ('skipped' in recipient) return skippedResult('mail-roundtrip', recipient.skipped);
     try {
-      await sender.driver.request({ type: WsMessageType.REQ_MAIL_CONNECT }, WsMessageType.RESP_MAIL_CONNECTED);
-      const sent = await sender.driver.request<WsRespMailSent>(
-        {
-          type: WsMessageType.REQ_MAIL_COMPOSE,
-          to: SECONDARY_ACCOUNT.username,
-          subject,
-          body: ['Automated L2 probe. Safe to delete.'],
-        },
-        WsMessageType.RESP_MAIL_SENT,
-        TIMEOUTS.login,
-      );
-      assertions.check('the compose was accepted', sent.type === WsMessageType.RESP_MAIL_SENT);
-    } finally {
-      await logoff(sender);
-    }
+      const sender = await login(PRIMARY_ACCOUNT);
+      try {
+        await sender.driver.request({ type: WsMessageType.REQ_MAIL_CONNECT }, WsMessageType.RESP_MAIL_CONNECTED);
+        const sent = await sender.driver.request<WsRespMailSent>(
+          {
+            type: WsMessageType.REQ_MAIL_COMPOSE,
+            to: SECONDARY_ACCOUNT.username,
+            subject,
+            body: ['Automated L2 probe. Safe to delete.'],
+          },
+          WsMessageType.RESP_MAIL_SENT,
+          TIMEOUTS.login,
+        );
+        assertions.check('the compose was accepted', sent.type === WsMessageType.RESP_MAIL_SENT);
+      } finally {
+        await logoff(sender);
+      }
 
-    const recipient = await login(SECONDARY_ACCOUNT);
-    try {
+      // The recipient's mail connect stays after the compose, so its unread count includes it.
       const connected = await recipient.driver.request<WsRespMailConnected>(
         { type: WsMessageType.REQ_MAIL_CONNECT },
         WsMessageType.RESP_MAIL_CONNECTED,
@@ -931,7 +940,18 @@ async function purgeSeededAlerts(
 ): Promise<FlowCheck> {
   const what = `seeded "${ZONING_ALERT_SUBJECT}" removed from ${account.username}'s ${folder}`;
   try {
-    const session = await login(account);
+    const opened = account === SECONDARY_ACCOUNT ? await loginSecondary() : await login(account);
+    if ('skipped' in opened) {
+      return {
+        what,
+        ok: false,
+        skipped: opened.skipped,
+        detail:
+          `${account.username} refused at login (${opened.skipped}) — ` +
+          `any seeded "${ZONING_ALERT_SUBJECT}" is left in ${account.username}'s ${folder}`,
+      };
+    }
+    const session = opened;
     try {
       await session.driver.request({ type: WsMessageType.REQ_MAIL_CONNECT }, WsMessageType.RESP_MAIL_CONNECTED);
       const listing = await session.driver.request<WsRespMailFolder>(
@@ -981,13 +1001,17 @@ async function seedZoningAlert(): Promise<FlowSeed> {
   const cleanup = sweepSeededAlerts;
 
   const swept = await sweepSeededAlerts();
+  const refused = swept.find(c => c.skipped !== undefined);
+  if (refused) return { outcome: { what, ok: false, skipped: refused.skipped }, cleanup };
   const bad = swept.find(c => !c.ok);
   if (bad) {
     return { outcome: { what, ok: false, detail: `stale sweep: ${bad.what} — ${bad.detail ?? ''}` }, cleanup };
   }
 
   try {
-    const sender = await login(SECONDARY_ACCOUNT);
+    const opened = await loginSecondary();
+    if ('skipped' in opened) return { outcome: { what, ok: false, skipped: opened.skipped }, cleanup };
+    const sender = opened;
     try {
       const ip = sender.world?.ip;
       if (!ip) return { outcome: { what, ok: false, detail: 'the login carried no world IP' }, cleanup };
@@ -1387,7 +1411,7 @@ export function flowByName(name: string): Flow {
  * data behind turns the result FAIL (the restore rule, doc/E2E-POLICY.md §5/§9).
  */
 export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult> {
-  if (!flow.seed) return runUnseeded(flow, ctx);
+  if (!flow.seed) return guardSkip(await runUnseeded(flow, ctx), ctx);
 
   let seeded: FlowSeed;
   try {
@@ -1401,6 +1425,8 @@ export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult>
   try {
     if (seeded.outcome.ok) {
       result = await runUnseeded(flow, ctx);
+    } else if (seeded.outcome.skipped !== undefined) {
+      result = skippedResult(flow.name, seeded.outcome.skipped);
     } else {
       const { what, detail } = seeded.outcome;
       result = {
@@ -1424,8 +1450,42 @@ export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult>
     }
   }
 
-  const status = cleanup.some(c => !c.ok) ? 'FAIL' : result.status;
-  return { ...result, seed: seeded.outcome, cleanup, status };
+  // A second-account refusal in the cleanup is forgiven only when the seed itself was skipped:
+  // nothing was sent. After a seed that ran, the refused mailbox keeps the leftover — FAIL.
+  const seedSkipped = seeded.outcome.skipped !== undefined;
+  const leftBehind = cleanup.some(c => !c.ok && !(seedSkipped && c.skipped !== undefined));
+  const status = leftBehind ? 'FAIL' : result.status;
+  return guardSkip({ ...result, seed: seeded.outcome, cleanup, status }, ctx);
+}
+
+/**
+ * A skip is only honest before the flow's first write. A `SKIPPED` result while the world
+ * lock still holds a pending restore would leave that write behind, so it is a FAIL.
+ */
+function guardSkip(result: FlowResult, ctx: FlowContext): FlowResult {
+  if (result.status !== 'SKIPPED') return result;
+  const pending = ctx.lock.read().pendingRestores.length;
+  if (pending === 0) return result;
+  return {
+    ...result,
+    status: 'FAIL',
+    error: `skipped after a write (${result.skipped ?? 'no reason'}) — ${pending} pending restore(s) still held`,
+  };
+}
+
+/** A flow that did not run: the second account was refused at login, before any write. */
+function skippedResult(name: string, reason: string): FlowResult {
+  return {
+    name,
+    status: 'SKIPPED',
+    skipped: reason,
+    assertions: [],
+    unproven: [],
+    probes: [],
+    messagesSent: 0,
+    messagesReceived: 0,
+    wireErrors: 0,
+  };
 }
 
 async function runUnseeded(flow: Flow, ctx: FlowContext): Promise<FlowResult> {

@@ -26,10 +26,16 @@ import type {
   MapBuilding,
   WorldInfo,
 } from '../shared/types/domain-types';
-import { WsDriver } from './ws-driver';
+import {
+  DIR_ERROR_AccountAlreadyExists,
+  DIR_ERROR_SubscriberIdNotFound,
+} from '../shared/directory-error-codes';
+import { ERROR_InvalidPassword, ERROR_InvalidUserName } from '../shared/error-codes';
+import { WsDriver, WsDriverError } from './ws-driver';
 import {
   GATEWAY_ORIGIN,
   GATEWAY_URL,
+  SECONDARY_ACCOUNT,
   TIMEOUTS,
   WORLD_NAME,
   ZONE_PATH,
@@ -54,54 +60,106 @@ export interface LiveSession {
  */
 export async function login(account: E2eAccount): Promise<LiveSession> {
   const driver = await WsDriver.connect(GATEWAY_URL, GATEWAY_ORIGIN);
-
-  await driver.request(
-    { type: WsMessageType.REQ_AUTH_CHECK, username: account.username, password: account.password },
-    WsMessageType.RESP_AUTH_SUCCESS,
-    TIMEOUTS.login,
-  );
-
-  const directory = await driver.request<WsRespConnectSuccess>(
-    {
-      type: WsMessageType.REQ_CONNECT_DIRECTORY,
-      username: account.username,
-      password: account.password,
-      zonePath: ZONE_PATH,
-    },
-    WsMessageType.RESP_CONNECT_SUCCESS,
-    TIMEOUTS.login,
-  );
-
-  if (!directory.worlds.some(w => w.name === WORLD_NAME)) {
-    throw new Error(
-      `World "${WORLD_NAME}" is not in the ${ZONE_PATH} listing — ` +
-        `got: ${directory.worlds.map(w => w.name).join(', ') || '(none)'}`,
+  try {
+    await driver.request(
+      { type: WsMessageType.REQ_AUTH_CHECK, username: account.username, password: account.password },
+      WsMessageType.RESP_AUTH_SUCCESS,
+      TIMEOUTS.login,
     );
+
+    const directory = await driver.request<WsRespConnectSuccess>(
+      {
+        type: WsMessageType.REQ_CONNECT_DIRECTORY,
+        username: account.username,
+        password: account.password,
+        zonePath: ZONE_PATH,
+      },
+      WsMessageType.RESP_CONNECT_SUCCESS,
+      TIMEOUTS.login,
+    );
+
+    if (!directory.worlds.some(w => w.name === WORLD_NAME)) {
+      throw new Error(
+        `World "${WORLD_NAME}" is not in the ${ZONE_PATH} listing — ` +
+          `got: ${directory.worlds.map(w => w.name).join(', ') || '(none)'}`,
+      );
+    }
+
+    const loggedIn = await driver.request<WsRespLoginSuccess>(
+      {
+        type: WsMessageType.REQ_LOGIN_WORLD,
+        username: account.username,
+        password: account.password,
+        worldName: WORLD_NAME,
+      },
+      WsMessageType.RESP_LOGIN_SUCCESS,
+      TIMEOUTS.login,
+    );
+
+    const companies = loggedIn.companies ?? [];
+    const company = pickCompany(companies, account.username);
+    await driver.request(
+      { type: WsMessageType.REQ_SELECT_COMPANY, companyId: company.id },
+      WsMessageType.RESP_RDO_RESULT,
+      TIMEOUTS.login,
+    );
+
+    await awaitSearchMenu(driver);
+
+    const world = directory.worlds.find(w => w.name === WORLD_NAME);
+    return { driver, account, company, worlds: directory.worlds.length, companies, world };
+  } catch (err: unknown) {
+    // A refused login must not leave its socket open for the rest of the run.
+    await driver.close();
+    throw err;
   }
+}
 
-  const loggedIn = await driver.request<WsRespLoginSuccess>(
-    {
-      type: WsMessageType.REQ_LOGIN_WORLD,
-      username: account.username,
-      password: account.password,
-      worldName: WORLD_NAME,
-    },
-    WsMessageType.RESP_LOGIN_SUCCESS,
-    TIMEOUTS.login,
-  );
+/** The second account's login: its session, or why the account itself was refused. */
+export type SecondaryLogin = LiveSession | { skipped: string };
 
-  const companies = loggedIn.companies ?? [];
-  const company = pickCompany(companies, account.username);
-  await driver.request(
-    { type: WsMessageType.REQ_SELECT_COMPANY, companyId: company.id },
-    WsMessageType.RESP_RDO_RESULT,
-    TIMEOUTS.login,
-  );
+/**
+ * The reason text when `err` is a typed credential refusal of the second account, else `null`.
+ *
+ * Only an account-level refusal counts: a named directory refusal on `REQ_AUTH_CHECK`
+ * (`DIR_ERROR_AccountAlreadyExists`..`DIR_ERROR_SubscriberIdNotFound`, 2-10 — not
+ * `DIR_ERROR_Unknown`, not the missing-credentials `ERROR_InvalidLogonData`), or
+ * `ERROR_InvalidUserName` / `ERROR_InvalidPassword` on `REQ_LOGIN_WORLD`. Everything else —
+ * `ERROR_Unknown` (the gateway masks every handler throw with it), any `REQ_CONNECT_DIRECTORY`
+ * refusal, a timeout, a wire error — is a real failure: the spine proves the same path works
+ * for the primary account.
+ */
+export function secondaryRefusal(err: unknown): string | null {
+  if (!(err instanceof WsDriverError)) return null;
+  const refused =
+    (err.forType === WsMessageType.REQ_AUTH_CHECK &&
+      err.code >= DIR_ERROR_AccountAlreadyExists &&
+      err.code <= DIR_ERROR_SubscriberIdNotFound) ||
+    (err.forType === WsMessageType.REQ_LOGIN_WORLD &&
+      (err.code === ERROR_InvalidUserName || err.code === ERROR_InvalidPassword));
+  if (!refused) return null;
+  return `${SECONDARY_ACCOUNT.username} refused at ${err.forType} (code ${err.code}): ${err.message}`;
+}
 
-  await awaitSearchMenu(driver);
-
-  const world = directory.worlds.find(w => w.name === WORLD_NAME);
-  return { driver, account, company, worlds: directory.worlds.length, companies, world };
+/**
+ * Log the optional second account (Crazz) in — or report that it was refused.
+ *
+ * Returns `{ skipped }` only on a typed credential refusal (see {@link secondaryRefusal});
+ * anything else is rethrown and fails the flow. The flow then ends `SKIPPED`, recorded but
+ * never a gate PASS (doc/E2E-POLICY.md §7).
+ *
+ * The rule for every flow: log Crazz in with `loginSecondary()` **before the flow's first
+ * write**. A skip after a write is a `FAIL` (`runFlow` checks the world lock for a pending
+ * restore). Crazz writes only to complete a pair the test undoes.
+ */
+export async function loginSecondary(): Promise<SecondaryLogin> {
+  try {
+    return await login(SECONDARY_ACCOUNT);
+  } catch (err: unknown) {
+    const reason = secondaryRefusal(err);
+    if (reason === null) throw err;
+    return { skipped: reason };
+  }
 }
 
 /**
