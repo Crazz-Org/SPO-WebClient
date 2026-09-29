@@ -565,6 +565,15 @@ describe('routing invariants (#1134)', () => {
     expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip', 'bank-borrow-payoff']);
   });
 
+  // #1149: the fixture builder is the one permanent mutation — nightly only, no gate requires it.
+  it('keeps fixtures-ensure nightly-only with its card cited, never gate-only, named by no route', () => {
+    expect(NIGHTLY_ONLY['fixtures-ensure']).toMatch(/#1149/);
+    expect(uncited({ 'fixtures-ensure': NIGHTLY_ONLY['fixtures-ensure'] })).toEqual([]);
+    expect('fixtures-ensure' in GATE_ONLY).toBe(false);
+    expect(ROUTES.some(r => r.flows.includes('fixtures-ensure'))).toBe(false);
+    expect(flowNames).toContain('fixtures-ensure');
+  });
+
   it('cites a reason for every exemption', () => {
     expect(uncited(NIGHTLY_ONLY)).toEqual([]);
     expect(uncited(GATE_ONLY)).toEqual([]);

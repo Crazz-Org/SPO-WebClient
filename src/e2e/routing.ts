@@ -37,6 +37,8 @@ export const NIGHTLY_ONLY: Record<string, string> = {
   'warehouse-role-reading': 'a reading, recorded and never asserted (#1006) — nothing a gate could require',
   'vote-roundtrip':
     'data-gated: a prior vote cannot be seeded (a vote with no prior cannot be retracted) and goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
+  'fixtures-ensure':
+    'builds only when a fixture is missing — the one sanctioned permanent mutation (#1149); the nightly re-creates a fixture that disappeared, no gate requires it',
 };
 
 /**
