@@ -125,7 +125,8 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
 `src/e2e/routing.test.ts` holds all three.
 
 - **`NIGHTLY_ONLY`** lists the flows no gate requires — a data-gated flow (a required `UNPROVEN`
-  fails the gate) or a reading that asserts nothing. The nightly still runs them; every other
+  fails the gate), a reading that asserts nothing, or the fixture builder `fixtures-ensure`,
+  which builds only when a fixture is missing (§9). The nightly still runs them; every other
   flow must be reached by some tracked path.
 - **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
   (`politics-write`, `Kernel/Population.pas:1264-1284`; `policy-roundtrip`,
@@ -152,6 +153,9 @@ read original -> record the pending restore -> write test value
 
 `runRoundTrip` in `src/e2e/probe.ts` carries this shape for any mutation (politics, profile,
 road, zone, building); `runProbe` is its building-property adapter.
+
+The one mutation left in place is the permanent fixture build (`fixtures-ensure`, §9), proven by
+its line, its result code and the lot read-back.
 
 **The line proves receipt; the read-back proves the change.** Most handlers log before their
 owner check (e.g. `Kernel/Kernel.pas:4336` -> `:4337`), so a refused write prints its line.
@@ -402,6 +406,18 @@ No flow reads or writes its buildings (`flows.ts`: it appears at the login in
 `permission-negative`, which does not mutate, as the mail recipient, as the reply sender, and as the seed sender).
 Never another player's assets. Never a world-scope value. Every mutation is restored in
 the same run (§5).
+
+**Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29, the
+nightly-only flow `fixtures-ensure` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
+kind the owner-setter flows need — `industry`, `store`, `warehouse`, `residential`, `research`,
+`bank`, `tv` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
+missing, once, and keeps it. Fixtures are found **by kind at run time** (`findFixture`: the
+directory's tycoon branch, then the lot's owner and the inspector's template groups), never by
+coordinates committed to the tree — the world moves. A build is proven by its `New Facility:`
+line, result code 0 and the lot read-back. While SPO_test3 owns a construction site in Helartia,
+the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
+(placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
+and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
 
 ---
 

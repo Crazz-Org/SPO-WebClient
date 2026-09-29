@@ -19,6 +19,7 @@ import { WsDriver, WsDriverError } from './ws-driver';
 import * as session from './session';
 import * as probeModule from './probe';
 import * as liveLog from './live-log';
+import * as fixtures from './fixtures';
 import { LIMITS, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
 
 function stubSession(responder: (msg: WsMessage) => unknown): session.LiveSession {
@@ -66,7 +67,7 @@ describe('the catalogue', () => {
     expect(mutating).toEqual(
       [
         'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'favorites-folders',
-        'favorites-roundtrip', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
+        'favorites-roundtrip', 'fixtures-ensure', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
         'town-min-wage', 'vote-roundtrip', 'zoning-alert-read',
       ],
@@ -2650,6 +2651,73 @@ describe('search-menu-read', () => {
       expect.objectContaining({ searchStr: 'S', mode: 'prefix' }),
     ]);
     expect(failed(result)).toEqual([expect.stringMatching(/"S" index lists SPO_test3/)]);
+  });
+});
+
+describe('fixtures-ensure', () => {
+  function arrange(outcomes: fixtures.FixtureOutcome[]) {
+    const stub = stubSession(() => undefined);
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    const ensure = jest.spyOn(fixtures, 'ensureFixtures').mockResolvedValue(outcomes);
+    return { off, ensure, stub };
+  }
+
+  it('is mutating and nightly-only', () => {
+    expect(flowByName('fixtures-ensure').mutates).toBe(true);
+  });
+
+  it('PASSes on found and built kinds, and carries the outcomes into the artifact', async () => {
+    const outcomes: fixtures.FixtureOutcome[] = [
+      { kind: 'industry', status: 'found', x: 1, y: 2, visualClass: '4116' },
+      { kind: 'store', status: 'built', x: 3, y: 4, visualClass: '4601', facilityClass: 'PGIFoodStore', logLine: 'New Facility: PGIFoodStore Company: 1 x: 3 y: 4' },
+    ];
+    const { off, ensure, stub } = arrange(outcomes);
+    const result = await flowByName('fixtures-ensure').run({ ...ctx, survivalLogUrl: 'log' });
+    expect(result.status).toBe('PASS');
+    expect(result.fixtures).toEqual(outcomes);
+    expect(result.assertions.map(a => a.what)).toEqual(['industry: fixture found', 'store: fixture built']);
+    expect(result.assertions[1].detail).toMatch(/New Facility: PGIFoodStore/);
+    expect(ensure).toHaveBeenCalledWith(stub, expect.objectContaining({ survivalLogUrl: 'log' }));
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it('is UNPROVEN on an unproven or under-construction kind', async () => {
+    arrange([
+      { kind: 'bank', status: 'unproven', reason: 'no candidate offered to SPO_test3 - Green' },
+      { kind: 'tv', status: 'under construction', reason: 'site' },
+    ]);
+    const result = await flowByName('fixtures-ensure').run(ctx);
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toEqual([
+      'bank fixture — no candidate offered to SPO_test3 - Green',
+      'tv fixture — under construction — site',
+    ]);
+  });
+
+  it('FAILs a found fixture with no lot, and a built one with no New Facility: line', async () => {
+    arrange([
+      { kind: 'industry', status: 'found' },
+      { kind: 'store', status: 'built', x: 3, y: 4 },
+    ]);
+    const result = await flowByName('fixtures-ensure').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.map(a => a.ok)).toEqual([false, false]);
+  });
+
+  it('FAILs on a FAIL outcome and still logs off', async () => {
+    const { off } = arrange([{ kind: 'warehouse', status: 'FAIL', reason: 'NewFacility answered 3' }]);
+    const result = await flowByName('fixtures-ensure').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions).toEqual([{ what: 'warehouse fixture', ok: false, detail: 'NewFacility answered 3' }]);
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs off when ensureFixtures throws', async () => {
+    const { off, ensure } = arrange([]);
+    ensure.mockRejectedValue(new Error('terrain: BMP 404'));
+    await expect(flowByName('fixtures-ensure').run(ctx)).rejects.toThrow('terrain');
+    expect(off).toHaveBeenCalledTimes(1);
   });
 });
 

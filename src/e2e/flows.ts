@@ -125,6 +125,7 @@ import {
   type SecondaryLogin,
 } from './session';
 import type { WorldLock } from './world-lock';
+import { ensureFixtures, type FixtureOutcome } from './fixtures';
 
 export interface FlowContext {
   lock: WorldLock;
@@ -155,6 +156,8 @@ export interface FlowResult {
   seed?: FlowCheck;
   /** One entry per mailbox (or store) the seed's cleanup restored — only on a seeded flow. */
   cleanup?: FlowCheck[];
+  /** Per fixture kind: found, under construction, built (with its `New Facility:` line), or why not — fixtures-ensure only. */
+  fixtures?: FixtureOutcome[];
 }
 
 /** One named outcome — a seed, or one mailbox's cleanup. */
@@ -3674,6 +3677,44 @@ const warehouseRoleReading: Flow = {
   },
 };
 
+/**
+ * The permanent fixtures (#1149): SPO_test3's own finished facility of each kind in Helartia,
+ * found by kind — and, when one is missing, built once and kept (the one sanctioned permanent
+ * mutation, doc/E2E-POLICY.md §9). A build is proven by its `New Facility:` line, result code 0
+ * and the lot read-back; nothing is restored, so no pending restore is recorded.
+ */
+const fixturesEnsure: Flow = {
+  name: 'fixtures-ensure',
+  what:
+    "SPO_test3's facility per kind in Helartia -> build each missing kind once (permanent fixture): " +
+    'New Facility: line + result 0 + lot read-back',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const outcomes = await ensureFixtures(session, {
+        survivalLogUrl: ctx.survivalLogUrl,
+        now: ctx.now,
+        sleep: ctx.sleep,
+      });
+      for (const o of outcomes) {
+        const at = o.x !== undefined ? `at (${o.x},${o.y}) vc ${o.visualClass ?? '?'}` : '';
+        // A found fixture carries its lot; a built one its New Facility: line (receipt).
+        if (o.status === 'found') assertions.check(`${o.kind}: fixture found`, o.x !== undefined && o.y !== undefined, at);
+        else if (o.status === 'built') {
+          assertions.check(`${o.kind}: fixture built`, Boolean(o.logLine) && o.x !== undefined, `${at} — ${o.logLine ?? ''}`);
+        }
+        else if (o.status === 'FAIL') assertions.check(`${o.kind} fixture`, false, o.reason);
+        else assertions.unproven(`${o.kind} fixture`, `${o.status === 'under construction' ? 'under construction — ' : ''}${o.reason ?? ''}`);
+      }
+      return { ...report('fixtures-ensure', assertions, [], session), fixtures: outcomes };
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   sessionResume,
@@ -3705,6 +3746,7 @@ export const FLOWS: Flow[] = [
   bankSendReturn,
   portraitRoundTrip,
   warehouseRoleReading,
+  fixturesEnsure,
 ];
 
 export function flowByName(name: string): Flow {
