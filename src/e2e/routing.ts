@@ -64,13 +64,10 @@ export const FALLBACK_ONLY: Record<string, string> = {
     'excluded: abandoning a role is never driven (maintainer, 2026-09-29 — recorded in card #1134)',
   'src/server/session/tutorial-handler.ts':
     'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
-  'src/server/session/auto-connection-handler.ts': 'awaiting card #1141 (C6)',
   'src/server/session/building-management-handler.ts': 'awaiting card #1150 (C10)',
   'src/server/session/building-templates-handler.ts': 'awaiting card #1150 (C10)',
   'src/server/session/chat-handler.ts': CHAT_AWAITING,
   'src/server/ws-handlers/chat-handlers.ts': CHAT_AWAITING,
-  'src/server/session/profile-finance-handler.ts': 'awaiting card #1141 (C6)',
-  'src/server/ws-handlers/profile-handlers.ts': 'awaiting card #1141 (C6)',
   'src/server/session/research-handler.ts': 'awaiting card #1154 (C11c)',
   'src/server/session/research-status-handler.ts': 'awaiting card #1154 (C11c)',
   'src/server/session/road-handler.ts': 'awaiting card #1151 (C9)',
@@ -140,10 +137,16 @@ export const ROUTES: RouteRule[] = [
     why: 'pixels — a WebSocket drive cannot see a rendered frame',
   },
   {
+    // Before the favorites rule: the Empire panel shows the Favorites tree and the profile tabs.
+    test: /^src\/client\/components\/empire\//,
+    flows: ['favorites-roundtrip', 'favorites-folders', 'profile-read'],
+    why: 'the Empire panel — the Favorites tree it shows and the profile & finance pages it reads',
+  },
+  {
     // Before the broad wire-level rule below, which would otherwise swallow
     // `session/favorites-handler.ts` and drive the politics flows instead of
     // the one flow that actually exercises the Favorites tree.
-    test: /favorites-handler\.ts$|^src\/client\/components\/empire\/|^src\/shared\/favorites-tree\.ts$/,
+    test: /favorites-handler\.ts$|^src\/shared\/favorites-tree\.ts$/,
     flows: ['favorites-roundtrip', 'favorites-folders'],
     why: 'the Favorites tree — the two flows that write to it',
   },
@@ -214,6 +217,12 @@ export const ROUTES: RouteRule[] = [
     test: /^src\/server\/session\/politics-handler\.ts$|^src\/server\/ws-handlers\/politics-handlers\.ts$/,
     flows: ['politics-read', 'politics-write'],
     why: 'the governance handlers changed — the flows that read and write the town hall',
+  },
+  {
+    // Before the fallbacks below: the Empire panel's profile & finance reads.
+    test: /^src\/server\/ws-handlers\/profile-handlers\.ts$|^src\/server\/session\/(profile-finance|auto-connection)-handler\.ts$|^src\/client\/store\/profile-store\.ts$/,
+    flows: ['profile-read'],
+    why: 'the profile & finance handlers — the flow that reads every Empire panel tab',
   },
   {
     // Before the fallbacks below. permission-negative's one request is REQ_BUILDING_DETAILS,

@@ -40,9 +40,23 @@ import type {
   WsRespWorldEvent,
   WsRespSurfaceData,
   WsRespAllFacilityDimensions,
+  WsRespGetProfile,
+  WsRespProfileCurriculum,
+  WsRespProfileBank,
+  WsRespProfileProfitLoss,
+  WsRespProfileCompanies,
+  WsRespProfileCompanyProfitLoss,
+  WsRespProfileAutoConnections,
+  WsRespProfilePolicy,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
 import type {
+  AutoConnectionsData,
+  BankAccountData,
+  CompaniesData,
+  CurriculumData,
+  PolicyData,
+  ProfitLossData,
   BuildingPropertyValue,
   DirectoryRef,
   DirectoryPage,
@@ -1595,6 +1609,197 @@ const searchMenuRead: Flow = {
   },
 };
 
+/**
+ * One Empire panel tab read. A dead page does not throw at the gateway — it answers the neutral
+ * default with `cacheUnavailable: true` — so this helper throws on it, and on a missing `data`.
+ */
+async function readProfileTab<R extends { data?: { cacheUnavailable?: boolean } }>(
+  session: LiveSession,
+  req: WsMessageType,
+  resp: WsMessageType,
+  page: string,
+): Promise<NonNullable<R['data']>> {
+  const answer = await session.driver.request<{ type: WsMessageType } & R>({ type: req }, resp);
+  const data = answer.data;
+  if (!data) throw new Error(`${page} answered without data`);
+  if (data.cacheUnavailable) {
+    throw new Error(`${page} answered cacheUnavailable — the page failed or ObjValid=false`);
+  }
+  return data;
+}
+
+const PAGE_CURRICULUM = 'NewTycoon/TycoonCurriculum.asp';
+const PAGE_BANK = 'NewTycoon/TycoonBankAccount.asp';
+const PAGE_PROFITLOSS = 'NewTycoon/TycoonProfitAndLoses.asp';
+const PAGE_COMPANIES = 'NewLogon/chooseCompany.asp';
+const PAGE_AUTOCONNECTIONS = 'NewTycoon/TycoonAutoConnections.asp';
+const PAGE_POLICY = 'NewTycoon/TycoonPolicy.asp';
+
+/** The bank tab, failing on `cacheUnavailable` — what a bank write restores against. */
+export function readBank(session: LiveSession): Promise<BankAccountData> {
+  return readProfileTab<WsRespProfileBank>(
+    session, WsMessageType.REQ_PROFILE_BANK, WsMessageType.RESP_PROFILE_BANK, PAGE_BANK,
+  );
+}
+
+/** The initial suppliers tab, failing on `cacheUnavailable`. */
+export function readAutoConnections(session: LiveSession): Promise<AutoConnectionsData> {
+  return readProfileTab<WsRespProfileAutoConnections>(
+    session, WsMessageType.REQ_PROFILE_AUTOCONNECTIONS, WsMessageType.RESP_PROFILE_AUTOCONNECTIONS, PAGE_AUTOCONNECTIONS,
+  );
+}
+
+/** The strategy tab, failing on `cacheUnavailable`. */
+export function readPolicy(session: LiveSession): Promise<PolicyData> {
+  return readProfileTab<WsRespProfilePolicy>(
+    session, WsMessageType.REQ_PROFILE_POLICY, WsMessageType.RESP_PROFILE_POLICY, PAGE_POLICY,
+  );
+}
+
+/** The curriculum tab, failing on `cacheUnavailable`. */
+export function readCurriculum(session: LiveSession): Promise<CurriculumData> {
+  return readProfileTab<WsRespProfileCurriculum>(
+    session, WsMessageType.REQ_PROFILE_CURRICULUM, WsMessageType.RESP_PROFILE_CURRICULUM, PAGE_CURRICULUM,
+  );
+}
+
+function readProfitLoss(session: LiveSession): Promise<ProfitLossData> {
+  return readProfileTab<WsRespProfileProfitLoss>(
+    session, WsMessageType.REQ_PROFILE_PROFITLOSS, WsMessageType.RESP_PROFILE_PROFITLOSS, PAGE_PROFITLOSS,
+  );
+}
+
+function readCompanies(session: LiveSession): Promise<CompaniesData> {
+  return readProfileTab<WsRespProfileCompanies>(
+    session, WsMessageType.REQ_PROFILE_COMPANIES, WsMessageType.RESP_PROFILE_COMPANIES, PAGE_COMPANIES,
+  );
+}
+
+const POLICY_STATUSES = [0, 1, 2];
+
+/**
+ * Read-only drive of the Empire panel's profile & finance tabs (#1141). Two traps shape it:
+ * a dead page does not throw — it answers the neutral default with `cacheUnavailable: true`,
+ * which every read here fails on; and the profile's `name` is the gateway's own session name,
+ * so only `levelName` (parsed from `NewTycoon/TycoonCurriculum.asp`) proves the page was read.
+ * A missing strategy row for the second account passes: it means both sides are neutral
+ * (`Kernel/Kernel.pas:11348`). Each read runs on its own, so the artifact names every dead page.
+ */
+const profileRead: Flow = {
+  name: 'profile-read',
+  what: 'profile -> curriculum -> bank -> profit & loss -> companies -> company P&L -> initial suppliers -> strategy',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    const attempt = async (page: string, read: () => Promise<void>): Promise<void> => {
+      try {
+        await read();
+      } catch (err: unknown) {
+        assertions.check(`${page} answered without cacheUnavailable`, false, toErrorMessage(err));
+      }
+    };
+    try {
+      await attempt(PAGE_CURRICULUM, async () => {
+        const answer = await session.driver.request<WsRespGetProfile>(
+          { type: WsMessageType.REQ_GET_PROFILE },
+          WsMessageType.RESP_GET_PROFILE,
+        );
+        const levelName = answer.profile?.levelName ?? '';
+        assertions.check(
+          `the profile carries a level name parsed from ${PAGE_CURRICULUM}`,
+          levelName.trim() !== '',
+          levelName || '(empty)',
+        );
+      });
+
+      await attempt(PAGE_CURRICULUM, async () => {
+        const cv = await readCurriculum(session);
+        assertions.check(
+          'the curriculum names a level',
+          cv.currentLevelName.trim() !== '' && cv.currentLevelName !== 'Unknown' && Number.isInteger(cv.currentLevel),
+          `${cv.currentLevel} ${cv.currentLevelName || '(empty)'}`,
+        );
+      });
+
+      await attempt(PAGE_BANK, async () => {
+        const bank = await readBank(session);
+        assertions.check('the bank page has a balance', /^-?\d+$/.test(bank.balance), bank.balance || '(empty)');
+      });
+
+      await attempt(PAGE_PROFITLOSS, async () => {
+        const pl = await readProfitLoss(session);
+        const lines = pl.root.children?.length ?? 0;
+        assertions.check('profit & loss has at least one line', lines > 0, `${lines} lines`);
+      });
+
+      let company: CompaniesData['companies'][number] | undefined;
+      await attempt(PAGE_COMPANIES, async () => {
+        const list = await readCompanies(session);
+        company = list.companies.find(c => c.name === session.company.name);
+        assertions.check(
+          `the companies list holds ${session.company.name}`,
+          company !== undefined,
+          `${list.companies.length} companies`,
+        );
+      });
+
+      const found = company;
+      if (found === undefined) {
+        assertions.check('the company P&L parses', false, 'no company to read');
+      } else {
+        await attempt('CompanyPage.asp', async () => {
+          const cpl = await session.driver.request<WsRespProfileCompanyProfitLoss>(
+            {
+              type: WsMessageType.REQ_PROFILE_COMPANY_PROFITLOSS,
+              companyName: found.name,
+              cluster: found.cluster,
+            },
+            WsMessageType.RESP_PROFILE_COMPANY_PROFITLOSS,
+          );
+          const lines = cpl.data?.root.children?.length ?? 0;
+          assertions.check(
+            'the company P&L parses',
+            cpl.data != null && cpl.error === undefined && lines > 0,
+            cpl.error ?? `${lines} lines`,
+          );
+        });
+      }
+
+      await attempt(PAGE_AUTOCONNECTIONS, async () => {
+        const ac = await readAutoConnections(session);
+        assertions.check(
+          'initial suppliers parse (may list none)',
+          Array.isArray(ac.fluids) && ac.fluids.every(f => f.fluidId !== ''),
+          `${ac.fluids.length} fluids`,
+        );
+      });
+
+      await attempt(PAGE_POLICY, async () => {
+        const policy = await readPolicy(session);
+        assertions.check('the strategy page parses', Array.isArray(policy.policies), `${policy.policies.length} rows`);
+        const row = policy.policies.find(p => sameAccount(p.tycoonName, SECONDARY_ACCOUNT));
+        // No row passes: both sides are neutral — a PolTycoon row is written only when a side
+        // is not pstNeutral (Kernel/Kernel.pas:11348).
+        assertions.check(
+          row
+            ? `the ${SECONDARY_ACCOUNT.username} strategy row carries a status`
+            : `no ${SECONDARY_ACCOUNT.username} strategy row`,
+          row === undefined || (POLICY_STATUSES.includes(row.yourPolicy) && POLICY_STATUSES.includes(row.theirPolicy)),
+          row
+            ? `yours ${row.yourPolicy}, theirs ${row.theirPolicy}`
+            : 'both sides neutral (Kernel/Kernel.pas:11348: a PolTycoon row is written only when a side is not pstNeutral)',
+        );
+      });
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('profile-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 /** A property's raw value from any group of an opening read, or 'absent'. */
 function rawProperty(groups: { [groupId: string]: BuildingPropertyValue[] }, name: string): string {
   for (const group of Object.values(groups)) {
@@ -1714,6 +1919,7 @@ export const FLOWS: Flow[] = [
   worldReaders,
   directoryBrowse,
   searchMenuRead,
+  profileRead,
   warehouseRoleReading,
 ];
 

@@ -4,7 +4,10 @@ import * as path from 'path';
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage, FavoritesItem, WsRespResumeSession } from '@/shared/types/message-types';
 import type { MailMessageHeader } from '@/shared/types/domain-types';
-import { FLOWS, flowByName, nudge, runFlow, type Flow, type FlowResult } from './flows';
+import {
+  FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum,
+  type Flow, type FlowResult,
+} from './flows';
 import { ROUTES } from './routing';
 import { WorldLock } from './world-lock';
 import { WsDriver, WsDriverError } from './ws-driver';
@@ -2534,5 +2537,128 @@ describe('world-readers', () => {
     const result = await run();
     expect(result.status).toBe('FAIL');
     expect(result.assertions.find(a => !a.ok)?.what).toMatch(/still listed/);
+  });
+});
+
+describe('profile-read', () => {
+  const T = WsMessageType;
+  const tree = (children: unknown[]) => ({ root: { label: 'Net', level: 0, amount: '0', children } });
+  type Pages = Record<string, unknown>;
+  const healthy = (): Pages => ({
+    [T.REQ_GET_PROFILE]: { profile: { name: 'SPO_test3', levelName: 'Apprentice' } },
+    [T.REQ_PROFILE_CURRICULUM]: { data: { currentLevel: 0, currentLevelName: 'Apprentice' } },
+    [T.REQ_PROFILE_BANK]: { data: { balance: '1000' } },
+    [T.REQ_PROFILE_PROFITLOSS]: { data: tree([{ label: 'Sales', level: 1, amount: '5' }]) },
+    [T.REQ_PROFILE_COMPANIES]: {
+      data: { companies: [{ name: 'SPO_test3 - Green', cluster: 'PGI', companyId: 1 }], currentCompany: '', worldName: 'planitia' },
+    },
+    [T.REQ_PROFILE_COMPANY_PROFITLOSS]: { companyName: 'SPO_test3 - Green', data: tree([{ label: 'Sales', level: 1, amount: '5' }]) },
+    [T.REQ_PROFILE_AUTOCONNECTIONS]: { data: { fluids: [{ fluidId: 'Food', fluidName: 'Food', suppliers: [] }] } },
+    [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: 'Crazz', yourPolicy: 1, theirPolicy: 1 }], alliesAllowed: true } },
+  });
+
+  function arrange(over: Pages = {}) {
+    const pages = { ...healthy(), ...over };
+    const sent: Record<string, unknown>[] = [];
+    jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+      sent.push(msg as unknown as Record<string, unknown>);
+      const page = pages[msg.type];
+      if (page instanceof Error) throw page;
+      return page;
+    }));
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    return { sent, off };
+  }
+
+  const run = () => flowByName('profile-read').run(ctx);
+  const failed = (r: FlowResult) => r.assertions.filter(a => !a.ok);
+
+  it('passes on healthy pages, sends all eight reads, logs off, and is read-only', async () => {
+    const { sent, off } = arrange();
+    const result = await run();
+    expect(failed(result)).toEqual([]);
+    expect(result.status).toBe('PASS');
+    expect(result.unproven).toEqual([]);
+    expect(off).toHaveBeenCalled();
+    expect(flowByName('profile-read').mutates).toBe(false);
+    expect(sent.map(m => m.type)).toEqual([
+      T.REQ_GET_PROFILE, T.REQ_PROFILE_CURRICULUM, T.REQ_PROFILE_BANK, T.REQ_PROFILE_PROFITLOSS,
+      T.REQ_PROFILE_COMPANIES, T.REQ_PROFILE_COMPANY_PROFITLOSS, T.REQ_PROFILE_AUTOCONNECTIONS, T.REQ_PROFILE_POLICY,
+    ]);
+    expect(sent[5]).toMatchObject({ companyName: 'SPO_test3 - Green', cluster: 'PGI' });
+  });
+
+  it.each([
+    [T.REQ_PROFILE_CURRICULUM, 'TycoonCurriculum.asp'],
+    [T.REQ_PROFILE_BANK, 'TycoonBankAccount.asp'],
+    [T.REQ_PROFILE_PROFITLOSS, 'TycoonProfitAndLoses.asp'],
+    [T.REQ_PROFILE_COMPANIES, 'chooseCompany.asp'],
+    [T.REQ_PROFILE_AUTOCONNECTIONS, 'TycoonAutoConnections.asp'],
+    [T.REQ_PROFILE_POLICY, 'TycoonPolicy.asp'],
+  ])('fails when %s answers cacheUnavailable, naming %s', async (type, page) => {
+    const base = healthy()[type] as { data: Record<string, unknown> };
+    arrange({ [type]: { data: { ...base.data, cacheUnavailable: true } } });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    const bad = failed(result);
+    expect(bad.some(a => a.what.includes(page) && /cacheUnavailable/.test(a.detail ?? ''))).toBe(true);
+  });
+
+  it('fails on an empty levelName even though the profile name is set', async () => {
+    arrange({ [T.REQ_GET_PROFILE]: { profile: { name: 'SPO_test3', levelName: '' } } });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result).map(a => a.what)).toEqual(['the profile carries a level name parsed from NewTycoon/TycoonCurriculum.asp']);
+  });
+
+  it.each<[string, Pages, string]>([
+    ['an Unknown curriculum level', { [T.REQ_PROFILE_CURRICULUM]: { data: { currentLevel: 0, currentLevelName: 'Unknown' } } }, 'the curriculum names a level'],
+    ['an unparsable bank balance', { [T.REQ_PROFILE_BANK]: { data: { balance: 'abc' } } }, 'the bank page has a balance'],
+    ['a P&L with no line', { [T.REQ_PROFILE_PROFITLOSS]: { data: tree([]) } }, 'profit & loss has at least one line'],
+    ['a company P&L that failed', { [T.REQ_PROFILE_COMPANY_PROFITLOSS]: { companyName: 'x', data: null, error: 'x' } }, 'the company P&L parses'],
+    ['a response without data', { [T.REQ_PROFILE_BANK]: {} }, 'NewTycoon/TycoonBankAccount.asp answered without cacheUnavailable'],
+    ['a rejected request', { [T.REQ_PROFILE_POLICY]: new WsDriverError('boom', 1, 'REQ_PROFILE_POLICY') }, 'NewTycoon/TycoonPolicy.asp answered without cacheUnavailable'],
+    ['an out-of-range Crazz status', { [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: 'Crazz', yourPolicy: 7, theirPolicy: 1 }] } } }, 'the Crazz strategy row carries a status'],
+  ])('fails on %s', async (_label, over, what) => {
+    arrange(over);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result).map(a => a.what)).toEqual([what]);
+  });
+
+  it('fails the company checks when the session company is not listed', async () => {
+    const { sent } = arrange({ [T.REQ_PROFILE_COMPANIES]: { data: { companies: [{ name: 'Other', cluster: 'PGI' }] } } });
+    const result = await run();
+    expect(failed(result).map(a => [a.what, a.detail])).toEqual([
+      ['the companies list holds SPO_test3 - Green', '1 companies'],
+      ['the company P&L parses', 'no company to read'],
+    ]);
+    expect(sent.some(m => m.type === T.REQ_PROFILE_COMPANY_PROFITLOSS)).toBe(false);
+  });
+
+  it('passes with no Crazz strategy row, never unproven', async () => {
+    arrange({ [T.REQ_PROFILE_POLICY]: { data: { policies: [], alliesAllowed: true } } });
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(result.unproven).toEqual([]);
+    expect(result.assertions.find(a => a.what === 'no Crazz strategy row')?.detail).toMatch(/Kernel\.pas:11348/);
+  });
+
+  it('passes on an empty initial-suppliers list', async () => {
+    arrange({ [T.REQ_PROFILE_AUTOCONNECTIONS]: { data: { fluids: [] } } });
+    const result = await run();
+    expect(result.status).toBe('PASS');
+  });
+
+  it.each([
+    ['readBank', readBank, T.REQ_PROFILE_BANK],
+    ['readAutoConnections', readAutoConnections, T.REQ_PROFILE_AUTOCONNECTIONS],
+    ['readPolicy', readPolicy, T.REQ_PROFILE_POLICY],
+    ['readCurriculum', readCurriculum, T.REQ_PROFILE_CURRICULUM],
+  ] as const)('%s resolves the data and rejects on cacheUnavailable', async (_name, read, type) => {
+    const base = healthy()[type] as { data: Record<string, unknown> };
+    await expect(read(stubSession(() => base))).resolves.toEqual(base.data);
+    await expect(read(stubSession(() => ({ data: { ...base.data, cacheUnavailable: true } }))))
+      .rejects.toThrow(/cacheUnavailable/);
   });
 });
