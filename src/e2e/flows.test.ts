@@ -3,11 +3,17 @@ import * as os from 'os';
 import * as path from 'path';
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage, FavoritesItem, WsRespResumeSession } from '@/shared/types/message-types';
-import type { MailMessageFull, MailMessageHeader, NewspaperBoard } from '@/shared/types/domain-types';
+import type {
+  BuildingConnectionData, BuildingProductData, BuildingPropertyValue, BuildingSupplyData, MailMessageFull,
+  MailMessageHeader, NewspaperBoard,
+} from '@/shared/types/domain-types';
 import {
   FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum, replyHeaders,
   otherPublicityLevel, publicityLogMatches, taxLogMatches, circuitLogMatches, zoneLogMatches,
   loanDelta, newLoan, receiverLimitRefusal, pictureCheck, testPortraitJpeg, portraitUrl, PROFILE_LEVEL_NAMES,
+  nudgeWithin, evenPriceNudge, roundHalfEven, servicePriceQuantised, facLineMatches, servicePriceLineMatches,
+  salariesLineMatches, clientLinksDiff, outputPriceRefusal, stoppedBit, workerCountsProblem, refreshMissingKeys,
+  fixtureKind,
   pickPlacement, ownsPlacement, delFacilityLineMatches,
   type Flow, type FlowResult,
 } from './flows';
@@ -68,11 +74,12 @@ describe('the catalogue', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
     expect(mutating).toEqual(
       [
-        'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'favorites-folders',
-        'favorites-roundtrip', 'fixtures-ensure', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
+        'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'facility-open-close',
+        'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
+        'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
         'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
-        'road-roundtrip', 'town-min-wage', 'vote-roundtrip', 'zone-roundtrip', 'zoning-alert-read',
+        'road-roundtrip', 'store-price-salaries', 'town-min-wage', 'vote-roundtrip', 'zone-roundtrip', 'zoning-alert-read',
       ],
     );
   });
@@ -5375,6 +5382,696 @@ describe('road-roundtrip and zone-roundtrip (#1151)', () => {
       expect(result.status).toBe('FAIL');
       expect(result.error).toMatch(/REQ_GET_SURFACE died/);
       expect(switched()).toEqual(['7', '1']);
+    });
+  });
+});
+
+// ---- #1152: inspector flows on SPO_test3's own fixtures -------------------------------------
+
+describe('inspector helpers (#1152)', () => {
+  it('nudgeWithin moves ±1 toward the middle and stays inside the range', () => {
+    expect(nudgeWithin('150', 0, 255)).toBe('149');
+    expect(nudgeWithin('100', 0, 255)).toBe('101');
+    expect(nudgeWithin('0', 0, 100)).toBe('1');
+    expect(nudgeWithin('100', 0, 100)).toBe('99');
+    expect(nudgeWithin('900', 0, 400)).toBe('400');
+    expect(nudgeWithin('-5', 0, 150)).toBe('0');
+    expect(nudgeWithin('12.6', 0, 150)).toBe('14');
+    expect(nudgeWithin('abc', 0, 400)).toBe('200');
+    expect(nudgeWithin('', 0, 150)).toBe('75');
+  });
+
+  it('evenPriceNudge never produces an odd value, and always moves', () => {
+    for (let v = 0; v <= 510; v++) {
+      const next = Number(evenPriceNudge(String(v)));
+      expect(next % 2).toBe(0);
+      expect(next).toBeGreaterThanOrEqual(0);
+      expect(next).toBeLessThanOrEqual(500);
+      expect(servicePriceQuantised(String(next))).not.toBe(servicePriceQuantised(String(v)));
+    }
+    expect(evenPriceNudge('100')).toBe('110');
+    expect(evenPriceNudge('300')).toBe('290');
+    expect(evenPriceNudge('junk')).toBe('100');
+    expect(evenPriceNudge(' ')).toBe('100');
+  });
+
+  it("servicePriceQuantised is 2*round(v/2) with Delphi's banker's round, capped at 255", () => {
+    expect([0.5, 1.5, 2.5, 3.2, 3.7].map(roundHalfEven)).toEqual([0, 2, 2, 3, 4]);
+    expect(servicePriceQuantised('110')).toBe('110');
+    expect(servicePriceQuantised('5')).toBe('4'); // round(2.5) = 2
+    expect(servicePriceQuantised('7')).toBe('8'); // round(3.5) = 4
+    expect(servicePriceQuantised('600')).toBe('510');
+    expect(servicePriceQuantised('n/a')).toBe('n/a');
+  });
+
+  it('facLineMatches wants the facility, the text, then a boundary', () => {
+    const line = '12:00 - Fac(30,40) Output price set: Chemicals to 101';
+    expect(facLineMatches(line, 30, 40, 'Output price set: Chemicals to 101')).toBe(true);
+    expect(facLineMatches(line, 30, 41, 'Output price set: Chemicals to 101')).toBe(false);
+    expect(facLineMatches(line, 30, 40, 'Output price set: Chemicals to 10')).toBe(false);
+    expect(facLineMatches(`${line} OK`, 30, 40, 'Output price set: Chemicals to 101')).toBe(true);
+  });
+
+  it('servicePriceLineMatches and salariesLineMatches pin every field', () => {
+    expect(servicePriceLineMatches('1/1 12:00 Service SetPrice: 0, 110', '110')).toBe(true);
+    expect(servicePriceLineMatches('1/1 12:00 Service SetPrice: 1, 110', '110')).toBe(false);
+    expect(servicePriceLineMatches('1/1 12:00 Service SetPrice: 0, 1100', '110')).toBe(false);
+    expect(salariesLineMatches('Setting salaries: 149, 100, 90', '149', '100', '90')).toBe(true);
+    expect(salariesLineMatches('Setting salaries: 149, 100, 91', '149', '100', '90')).toBe(false);
+    expect(salariesLineMatches('Setting salaries: 150, 100, 90', '149', '100', '90')).toBe(false);
+  });
+
+  it('clientLinksDiff compares links by lot and name, and labels them', () => {
+    const a = conn('Shop A', 'SPO_test3 - Green', 1, 2);
+    const b = conn('Shop B', 'Other Co', 3, 4);
+    expect(clientLinksDiff([a, b], [b, a])).toEqual({ lost: [], gained: [] });
+    expect(clientLinksDiff([a, b], [a])).toEqual({ lost: ['Shop B (3,4) of Other Co'], gained: [] });
+    expect(clientLinksDiff([a], [a, b])).toEqual({ lost: [], gained: ['Shop B (3,4) of Other Co'] });
+  });
+
+  it('outputPriceRefusal accepts no client or own clients only, all read', () => {
+    const own = conn('Shop A', 'SPO_test3 - Green', 1, 2);
+    const base = product({ connections: [], connectionCount: 0 });
+    expect(outputPriceRefusal(base, 'SPO_test3 - Green')).toBeNull();
+    expect(outputPriceRefusal(product({ connections: [own], connectionCount: 1 }), 'SPO_test3 - Green')).toBeNull();
+    expect(outputPriceRefusal(product({ connections: [own, conn('X', 'Other Co', 5, 6)], connectionCount: 2 }), 'SPO_test3 - Green'))
+      .toMatch(/another company: X \(5,6\) of Other Co/);
+    expect(outputPriceRefusal(product({ connections: [own], connectionCount: 25 }), 'SPO_test3 - Green')).toMatch(/25 client/);
+    expect(outputPriceRefusal(product({ pricePc: undefined }), 'SPO_test3 - Green')).toMatch(/header/);
+    expect(outputPriceRefusal(undefined, 'SPO_test3 - Green')).toMatch(/header/);
+  });
+
+  it('stoppedBit reads bit $04 of Trouble', () => {
+    expect(stoppedBit('0')).toBe('0');
+    expect(stoppedBit('4')).toBe('1');
+    expect(stoppedBit('5')).toBe('1');
+    expect(stoppedBit('3')).toBe('0');
+    expect(stoppedBit(undefined)).toBeUndefined();
+    expect(stoppedBit('')).toBeUndefined();
+    expect(stoppedBit('x')).toBeUndefined();
+  });
+
+  it('workerCountsProblem names a missing, non-numeric or unasked kind', () => {
+    expect(workerCountsProblem([{ kind: 0, workers: 1 }, { kind: 1, workers: 0 }, { kind: 2, workers: 7 }])).toBeNull();
+    expect(workerCountsProblem([{ kind: 0, workers: 1 }, { kind: 2, workers: 7 }])).toBe('kind 1 missing');
+    expect(workerCountsProblem([{ kind: 0, workers: NaN }, { kind: 1, workers: 0 }, { kind: 2, workers: 7 }]))
+      .toBe('kind 0 is not a number');
+    expect(workerCountsProblem([{ kind: 0, workers: 1 }, { kind: 1, workers: 0 }, { kind: 2, workers: 7 }, { kind: 5, workers: 1 }]))
+      .toBe('unasked kind(s) 5');
+  });
+
+  it('refreshMissingKeys names a dropped group and a dropped property', () => {
+    const opening = { srvGeneral: [pv('Name', 'a'), pv('Cost', '1')], workforce: [pv('Workers0', '1')] };
+    expect(refreshMissingKeys(opening, { ...opening, extra: [] })).toEqual([]);
+    expect(refreshMissingKeys(opening, { srvGeneral: [pv('Name', 'b')] })).toEqual(['srvGeneral.Cost', 'workforce']);
+  });
+
+  it('fixtureKind finds a kind and refuses an unknown one', () => {
+    expect(fixtureKind('store').id).toBe('store');
+    expect(() => fixtureKind('nope' as never)).toThrow(/No fixture kind "nope"/);
+  });
+});
+
+function pv(name: string, value: string): BuildingPropertyValue {
+  return { name, value };
+}
+
+function conn(facilityName: string, companyName: string, x: number, y: number, overprice = '0'): BuildingConnectionData {
+  return {
+    facilityName, companyName, createdBy: '', price: '0', overprice, lastValue: '', cost: '$0', quality: '0%',
+    connected: true, x, y,
+  };
+}
+
+function product(over: Partial<BuildingProductData> = {}): BuildingProductData {
+  return {
+    path: 'Outputs\\Chemicals.five\\', name: 'Chemicals', metaFluid: 'Chemicals', pricePc: '100', connectionCount: 0,
+    connections: [], ...over,
+  };
+}
+
+function supplyGate(over: Partial<BuildingSupplyData> = {}): BuildingSupplyData {
+  return {
+    path: 'Inputs\\00000000.Water.five\\', name: 'Water', metaFluid: 'Water', maxPrice: '200', minK: '10',
+    selected: '1', connectionCount: 1, connections: [conn('Well', 'Other Co', 7, 8, '20')], ...over,
+  };
+}
+
+describe('inspector flows (#1152)', () => {
+  const STORE = { x: 10, y: 20, visualClass: '4601', name: 'Food Store' };
+  const INDUSTRY = { x: 30, y: 40, visualClass: '4116', name: 'Farm' };
+
+  interface Write {
+    property: string;
+    value: string;
+    params?: Record<string, string>;
+  }
+
+  interface World {
+    storeTabs: string[];
+    srvPrices0?: string;
+    salaries: string[];
+    trouble?: string;
+    supplies: BuildingSupplyData[];
+    products: BuildingProductData[];
+    figures: { supply: string; demand: string };
+    counts: { kind: number; workers: number }[];
+    refreshGroups?: { [id: string]: BuildingPropertyValue[] };
+    /** Whether a write moves the value; default yes. */
+    apply: (w: Write, n: number) => boolean;
+    /** Throw on this write number (1-based). */
+    failWrite?: number;
+    /** Members whose Survival line never appears. */
+    silent: Set<string>;
+    /** Runs after each applied write — lets a test move the world. */
+    after?: (w: Write, n: number) => void;
+    writes: Write[];
+    lines: string[];
+    requests: WsMessage[];
+  }
+
+  function makeWorld(over: Partial<World> = {}): World {
+    return {
+      storeTabs: ['srvGeneral', 'supplies', 'workforce'],
+      srvPrices0: '120',
+      salaries: ['150', '100', '90'],
+      trouble: '0',
+      supplies: [supplyGate()],
+      products: [product({ connections: [conn('Own Shop', 'SPO_test3 - Green', 1, 2)], connectionCount: 1 })],
+      figures: { supply: '12', demand: '30' },
+      counts: [{ kind: 0, workers: 1 }, { kind: 1, workers: 2 }, { kind: 2, workers: 3 }],
+      apply: () => true,
+      silent: new Set(),
+      writes: [],
+      lines: [],
+      requests: [],
+      ...over,
+    };
+  }
+
+  const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+  function logLine(w: Write): string {
+    const fac = (text: string, x = INDUSTRY.x, y = INDUSTRY.y) => `12:00 - Fac(${x},${y}) ${text}`;
+    const p = w.params ?? {};
+    switch (w.property) {
+      case 'RDOSetPrice': return `1/1 12:00 Service SetPrice: ${p.index}, ${w.value}`;
+      case 'RDOSetSalaries': return `1/1 12:00 Setting salaries: ${p.salary0}, ${p.salary1}, ${p.salary2}`;
+      case 'RDOSetOutputPrice': return fac(`Output price set: ${p.fluidId} to ${w.value}`);
+      case 'RDOSetInputMaxPrice': return fac(`Input max price set: ${p.fluidId} to ${w.value}`);
+      case 'RDOSetInputMinK': return fac(`Input min K set: ${p.fluidId} to ${w.value}`);
+      case 'RDOSetInputOverPrice': return fac(`Input overprice set: ${p.fluidId} to ${w.value}`);
+      case 'RDOSetInputSortMode': return '12:00 Changing Sort Mode.. ';
+      case 'property': return '12:00 Stopping Facility.';
+      default: return '';
+    }
+  }
+
+  function applyWrite(world: World, w: Write): void {
+    const p = w.params ?? {};
+    const gateIn = world.supplies.find(s => s.metaFluid === p.fluidId);
+    switch (w.property) {
+      case 'RDOSetPrice': world.srvPrices0 = servicePriceQuantised(w.value); break;
+      case 'RDOSetSalaries': world.salaries = [p.salary0, p.salary1, p.salary2]; break;
+      case 'RDOSetOutputPrice': {
+        const out = world.products.find(o => o.metaFluid === p.fluidId);
+        if (out) out.pricePc = w.value;
+        break;
+      }
+      case 'RDOSetInputMaxPrice': if (gateIn) gateIn.maxPrice = w.value; break;
+      case 'RDOSetInputMinK': if (gateIn) gateIn.minK = w.value; break;
+      case 'RDOSetInputSortMode': if (gateIn) gateIn.sortMode = w.value; break;
+      case 'RDOSelSelected': if (gateIn) gateIn.selected = w.value; break;
+      case 'RDOSetInputOverPrice': if (gateIn) gateIn.connections[Number(p.index)].overprice = w.value; break;
+      case 'property': {
+        const t = Number(world.trouble ?? '0');
+        world.trouble = String(w.value === '-1' ? t | 4 : t & ~4);
+        break;
+      }
+    }
+  }
+
+  function arrange(world: World, found: { store?: boolean; industry?: boolean } = {}) {
+    const stub = stubSession(msg => {
+      world.requests.push(msg);
+      const m = msg as WsMessage & Record<string, unknown>;
+      const isStore = m.x === STORE.x && m.y === STORE.y;
+      switch (msg.type) {
+        case WsMessageType.REQ_BUILDING_DETAILS:
+          return {
+            details: isStore
+              ? { tabs: world.storeTabs.map(id => ({ id })), groups: { srvGeneral: [pv('Name', 'Food Store'), pv('Cost', '9')] } }
+              : { tabs: [{ id: 'indGeneral' }, { id: 'supplies' }, { id: 'products' }], groups: { indGeneral: [pv('Name', 'Farm')] } },
+          };
+        case WsMessageType.REQ_BUILDING_TAB_DATA: {
+          if (m.tabId === 'supplies') return { supplies: world.supplies.map(s => ({ path: s.path, name: s.name, connections: [] })) };
+          if (m.tabId === 'products') return { products: world.products.map(o => ({ path: o.path, name: o.name, connections: [] })) };
+          if (m.tabId === 'srvGeneral') {
+            const g: BuildingPropertyValue[] = [];
+            if (world.srvPrices0 !== undefined) g.push(pv('srvPrices0', world.srvPrices0));
+            if (world.trouble !== undefined) g.push(pv('Trouble', world.trouble));
+            return { groups: { srvGeneral: g } };
+          }
+          if (m.tabId === 'workforce') return { groups: { workforce: world.salaries.map((v, i) => pv(`Salaries${i}`, v)) } };
+          throw new Error(`unexpected tab ${String(m.tabId)}`);
+        }
+        case WsMessageType.REQ_BUILDING_GATE_CONNECTIONS: {
+          if (m.tabId === 'supplies') return { supply: clone(world.supplies.find(s => s.path === m.path)) };
+          return { product: clone(world.products.find(o => o.path === m.path)) };
+        }
+        case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
+          const w: Write = { property: String(m.propertyName), value: String(m.value), params: m.additionalParams as Record<string, string> };
+          world.writes.push(w);
+          const n = world.writes.length;
+          if (world.failWrite === n) throw new Error('write rejected');
+          const line = logLine(w);
+          if (line && !world.silent.has(w.property)) world.lines.push(line);
+          if (world.apply(w, n)) applyWrite(world, w);
+          world.after?.(w, n);
+          return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: '' };
+        }
+        case WsMessageType.REQ_BUILDING_SERVICE_FIGURES: return world.figures;
+        case WsMessageType.REQ_BUILDING_WORKER_COUNTS: return { counts: world.counts };
+        case WsMessageType.REQ_BUILDING_REFRESH_PROPERTIES:
+          return { details: { groups: world.refreshGroups ?? { srvGeneral: [pv('Name', 'Food Store'), pv('Cost', '9'), pv('ROI', '1')] } } };
+        default:
+          throw new Error(`unexpected request ${msg.type}`);
+      }
+    });
+    jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    const find = jest.spyOn(fixtures, 'findFixture').mockImplementation(async (_s, kind) => {
+      if (kind.id === 'store') return found.store === false ? { kind: 'store', reason: 'none in Helartia' } : { kind: 'store', found: STORE };
+      return found.industry === false ? { kind: 'industry', reason: 'under construction' } : { kind: 'industry', found: INDUSTRY };
+    });
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      if (typeof proof !== 'object') return null;
+      return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+    });
+    return { stub, off, find };
+  }
+
+  const run = (name: string, lock = cleanLock()) => flowByName(name).run({ lock, survivalLogUrl: 'u', ...fastClock() });
+  const setProps = (world: World) => world.requests.filter(r => r.type === WsMessageType.REQ_BUILDING_SET_PROPERTY);
+
+  describe('inspector-reads', () => {
+    it('reads one supply and one product gate, service 0, workers 0..2 and a refresh — and writes nothing', async () => {
+      const world = makeWorld();
+      const { off } = arrange(world);
+      const result = await run('inspector-reads');
+      expect(result.status).toBe('PASS');
+      expect(result.assertions.every(a => a.ok)).toBe(true);
+      const types = world.requests.map(r => r.type);
+      expect(types).toContain(WsMessageType.REQ_BUILDING_GATE_CONNECTIONS);
+      expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_BUILDING_SERVICE_FIGURES, serviceIndex: 0 }));
+      expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_BUILDING_WORKER_COUNTS, kinds: [0, 1, 2] }));
+      expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_BUILDING_REFRESH_PROPERTIES, activeTabId: 'srvGeneral' }));
+      expect(setProps(world)).toEqual([]);
+      expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('FAILs a missing worker kind, naming it', async () => {
+      const world = makeWorld({ counts: [{ kind: 0, workers: 1 }, { kind: 2, workers: 3 }] });
+      arrange(world);
+      const result = await run('inspector-reads');
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('kind 1 missing');
+    });
+
+    it('FAILs a refresh that drops a key of the opening read', async () => {
+      const world = makeWorld({ refreshGroups: { srvGeneral: [pv('Name', 'Food Store')] } });
+      arrange(world);
+      const result = await run('inspector-reads');
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('missing: srvGeneral.Cost');
+    });
+
+    it('FAILs empty service figures and a gate with no header', async () => {
+      const world = makeWorld({ figures: { supply: '', demand: '3' }, products: [product({ metaFluid: '' })] });
+      arrange(world);
+      const result = await run('inspector-reads');
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.filter(a => !a.ok).map(a => a.what)).toEqual([
+        'products gate "Chemicals": header and connections parsed',
+        'service 0: supply and demand are present',
+      ]);
+    });
+
+    it('FAILs an industry that lists no supply gate, and still reads its product gate', async () => {
+      const world = makeWorld({ supplies: [] });
+      arrange(world);
+      const result = await run('inspector-reads');
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.filter(a => !a.ok).map(a => a.what)).toEqual(['the industry fixture lists a supplies gate']);
+      expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_BUILDING_GATE_CONNECTIONS, tabId: 'products' }));
+    });
+
+    it('is UNPROVEN, not FAIL, when a fixture is missing — and the other half still runs', async () => {
+      const world = makeWorld();
+      arrange(world, { industry: false });
+      const result = await run('inspector-reads');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual(['industry fixture — under construction']);
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_BUILDING_SERVICE_FIGURES)).toBe(true);
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_BUILDING_GATE_CONNECTIONS)).toBe(false);
+    });
+
+    it('is UNPROVEN when the store fixture is missing', async () => {
+      const world = makeWorld();
+      arrange(world, { store: false });
+      const result = await run('inspector-reads');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual(['store fixture — none in Helartia']);
+    });
+  });
+
+  describe('store-price-salaries', () => {
+    it('writes an even price and the whole salary triplet, proves both, and restores both', async () => {
+      const world = makeWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('store-price-salaries', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes).toEqual([
+        { property: 'RDOSetPrice', value: '130', params: { index: '0' } },
+        { property: 'RDOSetPrice', value: '120', params: { index: '0' } },
+        { property: 'RDOSetSalaries', value: '149', params: { salary0: '149', salary1: '100', salary2: '90' } },
+        { property: 'RDOSetSalaries', value: '150', params: { salary0: '150', salary1: '100', salary2: '90' } },
+      ]);
+      expect(result.probes.map(p => p.logLine)).toEqual([
+        '1/1 12:00 Service SetPrice: 0, 130',
+        '1/1 12:00 Setting salaries: 149, 100, 90',
+      ]);
+      expect(world.srvPrices0).toBe('120');
+      expect(world.salaries).toEqual(['150', '100', '90']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('passes a read-back of 2*round(v/2), never an odd write', async () => {
+      // The published price is the stored half doubled: 131 would read back 132, so it is never written.
+      const world = makeWorld({ srvPrices0: '121' });
+      arrange(world);
+      const result = await run('store-price-salaries');
+      expect(result.probes[0]).toMatchObject({ status: 'PASS', written: '130', restoreReadBack: 'CONFIRMED' });
+      // The restore writes the original back; it reads 2*round(121/2) = 120, and that passes.
+      expect(world.writes.map(w => w.value).slice(0, 2)).toEqual(['130', '121']);
+      expect(world.srvPrices0).toBe('120');
+    });
+
+    it('FAILs a read-back that disagrees with the value written even when its Survival line is present', async () => {
+      const world = makeWorld({ apply: w => w.property !== 'RDOSetPrice' });
+      arrange(world);
+      const result = await run('store-price-salaries');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].logLine).toBe('1/1 12:00 Service SetPrice: 0, 130');
+      expect(result.probes[0].note).toMatch(/read-back never showed "130"/);
+    });
+
+    it('restores after a failed write, and after a missing Survival line', async () => {
+      const world = makeWorld({ failWrite: 1, silent: new Set(['RDOSetSalaries']) });
+      arrange(world);
+      const result = await run('store-price-salaries');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', restored: true, note: 'write rejected' });
+      expect(result.probes[1]).toMatchObject({ status: 'FAIL', restored: true });
+      expect(result.probes[1].note).toMatch(/no model-server log line/);
+      expect(world.writes.map(w => w.value)).toEqual(['130', '120', '149', '150']);
+    });
+
+    it('records RDOSetSalaries unproven by name when the template has no workforce group, and still runs RDOSetPrice', async () => {
+      const world = makeWorld({ storeTabs: ['srvGeneral', 'supplies'] });
+      arrange(world);
+      const result = await run('store-price-salaries');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetSalaries — .*workforce.*#1149/)]);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOSetPrice', 'RDOSetPrice']);
+    });
+
+    it('is UNPROVEN and writes nothing, anywhere, when the store fixture is missing', async () => {
+      const world = makeWorld();
+      arrange(world, { store: false });
+      const result = await run('store-price-salaries');
+      expect(result.status).toBe('UNPROVEN');
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('refuses to write salaries it cannot read in full', async () => {
+      const world = makeWorld({ salaries: ['150', '100'] });
+      arrange(world);
+      const result = await run('store-price-salaries');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[1].note).toMatch(/Cannot read the original/);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOSetPrice', 'RDOSetPrice']);
+    });
+  });
+
+  describe('industry-output-price', () => {
+    it("drives an own-client gate's price, proves it, restores it, and keeps every client link", async () => {
+      const world = makeWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('industry-output-price', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes).toEqual([
+        { property: 'RDOSetOutputPrice', value: '101', params: { fluidId: 'Chemicals' } },
+        { property: 'RDOSetOutputPrice', value: '100', params: { fluidId: 'Chemicals' } },
+      ]);
+      expect(result.probes[0].logLine).toBe('12:00 - Fac(30,40) Output price set: Chemicals to 101');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('writes nothing when a product client belongs to another company (UNPROVEN)', async () => {
+      const world = makeWorld({ products: [product({ connections: [conn('Their Shop', 'Other Co', 5, 6)], connectionCount: 1 })] });
+      arrange(world);
+      const result = await run('industry-output-price');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^RDOSetOutputPrice — .*Kernel\/Kernel\.pas:7193-7205.*Their Shop \(5,6\) of Other Co/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('takes the first safe gate when an earlier one is not', async () => {
+      const unsafe = product({ path: 'p1', name: 'Fruit', metaFluid: 'Fruit', connections: [conn('T', 'Other Co', 5, 6)], connectionCount: 1 });
+      const world = makeWorld({ products: [unsafe, product()] });
+      arrange(world);
+      const result = await run('industry-output-price');
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.params?.fluidId)).toEqual(['Chemicals', 'Chemicals']);
+    });
+
+    it('is UNPROVEN when the fixture lists no product gate', async () => {
+      const world = makeWorld({ products: [] });
+      arrange(world);
+      const result = await run('industry-output-price');
+      expect(result.unproven[0]).toMatch(/lists no product gate/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('FAILs naming the lost link when the client list after the restore differs from its snapshot', async () => {
+      const world = makeWorld({
+        after: (_w, n) => {
+          if (n === 1) {
+            world.products[0].connections = [];
+            world.products[0].connectionCount = 0;
+          }
+        },
+      });
+      arrange(world);
+      const result = await run('industry-output-price');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].status).toBe('PASS');
+      const failed = result.assertions.find(a => !a.ok);
+      expect(failed?.detail).toMatch(/lost: Own Shop \(1,2\) of SPO_test3 - Green/);
+    });
+
+    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+      const world = makeWorld();
+      arrange(world, { industry: false });
+      const result = await run('industry-output-price');
+      expect(result.status).toBe('UNPROVEN');
+      expect(setProps(world)).toEqual([]);
+    });
+  });
+
+  describe('industry-supply-limits', () => {
+    it('drives max price, min K, sort mode and overprice on a sortable gate with a supplier, restoring each', async () => {
+      const world = makeWorld({ supplies: [supplyGate({ qpSorted: '1', sortMode: '0' })] });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('industry-supply-limits', lock);
+      expect(result.status).toBe('PASS');
+      expect(result.probes.map(p => [p.member, p.written, p.original])).toEqual([
+        ['RDOSetInputMaxPrice', '199', '200'],
+        ['RDOSetInputMinK', '11', '10'],
+        ['RDOSetInputSortMode', '1', '0'],
+        ['RDOSetInputOverPrice', '21', '20'],
+      ]);
+      expect(result.probes[2].logLine).toBe('12:00 Changing Sort Mode.. ');
+      expect(world.supplies[0]).toMatchObject({ maxPrice: '200', minK: '10', sortMode: '0' });
+      expect(world.supplies[0].connections[0].overprice).toBe('20');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('records the sort mode and the overprice unproven by name on a plain gate with no supplier, and runs the others', async () => {
+      const world = makeWorld({ supplies: [supplyGate({ connections: [], connectionCount: 0 })] });
+      arrange(world);
+      const result = await run('industry-supply-limits');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual([
+        expect.stringMatching(/^RDOSetInputSortMode — the Water gate publishes no sort mode/),
+        expect.stringMatching(/^RDOSetInputOverPrice — the Water gate has no supplier row/),
+      ]);
+      expect(result.probes.map(p => [p.member, p.status])).toEqual([
+        ['RDOSetInputMaxPrice', 'PASS'],
+        ['RDOSetInputMinK', 'PASS'],
+      ]);
+    });
+
+    it('restores the overprice on the same supplier after its row shifted', async () => {
+      const world = makeWorld({
+        after: (w, n) => {
+          if (w.property === 'RDOSetInputOverPrice' && n === 5) {
+            world.supplies[0].connections.unshift(conn('New Well', 'Other Co', 9, 9, '0'));
+          }
+        },
+      });
+      arrange(world);
+      const result = await run('industry-supply-limits');
+      const over = world.writes.filter(w => w.property === 'RDOSetInputOverPrice');
+      expect(over).toEqual([
+        { property: 'RDOSetInputOverPrice', value: '21', params: { fluidId: 'Water', index: '0' } },
+        { property: 'RDOSetInputOverPrice', value: '20', params: { fluidId: 'Water', index: '1' } },
+      ]);
+      expect(world.supplies[0].connections.map(c => [c.facilityName, c.overprice])).toEqual([['New Well', '0'], ['Well', '20']]);
+      expect(result.probes.find(p => p.member === 'RDOSetInputOverPrice')?.status).toBe('PASS');
+    });
+
+    it('never writes the overprice onto another row when its supplier left the gate', async () => {
+      const world = makeWorld({
+        after: (w, n) => {
+          if (n === 5) world.supplies[0].connections = [conn('Other Well', 'Other Co', 9, 9, '0')];
+        },
+      });
+      arrange(world);
+      const result = await run('industry-supply-limits');
+      const over = result.probes.find(p => p.member === 'RDOSetInputOverPrice');
+      expect(over?.status).toBe('FAIL');
+      expect(over?.note).toMatch(/restore failed/);
+      expect(world.writes.filter(w => w.property === 'RDOSetInputOverPrice')).toHaveLength(1);
+      expect(world.supplies[0].connections[0].overprice).toBe('0');
+    });
+
+    it('FAILs a max-price read-back that never moves though its line is present', async () => {
+      const world = makeWorld({ apply: w => w.property !== 'RDOSetInputMaxPrice' });
+      arrange(world);
+      const result = await run('industry-supply-limits');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', logLine: '12:00 - Fac(30,40) Input max price set: Water to 199' });
+    });
+
+    it('is UNPROVEN when no supply gate publishes MaxPrice', async () => {
+      const world = makeWorld({ supplies: [supplyGate({ maxPrice: undefined })] });
+      arrange(world);
+      const result = await run('industry-supply-limits');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Kernel\/Kernel\.pas:7813/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+      const world = makeWorld();
+      arrange(world, { industry: false });
+      expect((await run('industry-supply-limits')).status).toBe('UNPROVEN');
+      expect(setProps(world)).toEqual([]);
+    });
+  });
+
+  describe('facility-open-close', () => {
+    it('stops the store (#-1), reads the facStoppedByTycoon bit, and restarts it (#0)', async () => {
+      const world = makeWorld({ trouble: '1' });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('facility-open-close', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes).toEqual([
+        { property: 'property', value: '-1', params: { propertyName: 'Stopped' } },
+        { property: 'property', value: '0', params: { propertyName: 'Stopped' } },
+      ]);
+      expect(result.probes[0]).toMatchObject({ original: '0', written: '1', logLine: '12:00 Stopping Facility.' });
+      expect(world.trouble).toBe('1');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('restarts a stopped store first, then stops it again', async () => {
+      const world = makeWorld({ trouble: '4' });
+      arrange(world);
+      const result = await run('facility-open-close');
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.value)).toEqual(['0', '-1']);
+    });
+
+    it('FAILs a bit that never moves though the line is present, and still restores', async () => {
+      const world = makeWorld({ apply: () => false });
+      arrange(world);
+      const result = await run('facility-open-close');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].logLine).toBe('12:00 Stopping Facility.');
+      expect(world.writes.map(w => w.value)).toEqual(['-1', '0']);
+    });
+
+    it('writes nothing when Trouble is absent', async () => {
+      const world = makeWorld({ trouble: undefined });
+      arrange(world);
+      const result = await run('facility-open-close');
+      expect(result.status).toBe('FAIL');
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the store fixture is missing', async () => {
+      const world = makeWorld();
+      arrange(world, { store: false });
+      expect((await run('facility-open-close')).status).toBe('UNPROVEN');
+      expect(setProps(world)).toEqual([]);
+    });
+  });
+
+  describe('industry-auto-buy', () => {
+    it('toggles Selected off and back on, proven by the read-back alone', async () => {
+      const world = makeWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('industry-auto-buy', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes).toEqual([
+        { property: 'RDOSelSelected', value: '0', params: { fluidId: 'Water' } },
+        { property: 'RDOSelSelected', value: '1', params: { fluidId: 'Water' } },
+      ]);
+      expect(result.probes[0].logLine).toBeNull();
+      expect(liveLog.openLogWindow).not.toHaveBeenCalled();
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a toggle that never reads back', async () => {
+      const world = makeWorld({ supplies: [supplyGate({ selected: '0' })], apply: () => false });
+      arrange(world);
+      const result = await run('industry-auto-buy');
+      expect(result.status).toBe('FAIL');
+      expect(world.writes.map(w => w.value)).toEqual(['1', '0']);
+    });
+
+    it('is UNPROVEN when no supply gate publishes Selected', async () => {
+      const world = makeWorld({ supplies: [supplyGate({ selected: undefined })] });
+      arrange(world);
+      const result = await run('industry-auto-buy');
+      expect(result.status).toBe('UNPROVEN');
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+      const world = makeWorld();
+      arrange(world, { industry: false });
+      expect((await run('industry-auto-buy')).status).toBe('UNPROVEN');
+      expect(setProps(world)).toEqual([]);
     });
   });
 });

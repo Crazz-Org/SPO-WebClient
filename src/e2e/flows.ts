@@ -67,6 +67,11 @@ import type {
   WsRespDemolishRoad,
   WsRespDemolishRoadArea,
   WsRespDefineZone,
+  WsRespBuildingGateConnections,
+  WsRespBuildingServiceFigures,
+  WsRespBuildingWorkerCounts,
+  WsRespBuildingRefreshProperties,
+  WorkerCount,
   WsRespBuildingCategories,
   WsRespBuildingFacilities,
   WsRespRenameFacility,
@@ -79,6 +84,9 @@ import type {
   AutoConnectionFluid,
   AutoConnectionsData,
   BankAccountData,
+  BuildingConnectionData,
+  BuildingProductData,
+  BuildingSupplyData,
   BuildingInfo,
   CompaniesData,
   CurriculumData,
@@ -137,14 +145,17 @@ import {
   readSectionGroups,
   propertyValue,
   resumeSession,
+  setBuildingProperty,
   switchToMayor,
   type LiveSession,
   type SecondaryLogin,
 } from './session';
 import type { WorldLock } from './world-lock';
 import {
+  FIXTURE_KINDS,
   ensureFixtures,
   facilityDimensions,
+  findFixture,
   findFreeLot,
   isConstructionClass,
   isRefusedClass,
@@ -154,6 +165,8 @@ import {
   placeFacility,
   readCash,
   FIXTURE_CASH_FLOOR,
+  type FixtureKind,
+  type FixtureKindId,
   type FixtureOutcome,
 } from './fixtures';
 
@@ -4449,6 +4462,784 @@ const fixturesEnsure: Flow = {
 };
 
 // ---------------------------------------------------------------------------------------------
+// Inspector flows (#1152) — owner setters and live reads on SPO_test3's own fixtures
+// ---------------------------------------------------------------------------------------------
+//
+// Every write below is a round trip (`runRoundTrip`): the Survival line proves receipt only —
+// each of these handlers logs before its owner check — and a read-back equal to the value
+// written proves the change. The gateway's own `confirmed` flag is never used as proof.
+
+/** Where a fixture stands — what `findFixture` found, and nothing else. */
+interface OwnFixture {
+  x: number;
+  y: number;
+  visualClass: string;
+  name: string;
+}
+
+/** A gate as the tab data lists it — path and name, nothing read off the gate yet. */
+interface GateStub {
+  path: string;
+  name: string;
+}
+
+/** The kind's row in FIXTURE_KINDS. */
+export function fixtureKind(id: FixtureKindId): FixtureKind {
+  const kind = FIXTURE_KINDS.find(k => k.id === id);
+  if (!kind) throw new Error(`No fixture kind "${id}" in FIXTURE_KINDS`);
+  return kind;
+}
+
+/**
+ * SPO_test3's own fixture of a kind, or `undefined` with the reason recorded as unproven. A flow
+ * whose fixture is missing writes nothing, anywhere.
+ */
+async function ownFixture(
+  session: LiveSession,
+  kindId: FixtureKindId,
+  assertions: Assertions,
+): Promise<OwnFixture | undefined> {
+  const lookup = await findFixture(session, fixtureKind(kindId));
+  if (!lookup.found) {
+    assertions.unproven(`${kindId} fixture`, lookup.reason ?? 'not found');
+    return undefined;
+  }
+  return lookup.found;
+}
+
+const fixtureLabel = (fx: OwnFixture): string => `${fx.name} (${fx.x},${fx.y})`;
+
+/**
+ * The gates of one accordion. The opening read comes first: it recreates the inspector's temp
+ * object, so what follows is a current read (`readSectionGroups` explains why).
+ */
+async function gateStubs(session: LiveSession, fx: OwnFixture, tabId: 'supplies' | 'products'): Promise<GateStub[]> {
+  await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+  const tab = await readBuildingTabData(session, fx.x, fx.y, tabId, fx.visualClass);
+  return (tabId === 'supplies' ? tab.supplies : tab.products) ?? [];
+}
+
+function gateConnections(
+  session: LiveSession,
+  fx: OwnFixture,
+  tabId: 'supplies' | 'products',
+  stub: GateStub,
+): Promise<WsRespBuildingGateConnections> {
+  return session.driver.request<WsRespBuildingGateConnections>(
+    {
+      type: WsMessageType.REQ_BUILDING_GATE_CONNECTIONS,
+      x: fx.x,
+      y: fx.y,
+      tabId,
+      path: stub.path,
+      name: stub.name,
+      visualClass: fx.visualClass,
+    },
+    WsMessageType.RESP_BUILDING_GATE_CONNECTIONS,
+  );
+}
+
+/** A fresh read of one supply gate, found by name. */
+async function readSupply(session: LiveSession, fx: OwnFixture, name: string): Promise<BuildingSupplyData | undefined> {
+  const stub = (await gateStubs(session, fx, 'supplies')).find(g => g.name === name);
+  return stub ? (await gateConnections(session, fx, 'supplies', stub)).supply : undefined;
+}
+
+/** A fresh read of one product gate, found by name. */
+async function readProduct(session: LiveSession, fx: OwnFixture, name: string): Promise<BuildingProductData | undefined> {
+  const stub = (await gateStubs(session, fx, 'products')).find(g => g.name === name);
+  return stub ? (await gateConnections(session, fx, 'products', stub)).product : undefined;
+}
+
+/** A read-back channel that polls through `read` until the bound. */
+function readBackOn(
+  source: string,
+  why: string,
+  read: () => Promise<string | undefined>,
+  normalise?: (value: string) => string,
+): RoundTripSpec['proof']['readBack'] {
+  return { source, why, read, boundMs: TIMEOUTS.readBack, ...(normalise ? { normalise } : {}) };
+}
+
+const FACILITY_CACHE_WHY =
+  "the facility's object-cache entry refreshes within its TTL (OB-29); the poll waits the lag out";
+const GATE_CACHE_WHY =
+  "the gate's own cache object, read the way the Supplies/Products tab reads it (SetPath onto the gate, " +
+  'building-details-handler.ts); the poll waits the cache refresh out';
+
+/**
+ * The integer ±1 toward the middle of `[min, max]`, clamped. `nudge` clamps to 0..100, which
+ * would turn a salary of 150 into 100 — a write of a different magnitude, not a nudge.
+ */
+export function nudgeWithin(original: string, min: number, max: number): string {
+  const middle = (min + max) / 2;
+  const parsed = Number(original);
+  if (original.trim() === '' || !Number.isFinite(parsed)) return String(Math.round(middle));
+  const rounded = Math.round(parsed);
+  const next = rounded >= middle ? rounded - 1 : rounded + 1;
+  return String(Math.min(max, Math.max(min, next)));
+}
+
+/** The largest price the client offers for a service (SRV_GENERAL_GROUP's slider, template-groups.ts). */
+const SERVICE_PRICE_MAX = 500;
+/** `high(fServiceData[index].Price)` — a byte (StdBlocks/ServiceBlock.pas:1585). */
+const SERVICE_PRICE_STORED_MAX = 255;
+
+/**
+ * The service price to write: ±10 from the original, inside 0..500, and always **even** —
+ * `RDOSetPrice` stores `round(value/2)` and the cache publishes `2*Price`
+ * (StdBlocks/ServiceBlock.pas:1585, :1731), so an odd value would read back different.
+ */
+export function evenPriceNudge(original: string): string {
+  const parsed = Number(original);
+  if (original.trim() === '' || !Number.isFinite(parsed)) return '100';
+  const base = Math.round(parsed);
+  const moved = Math.min(SERVICE_PRICE_MAX, Math.max(0, base >= 250 ? base - 10 : base + 10));
+  return String(moved % 2 === 0 ? moved : moved - 1);
+}
+
+/** Delphi's `round`: banker's rounding, a tie goes to the even neighbour. */
+export function roundHalfEven(value: number): number {
+  const floor = Math.floor(value);
+  const fraction = value - floor;
+  if (fraction > 0.5) return floor + 1;
+  if (fraction < 0.5) return floor;
+  return floor % 2 === 0 ? floor : floor + 1;
+}
+
+/**
+ * What the cache publishes for a written service price: `2 * min(255, round(v/2))`
+ * (StdBlocks/ServiceBlock.pas:1585 stores it, :1731 publishes `2*Price`).
+ */
+export function servicePriceQuantised(value: string): string {
+  const parsed = Number(value);
+  if (value.trim() === '' || !Number.isFinite(parsed)) return value;
+  return String(2 * Math.min(SERVICE_PRICE_STORED_MAX, roundHalfEven(parsed / 2)));
+}
+
+/** `text` directly after `Fac(<x>,<y>) `, ending the line or followed by whitespace. */
+export function facLineMatches(line: string, x: number, y: number, text: string): boolean {
+  return new RegExp(`${escapeRegExp(`Fac(${x},${y}) ${text}`)}(?=\\s|$)`).test(line);
+}
+
+/** `StdBlocks/ServiceBlock.pas:1580` — "Service SetPrice: <index>, <value>"; service 0 here. */
+export function servicePriceLineMatches(line: string, written: string): boolean {
+  return new RegExp(`${escapeRegExp(`Service SetPrice: 0, ${written}`)}(?=\\s|$)`).test(line);
+}
+
+/** `Kernel/WorkCenterBlock.pas:584` — "Setting salaries: <hi>, <mid>, <lo>". */
+export function salariesLineMatches(line: string, hi: string, mid: string, lo: string): boolean {
+  return new RegExp(`${escapeRegExp(`Setting salaries: ${hi}, ${mid}, ${lo}`)}(?=\\s|$)`).test(line);
+}
+
+const linkKey = (c: BuildingConnectionData): string => `${c.x},${c.y},${c.facilityName}`;
+const linkLabel = (c: BuildingConnectionData): string => `${c.facilityName} (${c.x},${c.y}) of ${c.companyName}`;
+
+/** The client links in one list and not the other, by identity (x, y, facility name). */
+export function clientLinksDiff(
+  before: BuildingConnectionData[],
+  after: BuildingConnectionData[],
+): { lost: string[]; gained: string[] } {
+  const afterKeys = new Set(after.map(linkKey));
+  const beforeKeys = new Set(before.map(linkKey));
+  return {
+    lost: before.filter(c => !afterKeys.has(linkKey(c))).map(linkLabel),
+    gained: after.filter(c => !beforeKeys.has(linkKey(c))).map(linkLabel),
+  };
+}
+
+/**
+ * Why a product gate's price must not be driven, or `null` when it may. A price change re-checks
+ * every client link (`TOutput.SetPricePerc`, Kernel/Kernel.pas:7193-7205) and
+ * `TGate.ConnectionChanged` drops any that no longer passes (:6664-6676, :6737-6750) — so the
+ * gate must have no client, or only clients of SPO_test3's own company, all of them read.
+ */
+export function outputPriceRefusal(product: BuildingProductData | undefined, ownCompany: string): string | null {
+  if (!product?.metaFluid || product.pricePc === undefined) return 'its header was not read';
+  if (product.connectionCount !== product.connections.length) {
+    return `${product.connectionCount ?? '?'} client(s) listed but ${product.connections.length} read (the row cap) — unread clients cannot be checked`;
+  }
+  const foreign = product.connections.filter(c => c.companyName !== ownCompany);
+  if (foreign.length > 0) return `client(s) of another company: ${foreign.map(linkLabel).join('; ')}`;
+  return null;
+}
+
+/**
+ * The `facStoppedByTycoon` bit ($04, Kernel/Kernel.pas:107) of the cached `Trouble`
+ * (Kernel/KernelCache.pas:417), as '1'/'0' — `undefined` when `Trouble` is absent or not a number.
+ */
+export function stoppedBit(trouble: string | undefined): string | undefined {
+  if (trouble === undefined || trouble.trim() === '') return undefined;
+  const parsed = Number(trouble);
+  if (!Number.isInteger(parsed)) return undefined;
+  return (parsed & 0x04) !== 0 ? '1' : '0';
+}
+
+const WORKER_KINDS = [0, 1, 2];
+
+/** What is wrong with a worker-count answer for kinds 0, 1 and 2, or `null`. */
+export function workerCountsProblem(counts: WorkerCount[]): string | null {
+  const problems: string[] = [];
+  for (const kind of WORKER_KINDS) {
+    const hit = counts.filter(c => c.kind === kind);
+    if (hit.length === 0) problems.push(`kind ${kind} missing`);
+    else if (!Number.isFinite(hit[0].workers)) problems.push(`kind ${kind} is not a number`);
+  }
+  const extra = counts.filter(c => !WORKER_KINDS.includes(c.kind)).map(c => c.kind);
+  if (extra.length > 0) problems.push(`unasked kind(s) ${extra.join(', ')}`);
+  return problems.length > 0 ? problems.join('; ') : null;
+}
+
+/** Every group id and property name of the opening read that the refresh does not carry. */
+export function refreshMissingKeys(
+  opening: { [groupId: string]: BuildingPropertyValue[] },
+  refreshed: { [groupId: string]: BuildingPropertyValue[] },
+): string[] {
+  const missing: string[] = [];
+  for (const [groupId, values] of Object.entries(opening)) {
+    const again = refreshed[groupId];
+    if (!again) {
+      missing.push(groupId);
+      continue;
+    }
+    const names = new Set(again.map(v => v.name));
+    for (const v of values) if (!names.has(v.name)) missing.push(`${groupId}.${v.name}`);
+  }
+  return missing;
+}
+
+/** One round trip's verdict, as an assertion naming the member. */
+function checkProbe(assertions: Assertions, probe: ProbeResult): void {
+  assertions.check(`${probe.member}: the write read back and was restored`, probe.status === 'PASS', probe.note);
+}
+
+async function survivalUrl(ctx: FlowContext): Promise<string> {
+  return ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+}
+
+/** The industry half of inspector-reads: one supply and one product gate, connections parsed. */
+async function readIndustryGates(session: LiveSession, fx: OwnFixture, assertions: Assertions): Promise<void> {
+  for (const tabId of ['supplies', 'products'] as const) {
+    const stubs = await gateStubs(session, fx, tabId);
+    assertions.check(`the industry fixture lists a ${tabId} gate`, stubs.length > 0, `${stubs.length} gate(s)`);
+    if (stubs.length === 0) continue;
+    const response = await gateConnections(session, fx, tabId, stubs[0]);
+    const gate = tabId === 'supplies' ? response.supply : response.product;
+    assertions.check(
+      `${tabId} gate "${stubs[0].name}": header and connections parsed`,
+      gate !== undefined &&
+        Boolean(gate.metaFluid) &&
+        typeof gate.connectionCount === 'number' &&
+        Array.isArray(gate.connections),
+      gate ? `metaFluid ${gate.metaFluid ?? '(none)'}, ${String(gate.connectionCount)} connection(s)` : 'no gate in the answer',
+    );
+  }
+}
+
+/** The store half of inspector-reads: service figures, worker counts, and a refresh. */
+async function readStoreFigures(session: LiveSession, fx: OwnFixture, assertions: Assertions): Promise<void> {
+  const opening = await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+
+  const figures = await session.driver.request<WsRespBuildingServiceFigures>(
+    { type: WsMessageType.REQ_BUILDING_SERVICE_FIGURES, x: fx.x, y: fx.y, serviceIndex: 0 },
+    WsMessageType.RESP_BUILDING_SERVICE_FIGURES,
+  );
+  assertions.check(
+    'service 0: supply and demand are present',
+    figures.supply !== '' && figures.demand !== '',
+    `supply "${figures.supply}", demand "${figures.demand}"`,
+  );
+
+  const workers = await session.driver.request<WsRespBuildingWorkerCounts>(
+    { type: WsMessageType.REQ_BUILDING_WORKER_COUNTS, x: fx.x, y: fx.y, kinds: WORKER_KINDS },
+    WsMessageType.RESP_BUILDING_WORKER_COUNTS,
+  );
+  const problem = workerCountsProblem(workers.counts);
+  assertions.check(
+    'worker counts: a number for each of kinds 0, 1 and 2',
+    problem === null,
+    problem ?? workers.counts.map(c => `${c.kind}=${c.workers}`).join(' '),
+  );
+
+  // "Same keys" is "every key the opening read carried comes back": a refresh without the tab
+  // scope reads the whole template (refreshBuildingProperties), so it may carry more.
+  const activeTabId = Object.keys(opening.groups)[0];
+  const refreshed = await session.driver.request<WsRespBuildingRefreshProperties>(
+    { type: WsMessageType.REQ_BUILDING_REFRESH_PROPERTIES, x: fx.x, y: fx.y, visualClass: fx.visualClass, activeTabId },
+    WsMessageType.RESP_BUILDING_REFRESH_PROPERTIES,
+  );
+  const missing = refreshMissingKeys(opening.groups, refreshed.details.groups);
+  assertions.check(
+    'refresh properties: every key of the opening read comes back',
+    missing.length === 0,
+    missing.length > 0 ? `missing: ${missing.join(' ')}` : `groups: ${Object.keys(refreshed.details.groups).join(' ')}`,
+  );
+}
+
+/**
+ * The inspector reads no other flow sends: gate connections (industry), service figures, worker
+ * counts and a property refresh (store). No write.
+ */
+const inspectorReads: Flow = {
+  name: 'inspector-reads',
+  what:
+    "SPO_test3's industry and store fixtures: gate connections (one supply, one product), service 0 " +
+    'figures, worker counts 0..2, refresh properties — no write',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const industry = await ownFixture(session, 'industry', assertions);
+      if (industry) await readIndustryGates(session, industry, assertions);
+      const store = await ownFixture(session, 'store', assertions);
+      if (store) await readStoreFigures(session, store, assertions);
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('inspector-reads', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+const NO_WORKFORCE_REASON =
+  "the store fixture's template carries no workforce group (WORKFORCE_GROUP) — FIXTURE_KINDS' store kind " +
+  'does not require it (#1149)';
+
+/**
+ * The store's owner settings: service 0's price (`TServiceBlock.RDOSetPrice`,
+ * StdBlocks/ServiceBlock.pas:1578) and the salary triplet (`TWorkCenter.RDOSetSalaries`,
+ * Kernel/WorkCenterBlock.pas:582). Both set back to the values read.
+ */
+const storePriceSalaries: Flow = {
+  name: 'store-price-salaries',
+  what:
+    "round trips on SPO_test3's store fixture: RDOSetPrice (service 0, an even value) and RDOSetSalaries " +
+    '(the whole triplet) — Survival line + read-back, restored',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'store', assertions);
+      if (!fx) return report('store-price-salaries', assertions, probes, session);
+      const url = await survivalUrl(ctx);
+      const details = await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+
+      const readPrice = async (): Promise<string | undefined> =>
+        propertyValue(await readSectionGroups(session, fx.x, fx.y, 'srvGeneral', fx.visualClass), 'srvGeneral', 'srvPrices0');
+      const price = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} service 0 price`,
+        member: 'RDOSetPrice',
+        read: readPrice,
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetPrice', value, { index: '0' });
+        },
+        testValue: evenPriceNudge,
+        proof: {
+          log: { marker: LOG_MARKERS.RDOSetPrice, match: servicePriceLineMatches },
+          readBack: readBackOn(
+            `srvGeneral.srvPrices0 at (${fx.x},${fx.y}) via the gateway's section read`,
+            `${FACILITY_CACHE_WHY}; the price is stored halved and published doubled (StdBlocks/ServiceBlock.pas:1585, :1731)`,
+            readPrice,
+            servicePriceQuantised,
+          ),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetPrice', additionalParams: { index: '0' } },
+      });
+      probes.push(price);
+      checkProbe(assertions, price);
+
+      if (!details.tabs.some(t => t.id === 'workforce')) {
+        assertions.unproven('RDOSetSalaries', NO_WORKFORCE_REASON);
+        return report('store-price-salaries', assertions, probes, session);
+      }
+
+      const readSalaries = async (): Promise<string | undefined> => {
+        const groups = await readSectionGroups(session, fx.x, fx.y, 'workforce', fx.visualClass);
+        const values = WORKER_KINDS.map(i => propertyValue(groups, 'workforce', `Salaries${i}`));
+        return values.some(v => v === undefined) ? undefined : values.join(',');
+      };
+      const salaries = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} salaries (hi,mid,lo)`,
+        member: 'RDOSetSalaries',
+        read: readSalaries,
+        write: async value => {
+          const [salary0, salary1, salary2] = value.split(',');
+          // The whole triplet, the untouched two unchanged — buildRdoCommandArgs requires all three.
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetSalaries', salary0, { salary0, salary1, salary2 });
+        },
+        testValue: original => {
+          const [hi, mid, lo] = original.split(',');
+          return [nudgeWithin(hi, 0, 255), mid, lo].join(',');
+        },
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDOSetSalaries,
+            match: (line, written) => {
+              const [hi, mid, lo] = written.split(',');
+              return salariesLineMatches(line, hi, mid, lo);
+            },
+          },
+          readBack: readBackOn(
+            `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read`,
+            `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593)`,
+            readSalaries,
+          ),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetSalaries' },
+      });
+      probes.push(salaries);
+      checkProbe(assertions, salaries);
+      return report('store-price-salaries', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * A product gate's price (`TFacility.RDOSetOutputPrice`, Kernel/Kernel.pas:4332), driven only on
+ * a gate whose clients are all SPO_test3's own — a price change can drop another player's link
+ * (`outputPriceRefusal`). The client list after the restore must equal its snapshot.
+ */
+const industryOutputPrice: Flow = {
+  name: 'industry-output-price',
+  what:
+    "round trip on RDOSetOutputPrice at SPO_test3's industry fixture, on a product gate with no foreign " +
+    'client — Survival line + read-back, restored, client links unchanged',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('industry-output-price', assertions, probes, session);
+
+      const refusals: string[] = [];
+      let chosen: { name: string; product: BuildingProductData; fluid: string } | undefined;
+      for (const stub of await gateStubs(session, fx, 'products')) {
+        const product = (await gateConnections(session, fx, 'products', stub)).product;
+        const refusal = outputPriceRefusal(product, session.company.name);
+        if (refusal === null && product?.metaFluid) {
+          chosen = { name: stub.name, product, fluid: product.metaFluid };
+          break;
+        }
+        refusals.push(`${stub.name}: ${refusal ?? 'no fluid'}`);
+      }
+      if (!chosen) {
+        assertions.unproven(
+          'RDOSetOutputPrice',
+          `no product gate is safe to drive — a price change re-checks every client link and drops a failing ` +
+            `one (Kernel/Kernel.pas:7193-7205): ${refusals.length > 0 ? refusals.join(' | ') : 'the fixture lists no product gate'}`,
+        );
+        return report('industry-output-price', assertions, probes, session);
+      }
+
+      const { name, product, fluid } = chosen;
+      const snapshot = product.connections;
+      const readPrice = async (): Promise<string | undefined> => (await readProduct(session, fx, name))?.pricePc;
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ${name} output price`,
+        member: 'RDOSetOutputPrice',
+        read: readPrice,
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetOutputPrice', value, { fluidId: fluid });
+        },
+        testValue: original => nudgeWithin(original, 0, 400),
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDOSetOutputPrice,
+            match: (line, written) => facLineMatches(line, fx.x, fx.y, `Output price set: ${fluid} to ${written}`),
+          },
+          readBack: readBackOn(`the ${name} product gate's PricePc via REQ_BUILDING_GATE_CONNECTIONS`, GATE_CACHE_WHY, readPrice),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetOutputPrice', additionalParams: { fluidId: fluid } },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+
+      const after = await readProduct(session, fx, name);
+      const diff = clientLinksDiff(snapshot, after?.connections ?? []);
+      const kept = diff.lost.length === 0 && diff.gained.length === 0 && after?.connectionCount === product.connectionCount;
+      assertions.check(
+        `the ${name} gate's client links equal their snapshot after the restore`,
+        kept,
+        kept
+          ? `${snapshot.length} client link(s)`
+          : `lost: ${diff.lost.join('; ') || '(none)'} — gained: ${diff.gained.join('; ') || '(none)'} — ` +
+              `count ${String(product.connectionCount)} -> ${String(after?.connectionCount)}`,
+      );
+      return report('industry-output-price', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * A supply gate's limits: max price, min quality, sort mode and one supplier's overprice
+ * (`TFacility.RDOSetInput*`, Kernel/Kernel.pas:4358-4442). Nightly only (routing.ts). A member the
+ * gate cannot carry is recorded unproven by name; the others still run.
+ */
+const industrySupplyLimits: Flow = {
+  name: 'industry-supply-limits',
+  what:
+    "round trips on RDOSetInputMaxPrice / MinK / SortMode / OverPrice at SPO_test3's industry fixture — " +
+    'Survival line + read-back each, restored',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('industry-supply-limits', assertions, probes, session);
+
+      let gate: { name: string; supply: BuildingSupplyData; fluid: string } | undefined;
+      for (const stub of await gateStubs(session, fx, 'supplies')) {
+        const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
+        if (supply?.metaFluid && supply.maxPrice !== undefined) {
+          gate = { name: stub.name, supply, fluid: supply.metaFluid };
+          break;
+        }
+      }
+      if (!gate) {
+        assertions.unproven(
+          'the supply limits',
+          'no supply gate of the industry fixture publishes MaxPrice — only a TPullInput caches it (Kernel/Kernel.pas:7813)',
+        );
+        return report('industry-supply-limits', assertions, probes, session);
+      }
+
+      const { name, supply, fluid } = gate;
+      const url = await survivalUrl(ctx);
+      const fresh = (): Promise<BuildingSupplyData | undefined> => readSupply(session, fx, name);
+      const source = (field: string): string => `the ${name} supply gate's ${field} via REQ_BUILDING_GATE_CONNECTIONS`;
+      const facMatch = (text: string) => (line: string, written: string): boolean =>
+        facLineMatches(line, fx.x, fx.y, `${text}: ${fluid} to ${written}`);
+      const writeGate = (member: string) => async (value: string): Promise<void> => {
+        await setBuildingProperty(session, fx.x, fx.y, member, value, { fluidId: fluid });
+      };
+
+      const readMaxPrice = async (): Promise<string | undefined> => (await fresh())?.maxPrice;
+      const maxPrice = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ${name} input max price`,
+        member: 'RDOSetInputMaxPrice',
+        read: readMaxPrice,
+        write: writeGate('RDOSetInputMaxPrice'),
+        testValue: original => nudgeWithin(original, 0, 400),
+        proof: {
+          log: { marker: LOG_MARKERS.RDOSetInputMaxPrice, match: facMatch('Input max price set') },
+          readBack: readBackOn(source('MaxPrice'), GATE_CACHE_WHY, readMaxPrice),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputMaxPrice', additionalParams: { fluidId: fluid } },
+      });
+      probes.push(maxPrice);
+      checkProbe(assertions, maxPrice);
+
+      const readMinK = async (): Promise<string | undefined> => (await fresh())?.minK;
+      const minK = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ${name} input min K`,
+        member: 'RDOSetInputMinK',
+        read: readMinK,
+        write: writeGate('RDOSetInputMinK'),
+        testValue: original => nudgeWithin(original, 0, 100),
+        proof: {
+          log: { marker: LOG_MARKERS.RDOSetInputMinK, match: facMatch('Input min K set') },
+          readBack: readBackOn(source('minK'), GATE_CACHE_WHY, readMinK),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputMinK', additionalParams: { fluidId: fluid } },
+      });
+      probes.push(minK);
+      checkProbe(assertions, minK);
+
+      // The control is offered only on a gate that publishes QPSorted = 1 and a SortMode (SuppliesGroup.tsx).
+      if (supply.qpSorted === '1' && supply.sortMode !== undefined) {
+        const readSortMode = async (): Promise<string | undefined> => (await fresh())?.sortMode;
+        const sortMode = await roundTripProbe(ctx, url, {
+          what: `${fixtureLabel(fx)} ${name} input sort mode`,
+          member: 'RDOSetInputSortMode',
+          read: readSortMode,
+          write: writeGate('RDOSetInputSortMode'),
+          testValue: original => (original === '1' ? '0' : '1'),
+          // The line carries no coordinates and no value (Kernel/Kernel.pas:4446): the read-back attributes it.
+          proof: {
+            log: { marker: LOG_MARKERS.RDOSetInputSortMode },
+            readBack: readBackOn(source('SortMode'), GATE_CACHE_WHY, readSortMode),
+          },
+          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputSortMode', additionalParams: { fluidId: fluid } },
+        });
+        probes.push(sortMode);
+        checkProbe(assertions, sortMode);
+      } else {
+        assertions.unproven(
+          'RDOSetInputSortMode',
+          `the ${fluid} gate publishes no sort mode — only TMediaInput caches QPSorted/SortMode ` +
+            "(Kernel/MediaGates.pas:388-389); a plain input's SetSortMode is empty (Kernel/Kernel.pas:7169-7171), " +
+            'so no sort control is offered and a write would change nothing',
+        );
+      }
+
+      const supplier = supply.connections[0];
+      if (supplier) {
+        // The supplier is identified by its lot, never by its row: a row can shift between reads.
+        const same = (c: BuildingConnectionData): boolean => c.x === supplier.x && c.y === supplier.y;
+        const readOverprice = async (): Promise<string | undefined> =>
+          (await fresh())?.connections.find(same)?.overprice;
+        const writeOverprice = async (value: string): Promise<void> => {
+          const index = (await fresh())?.connections.findIndex(same) ?? -1;
+          if (index < 0) throw new Error(`supplier (${supplier.x},${supplier.y}) is no longer on the ${fluid} gate`);
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetInputOverPrice', value, {
+            fluidId: fluid,
+            index: String(index),
+          });
+        };
+        const overprice = await roundTripProbe(ctx, url, {
+          what: `${fixtureLabel(fx)} ${name} overprice of ${supplier.facilityName} (${supplier.x},${supplier.y})`,
+          member: 'RDOSetInputOverPrice',
+          read: readOverprice,
+          write: writeOverprice,
+          testValue: original => nudgeWithin(original, 0, 150),
+          proof: {
+            log: { marker: LOG_MARKERS.RDOSetInputOverPrice, match: facMatch('Input overprice set') },
+            // The gateway's own confirmed read is always empty for it (mapRdoCommandToPropertyName).
+            readBack: readBackOn(source(`supplier row overprice (BuildingConnectionData.overprice)`), GATE_CACHE_WHY, readOverprice),
+          },
+          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputOverPrice', additionalParams: { fluidId: fluid } },
+        });
+        probes.push(overprice);
+        checkProbe(assertions, overprice);
+      } else {
+        assertions.unproven(
+          'RDOSetInputOverPrice',
+          `the ${fluid} gate has no supplier row — the overprice is set per supplier, and a fixture built fresh has none (#1149)`,
+        );
+      }
+      return report('industry-supply-limits', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * Stop and restart the store (`TFacility.SetStopped`, Kernel/Kernel.pas:3948). `Stopped` is
+ * set-only; the read-back is the `facStoppedByTycoon` bit of the cached `Trouble` (`stoppedBit`).
+ */
+const facilityOpenClose: Flow = {
+  name: 'facility-open-close',
+  what:
+    "round trip on Stopped at SPO_test3's store fixture — the Stopping Facility. line + the Trouble " +
+    'facStoppedByTycoon bit read back, restored',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'store', assertions);
+      if (!fx) return report('facility-open-close', assertions, probes, session);
+      const url = await survivalUrl(ctx);
+      const readStopped = async (): Promise<string | undefined> =>
+        stoppedBit(
+          propertyValue(await readSectionGroups(session, fx.x, fx.y, 'srvGeneral', fx.visualClass), 'srvGeneral', 'Trouble'),
+        );
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} stopped by its owner`,
+        member: 'Stopped',
+        read: readStopped,
+        write: async bit => {
+          // A boolean property travels as #-1 / #0.
+          await setBuildingProperty(session, fx.x, fx.y, 'property', bit === '1' ? '-1' : '0', { propertyName: 'Stopped' });
+        },
+        testValue: original => (original === '1' ? '0' : '1'),
+        // The line carries no coordinates (Kernel/Kernel.pas:3950): the read-back attributes it.
+        proof: {
+          log: { marker: LOG_MARKERS.Stopped },
+          readBack: readBackOn(
+            `the facStoppedByTycoon bit ($04, Kernel/Kernel.pas:107) of srvGeneral.Trouble at (${fx.x},${fx.y})`,
+            `Stopped is set-only; Trouble is what the facility caches (Kernel/KernelCache.pas:417). ${FACILITY_CACHE_WHY}`,
+            readStopped,
+          ),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'Stopped' },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+      return report('facility-open-close', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * A supply gate's auto-buy flag (`RDOSelSelected`, declared on the input gate). It prints no
+ * Survival line, so the read-back alone proves it: `Selected` off the gate header
+ * (Kernel/Kernel.pas:7815).
+ */
+const industryAutoBuy: Flow = {
+  name: 'industry-auto-buy',
+  what: "toggle RDOSelSelected on a supply gate of SPO_test3's industry fixture — read-back, toggled back",
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('industry-auto-buy', assertions, probes, session);
+
+      let gate: { name: string; fluid: string } | undefined;
+      for (const stub of await gateStubs(session, fx, 'supplies')) {
+        const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
+        if (supply?.metaFluid && supply.selected !== undefined) {
+          gate = { name: stub.name, fluid: supply.metaFluid };
+          break;
+        }
+      }
+      if (!gate) {
+        assertions.unproven(
+          'RDOSelSelected',
+          'no supply gate of the industry fixture publishes Selected — only a TPullInput caches it (Kernel/Kernel.pas:7815)',
+        );
+        return report('industry-auto-buy', assertions, probes, session);
+      }
+
+      const { name, fluid } = gate;
+      const url = await survivalUrl(ctx);
+      const readSelected = async (): Promise<string | undefined> => (await readSupply(session, fx, name))?.selected;
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ${name} auto-buy`,
+        member: 'RDOSelSelected',
+        read: readSelected,
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSelSelected', value, { fluidId: fluid });
+        },
+        testValue: original => (original === '1' ? '0' : '1'),
+        proof: {
+          readBack: readBackOn(
+            `the ${name} supply gate's Selected via REQ_BUILDING_GATE_CONNECTIONS`,
+            `RDOSelSelected prints no Survival line; ${GATE_CACHE_WHY}`,
+            readSelected,
+          ),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSelSelected', additionalParams: { fluidId: fluid } },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+      return report('industry-auto-buy', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
 // Build menu, placement, rename, demolition (#1150)
 // ---------------------------------------------------------------------------------------------
 
@@ -4859,6 +5650,12 @@ export const FLOWS: Flow[] = [
   zoneRoundTrip,
   warehouseRoleReading,
   fixturesEnsure,
+  inspectorReads,
+  storePriceSalaries,
+  industryOutputPrice,
+  industrySupplyLimits,
+  facilityOpenClose,
+  industryAutoBuy,
   buildMenuRead,
   placeRenameDemolish,
 ];
