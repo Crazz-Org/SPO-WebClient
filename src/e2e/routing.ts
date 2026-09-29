@@ -64,12 +64,11 @@ export const GATE_ONLY: Record<string, string> = {
     'each RDOSetTaxValue by the mayor posts a world event every online player sees (Kernel/Population.pas:1264-1284, WorldLocator.SendEvent) — driven only at the gate, when its code changes',
   'policy-roundtrip':
     'RDOSetPolicyStatus broadcasts a world event naming Crazz to every online tycoon, twice per run (Kernel/Kernel.pas:11790-11800, Kernel/World.pas:5179-5196, texts Kernel/Kernel.pas:13495-13497); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly',
+  'chat-private-channel':
+    'creating and deleting a channel and the typing / away states broadcast to every connected client (Interface Server/InterfaceServer.pas:4594, :4049-4060, :4690, :3968-3980); accepted by the maintainer (2026-09-29) at the gate only, when chat code changes — never in the nightly',
   'bank-borrow-payoff':
     "TBank.AskLoan broadcasts 'SPO_test3 borrowed $X from the <bank>.' to every online tycoon (Kernel/Kernel.pas:8849-8859, text Kernel/Kernel.pas:13487); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly",
 };
-
-const CHAT_AWAITING =
-  "awaiting card #1148 (C5) — session-resume's one REQ_CHAT_GET_USERS is its liveness read after the resume, not a drive of any chat action";
 
 /**
  * Handler file (repo-relative) -> why only a fallback rule routes it:
@@ -81,8 +80,6 @@ export const FALLBACK_ONLY: Record<string, string> = {
     'excluded: abandoning a role is never driven (maintainer, 2026-09-29 — recorded in card #1134)',
   'src/server/session/tutorial-handler.ts':
     'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
-  'src/server/session/chat-handler.ts': CHAT_AWAITING,
-  'src/server/ws-handlers/chat-handlers.ts': CHAT_AWAITING,
 };
 
 export const ROUTES: RouteRule[] = [
@@ -316,6 +313,19 @@ export const ROUTES: RouteRule[] = [
     why:
       "the research handlers — the flow that reads the research fixture's inventory and an invention's details, then " +
       'queues it and cancels it (#1154)',
+  },
+  {
+    // Before the fallbacks below (#1148): chat-private-channel is GATE_ONLY — it broadcasts.
+    test: /^src\/server\/session\/chat-handler\.ts$|^src\/server\/ws-handlers\/chat-handlers\.ts$|^src\/client\/store\/chat-store\.ts$/,
+    flows: ['chat-read', 'chat-private-channel', 'chat-chase'],
+    why: 'the chat handlers and store — the channel list read, the password channel the flow creates and removes (send, typing, away), and the chase of Crazz',
+  },
+  {
+    // After the pixel rule, which keeps the chat CSS.
+    test: /^src\/client\/components\/chat\//,
+    flows: ['chat-read', 'chat-private-channel', 'chat-chase'],
+    needsL3: true,
+    why: 'the chat strip and chase badge — the chat flows, plus a browser look',
   },
   {
     test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$/,

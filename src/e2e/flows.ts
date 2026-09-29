@@ -83,6 +83,12 @@ import type {
   WsRespResearchDetails,
   WsRespBuildingUpgrade,
   ResearchCategoryData,
+  WsRespChatChannelList,
+  WsRespChatChannelInfo,
+  WsRespChatSuccess,
+  WsEventChatMsg,
+  WsEventChatUserTyping,
+  WsEventChatChannelChange,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
 import { CLUSTER_IDS } from '../shared/cluster-data';
@@ -119,7 +125,7 @@ import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
 import { ERROR_AccessDenied, ERROR_TooManyFacilities } from '../shared/error-codes';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
-import { WsDriverError } from './ws-driver';
+import { WsDriverError, type OutboundMessage } from './ws-driver';
 import {
   GOVERNED_TOWN,
   INTERFACE_LOG_BASE,
@@ -7379,6 +7385,307 @@ async function undoUpgrade(
   if (stopped && cloningBack) ctx.lock.clearPendingRestore(run.key);
 }
 
+/** A chat name is SPO_test3's own — `ChatMsg`'s `From` may still carry `/AccDesc`. */
+function isSelf(name: string): boolean {
+  return sameAccount(name.split('/')[0], PRIMARY_ACCOUNT);
+}
+
+/** Run one step; its assertion holds exactly when the step did not throw. */
+async function attempt(assertions: Assertions, what: string, step: () => Promise<unknown>): Promise<boolean> {
+  let error: string | undefined;
+  try {
+    await step();
+  } catch (err: unknown) {
+    error = toErrorMessage(err);
+  }
+  assertions.check(what, error === undefined, error);
+  return error === undefined;
+}
+
+/**
+ * The chat channel list and the Lobby's info (#1148). Read-only. The gateway prepends the
+ * Lobby to every list (`getChatChannelList` in `chat-handler.ts`), so its presence proves
+ * nothing — the assertion is that every entry is well-formed.
+ */
+const chatRead: Flow = {
+  name: 'chat-read',
+  what: 'chat channel list -> Lobby channel info',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const list = await session.driver.request<WsRespChatChannelList>(
+        { type: WsMessageType.REQ_CHAT_GET_CHANNELS },
+        WsMessageType.RESP_CHAT_CHANNEL_LIST,
+      );
+      const channels: unknown = list.channels;
+      const wellFormed =
+        Array.isArray(channels) &&
+        channels.every(
+          (c: { name?: unknown; isProtected?: unknown }) =>
+            typeof c.name === 'string' && c.name !== '' && typeof c.isProtected === 'boolean',
+        );
+      assertions.check(
+        'the channel list is well-formed (each entry a name and isProtected)',
+        wellFormed,
+        Array.isArray(channels) ? `${channels.length} channel(s)` : 'not a list',
+      );
+      // '' is the Lobby's server name (Interface Server/InterfaceServer.pas:2623, :4565-4575).
+      const info = await session.driver.request<WsRespChatChannelInfo>(
+        { type: WsMessageType.REQ_CHAT_GET_CHANNEL_INFO, channelName: '' },
+        WsMessageType.RESP_CHAT_CHANNEL_INFO,
+      );
+      assertions.check('the Lobby channel info is a string', typeof info.info === 'string');
+      assertions.check('no gateway errors on the chat reads', session.driver.errors.length === 0);
+      return report('chat-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * A password channel the flow creates, chats in, and removes (#1148). GATE_ONLY — nothing
+ * here is private:
+ * - `TClientView.CreateChannel` enters the creator (`Interface Server/InterfaceServer.pas:1512`,
+ *   `:4591-4593`) and `ClientCreatedChannel` broadcasts the list change, password included, to
+ *   every client (`:4594` -> `:4049-4060`); `GetChannelList` lists passwords in clear
+ *   (`:3373-3390`). The channel is deleted when its last member leaves (`:4688-4693`).
+ * - `ChatMsg` delivers only to the sender's channel, sender included (`:3902-3924`) — the
+ *   `EVENT_CHAT_MSG` echo is a real server witness.
+ * - `MsgCompositionChanged` loops over every client, sender included (`:3968-3980`,
+ *   `TClientView.NotifyMsgCompositionState` `:2426-2430`) — typing and away are proven by the
+ *   sender's own echo. AFK sticks until another state (`:1495-1502`), so the cleanup pushes idle.
+ * - The Lobby's server name is `''` (`:2623`, `:4565-4575`), never `'Lobby'`.
+ * - A killed run cleans itself up: `DoLogOff` -> `ClientLeavedChannel` (`:2000`).
+ */
+const chatPrivateChannel: Flow = {
+  name: 'chat-private-channel',
+  what: 'create a password channel -> listed -> send (echo) -> typing on/off -> away -> idle -> Lobby -> gone',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    const driver = session.driver;
+    try {
+      const id = randomUUID().slice(0, 8);
+      const channel = `e2e-${id}`;
+      const password = randomUUID();
+      const line = `e2e chat probe ${id} — automated L2 check, safe to ignore`;
+
+      // Every call is a fresh request, correlated by its own wsRequestId — never a push.
+      const listed = async (): Promise<string> => {
+        const resp = await driver.request<WsRespChatChannelList>(
+          { type: WsMessageType.REQ_CHAT_GET_CHANNELS },
+          WsMessageType.RESP_CHAT_CHANNEL_LIST,
+        );
+        return resp.channels.some(c => c.name === channel) ? 'listed' : 'absent';
+      };
+
+      // The start index is what stops an earlier identical echo (typing off) from
+      // satisfying the AWAY wait or the cleanup's idle wait.
+      const awaitSelfTyping = (push: OutboundMessage, isTyping: boolean, label: string): Promise<boolean> => {
+        const from = driver.receivedCount();
+        driver.send(push);
+        return attempt(assertions, label, () =>
+          driver.waitFor(
+            m => {
+              const e = m as WsEventChatUserTyping;
+              return m.type === WsMessageType.EVENT_CHAT_USER_TYPING && isSelf(e.username) && e.isTyping === isTyping;
+            },
+            TIMEOUTS.request,
+            label,
+            from,
+          ),
+        );
+      };
+
+      let createdFrom = 0;
+
+      /** Never throws; nothing is sent outside the marker channel. */
+      const useChannel = async (): Promise<void> => {
+        const entered = await attempt(assertions, 'the session is in the marker channel', () =>
+          driver.waitFor(
+            m =>
+              m.type === WsMessageType.EVENT_CHAT_CHANNEL_CHANGE &&
+              (m as WsEventChatChannelChange).channelName === channel,
+            TIMEOUTS.request,
+            `EVENT_CHAT_CHANNEL_CHANGE to ${channel} — nothing is sent`,
+            createdFrom,
+          ),
+        );
+        if (!entered) return;
+
+        const sendFrom = driver.receivedCount();
+        const sent = await attempt(assertions, 'the message was sent in the marker channel', () =>
+          driver.request<WsRespChatSuccess>(
+            { type: WsMessageType.REQ_CHAT_SEND_MESSAGE, message: line },
+            WsMessageType.RESP_CHAT_SUCCESS,
+          ),
+        );
+        if (sent) {
+          await attempt(assertions, 'the server echoed the message in the channel', () =>
+            driver.waitFor(
+              m => {
+                const e = m as WsEventChatMsg;
+                return m.type === WsMessageType.EVENT_CHAT_MSG && isSelf(e.from) && e.message === line;
+              },
+              TIMEOUTS.request,
+              'the EVENT_CHAT_MSG echo of the marker line',
+              sendFrom,
+            ),
+          );
+        }
+
+        await awaitSelfTyping(
+          { type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: true },
+          true,
+          'the typing-on self-echo (isTyping: true)',
+        );
+        await awaitSelfTyping(
+          { type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: false },
+          false,
+          'the typing-off self-echo (isTyping: false)',
+        );
+        // The gateway maps only state '1' to typing (push-dispatcher.ts), so away is not
+        // distinguishable from idle over the WS contract: the claim is only that an event for
+        // SPO_test3 arrived after the AWAY push.
+        await awaitSelfTyping(
+          { type: WsMessageType.REQ_CHAT_AWAY },
+          false,
+          'a self-echo for SPO_test3 after AWAY (away reads as isTyping: false)',
+        );
+      };
+
+      /** Idle first (clears AFK, :1495-1502), and only after its echo the Lobby join. */
+      const leaveChannel = async (): Promise<void> => {
+        const idle = await awaitSelfTyping(
+          { type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: false },
+          false,
+          'the cleanup idle self-echo',
+        );
+        if (!idle) {
+          throw new Error(
+            'the idle push was never echoed — the Lobby join is not sent; logoff’s DoLogOff removes ' +
+              'the channel (Interface Server/InterfaceServer.pas:2000)',
+          );
+        }
+        await driver.request<WsRespChatSuccess>(
+          { type: WsMessageType.REQ_CHAT_JOIN_CHANNEL, channelName: '' },
+          WsMessageType.RESP_CHAT_SUCCESS,
+        );
+      };
+
+      const what = `password channel ${channel}`;
+      const member = 'CreateChannel';
+      try {
+        // CreateChannel has no LOG_MARKERS entry: chat is the Interface Server, whose chat log
+        // is not published — so no log part, and the log URL is never opened.
+        probes.push(
+          await runRoundTrip(
+            {
+              what,
+              member,
+              read: listed,
+              testValue: () => 'listed',
+              write: async () => {
+                createdFrom = driver.receivedCount();
+                await driver.request<WsRespChatSuccess>(
+                  { type: WsMessageType.REQ_CHAT_CREATE_CHANNEL, channelName: channel, password },
+                  WsMessageType.RESP_CHAT_SUCCESS,
+                );
+              },
+              restore: async () => {
+                try {
+                  await useChannel();
+                } finally {
+                  await leaveChannel();
+                }
+              },
+              proof: {
+                readBack: {
+                  source: 'RESP_CHAT_CHANNEL_LIST of a fresh REQ_CHAT_GET_CHANNELS (GetChannelList)',
+                  why:
+                    'TInterfaceServer.GetChannelList answers from the live channel table, no cache in ' +
+                    'between (Interface Server/InterfaceServer.pas:3373-3390)',
+                  read: listed,
+                  boundMs: TIMEOUTS.logSettle,
+                },
+              },
+            },
+            ctx.lock,
+            openLogWindow,
+            ctx.survivalLogUrl ?? '',
+            { now: ctx.now, sleep: ctx.sleep },
+          ),
+        );
+      } catch (err: unknown) {
+        probes.push(probeFailure({ what, member }, err));
+      }
+      const probe = probes[0];
+      assertions.check(
+        'the fresh channel list showed the marker channel after the create',
+        probe?.readBack === 'CONFIRMED',
+      );
+      assertions.check(
+        'the marker channel is gone after the cleanup',
+        probe?.restoreReadBack === 'CONFIRMED',
+        probe?.restoreReadBack === 'CONFIRMED'
+          ? undefined
+          : `${channel} is still listed — a third party may have joined: its name and password are ` +
+              'public (Interface Server/InterfaceServer.pas:4594, :3373-3390); a human must check',
+      );
+      assertions.check('the channel round trip passed', probe?.status === 'PASS', probe?.note);
+      assertions.check('no gateway errors in the channel', driver.errors.length === 0);
+      return report('chat-private-channel', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * SPO_test3 chases Crazz, then stops (#1148). `TClientView.Chase` only inserts the chaser in
+ * the target's list and moves the chaser's own view (`Interface Server/InterfaceServer.pas:
+ * 1579-1607`) — nothing is broadcast, Crazz writes nothing. `DoLogOff` (`:2002`) and `Destroy`
+ * (`:654`) end any chase a dead run leaves.
+ */
+const chatChase: Flow = {
+  name: 'chat-chase',
+  what: 'Crazz online -> SPO_test3 chases Crazz -> stop chase',
+  mutates: false,
+  run: async () => {
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult('chat-chase', crazz.skipped);
+    try {
+      const assertions = new Assertions();
+      const session = await login(PRIMARY_ACCOUNT);
+      try {
+        // attempt() never throws, so STOP_CHASE is sent whatever the chase answered.
+        await attempt(assertions, `CHASE ${SECONDARY_ACCOUNT.username} answered without error`, () =>
+          session.driver.request<WsRespChatSuccess>(
+            { type: WsMessageType.REQ_CHAT_CHASE, userName: SECONDARY_ACCOUNT.username },
+            WsMessageType.RESP_CHAT_SUCCESS,
+          ),
+        );
+        await attempt(assertions, 'STOP_CHASE answered', () =>
+          session.driver.request<WsRespChatSuccess>(
+            { type: WsMessageType.REQ_CHAT_STOP_CHASE },
+            WsMessageType.RESP_CHAT_SUCCESS,
+          ),
+        );
+        return report('chat-chase', assertions, [], session);
+      } finally {
+        await logoff(session);
+      }
+    } finally {
+      await logoff(crazz);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   sessionResume,
@@ -7408,6 +7715,9 @@ export const FLOWS: Flow[] = [
   profileRead,
   policyRoundTrip,
   autoConnectionRoundTrip,
+  chatRead,
+  chatPrivateChannel,
+  chatChase,
   bankBorrowPayoff,
   bankSendReturn,
   portraitRoundTrip,
