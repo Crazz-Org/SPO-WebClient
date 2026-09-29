@@ -57,7 +57,7 @@ describe('route', () => {
     'src/server/ws-handlers/auth-handlers.ts',
   ])('routes %s — a session-lifecycle file — to session-resume, plus the ws-handlers flows', file => {
     const d = route([file]);
-    expect(d.required).toEqual([SPINE_FLOW, 'building-details', 'politics-read', 'session-resume']);
+    expect(d.required).toEqual([SPINE_FLOW, 'building-details', 'politics-read', 'session-resume', 'company-switch']);
   });
 
   // #1134: building-handlers.ts left this list — it now has its own rule.
@@ -704,5 +704,39 @@ describe('route — world readers (#1139)', () => {
     const d = route([`src/client/handlers/${name}-handler.ts`]);
     expect(d.required).toEqual([SPINE_FLOW, 'world-readers']);
     expect(d.needsL3).toBe(false);
+  });
+});
+
+describe('route — session & company (#1142)', () => {
+  it('misc-handlers requires cluster-info-read beside the favorites flows', () => {
+    expect(route(['src/server/ws-handlers/misc-handlers.ts']).required)
+      .toEqual(expect.arrayContaining(['cluster-info-read', 'favorites-roundtrip', 'favorites-folders']));
+  });
+
+  it('login-handler requires company-switch', () => {
+    expect(route(['src/server/session/login-handler.ts']).required).toContain('company-switch');
+  });
+
+  it('CompanyStage routes to company-switch, no browser look', () => {
+    const d = route(['src/client/components/login/CompanyStage.tsx']);
+    expect(d.required).toEqual([SPINE_FLOW, 'company-switch']);
+    expect(d.needsL3).toBe(false);
+  });
+
+  it('CompanyCreationModal routes to cluster-info-read with a browser look', () => {
+    const d = route(['src/client/components/modals/CompanyCreationModal.tsx']);
+    expect(d.required).toEqual([SPINE_FLOW, 'cluster-info-read']);
+    expect(d.needsL3).toBe(true);
+  });
+
+  it('the client auth handler routes to both flows', () => {
+    const d = route(['src/client/handlers/auth-handler.ts']);
+    expect(d.required).toEqual([SPINE_FLOW, 'company-switch', 'cluster-info-read']);
+    expect(d.needsL3).toBe(false);
+  });
+
+  it('neither flow is nightly-only', () => {
+    expect(NIGHTLY_ONLY).not.toHaveProperty('company-switch');
+    expect(NIGHTLY_ONLY).not.toHaveProperty('cluster-info-read');
   });
 });

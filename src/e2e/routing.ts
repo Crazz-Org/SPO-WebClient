@@ -151,8 +151,8 @@ export const ROUTES: RouteRule[] = [
     // Before the broad wire-level rule below, which would otherwise route
     // login-handler.ts's people-search sweep through flows that never drive it.
     test: /^src\/server\/session\/login-handler\.ts$/,
-    flows: ['people-search', 'politics-read', 'politics-write', 'building-details', 'search-menu-read'],
-    why: 'the directory login/search path changed — including the Root/Users sweep and the one-bucket prefix path search-menu-read drives',
+    flows: ['people-search', 'politics-read', 'politics-write', 'building-details', 'search-menu-read', 'company-switch'],
+    why: 'the directory login/search path changed — including the Root/Users sweep, the one-bucket prefix path search-menu-read drives, and the company switch (switchCompany)',
   },
   {
     // Before the search-handlers rule and the broad src/ rules below: the directory tree
@@ -233,10 +233,10 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
     test: /^src\/server\/ws-handlers\/misc-handlers\.ts$/,
-    flows: ['favorites-roundtrip', 'favorites-folders', 'world-readers'],
+    flows: ['favorites-roundtrip', 'favorites-folders', 'world-readers', 'cluster-info-read'],
     why:
-      'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_* / REQ_WORLD_EVENT; ' +
-      'not driven by any flow yet: REQ_DEFINE_ZONE, REQ_CREATE_COMPANY, REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES, ' +
+      'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_* / REQ_WORLD_EVENT / ' +
+      'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES; not driven by any flow yet: REQ_DEFINE_ZONE, REQ_CREATE_COMPANY, ' +
       'the research requests, REQ_SEARCH_CONNECTIONS, REQ_CONNECTION_REACHABILITY',
   },
   {
@@ -267,8 +267,8 @@ export const ROUTES: RouteRule[] = [
     // Before the ws-handlers rule below: these three files implement session parking and
     // resume (#1045), which only session-resume drives live.
     test: /^src\/server\/server\.ts$|^src\/server\/spo_session\.ts$|^src\/server\/ws-handlers\/auth-handlers\.ts$/,
-    flows: ['building-details', 'politics-read', 'session-resume'],
-    why: 'gateway session lifecycle changed — parking, resume and logout',
+    flows: ['building-details', 'politics-read', 'session-resume', 'company-switch'],
+    why: 'gateway session lifecycle changed — parking, resume and logout, and the company switch',
   },
   {
     test: /^src\/server\/ws-handlers\/|^src\/server\/server\.ts$/,
@@ -315,6 +315,25 @@ export const ROUTES: RouteRule[] = [
     test: /^src\/client\/handlers\/(context-status|world-event|map)-handler\.ts$/,
     flows: ['world-readers'],
     why: 'the client halves of the map & world readers — the flow that drives their requests',
+  },
+  {
+    // Before the broad src/ rule below: the company list's switch into a Political Office.
+    test: /^src\/client\/components\/login\/CompanyStage\.tsx$/,
+    flows: ['company-switch'],
+    why: 'the company list — the flow that drives its REQ_SWITCH_COMPANY',
+  },
+  {
+    // Before the modals/ rule below: the company-creation dialog's cluster reads.
+    test: /^src\/client\/components\/modals\/CompanyCreationModal\.tsx$/,
+    flows: ['cluster-info-read'],
+    needsL3: true,
+    why: 'the company-creation dialog — the flow that drives its cluster reads, plus a browser look',
+  },
+  {
+    // Before the broad src/ rule below: the sender of the switch and the cluster reads.
+    test: /^src\/client\/handlers\/auth-handler\.ts$/,
+    flows: ['company-switch', 'cluster-info-read'],
+    why: 'the client auth handler — the flows that drive its company switch and cluster reads',
   },
   {
     // Before the broad src/ rule below: the rest of these component folders gets the same
