@@ -18,7 +18,7 @@ import {
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
-  researchState, lowerInterest,
+  researchState, researchCost, lowerInterest,
   type Flow, type FlowResult, type GateLinks,
 } from './flows';
 import { buildReplyHeaders } from '@/client/store/mail-store';
@@ -7559,6 +7559,15 @@ describe('inspector helpers (#1154)', () => {
     expect(queueResearchLineMatches('12:00 Cancel Research: R1', 'R1')).toBe(false);
   });
 
+  it('researchCost adds the Price and License lines of the details, in whole dollars', () => {
+    expect(researchCost('Price: $50,000,000\r\nLicense: $2,097,152,000,000\r\nPrestige: +5 pts\r\n')).toBe(2_097_202_000_000);
+    expect(researchCost('Price: $50,000,000 License: $2,097,152,000,000')).toBe(2_097_202_000_000);
+    expect(researchCost('Price: $1,000\nLicence: $0')).toBe(1000);
+    expect(researchCost('Price: $1,000\nImplementation: $5 a year/fac')).toBe(1000);
+    expect(researchCost('Prestige: +5 pts')).toBe(0);
+    expect(researchCost('')).toBe(0);
+  });
+
   it('cancelResearchLineMatches needs the exact id', () => {
     expect(cancelResearchLineMatches('12:00 Cancel Research: R1', 'R1')).toBe(true);
     expect(cancelResearchLineMatches('12:00 Cancel Research: R1.Level2', 'R1')).toBe(false);
@@ -7635,6 +7644,10 @@ describe('inspector flows (#1154)', () => {
     silent: Set<string>;
     /** A queued invention is bought at once (Time = 0). */
     queueBuys?: boolean;
+    /** The research details' properties text by invention id; default `Price: $1,000\nLicence: $0`. */
+    details?: Record<string, string>;
+    /** SPO_test3's cash (`readCash`); default $100,000,000, `null` when unknown. */
+    cash?: number | null;
     /** The START moves Pending; default yes. */
     upgradeMoves?: boolean;
     /** A level completes before the STOP. */
@@ -7772,8 +7785,10 @@ describe('inspector flows (#1154)', () => {
             },
           };
         }
-        case WsMessageType.REQ_RESEARCH_DETAILS:
-          return { details: { inventionId: m.inventionId, properties: 'Price: $1,000\nLicence: $0', description: '' } };
+        case WsMessageType.REQ_RESEARCH_DETAILS: {
+          const properties = world.details?.[String(m.inventionId)] ?? 'Price: $1,000\nLicence: $0';
+          return { details: { inventionId: m.inventionId, properties, description: '' } };
+        }
         case WsMessageType.REQ_BUILDING_UPGRADE:
           return upgrade(world, String(m.action), m.count);
         default:
@@ -7790,6 +7805,7 @@ describe('inspector flows (#1154)', () => {
       if (typeof proof !== 'object') return null;
       return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
     });
+    jest.spyOn(fixtures, 'readCash').mockResolvedValue(world.cash === undefined ? 100_000_000 : world.cash);
     return { stub, off };
   }
 
@@ -8057,15 +8073,95 @@ describe('inspector flows (#1154)', () => {
       expect(pending(lock)[0].what).toMatch(/must NOT be cancelled/);
     });
 
-    it('FAILs, with no cancel, when the queue never shows in development', async () => {
-      const world = makeWorld({ apply: w => w.property !== 'RDOQueueResearch' });
+    it('FAILs, with no cancel, and clears the pending restore when the queue still reads available', async () => {
+      // The server logs the queue, then drops it: StartResearch refuses an unaffordable one
+      // (Kernel/ResearchCenter.pas:240-253) — the 2026-09-30 Banking run.
+      const world = makeWorld();
+      world.apply = w => {
+        if (w.property !== 'RDOQueueResearch') return true;
+        world.lines.push(`12:00 Queue Research: ${w.params?.inventionId}, 10`);
+        return false;
+      };
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
-      expect(failed(result)).toEqual(expect.arrayContaining(['R1 is listed in development, not owned']));
+      expect(failed(result)).toEqual(['R1 is listed in development, not owned']);
+      expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/still reads available; nothing to cancel, world unchanged, pending restore cleared$/);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
+      expect(pending(lock)).toEqual([]);
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.read().dirty).toBe(false);
+    });
+
+    it('FAILs, with no cancel, and keeps the pending restore when the queued invention reads absent', async () => {
+      const world = makeWorld();
+      world.apply = w => {
+        if (w.property !== 'RDOQueueResearch') return true;
+        world.categories[1].available = world.categories[1].available.filter(i => i.id !== 'R1');
+        world.lines.push(`12:00 Queue Research: ${w.params?.inventionId}, 10`);
+        return false;
+      };
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['R1 is listed in development, not owned', 'R1 is cancelled']);
       expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
       expect(pending(lock)).toHaveLength(1);
+    });
+
+    it('skips an invention SPO_test3 cannot pay for and queues the next one', async () => {
+      const world = makeWorld({ details: { R1: 'Price: $50,000,000\r\nLicense: $2,097,152,000,000\r\n' } });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes).toEqual([
+        { property: 'RDOQueueResearch', value: '0', params: { inventionId: 'R2', priority: '10' } },
+        { property: 'RDOCancelResearch', value: '0', params: { inventionId: 'R2' } },
+      ]);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('is UNPROVEN and sends nothing when no free invention is affordable', async () => {
+      const world = makeWorld({
+        cash: 1_000_000,
+        details: { R1: 'Price: $50,000,000 License: $2,097,152,000,000', R2: 'Price: $2,000,000' },
+      });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual([
+        'RDOQueueResearch — no enabled invention in categories 0..1 costs at most the cash ($1000000) — Price + License: ' +
+          'R1 $2097202000000, R2 $2000000',
+      ]);
+      expect(setProps(world)).toEqual([]);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('lists at most five unaffordable inventions in its UNPROVEN reason', async () => {
+      const ids = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7'];
+      const world = makeWorld({
+        hq: { CatCount: '0' },
+        cash: 0,
+        categories: [{ available: ids.map(id => ({ id, enabled: true })), developing: [], completed: [] }],
+      });
+      arrange(world);
+      const result = await run('research-roundtrip');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/: A1 \$1000, A2 \$1000, A3 \$1000, A4 \$1000, A5 \$1000, … \(\+2 more\)$/);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it('is UNPROVEN and sends nothing when the cash is unknown', async () => {
+      const world = makeWorld({ cash: null });
+      arrange(world);
+      const result = await run('research-roundtrip');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual(['RDOQueueResearch — cash unknown — no EVENT_TYCOON_UPDATE received']);
+      expect(setProps(world)).toEqual([]);
     });
 
     it('still cancels after a throw that follows the queue', async () => {

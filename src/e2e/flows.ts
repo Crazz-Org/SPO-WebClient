@@ -6680,6 +6680,20 @@ export function startUpgradeLineMatches(line: string, count: number): boolean {
   return new RegExp(`${escapeRegExp(`Facility Start Upgrade count: ${count}`)}(?=\\s|$)`).test(line);
 }
 
+/**
+ * What queueing an invention costs, in dollars: the `Price:` and `License:` lines of its details
+ * (`TInvention.GetProperties`, Inventions/Inventions.pas:715-727; labels Kernel/SimHints.pas:482-483;
+ * amounts from `FormatMoney`, Utils/Misc/MathUtils.pas:87-99). A line the details do not show is 0. The server starts a
+ * research only when `Budget >= Price + GetFeePrice` (Kernel/ResearchCenter.pas:240).
+ */
+export function researchCost(properties: string): number {
+  const dollars = (label: string): number => {
+    const m = new RegExp(`(?:^|\\s)${label}:\\s*\\$([0-9][0-9,.]*)`, 'i').exec(properties);
+    return m ? Number(m[1].replace(/[^0-9]/g, '')) : 0;
+  };
+  return dollars('Price') + dollars('Licen[cs]e');
+}
+
 export type ResearchState = 'developing' | 'owned' | 'available' | 'absent';
 
 /**
@@ -7055,23 +7069,44 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   const parsed = Number(propertyValue(groups, 'hqInventions', 'CatCount') ?? '0');
   const catMax = Number.isFinite(parsed) ? parsed : 0;
 
-  let pick: { id: string; name: string; category: number } | undefined;
+  const cash = await readCash(session);
+  if (cash === null) {
+    assertions.unproven('RDOQueueResearch', 'cash unknown — no EVENT_TYCOON_UPDATE received');
+    return;
+  }
+
+  // The first enabled, not-held invention SPO_test3 can pay for. One it cannot is accepted and
+  // dropped at once (StartResearch, Kernel/ResearchCenter.pas:240-253) — it never reads queued.
+  let pick: { id: string; category: number; details: WsRespResearchDetails['details'] } | undefined;
+  const unaffordable: string[] = [];
   for (let category = 0; category <= catMax && !pick; category++) {
     const { data } = await researchInventory(session, fx, category);
     const held = new Set([...data.developing, ...data.completed].map(i => i.inventionId));
-    const hit = data.available.find(i => i.enabled === true && !held.has(i.inventionId));
-    if (hit) pick = { id: hit.inventionId, name: hit.name, category };
+    for (const hit of data.available.filter(i => i.enabled === true && !held.has(i.inventionId))) {
+      const { details } = await session.driver.request<WsRespResearchDetails>(
+        { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: hit.inventionId },
+        WsMessageType.RESP_RESEARCH_DETAILS,
+      );
+      const cost = researchCost(details.properties);
+      if (cost <= cash) {
+        pick = { id: hit.inventionId, category, details };
+        break;
+      }
+      unaffordable.push(`${hit.inventionId} $${cost}`);
+    }
   }
   if (!pick) {
-    assertions.unproven('RDOQueueResearch', `no enabled invention available to queue in categories 0..${catMax}`);
+    assertions.unproven(
+      'RDOQueueResearch',
+      unaffordable.length === 0
+        ? `no enabled invention available to queue in categories 0..${catMax}`
+        : `no enabled invention in categories 0..${catMax} costs at most the cash ($${cash}) — Price + License: ` +
+            unaffordable.slice(0, 5).join(', ') +
+            (unaffordable.length > 5 ? `, … (+${unaffordable.length - 5} more)` : ''),
+    );
     return;
   }
-  const { id, category } = pick;
-
-  const { details } = await session.driver.request<WsRespResearchDetails>(
-    { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: id },
-    WsMessageType.RESP_RESEARCH_DETAILS,
-  );
+  const { id, category, details } = pick;
   const properties = details.properties.trim().replace(/\s+/g, ' ');
   assertions.check(
     `REQ_RESEARCH_DETAILS answers for ${id} with its properties`,
@@ -7094,6 +7129,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   });
 
   let queued = false;
+  let refused = false;
   try {
     const window = await openLogWindow(url);
     queued = true;
@@ -7115,6 +7151,17 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
         `bought at once: ${id} (${properties}) — an invention with Time = 0 is bought on the spot ` +
           '(Kernel/ResearchCenter.pas:319-334); not cancelled: cancel would sell it',
       );
+    } else if (listed.last === 'available') {
+      // Reads exactly what the pending restore would put back: the server dropped the queue and
+      // nothing is owed. No cancel — nothing is queued (Kernel/ResearchCenter.pas:240-253).
+      refused = true;
+      ctx.lock.clearPendingRestore(key);
+      assertions.check(
+        `${id} is listed in development, not owned`,
+        false,
+        `the server did not take the queue — ${id} (${properties}) still reads available; nothing to cancel, ` +
+          'world unchanged, pending restore cleared',
+      );
     } else {
       assertions.check(
         `${id} is listed in development, not owned`,
@@ -7125,7 +7172,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   } catch (err: unknown) {
     assertions.check('the queue steps ran without a throw', false, toErrorMessage(err));
   }
-  if (queued) await cancelQueuedResearch(session, ctx, fx, { id, key, url, stateOf }, assertions);
+  if (queued && !refused) await cancelQueuedResearch(session, ctx, fx, { id, key, url, stateOf }, assertions);
 }
 
 /**
