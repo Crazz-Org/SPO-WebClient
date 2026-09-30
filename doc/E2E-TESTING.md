@@ -97,8 +97,9 @@ Desktop layout (viewport ≥ 1024 px):
   `Search or run a command (Ctrl+K)` opens the command palette. While a mode runs, that button
   is replaced by a mode row whose exit button is `Done` (`Cancel` in connect mode).
 - **More menu** (`role="menu"` named `More actions`, items `role="menuitem"`): `Build road`,
-  `Demolish road`, `Zone painting` (only for a public-office role), `Map overlays`,
-  `Docked minimap`, `My facilities`, `Settings`, `Keyboard shortcuts`, `Switch server`.
+  `Demolish road`, `Zone painting` (only for a public-office role), `Search the directory`,
+  `Map overlays`, `Docked minimap`, `My facilities`, `Settings`, `Keyboard shortcuts`,
+  `Switch server`.
 - **RightRail** (`nav[aria-label="Map controls"]`): `Zoom In (+)`, `Zoom Out (-)`,
   `Rotate view (Q)`, `Rotate view (W)`, `Toggle Minimap`, `Debug (D)`, `Refresh (R)`.
 - **StatusPill** (`header[aria-label="Player status"]`): `Open profile` (the name) and
@@ -300,14 +301,14 @@ result.
    close the sheet, assert `ui.stack` is empty. `Chat` toggles the strip: assert `chat.shown`
    flips, click again to restore. The screens behind the tiles are walked in Phase 3.
 4. **More menu** — click `More`; assert the menu "More actions" lists `Build road`,
-   `Demolish road`, `Map overlays`, `Docked minimap`, `My facilities`, `Settings`,
-   `Keyboard shortcuts`, `Switch server`. Here open only:
+   `Demolish road`, `Search the directory`, `Map overlays`, `Docked minimap`, `My facilities`,
+   `Settings`, `Keyboard shortcuts`, `Switch server`. Here open only:
    - `Docked minimap` — assert `panels.minimap` flips, click again to restore.
    - `Switch server` — assert `ui.serverSwitchMode === true` and the region picker; leave with
      `Back to planitia`, assert `ui.serverSwitchMode === false` and the map still loaded. Pick
      nothing in it.
 
-   `My facilities` and `Map overlays` are opened in Phase 3; `Build road`, `Demolish road`,
+   `Search the directory`, `My facilities` and `Map overlays` are opened in Phase 3; `Build road`, `Demolish road`,
    `Settings` and `Keyboard shortcuts` in Phase 6.
 5. **RightRail** — `Zoom In (+)` then `Zoom Out (-)`: `renderer.zoom` changes and restores.
    `Rotate view (Q)` four times: `renderer.rotation` steps NORTH→WEST→SOUTH→EAST→NORTH; then
@@ -348,7 +349,7 @@ Each surface opens as a sheet; open it, assert, close it (`ui.stack` back to emp
    `markInboxMessageRead` (`src/server/session/mail-handler.ts`) clear the mail server's unread
    flag, and no RDO member can set it back — `Mail Server/MailServer.pas:557`,
    `Mail/MailMessageAuto.pas:165-166`. Never click Compose, Reply, Forward or Delete.
-6. **Search** — Ctrl+K → `Open Search` (there is no desktop tile). Assert `panels.searchMenu`
+6. **Search** — More → `Search the directory` (there is no desktop tile). Assert `panels.searchMenu`
    and `subViews.searchPage === "home"`. Open each page the home offers once — `towns`,
    `people`, `rankings`, `banks`, `media`, `directory`, and a tycoon's `tycoon-profile` /
    `tycoon-full-profile` when reachable — asserting `subViews.searchPage`, and return with

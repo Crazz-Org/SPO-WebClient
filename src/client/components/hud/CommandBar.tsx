@@ -64,6 +64,7 @@ function MoreMenu({ onClose }: { onClose: () => void }) {
   const client = useClient();
   const openModal = useUiStore((s) => s.openModal);
   const toggleLeftPanel = useUiStore((s) => s.toggleLeftPanel);
+  const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
   const isPublicOfficeRole = useGameStore((s) => s.isPublicOfficeRole);
   const isRoadBuild = useGameStore((s) => s.isRoadBuildingMode);
   const isRoadDemolish = useGameStore((s) => s.isRoadDemolishMode);
@@ -109,6 +110,8 @@ function MoreMenu({ onClose }: { onClose: () => void }) {
       {!isVisitor && item(isRoadBuild ? 'Stop building roads' : 'Build road', <Route size={16} />, () => client.onBuildRoad(), isRoadBuild)}
       {!isVisitor && item(isRoadDemolish ? 'Stop demolishing roads' : 'Demolish road', <Eraser size={16} />, () => client.onDemolishRoad(), isRoadDemolish)}
       {isPublicOfficeRole && item(isZone ? 'Stop zone painting' : 'Zone painting', <Grid2x2 size={16} />, () => (isZone ? client.onCancelZonePainting() : openModal('zonePicker')), isZone)}
+      {/* The directory (towns, people, rankings, banks) — the search row above opens the palette, not this */}
+      {item('Search the directory', <Search size={16} />, () => toggleRightPanel('search'))}
       {item('Map overlays', <Layers size={16} />, () => toggleLeftPanel('overlays'))}
       {item('Docked minimap', <Map size={16} />, () => client.onToggleMinimap())}
       {isPanelOffered('facilities', isVisitor) && item('My facilities', <Heart size={16} />, () => toggleLeftPanel('facilities'))}

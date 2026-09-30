@@ -93,6 +93,21 @@ describe('CommandBar', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('More offers "Search the directory", which opens the search surface and closes the menu', () => {
+    renderWithProviders(<CommandBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Search the directory' }));
+    expect(useUiStore.getState().rightPanel).toBe('search');
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('a visitor is offered "Search the directory" too', () => {
+    useGameStore.setState({ isVisitor: true });
+    renderWithProviders(<CommandBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByRole('menuitem', { name: 'Search the directory' })).toBeTruthy();
+  });
+
   it('public office sees zone painting in More', () => {
     useGameStore.setState({ isPublicOfficeRole: true });
     renderWithProviders(<CommandBar />);
