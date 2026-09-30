@@ -562,6 +562,14 @@ export interface BuildingSupplyData {
    * Undefined until the gate is opened, or when the gate does not publish it.
    */
   selected?: string;
+  /**
+   * The input's capacity, `nfCapacity` (Kernel/KernelCache.pas:619). With
+   * {@link actualMaxFluid} it gives the ad percentage Voyager shows
+   * (Voyager/AdvSheetForm.pas:651-660). Undefined until the gate is opened.
+   */
+  capacity?: string;
+  /** The input's current ceiling, `nfActualMaxFluidValue` (Kernel/KernelCache.pas:617). */
+  actualMaxFluid?: string;
   /** Connection count. Undefined until the gate is opened — not zero. */
   connectionCount?: number;
   /** Connections — empty until the gate is opened. */

@@ -29,7 +29,9 @@ import type {
   WsRespNewspaperIssues,
   WsRespPoliticsData,
   WsRespPoliticsSetPublicity,
+  WsRespPoliticsSetRating,
   WsRespPoliticsVote,
+  WsRespTycoonRole,
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuDirectory,
   WsRespSearchMenuHome,
@@ -725,6 +727,245 @@ const publicityRoundTrip: Flow = {
 };
 
 const sameName = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * The test-owned value of `mayor-rating-roundtrip`: Crazz's opinion of SPO_test3's term.
+ *
+ * The baseline is 100 and the probe 0 — the two ends of the 0..100 range — so the direction of
+ * every move is known whatever Crazz's prior opinion P was on the very first run: P lies in
+ * [0, 100], so writing 0 can only move the aggregate down (or leave it), and writing 100 can only
+ * move it up (or leave it). The first run leaves Crazz's opinion at 100 for good — accepted by the
+ * maintainer (2026-09-29): a test account's opinion of a test account.
+ */
+export const RATING_BASELINE = 100;
+export const RATING_PROBE = 0;
+
+/**
+ * `Kernel/TownPolitics.pas:192` — "Setting town politics Tycoon rating: <TycoonId>, <RatingId>,
+ * <Value>". The rater is the gateway's login name (`politicsSetRating`), compared case-insensitively.
+ */
+export function ratingLogMatches(line: string, rater: string, ratingId: string, value: string): boolean {
+  return line
+    .trim()
+    .toLowerCase()
+    .endsWith(`Setting town politics Tycoon rating: ${rater}, ${ratingId}, ${value}`.toLowerCase());
+}
+
+export type RatingMove = 'towards' | 'away' | 'still';
+
+/** How the aggregate moved from `before` to `after`, against a write going from `from` to `to`. */
+export function ratingMove(before: number, after: number, from: number, to: number): RatingMove {
+  const moved = Math.sign(after - before);
+  if (moved === 0) return 'still';
+  return moved === Math.sign(to - from) ? 'towards' : 'away';
+}
+
+const RATING_STILL_REASON =
+  'the aggregate TycoonsRating did not move — it is round(Σ (prestige+1)·ethics·opinion / Σ (prestige+1)) ' +
+  'over every survey (Kernel/Politics.pas:374-392, evaluated from Kernel/TownPolitics.pas:210), so it equals ' +
+  "Crazz's opinion only when Crazz is the sole survey; the other surveys' weight, the rounding, or a Crazz " +
+  'campaign in the town (ethics 0, Kernel/TownPolitics.pas:550-553) can hold it still';
+
+/**
+ * Crazz rates SPO_test3's term at Helartia (`TPoliticalTownHall.RDOSetRatingFrom`,
+ * Kernel/TownPolitics.pas:186, log :192) — the maintainer's decision of 2026-09-29 (E2E-POLICY §9).
+ *
+ * Crazz's own opinion cannot be read: the gateway reads only the aggregate `TycoonsRating`
+ * (`parsePoliticsRatings`, tycoonratings.asp:147), and the per-rater `RDOGetRatingFrom`
+ * (Kernel/TownPolitics.pas:163-184) is uncatalogued. So the opinion is a test-owned value with the
+ * fixed baseline `RATING_BASELINE`: write `RATING_PROBE`, see the line and the aggregate move towards
+ * it, rate the baseline again, see it move back. An aggregate that does not move is UNPROVEN.
+ */
+const mayorRatingRoundTrip: Flow = {
+  name: 'mayor-rating-roundtrip',
+  what:
+    `Crazz rates SPO_test3's term at ${GOVERNED_TOWN} ${RATING_PROBE}, then back to ${RATING_BASELINE} — ` +
+    'Survival line + the aggregate Tycoons rating moving each way',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult('mayor-rating-roundtrip', crazz.skipped);
+    try {
+      await mayorRatingSteps(crazz, ctx, assertions);
+      return report('mayor-rating-roundtrip', assertions, [], crazz);
+    } finally {
+      await logoff(crazz);
+    }
+  },
+};
+
+async function mayorRatingSteps(crazz: LiveSession, ctx: FlowContext, assertions: Assertions): Promise<void> {
+  const rater = SECONDARY_ACCOUNT.username;
+  const town = await findTown(crazz, GOVERNED_TOWN);
+  const data = await readPolitics(crazz, town);
+  const mayor = data?.mayorName ?? '';
+  if (!holdsGovernedOffice(mayor)) {
+    assertions.unproven(
+      'the rating round trip',
+      `${GOVERNED_TOWN}'s mayor is "${mayor}", not ${PRIMARY_ACCOUNT.username} — ${rater} rates only ` +
+        `${PRIMARY_ACCOUNT.username}'s term (maintainer, 2026-09-29); nothing written`,
+    );
+    return;
+  }
+  const row = (data?.tycoonsRatings ?? []).find(r => r.id !== undefined && r.id !== '');
+  assertions.check(
+    "a Tycoons' rating row with an id is listed",
+    row?.id !== undefined,
+    row ? `${row.name} (${String(row.id)}) = ${row.value}` : 'none — nothing written',
+  );
+  if (row?.id === undefined) return;
+
+  const ratingId = row.id;
+  const before = row.value;
+  const read = async (): Promise<number | undefined> =>
+    (await readPolitics(crazz, town))?.tycoonsRatings?.find(r => r.id === ratingId)?.value;
+  const rate = async (value: number): Promise<void> => {
+    const resp = await crazz.driver.request<WsRespPoliticsSetRating>(
+      { type: WsMessageType.REQ_POLITICS_SET_RATING, buildingX: town.x, buildingY: town.y, ratingId, value },
+      WsMessageType.RESP_POLITICS_SET_RATING,
+    );
+    if (resp.success === false) throw new Error(`SET_RATING ${value} refused: ${resp.message ?? 'no message'}`);
+  };
+  const lineOf = (window: Awaited<ReturnType<typeof openLogWindow>>, value: number): Promise<string | null> =>
+    awaitMarker(
+      window,
+      { marker: LOG_MARKERS.RDOSetRatingFrom, match: l => ratingLogMatches(l, rater, ratingId, String(value)) },
+      TIMEOUTS.logSettle,
+    );
+
+  const key = `RDOSetRatingFrom:${randomUUID()}`;
+  ctx.lock.addPendingRestore({
+    key,
+    what:
+      `${rater}'s rating of ${PRIMARY_ACCOUNT.username}'s term at ${town.name}, criterion ${row.name} (${ratingId}) — ` +
+      `put back ${RATING_BASELINE} (log in as ${rater}, Politics → Tycoons' ratings)`,
+    originalValue: String(RATING_BASELINE),
+  });
+  const url = await survivalUrl(ctx);
+
+  // The write leg. `move` stays undefined when the write threw or the row vanished.
+  let move: RatingMove | undefined;
+  let after: number | undefined;
+  try {
+    const window = await openLogWindow(url);
+    await rate(RATING_PROBE);
+    const polled = await pollUntil(
+      read,
+      v => v !== undefined && ratingMove(before, v, RATING_BASELINE, RATING_PROBE) !== 'still',
+      ctx,
+    );
+    after = polled.last;
+    const line = await lineOf(window, RATING_PROBE);
+    assertions.check(`the write of ${RATING_PROBE} logged its Tycoon rating line`, line !== null, line ?? '(no line)');
+    if (after === undefined) {
+      assertions.check('the rating row reads back after the write', false, `row ${ratingId} is no longer listed`);
+    } else {
+      move = ratingMove(before, after, RATING_BASELINE, RATING_PROBE);
+      if (move === 'still') assertions.unproven('the rating write', `${before} -> ${after}: ${RATING_STILL_REASON}`);
+      else {
+        assertions.check(
+          `the aggregate moved towards the written ${RATING_PROBE}`,
+          move === 'towards',
+          `${before} -> ${after}`,
+        );
+      }
+    }
+  } catch (err: unknown) {
+    assertions.check(`the write of ${RATING_PROBE} was accepted`, false, toErrorMessage(err));
+  } finally {
+    await restoreRating(ctx, key, assertions, {
+      url,
+      write: () => rate(RATING_BASELINE),
+      line: window => lineOf(window, RATING_BASELINE),
+      read,
+      anchor: after ?? before,
+      moved: move === 'towards',
+    });
+  }
+}
+
+/**
+ * The rating's restore — rate the baseline again, always, even after a failed write. After a proven
+ * write the aggregate must move back; otherwise it must at least not move away. The pending restore
+ * is cleared only when the restore line was seen and that condition holds.
+ */
+async function restoreRating(
+  ctx: FlowContext,
+  key: string,
+  assertions: Assertions,
+  leg: {
+    url: string;
+    write: () => Promise<void>;
+    line: (window: Awaited<ReturnType<typeof openLogWindow>>) => Promise<string | null>;
+    read: () => Promise<number | undefined>;
+    anchor: number;
+    moved: boolean;
+  },
+): Promise<void> {
+  let restored = false;
+  try {
+    const window = await openLogWindow(leg.url);
+    await leg.write();
+    const line = await leg.line(window);
+    assertions.check(`the restore to ${RATING_BASELINE} logged its Tycoon rating line`, line !== null, line ?? '(no line)');
+    let back: boolean;
+    let detail: string;
+    if (leg.moved) {
+      const polled = await pollUntil(
+        leg.read,
+        v => v !== undefined && ratingMove(leg.anchor, v, RATING_PROBE, RATING_BASELINE) === 'towards',
+        ctx,
+      );
+      back = polled.ok;
+      detail = `${leg.anchor} -> ${String(polled.last)}`;
+      assertions.check(`the aggregate moved back towards ${RATING_BASELINE}`, back, detail);
+    } else {
+      const now = await leg.read();
+      back = now !== undefined && ratingMove(leg.anchor, now, RATING_PROBE, RATING_BASELINE) !== 'away';
+      detail = `${leg.anchor} -> ${String(now)}`;
+      assertions.check(`the restore did not move the aggregate away from ${RATING_BASELINE}`, back, detail);
+    }
+    restored = line !== null && back;
+  } catch (err: unknown) {
+    assertions.check(`the restore to ${RATING_BASELINE} was accepted`, false, toErrorMessage(err));
+  }
+  if (restored) ctx.lock.clearPendingRestore(key);
+  else assertions.check('the rating restore is proven', false, 'pending restore kept');
+}
+
+/**
+ * The political role the gateway reads for a tycoon (`handleTycoonRole`, ws-handlers/politics-handlers.ts)
+ * — sent today only by `checkCapability`, never by a flow. `TMayor.StoreRoleInfoToCache` writes
+ * `IsMayor` and `Town` (Kernel/TownPolitics.pas:642-651), and the roles recursion reaches the human's
+ * cache (Kernel/KernelCache.pas:903-910). No write.
+ */
+const tycoonRoleRead: Flow = {
+  name: 'tycoon-role-read',
+  what: `REQ_TYCOON_ROLE for SPO_test3 -> the answer names the Mayor of ${GOVERNED_TOWN} — no write`,
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const { role } = await session.driver.request<WsRespTycoonRole>(
+        { type: WsMessageType.REQ_TYCOON_ROLE, tycoonName: PRIMARY_ACCOUNT.username },
+        WsMessageType.RESP_TYCOON_ROLE,
+      );
+      assertions.check(
+        `the answer names ${PRIMARY_ACCOUNT.username}`,
+        sameName(role?.tycoonName ?? '', PRIMARY_ACCOUNT.username),
+        role?.tycoonName,
+      );
+      assertions.check(`${PRIMARY_ACCOUNT.username} is a mayor`, role?.isMayor === true, `isMayor=${String(role?.isMayor)}`);
+      assertions.check(`the mayor's town is ${GOVERNED_TOWN}`, sameName(role?.town ?? '', GOVERNED_TOWN), role?.town);
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('tycoon-role-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
 
 /**
  * `TPoliticalTownHall.RDOVote` (`Kernel/TownPolitics.pas:395`, log `:400`). Data-gated: it
@@ -5000,15 +5241,23 @@ const industryOutputPrice: Flow = {
 };
 
 /**
- * A supply gate's limits: max price, min quality, sort mode and one supplier's overprice
- * (`TFacility.RDOSetInput*`, Kernel/Kernel.pas:4358-4442). Nightly only (routing.ts). A member the
- * gate cannot carry is recorded unproven by name; the others still run.
+ * A supply gate's limits: max price and min quality (`TFacility.RDOSetInputMaxPrice` /
+ * `RDOSetInputMinK`, Kernel/Kernel.pas:4390-4420). Nightly only (routing.ts).
+ *
+ * Sort mode and overprice are **excluded**, never driven (#1195):
+ * - `RDOSetInputSortMode` — only `TMediaInput` caches `QPSorted` / `SortMode`
+ *   (Kernel/MediaGates.pas:388-389), and its sole user is the movie theatre's Films input
+ *   (StdBlocks/Movie.pas:84); a plain input's `SetSortMode` is empty (Kernel/Kernel.pas:7169-7171).
+ *   No sanctioned fixture kind (FIXTURE_KINDS, E2E-POLICY §9) is a movie theatre.
+ * - `RDOSetInputOverPrice` — set per supplier row; overpaying another player's supplier touches
+ *   that player's income (§9), and an own row exists only after `supplier-hire-fire` (#1153),
+ *   itself nightly-only and data-gated.
  */
 const industrySupplyLimits: Flow = {
   name: 'industry-supply-limits',
   what:
-    "round trips on RDOSetInputMaxPrice / MinK / SortMode / OverPrice at SPO_test3's industry fixture — " +
-    'Survival line + read-back each, restored',
+    "round trips on RDOSetInputMaxPrice / MinK at SPO_test3's industry fixture — Survival line + read-back " +
+    'each, restored; RDOSetInputSortMode / RDOSetInputOverPrice are excluded (no fixture carries them)',
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -5034,7 +5283,7 @@ const industrySupplyLimits: Flow = {
         return report('industry-supply-limits', assertions, probes, session);
       }
 
-      const { name, supply, fluid } = gate;
+      const { name, fluid } = gate;
       const url = await survivalUrl(ctx);
       const fresh = (): Promise<BuildingSupplyData | undefined> => readSupply(session, fx, name);
       const source = (field: string): string => `the ${name} supply gate's ${field} via REQ_BUILDING_GATE_CONNECTIONS`;
@@ -5076,69 +5325,110 @@ const industrySupplyLimits: Flow = {
       probes.push(minK);
       checkProbe(assertions, minK);
 
-      // The control is offered only on a gate that publishes QPSorted = 1 and a SortMode (SuppliesGroup.tsx).
-      if (supply.qpSorted === '1' && supply.sortMode !== undefined) {
-        const readSortMode = async (): Promise<string | undefined> => (await fresh())?.sortMode;
-        const sortMode = await roundTripProbe(ctx, url, {
-          what: `${fixtureLabel(fx)} ${name} input sort mode`,
-          member: 'RDOSetInputSortMode',
-          read: readSortMode,
-          write: writeGate('RDOSetInputSortMode'),
-          testValue: original => (original === '1' ? '0' : '1'),
-          // The line carries no coordinates and no value (Kernel/Kernel.pas:4446): the read-back attributes it.
-          proof: {
-            log: { marker: LOG_MARKERS.RDOSetInputSortMode },
-            readBack: readBackOn(source('SortMode'), GATE_CACHE_WHY, readSortMode),
-          },
-          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputSortMode', additionalParams: { fluidId: fluid } },
-        });
-        probes.push(sortMode);
-        checkProbe(assertions, sortMode);
-      } else {
+      return report('industry-supply-limits', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * The ad percentage Voyager shows: `min(100, round(100*nfActualMaxFluidValue/nfCapacity))`
+ * (Voyager/AdvSheetForm.pas:651-660). Undefined when either value is absent or not a number, or
+ * when the capacity is not positive — nothing to compare a write with.
+ */
+export function adPercent(actualMaxFluid: string | undefined, capacity: string | undefined): string | undefined {
+  if (actualMaxFluid === undefined || capacity === undefined) return undefined;
+  if (actualMaxFluid.trim() === '' || capacity.trim() === '') return undefined;
+  const fld = Number(actualMaxFluid);
+  const cap = Number(capacity);
+  if (!Number.isFinite(fld) || !Number.isFinite(cap) || cap <= 0) return undefined;
+  return String(Math.min(100, roundHalfEven((100 * fld) / cap)));
+}
+
+/** `tidFluid_Advertisement` (StdBlocks/StdFluids.pas:32) — the gate's fluid, and its name. */
+const ADVERTISEMENT = 'Advertisement';
+
+/**
+ * The ad budget — `TInput.RDOSetInputFluidPerc` (Kernel/Kernel.pas:1508, body :7154-7160, log :7156)
+ * on the Advertisement input of SPO_test3's research fixture.
+ *
+ * The research fixture, not the store: a food store declares only its food input gates
+ * (StdBlocks/FoodStore.pas:71-100) and takes advertisement as a company input
+ * (StdBlocks/ServiceBlock.pas:540), so the gate-bound member has nothing to address there. The
+ * general headquarters declares an Advertisement `TPullInput`, cacheable and editable
+ * (Kernel/Headquarters.pas:130-143). The gateway binds the write to that input's own ObjectId, as
+ * Voyager does (Voyager/AdvSheetForm.pas:456-457).
+ */
+const adBudgetRoundTrip: Flow = {
+  name: 'ad-budget-roundtrip',
+  what:
+    "round trip on RDOSetInputFluidPerc at the Advertisement input of SPO_test3's research (HQ) fixture — " +
+    'Survival line + read-back of the ad percentage, restored',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'research', assertions);
+      if (!fx) return report('ad-budget-roundtrip', assertions, probes, session);
+
+      const details = await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+      let gate: GateStub | undefined;
+      if (details.tabs.some(t => t.id === 'supplies')) {
+        for (const stub of await gateStubs(session, fx, 'supplies')) {
+          if ((await gateConnections(session, fx, 'supplies', stub)).supply?.metaFluid === ADVERTISEMENT) {
+            gate = stub;
+            break;
+          }
+        }
+      }
+      if (!gate) {
         assertions.unproven(
-          'RDOSetInputSortMode',
-          `the ${fluid} gate publishes no sort mode — only TMediaInput caches QPSorted/SortMode ` +
-            "(Kernel/MediaGates.pas:388-389); a plain input's SetSortMode is empty (Kernel/Kernel.pas:7169-7171), " +
-            'so no sort control is offered and a write would change nothing',
+          'RDOSetInputFluidPerc',
+          `${fixtureLabel(fx)} lists no ${ADVERTISEMENT} input — the HQ declares one (Kernel/Headquarters.pas:130-143); ` +
+            'nothing written',
         );
+        return report('ad-budget-roundtrip', assertions, probes, session);
       }
 
-      const supplier = supply.connections[0];
-      if (supplier) {
-        // The supplier is identified by its lot, never by its row: a row can shift between reads.
-        const same = (c: BuildingConnectionData): boolean => c.x === supplier.x && c.y === supplier.y;
-        const readOverprice = async (): Promise<string | undefined> =>
-          (await fresh())?.connections.find(same)?.overprice;
-        const writeOverprice = async (value: string): Promise<void> => {
-          const index = (await fresh())?.connections.findIndex(same) ?? -1;
-          if (index < 0) throw new Error(`supplier (${supplier.x},${supplier.y}) is no longer on the ${fluid} gate`);
-          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetInputOverPrice', value, {
-            fluidId: fluid,
-            index: String(index),
-          });
-        };
-        const overprice = await roundTripProbe(ctx, url, {
-          what: `${fixtureLabel(fx)} ${name} overprice of ${supplier.facilityName} (${supplier.x},${supplier.y})`,
-          member: 'RDOSetInputOverPrice',
-          read: readOverprice,
-          write: writeOverprice,
-          testValue: original => nudgeWithin(original, 0, 150),
-          proof: {
-            log: { marker: LOG_MARKERS.RDOSetInputOverPrice, match: facMatch('Input overprice set') },
-            // The gateway's own confirmed read is always empty for it (mapRdoCommandToPropertyName).
-            readBack: readBackOn(source(`supplier row overprice (BuildingConnectionData.overprice)`), GATE_CACHE_WHY, readOverprice),
+      const { name } = gate;
+      const readPerc = async (): Promise<string | undefined> => {
+        const supply = await readSupply(session, fx, name);
+        return adPercent(supply?.actualMaxFluid, supply?.capacity);
+      };
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ${name} input fluid percentage (the ad budget)`,
+        member: 'RDOSetInputFluidPerc',
+        read: readPerc,
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetInputFluidPerc', value, { fluidId: ADVERTISEMENT });
+        },
+        testValue: original => nudgeWithin(original, 0, 100),
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDOSetInputFluidPerc,
+            match: (line, written) => facLineMatches(line, fx.x, fx.y, `Setting Input fluid perc: ${written}`),
           },
-          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputOverPrice', additionalParams: { fluidId: fluid } },
-        });
-        probes.push(overprice);
-        checkProbe(assertions, overprice);
-      } else {
-        assertions.unproven(
-          'RDOSetInputOverPrice',
-          `the ${fluid} gate has no supplier row — the overprice is set per supplier, and a fixture built fresh has none (#1149)`,
-        );
-      }
-      return report('industry-supply-limits', assertions, probes, session);
+          readBack: readBackOn(
+            `the ${name} input's nfActualMaxFluidValue / nfCapacity via REQ_BUILDING_GATE_CONNECTIONS ` +
+              '(Voyager/AdvSheetForm.pas:651-660)',
+            `${GATE_CACHE_WHY}; the write sets ActualMaxFluid = MaxFluid*min(1, perc/100) (Kernel/Kernel.pas:7157-7158)`,
+            readPerc,
+          ),
+        },
+        restoreRecord: {
+          x: fx.x,
+          y: fx.y,
+          propertyName: 'RDOSetInputFluidPerc',
+          additionalParams: { fluidId: ADVERTISEMENT },
+        },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+      return report('ad-budget-roundtrip', assertions, probes, session);
     } finally {
       await logoff(session);
     }
@@ -7693,6 +7983,8 @@ export const FLOWS: Flow[] = [
   politicsWrite,
   townMinWage,
   publicityRoundTrip,
+  mayorRatingRoundTrip,
+  tycoonRoleRead,
   voteRoundTrip,
   buildingDetails,
   permissionNegative,
@@ -7729,6 +8021,7 @@ export const FLOWS: Flow[] = [
   storePriceSalaries,
   industryOutputPrice,
   industrySupplyLimits,
+  adBudgetRoundTrip,
   facilityOpenClose,
   industryAutoBuy,
   supplierSearchRead,

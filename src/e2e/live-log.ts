@@ -64,6 +64,8 @@ export const LOG_MARKERS: Record<string, string> = {
   RDOSetInputMinK: 'Input min K set:',
   // Kernel/Kernel.pas:4442 (log :4446)
   RDOSetInputSortMode: 'Changing Sort Mode..',
+  // Kernel/Kernel.pas:7154 (log :7156) — "Fac(<x>,<y>) Setting Input fluid perc: <perc>"
+  RDOSetInputFluidPerc: 'Setting Input fluid perc:',
   // Kernel/Kernel.pas:4304 (log :4306) — "Fac(<x>,<y>) Input connected:"
   RDOConnectInput: 'Input connected:',
   // Kernel/Kernel.pas:4311 (log :4313) — "Fac(<x>,<y>) Output connected:"
