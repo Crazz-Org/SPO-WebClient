@@ -53,6 +53,11 @@
  * the router requiring flows — propagated forward as a plain PASS every downstream reuse
  * could not tell apart from a real live drive (15 records on the real corpus). See
  * {@link mayReuseVerdict} for the rule that closes this.
+ *
+ * Since #1182 the rule is positive: a candidate is reused only when its own liveness PROVES
+ * something — it ran live, or it skipped with nothing routed. An absent or `'unknown'`
+ * liveness proves nothing live, so that entry is re-gated, never reused; those verdicts stay
+ * readable (`listVerdicts`, `attested()`), they just take a live slot instead.
  */
 
 import { toErrorMessage } from '../../shared/error-utils';
@@ -188,22 +193,23 @@ export interface ReuseCandidate {
    * 2026-09-03: 515 of 518 verdicts on file predate the `live` field — a DIFFERENT, smaller
    * population than the 518-of-518 still carrying the deleted `fingerprintStable` (see
    * ./verdict; the two counts were once conflated here) — and most of those 515 are
-   * resolved from their gate artifact before this rule ever sees them; only what resolution
-   * still cannot answer reads as absent. See {@link mayReuseVerdict} for what each state
-   * does.
+   * resolved from their gate artifact before this rule ever sees them. What resolution
+   * still cannot answer reads as absent, and {@link mayReuseVerdict} re-gates it: it
+   * proves nothing live.
    */
   live?: LiveAttestation;
 }
 
 /**
- * Would reusing this candidate's PASS propagate a static-only verdict as if it were
- * live? True for exactly the provable failure this rule closes — B2.4's "15-record
- * case": the source's OWN router said flows were required, and the source's own gate
- * skipped the live stage anyway. Reusing it would publish that skip as somebody else's
- * PASS, indistinguishable downstream from a real live drive.
+ * Does this candidate's own liveness prove enough to stand in for a live drive of the
+ * identical tree? Only two states do: it ran live, or it skipped with nothing routed
+ * (nothing was owed). A skip with flows routed is B2.4's "15-record case" — a static-only
+ * PASS that would propagate as if it were live. Absent or `'unknown'` carries no `required`
+ * list to judge by (see {@link LiveAttestation}), so it proves nothing live either.
  */
-function propagatesAStaticOnlyPass(live: LiveAttestation | undefined): boolean {
-  return live?.status === 'skipped' && live.required.length > 0;
+function provesItsLiveness(live: LiveAttestation | undefined): boolean {
+  if (live?.status === 'ran') return true;
+  return live?.status === 'skipped' && live.required.length === 0;
 }
 
 /**
@@ -224,39 +230,29 @@ function propagatesAStaticOnlyPass(live: LiveAttestation | undefined): boolean {
  *  - `'skipped'` with a non-empty `required` is the hole this rule closes — refuse it,
  *    and drive the entry instead.
  *  - `'unknown'` — whether asserted directly, or because nothing on file could answer the
- *    question for this candidate at all — means refusing it would strand the merge queue
- *    on a verdict that never had a chance to say what it proved: the field did not exist
- *    yet, the gate artifact was never written or is unreadable, or its recovery failed
- *    validation (see worker.ts's `resolveLegacyLiveness` — a "genuinely could not tell",
- *    not "we didn't bother to look"). So: reuse it.
+ *    question for this candidate at all (the field did not exist yet, the gate artifact
+ *    was never written or is unreadable, or its recovery failed validation — see
+ *    worker.ts's `resolveLegacyLiveness`) — proves nothing live, and carries no `required`
+ *    list to judge by. Refuse it, and drive the entry instead (#1182).
  *
- *    This population does NOT shrink on its own. Verdicts are never purged (job.ts's
- *    `purgeDone` only touches `done/`), so a verdict written before `live` existed answers
- *    `'unknown'` forever unless something resolves it after the fact. Two things do, and
- *    between them close nearly all of it: every new write already carries `live` (this
- *    fix), and `attested()` (worker.ts's `resolveLegacyLiveness`) recovers a legacy
- *    verdict's answer from its gate artifact at decision time — including when the
- *    artifact is filed under a merge commit's sha rather than the deposited head a verdict
- *    is keyed by. Measured 2026-09-03: 515 of 518 verdicts on file predate `live`; of the
- *    377 PASS-with-tree candidates this rule can ever be asked to reuse, 359 are
- *    recoverable this way (237 by direct lookup, 122 via first-parent inversion), leaving
- *    18 genuinely unrecoverable. The carve-out exists for those 18 (and whatever the
- *    growing corpus adds to them) — not for the 515.
+ *    Nearly all of that population is resolved before this rule sees it: every new write
+ *    carries `live`, and `attested()` recovers a legacy verdict's answer from its gate
+ *    artifact at decision time. Measured 2026-09-03: of the 377 PASS-with-tree candidates
+ *    this rule can ever be asked to reuse, 359 are recoverable that way, leaving 18
+ *    genuinely unrecoverable. Those 18 stay readable (`listVerdicts`, `attested()`) but
+ *    are re-gated rather than reused — a live slot is the price of a verdict that never
+ *    said what it proved.
  *
  * Fails toward driving: an unknown tree, an unreadable one, no candidates, all mean gate it.
  */
 export function mayReuseVerdict(entryTree: string | null, attested: ReuseCandidate[]): ReuseDecision {
   if (!entryTree) return { reuseFrom: null, why: 'the entry tree could not be read' };
   const match = attested.find(
-    a => a.tree === entryTree && a.verdict === 'PASS' && !propagatesAStaticOnlyPass(a.live),
+    a => a.tree === entryTree && a.verdict === 'PASS' && provesItsLiveness(a.live),
   );
   if (!match) return { reuseFrom: null, why: 'no passing attestation shares this tree' };
   const liveNote =
-    match.live?.status === 'ran'
-      ? ', already driven live'
-      : match.live?.status === 'skipped'
-        ? ', already judged (no live drive was required)'
-        : ', already judged (liveness unrecorded)';
+    match.live?.status === 'ran' ? ', already driven live' : ', already judged (no live drive was required)';
   return { reuseFrom: match.head, why: `identical tree to ${match.head.slice(0, 8)}${liveNote}` };
 }
 

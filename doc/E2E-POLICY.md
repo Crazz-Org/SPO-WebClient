@@ -112,6 +112,7 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 | `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip` |
 | `src/client/renderer/**`, `src/client/components/{mobile,hud,sheet,modals,map}/**`, `*.module.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
+| `src/e2e/flows.ts`, `src/e2e/{fixtures,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
 | `doc/**`, `*.md`, CI config, tooling | static only |
 
 The **login spine** (connect -> auth -> directory -> world login -> company select ->
@@ -124,10 +125,11 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
 `file.asp:Line` or `#<issue>`), where a flow or a handler departs from that table;
 `src/e2e/routing.test.ts` holds all three.
 
-- **`NIGHTLY_ONLY`** lists the flows no gate requires — a data-gated flow (a required `UNPROVEN`
-  fails the gate), a reading that asserts nothing, or the fixture builder `fixtures-ensure`,
-  which ensures every kind in one pass (§9). The nightly still runs them; every other
-  flow must be reached by some tracked path.
+- **`NIGHTLY_ONLY`** lists the flows no routing rule requires — a data-gated flow (a required
+  `UNPROVEN` fails the gate), a reading that asserts nothing, or the fixture builder
+  `fixtures-ensure`, which ensures every kind in one pass (§9). The nightly still runs
+  them; every other flow must be reached by some tracked path. A diff that changes such a
+  flow's own body does require it (below).
 - **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
   (`politics-write`, `Kernel/Population.pas:1264-1284`; `policy-roundtrip`,
   `Kernel/Kernel.pas:11790-11800`; `chat-private-channel`,
@@ -137,6 +139,29 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
 - **`FALLBACK_ONLY`** lists the handler files only a broad fallback rule routes, each `awaiting
   card #<n>` or `excluded: <reason>`. An area card adds its rule before the fallbacks and removes
   its file from the set, so a new handler cannot land unrouted.
+
+### Changed and declared flows
+
+The routing table sends `src/e2e/` to no flow, so the gate adds two more sets to the routed
+one and drives **routed ∪ changed ∪ declared** (`scripts/verify-gate.js`, stage 3):
+
+- **Changed** — `src/e2e/bench/changed-flows.ts` reads the diff of the six flow sources
+  (`src/e2e/flows.ts`, `fixtures.ts`, `probe.ts`, `session.ts`, `ws-driver.ts`,
+  `live-log.ts`). A hunk inside a `FLOWS` entry requires that flow — an edited body, an added
+  flow, a renamed flow under its new name — even when it is `NIGHTLY_ONLY`. A hunk inside a
+  shared helper requires every flow that reaches the helper, directly or through another
+  helper: the related flows, never a full nightly. A `NIGHTLY_ONLY` flow reached only through
+  a helper is listed in the artifact (`routing.changedFlowsNotDriven`), not driven. A diff the
+  mapping cannot pair with the `FLOWS` array fails the gate closed.
+- **Declared** — `npm run gate -- --also-flows=a,b` adds the card's own flows to the routed
+  set (a union).
+
+When either set is non-empty the spine is added too. All of them land in `routing.required`,
+so a flow-only diff is no longer static-only: an undriven required flow is `BLOCKED`, and a
+required flow that ends `UNPROVEN` fails (§7). `--flows=` still **replaces** the set, but it
+is refused (`BLOCKED`) unless it names every required flow — a gate cannot attest `PASS`
+having driven only the spine. No separate `test:live` run proves a card's flows: its own gate
+does.
 
 ---
 
@@ -338,9 +363,10 @@ capability — and then the gate demands the flow.
   It is never an override, and never a `PASS` for a flow that exercised nothing.
 - A flow whose data cannot be seeded is either kept failing or taken out of the routed set
   by a routing change (`src/e2e/routing.ts`), and that choice is the maintainer's.
-- A flow that no routing rule requires (for example the probes of #1004 and #1006) may end
-  UNPROVEN as information. **A card that makes such a flow required must seed its data
-  first.**
+- A flow that is not required — run only because `--flows=` named it beyond the required
+  set (for example the probes of #1004 and #1006) — may end UNPROVEN as information. A flow
+  the diff changed or a card declared (§4, "Changed and declared flows") is required. **A card
+  that makes such a flow required must seed its data first.**
 - **Every flow runs alone** (#1185, maintainer direction 2026-09-29):
   `--flows=login-spine,<flow>` proves it with no other flow before it. A flow opens and closes
   its own session; a world prerequisite is created by the flow's own seed, or named in its
@@ -467,7 +493,12 @@ with no snapshot (maintainer, 2026-09-29).
   "createdAt": "2026-08-21T09:12:44.101Z",
   "static": { "typecheck": "PASS", "lint": "PASS", "test": "PASS" },
   "routing": { "changed": ["src/…"],
-               "required": ["login-spine", "politics-write", "zoning-alert-read"] },
+               "required": ["login-spine", "politics-write", "zoning-alert-read"],
+               // §4, "Changed and declared flows" — all three are also in `required`,
+               // except the NIGHTLY_ONLY flows a changed helper reaches, listed only.
+               "changedFlows": ["zoning-alert-read"],
+               "changedFlowsNotDriven": ["newspaper-read"],
+               "declared": ["politics-write"] },
   "live": {
     "world": "planitia", "account": "SPO_test3",
     "window": { "from": "…Z", "to": "…Z" },
@@ -511,7 +542,8 @@ The L1 half — `rdo-mock.ts`, `rdo-strict-validator.ts`, `http-mock.ts`, `types
 ```bash
 npm run gate                     # local precheck -> bench job: build, static, routing, live, attest
 npm run gate -- --static-only    # skip the live layer (docs/tooling diffs)
-npm run gate -- --flows=login-spine,politics-write
+npm run gate -- --also-flows=a,b   # add flows to the routed set (a card's own flows)
+npm run gate -- --flows=login-spine,politics-write   # replaces the set; refused unless it covers every required flow
 npm run test:live                # the L2 drive as a bench job
 npm run dev                      # bench LEASE: this worktree's gateway held on 8080 for you
 npm run dev:release              # ...and give it back as soon as you are done
