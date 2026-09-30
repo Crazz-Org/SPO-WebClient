@@ -7274,18 +7274,22 @@ const acceptCloning = fixtureFlow(
 export const CLONE_SALARIES_OPTIONS = 0x103;
 
 /**
- * A salary triplet `hi,mid,lo` differing from `source` and from every one of `others`: `hi` moved
- * ±1, ±2, … inside 0..255, toward the middle first (as `nudgeWithin`). Throws when none exists.
+ * A salary triplet `hi,mid,lo` differing from `source` and from every one of `others`: the first
+ * **published** class moved ±1, ±2, … inside 0..255, toward the middle first (as `nudgeWithin`),
+ * the unpublished slots kept empty (as `salariesNudge`, Kernel/WorkCenterBlock.pas:567-571). Throws
+ * when no class is published, or when no such triplet exists.
  */
 export function distinctSalaries(source: string, others: string[]): string {
-  const [hi, mid, lo] = source.split(',');
-  const base = Math.round(Number(hi));
+  const slots = source.split(',');
+  const k = slots.findIndex(s => s.trim() !== '');
+  if (k < 0) throw new Error(`no salary class is published ("${source}") — nothing to nudge`);
+  const base = Math.round(Number(slots[k]));
   const taken = new Set([source, ...others]);
   const toward = base >= 127.5 ? -1 : 1;
   for (let step = 1; step <= 255; step++) {
     for (const candidate of [base + toward * step, base - toward * step]) {
       if (candidate < 0 || candidate > 255) continue;
-      const triplet = [String(candidate), mid, lo].join(',');
+      const triplet = slots.map((s, i) => (i === k ? String(candidate) : s)).join(',');
       if (!taken.has(triplet)) return triplet;
     }
   }
@@ -7379,11 +7383,20 @@ async function cloneSalariesSteps(
   }
 
   const sourceTriplet = originals.get(holdingKey(source)) as string;
+  if (sourceTriplet.split(',').every(s => s.trim() === '')) {
+    assertions.unproven(
+      what,
+      `${fixtureLabel(source)} publishes no salary class — TWorkCenter.StoreToCache writes Salaries<k> only for ` +
+        'a class with capacity (Kernel/WorkCenterBlock.pas:567-571), so no clone could be read back; nothing sent',
+    );
+    return;
+  }
   const written = distinctSalaries(sourceTriplet, same.map(h => originals.get(holdingKey(h)) as string));
   const byKey = new Map(listed.map(h => [holdingKey(h), h]));
   const tycoonId = ownTycoonId(session);
   const writeSalaries = async (h: Holding, triplet: string): Promise<void> => {
-    const [salary0, salary1, salary2] = triplet.split(',');
+    // An unpublished slot reads "" and goes as 0 — never `parseInt('')` into RdoValue.int.
+    const [salary0, salary1, salary2] = triplet.split(',').map(salaryArg);
     await setBuildingProperty(session, h.x, h.y, 'RDOSetSalaries', salary0, { salary0, salary1, salary2 });
   };
   const readAll = async (): Promise<string | undefined> => {

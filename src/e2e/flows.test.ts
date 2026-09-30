@@ -9007,6 +9007,12 @@ describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
       expect(() => distinctSalaries('0,1,1', all)).toThrow(/no salary triplet/);
     });
 
+    it('moves the first published class only, keeps unpublished slots empty, and refuses when none is published', () => {
+      expect(distinctSalaries(',80,60', [])).toBe(',81,60');
+      expect(distinctSalaries(',,60', [',,61'])).toBe(',,59');
+      expect(() => distinctSalaries(',,', [])).toThrow(/no salary class is published/);
+    });
+
     it('matches the tycoon id whole', () => {
       expect(cloneLineMatches('12:00 CloneFacility: 1', '1')).toBe(true);
       expect(cloneLineMatches('12:00 CloneFacility: 1 ', '1')).toBe(true);
@@ -9034,6 +9040,8 @@ describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
       salaries: Record<string, string>;
       accept: Record<string, string | undefined>;
       unreadable?: string;
+      /** Facilities whose executive slot (Salaries0) is never published — it reads "". */
+      noExecutives?: Set<string>;
       /** The queued clone never lands. */
       cloneIgnored?: boolean;
       cloneSuccess?: boolean;
@@ -9068,7 +9076,7 @@ describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
             if (!(key in w.salaries)) throw new Error(`read of an unlisted facility ${key}`);
             if (m.tabId === 'workforce') {
               const [s0, s1, s2] = w.salaries[key].split(',');
-              const rows = [pv('Salaries0', s0), pv('Salaries1', s1), pv('Salaries2', s2)];
+              const rows = [pv('Salaries0', w.noExecutives?.has(key) ? '' : s0), pv('Salaries1', s1), pv('Salaries2', s2)];
               return { groups: { workforce: w.unreadable === key ? rows.slice(0, 2) : rows } };
             }
             const flag = w.accept[key];
@@ -9139,6 +9147,11 @@ describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
       ["a target's salaries are unreadable", { unreadable: '12,10' }, /salaries of Shop C \(12,10\) cannot be read/],
       ["a guard's salaries are unreadable", { unreadable: '14,10' }, /salaries of Farm \(14,10\) cannot be read/],
       ["a target's AcceptCloning is unreadable", { accept: { '11,10': '1', '13,10': '0' } }, /Shop C \(12,10\)'s AcceptCloning cannot be read/],
+      [
+        'the source publishes no salary class',
+        { salaries: { '10,10': ',,', '11,10': ',,', '12,10': ',,', '13,10': ',,', '14,10': '30,20,10' } },
+        /Shop A \(10,10\) publishes no salary class .*WorkCenterBlock\.pas:567-571.*nothing sent/,
+      ],
     ])('is UNPROVEN, sending nothing, when %s', async (_label, over, reason) => {
       const world = makeWorld(over);
       arrange(world);
@@ -9147,6 +9160,31 @@ describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
       expect(result.unproven.join()).toMatch(reason);
       expect(writes()).toEqual([]);
       expect(clones()).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('never sends an empty salary field when the class publishes no executive slot — nudges a published one, PASS', async () => {
+      const world = makeWorld({
+        noExecutives: new Set(['10,10', '11,10', '12,10', '13,10']),
+        salaries: { '10,10': ',80,60', '11,10': ',81,60', '12,10': ',40,30', '13,10': ',60,50', '14,10': '30,20,10' },
+      });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual([
+        'set 10,10=0,79,60', 'clone 10,10 259',
+        'set 10,10=0,80,60', 'set 11,10=0,81,60', 'set 12,10=0,40,30',
+      ]);
+      for (const { msg } of writes()) {
+        const m = msg as WsMessage & Record<string, unknown>;
+        const p = m.additionalParams as Record<string, string>;
+        for (const v of [m.value, p.salary0, p.salary1, p.salary2]) expect(v).toMatch(/^\d+$/);
+      }
+      expect(result.probes[0]).toMatchObject({
+        written: '10,10=,79,60;11,10=,79,60;12,10=,79,60;13,10=,60,50;14,10=30,20,10',
+        readBack: 'CONFIRMED',
+        restoreReadBack: 'CONFIRMED',
+      });
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
