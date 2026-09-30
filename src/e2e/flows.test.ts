@@ -7668,7 +7668,7 @@ describe('inspector flows (#1154)', () => {
       hq: { CatCount: '1' },
       categories: [
         { available: [{ id: 'OFF', enabled: false }, { id: 'D1', enabled: true }], developing: ['D1'], completed: ['C1'] },
-        { available: [{ id: 'R1', enabled: true }, { id: 'R2', enabled: true }], developing: [], completed: [] },
+        { available: [{ id: 'R1', enabled: true }, { id: 'HappyHour', enabled: true }], developing: [], completed: [] },
       ],
       apply: () => true,
       silent: new Set(),
@@ -8030,129 +8030,97 @@ describe('inspector flows (#1154)', () => {
   });
 
   describe('research-roundtrip', () => {
-    it('scans CatCount inclusively, reads the details, queues then cancels the one invention it chose', async () => {
+    const HH = 'HappyHour';
+    const inventoryCats = (world: World) =>
+      world.requests
+        .filter(r => r.type === WsMessageType.REQ_RESEARCH_INVENTORY)
+        .map(r => (r as WsMessage & { categoryIndex: number }).categoryIndex);
+
+    it('finds Happy Hour by scanning CatCount inclusively, queues then cancels it and nothing else', async () => {
       const world = makeWorld();
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('PASS');
-      const cats = world.requests
-        .filter(r => r.type === WsMessageType.REQ_RESEARCH_INVENTORY)
-        .map(r => (r as WsMessage & { categoryIndex: number }).categoryIndex);
-      expect(cats.slice(0, 2)).toEqual([0, 1]);
-      expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_RESEARCH_DETAILS, inventionId: 'R1' }));
+      expect(inventoryCats(world).slice(0, 2)).toEqual([0, 1]);
+      const detailIds = world.requests
+        .filter(r => r.type === WsMessageType.REQ_RESEARCH_DETAILS)
+        .map(r => (r as WsMessage & { inventionId: string }).inventionId);
+      expect(detailIds).toEqual([HH]);
       expect(world.writes).toEqual([
-        { property: 'RDOQueueResearch', value: '0', params: { inventionId: 'R1', priority: '10' } },
-        { property: 'RDOCancelResearch', value: '0', params: { inventionId: 'R1' } },
+        { property: 'RDOQueueResearch', value: '0', params: { inventionId: HH, priority: '10' } },
+        { property: 'RDOCancelResearch', value: '0', params: { inventionId: HH } },
       ]);
       expect(world.categories[1].developing).toEqual([]);
       expect(pending(lock)).toEqual([]);
     });
 
-    it('is UNPROVEN and sends nothing when no enabled invention is free to queue', async () => {
+    it('reads the category Happy Hour is listed in, whatever its index', async () => {
       const world = makeWorld({
-        hq: { CatCount: '0' },
-        categories: [{ available: [{ id: 'OFF', enabled: false }, { id: 'D1', enabled: true }], developing: ['D1'], completed: [] }],
+        categories: [
+          { available: [{ id: HH, enabled: true }], developing: [], completed: [] },
+          { available: [{ id: 'R1', enabled: true }], developing: [], completed: [] },
+        ],
+      });
+      arrange(world);
+      const result = await run('research-roundtrip');
+      expect(result.status).toBe('PASS');
+      expect(new Set(inventoryCats(world))).toEqual(new Set([0]));
+      expect(world.writes.map(w => `${w.property}:${w.params?.inventionId}`)).toEqual([`RDOQueueResearch:${HH}`, `RDOCancelResearch:${HH}`]);
+    });
+
+    it('is UNPROVEN and sends nothing when Happy Hour is not listed', async () => {
+      const world = makeWorld({
+        categories: [
+          { available: [{ id: 'R1', enabled: true }], developing: ['D1'], completed: ['C1'] },
+          { available: [{ id: 'R2', enabled: true }], developing: [], completed: [] },
+        ],
       });
       arrange(world);
       const result = await run('research-roundtrip');
       expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual(['RDOQueueResearch — no enabled invention available to queue in categories 0..0']);
+      expect(result.unproven).toEqual(['RDOQueueResearch — Happy Hour not listed at HQ (9,10) (categories 0..1)']);
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_RESEARCH_DETAILS)).toBe(false);
       expect(setProps(world)).toEqual([]);
     });
 
-    it('FAILs loudly and never cancels an invention bought at once', async () => {
-      const world = makeWorld({ queueBuys: true });
+    it.each([
+      ['owned', { available: [], developing: [], completed: [HH] }, /: already owned — a cancel on it would sell it/],
+      ['in development', { available: [], developing: [HH], completed: [] }, /: already in development — not queued by this flow/],
+      ['listed but not enabled', { available: [{ id: HH, enabled: false }], developing: [], completed: [] }, /: listed but not enabled — its prerequisite Bars is not owned/],
+    ])('is UNPROVEN and sends nothing when Happy Hour is %s', async (_label, cat, reason) => {
+      const world = makeWorld({ categories: [{ available: [], developing: [], completed: [] }, cat] });
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
-      expect(result.status).toBe('FAIL');
-      expect(result.assertions.find(a => /in development, not owned/.test(a.what))?.detail).toMatch(/^bought at once: R1 \(Price: \$1,000 Licence: \$0\)/);
-      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
-      expect(pending(lock)).toHaveLength(1);
-      expect(pending(lock)[0].what).toMatch(/must NOT be cancelled/);
-    });
-
-    it('FAILs, with no cancel, and clears the pending restore when the queue still reads available', async () => {
-      // The server logs the queue, then drops it: StartResearch refuses an unaffordable one
-      // (Kernel/ResearchCenter.pas:240-253) — the 2026-09-30 Banking run.
-      const world = makeWorld();
-      world.apply = w => {
-        if (w.property !== 'RDOQueueResearch') return true;
-        world.lines.push(`12:00 Queue Research: ${w.params?.inventionId}, 10`);
-        return false;
-      };
-      const lock = cleanLock();
-      arrange(world);
-      const result = await run('research-roundtrip', lock);
-      expect(result.status).toBe('FAIL');
-      expect(failed(result)).toEqual(['R1 is listed in development, not owned']);
-      expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/still reads available; nothing to cancel, world unchanged, pending restore cleared$/);
-      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
-      expect(pending(lock)).toEqual([]);
-      expect(() => lock.release()).not.toThrow();
-      expect(lock.read().dirty).toBe(false);
-    });
-
-    it('FAILs, with no cancel, and keeps the pending restore when the queued invention reads absent', async () => {
-      const world = makeWorld();
-      world.apply = w => {
-        if (w.property !== 'RDOQueueResearch') return true;
-        world.categories[1].available = world.categories[1].available.filter(i => i.id !== 'R1');
-        world.lines.push(`12:00 Queue Research: ${w.params?.inventionId}, 10`);
-        return false;
-      };
-      const lock = cleanLock();
-      arrange(world);
-      const result = await run('research-roundtrip', lock);
-      expect(result.status).toBe('FAIL');
-      expect(failed(result)).toEqual(['R1 is listed in development, not owned', 'R1 is cancelled']);
-      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
-      expect(pending(lock)).toHaveLength(1);
-    });
-
-    it('skips an invention SPO_test3 cannot pay for and queues the next one', async () => {
-      const world = makeWorld({ details: { R1: 'Price: $50,000,000\r\nLicense: $2,097,152,000,000\r\n' } });
-      const lock = cleanLock();
-      arrange(world);
-      const result = await run('research-roundtrip', lock);
-      expect(result.status).toBe('PASS');
-      expect(world.writes).toEqual([
-        { property: 'RDOQueueResearch', value: '0', params: { inventionId: 'R2', priority: '10' } },
-        { property: 'RDOCancelResearch', value: '0', params: { inventionId: 'R2' } },
-      ]);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toHaveLength(1);
+      expect(result.unproven[0]).toMatch(/^RDOQueueResearch — Happy Hour at HQ \(9,10\): /);
+      expect(result.unproven[0]).toMatch(reason);
+      expect(result.unproven[0]).toMatch(/; nothing sent$/);
+      expect(setProps(world)).toEqual([]);
       expect(pending(lock)).toEqual([]);
     });
 
-    it('is UNPROVEN and sends nothing when no free invention is affordable', async () => {
-      const world = makeWorld({
-        cash: 1_000_000,
-        details: { R1: 'Price: $50,000,000 License: $2,097,152,000,000', R2: 'Price: $2,000,000' },
-      });
+    it('is UNPROVEN and sends nothing when Happy Hour costs more than the cash', async () => {
+      const world = makeWorld({ cash: 30_000_000, details: { [HH]: 'Price: $25,000,000\r\nLicense: $8,000,000\r\n' } });
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('UNPROVEN');
       expect(result.unproven).toEqual([
-        'RDOQueueResearch — no enabled invention in categories 0..1 costs at most the cash ($1000000) — Price + License: ' +
-          'R1 $2097202000000, R2 $2000000',
+        'RDOQueueResearch — Happy Hour costs $33000000 (Price + License), above the cash ($30000000); nothing sent',
       ]);
       expect(setProps(world)).toEqual([]);
       expect(pending(lock)).toEqual([]);
     });
 
-    it('lists at most five unaffordable inventions in its UNPROVEN reason', async () => {
-      const ids = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7'];
-      const world = makeWorld({
-        hq: { CatCount: '0' },
-        cash: 0,
-        categories: [{ available: ids.map(id => ({ id, enabled: true })), developing: [], completed: [] }],
-      });
+    it('queues Happy Hour when its Price + License is exactly the cash', async () => {
+      const world = makeWorld({ cash: 33_000_000, details: { [HH]: 'Price: $25,000,000\r\nLicense: $8,000,000\r\n' } });
       arrange(world);
       const result = await run('research-roundtrip');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/: A1 \$1000, A2 \$1000, A3 \$1000, A4 \$1000, A5 \$1000, … \(\+2 more\)$/);
-      expect(setProps(world)).toEqual([]);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch']);
     });
 
     it('is UNPROVEN and sends nothing when the cash is unknown', async () => {
@@ -8164,6 +8132,56 @@ describe('inspector flows (#1154)', () => {
       expect(setProps(world)).toEqual([]);
     });
 
+    it('FAILs loudly and never cancels an invention bought at once', async () => {
+      const world = makeWorld({ queueBuys: true });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => /in development, not owned/.test(a.what))?.detail).toMatch(/^bought at once: HappyHour \(Price: \$1,000 Licence: \$0\)/);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
+      expect(pending(lock)).toHaveLength(1);
+      expect(pending(lock)[0].what).toMatch(/must NOT be cancelled/);
+    });
+
+    it('FAILs, with no cancel, and clears the pending restore when the queue still reads available', async () => {
+      // The server logs the queue, then drops it: StartResearch refuses one the owner cannot pay
+      // for (Kernel/ResearchCenter.pas:240-253) — the 2026-09-30 Banking run.
+      const world = makeWorld();
+      world.apply = w => {
+        if (w.property !== 'RDOQueueResearch') return true;
+        world.lines.push(`12:00 Queue Research: ${w.params?.inventionId}, 10`);
+        return false;
+      };
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['HappyHour is listed in development, not owned']);
+      expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/still reads available; nothing to cancel, world unchanged, pending restore cleared$/);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
+      expect(pending(lock)).toEqual([]);
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.read().dirty).toBe(false);
+    });
+
+    it('FAILs, with no cancel, and keeps the pending restore when Happy Hour reads absent after the queue', async () => {
+      const world = makeWorld();
+      world.apply = w => {
+        if (w.property !== 'RDOQueueResearch') return true;
+        world.categories[1].available = world.categories[1].available.filter(i => i.id !== HH);
+        world.lines.push(`12:00 Queue Research: ${w.params?.inventionId}, 10`);
+        return false;
+      };
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['HappyHour is listed in development, not owned', 'HappyHour is cancelled']);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
+      expect(pending(lock)).toHaveLength(1);
+    });
+
     it('still cancels after a throw that follows the queue', async () => {
       const world = makeWorld({ throwAfter: w => w.property === 'RDOQueueResearch' });
       const lock = cleanLock();
@@ -8171,7 +8189,7 @@ describe('inspector flows (#1154)', () => {
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
       expect(failed(result)).toEqual(['the queue steps ran without a throw']);
-      expect(world.writes.map(w => `${w.property}:${w.params?.inventionId}`)).toEqual(['RDOQueueResearch:R1', 'RDOCancelResearch:R1']);
+      expect(world.writes.map(w => `${w.property}:${w.params?.inventionId}`)).toEqual([`RDOQueueResearch:${HH}`, `RDOCancelResearch:${HH}`]);
       expect(pending(lock)).toEqual([]);
     });
 
@@ -8185,17 +8203,17 @@ describe('inspector flows (#1154)', () => {
       expect(pending(lock)).toHaveLength(1);
     });
 
-    it('FAILs details that do not answer for the chosen invention', async () => {
+    it('FAILs details that do not answer for Happy Hour', async () => {
       const world = makeWorld();
       const { stub } = arrange(world);
       const request = stub.driver.request as jest.Mock;
       const base = request.getMockImplementation() as (m: WsMessage) => Promise<unknown>;
       request.mockImplementation(async (m: WsMessage) =>
-        m.type === WsMessageType.REQ_RESEARCH_DETAILS ? { details: { inventionId: 'R1', properties: ' ', description: '' } } : base(m),
+        m.type === WsMessageType.REQ_RESEARCH_DETAILS ? { details: { inventionId: HH, properties: ' ', description: '' } } : base(m),
       );
       const result = await run('research-roundtrip');
       expect(result.status).toBe('FAIL');
-      expect(failed(result)).toEqual(['REQ_RESEARCH_DETAILS answers for R1 with its properties']);
+      expect(failed(result)).toEqual(['REQ_RESEARCH_DETAILS answers for HappyHour with its properties']);
     });
 
     it('turns a throw before the queue into a FAIL, sending nothing', async () => {
