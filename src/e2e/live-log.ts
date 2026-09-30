@@ -38,6 +38,12 @@ import { LIVE_LOG_BASE } from './config';
  * - **No public line.** `RDOPayOff` (`Kernel/Kernel.pas:11555`) logs nothing, and
  *   `RDOSendMoney` logs to a `Money` log (`Logs.Log('Money', …)`, `Kernel/Kernel.pas:11491`)
  *   the public listing does not carry — both are proven by `readBack` alone.
+ * - **Two `AskLoan` lines.** The bank block's `TBankBlock.RDOAskLoan` logs
+ *   `Fac(<x>,<y>) AskLoan` (`StdBlocks/Banks.pas:162`) while the tycoon's `RDOAskLoan` logs
+ *   `AskLoan: <tycoon>, $<amount>` (`Kernel/Kernel.pas:11455`). One member name cannot carry two
+ *   markers (`runRoundTrip` refuses a differing one), so the block form has a class-qualified key,
+ *   and its `match` must be `facLineMatches(…, 'AskLoan')` — the bare marker is also a substring of
+ *   `AskLoan:` and of an `Error in AskLoan` line, neither of which proves the block's borrow.
  */
 export const LOG_MARKERS: Record<string, string> = {
   // Kernel/Population.pas:1250 (log :1254) — "Setting Tax value: <town>, <TaxId>, <value>"
@@ -119,6 +125,11 @@ export const LOG_MARKERS: Record<string, string> = {
   // Kernel/Kernel.pas:11753 (log :11757) — "Initial suppliers, hire all: <tycoon>, <fluid>" (the later
   // "hire all OK!" line, :11766, does not contain "hire all:")
   RDODontHireOnlyFromWarehouse: 'Initial suppliers, hire all:',
+  // StdBlocks/Banks.pas:46 (impl :160, log :162) — "<date> - Fac(<x>,<y>) AskLoan", no tycoon, no amount.
+  // Its own key: RDOAskLoan above is the tycoon form's "AskLoan:" (Kernel/Kernel.pas:11455).
+  'TBankBlock.RDOAskLoan': 'AskLoan',
+  // Kernel/World.pas:4794 (log :4801) — "CloneFacility: <TycoonId>"; the clone itself is only queued (:4815)
+  CloneFacility: 'CloneFacility:',
   // Kernel/PoliticsCache.pas:139 — kept; not a write, no flow's proof
   CacheTown: 'Caching Town..',
 };

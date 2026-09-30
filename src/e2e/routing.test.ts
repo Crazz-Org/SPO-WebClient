@@ -557,11 +557,14 @@ describe('routing invariants (#1134)', () => {
   });
 
   // #1145: the vote is data-gated — never required, never nightly-excluded by GATE_ONLY.
-  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip, chat-private-channel and bank-borrow-payoff alone', () => {
+  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip, chat-private-channel, bank-borrow-payoff and facility-bank-loan alone', () => {
     expect(NIGHTLY_ONLY['vote-roundtrip']).toMatch(/Kernel\/TownPolitics\.pas:690/);
     expect(uncited({ 'vote-roundtrip': NIGHTLY_ONLY['vote-roundtrip'] })).toEqual([]);
     expect(ROUTES.some(r => r.flows.includes('vote-roundtrip'))).toBe(false);
-    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip', 'chat-private-channel', 'bank-borrow-payoff']);
+    // #1189: facility-bank-loan broadcasts the approved loan like bank-borrow-payoff (Kernel/Kernel.pas:8849-8859).
+    expect(Object.keys(GATE_ONLY)).toEqual([
+      'politics-write', 'policy-roundtrip', 'chat-private-channel', 'bank-borrow-payoff', 'facility-bank-loan',
+    ]);
   });
 
   // #1149: the fixture builder is the one permanent mutation — nightly only, no gate requires it.
@@ -690,6 +693,8 @@ describe('route — handler rules seeded by #1134', () => {
       'build-menu-read', 'place-rename-demolish', 'inspector-reads',
       // #1154: upgrade-stop sends REQ_BUILDING_UPGRADE.
       'upgrade-stop',
+      // #1189: REQ_BUILDING_LOAN_REQUEST and REQ_CLONE_FACILITY.
+      'facility-bank-loan', 'clone-salaries-roundtrip',
     ]);
   });
 
@@ -704,6 +709,8 @@ describe('route — handler rules seeded by #1134', () => {
         'trade-settings',
         // #1154: the residential, bank, TV, accept-cloning and research setters.
         'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+        // #1189: requestBankLoan lives in building-details-handler.ts.
+        'facility-bank-loan',
       ]);
     },
   );
@@ -1070,5 +1077,24 @@ describe('route — inspector flows (#1154)', () => {
       expect(GATE_ONLY).not.toHaveProperty(flow);
       expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
     }
+  });
+});
+
+describe('route — the bank-fixture loan and the salaries clone (#1189)', () => {
+  it('keeps facility-bank-loan gate-only with its broadcast cited, and the clone neither gate- nor nightly-only', () => {
+    expect(GATE_ONLY['facility-bank-loan']).toMatch(/Kernel\/Kernel\.pas:8849-8859/);
+    expect(uncited({ 'facility-bank-loan': GATE_ONLY['facility-bank-loan'] })).toEqual([]);
+    expect(GATE_ONLY).not.toHaveProperty('clone-salaries-roundtrip');
+    expect(NIGHTLY_ONLY).not.toHaveProperty('clone-salaries-roundtrip');
+    expect(NIGHTLY_ONLY).not.toHaveProperty('facility-bank-loan');
+  });
+
+  it('building-handlers.ts requires both flows; building-details-handler.ts the loan only', () => {
+    const building = route(['src/server/ws-handlers/building-handlers.ts']).required;
+    expect(building).toContain('facility-bank-loan');
+    expect(building).toContain('clone-salaries-roundtrip');
+    const details = route(['src/server/session/building-details-handler.ts']).required;
+    expect(details).toContain('facility-bank-loan');
+    expect(details).not.toContain('clone-salaries-roundtrip');
   });
 });

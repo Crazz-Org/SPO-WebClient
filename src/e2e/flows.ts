@@ -82,6 +82,8 @@ import type {
   WsRespResearchInventory,
   WsRespResearchDetails,
   WsRespBuildingUpgrade,
+  WsRespBuildingLoanRequest,
+  WsRespCloneFacility,
   ResearchCategoryData,
   WsRespChatChannelList,
   WsRespChatChannelInfo,
@@ -147,6 +149,7 @@ import {
 } from './probe';
 import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
 import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES, isTradeModeValue } from '../shared/building-details/trade-settings';
+import { bankLoanOutcomeOf } from '../shared/building-details/bank-loan';
 import {
   awaitResumeToken,
   findTown,
@@ -182,11 +185,13 @@ import {
   ownTycoonId,
   placeFacility,
   readCash,
+  scanHoldings,
   townValueAt,
   FIXTURE_CASH_FLOOR,
   type FixtureKind,
   type FixtureKindId,
   type FixtureOutcome,
+  type Holding,
 } from './fixtures';
 
 export interface FlowContext {
@@ -6950,6 +6955,191 @@ const bankSettings = fixtureFlow(
   },
 );
 
+/**
+ * `account`'s rows among the bank's granted loans (`bankLoans`: `LoanCount`, `Debtor<i>`, …,
+ * `TBankBlock.StoreToCache`, StdBlocks/Banks.pas:194-204), or `undefined` when the group carries
+ * no `LoanCount`. A non-tycoon debtor leaves a gap in the index (:197), so every `Debtor<i>` is
+ * read, not `0..LoanCount-1`.
+ */
+export function bankDebtorCount(
+  groups: { [groupId: string]: BuildingPropertyValue[] },
+  account: E2eAccount,
+): number | undefined {
+  if (propertyValue(groups, 'bankLoans', 'LoanCount') === undefined) return undefined;
+  return (groups.bankLoans ?? []).filter(p => /^Debtor\d+$/.test(p.name) && sameAccount(p.value, account)).length;
+}
+
+/** A read that may throw (`cacheUnavailable`), as `undefined`. */
+async function readOrUndefined<T>(read: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await read();
+  } catch {
+    return undefined;
+  }
+}
+
+/** The block-form loan: the ordinal `TBankBlock.RDOAskLoan` answers, named. */
+function loanRefusal(result: number): string {
+  const outcome = bankLoanOutcomeOf(result);
+  const why: Record<string, string> = {
+    rejected: 'rejected (StdBlocks/Banks.pas:164-166)',
+    notEnoughFunds: "granted but the owner's budget could not cover it (Kernel/Kernel.pas:8866-8870)",
+    error: 'no answer from the block (the gateway sent no frame, or an unknown ordinal)',
+  };
+  return `the loan request answered ${result}: ${why[outcome] ?? outcome}`;
+}
+
+async function driveFacilityLoan(crazz: LiveSession, ctx: FlowContext): Promise<FlowResult> {
+  const name = 'facility-bank-loan';
+  const HIM = SECONDARY_ACCOUNT.username;
+  const what = `${HIM}'s loan at the bank fixture → pay off round trip`;
+  const assertions = new Assertions();
+  const probes: ProbeResult[] = [];
+  const me = await login(PRIMARY_ACCOUNT);
+  try {
+    const fx = await ownFixture(me, 'bank', assertions);
+    if (!fx) return report(name, assertions, probes, me);
+
+    // The owner must cover the loan: TBank.LoanApproved needs EstimateLoan >= Amount
+    // (Kernel/Kernel.pas:8911), EstimateLoan is Owner.BankLoanLimit for an owned bank (:8813-8814),
+    // min(1, BankLoanPerc/100) * Budget (:9095-9097). Short of it the loan is still granted with
+    // brqNotEnoughFunds and only Owner.Budget taken (:8866-8870) — so the flow borrows nothing then.
+    const general = await readOrUndefined(() => readSectionGroups(me, fx.x, fx.y, 'bankGeneral', fx.visualClass));
+    const perc = general ? propertyValue(general, 'bankGeneral', 'BudgetPerc') : undefined;
+    const balance = (await readOrUndefined(() => readBank(me)))?.balance;
+    if (perc === undefined || perc.trim() === '' || balance === undefined || balance.trim() === '') {
+      assertions.unproven(
+        what,
+        `the bank's BudgetPerc (${perc ?? 'unreadable'}) or ${PRIMARY_ACCOUNT.username}'s balance ` +
+          `(${balance ?? 'unreadable'}) cannot be read — the owner's cover (Kernel/Kernel.pas:8813-8814, ` +
+          ':9095-9097) is unknown; nothing borrowed',
+      );
+      return report(name, assertions, probes, me);
+    }
+    const cover = Math.min(1, Number(perc) / 100) * Number(balance);
+    if (!(cover >= Number(BORROW_AMOUNT))) {
+      assertions.unproven(
+        what,
+        `the owner's loan limit is ${cover} (BudgetPerc ${perc} of ${balance}, Kernel/Kernel.pas:9095-9097) < ` +
+          `$${BORROW_AMOUNT} — TBank.LoanApproved would refuse it (Kernel/Kernel.pas:8911) or grant it ` +
+          'uncovered (:8866-8870); nothing borrowed',
+      );
+      return report(name, assertions, probes, me);
+    }
+
+    const crazzBank = await readOrUndefined(() => readBank(crazz));
+    if (!crazzBank || !(Number(crazzBank.balance) > 0)) {
+      assertions.unproven(
+        what,
+        `${HIM}'s balance ${crazzBank?.balance ?? 'unreadable'} is not > 0 — RDOPayOff pays only if ` +
+          'Loan.Amount < Budget - AprFee (Kernel/Kernel.pas:11572); nothing borrowed',
+      );
+      return report(name, assertions, probes, me);
+    }
+    const crazzLoans = crazzBank.loans;
+    const readRows = async (): Promise<number | undefined> =>
+      bankDebtorCount(await readSectionGroups(me, fx.x, fx.y, 'bankLoans', fx.visualClass), SECONDARY_ACCOUNT);
+    const rows0 = await readOrUndefined(readRows);
+    if (rows0 === undefined) {
+      assertions.unproven(
+        what,
+        `${fixtureLabel(fx)}'s bankLoans group carries no LoanCount (StdBlocks/Banks.pas:194-204) — the ` +
+          "bank's side of the loan cannot be read back; nothing borrowed",
+      );
+      return report(name, assertions, probes, me);
+    }
+
+    const url = await survivalUrl(ctx);
+    const read = tolerantRead(async () => {
+      const rows = await readRows();
+      if (rows === undefined) return undefined;
+      const delta = rows - rows0;
+      return `crazz ${loanDelta(crazzLoans, (await readBank(crazz)).loans)}; bank ${delta >= 0 ? '+' : ''}${delta}`;
+    });
+    const probe = await roundTripProbe(ctx, url, {
+      what:
+        `${HIM}'s $${BORROW_AMOUNT} loan at ${PRIMARY_ACCOUNT.username}'s bank ${fixtureLabel(fx)} — ${HIM} pays off ` +
+        `the $${BORROW_AMOUNT} loan not among the ${crazzLoans.length} loans listed before`,
+      member: 'TBankBlock.RDOAskLoan',
+      read,
+      testValue: original => {
+        if (original !== 'crazz new=none gone=0; bank +0') throw new Error(`the loan lists moved before the borrow: ${original}`);
+        return `crazz new=${BORROW_AMOUNT} gone=0; bank +1`;
+      },
+      write: async () => {
+        // The borrower is the session that asks: the gateway sends Crazz's own proxy id
+        // (requestBankLoan, building-details-handler.ts).
+        const answer = await crazz.driver.request<WsRespBuildingLoanRequest>(
+          { type: WsMessageType.REQ_BUILDING_LOAN_REQUEST, x: fx.x, y: fx.y, amount: BORROW_AMOUNT },
+          WsMessageType.RESP_BUILDING_LOAN_REQUEST,
+          TIMEOUTS.login,
+        );
+        if (answer.result !== 0) throw new Error(loanRefusal(answer.result));
+      },
+      restore: async () => {
+        // brqNotEnoughFunds still leaves a loan (Kernel/Kernel.pas:8866-8870): pay off whatever was granted.
+        const loan = newLoan(crazzLoans, (await readBank(crazz)).loans);
+        if (!loan) return;
+        // TTycoon.RDOPayOff repays the bank owner and deletes the loan from the bank (Kernel/Kernel.pas:11555, :11592-11594).
+        const answer = await crazz.driver.request<WsRespProfileBankAction>(
+          { type: WsMessageType.REQ_PROFILE_BANK_ACTION, action: 'payoff', loanIndex: loan.loanIndex },
+          WsMessageType.RESP_PROFILE_BANK_ACTION,
+          TIMEOUTS.login,
+        );
+        if (answer.result?.success !== true) {
+          throw new Error(
+            `${HIM}'s payoff of loan ${loan.loanIndex} (${loan.bank}) refused: ${answer.result?.message ?? '(no result)'}`,
+          );
+        }
+      },
+      proof: {
+        log: {
+          marker: LOG_MARKERS['TBankBlock.RDOAskLoan'],
+          // "Fac(<x>,<y>) AskLoan" (StdBlocks/Banks.pas:162) — never the tycoon's "AskLoan:" line.
+          match: line => facLineMatches(line, fx.x, fx.y, 'AskLoan'),
+        },
+        readBack: {
+          source: `${HIM}'s loan list on ${PAGE_BANK} and the Debtor rows of the bank's bankLoans group`,
+          why:
+            'both are object-cache reads RDOAskLoan / RDOPayOff invalidate or refresh within the TTL ' +
+            '(Kernel/Kernel.pas:8873, :11594, :11596) — OB-29, bounded poll',
+          read,
+          boundMs: TIMEOUTS.readBack,
+        },
+      },
+      restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOPayOff' },
+    });
+    probes.push(probe);
+    checkProbe(assertions, probe);
+    return report(name, assertions, probes, me);
+  } finally {
+    await logoff(me);
+  }
+}
+
+/**
+ * Crazz borrows $1 at SPO_test3's bank fixture and pays it off (#1189, lifted by the maintainer on
+ * 2026-09-29). GATE_ONLY: an approved loan posts a world event every online player sees
+ * (Kernel/Kernel.pas:8849-8859). Crazz logs in first — refused → SKIPPED, nothing sent. Nothing is
+ * borrowed unless the owner covers the loan and Crazz can pay it off.
+ */
+const facilityBankLoan: Flow = {
+  name: 'facility-bank-loan',
+  what:
+    "Crazz asks $1 at SPO_test3's bank fixture -> Fac(x,y) AskLoan line + Crazz's loan list and the bank's " +
+    'debtors show it -> Crazz pays it off -> both lists as before',
+  mutates: true,
+  run: async ctx => {
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult('facility-bank-loan', crazz.skipped);
+    try {
+      return await driveFacilityLoan(crazz, ctx);
+    } finally {
+      await logoff(crazz);
+    }
+  },
+};
+
 /** Hours on air and commercials, stored verbatim (StdBlocks/Broadcast.pas:51-53). */
 const tvSettings = fixtureFlow(
   'tv-settings',
@@ -7019,6 +7209,208 @@ const acceptCloning = fixtureFlow(
     checkProbe(assertions, probe);
   },
 );
+
+/**
+ * Same town + same company + salaries only: `cloneOption_SameTown = $1`, `cloneOption_SameCompany
+ * = $2`, `cloneOption_Salaries = $100` (Kernel/CloneOptions.pas:7-8, :13) — the scope the
+ * maintainer lifted the clone exclusion for (2026-09-29).
+ */
+export const CLONE_SALARIES_OPTIONS = 0x103;
+
+/**
+ * A salary triplet `hi,mid,lo` differing from `source` and from every one of `others`: `hi` moved
+ * ±1, ±2, … inside 0..255, toward the middle first (as `nudgeWithin`). Throws when none exists.
+ */
+export function distinctSalaries(source: string, others: string[]): string {
+  const [hi, mid, lo] = source.split(',');
+  const base = Math.round(Number(hi));
+  const taken = new Set([source, ...others]);
+  const toward = base >= 127.5 ? -1 : 1;
+  for (let step = 1; step <= 255; step++) {
+    for (const candidate of [base + toward * step, base - toward * step]) {
+      if (candidate < 0 || candidate > 255) continue;
+      const triplet = [String(candidate), mid, lo].join(',');
+      if (!taken.has(triplet)) return triplet;
+    }
+  }
+  throw new Error(`no salary triplet inside 0..255 differs from ${source} and ${others.join(' ')}`);
+}
+
+/** `CloneFacility: <TycoonId>` (Kernel/World.pas:4801) — the id whole, so 12 never matches 1. */
+export function cloneLineMatches(line: string, tycoonId: string): boolean {
+  return new RegExp(`${escapeRegExp(`CloneFacility: ${tycoonId}`)}(?=\\s|$)`).test(line);
+}
+
+/** `workforce.Salaries0..2` as `hi,mid,lo`, or `undefined` when any of the three is unreadable. */
+async function readSalaryTriplet(session: LiveSession, h: Holding): Promise<string | undefined> {
+  const groups = await readOrUndefined(() => readSectionGroups(session, h.x, h.y, 'workforce', h.visualClass));
+  if (!groups) return undefined;
+  const values = WORKER_KINDS.map(i => propertyValue(groups, 'workforce', `Salaries${i}`));
+  return values.some(v => v === undefined) ? undefined : values.join(',');
+}
+
+/** The live `AcceptCloning` get (`enrichUpgradeTab`), by truthiness. */
+async function readAcceptCloning(session: LiveSession, h: Holding): Promise<'1' | '0' | undefined> {
+  const groups = await readOrUndefined(() => readSectionGroups(session, h.x, h.y, 'upgrade', h.visualClass));
+  return groups ? truthyFlag(propertyValue(groups, 'upgrade', 'AcceptCloning')) : undefined;
+}
+
+const holdingKey = (h: { x: number; y: number }): string => `${h.x},${h.y}`;
+
+/** `x,y=hi,mid,lo;…` → one entry per facility. */
+function parseSalarySegments(value: string): { key: string; triplet: string }[] {
+  return value.split(';').map(segment => {
+    const [key, triplet] = segment.split('=');
+    return { key, triplet };
+  });
+}
+
+async function cloneSalariesSteps(
+  session: LiveSession,
+  ctx: FlowContext,
+  assertions: Assertions,
+  probes: ProbeResult[],
+): Promise<void> {
+  const what = 'the salaries clone round trip';
+  const holdings = (await scanHoldings(session)).holdings.filter(h => h.tabIds.includes('workforce'));
+  const cls = holdings.find(h => holdings.filter(o => o.visualClass === h.visualClass).length >= 2)?.visualClass;
+  if (cls === undefined) {
+    assertions.unproven(
+      what,
+      'no two finished SPO_test3 work centers of one class in Helartia; TWorld.CloneFacility writes only the ' +
+        'same FacId (Kernel/World.pas:3529); nothing sent',
+    );
+    return;
+  }
+  const [source, ...same] = holdings.filter(h => h.visualClass === cls);
+  const guards = holdings.filter(h => h.visualClass !== cls);
+  // Every other work center is listed too: the FacId is not readable over the WS, so a class that
+  // shares it would be written as well — it must read back unchanged, and is restored if it moved.
+  const listed = [source, ...same, ...guards];
+
+  const originals = new Map<string, string>();
+  for (const h of listed) {
+    const triplet = await readSalaryTriplet(session, h);
+    if (triplet === undefined) {
+      assertions.unproven(
+        what,
+        `the salaries of ${fixtureLabel(h)} cannot be read (workforce.Salaries0..2) — it could not be restored ` +
+          'or proven unchanged; nothing sent',
+      );
+      return;
+    }
+    originals.set(holdingKey(h), triplet);
+  }
+  const accepting = new Set<string>();
+  for (const h of same) {
+    const flag = await readAcceptCloning(session, h);
+    if (flag === undefined) {
+      assertions.unproven(
+        what,
+        `${fixtureLabel(h)}'s AcceptCloning cannot be read — whether the clone writes it is unknown ` +
+          '(Kernel/Kernel.pas:5101-5104); nothing sent',
+      );
+      return;
+    }
+    if (flag === '1') accepting.add(holdingKey(h));
+  }
+  if (accepting.size === 0) {
+    assertions.unproven(
+      what,
+      `no ${cls} target accepts cloning — TFacility.CopySettingsFrom skips it (Kernel/Kernel.pas:5101-5104); nothing sent`,
+    );
+    return;
+  }
+
+  const sourceTriplet = originals.get(holdingKey(source)) as string;
+  const written = distinctSalaries(sourceTriplet, same.map(h => originals.get(holdingKey(h)) as string));
+  const byKey = new Map(listed.map(h => [holdingKey(h), h]));
+  const tycoonId = ownTycoonId(session);
+  const writeSalaries = async (h: Holding, triplet: string): Promise<void> => {
+    const [salary0, salary1, salary2] = triplet.split(',');
+    await setBuildingProperty(session, h.x, h.y, 'RDOSetSalaries', salary0, { salary0, salary1, salary2 });
+  };
+  const readAll = async (): Promise<string | undefined> => {
+    const segments: string[] = [];
+    for (const h of listed) {
+      const triplet = await readSalaryTriplet(session, h);
+      if (triplet === undefined) return undefined;
+      segments.push(`${holdingKey(h)}=${triplet}`);
+    }
+    return segments.join(';');
+  };
+
+  const probe = await roundTripProbe(ctx, await survivalUrl(ctx), {
+    what: `salaries clone (options 0x103) from ${fixtureLabel(source)} — put back every listed facility's hi,mid,lo`,
+    member: 'CloneFacility',
+    read: readAll,
+    // The source and each accepting target take the new triplet; a refusing target and every
+    // other work center keep their own.
+    testValue: original =>
+      parseSalarySegments(original)
+        .map(({ key, triplet }) => `${key}=${key === holdingKey(source) || accepting.has(key) ? written : triplet}`)
+        .join(';'),
+    write: async () => {
+      await writeSalaries(source, written);
+      const answer = await session.driver.request<WsRespCloneFacility>(
+        { type: WsMessageType.REQ_CLONE_FACILITY, x: source.x, y: source.y, options: CLONE_SALARIES_OPTIONS },
+        WsMessageType.RESP_CLONE_FACILITY,
+      );
+      if (answer.success !== true) throw new Error(`REQ_CLONE_FACILITY answered success ${String(answer.success)}`);
+    },
+    restore: async original => {
+      const failures: string[] = [];
+      for (const { key, triplet } of parseSalarySegments(original)) {
+        const h = byKey.get(key) as Holding;
+        if ((await readSalaryTriplet(session, h)) === triplet) continue;
+        try {
+          await writeSalaries(h, triplet);
+        } catch (err: unknown) {
+          failures.push(`${fixtureLabel(h)}: ${toErrorMessage(err)}`);
+        }
+      }
+      if (failures.length > 0) throw new Error(`salaries not put back: ${failures.join('; ')}`);
+    },
+    proof: {
+      log: { marker: LOG_MARKERS.CloneFacility, match: line => cloneLineMatches(line, tycoonId) },
+      readBack: readBackOn(
+        "workforce.Salaries0..2 of every listed facility via the gateway's section read",
+        'RDOCloneFacility only queues the clone (Kernel/World.pas:4815), drained once per simulation cycle ' +
+          "(:1996-1998); each target's cache then refreshes within its TTL (OB-29) — bounded poll",
+        tolerantRead(readAll),
+      ),
+    },
+    restoreRecord: { x: source.x, y: source.y, propertyName: 'RDOSetSalaries' },
+  });
+  probes.push(probe);
+  checkProbe(assertions, probe);
+}
+
+/**
+ * The salaries-only clone (#1189, lifted by the maintainer on 2026-09-29). `TWorld.CloneFacility`
+ * (Kernel/World.pas:3494) writes every facility of the source's kind of that company in that town,
+ * so every SPO_test3 work center in Helartia is snapshotted before anything is sent, and each one
+ * is restored in the same run. A target refusing cloning (Kernel/Kernel.pas:5101-5104) must read
+ * back unchanged. An unreadable target, or no accepting one, is UNPROVEN with nothing sent.
+ */
+const cloneSalariesRoundTrip: Flow = {
+  name: 'clone-salaries-roundtrip',
+  what:
+    "snapshot every SPO_test3 work center's salaries in Helartia -> a distinct salary on the source -> " +
+    'REQ_CLONE_FACILITY (0x103) -> CloneFacility: line + every accepting target equal to the source -> restore all',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      await cloneSalariesSteps(session, ctx, assertions, probes);
+      return report('clone-salaries-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
 
 /**
  * Queue one invention, prove it is in development, cancel it. Queueing can buy on the spot —
@@ -7748,6 +8140,8 @@ export const FLOWS: Flow[] = [
   researchRoundTrip,
   acceptCloning,
   upgradeStop,
+  facilityBankLoan,
+  cloneSalariesRoundTrip,
 ];
 
 export function flowByName(name: string): Flow {

@@ -73,6 +73,10 @@ describe('LOG_MARKERS', () => {
       RDODontHireTradeCenter: 'Initial suppliers, excluding Trade Center:',
       RDOHireOnlyFromWarehouse: 'Initial suppliers, hire only warehouses:',
       RDODontHireOnlyFromWarehouse: 'Initial suppliers, hire all:',
+      // #1189: the bank block's own line (StdBlocks/Banks.pas:162), keyed apart from the tycoon's
+      // "AskLoan:", and the clone's receipt line (Kernel/World.pas:4801).
+      'TBankBlock.RDOAskLoan': 'AskLoan',
+      CloneFacility: 'CloneFacility:',
       CacheTown: 'Caching Town..',
     });
   });
