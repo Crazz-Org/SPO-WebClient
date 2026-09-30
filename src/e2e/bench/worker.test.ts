@@ -17,6 +17,13 @@ import {
   classifyStage,
   countCapabilityExceptions,
   flowCountFromArgs,
+  flowsFromArgs,
+  gateArtifactProblem,
+  liveArtifactNames,
+  liveArtifactProblem,
+  liveFlowStatuses,
+  newLiveArtifact,
+  readCheckoutDefaultFlows,
   GATE_BASE_MS,
   LIVE_RUN_BASE_MS,
   LIVE_RUN_FLOW_CEILING,
@@ -95,6 +102,67 @@ interface Harness {
   reachProbeCalls: number;
   /** The drive log file each probe invocation was handed. */
   reachProbeLogs: string[];
+  /** What deps.defaultLiveFlows answers — run.js's no-`--flows` default (FLOWS minus GATE_ONLY). */
+  defaultLiveFlows: string[] | undefined;
+  /**
+   * When true (the default), a `node` body that exits 0 writes the artifact the real body
+   * writes — `live-*.json` for run.js, `gate-<head>.json` for verify-gate.js — because an
+   * exit code alone is no longer a PASS (#1182). False = the body exits 0 and writes nothing.
+   */
+  writeArtifacts: boolean;
+  /** Overrides the `sha` the harness's live artifact carries (default: the `--sha=` it was given). */
+  liveArtifactSha: string | undefined;
+  /** Overrides the flows the harness's live artifact carries (default: exactly the flows asked). */
+  liveArtifactFlows: { name: string; status: string }[] | undefined;
+}
+
+/** A flag's value, first match wins — the way run.ts and verify-gate.js read their argv. */
+function argValue(args: string[], name: string): string | undefined {
+  return args.find(a => a.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
+}
+
+/**
+ * Writes what the real body would have written on exit 0: run.js's `live-*.json`, or
+ * verify-gate.js's `gate-<head>.json` (only when the test has not seeded one itself).
+ */
+function writeBodyArtifact(h: Harness, cmd: string, args: string[], cwd: string, seq: number): void {
+  if (cmd !== 'node') return;
+  const dir = path.join(cwd, 'report', 'e2e');
+  if (args[0] === 'dist/e2e/run.js') {
+    const asked = flowsFromArgs(args) ?? h.defaultLiveFlows ?? [];
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, `live-harness-${String(seq).padStart(6, '0')}.json`),
+      JSON.stringify({
+        sha: h.liveArtifactSha ?? argValue(args, 'sha'),
+        status: 'PASS',
+        flows: h.liveArtifactFlows ?? asked.map(name => ({ name, status: 'PASS' })),
+      }),
+    );
+  } else if (args[0] === 'scripts/verify-gate.js') {
+    const head = `head-of-${path.basename(cwd)}`;
+    const file = path.join(dir, `gate-${head}.json`);
+    fs.mkdirSync(dir, { recursive: true });
+    // Exclusive create ('wx'): a gate artifact the test seeded itself is kept, atomically —
+    // no check-then-write window.
+    try {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          head,
+          depositedSha: argValue(args, 'deposited-sha'),
+          gatedSha: head,
+          attempt: Number(argValue(args, 'attempt')),
+          verdict: 'PASS',
+          routing: { required: [] },
+          live: { skipped: true, why: 'nothing in this diff is observable over the wire' },
+        }),
+        { flag: 'wx' },
+      );
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+  }
 }
 
 function harness(): Harness {
@@ -106,6 +174,7 @@ function harness(): Harness {
   // other worker log line does.
   const spool = new Spool(paths, line => h.logs.push(line));
   let fingerprintCalls = 0;
+  let bodyRuns = 0;
 
   const h: Harness = {
     paths,
@@ -138,6 +207,10 @@ function harness(): Harness {
     reachProbeThrows: false,
     reachProbeCalls: 0,
     reachProbeLogs: [],
+    defaultLiveFlows: ['login-spine', 'send-message'],
+    writeArtifacts: true,
+    liveArtifactSha: undefined,
+    liveArtifactFlows: undefined,
     deps: {
       paths,
       spool,
@@ -149,7 +222,9 @@ function harness(): Harness {
       resolveRef: (_wt, ref) => (ref === 'origin/main' ? h.baseMain : h.trees[ref]),
       runCommand: async (cmd, args, options) => {
         h.commands.push({ cmd, args, cwd: options.cwd, env: options.env });
-        return h.exitCodes.shift() ?? 0;
+        const code = h.exitCodes.shift() ?? 0;
+        if (code === 0 && h.writeArtifacts) writeBodyArtifact(h, cmd, args, options.cwd, ++bodyRuns);
+        return code;
       },
       gateway: {
         clearPort: async () => {},
@@ -179,6 +254,7 @@ function harness(): Harness {
         return { held: h.leaseDecision.ok };
       },
       processAlive: () => h.submitterAlive,
+      defaultLiveFlows: () => h.defaultLiveFlows,
       gameServerReachable: async driveLog => {
         h.reachProbeCalls++;
         h.reachProbeLogs.push(driveLog);
@@ -1723,6 +1799,7 @@ describe('the real command runner and deps', () => {
     ensureLayout(paths);
     const deps = realWorkerDeps(paths);
     expect(deps.port).toBe(8080);
+    expect(deps.defaultLiveFlows).toBe(readCheckoutDefaultFlows);
     expect(typeof deps.now()).toBe('number');
     await deps.sleep(1);
     deps.log('smoke'); // writes to stdout; must not throw
@@ -3121,5 +3198,311 @@ describe('a manual nightly — attest-only replacement of latest.json', () => {
       scheduledSubmittedAt: job.submittedAt,
     });
     expect(readManualRecords(h.paths)).toEqual([]);
+  });
+});
+
+describe('#1182 — an exit code alone is not a PASS', () => {
+  const head = (h: Harness): string => `head-of-${path.basename(h.worktree)}`;
+  const e2eDir = (h: Harness): string => path.join(h.worktree, 'report', 'e2e');
+  function seedGate(h: Harness, artifact: Record<string, unknown>): void {
+    fs.mkdirSync(e2eDir(h), { recursive: true });
+    fs.writeFileSync(
+      path.join(e2eDir(h), `gate-${head(h)}.json`),
+      JSON.stringify({ head: head(h), depositedSha: head(h), attempt: 1, ...artifact }),
+    );
+  }
+
+  describe('live / nightly', () => {
+    it('exit 0 with no artifact written is a FAIL naming what is missing', async () => {
+      const h = harness();
+      h.writeArtifacts = false;
+      const report = await runJob(h.deps, deposit(h, 'live'));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/no report\/e2e\/live-\*\.json was written by this run/);
+      expect(report.detail).toMatch(/an exit code alone is not a PASS/);
+      expect(report.liveArtifact).toBeUndefined();
+    });
+
+    it('an artifact for another sha is a FAIL naming that sha', async () => {
+      const h = harness();
+      h.liveArtifactSha = 'some-other-sha';
+      const report = await runJob(h.deps, deposit(h, 'live'));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(new RegExp(`names sha some-other-sha, not ${head(h)}`));
+    });
+
+    it('an artifact missing one requested flow is a FAIL naming the missing flow', async () => {
+      const h = harness();
+      h.liveArtifactFlows = [{ name: 'a', status: 'PASS' }];
+      const report = await runJob(h.deps, deposit(h, 'live', ['--flows=a,b']));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/missing: b/);
+      expect(report.detail).not.toMatch(/unexpected/);
+    });
+
+    it('an artifact carrying a flow nobody asked for is a FAIL naming it', async () => {
+      const h = harness();
+      h.liveArtifactFlows = [{ name: 'a', status: 'PASS' }, { name: 'z', status: 'PASS' }];
+      const report = await runJob(h.deps, deposit(h, 'live', ['--flows=a']));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/unexpected: z/);
+      expect(report.detail).not.toMatch(/missing/);
+    });
+
+    it('a complete artifact written by this run is a PASS, and the report points at it', async () => {
+      const h = harness();
+      const report = await runJob(h.deps, deposit(h, 'live', ['--flows=a,b']));
+      expect(report.verdict).toBe('PASS');
+      expect(report.liveArtifact).toMatch(new RegExp(`^${e2eDir(h)}/live-.*\\.json$`));
+      expect(report.liveFlows).toEqual([
+        { name: 'a', status: 'PASS' },
+        { name: 'b', status: 'PASS' },
+      ]);
+    });
+
+    it('a matching artifact left by an EARLIER run does not count — only one this run wrote', async () => {
+      const h = harness();
+      fs.mkdirSync(e2eDir(h), { recursive: true });
+      fs.writeFileSync(
+        path.join(e2eDir(h), 'live-2026-01-01T00-00-00-000Z.json'),
+        JSON.stringify({ sha: head(h), flows: [{ name: 'login-spine', status: 'PASS' }, { name: 'send-message', status: 'PASS' }] }),
+      );
+      h.writeArtifacts = false;
+      const report = await runJob(h.deps, deposit(h, 'live'));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/no report\/e2e\/live-\*\.json was written by this run/);
+    });
+
+    it('a nightly whose default flow list cannot be read from the checkout is a FAIL saying so', async () => {
+      const h = harness();
+      h.defaultLiveFlows = undefined;
+      const report = await runJob(h.deps, deposit(h, 'nightly'));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/the flow list this job asked for could not be read from the checkout/);
+    });
+
+    it('a nightly is judged against FLOWS minus GATE_ONLY — the checkout default', async () => {
+      const h = harness();
+      h.defaultLiveFlows = ['a', 'b', 'c'];
+      h.liveArtifactFlows = [{ name: 'a', status: 'PASS' }, { name: 'b', status: 'PASS' }];
+      const report = await runJob(h.deps, deposit(h, 'nightly'));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/missing: c/);
+    });
+
+    it("the nightly's latest.json lists each flow's status, and the UNPROVEN and SKIPPED ones by name", async () => {
+      const h = harness();
+      h.defaultLiveFlows = ['a', 'b', 'c'];
+      h.liveArtifactFlows = [
+        { name: 'a', status: 'PASS' },
+        { name: 'b', status: 'UNPROVEN' },
+        { name: 'c', status: 'SKIPPED' },
+      ];
+      deposit(h, 'nightly');
+      await processOldest(h.deps);
+      const result = readNightlyResult(h.paths);
+      expect(result?.verdict).toBe('PASS');
+      expect(result?.flows).toEqual(h.liveArtifactFlows);
+      expect(result?.unproven).toEqual(['b']);
+      expect(result?.skipped).toEqual(['c']);
+    });
+
+    it('a drive that exits non-zero keeps its own verdict — the artifact check only vetoes a PASS', async () => {
+      const h = harness();
+      h.writeArtifacts = false;
+      const job = deposit(h, 'live');
+      h.exitCodes = [0, 0, 0, 2];
+      const report = await runJob(h.deps, job);
+      expect(report.verdict).toBe('BLOCKED');
+      expect(report.detail).not.toMatch(/exit code alone/);
+    });
+  });
+
+  describe('ref', () => {
+    it('exit 0 with no gate artifact is a FAIL', async () => {
+      const h = harness();
+      h.writeArtifacts = false;
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/no readable gate artifact at .*gate-.*\.json/);
+      expect(report.detail).toMatch(/an exit code alone is not a PASS/);
+    });
+
+    it('a gate artifact whose head is another sha is a FAIL', async () => {
+      const h = harness();
+      seedGate(h, { head: 'another-sha', routing: { required: [] }, live: { skipped: true } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/names head another-sha, not the gated sha/);
+    });
+
+    it('a gate artifact whose deposited sha differs is a FAIL', async () => {
+      const h = harness();
+      seedGate(h, { depositedSha: 'someone-else', routing: { required: [] }, live: { skipped: true } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/names deposited sha someone-else/);
+    });
+
+    it('a gate artifact from an earlier attempt is a FAIL — an earlier run wrote it', async () => {
+      const h = harness();
+      seedGate(h, { attempt: 99, routing: { required: [] }, live: { skipped: true } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/from attempt 99, not this run's attempt 1/);
+    });
+
+    it('a live stage that drove fewer flows than routed is a FAIL', async () => {
+      const h = harness();
+      seedGate(h, { routing: { required: ['a', 'b'] }, live: { status: 'PASS', flows: [{ name: 'a' }] } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/missing: b/);
+    });
+
+    it('a skipped live stage with flows routed is a FAIL', async () => {
+      const h = harness();
+      seedGate(h, { routing: { required: ['a'] }, live: { skipped: true, why: 'x' } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/skipped the live stage while a were asked for/);
+    });
+
+    it('a gate artifact with no completed live stage is a FAIL', async () => {
+      const h = harness();
+      seedGate(h, { routing: { required: ['a'] }, live: { status: 'BLOCKED' } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/records no completed live stage/);
+    });
+
+    it('a complete, matching gate artifact is a PASS', async () => {
+      const h = harness();
+      seedGate(h, {
+        routing: { required: ['a', 'b'] },
+        live: { status: 'PASS', flows: [{ name: 'b' }, { name: 'a' }] },
+      });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('PASS');
+    });
+
+    it('a forwarded --flows= is what the live stage is judged against, not routing.required', async () => {
+      const h = harness();
+      seedGate(h, { routing: { required: ['a', 'b'] }, live: { status: 'PASS', flows: [{ name: 'a' }] } });
+      const report = await runJob(h.deps, deposit(h, 'ref', ['--flows=a']));
+      expect(report.verdict).toBe('PASS');
+    });
+
+    it('a vetoed PASS is attested as a FAIL', async () => {
+      const h = harness();
+      h.writeArtifacts = false;
+      const job = deposit(h);
+      await processOldest(h.deps);
+      expect(listVerdicts(h.paths).find(v => v.verdict.head === job.fingerprint.head)?.verdict.verdict).toBe('FAIL');
+    });
+  });
+
+  describe('the pure helpers', () => {
+    const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'spo-bench-1182-'));
+    function write(file: string, body: string): string {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, body, 'utf8');
+      return file;
+    }
+
+    it('flowsFromArgs: absent is undefined, the first flag wins, blanks are dropped', () => {
+      expect(flowsFromArgs(['--branch=main'])).toBeUndefined();
+      expect(flowsFromArgs(['--flows=a', '--flows=b,c'])).toEqual(['a']);
+      expect(flowsFromArgs(['--flows=a,,b,'])).toEqual(['a', 'b']);
+    });
+
+    it('liveArtifactNames: empty when report/e2e does not exist; only live-*.json otherwise', () => {
+      const wt = tmp();
+      expect(liveArtifactNames(wt).size).toBe(0);
+      write(path.join(wt, 'report', 'e2e', 'live-1.json'), '{}');
+      write(path.join(wt, 'report', 'e2e', 'gate-x.json'), '{}');
+      expect([...liveArtifactNames(wt)]).toEqual(['live-1.json']);
+    });
+
+    it('newLiveArtifact: the lexicographically last new name; undefined when nothing is new', () => {
+      const wt = tmp();
+      write(path.join(wt, 'report', 'e2e', 'live-1.json'), '{}');
+      const before = liveArtifactNames(wt);
+      expect(newLiveArtifact(wt, before)).toBeUndefined();
+      write(path.join(wt, 'report', 'e2e', 'live-3.json'), '{}');
+      write(path.join(wt, 'report', 'e2e', 'live-2.json'), '{}');
+      expect(newLiveArtifact(wt, before)).toBe(path.join(wt, 'report', 'e2e', 'live-3.json'));
+    });
+
+    it('liveFlowStatuses: undefined without a path, unreadable, or with no flows array', () => {
+      const dir = tmp();
+      expect(liveFlowStatuses(undefined)).toBeUndefined();
+      expect(liveFlowStatuses(write(path.join(dir, 'bad.json'), '{'))).toBeUndefined();
+      expect(liveFlowStatuses(write(path.join(dir, 'none.json'), '{}'))).toBeUndefined();
+      expect(
+        liveFlowStatuses(
+          write(path.join(dir, 'ok.json'), JSON.stringify({ flows: [{ name: 'a', status: 'PASS' }, { name: 'b' }, { status: 'X' }] })),
+        ),
+      ).toEqual([
+        { name: 'a', status: 'PASS' },
+        { name: 'b', status: 'UNKNOWN' },
+      ]);
+    });
+
+    it('liveArtifactProblem: an unreadable artifact, and one naming no sha', () => {
+      const dir = tmp();
+      expect(liveArtifactProblem(write(path.join(dir, 'bad.json'), '{'), 's', ['a'])).toMatch(/could not be read/);
+      expect(liveArtifactProblem(write(path.join(dir, 'nosha.json'), '{}'), 's', ['a'])).toMatch(/names sha none, not s/);
+      expect(
+        liveArtifactProblem(write(path.join(dir, 'ok.json'), JSON.stringify({ sha: 's', flows: [{ name: 'a' }] })), 's', ['a']),
+      ).toBeUndefined();
+    });
+
+    it('gateArtifactProblem: no path, and fields absent from the artifact', () => {
+      const dir = tmp();
+      const expected = { gatedSha: 'g', depositedSha: 'd', attempt: 1, askedFlows: undefined };
+      expect(gateArtifactProblem(undefined, expected)).toMatch(/no readable gate artifact/);
+      const empty = write(path.join(dir, 'empty.json'), '{}');
+      expect(gateArtifactProblem(empty, expected)).toMatch(/names head none/);
+      const noDep = write(path.join(dir, 'nodep.json'), JSON.stringify({ head: 'g' }));
+      expect(gateArtifactProblem(noDep, expected)).toMatch(/names deposited sha none/);
+      const noAttempt = write(path.join(dir, 'noatt.json'), JSON.stringify({ head: 'g', depositedSha: 'd' }));
+      expect(gateArtifactProblem(noAttempt, expected)).toMatch(/from attempt none/);
+      const noRouting = write(
+        path.join(dir, 'norouting.json'),
+        JSON.stringify({ head: 'g', depositedSha: 'd', attempt: 1, live: { skipped: true } }),
+      );
+      expect(gateArtifactProblem(noRouting, expected)).toBeUndefined();
+      const liveNull = write(path.join(dir, 'livenull.json'), JSON.stringify({ head: 'g', depositedSha: 'd', attempt: 1, live: null }));
+      expect(gateArtifactProblem(liveNull, expected)).toMatch(/no completed live stage/);
+    });
+
+    describe('readCheckoutDefaultFlows', () => {
+      function checkout(flowsJs: string | undefined, routingJs: string | undefined): string {
+        const dir = tmp();
+        if (flowsJs !== undefined) write(path.join(dir, 'dist', 'e2e', 'flows.js'), flowsJs);
+        if (routingJs !== undefined) write(path.join(dir, 'dist', 'e2e', 'routing.js'), routingJs);
+        return dir;
+      }
+
+      it('reads FLOWS minus GATE_ONLY from the checkout', () => {
+        const dir = checkout(
+          "exports.FLOWS = [{name:'a'},{name:'chat'},{name:'b'}];",
+          "exports.GATE_ONLY = { chat: 'broadcasts' };",
+        );
+        expect(readCheckoutDefaultFlows(dir)).toEqual(['a', 'b']);
+      });
+
+      it.each([
+        ['flows.js is missing', undefined, 'exports.GATE_ONLY = {};'],
+        ['routing.js is missing', "exports.FLOWS = [{name:'a'}];", undefined],
+        ['flows.js throws on load', "throw new Error('boom');", 'exports.GATE_ONLY = {};'],
+        ['FLOWS is not an array', "exports.FLOWS = 'x';", 'exports.GATE_ONLY = {};'],
+        ['GATE_ONLY is not an object', "exports.FLOWS = [{name:'a'}];", 'exports.GATE_ONLY = 3;'],
+        ['a flow has no string name', 'exports.FLOWS = [{}];', 'exports.GATE_ONLY = {};'],
+      ])('is undefined when %s', (_label, flowsJs, routingJs) => {
+        expect(readCheckoutDefaultFlows(checkout(flowsJs, routingJs))).toBeUndefined();
+      });
+    });
   });
 });

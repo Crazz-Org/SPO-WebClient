@@ -6,7 +6,6 @@
 import { create } from 'zustand';
 import type { BuildingCategory, BuildingInfo } from '@/shared/types';
 import { ALL_CONNECTION_ROLES, type ConnectionRoleFlags } from '@/shared/connection-roles';
-import { useBuildingStore } from './building-store';
 import { useGameStore } from './game-store';
 import type { SnapPoint } from '../hooks/useSheetGesture';
 import { isDialogSuppressed, type DialogKind, type DialogRow } from '../components/common/Dialog';
@@ -68,7 +67,7 @@ function legacyView(stack: Surface[]): { rightPanel: RightPanelType | null; left
     leftPanel: LEFT_KINDS.has(top.kind) ? (top.kind as LeftPanelType) : null,
   };
 }
-export type ModalType = 'buildMenu' | 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'createChannel' | 'connectionPicker' | 'zonePicker' | 'supplierSearch' | 'buildingInspector' | 'newspaper' | 'changelog' | 'chatHistory' | 'shortcuts';
+export type ModalType = 'settings' | 'confirm' | 'prompt' | 'createCompany' | 'createChannel' | 'zonePicker' | 'supplierSearch' | 'newspaper' | 'changelog' | 'chatHistory' | 'shortcuts';
 export type MobileTab = 'map' | 'chat' | 'build' | 'more';
 
 /** The right-click map context menu — what tile it opened on, and what sits there. */
@@ -129,9 +128,6 @@ interface UiState {
   // Mobile
   mobileTab: MobileTab;
   mobileSheetSnap: SnapPoint;
-
-  // Minimap fullscreen (mobile)
-  minimapFullscreen: boolean;
 
   // Placement mode (building placement on map)
   isPlacingBuilding: boolean;
@@ -207,10 +203,6 @@ interface UiState {
   setMobileTab: (tab: MobileTab) => void;
   setMobileSheetSnap: (snap: SnapPoint) => void;
 
-  // Actions — Minimap fullscreen
-  setMinimapFullscreen: (open: boolean) => void;
-  toggleMinimapFullscreen: () => void;
-
   // Actions — Placement
   setIsPlacingBuilding: (v: boolean) => void;
   setPlacementValid: (v: boolean) => void;
@@ -249,7 +241,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   hudVisible: true,
   mobileTab: 'map',
   mobileSheetSnap: 'half' as SnapPoint,
-  minimapFullscreen: false,
   isPlacingBuilding: false,
   placementValid: false,
   placingFacility: null,
@@ -317,14 +308,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   closeAllPanels: () => get().clearSurfaces(),
 
   // Modals
-  openModal: (type) => {
-    // Civic building modal replaces the right-panel building inspector
-    if (type === 'buildingInspector') {
-      set({ modal: type, stack: [], ...legacyView([]) });
-    } else {
-      set({ modal: type });
-    }
-  },
+  openModal: (type) => set({ modal: type }),
   // Closing a stacked prompt returns to whatever it was raised over, not to
   // nothing. `modalBeneath` is null for every ordinary modal, so this stays a
   // plain close in every other case.
@@ -374,10 +358,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   setMobileTab: (tab) => set({ mobileTab: tab }),
   setMobileSheetSnap: (snap) => set({ mobileSheetSnap: snap }),
 
-  // Minimap fullscreen
-  setMinimapFullscreen: (open) => set({ minimapFullscreen: open }),
-  toggleMinimapFullscreen: () => set((s) => ({ minimapFullscreen: !s.minimapFullscreen })),
-
   // Placement
   setIsPlacingBuilding: (v) => set({ isPlacingBuilding: v }),
   setPlacementValid: (v) => set({ placementValid: v }),
@@ -401,9 +381,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     // Connect mode owns Escape: its own listener cancels the mode and reveals
     // the hidden stack — popping a surface the player cannot see would be worse.
     if (state.connectMode.active) return;
-    if (state.minimapFullscreen) {
-      set({ minimapFullscreen: false });
-    } else if (state.commandPaletteOpen) {
+    if (state.commandPaletteOpen) {
       set({ commandPaletteOpen: false });
     } else {
       // Server switch overlay sits at z-450 (above modals z-400)
@@ -418,13 +396,10 @@ export const useUiStore = create<UiState>((set, get) => ({
       }
       if (state.modal) {
         // Escape dismisses one layer. On a stacked prompt that means returning
-        // to the inspector underneath, not closing both and losing the focus.
+        // to the modal underneath, not closing both.
         if (state.modalBeneath) {
           set({ modal: state.modalBeneath, modalBeneath: null, confirmPayload: null, promptPayload: null });
           return;
-        }
-        if (state.modal === 'buildingInspector') {
-          useBuildingStore.getState().clearFocus();
         }
         set({ modal: null, confirmPayload: null, promptPayload: null });
       } else if (state.stack.length > 0) {
