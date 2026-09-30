@@ -4651,6 +4651,38 @@ export function salariesLineMatches(line: string, hi: string, mid: string, lo: s
   return new RegExp(`${escapeRegExp(`Setting salaries: ${hi}, ${mid}, ${lo}`)}(?=\\s|$)`).test(line);
 }
 
+/**
+ * A salary slot the server left unpublished reads `""`: `TWorkCenter.StoreToCache` writes
+ * `Salaries<k>` only for a class the block has capacity for (Kernel/WorkCenterBlock.pas:567-571).
+ * It is sent as 0, as the inspector sends it (`collectSalaryTriplet`, property-utils.ts) — an
+ * empty slot must never reach `RdoValue.int` as `parseInt('')`.
+ */
+export function salaryArg(value: string): string {
+  return value.trim() === '' ? '0' : value;
+}
+
+/**
+ * The triplet with the first **published** class nudged, the unpublished slots kept empty so the
+ * read-back can tell them apart. Throws when no class is published — nothing is written then.
+ */
+export function salariesNudge(original: string): string {
+  const slots = original.split(',');
+  const k = slots.findIndex(s => s.trim() !== '');
+  if (k < 0) throw new Error(`no salary class is published ("${original}") — nothing to nudge`);
+  slots[k] = nudgeWithin(slots[k], 0, 255);
+  return slots.join(',');
+}
+
+/**
+ * The read-back compares the published classes only — a slot `expected` leaves empty was never
+ * published, so its value cannot be read back (Kernel/WorkCenterBlock.pas:567-571).
+ */
+export function publishedSalariesMatch(last: string, expected: string): boolean {
+  const got = last.split(',');
+  const want = expected.split(',');
+  return got.length === want.length && want.every((w, i) => w.trim() === '' || got[i] === w);
+}
+
 const linkKey = (c: BuildingConnectionData): string => `${c.x},${c.y},${c.facilityName}`;
 const linkLabel = (c: BuildingConnectionData): string => `${c.facilityName} (${c.x},${c.y}) of ${c.companyName}`;
 
@@ -4825,6 +4857,10 @@ const NO_WORKFORCE_REASON =
   "the store fixture's template carries no workforce group (WORKFORCE_GROUP) — FIXTURE_KINDS' store kind " +
   'does not require it (#1149)';
 
+const NO_SALARY_CLASS_REASON =
+  "the store fixture publishes no salary class — TWorkCenter.StoreToCache writes Salaries<k> only for a " +
+  'class with capacity (Kernel/WorkCenterBlock.pas:567-571), so no write could be read back';
+
 /**
  * The store's owner settings: service 0's price (`TServiceBlock.RDOSetPrice`,
  * StdBlocks/ServiceBlock.pas:1578) and the salary triplet (`TWorkCenter.RDOSetSalaries`,
@@ -4880,32 +4916,38 @@ const storePriceSalaries: Flow = {
         const values = WORKER_KINDS.map(i => propertyValue(groups, 'workforce', `Salaries${i}`));
         return values.some(v => v === undefined) ? undefined : values.join(',');
       };
+      const before = await readSalaries();
+      if (before !== undefined && before.split(',').every(s => s.trim() === '')) {
+        assertions.unproven('RDOSetSalaries', NO_SALARY_CLASS_REASON);
+        return report('store-price-salaries', assertions, probes, session);
+      }
       const salaries = await roundTripProbe(ctx, url, {
         what: `${fixtureLabel(fx)} salaries (hi,mid,lo)`,
         member: 'RDOSetSalaries',
         read: readSalaries,
         write: async value => {
-          const [salary0, salary1, salary2] = value.split(',');
+          const [salary0, salary1, salary2] = value.split(',').map(salaryArg);
           // The whole triplet, the untouched two unchanged — buildRdoCommandArgs requires all three.
           await setBuildingProperty(session, fx.x, fx.y, 'RDOSetSalaries', salary0, { salary0, salary1, salary2 });
         },
-        testValue: original => {
-          const [hi, mid, lo] = original.split(',');
-          return [nudgeWithin(hi, 0, 255), mid, lo].join(',');
-        },
+        testValue: salariesNudge,
         proof: {
           log: {
             marker: LOG_MARKERS.RDOSetSalaries,
             match: (line, written) => {
-              const [hi, mid, lo] = written.split(',');
+              const [hi, mid, lo] = written.split(',').map(salaryArg);
               return salariesLineMatches(line, hi, mid, lo);
             },
           },
-          readBack: readBackOn(
-            `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read`,
-            `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593)`,
-            readSalaries,
-          ),
+          readBack: {
+            ...readBackOn(
+              `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read, published classes only`,
+              `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593), ` +
+                'and only a class with capacity is published (:567-571)',
+              readSalaries,
+            ),
+            matches: publishedSalariesMatch,
+          },
         },
         restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetSalaries' },
       });
