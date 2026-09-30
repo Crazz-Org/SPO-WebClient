@@ -564,7 +564,7 @@ describe('routing invariants (#1134)', () => {
     expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip', 'chat-private-channel', 'bank-borrow-payoff']);
   });
 
-  // #1149: the fixture builder is the one permanent mutation — nightly only, no gate requires it.
+  // #1149: the all-kinds fixture builder is nightly only, no gate requires it (a fixture flow's own seed builds its kind, #1185).
   it('keeps fixtures-ensure nightly-only with its card cited, never gate-only, named by no route', () => {
     expect(NIGHTLY_ONLY['fixtures-ensure']).toMatch(/#1149/);
     expect(uncited({ 'fixtures-ensure': NIGHTLY_ONLY['fixtures-ensure'] })).toEqual([]);

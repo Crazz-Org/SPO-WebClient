@@ -84,7 +84,10 @@ describe('the catalogue', () => {
         'client-hire-remove', 'company-input-demand', 'connect-on-map',
         'facility-open-close',
         'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
-        'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
+        'industry-supply-limits',
+        // #1185: its seed may build a permanent fixture
+        'inspector-reads',
+        'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
         'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
         // #1153
@@ -93,6 +96,8 @@ describe('the catalogue', () => {
         'road-roundtrip', 'store-price-salaries',
         // #1153
         'supplier-hire-fire',
+        // #1185: its seed may build a permanent fixture
+        'supplier-search-read',
         'town-min-wage',
         // #1153
         'trade-settings',
@@ -8557,5 +8562,136 @@ describe('chat flows (#1148)', () => {
       expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
       expect(off).toHaveBeenCalledWith(crazz.session);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// #1185 — a fixture flow ensures its own fixture; every flow runs alone
+// ---------------------------------------------------------------------------------------------
+
+describe('a fixture flow ensures its own fixture (#1185)', () => {
+  const FIXTURE_FLOW_KINDS: [string, fixtures.FixtureKindId[]][] = [
+    ['inspector-reads', ['industry', 'store']],
+    ['store-price-salaries', ['store']],
+    ['facility-open-close', ['store']],
+    ['industry-output-price', ['industry']],
+    ['industry-supply-limits', ['industry']],
+    ['industry-auto-buy', ['industry']],
+    ['supplier-search-read', ['industry']],
+    ['supplier-hire-fire', ['industry']],
+    ['client-hire-remove', ['industry']],
+    ['quick-trade-roundtrip', ['industry']],
+    ['connect-on-map', ['industry', 'warehouse']],
+    ['trade-settings', ['industry', 'warehouse']],
+    ['warehouse-wares', ['warehouse']],
+    ['company-input-demand', ['store', 'industry', 'warehouse']],
+    ['residential-settings', ['residential']],
+    ['residential-repair', ['residential']],
+    ['bank-settings', ['bank']],
+    ['tv-settings', ['tv']],
+    ['accept-cloning', ['industry']],
+    ['research-roundtrip', ['research']],
+    ['upgrade-stop', ['industry']],
+  ];
+
+  const outcome = (kind: fixtures.FixtureKindId, status: fixtures.FixtureOutcome['status'], extra: Partial<fixtures.FixtureOutcome> = {}) =>
+    ({ kind, status, ...extra }) as fixtures.FixtureOutcome;
+
+  function spySeed(outcomes: (kinds: readonly fixtures.FixtureKind[]) => fixtures.FixtureOutcome[]) {
+    const stub = stubSession(() => undefined);
+    const login = jest.spyOn(session, 'login').mockResolvedValue(stub);
+    const logoff = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    const ensure = jest.spyOn(fixtures, 'ensureFixtures').mockImplementation(async (_s, _d, kinds) => outcomes(kinds ?? []));
+    return { stub, login, logoff, ensure };
+  }
+
+  it('covers every flow that looks a fixture up', () => {
+    const seeded = FLOWS.filter(f => f.seed && FIXTURE_FLOW_KINDS.some(([n]) => n === f.name)).map(f => f.name);
+    expect(seeded.sort()).toEqual(FIXTURE_FLOW_KINDS.map(([n]) => n).sort());
+  });
+
+  it.each(FIXTURE_FLOW_KINDS)('%s ensures exactly its own kinds as SPO_test3, then logs off', async (name, kindIds) => {
+    const { stub, login, logoff, ensure } = spySeed(kinds => kinds.map(k => outcome(k.id, 'found', { x: 1, y: 2 })));
+    const seeded = await flowByName(name).seed!({ ...ctx, survivalLogUrl: 'log' });
+    expect(login).toHaveBeenCalledWith(PRIMARY_ACCOUNT);
+    expect(ensure).toHaveBeenCalledTimes(1);
+    expect(ensure).toHaveBeenCalledWith(stub, expect.objectContaining({ survivalLogUrl: 'log' }), kindIds.map(fixtureKind));
+    expect(seeded.outcome.ok).toBe(true);
+    expect(seeded.outcome.what).toBe(`ensure ${kindIds.join(' + ')} fixture(s) in Helartia`);
+    expect(seeded.outcome.detail).toContain(`${kindIds[0]}: found at (1,2)`);
+    expect(seeded.cleanup).toBeUndefined();
+    expect(logoff).toHaveBeenCalledTimes(1);
+    expect(logoff).toHaveBeenCalledWith(stub);
+  });
+
+  it('fails the seed on a FAIL outcome, the reason in its detail', async () => {
+    spySeed(() => [outcome('industry', 'FAIL', { reason: 'NewFacility code 7' })]);
+    const seeded = await flowByName('industry-output-price').seed!(ctx);
+    expect(seeded.outcome).toMatchObject({ ok: false, detail: 'industry: FAIL — NewFacility code 7' });
+  });
+
+  it.each(['built', 'unproven', 'under construction'] as const)('keeps the seed ok on a %s outcome', async status => {
+    spySeed(() => [outcome('industry', status, { reason: 'why', logLine: status === 'built' ? 'New Facility: X' : undefined })]);
+    const seeded = await flowByName('industry-output-price').seed!(ctx);
+    expect(seeded.outcome.ok).toBe(true);
+    expect(seeded.outcome.detail).toContain(`industry: ${status} — why`);
+    if (status === 'built') expect(seeded.outcome.detail).toContain('— New Facility: X');
+  });
+
+  it('logs off even when the ensure throws, and lets the throw through', async () => {
+    const { logoff, ensure } = spySeed(() => []);
+    ensure.mockRejectedValue(new Error('terrain 404'));
+    await expect(flowByName('industry-output-price').seed!(ctx)).rejects.toThrow('terrain 404');
+    expect(logoff).toHaveBeenCalledTimes(1);
+  });
+
+  describe('through runFlow', () => {
+    it('skips the run on a failed seed — UNPROVEN, nothing looked up', async () => {
+      spySeed(() => [outcome('industry', 'FAIL', { reason: 'no read-back' })]);
+      const find = jest.spyOn(fixtures, 'findFixture');
+      const result = await runFlow(flowByName('industry-output-price'), { lock: cleanLock() });
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^the flow's data — seed failed: ensure industry fixture\(s\) in Helartia \(industry: FAIL — no read-back\)/);
+      expect(find).not.toHaveBeenCalled();
+    });
+
+    it.each(['under construction', 'none in Helartia'])('keeps the lookup reason "%s" once the seed ran', async reason => {
+      spySeed(() => [outcome('industry', reason === 'under construction' ? 'under construction' : 'unproven', { reason: 'x' })]);
+      jest.spyOn(fixtures, 'findFixture').mockResolvedValue({ kind: 'industry', reason });
+      const result = await runFlow(flowByName('industry-output-price'), { lock: cleanLock() });
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.seed?.ok).toBe(true);
+      expect(result.unproven).toContain(`industry fixture — ${reason}`);
+    });
+  });
+});
+
+describe('every flow runs alone (#1185)', () => {
+  it.each(FLOWS.map(f => [f.name, f] as const))('%s opens its own session first', async (_name, flow: Flow) => {
+    const sent: string[] = [];
+    const connect = jest.spyOn(WsDriver, 'connect').mockImplementation(async () =>
+      ({
+        request: jest.fn(async (msg: WsMessage) => {
+          sent.push(msg.type);
+          throw new WsDriverError('stub: no world', 99, msg.type);
+        }),
+        waitFor: jest.fn(async () => Promise.reject(new Error('stub: nothing arrives'))),
+        send: jest.fn(),
+        close: jest.fn(async () => undefined),
+        log: [],
+        errors: [],
+        seen: jest.fn(() => []),
+      }) as unknown as WsDriver,
+    );
+    jest.spyOn(global, 'fetch').mockRejectedValue(new Error('stub: no network'));
+    const result: FlowResult = await runFlow(flow, {
+      lock: cleanLock(),
+      survivalLogUrl: 'log',
+      sleep: async () => {},
+      now: () => 0,
+    });
+    expect(result.name).toBe(flow.name);
+    expect(connect).toHaveBeenCalled();
+    expect(sent[0]).toBe(WsMessageType.REQ_AUTH_CHECK);
   });
 });

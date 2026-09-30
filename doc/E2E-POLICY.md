@@ -126,7 +126,7 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
 
 - **`NIGHTLY_ONLY`** lists the flows no gate requires — a data-gated flow (a required `UNPROVEN`
   fails the gate), a reading that asserts nothing, or the fixture builder `fixtures-ensure`,
-  which builds only when a fixture is missing (§9). The nightly still runs them; every other
+  which ensures every kind in one pass (§9). The nightly still runs them; every other
   flow must be reached by some tracked path.
 - **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
   (`politics-write`, `Kernel/Population.pas:1264-1284`; `policy-roundtrip`,
@@ -158,8 +158,8 @@ mutations; `runProbe` is its building-property adapter. `road-roundtrip` drives 
 step by step, because a road's undo is two proven writes of its own — a break, then a wipe —
 each shown by its Survival line and a `SegmentsInArea` read-back.
 
-The one mutation left in place is the permanent fixture build (`fixtures-ensure`, §9), proven by
-its line, its result code and the lot read-back.
+The one mutation left in place is the permanent fixture build (§9) — by `fixtures-ensure` or by
+a fixture flow's own seed — proven by its line, its result code and the lot read-back.
 
 **The line proves receipt; the read-back proves the change.** Most handlers log before their
 owner check (e.g. `Kernel/Kernel.pas:4336` -> `:4337`), so a refused write prints its line.
@@ -341,6 +341,11 @@ capability — and then the gate demands the flow.
 - A flow that no routing rule requires (for example the probes of #1004 and #1006) may end
   UNPROVEN as information. **A card that makes such a flow required must seed its data
   first.**
+- **Every flow runs alone** (#1185, maintainer direction 2026-09-29):
+  `--flows=login-spine,<flow>` proves it with no other flow before it. A flow opens and closes
+  its own session; a world prerequisite is created by the flow's own seed, or named in its
+  UNPROVEN reason. The ratchet in `src/e2e/flows.test.ts` runs every `FLOWS` entry alone
+  through `runFlow` and checks that its first request is its own `REQ_AUTH_CHECK`.
 
 `verify-gate.js` records every UNPROVEN flow in the artifact's top-level `unproven` list
 (`{ flow, required, reasons }`, §10) — outside `exclusions`, because a required entry is a
@@ -411,15 +416,20 @@ No flow reads or writes its buildings (`flows.ts`: it appears at the login in
 Never another player's assets. Never a world-scope value. Every mutation is restored in
 the same run (§5).
 
-**Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29, the
-nightly-only flow `fixtures-ensure` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
+**Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29,
+`ensureFixtures` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
 kind the owner-setter flows need — `industry`, `store`, `warehouse`, `residential`, `research`,
-`bank`, `tv` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
-missing, once, and keeps it. Fixtures are found **by kind at run time** (`findFixture`: the
+`bank`, `tv` — owned by *SPO_test3 - Green* in Helartia. Two callers build them: the nightly-only flow
+`fixtures-ensure`, for every kind, and each fixture flow's own seed, for the kinds it reads
+(#1185) — so a gate-routed fixture flow may build its missing fixture (sanction: maintainer
+direction 2026-09-29, given in session). Either builds a kind only when it is missing, once, and
+keeps it. Fixtures are found **by kind at run time** (`findFixture`: the
 directory's tycoon branch, then the lot's owner and the inspector's template groups), never by
 coordinates committed to the tree — the world moves. A build is proven by its `New Facility:`
 line, result code 0 and the lot read-back. While SPO_test3 owns a construction site in Helartia,
-the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
+neither places anything: a site cannot be tied to a kind. A fixture a seed places is still under
+construction in that run — the flow ends UNPROVEN `under construction`; a later run finds it
+finished. A mausoleum is never a fixture
 (placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
 and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
 
