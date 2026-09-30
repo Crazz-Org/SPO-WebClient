@@ -93,10 +93,13 @@ export const ROUTES: RouteRule[] = [
   // stage 6) goes in NIGHTLY_ONLY; a flow whose action posts a message every online player
   // sees goes in GATE_ONLY (the card states the maintainer accepts the broadcast at the gate
   // on that basis). Each exemption carries a cited reason: `File.pas:Line`, `file.asp:Line`
-  // or `#<issue>`. A diff under src/e2e/ routes to no flow, so the area card's own gate is
-  // static: it proves its flows ran with `npm run test:live -- --flows=login-spine,<new flows>`
-  // exiting 0 — never `npm run gate -- --flows=…`, which verify-gate.js stage 3 BLOCKs on a
-  // static-only diff.
+  // or `#<issue>`. The tooling rule below routes no flow for a diff under src/e2e/; the gate
+  // itself adds the flows. verify-gate.js stage 3 adds the flows the diff CHANGED — a hunk
+  // inside a `FLOWS` entry, or inside a shared helper of the six flow sources, which drives
+  // every flow that reaches it (src/e2e/bench/changed-flows.ts) — and the flows a card
+  // DECLARES with `npm run gate -- --also-flows=a,b`. All of them land in `routing.required`,
+  // so the card's own gate drives them and a required flow that ends UNPROVEN fails it.
+  // `--flows=` replaces the set and is refused unless it names every required flow.
   {
     test: /^doc\/|\.md$|^src\/mock-server\/|\.test\.tsx?$|^src\/__tests__\//,
     flows: [],
