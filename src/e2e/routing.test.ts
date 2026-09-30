@@ -723,7 +723,7 @@ describe('route — handler rules seeded by #1134', () => {
   // #1148: chat-handler.ts left FALLBACK_ONLY — its own rule is now the first match.
   it('routes the former FALLBACK_ONLY chat handler through its own rule', () => {
     expect(route(['src/server/session/chat-handler.ts']).required).toEqual([
-      SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase',
+      SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase', 'gm-broadcast',
     ]);
     expect('src/server/session/chat-handler.ts' in FALLBACK_ONLY).toBe(false);
   });
@@ -864,14 +864,16 @@ describe('route — profile & finance reads (#1141)', () => {
 
 describe('route — chat (#1148)', () => {
   const CHAT = [SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase'];
+  // #1199: the handler/store rule also drives the GM broadcast; the component rule does not.
+  const CHAT_RULE = [...CHAT, 'gm-broadcast'];
 
   it.each([
     'src/server/session/chat-handler.ts',
     'src/server/ws-handlers/chat-handlers.ts',
     'src/client/store/chat-store.ts',
-  ])('%s requires the three chat flows, and is not fallback-only', file => {
+  ])('%s requires the chat flows and the GM broadcast, and is not fallback-only', file => {
     const d = route([file]);
-    expect(d.required).toEqual(CHAT);
+    expect(d.required).toEqual(CHAT_RULE);
     expect(d.needsL3).toBe(false);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
@@ -894,10 +896,30 @@ describe('route — chat (#1148)', () => {
   it('keeps chat-private-channel gate-only with its broadcast cited, and the other two on both', () => {
     expect(GATE_ONLY['chat-private-channel']).toMatch(/InterfaceServer\.pas:4594/);
     expect(GATE_ONLY['chat-private-channel']).toMatch(/:3968-3980/);
-    for (const name of ['chat-read', 'chat-chase']) {
+    for (const name of ['chat-read', 'chat-chase', 'gm-broadcast']) {
       expect(name in GATE_ONLY).toBe(false);
       expect(name in NIGHTLY_ONLY).toBe(false);
     }
+  });
+});
+
+describe('route — tutorial (#1199)', () => {
+  it('keeps tutorial-read nightly-only, cited, and named by no rule', () => {
+    expect(NIGHTLY_ONLY['tutorial-read']).toMatch(/Tasks\/InformativeTask\.pas:42-52/);
+    expect(uncited({ 'tutorial-read': NIGHTLY_ONLY['tutorial-read'] })).toEqual([]);
+    expect('tutorial-read' in GATE_ONLY).toBe(false);
+    expect(ROUTES.some(r => r.flows.includes('tutorial-read'))).toBe(false);
+    expect(flowNames).toContain('tutorial-read');
+  });
+
+  it('keeps the tutorial handler excluded for close and Get New Assignment, and records the lift', () => {
+    const entry = FALLBACK_ONLY['src/server/session/tutorial-handler.ts'];
+    expect(entry).toMatch(/^excluded: /);
+    expect(entry).toContain('Get New Assignment');
+    expect(entry).toContain('tutorial-read');
+    expect(route(['src/server/session/tutorial-handler.ts']).required).toEqual([
+      SPINE_FLOW, 'politics-read', 'politics-write', 'building-details',
+    ]);
   });
 });
 

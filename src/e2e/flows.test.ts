@@ -18,7 +18,7 @@ import {
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
-  researchState, researchCost, lowerInterest,
+  researchState, researchCost, lowerInterest, tutorialStateProblem,
   type Flow, type FlowResult, type GateLinks,
 } from './flows';
 import { buildReplyHeaders } from '@/client/store/mail-store';
@@ -28,6 +28,7 @@ import { ROUTES, NIGHTLY_ONLY, GATE_ONLY } from './routing';
 import { CLUSTER_IDS } from '@/shared/cluster-data';
 import { WorldLock, WorldDirtyError } from './world-lock';
 import { WsDriver, WsDriverError } from './ws-driver';
+import { ERROR_AccessDenied } from '@/shared/error-codes';
 import * as session from './session';
 import * as probeModule from './probe';
 import * as liveLog from './live-log';
@@ -96,6 +97,8 @@ describe('the catalogue', () => {
         'town-min-wage',
         // #1153
         'trade-settings',
+        // #1199: it sends prev/next
+        'tutorial-read',
         'tv-settings', 'upgrade-stop', 'vote-roundtrip',
         // #1153
         'warehouse-wares',
@@ -8670,6 +8673,368 @@ describe('chat flows (#1148)', () => {
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
       expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
       expect(off).toHaveBeenCalledWith(crazz.session);
+    });
+  });
+});
+
+describe('gm-broadcast (#1199)', () => {
+  const GM_REFUSAL = 'Only Game Masters can send GM messages';
+  const PHASE_REFUSAL = 'Operation not allowed in current session state';
+
+  interface GmOptions {
+    /** What the primary's GM send delivers to the bus: the event, altered, or nothing. */
+    deliver?: (msg: Record<string, unknown>) => Record<string, unknown> | null;
+    /** How Crazz's GM send ends: refused (default), or a plain timeout (accepted). */
+    crazzAccepted?: boolean;
+    /** The refusal the directory-only session gets. */
+    dirRefusal?: { message: string; code: number };
+    connectFails?: boolean;
+  }
+
+  interface FakeDriver {
+    sent: Record<string, unknown>[];
+    received: WsMessage[];
+    close: jest.Mock;
+    driver: WsDriver;
+  }
+
+  function fakeDriver(request: (msg: Record<string, unknown>) => Promise<unknown>, onSend?: (msg: Record<string, unknown>) => void): FakeDriver {
+    const sent: Record<string, unknown>[] = [];
+    const received: WsMessage[] = [];
+    const close = jest.fn(async () => undefined);
+    const driver = {
+      log: [] as unknown[],
+      errors: [] as WsMessage[],
+      close,
+      receivedCount: () => received.length,
+      send: (msg: Record<string, unknown>) => {
+        sent.push(msg);
+        onSend?.(msg);
+        return `e2e-${sent.length}`;
+      },
+      waitFor: async (match: (m: WsMessage) => boolean, _t?: number, label = 'message', from = 0) => {
+        const hit = received.slice(from).find(match);
+        if (!hit) throw new Error(`Timed out waiting for ${label}`);
+        return hit;
+      },
+      request: async (msg: Record<string, unknown>) => {
+        sent.push(msg);
+        return request(msg);
+      },
+    };
+    return { sent, received, close, driver: driver as unknown as WsDriver };
+  }
+
+  function asSession(d: FakeDriver, account = PRIMARY_ACCOUNT): session.LiveSession {
+    return { driver: d.driver, account, company: { id: '1', name: 'x' }, worlds: 3, companies: [], playerX: 0, playerY: 0 };
+  }
+
+  function gmWorld(options: GmOptions = {}) {
+    const crazz = fakeDriver(async msg => {
+      if (msg.type === WsMessageType.REQ_GM_CHAT_SEND) {
+        if (options.crazzAccepted) throw new Error('Timed out after 30000 ms waiting for RESP_CHAT_SUCCESS');
+        throw new WsDriverError(GM_REFUSAL, 0, String(msg.type));
+      }
+      throw new Error(`unexpected ${String(msg.type)}`);
+    });
+    const primary: FakeDriver = fakeDriver(
+      async msg => {
+        throw new Error(`unexpected ${String(msg.type)}`);
+      },
+      msg => {
+        if (msg.type !== WsMessageType.REQ_GM_CHAT_SEND) return;
+        const event = { type: WsMessageType.EVENT_CHAT_MSG, channel: 'GM', from: 'SPO_test3', message: msg.message, isGM: true };
+        const delivered = options.deliver ? options.deliver(event) : event;
+        if (delivered === null) return;
+        crazz.received.push(delivered as unknown as WsMessage);
+        primary.received.push(delivered as unknown as WsMessage);
+      },
+    );
+    const dir = fakeDriver(async msg => {
+      switch (msg.type) {
+        case WsMessageType.REQ_AUTH_CHECK:
+          return { type: WsMessageType.RESP_AUTH_SUCCESS };
+        case WsMessageType.REQ_CONNECT_DIRECTORY:
+          return { type: WsMessageType.RESP_CONNECT_SUCCESS };
+        case WsMessageType.REQ_GM_CHAT_SEND: {
+          const r = options.dirRefusal ?? { message: PHASE_REFUSAL, code: ERROR_AccessDenied };
+          throw new WsDriverError(r.message, r.code, String(msg.type));
+        }
+        default:
+          throw new Error(`unexpected ${String(msg.type)}`);
+      }
+    });
+    const crazzSession = asSession(crazz, SECONDARY_ACCOUNT);
+    const primarySession = asSession(primary);
+    jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazzSession);
+    const login = jest.spyOn(session, 'login').mockResolvedValue(primarySession);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    const connect = options.connectFails
+      ? jest.spyOn(WsDriver, 'connect').mockRejectedValue(new Error('WebSocket failed to open: ECONNREFUSED'))
+      : jest.spyOn(WsDriver, 'connect').mockResolvedValue(dir.driver);
+    return { crazz, primary, dir, crazzSession, primarySession, login, off, connect };
+  }
+
+  const failed = (r: FlowResult): string[] => r.assertions.filter(a => !a.ok).map(a => a.what);
+  const run = () => runFlow(flowByName('gm-broadcast'), { lock: cleanLock() });
+
+  it('delivers the GM message to Crazz, refuses Crazz and a directory-only session, and logs both off', async () => {
+    const w = gmWorld();
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    const gm = w.primary.sent.find(m => m.type === WsMessageType.REQ_GM_CHAT_SEND);
+    expect(String(gm?.message)).toMatch(/^e2e gm probe [0-9a-f]{8} — /);
+    const got = w.crazz.received.find(m => m.type === WsMessageType.EVENT_CHAT_MSG) as unknown as Record<string, unknown>;
+    expect(got).toMatchObject({ channel: 'GM', message: gm?.message, isGM: true });
+    expect(result.assertions.find(a => a.what === `a non-GM session (${SECONDARY_ACCOUNT.username}) is refused`)).toMatchObject({ ok: true, detail: GM_REFUSAL });
+    expect(w.dir.sent.map(m => m.type)).toEqual([
+      WsMessageType.REQ_AUTH_CHECK,
+      WsMessageType.REQ_CONNECT_DIRECTORY,
+      WsMessageType.REQ_GM_CHAT_SEND,
+    ]);
+    expect(w.dir.sent[0]).toMatchObject({ username: PRIMARY_ACCOUNT.username });
+    expect(w.dir.close).toHaveBeenCalled();
+    expect(w.off).toHaveBeenCalledWith(w.primarySession);
+    expect(w.off).toHaveBeenCalledWith(w.crazzSession);
+    expect(flowByName('gm-broadcast').mutates).toBe(false);
+  });
+
+  it('fails when the broadcast never reaches Crazz', async () => {
+    gmWorld({ deliver: () => null });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toEqual(['Crazz received the GM message on channel GM']);
+  });
+
+  it.each([
+    ['another channel', (e: Record<string, unknown>) => ({ ...e, channel: 'Lobby' })],
+    ['another text', (e: Record<string, unknown>) => ({ ...e, message: 'hello' })],
+    ['no GM flag', (e: Record<string, unknown>) => ({ ...e, isGM: false })],
+    ['another sender', (e: Record<string, unknown>) => ({ ...e, from: 'Crazz' })],
+  ])('fails when the message arrives on %s', async (_label, deliver) => {
+    gmWorld({ deliver });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toEqual(['Crazz received the GM message on channel GM']);
+  });
+
+  it('fails, naming SPO_GM_USERS, when the GM sender gets a gateway error', async () => {
+    const w = gmWorld({ deliver: () => null });
+    (w.primary.driver.errors as WsMessage[]).push({ type: WsMessageType.RESP_ERROR, errorMessage: GM_REFUSAL } as unknown as WsMessage);
+    const result = await run();
+    const errs = result.assertions.find(a => a.what === 'no gateway errors on the GM sender');
+    expect(errs?.ok).toBe(false);
+    expect(errs?.detail).toMatch(/Only Game Masters.*SPO_GM_USERS=SPO_test3/);
+  });
+
+  it('fails when Crazz\'s GM send is accepted', async () => {
+    gmWorld({ crazzAccepted: true });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toEqual([`a non-GM session (${SECONDARY_ACCOUNT.username}) is refused`]);
+  });
+
+  it('fails when the directory-only session is refused by the GM check rather than the phase gate', async () => {
+    gmWorld({ dirRefusal: { message: GM_REFUSAL, code: 0 } });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toEqual(['a session not yet WORLD_CONNECTED is refused by the phase gate']);
+  });
+
+  it('fails when the phase refusal carries another code', async () => {
+    gmWorld({ dirRefusal: { message: PHASE_REFUSAL, code: 0 } });
+    const result = await run();
+    expect(failed(result)).toEqual(['a session not yet WORLD_CONNECTED is refused by the phase gate']);
+  });
+
+  it('turns a directory socket that will not open into a failed assertion, and still logs both off', async () => {
+    const w = gmWorld({ connectFails: true });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    const phase = result.assertions.find(a => a.what === 'a session not yet WORLD_CONNECTED is refused by the phase gate');
+    expect(phase).toMatchObject({ ok: false, detail: expect.stringMatching(/ECONNREFUSED/) });
+    expect(w.off).toHaveBeenCalledWith(w.primarySession);
+    expect(w.off).toHaveBeenCalledWith(w.crazzSession);
+  });
+
+  it('ends SKIPPED when Crazz is refused, with nothing sent', async () => {
+    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+    const login = jest.spyOn(session, 'login');
+    const connect = jest.spyOn(WsDriver, 'connect');
+    const result = await run();
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused', messagesSent: 0 });
+    expect(login).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('logs Crazz off even when the primary login throws', async () => {
+    const w = gmWorld();
+    w.login.mockRejectedValue(new Error('login refused'));
+    const result = await run();
+    expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
+    expect(w.off).toHaveBeenCalledWith(w.crazzSession);
+    expect(w.connect).not.toHaveBeenCalled();
+  });
+});
+
+describe('tutorial-read (#1199)', () => {
+  interface TutorialOptions {
+    state?: unknown;
+    /** prev leaves the stage where it is. */
+    prevIgnored?: boolean;
+    prevRefused?: boolean;
+  }
+
+  function tutorialWorld(options: TutorialOptions = {}) {
+    const actions: string[] = [];
+    const sent: Record<string, unknown>[] = [];
+    const initial = 'state' in options
+      ? options.state
+      : { taskObjId: '12345', kindId: 'Welcome', name: 'Welcome', stage: 3, progress: 50 };
+    let state: unknown = initial === null || typeof initial !== 'object' ? initial : { ...(initial as object) };
+    const driver = {
+      log: [] as unknown[],
+      errors: [] as WsMessage[],
+      close: jest.fn(),
+      request: async (msg: Record<string, unknown>) => {
+        sent.push(msg);
+        if (msg.type === WsMessageType.REQ_TUTORIAL_STATE) {
+          return 'state' in options && options.state === undefined
+            ? { type: WsMessageType.RESP_TUTORIAL_STATE }
+            : { type: WsMessageType.RESP_TUTORIAL_STATE, state };
+        }
+        if (msg.type === WsMessageType.REQ_TUTORIAL_ACTION) {
+          const action = String(msg.action);
+          actions.push(action);
+          const s = state as { stage: number };
+          if (action === 'prev') {
+            if (options.prevRefused) return { type: WsMessageType.RESP_TUTORIAL_ACTION, success: false, message: 'no', state };
+            if (!options.prevIgnored && s.stage > 0) state = { ...s, stage: s.stage - 1 };
+          } else if (action === 'next') {
+            state = { ...s, stage: s.stage + 1 };
+          }
+          return { type: WsMessageType.RESP_TUTORIAL_ACTION, success: true, message: '', state };
+        }
+        throw new Error(`unexpected ${String(msg.type)}`);
+      },
+    };
+    const live: session.LiveSession = {
+      driver: driver as unknown as WsDriver, account: PRIMARY_ACCOUNT, company: { id: '1', name: 'x' },
+      worlds: 3, companies: [], playerX: 0, playerY: 0,
+    };
+    jest.spyOn(session, 'login').mockResolvedValue(live);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    return { actions, sent, live, off, current: () => state };
+  }
+
+  function tutorialCtx(lock: WorldLock = cleanLock()) {
+    let t = 0;
+    return { lock, sleep: async () => undefined, now: () => (t += 1_000_000_000) };
+  }
+
+  const failed = (r: FlowResult): string[] => r.assertions.filter(a => !a.ok).map(a => a.what);
+
+  it('is a mutating flow', () => {
+    expect(flowByName('tutorial-read').mutates).toBe(true);
+  });
+
+  it('ends UNPROVEN, sending no action, when SPO_test3 holds no assignment', async () => {
+    const w = tutorialWorld({ state: null });
+    const result = await runFlow(flowByName('tutorial-read'), tutorialCtx());
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/no active assignment/);
+    expect(w.actions).toEqual([]);
+    expect(w.off).toHaveBeenCalledWith(w.live);
+  });
+
+  it('ends UNPROVEN, sending no action, at stage 0', async () => {
+    const w = tutorialWorld({ state: { taskObjId: '9', kindId: 'Welcome', name: 'W', stage: 0, progress: 0 } });
+    const result = await runFlow(flowByName('tutorial-read'), tutorialCtx());
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/Welcome is at stage 0/);
+    expect(w.actions).toEqual([]);
+  });
+
+  it.each([
+    ['a missing state', undefined],
+    ['a non-numeric stage', { taskObjId: '9', kindId: 'W', name: 'W', stage: 'x', progress: 0 }],
+  ])('fails, sending no action, on %s', async (_label, state) => {
+    const w = tutorialWorld({ state });
+    const result = await runFlow(flowByName('tutorial-read'), tutorialCtx());
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toEqual(['the tutorial state parses (null, or an assignment with an object id and a stage)']);
+    expect(w.actions).toEqual([]);
+  });
+
+  it('at stage > 0 sends prev, reads one lower, sends next, reads the original back', async () => {
+    const lock = cleanLock();
+    const w = tutorialWorld();
+    const result = await runFlow(flowByName('tutorial-read'), tutorialCtx(lock));
+    expect(result.status).toBe('PASS');
+    expect(w.actions).toEqual(['prev', 'next']);
+    expect(w.actions[0]).toBe('prev');
+    expect((w.current() as { stage: number }).stage).toBe(3);
+    expect(result.probes[0]).toMatchObject({ readBack: 'CONFIRMED', restoreReadBack: 'CONFIRMED', member: 'RDOPrevStep' });
+    expect(lock.read().pendingRestores).toHaveLength(0);
+    expect(w.sent.some(m => m.action === 'close' || m.action === 'complete')).toBe(false);
+  });
+
+  it('withholds next when prev never moves the stage, and fails', async () => {
+    const w = tutorialWorld({ prevIgnored: true });
+    const result = await runFlow(flowByName('tutorial-read'), tutorialCtx());
+    expect(result.status).toBe('FAIL');
+    expect(w.actions).toEqual(['prev']);
+    const lower = result.assertions.find(a => a.what === 'the stage read back one lower after prev');
+    expect(lower).toMatchObject({ ok: false, detail: expect.stringMatching(/next withheld/) });
+  });
+
+  it('never sends next after a refused prev, and fails', async () => {
+    const w = tutorialWorld({ prevRefused: true });
+    const result = await runFlow(flowByName('tutorial-read'), tutorialCtx());
+    expect(result.status).toBe('FAIL');
+    expect(w.actions).toEqual(['prev']);
+  });
+
+  it('reads another task object as absent: no action is sent past the original read', async () => {
+    const w = tutorialWorld();
+    let calls = 0;
+    const request = (w.live.driver as unknown as { request: (m: Record<string, unknown>) => Promise<unknown> }).request;
+    (w.live.driver as unknown as { request: unknown }).request = async (m: Record<string, unknown>) => {
+      const r = (await request(m)) as { state?: { taskObjId: string } };
+      if (m.type === WsMessageType.REQ_TUTORIAL_STATE && ++calls > 1 && r.state) {
+        return { ...r, state: { ...r.state, taskObjId: 'other' } };
+      }
+      return r;
+    };
+    const result = await runFlow(flowByName('tutorial-read'), tutorialCtx());
+    expect(result.status).toBe('FAIL');
+    expect(w.actions).toEqual([]);
+  });
+
+  it('reports a probe that throws as a FAIL', async () => {
+    tutorialWorld();
+    jest.spyOn(probeModule, 'runRoundTrip').mockRejectedValue(new Error('boom'));
+    const result = await runFlow(flowByName('tutorial-read'), tutorialCtx());
+    expect(result.status).toBe('FAIL');
+    expect(result.probes[0]).toMatchObject({ status: 'FAIL', note: 'boom', member: 'RDOPrevStep' });
+  });
+
+  describe('tutorialStateProblem', () => {
+    const ok = { taskObjId: '1', kindId: 'W', name: 'W', stage: 2, progress: 40 };
+    it('accepts null and a well-formed state', () => {
+      expect(tutorialStateProblem(null)).toBeNull();
+      expect(tutorialStateProblem(ok)).toBeNull();
+    });
+    it.each([
+      [undefined, /no state/],
+      ['x', /string, not an object/],
+      [{ ...ok, taskObjId: '' }, /task object id/],
+      [{ ...ok, kindId: 3 }, /kind id/],
+      [{ ...ok, stage: -1 }, /stage/],
+      [{ ...ok, stage: 1.5 }, /stage/],
+      [{ ...ok, progress: 'x' }, /progress/],
+    ])('names the problem in %p', (state, re) => {
+      expect(tutorialStateProblem(state)).toMatch(re);
     });
   });
 });

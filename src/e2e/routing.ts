@@ -53,6 +53,8 @@ export const NIGHTLY_ONLY: Record<string, string> = {
     'data-gated: only a MegaStorage publishes RDOSelectWare (StdBlocks/MegaWarehouse.pas:25; a TWarehouse publishes RDOSetRole only, StdBlocks/Warehouses.pas:95), and findFixture takes the first holding that carries whGeneral (#1149), which need not be one',
   'quick-trade-roundtrip':
     "data-gated by three guards: the disconnect drops the fixture's outputs from every SPO_test3 facility's matching input, whatever its type (Kernel/Kernel.pas:4593-4600), across all its companies and towns (Kernel/Kernel.pas:4537-4553), and unregisters the fixture as an initial supplier (Kernel/Kernel.pas:4564-4565, :4606-4607); a guard that holds ends UNPROVEN, which fails a gate",
+  'tutorial-read':
+    'data-gated: it needs an active assignment above stage 0, which SPO_test3 very likely does not hold; at stage 0 prev/next cannot be driven safely — RDONextStep finalises the task when Stage+1 reaches StageCount, which the cache never publishes (Tasks/InformativeTask.pas:42-52, Tasks/Tasks.pas:532-533) — so it ends UNPROVEN, which fails a gate',
 };
 
 /**
@@ -79,7 +81,7 @@ export const FALLBACK_ONLY: Record<string, string> = {
   'src/server/session/abandon-role-handler.ts':
     'excluded: abandoning a role is never driven (maintainer, 2026-09-29 — recorded in card #1134)',
   'src/server/session/tutorial-handler.ts':
-    'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
+    'excluded: the tutorial close and "Get New Assignment" finalise the task and are never driven (maintainer, 2026-09-29 — recorded in card #1134); lifted: the state read and prev/next are driven nightly by tutorial-read (maintainer, 2026-09-29, #1199)',
 };
 
 export const ROUTES: RouteRule[] = [
@@ -320,8 +322,8 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below (#1148): chat-private-channel is GATE_ONLY — it broadcasts.
     test: /^src\/server\/session\/chat-handler\.ts$|^src\/server\/ws-handlers\/chat-handlers\.ts$|^src\/client\/store\/chat-store\.ts$/,
-    flows: ['chat-read', 'chat-private-channel', 'chat-chase'],
-    why: 'the chat handlers and store — the channel list read, the password channel the flow creates and removes (send, typing, away), and the chase of Crazz',
+    flows: ['chat-read', 'chat-private-channel', 'chat-chase', 'gm-broadcast'],
+    why: 'the chat handlers and store — the channel list read, the password channel the flow creates and removes (send, typing, away), the chase of Crazz, and the GM broadcast delivered to Crazz and refused to a non-GM and to a session not yet in the world',
   },
   {
     // After the pixel rule, which keeps the chat CSS.

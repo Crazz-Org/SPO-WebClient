@@ -89,6 +89,8 @@ import type {
   WsEventChatMsg,
   WsEventChatUserTyping,
   WsEventChatChannelChange,
+  WsRespTutorialState,
+  WsRespTutorialAction,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
 import { CLUSTER_IDS } from '../shared/cluster-data';
@@ -120,13 +122,16 @@ import type {
   PoliticsData,
   RankingCategory,
   TycoonProfileFull,
+  TutorialState,
 } from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
 import { ERROR_AccessDenied, ERROR_TooManyFacilities } from '../shared/error-codes';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
-import { WsDriverError, type OutboundMessage } from './ws-driver';
+import { WsDriver, WsDriverError, type OutboundMessage } from './ws-driver';
 import {
+  GATEWAY_ORIGIN,
+  GATEWAY_URL,
   GOVERNED_TOWN,
   INTERFACE_LOG_BASE,
   LIMITS,
@@ -134,6 +139,7 @@ import {
   SECONDARY_ACCOUNT,
   TIMEOUTS,
   WORLD_NAME,
+  ZONE_PATH,
   type E2eAccount,
 } from './config';
 import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, readSince } from './live-log';
@@ -7747,6 +7753,280 @@ const chatChase: Flow = {
   },
 };
 
+/** The GM refusal `handleGmChatSend` answers a non-GM with (ws-handlers/chat-handlers.ts). */
+const GM_REFUSAL = 'Only Game Masters can send GM messages';
+/** The phase gate's refusal (`PHASE_ALLOWED_MESSAGES` in server.ts). */
+const PHASE_REFUSAL = 'Operation not allowed in current session state';
+
+/**
+ * Send one GM message expecting a refusal. The handler never answers an accepted GM send, so
+ * acceptance surfaces as a timeout (a plain Error), a refusal as a WsDriverError.
+ */
+async function gmSendRefusal(driver: WsDriver, message: string): Promise<WsDriverError | string> {
+  try {
+    await driver.request<WsRespChatSuccess>(
+      { type: WsMessageType.REQ_GM_CHAT_SEND, message },
+      WsMessageType.RESP_CHAT_SUCCESS,
+    );
+    return 'answered without an error';
+  } catch (err: unknown) {
+    return err instanceof WsDriverError ? err : `not refused: ${toErrorMessage(err)}`;
+  }
+}
+
+/**
+ * GM broadcast (#1199). handleGmChatSend (ws-handlers/chat-handlers.ts) makes no RDO call and
+ * sends only to the gateway's own connectedClients — on the bench, the drive's own sessions
+ * (#1197, doc/E2E-POLICY.md §6). Nothing reaches a player, nothing to undo. Crazz is logged in
+ * BEFORE the send: a second SPO_test3 world session would retire the first
+ * (Interface Server/InterfaceServer.pas:3138-3146).
+ */
+const gmBroadcast: Flow = {
+  name: 'gm-broadcast',
+  what:
+    'Crazz online -> SPO_test3 GM message -> Crazz receives it on GM -> Crazz refused -> ' +
+    'a directory-only session refused by the phase gate',
+  mutates: false,
+  run: async () => {
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult('gm-broadcast', crazz.skipped);
+    try {
+      const assertions = new Assertions();
+      const session = await login(PRIMARY_ACCOUNT);
+      try {
+        const id = randomUUID().slice(0, 8);
+        const text = `e2e gm probe ${id} — automated L2 check, safe to ignore`;
+
+        // 1. Delivered. Matched on channel, text and sender — Lobby chat shares the event type.
+        const from = crazz.driver.receivedCount();
+        await attempt(assertions, 'Crazz received the GM message on channel GM', () => {
+          session.driver.send({ type: WsMessageType.REQ_GM_CHAT_SEND, message: text });
+          return crazz.driver.waitFor(
+            m => {
+              const e = m as WsEventChatMsg;
+              return (
+                m.type === WsMessageType.EVENT_CHAT_MSG &&
+                e.channel === 'GM' &&
+                e.message === text &&
+                e.isGM === true &&
+                isSelf(e.from)
+              );
+            },
+            TIMEOUTS.request,
+            `EVENT_CHAT_MSG on GM carrying "${text}"`,
+            from,
+          );
+        });
+        const senderErrors = session.driver.errors
+          .map(e => (e as { errorMessage?: string }).errorMessage ?? 'gateway error')
+          .join('; ');
+        assertions.check(
+          'no gateway errors on the GM sender',
+          session.driver.errors.length === 0,
+          senderErrors === ''
+            ? undefined
+            : `${senderErrors} — is the gateway started with SPO_GM_USERS=SPO_test3 (#1197)?`,
+        );
+
+        // 2. A non-GM is refused by the GM check.
+        const crazzOutcome = await gmSendRefusal(crazz.driver, `e2e gm refusal probe ${id} — safe to ignore`);
+        const crazzDetail = crazzOutcome instanceof WsDriverError ? crazzOutcome.message : crazzOutcome;
+        assertions.check(
+          `a non-GM session (${SECONDARY_ACCOUNT.username}) is refused`,
+          crazzDetail === GM_REFUSAL,
+          crazzDetail,
+        );
+
+        // 3. A session still DIRECTORY_CONNECTED — as the GM, so only the phase gate can refuse.
+        // No REQ_LOGIN_WORLD: no Interface Server login, no eviction of the world session.
+        let phaseDetail: string;
+        let phaseOk = false;
+        try {
+          const dir = await WsDriver.connect(GATEWAY_URL, GATEWAY_ORIGIN);
+          try {
+            await dir.request(
+              {
+                type: WsMessageType.REQ_AUTH_CHECK,
+                username: PRIMARY_ACCOUNT.username,
+                password: PRIMARY_ACCOUNT.password,
+              },
+              WsMessageType.RESP_AUTH_SUCCESS,
+              TIMEOUTS.login,
+            );
+            await dir.request(
+              {
+                type: WsMessageType.REQ_CONNECT_DIRECTORY,
+                username: PRIMARY_ACCOUNT.username,
+                password: PRIMARY_ACCOUNT.password,
+                zonePath: ZONE_PATH,
+              },
+              WsMessageType.RESP_CONNECT_SUCCESS,
+              TIMEOUTS.login,
+            );
+            const outcome = await gmSendRefusal(dir, `e2e gm phase probe ${id} — safe to ignore`);
+            phaseOk =
+              outcome instanceof WsDriverError &&
+              outcome.message === PHASE_REFUSAL &&
+              outcome.code === ERROR_AccessDenied;
+            phaseDetail =
+              outcome instanceof WsDriverError ? `${outcome.message} (code ${outcome.code})` : outcome;
+          } finally {
+            // A session never in the world is never parked: a bare close ends it.
+            await dir.close();
+          }
+        } catch (err: unknown) {
+          phaseOk = false;
+          phaseDetail = toErrorMessage(err);
+        }
+        assertions.check('a session not yet WORLD_CONNECTED is refused by the phase gate', phaseOk, phaseDetail);
+
+        return report('gm-broadcast', assertions, [], session);
+      } finally {
+        await logoff(session);
+      }
+    } finally {
+      await logoff(crazz);
+    }
+  },
+};
+
+/** Why a RESP_TUTORIAL_STATE `state` does not parse, or null — null itself is valid (no assignment). */
+export function tutorialStateProblem(state: unknown): string | null {
+  if (state === null) return null;
+  if (state === undefined) return 'the answer carries no state';
+  if (typeof state !== 'object') return `the state is a ${typeof state}, not an object`;
+  const s = state as Partial<Record<keyof TutorialState, unknown>>;
+  if (typeof s.taskObjId !== 'string' || s.taskObjId === '') return 'no task object id';
+  if (typeof s.kindId !== 'string') return 'no kind id';
+  if (typeof s.stage !== 'number' || !Number.isInteger(s.stage) || s.stage < 0) {
+    return `the stage is not a non-negative integer (${String(s.stage)})`;
+  }
+  if (typeof s.progress !== 'number') return `the progress is not a number (${String(s.progress)})`;
+  return null;
+}
+
+/**
+ * Tutorial read, and prev/next only (#1199; maintainer lift, 2026-09-29). The state carries stage
+ * and progress but never StageCount (Tasks/Tasks.pas:532-533, :384-388), and RDONextStep finalises
+ * the task when Stage+1 >= StageCount (Tasks/InformativeTask.pas:44-51), so `next` is never sent
+ * first: prev (never finalises, :54-63) -> one lower -> next from exactly one lower -> back.
+ * Close and complete are never sent.
+ */
+const tutorialRead: Flow = {
+  name: 'tutorial-read',
+  what: 'tutorial state -> at stage > 0: prev -> one lower -> next -> original; never next first, never close/complete',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    const driver = session.driver;
+    try {
+      const readState = (): Promise<WsRespTutorialState> =>
+        driver.request<WsRespTutorialState>(
+          { type: WsMessageType.REQ_TUTORIAL_STATE },
+          WsMessageType.RESP_TUTORIAL_STATE,
+        );
+      const first = await readState();
+      const problem = tutorialStateProblem(first.state);
+      assertions.check(
+        'the tutorial state parses (null, or an assignment with an object id and a stage)',
+        problem === null,
+        problem ?? undefined,
+      );
+      if (problem !== null) return report('tutorial-read', assertions, probes, session);
+
+      const state = first.state;
+      if (state === null) {
+        assertions.unproven(
+          'the tutorial prev/next round trip',
+          'SPO_test3 holds no active assignment — REQ_TUTORIAL_STATE answers null (fetchTutorialState, tutorial-handler.ts)',
+        );
+        return report('tutorial-read', assertions, probes, session);
+      }
+      if (state.stage === 0) {
+        assertions.unproven(
+          'the tutorial prev/next round trip',
+          `the assignment ${state.kindId} is at stage 0: RDOPrevStep does not move from 0 ` +
+            '(Tasks/InformativeTask.pas:56) and RDONextStep may finalise it — StageCount is never ' +
+            'published (Tasks/Tasks.pas:532-533, InformativeTask.pas:44-51)',
+        );
+        return report('tutorial-read', assertions, probes, session);
+      }
+
+      const { taskObjId, kindId } = state;
+      // A different task object reads as absent — never mistaken for a stage of this one.
+      const stageOf = async (): Promise<string | undefined> => {
+        const s = (await readState()).state;
+        return s && s.taskObjId === taskObjId ? String(s.stage) : undefined;
+      };
+      // Only 'prev' and 'next' are ever sent — never 'close', never 'complete'.
+      const act = async (action: 'prev' | 'next'): Promise<void> => {
+        const resp = await driver.request<WsRespTutorialAction>(
+          { type: WsMessageType.REQ_TUTORIAL_ACTION, action },
+          WsMessageType.RESP_TUTORIAL_ACTION,
+        );
+        if (resp.success === false) throw new Error(`${action} refused: ${resp.message}`);
+      };
+
+      const what = `tutorial ${kindId} stage (task ${taskObjId})`;
+      const member = 'RDOPrevStep';
+      try {
+        // RDOPrevStep has no LOG_MARKERS entry: no log part, the log URL is never opened.
+        probes.push(
+          await runRoundTrip(
+            {
+              what,
+              member,
+              read: stageOf,
+              testValue: o => String(Number(o) - 1),
+              write: () => act('prev'),
+              // next only from exactly one below the original: Stage+1 = original < StageCount,
+              // so it cannot finalise. If prev never landed, next is withheld.
+              restore: async original => {
+                if ((await stageOf()) === String(Number(original) - 1)) await act('next');
+              },
+              proof: {
+                readBack: {
+                  source: 'state.stage of a fresh REQ_TUTORIAL_STATE, same TutorialObjId',
+                  why:
+                    'RDOPrevStep / RDONextStep rewrite the tycoon cache (UpdateObjectCache) before ' +
+                    'notifying (Tasks/InformativeTask.pas:48, :60); a lag (OB-29) is polled out',
+                  read: stageOf,
+                  boundMs: TIMEOUTS.readBack,
+                },
+              },
+            },
+            ctx.lock,
+            openLogWindow,
+            ctx.survivalLogUrl ?? '',
+            { now: ctx.now, sleep: ctx.sleep },
+          ),
+        );
+      } catch (err: unknown) {
+        probes.push(probeFailure({ what, member }, err));
+      }
+      const probe = probes[0];
+      assertions.check(
+        'the stage read back one lower after prev',
+        probe?.readBack === 'CONFIRMED',
+        probe?.readBack === 'CONFIRMED'
+          ? undefined
+          : 'prev never read back — next withheld; if prev lands late the stage stays one lower: a human must check',
+      );
+      assertions.check(
+        'the stage read back to its original after next',
+        probe?.restoreReadBack === 'CONFIRMED',
+        probe?.note,
+      );
+      assertions.check('no gateway errors on the tutorial drive', driver.errors.length === 0);
+      return report('tutorial-read', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   sessionResume,
@@ -7779,6 +8059,8 @@ export const FLOWS: Flow[] = [
   chatRead,
   chatPrivateChannel,
   chatChase,
+  gmBroadcast,
+  tutorialRead,
   bankBorrowPayoff,
   bankSendReturn,
   portraitRoundTrip,

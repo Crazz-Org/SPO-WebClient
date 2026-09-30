@@ -479,6 +479,15 @@ cannot reach beyond the test: no SPO_test3 facility already a client of the fixt
 nothing sent. Clone facility is never driven: it overwrites every same-type facility in scope
 with no snapshot (maintainer, 2026-09-29).
 
+**Tutorial — read, prev and next only (#1199).** Lifted from the exclusions by the maintainer
+(2026-09-29): the nightly-only flow `tutorial-read` reads `REQ_TUTORIAL_STATE`, and only when
+SPO_test3 holds an assignment above stage 0 sends `prev` (never finalises,
+`Tasks/InformativeTask.pas:54-63`), proves the stage one lower, then `next` from exactly that
+stage back to the original. `next` is never sent first: the state never publishes `StageCount`
+(`Tasks/Tasks.pas:532-533`) and `RDONextStep` finalises the task at the last stage
+(`Tasks/InformativeTask.pas:44-51`). No assignment, or stage 0 → `UNPROVEN`. Close and
+*Get New Assignment* finalise the task and stay excluded.
+
 ---
 
 ## 10. Artifact format
