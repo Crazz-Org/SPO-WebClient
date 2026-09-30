@@ -1096,7 +1096,10 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
   // own drive. Gateway only: the body's env is unchanged, so a replayed Jest suite never sees
   // it. A loopback exemption was rejected: behind nginx without TRUST_PROXY every public
   // client is 127.0.0.1 too.
-  const gatewayEnv = { ...env, SINGLE_USER_MODE: 'true' };
+  // It also names the LOCKED primary account SPO_test3 as GM, so the GM broadcast can be
+  // driven live: handleGmChatSend makes no RDO / game-server call and reaches only the
+  // clients of this gateway process — on the bench, the drive's own sessions. Gateway only.
+  const gatewayEnv = { ...env, SINGLE_USER_MODE: 'true', SPO_GM_USERS: 'SPO_test3' };
 
   let gateway: RunningGateway;
   try {
