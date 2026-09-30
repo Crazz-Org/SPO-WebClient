@@ -1,5 +1,11 @@
 [
   {
+    "id": 1216,
+    "type": "fixed",
+    "text": "On desktop, the search directory with towns, people, rankings and banks opens again from the More menu.",
+    "date": "2026-09-30"
+  },
+  {
     "id": 1132,
     "type": "fixed",
     "text": "Changing a product's price from a factory's General tab now actually changes it, and both price sliders now show whether the change was saved.",
