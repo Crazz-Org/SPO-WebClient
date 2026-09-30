@@ -120,6 +120,10 @@ export interface JobReport {
   detail?: string;
   /** `ref` only: path of report/e2e/gate-<sha>.json inside the checkout. */
   gateArtifact?: string;
+  /** `live` / `nightly` only: the `report/e2e/live-*.json` THIS run wrote (absent before the drive). */
+  liveArtifact?: string;
+  /** `live` / `nightly` only: each flow's status, as that artifact recorded it. */
+  liveFlows?: { name: string; status: string }[];
   /**
    * `ref` only: whether the static stage (typecheck, lint, tests) was taken from CI's run
    * on this sha instead of replayed on the bench, and why not when it was not. See

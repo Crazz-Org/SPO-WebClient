@@ -205,20 +205,26 @@ describe('mayReuseVerdict — a live slot only where it proves something', () =>
     expect(mayReuseVerdict('T1', [{ ...passing, live: legitSkip }]).reuseFrom).toBe(SHA_B);
   });
 
-  // Disposition for `'unknown'` and for the legacy shape with no `live` key at all: allow.
-  // Refusing every unrecorded-liveness reuse would strand the merge queue on a verdict
-  // that never had a chance to answer at all, instead of closing the one proven hole (the
-  // required-skip case above). This is `mayReuseVerdict`'s own rule regardless of source:
-  // worker.ts's `attested()` now resolves most legacy verdicts' `live` from their gate
-  // artifact before this function ever sees them (see merge-queue.ts's own doc comment for
-  // the measured counts), but the carve-out still has to exist for what even that cannot
-  // answer — verdicts are never purged, so that remainder does not shrink on its own.
-  it("reuses a source whose liveness is 'unknown' rather than stranding the queue", () => {
-    expect(mayReuseVerdict('T1', [{ ...passing, live: unknown }]).reuseFrom).toBe(SHA_B);
+  // Disposition for `'unknown'` and for the legacy shape with no `live` key at all: refuse
+  // (#1182, a reversal of the B2.4 carve-out). An `'unknown'` attestation carries no
+  // `required` list to judge by, so it proves nothing live — reusing it would publish a PASS
+  // no live drive ever stood behind. worker.ts's `attested()` still resolves most legacy
+  // verdicts' `live` from their gate artifact first; what even that cannot answer stays
+  // readable but is re-gated, taking a live slot instead of borrowing a proof it lacks.
+  it("refuses a source whose liveness is 'unknown' — it proves nothing live", () => {
+    const decision = mayReuseVerdict('T1', [{ ...passing, live: unknown }]);
+    expect(decision.reuseFrom).toBeNull();
+    expect(decision.why).toBe('no passing attestation shares this tree');
   });
 
-  it('reuses a source with no `live` key at all — the pre-B2.4 legacy shape', () => {
-    expect(mayReuseVerdict('T1', [passing]).reuseFrom).toBe(SHA_B);
+  it('refuses a source with no `live` key at all — the pre-B2.4 legacy shape reads as unknown', () => {
+    expect(mayReuseVerdict('T1', [passing]).reuseFrom).toBeNull();
+  });
+
+  it('names a legitimate skip as judged with no live drive required', () => {
+    expect(mayReuseVerdict('T1', [{ ...passing, live: legitSkip }]).why).toMatch(
+      /already judged \(no live drive was required\)/,
+    );
   });
 
   it.each([

@@ -131,6 +131,24 @@ comment in `job.ts` for the measured line size and growth rate.
      attested a sha whose code was never judged. The two tables must move together:
      `EXIT` in `scripts/verify-gate.js`, `GATE_EXIT_VERDICT` in `src/e2e/bench/worker.ts`
    - `live`, `nightly` → `node dist/e2e/run.js [flags]`
+   - **The artifact is the proof — an exit code alone is not a PASS** (#1182). Exit 0 is
+     only a claim; the artifact the body wrote is the proof, and a PASS whose artifact does not back it becomes `FAIL`,
+     the detail naming what is missing. A drive that stopped early with exit 0 was published
+     as a PASS five times before this rule.
+     - `live` / `nightly`: a `report/e2e/live-*.json` that **this run** wrote (a file absent
+       from the directory just before the drive — a set difference, so a leftover from an
+       earlier run never counts), carrying this job's sha, whose flow list is exactly the
+       flows asked for: `--flows=` when given, otherwise every `FLOWS` entry minus
+       `GATE_ONLY`, read from the checkout's own `dist/e2e/` in a child process
+       (`readCheckoutDefaultFlows`). A flow list that cannot be read is itself a FAIL.
+     - `ref`: `report/e2e/gate-<gatedSha>.json` naming the gated and deposited shas and this
+       run's `attempt` (the worker passes `--attempt`, so an artifact from an earlier run
+       carries a lower one), whose live stage drove exactly the flows asked for (`--flows=`,
+       else `routing.required`) — or legitimately skipped with none routed.
+     - The check runs after the reachability probe and only on a PASS: a drive that claimed
+       success cannot be downgraded to `ENVIRONMENT` by it, and every other verdict keeps its
+       own meaning. `liveArtifactProblem` / `gateArtifactProblem` in
+       `src/e2e/bench/worker.ts`.
    - `lease` → report `LEASED` **immediately** (that is what the waiting session unblocks
      on), then hold the gateway until the lease expires or the session releases it
      (`npm run dev:release` drops a marker the hold loop watches). No pid watching: the
@@ -442,8 +460,14 @@ not the failure.
   "requestedBy": { "user": "…", "host": "…", "tty": "…",
                    "via": "bench-cli | spo", "reason": "…", "requestedAt": "…" },
   "supersedes": { "jobId": "…", "sha": "…", "verdict": "FAIL",
-                  "trigger": "scheduled", "finishedAt": "…" } }
+                  "trigger": "scheduled", "finishedAt": "…" },
+  "flows": [{ "name": "…", "status": "PASS | FAIL | UNPROVEN | SKIPPED" }],
+  "unproven": ["…"], "skipped": ["…"] }
 ```
+
+`flows`, `unproven` and `skipped` come from the `live-*.json` the run wrote (§3 step 9), so a
+flow that never proves anything is visible by name without opening the artifact. They are
+absent on records written before #1182 and whenever no live artifact was read.
 
 `submittedAt` is the **deposit** time, not the start: it is what the 20 h gap is measured
 from, so a night that queued behind a long job cannot buy itself a second slot. A failure to
@@ -861,7 +885,10 @@ and § The gate base still announces a moved base rather than refusing it.
   whenever the queue head has not moved since that head was gated — the common case at one
   entry at a time. An identical tree reuses the verdict and publishes the status at once.
   When `main` has moved the trees differ, the drive happens, and that is the case worth
-  paying for.
+  paying for. **A reused verdict must prove its liveness** (#1182): its live stage `ran`, or
+  it `skipped` with nothing routed. A PASS whose `live` is missing or `'unknown'` carries no
+  `required` list to judge by, so it proves nothing live — that entry is re-gated, never
+  reused. Such verdicts stay readable (`listVerdicts`); they just cost a live slot.
 - **The entry is fetched before its tree is read.** A speculative commit exists on GitHub and
   in no checkout, so `rev-parse <sha>^{tree}` can only answer "unknown" until its objects are
   local. The ref is fetched by name with no refspec — objects only, nothing written under
@@ -1017,6 +1044,14 @@ believe a mechanism is in place. It was restored by reverting #178 once the repo
   byte-identical and are recorded under `nightly/manual/` instead. The request itself refuses
   an agent session and a non-terminal, both before writing anything. — `nightly.test.ts`,
   `worker.test.ts`, `cli.test.ts`.
+- An exit code alone is not a PASS: a `live` / `nightly` PASS needs a `live-*.json` written
+  by this run, for this sha, with exactly the flows asked; a `ref` PASS needs its matching
+  `gate-<gatedSha>.json` (shas, attempt, flows driven versus asked). Anything else is `FAIL`
+  with the missing piece named, and `latest.json` lists every flow's status.
+  `worker.test.ts`, `nightly.test.ts`.
+- A merge-queue entry reuses a verdict only when that verdict's own liveness proves
+  something — `ran`, or skipped with nothing routed; a missing or `'unknown'` one is
+  re-gated. `merge-queue.test.ts`.
 - A merge-queue entry is gated exactly once, only from GitHub's own queue refs, and its
   objects are **fetched before its tree is read** — so an entry whose tree already carries a
   passing attestation reuses it and takes no live slot, while an unfetchable or unreadable

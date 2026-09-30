@@ -90,6 +90,15 @@ export interface NightlyResult {
   scheduledSubmittedAt?: string;
   /** manual only: who asked. */
   requestedBy?: ManualRequester;
+  /**
+   * Each flow's status, as this run's `report/e2e/live-*.json` recorded it. Absent when no
+   * live artifact was read — every record written before #1182, and any run that wrote none.
+   */
+  flows?: NightlyFlowStatus[];
+  /** The flows whose status is `UNPROVEN`, by name — visible without opening the artifact. */
+  unproven?: string[];
+  /** The flows whose status is `SKIPPED`, by name. */
+  skipped?: string[];
   /** manual only: a summary of the record this one replaced. */
   supersedes?: {
     jobId?: string;
@@ -98,6 +107,12 @@ export interface NightlyResult {
     trigger?: NightlyTrigger;
     finishedAt?: string;
   };
+}
+
+/** One flow of a live drive, as its artifact recorded it (`FlowResult['status']`, src/e2e/flows.ts). */
+export interface NightlyFlowStatus {
+  name: string;
+  status: string;
 }
 
 /** The marker a maintainer's `request-nightly` leaves for the worker's idle branch. */
@@ -708,6 +723,24 @@ interface NightlyReportView {
   finishedAt?: string;
   detail?: string;
   logFile?: string;
+  /** Each flow's status from the live artifact this run wrote; absent when none was read. */
+  liveFlows?: NightlyFlowStatus[];
+}
+
+/**
+ * The per-flow keys `latest.json` carries: every flow's status, plus the UNPROVEN and
+ * SKIPPED ones by name, so a flow that never proves anything is visible at a glance. `{}`
+ * when no live artifact was read — a conditional spread, so such a record gains no key.
+ */
+export function flowSummary(
+  liveFlows: NightlyFlowStatus[] | undefined,
+): Pick<NightlyResult, 'flows' | 'unproven' | 'skipped'> {
+  if (!liveFlows) return {};
+  return {
+    flows: liveFlows,
+    unproven: liveFlows.filter(f => f.status === 'UNPROVEN').map(f => f.name),
+    skipped: liveFlows.filter(f => f.status === 'SKIPPED').map(f => f.name),
+  };
 }
 
 /** The sha a nightly job actually started on; the deposit sha when it never started. */
@@ -740,6 +773,7 @@ export function nightlyResultFromReport(
     // A scheduled deposit IS the night's slot, so the two stamps are the same value; a
     // later manual write carries this one forward rather than resetting the window.
     scheduledSubmittedAt: request.submittedAt,
+    ...flowSummary(report.liveFlows),
   };
 }
 
@@ -788,6 +822,7 @@ export function publishManualResult(
     detail: report.detail,
     logFile: report.logFile,
     trigger: 'manual',
+    ...flowSummary(report.liveFlows),
   });
 
   if (!attested) return;
@@ -809,6 +844,7 @@ export function publishManualResult(
       ? { scheduledSubmittedAt: previous.scheduledSubmittedAt ?? previous.submittedAt }
       : {}),
     requestedBy,
+    ...flowSummary(report.liveFlows),
     ...(previous
       ? {
           supersedes: {
