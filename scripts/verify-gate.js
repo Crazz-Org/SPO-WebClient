@@ -11,7 +11,9 @@
  *                 (src/e2e/bench/ci-proof.ts). --static-from names which, in the artifact.
  *   capabilities  President members in the diff -> the live stage must read, from the
  *                 server, whether the test account holds the capability (§7)
- *   routing       diff -> required L2 flows
+ *   routing       diff -> routed ∪ changed ∪ declared flows: the routing table, the flows
+ *                 the diff changed in the flow sources (src/e2e/bench/changed-flows.ts) and
+ *                 the flows named by --also-flows; all of them are required
  *   live          pre-flight, lock, capability reads, flows against planitia, restore, release
  *   judge         a capability the server GRANTS must be exercised by a flow (fail closed);
  *                 one it REFUSES is a recorded exception, never a human override
@@ -30,7 +32,10 @@
  *   node scripts/verify-gate.js --static-only
  *   node scripts/verify-gate.js --skip-static      # worker only: a receipt covers stage 1
  *   node scripts/verify-gate.js --skip-static --static-from=ci   # worker only: CI proved this sha
+ *   node scripts/verify-gate.js --also-flows=a,b          # adds flows to the routed set (a union)
  *   node scripts/verify-gate.js --flows=login-spine,politics-write
+ *                                                          # replaces the set; refused unless it
+ *                                                          # names every required flow
  *   node scripts/verify-gate.js --attempt=2               # worker only: the bench computes
  *                                                          # and passes this — see worker.ts's
  *                                                          # nextGateAttempt (B4.3)
@@ -122,6 +127,19 @@ function deletedFiles() {
     ? ['diff', '--name-only', '--diff-filter=D', base, 'HEAD']
     : ['diff', '--name-only', '--diff-filter=D', 'HEAD'];
   return git(args).split('\n').filter(Boolean);
+}
+
+/**
+ * A zero-context diff of `paths`, from the diff base to the WORKING TREE — committed and
+ * uncommitted changes together, so its new-side line numbers match the files on disk, which
+ * is what the changed-flow mapping reads them against.
+ */
+function flowSourceDiff(paths) {
+  return execFileSync(
+    'git',
+    ['diff', '-U0', '--no-color', '--no-ext-diff', diffBase() || 'HEAD', '--', ...paths],
+    { encoding: 'utf8' },
+  );
 }
 
 /**
@@ -299,7 +317,10 @@ async function main() {
     return 1;
   }
 
-  const { route, presidentMembersInDiff } = require(path.resolve('dist/e2e/routing.js'));
+  const { route, presidentMembersInDiff, SPINE_FLOW } = require(path.resolve('dist/e2e/routing.js'));
+  const { FLOW_SOURCES, flowsChangedInWorktree } = require(
+    path.resolve('dist/e2e/bench/changed-flows.js'),
+  );
   const { capabilitiesFor } = require(path.resolve('dist/e2e/capability.js'));
 
   // --- Stage 2: capabilities -------------------------------------------------
@@ -330,10 +351,62 @@ async function main() {
     return 1;
   }
 
+  // Routed ∪ changed ∪ declared (doc/E2E-POLICY.md §4, "Changed and declared flows"). The
+  // routing table sends src/e2e/ to no flow, so without this a card that edits a flow never
+  // drives it. A diff the mapping cannot read fails closed: never a hunk paired with the
+  // wrong flow, never a silent "nothing changed".
+  let changed;
+  try {
+    changed = flowsChangedInWorktree(flowSourceDiff(FLOW_SOURCES));
+  } catch (err) {
+    artifact.verdict = 'FAIL';
+    const file = write(artifact);
+    fail(`could not map the diff to changed flows: ${err && err.message ? err.message : String(err)}`, file);
+    return 1;
+  }
+  const alsoFlows = flag('also-flows');
+  const declared = !alsoFlows || alsoFlows === 'true' ? [] : alsoFlows.split(',').filter(Boolean);
+  const extra = [...changed.required, ...declared];
+  const required =
+    extra.length > 0
+      ? Array.from(new Set([SPINE_FLOW, ...decision.required, ...extra]))
+      : decision.required;
+  artifact.routing.required = required;
+  artifact.routing.changedFlows = changed.required;
+  artifact.routing.changedFlowsNotDriven = changed.notDriven;
+  artifact.routing.declared = declared;
+  artifact.routing.reasons = [
+    ...decision.reasons,
+    ...changed.reasons,
+    ...(declared.length > 0 ? [`declared by --also-flows: ${declared.join(', ')}`] : []),
+  ];
+
   const liveRequested = flag('live') === 'true';
-  const staticOnly = !liveRequested || flag('static-only') === 'true' || decision.staticOnly;
+  // A diff that changes a flow, or declares one, is never static-only: its flows are required.
+  const staticOnly =
+    !liveRequested ||
+    flag('static-only') === 'true' ||
+    (decision.staticOnly && extra.length === 0);
   const requested = flag('flows');
-  const flows = requested ? requested.split(',').filter(Boolean) : decision.required;
+  const requestedList = requested ? requested.split(',').filter(Boolean) : [];
+  const flows = requested ? requestedList : required;
+
+  // --flows= replaces the set, so it must still name every required flow: otherwise a gate
+  // could attest PASS having driven only the spine.
+  const missing = requested ? required.filter(f => !requestedList.includes(f)) : [];
+  if (missing.length > 0) {
+    artifact.verdict = 'BLOCKED';
+    artifact.live = {
+      skipped: true,
+      why: `--flows= leaves out required flow(s): ${missing.join(', ')}`,
+    };
+    const file = write(artifact);
+    process.stdout.write(
+      `\nGate BLOCKED — --flows= replaces the routed set but leaves out required flow(s): ` +
+        `${missing.join(', ')}; name them too, or add flows with --also-flows=\nArtifact: ${file}\n`,
+    );
+    return EXIT.BLOCKED;
+  }
 
   // A capability question cannot be answered statically, and without --live the live stage
   // cannot run at all — so it is a BLOCKED question for the worker, never a silent pass.
@@ -352,7 +425,7 @@ async function main() {
     return EXIT.BLOCKED;
   }
 
-  // Nothing routed: the common case (doc/E2E-POLICY.md §4 — 186 of 215 skips in the
+  // Nothing routed, changed or declared: the common case (doc/E2E-POLICY.md §4 — 186 of 215 skips in the
   // corpus), and the only shape that may legitimately PASS without a live drive.
   if (flows.length === 0 && capabilities.length === 0) {
     artifact.verdict = 'PASS';

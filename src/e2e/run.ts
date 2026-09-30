@@ -82,58 +82,81 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
     };
   }
 
-  const checks = await preflight();
-  if (!checks.ok) {
-    lock.release();
+  // Every sleep of the drive is a ref'd timer (#1181), but if the event loop still drains
+  // before the run settles, Node would exit 0 half-way — a silent false PASS. Fail loudly.
+  let inProgress = 'preflight';
+  const onDrain = (): void => {
+    process.stderr.write(
+      `L2 live drive: the event loop drained before the run settled — Node was about to exit mid-drive (in progress: ${inProgress}). ` +
+        `A drive that stopped half-way is not a PASS: exiting ${EXIT.FAIL}.\n`,
+    );
+    try {
+      lock.release(`live drive drained mid-run (${inProgress})`);
+    } catch {
+      // release() already marked the world dirty (pending restores) — nothing more to do here.
+    }
+    process.exit(EXIT.FAIL);
+  };
+  process.on('beforeExit', onDrain);
+
+  try {
+    const checks = await preflight();
+    if (!checks.ok) {
+      lock.release();
+      return {
+        ...base,
+        finishedAt: new Date().toISOString(),
+        status: 'ENVIRONMENT',
+        preflight: checks,
+        flows: [],
+        capabilities: [],
+        error: checks.checks.filter(c => !c.ok).map(c => `${c.what}: ${c.detail}`).join('; '),
+      };
+    }
+
+    const results: FlowResult[] = [];
+    const capabilities: CapabilityEvidence[] = [];
+    let releaseError: string | undefined;
+
+    try {
+      // Capability reads come first: they mutate nothing, and the gate needs the answer
+      // whether or not a flow then runs.
+      for (const capability of options.capabilities ?? []) {
+        inProgress = `capability ${capability}`;
+        capabilities.push(await checkCapability(capability));
+      }
+      for (const name of options.flows) {
+        inProgress = `flow ${name}`;
+        results.push(await runFlow(flowByName(name), { lock, survivalLogUrl: checks.survivalLogUrl }));
+      }
+    } finally {
+      try {
+        lock.release();
+      } catch (err: unknown) {
+        // A dirty world is worse than a failed flow — surface it as the headline.
+        releaseError = toErrorMessage(err);
+      }
+    }
+
+    const failed = releaseError !== undefined || results.some(r => r.status === 'FAIL');
+    // A flow that did not run is not a pass: a skip BLOCKS, and verify-gate.js maps that to a
+    // BLOCKED gate (doc/E2E-POLICY.md §7).
+    const skippedFlows = results.filter(r => r.status === 'SKIPPED');
+    const skipError = skippedFlows.length
+      ? `skipped — a flow that did not run is not a pass: ${skippedFlows.map(f => `${f.name} (${f.skipped ?? ''})`).join('; ')}`
+      : undefined;
     return {
       ...base,
       finishedAt: new Date().toISOString(),
-      status: 'ENVIRONMENT',
+      status: failed ? 'FAIL' : skippedFlows.length > 0 ? 'BLOCKED' : 'PASS',
       preflight: checks,
-      flows: [],
-      capabilities: [],
-      error: checks.checks.filter(c => !c.ok).map(c => `${c.what}: ${c.detail}`).join('; '),
+      flows: results,
+      capabilities,
+      error: releaseError ?? skipError,
     };
-  }
-
-  const results: FlowResult[] = [];
-  const capabilities: CapabilityEvidence[] = [];
-  let releaseError: string | undefined;
-
-  try {
-    // Capability reads come first: they mutate nothing, and the gate needs the answer
-    // whether or not a flow then runs.
-    for (const capability of options.capabilities ?? []) {
-      capabilities.push(await checkCapability(capability));
-    }
-    for (const name of options.flows) {
-      results.push(await runFlow(flowByName(name), { lock, survivalLogUrl: checks.survivalLogUrl }));
-    }
   } finally {
-    try {
-      lock.release();
-    } catch (err: unknown) {
-      // A dirty world is worse than a failed flow — surface it as the headline.
-      releaseError = toErrorMessage(err);
-    }
+    process.removeListener('beforeExit', onDrain);
   }
-
-  const failed = releaseError !== undefined || results.some(r => r.status === 'FAIL');
-  // A flow that did not run is not a pass: a skip BLOCKS, and verify-gate.js maps that to a
-  // BLOCKED gate (doc/E2E-POLICY.md §7).
-  const skippedFlows = results.filter(r => r.status === 'SKIPPED');
-  const skipError = skippedFlows.length
-    ? `skipped — a flow that did not run is not a pass: ${skippedFlows.map(f => `${f.name} (${f.skipped ?? ''})`).join('; ')}`
-    : undefined;
-  return {
-    ...base,
-    finishedAt: new Date().toISOString(),
-    status: failed ? 'FAIL' : skippedFlows.length > 0 ? 'BLOCKED' : 'PASS',
-    preflight: checks,
-    flows: results,
-    capabilities,
-    error: releaseError ?? skipError,
-  };
 }
 
 /** `npm run test:live -- --flows=a,b --branch=fix/x --sha=<40-hex> --capabilities=president` */

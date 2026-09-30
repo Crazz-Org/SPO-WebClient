@@ -179,10 +179,14 @@ export class WsDriver {
         resolve();
         return;
       }
-      this.socket.once('close', () => resolve());
-      this.socket.close();
       // Do not hang on a close that never lands: the gateway parks or ends the session either way.
-      setTimeout(() => resolve(), 5_000).unref?.();
+      // Ref'd on purpose (#1181): a timer that does not hold the loop lets Node drain and exit 0 mid-drive.
+      const fallback = setTimeout(() => resolve(), 5_000);
+      this.socket.once('close', () => {
+        clearTimeout(fallback);
+        resolve();
+      });
+      this.socket.close();
     });
   }
 

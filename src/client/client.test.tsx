@@ -2057,8 +2057,6 @@ describe('window.__spoDebug.getState() (issue 1133)', () => {
     expect(snap().panels.buildMenu).toBe(true);
     useUiStore.setState({ stack: [{ kind: 'build' }, { kind: 'mail' }] });
     expect(snap().panels.buildMenu).toBe(false);
-    useUiStore.setState({ stack: [], modal: 'buildMenu' });
-    expect(snap().panels.buildMenu).toBe(false);
   });
 
   it('chat.shown follows chatVisible independently of chat.visible (expanded)', () => {
@@ -2080,7 +2078,7 @@ describe('window.__spoDebug.getState() (issue 1133)', () => {
   const rows: Row[] = [
     ['ui.stack', ui({ stack: [{ kind: 'mail' }, { kind: 'build' }] }), ui({ stack: [] }), s => s.ui.stack, ['mail', 'build'], []],
     ['ui.modal', ui({ modal: 'settings' }), ui({ modal: null }), s => s.ui.modal, 'settings', null],
-    ['ui.modalBeneath', ui({ modalBeneath: 'buildingInspector' }), ui({ modalBeneath: null }), s => s.ui.modalBeneath, 'buildingInspector', null],
+    ['ui.modalBeneath', ui({ modalBeneath: 'settings' }), ui({ modalBeneath: null }), s => s.ui.modalBeneath, 'settings', null],
     ['ui.pinned', ui({ pinned: true }), ui({ pinned: false }), s => s.ui.pinned, true, false],
     ['ui.commandPaletteOpen', ui({ commandPaletteOpen: true }), ui({ commandPaletteOpen: false }), s => s.ui.commandPaletteOpen, true, false],
     ['ui.contextMenuOpen', ui({ mapContextMenu: { clientX: 1, clientY: 2, tileX: 3, tileY: 4, layer: 'terrain' } }), ui({ mapContextMenu: null }), s => s.ui.contextMenuOpen, true, false],

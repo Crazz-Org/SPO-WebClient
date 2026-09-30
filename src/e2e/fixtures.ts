@@ -42,6 +42,7 @@ import { GOVERNED_TOWN, HTTP_BASE, PRIMARY_ACCOUNT, TIMEOUTS, WORLD_NAME } from 
 import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, type LogWindow } from './live-log';
 import { findTown, readBuildingDetails, type LiveSession } from './session';
 import { WsDriverError } from './ws-driver';
+import { sleep as defaultSleep } from './sleep';
 
 // ---------------------------------------------------------------------------------------------
 // 1. The kind table
@@ -861,10 +862,4 @@ export async function ensureFixtures(session: LiveSession, deps: FixtureDeps = {
     set({ status: 'built', ...base, visualClass: vc, logLine: line });
   }
   return ordered();
-}
-
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise(resolve => {
-    setTimeout(resolve, ms).unref?.();
-  });
 }

@@ -4656,6 +4656,38 @@ export function salariesLineMatches(line: string, hi: string, mid: string, lo: s
   return new RegExp(`${escapeRegExp(`Setting salaries: ${hi}, ${mid}, ${lo}`)}(?=\\s|$)`).test(line);
 }
 
+/**
+ * A salary slot the server left unpublished reads `""`: `TWorkCenter.StoreToCache` writes
+ * `Salaries<k>` only for a class the block has capacity for (Kernel/WorkCenterBlock.pas:567-571).
+ * It is sent as 0, as the inspector sends it (`collectSalaryTriplet`, property-utils.ts) — an
+ * empty slot must never reach `RdoValue.int` as `parseInt('')`.
+ */
+export function salaryArg(value: string): string {
+  return value.trim() === '' ? '0' : value;
+}
+
+/**
+ * The triplet with the first **published** class nudged, the unpublished slots kept empty so the
+ * read-back can tell them apart. Throws when no class is published — nothing is written then.
+ */
+export function salariesNudge(original: string): string {
+  const slots = original.split(',');
+  const k = slots.findIndex(s => s.trim() !== '');
+  if (k < 0) throw new Error(`no salary class is published ("${original}") — nothing to nudge`);
+  slots[k] = nudgeWithin(slots[k], 0, 255);
+  return slots.join(',');
+}
+
+/**
+ * The read-back compares the published classes only — a slot `expected` leaves empty was never
+ * published, so its value cannot be read back (Kernel/WorkCenterBlock.pas:567-571).
+ */
+export function publishedSalariesMatch(last: string, expected: string): boolean {
+  const got = last.split(',');
+  const want = expected.split(',');
+  return got.length === want.length && want.every((w, i) => w.trim() === '' || got[i] === w);
+}
+
 const linkKey = (c: BuildingConnectionData): string => `${c.x},${c.y},${c.facilityName}`;
 const linkLabel = (c: BuildingConnectionData): string => `${c.facilityName} (${c.x},${c.y}) of ${c.companyName}`;
 
@@ -4830,6 +4862,10 @@ const NO_WORKFORCE_REASON =
   "the store fixture's template carries no workforce group (WORKFORCE_GROUP) — FIXTURE_KINDS' store kind " +
   'does not require it (#1149)';
 
+const NO_SALARY_CLASS_REASON =
+  "the store fixture publishes no salary class — TWorkCenter.StoreToCache writes Salaries<k> only for a " +
+  'class with capacity (Kernel/WorkCenterBlock.pas:567-571), so no write could be read back';
+
 /**
  * The store's owner settings: service 0's price (`TServiceBlock.RDOSetPrice`,
  * StdBlocks/ServiceBlock.pas:1578) and the salary triplet (`TWorkCenter.RDOSetSalaries`,
@@ -4885,32 +4921,38 @@ const storePriceSalaries: Flow = {
         const values = WORKER_KINDS.map(i => propertyValue(groups, 'workforce', `Salaries${i}`));
         return values.some(v => v === undefined) ? undefined : values.join(',');
       };
+      const before = await readSalaries();
+      if (before !== undefined && before.split(',').every(s => s.trim() === '')) {
+        assertions.unproven('RDOSetSalaries', NO_SALARY_CLASS_REASON);
+        return report('store-price-salaries', assertions, probes, session);
+      }
       const salaries = await roundTripProbe(ctx, url, {
         what: `${fixtureLabel(fx)} salaries (hi,mid,lo)`,
         member: 'RDOSetSalaries',
         read: readSalaries,
         write: async value => {
-          const [salary0, salary1, salary2] = value.split(',');
+          const [salary0, salary1, salary2] = value.split(',').map(salaryArg);
           // The whole triplet, the untouched two unchanged — buildRdoCommandArgs requires all three.
           await setBuildingProperty(session, fx.x, fx.y, 'RDOSetSalaries', salary0, { salary0, salary1, salary2 });
         },
-        testValue: original => {
-          const [hi, mid, lo] = original.split(',');
-          return [nudgeWithin(hi, 0, 255), mid, lo].join(',');
-        },
+        testValue: salariesNudge,
         proof: {
           log: {
             marker: LOG_MARKERS.RDOSetSalaries,
             match: (line, written) => {
-              const [hi, mid, lo] = written.split(',');
+              const [hi, mid, lo] = written.split(',').map(salaryArg);
               return salariesLineMatches(line, hi, mid, lo);
             },
           },
-          readBack: readBackOn(
-            `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read`,
-            `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593)`,
-            readSalaries,
-          ),
+          readBack: {
+            ...readBackOn(
+              `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read, published classes only`,
+              `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593), ` +
+                'and only a class with capacity is published (:567-571)',
+              readSalaries,
+            ),
+            matches: publishedSalariesMatch,
+          },
         },
         restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetSalaries' },
       });
@@ -6685,6 +6727,20 @@ export function startUpgradeLineMatches(line: string, count: number): boolean {
   return new RegExp(`${escapeRegExp(`Facility Start Upgrade count: ${count}`)}(?=\\s|$)`).test(line);
 }
 
+/**
+ * What queueing an invention costs, in dollars: the `Price:` and `License:` lines of its details
+ * (`TInvention.GetProperties`, Inventions/Inventions.pas:715-727; labels Kernel/SimHints.pas:482-483;
+ * amounts from `FormatMoney`, Utils/Misc/MathUtils.pas:87-99). A line the details do not show is 0. The server starts a
+ * research only when `Budget >= Price + GetFeePrice` (Kernel/ResearchCenter.pas:240).
+ */
+export function researchCost(properties: string): number {
+  const dollars = (label: string): number => {
+    const m = new RegExp(`(?:^|\\s)${label}:\\s*\\$([0-9][0-9,.]*)`, 'i').exec(properties);
+    return m ? Number(m[1].replace(/[^0-9]/g, '')) : 0;
+  };
+  return dollars('Price') + dollars('Licen[cs]e');
+}
+
 export type ResearchState = 'developing' | 'owned' | 'available' | 'absent';
 
 /**
@@ -7413,14 +7469,20 @@ const cloneSalariesRoundTrip: Flow = {
 };
 
 /**
- * Queue one invention, prove it is in development, cancel it. Queueing can buy on the spot —
+ * The one invention research-roundtrip drives (maintainer, PR #1214): Commerce > Bars > Happy Hour,
+ * id `HappyHour` in research.0.dat — Price $25,000,000, requires `Bars`.
+ */
+export const RESEARCH_TARGET = { id: 'HappyHour', name: 'Happy Hour' } as const;
+
+/**
+ * Queue Happy Hour, prove it is in development, cancel it. Queueing can buy on the spot —
  * an invention with `Time = 0` is paid for and declared at once (Kernel/ResearchCenter.pas:319-334)
  * — and a cancel on an owned invention reaches `RetireInvention` (:372), the excluded sell. So the
  * cancel is sent only on an invention that reads in development right before it.
  */
 const researchRoundTrip = fixtureFlow(
   'research-roundtrip',
-  "REQ_RESEARCH_INVENTORY + DETAILS on SPO_test3's research fixture → RDOQueueResearch (Queue Research: line, " +
+  "REQ_RESEARCH_INVENTORY + DETAILS for Happy Hour on SPO_test3's research fixture → RDOQueueResearch (Queue Research: line, " +
     'in development) → RDOCancelResearch (Cancel Research: line, no longer queued)',
   'research',
   'hqInventions',
@@ -7447,18 +7509,40 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   const parsed = Number(propertyValue(groups, 'hqInventions', 'CatCount') ?? '0');
   const catMax = Number.isFinite(parsed) ? parsed : 0;
 
-  let pick: { id: string; name: string; category: number } | undefined;
-  for (let category = 0; category <= catMax && !pick; category++) {
-    const { data } = await researchInventory(session, fx, category);
-    const held = new Set([...data.developing, ...data.completed].map(i => i.inventionId));
-    const hit = data.available.find(i => i.enabled === true && !held.has(i.inventionId));
-    if (hit) pick = { id: hit.inventionId, name: hit.name, category };
-  }
-  if (!pick) {
-    assertions.unproven('RDOQueueResearch', `no enabled invention available to queue in categories 0..${catMax}`);
+  const cash = await readCash(session);
+  if (cash === null) {
+    assertions.unproven('RDOQueueResearch', 'cash unknown — no EVENT_TYCOON_UPDATE received');
     return;
   }
-  const { id, category } = pick;
+
+  // The one pinned invention (maintainer, PR #1214), wherever the building lists it — the
+  // category index is read, not assumed. The three lists are exclusive (researchState).
+  const { id, name } = RESEARCH_TARGET;
+  const at = `${fx.name} (${fx.x},${fx.y})`;
+  let found: { category: number; state: ResearchState; enabled: boolean } | undefined;
+  for (let category = 0; category <= catMax && !found; category++) {
+    const { data } = await researchInventory(session, fx, category);
+    const state = researchState(data, id);
+    if (state !== 'absent') {
+      found = { category, state, enabled: data.available.some(i => i.inventionId === id && i.enabled === true) };
+    }
+  }
+  if (!found) {
+    assertions.unproven('RDOQueueResearch', `${name} not listed at ${at} (categories 0..${catMax})`);
+    return;
+  }
+  if (found.state !== 'available' || !found.enabled) {
+    const why =
+      found.state === 'owned'
+        ? 'already owned — a cancel on it would sell it (Kernel/ResearchCenter.pas:372)'
+        : found.state === 'developing'
+          ? 'already in development — not queued by this flow, so not its to cancel'
+          : 'listed but not enabled — its prerequisite Bars is not owned, or the tier / nobility does not match ' +
+            '(TInvention.Enabled, Inventions/Inventions.pas:658-693)';
+    assertions.unproven('RDOQueueResearch', `${name} at ${at}: ${why}; nothing sent`);
+    return;
+  }
+  const { category } = found;
 
   const { details } = await session.driver.request<WsRespResearchDetails>(
     { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: id },
@@ -7470,6 +7554,13 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     details.inventionId === id && properties !== '',
     `${details.inventionId}: ${properties || '(no properties)'}`,
   );
+  // One the account cannot pay for is accepted, then dropped at once (StartResearch,
+  // Kernel/ResearchCenter.pas:240-253) — it would never read queued.
+  const cost = researchCost(details.properties);
+  if (cost > cash) {
+    assertions.unproven('RDOQueueResearch', `${name} costs $${cost} (Price + License), above the cash ($${cash}); nothing sent`);
+    return;
+  }
 
   const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
   const url = await survivalUrl(ctx);
@@ -7486,6 +7577,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   });
 
   let queued = false;
+  let refused = false;
   try {
     const window = await openLogWindow(url);
     queued = true;
@@ -7507,6 +7599,17 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
         `bought at once: ${id} (${properties}) — an invention with Time = 0 is bought on the spot ` +
           '(Kernel/ResearchCenter.pas:319-334); not cancelled: cancel would sell it',
       );
+    } else if (listed.last === 'available') {
+      // Reads exactly what the pending restore would put back: the server dropped the queue and
+      // nothing is owed. No cancel — nothing is queued (Kernel/ResearchCenter.pas:240-253).
+      refused = true;
+      ctx.lock.clearPendingRestore(key);
+      assertions.check(
+        `${id} is listed in development, not owned`,
+        false,
+        `the server did not take the queue — ${id} (${properties}) still reads available; nothing to cancel, ` +
+          'world unchanged, pending restore cleared',
+      );
     } else {
       assertions.check(
         `${id} is listed in development, not owned`,
@@ -7517,7 +7620,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   } catch (err: unknown) {
     assertions.check('the queue steps ran without a throw', false, toErrorMessage(err));
   }
-  if (queued) await cancelQueuedResearch(session, ctx, fx, { id, key, url, stateOf }, assertions);
+  if (queued && !refused) await cancelQueuedResearch(session, ctx, fx, { id, key, url, stateOf }, assertions);
 }
 
 /**
