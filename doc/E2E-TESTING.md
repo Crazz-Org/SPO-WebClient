@@ -165,7 +165,8 @@ window.__spoDebug.getState()                         // full snapshot, see below
 mapDimensions, debugMode, canvasSize, canvasHasContent}`,
 `panels {login, chat, mail, profile, politics, settings, minimap, buildMenu,
 buildingDetails, searchMenu}` (note: `minimap` is `true` by default after login),
-`tycoonStats`, `wire`. `panels.buildMenu` = the top surface of the stack is `build`;
+`tycoonStats`, `wire`. `panels.buildMenu` = the top surface of the stack is `build` or, on
+mobile, the Build tab's content is on screen;
 `panels.chat` = the chat strip is expanded.
 
 Added by #1133, unit-tested in `client.test.tsx`:
@@ -176,6 +177,26 @@ contextMenuOpen, hudVisible, serverSwitchMode, mobileTab, mobileSheetSnap}`,
 `login {stage, authError (boolean only), isVisitor, isPublicOfficeRole}`,
 `subViews {profileTab, searchPage, mailFolder, mailView, tutorialAssigned, buildingPreview}`.
 Values only — never a player name, message text beyond `chat.lastMessage`, or error text.
+
+Added by #1192, unit-tested in `client.test.tsx` (read from on-screen `data-testid` markers
+listed in `src/client/debug-markers.ts`, the stores, and the renderer):
+`ui.moreMenuOpen` (the command bar's More menu),
+`chat {channelPickerOpen, usersListShown}` (`usersListShown` is also true on the mobile
+embedded chat, where `chat.visible` may be false),
+`build {phase (categories|facilities|null), category, loading, facilityCount, mobileSubTab}`
+(`phase` is null when no BuildMenu is on screen; `category` is the chosen category label while
+`phase === 'facilities'`; `facilityCount` is 0 until loaded; `mobileSubTab` =
+`buildings`/`roads`/`demolish`, null off the mobile Build tab),
+`bugReporter {available (Settings shows Support), armed (report-mode overlay), modalOpen}`,
+`layers {overlay (the SurfaceType value, `ZONES` for city zones, null for none),
+debugSubLayers {tileInfo, buildingInfo, concreteInfo, waterGrid, roadInfo} (keys 1–5, null
+without a renderer), season (`Winter`/`Spring`/`Summer`/`Autumn`, what F1–F4 force)}`,
+`mobile {infoBar, chatBanner}` (booleans only — never the banner's text).
+
+Reading the existing `buildingDetails.currentTab` (non-null while `panels.buildingDetails`):
+on a standard facility a section drawer is open iff `buildingDetails.tabs` has an entry whose
+`id === currentTab` (no match = the section menu is showing); on a civic building the shown tab
+is `currentTab` when it names a civic tab, else the first one.
 
 **Standard post-login assertion set:**
 `session.connected === true`, `session.worldName === "planitia"`,
@@ -457,8 +478,8 @@ facility offering `Connect` is recorded *absent* with that reason.
 3. **MobileMenu** — the `More` tab lists the groups Communication, Exploration, Map Controls,
    System; confirm each is present. Do not tap Logout or Switch Server here.
 4. **Mobile build content** — the `Build` tab shows the sub-tabs Buildings, Roads, Demolish;
-   open each, start no mode. `panels.buildMenu` stays false on mobile (it is a tab, not the
-   `build` surface) — do not assert it here.
+   open each, start no mode. Assert `panels.buildMenu === true` while the tab is shown, and
+   `build.mobileSubTab` reads `buildings` / `roads` / `demolish` per sub-tab.
 
 `browser_resize` → 1440×900 before Phase 8.
 
