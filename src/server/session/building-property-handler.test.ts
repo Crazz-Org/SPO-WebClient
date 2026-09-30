@@ -14,8 +14,9 @@
  * `KNOWN_RDO_COMMANDS` and pins, in this order:
  *
  *   1. TARGET     — `ObjectId` for the ten gate commands, the INPUT GATE's own
- *                   id for the one member declared on a gate (`RDOSelSelected`,
- *                   Kernel/Kernel.pas:1623), `CurrBlock` otherwise. The fake
+ *                   id for the two members declared on an input gate
+ *                   (`RDOSelSelected`, Kernel/Kernel.pas:1623;
+ *                   `RDOSetInputFluidPerc`, :1508), `CurrBlock` otherwise. The fake
  *                   answers with three DIFFERENT ids (the warehouse case, plus
  *                   the gate), so a handler that always picked one fails here.
  *   2. SEPARATOR  — `"*"` everywhere, and which channel carries it: a QueryId
@@ -451,9 +452,13 @@ const MATRIX: readonly MatrixEntry[] = [
     target: 'currBlock', verb: 'call', channel: 'frame', readBack: 'cInputDem1',
   },
   {
-    command: 'RDOSetInputFluidPerc', value: '80',
+    // Declared on TInput, the gate (Kernel/Kernel.pas:1508), and Voyager binds
+    // it to the ad input's own ObjectId — `MSProxy.BindTo(fAdInputId)`
+    // (Voyager/AdvSheetForm.pas:456-457, id read at :645). `fluidId` names that
+    // gate; it is not a wire argument (#1195).
+    command: 'RDOSetInputFluidPerc', value: '80', params: { fluidId: GATE_FLUID },
     args: [RdoValue.int(80)],
-    target: 'currBlock', verb: 'call', channel: 'frame', readBack: 'nfActualMaxFluidValue',
+    target: 'gate', verb: 'call', channel: 'frame', readBack: 'nfActualMaxFluidValue',
   },
 
   // ── Prices, trade, roles ─────────────────────────────────────────────────
@@ -688,9 +693,10 @@ describe('target selection', () => {
       'RDODisconnectFromTycoon', 'RDODisconnectInput', 'RDODisconnectOutput',
       'RDOSetInputMaxPrice', 'RDOSetInputMinK', 'RDOSetInputOverPrice', 'RDOSetOutputPrice',
     ]);
-    // And exactly one member is bound to neither: it is declared on the gate.
-    expect(GATE_COMMANDS).toEqual(['RDOSelSelected']);
-    expect(CURR_BLOCK_COMMANDS).toHaveLength(MATRIX.length - 11);
+    // And exactly two members are bound to neither: they are declared on the
+    // input gate (Kernel/Kernel.pas:1623, :1508).
+    expect(GATE_COMMANDS).toEqual(['RDOSelSelected', 'RDOSetInputFluidPerc']);
+    expect(CURR_BLOCK_COMMANDS).toHaveLength(MATRIX.length - 12);
   });
 
   it('binds both synchronous commands to ObjectId — the CurrBlock arm of :193 is dead', () => {
@@ -1613,6 +1619,23 @@ describe('read-back on the gate object', () => {
     );
     expect(fake.log.error).toHaveBeenCalledWith(
       expect.stringContaining('RDOSelSelected cannot be addressed'),
+    );
+  });
+
+  it('refuses RDOSetInputFluidPerc when no input gate carries that fluid (#1195)', async () => {
+    // Same gate binding as RDOSelSelected: with no gate resolved there is no
+    // legal target (the block does not publish the member, Kernel/Kernel.pas:1508),
+    // so nothing goes on the wire.
+    const fake = makeConstructionCtx({ readBack: ['1'] });
+
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOSetInputFluidPerc', '50', {
+      fluidId: 'Advertisement',
+    }));
+
+    expect(fake.frames.construction).toEqual([]);
+    expect(result).toEqual({ success: false, newValue: '' });
+    expect(fake.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('RDOSetInputFluidPerc cannot be addressed'),
     );
   });
 
