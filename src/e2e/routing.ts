@@ -40,7 +40,7 @@ export const NIGHTLY_ONLY: Record<string, string> = {
   'fixtures-ensure':
     'builds only when a fixture is missing — the one sanctioned permanent mutation (#1149); the nightly re-creates a fixture that disappeared, no gate requires it',
   'industry-supply-limits':
-    "data-gated: every industry fixture candidate is a farm (#1149), whose supply gate is a plain TPullInput (StdBlocks/Farms.pas:76-82) that never caches a sort mode (Kernel/Kernel.pas:7169-7171; only Kernel/MediaGates.pas:388-389 does), and a fixture built fresh has no supplier row for the overprice write — RDOSetInputSortMode / RDOSetInputOverPrice end UNPROVEN, which fails a gate (E2E-POLICY §7)",
+    "data-gated: it needs the industry fixture's supply gate to publish MaxPrice — only a TPullInput caches it (Kernel/Kernel.pas:7813, #1149); none ends UNPROVEN, which fails a gate (E2E-POLICY §7). Its sort-mode and overprice writes are excluded, not unproven (#1195): a plain input's SetSortMode is empty (Kernel/Kernel.pas:7169-7171), only TMediaInput caches a sort mode (Kernel/MediaGates.pas:388-389) and only the movie theatre's Films input is one (StdBlocks/Movie.pas:84), which no fixture kind is; the overprice needs an own supplier row, which only supplier-hire-fire creates (#1153)",
   'supplier-hire-fire':
     "data-gated: it needs a supplier of SPO_test3's own company, in Helartia, on an input fluid of the industry fixture; none ends UNPROVEN, which fails a gate. Hiring anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
   'client-hire-remove':
@@ -221,8 +221,13 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.
     test: /^src\/server\/session\/politics-handler\.ts$|^src\/server\/ws-handlers\/politics-handlers\.ts$/,
-    flows: ['politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip'],
-    why: 'the governance handlers changed — the flows that read and write the town hall (tax, minimum wage, publicity)',
+    flows: [
+      'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
+      'mayor-rating-roundtrip', 'tycoon-role-read',
+    ],
+    why:
+      'the governance handlers changed — the flows that read and write the town hall (tax, minimum wage, publicity), ' +
+      "Crazz's rating of the mayor's term (politicsSetRating) and the tycoon role read (handleTycoonRole) (#1195)",
   },
   {
     // Before the fallbacks below: the Empire panel's profile & finance reads and writes.
@@ -245,6 +250,7 @@ export const ROUTES: RouteRule[] = [
       'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
       'trade-settings',
       'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+      'ad-budget-roundtrip',
     ],
     why:
       'the facility details/property handlers changed — the flows that read and write a facility (including the ' +
@@ -252,7 +258,8 @@ export const ROUTES: RouteRule[] = [
       "flow sends (gate connections, service figures, worker counts, refresh), the owner setters on SPO_test3's " +
       'store and industry fixtures (#1152), the trade role and level on its warehouse and industry (#1153), and its ' +
       'residential, bank, TV, industry and research fixtures — including the RDOQueueResearch / RDOCancelResearch ' +
-      'cases of buildRdoCommandArgs (#1154)',
+      "cases of buildRdoCommandArgs (#1154), and the Advertisement input's RDOSetInputFluidPerc, bound to the gate " +
+      '(#1195)',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
@@ -358,8 +365,11 @@ export const ROUTES: RouteRule[] = [
   },
   {
     test: /^src\/client\/components\/politics\//,
-    flows: ['politics-read', 'politics-write', 'permission-negative', 'town-min-wage', 'publicity-roundtrip'],
-    why: 'governance UI — including who is offered the controls',
+    flows: [
+      'politics-read', 'politics-write', 'permission-negative', 'town-min-wage', 'publicity-roundtrip',
+      'mayor-rating-roundtrip',
+    ],
+    why: "governance UI — including who is offered the controls, and the Tycoons' rating control (#1195)",
   },
   {
     test: /^src\/client\/components\/building\/|^src\/shared\/building-details\//,
@@ -368,12 +378,14 @@ export const ROUTES: RouteRule[] = [
       'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
       'trade-settings',
       'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+      'ad-budget-roundtrip',
     ],
     why:
       "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in " +
       'template-groups.ts, the store and industry owner setters the panels send (#1152), the trade role and ' +
       'level (trade-settings.ts, #1153), and the residential, bank, TV, accept-cloning and research controls ' +
-      '(ResearchPanel.tsx, HQ_INVENTIONS_GROUP) (#1154)',
+      "(ResearchPanel.tsx, HQ_INVENTIONS_GROUP) (#1154), and ADS_GROUP's AdPerc slider — the Advertisement input's " +
+      'RDOSetInputFluidPerc, gate-bound (#1195)',
   },
   {
     test: /^src\/client\/components\/mail\/|^src\/server\/mail/,
@@ -421,8 +433,8 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the broad src/ rule below: the sender of the switch and the cluster reads.
     test: /^src\/client\/handlers\/auth-handler\.ts$/,
-    flows: ['company-switch', 'cluster-info-read'],
-    why: 'the client auth handler — the flows that drive its company switch and cluster reads',
+    flows: ['company-switch', 'cluster-info-read', 'tycoon-role-read'],
+    why: 'the client auth handler — the flows that drive its company switch, cluster reads and tycoon role read (REQ_TYCOON_ROLE, #1195)',
   },
   {
     // Before the broad src/ rule below: the rest of these component folders gets the same
