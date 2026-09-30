@@ -312,6 +312,14 @@ by run, and are unaffected by this removal; they stand at the production values 
 SEC-W-3, `doc/production-security-policy.md`); the bench gateway skips them through
 `SINGLE_USER_MODE`.
 
+**GM broadcast — contained to the bench gateway (2026-09-30, #1197).** The bench gateway is
+started with `SPO_GM_USERS=SPO_test3` (set in the gateway launch env in `runJob`,
+`src/e2e/bench/worker.ts` — gateway only, the drive's own process never sees it). A GM
+message (`handleGmChatSend`) makes no RDO or game-server call and is sent only to the
+clients connected to that same gateway process — on the bench, only the drive's own
+sessions — so a live `/gm` drive reaches no player and mutates nothing in the world.
+Production gateways are untouched: their `SPO_GM_USERS` comes from their own deployment env.
+
 ---
 
 ## 7. Capability exceptions — what the account cannot do
