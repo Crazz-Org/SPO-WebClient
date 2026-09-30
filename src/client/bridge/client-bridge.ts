@@ -619,7 +619,7 @@ export const ClientBridge = {
     const bld = useBuildingStore.getState();
     const ui = useUiStore.getState();
     // Clear stale details if inspector panel is currently showing another building
-    if (ui.rightPanel === 'building' || ui.modal === 'buildingInspector') {
+    if (ui.rightPanel === 'building') {
       bld.clearDetails();
     }
     bld.setFocus(info);
@@ -631,7 +631,7 @@ export const ClientBridge = {
     useBuildingStore.getState().clearOverlay();
   },
 
-  /** Show the building panel (right panel for normal buildings, modal for civic buildings). */
+  /** Show the building panel. */
   showBuildingPanel(details: BuildingDetailsResponse, currentCompanyName: string, focusInfo?: BuildingFocusInfo): void {
     const bld = useBuildingStore.getState();
     bld.setCurrentCompanyName(currentCompanyName);
@@ -717,16 +717,12 @@ export const ClientBridge = {
     useBuildingStore.getState().setDetails(details);
   },
 
-  /** Hide the building panel (right panel or modal). */
+  /** Hide the building surface. */
   hideBuildingPanel(): void {
     useBuildingStore.getState().clearFocus();
     const uiState = useUiStore.getState();
-    if (uiState.modal === 'buildingInspector') {
-      uiState.closeModal();
-    } else if (uiState.rightPanel === 'building') {
-      // Unstack the building; whatever was under it (politics, a search) comes back.
-      uiState.popSurface();
-    }
+    // Unstack the building; whatever was under it (politics, a search) comes back.
+    if (uiState.rightPanel === 'building') uiState.popSurface();
   },
 
   // ---- Chat ----
@@ -1135,9 +1131,6 @@ export const ClientBridge = {
   closeConnectionPicker(): void {
     useBuildingStore.getState().clearConnectionPicker();
     const uiState = useUiStore.getState();
-    if (uiState.modal === 'connectionPicker') {
-      uiState.closeModal();
-    }
     // Sheet surface: pop it if it is on top (back to the building)
     const top = uiState.stack[uiState.stack.length - 1];
     if (top?.kind === 'supplierSearch') uiState.popSurface();

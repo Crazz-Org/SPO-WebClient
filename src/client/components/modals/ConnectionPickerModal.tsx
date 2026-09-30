@@ -3,8 +3,7 @@
  *
  * `ConnectionPickerContent` is the body (filters, results, footer) and is what the universal
  * sheet shows as the `supplierSearch` surface, STACKED on the building (T3 handoff): the
- * inspector stays underneath, one chip away. `ConnectionPickerModal` keeps the historical
- * modal shape for the legacy `modal: 'connectionPicker'` path.
+ * inspector stays underneath, one chip away.
  *
  * Filters are remembered for the session (ui-store.connectionFilters) and Enter in any filter
  * field runs the search — the audit found both missing (B4). A supplier search shows the rows
@@ -51,7 +50,7 @@ const ROAD_FLAG_CLASS: Record<RoadReachability, string> = {
 type SortMode = 'cost' | 'quality' | 'distance';
 
 export interface ConnectionPickerContentProps {
-  /** Called when the picker is dismissed (the sheet pops the surface; the modal closes). */
+  /** Called when the picker is dismissed (the sheet pops the surface). */
   onClose: () => void;
   /** Show the "Find Suppliers for: X" heading (the sheet already names the surface). */
   showTitle?: boolean;
@@ -456,24 +455,5 @@ export function ConnectionPickerContent({ onClose, showTitle = true, className }
           </button>
         </div>
     </div>
-  );
-}
-
-/** Legacy modal shape — nothing opens it since the picker became a sheet surface, kept for the `modal` path. */
-export function ConnectionPickerModal() {
-  const modal = useUiStore((s) => s.modal);
-  const closeModal = useUiStore((s) => s.closeModal);
-  const picker = useBuildingStore((s) => s.connectionPicker);
-
-  if (modal !== 'connectionPicker' || !picker) return null;
-  const dirLabel = picker.direction === 'input' ? 'Find Suppliers' : 'Find Clients';
-
-  return (
-    <>
-      <div className={styles.backdrop} onClick={closeModal} aria-hidden="true" />
-      <div className={styles.modal} role="dialog" aria-label={`${dirLabel} for ${picker.fluidName}`}>
-        <ConnectionPickerContent onClose={closeModal} />
-      </div>
-    </>
   );
 }
