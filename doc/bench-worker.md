@@ -155,7 +155,7 @@ Verdicts: `PASS` (possibly with capability exceptions listed — §7 of the poli
 (including a required flow that ended UNPROVEN — §7 of the policy; the `bench/gate` status
 then shows `— N unproven flow(s)`) ·
 `BLOCKED` (the live stage was refused before running: dirty world or another run already
-in flight) · `ENVIRONMENT` (does not consume an attempt) · `STALE` · `DIRTY` (gate on
+in flight — or a flow ended `SKIPPED`, the second account refused at login) · `ENVIRONMENT` (does not consume an attempt) · `STALE` · `DIRTY` (gate on
 uncommitted changes — commit first) · `ABANDONED` ·
 `INTERRUPTED` (worker died mid-job — check the world lock before resubmitting) · `LEASED`.
 
@@ -297,9 +297,9 @@ already mistaken a readable line for an API and drawn the wrong verdict from it.
 that finds nothing is indistinguishable from a `grep` that ran against a changed heading —
 the exit code cannot fail that way.
 
-The same reflex applies one level down, inside the live drive: a mutation is proven by the
-`FIVEMODELSERVER/Survival` log line, never by a `success: true` in a response
-(E2E-POLICY.md, `OB-28`).
+The same reflex applies one level down, inside the live drive: a mutation's receipt is proven by the
+`FIVEMODELSERVER/Survival` log line and the read-back proves the change — never a
+`success: true` in a response (E2E-POLICY.md, `OB-28`).
 
 #### The session-side rules
 

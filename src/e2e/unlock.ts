@@ -13,7 +13,11 @@ export function unlock(lock: WorldLock = new WorldLock()): string {
     return 'No dirty lock was held — nothing to clear.';
   }
   const pending = previous.pendingRestores
-    .map(p => `  - ${p.what} at (${p.x},${p.y}) ${p.propertyName} -> "${p.originalValue}"`)
+    .map(
+      p =>
+        `  - ${p.what}${p.x !== undefined ? ` at (${p.x},${p.y}) ${p.propertyName}` : ''} ` +
+        `-> "${p.originalValue}" [key: ${p.key ?? '(none — written before keys existed)'}]`,
+    )
     .join('\n');
   return [
     `Cleared a dirty lock from ${previous.dirtySince ?? 'an earlier run'}.`,

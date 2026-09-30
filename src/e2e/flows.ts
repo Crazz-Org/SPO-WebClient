@@ -6,6 +6,7 @@
  * drifts and eventually tests nothing that changed.
  */
 
+import { createHash, randomUUID } from 'crypto';
 import { WsMessageType } from '../shared/types/message-types';
 import { nearestTown } from '../shared/nearest-town';
 import type {
@@ -18,30 +19,113 @@ import type {
   WsRespFavoriteMove,
   WsRespMailConnected,
   WsRespMailDeleted,
+  WsRespMailDraftSaved,
   WsRespMailFolder,
   WsRespMailMessage,
   WsRespMailSent,
   WsRespMailUnreadCount,
+  WsRespNewspaperBoard,
   WsRespNewspaperIssue,
   WsRespNewspaperIssues,
   WsRespPoliticsData,
+  WsRespPoliticsSetPublicity,
+  WsRespPoliticsVote,
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuDirectory,
+  WsRespSearchMenuHome,
+  WsRespSearchMenuRankings,
+  WsRespSearchMenuRankingDetail,
+  WsRespSearchMenuTycoonProfile,
+  WsRespSearchMenuTycoonFullProfile,
+  WsRespSearchMenuBanks,
+  WsRespSearchMenuNewspapers,
   WsRespMapData,
   WsRespChatUserList,
+  WsRespContextStatus,
+  WsRespWorldEvent,
+  WsRespSurfaceData,
+  WsRespAllFacilityDimensions,
+  WsRespClusterInfo,
+  WsRespClusterFacilities,
+  WsRespRdoResult,
+  WsRespGetProfile,
+  WsRespProfileCurriculum,
+  WsRespProfileBank,
+  WsRespProfileProfitLoss,
+  WsRespProfileCompanies,
+  WsRespProfileCompanyProfitLoss,
+  WsRespProfileAutoConnections,
+  WsRespProfilePolicy,
+  WsRespProfilePolicySet,
+  WsRespProfileAutoConnectionAction,
+  WsRespProfileBankAction,
+  WsRespProfileUploadPicture,
+  PictureUploadFailure,
+  WsRespSearchConnections,
+  ConnectionSearchResult,
+  WsRespConnectionReachability,
+  WsRespConnectFacilities,
+  WsRespBuildingSetProperty,
+  WsRespBuildRoad,
+  WsRespDemolishRoad,
+  WsRespDemolishRoadArea,
+  WsRespDefineZone,
+  WsRespBuildingGateConnections,
+  WsRespBuildingServiceFigures,
+  WsRespBuildingWorkerCounts,
+  WsRespBuildingRefreshProperties,
+  WorkerCount,
+  WsRespBuildingCategories,
+  WsRespBuildingFacilities,
+  WsRespRenameFacility,
+  WsRespDeleteFacility,
+  WsRespResearchInventory,
+  WsRespResearchDetails,
+  WsRespBuildingUpgrade,
+  ResearchCategoryData,
+  WsRespChatChannelList,
+  WsRespChatChannelInfo,
+  WsRespChatSuccess,
+  WsEventChatMsg,
+  WsEventChatUserTyping,
+  WsEventChatChannelChange,
 } from '../shared/types/message-types';
+import { SurfaceType } from '../shared/types/domain-types';
+import { CLUSTER_IDS } from '../shared/cluster-data';
 import type {
+  AutoConnectionActionType,
+  AutoConnectionFluid,
+  AutoConnectionsData,
+  BankAccountData,
+  BuildingConnectionData,
+  BuildingProductData,
+  BuildingSupplyData,
+  BuildingInfo,
+  CompaniesData,
+  CompInputData,
+  CurriculumData,
+  PolicyData,
+  ProfitLossData,
   BuildingPropertyValue,
+  CompanyInfo,
   DirectoryRef,
   DirectoryPage,
+  FacilityDimensions,
+  LoanInfo,
+  MailFolder,
+  MailMessageFull,
   MailMessageHeader,
   MapBuilding,
+  MapSegment,
+  PoliticsData,
+  RankingCategory,
+  TycoonProfileFull,
 } from '../shared/types/domain-types';
 import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
-import { ERROR_AccessDenied } from '../shared/error-codes';
+import { ERROR_AccessDenied, ERROR_TooManyFacilities } from '../shared/error-codes';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
-import { WsDriverError } from './ws-driver';
+import { WsDriverError, type OutboundMessage } from './ws-driver';
 import {
   GOVERNED_TOWN,
   INTERFACE_LOG_BASE,
@@ -49,25 +133,61 @@ import {
   PRIMARY_ACCOUNT,
   SECONDARY_ACCOUNT,
   TIMEOUTS,
+  WORLD_NAME,
   type E2eAccount,
 } from './config';
-import { awaitMarker, findCurrentSurvivalLog, openLogWindow, readSince } from './live-log';
-import { runProbe, probeFailure, type ProbeResult, type ProbeSpec } from './probe';
+import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, readSince } from './live-log';
+import {
+  runProbe,
+  runRoundTrip,
+  probeFailure,
+  type ProbeResult,
+  type ProbeSpec,
+  type RoundTripSpec,
+} from './probe';
+import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
+import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES, isTradeModeValue } from '../shared/building-details/trade-settings';
 import {
   awaitResumeToken,
   findTown,
   listTowns,
   resolveVisualClass,
   login,
+  loginSecondary,
   logoff,
   readBuildingDetails,
   readBuildingTabData,
   readSectionGroups,
   propertyValue,
   resumeSession,
+  setBuildingProperty,
+  switchToMayor,
   type LiveSession,
+  type SecondaryLogin,
 } from './session';
 import type { WorldLock } from './world-lock';
+import {
+  FIXTURE_KINDS,
+  ensureFixtures,
+  facilityDimensions,
+  findFixture,
+  findFreeLot,
+  helartiaValue,
+  isConstructionClass,
+  isRefusedClass,
+  listBuildable,
+  listTycoonFacilities,
+  newFacilityLineMatches,
+  ownLotRefusal,
+  ownTycoonId,
+  placeFacility,
+  readCash,
+  townValueAt,
+  FIXTURE_CASH_FLOOR,
+  type FixtureKind,
+  type FixtureKindId,
+  type FixtureOutcome,
+} from './fixtures';
 
 export interface FlowContext {
   lock: WorldLock;
@@ -75,11 +195,15 @@ export interface FlowContext {
   survivalLogUrl?: string;
   /** Injected so a test can avoid a real delay between mailRoundTrip's Inbox re-reads. */
   sleep?: (ms: number) => Promise<void>;
+  /** Injected so a test can bound a round trip's read-back poll without waiting. */
+  now?: () => number;
 }
 
 export interface FlowResult {
   name: string;
-  status: 'PASS' | 'FAIL' | 'UNPROVEN';
+  status: 'PASS' | 'FAIL' | 'UNPROVEN' | 'SKIPPED';
+  /** Why the flow did not run — only on `SKIPPED`: the second account was refused at login. */
+  skipped?: string;
   assertions: { what: string; ok: boolean; detail?: string }[];
   /** What the flow could not prove, each with its reason. */
   unproven: string[];
@@ -94,6 +218,8 @@ export interface FlowResult {
   seed?: FlowCheck;
   /** One entry per mailbox (or store) the seed's cleanup restored — only on a seeded flow. */
   cleanup?: FlowCheck[];
+  /** Per fixture kind: found, under construction, built (with its `New Facility:` line), or why not — fixtures-ensure only. */
+  fixtures?: FixtureOutcome[];
 }
 
 /** One named outcome — a seed, or one mailbox's cleanup. */
@@ -101,6 +227,8 @@ export interface FlowCheck {
   what: string;
   ok: boolean;
   detail?: string;
+  /** The check could not run: the second account was refused at login (the reason). */
+  skipped?: string;
 }
 
 /** What a seed produced, and how to undo it. */
@@ -294,16 +422,13 @@ const politicsRead: Flow = {
       const town = await findTown(session, GOVERNED_TOWN);
       assertions.check('the governed town is still listed', town.name === GOVERNED_TOWN, town.name);
 
-      const politics = await session.driver.request<WsRespPoliticsData>(
-        {
-          type: WsMessageType.REQ_POLITICS_DATA,
-          townName: town.name,
-          buildingX: town.x,
-          buildingY: town.y,
-        },
-        WsMessageType.RESP_POLITICS_DATA,
-      );
-      assertions.check('politics data returned', Boolean(politics.data));
+      const data = await readPolitics(session, town);
+      assertions.check('politics data returned', Boolean(data));
+      const ratingCount =
+        (data?.popularRatings ?? []).length + (data?.ifelRatings ?? []).length + (data?.tycoonsRatings ?? []).length;
+      assertions.check('ratings are listed', ratingCount > 0, `${ratingCount} rating row(s)`);
+      const mayorName = data?.mayorName ?? '';
+      assertions.check("mayorName names SPO_test3's office", holdsGovernedOffice(mayorName), mayorName);
       assertions.check('no gateway errors', session.driver.errors.length === 0);
       return report('politics-read', assertions, [], session);
     } finally {
@@ -318,7 +443,7 @@ const politicsRead: Flow = {
  */
 const politicsWrite: Flow = {
   name: 'politics-write',
-  what: 'round-trip probe on RDOSetTaxValue at the governed town hall',
+  what: 'round-trip probes on RDOSetTaxValue at the governed town hall: row-0 rate, then row-0 subsidy',
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -359,7 +484,356 @@ const politicsWrite: Flow = {
         probes.push(probeFailure(spec, err));
       }
       assertions.check('the probe proved the write reached the object', probes[0]?.status === 'PASS', probes[0]?.note);
+
+      // The subsidy restores to the rate probe's original, never to a value re-read now: the
+      // facility's cache (two-minute TTL, Kernel/Population.pas:1192) can still hand back the
+      // rate probe's test value. So it runs only when that original was confirmed.
+      const rate = probes[0];
+      if (rate?.restored === true) {
+        const taxId = propertyValue(taxes, 'townTaxes', 'Tax0Id');
+        const subsidy: ProbeSpec = {
+          ...spec,
+          what: `${town.name} tax row 0 subsidy`,
+          testValue: () => SUBSIDY_VALUE,
+          original: rate.original,
+          // Kernel/Population.pas:1254 — "Setting Tax value: <town>, <TaxId>, <value>".
+          logMatch: (line, written) => taxLogMatches(line, town.name, taxId, written),
+        };
+        try {
+          probes.push(
+            await runProbe(session, subsidy, ctx.lock, openLogWindow, url, { now: ctx.now, sleep: ctx.sleep }),
+          );
+        } catch (err: unknown) {
+          probes.push(probeFailure(subsidy, err));
+        }
+        assertions.check(
+          "the subsidy probe proved the write and restored the rate probe's original",
+          probes[1]?.status === 'PASS',
+          probes[1]?.note,
+        );
+      } else {
+        assertions.unproven(
+          'the subsidy probe',
+          "not attempted — the rate probe's restore did not read back, so its original is unconfirmed",
+        );
+      }
       return report('politics-write', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * What a subsidy writes: `TaxesTab.tsx` sends the literal `'-10'`, as Voyager does, and
+ * `Kernel/BasicTaxes.pas:247-250` stores it (`StoreToCache` then writes `Tax0Percent = -10`).
+ */
+const SUBSIDY_VALUE = '-10';
+
+/** The tax line's identifying fields — the town, the TaxId when the section served it, the value. */
+export function taxLogMatches(line: string, town: string, taxId: string | undefined, written: string): boolean {
+  const trimmed = line.trim();
+  if (taxId !== undefined) return trimmed.endsWith(`Setting Tax value: ${town}, ${taxId}, ${written}`);
+  return trimmed.includes(`Setting Tax value: ${town}, `) && trimmed.endsWith(`, ${written}`);
+}
+
+/** `REQ_POLITICS_DATA` for a town hall — the payload the Politics panel reads. */
+async function readPolitics(
+  session: LiveSession,
+  town: { name: string; x: number; y: number },
+): Promise<PoliticsData> {
+  const politics = await session.driver.request<WsRespPoliticsData>(
+    {
+      type: WsMessageType.REQ_POLITICS_DATA,
+      townName: town.name,
+      buildingX: town.x,
+      buildingY: town.y,
+    },
+    WsMessageType.RESP_POLITICS_DATA,
+  );
+  return politics.data;
+}
+
+/**
+ * Whether a ruler name is SPO_test3's office: the login name, or the role name a company
+ * switch installs — the two prongs `holdsOffice` (politics-handler.ts) applies, case-insensitively.
+ */
+export function holdsGovernedOffice(mayorName: string): boolean {
+  const name = mayorName.trim().toLowerCase();
+  return name === PRIMARY_ACCOUNT.username.toLowerCase() || name === `mayor of ${GOVERNED_TOWN}`.toLowerCase();
+}
+
+/**
+ * The town minimum wage — `TTownHall.RDOSetMinSalaryValue` (`Kernel/Population.pas:167`,
+ * body `:1292`, log `:1294`). The Capitol's variant (`Kernel/WorldPolitics.pas:265`) stays a
+ * capability exception (`PRESIDENT_MEMBERS`); this drives the town hall's.
+ */
+const townMinWage: Flow = {
+  name: 'town-min-wage',
+  what: 'round-trip probe on RDOSetMinSalaryValue (population kind 0) at the governed town hall',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const visualClass = await resolveVisualClass(session, town.x, town.y);
+      const details = await readBuildingDetails(session, town.x, town.y, visualClass);
+      assertions.check('the town hall is governable by this account', details.canGovern === true);
+      if (!details.canGovern) return report('town-min-wage', assertions, probes, session);
+
+      const jobs = await readSectionGroups(session, town.x, town.y, 'townJobs', visualClass);
+      const current = propertyValue(jobs, 'townJobs', 'hiMinSalary');
+      assertions.check('the minimum wage is readable', current !== undefined, current);
+      if (current === undefined) return report('town-min-wage', assertions, probes, session);
+
+      const spec: ProbeSpec = {
+        what: `${town.name} minimum wage, population kind 0 (hi)`,
+        member: 'RDOSetMinSalaryValue',
+        x: town.x,
+        y: town.y,
+        visualClass,
+        // hiMinSalary is MayorMinSalary, the town's own figure (Kernel/Population.pas:1219);
+        // the write invalidates the facility (:1300), so the read-back does not lag.
+        groupId: 'townJobs',
+        readProperty: 'hiMinSalary',
+        writeProperty: 'RDOSetMinSalaryValue',
+        // TOWN_JOBS_GROUP's mapping; building-property-handler.ts builds (levelIndex, value).
+        additionalParams: { levelIndex: '0' },
+        // 0..100 — inside the 255 clamp of Kernel/Population.pas:1299.
+        testValue: original => nudge(original),
+        logMatch: (line, written) => minWageLogMatches(line, town.name, written),
+      };
+
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      try {
+        probes.push(await runProbe(session, spec, ctx.lock, openLogWindow, url, { now: ctx.now, sleep: ctx.sleep }));
+      } catch (err: unknown) {
+        probes.push(probeFailure(spec, err));
+      }
+      assertions.check('the probe proved the write reached the object', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report('town-min-wage', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** `Kernel/Population.pas:1294` — "Setting Min Wage: <town>, <PopKind>, <value>"; kind 0 here. */
+export function minWageLogMatches(line: string, town: string, written: string): boolean {
+  return line.trim().endsWith(`Setting Min Wage: ${town}, 0, ${written}`);
+}
+
+const PUBLICITY_LEVELS = [0, 25, 50, 75, 100];
+
+/**
+ * Another publicity level than `original`. The reference client emits only 0/25/50/75/100
+ * (`mayorpub.asp:182-186`) and the default is 0 (`Kernel/Politics.pas:453`), so any other
+ * original is refused — before the round trip records or writes anything.
+ */
+export function otherPublicityLevel(original: string): string {
+  const parsed = Number(original);
+  if (original.trim() === '' || !PUBLICITY_LEVELS.includes(parsed)) {
+    throw new Error(
+      `publicity "${original}" is not one of 0/25/50/75/100 — the restore could not be exact, so nothing is written`,
+    );
+  }
+  return String(parsed >= 50 ? parsed - 25 : parsed + 25);
+}
+
+/** `Kernel/TownPolitics.pas:224` — "Setting town politics publicity: <RatingId>, <value>". */
+export function publicityLogMatches(line: string, ratingId: string, written: string): boolean {
+  return line.trim().endsWith(`Setting town politics publicity: ${ratingId}, ${written}`);
+}
+
+/** `TPoliticalTownHall.RDOSetPublicity` (`Kernel/TownPolitics.pas:220`) — town-scoped. */
+const publicityRoundTrip: Flow = {
+  name: 'publicity-roundtrip',
+  what: 'round trip on RDOSetPublicity for one rating at the governed town hall',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const data = await readPolitics(session, town);
+      const row = (data?.publicity ?? [])[0];
+      assertions.check('a publicity row is listed', row !== undefined, row ? `${row.name} (${row.id})` : 'none');
+      if (!row) return report('publicity-roundtrip', assertions, probes, session);
+
+      const ratingId = row.id;
+      const read = async (): Promise<string | undefined> => {
+        const level = (await readPolitics(session, town))?.publicity?.find(p => p.id === ratingId)?.level;
+        return level === undefined ? undefined : String(level);
+      };
+      const what = `${town.name} publicity for rating ${row.name} (${ratingId})`;
+      const member = 'RDOSetPublicity';
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      try {
+        probes.push(
+          await runRoundTrip(
+            {
+              what,
+              member,
+              read,
+              testValue: otherPublicityLevel,
+              write: async value => {
+                const resp = await session.driver.request<WsRespPoliticsSetPublicity>(
+                  {
+                    type: WsMessageType.REQ_POLITICS_SET_PUBLICITY,
+                    buildingX: town.x,
+                    buildingY: town.y,
+                    ratingId,
+                    value: Number(value),
+                  },
+                  WsMessageType.RESP_POLITICS_SET_PUBLICITY,
+                );
+                if (!resp.success) throw new Error(`SET_PUBLICITY refused: ${resp.message ?? 'no message'}`);
+              },
+              proof: {
+                log: {
+                  marker: LOG_MARKERS.RDOSetPublicity,
+                  match: (line, written) => publicityLogMatches(line, ratingId, written),
+                },
+                readBack: {
+                  source: `publicity[${ratingId}].level via REQ_POLITICS_DATA (mayorpub.asp's selected option)`,
+                  why:
+                    'the page reads 25*(RulerPublicity \\ 25) (mayorpub.asp:169) and the write ' +
+                    'invalidates the town hall cache (Kernel/TownPolitics.pas:231-232)',
+                  read,
+                  boundMs: TIMEOUTS.readBack,
+                },
+              },
+            },
+            ctx.lock,
+            openLogWindow,
+            url,
+            { now: ctx.now, sleep: ctx.sleep },
+          ),
+        );
+      } catch (err: unknown) {
+        probes.push(probeFailure({ what, member }, err));
+      }
+      assertions.check('the round trip proved the write and restored it', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report('publicity-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+const sameName = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * `TPoliticalTownHall.RDOVote` (`Kernel/TownPolitics.pas:395`, log `:400`). Data-gated: it
+ * votes only when a prior vote exists and still names a current candidate or the mayor, so
+ * the restore is a real vote and not a silent no-op (`Kernel/Politics.pas:916-933`).
+ */
+const voteRoundTrip: Flow = {
+  name: 'vote-roundtrip',
+  what: 'vote for another candidate, then re-vote the prior choice, at the governed town hall',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const voter = PRIMARY_ACCOUNT.username;
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const visualClass = await resolveVisualClass(session, town.x, town.y);
+      const data = await readPolitics(session, town);
+      const candidates = (data?.campaigns ?? []).map(c => c.candidateName).filter(n => n.trim() !== '');
+      const mayor = data?.mayorName ?? '';
+      const readVoteOf = async (): Promise<string | undefined> =>
+        propertyValue(await readSectionGroups(session, town.x, town.y, 'votes', visualClass), 'votes', 'VoteOf');
+
+      const prior = await readVoteOf();
+      if (prior === undefined || prior.trim() === '') {
+        assertions.unproven(
+          'the vote round trip',
+          `${voter} has no readable prior vote at ${town.name} — RDOVoteOf answered nothing, or the ` +
+            'gateway did not serve VoteOf (enrichVotesTab binds to CurrBlock, which no Town Hall ' +
+            'template requests); nothing written',
+        );
+        return report('vote-roundtrip', assertions, probes, session);
+      }
+      const choices = [...candidates, mayor].filter(n => n.trim() !== '');
+      if (!choices.some(n => sameName(n, prior))) {
+        assertions.unproven(
+          'the vote round trip',
+          `stale prior vote "${prior}": no campaign now and not the mayor (a town election deletes ` +
+            'campaigns but keeps Voter.Votes — Kernel/TownPolitics.pas:690, :744; ' +
+            'Kernel/Politics.pas:916-933); nothing written',
+        );
+        return report('vote-roundtrip', assertions, probes, session);
+      }
+      const other = choices.find(n => !sameName(n, prior));
+      if (other === undefined) {
+        assertions.unproven('the vote round trip', `no other candidate to vote for than "${prior}"; nothing written`);
+        return report('vote-roundtrip', assertions, probes, session);
+      }
+
+      const what = `${town.name} vote of ${voter} — prior choice ${prior}`;
+      const member = 'RDOVote';
+      // The choice ends the line (TownPolitics.pas:400), so "by Bob" never matches "by Bobby".
+      const votedBy = (line: string, choice: string): boolean =>
+        line.trim().toLowerCase().endsWith(`voting: ${voter} by ${choice}`.toLowerCase());
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      let restoreLine: string | null = null;
+      try {
+        // Opened before the change vote: the restore's line is the one naming the prior choice.
+        const restoreWindow = await openLogWindow(url);
+        const result = await runRoundTrip(
+          {
+            what,
+            member,
+            read: async () => prior,
+            testValue: () => other,
+            write: async value => {
+              const resp = await session.driver.request<WsRespPoliticsVote>(
+                {
+                  type: WsMessageType.REQ_POLITICS_VOTE,
+                  buildingX: town.x,
+                  buildingY: town.y,
+                  candidateName: value,
+                },
+                WsMessageType.RESP_POLITICS_VOTE,
+              );
+              if (resp.success === false) throw new Error(`VOTE refused: ${resp.message ?? 'no message'}`);
+            },
+            proof: {
+              // The voter in the match excludes the Capitol's identical line (WorldPolitics.pas:1822).
+              log: { marker: LOG_MARKERS.RDOVote, match: votedBy },
+              readBack: {
+                source: 'votes.VoteOf via the section read (enrichVotesTab, RDOVoteOf)',
+                why: 'RDOVoteOf is a live function (Kernel/TownPolitics.pas:47) with no cache in between',
+                read: readVoteOf,
+                normalise: v => v.trim().toLowerCase(),
+                boundMs: TIMEOUTS.logSettle,
+              },
+            },
+          },
+          ctx.lock,
+          openLogWindow,
+          url,
+          { now: ctx.now, sleep: ctx.sleep },
+        );
+        probes.push(result);
+        if (result.restored) {
+          restoreLine = await awaitMarker(
+            restoreWindow,
+            { marker: LOG_MARKERS.RDOVote, match: line => votedBy(line, prior) },
+            TIMEOUTS.logSettle,
+          );
+          assertions.check('the restore vote reached the object', restoreLine !== null, restoreLine ?? undefined);
+        }
+      } catch (err: unknown) {
+        probes.push(probeFailure({ what, member }, err));
+      }
+      assertions.check('the round trip proved the vote and restored it', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report('vote-roundtrip', assertions, probes, session);
     } finally {
       await logoff(session);
     }
@@ -377,7 +851,8 @@ const permissionNegative: Flow = {
   mutates: false,
   run: async () => {
     const assertions = new Assertions();
-    const session = await login(SECONDARY_ACCOUNT);
+    const session = await loginSecondary();
+    if ('skipped' in session) return skippedResult('permission-negative', session.skipped);
     try {
       const town = await findTown(session, GOVERNED_TOWN);
       const visualClass = await resolveVisualClass(session, town.x, town.y);
@@ -408,26 +883,29 @@ const mailRoundTrip: Flow = {
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `e2e ${new Date().toISOString()}`;
 
-    const sender = await login(PRIMARY_ACCOUNT);
+    // Crazz first, before the compose: a refused login then leaves no mail behind.
+    const recipient = await loginSecondary();
+    if ('skipped' in recipient) return skippedResult('mail-roundtrip', recipient.skipped);
     try {
-      await sender.driver.request({ type: WsMessageType.REQ_MAIL_CONNECT }, WsMessageType.RESP_MAIL_CONNECTED);
-      const sent = await sender.driver.request<WsRespMailSent>(
-        {
-          type: WsMessageType.REQ_MAIL_COMPOSE,
-          to: SECONDARY_ACCOUNT.username,
-          subject,
-          body: ['Automated L2 probe. Safe to delete.'],
-        },
-        WsMessageType.RESP_MAIL_SENT,
-        TIMEOUTS.login,
-      );
-      assertions.check('the compose was accepted', sent.type === WsMessageType.RESP_MAIL_SENT);
-    } finally {
-      await logoff(sender);
-    }
+      const sender = await login(PRIMARY_ACCOUNT);
+      try {
+        await sender.driver.request({ type: WsMessageType.REQ_MAIL_CONNECT }, WsMessageType.RESP_MAIL_CONNECTED);
+        const sent = await sender.driver.request<WsRespMailSent>(
+          {
+            type: WsMessageType.REQ_MAIL_COMPOSE,
+            to: SECONDARY_ACCOUNT.username,
+            subject,
+            body: ['Automated L2 probe. Safe to delete.'],
+          },
+          WsMessageType.RESP_MAIL_SENT,
+          TIMEOUTS.login,
+        );
+        assertions.check('the compose was accepted', sent.type === WsMessageType.RESP_MAIL_SENT);
+      } finally {
+        await logoff(sender);
+      }
 
-    const recipient = await login(SECONDARY_ACCOUNT);
-    try {
+      // The recipient's mail connect stays after the compose, so its unread count includes it.
       const connected = await recipient.driver.request<WsRespMailConnected>(
         { type: WsMessageType.REQ_MAIL_CONNECT },
         WsMessageType.RESP_MAIL_CONNECTED,
@@ -890,6 +1368,62 @@ const newspaperRead: Flow = {
   },
 };
 
+/**
+ * The paper's columns board: the town hall names its paper, then the board index
+ * (`boardmsg.asp?top=TRUE` + `boardlist.asp`) is read. Read-only — the read branch of
+ * `boardmsg.asp` only opens `NewsBoard.NewsObject`; `action=post` is the only write branch
+ * and is never sent (posting is excluded, maintainer 2026-09-29: no member deletes a post,
+ * `News Server/NewsObject.pas:11-53`). An empty board is a pass, not UNPROVEN: the page
+ * answering is what is proven, and the detail records the counts. Unlike `newspaper-read`
+ * it is not data-gated, so routing requires it.
+ */
+const newspaperBoardRead: Flow = {
+  name: 'newspaper-board-read',
+  what: 'town hall -> its paper -> the columns board',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const town = await findTown(session, GOVERNED_TOWN);
+      const visualClass = await resolveVisualClass(session, town.x, town.y);
+      const details = await readBuildingDetails(session, town.x, town.y, visualClass);
+      const paperName = propertyValue(details.groups, 'townGeneral', 'NewspaperName') ?? '';
+      assertions.check('the town hall names its paper', paperName !== '', paperName || '(none)');
+      // Never ask for the board of a paper with no name.
+      if (paperName === '') return report('newspaper-board-read', assertions, [], session);
+
+      const { board } = await session.driver.request<WsRespNewspaperBoard>(
+        {
+          type: WsMessageType.REQ_NEWSPAPER_BOARD,
+          paperName,
+          townName: town.name,
+          isCapitol: false,
+          buildingX: town.x,
+          buildingY: town.y,
+        },
+        WsMessageType.RESP_NEWSPAPER_BOARD,
+      );
+      assertions.check('the columns board was read', board.error === '', board.error);
+      const wellFormed =
+        Array.isArray(board.columns) &&
+        Array.isArray(board.tree) &&
+        board.columns.every(c => c.path !== '') &&
+        board.tree.every(e => e.path !== '');
+      assertions.check(
+        'the board lists are well-formed',
+        wellFormed,
+        `${board.columns.length} columns, ${board.tree.length} tree entries`,
+      );
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('newspaper-board-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 const ZONING_ALERT_SUBJECT = 'Zoning Alert!'; // World.pas:2721
 /** The header the server's own alert carries — Mail Server/ModelServer.pas:883. */
 const ZONING_ALERT_HEADERS = 'ContentType=text/html';
@@ -931,7 +1465,18 @@ async function purgeSeededAlerts(
 ): Promise<FlowCheck> {
   const what = `seeded "${ZONING_ALERT_SUBJECT}" removed from ${account.username}'s ${folder}`;
   try {
-    const session = await login(account);
+    const opened = account === SECONDARY_ACCOUNT ? await loginSecondary() : await login(account);
+    if ('skipped' in opened) {
+      return {
+        what,
+        ok: false,
+        skipped: opened.skipped,
+        detail:
+          `${account.username} refused at login (${opened.skipped}) — ` +
+          `any seeded "${ZONING_ALERT_SUBJECT}" is left in ${account.username}'s ${folder}`,
+      };
+    }
+    const session = opened;
     try {
       await session.driver.request({ type: WsMessageType.REQ_MAIL_CONNECT }, WsMessageType.RESP_MAIL_CONNECTED);
       const listing = await session.driver.request<WsRespMailFolder>(
@@ -981,13 +1526,17 @@ async function seedZoningAlert(): Promise<FlowSeed> {
   const cleanup = sweepSeededAlerts;
 
   const swept = await sweepSeededAlerts();
+  const refused = swept.find(c => c.skipped !== undefined);
+  if (refused) return { outcome: { what, ok: false, skipped: refused.skipped }, cleanup };
   const bad = swept.find(c => !c.ok);
   if (bad) {
     return { outcome: { what, ok: false, detail: `stale sweep: ${bad.what} — ${bad.detail ?? ''}` }, cleanup };
   }
 
   try {
-    const sender = await login(SECONDARY_ACCOUNT);
+    const opened = await loginSecondary();
+    if ('skipped' in opened) return { outcome: { what, ok: false, skipped: opened.skipped }, cleanup };
+    const sender = opened;
     try {
       const ip = sender.world?.ip;
       if (!ip) return { outcome: { what, ok: false, detail: 'the login carried no world IP' }, cleanup };
@@ -1112,6 +1661,499 @@ const zoningAlertRead: Flow = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Drafts, send-from-draft and reply (#1144)
+//
+// Mail is served by the Mail Server, not the model server: there is no Survival line, and the
+// proof is the mailbox read back through the account that should hold the message (the
+// mail-roundtrip precedent). `Post` files a Sent copy for the sender
+// (Mail Server/MailServer.pas:809-811), which is why each sender's `Sent` is swept too.
+// ---------------------------------------------------------------------------
+
+const MAIL_DRAFTS_MARKER = 'e2e-mail-drafts ';
+const MAIL_SEND_FROM_DRAFT_MARKER = 'e2e-mail-send-from-draft ';
+const MAIL_REPLY_MARKER = 'e2e-mail-reply ';
+const MAIL_PROBE_BODY = 'Automated L2 probe. Safe to delete.';
+const DRAFT_FIRST_TEXT = 'Automated L2 draft probe, first save. Safe to delete.';
+const DRAFT_SECOND_TEXT = 'Automated L2 draft probe, second save. Safe to delete.';
+
+/** Matches a message whose subject starts with `marker` — also once answered (`Re: <marker>…`). */
+function hasMarker(marker: string): (m: MailMessageHeader) => boolean {
+  return m => m.subject.replace(/^re:\s*/i, '').startsWith(marker);
+}
+
+/**
+ * The reply headers the client's Reply sends — the same four lines, in the same order, as
+ * `buildReplyHeaders` in `src/client/store/mail-store.ts`. A copy, because the e2e build
+ * (`tsconfig.e2e.json`) includes only `src/e2e/**` and `src/shared/**`, and that store imports
+ * `zustand`; a unit test pins the two equal.
+ */
+export function replyHeaders(message: MailMessageFull): string {
+  return [
+    `In-Reply-To=${message.messageId}`,
+    `In-Reply-To-From=${message.fromAddr}`,
+    `In-Reply-To-Subject=${message.subject}`,
+    `In-Reply-To-Date=${message.date}`,
+  ].join('\n');
+}
+
+async function mailConnect(session: LiveSession): Promise<void> {
+  await session.driver.request({ type: WsMessageType.REQ_MAIL_CONNECT }, WsMessageType.RESP_MAIL_CONNECTED);
+}
+
+async function listFolder(session: LiveSession, folder: MailFolder): Promise<MailMessageHeader[]> {
+  const listing = await session.driver.request<WsRespMailFolder>(
+    { type: WsMessageType.REQ_MAIL_GET_FOLDER, folder },
+    WsMessageType.RESP_MAIL_FOLDER,
+  );
+  return listing.messages;
+}
+
+interface MailOut {
+  to: string;
+  subject: string;
+  body: string[];
+  headers?: string;
+  existingDraftId?: string;
+}
+
+function saveDraft(session: LiveSession, mail: MailOut): Promise<WsRespMailDraftSaved> {
+  return session.driver.request<WsRespMailDraftSaved>(
+    { type: WsMessageType.REQ_MAIL_SAVE_DRAFT, ...mail },
+    WsMessageType.RESP_MAIL_DRAFT_SAVED,
+    TIMEOUTS.login,
+  );
+}
+
+function sendMail(session: LiveSession, mail: MailOut): Promise<WsRespMailSent> {
+  return session.driver.request<WsRespMailSent>(
+    { type: WsMessageType.REQ_MAIL_COMPOSE, ...mail },
+    WsMessageType.RESP_MAIL_SENT,
+    TIMEOUTS.login,
+  );
+}
+
+interface Reread {
+  /** The last listing read — the one every assertion is judged on. */
+  messages: MailMessageHeader[];
+  reads: number;
+  settled: boolean;
+}
+
+/**
+ * The bounded re-read of #1025: the listing is IIS-served and deletes are fire-and-forget, so
+ * one read can lag in either direction. Reads until `settled`, at most
+ * `LIMITS.mailDeleteMaxReads` times, `TIMEOUTS.mailDeleteReread` apart (never after the last).
+ */
+async function rereadUntil(
+  session: LiveSession,
+  folder: MailFolder,
+  settled: (messages: MailMessageHeader[]) => boolean,
+  sleep: (ms: number) => Promise<void>,
+): Promise<Reread> {
+  let messages: MailMessageHeader[] = [];
+  let reads = 0;
+  let done = false;
+  for (let attempt = 1; attempt <= LIMITS.mailDeleteMaxReads; attempt++) {
+    messages = await listFolder(session, folder);
+    reads = attempt;
+    done = settled(messages);
+    if (done) break;
+    if (attempt < LIMITS.mailDeleteMaxReads) await sleep(TIMEOUTS.mailDeleteReread);
+  }
+  return { messages, reads, settled: done };
+}
+
+/** Delete every match from one folder, judged on the last bounded re-read. Never throws. */
+async function purgeFolder(
+  session: LiveSession,
+  folder: MailFolder,
+  matches: (m: MailMessageHeader) => boolean,
+  sleep: (ms: number) => Promise<void>,
+  label: string,
+): Promise<FlowCheck> {
+  const what = `${label} removed from ${session.account.username}'s ${folder}`;
+  try {
+    const stale = (await listFolder(session, folder)).filter(matches);
+    for (const m of stale) {
+      await session.driver.request<WsRespMailDeleted>(
+        { type: WsMessageType.REQ_MAIL_DELETE, folder, messageId: m.messageId },
+        WsMessageType.RESP_MAIL_DELETED,
+      );
+    }
+    const after = await rereadUntil(session, folder, msgs => !msgs.some(matches), sleep);
+    const left = after.messages.filter(matches).length;
+    return {
+      what,
+      ok: left === 0,
+      detail: `${stale.length} deleted, ${left} still listed after ${after.reads} read(s)`,
+    };
+  } catch (err: unknown) {
+    return { what, ok: false, detail: toErrorMessage(err) };
+  }
+}
+
+/**
+ * The cleanup of one mailbox: a fresh login — the cleanup matters most after a failure, which
+ * is when the drive's socket may be dead — then `purgeFolder` on each folder. One check per
+ * folder; never throws. A Crazz refusal here comes after the flow's first write, so its checks
+ * are not ok and name the leftover.
+ */
+async function purgeMailbox(
+  account: E2eAccount,
+  folders: MailFolder[],
+  matches: (m: MailMessageHeader) => boolean,
+  sleep: (ms: number) => Promise<void>,
+  label: string,
+): Promise<FlowCheck[]> {
+  const whatOf = (folder: MailFolder): string => `${label} removed from ${account.username}'s ${folder}`;
+  const failAll = (detail: string): FlowCheck[] => folders.map(f => ({ what: whatOf(f), ok: false, detail }));
+  let opened: SecondaryLogin;
+  try {
+    opened = account === SECONDARY_ACCOUNT ? await loginSecondary() : await login(account);
+  } catch (err: unknown) {
+    return failAll(toErrorMessage(err));
+  }
+  if ('skipped' in opened) {
+    const reason = opened.skipped;
+    return folders.map(f => ({
+      what: whatOf(f),
+      ok: false,
+      skipped: reason,
+      detail: `${account.username} refused at login (${reason}) — any ${label} is left in ${account.username}'s ${f}`,
+    }));
+  }
+  const session = opened;
+  try {
+    await mailConnect(session);
+    const checks: FlowCheck[] = [];
+    for (const f of folders) checks.push(await purgeFolder(session, f, matches, sleep, label));
+    return checks;
+  } catch (err: unknown) {
+    return failAll(toErrorMessage(err));
+  } finally {
+    await logoff(session);
+  }
+}
+
+/**
+ * Sweep every folder the flow writes for its marker before anything is composed — a run killed
+ * between send and cleanup leaves nothing the next run cannot remove. Each sweep is recorded as
+ * a `pre-sweep:` assertion; returns false when one could not clear its folder.
+ */
+async function preSweep(
+  assertions: Assertions,
+  targets: [LiveSession, MailFolder][],
+  matches: (m: MailMessageHeader) => boolean,
+  sleep: (ms: number) => Promise<void>,
+  label: string,
+): Promise<boolean> {
+  for (const [session, folder] of targets) {
+    const check = await purgeFolder(session, folder, matches, sleep, label);
+    assertions.check(`pre-sweep: ${check.what}`, check.ok, check.detail);
+  }
+  return !assertions.failed;
+}
+
+/** The drive's result with the cleanup attached; a cleanup that left anything turns it FAIL. */
+function withCleanup(result: FlowResult, cleanup: FlowCheck[]): FlowResult {
+  return { ...result, cleanup, status: cleanup.some(c => !c.ok) ? 'FAIL' : result.status };
+}
+
+/** The same FAIL shape `runUnseeded` builds for a drive that threw. */
+function failedResult(name: string, err: unknown): FlowResult {
+  return {
+    name,
+    status: 'FAIL',
+    assertions: [],
+    unproven: [],
+    probes: [],
+    messagesSent: 0,
+    messagesReceived: 0,
+    wireErrors: 0,
+    error: toErrorMessage(err),
+  };
+}
+
+const markerLabel = (marker: string): string => `"${marker.trim()}" mail`;
+
+async function driveDrafts(subject: string, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
+  const name = 'mail-drafts';
+  const assertions = new Assertions();
+  const bySubject = (m: MailMessageHeader): boolean => m.subject === subject;
+  const session = await login(PRIMARY_ACCOUNT);
+  try {
+    await mailConnect(session);
+    const swept = await preSweep(
+      assertions, [[session, 'Draft']], hasMarker(MAIL_DRAFTS_MARKER), sleep, markerLabel(MAIL_DRAFTS_MARKER),
+    );
+    if (!swept) return report(name, assertions, [], session);
+
+    // Addressed to itself: a draft is never delivered, and if a regression ever posted it,
+    // it could not land in another player's mailbox.
+    const mail = { to: PRIMARY_ACCOUNT.username, subject };
+    const first = await saveDraft(session, { ...mail, body: [DRAFT_FIRST_TEXT] });
+    assertions.check('the first save was accepted', first.success === true, first.message);
+
+    const listed = await rereadUntil(session, 'Draft', msgs => msgs.some(bySubject), sleep);
+    const firstCopy = listed.messages.find(bySubject);
+    assertions.check('the Draft folder lists the saved draft', Boolean(firstCopy), `${subject} reads=${listed.reads}`);
+    if (!firstCopy) return report(name, assertions, [], session);
+
+    const second = await saveDraft(session, { ...mail, body: [DRAFT_SECOND_TEXT], existingDraftId: firstCopy.messageId });
+    assertions.check('the save over the draft was accepted', second.success === true, second.message);
+
+    const replaced = await rereadUntil(
+      session,
+      'Draft',
+      msgs => {
+        const copies = msgs.filter(bySubject);
+        return copies.length === 1 && copies[0].messageId !== firstCopy.messageId;
+      },
+      sleep,
+    );
+    const copies = replaced.messages.filter(bySubject);
+    assertions.check(
+      'Draft holds exactly one copy, not the old one',
+      replaced.settled,
+      `old=${firstCopy.messageId} listed=[${copies.map(m => m.messageId).join(',')}] reads=${replaced.reads}`,
+    );
+    if (!replaced.settled) return report(name, assertions, [], session);
+
+    const kept = copies[0];
+    const opened = await session.driver.request<WsRespMailMessage>(
+      { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder: 'Draft', messageId: kept.messageId },
+      WsMessageType.RESP_MAIL_MESSAGE,
+    );
+    const text = (opened.message.body ?? []).join('\n');
+    assertions.check('the kept copy carries the new text', text.includes(DRAFT_SECOND_TEXT), text);
+
+    await session.driver.request(
+      { type: WsMessageType.REQ_MAIL_DELETE, folder: 'Draft', messageId: kept.messageId },
+      WsMessageType.RESP_MAIL_DELETED,
+    );
+    const gone = await rereadUntil(session, 'Draft', msgs => !msgs.some(bySubject), sleep);
+    assertions.check('the draft was deleted', gone.settled, `messageId=${kept.messageId} reads=${gone.reads}`);
+    return report(name, assertions, [], session);
+  } finally {
+    await logoff(session);
+  }
+}
+
+/**
+ * Save draft (`REQ_MAIL_SAVE_DRAFT`), then save again over it (`existingDraftId`): the Draft
+ * folder must end with exactly one copy, carrying the new text; the draft is then deleted.
+ * SPO_test3 only — no second account.
+ */
+const mailDrafts: Flow = {
+  name: 'mail-drafts',
+  what: 'save draft -> Draft lists it -> save again over it -> one copy, new text -> delete -> gone',
+  mutates: true,
+  run: async ctx => {
+    const sleep = ctx.sleep ?? defaultSleep;
+    const subject = `${MAIL_DRAFTS_MARKER}${new Date().toISOString()}`;
+    let result: FlowResult;
+    try {
+      result = await driveDrafts(subject, sleep);
+    } catch (err: unknown) {
+      result = failedResult('mail-drafts', err);
+    }
+    const cleanup = await purgeMailbox(
+      PRIMARY_ACCOUNT, ['Draft'], hasMarker(MAIL_DRAFTS_MARKER), sleep, markerLabel(MAIL_DRAFTS_MARKER),
+    );
+    return withCleanup(result, cleanup);
+  },
+};
+
+async function driveSendFromDraft(
+  crazz: LiveSession,
+  subject: string,
+  sleep: (ms: number) => Promise<void>,
+): Promise<FlowResult> {
+  const name = 'mail-send-from-draft';
+  const assertions = new Assertions();
+  const bySubject = (m: MailMessageHeader): boolean => m.subject === subject;
+  try {
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      await mailConnect(crazz);
+      await mailConnect(session);
+      const swept = await preSweep(
+        assertions,
+        [[session, 'Draft'], [session, 'Sent'], [crazz, 'Inbox']],
+        hasMarker(MAIL_SEND_FROM_DRAFT_MARKER),
+        sleep,
+        markerLabel(MAIL_SEND_FROM_DRAFT_MARKER),
+      );
+      if (!swept) return report(name, assertions, [], session);
+
+      const mail = { to: SECONDARY_ACCOUNT.username, subject, body: [MAIL_PROBE_BODY] };
+      const saved = await saveDraft(session, mail);
+      assertions.check('the draft save was accepted', saved.success === true, saved.message);
+
+      const listed = await rereadUntil(session, 'Draft', msgs => msgs.some(bySubject), sleep);
+      const draft = listed.messages.find(bySubject);
+      assertions.check('the Draft folder lists the saved draft', Boolean(draft), `${subject} reads=${listed.reads}`);
+      if (!draft) return report(name, assertions, [], session);
+
+      const sent = await sendMail(session, { ...mail, existingDraftId: draft.messageId });
+      assertions.check('the send from the draft was accepted', sent.success === true, sent.message);
+
+      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      assertions.check(
+        `${SECONDARY_ACCOUNT.username}'s Inbox holds it`,
+        delivered.settled,
+        `${subject} reads=${delivered.reads}`,
+      );
+
+      const draftGone = await rereadUntil(session, 'Draft', msgs => !msgs.some(bySubject), sleep);
+      assertions.check(
+        `${PRIMARY_ACCOUNT.username}'s Draft no longer holds it (#510)`,
+        draftGone.settled,
+        `draftId=${draft.messageId} reads=${draftGone.reads}`,
+      );
+      return report(name, assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  } finally {
+    await logoff(crazz);
+  }
+}
+
+/**
+ * Send from an opened draft: `REQ_MAIL_COMPOSE` with `existingDraftId`, which deletes the Draft
+ * copy once `Post` succeeds (#510). Crazz logs in first, so a refusal writes nothing (SKIPPED);
+ * a refusal at the cleanup, after the send, is a FAIL naming the leftover.
+ */
+const mailSendFromDraft: Flow = {
+  name: 'mail-send-from-draft',
+  what: 'Crazz first -> SPO_test3 saves a draft to Crazz -> sends it from the draft -> Crazz receives it, Draft copy gone',
+  mutates: true,
+  run: async ctx => {
+    const name = 'mail-send-from-draft';
+    const sleep = ctx.sleep ?? defaultSleep;
+    const subject = `${MAIL_SEND_FROM_DRAFT_MARKER}${new Date().toISOString()}`;
+    // Crazz first, before any write: a refused login then leaves nothing behind.
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    let result: FlowResult;
+    try {
+      result = await driveSendFromDraft(crazz, subject, sleep);
+    } catch (err: unknown) {
+      result = failedResult(name, err);
+    }
+    const matches = hasMarker(MAIL_SEND_FROM_DRAFT_MARKER);
+    const label = markerLabel(MAIL_SEND_FROM_DRAFT_MARKER);
+    const cleanup = [
+      ...(await purgeMailbox(PRIMARY_ACCOUNT, ['Draft', 'Sent'], matches, sleep, label)),
+      ...(await purgeMailbox(SECONDARY_ACCOUNT, ['Inbox'], matches, sleep, label)),
+    ];
+    return withCleanup(result, cleanup);
+  },
+};
+
+async function driveReply(
+  crazz: LiveSession,
+  subject: string,
+  sleep: (ms: number) => Promise<void>,
+): Promise<FlowResult> {
+  const name = 'mail-reply';
+  const assertions = new Assertions();
+  const bySubject = (m: MailMessageHeader): boolean => m.subject === subject;
+  const replySubject = `Re: ${subject}`;
+  try {
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      await mailConnect(crazz);
+      await mailConnect(session);
+      const swept = await preSweep(
+        assertions,
+        [[session, 'Inbox'], [session, 'Sent'], [crazz, 'Inbox'], [crazz, 'Sent']],
+        hasMarker(MAIL_REPLY_MARKER),
+        sleep,
+        markerLabel(MAIL_REPLY_MARKER),
+      );
+      if (!swept) return report(name, assertions, [], session);
+
+      const sent = await sendMail(session, { to: SECONDARY_ACCOUNT.username, subject, body: [MAIL_PROBE_BODY] });
+      assertions.check('the compose was accepted', sent.success === true, sent.message);
+
+      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      const received = delivered.messages.find(bySubject);
+      assertions.check(
+        `${SECONDARY_ACCOUNT.username}'s Inbox holds the message`,
+        Boolean(received),
+        `${subject} reads=${delivered.reads}`,
+      );
+      if (!received) return report(name, assertions, [], session);
+
+      const { message } = await crazz.driver.request<WsRespMailMessage>(
+        { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder: 'Inbox', messageId: received.messageId },
+        WsMessageType.RESP_MAIL_MESSAGE,
+      );
+      assertions.check('the read message carries a sender address', Boolean(message.fromAddr), message.fromAddr);
+      if (!message.fromAddr) return report(name, assertions, [], session);
+
+      // The client's Reply (`startReply` in mail-store.ts): to the sender, `Re: ` subject, and
+      // the four In-Reply-To* lines as headers. Crazz's one write — a pair the flow undoes.
+      const reply = await sendMail(crazz, {
+        to: message.fromAddr,
+        subject: `Re: ${message.subject}`,
+        body: ['Automated L2 reply probe. Safe to delete.'],
+        headers: replyHeaders(message),
+      });
+      assertions.check('the reply was accepted', reply.success === true, reply.message);
+
+      const answered = await rereadUntil(session, 'Inbox', msgs => msgs.some(m => m.subject === replySubject), sleep);
+      assertions.check(
+        `${PRIMARY_ACCOUNT.username}'s Inbox holds the reply with a Re: subject`,
+        answered.settled,
+        `${replySubject} reads=${answered.reads}`,
+      );
+      return report(name, assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  } finally {
+    await logoff(crazz);
+  }
+}
+
+/**
+ * Reply, the way the client's Reply does it: `Re: <subject>` and the `In-Reply-To*` headers
+ * (`replyHeaders`). What it does NOT prove: `RESP_MAIL_MESSAGE` carries only the fixed header
+ * keys (`parseMailHeaders` in `session/mail-handler.ts`) and `AddHeaders` is fire-and-forget, so
+ * whether the `In-Reply-To*` lines landed is not observable over the WS contract. It proves a
+ * compose carrying `headers` is still posted and delivered with its `Re:` subject.
+ */
+const mailReply: Flow = {
+  name: 'mail-reply',
+  what: 'Crazz first -> SPO_test3 sends -> Crazz reads and replies (Re:, In-Reply-To* headers) -> SPO_test3 receives the reply',
+  mutates: true,
+  run: async ctx => {
+    const name = 'mail-reply';
+    const sleep = ctx.sleep ?? defaultSleep;
+    const subject = `${MAIL_REPLY_MARKER}${new Date().toISOString()}`;
+    // Crazz first, before any write: a refused login then leaves nothing behind.
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    let result: FlowResult;
+    try {
+      result = await driveReply(crazz, subject, sleep);
+    } catch (err: unknown) {
+      result = failedResult(name, err);
+    }
+    const matches = hasMarker(MAIL_REPLY_MARKER);
+    const label = markerLabel(MAIL_REPLY_MARKER);
+    const cleanup = [
+      ...(await purgeMailbox(PRIMARY_ACCOUNT, ['Inbox', 'Sent'], matches, sleep, label)),
+      ...(await purgeMailbox(SECONDARY_ACCOUNT, ['Inbox', 'Sent'], matches, sleep, label)),
+    ];
+    return withCleanup(result, cleanup);
+  },
+};
+
 /**
  * The map surface's "Nearest Town Hall" jump, end to end: the local Manhattan approximation
  * (`@/shared/nearest-town`) picks a town, then the arrival goes through the same
@@ -1166,6 +2208,142 @@ const nearestTownHall: Flow = {
   },
 };
 
+/** One `REQ_CONTEXT_STATUS` read at (x, y). */
+async function contextStatusAt(session: LiveSession, x: number, y: number): Promise<string> {
+  const response = await session.driver.request<WsRespContextStatus>(
+    { type: WsMessageType.REQ_CONTEXT_STATUS, x, y },
+    WsMessageType.RESP_CONTEXT_STATUS,
+  );
+  return response.text;
+}
+
+/**
+ * The context status at (x, y), re-read a bounded number of times: `ContextStatusText`
+ * answers `''` while the ClientView is `fServerBusy` (`Interface Server/InterfaceServer.pas:837-839`).
+ */
+async function readContextStatus(
+  session: LiveSession,
+  x: number,
+  y: number,
+  sleep: (ms: number) => Promise<void>,
+): Promise<{ text: string; reads: number }> {
+  let text = '';
+  let reads = 0;
+  while (reads < LIMITS.contextStatusMaxReads) {
+    if (reads > 0) await sleep(TIMEOUTS.contextStatusReread);
+    text = await contextStatusAt(session, x, y);
+    reads++;
+    if (text !== '') break;
+  }
+  return { text, reads };
+}
+
+interface Rect { x1: number; y1: number; x2: number; y2: number }
+
+/**
+ * Whether a surface grid covers the inclusive rectangle (`Kernel/MapCompress.pas:45-50`):
+ * `y2-y1+1` rows of `x2-x1+1` cells. Reads the rows only, never the `width`/`height`
+ * labels — `CompressMap` writes the row count first (`MapCompress.pas:44`) while
+ * `parseRLEResponse` labels it `width`, so a label check fails on correct data.
+ */
+function surfaceShape(rows: number[][], rect: Rect): { ok: boolean; detail: string } {
+  const w = rect.x2 - rect.x1 + 1;
+  const h = rect.y2 - rect.y1 + 1;
+  const ok = rows.length === h && rows.every(r => r.length === w);
+  return { ok, detail: `${rows.length} rows × ${rows[0]?.length ?? 0} cells (expected ${h} × ${w})` };
+}
+
+/**
+ * The map & world readers: context status, world event, two surfaces, the facility
+ * dimensions and the camera update.
+ *
+ * Two persistent effects, both bounded. The world event is **consumed** — `PickEvent`
+ * extracts and frees the head of SPO_test3's event queue (`Kernel/Kernel.pas:11255-11271`,
+ * `Kernel/World.pas:4840-4871`), the same pop every login's `selectCompany` makes, so the
+ * flow costs one more login's worth. The camera is sent **to the saved position** the
+ * select-company reply carried, so `savePlayerPosition` rewrites the same cookie values at
+ * logoff. Nothing in the world is written: `mutates: false`.
+ */
+const worldReaders: Flow = {
+  name: 'world-readers',
+  what: 'context status -> world event -> ZONES + Beauty surfaces -> facility dimensions -> camera',
+  mutates: false,
+  run: async ctx => {
+    const sleep = ctx.sleep ?? defaultSleep;
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const here = (await listTowns(session)).find(t => t.name === GOVERNED_TOWN);
+      assertions.check('the governed town is still listed', here !== undefined);
+      if (!here) return report('world-readers', assertions, [], session);
+
+      const status = await readContextStatus(session, here.x, here.y, sleep);
+      assertions.check(
+        'the context status at the town hall is non-empty',
+        status.text !== '',
+        `${status.reads} read(s): ${status.text || "''"}`,
+      );
+
+      const { event } = await session.driver.request<WsRespWorldEvent>(
+        { type: WsMessageType.REQ_WORLD_EVENT },
+        WsMessageType.RESP_WORLD_EVENT,
+      );
+      assertions.check(
+        'the world event answer is well-formed',
+        event === null ||
+          (typeof event.date === 'string' && typeof event.kind === 'number' && typeof event.text === 'string'),
+        event === null ? 'no event queued' : `kind ${event.kind}: ${event.text}`,
+      );
+
+      // Non-square on purpose: a transposed grid cannot pass (13 cells × 7 rows).
+      const rect: Rect = {
+        x1: Math.max(0, here.x - 6),
+        y1: Math.max(0, here.y - 3),
+        x2: here.x + 6,
+        y2: here.y + 3,
+      };
+      for (const surfaceType of [SurfaceType.ZONES, SurfaceType.BEAUTY]) {
+        const { data } = await session.driver.request<WsRespSurfaceData>(
+          { type: WsMessageType.REQ_GET_SURFACE, surfaceType, ...rect },
+          WsMessageType.RESP_SURFACE_DATA,
+        );
+        const shape = surfaceShape(data.rows, rect);
+        assertions.check(`the ${surfaceType} surface covers the requested rectangle`, shape.ok, shape.detail);
+      }
+
+      // Answered from the gateway's own facilityDimensionsCache (src/server/facility-dimensions-cache.ts),
+      // not the world — holding the hall's class is all this proves.
+      const visualClass = await resolveVisualClass(session, here.x, here.y);
+      const { dimensions } = await session.driver.request<WsRespAllFacilityDimensions>(
+        { type: WsMessageType.REQ_GET_ALL_FACILITY_DIMENSIONS },
+        WsMessageType.RESP_ALL_FACILITY_DIMENSIONS,
+      );
+      const count = Object.keys(dimensions).length;
+      assertions.check('the facility dimensions are not empty', count > 0, String(count));
+      assertions.check('the facility dimensions hold the town hall class', visualClass in dimensions, visualClass);
+
+      // Fire-and-forget: handleUpdateCamera answers nothing. With the view fields,
+      // updateCameraPosition emits SetViewedArea (session-only).
+      session.driver.send({
+        type: WsMessageType.REQ_UPDATE_CAMERA,
+        x: session.playerX,
+        y: session.playerY,
+        viewX: Math.max(0, session.playerX - 16),
+        viewY: Math.max(0, session.playerY - 16),
+        viewW: 32,
+        viewH: 32,
+      });
+      const after = await contextStatusAt(session, here.x, here.y);
+      assertions.check('the gateway still answers after the camera update', typeof after === 'string');
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('world-readers', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 /** One page of the directory tree, by ref — the gateway rebuilds the legacy URL itself. */
 async function readDirectory(session: LiveSession, ref: DirectoryRef): Promise<DirectoryPage> {
   const response = await session.driver.request<WsRespSearchMenuDirectory>(
@@ -1177,7 +2355,9 @@ async function readDirectory(session: LiveSession, ref: DirectoryRef): Promise<D
 
 /**
  * The directory descent below the town list: town page -> Facilities -> a kind -> a
- * facility card. Read-only, so no Survival-log probe (doc/E2E-POLICY.md §5 scopes the probe
+ * facility card, then on into the company and tycoon branches — the first row's company
+ * in the town, its owner's companies, that company's facility kinds, the first kind. Each
+ * step follows a row the previous page listed, so none is empty by construction. Read-only, so no Survival-log probe (doc/E2E-POLICY.md §5 scopes the probe
  * to mutations).
  *
  * An empty kind list or an empty facility list fails here rather than being excused as an
@@ -1186,7 +2366,7 @@ async function readDirectory(session: LiveSession, ref: DirectoryRef): Promise<D
  */
 const directoryBrowse: Flow = {
   name: 'directory-browse',
-  what: 'town list -> town page -> Facilities -> first kind -> first facility card',
+  what: 'town list -> town page -> Facilities -> first kind -> first facility card -> the company\'s town page -> its owner\'s companies -> that company\'s kinds -> first kind',
   mutates: false,
   run: async () => {
     const assertions = new Assertions();
@@ -1245,12 +2425,1919 @@ const directoryBrowse: Flow = {
         );
       }
 
+      const company = rows[0].company;
+      if (company !== null) {
+        const townCompanies = await readDirectory(session, { kind: 'town-companies', town: town.name });
+        const listed = townCompanies.kind === 'folder' ? townCompanies.items : [];
+        assertions.check(
+          `${town.name}'s companies list "${company}" — InTownCompanies.asp`,
+          listed.includes(company),
+          `${listed.length} companies`,
+        );
+        if (!listed.includes(company)) return report('directory-browse', assertions, [], session);
+
+        const companyPage = await readDirectory(session, { kind: 'town-company', town: town.name, company });
+        const owner = companyPage.kind === 'folder' ? companyPage.ownedBy : null;
+        assertions.check(`"${company}" names its owner — InTownCompany.asp:63-71`, owner !== null, owner ?? '(none)');
+        if (owner === null) return report('directory-browse', assertions, [], session);
+
+        const ownerCompanies = await readDirectory(session, { kind: 'tycoon-companies', tycoon: owner });
+        const owned = ownerCompanies.kind === 'folder' ? ownerCompanies.items : [];
+        assertions.check(
+          `${owner}'s companies list "${company}" — TycoonCompanies.asp`,
+          owned.includes(company),
+          `${owned.length} companies`,
+        );
+        if (!owned.includes(company)) return report('directory-browse', assertions, [], session);
+
+        const tycoonCompany = await readDirectory(session, { kind: 'tycoon-company', tycoon: owner, company });
+        const facKinds = tycoonCompany.kind === 'folder' ? tycoonCompany.items : [];
+        assertions.check(
+          `"${company}" lists at least one facility kind — TycoonCompany.asp:7, :13`,
+          facKinds.length > 0,
+          `${facKinds.length} kinds`,
+        );
+        if (facKinds.length === 0) return report('directory-browse', assertions, [], session);
+
+        const tycoonFacs = await readDirectory(session, {
+          kind: 'tycoon-facility-kind', tycoon: owner, company, facKind: facKinds[0],
+        });
+        const ownedRows = tycoonFacs.kind === 'facility-list' ? tycoonFacs.facilities : [];
+        assertions.check(
+          `"${company}" lists at least one "${facKinds[0]}" facility — TycoonFacilities.asp`,
+          ownedRows.length > 0,
+          `${ownedRows.length} rows`,
+        );
+        if (ownedRows.length === 0) return report('directory-browse', assertions, [], session);
+      }
+
       assertions.check('no gateway errors', session.driver.errors.length === 0);
       return report('directory-browse', assertions, [], session);
     } finally {
       await logoff(session);
     }
   },
+};
+
+/** The first ranking that can be opened — depth-first, because RankingCategory nests children. */
+function firstOpenableRanking(categories: RankingCategory[]): RankingCategory | undefined {
+  for (const c of categories) {
+    if (c.url !== '') return c;
+    const hit = firstOpenableRanking(c.children ?? []);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * The search menu's read-only pages: home, rankings, one ranking, a tycoon card and its
+ * full profile, banks, newspapers, and the people index by letter (the one-bucket prefix
+ * path in `searchPeople`). Read-only, so no Survival-log probe.
+ *
+ * The profiles are read for a tycoon other than the session's own — the own branch of
+ * `resolveTycoon` answers with the gateway's name — and never assert the echoed name
+ * (`RenderTycoon.asp:55` renders the request's `Tycoon`). Banks and newspapers prove
+ * reachability only: an empty list passes and its count is in the detail.
+ */
+const searchMenuRead: Flow = {
+  name: 'search-menu-read',
+  what: 'search home -> rankings -> one ranking -> a tycoon card and full profile -> banks -> newspapers -> people by letter',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const home = await session.driver.request<WsRespSearchMenuHome>(
+        { type: WsMessageType.REQ_SEARCH_MENU_HOME },
+        WsMessageType.RESP_SEARCH_MENU_HOME,
+      );
+      assertions.check('the search home lists at least one tile', home.categories.length > 0, `${home.categories.length} tiles`);
+
+      const rankings = await session.driver.request<WsRespSearchMenuRankings>(
+        { type: WsMessageType.REQ_SEARCH_MENU_RANKINGS },
+        WsMessageType.RESP_SEARCH_MENU_RANKINGS,
+      );
+      assertions.check(
+        'the rankings list at least one ranking',
+        rankings.categories.length > 0,
+        `${rankings.categories.length} rankings`,
+      );
+
+      const ranking = firstOpenableRanking(rankings.categories);
+      assertions.check('some ranking carries a url', ranking !== undefined, ranking?.label ?? '(none)');
+      if (ranking) {
+        const detail = await session.driver.request<WsRespSearchMenuRankingDetail>(
+          { type: WsMessageType.REQ_SEARCH_MENU_RANKING_DETAIL, rankingPath: ranking.url },
+          WsMessageType.RESP_SEARCH_MENU_RANKING_DETAIL,
+        );
+        assertions.check('the ranking detail has a title', detail.title.trim() !== '', detail.title || '(empty)');
+        assertions.check(
+          'the ranking detail lists at least one row',
+          detail.entries.length > 0,
+          `${detail.entries.length} rows`,
+        );
+
+        const tycoon = detail.entries.find(e => !sameAccount(e.name, PRIMARY_ACCOUNT))?.name;
+        assertions.check(`the ranking lists a tycoon other than ${PRIMARY_ACCOUNT.username}`, tycoon !== undefined, tycoon ?? '(none)');
+        if (tycoon !== undefined) {
+          const card = await session.driver.request<WsRespSearchMenuTycoonProfile>(
+            { type: WsMessageType.REQ_SEARCH_MENU_TYCOON_PROFILE, tycoonName: tycoon },
+            WsMessageType.RESP_SEARCH_MENU_TYCOON_PROFILE,
+          );
+          assertions.check(
+            `the ${tycoon} card carries a level — RenderTycoon.asp:103`,
+            card.profile.level !== 'Unknown',
+            card.profile.level,
+          );
+          const full = await session.driver.request<WsRespSearchMenuTycoonFullProfile>(
+            { type: WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE, tycoonName: tycoon },
+            WsMessageType.RESP_SEARCH_MENU_TYCOON_FULL_PROFILE,
+          );
+          assertions.check(
+            `the ${tycoon} full profile names a current level`,
+            full.data.currentLevelName.trim() !== '',
+            full.data.currentLevelName || '(empty)',
+          );
+        }
+      }
+
+      const banks = await session.driver.request<WsRespSearchMenuBanks>(
+        { type: WsMessageType.REQ_SEARCH_MENU_BANKS },
+        WsMessageType.RESP_SEARCH_MENU_BANKS,
+      );
+      assertions.check(
+        'the banks list is well-formed (reachability only)',
+        Array.isArray(banks.banks) && banks.banks.every(b => b.name !== ''),
+        `${banks.banks.length} banks`,
+      );
+
+      const papers = await session.driver.request<WsRespSearchMenuNewspapers>(
+        { type: WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS },
+        WsMessageType.RESP_SEARCH_MENU_NEWSPAPERS,
+      );
+      assertions.check(
+        'the newspapers list is well-formed (reachability only) — Newspapers.asp:61-62',
+        Array.isArray(papers.newspapers) && papers.newspapers.every(p => p.paperName !== ''),
+        `${papers.newspapers.length} newspapers`,
+      );
+
+      const letter = PRIMARY_ACCOUNT.username.charAt(0).toUpperCase();
+      const people = await session.driver.request<WsRespSearchMenuPeopleSearch>(
+        { type: WsMessageType.REQ_SEARCH_MENU_PEOPLE_SEARCH, searchStr: letter, mode: 'prefix' },
+        WsMessageType.RESP_SEARCH_MENU_PEOPLE_SEARCH,
+      );
+      assertions.check(
+        `the "${letter}" index lists ${PRIMARY_ACCOUNT.username}`,
+        people.results.some(r => sameAccount(r, PRIMARY_ACCOUNT)),
+        `${people.results.length} results`,
+      );
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('search-menu-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** Send `REQ_SWITCH_COMPANY`; never throws — a `RESP_ERROR` or timeout becomes `ok: false`. */
+async function trySwitch(session: LiveSession, company: CompanyInfo): Promise<{ ok: boolean; detail: string }> {
+  try {
+    await session.driver.request<WsRespRdoResult>(
+      { type: WsMessageType.REQ_SWITCH_COMPANY, company },
+      WsMessageType.RESP_RDO_RESULT,
+      TIMEOUTS.login,
+    );
+    return { ok: true, detail: 'RESP_RDO_RESULT' };
+  } catch (err: unknown) {
+    const prefix = err instanceof WsDriverError ? `RESP_ERROR (code ${err.code}): ` : '';
+    return { ok: false, detail: prefix + toErrorMessage(err) };
+  }
+}
+
+/** One town-hall read recorded as a check; never throws. */
+async function hallRead(
+  session: LiveSession,
+  town: { x: number; y: number },
+  visualClass: string,
+  assertions: Assertions,
+  label: string,
+): Promise<void> {
+  try {
+    const details = await readBuildingDetails(session, town.x, town.y, visualClass);
+    assertions.check(label, details !== undefined, details?.templateName ?? '(no details)');
+  } catch (err: unknown) {
+    assertions.check(label, false, toErrorMessage(err));
+  }
+}
+
+/**
+ * Live drive of the company list's Political Offices half (#1142): switch into the Mayor of
+ * the governed town, read the world, switch back, read again.
+ *
+ * Side effects are session-only: the Interface Server drops a ClientView when its socket
+ * closes (`TClientView.OnDisconnect`, `Interface Server/InterfaceServer.pas:1799-1813`). The
+ * proof is the gateway answering `RESP_RDO_RESULT` only after `loginWorld` under the role
+ * name and `selectCompany` succeeded. No check claims the reads answer "as the role":
+ * `TTycoon.GetAllCompaniesCount` / `GetAllCompanies` walk the MasterRole
+ * (`Kernel/Kernel.pas:10972-10992`), so neither can tell the identities apart.
+ */
+const companySwitch: Flow = {
+  name: 'company-switch',
+  what: 'company list -> switch to Mayor of <town> -> town hall read -> switch back -> town hall read',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const wanted = `Mayor of ${GOVERNED_TOWN}`.toLowerCase();
+      const role = session.companies.find(c => (c.ownerRole ?? '').toLowerCase() === wanted);
+      const listed = session.companies.map(c => `${c.name} [${c.ownerRole ?? ''}]`).join(', ') || '(empty)';
+      assertions.check(`the company list holds the Mayor of ${GOVERNED_TOWN} entry`, role !== undefined, listed);
+      if (!role) return report('company-switch', assertions, [], session);
+
+      const town = await findTown(session, GOVERNED_TOWN);
+      const visualClass = await resolveVisualClass(session, town.x, town.y);
+
+      let back: { ok: boolean; detail: string };
+      try {
+        const there = await trySwitch(session, role);
+        assertions.check('the switch to the role answers RESP_RDO_RESULT, not RESP_ERROR', there.ok, there.detail);
+        if (there.ok) {
+          await hallRead(
+            session,
+            town,
+            visualClass,
+            assertions,
+            'a world read answers on the role ClientView (REQ_BUILDING_DETAILS at the town hall)',
+          );
+        }
+      } finally {
+        back = await trySwitch(session, session.company);
+      }
+      assertions.check('the switch back to the own company answers RESP_RDO_RESULT', back.ok, back.detail);
+      if (back.ok) {
+        await hallRead(session, town, visualClass, assertions, 'the same world read answers after switching back');
+      }
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('company-switch', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * One Empire panel tab read. A dead page does not throw at the gateway — it answers the neutral
+ * default with `cacheUnavailable: true` — so this helper throws on it, and on a missing `data`.
+ */
+async function readProfileTab<R extends { data?: { cacheUnavailable?: boolean } }>(
+  session: LiveSession,
+  req: WsMessageType,
+  resp: WsMessageType,
+  page: string,
+): Promise<NonNullable<R['data']>> {
+  const answer = await session.driver.request<{ type: WsMessageType } & R>({ type: req }, resp);
+  const data = answer.data;
+  if (!data) throw new Error(`${page} answered without data`);
+  if (data.cacheUnavailable) {
+    throw new Error(`${page} answered cacheUnavailable — the page failed or ObjValid=false`);
+  }
+  return data;
+}
+
+const PAGE_CURRICULUM = 'NewTycoon/TycoonCurriculum.asp';
+const PAGE_BANK = 'NewTycoon/TycoonBankAccount.asp';
+const PAGE_PROFITLOSS = 'NewTycoon/TycoonProfitAndLoses.asp';
+const PAGE_COMPANIES = 'NewLogon/chooseCompany.asp';
+const PAGE_AUTOCONNECTIONS = 'NewTycoon/TycoonAutoConnections.asp';
+const PAGE_POLICY = 'NewTycoon/TycoonPolicy.asp';
+
+/** The bank tab, failing on `cacheUnavailable` — what a bank write restores against. */
+export function readBank(session: LiveSession): Promise<BankAccountData> {
+  return readProfileTab<WsRespProfileBank>(
+    session, WsMessageType.REQ_PROFILE_BANK, WsMessageType.RESP_PROFILE_BANK, PAGE_BANK,
+  );
+}
+
+/** The initial suppliers tab, failing on `cacheUnavailable`. */
+export function readAutoConnections(session: LiveSession): Promise<AutoConnectionsData> {
+  return readProfileTab<WsRespProfileAutoConnections>(
+    session, WsMessageType.REQ_PROFILE_AUTOCONNECTIONS, WsMessageType.RESP_PROFILE_AUTOCONNECTIONS, PAGE_AUTOCONNECTIONS,
+  );
+}
+
+/** The strategy tab, failing on `cacheUnavailable`. */
+export function readPolicy(session: LiveSession): Promise<PolicyData> {
+  return readProfileTab<WsRespProfilePolicy>(
+    session, WsMessageType.REQ_PROFILE_POLICY, WsMessageType.RESP_PROFILE_POLICY, PAGE_POLICY,
+  );
+}
+
+/** The curriculum tab, failing on `cacheUnavailable`. */
+export function readCurriculum(session: LiveSession): Promise<CurriculumData> {
+  return readProfileTab<WsRespProfileCurriculum>(
+    session, WsMessageType.REQ_PROFILE_CURRICULUM, WsMessageType.RESP_PROFILE_CURRICULUM, PAGE_CURRICULUM,
+  );
+}
+
+function readProfitLoss(session: LiveSession): Promise<ProfitLossData> {
+  return readProfileTab<WsRespProfileProfitLoss>(
+    session, WsMessageType.REQ_PROFILE_PROFITLOSS, WsMessageType.RESP_PROFILE_PROFITLOSS, PAGE_PROFITLOSS,
+  );
+}
+
+function readCompanies(session: LiveSession): Promise<CompaniesData> {
+  return readProfileTab<WsRespProfileCompanies>(
+    session, WsMessageType.REQ_PROFILE_COMPANIES, WsMessageType.RESP_PROFILE_COMPANIES, PAGE_COMPANIES,
+  );
+}
+
+const POLICY_STATUSES = [0, 1, 2];
+
+/**
+ * Read-only drive of the Empire panel's profile & finance tabs (#1141). Two traps shape it:
+ * a dead page does not throw — it answers the neutral default with `cacheUnavailable: true`,
+ * which every read here fails on; and the profile's `name` is the gateway's own session name,
+ * so only `levelName` (parsed from `NewTycoon/TycoonCurriculum.asp`) proves the page was read.
+ * A missing strategy row for the second account passes: it means both sides are neutral
+ * (`Kernel/Kernel.pas:11348`). Each read runs on its own, so the artifact names every dead page.
+ */
+const profileRead: Flow = {
+  name: 'profile-read',
+  what: 'profile -> curriculum -> bank -> profit & loss -> companies -> company P&L -> initial suppliers -> strategy',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    const attempt = async (page: string, read: () => Promise<void>): Promise<void> => {
+      try {
+        await read();
+      } catch (err: unknown) {
+        assertions.check(`${page} answered without cacheUnavailable`, false, toErrorMessage(err));
+      }
+    };
+    try {
+      await attempt(PAGE_CURRICULUM, async () => {
+        const answer = await session.driver.request<WsRespGetProfile>(
+          { type: WsMessageType.REQ_GET_PROFILE },
+          WsMessageType.RESP_GET_PROFILE,
+        );
+        const levelName = answer.profile?.levelName ?? '';
+        assertions.check(
+          `the profile carries a level name parsed from ${PAGE_CURRICULUM}`,
+          levelName.trim() !== '',
+          levelName || '(empty)',
+        );
+      });
+
+      await attempt(PAGE_CURRICULUM, async () => {
+        const cv = await readCurriculum(session);
+        assertions.check(
+          'the curriculum names a level',
+          cv.currentLevelName.trim() !== '' && cv.currentLevelName !== 'Unknown' && Number.isInteger(cv.currentLevel),
+          `${cv.currentLevel} ${cv.currentLevelName || '(empty)'}`,
+        );
+      });
+
+      await attempt(PAGE_BANK, async () => {
+        const bank = await readBank(session);
+        assertions.check('the bank page has a balance', /^-?\d+$/.test(bank.balance), bank.balance || '(empty)');
+      });
+
+      await attempt(PAGE_PROFITLOSS, async () => {
+        const pl = await readProfitLoss(session);
+        const lines = pl.root.children?.length ?? 0;
+        assertions.check('profit & loss has at least one line', lines > 0, `${lines} lines`);
+      });
+
+      let company: CompaniesData['companies'][number] | undefined;
+      await attempt(PAGE_COMPANIES, async () => {
+        const list = await readCompanies(session);
+        company = list.companies.find(c => c.name === session.company.name);
+        assertions.check(
+          `the companies list holds ${session.company.name}`,
+          company !== undefined,
+          `${list.companies.length} companies`,
+        );
+      });
+
+      const found = company;
+      if (found === undefined) {
+        assertions.check('the company P&L parses', false, 'no company to read');
+      } else {
+        await attempt('CompanyPage.asp', async () => {
+          const cpl = await session.driver.request<WsRespProfileCompanyProfitLoss>(
+            {
+              type: WsMessageType.REQ_PROFILE_COMPANY_PROFITLOSS,
+              companyName: found.name,
+              cluster: found.cluster,
+            },
+            WsMessageType.RESP_PROFILE_COMPANY_PROFITLOSS,
+          );
+          const lines = cpl.data?.root.children?.length ?? 0;
+          assertions.check(
+            'the company P&L parses',
+            cpl.data != null && cpl.error === undefined && lines > 0,
+            cpl.error ?? `${lines} lines`,
+          );
+        });
+      }
+
+      await attempt(PAGE_AUTOCONNECTIONS, async () => {
+        const ac = await readAutoConnections(session);
+        assertions.check(
+          'initial suppliers parse (may list none)',
+          Array.isArray(ac.fluids) && ac.fluids.every(f => f.fluidId !== ''),
+          `${ac.fluids.length} fluids`,
+        );
+      });
+
+      await attempt(PAGE_POLICY, async () => {
+        const policy = await readPolicy(session);
+        assertions.check('the strategy page parses', Array.isArray(policy.policies), `${policy.policies.length} rows`);
+        const row = policy.policies.find(p => sameAccount(p.tycoonName, SECONDARY_ACCOUNT));
+        // No row passes: both sides are neutral — a PolTycoon row is written only when a side
+        // is not pstNeutral (Kernel/Kernel.pas:11348).
+        assertions.check(
+          row
+            ? `the ${SECONDARY_ACCOUNT.username} strategy row carries a status`
+            : `no ${SECONDARY_ACCOUNT.username} strategy row`,
+          row === undefined || (POLICY_STATUSES.includes(row.yourPolicy) && POLICY_STATUSES.includes(row.theirPolicy)),
+          row
+            ? `yours ${row.yourPolicy}, theirs ${row.theirPolicy}`
+            : 'both sides neutral (Kernel/Kernel.pas:11348: a PolTycoon row is written only when a side is not pstNeutral)',
+        );
+      });
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('profile-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** `TPolicyStatus = (pstAlly, pstNeutral, pstEnemy)` — Kernel/Kernel.pas:2267. */
+const PST_NEUTRAL = 1;
+const PST_ENEMY = 2;
+
+/** The read-back half of a round trip: a transient dead page keeps the bounded poll going. */
+function tolerantRead(read: () => Promise<string | undefined>): () => Promise<string | undefined> {
+  return async () => {
+    try {
+      return await read();
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+/** The Survival line carries the server's spelling of the tycoon, so compare case-insensitively. */
+function lineHas(line: string, expected: string): boolean {
+  return line.toLowerCase().includes(expected.toLowerCase());
+}
+
+/** One round trip, a throw (unreadable original, `cacheUnavailable`) folded into a FAIL. */
+async function roundTripProbe(
+  ctx: FlowContext,
+  url: string,
+  spec: RoundTripSpec,
+): Promise<ProbeResult> {
+  try {
+    return await runRoundTrip(spec, ctx.lock, openLogWindow, url, { now: ctx.now, sleep: ctx.sleep });
+  } catch (err: unknown) {
+    return probeFailure(spec, err);
+  }
+}
+
+/** SPO_test3's row towards Crazz as `"<yours>:<theirs>"`, or `"none"` — no row, both neutral. */
+async function policyTowardsSecondary(session: LiveSession): Promise<string> {
+  const policy = await readPolicy(session);
+  const row = policy.policies.find(p => sameAccount(p.tycoonName, SECONDARY_ACCOUNT));
+  return row ? `${row.yourPolicy}:${row.theirPolicy}` : 'none';
+}
+
+/** The status a policy value asks SPO_test3 to hold: `"none"` is neutral. */
+function policyStatus(value: string): number {
+  return value === 'none' ? PST_NEUTRAL : Number(value.split(':')[0]);
+}
+
+/**
+ * The strategy towards Crazz, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
+ * broadcasts a world event naming Crazz (Kernel/Kernel.pas:11790-11800). The restore from "no
+ * row" expects the row gone — a neutral row left behind is not the original.
+ */
+const policyRoundTrip: Flow = {
+  name: 'policy-roundtrip',
+  what: "strategy towards Crazz: read -> set another status -> read back -> restore -> read back",
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      const read = (): Promise<string> => policyTowardsSecondary(session);
+      probes.push(
+        await roundTripProbe(ctx, url, {
+          what: `${PRIMARY_ACCOUNT.username}'s strategy towards ${SECONDARY_ACCOUNT.username} ("none" = no row, both neutral)`,
+          member: 'RDOSetPolicyStatus',
+          read,
+          testValue: original => {
+            const [yours, theirs] =
+              original === 'none' ? [PST_NEUTRAL, PST_NEUTRAL] : original.split(':').map(Number);
+            const next = yours === PST_ENEMY ? PST_NEUTRAL : PST_ENEMY;
+            return next === PST_NEUTRAL && theirs === PST_NEUTRAL ? 'none' : `${next}:${theirs}`;
+          },
+          write: async value => {
+            // `success` is ignored: the gateway answers false whenever the row disappears — every
+            // restore to neutral against a neutral counterpart. The read-back is the judge.
+            await session.driver.request<WsRespProfilePolicySet>(
+              {
+                type: WsMessageType.REQ_PROFILE_POLICY_SET,
+                tycoonName: SECONDARY_ACCOUNT.username,
+                status: policyStatus(value),
+              },
+              WsMessageType.RESP_PROFILE_POLICY_SET,
+            );
+          },
+          proof: {
+            log: {
+              marker: LOG_MARKERS.RDOSetPolicyStatus,
+              match: (line, written) =>
+                lineHas(line, `${PRIMARY_ACCOUNT.username}, ${SECONDARY_ACCOUNT.username}, ${policyStatus(written)}`),
+            },
+            readBack: {
+              source: `the ${SECONDARY_ACCOUNT.username} row of ${PAGE_POLICY}`,
+              why:
+                'the page reads the object cache, refreshed after the write (Kernel/Kernel.pas:11787-11788) ' +
+                '— OB-29 lag, so the poll is bounded',
+              read: tolerantRead(read),
+              boundMs: TIMEOUTS.readBack,
+            },
+          },
+        }),
+      );
+      assertions.check('the policy round trip proved the write and the restore', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report('policy-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** The company-creation dialog's cluster reads (#1142) — class-cache ASP reads, no write. */
+const clusterInfoRead: Flow = {
+  name: 'cluster-info-read',
+  what: 'REQ_CLUSTER_INFO (first cluster) -> REQ_CLUSTER_FACILITIES (its first category)',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const cluster = CLUSTER_IDS[0];
+      const { clusterInfo } = await session.driver.request<WsRespClusterInfo>(
+        { type: WsMessageType.REQ_CLUSTER_INFO, clusterName: cluster },
+        WsMessageType.RESP_CLUSTER_INFO,
+      );
+      assertions.check(
+        'the cluster description is non-empty',
+        clusterInfo.description.trim() !== '',
+        `${cluster}: ${clusterInfo.description.length} chars`,
+      );
+      const folder = clusterInfo.categories[0]?.folder ?? '';
+      assertions.check(
+        'the cluster lists a facility category',
+        folder !== '',
+        folder || `${clusterInfo.categories.length} categories`,
+      );
+      if (folder !== '') {
+        const { facilities } = await session.driver.request<WsRespClusterFacilities>(
+          { type: WsMessageType.REQ_CLUSTER_FACILITIES, cluster, folder },
+          WsMessageType.RESP_CLUSTER_FACILITIES,
+        );
+        assertions.check(
+          'the category lists at least one facility',
+          facilities.length > 0,
+          `${facilities.length} facilities in ${folder}`,
+        );
+      }
+
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('cluster-info-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+type AutoConnectionSwitch = 'hireTradeCenter' | 'onlyWarehouses';
+
+const SWITCHES: Record<
+  AutoConnectionSwitch,
+  { on: 'hireTradeCenter' | 'onlyWarehouses'; off: 'dontHireTradeCenter' | 'dontOnlyWarehouses'; onMember: string; offMember: string }
+> = {
+  hireTradeCenter: {
+    on: 'hireTradeCenter',
+    off: 'dontHireTradeCenter',
+    onMember: 'RDOHireTradeCenter',
+    offMember: 'RDODontHireTradeCenter',
+  },
+  onlyWarehouses: {
+    on: 'onlyWarehouses',
+    off: 'dontOnlyWarehouses',
+    onMember: 'RDOHireOnlyFromWarehouse',
+    offMember: 'RDODontHireOnlyFromWarehouse',
+  },
+};
+
+/** `ParseGateList` (Kernel/Kernel.pas:4277, called at :11653) needs the trailing comma. */
+function supplierGate(r: ConnectionSearchResult): string {
+  return `${r.x},${r.y},`;
+}
+
+/**
+ * The initial suppliers, change-then-undo (#1146): flip the Trade Center switch, flip the
+ * only-warehouses switch on a storable fluid, then add one default supplier not already listed
+ * and delete it. None of these members broadcasts (Kernel/Kernel.pas:11679-11766).
+ */
+const autoConnectionRoundTrip: Flow = {
+  name: 'autoconnection-roundtrip',
+  what: 'initial suppliers: flip Trade Center -> flip only-warehouses -> add a supplier -> delete it',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      let initial: AutoConnectionsData;
+      try {
+        initial = await readAutoConnections(session);
+      } catch (err: unknown) {
+        assertions.check(`${PAGE_AUTOCONNECTIONS} answered without cacheUnavailable`, false, toErrorMessage(err));
+        return report('autoconnection-roundtrip', assertions, probes, session);
+      }
+      if (initial.fluids.length === 0) {
+        for (const half of ['the Trade Center flip', 'the only-warehouses flip', 'the add/delete supplier half']) {
+          assertions.unproven(half, 'the initial suppliers page lists no fluid');
+        }
+        return report('autoconnection-roundtrip', assertions, probes, session);
+      }
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      const fluidOf = async (fluidId: string) =>
+        (await readAutoConnections(session)).fluids.find(f => f.fluidId === fluidId);
+      const act = async (action: AutoConnectionActionType, fluidId: string, suppliers?: string): Promise<void> => {
+        // `success` is ignored; the page read-back is the judge (doc/E2E-POLICY.md §5).
+        await session.driver.request<WsRespProfileAutoConnectionAction>(
+          { type: WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION, action, fluidId, suppliers },
+          WsMessageType.RESP_PROFILE_AUTOCONNECTION_ACTION,
+        );
+      };
+      const readBackWhy =
+        `${PAGE_AUTOCONNECTIONS} reads the object cache (NewTycoon/TycoonAutoConnections.asp:3,12,29), ` +
+        'refreshed by the member with BackgroundInvalidateCache — OB-29 lag, so the poll is bounded';
+
+      const flip = async (fluid: AutoConnectionFluid, key: AutoConnectionSwitch): Promise<void> => {
+        const sw = SWITCHES[key];
+        const read = async (): Promise<string | undefined> => {
+          const f = await fluidOf(fluid.fluidId);
+          return f ? String(f[key]) : undefined;
+        };
+        const probe = await roundTripProbe(ctx, url, {
+          what: `${PRIMARY_ACCOUNT.username}'s ${key} switch on ${fluid.fluidId}`,
+          member: fluid[key] ? sw.offMember : sw.onMember,
+          read,
+          testValue: original => (original === 'true' ? 'false' : 'true'),
+          write: value => act(value === 'true' ? sw.on : sw.off, fluid.fluidId),
+          proof: {
+            log: {
+              marker: LOG_MARKERS[fluid[key] ? sw.offMember : sw.onMember],
+              match: line => lineHas(line, `${PRIMARY_ACCOUNT.username}, ${fluid.fluidId}`),
+            },
+            readBack: {
+              source: `${fluid.fluidId}.${key} on ${PAGE_AUTOCONNECTIONS}`,
+              why: readBackWhy,
+              read: tolerantRead(read),
+              boundMs: TIMEOUTS.readBack,
+            },
+          },
+        });
+        probes.push(probe);
+        assertions.check(`the ${key} flip proved the write and the restore`, probe.status === 'PASS', probe.note);
+      };
+
+      await flip(initial.fluids[0], 'hireTradeCenter');
+
+      // The checkbox is rendered only under Storable (TycoonAutoConnections.asp:103-104): a
+      // non-storable fluid could never read the flag back.
+      const storable = initial.fluids.find(f => f.storable === true);
+      if (storable) {
+        await flip(storable, 'onlyWarehouses');
+      } else {
+        assertions.unproven(
+          'the only-warehouses flip',
+          'no storable fluid listed — the checkbox is rendered only under Storable (TycoonAutoConnections.asp:103-104)',
+        );
+      }
+
+      // A supplier found the way the Add Supplier dialog finds one (SupplierSearchModal.tsx):
+      // profile-level coords 0,0, the ASP default roles (TycoonSuppliesSearch.asp:29), no Trade
+      // Center (:43-44), and not already listed for that fluid.
+      let target: { fluid: AutoConnectionFluid; gate: string } | undefined;
+      for (const fluid of initial.fluids) {
+        const search = await session.driver.request<WsRespSearchConnections>(
+          {
+            type: WsMessageType.REQ_SEARCH_CONNECTIONS,
+            buildingX: 0,
+            buildingY: 0,
+            fluidId: fluid.fluidId,
+            direction: 'input',
+            filters: { maxResults: 50, roles: rolesToMask('input', { ...ALL_CONNECTION_ROLES, exporter: false }) },
+          },
+          WsMessageType.RESP_SEARCH_CONNECTIONS,
+        );
+        const listed = new Set(fluid.suppliers.map(s => s.facilityId));
+        const hit = (search.results ?? []).find(
+          r => r.facilityName !== 'Trade Center' && !listed.has(supplierGate(r)),
+        );
+        if (hit) {
+          target = { fluid, gate: supplierGate(hit) };
+          break;
+        }
+      }
+      if (!target) {
+        assertions.unproven('the add/delete supplier half', 'no search result not already listed for any fluid');
+        return report('autoconnection-roundtrip', assertions, probes, session);
+      }
+
+      const { fluid, gate } = target;
+      const identity = `${PRIMARY_ACCOUNT.username}, ${fluid.fluidId}, ${gate}`;
+      const delWindow = await openLogWindow(url);
+      const read = async (): Promise<string | undefined> => {
+        const f = await fluidOf(fluid.fluidId);
+        if (!f) return undefined;
+        return f.suppliers.some(s => s.facilityId === gate) ? 'listed' : 'absent';
+      };
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${PRIMARY_ACCOUNT.username}'s default supplier ${gate} for ${fluid.fluidId}`,
+        member: 'RDOAddAutoConnection',
+        read,
+        testValue: () => 'listed',
+        write: value => act(value === 'listed' ? 'add' : 'delete', fluid.fluidId, gate),
+        proof: {
+          log: { marker: LOG_MARKERS.RDOAddAutoConnection, match: line => lineHas(line, identity) },
+          readBack: {
+            source: `${fluid.fluidId}'s supplier list on ${PAGE_AUTOCONNECTIONS}`,
+            why: readBackWhy,
+            read: tolerantRead(read),
+            boundMs: TIMEOUTS.readBack,
+          },
+        },
+      });
+      probes.push(probe);
+      assertions.check('the supplier add proved the write and the delete', probe.status === 'PASS', probe.note);
+      if (probe.original !== '') {
+        const deleted = await awaitMarker(
+          delWindow,
+          {
+            marker: LOG_MARKERS.RDODelAutoConnection,
+            match: line => line.includes(LOG_MARKERS.RDODelAutoConnection) && lineHas(line, identity),
+          },
+          TIMEOUTS.logSettle,
+        );
+        assertions.check(
+          'the delete reached the model server (Deleting initial suppliers: line)',
+          deleted !== null,
+          deleted ?? `no "${LOG_MARKERS.RDODelAutoConnection}" line for ${identity}`,
+        );
+      }
+      return report('autoconnection-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Borrow → pay off, send → send back, and the portrait upload (#1147)
+// ---------------------------------------------------------------------------
+
+/** The session's own profile. `handleGetProfile` calls `fetchTycoonProfile()` with no name. */
+async function readProfile(session: LiveSession): Promise<TycoonProfileFull> {
+  const answer = await session.driver.request<WsRespGetProfile>(
+    { type: WsMessageType.REQ_GET_PROFILE },
+    WsMessageType.RESP_GET_PROFILE,
+  );
+  return answer.profile;
+}
+
+/**
+ * The level names `parseCurriculumHtml` (`profile-finance-handler.ts`) maps to a tier. A copy:
+ * the e2e build includes only `src/e2e/**` and `src/shared/**`.
+ */
+export const PROFILE_LEVEL_NAMES = [
+  'apprentice', 'entrepreneur', 'tycoon', 'master', 'paradigm', 'legend', 'beyondlegend', 'legendx',
+];
+
+/**
+ * Why `RDOSendMoney` could refuse `account` as a receiver, or `null`. The limits are
+ * `NobPoints < 50` and `Level.Tier < 6` (Kernel/Kernel.pas:11499). The parser leaves
+ * `levelTier` 0 on a missing or unmapped level image and `fetchTycoonProfile` carries no
+ * `cacheUnavailable`, so a profile without a known level name proves nothing.
+ */
+export function receiverLimitRefusal(account: E2eAccount, profile: TycoonProfileFull): string | null {
+  const who = account.username;
+  const level = (profile.levelName ?? '').trim().toLowerCase();
+  if (level === '') return `${who}'s profile has no level name — the page was not read`;
+  if (!PROFILE_LEVEL_NAMES.includes(level)) {
+    return `${who}'s level "${profile.levelName}" is not one parseCurriculumHtml maps to a tier`;
+  }
+  if (profile.nobPoints >= 50) return `${who} has ${profile.nobPoints} nobility points (≥ 50, Kernel/Kernel.pas:11499)`;
+  if (profile.levelTier >= 6) return `${who} is at level tier ${profile.levelTier} (≥ 6, Kernel/Kernel.pas:11499)`;
+  return null;
+}
+
+const BORROW_AMOUNT = '1';
+
+/**
+ * Pair the listed loans with the baseline, as a multiset: first on bank, date and amount, then
+ * on bank and date alone — a yearly slice lowers an old loan's amount without making it new.
+ */
+function matchLoans(baseline: LoanInfo[], now: LoanInfo[]): { added: LoanInfo[]; gone: number } {
+  const left = [...baseline];
+  const take = (key: (l: LoanInfo) => string, loan: LoanInfo): boolean => {
+    const i = left.findIndex(b => key(b) === key(loan));
+    if (i < 0) return false;
+    left.splice(i, 1);
+    return true;
+  };
+  const exact = (l: LoanInfo): string => `${l.bank}|${l.date}|${l.amount}`;
+  const loose = (l: LoanInfo): string => `${l.bank}|${l.date}`;
+  const unmatched = now.filter(l => !take(exact, l));
+  const added = unmatched.filter(l => !take(loose, l));
+  return { added, gone: left.length };
+}
+
+/** `new=<amounts of loans not in the baseline, or none> gone=<baseline loans no longer listed>`. */
+export function loanDelta(baseline: LoanInfo[], now: LoanInfo[]): string {
+  const { added, gone } = matchLoans(baseline, now);
+  const amounts = added.map(l => l.amount).sort();
+  return `new=${amounts.length > 0 ? amounts.join(',') : 'none'} gone=${gone}`;
+}
+
+/** The loan the flow took: not in the baseline, and of the borrowed amount. */
+export function newLoan(baseline: LoanInfo[], now: LoanInfo[]): LoanInfo | undefined {
+  return matchLoans(baseline, now).added.find(l => l.amount === BORROW_AMOUNT);
+}
+
+/**
+ * Borrow $1, then pay that loan off (#1147). GATE_ONLY: `TBank.AskLoan` broadcasts the loan to
+ * every online tycoon (Kernel/Kernel.pas:8849-8859). `RDOPayOff` pays only when
+ * `Loan.Amount < Budget - AprFee` (Kernel/Kernel.pas:11572), so the flow borrows nothing unless
+ * the balance is above 0. A refused payoff throws in the restore: the pending restore is kept.
+ */
+const bankBorrowPayoff: Flow = {
+  name: 'bank-borrow-payoff',
+  what: 'bank: balance > 0 -> borrow $1 -> AskLoan: line + the loan listed -> pay it off -> the loan list as before',
+  mutates: true,
+  run: async ctx => {
+    const name = 'bank-borrow-payoff';
+    const ME = PRIMARY_ACCOUNT.username;
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const baseline = await readBank(session);
+      if (!(Number(baseline.balance) > 0)) {
+        assertions.unproven(
+          'the borrow → pay off round trip',
+          `balance ${baseline.balance} is not > 0 — RDOPayOff pays only if Loan.Amount < Budget - AprFee ` +
+            '(Kernel/Kernel.pas:11572); nothing borrowed',
+        );
+        return report(name, assertions, probes, session);
+      }
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      const n = baseline.loans.length;
+      const bankAction = (msg: { action: 'borrow' | 'payoff'; amount?: string; loanIndex?: number }) =>
+        session.driver.request<WsRespProfileBankAction>(
+          { type: WsMessageType.REQ_PROFILE_BANK_ACTION, ...msg },
+          WsMessageType.RESP_PROFILE_BANK_ACTION,
+          TIMEOUTS.login,
+        );
+      const read = async (): Promise<string> => loanDelta(baseline.loans, (await readBank(session)).loans);
+      probes.push(
+        await roundTripProbe(ctx, url, {
+          what:
+            `${ME}'s $${BORROW_AMOUNT} loan from the main bank — pay off the $${BORROW_AMOUNT} loan not among ` +
+            `the ${n} loans listed before (baseline indices 0..${n - 1})`,
+          member: 'RDOAskLoan',
+          read: tolerantRead(read),
+          testValue: original => {
+            if (original !== 'new=none gone=0') throw new Error(`the loan list moved before the borrow: ${original}`);
+            return `new=${BORROW_AMOUNT} gone=0`;
+          },
+          write: async () => {
+            // TBank.LoanApproved (Kernel/Kernel.pas:8909) accepts any Amount > 0 within EstimateLoan.
+            const answer = await bankAction({ action: 'borrow', amount: BORROW_AMOUNT });
+            if (answer.result?.success !== true) throw new Error(`borrow refused: ${answer.result?.message ?? '(no result)'}`);
+          },
+          restore: async () => {
+            const loan = newLoan(baseline.loans, (await readBank(session)).loans);
+            if (!loan) return;
+            const answer = await bankAction({ action: 'payoff', loanIndex: loan.loanIndex });
+            if (answer.result?.success !== true) {
+              throw new Error(`payoff of loan ${loan.loanIndex} refused: ${answer.result?.message ?? '(no result)'}`);
+            }
+          },
+          proof: {
+            log: {
+              marker: LOG_MARKERS.RDOAskLoan,
+              // ' AskLoan: ' + Name + ', $' + AmountStr (Kernel/Kernel.pas:11455); endsWith keeps $1 from matching $10.
+              match: line => line.trim().toLowerCase().endsWith(`askloan: ${ME}, $${BORROW_AMOUNT}`.toLowerCase()),
+            },
+            readBack: {
+              source: `the loan list on ${PAGE_BANK}`,
+              why:
+                'the page re-reads the tycoon cache that RDOAskLoan / RDOPayOff invalidate ' +
+                '(Kernel/Kernel.pas:11466, :11593) — OB-29 lag, so the poll is bounded',
+              read: tolerantRead(read),
+              boundMs: TIMEOUTS.readBack,
+            },
+          },
+        }),
+      );
+      assertions.check('the loan round trip proved the borrow and the payoff', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report(name, assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** Every transfer marker the flow writes starts with this — the sweep and the cleanup match it. */
+const TRANSFER_MARKER = 'e2e-send-';
+
+/**
+ * The ids of the transfer notices in `folder` from (Inbox) or to (Sent) `counterpart` whose body
+ * carries `needle`. The subject is localised (`mtidMsgMoneyTransfer`) and the same for every
+ * transfer, so only the body's refresh URL — `…&Reason=<reason>&Amount=…`
+ * (Kernel/Kernel.pas:11521-11529) — tells one transfer from another.
+ */
+async function noticeIds(
+  session: LiveSession,
+  folder: MailFolder,
+  counterpart: string,
+  needle: string,
+): Promise<Set<string>> {
+  const who = counterpart.toLowerCase();
+  const ids = new Set<string>();
+  for (const m of await listFolder(session, folder)) {
+    const party = folder === 'Sent' ? m.to : m.from;
+    if (!party.toLowerCase().includes(who)) continue;
+    const { message } = await session.driver.request<WsRespMailMessage>(
+      { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder, messageId: m.messageId },
+      WsMessageType.RESP_MAIL_MESSAGE,
+    );
+    if ((message.body ?? []).join('\n').includes(needle)) ids.add(m.messageId);
+  }
+  return ids;
+}
+
+const transferLabel = `"Reason=${TRANSFER_MARKER}" transfer notice`;
+
+/** Delete every flow transfer notice from one folder. Never throws. */
+async function purgeTransferFolder(
+  session: LiveSession,
+  folder: MailFolder,
+  counterpart: string,
+  sleep: (ms: number) => Promise<void>,
+): Promise<FlowCheck> {
+  let ids: Set<string>;
+  try {
+    ids = await noticeIds(session, folder, counterpart, `Reason=${TRANSFER_MARKER}`);
+  } catch (err: unknown) {
+    return { what: `${transferLabel} removed from ${session.account.username}'s ${folder}`, ok: false, detail: toErrorMessage(err) };
+  }
+  return purgeFolder(session, folder, m => ids.has(m.messageId), sleep, transferLabel);
+}
+
+/** The cleanup of one mailbox, as `purgeMailbox`: a fresh login, one check per folder, never throws. */
+async function purgeTransferMailbox(
+  account: E2eAccount,
+  counterpart: string,
+  folders: MailFolder[],
+  sleep: (ms: number) => Promise<void>,
+): Promise<FlowCheck[]> {
+  const whatOf = (folder: MailFolder): string => `${transferLabel} removed from ${account.username}'s ${folder}`;
+  const failAll = (detail: string): FlowCheck[] => folders.map(f => ({ what: whatOf(f), ok: false, detail }));
+  let opened: SecondaryLogin;
+  try {
+    opened = account === SECONDARY_ACCOUNT ? await loginSecondary() : await login(account);
+  } catch (err: unknown) {
+    return failAll(toErrorMessage(err));
+  }
+  if ('skipped' in opened) {
+    const reason = opened.skipped;
+    return folders.map(f => ({
+      what: whatOf(f),
+      ok: false,
+      skipped: reason,
+      detail: `${account.username} refused at login (${reason}) — any ${transferLabel} is left in ${account.username}'s ${f}`,
+    }));
+  }
+  const session = opened;
+  try {
+    await mailConnect(session);
+    const checks: FlowCheck[] = [];
+    for (const f of folders) checks.push(await purgeTransferFolder(session, f, counterpart, sleep));
+    return checks;
+  } catch (err: unknown) {
+    return failAll(toErrorMessage(err));
+  } finally {
+    await logoff(session);
+  }
+}
+
+/** Why `bank` cannot send $1, or `null` — the page mirrors `RDOSendMoney`'s clip as `maxTransfer`. */
+function transferRefusal(bank: BankAccountData): string | null {
+  if (bank.transferDenied) return `the page denies the transfer (${bank.transferDenied})`;
+  if (bank.maxTransfer === undefined) return 'the page offers no transfer (no "You can transfer up to $…" note)';
+  if (!(Number(bank.maxTransfer) >= 1)) return `the page offers at most $${bank.maxTransfer}`;
+  return null;
+}
+
+async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
+  const name = 'bank-send-return';
+  const ME = PRIMARY_ACCOUNT.username;
+  const HIM = SECONDARY_ACCOUNT.username;
+  const what = 'the send → send back round trip';
+  const assertions = new Assertions();
+  const probes: ProbeResult[] = [];
+  const me = await login(PRIMARY_ACCOUNT);
+  try {
+    await mailConnect(me);
+    await mailConnect(crazz);
+
+    // RDOSendMoney clips the amount to fBudget - LoanAmount - AprFee and answers
+    // ERROR_InvalidMoneyValue when that is ≤ 0 (Kernel/Kernel.pas:11507-11512, :11535); the page
+    // mirrors it as "You can transfer up to $…" (NewTycoon/TycoonBankAccount.asp:116-122).
+    const mine = transferRefusal(await readBank(me));
+    if (mine) {
+      assertions.unproven(what, `${ME} cannot send $1: ${mine}; nothing sent`);
+      return report(name, assertions, probes, me);
+    }
+    const theirs = transferRefusal(await readBank(crazz));
+    if (theirs) {
+      assertions.unproven(what, `${HIM} cannot send $1 back: ${theirs}; nothing sent`);
+      return report(name, assertions, probes, me);
+    }
+    // The :11499 receiver limits, each profile read through its own session.
+    for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, crazz]] as const) {
+      const refusal = receiverLimitRefusal(account, await readProfile(s));
+      if (refusal) {
+        assertions.unproven(what, `${refusal}; nothing sent`);
+        return report(name, assertions, probes, me);
+      }
+    }
+
+    for (const [s, folder, counterpart] of [
+      [me, 'Inbox', HIM], [me, 'Sent', HIM], [crazz, 'Inbox', ME], [crazz, 'Sent', ME],
+    ] as const) {
+      const check = await purgeTransferFolder(s, folder, counterpart, sleep);
+      assertions.check(`pre-sweep: ${check.what}`, check.ok, check.detail);
+    }
+    if (assertions.failed) return report(name, assertions, probes, me);
+
+    // Reason is concatenated into the URL unencoded (:11528): letters, digits and '-' only.
+    const stamp = new Date().toISOString().replace(/[^0-9]/g, '');
+    const out = `${TRANSFER_MARKER}${stamp}-out`;
+    const back = `${TRANSFER_MARKER}${stamp}-back`;
+    const has = async (s: LiveSession, from: string, marker: string): Promise<boolean> =>
+      (await noticeIds(s, 'Inbox', from, `Reason=${marker}&`)).size > 0;
+    const owed = async (): Promise<string> =>
+      String((await has(crazz, ME, out) ? 1 : 0) - (await has(me, HIM, back) ? 1 : 0));
+    const send = (s: LiveSession, toTycoon: string, reason: string) =>
+      s.driver.request<WsRespProfileBankAction>(
+        { type: WsMessageType.REQ_PROFILE_BANK_ACTION, action: 'send', amount: '1', toTycoon, reason },
+        WsMessageType.RESP_PROFILE_BANK_ACTION,
+        TIMEOUTS.login,
+      );
+    let firstLegSent = false;
+
+    probes.push(
+      await roundTripProbe(ctx, ctx.survivalLogUrl ?? '', {
+        what: `$1 sent by ${ME} to ${HIM} (reason ${out}) — ${HIM} owes ${ME} $1 back`,
+        // No LOG_MARKERS entry: RDOSendMoney logs to a Money log the listing does not publish (:11491).
+        member: 'RDOSendMoney',
+        read: tolerantRead(owed),
+        testValue: original => {
+          if (original !== '0') throw new Error(`a transfer notice was already listed before the send: ${original}`);
+          return '1';
+        },
+        write: async () => {
+          const answer = await send(me, HIM, out);
+          if (answer.result?.success !== true) throw new Error(`send refused: ${answer.result?.message ?? '(no result)'}`);
+          firstLegSent = true;
+        },
+        restore: async () => {
+          // Crazz writes only to complete the pair: nothing to send back unless the $1 arrived.
+          if (!firstLegSent && !(await has(crazz, ME, out))) return;
+          const answer = await send(crazz, ME, back);
+          if (answer.result?.success !== true) throw new Error(`send back refused: ${answer.result?.message ?? '(no result)'}`);
+        },
+        proof: {
+          readBack: {
+            source:
+              `the transfer notification (Reason=<marker> in its refresh URL, Kernel/Kernel.pas:11521-11529) in ` +
+              `${HIM}'s Inbox for the send and ${ME}'s Inbox for the return, each read through the receiver's own login`,
+            why: 'the Money log is not published; the server mails the receiver only after GenMoney moved the $1 (:11514-11529)',
+            read: tolerantRead(owed),
+            boundMs: TIMEOUTS.readBack,
+          },
+        },
+      }),
+    );
+    assertions.check('the transfer round trip proved the send and the send back', probes[0]?.status === 'PASS', probes[0]?.note);
+    return report(name, assertions, probes, me);
+  } finally {
+    await logoff(me);
+  }
+}
+
+/**
+ * Send $1 to Crazz, and Crazz sends it back (#1147). Both accounts log in before the first send;
+ * a refusal of Crazz then is SKIPPED with nothing sent. Nothing is sent unless both bank pages
+ * offer the transfer and both profiles are under the receiver limits (Kernel/Kernel.pas:11499).
+ * Two residual risks remain, each a FAIL with the pending restore kept ($1 stays with Crazz): a
+ * Transcended item (not readable over the WS contract), and a nobility of 0 that cannot be told
+ * from "Nobility label not found". Any failure after the first send is a FAIL, never SKIPPED.
+ */
+const bankSendReturn: Flow = {
+  name: 'bank-send-return',
+  what: 'both log in -> both pages offer $1 -> receiver limits -> send $1 to Crazz -> notice -> Crazz sends $1 back -> notice',
+  mutates: true,
+  run: async ctx => {
+    const name = 'bank-send-return';
+    const sleep = ctx.sleep ?? defaultSleep;
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    let result: FlowResult;
+    try {
+      result = await driveSendReturn(crazz, ctx, sleep);
+    } catch (err: unknown) {
+      result = failedResult(name, err);
+    } finally {
+      await logoff(crazz);
+    }
+    const cleanup = [
+      ...(await purgeTransferMailbox(PRIMARY_ACCOUNT, SECONDARY_ACCOUNT.username, ['Inbox', 'Sent'], sleep)),
+      ...(await purgeTransferMailbox(SECONDARY_ACCOUNT, PRIMARY_ACCOUNT.username, ['Inbox', 'Sent'], sleep)),
+    ];
+    return withCleanup(result, cleanup);
+  },
+};
+
+const PORTRAIT_WIDTH = 150;
+const PORTRAIT_HEIGHT = 200;
+const PORTRAIT_MAX_BYTES = 32 * 1024;
+
+/**
+ * The committed test portrait: a 150×200 baseline grayscale JPEG, flat mid-grey, built from
+ * constants so its bytes are fixed by the source. One quantisation table, one DC and one AC
+ * Huffman table each holding the single code `0` for symbol 0, then 19×25 = 475 blocks of two
+ * zero bits (DC diff 0, EOB) — 950 bits, the last byte padded with ones.
+ */
+export function testPortraitJpeg(): Buffer {
+  const dht = (tableClass: number): number[] => [0xff, 0xc4, 0x00, 0x14, tableClass, 0x01, ...new Array<number>(15).fill(0), 0x00];
+  return Buffer.from([
+    0xff, 0xd8,
+    0xff, 0xdb, 0x00, 0x43, 0x00, ...new Array<number>(64).fill(0x01),
+    0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0xc8, 0x00, 0x96, 0x01, 0x01, 0x11, 0x00,
+    ...dht(0x00),
+    ...dht(0x10),
+    0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00,
+    ...new Array<number>(118).fill(0x00), 0x03,
+    0xff, 0xd9,
+  ]);
+}
+
+/** The JPEG marker walk `readJpegDimensions` (`picture-transfer.ts`) does — a copy, see below. */
+function jpegDimensions(bytes: Buffer): { width: number; height: number } | null {
+  let offset = 2;
+  while (offset < bytes.length) {
+    if (bytes[offset] !== 0xff) return null;
+    offset++;
+    while (offset < bytes.length && bytes[offset] === 0xff) offset++;
+    if (offset >= bytes.length) return null;
+    const marker = bytes[offset];
+    offset++;
+    if (marker === 0xda) return null;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) continue;
+    if (offset + 1 >= bytes.length) return null;
+    const segmentLength = bytes.readUInt16BE(offset);
+    const isStartOfFrame = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isStartOfFrame) {
+      if (offset + 7 >= bytes.length) return null;
+      return { height: bytes.readUInt16BE(offset + 3), width: bytes.readUInt16BE(offset + 5) };
+    }
+    offset += segmentLength;
+  }
+  return null;
+}
+
+/**
+ * The checks `validatePicture` (`picture-transfer.ts`) applies, in its order — the gateway
+ * refuses any upload that fails them, the restore included. A copy, because the e2e build does
+ * not include gateway code; a unit test pins the two equal.
+ */
+export function pictureCheck(bytes: Buffer): PictureUploadFailure | null {
+  if (bytes.length === 0) return 'NOT_A_JPEG';
+  if (bytes.length > PORTRAIT_MAX_BYTES) return 'TOO_LARGE';
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return 'NOT_A_JPEG';
+  const dims = jpegDimensions(bytes);
+  if (!dims) return 'NOT_A_JPEG';
+  if (dims.width !== PORTRAIT_WIDTH || dims.height !== PORTRAIT_HEIGHT) return 'WRONG_DIMENSIONS';
+  return null;
+}
+
+function sha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+/**
+ * The portrait on the world web server — the path `RenderTycoon.asp:58` emits and
+ * `fetchTycoonProfile` reads. Never the gateway's `/proxy-image`: it answers a missing image
+ * with a 1×1 placeholder and caches for up to 30 days.
+ */
+export function portraitUrl(ip: string, world: string, tycoon: string): string {
+  return `http://${ip}/fivedata/userinfo/${encodeURIComponent(world)}/${encodeURIComponent(tycoon)}/largephoto.jpg`;
+}
+
+async function fetchPortrait(url: string): Promise<{ status: number; bytes?: Buffer }> {
+  const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(TIMEOUTS.request) });
+  if (!res.ok) return { status: res.status };
+  return { status: res.status, bytes: Buffer.from(await res.arrayBuffer()) };
+}
+
+/**
+ * Upload the committed test portrait, then the original back (#1147). The original is fetched
+ * directly from the world web server and must pass the gateway's picture checks, or nothing is
+ * uploaded — the restore upload would be refused after the test image is stored. An original
+ * that already is the test image means an earlier run died after its upload: FAIL, world dirty.
+ * The pending restore holds the original bytes (base64) before the test upload; the restore
+ * uploads those bytes, never a fresh download.
+ */
+const portraitRoundTrip: Flow = {
+  name: 'portrait-roundtrip',
+  what: 'fetch largephoto.jpg directly -> picture checks -> upload the test JPEG -> byte-identical re-fetch -> upload the original -> byte-identical re-fetch',
+  mutates: true,
+  run: async ctx => {
+    const name = 'portrait-roundtrip';
+    const ME = PRIMARY_ACCOUNT.username;
+    const what = 'the portrait round trip';
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const ip = session.world?.ip;
+      if (!ip) {
+        assertions.check('the login carried the world IP', false, 'no world IP — the portrait URL cannot be built');
+        return report(name, assertions, probes, session);
+      }
+      const url = portraitUrl(ip, session.world?.name ?? WORLD_NAME, ME);
+      const first = await fetchPortrait(url);
+      if (!first.bytes) {
+        assertions.unproven(what, `no readable original portrait at ${url} (HTTP ${first.status}) — nothing to restore to; nothing uploaded`);
+        return report(name, assertions, probes, session);
+      }
+      const refused = pictureCheck(first.bytes);
+      if (refused) {
+        assertions.unproven(
+          what,
+          `the original at ${url} fails the picture checks (${refused}) — the gateway would refuse the restore ` +
+            'upload after the test image is stored; nothing uploaded',
+        );
+        return report(name, assertions, probes, session);
+      }
+      const test = testPortraitJpeg();
+      if (sha256(first.bytes) === sha256(test)) {
+        ctx.lock.addPendingRestore({
+          key: `portrait-leftover:${randomUUID()}`,
+          what:
+            `${ME}'s largephoto.jpg (${url}) is the e2e test image — an earlier run died after its upload; ` +
+            "put the real portrait back from that run's saved originalValue",
+          originalValue: '',
+        });
+        assertions.check('the original portrait is not the e2e test image', false, `${url} — nothing uploaded, world marked dirty`);
+        return report(name, assertions, probes, session);
+      }
+      const originalB64 = first.bytes.toString('base64');
+      const testB64 = test.toString('base64');
+      probes.push(
+        await roundTripProbe(ctx, ctx.survivalLogUrl ?? '', {
+          what: `${ME}'s portrait ${url} — the original JPEG is this entry's originalValue (base64) in the world lock file; re-upload it`,
+          // The cache server's picture socket: no Survival line, so the read-back alone.
+          member: 'PictureUpload',
+          read: async () => originalB64,
+          testValue: () => testB64,
+          write: async value => {
+            const answer = await session.driver.request<WsRespProfileUploadPicture>(
+              { type: WsMessageType.REQ_PROFILE_UPLOAD_PICTURE, pictureBase64: value },
+              WsMessageType.RESP_PROFILE_UPLOAD_PICTURE,
+              TIMEOUTS.login,
+            );
+            if (answer.success !== true) throw new Error(`upload refused: ${answer.reason ?? ''} ${answer.message ?? ''}`.trim());
+          },
+          proof: {
+            readBack: {
+              source: `a direct re-fetch of ${url}, compared byte for byte`,
+              why:
+                'the cache server writes the uploaded bytes verbatim and answers OK only then ' +
+                '(Cache Server/CacheServerReportForm.pas:548-549, :574-600); its OK alone proves nothing',
+              read: tolerantRead(async () => (await fetchPortrait(url)).bytes?.toString('base64')),
+              boundMs: TIMEOUTS.readBack,
+            },
+          },
+        }),
+      );
+      assertions.check('the portrait round trip proved the upload and the restore', probes[0]?.status === 'PASS', probes[0]?.note);
+      return report(name, assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
+// Roads & zones as the Mayor of the governed town (#1151)
+// ---------------------------------------------------------------------------------------------
+
+/** Circuit id of roads — the gateway's `circuitId = 1` in `buildRoad` (road-handler.ts). */
+const ROAD_CIRCUIT = 1;
+/** Tiles in the test road: an end break then keeps two tiles as one segment (Circuits/Circuits.pas:582). */
+const ROAD_SPAN = 3;
+/** Candidates lie within the town hall ± this many tiles. */
+const SEARCH_RADIUS = 12;
+/** The map load grows the search window by this much, so a footprint anchored outside it is seen. */
+const FOOTPRINT_MARGIN = 10;
+/** Non-square on purpose: a transposed surface read cannot pass. */
+const ZONE_W = 3;
+const ZONE_H = 2;
+/**
+ * Every rectangle tile needs a road tile within this Chebyshev distance. `RDODefineZone` writes a
+ * non-None zone only where the road reach matrix marks the tile (Kernel/World.pas:4527-4528,
+ * tolerance 7 in Circuits/MatrixCircuits.pas:205-244); 3 is conservative, because the client
+ * cannot see whether a road belongs to a valid circuit.
+ */
+const ZONE_REACH = 3;
+/**
+ * The zones the reference client offered the mayor (Five/0/Visual/Voyager/Build/MayorOptions.asp:134-224,
+ * :388). Reserved (1) is commented out (:234-249); Residential (2) was never offered (#606).
+ */
+const MAYOR_ZONE_IDS = [0, 3, 4, 5, 6, 7, 8, 9];
+/** The ids the flow may paint over the original. */
+const PAINT_ZONE_IDS = [3, 4, 5, 6, 7, 8, 9];
+
+/** What `readArea` saw around the town hall. Grids are indexed `rows[y - rect.y1][x - rect.x1]`. */
+export interface AreaRead {
+  rect: Rect;
+  towns: number[][];
+  zones?: number[][];
+  /** `x,y` of every tile a facility footprint covers. */
+  occupied: Set<string>;
+  /** `x,y` of every tile a road segment covers. */
+  road: Set<string>;
+  /** The TOWNS value at the town-hall tile — the server's "inside the town" test. */
+  hallTown: number;
+}
+
+const tileKey = (x: number, y: number): string => `${x},${y}`;
+const rectText = (r: Rect): string => `(${r.x1},${r.y1})-(${r.x2},${r.y2})`;
+
+function cell(grid: number[][] | undefined, rect: Rect, x: number, y: number): number | undefined {
+  return grid?.[y - rect.y1]?.[x - rect.x1];
+}
+
+function inside(rect: Rect, x: number, y: number): boolean {
+  return x >= rect.x1 && x <= rect.x2 && y >= rect.y1 && y <= rect.y2;
+}
+
+/** The min/max box of a segment; a tile is covered when it lies inside the box. */
+function segmentBox(s: MapSegment): Rect {
+  return {
+    x1: Math.min(s.x1, s.x2),
+    y1: Math.min(s.y1, s.y2),
+    x2: Math.max(s.x1, s.x2),
+    y2: Math.max(s.y1, s.y2),
+  };
+}
+
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x1 <= b.x2 && b.x1 <= a.x2 && a.y1 <= b.y2 && b.y1 <= a.y2;
+}
+
+async function loadMap(session: LiveSession, rect: Rect): Promise<{ buildings: MapBuilding[]; segments: MapSegment[] }> {
+  const response = await session.driver.request<WsRespMapData>(
+    {
+      type: WsMessageType.REQ_MAP_LOAD,
+      x: rect.x1,
+      y: rect.y1,
+      width: rect.x2 - rect.x1 + 1,
+      height: rect.y2 - rect.y1 + 1,
+    },
+    [WsMessageType.RESP_MAP_DATA, WsMessageType.EVENT_MAP_DATA],
+    TIMEOUTS.login,
+  );
+  return { buildings: response.data?.buildings ?? [], segments: response.data?.segments ?? [] };
+}
+
+async function readSurface(session: LiveSession, surfaceType: SurfaceType, rect: Rect): Promise<number[][]> {
+  const { data } = await session.driver.request<WsRespSurfaceData>(
+    { type: WsMessageType.REQ_GET_SURFACE, surfaceType, ...rect },
+    WsMessageType.RESP_SURFACE_DATA,
+  );
+  const shape = surfaceShape(data.rows, rect);
+  if (!shape.ok) throw new Error(`the ${surfaceType} surface does not cover ${rectText(rect)}: ${shape.detail}`);
+  return data.rows;
+}
+
+/**
+ * The TOWNS surface (and ZONES when asked) over the town hall ± SEARCH_RADIUS, the facilities and
+ * roads over that window grown by FOOTPRINT_MARGIN, and the facility sizes. `GetSurface` compresses
+ * the world live (Kernel/World.pas:4461-4470) — no object-cache lag.
+ */
+async function readArea(session: LiveSession, hall: { x: number; y: number }, withZones: boolean): Promise<AreaRead> {
+  const rect: Rect = {
+    x1: Math.max(0, hall.x - SEARCH_RADIUS),
+    y1: Math.max(0, hall.y - SEARCH_RADIUS),
+    x2: hall.x + SEARCH_RADIUS,
+    y2: hall.y + SEARCH_RADIUS,
+  };
+  const towns = await readSurface(session, SurfaceType.TOWNS, rect);
+  const zones = withZones ? await readSurface(session, SurfaceType.ZONES, rect) : undefined;
+  const loaded: Rect = {
+    x1: Math.max(0, rect.x1 - FOOTPRINT_MARGIN),
+    y1: Math.max(0, rect.y1 - FOOTPRINT_MARGIN),
+    x2: rect.x2 + FOOTPRINT_MARGIN,
+    y2: rect.y2 + FOOTPRINT_MARGIN,
+  };
+  const map = await loadMap(session, loaded);
+  const { dimensions } = await session.driver.request<WsRespAllFacilityDimensions>(
+    { type: WsMessageType.REQ_GET_ALL_FACILITY_DIMENSIONS },
+    WsMessageType.RESP_ALL_FACILITY_DIMENSIONS,
+  );
+
+  // A footprint covers (x .. x+xsize-1, y .. y+ysize-1) from its origin — the renderer's
+  // occupied-tile rule (isometric-map-renderer.ts). An unknown class counts as one tile.
+  const occupied = new Set<string>();
+  for (const b of map.buildings) {
+    const dims = dimensions[b.visualClass];
+    const w = dims?.xsize ?? 1;
+    const h = dims?.ysize ?? 1;
+    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) occupied.add(tileKey(b.x + dx, b.y + dy));
+  }
+  const road = new Set<string>();
+  for (const s of map.segments) {
+    const box = segmentBox(s);
+    for (let y = Math.max(box.y1, loaded.y1); y <= Math.min(box.y2, loaded.y2); y++) {
+      for (let x = Math.max(box.x1, loaded.x1); x <= Math.min(box.x2, loaded.x2); x++) road.add(tileKey(x, y));
+    }
+  }
+  const hallTown = cell(towns, rect, hall.x, hall.y);
+  if (hallTown === undefined) throw new Error(`the town hall (${hall.x},${hall.y}) is outside ${rectText(rect)}`);
+  return { rect, towns, zones, occupied, road, hallTown };
+}
+
+/** Every tile of the area, nearest the town hall first: Chebyshev distance, then y, then x. */
+function tilesByDistance(area: AreaRead, hall: { x: number; y: number }): { x: number; y: number }[] {
+  const tiles: { x: number; y: number; d: number }[] = [];
+  for (let y = area.rect.y1; y <= area.rect.y2; y++) {
+    for (let x = area.rect.x1; x <= area.rect.x2; x++) {
+      tiles.push({ x, y, d: Math.max(Math.abs(x - hall.x), Math.abs(y - hall.y)) });
+    }
+  }
+  return tiles.sort((a, b) => a.d - b.d || a.y - b.y || a.x - b.x);
+}
+
+/**
+ * The nearest straight ROAD_SPAN-tile span inside the town (every tile reads the hall's TOWNS
+ * value) with no facility and no road on it or on its 8-neighbour halo, span and halo inside the
+ * read window. Horizontal before vertical. `undefined` when nothing fits.
+ */
+export function findRoadSpan(area: AreaRead, hall: { x: number; y: number }): Rect | undefined {
+  for (const { x, y } of tilesByDistance(area, hall)) {
+    for (const span of [
+      { x1: x, y1: y, x2: x + ROAD_SPAN - 1, y2: y },
+      { x1: x, y1: y, x2: x, y2: y + ROAD_SPAN - 1 },
+    ]) {
+      if (roadSpanFits(area, span)) return span;
+    }
+  }
+  return undefined;
+}
+
+function roadSpanFits(area: AreaRead, span: Rect): boolean {
+  for (let y = span.y1 - 1; y <= span.y2 + 1; y++) {
+    for (let x = span.x1 - 1; x <= span.x2 + 1; x++) {
+      if (!inside(area.rect, x, y)) return false;
+      if (area.occupied.has(tileKey(x, y)) || area.road.has(tileKey(x, y))) return false;
+    }
+  }
+  return spanTiles(span).every(t => cell(area.towns, area.rect, t.x, t.y) === area.hallTown);
+}
+
+/**
+ * The nearest ZONE_W × ZONE_H rectangle inside the town whose tiles all hold one zone id the mayor
+ * was offered, that no facility footprint overlaps, and whose every tile has a road within
+ * ZONE_REACH. `undefined` when nothing fits.
+ */
+export function findZoneRect(area: AreaRead, hall: { x: number; y: number }): Rect | undefined {
+  for (const { x, y } of tilesByDistance(area, hall)) {
+    const rect = { x1: x, y1: y, x2: x + ZONE_W - 1, y2: y + ZONE_H - 1 };
+    if (zoneRectFits(area, rect)) return rect;
+  }
+  return undefined;
+}
+
+function zoneRectFits(area: AreaRead, rect: Rect): boolean {
+  if (!inside(area.rect, rect.x2, rect.y2)) return false;
+  const zone = cell(area.zones, area.rect, rect.x1, rect.y1);
+  if (zone === undefined || !MAYOR_ZONE_IDS.includes(zone)) return false;
+  for (let y = rect.y1; y <= rect.y2; y++) {
+    for (let x = rect.x1; x <= rect.x2; x++) {
+      if (cell(area.towns, area.rect, x, y) !== area.hallTown) return false;
+      if (cell(area.zones, area.rect, x, y) !== zone) return false;
+      if (area.occupied.has(tileKey(x, y))) return false;
+      if (!roadWithin(area, x, y)) return false;
+    }
+  }
+  return true;
+}
+
+function roadWithin(area: AreaRead, x: number, y: number): boolean {
+  for (let dy = -ZONE_REACH; dy <= ZONE_REACH; dy++) {
+    for (let dx = -ZONE_REACH; dx <= ZONE_REACH; dx++) {
+      if (area.road.has(tileKey(x + dx, y + dy))) return true;
+    }
+  }
+  return false;
+}
+
+/** The tiles of a straight span, from (x1,y1) to (x2,y2). */
+function spanTiles(span: Rect): { x: number; y: number }[] {
+  const tiles: { x: number; y: number }[] = [];
+  for (let y = span.y1; y <= span.y2; y++) for (let x = span.x1; x <= span.x2; x++) tiles.push({ x, y });
+  return tiles;
+}
+
+interface SpanRead {
+  /** Span tiles, in span order, covered by a segment lying wholly inside the span — and by no foreign one. */
+  covered: string[];
+  /** Segments that touch the span but extend beyond it. */
+  foreign: number;
+}
+
+const spanReadText = (r: SpanRead): string => `covered=[${r.covered.join(' ')}] foreign=${r.foreign}`;
+
+/** `SegmentsInArea` over the span grown by 2 tiles. */
+async function readSpan(session: LiveSession, span: Rect): Promise<SpanRead> {
+  const { segments } = await loadMap(session, {
+    x1: Math.max(0, span.x1 - 2),
+    y1: Math.max(0, span.y1 - 2),
+    x2: span.x2 + 2,
+    y2: span.y2 + 2,
+  });
+  const own: Rect[] = [];
+  const foreign: Rect[] = [];
+  for (const s of segments) {
+    const box = segmentBox(s);
+    if (!overlaps(box, span)) continue;
+    const wholly = box.x1 >= span.x1 && box.x2 <= span.x2 && box.y1 >= span.y1 && box.y2 <= span.y2;
+    (wholly ? own : foreign).push(box);
+  }
+  const covered = spanTiles(span)
+    .filter(t => own.some(b => inside(b, t.x, t.y)) && !foreign.some(b => inside(b, t.x, t.y)))
+    .map(t => tileKey(t.x, t.y));
+  return { covered, foreign: foreign.length };
+}
+
+/** Read at least once, then every `readBackPoll` until `done` holds or `readBack` has elapsed. */
+async function pollSpan(
+  session: LiveSession,
+  span: Rect,
+  done: (r: SpanRead) => boolean,
+  ctx: FlowContext,
+): Promise<{ ok: boolean; last: SpanRead }> {
+  const now = ctx.now ?? Date.now;
+  const sleep = ctx.sleep ?? defaultSleep;
+  const deadline = now() + TIMEOUTS.readBack;
+  for (;;) {
+    const last = await readSpan(session, span);
+    if (done(last)) return { ok: true, last };
+    if (now() >= deadline) return { ok: false, last };
+    await sleep(TIMEOUTS.readBackPoll);
+  }
+}
+
+/** The span reads exactly these tiles, and no foreign segment touches it. */
+const exactly = (expected: string[]) => (r: SpanRead): boolean =>
+  r.foreign === 0 && r.covered.length === expected.length && r.covered.every((t, i) => t === expected[i]);
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * A circuit Survival line (Kernel/World.pas:4263, :4320, :4366): `<marker> <CircuitId>, <TycoonRef>, <coords>`.
+ * The tycoon field is the gateway's object reference, which no WS message exposes — so the line
+ * is matched on the road circuit id and the coordinates as sent.
+ */
+export function circuitLogMatches(line: string, marker: string, coords: number[]): boolean {
+  return new RegExp(`${escapeRegExp(marker)} ${ROAD_CIRCUIT}, -?\\d+, ${coords.join(', ')}(?!\\d)`).test(line);
+}
+
+/** `Defining Zone: <ZoneId>, <TycoonId>, <x1>, <y1>, <x2>, <y2>` (Kernel/World.pas:4526), rectangle normalised. */
+export function zoneLogMatches(line: string, zoneId: number, rect: Rect): boolean {
+  const coords = [rect.x1, rect.y1, rect.x2, rect.y2].join(', ');
+  return new RegExp(`${escapeRegExp(LOG_MARKERS.RDODefineZone)} ${zoneId}, -?\\d+, ${coords}(?!\\d)`).test(line);
+}
+
+/** The ZONES value of the rectangle when every tile holds the same mayor-offered id, else `undefined`. */
+async function readZone(session: LiveSession, rect: Rect): Promise<string | undefined> {
+  const { data } = await session.driver.request<WsRespSurfaceData>(
+    { type: WsMessageType.REQ_GET_SURFACE, surfaceType: SurfaceType.ZONES, ...rect },
+    WsMessageType.RESP_SURFACE_DATA,
+  );
+  if (!surfaceShape(data.rows, rect).ok) return undefined;
+  const first = data.rows[0][0];
+  if (!data.rows.every(r => r.every(v => v === first)) || !MAYOR_ZONE_IDS.includes(first)) return undefined;
+  return String(first);
+}
+
+/**
+ * Log in, find the governed town (the search menu belongs to the own session), switch to the
+ * Mayor role company, run the body, and switch back in a `finally` — including when the switch
+ * itself threw. A throw still propagates, so `runFlow` turns it into FAIL.
+ */
+async function asMayor(
+  name: string,
+  ctx: FlowContext,
+  body: (
+    session: LiveSession,
+    town: { x: number; y: number },
+    url: string,
+    assertions: Assertions,
+    probes: ProbeResult[],
+  ) => Promise<void>,
+): Promise<FlowResult> {
+  const assertions = new Assertions();
+  const probes: ProbeResult[] = [];
+  const session = await login(PRIMARY_ACCOUNT);
+  try {
+    const town = await findTown(session, GOVERNED_TOWN);
+    const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+    try {
+      await switchToMayor(session);
+      await body(session, town, url, assertions, probes);
+    } finally {
+      const back = await trySwitch(session, session.company);
+      assertions.check('the switch back to the own company answers RESP_RDO_RESULT', back.ok, back.detail);
+    }
+    assertions.check('no gateway errors', session.driver.errors.length === 0);
+    return report(name, assertions, probes, session);
+  } finally {
+    await logoff(session);
+  }
+}
+
+/**
+ * Build a 3-tile road, break its start tile, wipe the two tiles left — as the Mayor of the
+ * governed town (#1151).
+ *
+ * Roads need the Mayor role: as the plain player `CreateCircuitSeg` answers `#22`
+ * (`ERROR_CannotCreateSeg`, Protocol/Protocol.pas:51; the guard at Kernel/World.pas:4273). The
+ * mayor may break any segment in the town (`TWorld.OnAuthorizeBreak`, Kernel/World.pas:5593-5608),
+ * so the span choice — empty tiles, no road on or next to them — and the cleanup rule are the only
+ * guards: the cleanup re-reads the span and breaks only tiles of a segment lying wholly inside it,
+ * one tile at a time, never with `REQ_DEMOLISH_ROAD_AREA`.
+ *
+ * `TSegment.MakeHole` on the start tile moves the node in and keeps the other two tiles as one
+ * segment (Circuits/Circuits.pas:582-598); a break within one tile of both ends deletes the whole
+ * segment (:556-577), which is why the span is 3. Each run spends two road blocks of a tier-<2
+ * identity's yearly quota (`tiles := abs(x2-x1)+abs(y2-y1)`, Kernel/World.pas:4271, :4290;
+ * Kernel/Kernel.pas:13180-13187) and the road's construction cost — accepted by the maintainer.
+ * Each write is proven by its Survival line (Kernel/World.pas:4263, :4320, :4366 —
+ * `CreateCircuitSeg: OK!` at :4307 is unconditional and proves nothing) and a `SegmentsInArea`
+ * read-back.
+ */
+const roadRoundTrip: Flow = {
+  name: 'road-roundtrip',
+  what: 'as Mayor: find an empty 3-tile span -> build a road -> break its start tile -> wipe the other two -> no segment left',
+  mutates: true,
+  run: ctx =>
+    asMayor('road-roundtrip', ctx, async (session, town, url, assertions) => {
+      let span: Rect | undefined;
+      let key: string | undefined;
+      try {
+        const area = await readArea(session, town, false);
+        span = findRoadSpan(area, town);
+        if (!span) {
+          assertions.unproven(
+            `a road round trip in ${GOVERNED_TOWN}`,
+            `no straight ${ROAD_SPAN}-tile span inside ${GOVERNED_TOWN} with no object and no road on or next to it ` +
+              `in the ±${SEARCH_RADIUS} window`,
+          );
+          return;
+        }
+        key = `road-roundtrip:${randomUUID()}`;
+        ctx.lock.addPendingRestore({
+          key,
+          what: `break the road on ${rectText(span)} as Mayor of ${GOVERNED_TOWN} — road-roundtrip built it`,
+          originalValue: 'no road',
+        });
+        await roadSteps(session, span, url, assertions, ctx);
+      } catch (err: unknown) {
+        assertions.check('the road steps ran without a throw', false, toErrorMessage(err));
+      }
+      if (span && key) await roadCleanup(session, span, key, assertions, ctx);
+    }),
+};
+
+async function roadSteps(
+  session: LiveSession,
+  span: Rect,
+  url: string,
+  assertions: Assertions,
+  ctx: FlowContext,
+): Promise<void> {
+  const tiles = spanTiles(span).map(t => tileKey(t.x, t.y));
+  const [, second, third] = spanTiles(span);
+  const window = await openLogWindow(url);
+  const line = (marker: string, coords: number[]): Promise<string | null> =>
+    awaitMarker(window, { marker, match: l => circuitLogMatches(l, marker, coords) }, TIMEOUTS.logSettle);
+
+  // Build.
+  const built = await session.driver.request<WsRespBuildRoad>(
+    { type: WsMessageType.REQ_BUILD_ROAD, ...span },
+    WsMessageType.RESP_BUILD_ROAD,
+    TIMEOUTS.login,
+  );
+  assertions.check(
+    'the gateway accepted the road build',
+    built.success === true && !built.partial,
+    `success=${built.success} partial=${built.partial ?? false} ${built.message ?? ''}`.trim(),
+  );
+  if (built.success !== true) return;
+  const afterBuild = await pollSpan(session, span, exactly(tiles), ctx);
+  assertions.check('the map shows segments covering exactly the span', afterBuild.ok, spanReadText(afterBuild.last));
+  const buildLine = await line(LOG_MARKERS.RDOCreateCircuitSeg, [span.x1, span.y1, span.x2, span.y2]);
+  assertions.check('the build logged its CreateCircuitSeg: line', buildLine !== null, buildLine ?? '(no line)');
+  if (!afterBuild.ok) return;
+
+  // Break the start tile: the node moves in, the other two tiles stay as one segment.
+  const broken = await session.driver.request<WsRespDemolishRoad>(
+    { type: WsMessageType.REQ_DEMOLISH_ROAD, x: span.x1, y: span.y1 },
+    WsMessageType.RESP_DEMOLISH_ROAD,
+    TIMEOUTS.login,
+  );
+  assertions.check('the gateway accepted the break', broken.success === true, broken.message);
+  const afterBreak = await pollSpan(session, span, exactly(tiles.slice(1)), ctx);
+  assertions.check('the map shows exactly the other two tiles left', afterBreak.ok, spanReadText(afterBreak.last));
+  const breakLine = await line(LOG_MARKERS.RDOBreakCircuitAt, [span.x1, span.y1]);
+  assertions.check('the break logged its BreakCircuit: line', breakLine !== null, breakLine ?? '(no line)');
+  // A break that removed everything goes on to the wipe step, which FAILs for it.
+  if (!afterBreak.ok && afterBreak.last.covered.length > 0) return;
+
+  // Wipe the two tiles left — the undo.
+  const before = await readSpan(session, span);
+  if (before.covered.length === 0 || before.foreign > 0) {
+    assertions.check(
+      'a segment remained on the span for the wipe',
+      false,
+      before.foreign > 0 ? `a segment extends beyond the span — nothing wiped (${spanReadText(before)})` : 'the break removed the whole road',
+    );
+    return;
+  }
+  const wiped = await session.driver.request<WsRespDemolishRoadArea>(
+    { type: WsMessageType.REQ_DEMOLISH_ROAD_AREA, x1: second.x, y1: second.y, x2: third.x, y2: third.y },
+    WsMessageType.RESP_DEMOLISH_ROAD_AREA,
+    TIMEOUTS.login,
+  );
+  assertions.check('the gateway accepted the wipe', wiped.success === true, wiped.message);
+  const afterWipe = await pollSpan(session, span, exactly([]), ctx);
+  assertions.check('the map shows no segment left on the span', afterWipe.ok, spanReadText(afterWipe.last));
+  const wipeLine = await line(LOG_MARKERS.RDOWipeCircuit, [second.x, second.y, third.x, third.y]);
+  assertions.check('the wipe logged its WipingCircuit: line', wipeLine !== null, wipeLine ?? '(no line)');
+}
+
+/**
+ * Leave the span as found. Breaks, one tile at a time, only tiles of a segment lying wholly inside
+ * the span; stops without touching anything when a segment extends beyond it. The pending restore
+ * is cleared only when the span reads clean.
+ */
+async function roadCleanup(
+  session: LiveSession,
+  span: Rect,
+  key: string,
+  assertions: Assertions,
+  ctx: FlowContext,
+): Promise<void> {
+  let last: SpanRead | undefined;
+  let clean = false;
+  try {
+    for (let breaks = 0; ; breaks++) {
+      last = await readSpan(session, span);
+      if (last.covered.length === 0 && last.foreign === 0) {
+        clean = true;
+        break;
+      }
+      if (last.foreign > 0 || breaks >= ROAD_SPAN) break;
+      const target = last.covered[0];
+      const [x, y] = target.split(',').map(Number);
+      await session.driver.request<WsRespDemolishRoad>(
+        { type: WsMessageType.REQ_DEMOLISH_ROAD, x, y },
+        WsMessageType.RESP_DEMOLISH_ROAD,
+        TIMEOUTS.login,
+      );
+      await pollSpan(session, span, r => !r.covered.includes(target), ctx);
+    }
+  } catch (err: unknown) {
+    assertions.check('the road cleanup ran without a throw', false, toErrorMessage(err));
+  }
+  if (clean) ctx.lock.clearPendingRestore(key);
+  assertions.check(
+    'no segment is left on the span',
+    clean,
+    clean ? rectText(span) : `${rectText(span)}: ${last ? spanReadText(last) : 'unread'} — pending restore kept`,
+  );
+}
+
+/**
+ * Paint a small uniform rectangle in the town with another zone, then repaint the original — as
+ * the Mayor of the governed town (#1151).
+ *
+ * The rectangle holds one zone id the reference client offered the mayor, so one call restores it
+ * exactly, and no facility footprint overlaps it: rezoning under a private facility schedules its
+ * demolition and mails its owner a Zoning Alert (`ReportZoning`, Kernel/World.pas:4546-4561 ->
+ * :7908-7916), which a repaint cannot unsend. Each write is proven by its `Defining Zone:` line
+ * (Kernel/World.pas:4526) and the ZONES surface read back live from `fZones` (:4461-4464).
+ */
+const zoneRoundTrip: Flow = {
+  name: 'zone-roundtrip',
+  what: 'as Mayor: find a uniform unbuilt rectangle -> paint another zone -> read back -> repaint the original -> read back',
+  mutates: true,
+  run: ctx =>
+    asMayor('zone-roundtrip', ctx, async (session, town, url, assertions, probes) => {
+      const area = await readArea(session, town, true);
+      const rect = findZoneRect(area, town);
+      if (!rect) {
+        assertions.unproven(
+          `a zone round trip in ${GOVERNED_TOWN}`,
+          `no ${ZONE_W}×${ZONE_H} rectangle inside ${GOVERNED_TOWN} in the ±${SEARCH_RADIUS} window holding one zone id ` +
+            `of {${MAYOR_ZONE_IDS.join(', ')}}, overlapped by no facility footprint, with a road within ${ZONE_REACH} tiles`,
+        );
+        return;
+      }
+      const window = await openLogWindow(url);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `the zone of ${rectText(rect)} in ${GOVERNED_TOWN} — repaint it as Mayor of ${GOVERNED_TOWN} with REQ_DEFINE_ZONE`,
+        member: 'RDODefineZone',
+        read: () => readZone(session, rect),
+        testValue: original => String(PAINT_ZONE_IDS.find(z => String(z) !== original)),
+        write: async value => {
+          const answer = await session.driver.request<WsRespDefineZone>(
+            { type: WsMessageType.REQ_DEFINE_ZONE, zoneId: Number(value), ...rect },
+            WsMessageType.RESP_DEFINE_ZONE,
+            TIMEOUTS.login,
+          );
+          if (answer.success !== true) throw new Error(`REQ_DEFINE_ZONE refused: ${answer.message ?? ''}`.trim());
+        },
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDODefineZone,
+            match: (line, written) => zoneLogMatches(line, Number(written), rect),
+          },
+          readBack: {
+            source: 'the ZONES surface over the rectangle (REQ_GET_SURFACE)',
+            why: 'GetSurface compresses fZones live — no object cache (Kernel/World.pas:4461-4464)',
+            read: tolerantRead(() => readZone(session, rect)),
+            boundMs: TIMEOUTS.readBack,
+          },
+        },
+      });
+      probes.push(probe);
+      assertions.check('the zone round trip proved the paint and the repaint', probe.status === 'PASS', probe.note);
+      if (probe.written !== '') {
+        const repaint = await awaitMarker(
+          window,
+          { marker: LOG_MARKERS.RDODefineZone, match: l => zoneLogMatches(l, Number(probe.original), rect) },
+          TIMEOUTS.logSettle,
+        );
+        assertions.check('the repaint to the original logged its Defining Zone: line', repaint !== null, repaint ?? '(no line)');
+      }
+    }),
 };
 
 /** A property's raw value from any group of an opening read, or 'absent'. */
@@ -1355,11 +4442,3258 @@ const warehouseRoleReading: Flow = {
   },
 };
 
+/**
+ * The permanent fixtures (#1149): SPO_test3's own finished facility of each kind in Helartia,
+ * found by kind — and, when one is missing, built once and kept (the one sanctioned permanent
+ * mutation, doc/E2E-POLICY.md §9). A build is proven by its `New Facility:` line, result code 0
+ * and the lot read-back; nothing is restored, so no pending restore is recorded.
+ */
+const fixturesEnsure: Flow = {
+  name: 'fixtures-ensure',
+  what:
+    "SPO_test3's facility per kind in Helartia -> build each missing kind once (permanent fixture): " +
+    'New Facility: line + result 0 + lot read-back',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const outcomes = await ensureFixtures(session, {
+        survivalLogUrl: ctx.survivalLogUrl,
+        now: ctx.now,
+        sleep: ctx.sleep,
+      });
+      for (const o of outcomes) {
+        const at = o.x !== undefined ? `at (${o.x},${o.y}) vc ${o.visualClass ?? '?'}` : '';
+        // A found fixture carries its lot; a built one its New Facility: line (receipt).
+        if (o.status === 'found') assertions.check(`${o.kind}: fixture found`, o.x !== undefined && o.y !== undefined, at);
+        else if (o.status === 'built') {
+          assertions.check(`${o.kind}: fixture built`, Boolean(o.logLine) && o.x !== undefined, `${at} — ${o.logLine ?? ''}`);
+        }
+        else if (o.status === 'FAIL') assertions.check(`${o.kind} fixture`, false, o.reason);
+        else assertions.unproven(`${o.kind} fixture`, `${o.status === 'under construction' ? 'under construction — ' : ''}${o.reason ?? ''}`);
+      }
+      return { ...report('fixtures-ensure', assertions, [], session), fixtures: outcomes };
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
+// Inspector flows (#1152) — owner setters and live reads on SPO_test3's own fixtures
+// ---------------------------------------------------------------------------------------------
+//
+// Every write below is a round trip (`runRoundTrip`): the Survival line proves receipt only —
+// each of these handlers logs before its owner check — and a read-back equal to the value
+// written proves the change. The gateway's own `confirmed` flag is never used as proof.
+
+/** Where a fixture stands — what `findFixture` found, and nothing else. */
+interface OwnFixture {
+  x: number;
+  y: number;
+  visualClass: string;
+  name: string;
+}
+
+/** A gate as the tab data lists it — path and name, nothing read off the gate yet. */
+interface GateStub {
+  path: string;
+  name: string;
+}
+
+/** The kind's row in FIXTURE_KINDS. */
+export function fixtureKind(id: FixtureKindId): FixtureKind {
+  const kind = FIXTURE_KINDS.find(k => k.id === id);
+  if (!kind) throw new Error(`No fixture kind "${id}" in FIXTURE_KINDS`);
+  return kind;
+}
+
+/**
+ * SPO_test3's own fixture of a kind, or `undefined` with the reason recorded as unproven. A flow
+ * whose fixture is missing writes nothing, anywhere.
+ */
+async function ownFixture(
+  session: LiveSession,
+  kindId: FixtureKindId,
+  assertions: Assertions,
+): Promise<OwnFixture | undefined> {
+  const lookup = await findFixture(session, fixtureKind(kindId));
+  if (!lookup.found) {
+    assertions.unproven(`${kindId} fixture`, lookup.reason ?? 'not found');
+    return undefined;
+  }
+  return lookup.found;
+}
+
+const fixtureLabel = (fx: OwnFixture): string => `${fx.name} (${fx.x},${fx.y})`;
+
+/**
+ * The gates of one accordion. The opening read comes first: it recreates the inspector's temp
+ * object, so what follows is a current read (`readSectionGroups` explains why).
+ */
+async function gateStubs(session: LiveSession, fx: OwnFixture, tabId: 'supplies' | 'products'): Promise<GateStub[]> {
+  await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+  const tab = await readBuildingTabData(session, fx.x, fx.y, tabId, fx.visualClass);
+  return (tabId === 'supplies' ? tab.supplies : tab.products) ?? [];
+}
+
+function gateConnections(
+  session: LiveSession,
+  fx: OwnFixture,
+  tabId: 'supplies' | 'products',
+  stub: GateStub,
+): Promise<WsRespBuildingGateConnections> {
+  return session.driver.request<WsRespBuildingGateConnections>(
+    {
+      type: WsMessageType.REQ_BUILDING_GATE_CONNECTIONS,
+      x: fx.x,
+      y: fx.y,
+      tabId,
+      path: stub.path,
+      name: stub.name,
+      visualClass: fx.visualClass,
+    },
+    WsMessageType.RESP_BUILDING_GATE_CONNECTIONS,
+  );
+}
+
+/** A fresh read of one supply gate, found by name. */
+async function readSupply(session: LiveSession, fx: OwnFixture, name: string): Promise<BuildingSupplyData | undefined> {
+  const stub = (await gateStubs(session, fx, 'supplies')).find(g => g.name === name);
+  return stub ? (await gateConnections(session, fx, 'supplies', stub)).supply : undefined;
+}
+
+/** A fresh read of one product gate, found by name. */
+async function readProduct(session: LiveSession, fx: OwnFixture, name: string): Promise<BuildingProductData | undefined> {
+  const stub = (await gateStubs(session, fx, 'products')).find(g => g.name === name);
+  return stub ? (await gateConnections(session, fx, 'products', stub)).product : undefined;
+}
+
+/** A read-back channel that polls through `read` until the bound. */
+function readBackOn(
+  source: string,
+  why: string,
+  read: () => Promise<string | undefined>,
+  normalise?: (value: string) => string,
+): RoundTripSpec['proof']['readBack'] {
+  return { source, why, read, boundMs: TIMEOUTS.readBack, ...(normalise ? { normalise } : {}) };
+}
+
+const FACILITY_CACHE_WHY =
+  "the facility's object-cache entry refreshes within its TTL (OB-29); the poll waits the lag out";
+const GATE_CACHE_WHY =
+  "the gate's own cache object, read the way the Supplies/Products tab reads it (SetPath onto the gate, " +
+  'building-details-handler.ts); the poll waits the cache refresh out';
+
+/**
+ * The integer ±1 toward the middle of `[min, max]`, clamped. `nudge` clamps to 0..100, which
+ * would turn a salary of 150 into 100 — a write of a different magnitude, not a nudge.
+ */
+export function nudgeWithin(original: string, min: number, max: number): string {
+  const middle = (min + max) / 2;
+  const parsed = Number(original);
+  if (original.trim() === '' || !Number.isFinite(parsed)) return String(Math.round(middle));
+  const rounded = Math.round(parsed);
+  const next = rounded >= middle ? rounded - 1 : rounded + 1;
+  return String(Math.min(max, Math.max(min, next)));
+}
+
+/** The largest price the client offers for a service (SRV_GENERAL_GROUP's slider, template-groups.ts). */
+const SERVICE_PRICE_MAX = 500;
+/** `high(fServiceData[index].Price)` — a byte (StdBlocks/ServiceBlock.pas:1585). */
+const SERVICE_PRICE_STORED_MAX = 255;
+
+/**
+ * The service price to write: ±10 from the original, inside 0..500, and always **even** —
+ * `RDOSetPrice` stores `round(value/2)` and the cache publishes `2*Price`
+ * (StdBlocks/ServiceBlock.pas:1585, :1731), so an odd value would read back different.
+ */
+export function evenPriceNudge(original: string): string {
+  const parsed = Number(original);
+  if (original.trim() === '' || !Number.isFinite(parsed)) return '100';
+  const base = Math.round(parsed);
+  const moved = Math.min(SERVICE_PRICE_MAX, Math.max(0, base >= 250 ? base - 10 : base + 10));
+  return String(moved % 2 === 0 ? moved : moved - 1);
+}
+
+/** Delphi's `round`: banker's rounding, a tie goes to the even neighbour. */
+export function roundHalfEven(value: number): number {
+  const floor = Math.floor(value);
+  const fraction = value - floor;
+  if (fraction > 0.5) return floor + 1;
+  if (fraction < 0.5) return floor;
+  return floor % 2 === 0 ? floor : floor + 1;
+}
+
+/**
+ * What the cache publishes for a written service price: `2 * min(255, round(v/2))`
+ * (StdBlocks/ServiceBlock.pas:1585 stores it, :1731 publishes `2*Price`).
+ */
+export function servicePriceQuantised(value: string): string {
+  const parsed = Number(value);
+  if (value.trim() === '' || !Number.isFinite(parsed)) return value;
+  return String(2 * Math.min(SERVICE_PRICE_STORED_MAX, roundHalfEven(parsed / 2)));
+}
+
+/** `text` directly after `Fac(<x>,<y>) `, ending the line or followed by whitespace. */
+export function facLineMatches(line: string, x: number, y: number, text: string): boolean {
+  return new RegExp(`${escapeRegExp(`Fac(${x},${y}) ${text}`)}(?=\\s|$)`).test(line);
+}
+
+/** `StdBlocks/ServiceBlock.pas:1580` — "Service SetPrice: <index>, <value>"; service 0 here. */
+export function servicePriceLineMatches(line: string, written: string): boolean {
+  return new RegExp(`${escapeRegExp(`Service SetPrice: 0, ${written}`)}(?=\\s|$)`).test(line);
+}
+
+/** `Kernel/WorkCenterBlock.pas:584` — "Setting salaries: <hi>, <mid>, <lo>". */
+export function salariesLineMatches(line: string, hi: string, mid: string, lo: string): boolean {
+  return new RegExp(`${escapeRegExp(`Setting salaries: ${hi}, ${mid}, ${lo}`)}(?=\\s|$)`).test(line);
+}
+
+const linkKey = (c: BuildingConnectionData): string => `${c.x},${c.y},${c.facilityName}`;
+const linkLabel = (c: BuildingConnectionData): string => `${c.facilityName} (${c.x},${c.y}) of ${c.companyName}`;
+
+/** The client links in one list and not the other, by identity (x, y, facility name). */
+export function clientLinksDiff(
+  before: BuildingConnectionData[],
+  after: BuildingConnectionData[],
+): { lost: string[]; gained: string[] } {
+  const afterKeys = new Set(after.map(linkKey));
+  const beforeKeys = new Set(before.map(linkKey));
+  return {
+    lost: before.filter(c => !afterKeys.has(linkKey(c))).map(linkLabel),
+    gained: after.filter(c => !beforeKeys.has(linkKey(c))).map(linkLabel),
+  };
+}
+
+/**
+ * Why a product gate's price must not be driven, or `null` when it may. A price change re-checks
+ * every client link (`TOutput.SetPricePerc`, Kernel/Kernel.pas:7193-7205) and
+ * `TGate.ConnectionChanged` drops any that no longer passes (:6664-6676, :6737-6750) — so the
+ * gate must have no client, or only clients of SPO_test3's own company, all of them read.
+ */
+export function outputPriceRefusal(product: BuildingProductData | undefined, ownCompany: string): string | null {
+  if (!product?.metaFluid || product.pricePc === undefined) return 'its header was not read';
+  if (product.connectionCount !== product.connections.length) {
+    return `${product.connectionCount ?? '?'} client(s) listed but ${product.connections.length} read (the row cap) — unread clients cannot be checked`;
+  }
+  const foreign = product.connections.filter(c => c.companyName !== ownCompany);
+  if (foreign.length > 0) return `client(s) of another company: ${foreign.map(linkLabel).join('; ')}`;
+  return null;
+}
+
+/**
+ * The `facStoppedByTycoon` bit ($04, Kernel/Kernel.pas:107) of the cached `Trouble`
+ * (Kernel/KernelCache.pas:417), as '1'/'0' — `undefined` when `Trouble` is absent or not a number.
+ */
+export function stoppedBit(trouble: string | undefined): string | undefined {
+  if (trouble === undefined || trouble.trim() === '') return undefined;
+  const parsed = Number(trouble);
+  if (!Number.isInteger(parsed)) return undefined;
+  return (parsed & 0x04) !== 0 ? '1' : '0';
+}
+
+const WORKER_KINDS = [0, 1, 2];
+
+/** What is wrong with a worker-count answer for kinds 0, 1 and 2, or `null`. */
+export function workerCountsProblem(counts: WorkerCount[]): string | null {
+  const problems: string[] = [];
+  for (const kind of WORKER_KINDS) {
+    const hit = counts.filter(c => c.kind === kind);
+    if (hit.length === 0) problems.push(`kind ${kind} missing`);
+    else if (!Number.isFinite(hit[0].workers)) problems.push(`kind ${kind} is not a number`);
+  }
+  const extra = counts.filter(c => !WORKER_KINDS.includes(c.kind)).map(c => c.kind);
+  if (extra.length > 0) problems.push(`unasked kind(s) ${extra.join(', ')}`);
+  return problems.length > 0 ? problems.join('; ') : null;
+}
+
+/** Every group id and property name of the opening read that the refresh does not carry. */
+export function refreshMissingKeys(
+  opening: { [groupId: string]: BuildingPropertyValue[] },
+  refreshed: { [groupId: string]: BuildingPropertyValue[] },
+): string[] {
+  const missing: string[] = [];
+  for (const [groupId, values] of Object.entries(opening)) {
+    const again = refreshed[groupId];
+    if (!again) {
+      missing.push(groupId);
+      continue;
+    }
+    const names = new Set(again.map(v => v.name));
+    for (const v of values) if (!names.has(v.name)) missing.push(`${groupId}.${v.name}`);
+  }
+  return missing;
+}
+
+/** One round trip's verdict, as an assertion naming the member. */
+function checkProbe(assertions: Assertions, probe: ProbeResult): void {
+  assertions.check(`${probe.member}: the write read back and was restored`, probe.status === 'PASS', probe.note);
+}
+
+async function survivalUrl(ctx: FlowContext): Promise<string> {
+  return ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+}
+
+/** The industry half of inspector-reads: one supply and one product gate, connections parsed. */
+async function readIndustryGates(session: LiveSession, fx: OwnFixture, assertions: Assertions): Promise<void> {
+  for (const tabId of ['supplies', 'products'] as const) {
+    const stubs = await gateStubs(session, fx, tabId);
+    assertions.check(`the industry fixture lists a ${tabId} gate`, stubs.length > 0, `${stubs.length} gate(s)`);
+    if (stubs.length === 0) continue;
+    const response = await gateConnections(session, fx, tabId, stubs[0]);
+    const gate = tabId === 'supplies' ? response.supply : response.product;
+    assertions.check(
+      `${tabId} gate "${stubs[0].name}": header and connections parsed`,
+      gate !== undefined &&
+        Boolean(gate.metaFluid) &&
+        typeof gate.connectionCount === 'number' &&
+        Array.isArray(gate.connections),
+      gate ? `metaFluid ${gate.metaFluid ?? '(none)'}, ${String(gate.connectionCount)} connection(s)` : 'no gate in the answer',
+    );
+  }
+}
+
+/** The store half of inspector-reads: service figures, worker counts, and a refresh. */
+async function readStoreFigures(session: LiveSession, fx: OwnFixture, assertions: Assertions): Promise<void> {
+  const opening = await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+
+  const figures = await session.driver.request<WsRespBuildingServiceFigures>(
+    { type: WsMessageType.REQ_BUILDING_SERVICE_FIGURES, x: fx.x, y: fx.y, serviceIndex: 0 },
+    WsMessageType.RESP_BUILDING_SERVICE_FIGURES,
+  );
+  assertions.check(
+    'service 0: supply and demand are present',
+    figures.supply !== '' && figures.demand !== '',
+    `supply "${figures.supply}", demand "${figures.demand}"`,
+  );
+
+  const workers = await session.driver.request<WsRespBuildingWorkerCounts>(
+    { type: WsMessageType.REQ_BUILDING_WORKER_COUNTS, x: fx.x, y: fx.y, kinds: WORKER_KINDS },
+    WsMessageType.RESP_BUILDING_WORKER_COUNTS,
+  );
+  const problem = workerCountsProblem(workers.counts);
+  assertions.check(
+    'worker counts: a number for each of kinds 0, 1 and 2',
+    problem === null,
+    problem ?? workers.counts.map(c => `${c.kind}=${c.workers}`).join(' '),
+  );
+
+  // "Same keys" is "every key the opening read carried comes back": a refresh without the tab
+  // scope reads the whole template (refreshBuildingProperties), so it may carry more.
+  const activeTabId = Object.keys(opening.groups)[0];
+  const refreshed = await session.driver.request<WsRespBuildingRefreshProperties>(
+    { type: WsMessageType.REQ_BUILDING_REFRESH_PROPERTIES, x: fx.x, y: fx.y, visualClass: fx.visualClass, activeTabId },
+    WsMessageType.RESP_BUILDING_REFRESH_PROPERTIES,
+  );
+  const missing = refreshMissingKeys(opening.groups, refreshed.details.groups);
+  assertions.check(
+    'refresh properties: every key of the opening read comes back',
+    missing.length === 0,
+    missing.length > 0 ? `missing: ${missing.join(' ')}` : `groups: ${Object.keys(refreshed.details.groups).join(' ')}`,
+  );
+}
+
+/**
+ * The inspector reads no other flow sends: gate connections (industry), service figures, worker
+ * counts and a property refresh (store). No write.
+ */
+const inspectorReads: Flow = {
+  name: 'inspector-reads',
+  what:
+    "SPO_test3's industry and store fixtures: gate connections (one supply, one product), service 0 " +
+    'figures, worker counts 0..2, refresh properties — no write',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const industry = await ownFixture(session, 'industry', assertions);
+      if (industry) await readIndustryGates(session, industry, assertions);
+      const store = await ownFixture(session, 'store', assertions);
+      if (store) await readStoreFigures(session, store, assertions);
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('inspector-reads', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+const NO_WORKFORCE_REASON =
+  "the store fixture's template carries no workforce group (WORKFORCE_GROUP) — FIXTURE_KINDS' store kind " +
+  'does not require it (#1149)';
+
+/**
+ * The store's owner settings: service 0's price (`TServiceBlock.RDOSetPrice`,
+ * StdBlocks/ServiceBlock.pas:1578) and the salary triplet (`TWorkCenter.RDOSetSalaries`,
+ * Kernel/WorkCenterBlock.pas:582). Both set back to the values read.
+ */
+const storePriceSalaries: Flow = {
+  name: 'store-price-salaries',
+  what:
+    "round trips on SPO_test3's store fixture: RDOSetPrice (service 0, an even value) and RDOSetSalaries " +
+    '(the whole triplet) — Survival line + read-back, restored',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'store', assertions);
+      if (!fx) return report('store-price-salaries', assertions, probes, session);
+      const url = await survivalUrl(ctx);
+      const details = await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+
+      const readPrice = async (): Promise<string | undefined> =>
+        propertyValue(await readSectionGroups(session, fx.x, fx.y, 'srvGeneral', fx.visualClass), 'srvGeneral', 'srvPrices0');
+      const price = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} service 0 price`,
+        member: 'RDOSetPrice',
+        read: readPrice,
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetPrice', value, { index: '0' });
+        },
+        testValue: evenPriceNudge,
+        proof: {
+          log: { marker: LOG_MARKERS.RDOSetPrice, match: servicePriceLineMatches },
+          readBack: readBackOn(
+            `srvGeneral.srvPrices0 at (${fx.x},${fx.y}) via the gateway's section read`,
+            `${FACILITY_CACHE_WHY}; the price is stored halved and published doubled (StdBlocks/ServiceBlock.pas:1585, :1731)`,
+            readPrice,
+            servicePriceQuantised,
+          ),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetPrice', additionalParams: { index: '0' } },
+      });
+      probes.push(price);
+      checkProbe(assertions, price);
+
+      if (!details.tabs.some(t => t.id === 'workforce')) {
+        assertions.unproven('RDOSetSalaries', NO_WORKFORCE_REASON);
+        return report('store-price-salaries', assertions, probes, session);
+      }
+
+      const readSalaries = async (): Promise<string | undefined> => {
+        const groups = await readSectionGroups(session, fx.x, fx.y, 'workforce', fx.visualClass);
+        const values = WORKER_KINDS.map(i => propertyValue(groups, 'workforce', `Salaries${i}`));
+        return values.some(v => v === undefined) ? undefined : values.join(',');
+      };
+      const salaries = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} salaries (hi,mid,lo)`,
+        member: 'RDOSetSalaries',
+        read: readSalaries,
+        write: async value => {
+          const [salary0, salary1, salary2] = value.split(',');
+          // The whole triplet, the untouched two unchanged — buildRdoCommandArgs requires all three.
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetSalaries', salary0, { salary0, salary1, salary2 });
+        },
+        testValue: original => {
+          const [hi, mid, lo] = original.split(',');
+          return [nudgeWithin(hi, 0, 255), mid, lo].join(',');
+        },
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDOSetSalaries,
+            match: (line, written) => {
+              const [hi, mid, lo] = written.split(',');
+              return salariesLineMatches(line, hi, mid, lo);
+            },
+          },
+          readBack: readBackOn(
+            `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read`,
+            `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593)`,
+            readSalaries,
+          ),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetSalaries' },
+      });
+      probes.push(salaries);
+      checkProbe(assertions, salaries);
+      return report('store-price-salaries', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * A product gate's price (`TFacility.RDOSetOutputPrice`, Kernel/Kernel.pas:4332), driven only on
+ * a gate whose clients are all SPO_test3's own — a price change can drop another player's link
+ * (`outputPriceRefusal`). The client list after the restore must equal its snapshot.
+ */
+const industryOutputPrice: Flow = {
+  name: 'industry-output-price',
+  what:
+    "round trip on RDOSetOutputPrice at SPO_test3's industry fixture, on a product gate with no foreign " +
+    'client — Survival line + read-back, restored, client links unchanged',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('industry-output-price', assertions, probes, session);
+
+      const refusals: string[] = [];
+      let chosen: { name: string; product: BuildingProductData; fluid: string } | undefined;
+      for (const stub of await gateStubs(session, fx, 'products')) {
+        const product = (await gateConnections(session, fx, 'products', stub)).product;
+        const refusal = outputPriceRefusal(product, session.company.name);
+        if (refusal === null && product?.metaFluid) {
+          chosen = { name: stub.name, product, fluid: product.metaFluid };
+          break;
+        }
+        refusals.push(`${stub.name}: ${refusal ?? 'no fluid'}`);
+      }
+      if (!chosen) {
+        assertions.unproven(
+          'RDOSetOutputPrice',
+          `no product gate is safe to drive — a price change re-checks every client link and drops a failing ` +
+            `one (Kernel/Kernel.pas:7193-7205): ${refusals.length > 0 ? refusals.join(' | ') : 'the fixture lists no product gate'}`,
+        );
+        return report('industry-output-price', assertions, probes, session);
+      }
+
+      const { name, product, fluid } = chosen;
+      const snapshot = product.connections;
+      const readPrice = async (): Promise<string | undefined> => (await readProduct(session, fx, name))?.pricePc;
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ${name} output price`,
+        member: 'RDOSetOutputPrice',
+        read: readPrice,
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetOutputPrice', value, { fluidId: fluid });
+        },
+        testValue: original => nudgeWithin(original, 0, 400),
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDOSetOutputPrice,
+            match: (line, written) => facLineMatches(line, fx.x, fx.y, `Output price set: ${fluid} to ${written}`),
+          },
+          readBack: readBackOn(`the ${name} product gate's PricePc via REQ_BUILDING_GATE_CONNECTIONS`, GATE_CACHE_WHY, readPrice),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetOutputPrice', additionalParams: { fluidId: fluid } },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+
+      const after = await readProduct(session, fx, name);
+      const diff = clientLinksDiff(snapshot, after?.connections ?? []);
+      const kept = diff.lost.length === 0 && diff.gained.length === 0 && after?.connectionCount === product.connectionCount;
+      assertions.check(
+        `the ${name} gate's client links equal their snapshot after the restore`,
+        kept,
+        kept
+          ? `${snapshot.length} client link(s)`
+          : `lost: ${diff.lost.join('; ') || '(none)'} — gained: ${diff.gained.join('; ') || '(none)'} — ` +
+              `count ${String(product.connectionCount)} -> ${String(after?.connectionCount)}`,
+      );
+      return report('industry-output-price', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * A supply gate's limits: max price, min quality, sort mode and one supplier's overprice
+ * (`TFacility.RDOSetInput*`, Kernel/Kernel.pas:4358-4442). Nightly only (routing.ts). A member the
+ * gate cannot carry is recorded unproven by name; the others still run.
+ */
+const industrySupplyLimits: Flow = {
+  name: 'industry-supply-limits',
+  what:
+    "round trips on RDOSetInputMaxPrice / MinK / SortMode / OverPrice at SPO_test3's industry fixture — " +
+    'Survival line + read-back each, restored',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('industry-supply-limits', assertions, probes, session);
+
+      let gate: { name: string; supply: BuildingSupplyData; fluid: string } | undefined;
+      for (const stub of await gateStubs(session, fx, 'supplies')) {
+        const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
+        if (supply?.metaFluid && supply.maxPrice !== undefined) {
+          gate = { name: stub.name, supply, fluid: supply.metaFluid };
+          break;
+        }
+      }
+      if (!gate) {
+        assertions.unproven(
+          'the supply limits',
+          'no supply gate of the industry fixture publishes MaxPrice — only a TPullInput caches it (Kernel/Kernel.pas:7813)',
+        );
+        return report('industry-supply-limits', assertions, probes, session);
+      }
+
+      const { name, supply, fluid } = gate;
+      const url = await survivalUrl(ctx);
+      const fresh = (): Promise<BuildingSupplyData | undefined> => readSupply(session, fx, name);
+      const source = (field: string): string => `the ${name} supply gate's ${field} via REQ_BUILDING_GATE_CONNECTIONS`;
+      const facMatch = (text: string) => (line: string, written: string): boolean =>
+        facLineMatches(line, fx.x, fx.y, `${text}: ${fluid} to ${written}`);
+      const writeGate = (member: string) => async (value: string): Promise<void> => {
+        await setBuildingProperty(session, fx.x, fx.y, member, value, { fluidId: fluid });
+      };
+
+      const readMaxPrice = async (): Promise<string | undefined> => (await fresh())?.maxPrice;
+      const maxPrice = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ${name} input max price`,
+        member: 'RDOSetInputMaxPrice',
+        read: readMaxPrice,
+        write: writeGate('RDOSetInputMaxPrice'),
+        testValue: original => nudgeWithin(original, 0, 400),
+        proof: {
+          log: { marker: LOG_MARKERS.RDOSetInputMaxPrice, match: facMatch('Input max price set') },
+          readBack: readBackOn(source('MaxPrice'), GATE_CACHE_WHY, readMaxPrice),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputMaxPrice', additionalParams: { fluidId: fluid } },
+      });
+      probes.push(maxPrice);
+      checkProbe(assertions, maxPrice);
+
+      const readMinK = async (): Promise<string | undefined> => (await fresh())?.minK;
+      const minK = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ${name} input min K`,
+        member: 'RDOSetInputMinK',
+        read: readMinK,
+        write: writeGate('RDOSetInputMinK'),
+        testValue: original => nudgeWithin(original, 0, 100),
+        proof: {
+          log: { marker: LOG_MARKERS.RDOSetInputMinK, match: facMatch('Input min K set') },
+          readBack: readBackOn(source('minK'), GATE_CACHE_WHY, readMinK),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputMinK', additionalParams: { fluidId: fluid } },
+      });
+      probes.push(minK);
+      checkProbe(assertions, minK);
+
+      // The control is offered only on a gate that publishes QPSorted = 1 and a SortMode (SuppliesGroup.tsx).
+      if (supply.qpSorted === '1' && supply.sortMode !== undefined) {
+        const readSortMode = async (): Promise<string | undefined> => (await fresh())?.sortMode;
+        const sortMode = await roundTripProbe(ctx, url, {
+          what: `${fixtureLabel(fx)} ${name} input sort mode`,
+          member: 'RDOSetInputSortMode',
+          read: readSortMode,
+          write: writeGate('RDOSetInputSortMode'),
+          testValue: original => (original === '1' ? '0' : '1'),
+          // The line carries no coordinates and no value (Kernel/Kernel.pas:4446): the read-back attributes it.
+          proof: {
+            log: { marker: LOG_MARKERS.RDOSetInputSortMode },
+            readBack: readBackOn(source('SortMode'), GATE_CACHE_WHY, readSortMode),
+          },
+          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputSortMode', additionalParams: { fluidId: fluid } },
+        });
+        probes.push(sortMode);
+        checkProbe(assertions, sortMode);
+      } else {
+        assertions.unproven(
+          'RDOSetInputSortMode',
+          `the ${fluid} gate publishes no sort mode — only TMediaInput caches QPSorted/SortMode ` +
+            "(Kernel/MediaGates.pas:388-389); a plain input's SetSortMode is empty (Kernel/Kernel.pas:7169-7171), " +
+            'so no sort control is offered and a write would change nothing',
+        );
+      }
+
+      const supplier = supply.connections[0];
+      if (supplier) {
+        // The supplier is identified by its lot, never by its row: a row can shift between reads.
+        const same = (c: BuildingConnectionData): boolean => c.x === supplier.x && c.y === supplier.y;
+        const readOverprice = async (): Promise<string | undefined> =>
+          (await fresh())?.connections.find(same)?.overprice;
+        const writeOverprice = async (value: string): Promise<void> => {
+          const index = (await fresh())?.connections.findIndex(same) ?? -1;
+          if (index < 0) throw new Error(`supplier (${supplier.x},${supplier.y}) is no longer on the ${fluid} gate`);
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetInputOverPrice', value, {
+            fluidId: fluid,
+            index: String(index),
+          });
+        };
+        const overprice = await roundTripProbe(ctx, url, {
+          what: `${fixtureLabel(fx)} ${name} overprice of ${supplier.facilityName} (${supplier.x},${supplier.y})`,
+          member: 'RDOSetInputOverPrice',
+          read: readOverprice,
+          write: writeOverprice,
+          testValue: original => nudgeWithin(original, 0, 150),
+          proof: {
+            log: { marker: LOG_MARKERS.RDOSetInputOverPrice, match: facMatch('Input overprice set') },
+            // The gateway's own confirmed read is always empty for it (mapRdoCommandToPropertyName).
+            readBack: readBackOn(source(`supplier row overprice (BuildingConnectionData.overprice)`), GATE_CACHE_WHY, readOverprice),
+          },
+          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputOverPrice', additionalParams: { fluidId: fluid } },
+        });
+        probes.push(overprice);
+        checkProbe(assertions, overprice);
+      } else {
+        assertions.unproven(
+          'RDOSetInputOverPrice',
+          `the ${fluid} gate has no supplier row — the overprice is set per supplier, and a fixture built fresh has none (#1149)`,
+        );
+      }
+      return report('industry-supply-limits', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * Stop and restart the store (`TFacility.SetStopped`, Kernel/Kernel.pas:3948). `Stopped` is
+ * set-only; the read-back is the `facStoppedByTycoon` bit of the cached `Trouble` (`stoppedBit`).
+ */
+const facilityOpenClose: Flow = {
+  name: 'facility-open-close',
+  what:
+    "round trip on Stopped at SPO_test3's store fixture — the Stopping Facility. line + the Trouble " +
+    'facStoppedByTycoon bit read back, restored',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'store', assertions);
+      if (!fx) return report('facility-open-close', assertions, probes, session);
+      const url = await survivalUrl(ctx);
+      const readStopped = async (): Promise<string | undefined> =>
+        stoppedBit(
+          propertyValue(await readSectionGroups(session, fx.x, fx.y, 'srvGeneral', fx.visualClass), 'srvGeneral', 'Trouble'),
+        );
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} stopped by its owner`,
+        member: 'Stopped',
+        read: readStopped,
+        write: async bit => {
+          // A boolean property travels as #-1 / #0.
+          await setBuildingProperty(session, fx.x, fx.y, 'property', bit === '1' ? '-1' : '0', { propertyName: 'Stopped' });
+        },
+        testValue: original => (original === '1' ? '0' : '1'),
+        // The line carries no coordinates (Kernel/Kernel.pas:3950): the read-back attributes it.
+        proof: {
+          log: { marker: LOG_MARKERS.Stopped },
+          readBack: readBackOn(
+            `the facStoppedByTycoon bit ($04, Kernel/Kernel.pas:107) of srvGeneral.Trouble at (${fx.x},${fx.y})`,
+            `Stopped is set-only; Trouble is what the facility caches (Kernel/KernelCache.pas:417). ${FACILITY_CACHE_WHY}`,
+            readStopped,
+          ),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'Stopped' },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+      return report('facility-open-close', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * A supply gate's auto-buy flag (`RDOSelSelected`, declared on the input gate). It prints no
+ * Survival line, so the read-back alone proves it: `Selected` off the gate header
+ * (Kernel/Kernel.pas:7815).
+ */
+const industryAutoBuy: Flow = {
+  name: 'industry-auto-buy',
+  what: "toggle RDOSelSelected on a supply gate of SPO_test3's industry fixture — read-back, toggled back",
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('industry-auto-buy', assertions, probes, session);
+
+      let gate: { name: string; fluid: string } | undefined;
+      for (const stub of await gateStubs(session, fx, 'supplies')) {
+        const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
+        if (supply?.metaFluid && supply.selected !== undefined) {
+          gate = { name: stub.name, fluid: supply.metaFluid };
+          break;
+        }
+      }
+      if (!gate) {
+        assertions.unproven(
+          'RDOSelSelected',
+          'no supply gate of the industry fixture publishes Selected — only a TPullInput caches it (Kernel/Kernel.pas:7815)',
+        );
+        return report('industry-auto-buy', assertions, probes, session);
+      }
+
+      const { name, fluid } = gate;
+      const url = await survivalUrl(ctx);
+      const readSelected = async (): Promise<string | undefined> => (await readSupply(session, fx, name))?.selected;
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ${name} auto-buy`,
+        member: 'RDOSelSelected',
+        read: readSelected,
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSelSelected', value, { fluidId: fluid });
+        },
+        testValue: original => (original === '1' ? '0' : '1'),
+        proof: {
+          readBack: readBackOn(
+            `the ${name} supply gate's Selected via REQ_BUILDING_GATE_CONNECTIONS`,
+            `RDOSelSelected prints no Survival line; ${GATE_CACHE_WHY}`,
+            readSelected,
+          ),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSelSelected', additionalParams: { fluidId: fluid } },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+      return report('industry-auto-buy', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
+// Inspector flows (#1153) — suppliers, clients, Connect on the map, Quick Trade, trade settings,
+// warehouse wares, company input demand
+// ---------------------------------------------------------------------------------------------
+//
+// Every counterpart is SPO_test3's own: a link is written on both gates (`TGate.ConnectTo`,
+// Kernel/Kernel.pas:6784-6785), so hiring anyone else would write their facility
+// (doc/E2E-POLICY.md §9). A Survival line proves receipt only; the read-back decides.
+
+/** How many search results the reachability read asks about — below REACHABILITY_BATCH_SIZE (10), so one push. */
+const REACHABILITY_CANDIDATES = 5;
+
+/** A gate's links as sorted, de-duplicated `x,y` keys joined by a space — its identity for a snapshot. */
+export function linkSet(connections: BuildingConnectionData[]): string {
+  return [...new Set(connections.map(c => `${c.x},${c.y}`))].sort().join(' ');
+}
+
+/** `set` with `key` added, in `linkSet` form. */
+function withLink(set: string, key: string): string {
+  return [...new Set([...set.split(' ').filter(Boolean), key])].sort().join(' ');
+}
+
+/** `ParseGateList` (Kernel/Kernel.pas:4277) reads `x1,y1,x2,y2,` — a trailing comma after each pair. */
+function connectionList(keys: string[]): string {
+  return keys.map(k => `${k},`).join('');
+}
+
+/**
+ * The search results a hire may pick: SPO_test3's own company, in Helartia (or no town given),
+ * not already connected to the gate, and not the fixture itself.
+ */
+export function hireCandidates(
+  results: ConnectionSearchResult[],
+  connected: BuildingConnectionData[],
+  ownCompany: string,
+  fx: { x: number; y: number },
+): ConnectionSearchResult[] {
+  const linked = new Set(connected.map(c => `${c.x},${c.y}`));
+  return results.filter(
+    r =>
+      r.companyName === ownCompany &&
+      (!r.town || r.town === GOVERNED_TOWN) &&
+      !linked.has(`${r.x},${r.y}`) &&
+      !(r.x === fx.x && r.y === fx.y),
+  );
+}
+
+/** Every gate of a facility, keyed `supplies:<name>` / `products:<name>`. */
+export type GateLinks = Record<string, { fluid: string; keys: string[]; complete: boolean }>;
+
+/**
+ * `'snapshot'` when every gate equals its snapshot, `'new-links'` when nothing was lost and at
+ * least one link was gained, otherwise the lost links by gate.
+ */
+export function linkState(snapshot: GateLinks, now: GateLinks): string {
+  const lost: string[] = [];
+  for (const [gate, before] of Object.entries(snapshot)) {
+    const after = new Set(now[gate]?.keys ?? []);
+    const missing = before.keys.filter(k => !after.has(k));
+    if (missing.length > 0) lost.push(`lost ${gate}: ${missing.join(' ')}`);
+  }
+  if (lost.length > 0) return lost.join('; ');
+  return gainedLinks(snapshot, now).length > 0 ? 'new-links' : 'snapshot';
+}
+
+/** The links each gate shows that its snapshot did not. */
+export function gainedLinks(
+  snapshot: GateLinks,
+  now: GateLinks,
+): { gate: string; tab: 'supplies' | 'products'; fluid: string; keys: string[] }[] {
+  const out: { gate: string; tab: 'supplies' | 'products'; fluid: string; keys: string[] }[] = [];
+  for (const [gate, after] of Object.entries(now)) {
+    const before = new Set(snapshot[gate]?.keys ?? []);
+    const keys = after.keys.filter(k => !before.has(k));
+    if (keys.length > 0) out.push({ gate, tab: gate.startsWith('supplies:') ? 'supplies' : 'products', fluid: after.fluid, keys });
+  }
+  return out;
+}
+
+/** Several facilities' `linkState`s as one: any loss wins, then any gain. */
+function combinedState(states: string[]): string {
+  const lost = states.filter(s => s !== 'snapshot' && s !== 'new-links');
+  if (lost.length > 0) return lost.join('; ');
+  return states.includes('new-links') ? 'new-links' : 'snapshot';
+}
+
+/** The first `RDOSetRole` argument the client offers that differs from the original (TRADE_MODE_VALUES). */
+export function tradeRoleNudge(original: string): string {
+  const current = parseInt(original, 10);
+  return String(TRADE_MODE_VALUES.find(v => v !== current) ?? TRADE_MODE_VALUES[0]);
+}
+
+/** Another trade level the client offers (TRADE_LEVEL_VALUES): 3 (Anyone) <-> 2 (Allies only). */
+export function tradeLevelNudge(original: string): string {
+  return original === '3' ? '2' : '3';
+}
+
+/** A value the trade-level combo can send back (TRADE_LEVEL_VALUES, trade-settings.ts). */
+function isTradeLevelValue(raw: string | undefined): boolean {
+  return raw !== undefined && /^\d+$/.test(raw.trim()) && TRADE_LEVEL_VALUES.includes(Number(raw));
+}
+
+/**
+ * The class is an Import or Export Storage: `FID_MegaWarehouseImp` / `FID_MegaWarehouseExp`
+ * (Model Extensions/FacIds.pas:109-110), both `TMegaStorage` (General/GeneralPack1.dpr:711-715,
+ * :746-750) — the only block publishing `RDOSelectWare` (StdBlocks/MegaWarehouse.pas:25).
+ */
+export function isMegaStorage(dims: Record<string, FacilityDimensions>, visualClass: string): boolean {
+  const facId = dims[visualClass]?.facId;
+  return facId === 125 || facId === 126;
+}
+
+/** The demand as the slider shows it: `round(100 * cInputDem / cInputMax)`. */
+export function companyDemandPercent(dem: number, max: number): number {
+  return Math.round((100 * dem) / max);
+}
+
+/** The percent to write: 20 points toward the middle. */
+export function companyDemandTarget(p0: number): number {
+  return p0 >= 50 ? p0 - 20 : p0 + 20;
+}
+
+/** The units a percent reads back as: `cInputDem = ceil(units(Max))` (Kernel/Kernel.pas:5878). */
+export function companyDemandUnits(p: number, max: number): number {
+  return Math.ceil((p * max) / 100);
+}
+
+/** (x, y) is one of the tycoon's initial suppliers — `facilityId` is `"x,y,"` (auto-connection-handler.ts). */
+export function initialSupplierAt(data: AutoConnectionsData, x: number, y: number): boolean {
+  return data.fluids.some(f =>
+    f.suppliers.some(s => {
+      const [sx, sy] = s.facilityId.split(',');
+      return Number(sx) === x && Number(sy) === y;
+    }),
+  );
+}
+
+/** The initial-supplier list's identity: sorted `fluidId:facilityId` entries. */
+export function initialSuppliersKey(data: AutoConnectionsData): string {
+  return data.fluids
+    .flatMap(f => f.suppliers.map(s => `${f.fluidId}:${s.facilityId}`))
+    .sort()
+    .join(' ');
+}
+
+/**
+ * A set-property the gateway waits on: `RDOConnectInput` / `RDOConnectOutput` are synchronous
+ * (`SYNCHRONOUS_RDO_COMMANDS`, building-property-handler.ts, 5–30 s by its own comment), past
+ * the default request bound.
+ */
+async function setPropertySlow(
+  session: LiveSession,
+  fx: OwnFixture,
+  propertyName: string,
+  additionalParams: Record<string, string>,
+): Promise<void> {
+  await session.driver.request<WsRespBuildingSetProperty>(
+    { type: WsMessageType.REQ_BUILDING_SET_PROPERTY, x: fx.x, y: fx.y, propertyName, value: '0', additionalParams },
+    WsMessageType.RESP_BUILDING_SET_PROPERTY,
+    TIMEOUTS.login,
+  );
+}
+
+/** A connection search the way the hire dialogs send it, restricted to Helartia and SPO_test3's own company. */
+async function searchOwn(
+  session: LiveSession,
+  fx: OwnFixture,
+  fluidId: string,
+  direction: 'input' | 'output',
+): Promise<WsRespSearchConnections> {
+  return session.driver.request<WsRespSearchConnections>(
+    {
+      type: WsMessageType.REQ_SEARCH_CONNECTIONS,
+      buildingX: fx.x,
+      buildingY: fx.y,
+      fluidId,
+      direction,
+      filters: { town: GOVERNED_TOWN, company: session.company.name },
+    },
+    WsMessageType.RESP_SEARCH_CONNECTIONS,
+  );
+}
+
+/** Every listed gate of the given tabs, read fresh. A gate that answers nothing is incomplete. */
+async function readGateLinks(
+  session: LiveSession,
+  fx: OwnFixture,
+  tabs: readonly ('supplies' | 'products')[],
+): Promise<GateLinks> {
+  const out: GateLinks = {};
+  for (const tabId of tabs) {
+    for (const stub of await gateStubs(session, fx, tabId)) {
+      const response = await gateConnections(session, fx, tabId, stub);
+      const gate = tabId === 'supplies' ? response.supply : response.product;
+      out[`${tabId}:${stub.name}`] = gate
+        ? {
+            fluid: gate.metaFluid ?? '',
+            keys: linkSet(gate.connections).split(' ').filter(Boolean),
+            complete: gate.connectionCount === gate.connections.length,
+          }
+        : { fluid: '', keys: [], complete: false };
+    }
+  }
+  return out;
+}
+
+const BOTH_TABS = ['supplies', 'products'] as const;
+const LINK_WHY = `${GATE_CACHE_WHY}; a link is written on both gates (Kernel/Kernel.pas:6784-6785)`;
+const FOREIGN_WHY = 'hiring anyone else writes their gate (Kernel/Kernel.pas:6784-6785, E2E-POLICY §9)';
+
+/**
+ * The connection searches the hire dialogs send, read only: one input fluid of the industry
+ * fixture, Helartia and SPO_test3's own company, then the road reachability of the first results.
+ */
+const supplierSearchRead: Flow = {
+  name: 'supplier-search-read',
+  what:
+    "REQ_SEARCH_CONNECTIONS for one input fluid of SPO_test3's industry fixture (Helartia, own company) -> " +
+    'REQ_CONNECTION_REACHABILITY for the first candidates — no write',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('supplier-search-read', assertions, [], session);
+      let fluid: string | undefined;
+      for (const stub of await gateStubs(session, fx, 'supplies')) {
+        const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
+        if (supply?.metaFluid) {
+          fluid = supply.metaFluid;
+          break;
+        }
+      }
+      assertions.check('the industry fixture lists a supply gate with a fluid', fluid !== undefined, fluid ?? 'none');
+      if (fluid !== undefined) {
+        const search = await searchOwn(session, fx, fluid, 'input');
+        const results = Array.isArray(search.results) ? search.results : undefined;
+        // An empty list is an answer: SPO_test3 may own no supplier of that fluid in Helartia.
+        assertions.check(
+          `REQ_SEARCH_CONNECTIONS answered a candidate list for ${fluid}`,
+          results !== undefined,
+          results ? `${results.length} candidate(s)` : 'no results array',
+        );
+        const batch = (results ?? []).slice(0, REACHABILITY_CANDIDATES);
+        if (batch.length === 0) {
+          // The gateway pushes nothing for an empty list (resolveConnectionReachability): a request
+          // sent here would wait for an answer that never comes.
+          const sent = session.driver.log.some(
+            e => e.direction === 'sent' && e.type === WsMessageType.REQ_CONNECTION_REACHABILITY,
+          );
+          assertions.check('REQ_CONNECTION_REACHABILITY', !sent, sent ? 'sent for an empty list' : 'not sent: no candidate');
+        } else {
+          const answer = await session.driver.request<WsRespConnectionReachability>(
+            {
+              type: WsMessageType.REQ_CONNECTION_REACHABILITY,
+              buildingX: fx.x,
+              buildingY: fx.y,
+              fluidId: fluid,
+              direction: 'input',
+              candidates: batch.map(r => ({ x: r.x, y: r.y })),
+            },
+            WsMessageType.RESP_CONNECTION_REACHABILITY,
+          );
+          const entries = answer.entries ?? [];
+          const missing = batch.filter(
+            r =>
+              !entries.some(
+                e => e.x === r.x && e.y === r.y && ['connected', 'isolated', 'unknown'].includes(e.reachability),
+              ),
+          );
+          assertions.check(
+            'REQ_CONNECTION_REACHABILITY answered each candidate',
+            missing.length === 0,
+            missing.length === 0
+              ? entries.map(e => `(${e.x},${e.y}) ${e.reachability}`).join(' ')
+              : `no answer for ${missing.map(r => `(${r.x},${r.y})`).join(' ')}`,
+          );
+        }
+      }
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('supplier-search-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** One side of a hire: a supplier on an input gate, or a client on an output gate. */
+interface HireSide {
+  flow: string;
+  tab: 'supplies' | 'products';
+  direction: 'input' | 'output';
+  connect: 'RDOConnectInput' | 'RDOConnectOutput';
+  disconnect: 'RDODisconnectInput' | 'RDODisconnectOutput';
+  role: string;
+  /** `Kernel/Kernel.pas:4304` / `:4311` */
+  connected: string;
+  /** `Kernel/Kernel.pas:4320` / `:4327` */
+  disconnected: string;
+}
+
+/**
+ * Hire one own counterpart on a gate of the industry fixture, then fire it. The candidate is
+ * SPO_test3's own facility in Helartia and not already connected; the gate must list exactly its
+ * snapshot again after the undo.
+ */
+async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
+  const assertions = new Assertions();
+  const probes: ProbeResult[] = [];
+  const session = await login(PRIMARY_ACCOUNT);
+  try {
+    const fx = await ownFixture(session, 'industry', assertions);
+    if (!fx) return report(side.flow, assertions, probes, session);
+
+    const refusals: string[] = [];
+    let target: { name: string; fluid: string; candidate: ConnectionSearchResult } | undefined;
+    for (const stub of await gateStubs(session, fx, side.tab)) {
+      const response = await gateConnections(session, fx, side.tab, stub);
+      const gate = side.tab === 'supplies' ? response.supply : response.product;
+      if (!gate?.metaFluid) {
+        refusals.push(`${stub.name}: its header was not read`);
+        continue;
+      }
+      if (gate.connectionCount !== gate.connections.length) {
+        refusals.push(
+          `${stub.name}: ${String(gate.connectionCount)} link(s) listed but ${gate.connections.length} read — ` +
+            'an unread link cannot be told from a candidate',
+        );
+        continue;
+      }
+      const search = await searchOwn(session, fx, gate.metaFluid, side.direction);
+      const results = search.results ?? [];
+      const candidates = hireCandidates(results, gate.connections, session.company.name, fx);
+      if (candidates.length === 0) {
+        refusals.push(`${stub.name}: no own ${side.role} in ${GOVERNED_TOWN} not already connected (${results.length} result(s))`);
+        continue;
+      }
+      for (const candidate of candidates) {
+        const refusal = await ownLotRefusal(session, candidate.x, candidate.y);
+        if (refusal === null) {
+          target = { name: stub.name, fluid: gate.metaFluid, candidate };
+          break;
+        }
+        refusals.push(`${stub.name}: ${candidate.facilityName} (${candidate.x},${candidate.y}) — ${refusal}`);
+      }
+      if (target) break;
+    }
+    if (!target) {
+      assertions.unproven(
+        side.connect,
+        `no ${side.role} of SPO_test3's own company in ${GOVERNED_TOWN} for any ${side.tab} gate of the industry ` +
+          `fixture — ${FOREIGN_WHY}: ${refusals.length > 0 ? refusals.join(' | ') : `the fixture lists no ${side.tab} gate`}`,
+      );
+      return report(side.flow, assertions, probes, session);
+    }
+
+    const { name, fluid, candidate } = target;
+    const key = `${candidate.x},${candidate.y}`;
+    const list = connectionList([key]);
+    const read = async (): Promise<string | undefined> => {
+      const gate = side.tab === 'supplies' ? await readSupply(session, fx, name) : await readProduct(session, fx, name);
+      return gate ? linkSet(gate.connections) : undefined;
+    };
+    const url = await survivalUrl(ctx);
+    const undoWindow = await openLogWindow(url);
+    const probe = await roundTripProbe(ctx, url, {
+      what: `${fixtureLabel(fx)} ${name}: ${side.role} ${candidate.facilityName} (${key})`,
+      member: side.connect,
+      read,
+      testValue: original => withLink(original, key),
+      write: async () => {
+        await setPropertySlow(session, fx, side.connect, { fluidId: fluid, connectionList: list });
+      },
+      restore: async () => {
+        await setBuildingProperty(session, fx.x, fx.y, side.disconnect, '0', { fluidId: fluid, connectionList: list });
+      },
+      proof: {
+        log: {
+          marker: LOG_MARKERS[side.connect],
+          match: line => facLineMatches(line, fx.x, fx.y, `${side.connected} ${fluid} to ${list}`),
+        },
+        readBack: readBackOn(
+          `the ${name} ${side.tab} gate's links (x,y) via REQ_BUILDING_GATE_CONNECTIONS`,
+          LINK_WHY,
+          tolerantRead(read),
+        ),
+      },
+      restoreRecord: {
+        x: fx.x,
+        y: fx.y,
+        propertyName: side.disconnect,
+        additionalParams: { fluidId: fluid, connectionList: list },
+      },
+    });
+    probes.push(probe);
+    assertions.check(
+      `${side.connect}: the gate listed the ${side.role}, and exactly its snapshot again after ${side.disconnect}`,
+      probe.status === 'PASS',
+      probe.note,
+    );
+    // `written` is empty only when the round trip never reached its write (probeFailure);
+    // `original` is legitimately empty — a gate with no link.
+    if (probe.written !== '') {
+      const marker = LOG_MARKERS[side.disconnect];
+      const undoLine = await awaitMarker(
+        undoWindow,
+        {
+          marker,
+          match: line => line.includes(marker) && facLineMatches(line, fx.x, fx.y, `${side.disconnected} ${fluid} from ${list}`),
+        },
+        TIMEOUTS.logSettle,
+      );
+      assertions.check(
+        `the undo reached the model server (${marker} line)`,
+        undoLine !== null,
+        undoLine ?? `no "${marker}" line for Fac(${fx.x},${fx.y}) ${fluid} from ${list}`,
+      );
+    }
+    return report(side.flow, assertions, probes, session);
+  } finally {
+    await logoff(session);
+  }
+}
+
+/** Hire an own supplier on an input gate of the industry fixture, then fire it. NIGHTLY_ONLY (routing.ts). */
+const supplierHireFire: Flow = {
+  name: 'supplier-hire-fire',
+  what:
+    "hire an own supplier (Helartia, SPO_test3's company) on an input of the industry fixture -> Input connected: " +
+    'line + the gate lists it -> fire it -> the gate lists exactly its snapshot',
+  mutates: true,
+  run: ctx =>
+    runHire(
+      {
+        flow: 'supplier-hire-fire',
+        tab: 'supplies',
+        direction: 'input',
+        connect: 'RDOConnectInput',
+        disconnect: 'RDODisconnectInput',
+        role: 'supplier',
+        connected: 'Input connected:',
+        disconnected: 'Input disconnect:',
+      },
+      ctx,
+    ),
+};
+
+/** Add an own client on an output gate of the industry fixture, then remove it. NIGHTLY_ONLY (routing.ts). */
+const clientHireRemove: Flow = {
+  name: 'client-hire-remove',
+  what:
+    "add an own client (Helartia, SPO_test3's company) on an output of the industry fixture -> Output connected: " +
+    'line + the gate lists it -> remove it -> the gate lists exactly its snapshot',
+  mutates: true,
+  run: ctx =>
+    runHire(
+      {
+        flow: 'client-hire-remove',
+        tab: 'products',
+        direction: 'output',
+        connect: 'RDOConnectOutput',
+        disconnect: 'RDODisconnectOutput',
+        role: 'client',
+        connected: 'Output connected:',
+        disconnected: 'Output disconnect:',
+      },
+      ctx,
+    ),
+};
+
+/** The fluids of `from`'s tab that `to` carries on the opposite tab. */
+function sharedFluids(from: GateLinks, to: GateLinks): string[] {
+  const opposite = (gate: string): string => (gate.startsWith('supplies:') ? 'products:' : 'supplies:');
+  const shared = new Set<string>();
+  for (const [gate, g] of Object.entries(from)) {
+    if (!g.fluid) continue;
+    const prefix = opposite(gate);
+    if (Object.entries(to).some(([other, o]) => other.startsWith(prefix) && o.fluid === g.fluid)) shared.add(g.fluid);
+  }
+  return [...shared];
+}
+
+/**
+ * Connect on the map (`TWorld.RDOConnectFacilities`, Kernel/World.pas:3710-3726): the industry and
+ * warehouse fixtures, both SPO_test3's own. It hires every matching fluid in both directions
+ * (Kernel/Kernel.pas:5470-5513), so every gate of both facilities is snapshotted and every new
+ * link is undone. NIGHTLY_ONLY (routing.ts).
+ */
+const connectOnMap: Flow = {
+  name: 'connect-on-map',
+  what:
+    'REQ_CONNECT_FACILITIES between the industry and warehouse fixtures -> a new link read back -> every new link ' +
+    'disconnected -> both facilities\' inputs and outputs equal their snapshot',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const industry = await ownFixture(session, 'industry', assertions);
+      const warehouse = industry ? await ownFixture(session, 'warehouse', assertions) : undefined;
+      if (!industry || !warehouse) return report('connect-on-map', assertions, probes, session);
+
+      const snapIndustry = await readGateLinks(session, industry, BOTH_TABS);
+      const snapWarehouse = await readGateLinks(session, warehouse, BOTH_TABS);
+      const incomplete = [
+        ...Object.entries(snapIndustry).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(industry)} ${gate}`),
+        ...Object.entries(snapWarehouse).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(warehouse)} ${gate}`),
+      ];
+      if (incomplete.length > 0) {
+        assertions.unproven(
+          'ConnectFacilities',
+          `gate(s) whose links were not all read — the undo could not tell a new link from an unread one: ${incomplete.join(' | ')}`,
+        );
+        return report('connect-on-map', assertions, probes, session);
+      }
+      const shared = sharedFluids(snapIndustry, snapWarehouse);
+      if (shared.length === 0) {
+        assertions.unproven(
+          'ConnectFacilities',
+          `${fixtureLabel(industry)} and ${fixtureLabel(warehouse)} share no fluid on opposite gates — ConnectFacilities ` +
+            'hires only a matching fluid (Kernel/Kernel.pas:5470-5513), so nothing is sent',
+        );
+        return report('connect-on-map', assertions, probes, session);
+      }
+
+      const read = async (): Promise<string> =>
+        combinedState([
+          linkState(snapIndustry, await readGateLinks(session, industry, BOTH_TABS)),
+          linkState(snapWarehouse, await readGateLinks(session, warehouse, BOTH_TABS)),
+        ]);
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `Connect ${fixtureLabel(industry)} with ${fixtureLabel(warehouse)} (shared: ${shared.join(', ')})`,
+        member: 'ConnectFacilities',
+        read,
+        testValue: () => 'new-links',
+        write: async () => {
+          const answer = await session.driver.request<WsRespConnectFacilities>(
+            {
+              type: WsMessageType.REQ_CONNECT_FACILITIES,
+              sourceX: industry.x,
+              sourceY: industry.y,
+              targetX: warehouse.x,
+              targetY: warehouse.y,
+            },
+            WsMessageType.RESP_CONNECT_FACILITIES,
+            TIMEOUTS.login,
+          );
+          if (answer.success !== true) throw new Error(`REQ_CONNECT_FACILITIES answered success=false: ${answer.resultMessage}`);
+        },
+        restore: async () => {
+          for (const [fx, snap] of [
+            [industry, snapIndustry],
+            [warehouse, snapWarehouse],
+          ] as const) {
+            for (const g of gainedLinks(snap, await readGateLinks(session, fx, BOTH_TABS))) {
+              await setBuildingProperty(
+                session,
+                fx.x,
+                fx.y,
+                g.tab === 'supplies' ? 'RDODisconnectInput' : 'RDODisconnectOutput',
+                '0',
+                { fluidId: g.fluid, connectionList: connectionList(g.keys) },
+              );
+            }
+          }
+        },
+        // The `Connect Facilities` line carries no coordinates (Kernel/World.pas:3713): read-back alone.
+        proof: {
+          readBack: readBackOn(
+            'every input and output gate of both facilities via REQ_BUILDING_GATE_CONNECTIONS',
+            LINK_WHY,
+            tolerantRead(read),
+          ),
+        },
+        restoreRecord: { x: industry.x, y: industry.y, propertyName: 'ConnectFacilities' },
+      });
+      probes.push(probe);
+      assertions.check(
+        'ConnectFacilities: a new link read back, and both facilities equal their snapshot after the undo',
+        probe.status === 'PASS',
+        probe.note,
+      );
+      return report('connect-on-map', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+const COMPANY_INPUT_KINDS: readonly FixtureKindId[] = ['store', 'industry', 'warehouse'];
+
+async function readCompInputs(session: LiveSession, fx: OwnFixture): Promise<CompInputData[]> {
+  await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+  const tab = await readBuildingTabData(session, fx.x, fx.y, 'compInputs', fx.visualClass);
+  return tab.compInputs ?? [];
+}
+
+/**
+ * A company input's demand (`TBlock.RDOSetCompanyInputDemand`, Kernel/Kernel.pas:6371): written as
+ * a percent, cached in units (`cInputDem = ceil(units(Max))`, :5878), so the read-back allows the
+ * one unit the `ceil` introduces. Only an editable input is written. NIGHTLY_ONLY (routing.ts).
+ */
+const companyInputDemand: Flow = {
+  name: 'company-input-demand',
+  what:
+    "RDOSetCompanyInputDemand on an editable company input of SPO_test3's fixtures — SetCompanyInputDemand line + " +
+    'cInputDem moves, restored within one unit',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const refusals: string[] = [];
+      let chosen: { fx: OwnFixture; index: number; input: CompInputData } | undefined;
+      for (const kindId of COMPANY_INPUT_KINDS) {
+        const lookup = await findFixture(session, fixtureKind(kindId));
+        if (!lookup.found) {
+          refusals.push(`${kindId} fixture: ${lookup.reason ?? 'not found'}`);
+          continue;
+        }
+        const fx = lookup.found;
+        const inputs = await readCompInputs(session, fx);
+        if (inputs.length === 0) refusals.push(`${kindId} ${fixtureLabel(fx)}: no company input`);
+        inputs.forEach((input, index) => {
+          if (chosen) return;
+          if (!input.editable) refusals.push(`${kindId} ${fixtureLabel(fx)} input ${index} "${input.name}": not editable`);
+          else if (!(input.maxDemand > 0)) refusals.push(`${kindId} ${fixtureLabel(fx)} input ${index} "${input.name}": capacity ${input.maxDemand}`);
+          else chosen = { fx, index, input };
+        });
+        if (chosen) break;
+      }
+      if (!chosen) {
+        assertions.unproven(
+          'RDOSetCompanyInputDemand',
+          'no editable company input on any fixture — cEditable is written only for a meta input flagged Editable ' +
+            `(Kernel/Kernel.pas:5887): ${refusals.join(' | ')}`,
+        );
+        return report('company-input-demand', assertions, probes, session);
+      }
+
+      const { fx, index, input } = chosen;
+      const dem0 = input.demanded;
+      const max = input.maxDemand;
+      const p0 = companyDemandPercent(dem0, max);
+      const p1 = companyDemandTarget(p0);
+      if (Math.abs(companyDemandUnits(p1, max) - dem0) < 3) {
+        assertions.unproven(
+          'RDOSetCompanyInputDemand',
+          `${fixtureLabel(fx)} input ${index} "${input.name}": capacity ${max} is too small to tell a move from the one ` +
+            'unit the ceil introduces (Kernel/Kernel.pas:5878)',
+        );
+        return report('company-input-demand', assertions, probes, session);
+      }
+
+      const readDemand = async (): Promise<string | undefined> => {
+        const hit = (await readCompInputs(session, fx))[index];
+        return hit && hit.name === input.name ? String(hit.demanded) : undefined;
+      };
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} company input ${index} "${input.name}" demand (percent; ${dem0} of ${max} units)`,
+        member: 'RDOSetCompanyInputDemand',
+        // Pinned like runProbe's fixed original: the percent is derived, never read back as such.
+        read: async () => String(p0),
+        testValue: () => String(p1),
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetCompanyInputDemand', value, { index: String(index) });
+        },
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDOSetCompanyInputDemand,
+            match: line => facLineMatches(line, fx.x, fx.y, 'SetCompanyInputDemand'),
+          },
+          readBack: {
+            ...readBackOn(
+              `compInputs[${index}].demanded (cInputDem) via REQ_BUILDING_TAB_DATA`,
+              `${FACILITY_CACHE_WHY}; cInputDem = ceil(units(Max)) and cInputMax is the capacity (Kernel/Kernel.pas:5878, :5888)`,
+              tolerantRead(readDemand),
+            ),
+            matches: (last, expected) => {
+              const got = Number(last);
+              if (last.trim() === '' || !Number.isFinite(got)) return false;
+              if (expected === String(p0)) return Math.abs(got - dem0) <= 1;
+              return Math.abs(got - companyDemandUnits(Number(expected), max)) <= 1 && last !== String(dem0);
+            },
+          },
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetCompanyInputDemand', additionalParams: { index: String(index) } },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+      return report('company-input-demand', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * The trade role (warehouse only — `RDOSetRole` is published by `TWarehouse`,
+ * StdBlocks/Warehouses.pas:95) and the trade level (warehouse and industry,
+ * `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408). Only values the client offers are written.
+ */
+const tradeSettings: Flow = {
+  name: 'trade-settings',
+  what:
+    "RDOSetRole on SPO_test3's warehouse fixture (a role the client offers, read-back) and RDOSetTradeLevel on the " +
+    'warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const warehouse = await ownFixture(session, 'warehouse', assertions);
+      const industry = await ownFixture(session, 'industry', assertions);
+      if (!warehouse && !industry) return report('trade-settings', assertions, probes, session);
+      const url = await survivalUrl(ctx);
+      const readField = (fx: OwnFixture, groupId: string, name: string) => async (): Promise<string | undefined> =>
+        propertyValue(await readSectionGroups(session, fx.x, fx.y, groupId, fx.visualClass), groupId, name);
+
+      const tradeLevel = async (fx: OwnFixture, groupId: string): Promise<void> => {
+        const read = readField(fx, groupId, 'TradeLevel');
+        const original = await read();
+        if (!isTradeLevelValue(original)) {
+          assertions.unproven(
+            `RDOSetTradeLevel on ${fixtureLabel(fx)}`,
+            `its TradeLevel "${original ?? 'absent'}" is not one the client sends (TRADE_LEVEL_VALUES ` +
+              `${TRADE_LEVEL_VALUES.join('/')}, trade-settings.ts) — the restore would need a value the client never writes`,
+          );
+          return;
+        }
+        const probe = await roundTripProbe(ctx, url, {
+          what: `${fixtureLabel(fx)} trade level`,
+          member: 'RDOSetTradeLevel',
+          read,
+          testValue: tradeLevelNudge,
+          write: async value => {
+            await setBuildingProperty(session, fx.x, fx.y, 'RDOSetTradeLevel', value);
+          },
+          proof: {
+            // The Fac(x,y) match excludes ' Error in SetTradeLevel..' (Kernel/Kernel.pas:6404).
+            log: { marker: LOG_MARKERS.RDOSetTradeLevel, match: line => facLineMatches(line, fx.x, fx.y, 'SetTradeLevel') },
+            readBack: readBackOn(`${groupId}.TradeLevel at (${fx.x},${fx.y}) via the gateway's section read`, FACILITY_CACHE_WHY, tolerantRead(read)),
+          },
+          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetTradeLevel' },
+        });
+        probes.push(probe);
+        checkProbe(assertions, probe);
+      };
+
+      if (warehouse) {
+        const readRole = readField(warehouse, 'whGeneral', 'Role');
+        const role = await readRole();
+        if (role !== undefined && isTradeModeValue(role)) {
+          const probe = await roundTripProbe(ctx, url, {
+            what: `${fixtureLabel(warehouse)} trade role`,
+            member: 'RDOSetRole',
+            read: readRole,
+            testValue: tradeRoleNudge,
+            write: async value => {
+              await setBuildingProperty(session, warehouse.x, warehouse.y, 'RDOSetRole', value);
+            },
+            // RDOSetRole logs nothing (StdBlocks/Warehouses.pas:527): the read-back alone proves it.
+            proof: {
+              readBack: readBackOn(
+                `whGeneral.Role at (${warehouse.x},${warehouse.y}) via the gateway's section read`,
+                `RDOSetRole prints no Survival line; ${FACILITY_CACHE_WHY}`,
+                tolerantRead(readRole),
+              ),
+            },
+            restoreRecord: { x: warehouse.x, y: warehouse.y, propertyName: 'RDOSetRole' },
+          });
+          probes.push(probe);
+          checkProbe(assertions, probe);
+        } else {
+          assertions.unproven(
+            'RDOSetRole',
+            `${fixtureLabel(warehouse)}'s Role "${role ?? 'absent'}" is not one the client offers (isTradeModeValue, ` +
+              `TRADE_MODE_VALUES ${TRADE_MODE_VALUES.join('/')}; Voyager/IndustryGeneralSheet.pas:189-235) — RDOSetRole ` +
+              'range-checks nothing (StdBlocks/Warehouses.pas:527), so nothing is sent',
+          );
+        }
+        await tradeLevel(warehouse, 'whGeneral');
+      }
+      // RDOSetRole is never sent to the industry: only TWarehouse publishes it (StdBlocks/Warehouses.pas:95).
+      if (industry) await tradeLevel(industry, 'indGeneral');
+      return report('trade-settings', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * Toggle one ware of the warehouse's checklist (`TMegaStorage.RDOSelectWare`,
+ * StdBlocks/MegaWarehouse.pas:94) and toggle it back — only on a MegaStorage. NIGHTLY_ONLY (routing.ts).
+ */
+const warehouseWares: Flow = {
+  name: 'warehouse-wares',
+  what: "toggle one ware of SPO_test3's warehouse fixture when it is a MegaStorage (RDOSelectWare) — read-back, toggled back",
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'warehouse', assertions);
+      if (!fx) return report('warehouse-wares', assertions, probes, session);
+      const dims = await facilityDimensions(session);
+      if (!isMegaStorage(dims, fx.visualClass)) {
+        assertions.unproven(
+          'RDOSelectWare',
+          `${fixtureLabel(fx)} (facId ${String(dims[fx.visualClass]?.facId ?? 'absent')}) is not an Import/Export Storage — ` +
+            'only a TMegaStorage publishes RDOSelectWare (StdBlocks/MegaWarehouse.pas:25); a TWarehouse publishes ' +
+            'RDOSetRole only (StdBlocks/Warehouses.pas:95)',
+        );
+        return report('warehouse-wares', assertions, probes, session);
+      }
+      const wares = (await readBuildingDetails(session, fx.x, fx.y, fx.visualClass)).warehouseWares ?? [];
+      const ware = wares.find(w => !w.enabled) ?? wares[0];
+      if (!ware) {
+        assertions.unproven('RDOSelectWare', `${fixtureLabel(fx)} lists no ware (GateMap)`);
+        return report('warehouse-wares', assertions, probes, session);
+      }
+      const read = async (): Promise<string | undefined> => {
+        const hit = (await readBuildingDetails(session, fx.x, fx.y, fx.visualClass)).warehouseWares?.find(
+          w => w.index === ware.index && w.name === ware.name,
+        );
+        return hit ? (hit.enabled ? '1' : '0') : undefined;
+      };
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} ware ${ware.index} "${ware.name}"`,
+        member: 'RDOSelectWare',
+        read,
+        testValue: original => (original === '1' ? '0' : '1'),
+        write: async value => {
+          // A WordBool, as WarehouseWares sends it: #-1 selects, #0 clears.
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSelectWare', value === '1' ? '-1' : '0', { index: String(ware.index) });
+        },
+        // RDOSelectWare logs nothing: the read-back alone proves it.
+        proof: {
+          readBack: readBackOn(
+            `warehouseWares[${ware.index}] (GateMap) via REQ_BUILDING_DETAILS`,
+            `RDOSelectWare prints no Survival line; ${FACILITY_CACHE_WHY}`,
+            tolerantRead(read),
+          ),
+        },
+        restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSelectWare', additionalParams: { index: String(ware.index) } },
+      });
+      probes.push(probe);
+      checkProbe(assertions, probe);
+      return report('warehouse-wares', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/** `ftpWarehouses` (Kernel/Kernel.pas:2760) — the facility types Quick Trade connects to. */
+const QUICK_TRADE_KIND = '1';
+
+/**
+ * Quick Trade (`TFacility.RDOConnectToTycoon`, Kernel/Kernel.pas:4521) and its undo
+ * (`RDODisconnectFromTycoon`), which reaches every SPO_test3 facility (:4537-4553, :4593-4600) and
+ * unregisters the fixture as an initial supplier (:4564-4565, :4606-4607) — so it runs only
+ * behind three data guards. NIGHTLY_ONLY (routing.ts).
+ */
+const quickTradeRoundTrip: Flow = {
+  name: 'quick-trade-roundtrip',
+  what:
+    "RDOConnectToTycoon on SPO_test3's industry fixture (warehouses) behind three guards -> Connect to Tycoon: line + " +
+    'new links -> RDODisconnectFromTycoon -> the output links and the initial-supplier list equal their snapshots',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('quick-trade-roundtrip', assertions, probes, session);
+      const own = await listTycoonFacilities(session);
+      const ownCompanies = new Set(own.companies);
+      const ownLots = new Set(own.facilities.map(f => `${f.x},${f.y}`));
+      let refused = false;
+
+      // Guard 1: the undo drops the fixture's outputs from every SPO_test3 facility's matching input.
+      const clients: string[] = [];
+      for (const stub of await gateStubs(session, fx, 'products')) {
+        const product = (await gateConnections(session, fx, 'products', stub)).product;
+        if (!product || product.connectionCount !== product.connections.length) {
+          clients.push(`${stub.name}: ${String(product?.connectionCount)} client(s) listed but ${product?.connections.length ?? 0} read`);
+          continue;
+        }
+        for (const c of product.connections) {
+          if (ownCompanies.has(c.companyName) || ownLots.has(`${c.x},${c.y}`)) clients.push(`${stub.name}: ${linkLabel(c)}`);
+        }
+      }
+      if (clients.length > 0) {
+        refused = true;
+        assertions.unproven(
+          'RDOConnectToTycoon',
+          'an SPO_test3 facility is already a client of the fixture (or a client could not be read) — the undo would ' +
+            `drop it, whatever its type (Kernel/Kernel.pas:4593-4600): ${clients.join(' | ')}`,
+        );
+      }
+
+      // Guard 2: the undo unregisters the fixture as an initial supplier.
+      const auto = await readAutoConnections(session);
+      if (initialSupplierAt(auto, fx.x, fx.y)) {
+        refused = true;
+        assertions.unproven(
+          'RDOConnectToTycoon',
+          `${fixtureLabel(fx)} is one of SPO_test3's initial suppliers — the undo would remove it for good ` +
+            '(Kernel/Kernel.pas:4564-4565, :4606-4607)',
+        );
+      }
+
+      // Guard 3: the connect and its undo reach every company and town of the tycoon.
+      const helartia = await helartiaValue(session);
+      const outside: string[] = [];
+      for (const f of own.facilities) {
+        if (helartia !== undefined && (await townValueAt(session, f.x, f.y)) === helartia) continue;
+        try {
+          const vc = await resolveVisualClass(session, f.x, f.y);
+          const details = await readBuildingDetails(session, f.x, f.y, vc);
+          if (details.tabs.some(t => t.id === 'whGeneral')) outside.push(`${f.name} (${f.x},${f.y}) of ${f.company}`);
+        } catch (err: unknown) {
+          outside.push(`${f.name} (${f.x},${f.y}) could not be read: ${toErrorMessage(err)}`);
+        }
+      }
+      if (outside.length > 0) {
+        refused = true;
+        assertions.unproven(
+          'RDOConnectToTycoon',
+          `an SPO_test3 warehouse lies outside ${GOVERNED_TOWN} — Quick Trade reaches every company and town of the ` +
+            `tycoon (Kernel/Kernel.pas:4537-4553): ${outside.join(' | ')}`,
+        );
+      }
+      if (refused) return report('quick-trade-roundtrip', assertions, probes, session);
+
+      const snapshot = await readGateLinks(session, fx, ['products']);
+      const suppliersKey = initialSuppliersKey(auto);
+      const read = async (): Promise<string> => linkState(snapshot, await readGateLinks(session, fx, ['products']));
+      const url = await survivalUrl(ctx);
+      const probe = await roundTripProbe(ctx, url, {
+        what: `${fixtureLabel(fx)} Quick Trade with SPO_test3's warehouses`,
+        member: 'RDOConnectToTycoon',
+        read,
+        testValue: () => 'new-links',
+        write: async () => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOConnectToTycoon', '0', { kind: QUICK_TRADE_KIND });
+        },
+        restore: async () => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: QUICK_TRADE_KIND });
+        },
+        proof: {
+          log: {
+            marker: LOG_MARKERS.RDOConnectToTycoon,
+            match: line => facLineMatches(line, fx.x, fx.y, 'Connect to Tycoon:'),
+          },
+          readBack: readBackOn(
+            "the fixture's product gates' links via REQ_BUILDING_GATE_CONNECTIONS",
+            LINK_WHY,
+            tolerantRead(read),
+          ),
+        },
+        restoreRecord: {
+          x: fx.x,
+          y: fx.y,
+          propertyName: 'RDODisconnectFromTycoon',
+          additionalParams: { kind: QUICK_TRADE_KIND },
+        },
+      });
+      probes.push(probe);
+      assertions.check(
+        'RDOConnectToTycoon: new links read back, and the output links equal their snapshot after the undo',
+        probe.status === 'PASS',
+        probe.note,
+      );
+
+      const suppliers = await pollUntil(
+        async () => {
+          try {
+            return initialSuppliersKey(await readAutoConnections(session));
+          } catch (err: unknown) {
+            return `(unreadable: ${toErrorMessage(err)})`;
+          }
+        },
+        k => k === suppliersKey,
+        ctx,
+      );
+      assertions.check(
+        'the initial-supplier list equals its snapshot',
+        suppliers.ok,
+        suppliers.ok ? `${suppliersKey || '(none)'}` : `before: ${suppliersKey || '(none)'} — after: ${suppliers.last || '(none)'}`,
+      );
+      return report('quick-trade-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
+// Build menu, placement, rename, demolition (#1150)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The facility place-rename-demolish places: the cheapest one offered, never a refused class
+ * (a transcendence block or the Capitol, `isRefusedClass`) even when it is the cheapest, and
+ * only when it costs no more than `budget` (cash minus `FIXTURE_CASH_FLOOR`).
+ */
+export function pickPlacement(buildable: BuildingInfo[], budget: number): { info?: BuildingInfo; reason?: string } {
+  const allowed = buildable.filter(b => !isRefusedClass(b.facilityClass)).sort((a, b) => a.cost - b.cost);
+  const cheapest = allowed[0];
+  if (!cheapest) return { reason: 'nothing buildable offered' };
+  if (cheapest.cost > budget) {
+    return {
+      reason: `the cheapest buildable ${cheapest.facilityClass} costs ${cheapest.cost}, above cash minus FIXTURE_CASH_FLOOR (${budget})`,
+    };
+  }
+  return { info: cheapest };
+}
+
+/**
+ * The object at the lot is the one this run placed: owned by SPO_test3's tycoon id
+ * (`MapBuilding.tycoonId` is `Company.Owner.Id`, `Kernel/World.pas:3295-3300` — a role company's
+ * owner is the role tycoon, so the Mayor's facilities never match), and a construction-state
+ * class or the placed class's own visual class (registered, or completed = registered + 1,
+ * `Kernel/KernelCache.pas:291`) — the rule `placeFacility` confirms with.
+ */
+export function ownsPlacement(
+  b: MapBuilding | undefined,
+  dims: Record<string, FacilityDimensions>,
+  visualClassId: string,
+  tycoonId: string,
+): boolean {
+  if (!b || String(b.tycoonId) !== tycoonId) return false;
+  return (
+    isConstructionClass(dims, b.visualClass) ||
+    b.visualClass === visualClassId ||
+    b.visualClass === String(Number(visualClassId) + 1)
+  );
+}
+
+/** `Del Facility, x: <x> y: <y>` (`Kernel/World.pas:3575`), on both coordinates. */
+export function delFacilityLineMatches(line: string, x: number, y: number): boolean {
+  return new RegExp(`${escapeRegExp(LOG_MARKERS.RDODelFacility)} ${x} y: ${y}(\\s|$)`).test(line);
+}
+
+/** The building anchored exactly at (x, y), read from a ±8 window around it. */
+async function lotBuilding(session: LiveSession, x: number, y: number): Promise<MapBuilding | undefined> {
+  const { buildings } = await loadMap(session, { x1: Math.max(0, x - 8), y1: Math.max(0, y - 8), x2: x + 8, y2: y + 8 });
+  return buildings.find(b => b.x === x && b.y === y);
+}
+
+/** Read at least once, then every `readBackPoll` until `done` holds or `readBack` has elapsed. */
+async function pollUntil<T>(
+  read: () => Promise<T>,
+  done: (v: T) => boolean,
+  ctx: FlowContext,
+): Promise<{ ok: boolean; last: T }> {
+  const now = ctx.now ?? Date.now;
+  const sleep = ctx.sleep ?? defaultSleep;
+  const deadline = now() + TIMEOUTS.readBack;
+  for (;;) {
+    const last = await read();
+    if (done(last)) return { ok: true, last };
+    if (now() >= deadline) return { ok: false, last };
+    await sleep(TIMEOUTS.readBackPoll);
+  }
+}
+
+/**
+ * The build menu, read only (#1150): the categories the own company is offered, then the
+ * facilities of the first category of its cluster — the two reads the client's build menu makes.
+ */
+const buildMenuRead: Flow = {
+  name: 'build-menu-read',
+  what: "build menu: categories -> the first category of the own company's cluster -> its facilities, each with a class and a cost",
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const companyName = session.company.name;
+      const { categories } = await session.driver.request<WsRespBuildingCategories>(
+        { type: WsMessageType.REQ_GET_BUILDING_CATEGORIES, companyName },
+        WsMessageType.RESP_BUILDING_CATEGORIES,
+      );
+      assertions.check('the build menu lists at least one category', categories.length > 0, `${categories.length} categories`);
+      if (categories.length === 0) return report('build-menu-read', assertions, [], session);
+
+      const cluster = session.company.cluster;
+      const category = cluster
+        ? categories.find(c => c.cluster.toLowerCase() === cluster.toLowerCase())
+        : categories[0];
+      assertions.check(
+        "a category of the own company's cluster is listed",
+        category !== undefined,
+        `cluster ${cluster ?? '(unset)'}; listed: ${[...new Set(categories.map(c => c.cluster))].join(', ')}`,
+      );
+      if (!category) return report('build-menu-read', assertions, [], session);
+
+      const { facilities } = await session.driver.request<WsRespBuildingFacilities>(
+        {
+          type: WsMessageType.REQ_GET_BUILDING_FACILITIES,
+          companyName,
+          cluster: category.cluster,
+          kind: category.kind,
+          kindName: category.kindName,
+          folder: category.folder,
+          tycoonLevel: category.tycoonLevel,
+        },
+        WsMessageType.RESP_BUILDING_FACILITIES,
+      );
+      assertions.check(
+        'the category lists at least one facility',
+        facilities.length > 0,
+        `${facilities.length} facilities in ${category.kindName}`,
+      );
+      const bad = facilities.filter(
+        f => !(f.facilityClass ?? '').trim() || typeof f.cost !== 'number' || !Number.isFinite(f.cost),
+      );
+      assertions.check(
+        'every facility carries a class and a cost',
+        bad.length === 0,
+        bad.map(f => `${f.name}: class "${f.facilityClass ?? ''}", cost ${String(f.cost)}`).join('; ') || undefined,
+      );
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('build-menu-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+interface Placement {
+  x: number;
+  y: number;
+  facilityClass: string;
+  visualClassId: string;
+  tycoonId: string;
+  key: string;
+  /** NewFacility answered non-zero: every such branch returns before a facility exists (`Kernel/World.pas:3180-3195`). */
+  refused: boolean;
+  url: string;
+  dims: Record<string, FacilityDimensions>;
+}
+
+/**
+ * Place, rename and demolish one facility on a free Helartia lot, as SPO_test3's own company
+ * (#1150). The cheapest buildable class is placed — never a transcendence block nor the Capitol
+ * (`isRefusedClass`; `placeFacility` refuses them again before sending). The pending restore is
+ * recorded before `NewFacility` is sent. The placement is proven by its `New Facility:` line
+ * (`Kernel/World.pas:3565`, logged on entry — receipt), result code 0 and a lot read-back of
+ * the placed class or its construction state (`StdBlocks/Construction.pas:55`) owned by
+ * SPO_test3; the demolition by its `Del Facility` line (`:3575`) and an empty lot. The cleanup
+ * demolishes only what this run placed. The construction cost is spent each run — accepted by
+ * the maintainer (2026-09-29).
+ */
+const placeRenameDemolish: Flow = {
+  name: 'place-rename-demolish',
+  what:
+    'place the cheapest non-refused buildable facility on a free Helartia lot -> New Facility: line + result 0 + ' +
+    'owned read-back -> rename to a marker and back -> demolish -> Del Facility line + empty lot',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      await placeRenameDemolishSteps(session, ctx, assertions);
+      return report('place-rename-demolish', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+async function placeRenameDemolishSteps(session: LiveSession, ctx: FlowContext, assertions: Assertions): Promise<void> {
+  const what = `a place-rename-demolish round trip in ${GOVERNED_TOWN}`;
+  const cash = await readCash(session);
+  if (cash === null) {
+    assertions.unproven(what, 'cash unknown — no EVENT_TYCOON_UPDATE received');
+    return;
+  }
+  const pick = pickPlacement(await listBuildable(session), cash - FIXTURE_CASH_FLOOR);
+  const info = pick.info;
+  if (!info) {
+    assertions.unproven(what, `${pick.reason ?? 'nothing picked'} (${session.company.name})`);
+    return;
+  }
+  const cls = info.facilityClass;
+  const dims = await facilityDimensions(session);
+  const d = dims[info.visualClassId];
+  const footprint =
+    info.xsize && info.ysize ? { xsize: info.xsize, ysize: info.ysize } : d ? { xsize: d.xsize, ysize: d.ysize } : null;
+  if (!footprint) {
+    assertions.unproven(what, `footprint unknown for ${cls}`);
+    return;
+  }
+  const lot = await findFreeLot(session, footprint, info.zoneRequirement);
+  if (!lot) {
+    assertions.unproven(
+      what,
+      `no free lot in ${GOVERNED_TOWN} for ${cls} (${footprint.xsize}×${footprint.ysize}, ${info.zoneRequirement || 'no zone'})`,
+    );
+    return;
+  }
+
+  const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+  const newWindow = await openLogWindow(url);
+  const tycoonId = ownTycoonId(session);
+  const companyId = session.company.id;
+  const where = `(${lot.x},${lot.y})`;
+
+  // Recorded before NewFacility is sent: a crash after the send cannot leave an unmarked building.
+  const key = `place-rename-demolish:${randomUUID()}`;
+  ctx.lock.addPendingRestore({
+    key,
+    x: lot.x,
+    y: lot.y,
+    what:
+      `demolish the ${cls} at ${where}, company ${companyId} (${session.company.name}) — place-rename-demolish ` +
+      `placed it in ${GOVERNED_TOWN}; demolish it as ${PRIMARY_ACCOUNT.username}, then npm run e2e:unlock`,
+    originalValue: 'no facility',
+  });
+
+  let refused = false;
+  try {
+    const placed = await placeFacility(session, cls, lot.x, lot.y, {
+      visualClassId: info.visualClassId,
+      now: ctx.now,
+      sleep: ctx.sleep,
+    });
+    refused = placed.code !== 0;
+    if (placed.code === ERROR_TooManyFacilities) {
+      assertions.unproven(
+        what,
+        `NewFacility answered ERROR_TooManyFacilities for ${cls} — facility limit or company uniqueness (Kernel/World.pas:3195)`,
+      );
+    } else {
+      assertions.check('NewFacility answered 0', !refused, `answered ${placed.code} for ${cls} at ${where}`);
+    }
+    if (!refused) {
+      const line = await awaitMarker(
+        newWindow,
+        { marker: LOG_MARKERS.RDONewFacility, match: l => newFacilityLineMatches(l, cls, companyId, lot.x, lot.y) },
+        TIMEOUTS.logSettle,
+        undefined,
+        ctx.now,
+        ctx.sleep,
+      );
+      assertions.check(
+        'the placement logged its New Facility: line (class, company, x, y)',
+        line !== null,
+        line ?? `(no New Facility: line for ${cls}, company ${companyId}, ${where})`,
+      );
+      const rb = placed.readBack;
+      assertions.check(
+        'the lot reads back the placed class or its construction state, owned by SPO_test3',
+        placed.confirmed,
+        rb ? `visual class ${rb.visualClass}, owner ${rb.tycoonId}${rb.construction ? ', construction' : ''}` : 'nothing at the lot',
+      );
+      if (line !== null && placed.confirmed && rb) await renameSteps(session, ctx, lot, rb.visualClass, assertions);
+    }
+  } catch (err: unknown) {
+    assertions.check('the place-rename-demolish steps ran without a throw', false, toErrorMessage(err));
+  }
+
+  await removePlacement(
+    session,
+    ctx,
+    { ...lot, facilityClass: cls, visualClassId: info.visualClassId, tycoonId, key, refused, url, dims },
+    assertions,
+  );
+}
+
+/**
+ * Rename to a marker, read it back, rename back to the original, read it back. Not a pending
+ * restore of its own: the facility is demolished next, and the placement's entry covers it.
+ */
+async function renameSteps(
+  session: LiveSession,
+  ctx: FlowContext,
+  lot: { x: number; y: number },
+  vc: string,
+  assertions: Assertions,
+): Promise<void> {
+  const { x, y } = lot;
+  const nameAt = (): Promise<string> => readBuildingDetails(session, x, y, vc).then(d => d.buildingName ?? '');
+  const rename = (newName: string): Promise<WsRespRenameFacility> =>
+    session.driver.request<WsRespRenameFacility>(
+      { type: WsMessageType.REQ_RENAME_FACILITY, x, y, newName },
+      WsMessageType.RESP_RENAME_FACILITY,
+      TIMEOUTS.login,
+    );
+  try {
+    const original = await nameAt();
+    const marker = `e2e-rename-${randomUUID().slice(0, 8)}`;
+    const toMarker = await rename(marker);
+    assertions.check('the gateway accepted the rename to the marker', toMarker.success === true, toMarker.message);
+    const readMarker = await pollUntil(nameAt, n => n.trim() === marker, ctx);
+    assertions.check('the details read the marker name', readMarker.ok, `"${readMarker.last}" (expected "${marker}")`);
+    if (!readMarker.ok) return;
+
+    const back = await rename(original);
+    assertions.check('the gateway accepted the rename back', back.success === true, back.message);
+    const readBack = await pollUntil(nameAt, n => n.trim() === original.trim(), ctx);
+    assertions.check('the details read the original name back', readBack.ok, `"${readBack.last}" (expected "${original}")`);
+  } catch (err: unknown) {
+    assertions.check('the rename steps ran without a throw', false, toErrorMessage(err));
+  }
+}
+
+/**
+ * The single demolition path, happy or not: demolishes only what this run placed — the lot
+ * holds the placed class (or its construction state) owned by SPO_test3's tycoon id. Anything
+ * else is left alone and FAILs, keeping the pending restore; the lock then goes dirty and a
+ * human demolishes and runs `npm run e2e:unlock` (E2E-POLICY §6). The pending restore is cleared
+ * only after a `Del Facility` line and an empty lot, or after a refused placement that left the
+ * lot empty.
+ */
+async function removePlacement(session: LiveSession, ctx: FlowContext, p: Placement, assertions: Assertions): Promise<void> {
+  const where = `(${p.x},${p.y})`;
+  try {
+    const b = await lotBuilding(session, p.x, p.y);
+    if (!b) {
+      if (p.refused) {
+        ctx.lock.clearPendingRestore(p.key);
+        assertions.check('nothing was placed at the lot', b === undefined, `NewFacility refused; ${where} is empty`);
+      } else {
+        assertions.check(
+          'the placed facility stands at the lot for the demolition',
+          false,
+          `nothing at ${where} — nothing demolished, pending restore kept`,
+        );
+      }
+      return;
+    }
+    if (!ownsPlacement(b, p.dims, p.visualClassId, p.tycoonId)) {
+      assertions.check(
+        'the object at the lot is the one this run placed',
+        false,
+        `visual class ${b.visualClass}, owner ${b.tycoonId} at ${where} — nothing demolished, pending restore kept`,
+      );
+      return;
+    }
+
+    const delWindow = await openLogWindow(p.url);
+    const deleted = await session.driver.request<WsRespDeleteFacility>(
+      { type: WsMessageType.REQ_DELETE_FACILITY, x: p.x, y: p.y },
+      WsMessageType.RESP_DELETE_FACILITY,
+      TIMEOUTS.login,
+    );
+    assertions.check('the gateway accepted the demolition', deleted.success === true, deleted.message);
+    const delLine = await awaitMarker(
+      delWindow,
+      { marker: LOG_MARKERS.RDODelFacility, match: l => delFacilityLineMatches(l, p.x, p.y) },
+      TIMEOUTS.logSettle,
+      undefined,
+      ctx.now,
+      ctx.sleep,
+    );
+    const gone = await pollUntil(() => lotBuilding(session, p.x, p.y), v => v === undefined, ctx);
+    const kept = delLine !== null && gone.ok ? '' : ' — pending restore kept';
+    assertions.check('the demolition logged its Del Facility line', delLine !== null, (delLine ?? `(no Del Facility line for ${where})`) + kept);
+    assertions.check(
+      'nothing stands at the lot on REQ_MAP_LOAD',
+      gone.ok,
+      (gone.last ? `visual class ${gone.last.visualClass} still at ${where}` : `${where} is empty`) + kept,
+    );
+    if (delLine !== null && gone.ok) ctx.lock.clearPendingRestore(p.key);
+  } catch (err: unknown) {
+    assertions.check('the demolition cleanup ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Inspector flows (#1154) — residential, bank, TV and research settings, repair, upgrades and
+// accept-cloning on SPO_test3's own fixtures. Every write is set back: a setting to its original,
+// a repair by its stop, a queued research by its cancel, an upgrade by its stop.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A boolean as the gateway compares it — by truthiness: `1`, `255` and `-1` are all `'1'`
+ * (`wanted` / `held` in building-property-handler.ts). `undefined` when absent or blank.
+ */
+export function truthyFlag(value: string | undefined): '1' | '0' | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  return Number(value) !== 0 ? '1' : '0';
+}
+
+/**
+ * `Repairing: <name>` (Kernel/PopulatedBlock.pas:773) — never `Stop Repairing: <name>` (:781),
+ * which carries the same marker.
+ */
+export function repairLineMatches(line: string, name: string): boolean {
+  return new RegExp(`(?<!Stop )${escapeRegExp(`Repairing: ${name}`)}(?=\\s|$)`).test(line);
+}
+
+/** `Queue Research: <id>, <priority>` (Kernel/ResearchCenter.pas:384). */
+export function queueResearchLineMatches(line: string, id: string): boolean {
+  return line.includes(`Queue Research: ${id}, `);
+}
+
+/** `Cancel Research: <id>` (Kernel/ResearchCenter.pas:396). */
+export function cancelResearchLineMatches(line: string, id: string): boolean {
+  return new RegExp(`${escapeRegExp(`Cancel Research: ${id}`)}(?=\\s|$)`).test(line);
+}
+
+/** `Facility Start Upgrade count: <count>` (Kernel/Kernel.pas:4675). */
+export function startUpgradeLineMatches(line: string, count: number): boolean {
+  return new RegExp(`${escapeRegExp(`Facility Start Upgrade count: ${count}`)}(?=\\s|$)`).test(line);
+}
+
+export type ResearchState = 'developing' | 'owned' | 'available' | 'absent';
+
+/**
+ * Where an invention stands in one category's inventory. The three lists are mutually exclusive
+ * by construction (`TResearchCenter.StoreToCache`, Kernel/ResearchCenter.pas:797-817).
+ */
+export function researchState(data: ResearchCategoryData, id: string): ResearchState {
+  const has = (list: { inventionId: string }[]): boolean => list.some(i => i.inventionId === id);
+  if (has(data.developing)) return 'developing';
+  if (has(data.completed)) return 'owned';
+  if (has(data.available)) return 'available';
+  return 'absent';
+}
+
+/**
+ * The test interest: strictly below the original, never above, never negative (the flow drives
+ * `Interest` only when it reads above 0). A loan granted during the window keeps its rate for
+ * life (Kernel/Kernel.pas:8837), so a lower test rate never worsens another player's debt.
+ */
+export function lowerInterest(original: string): string {
+  return String(Math.ceil(Number(original)) - 1);
+}
+
+/** One setting of a composite round trip. */
+interface SettingMember {
+  /** The key the section read carries. */
+  key: string;
+  /** The member's name in the report. */
+  label: string;
+  testValue: (original: string) => string;
+  write: (value: string) => Promise<void>;
+}
+
+/**
+ * Several settings of one tab in ONE round trip: write them all, wait once for the object-cache
+ * refresh, read them all, restore them all, wait once more. None of these setters logs a Survival
+ * line, so the read-back alone proves them — every member must read back the value written.
+ */
+function settingsRoundTrip(
+  ctx: FlowContext,
+  url: string,
+  session: LiveSession,
+  fx: OwnFixture,
+  tabId: string,
+  members: SettingMember[],
+  why: string,
+): Promise<ProbeResult> {
+  const read = async (): Promise<string | undefined> => {
+    const groups = await readSectionGroups(session, fx.x, fx.y, tabId, fx.visualClass);
+    const values = members.map(m => propertyValue(groups, tabId, m.key));
+    return values.some(v => v === undefined) ? undefined : values.join(',');
+  };
+  const label = members.map(m => m.label).join('+');
+  return roundTripProbe(ctx, url, {
+    what: `${fixtureLabel(fx)} ${label}`,
+    member: label,
+    read,
+    write: async value => {
+      const parts = value.split(',');
+      for (const [i, m] of members.entries()) await m.write(parts[i]);
+    },
+    testValue: original => original.split(',').map((v, i) => members[i].testValue(v)).join(','),
+    proof: {
+      readBack: readBackOn(
+        `${tabId}.${members.map(m => m.key).join(',')} at (${fx.x},${fx.y}) via the gateway's section read`,
+        why,
+        read,
+      ),
+    },
+    restoreRecord: { x: fx.x, y: fx.y, propertyName: label },
+  });
+}
+
+/** A `property` set of one published member, the way the inspector's sliders send it. */
+function propertyWriter(session: LiveSession, fx: OwnFixture, propertyName: string): (value: string) => Promise<void> {
+  return async value => {
+    await setBuildingProperty(session, fx.x, fx.y, 'property', value, { propertyName });
+  };
+}
+
+/** Whether the fixture's template carries the tab — otherwise `member` is unproven, nothing sent. */
+async function hasTab(
+  session: LiveSession,
+  fx: OwnFixture,
+  tabId: string,
+  member: string,
+  assertions: Assertions,
+): Promise<boolean> {
+  const details = await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+  if (details.tabs.some(t => t.id === tabId)) return true;
+  assertions.unproven(member, `${fixtureLabel(fx)} carries no ${tabId} tab — its template does not offer it`);
+  return false;
+}
+
+type FixtureSteps = (
+  session: LiveSession,
+  ctx: FlowContext,
+  fx: OwnFixture,
+  assertions: Assertions,
+  probes: ProbeResult[],
+) => Promise<void>;
+
+/** A flow on one fixture's tab: no fixture or no tab → unproven, nothing sent. */
+function fixtureFlow(
+  name: string,
+  what: string,
+  kind: FixtureKindId,
+  tabId: string,
+  member: string,
+  steps: FixtureSteps,
+): Flow {
+  return {
+    name,
+    what,
+    mutates: true,
+    run: async ctx => {
+      const assertions = new Assertions();
+      const probes: ProbeResult[] = [];
+      const session = await login(PRIMARY_ACCOUNT);
+      try {
+        const fx = await ownFixture(session, kind, assertions);
+        if (fx && (await hasTab(session, fx, tabId, member, assertions))) {
+          await steps(session, ctx, fx, assertions, probes);
+        }
+        return report(name, assertions, probes, session);
+      } finally {
+        await logoff(session);
+      }
+    },
+  };
+}
+
+/** Rent and maintenance (`TPopulatedBlock.SetRent` / `SetMaintenance`, Kernel/PopulatedBlock.pas:722-758). */
+const residentialSettings = fixtureFlow(
+  'residential-settings',
+  "Rent + Maintenance on SPO_test3's residential fixture — written together, read back, restored, read back",
+  'residential',
+  'resGeneral',
+  'Rent+Maintenance',
+  async (session, ctx, fx, assertions, probes) => {
+    const probe = await settingsRoundTrip(
+      ctx,
+      await survivalUrl(ctx),
+      session,
+      fx,
+      'resGeneral',
+      [
+        { key: 'Rent', label: 'Rent', testValue: v => nudgeWithin(v, 0, 200), write: propertyWriter(session, fx, 'Rent') },
+        {
+          key: 'Maintenance',
+          label: 'Maintenance',
+          testValue: v => nudgeWithin(v, 0, 200),
+          write: propertyWriter(session, fx, 'Maintenance'),
+        },
+      ],
+      `${FACILITY_CACHE_WHY} (Kernel/PopulatedBlock.pas:921-922 caches both verbatim)`,
+    );
+    probes.push(probe);
+    checkProbe(assertions, probe);
+  },
+);
+
+/**
+ * Repair → stop repair on the residential fixture. `Repair` is a 0..100 progress, not a flag
+ * (Kernel/PopulatedBlock.pas:623-638): "reads > 0" proves the repair, "reads 0" the stop (:783).
+ * Driven only from 0 — a stop would cancel a repair the owner started. The repair's spend
+ * between the two is the accepted cost (maintainer, 2026-09-29).
+ */
+const residentialRepair = fixtureFlow(
+  'residential-repair',
+  "RdoRepair on SPO_test3's residential fixture, only when Repair reads 0 — Repairing: line + Repair > 0, " +
+    'then RdoStopRepair → Repair reads 0',
+  'residential',
+  'resGeneral',
+  'RdoRepair',
+  async (session, ctx, fx, assertions, probes) => {
+    const groups = await readSectionGroups(session, fx.x, fx.y, 'resGeneral', fx.visualClass);
+    const raw = propertyValue(groups, 'resGeneral', 'Repair');
+    if (raw === undefined) {
+      assertions.check('Repair is readable on the resGeneral tab', false, `${fixtureLabel(fx)}: no Repair — nothing sent`);
+      return;
+    }
+    if (Number(raw) !== 0) {
+      assertions.unproven(
+        'RdoRepair',
+        `Repair reads ${raw} — a repair of the owner's own is running; RdoStopRepair would cancel it (Kernel/PopulatedBlock.pas:783)`,
+      );
+      return;
+    }
+    const name = propertyValue(groups, 'resGeneral', 'Name') ?? fx.name;
+    const readRepairing = async (): Promise<string | undefined> => {
+      const value = propertyValue(
+        await readSectionGroups(session, fx.x, fx.y, 'resGeneral', fx.visualClass),
+        'resGeneral',
+        'Repair',
+      );
+      return value === undefined ? undefined : Number(value) > 0 ? '1' : '0';
+    };
+    const probe = await roundTripProbe(ctx, await survivalUrl(ctx), {
+      what: `${fixtureLabel(fx)} repair ("1" = Repair reads > 0)`,
+      member: 'RdoRepair',
+      read: readRepairing,
+      testValue: () => '1',
+      write: async value => {
+        await setBuildingProperty(session, fx.x, fx.y, value === '1' ? 'RdoRepair' : 'RdoStopRepair', '0');
+      },
+      proof: {
+        log: { marker: LOG_MARKERS.RdoRepair, match: line => repairLineMatches(line, name) },
+        readBack: readBackOn(
+          `resGeneral.Repair at (${fx.x},${fx.y}) via the gateway's section read, > 0 while repairing`,
+          `${FACILITY_CACHE_WHY}; fRepair runs 0..100 (Kernel/PopulatedBlock.pas:623-638) and RdoStopRepair sets it to 0 (:783)`,
+          readRepairing,
+        ),
+      },
+      restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RdoStopRepair' },
+    });
+    probes.push(probe);
+    checkProbe(assertions, probe);
+  },
+);
+
+/**
+ * The bank's interest, term and budget percentage — three live gets (`enrichBankTab`). Interest
+ * only ever goes down (`lowerInterest`); an original of 0 leaves it unsent and unproven.
+ */
+const bankSettings = fixtureFlow(
+  'bank-settings',
+  "Interest (down only) + Term + RDOSetLoanPerc on SPO_test3's bank fixture — written together, read back, " +
+    'restored, read back',
+  'bank',
+  'bankGeneral',
+  'Interest+Term+RDOSetLoanPerc',
+  async (session, ctx, fx, assertions, probes) => {
+    const groups = await readSectionGroups(session, fx.x, fx.y, 'bankGeneral', fx.visualClass);
+    const interest = propertyValue(groups, 'bankGeneral', 'Interest');
+    const members: SettingMember[] = [];
+    // An unreadable Interest stays in, so the round trip refuses to write and FAILs.
+    if (interest === undefined || Number(interest) > 0) {
+      members.push({ key: 'Interest', label: 'Interest', testValue: lowerInterest, write: propertyWriter(session, fx, 'Interest') });
+    } else {
+      assertions.unproven(
+        'Interest',
+        `reads ${interest} — the flow only nudges it down: a loan granted during the window keeps its rate for life (Kernel/Kernel.pas:8837)`,
+      );
+    }
+    members.push(
+      { key: 'Term', label: 'Term', testValue: v => nudgeWithin(v, 1, 100), write: propertyWriter(session, fx, 'Term') },
+      {
+        key: 'BudgetPerc',
+        label: 'RDOSetLoanPerc',
+        testValue: v => nudgeWithin(v, 0, 100),
+        write: async value => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetLoanPerc', value);
+        },
+      },
+    );
+    const probe = await settingsRoundTrip(
+      ctx,
+      await survivalUrl(ctx),
+      session,
+      fx,
+      'bankGeneral',
+      members,
+      'Interest, Term and BudgetPerc are live gets on the block (enrichBankTab), no object cache between',
+    );
+    probes.push(probe);
+    checkProbe(assertions, probe);
+  },
+);
+
+/** Hours on air and commercials, stored verbatim (StdBlocks/Broadcast.pas:51-53). */
+const tvSettings = fixtureFlow(
+  'tv-settings',
+  "HoursOnAir + Commercials on SPO_test3's TV fixture — written together, read back, restored, read back",
+  'tv',
+  'tvGeneral',
+  'HoursOnAir+Commercials',
+  async (session, ctx, fx, assertions, probes) => {
+    const probe = await settingsRoundTrip(
+      ctx,
+      await survivalUrl(ctx),
+      session,
+      fx,
+      'tvGeneral',
+      [
+        { key: 'HoursOnAir', label: 'HoursOnAir', testValue: v => nudgeWithin(v, 0, 24), write: propertyWriter(session, fx, 'HoursOnAir') },
+        // Read under the template's one-m key, written under the published two-m name (enrichTvTab).
+        {
+          key: 'Comercials',
+          label: 'Commercials',
+          testValue: v => nudgeWithin(v, 0, 100),
+          write: propertyWriter(session, fx, 'Commercials'),
+        },
+      ],
+      'HoursOnAir and Commercials are live gets on the block (enrichTvTab), stored verbatim (StdBlocks/Broadcast.pas:51-53)',
+    );
+    probes.push(probe);
+    checkProbe(assertions, probe);
+  },
+);
+
+/**
+ * `RDOAcceptCloning` toggled and toggled back. Its read is the live get `enrichUpgradeTab` makes
+ * — no object cache between — and each write must come back `confirmed: true` from the gateway's
+ * own live get. Every comparison is by truthiness (`truthyFlag`).
+ */
+const acceptCloning = fixtureFlow(
+  'accept-cloning',
+  "RDOAcceptCloning on SPO_test3's industry fixture — toggled (confirmed + read back by truthiness), toggled back",
+  'industry',
+  'upgrade',
+  'RDOAcceptCloning',
+  async (session, ctx, fx, assertions, probes) => {
+    const readCloning = async (): Promise<string | undefined> =>
+      truthyFlag(propertyValue(await readSectionGroups(session, fx.x, fx.y, 'upgrade', fx.visualClass), 'upgrade', 'AcceptCloning'));
+    const probe = await roundTripProbe(ctx, await survivalUrl(ctx), {
+      what: `${fixtureLabel(fx)} accepts cloning ("1" = true)`,
+      member: 'RDOAcceptCloning',
+      read: readCloning,
+      testValue: original => (original === '1' ? '0' : '1'),
+      write: async value => {
+        const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', value);
+        if (r.confirmed !== true) {
+          throw new Error(`RDOAcceptCloning ${value}: the gateway's live get did not confirm it (holds "${r.newValue}")`);
+        }
+      },
+      proof: {
+        readBack: readBackOn(
+          `upgrade.AcceptCloning at (${fx.x},${fx.y}), by truthiness`,
+          'the live RDOAcceptCloning get enrichUpgradeTab makes — no object cache between; the member prints no Survival line',
+          readCloning,
+        ),
+      },
+      restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOAcceptCloning' },
+    });
+    probes.push(probe);
+    checkProbe(assertions, probe);
+  },
+);
+
+/**
+ * Queue one invention, prove it is in development, cancel it. Queueing can buy on the spot —
+ * an invention with `Time = 0` is paid for and declared at once (Kernel/ResearchCenter.pas:319-334)
+ * — and a cancel on an owned invention reaches `RetireInvention` (:372), the excluded sell. So the
+ * cancel is sent only on an invention that reads in development right before it.
+ */
+const researchRoundTrip = fixtureFlow(
+  'research-roundtrip',
+  "REQ_RESEARCH_INVENTORY + DETAILS on SPO_test3's research fixture → RDOQueueResearch (Queue Research: line, " +
+    'in development) → RDOCancelResearch (Cancel Research: line, no longer queued)',
+  'research',
+  'hqInventions',
+  'RDOQueueResearch',
+  async (session, ctx, fx, assertions) => {
+    try {
+      await researchSteps(session, ctx, fx, assertions);
+    } catch (err: unknown) {
+      assertions.check('the research steps ran without a throw', false, toErrorMessage(err));
+    }
+  },
+);
+
+function researchInventory(session: LiveSession, fx: OwnFixture, categoryIndex: number): Promise<WsRespResearchInventory> {
+  return session.driver.request<WsRespResearchInventory>(
+    { type: WsMessageType.REQ_RESEARCH_INVENTORY, buildingX: fx.x, buildingY: fx.y, categoryIndex },
+    WsMessageType.RESP_RESEARCH_INVENTORY,
+  );
+}
+
+async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixture, assertions: Assertions): Promise<void> {
+  // CatCount is the highest category index, not a count (Kernel/ResearchCenter.pas:820).
+  const groups = await readSectionGroups(session, fx.x, fx.y, 'hqInventions', fx.visualClass);
+  const parsed = Number(propertyValue(groups, 'hqInventions', 'CatCount') ?? '0');
+  const catMax = Number.isFinite(parsed) ? parsed : 0;
+
+  let pick: { id: string; name: string; category: number } | undefined;
+  for (let category = 0; category <= catMax && !pick; category++) {
+    const { data } = await researchInventory(session, fx, category);
+    const held = new Set([...data.developing, ...data.completed].map(i => i.inventionId));
+    const hit = data.available.find(i => i.enabled === true && !held.has(i.inventionId));
+    if (hit) pick = { id: hit.inventionId, name: hit.name, category };
+  }
+  if (!pick) {
+    assertions.unproven('RDOQueueResearch', `no enabled invention available to queue in categories 0..${catMax}`);
+    return;
+  }
+  const { id, category } = pick;
+
+  const { details } = await session.driver.request<WsRespResearchDetails>(
+    { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: id },
+    WsMessageType.RESP_RESEARCH_DETAILS,
+  );
+  const properties = details.properties.trim().replace(/\s+/g, ' ');
+  assertions.check(
+    `REQ_RESEARCH_DETAILS answers for ${id} with its properties`,
+    details.inventionId === id && properties !== '',
+    `${details.inventionId}: ${properties || '(no properties)'}`,
+  );
+
+  const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
+  const url = await survivalUrl(ctx);
+  const key = `research-roundtrip:${randomUUID()}`;
+  ctx.lock.addPendingRestore({
+    key,
+    x: fx.x,
+    y: fx.y,
+    propertyName: 'RDOCancelResearch',
+    what:
+      `cancel research ${id} at (${fx.x},${fx.y}) — queued by research-roundtrip; if it reads owned it was bought at ` +
+      'once and must NOT be cancelled (RDOCancelResearch on an owned invention sells it, Kernel/ResearchCenter.pas:372)',
+    originalValue: 'available',
+  });
+
+  let queued = false;
+  try {
+    const window = await openLogWindow(url);
+    queued = true;
+    await setBuildingProperty(session, fx.x, fx.y, 'RDOQueueResearch', '0', { inventionId: id, priority: '10' });
+    const line = await awaitMarker(
+      window,
+      { marker: LOG_MARKERS.RDOQueueResearch, match: l => queueResearchLineMatches(l, id) },
+      TIMEOUTS.logSettle,
+      undefined,
+      ctx.now,
+      ctx.sleep,
+    );
+    assertions.check('the queue logged its Queue Research: line', line !== null, line ?? `(no Queue Research: line for ${id})`);
+    const listed = await pollUntil(stateOf, s => s !== 'available' && s !== 'absent', ctx);
+    if (listed.last === 'owned') {
+      assertions.check(
+        `${id} is listed in development, not owned`,
+        false,
+        `bought at once: ${id} (${properties}) — an invention with Time = 0 is bought on the spot ` +
+          '(Kernel/ResearchCenter.pas:319-334); not cancelled: cancel would sell it',
+      );
+    } else {
+      assertions.check(
+        `${id} is listed in development, not owned`,
+        listed.ok,
+        listed.ok ? `${id} in development` : `never listed in development — reads ${listed.last}; not cancelled`,
+      );
+    }
+  } catch (err: unknown) {
+    assertions.check('the queue steps ran without a throw', false, toErrorMessage(err));
+  }
+  if (queued) await cancelQueuedResearch(session, ctx, fx, { id, key, url, stateOf }, assertions);
+}
+
+/**
+ * The cancel, only on an invention that reads in development right before it — never one that
+ * reads owned (a sell) or one the flow never saw queued. Anything else keeps the pending restore.
+ */
+async function cancelQueuedResearch(
+  session: LiveSession,
+  ctx: FlowContext,
+  fx: OwnFixture,
+  q: { id: string; key: string; url: string; stateOf: () => Promise<ResearchState> },
+  assertions: Assertions,
+): Promise<void> {
+  try {
+    const state = await q.stateOf();
+    if (state !== 'developing') {
+      assertions.check(
+        `${q.id} is cancelled`,
+        false,
+        `reads ${state}, not in development — not cancelled (RDOCancelResearch on an owned invention sells it, ` +
+          'Kernel/ResearchCenter.pas:372); pending restore kept',
+      );
+      return;
+    }
+    const window = await openLogWindow(q.url);
+    await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: q.id });
+    const line = await awaitMarker(
+      window,
+      { marker: LOG_MARKERS.RDOCancelResearch, match: l => cancelResearchLineMatches(l, q.id) },
+      TIMEOUTS.logSettle,
+      undefined,
+      ctx.now,
+      ctx.sleep,
+    );
+    const gone = await pollUntil(q.stateOf, s => s !== 'developing' && s !== 'owned', ctx);
+    const kept = line !== null && gone.ok ? '' : ' — pending restore kept';
+    assertions.check('the cancel logged its Cancel Research: line', line !== null, (line ?? `(no Cancel Research: line for ${q.id})`) + kept);
+    assertions.check(`the inventory no longer lists ${q.id} as queued`, gone.ok, `reads ${gone.last}${kept}`);
+    if (line !== null && gone.ok) ctx.lock.clearPendingRestore(q.key);
+  } catch (err: unknown) {
+    assertions.check('the research cancel ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+  }
+}
+
+/** The upgrade tab's cached counters (Kernel/Kernel.pas:5896-5899) and the live AcceptCloning. */
+interface UpgradeState {
+  level: number;
+  upgrading: number;
+  pending: number;
+  max: number;
+  cloning: '1' | '0' | undefined;
+}
+
+async function readUpgrade(session: LiveSession, fx: OwnFixture): Promise<UpgradeState> {
+  const groups = await readSectionGroups(session, fx.x, fx.y, 'upgrade', fx.visualClass);
+  const num = (name: string): number => {
+    const raw = propertyValue(groups, 'upgrade', name);
+    return raw === undefined || raw.trim() === '' ? NaN : Number(raw);
+  };
+  return {
+    level: num('UpgradeLevel'),
+    upgrading: num('Upgrading'),
+    pending: num('Pending'),
+    max: num('MaxUpgrade'),
+    cloning: truthyFlag(propertyValue(groups, 'upgrade', 'AcceptCloning')),
+  };
+}
+
+const upgradeText = (u: UpgradeState): string =>
+  `level ${u.level}/${u.max}, Upgrading ${u.upgrading}, Pending ${u.pending}, AcceptCloning ${u.cloning ?? '(unread)'}`;
+
+/** What the upgrade flow must undo, and whether its START went out. */
+interface UpgradeRun {
+  key: string;
+  url: string;
+  level0: number;
+  cloning0: '1' | '0';
+  startSent: boolean;
+}
+
+function requestUpgrade(
+  session: LiveSession,
+  fx: OwnFixture,
+  action: 'START_UPGRADE' | 'STOP_UPGRADE',
+): Promise<WsRespBuildingUpgrade> {
+  return session.driver.request<WsRespBuildingUpgrade>(
+    { type: WsMessageType.REQ_BUILDING_UPGRADE, x: fx.x, y: fx.y, action, ...(action === 'START_UPGRADE' ? { count: 1 } : {}) },
+    WsMessageType.RESP_BUILDING_UPGRADE,
+  );
+}
+
+/**
+ * Start one upgrade and stop it (`manageConstructionImpl`, building-management-handler.ts). The
+ * handler refuses unless AcceptCloning reads true, writes `-1` itself and never restores it — so
+ * the flow sets AcceptCloning back to its original's truthiness after the STOP. Driven only on a
+ * fixture below MaxUpgrade with nothing upgrading or pending: `TBlock.StartUpgrading` is a no-op
+ * while `fUpgradeHours > 0` (Kernel/Kernel.pas:6525), and the STOP would cancel an upgrade the
+ * flow did not start. A level that completes before the STOP cannot be undone (downgrade is
+ * excluded) and FAILs.
+ */
+const upgradeStop = fixtureFlow(
+  'upgrade-stop',
+  "REQ_BUILDING_UPGRADE START (count 1) on SPO_test3's industry fixture → Start Upgrade line + Upgrading/Pending " +
+    '→ STOP → Stop Upgrade line + zeros + level unchanged → AcceptCloning back to its original',
+  'industry',
+  'upgrade',
+  'REQ_BUILDING_UPGRADE',
+  async (session, ctx, fx, assertions) => {
+    try {
+      await upgradeSteps(session, ctx, fx, assertions);
+    } catch (err: unknown) {
+      assertions.check('the upgrade pre-checks ran without a throw', false, toErrorMessage(err));
+    }
+  },
+);
+
+async function upgradeSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixture, assertions: Assertions): Promise<void> {
+  const before = await readUpgrade(session, fx);
+  const counters = [before.level, before.upgrading, before.pending, before.max];
+  if (counters.some(n => !Number.isFinite(n)) || before.cloning === undefined) {
+    assertions.check('the upgrade tab reads UpgradeLevel, Upgrading, Pending, MaxUpgrade and AcceptCloning', false, upgradeText(before));
+    return;
+  }
+  if (before.level >= before.max) {
+    assertions.unproven('REQ_BUILDING_UPGRADE', `${fixtureLabel(fx)} is at MaxUpgrade (${before.level}/${before.max}) — nothing to start`);
+    return;
+  }
+  if (before.upgrading > 0 || before.pending > 0) {
+    assertions.unproven(
+      'REQ_BUILDING_UPGRADE',
+      `${fixtureLabel(fx)} is already upgrading (Upgrading ${before.upgrading}, Pending ${before.pending}) — ` +
+        'TBlock.StartUpgrading is a no-op while fUpgradeHours > 0 (Kernel/Kernel.pas:6525), and the STOP would cancel ' +
+        'an upgrade the flow did not start; nothing sent',
+    );
+    return;
+  }
+
+  const run: UpgradeRun = {
+    key: `upgrade-stop:${randomUUID()}`,
+    url: await survivalUrl(ctx),
+    level0: before.level,
+    cloning0: before.cloning,
+    startSent: false,
+  };
+  ctx.lock.addPendingRestore({
+    key: run.key,
+    x: fx.x,
+    y: fx.y,
+    propertyName: 'RDOStopUpgrade+RDOAcceptCloning',
+    what:
+      `stop the upgrade at (${fx.x},${fx.y}) of ${fixtureLabel(fx)}, set AcceptCloning back to ` +
+      `${run.cloning0 === '1' ? 'true' : 'false'} — upgrade-stop started one upgrade from level ${run.level0}; ` +
+      `do both as ${PRIMARY_ACCOUNT.username}, then npm run e2e:unlock`,
+    originalValue: `level ${run.level0}, AcceptCloning ${run.cloning0}`,
+  });
+
+  try {
+    await startUpgrade(session, ctx, fx, run, assertions);
+  } catch (err: unknown) {
+    assertions.check('the upgrade steps ran without a throw', false, toErrorMessage(err));
+  }
+  await undoUpgrade(session, ctx, fx, run, assertions);
+}
+
+async function startUpgrade(
+  session: LiveSession,
+  ctx: FlowContext,
+  fx: OwnFixture,
+  run: UpgradeRun,
+  assertions: Assertions,
+): Promise<void> {
+  if (run.cloning0 === '0') {
+    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', '1');
+    assertions.check(
+      'AcceptCloning set true before the START (manageConstructionImpl refuses otherwise)',
+      r.confirmed === true,
+      `live get holds "${r.newValue}"`,
+    );
+    if (r.confirmed !== true) return;
+  }
+  const window = await openLogWindow(run.url);
+  run.startSent = true;
+  const started = await requestUpgrade(session, fx, 'START_UPGRADE');
+  assertions.check('the gateway accepted START_UPGRADE', started.success === true, started.message);
+  const line = await awaitMarker(
+    window,
+    { marker: LOG_MARKERS.RDOStartUpgrades, match: l => startUpgradeLineMatches(l, 1) },
+    TIMEOUTS.logSettle,
+    undefined,
+    ctx.now,
+    ctx.sleep,
+  );
+  assertions.check('the START logged Facility Start Upgrade count: 1', line !== null, line ?? '(no Facility Start Upgrade count: 1 line)');
+  const moved = await pollUntil(() => readUpgrade(session, fx), u => u.upgrading > 0 || u.pending >= 1, ctx);
+  assertions.check(
+    'Upgrading or Pending moved after the START',
+    moved.ok,
+    moved.ok ? upgradeText(moved.last) : `neither Upgrading nor Pending moved — ${upgradeText(moved.last)}`,
+  );
+}
+
+/**
+ * The STOP when the START went out, then — always — AcceptCloning back to its original's
+ * truthiness, which also undoes the handler's own `-1`. The pending restore is cleared only when
+ * the STOP is proven (line + zeros + the original level) and AcceptCloning reads its original.
+ */
+async function undoUpgrade(
+  session: LiveSession,
+  ctx: FlowContext,
+  fx: OwnFixture,
+  run: UpgradeRun,
+  assertions: Assertions,
+): Promise<void> {
+  let stopped = !run.startSent;
+  if (run.startSent) {
+    try {
+      const window = await openLogWindow(run.url);
+      const r = await requestUpgrade(session, fx, 'STOP_UPGRADE');
+      assertions.check('the gateway accepted STOP_UPGRADE', r.success === true, r.message);
+      // The line carries no coordinates (Kernel/Kernel.pas:4689): the read-back attributes it.
+      const line = await awaitMarker(window, { marker: LOG_MARKERS.RDOStopUpgrade }, TIMEOUTS.logSettle, undefined, ctx.now, ctx.sleep);
+      assertions.check('the STOP logged Facility Stop Upgrade..', line !== null, line ?? '(no Facility Stop Upgrade.. line)');
+      const idle = await pollUntil(() => readUpgrade(session, fx), u => u.upgrading === 0 && u.pending === 0, ctx);
+      assertions.check('Upgrading and Pending read 0 after the STOP', idle.ok, upgradeText(idle.last));
+      const sameLevel = idle.last.level === run.level0;
+      assertions.check(
+        'UpgradeLevel equals its original after the STOP',
+        sameLevel,
+        sameLevel
+          ? `level ${run.level0}`
+          : `a level completed before the STOP — downgrade is excluded, level ${run.level0}→${idle.last.level} kept`,
+      );
+      stopped = line !== null && idle.ok && sameLevel;
+    } catch (err: unknown) {
+      assertions.check('the upgrade STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+    }
+  }
+
+  let cloningBack = false;
+  try {
+    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', run.cloning0);
+    assertions.check(
+      `AcceptCloning set back to ${run.cloning0 === '1' ? 'true' : 'false'}, confirmed by the gateway's live get`,
+      r.confirmed === true,
+      `live get holds "${r.newValue}"`,
+    );
+    const after = await readUpgrade(session, fx);
+    assertions.check(
+      'AcceptCloning reads its original truthiness',
+      after.cloning === run.cloning0,
+      `reads ${after.cloning ?? '(unread)'}, original ${run.cloning0}`,
+    );
+    cloningBack = r.confirmed === true && after.cloning === run.cloning0;
+  } catch (err: unknown) {
+    assertions.check('the AcceptCloning restore ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+  }
+  if (stopped && cloningBack) ctx.lock.clearPendingRestore(run.key);
+}
+
+/** A chat name is SPO_test3's own — `ChatMsg`'s `From` may still carry `/AccDesc`. */
+function isSelf(name: string): boolean {
+  return sameAccount(name.split('/')[0], PRIMARY_ACCOUNT);
+}
+
+/** Run one step; its assertion holds exactly when the step did not throw. */
+async function attempt(assertions: Assertions, what: string, step: () => Promise<unknown>): Promise<boolean> {
+  let error: string | undefined;
+  try {
+    await step();
+  } catch (err: unknown) {
+    error = toErrorMessage(err);
+  }
+  assertions.check(what, error === undefined, error);
+  return error === undefined;
+}
+
+/**
+ * The chat channel list and the Lobby's info (#1148). Read-only. The gateway prepends the
+ * Lobby to every list (`getChatChannelList` in `chat-handler.ts`), so its presence proves
+ * nothing — the assertion is that every entry is well-formed.
+ */
+const chatRead: Flow = {
+  name: 'chat-read',
+  what: 'chat channel list -> Lobby channel info',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const list = await session.driver.request<WsRespChatChannelList>(
+        { type: WsMessageType.REQ_CHAT_GET_CHANNELS },
+        WsMessageType.RESP_CHAT_CHANNEL_LIST,
+      );
+      const channels: unknown = list.channels;
+      const wellFormed =
+        Array.isArray(channels) &&
+        channels.every(
+          (c: { name?: unknown; isProtected?: unknown }) =>
+            typeof c.name === 'string' && c.name !== '' && typeof c.isProtected === 'boolean',
+        );
+      assertions.check(
+        'the channel list is well-formed (each entry a name and isProtected)',
+        wellFormed,
+        Array.isArray(channels) ? `${channels.length} channel(s)` : 'not a list',
+      );
+      // '' is the Lobby's server name (Interface Server/InterfaceServer.pas:2623, :4565-4575).
+      const info = await session.driver.request<WsRespChatChannelInfo>(
+        { type: WsMessageType.REQ_CHAT_GET_CHANNEL_INFO, channelName: '' },
+        WsMessageType.RESP_CHAT_CHANNEL_INFO,
+      );
+      assertions.check('the Lobby channel info is a string', typeof info.info === 'string');
+      assertions.check('no gateway errors on the chat reads', session.driver.errors.length === 0);
+      return report('chat-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * A password channel the flow creates, chats in, and removes (#1148). GATE_ONLY — nothing
+ * here is private:
+ * - `TClientView.CreateChannel` enters the creator (`Interface Server/InterfaceServer.pas:1512`,
+ *   `:4591-4593`) and `ClientCreatedChannel` broadcasts the list change, password included, to
+ *   every client (`:4594` -> `:4049-4060`); `GetChannelList` lists passwords in clear
+ *   (`:3373-3390`). The channel is deleted when its last member leaves (`:4688-4693`).
+ * - `ChatMsg` delivers only to the sender's channel, sender included (`:3902-3924`) — the
+ *   `EVENT_CHAT_MSG` echo is a real server witness.
+ * - `MsgCompositionChanged` loops over every client, sender included (`:3968-3980`,
+ *   `TClientView.NotifyMsgCompositionState` `:2426-2430`) — typing and away are proven by the
+ *   sender's own echo. AFK sticks until another state (`:1495-1502`), so the cleanup pushes idle.
+ * - The Lobby's server name is `''` (`:2623`, `:4565-4575`), never `'Lobby'`.
+ * - A killed run cleans itself up: `DoLogOff` -> `ClientLeavedChannel` (`:2000`).
+ */
+const chatPrivateChannel: Flow = {
+  name: 'chat-private-channel',
+  what: 'create a password channel -> listed -> send (echo) -> typing on/off -> away -> idle -> Lobby -> gone',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    const driver = session.driver;
+    try {
+      const id = randomUUID().slice(0, 8);
+      const channel = `e2e-${id}`;
+      const password = randomUUID();
+      const line = `e2e chat probe ${id} — automated L2 check, safe to ignore`;
+
+      // Every call is a fresh request, correlated by its own wsRequestId — never a push.
+      const listed = async (): Promise<string> => {
+        const resp = await driver.request<WsRespChatChannelList>(
+          { type: WsMessageType.REQ_CHAT_GET_CHANNELS },
+          WsMessageType.RESP_CHAT_CHANNEL_LIST,
+        );
+        return resp.channels.some(c => c.name === channel) ? 'listed' : 'absent';
+      };
+
+      // The start index is what stops an earlier identical echo (typing off) from
+      // satisfying the AWAY wait or the cleanup's idle wait.
+      const awaitSelfTyping = (push: OutboundMessage, isTyping: boolean, label: string): Promise<boolean> => {
+        const from = driver.receivedCount();
+        driver.send(push);
+        return attempt(assertions, label, () =>
+          driver.waitFor(
+            m => {
+              const e = m as WsEventChatUserTyping;
+              return m.type === WsMessageType.EVENT_CHAT_USER_TYPING && isSelf(e.username) && e.isTyping === isTyping;
+            },
+            TIMEOUTS.request,
+            label,
+            from,
+          ),
+        );
+      };
+
+      let createdFrom = 0;
+
+      /** Never throws; nothing is sent outside the marker channel. */
+      const useChannel = async (): Promise<void> => {
+        const entered = await attempt(assertions, 'the session is in the marker channel', () =>
+          driver.waitFor(
+            m =>
+              m.type === WsMessageType.EVENT_CHAT_CHANNEL_CHANGE &&
+              (m as WsEventChatChannelChange).channelName === channel,
+            TIMEOUTS.request,
+            `EVENT_CHAT_CHANNEL_CHANGE to ${channel} — nothing is sent`,
+            createdFrom,
+          ),
+        );
+        if (!entered) return;
+
+        const sendFrom = driver.receivedCount();
+        const sent = await attempt(assertions, 'the message was sent in the marker channel', () =>
+          driver.request<WsRespChatSuccess>(
+            { type: WsMessageType.REQ_CHAT_SEND_MESSAGE, message: line },
+            WsMessageType.RESP_CHAT_SUCCESS,
+          ),
+        );
+        if (sent) {
+          await attempt(assertions, 'the server echoed the message in the channel', () =>
+            driver.waitFor(
+              m => {
+                const e = m as WsEventChatMsg;
+                return m.type === WsMessageType.EVENT_CHAT_MSG && isSelf(e.from) && e.message === line;
+              },
+              TIMEOUTS.request,
+              'the EVENT_CHAT_MSG echo of the marker line',
+              sendFrom,
+            ),
+          );
+        }
+
+        await awaitSelfTyping(
+          { type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: true },
+          true,
+          'the typing-on self-echo (isTyping: true)',
+        );
+        await awaitSelfTyping(
+          { type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: false },
+          false,
+          'the typing-off self-echo (isTyping: false)',
+        );
+        // The gateway maps only state '1' to typing (push-dispatcher.ts), so away is not
+        // distinguishable from idle over the WS contract: the claim is only that an event for
+        // SPO_test3 arrived after the AWAY push.
+        await awaitSelfTyping(
+          { type: WsMessageType.REQ_CHAT_AWAY },
+          false,
+          'a self-echo for SPO_test3 after AWAY (away reads as isTyping: false)',
+        );
+      };
+
+      /** Idle first (clears AFK, :1495-1502), and only after its echo the Lobby join. */
+      const leaveChannel = async (): Promise<void> => {
+        const idle = await awaitSelfTyping(
+          { type: WsMessageType.REQ_CHAT_TYPING_STATUS, isTyping: false },
+          false,
+          'the cleanup idle self-echo',
+        );
+        if (!idle) {
+          throw new Error(
+            'the idle push was never echoed — the Lobby join is not sent; logoff’s DoLogOff removes ' +
+              'the channel (Interface Server/InterfaceServer.pas:2000)',
+          );
+        }
+        await driver.request<WsRespChatSuccess>(
+          { type: WsMessageType.REQ_CHAT_JOIN_CHANNEL, channelName: '' },
+          WsMessageType.RESP_CHAT_SUCCESS,
+        );
+      };
+
+      const what = `password channel ${channel}`;
+      const member = 'CreateChannel';
+      try {
+        // CreateChannel has no LOG_MARKERS entry: chat is the Interface Server, whose chat log
+        // is not published — so no log part, and the log URL is never opened.
+        probes.push(
+          await runRoundTrip(
+            {
+              what,
+              member,
+              read: listed,
+              testValue: () => 'listed',
+              write: async () => {
+                createdFrom = driver.receivedCount();
+                await driver.request<WsRespChatSuccess>(
+                  { type: WsMessageType.REQ_CHAT_CREATE_CHANNEL, channelName: channel, password },
+                  WsMessageType.RESP_CHAT_SUCCESS,
+                );
+              },
+              restore: async () => {
+                try {
+                  await useChannel();
+                } finally {
+                  await leaveChannel();
+                }
+              },
+              proof: {
+                readBack: {
+                  source: 'RESP_CHAT_CHANNEL_LIST of a fresh REQ_CHAT_GET_CHANNELS (GetChannelList)',
+                  why:
+                    'TInterfaceServer.GetChannelList answers from the live channel table, no cache in ' +
+                    'between (Interface Server/InterfaceServer.pas:3373-3390)',
+                  read: listed,
+                  boundMs: TIMEOUTS.logSettle,
+                },
+              },
+            },
+            ctx.lock,
+            openLogWindow,
+            ctx.survivalLogUrl ?? '',
+            { now: ctx.now, sleep: ctx.sleep },
+          ),
+        );
+      } catch (err: unknown) {
+        probes.push(probeFailure({ what, member }, err));
+      }
+      const probe = probes[0];
+      assertions.check(
+        'the fresh channel list showed the marker channel after the create',
+        probe?.readBack === 'CONFIRMED',
+      );
+      assertions.check(
+        'the marker channel is gone after the cleanup',
+        probe?.restoreReadBack === 'CONFIRMED',
+        probe?.restoreReadBack === 'CONFIRMED'
+          ? undefined
+          : `${channel} is still listed — a third party may have joined: its name and password are ` +
+              'public (Interface Server/InterfaceServer.pas:4594, :3373-3390); a human must check',
+      );
+      assertions.check('the channel round trip passed', probe?.status === 'PASS', probe?.note);
+      assertions.check('no gateway errors in the channel', driver.errors.length === 0);
+      return report('chat-private-channel', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * SPO_test3 chases Crazz, then stops (#1148). `TClientView.Chase` only inserts the chaser in
+ * the target's list and moves the chaser's own view (`Interface Server/InterfaceServer.pas:
+ * 1579-1607`) — nothing is broadcast, Crazz writes nothing. `DoLogOff` (`:2002`) and `Destroy`
+ * (`:654`) end any chase a dead run leaves.
+ */
+const chatChase: Flow = {
+  name: 'chat-chase',
+  what: 'Crazz online -> SPO_test3 chases Crazz -> stop chase',
+  mutates: false,
+  run: async () => {
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult('chat-chase', crazz.skipped);
+    try {
+      const assertions = new Assertions();
+      const session = await login(PRIMARY_ACCOUNT);
+      try {
+        // attempt() never throws, so STOP_CHASE is sent whatever the chase answered.
+        await attempt(assertions, `CHASE ${SECONDARY_ACCOUNT.username} answered without error`, () =>
+          session.driver.request<WsRespChatSuccess>(
+            { type: WsMessageType.REQ_CHAT_CHASE, userName: SECONDARY_ACCOUNT.username },
+            WsMessageType.RESP_CHAT_SUCCESS,
+          ),
+        );
+        await attempt(assertions, 'STOP_CHASE answered', () =>
+          session.driver.request<WsRespChatSuccess>(
+            { type: WsMessageType.REQ_CHAT_STOP_CHASE },
+            WsMessageType.RESP_CHAT_SUCCESS,
+          ),
+        );
+        return report('chat-chase', assertions, [], session);
+      } finally {
+        await logoff(session);
+      }
+    } finally {
+      await logoff(crazz);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   sessionResume,
   politicsRead,
   politicsWrite,
+  townMinWage,
+  publicityRoundTrip,
+  voteRoundTrip,
   buildingDetails,
   permissionNegative,
   mailRoundTrip,
@@ -1367,10 +7701,53 @@ export const FLOWS: Flow[] = [
   favoritesFolders,
   peopleSearch,
   newspaperRead,
+  newspaperBoardRead,
   zoningAlertRead,
+  mailDrafts,
+  mailSendFromDraft,
+  mailReply,
   nearestTownHall,
+  worldReaders,
   directoryBrowse,
+  searchMenuRead,
+  companySwitch,
+  clusterInfoRead,
+  profileRead,
+  policyRoundTrip,
+  autoConnectionRoundTrip,
+  chatRead,
+  chatPrivateChannel,
+  chatChase,
+  bankBorrowPayoff,
+  bankSendReturn,
+  portraitRoundTrip,
+  roadRoundTrip,
+  zoneRoundTrip,
   warehouseRoleReading,
+  fixturesEnsure,
+  inspectorReads,
+  storePriceSalaries,
+  industryOutputPrice,
+  industrySupplyLimits,
+  facilityOpenClose,
+  industryAutoBuy,
+  supplierSearchRead,
+  supplierHireFire,
+  clientHireRemove,
+  connectOnMap,
+  companyInputDemand,
+  tradeSettings,
+  warehouseWares,
+  quickTradeRoundTrip,
+  buildMenuRead,
+  placeRenameDemolish,
+  residentialSettings,
+  residentialRepair,
+  bankSettings,
+  tvSettings,
+  researchRoundTrip,
+  acceptCloning,
+  upgradeStop,
 ];
 
 export function flowByName(name: string): Flow {
@@ -1387,7 +7764,7 @@ export function flowByName(name: string): Flow {
  * data behind turns the result FAIL (the restore rule, doc/E2E-POLICY.md §5/§9).
  */
 export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult> {
-  if (!flow.seed) return runUnseeded(flow, ctx);
+  if (!flow.seed) return guardSkip(await runUnseeded(flow, ctx), ctx);
 
   let seeded: FlowSeed;
   try {
@@ -1401,6 +7778,8 @@ export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult>
   try {
     if (seeded.outcome.ok) {
       result = await runUnseeded(flow, ctx);
+    } else if (seeded.outcome.skipped !== undefined) {
+      result = skippedResult(flow.name, seeded.outcome.skipped);
     } else {
       const { what, detail } = seeded.outcome;
       result = {
@@ -1424,8 +7803,42 @@ export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult>
     }
   }
 
-  const status = cleanup.some(c => !c.ok) ? 'FAIL' : result.status;
-  return { ...result, seed: seeded.outcome, cleanup, status };
+  // A second-account refusal in the cleanup is forgiven only when the seed itself was skipped:
+  // nothing was sent. After a seed that ran, the refused mailbox keeps the leftover — FAIL.
+  const seedSkipped = seeded.outcome.skipped !== undefined;
+  const leftBehind = cleanup.some(c => !c.ok && !(seedSkipped && c.skipped !== undefined));
+  const status = leftBehind ? 'FAIL' : result.status;
+  return guardSkip({ ...result, seed: seeded.outcome, cleanup, status }, ctx);
+}
+
+/**
+ * A skip is only honest before the flow's first write. A `SKIPPED` result while the world
+ * lock still holds a pending restore would leave that write behind, so it is a FAIL.
+ */
+function guardSkip(result: FlowResult, ctx: FlowContext): FlowResult {
+  if (result.status !== 'SKIPPED') return result;
+  const pending = ctx.lock.read().pendingRestores.length;
+  if (pending === 0) return result;
+  return {
+    ...result,
+    status: 'FAIL',
+    error: `skipped after a write (${result.skipped ?? 'no reason'}) — ${pending} pending restore(s) still held`,
+  };
+}
+
+/** A flow that did not run: the second account was refused at login, before any write. */
+function skippedResult(name: string, reason: string): FlowResult {
+  return {
+    name,
+    status: 'SKIPPED',
+    skipped: reason,
+    assertions: [],
+    unproven: [],
+    probes: [],
+    messagesSent: 0,
+    messagesReceived: 0,
+    wireErrors: 0,
+  };
 }
 
 async function runUnseeded(flow: Flow, ctx: FlowContext): Promise<FlowResult> {

@@ -31,9 +31,50 @@ beforeEach(() => {
 });
 
 describe('LOG_MARKERS', () => {
-  it('carries the civic markers the probe relies on', () => {
-    expect(LOG_MARKERS.RDOSetTaxValue).toBe('Setting Tax value:');
-    expect(LOG_MARKERS.RDOSetMinSalaryValue).toBe('Setting Min Wage:');
+  // Each prefix is cited beside its entry in live-log.ts (declaration, then the Logs.Log line).
+  it('carries every marker verified in the Pascal', () => {
+    expect(LOG_MARKERS).toEqual({
+      RDOSetTaxValue: 'Setting Tax value:',
+      RDOSetMinSalaryValue: 'Setting Min Wage:',
+      RDOSetPublicity: 'Setting town politics publicity:',
+      RDOSetRatingFrom: 'Setting town politics Tycoon rating:',
+      RDOVote: 'Voting:',
+      RDOSetPrice: 'Service SetPrice:',
+      RDOSetSalaries: 'Setting salaries:',
+      RDOSetOutputPrice: 'Output price set:',
+      RDOSetInputOverPrice: 'Input overprice set:',
+      RDOSetInputMaxPrice: 'Input max price set:',
+      RDOSetInputMinK: 'Input min K set:',
+      RDOSetInputSortMode: 'Changing Sort Mode..',
+      RDOConnectInput: 'Input connected:',
+      RDOConnectOutput: 'Output connected:',
+      RDODisconnectInput: 'Input disconnect:',
+      RDODisconnectOutput: 'Output disconnect:',
+      RDOConnectToTycoon: 'Connect to Tycoon:',
+      RDOSetCompanyInputDemand: 'SetCompanyInputDemand',
+      RDOSetTradeLevel: 'SetTradeLevel',
+      Stopped: 'Stopping Facility.',
+      RDOStartUpgrades: 'Facility Start Upgrade count:',
+      RDOStopUpgrade: 'Facility Stop Upgrade..',
+      RDOQueueResearch: 'Queue Research:',
+      RDOCancelResearch: 'Cancel Research:',
+      RdoRepair: 'Repairing:',
+      RDONewFacility: 'New Facility:',
+      RDODelFacility: 'Del Facility, x:',
+      RDOCreateCircuitSeg: 'CreateCircuitSeg:',
+      RDOBreakCircuitAt: 'BreakCircuit:',
+      RDOWipeCircuit: 'WipingCircuit:',
+      RDODefineZone: 'Defining Zone:',
+      RDOAskLoan: 'AskLoan:',
+      RDOSetPolicyStatus: 'Setting policy status:',
+      RDOAddAutoConnection: 'Adding initial suppliers:',
+      RDODelAutoConnection: 'Deleting initial suppliers:',
+      RDOHireTradeCenter: 'Initial suppliers, include Trade Center:',
+      RDODontHireTradeCenter: 'Initial suppliers, excluding Trade Center:',
+      RDOHireOnlyFromWarehouse: 'Initial suppliers, hire only warehouses:',
+      RDODontHireOnlyFromWarehouse: 'Initial suppliers, hire all:',
+      CacheTown: 'Caching Town..',
+    });
   });
 });
 
@@ -127,6 +168,31 @@ describe('awaitMarker', () => {
       .mockResolvedValueOnce(response({ status: 206, body: 'Setting Min Wage: 300' }));
     const line = await awaitMarker(window, 'Setting Min Wage:', 10_000, 0, mockClock([0, 1]), noSleep);
     expect(line).toBe('Setting Min Wage: 300');
+  });
+
+  it('skips a prefixed line that fails match and returns the one that satisfies it', async () => {
+    fetchMock.mockResolvedValueOnce(
+      response({ status: 206, body: 'Setting Tax value: Other, 0, 8\nSetting Tax value: Helartia, 0, 8' }),
+    );
+    const line = await awaitMarker(
+      window,
+      { marker: 'Setting Tax value:', match: l => l.includes('Helartia') },
+      1_000,
+    );
+    expect(line).toBe('Setting Tax value: Helartia, 0, 8');
+  });
+
+  it('returns null when the only prefixed line fails match', async () => {
+    fetchMock.mockResolvedValue(response({ status: 206, body: 'Setting Tax value: Other, 0, 8' }));
+    const line = await awaitMarker(
+      window,
+      { marker: 'Setting Tax value:', match: l => l.includes('Helartia') },
+      5,
+      0,
+      mockClock([0, 100]),
+      noSleep,
+    );
+    expect(line).toBeNull();
   });
 
   it('returns null when the write never reaches the object', async () => {

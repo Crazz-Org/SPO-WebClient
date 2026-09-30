@@ -66,6 +66,11 @@ export const INTERFACE_LOG_BASE = new URL('../FIVEINTERFACESERVER/', LIVE_LOG_BA
  *
  * Source: TPresidentialHall, Kernel/WorldPolitics.pas:261-266, indexed in
  * doc/civic-roles-reference.md:101-106.
+ *
+ * `RDOSetMinSalaryValue` has two declarations behind one client path: `TTownHall`
+ * (Kernel/Population.pas:167, the town) and `TPresidentialHall` (Kernel/WorldPolitics.pas:265,
+ * the Capitol), plus the `TPoliticalWorld` twins (Kernel/WorldPolitics.pas:219-220). It stays
+ * listed for its Capitol variant; the `town-min-wage` flow drives the town variant.
  */
 export const PRESIDENT_MEMBERS = [
   'RDOSetMinSalaryValue',
@@ -92,6 +97,20 @@ export const TIMEOUTS = {
   mailDeleteReread: 1_000,
   /** How long session-resume keeps the WebSocket closed before resuming the parked session. */
   resumeGap: 20_000,
+  /**
+   * How long a round trip polls its read-back for the written value. The town-hall
+   * facility's object-cache entry lives two minutes (`Kernel/Population.pas:1192`,
+   * `CreateTTL(0, 0, 2, 0)`, OB-29), plus a 30 s margin. Never widen it past TTL + margin:
+   * a read-back that outlasts it FAILs.
+   */
+  readBack: 150_000,
+  /** Gap between read-back polls. */
+  readBackPoll: 5_000,
+  /**
+   * Gap between context-status re-reads: `ContextStatusText` answers `''` while the
+   * ClientView is `fServerBusy` (`Interface Server/InterfaceServer.pas:837-839`).
+   */
+  contextStatusReread: 3_000,
 } as const;
 
 export const LIMITS = {
@@ -101,6 +120,8 @@ export const LIMITS = {
   maxAttempts: 3,
   /** Inbox re-reads mail-roundtrip takes after REQ_MAIL_DELETE before it gives up (issue #1025). */
   mailDeleteMaxReads: 5,
+  /** Context-status reads world-readers takes before FAIL (`''` while `fServerBusy`, `Interface Server/InterfaceServer.pas:837-839`). */
+  contextStatusMaxReads: 3,
 } as const;
 
 /** Where run artifacts live. Gitignored — evidence is per-machine, per-worktree. */

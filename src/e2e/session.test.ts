@@ -8,15 +8,19 @@ import {
   resolveVisualClass,
   listTowns,
   login,
+  loginSecondary,
   logoff,
   pickCompany,
   propertyValue,
   readBuildingDetails,
   resumeSession,
   setBuildingProperty,
+  switchToMayor,
   type LiveSession,
 } from './session';
 import { PRIMARY_ACCOUNT } from './config';
+import { DIR_ERROR_InvalidPassword, DIR_ERROR_Unknown } from '@/shared/directory-error-codes';
+import { ERROR_InvalidLogonData, ERROR_InvalidPassword, ERROR_Unknown } from '@/shared/error-codes';
 
 type Responder = (msg: WsMessage) => unknown;
 
@@ -44,6 +48,8 @@ function sessionWith(responder: Responder): LiveSession {
     company: { id: '1', name: 'SPO_test3 - Green' },
     worlds: 3,
     companies: [],
+    playerX: 0,
+    playerY: 0,
   };
 }
 
@@ -79,6 +85,53 @@ describe('pickCompany', () => {
 
   it('refuses when the world returned no company at all', () => {
     expect(() => pickCompany([], 'SPO_test3')).toThrow(/No company/);
+  });
+});
+
+describe('switchToMayor', () => {
+  const own: CompanyInfo = { id: '1', name: 'SPO_test3 - Green' };
+  const minister: CompanyInfo = { id: '9', name: 'Ministry', ownerRole: 'Minister of Agriculture' };
+  const mayor: CompanyInfo = { id: '7', name: 'Helartia Town', ownerRole: 'Mayor of Helartia' };
+
+  function withCompanies(companies: CompanyInfo[], responder: Responder = () => ({ result: '' })) {
+    const s = sessionWith(responder);
+    s.companies = companies;
+    return s;
+  }
+
+  it('sends REQ_SWITCH_COMPANY with the Mayor entry, not a Minister listed first, and returns it', async () => {
+    const s = withCompanies([own, minister, mayor]);
+    await expect(switchToMayor(s)).resolves.toBe(mayor);
+    expect(s.driver.request).toHaveBeenCalledTimes(1);
+    expect(s.driver.request).toHaveBeenCalledWith(
+      { type: WsMessageType.REQ_SWITCH_COMPANY, company: mayor },
+      WsMessageType.RESP_RDO_RESULT,
+      expect.any(Number),
+    );
+  });
+
+  it('matches the ownerRole case-insensitively', async () => {
+    const lower = { ...mayor, ownerRole: 'MAYOR OF helartia' };
+    await expect(switchToMayor(withCompanies([minister, lower]))).resolves.toBe(lower);
+  });
+
+  it('throws naming the entries, having sent nothing, when there is no Mayor entry', async () => {
+    const s = withCompanies([own, minister]);
+    await expect(switchToMayor(s)).rejects.toThrow(
+      'No Mayor of Helartia entry in the company list: SPO_test3 - Green [], Ministry [Minister of Agriculture]',
+    );
+    expect(s.driver.request).not.toHaveBeenCalled();
+  });
+
+  it('names an empty list (empty)', async () => {
+    await expect(switchToMayor(withCompanies([]))).rejects.toThrow(/company list: \(empty\)$/);
+  });
+
+  it('propagates a RESP_ERROR from the switch', async () => {
+    const s = withCompanies([mayor], msg => {
+      throw new WsDriverError('refused', 42, msg.type);
+    });
+    await expect(switchToMayor(s)).rejects.toBeInstanceOf(WsDriverError);
   });
 });
 
@@ -120,6 +173,27 @@ describe('login', () => {
     expect(session.world).toEqual({ name: 'planitia' });
   });
 
+  it('keeps the saved position the select-company reply carried', async () => {
+    const base = loginResponder();
+    const driver = stubDriver(msg =>
+      msg.type === WsMessageType.REQ_SELECT_COMPANY
+        ? { type: WsMessageType.RESP_RDO_RESULT, result: '', playerX: 321, playerY: 654 }
+        : base(msg),
+    );
+    jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
+
+    const session = await login(PRIMARY_ACCOUNT);
+    expect([session.playerX, session.playerY]).toEqual([321, 654]);
+  });
+
+  it('defaults the saved position to 0,0 when the reply carries none', async () => {
+    const driver = stubDriver(loginResponder());
+    jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
+
+    const session = await login(PRIMARY_ACCOUNT);
+    expect([session.playerX, session.playerY]).toEqual([0, 0]);
+  });
+
   it('waits for the search menu before handing the session back', async () => {
     const driver = stubDriver(loginResponder());
     jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
@@ -137,6 +211,13 @@ describe('login', () => {
     const driver = stubDriver(loginResponder([{ name: 'aries' }]));
     jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
     await expect(login(PRIMARY_ACCOUNT)).rejects.toThrow(/got: aries/);
+  });
+
+  it('closes the driver and rethrows when the spine fails', async () => {
+    const driver = stubDriver(loginResponder([{ name: 'aries' }]));
+    jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
+    await expect(login(PRIMARY_ACCOUNT)).rejects.toThrow(/got: aries/);
+    expect(driver.close).toHaveBeenCalledTimes(1);
   });
 
   it('logoff sends REQ_LOGOUT, awaits RESP_LOGOUT, and only then closes', async () => {
@@ -311,5 +392,72 @@ describe('resumeSession', () => {
 
     await expect(resumeSession(PRIMARY_ACCOUNT, 'old')).rejects.toBe(refusal);
     expect(driver.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('loginSecondary', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  /** A spine that answers every step, except `refuseOn`, which fails with `err`. */
+  function refusing(refuseOn: string | null, err: (msg: WsMessage) => Error) {
+    const driver = stubDriver(msg => {
+      if (msg.type === refuseOn) throw err(msg);
+      switch (msg.type) {
+        case WsMessageType.REQ_AUTH_CHECK:
+          return { type: WsMessageType.RESP_AUTH_SUCCESS };
+        case WsMessageType.REQ_CONNECT_DIRECTORY:
+          return { type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: 'planitia' }] };
+        case WsMessageType.REQ_LOGIN_WORLD:
+          return { type: WsMessageType.RESP_LOGIN_SUCCESS, companies: [{ id: '5', name: 'Crazz - Red' }] };
+        default:
+          return { type: WsMessageType.RESP_RDO_RESULT, result: '' };
+      }
+    });
+    jest.spyOn(WsDriver, 'connect').mockResolvedValue(driver as unknown as WsDriver);
+    return driver;
+  }
+  const typed = (code: number) => (msg: WsMessage) => new WsDriverError('refused', code, msg.type);
+
+  it('logs the second account in when nothing refuses it', async () => {
+    const driver = refusing(null, typed(0));
+    const result = await loginSecondary();
+    expect('skipped' in result).toBe(false);
+    expect(driver.request.mock.calls[0][0]).toMatchObject({
+      type: WsMessageType.REQ_AUTH_CHECK,
+      username: 'Crazz',
+    });
+  });
+
+  it('skips on a named directory refusal at REQ_AUTH_CHECK, and closes the socket', async () => {
+    const driver = refusing(WsMessageType.REQ_AUTH_CHECK, typed(DIR_ERROR_InvalidPassword));
+    const result = await loginSecondary();
+    expect(result).toEqual({
+      skipped: expect.stringMatching(/^Crazz refused at REQ_AUTH_CHECK \(code 7\): refused$/),
+    });
+    expect(driver.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips on ERROR_InvalidPassword at REQ_LOGIN_WORLD', async () => {
+    refusing(WsMessageType.REQ_LOGIN_WORLD, typed(ERROR_InvalidPassword));
+    expect(await loginSecondary()).toEqual({ skipped: expect.stringMatching(/REQ_LOGIN_WORLD \(code 13\)/) });
+  });
+
+  it.each([
+    ['DIR_ERROR_Unknown', WsMessageType.REQ_AUTH_CHECK, DIR_ERROR_Unknown],
+    ['ERROR_InvalidLogonData', WsMessageType.REQ_AUTH_CHECK, ERROR_InvalidLogonData],
+    ['ERROR_Unknown', WsMessageType.REQ_CONNECT_DIRECTORY, ERROR_Unknown],
+    ['a named refusal', WsMessageType.REQ_CONNECT_DIRECTORY, DIR_ERROR_InvalidPassword],
+    ['missing credentials', WsMessageType.REQ_CONNECT_DIRECTORY, ERROR_InvalidLogonData],
+    ['ERROR_Unknown', WsMessageType.REQ_LOGIN_WORLD, ERROR_Unknown],
+    ['a code outside the credential refusals', WsMessageType.REQ_SELECT_COMPANY, ERROR_InvalidPassword],
+  ])('rethrows %s on %s', async (_label, type, code) => {
+    const refusal = new WsDriverError('refused', code, type);
+    refusing(type, () => refusal);
+    await expect(loginSecondary()).rejects.toBe(refusal);
+  });
+
+  it('rethrows a timeout', async () => {
+    refusing(WsMessageType.REQ_AUTH_CHECK, () => new Error('Timed out waiting for RESP_AUTH_SUCCESS'));
+    await expect(loginSecondary()).rejects.toThrow(/Timed out/);
   });
 });

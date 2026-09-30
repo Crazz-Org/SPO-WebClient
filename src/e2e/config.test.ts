@@ -53,4 +53,10 @@ describe('locked configuration', () => {
   it('keeps the WebSocket closed 20 s before session-resume resumes', () => {
     expect(TIMEOUTS.resumeGap).toBe(20_000);
   });
+
+  it('bounds the read-back poll by the town-hall cache TTL plus a margin, never more', () => {
+    // Kernel/Population.pas:1192 — a two-minute TTL (OB-29), plus 30 s.
+    expect(TIMEOUTS.readBack).toBe(150_000);
+    expect(TIMEOUTS.readBackPoll).toBe(5_000);
+  });
 });

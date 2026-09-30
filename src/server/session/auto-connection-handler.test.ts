@@ -436,6 +436,26 @@ describe('fetchAutoConnections', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('executeAutoConnectionAction', () => {
+  /**
+   * The page's `Obj.ObjectId` (4666201923 in the fixture) and the session's
+   * `ctx.tycoonId` are two different numbers on the live server — the latter is
+   * `fTycoonProxy.Id` (InterfaceServer.pas:3236-3237), e.g. 37. The fake's default
+   * tycoonId happens to equal the fixture's ObjectId, which hid the bug: every
+   * action here runs with the live-shaped 37. The ASP cache keeps what it is given,
+   * and the page fetch serves the real fixture.
+   */
+  const PAGE_OBJECT_ID = '4666201923';
+  const SESSION_TYCOON_ID = '37';
+
+  function actionCtx(overrides: Partial<SessionContext> = {}): FakeSessionCtx {
+    const fake = makeWebCtx({ tycoonId: SESSION_TYCOON_ID, ...overrides });
+    let stored: Map<string, AspActionUrl> | undefined;
+    setCache(fake).mockImplementation((_path, map) => { stored = map; });
+    getCache(fake).mockImplementation(() => stored);
+    fetchAsp(fake).mockResolvedValue(autoConnectionsPage([PLASTICS]));
+    return fake;
+  }
+
   beforeEach(() => {
     mockFetch.mockResolvedValue(htmlResponse(DELETE_OK));
   });
@@ -452,7 +472,7 @@ describe('executeAutoConnectionAction', () => {
       // Regression guard for B-3. `AddDefaultSupplier.asp` is absent from the
       // 2 774 ASP files; the add path is TycoonAutoConnections.asp:18-33, which
       // needs FullAccess (Tycoon + Password + WorldName) and the DA address.
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       mockFetch.mockResolvedValue(htmlResponse(ADDED));
 
       const result = await executeAutoConnectionAction(fake.ctx, 'add', 'PGIPlastics', '118,226,');
@@ -475,7 +495,7 @@ describe('executeAutoConnectionAction', () => {
     });
 
     it('the answer is the page re-rendered: the supplier is there or the add failed', async () => {
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       // A wrong password forces Count = 0 (:72-76): the list comes back empty
       // and the page is otherwise perfectly normal — no marker of any kind.
       mockFetch.mockResolvedValue(htmlResponse(autoConnectionsPage([{ ...PLASTICS, suppliers: [] }])));
@@ -485,19 +505,19 @@ describe('executeAutoConnectionAction', () => {
     });
 
     it('an answer listing another fluid only is a failure too', async () => {
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       mockFetch.mockResolvedValue(htmlResponse(autoConnectionsPage([SERVICES])));
       expect((await executeAutoConnectionAction(fake.ctx, 'add', 'PGIPlastics', '118,226,')).success).toBe(false);
     });
 
     it('add without suppliers is refused before any fetch', async () => {
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       expect(await executeAutoConnectionAction(fake.ctx, 'add', 'PGIPlastics')).toEqual({ success: false, message: 'Supplier facility coordinates required' });
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('refuses when the DA lock channel is unset, rather than falling back to the directory host/port', async () => {
-      const fake = makeWebCtx({
+      const fake = actionCtx({
         activeUsername: null, cachedUsername: 'Cached', cachedPassword: null,
         daAddr: null, daPort: null, currentWorldInfo: { ...WORLD, name: '' },
       });
@@ -510,14 +530,14 @@ describe('executeAutoConnectionAction', () => {
     });
 
     it('with no username at all sends an empty Tycoon', async () => {
-      const fake = makeWebCtx({ activeUsername: null, cachedUsername: null });
+      const fake = actionCtx({ activeUsername: null, cachedUsername: null });
       mockFetch.mockResolvedValue(htmlResponse(ADDED));
       await executeAutoConnectionAction(fake.ctx, 'add', 'PGIPlastics', '118,226,');
       expect(queryOf(0).get('Tycoon')).toBe('');
     });
 
     it('a cached AddDefaultSupplier.asp entry cannot hijack the add path', async () => {
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       getCache(fake).mockReturnValue(cacheWith([['AddDefaultSupplier.asp', { key: 'AddDefaultSupplier.asp', url: `${IS_BASE}AddDefaultSupplier.asp?TycoonId=OLD`, method: 'GET' }]]));
       mockFetch.mockResolvedValue(htmlResponse(ADDED));
       await executeAutoConnectionAction(fake.ctx, 'add', 'PGIPlastics', '118,226,');
@@ -527,27 +547,31 @@ describe('executeAutoConnectionAction', () => {
 
   // ── the text pages: the `OK.` oracle ─────────────────────────────────────
 
-  describe('with a cold cache — URL reconstructed from session state', () => {
-    it('delete: DeleteDefaultSupplier.asp with the five reference params (:212-218)', async () => {
-      const fake = makeWebCtx();
+  describe('with a cold cache — the page is fetched first, its URL used', () => {
+    it('delete: fetches TycoonAutoConnections.asp once, then DeleteDefaultSupplier.asp with the page\'s TycoonId (:212-218)', async () => {
+      const fake = actionCtx();
       const result = await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIPlastics', '118,226,');
-      expect(getCache(fake)).toHaveBeenCalledWith(AUTOCONN);
-      expect(mockFetch.mock.calls[0][0].startsWith(`${IS_BASE}DeleteDefaultSupplier.asp?`)).toBe(true);
+      expect(fetchAsp(fake)).toHaveBeenCalledTimes(1);
+      expect(fetchAsp(fake)).toHaveBeenCalledWith(AUTOCONN, { RIWS: '' });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][0].startsWith('http://158.69.153.134//Five/0/Visual/Voyager/NewTycoon/DeleteDefaultSupplier.asp?')).toBe(true);
       expect(mockFetch.mock.calls[0][1]).toEqual(expect.objectContaining({ redirect: 'follow' }));
       expect((mockFetch.mock.calls[0][1] as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
       const q = queryOf(0);
-      expect(q.get('TycoonId')).toBe(FAKE_CONTEXT_IDS.tycoonId);
+      expect(q.get('TycoonId')).toBe(PAGE_OBJECT_ID);
       expect(q.get('FluidId')).toBe('PGIPlastics');
       expect(q.get('Supplier')).toBe('118,226,');
       expect(q.get('DAAddr')).toBe('10.0.0.5');
       expect(q.get('DAPort')).toBe('1111');
       expect(result).toEqual({ success: true });
+      expect(fake.log.debug).toHaveBeenCalledWith('[AutoConnections] No cached URL for delete, fetching the page');
     });
 
     it('delete without suppliers is refused before any fetch', async () => {
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       expect(await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIPlastics')).toEqual({ success: false, message: 'Supplier facility ID required' });
       expect(mockFetch).not.toHaveBeenCalled();
+      expect(fetchAsp(fake)).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -555,14 +579,14 @@ describe('executeAutoConnectionAction', () => {
       ['dontHireTradeCenter', 'ModifyTradeCenterStatus.asp', 'NO', TC_OK],
       ['onlyWarehouses', 'ModifyWarehouseStatus.asp', 'YES', WH_OK],
       ['dontOnlyWarehouses', 'ModifyWarehouseStatus.asp', 'NO', WH_OK],
-    ])('%s: %s with Hire=%s and the tycoon credentials', async (action, asp, hire, body) => {
-      const fake = makeWebCtx();
+    ])('%s: %s with Hire=%s, the page\'s TycoonId and the tycoon credentials', async (action, asp, hire, body) => {
+      const fake = actionCtx();
       mockFetch.mockResolvedValue(htmlResponse(body));
       const result = await executeAutoConnectionAction(fake.ctx, action, 'PGIFood');
-      expect(mockFetch.mock.calls[0][0].startsWith(`${IS_BASE}${asp}?`)).toBe(true);
+      expect(mockFetch.mock.calls[0][0]).toContain(`/NewTycoon/${asp}?`);
       const q = queryOf(0);
       expect(q.get('Hire')).toBe(hire);
-      expect(q.get('TycoonId')).toBe(FAKE_CONTEXT_IDS.tycoonId);
+      expect(q.get('TycoonId')).toBe(PAGE_OBJECT_ID);
       expect(q.get('FluidId')).toBe('PGIFood');
       expect(q.get('WorldName')).toBe('Shamba');
       expect(q.get('Tycoon')).toBe('SPO_test3');
@@ -572,8 +596,38 @@ describe('executeAutoConnectionAction', () => {
       expect(result).toEqual({ success: true });
     });
 
+    it('the fetched page stays cached: a second action does not fetch it again', async () => {
+      const fake = actionCtx();
+      await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIPlastics', '118,226,');
+      await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIPlastics', '77,42,');
+      expect(fetchAsp(fake)).toHaveBeenCalledTimes(1);
+      expect(queryOf(1).get('TycoonId')).toBe(PAGE_OBJECT_ID);
+      expect(queryOf(1).get('Supplier')).toBe('77,42,');
+    });
+
+    it('a page that offers no action URL is a failure, and nothing is sent with the session tycoonId', async () => {
+      const fake = actionCtx();
+      fetchAsp(fake).mockResolvedValue('<html><body>nothing here</body></html>');
+      expect(await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIPlastics', '118,226,')).toEqual({
+        success: false,
+        message: 'delete failed: the auto-connections page offered no DeleteDefaultSupplier.asp URL',
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('a page fetch that rejects is a failure too, nothing sent', async () => {
+      const fake = actionCtx();
+      fetchAsp(fake).mockRejectedValue(new Error('ASP request failed: 500'));
+      const result = await executeAutoConnectionAction(fake.ctx, 'hireTradeCenter', 'PGIFood');
+      expect(result).toEqual({
+        success: false,
+        message: 'hireTradeCenter failed: the auto-connections page offered no ModifyTradeCenterStatus.asp URL',
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it.each(['hireTradeCenter', 'onlyWarehouses'])('%s refuses when the DA lock channel is unset', async (action) => {
-      const fake = makeWebCtx({
+      const fake = actionCtx({
         activeUsername: null, cachedUsername: 'Cached', cachedPassword: null, daAddr: null, daPort: null,
         tycoonId: null, currentWorldInfo: { ...WORLD, name: '' },
       });
@@ -583,10 +637,11 @@ describe('executeAutoConnectionAction', () => {
         success: false,
         message: 'ASP call refused: DA lock channel not announced yet (daAddr/daPort unset)',
       });
+      expect(fetchAsp(fake)).not.toHaveBeenCalled();
     });
 
     it('delete also refuses when the DA lock channel is unset', async () => {
-      const fake = makeWebCtx({ activeUsername: null, cachedUsername: null, daAddr: null, daPort: null });
+      const fake = actionCtx({ activeUsername: null, cachedUsername: null, daAddr: null, daPort: null });
       mockFetch.mockResolvedValue(htmlResponse(DELETE_OK));
       const result = await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIFood', '1,1,');
       expect(result).toEqual({
@@ -596,20 +651,21 @@ describe('executeAutoConnectionAction', () => {
     });
 
     it('an unknown action is refused without a fetch', async () => {
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       expect(await executeAutoConnectionAction(fake.ctx, 'explode', 'PGIFood')).toEqual({ success: false, message: 'Unknown action: explode' });
       expect(mockFetch).not.toHaveBeenCalled();
+      expect(fetchAsp(fake)).not.toHaveBeenCalled();
     });
   });
 
-  describe('with a warm cache — URL taken from the last page, params overwritten', () => {
+  describe('with a warm cache — URL taken from the last page, per-action params overwritten', () => {
     function warmCache(fake: FakeSessionCtx, key: string, url: string): void {
       getCache(fake).mockReturnValue(cacheWith([[key, { key, url, method: 'GET' }]]));
     }
 
-    it('delete: keeps the cached URL and overwrites TycoonId/FluidId/Supplier', async () => {
-      const fake = makeWebCtx();
-      warmCache(fake, 'DeleteDefaultSupplier.asp', `${SCRIPT_BASE}DeleteDefaultSupplier.asp?TycoonId=OLD&FluidId=OLD&Supplier=OLD&DAAddr=cached.host`);
+    it('delete: keeps the cached URL and its TycoonId, overwrites FluidId/Supplier', async () => {
+      const fake = actionCtx();
+      warmCache(fake, 'DeleteDefaultSupplier.asp', `${SCRIPT_BASE}DeleteDefaultSupplier.asp?TycoonId=${PAGE_OBJECT_ID}&FluidId=OLD&Supplier=OLD&DAAddr=cached.host`);
 
       const result = await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIPlastics', '118,226,');
 
@@ -618,7 +674,7 @@ describe('executeAutoConnectionAction', () => {
       // and keeps the double slash of getBaseURL() — same URL, and the double
       // slash is the reference client's own form (audit §4).
       expect(mockFetch.mock.calls[0][0].startsWith('http://158.69.153.134//Five/0/Visual/Voyager/NewTycoon/DeleteDefaultSupplier.asp?')).toBe(true);
-      expect(q.get('TycoonId')).toBe(FAKE_CONTEXT_IDS.tycoonId);
+      expect(q.get('TycoonId')).toBe(PAGE_OBJECT_ID);
       expect(q.get('FluidId')).toBe('PGIPlastics');
       expect(q.get('Supplier')).toBe('118,226,');
       expect(q.get('DAAddr')).toBe('cached.host');
@@ -628,7 +684,7 @@ describe('executeAutoConnectionAction', () => {
     });
 
     it.each([undefined, ''])('delete without suppliers is refused before the cache lookup, even with a warm cache (%p)', async (suppliers) => {
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       warmCache(fake, 'DeleteDefaultSupplier.asp', `${IS_BASE}DeleteDefaultSupplier.asp?Supplier=OLD`);
       expect(await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIPlastics', suppliers)).toEqual({
         success: false,
@@ -644,28 +700,35 @@ describe('executeAutoConnectionAction', () => {
       ['onlyWarehouses', 'ModifyWarehouseStatus.asp', 'YES'],
       ['dontOnlyWarehouses', 'ModifyWarehouseStatus.asp', 'NO'],
     ])('%s: sets Hire=%s on the cached URL', async (action, asp, hire) => {
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       warmCache(fake, asp, `${SCRIPT_BASE}${asp}?TycoonId=OLD`);
       mockFetch.mockResolvedValue(htmlResponse(TC_OK));
       await executeAutoConnectionAction(fake.ctx, action, 'PGIFood');
       expect(queryOf(0).get('Hire')).toBe(hire);
       expect(queryOf(0).get('FluidId')).toBe('PGIFood');
+      expect(queryOf(0).get('TycoonId')).toBe('OLD');
+      expect(fetchAsp(fake)).not.toHaveBeenCalled();
     });
 
-    it('a cache that lacks the key for this action falls back to reconstruction', async () => {
-      const fake = makeWebCtx();
+    it('a cache that lacks the key for this action fetches the page and uses its URL', async () => {
+      const fake = actionCtx();
       warmCache(fake, 'ModifyWarehouseStatus.asp', `${IS_BASE}ModifyWarehouseStatus.asp?x=1`);
+      setCache(fake).mockImplementation((_path, map) => { getCache(fake).mockReturnValue(map); });
       mockFetch.mockResolvedValue(htmlResponse(TC_OK));
       await executeAutoConnectionAction(fake.ctx, 'hireTradeCenter', 'PGIFood');
-      expect(mockFetch.mock.calls[0][0].startsWith(`${IS_BASE}ModifyTradeCenterStatus.asp?`)).toBe(true);
-      expect(fake.log.debug).toHaveBeenCalledWith('[AutoConnections] No cached URL for hireTradeCenter, reconstructing');
+      expect(fetchAsp(fake)).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][0]).toContain('/NewTycoon/ModifyTradeCenterStatus.asp?');
+      expect(queryOf(0).get('TycoonId')).toBe(PAGE_OBJECT_ID);
+      expect(fake.log.debug).toHaveBeenCalledWith('[AutoConnections] No cached URL for hireTradeCenter, fetching the page');
     });
 
-    it('an empty tycoonId is written as an empty TycoonId param', async () => {
-      const fake = makeWebCtx({ tycoonId: null });
-      warmCache(fake, 'DeleteDefaultSupplier.asp', `${IS_BASE}DeleteDefaultSupplier.asp?TycoonId=OLD`);
+    // The bug behind the HTTP 500 (DeleteDefaultSupplier.asp:11 binds CLng(TycoonId)):
+    // the session's tycoonId was written over the page's Obj.ObjectId.
+    it.each([SESSION_TYCOON_ID, null])('the session tycoonId (%p) never replaces the page\'s TycoonId', async (tycoonId) => {
+      const fake = actionCtx({ tycoonId });
+      warmCache(fake, 'DeleteDefaultSupplier.asp', `${IS_BASE}DeleteDefaultSupplier.asp?TycoonId=${PAGE_OBJECT_ID}`);
       await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIFood', '1,1,');
-      expect(queryOf(0).get('TycoonId')).toBe('');
+      expect(queryOf(0).get('TycoonId')).toBe(PAGE_OBJECT_ID);
     });
   });
 
@@ -681,13 +744,13 @@ describe('executeAutoConnectionAction', () => {
       ['hireTradeCenter', TC_SECURITY_FAILED, 'Security Failed.'],
       ['onlyWarehouses', ADVANCE_SECURITY_FAILED, 'ERROR: Cannot perform operation.'],
     ])('%s answering %j is a failure carrying the server text', async (action, body, message) => {
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       mockFetch.mockResolvedValue(htmlResponse(body));
       expect(await executeAutoConnectionAction(fake.ctx, action, 'PGIFood', '1,1,')).toEqual({ success: false, message });
     });
 
     it('an empty body is a failure too', async () => {
-      const fake = makeWebCtx();
+      const fake = actionCtx();
       mockFetch.mockResolvedValue(htmlResponse('   \n  '));
       expect(await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIFood', '1,1,')).toEqual({
         success: false, message: 'delete failed: the server returned an empty page',
@@ -698,19 +761,19 @@ describe('executeAutoConnectionAction', () => {
   it('a 500 response is a failure — the response is no longer discarded', async () => {
     // Regression guard for A-9. This used to return `{ success: true }` whatever the
     // server answered: the response object was dropped on the floor.
-    const fake = makeWebCtx();
+    const fake = actionCtx();
     mockFetch.mockResolvedValue(htmlResponse('<html>500 Internal Server Error</html>', 500));
     expect(await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIFood', '1,1,')).toEqual({ success: false, message: 'delete failed: HTTP 500' });
   });
 
   it('a rejected fetch is caught and returned as failure', async () => {
-    const fake = makeWebCtx();
+    const fake = actionCtx();
     mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
     expect(await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIFood', '1,1,')).toEqual({ success: false, message: 'ECONNREFUSED' });
   });
 
   it('a malformed cached URL is caught and returned as failure', async () => {
-    const fake = makeWebCtx();
+    const fake = actionCtx();
     getCache(fake).mockReturnValue(cacheWith([['DeleteDefaultSupplier.asp', { key: 'DeleteDefaultSupplier.asp', url: 'not a url', method: 'GET' }]]));
     const result = await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIFood', '1,1,');
     expect(result.success).toBe(false);
@@ -718,7 +781,7 @@ describe('executeAutoConnectionAction', () => {
   });
 
   it('without a world ip: "World IP not available", no fetch', async () => {
-    const fake = makeWebCtx({ currentWorldInfo: null });
+    const fake = actionCtx({ currentWorldInfo: null });
     expect(await executeAutoConnectionAction(fake.ctx, 'delete', 'PGIFood', '1,1,')).toEqual({ success: false, message: 'World IP not available' });
     expect(mockFetch).not.toHaveBeenCalled();
   });

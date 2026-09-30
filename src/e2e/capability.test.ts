@@ -35,6 +35,8 @@ function stubSession(opts: StubOptions = {}): session.LiveSession {
     company: { id: '1', name: 'SPO_test3 - Green' },
     worlds: 3,
     companies: [],
+    playerX: 0,
+    playerY: 0,
   };
 }
 

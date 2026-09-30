@@ -8,6 +8,7 @@ function tempDir(): string {
 }
 
 const restore = {
+  key: 'RDOSetTaxValue:a',
   what: 'Helartia tax row 0',
   x: 10,
   y: 20,
@@ -41,7 +42,7 @@ describe('WorldLock — single flight', () => {
     const lock = new WorldLock(dir);
     lock.acquire('fix/a', 111, () => false);
     lock.addPendingRestore(restore);
-    lock.clearPendingRestore(restore.x, restore.y, restore.propertyName);
+    lock.clearPendingRestore(restore.key);
     lock.release();
     lock.acquire('fix/a', 111, () => false);
     expect(lock.read().pendingRestores).toEqual([]);
@@ -100,7 +101,7 @@ describe('WorldLock — world dirty', () => {
     const lock = new WorldLock(tempDir());
     lock.acquire('fix/a', 111, () => false);
     lock.addPendingRestore(restore);
-    lock.clearPendingRestore(restore.x, restore.y, restore.propertyName);
+    lock.clearPendingRestore(restore.key);
     expect(() => lock.release()).not.toThrow();
     expect(lock.read().dirty).toBe(false);
     expect(lock.read().holder).toBeNull();
@@ -110,10 +111,11 @@ describe('WorldLock — world dirty', () => {
     const lock = new WorldLock(tempDir());
     lock.acquire('fix/a', 111, () => false);
     lock.addPendingRestore(restore);
-    lock.addPendingRestore({ ...restore, x: 99, what: 'other' });
-    lock.clearPendingRestore(10, 20, 'RDOSetTaxValue');
+    // Same facility and property: only the key tells the two round trips apart.
+    lock.addPendingRestore({ ...restore, key: 'RDOSetTaxValue:b', what: 'other' });
+    lock.clearPendingRestore(restore.key);
     expect(lock.read().pendingRestores).toHaveLength(1);
-    expect(lock.read().pendingRestores[0].x).toBe(99);
+    expect(lock.read().pendingRestores[0].key).toBe('RDOSetTaxValue:b');
   });
 
   it('forceUnlock returns what was pending so a human can check it', () => {
@@ -174,5 +176,36 @@ describe('WorldLock — world dirty', () => {
 
     // And a third run is blocked too — the dirty flag, not aliveness, is what gates it now.
     expect(() => new WorldLock(dir).acquire('fix/c', 333, () => false)).toThrow(WorldDirtyError);
+  });
+
+  it('loads a lock written in the old PendingRestore shape and reports it dirty', () => {
+    const dir = tempDir();
+    const legacy = {
+      what: 'Helartia tax row 0',
+      x: 10,
+      y: 20,
+      propertyName: 'RDOSetTaxValue',
+      originalValue: '7',
+    };
+    fs.writeFileSync(
+      path.join(dir, 'world-lock.json'),
+      JSON.stringify({ holder: null, pendingRestores: [legacy], dirty: true, dirtyReason: 'old run' }),
+      'utf8',
+    );
+    const lock = new WorldLock(dir);
+    expect(() => lock.acquire('fix/z', 999, () => false)).toThrow(WorldDirtyError);
+    expect(lock.read().pendingRestores[0]).toEqual(legacy);
+    // A keyless entry is never cleared by a key — only a human clears it.
+    lock.clearPendingRestore('RDOSetTaxValue:a');
+    expect(lock.read().pendingRestores).toHaveLength(1);
+  });
+
+  it('round-trips a base64 originalValue', () => {
+    const lock = new WorldLock(tempDir());
+    const bytes = Buffer.from([0, 255, 137, 80]);
+    lock.addPendingRestore({ key: 'portrait:1', what: 'SPO_test3 portrait', originalValue: bytes.toString('base64') });
+    const stored = lock.read().pendingRestores[0];
+    expect(stored.key).toBe('portrait:1');
+    expect(Buffer.from(stored.originalValue, 'base64')).toEqual(bytes);
   });
 });

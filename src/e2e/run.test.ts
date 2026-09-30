@@ -7,6 +7,7 @@ import { WorldLock } from './world-lock';
 import * as preflightModule from './preflight';
 import * as flowsModule from './flows';
 import * as capabilityModule from './capability';
+import { GATE_ONLY } from './routing';
 
 function tempLock(): WorldLock {
   return new WorldLock(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-run-')));
@@ -105,6 +106,42 @@ describe('runLive', () => {
     expect(result.status).toBe('FAIL');
   });
 
+  it('BLOCKS a run whose flows all pass but one ended SKIPPED, and names it', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow =>
+      flow.name === 'permission-negative'
+        ? { ...passingFlow(flow.name), status: 'SKIPPED', skipped: 'Crazz refused at REQ_AUTH_CHECK (code 7)' }
+        : passingFlow(flow.name),
+    );
+
+    const result = await runLive({
+      flows: ['login-spine', 'permission-negative'],
+      branch: 'fix/a',
+      lock: tempLock(),
+    });
+
+    expect(result.status).toBe('BLOCKED');
+    expect(result.error).toBe(
+      'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused at REQ_AUTH_CHECK (code 7))',
+    );
+  });
+
+  it('a skip beside a failure is still a FAIL', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => ({
+      ...passingFlow(flow.name),
+      status: flow.name === 'login-spine' ? 'FAIL' : 'SKIPPED',
+    }));
+
+    const result = await runLive({
+      flows: ['login-spine', 'permission-negative'],
+      branch: 'fix/a',
+      lock: tempLock(),
+    });
+
+    expect(result.status).toBe('FAIL');
+  });
+
   it('reports an ENVIRONMENT abort without running a single flow', async () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue({
       ok: false,
@@ -137,7 +174,7 @@ describe('runLive', () => {
 
     const lock = tempLock();
     lock.acquire('fix/a', 1, () => false);
-    lock.addPendingRestore({ what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
+    lock.addPendingRestore({ key: 'k', what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
     expect(() => lock.release()).toThrow();
 
     const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock });
@@ -154,7 +191,7 @@ describe('runLive', () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
     const lock = tempLock();
     jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => {
-      lock.addPendingRestore({ what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
+      lock.addPendingRestore({ key: 'k', what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
       return passingFlow(flow.name);
     });
 
@@ -324,6 +361,28 @@ describe('formatSummary', () => {
     expect(summary).not.toContain('cleanup');
   });
 
+  it('prints a skipped flow as SKIP with its reason', () => {
+    const summary = formatSummary({
+      ...base,
+      status: 'BLOCKED',
+      flows: [
+        {
+          name: 'permission-negative',
+          status: 'SKIPPED',
+          skipped: 'Crazz refused',
+          assertions: [],
+          unproven: [],
+          probes: [],
+          messagesSent: 0,
+          messagesReceived: 0,
+          wireErrors: 0,
+        },
+      ],
+    });
+    expect(summary).toContain('  SKIP  permission-negative — Crazz refused');
+    expect(summary).not.toContain('SKIPPED  permission-negative');
+  });
+
   it('surfaces failed pre-flight checks', () => {
     const summary = formatSummary({
       ...base,
@@ -367,9 +426,20 @@ describe('main', () => {
     const out = sink();
     await main([], runner, out.stream);
     const flows = runner.mock.calls[0][0].flows;
-    expect(flows).toEqual(flowsModule.FLOWS.map(f => f.name).filter(n => n !== 'politics-write'));
+    expect(flows).toEqual(flowsModule.FLOWS.map(f => f.name).filter(n => !(n in GATE_ONLY)));
     expect(flows).not.toContain('politics-write');
+    expect(flows).not.toContain('policy-roundtrip');
+    expect(flows).toContain('autoconnection-roundtrip');
+    expect(flows).not.toContain('chat-private-channel');
+    expect(flows).toContain('chat-read');
+    expect(flows).toContain('chat-chase');
     expect(out.text()).toMatch(/gate-only, not driven: politics-write/);
+    expect(out.text()).toMatch(/gate-only, not driven: policy-roundtrip/);
+    expect(out.text()).toMatch(/gate-only, not driven: chat-private-channel/);
+    expect(flows).not.toContain('bank-borrow-payoff');
+    expect(flows).toContain('bank-send-return');
+    expect(flows).toContain('portrait-roundtrip');
+    expect(out.text()).toMatch(/gate-only, not driven: bank-borrow-payoff/);
     const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
     if (fs.existsSync(written)) fs.unlinkSync(written);
   });
@@ -447,6 +517,52 @@ describe('main', () => {
     expect(await main(['--flows=login-spine'], async () => failed, sink().stream)).toBe(1);
     const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
     if (fs.existsSync(written)) fs.unlinkSync(written);
+  });
+
+  describe('a run BLOCKED only by skipped flows', () => {
+    const skippedRun: LiveRunResult = {
+      ...result,
+      status: 'BLOCKED',
+      error: 'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused)',
+      flows: [
+        {
+          name: 'permission-negative',
+          status: 'SKIPPED',
+          skipped: 'Crazz refused',
+          assertions: [],
+          unproven: [],
+          probes: [],
+          messagesSent: 0,
+          messagesReceived: 0,
+          wireErrors: 0,
+        },
+      ],
+    };
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    afterEach(() => {
+      if (fs.existsSync(written)) fs.unlinkSync(written);
+    });
+
+    it('is reported PASS by the nightly (no --flows), the skip listed, and the artifact agrees', async () => {
+      const out = sink();
+      expect(await main([], async () => skippedRun, out.stream)).toBe(0);
+      expect(out.text()).toContain('L2 live drive on planitia — PASS');
+      expect(out.text()).toContain('  SKIP  permission-negative — Crazz refused');
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('PASS');
+      expect(artifact.flows[0]).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+    });
+
+    it('stays BLOCKED, exit 2, when the caller named the flows', async () => {
+      const out = sink();
+      expect(await main(['--flows=permission-negative'], async () => skippedRun, out.stream)).toBe(2);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('BLOCKED');
+    });
+
+    it('a lock-refusal BLOCK (no flows) stays BLOCKED for the nightly too', async () => {
+      const refused = { ...result, status: 'BLOCKED' as const, error: 'world dirty' };
+      expect(await main([], async () => refused, sink().stream)).toBe(2);
+    });
   });
 
   it.each([

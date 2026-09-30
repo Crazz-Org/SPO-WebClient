@@ -108,8 +108,8 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 |---|---|
 | `src/shared/rdo-*.ts`, `src/server/session/**`, `src/server/rdo.ts` | L1 + **L2 login spine + every flow touching the changed members** |
 | `src/shared/types/message-types.ts`, `src/server/session/*-handler.ts` | L2 flows for the affected message types |
-| `src/client/components/politics/**` | L2 `politics-read`, `politics-write` |
-| `src/client/components/building/**` | L2 `building-details` |
+| `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `town-min-wage`, `publicity-roundtrip` |
+| `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip` |
 | `src/client/renderer/**`, `src/client/components/{mobile,hud,sheet,modals,map}/**`, `*.module.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
 | `doc/**`, `*.md`, CI config, tooling | static only |
@@ -125,11 +125,15 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
 `src/e2e/routing.test.ts` holds all three.
 
 - **`NIGHTLY_ONLY`** lists the flows no gate requires — a data-gated flow (a required `UNPROVEN`
-  fails the gate) or a reading that asserts nothing. The nightly still runs them; every other
+  fails the gate), a reading that asserts nothing, or the fixture builder `fixtures-ensure`,
+  which builds only when a fixture is missing (§9). The nightly still runs them; every other
   flow must be reached by some tracked path.
 - **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
-  (`politics-write`, `Kernel/Population.pas:1264-1284`). The nightly leaves them out and prints
-  them as `gate-only, not driven`; the gate still runs them when their code changes.
+  (`politics-write`, `Kernel/Population.pas:1264-1284`; `policy-roundtrip`,
+  `Kernel/Kernel.pas:11790-11800`; `chat-private-channel`,
+  `Interface Server/InterfaceServer.pas:4594`, `:3968-3980`; `bank-borrow-payoff`,
+  `Kernel/Kernel.pas:8849-8859`). The nightly leaves them out and prints them as
+  `gate-only, not driven`; the gate still runs them when their code changes.
 - **`FALLBACK_ONLY`** lists the handler files only a broad fallback rule routes, each `awaiting
   card #<n>` or `excluded: <reason>`. An area card adds its rule before the fallbacks and removes
   its file from the set, so a new handler cannot land unrouted.
@@ -141,24 +145,82 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
 Every mutation exercised live uses this shape, and nothing else counts as verification:
 
 ```
-read original -> write test value
-              -> assert the FIVEMODELSERVER/Survival log line inside the run's UTC window
-              -> read back
-              -> restore original
-              -> assert restored
+read original -> record the pending restore -> write test value
+              -> poll the read-back until it shows the value (up to the spec's boundMs)
+              -> assert the FIVEMODELSERVER/Survival log line (marker + the flow's match)
+              -> restore original (always, even after a throw)
+              -> poll the read-back until it shows the original
+              -> clear the pending restore
 ```
 
-The log line is the only evidence that is not the client agreeing with itself. Civic RDO
-members log on entry, *before* their `try`, so a line proves the frame reached the object:
+`runRoundTrip` in `src/e2e/probe.ts` carries this shape for politics, profile, zone and building
+mutations; `runProbe` is its building-property adapter. `road-roundtrip` drives the same shape
+step by step, because a road's undo is two proven writes of its own — a break, then a wipe —
+each shown by its Survival line and a `SegmentsInArea` read-back.
 
-| Member | Log marker |
-|---|---|
-| `RDOSetTaxValue` | `Setting Tax value:` |
-| `RDOSetMinSalaryValue` | `Setting Min Wage:` |
-| town cache load | `Caching Town..` |
+The one mutation left in place is the permanent fixture build (`fixtures-ensure`, §9), proven by
+its line, its result code and the lot read-back.
 
-Read-back may legitimately lag the write (`OB-29`) — so a read-back mismatch **downgrades**
-to `UNCONFIRMED`, it does not by itself fail the probe. A missing log line **fails**.
+**The line proves receipt; the read-back proves the change.** Most handlers log before their
+owner check (e.g. `Kernel/Kernel.pas:4336` -> `:4337`), so a refused write prints its line.
+A lag (`OB-29`) is polled out up to the spec's `boundMs`; a read-back that never shows the
+value FAILs, as does a missing line. A member with a marker must carry a log part; a member
+with none (e.g. `RDOPayOff`, `RDOSendMoney`) is proven by the read-back alone. The restore is
+proven the same way: its read-back must reach the original, or the pending restore is kept.
+
+The read-back is any authoritative channel, named in the spec with why it is authoritative —
+an object-cache property re-read after its refresh, a live RDO `get`, a server-generated mail
+read from the recipient's mailbox, or a direct HTTP re-fetch compared byte for byte. For
+`C7b` (#1147): the money transfer is proven by the transfer notification in the receiver's
+Inbox, the portrait upload by a direct re-fetch of the stored image compared byte for byte;
+the cache server's `OK` reply alone proves nothing.
+
+The markers (`LOG_MARKERS` in `src/e2e/live-log.ts`, the citation beside each entry). A
+`Fac(<x>,<y>)` line is keyed by the text after the coordinates; the identifying fields —
+town, `Fac(x,y)`, voter, circuit id, the value — go in each flow's `match`:
+
+| Member | Line contains | Cited at |
+|---|---|---|
+| `RDOSetTaxValue` | `Setting Tax value: <town>, <TaxId>, <value>` | `Kernel/Population.pas:1250` |
+| `RDOSetMinSalaryValue` (town hall) | `Setting Min Wage: <town>, <PopKind>, <value>` | `Kernel/Population.pas:1292` |
+| `RDOSetPublicity` | `Setting town politics publicity:` | `Kernel/TownPolitics.pas:220` |
+| `RDOSetRatingFrom` | `Setting town politics Tycoon rating:` | `Kernel/TownPolitics.pas:186` |
+| `RDOVote` | `Voting: <voter> by <choice>` — `TPresidentialHall.RDOVote` logs the identical text (`Kernel/WorldPolitics.pas:1822`), so a vote's `match` carries the voter | `Kernel/TownPolitics.pas:395` |
+| `RDOSetPrice` | `Service SetPrice: <index>, <value>` | `StdBlocks/ServiceBlock.pas:1578` |
+| `RDOSetSalaries` | `Setting salaries: <hi>, <mid>, <lo>` | `Kernel/WorkCenterBlock.pas:582` |
+| `RDOSetOutputPrice` | `Fac(<x>,<y>) Output price set:` | `Kernel/Kernel.pas:4332` |
+| `RDOSetInputOverPrice` | `Fac(<x>,<y>) Input overprice set:` | `Kernel/Kernel.pas:4358` |
+| `RDOSetInputMaxPrice` | `Fac(<x>,<y>) Input max price set:` | `Kernel/Kernel.pas:4390` |
+| `RDOSetInputMinK` | `Fac(<x>,<y>) Input min K set:` | `Kernel/Kernel.pas:4416` |
+| `RDOSetInputSortMode` | `Changing Sort Mode..` | `Kernel/Kernel.pas:4442` |
+| `RDOConnectInput` / `RDOConnectOutput` | `Fac(<x>,<y>) Input connected:` / `Output connected:` | `Kernel/Kernel.pas:4304` / `:4311` |
+| `RDODisconnectInput` / `RDODisconnectOutput` | `Fac(<x>,<y>) Input disconnect:` / `Output disconnect:` | `Kernel/Kernel.pas:4320` / `:4327` |
+| `RDOConnectToTycoon` | `Fac(<x>,<y>) Connect to Tycoon:` | `Kernel/Kernel.pas:4521` |
+| `RDOSetCompanyInputDemand` | `Fac(<x>,<y>) SetCompanyInputDemand` | `Kernel/Kernel.pas:6371` |
+| `RDOSetTradeLevel` | `Fac(<x>,<y>) SetTradeLevel` | `Kernel/Kernel.pas:6395` (in `TBlock.SetTradeLevel`, called by `RDOSetTradeLevel` `:6408` after its owner check) |
+| `Stopped` (property `set`, `TFacility.SetStopped`) | `Stopping Facility.` — no coordinates, so the read-back attributes it | `Kernel/Kernel.pas:3948` (log `:3950`) |
+| `RDOStartUpgrades` / `RDOStopUpgrade` | `Facility Start Upgrade count:` / `Facility Stop Upgrade..` | `Kernel/Kernel.pas:4668` (inside its `CheckOpAuthenticity` guard) / `:4685` |
+| `RDOQueueResearch` / `RDOCancelResearch` | `Queue Research:` / `Cancel Research:` | `Kernel/ResearchCenter.pas:382` / `:394` |
+| `RdoRepair` | `Repairing: <facility name>` | `Kernel/PopulatedBlock.pas:771` |
+| `RDONewFacility` | `New Facility: <class> Company: <id> x: <x> y: <y>` | `Kernel/World.pas:3560` (log `:3565`) |
+| `RDODelFacility` | `Del Facility, x: <x> y: <y>` | `Kernel/World.pas:3571` |
+| `RDOCreateCircuitSeg` | `CreateCircuitSeg: <CircuitId>, <TycoonId>, <x1>, <y1>, <x2>, <y2>` | `Kernel/World.pas:4252` (log `:4263`) |
+| `RDOBreakCircuitAt` | `BreakCircuit: <CircuitId>, <TycoonId>, <x>, <y>` | `Kernel/World.pas:4311` (log `:4320`) |
+| `RDOWipeCircuit` | `WipingCircuit: <CircuitId>, <TycoonId>, <x1>, <y1>, <x2>, <y2>` | `Kernel/World.pas:4356` (log `:4366`) |
+| `RDODefineZone` | `Defining Zone: <ZoneId>, <TycoonId>, <x1>, <y1>, <x2>, <y2>` | `Kernel/World.pas:4502` (log `:4526`) |
+| `RDOAskLoan` | `AskLoan: <tycoon>, $<amount>` | `Kernel/Kernel.pas:11451` |
+| `RDOSetPolicyStatus` | `Setting policy status: <tycoon>, <to>, <status>` | `Kernel/Kernel.pas:11772` |
+| `CacheTown` (not a write, no flow's proof) | `Caching Town..` | `Kernel/PoliticsCache.pas:139` |
+
+- The three circuit lines log the gateway's tycoon **object reference**, not the tycoon id
+  (`TTycoon(TycoonId)`, `Kernel/World.pas:4270`), which no WS message exposes — their `match`
+  uses the circuit id and the coordinates. `CreateCircuitSeg: OK!` (`Kernel/World.pas:4307`)
+  is logged unconditionally and is never a proof.
+- `TPresidentialHall.RDOSetMinSalaryValue` logs `Setting Ministry Salary.` instead
+  (`Kernel/WorldPolitics.pas:1772`), so the town marker can never be satisfied by the Capitol
+  variant. `RDOPayOff` (`Kernel/Kernel.pas:11555`) logs nothing, and `RDOSendMoney` logs to a
+  `Money` log (`Kernel/Kernel.pas:11491`) the public listing does not carry — both are proven
+  by the read-back alone.
 
 ### The live server logs — http://158.69.153.134/logs/
 
@@ -170,7 +232,7 @@ MB/day, too big for context.
 
 | Path | Carries |
 |------|---------|
-| `FIVEMODELSERVER/Survival <YY-MM-DD>.log` | **the one that matters** — civic RDO members log on entry, *before* their `try`, so a line here proves the frame reached the object (`Setting Tax value: …`, `Setting Min Wage: …`, `Caching Town..`) |
+| `FIVEMODELSERVER/Survival <YY-MM-DD>.log` | **the one that matters** — RDO members log on entry, *before* their `try`, so a line here proves receipt; the change is proven by the read-back (`Setting Tax value: …`, `Setting Min Wage: …`, `Caching Town..`) |
 | `FIVEMODELSERVER/TimeWarp <date>.log` | a periodic world snapshot — who holds each ministry, per-town vacancies and average salaries. Small (~20 KB), good for checking model state without replaying a session |
 | `FIVEINTERFACESERVER/Survival <date>.log` | `LOGON ATTEMPT: User=<name>` / `Start Disconnecting <name>` — which identity (human vs role company) was active at a given second |
 | `FIVECACHESERVER/`, `FIVEMAILSERVER/` | near-empty, rarely useful |
@@ -192,7 +254,11 @@ An autonomous loop mutating a production game world needs two rails a human run 
   B5.5: `acquire()` taking over a dead holder silently dropped its pending restores and never
   marked the lock dirty, so this guarantee held only for a clean unwind — a hard crash left
   `Helartia` mutated with nothing to block the next run or tell a human to look. Fixed; a
-  takeover now always preserves or flags what was owed.)
+  takeover now always preserves or flags what was owed.) Each pending restore carries a
+  unique `key` and a `what` that names the literal undo a human can perform (the town or
+  facility, the id or rating, the original value); `npm run e2e:unlock` prints both. A binary
+  original is stored base64 in `originalValue`, so an interrupted run's restore uses the
+  saved bytes.
 - **Single-flight.** Mechanical since 2026-08-22: the bench worker executes one job at a
   time ([bench-worker.md](bench-worker.md)). The lock file remains as the world-dirty
   carrier and as a belt-and-braces refusal for `gate:local` runs.
@@ -234,6 +300,7 @@ distinction is the whole point:
 | a control missing, a request refused by the gateway, a wrong frame | a **bug** | `FAIL` — diagnose, fix, iterate (§8) |
 | the server says the account does not hold the role the member needs | a **capability exception** | recorded with its evidence; the gate continues |
 | the flow ran and nothing failed, but the world held no data to exercise it on (`UNPROVEN`) | an **unproven flow** | required by routing → `FAIL`; run only because `--flows` named it → recorded, informational |
+| the flow needs the optional second account, which was refused at login before the flow's first write (`SKIPPED`) | a **skipped flow** | never a gate `PASS` — `runLive` returns `BLOCKED`, and so does an explicit `--flows`; the no-`--flows` nightly records it and reports `PASS` with the skip listed. A skip after a write is `FAIL` |
 
 The six `TPresidentialHall` members ([civic-roles-reference.md:101-106](civic-roles-reference.md))
 — `RDOSetMinSalaryValue` · `RDOSetTownTaxes` · `RDOSitMayor` · `RDOSitMinister` ·
@@ -242,6 +309,9 @@ touches one, the live stage reads two server facts for `SPO_test3` (`src/e2e/cap
 `IsPresident` from the tycoon cache (`Tycoons\<name>.five\`, written by `StoreRoleInfoToCache`)
 and `canGovern` on the Capitol itself — the server's own `grantAccess` decision on the
 presidential hall. `granted` follows `canGovern`; the cache flag rides along as evidence.
+`RDOSetMinSalaryValue` stays in that list for its Capitol variant (`Kernel/WorldPolitics.pas:265`);
+its town variant (`Kernel/Population.pas:167`) is driven by `town-min-wage`, so a gate that routes
+it drives the town hall and still records the Capitol variant as a capability exception.
 
 - **Granted** → the members *can* be driven, so they *must* be: the gate **fails closed**
   until a flow exercises the changed member (`src/e2e/flows.ts`) and the routing table
@@ -316,7 +386,7 @@ ahead of zero.
 | Account | Password | Holds | Used for |
 |---|---|---|---|
 | `SPO_test3` | `test3` | Mayor of **Helartia**, Minister of Agriculture, company *SPO_test3 - Green* | Primary. Governance reads and writes, roads, zones |
-| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, rating another tycoon's term. **Read-only apart from mail:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. |
+| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. |
 
 Both are **LOCKED** — never changed without explicit developer approval. Zone **Free Space**,
 world **planitia**.
@@ -334,10 +404,46 @@ Two accounts unlock four things that were structurally impossible:
 account is touched only by mail: `mail-roundtrip` sends it one message and deletes it
 in the same run, and the `zoning-alert-read` seed has it send SPO_test3 one look-alike
 `Zoning Alert!`, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run.
+`mail-send-from-draft` sends it one message, and in `mail-reply` it sends SPO_test3 one
+reply; each flow sweeps and deletes every copy it created in the same run.
 No flow reads or writes its buildings (`flows.ts`: it appears at the login in
-`permission-negative`, which does not mutate, as the mail recipient, and as the seed sender).
+`permission-negative`, which does not mutate, as the mail recipient, as the reply sender, and as the seed sender).
 Never another player's assets. Never a world-scope value. Every mutation is restored in
 the same run (§5).
+
+**Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29, the
+nightly-only flow `fixtures-ensure` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
+kind the owner-setter flows need — `industry`, `store`, `warehouse`, `residential`, `research`,
+`bank`, `tv` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
+missing, once, and keeps it. Fixtures are found **by kind at run time** (`findFixture`: the
+directory's tycoon branch, then the lot's owner and the inspector's template groups), never by
+coordinates committed to the tree — the world moves. A build is proven by its `New Facility:`
+line, result code 0 and the lot read-back. While SPO_test3 owns a construction site in Helartia,
+the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
+(placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
+and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
+
+**Build → demolish (#1150).** `place-rename-demolish` places the cheapest buildable facility —
+never a mausoleum, never the Capitol (`isRefusedClass`) — on a free Helartia lot as
+*SPO_test3 - Green*, renames it to a marker and back, and demolishes it in the same run. Its
+pending restore (the lot, the class, the company id and the literal undo) is recorded **before**
+`NewFacility` is sent, and cleared only after the `Del Facility` line and an empty lot on
+`REQ_MAP_LOAD`. The cleanup demolishes only a lot holding the placed class (or its construction
+state) whose owner tycoon id is SPO_test3's — never the Mayor role's, never another player's;
+anything else is left in place, the flow FAILs and the lock goes dirty (§6). The construction
+cost is spent each run — accepted by the maintainer on 2026-09-29.
+
+**Supplier and client links (#1153).** A link is written on **both** gates (`TGate.ConnectTo`,
+`Kernel/Kernel.pas:6784-6785`), so a hire is another player's asset the moment the counterpart
+is theirs. `supplier-hire-fire`, `client-hire-remove` and `connect-on-map` link the industry
+fixture only to a facility of *SPO_test3 - Green* in Helartia (search filtered by town and
+company, the row's company checked, the lot's owner read back), snapshot every gate they can
+touch, and undo every new link in the same run. `quick-trade-roundtrip` runs only when its undo
+cannot reach beyond the test: no SPO_test3 facility already a client of the fixture
+(`Kernel/Kernel.pas:4593-4600`), the fixture not an initial supplier (`:4564-4565`,
+`:4606-4607`), and no SPO_test3 warehouse outside Helartia (`:4537-4553`) — otherwise `UNPROVEN`,
+nothing sent. Clone facility is never driven: it overwrites every same-type facility in scope
+with no snapshot (maintainer, 2026-09-29).
 
 ---
 
@@ -357,7 +463,8 @@ the same run (§5).
     "window": { "from": "…Z", "to": "…Z" },
     "flows": [{ "name": "politics-write", "status": "PASS",
                 "probes": [{ "member": "RDOSetTaxValue", "logLine": "Setting Tax value: 12",
-                             "restored": true, "readBack": "CONFIRMED" }] },
+                             "restored": true, "readBack": "CONFIRMED",
+                             "restoreReadBack": "CONFIRMED" }] },
               { "name": "zoning-alert-read", "status": "UNPROVEN",
                 "unproven": ["the flow's data — seed failed: …"] }]
   },
