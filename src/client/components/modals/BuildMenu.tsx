@@ -1,5 +1,5 @@
 /**
- * BuildMenu — Centered modal for building construction.
+ * BuildMenu — Build surface content, rendered by the universal sheet's `build` surface.
  *
  * Two phases:
  * 1. Category grid — building type categories with icons
@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { X, ArrowLeft, Lock } from 'lucide-react';
+import { ArrowLeft, Lock } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { useClient } from '../../context';
@@ -178,15 +178,11 @@ function FacilityCard({ facility, isExpanded, onToggleExpand, onSelect, cash }: 
 }
 
 interface BuildMenuProps {
-  /** When true, renders inline without modal wrapper (used in mobile BottomSheet). */
-  embedded?: boolean;
-  /** Called when a building is selected in embedded mode. */
+  /** Called when a building (or the Capitol) is selected — the sheet pops the surface. */
   onClose?: () => void;
 }
 
-export function BuildMenu({ embedded = false, onClose }: BuildMenuProps = {}) {
-  const modal = useUiStore((s) => s.modal);
-  const closeModal = useUiStore((s) => s.closeModal);
+export function BuildMenu({ onClose }: BuildMenuProps = {}) {
   const categories = useUiStore((s) => s.buildMenuCategories);
   const facilities = useUiStore((s) => s.buildMenuFacilities);
   const capitolIconUrl = useUiStore((s) => s.capitolIconUrl);
@@ -201,10 +197,9 @@ export function BuildMenu({ embedded = false, onClose }: BuildMenuProps = {}) {
   const cash = useGameStore((s) => s.tycoonStats?.cash);
   const cashNum = cash ? parseFloat(String(cash).replace(/,/g, '')) : NaN;
 
-  // Load categories when opened (modal mode or embedded mode). The list is kept for the
-  // session (T1 handoff: one request, then cache) — only an empty store triggers a read.
+  // Load categories on mount. The list is kept for the session (T1 handoff: one
+  // request, then cache) — only an empty store triggers a read.
   useEffect(() => {
-    if (!embedded && modal !== 'buildMenu') return;
     setPhase('categories');
     setExpandedFacility(null);
     if (useUiStore.getState().buildMenuCategories.length === 0) {
@@ -213,7 +208,7 @@ export function BuildMenu({ embedded = false, onClose }: BuildMenuProps = {}) {
     } else {
       setIsLoading(false);
     }
-  }, [modal, client, embedded]);
+  }, [client]);
 
   // Stop loading when store receives data
   useEffect(() => {
@@ -239,13 +234,7 @@ export function BuildMenu({ embedded = false, onClose }: BuildMenuProps = {}) {
     [client],
   );
 
-  const dismiss = useCallback(() => {
-    if (embedded) {
-      onClose?.();
-    } else {
-      closeModal();
-    }
-  }, [embedded, onClose, closeModal]);
+  const dismiss = useCallback(() => onClose?.(), [onClose]);
 
   const handleBuildCapitol = useCallback(() => {
     dismiss();
@@ -292,193 +281,93 @@ export function BuildMenu({ embedded = false, onClose }: BuildMenuProps = {}) {
     [categories, q],
   );
 
-  if (!embedded && modal !== 'buildMenu') return null;
-
-  // Embedded mode: render content directly without modal wrapper
-  if (embedded) {
-    return (
-      <div>
-        {/* Header */}
-        <div className={styles.header}>
-          {phase === 'facilities' && (
-            <button className={styles.backBtn} onClick={() => setPhase('categories')}>
-              <ArrowLeft size={16} />
-            </button>
-          )}
-          <h2 className={styles.title}>
-            {phase === 'categories' ? 'Build' : selectedCategory}
-          </h2>
-        </div>
-        <div className={styles.filterRow}>
-          <input
-            type="search"
-            className={styles.filterInput}
-            placeholder={phase === 'categories' ? 'Filter categories…' : 'Filter buildings by name…'}
-            aria-label={phase === 'categories' ? 'Filter categories' : 'Filter buildings by name'}
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-        </div>
-
-        {/* Content */}
-        <div className={styles.content}>
-          {isLoading && (
-            <div className={styles.loadingGrid}>
-              {Array.from({ length: 6 }, (_, i) => (
-                <Skeleton key={i} width="100%" height="80px" />
-              ))}
-            </div>
-          )}
-
-          {!isLoading && phase === 'categories' && (
-            <div className={styles.categoryGrid}>
-              {visibleCategories.map((cat) => (
-                <GlassCard
-                  key={cat.kind}
-                  className={styles.categoryCard}
-                  onClick={() => handleCategorySelect(cat)}
-                >
-                  {cat.iconPath && (
-                    <img src={cat.iconPath} alt={cat.kindName} className={styles.categoryIcon} />
-                  )}
-                  <span className={styles.categoryName}>{cat.kindName}</span>
-                </GlassCard>
-              ))}
-              {isPublicOfficeRole && capitolIconUrl && (
-                <GlassCard
-                  className={`${styles.categoryCard} ${styles.capitolCard}`}
-                  onClick={handleBuildCapitol}
-                >
-                  <img src={capitolIconUrl} alt="Capitol" className={styles.categoryIcon} />
-                  <span className={styles.categoryName}>Capitol</span>
-                  <span className={styles.officeBadge}>Public Office</span>
-                </GlassCard>
-              )}
-            </div>
-          )}
-
-          {!isLoading && phase === 'facilities' && (
-            <div className={styles.facilityList}>
-              {hasResidenceGroups
-                ? <>
-                    {RESIDENCE_GROUPS.map(({ key, label, styleClass }) => {
-                      const group = visibleFacilities.filter((f) => f.residenceClass === key);
-                      if (group.length === 0) return null;
-                      return (
-                        <div key={key} className={styles.resGroup}>
-                          <div className={`${styles.resGroupHeader} ${styleClass}`}>{label}</div>
-                          {group.map(renderFacilityCard)}
-                        </div>
-                      );
-                    })}
-                    {visibleFacilities.filter((f) => !f.residenceClass).map(renderFacilityCard)}
-                  </>
-                : visibleFacilities.map(renderFacilityCard)}
-              {facilities.length === 0 && (
-                <div className={styles.empty}>No buildings available in this category</div>
-              )}
-              {facilities.length > 0 && visibleFacilities.length === 0 && (
-                <div className={styles.empty}>No building matches “{filter.trim()}”</div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <>
-      {/* Backdrop */}
-      <div className={styles.backdrop} onClick={closeModal} aria-hidden="true" />
-
-      <div className={styles.modal} role="dialog" aria-label="Build Menu">
-        {/* Header */}
-        <div className={styles.header}>
-          {phase === 'facilities' && (
-            <button className={styles.backBtn} onClick={() => setPhase('categories')}>
-              <ArrowLeft size={16} />
-            </button>
-          )}
-          <h2 className={styles.title}>
-            {phase === 'categories' ? 'Build' : selectedCategory}
-          </h2>
-          <button className={styles.closeBtn} onClick={closeModal} aria-label="Close">
-            <X size={18} />
+    <div>
+      {/* Header */}
+      <div className={styles.header}>
+        {phase === 'facilities' && (
+          <button className={styles.backBtn} onClick={() => setPhase('categories')}>
+            <ArrowLeft size={16} />
           </button>
-        </div>
-
-        {/* Content */}
-        <div className={styles.content}>
-          {isLoading && (
-            <div className={styles.loadingGrid}>
-              {Array.from({ length: 6 }, (_, i) => (
-                <Skeleton key={i} width="100%" height="80px" />
-              ))}
-            </div>
-          )}
-
-          {!isLoading && phase === 'categories' && (
-            <div className={styles.categoryGrid}>
-              {categories.map((cat) => (
-                <GlassCard
-                  key={cat.kind}
-                  className={styles.categoryCard}
-                  onClick={() => handleCategorySelect(cat)}
-                >
-                  {cat.iconPath && (
-                    <img
-                      src={cat.iconPath}
-                      alt={cat.kindName}
-                      className={styles.categoryIcon}
-                    />
-                  )}
-                  <span className={styles.categoryName}>{cat.kindName}</span>
-                </GlassCard>
-              ))}
-              {isPublicOfficeRole && capitolIconUrl && (
-                <GlassCard
-                  className={`${styles.categoryCard} ${styles.capitolCard}`}
-                  onClick={handleBuildCapitol}
-                >
-                  <img
-                    src={capitolIconUrl}
-                    alt="Capitol"
-                    className={styles.categoryIcon}
-                  />
-                  <span className={styles.categoryName}>Capitol</span>
-                  <span className={styles.officeBadge}>Public Office</span>
-                </GlassCard>
-              )}
-            </div>
-          )}
-
-          {!isLoading && phase === 'facilities' && (
-            <div className={styles.facilityList}>
-              {hasResidenceGroups
-                ? <>
-                    {RESIDENCE_GROUPS.map(({ key, label, styleClass }) => {
-                      const group = facilities.filter((f) => f.residenceClass === key);
-                      if (group.length === 0) return null;
-                      return (
-                        <div key={key} className={styles.resGroup}>
-                          <div className={`${styles.resGroupHeader} ${styleClass}`}>
-                            {label}
-                          </div>
-                          {group.map(renderFacilityCard)}
-                        </div>
-                      );
-                    })}
-                    {facilities.filter((f) => !f.residenceClass).map(renderFacilityCard)}
-                  </>
-                : facilities.map(renderFacilityCard)}
-              {facilities.length === 0 && (
-                <div className={styles.empty}>No buildings available in this category</div>
-              )}
-            </div>
-          )}
-        </div>
+        )}
+        <h2 className={styles.title}>
+          {phase === 'categories' ? 'Build' : selectedCategory}
+        </h2>
       </div>
-    </>
+      <div className={styles.filterRow}>
+        <input
+          type="search"
+          className={styles.filterInput}
+          placeholder={phase === 'categories' ? 'Filter categories…' : 'Filter buildings by name…'}
+          aria-label={phase === 'categories' ? 'Filter categories' : 'Filter buildings by name'}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      </div>
+
+      {/* Content */}
+      <div className={styles.content}>
+        {isLoading && (
+          <div className={styles.loadingGrid}>
+            {Array.from({ length: 6 }, (_, i) => (
+              <Skeleton key={i} width="100%" height="80px" />
+            ))}
+          </div>
+        )}
+
+        {!isLoading && phase === 'categories' && (
+          <div className={styles.categoryGrid}>
+            {visibleCategories.map((cat) => (
+              <GlassCard
+                key={cat.kind}
+                className={styles.categoryCard}
+                onClick={() => handleCategorySelect(cat)}
+              >
+                {cat.iconPath && (
+                  <img src={cat.iconPath} alt={cat.kindName} className={styles.categoryIcon} />
+                )}
+                <span className={styles.categoryName}>{cat.kindName}</span>
+              </GlassCard>
+            ))}
+            {isPublicOfficeRole && capitolIconUrl && (
+              <GlassCard
+                className={`${styles.categoryCard} ${styles.capitolCard}`}
+                onClick={handleBuildCapitol}
+              >
+                <img src={capitolIconUrl} alt="Capitol" className={styles.categoryIcon} />
+                <span className={styles.categoryName}>Capitol</span>
+                <span className={styles.officeBadge}>Public Office</span>
+              </GlassCard>
+            )}
+          </div>
+        )}
+
+        {!isLoading && phase === 'facilities' && (
+          <div className={styles.facilityList}>
+            {hasResidenceGroups
+              ? <>
+                  {RESIDENCE_GROUPS.map(({ key, label, styleClass }) => {
+                    const group = visibleFacilities.filter((f) => f.residenceClass === key);
+                    if (group.length === 0) return null;
+                    return (
+                      <div key={key} className={styles.resGroup}>
+                        <div className={`${styles.resGroupHeader} ${styleClass}`}>{label}</div>
+                        {group.map(renderFacilityCard)}
+                      </div>
+                    );
+                  })}
+                  {visibleFacilities.filter((f) => !f.residenceClass).map(renderFacilityCard)}
+                </>
+              : visibleFacilities.map(renderFacilityCard)}
+            {facilities.length === 0 && (
+              <div className={styles.empty}>No buildings available in this category</div>
+            )}
+            {facilities.length > 0 && visibleFacilities.length === 0 && (
+              <div className={styles.empty}>No building matches “{filter.trim()}”</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

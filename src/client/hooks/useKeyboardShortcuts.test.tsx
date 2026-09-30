@@ -27,7 +27,7 @@ describe('useKeyboardShortcuts', () => {
   let client: ClientCallbacks;
   beforeEach(() => {
     client = makeClient();
-    useUiStore.setState({ modal: null, commandPaletteOpen: false, minimapFullscreen: false, hudVisible: true });
+    useUiStore.setState({ modal: null, commandPaletteOpen: false, hudVisible: true });
     useUiStore.getState().clearSurfaces();
     useGameStore.setState({ isVisitor: false });
     document.body.innerHTML = '';

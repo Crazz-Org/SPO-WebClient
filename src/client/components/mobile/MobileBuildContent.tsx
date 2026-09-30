@@ -71,7 +71,7 @@ export function MobileBuildContent() {
       {/* Subtab content */}
       <div className={styles.content}>
         {subtab === 'buildings' && (
-          <BuildMenu embedded onClose={handleBuildMenuClose} />
+          <BuildMenu onClose={handleBuildMenuClose} />
         )}
 
         {subtab === 'roads' && (

@@ -1,9 +1,7 @@
 export { BuildMenu } from './BuildMenu';
-export { BuildingInspectorModal } from './BuildingInspectorModal';
 export { ChangelogModal } from './ChangelogModal';
 export { ChatHistoryModal } from './ChatHistoryModal';
 export { CompanyCreationModal } from './CompanyCreationModal';
-export { ConnectionPickerModal } from './ConnectionPickerModal';
 export { CreateChannelModal } from './CreateChannelModal';
 export { NewspaperModal } from './NewspaperModal';
 export { SettingsDialog } from './SettingsDialog';

@@ -16,10 +16,9 @@ src/
 │   ├── layouts/               # LoginScreen, GameScreen
 │   ├── components/            # React UI (60+ components, CSS Modules)
 │   │   ├── common/            # Badge, Toast, GlassCard, Skeleton, etc.
-│   │   ├── hud/               # TopBar, LeftRail, RightRail
-│   │   ├── panels/            # RightPanel, LeftPanel (slide-in)
+│   │   ├── hud/               # StatusPill, CommandBar, RightRail
 │   │   ├── building/          # BuildingInspector, QuickStats, PropertyGroup
-│   │   ├── empire/            # EmpireOverview, FacilityList, FinancialSummary
+│   │   ├── empire/            # EmpireOverview, FacilityList
 │   │   ├── mail/              # MailPanel
 │   │   ├── chat/              # ChatStrip
 │   │   ├── search/            # SearchPanel

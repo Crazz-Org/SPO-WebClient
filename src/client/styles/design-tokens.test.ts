@@ -1089,15 +1089,6 @@ describe('HUD band table (issue 931)', () => {
       },
     },
     {
-      name: 'LeftRail',
-      css: 'components/hud/LeftRail.module.css',
-      selector: '.rail',
-      mounted: 'no renderer — CommandBar replaced it on desktop (CommandBar.tsx header)',
-      band: () => {
-        throw new Error('LeftRail is mounted again: give it a real band');
-      },
-    },
-    {
       name: 'VersionBadge',
       css: 'components/hud/VersionBadge.module.css',
       selector: '.badge',
@@ -1239,7 +1230,7 @@ describe('HUD band table (issue 931)', () => {
     return out;
   }
 
-  it('names exactly the sixteen fixed HUD elements, each positioned fixed or absolute', () => {
+  it('names exactly the fifteen fixed HUD elements, each positioned fixed or absolute', () => {
     expect(HUD_BANDS.map((r) => r.name).sort()).toEqual(
       [
         'StatusPill',
@@ -1253,7 +1244,6 @@ describe('HUD band table (issue 931)', () => {
         'ChatStrip',
         'CommandBar',
         'RightRail',
-        'LeftRail',
         'VersionBadge',
         'BottomNav',
         'MobileSearchPill',
@@ -1299,25 +1289,6 @@ describe('HUD band table (issue 931)', () => {
     const row = HUD_BANDS.find((r) => r.name === 'RightRail');
     expect(row).toBeDefined();
     expect(rightRailHeight(ctxFor(row!, VIEWPORTS[0]))).toBe(345);
-  });
-
-  it('LeftRail really is unmounted — no .tsx under src/client renders it', () => {
-    const renderers: string[] = [];
-    const scan = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name !== 'node_modules') scan(full);
-        } else if (entry.name.endsWith('.tsx') && !entry.name.endsWith('.test.tsx') && readFileSync(full, 'utf8').includes('<LeftRail')) {
-          renderers.push(relative(CLIENT_ROOT, full));
-        }
-      }
-    };
-    scan(CLIENT_ROOT);
-    expect(renderers).toEqual([]);
-    const row = HUD_BANDS.find((r) => r.name === 'LeftRail');
-    expect(row?.mounted).not.toBe(true);
-    expect(() => row?.band(VIEWPORTS[0], ctxFor(row, VIEWPORTS[0]))).toThrow(/give it a real band/);
   });
 
   it('MobileShell still keeps BottomSheet apart from ChatBanner and MobileSearchPill', () => {
