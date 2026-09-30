@@ -8900,16 +8900,39 @@ describe('player actions (#1195)', () => {
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('FAILs a read-back that never shows the written percentage though its line is present', async () => {
+    it('is UNPROVEN, not PASS, when the line is present but the company spread holds the percentage at its original', async () => {
       const world = adWorld({ apply: false });
       arrange(world);
-      const result = await run();
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.probes).toEqual([]);
+      expect(result.unproven[0]).toMatch(/^RDOSetInputFluidPerc — the ad percentage stayed at "100" after writing "99"/);
+      expect(result.unproven[0]).toMatch(/Kernel\/Kernel\.pas:10003-10008, :10160/);
+      expect(result.unproven[0]).toMatch(/Survival line: 12:00 - Fac\(50,60\) Setting Input fluid perc: 99$/);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a read-back that never shows the written percentage nor returns to the original', async () => {
+      const world = adWorld({ apply: false });
+      arrange(world);
+      // After the write the percentage moves to 50 — neither the written 99 nor the original 100 — and stays.
+      const ad = world.supplies[1];
+      const lock = cleanLock();
+      jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async () => {
+        ad.actualMaxFluid = '100';
+        return '12:00 - Fac(50,60) Setting Input fluid perc: 99';
+      });
+      const result = await run(lock);
       expect(result.status).toBe('FAIL');
       expect(result.probes[0]).toMatchObject({
         status: 'FAIL',
         logLine: '12:00 - Fac(50,60) Setting Input fluid perc: 99',
+        restored: false,
       });
       expect(result.probes[0].note).toMatch(/read-back never showed "99"/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
     });
 
     it('FAILs when the write logs no Setting Input fluid perc line', async () => {

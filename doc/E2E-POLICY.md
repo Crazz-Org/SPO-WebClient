@@ -462,7 +462,12 @@ input of the `research` fixture — the general headquarters declares it
 (`Kernel/Headquarters.pas:130-143`); a store takes advertisement as a company input, with no gate
 to address (`StdBlocks/ServiceBlock.pas:540`). The write binds to the input's own ObjectId, as
 Voyager does (`Voyager/AdvSheetForm.pas:456-457`), and reads back as
-`min(100, round(100*nfActualMaxFluidValue/nfCapacity))` (`:651-660`).
+`min(100, round(100*nfActualMaxFluidValue/nfCapacity))` (`:651-660`). That read-back may never
+show the write: Advertisement is a company fluid (`StdBlocks/StdFluids.pas:499`), so the input joins
+its company's `TCompanyInput` (`Kernel/Kernel.pas:5232-5233`), whose `Spread` runs every company
+cycle (`:10160`) and overwrites `ActualMaxFluid` from the demand slices (`:10003-10008`). A write
+whose Survival line is present while the percentage stays at the original — restored and read back
+— ends UNPROVEN with that reason, never PASS; a read-back that never returns to the original FAILs.
 
 ---
 

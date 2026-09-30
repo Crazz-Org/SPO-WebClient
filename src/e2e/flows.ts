@@ -5359,6 +5359,14 @@ const ADVERTISEMENT = 'Advertisement';
  * general headquarters declares an Advertisement `TPullInput`, cacheable and editable
  * (Kernel/Headquarters.pas:130-143). The gateway binds the write to that input's own ObjectId, as
  * Voyager does (Voyager/AdvSheetForm.pas:456-457).
+ *
+ * The read-back may never show the write, and that is not the write failing: Advertisement is a
+ * company fluid (StdBlocks/StdFluids.pas:499, mfCompanyFluid), so the input joins its company's
+ * TCompanyInput (Kernel/Kernel.pas:5232-5233, :10323-10329), whose `Spread` runs every company
+ * cycle (:10160) and overwrites ActualMaxFluid from the demand slices (`UpdateMaxFluids`,
+ * :10003-10008). A write whose line is present and whose value stays at the original — restored
+ * and confirmed — ends UNPROVEN with that reason, never PASS; a read-back that never returns to
+ * the original still FAILs.
  */
 const adBudgetRoundTrip: Flow = {
   name: 'ad-budget-roundtrip',
@@ -5426,6 +5434,16 @@ const adBudgetRoundTrip: Flow = {
           additionalParams: { fluidId: ADVERTISEMENT },
         },
       });
+      if (probe.status === 'FAIL' && probe.logLine !== null && probe.readBack === 'UNCONFIRMED' && probe.restored) {
+        assertions.unproven(
+          'RDOSetInputFluidPerc',
+          `the ad percentage stayed at "${probe.original}" after writing "${probe.written}" — the company's ` +
+            'TCompanyInput.Spread overwrites ActualMaxFluid every cycle (Kernel/Kernel.pas:10003-10008, :10160; ' +
+            'Advertisement is a company fluid, StdBlocks/StdFluids.pas:499), so the read-back cannot prove the write; ' +
+            `restored; Survival line: ${probe.logLine}`,
+        );
+        return report('ad-budget-roundtrip', assertions, probes, session);
+      }
       probes.push(probe);
       checkProbe(assertions, probe);
       return report('ad-budget-roundtrip', assertions, probes, session);
