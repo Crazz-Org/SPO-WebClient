@@ -236,6 +236,51 @@ describe('runLive', () => {
   });
 });
 
+describe('runLive — the drain guard (#1181)', () => {
+  async function flush(): Promise<void> {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  }
+
+  it('exits non-zero, naming the flow in progress, when the event loop drains mid-drive', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    // A flow whose awaited timer never fires — exactly the drained session-resume.
+    const runFlow = jest.spyOn(flowsModule, 'runFlow').mockImplementation(() => new Promise(() => {}));
+    const before = process.listeners('beforeExit');
+    const lock = tempLock();
+
+    void runLive({ flows: ['session-resume'], branch: 'fix/a', lock });
+    await flush();
+    expect(runFlow).toHaveBeenCalled();
+
+    const added = process.listeners('beforeExit').filter(l => !before.includes(l));
+    expect(added).toHaveLength(1);
+    const exit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const write = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      (added[0] as () => void)();
+      expect(exit).toHaveBeenCalledWith(1);
+      const text = write.mock.calls.map(c => String(c[0])).join('');
+      expect(text).toContain('in progress');
+      expect(text).toContain('session-resume');
+      expect(lock.read().holder).toBeNull();
+    } finally {
+      process.removeListener('beforeExit', added[0] as () => void);
+    }
+  });
+
+  it('disarms the guard once a run settles — PASS or ENVIRONMENT', async () => {
+    const count = process.listeners('beforeExit').length;
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => passingFlow(flow.name));
+    await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+    expect(process.listeners('beforeExit')).toHaveLength(count);
+
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue({ ...okPreflight, ok: false });
+    await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+    expect(process.listeners('beforeExit')).toHaveLength(count);
+  });
+});
+
 describe('formatSummary', () => {
   const base: LiveRunResult = {
     world: 'planitia',
