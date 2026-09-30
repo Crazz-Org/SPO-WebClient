@@ -12,7 +12,7 @@ import {
   otherPublicityLevel, publicityLogMatches, taxLogMatches, circuitLogMatches, zoneLogMatches,
   loanDelta, newLoan, receiverLimitRefusal, pictureCheck, testPortraitJpeg, portraitUrl, PROFILE_LEVEL_NAMES,
   nudgeWithin, evenPriceNudge, roundHalfEven, servicePriceQuantised, facLineMatches, servicePriceLineMatches,
-  salariesLineMatches, clientLinksDiff, outputPriceRefusal, stoppedBit, workerCountsProblem, refreshMissingKeys,
+  salariesLineMatches, salaryArg, salariesNudge, publishedSalariesMatch, clientLinksDiff, outputPriceRefusal, stoppedBit, workerCountsProblem, refreshMissingKeys,
   fixtureKind,
   pickPlacement, ownsPlacement, delFacilityLineMatches,
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
@@ -5461,6 +5461,28 @@ describe('inspector helpers (#1152)', () => {
     expect(salariesLineMatches('Setting salaries: 150, 100, 90', '149', '100', '90')).toBe(false);
   });
 
+  it('salaryArg sends an unpublished (empty) slot as 0 and keeps a published one', () => {
+    expect(salaryArg('')).toBe('0');
+    expect(salaryArg('  ')).toBe('0');
+    expect(salaryArg('100')).toBe('100');
+  });
+
+  it('salariesNudge moves the first published class only, keeps empty slots empty, and refuses when none is published', () => {
+    expect(salariesNudge('150,100,90')).toBe('149,100,90');
+    expect(salariesNudge(',100,100')).toBe(',101,100');
+    expect(salariesNudge(',,40')).toBe(',,41');
+    expect(() => salariesNudge(',,')).toThrow(/no salary class is published/);
+  });
+
+  it('publishedSalariesMatch compares only the classes the expected triplet publishes', () => {
+    expect(publishedSalariesMatch(',99,100', ',99,100')).toBe(true);
+    // The server never publishes the executive slot, whatever was written to it.
+    expect(publishedSalariesMatch('0,99,100', ',99,100')).toBe(true);
+    expect(publishedSalariesMatch(',100,100', ',99,100')).toBe(false);
+    expect(publishedSalariesMatch(',99,101', ',99,100')).toBe(false);
+    expect(publishedSalariesMatch(',99', ',99,100')).toBe(false);
+  });
+
   it('clientLinksDiff compares links by lot and name, and labels them', () => {
     const a = conn('Shop A', 'SPO_test3 - Green', 1, 2);
     const b = conn('Shop B', 'Other Co', 3, 4);
@@ -5834,6 +5856,59 @@ describe('inspector flows (#1152)', () => {
       const result = await run('store-price-salaries');
       expect(result.status).toBe('UNPROVEN');
       expect(setProps(world)).toEqual([]);
+    });
+
+    it('nudges a published class when the executive slot is unpublished, compares only published classes, and restores it as 0', async () => {
+      // Book Store 1: no executive capacity, so StoreToCache never publishes Salaries0 (WorkCenterBlock.pas:567-571).
+      const world = makeWorld({
+        salaries: ['', '100', '100'],
+        after: w => { if (w.property === 'RDOSetSalaries') world.salaries[0] = ''; },
+      });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('store-price-salaries', lock);
+      expect(result.status).toBe('PASS');
+      expect(result.probes[1]).toMatchObject({
+        status: 'PASS', original: ',100,100', written: ',101,100', readBack: 'CONFIRMED', restoreReadBack: 'CONFIRMED',
+        logLine: '1/1 12:00 Setting salaries: 0, 101, 100',
+      });
+      expect(world.writes.slice(2)).toEqual([
+        { property: 'RDOSetSalaries', value: '0', params: { salary0: '0', salary1: '101', salary2: '100' } },
+        { property: 'RDOSetSalaries', value: '0', params: { salary0: '0', salary1: '100', salary2: '100' } },
+      ]);
+      expect(world.salaries).toEqual(['', '100', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('never sends an empty or non-numeric salary field, forward or restore', async () => {
+      const world = makeWorld({
+        salaries: ['', '', '70'],
+        after: w => { if (w.property === 'RDOSetSalaries') { world.salaries[0] = ''; world.salaries[1] = ''; } },
+      });
+      arrange(world);
+      const result = await run('store-price-salaries');
+      expect(result.status).toBe('PASS');
+      const sent = world.writes.filter(w => w.property === 'RDOSetSalaries');
+      expect(sent).toHaveLength(2);
+      for (const w of sent) {
+        for (const v of [w.value, ...Object.values(w.params ?? {})]) expect(v).toMatch(/^\d+$/);
+      }
+      expect(sent.map(w => w.params)).toEqual([
+        { salary0: '0', salary1: '0', salary2: '71' },
+        { salary0: '0', salary1: '0', salary2: '70' },
+      ]);
+    });
+
+    it('is UNPROVEN for RDOSetSalaries, and sends nothing for it, when the store publishes no salary class', async () => {
+      const world = makeWorld({ salaries: ['', '', ''] });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('store-price-salaries', lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetSalaries — .*publishes no salary class.*WorkCenterBlock\.pas:567-571/)]);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOSetPrice', 'RDOSetPrice']);
+      expect(result.probes).toHaveLength(1);
+      expect(lock.read().pendingRestores).toEqual([]);
     });
 
     it('refuses to write salaries it cannot read in full', async () => {
