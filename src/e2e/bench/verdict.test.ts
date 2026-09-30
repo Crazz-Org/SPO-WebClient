@@ -266,6 +266,13 @@ describe('statusDescription', () => {
       expect(description).toBe('PASS — live unknown — job job-1');
     });
 
+    it('marks a skip-BLOCKED run with its own marker, distinct from unknown', () => {
+      const description = statusDescription(
+        verdictFor('c1', { verdict: 'BLOCKED', live: { status: 'blocked-skip', skipped: ['permission-negative'] } }),
+      );
+      expect(description).toBe('BLOCKED — live blocked-skip — job job-1');
+    });
+
     it('omits the marker entirely for a verdict written before the field existed', () => {
       // No `live` key at all — verdictFor's default. Must render exactly as it always did,
       // never inferring "ran" or "static-only" from silence.
