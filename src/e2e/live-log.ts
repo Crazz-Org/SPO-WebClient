@@ -16,12 +16,15 @@
  *    the window a fraction of the way into the file (#1228).
  * 2. **Timestamp.** Every Survival line starts with its own `h:mm:ss AM/PM` stamp
  *    (`TimeToStr(Now)`, `Kernel/Kernel.pas:4689`); it must be at or after
- *    `LogWindow.openedAt`, compared as a time of day within one day's file. A line earlier
- *    than the window never counts, whatever the byte offset says. A line without a stamp
- *    falls back to the byte offset alone.
+ *    `LogWindow.openedAt`, compared as a time of day within one day's file, less a
+ *    `CLOCK_SKEW_SECONDS` allowance. A line earlier than that never counts, whatever the byte
+ *    offset says. A line without a stamp falls back to the byte offset alone.
  *
  * Assumption: **Survival log time = UTC** — verified 2026-09-30 and 2026-10-01 (tail line
- * `6:28:28 AM` read at `06:28:30 UTC`).
+ * `6:28:28 AM` read at `06:28:30 UTC`). The server clock can trail the bench by a second or
+ * two, and a line logged right after the window opens would then carry a stamp earlier than
+ * `openedAt` (research-roundtrip's `Cancel Research:` line, dropped on the first #1228 gate) —
+ * hence the allowance. It is seconds; the stale lines this rule exists to refuse are hours old.
  */
 
 import { toErrorMessage } from '../shared/error-utils';
@@ -184,7 +187,13 @@ export async function readSince(window: LogWindow): Promise<string> {
   return response.status === 206 ? text : text.slice(window.offset);
 }
 
-/** True unless the line carries an `h:mm:ss AM|PM` stamp earlier (UTC, same day) than window.openedAt. */
+/** How far a line's stamp may trail `openedAt` and still count — the server clock can lag the bench. */
+export const CLOCK_SKEW_SECONDS = 10;
+
+/**
+ * True unless the line carries an `h:mm:ss AM|PM` stamp earlier (UTC, same day) than
+ * window.openedAt less `CLOCK_SKEW_SECONDS`.
+ */
 export function loggedInWindow(line: string, window: LogWindow): boolean {
   const stamp = /^\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)\b/i.exec(line);
   const opened = new Date(window.openedAt);
@@ -194,7 +203,7 @@ export function loggedInWindow(line: string, window: LogWindow): boolean {
     ((Number(stamp[1]) % 12) + (pm ? 12 : 0)) * 3600 + Number(stamp[2]) * 60 + Number(stamp[3]);
   const windowSeconds =
     opened.getUTCHours() * 3600 + opened.getUTCMinutes() * 60 + opened.getUTCSeconds();
-  return lineSeconds >= windowSeconds;
+  return lineSeconds >= windowSeconds - CLOCK_SKEW_SECONDS;
 }
 
 /**

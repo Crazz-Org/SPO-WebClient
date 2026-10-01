@@ -282,7 +282,14 @@ describe('loggedInWindow', () => {
   });
 
   it('parses the interface-server form', () => {
-    expect(loggedInWindow('8:06:05 PM - Start Disconnecting SPO_test3', at('2026-10-01T20:06:06.000Z'))).toBe(false);
+    expect(loggedInWindow('8:06:05 PM - Start Disconnecting SPO_test3', at('2026-10-01T20:06:30.000Z'))).toBe(false);
+  });
+
+  it('allows a server clock trailing the bench by up to CLOCK_SKEW_SECONDS', () => {
+    // A line logged right after the window opened, stamped 2 s early by a lagging server clock.
+    expect(loggedInWindow('8:05:58 PM Cancel Research: HappyHour', at('2026-10-01T20:06:00.000Z'))).toBe(true);
+    expect(loggedInWindow('8:05:50 PM x', at('2026-10-01T20:06:00.000Z'))).toBe(true);
+    expect(loggedInWindow('8:05:49 PM x', at('2026-10-01T20:06:00.000Z'))).toBe(false);
   });
 
   it('falls back to the byte offset for a stamp-less line or an invalid openedAt', () => {
