@@ -173,7 +173,7 @@ export const ROUTES: RouteRule[] = [
   // on that basis). Each exemption carries a cited reason: `File.pas:Line`, `file.asp:Line`
   // or `#<issue>`. The tooling rule below routes no flow for a diff under src/e2e/; the gate
   // itself adds the flows. verify-gate.js stage 3 adds the flows the diff CHANGED — a hunk
-  // inside a `FLOWS` entry, or inside a shared helper of the six flow sources, which drives
+  // inside a `FLOWS` entry, or inside a shared helper of the seven flow sources, which drives
   // every flow that reaches it (src/e2e/bench/changed-flows.ts) — and the flows a card
   // DECLARES with `npm run gate -- --also-flows=a,b`. All of them land in `routing.required`,
   // so the card's own gate drives them and a required flow that ends UNPROVEN fails it.

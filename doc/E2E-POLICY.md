@@ -112,7 +112,7 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 | `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip` |
 | `src/client/renderer/**`; the component folders `mobile`, `hud`, `sheet`, `modals`, `map`, `search`, `chat`, `building`, `politics`, `mail`, `empire`, `login`, `common`, `command-palette`, `startup`, `tutorial` under `src/client/components/`; `src/client/report/*.tsx`; `src/client/App.tsx`, `main.tsx`, `client.ts`; `src/client/ui/**`, `src/client/hooks/**`; `src/client/store/ui-store.ts`; `*.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
-| `src/e2e/flows.ts`, `src/e2e/{fixtures,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
+| `src/e2e/flows.ts`, `src/e2e/{fixtures,research,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
 | `doc/**`, `*.md`, CI config, tooling | static only |
 
 The **login spine** (connect -> auth -> directory -> world login -> company select ->
@@ -158,8 +158,8 @@ requires that a flow the file's rule routes to sends each one, or that the reque
 The routing table sends `src/e2e/` to no flow, so the gate adds two more sets to the routed
 one and drives **routed ∪ changed ∪ declared** (`scripts/verify-gate.js`, stage 3):
 
-- **Changed** — `src/e2e/bench/changed-flows.ts` reads the diff of the six flow sources
-  (`src/e2e/flows.ts`, `fixtures.ts`, `probe.ts`, `session.ts`, `ws-driver.ts`,
+- **Changed** — `src/e2e/bench/changed-flows.ts` reads the diff of the seven flow sources
+  (`src/e2e/flows.ts`, `fixtures.ts`, `research.ts`, `probe.ts`, `session.ts`, `ws-driver.ts`,
   `live-log.ts`). A hunk inside a `FLOWS` entry requires that flow — an edited body, an added
   flow, a renamed flow under its new name — even when it is `NIGHTLY_ONLY`. A hunk inside a
   shared helper requires every flow that reaches the helper, directly or through another
@@ -481,6 +481,15 @@ line, result code 0 and the lot read-back. While SPO_test3 owns a construction s
 the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
 (placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
 and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
+**Research queued by the fixture builder is permanent setup data too** (maintainer, 2026-10-01,
+#1233). The bank and TV classes stay locked until *SPO_test3 - Green* owns the invention that
+unlocks them (`RESEARCH_UNLOCKS`); the builder then queues one research step per run at
+SPO_test3's research fixture: the first missing link of the chain that reads enabled and fits
+under cash − the cash floor − `research-roundtrip`'s own cost. It is proven by its
+`Queue Research:` line and an inventory read-back. It never sends `RDOCancelResearch` (on an
+owned invention that sells it, `Kernel/ResearchCenter.pas:372`), never queues
+`research-roundtrip`'s target, and records no pending restore, so no restore or unlock step can
+cancel it.
 
 **Build → demolish (#1150).** `place-rename-demolish` places the cheapest buildable facility —
 never a mausoleum, never the Capitol (`isRefusedClass`) — on a free Helartia lot as
