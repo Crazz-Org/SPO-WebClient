@@ -15,8 +15,18 @@ import type { LiveSession } from './session';
 
 /**
  * The one invention research-roundtrip drives (maintainer, PR #1214): Commerce > Bars > Happy Hour,
- * id `HappyHour` in research.0.dat — Price $25,000,000, requires `Bars`. The fixture builder never
- * queues it, and reserves its cost so research-roundtrip can always afford its own queue (#1233).
+ * id `HappyHour` in research.0.dat — Price $25,000,000, requires `Bars`.
+ *
+ * Isolation: research-roundtrip may freely queue, cancel and **sell** Happy Hour (maintainer, #1236).
+ * (a) Nothing else depends on it — `FIXTURE_KINDS` has no Bar class, and the only other code naming
+ * `HappyHour` is the fixture builder (#1233), which reads its price as a reserve and never queues
+ * or cancels it. (b) A sell's server-side cascade is empty —
+ * `TCompany.RetireInvention` refunds `TotalCost - Subsidy` (Kernel/Kernel0.pas:10239) and retires
+ * every owned invention whose `Req` includes the sold one (Kernel/Kernel0.pas:10284-10289), and no
+ * entry in `cache/Inventions/research.0.dat` carries `Requires: Happy Hour`.
+ * That cascade is exactly why a shared prerequisite (e.g. General Services, on which every shop
+ * depends) must never be the target: selling it would retire inventions other flows need — the
+ * only case that justifies a human lock.
  */
 export const RESEARCH_TARGET = { id: 'HappyHour', name: 'Happy Hour' } as const;
 

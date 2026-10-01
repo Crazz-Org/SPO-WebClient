@@ -44,7 +44,7 @@ export interface ChangedFlowsInput {
   nightlyOnly: Record<string, string>;
 }
 
-interface Declaration {
+export interface Declaration {
   file: string;
   name: string;
   /** 1-based, inclusive. */
@@ -93,7 +93,7 @@ function touchedLines(diff: string): Map<string, Touches> {
   return touches;
 }
 
-function declarationsOf(file: string, source: string): Declaration[] {
+export function declarationsOf(file: string, source: string): Declaration[] {
   const lines = source.split('\n');
   const spans: Array<{ name: string; start: number; end: number }> = [];
   let open: { name: string; start: number } | null = null;

@@ -7208,10 +7208,10 @@ const acceptCloning = fixtureFlow(
 );
 
 /**
- * Queue Happy Hour, prove it is in development, cancel it. Queueing can buy on the spot —
- * an invention with `Time = 0` is paid for and declared at once (Kernel/ResearchCenter.pas:319-334)
- * — and a cancel on an owned invention reaches `RetireInvention` (:372), the excluded sell. So the
- * cancel is sent only on an invention that reads in development right before it.
+ * Queue Happy Hour, prove it is in development, cancel it. It starts from any state: one left owned
+ * or in development by an earlier run is cancelled/sold first (Kernel/ResearchCenter.pas:354-372).
+ * After the queue the cancel is always sent — it removes a queued invention and sells one bought at
+ * once (`Time = 0`, :319-334) — and the inventory reading `available` again decides the restore.
  */
 const researchRoundTrip = fixtureFlow(
   'research-roundtrip',
@@ -7257,18 +7257,30 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     assertions.unproven('RDOQueueResearch', `${name} not listed at ${at} (categories 0..${catMax})`);
     return;
   }
-  if (found.state !== 'available' || !found.enabled) {
-    const why =
-      found.state === 'owned'
-        ? 'already owned — a cancel on it would sell it (Kernel/ResearchCenter.pas:372)'
-        : found.state === 'developing'
-          ? 'already in development — not queued by this flow, so not its to cancel'
-          : 'listed but not enabled — its prerequisite Bars is not owned, or the tier / nobility does not match ' +
-            '(TInvention.Enabled, Inventions/Inventions.pas:658-693)';
-    assertions.unproven('RDOQueueResearch', `${name} at ${at}: ${why}; nothing sent`);
+  const { category } = found;
+  const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
+  // Isolated target (RESEARCH_TARGET): a leftover is cancelled/sold first, with no pending restore.
+  if (found.state === 'owned' || found.state === 'developing') {
+    await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: id });
+    const reset = await pollUntil(stateOf, s => s === 'available', ctx);
+    if (!reset.ok) {
+      assertions.unproven(
+        'RDOQueueResearch',
+        `${name} at ${at}: read ${found.state}, cancel/sell sent, still reads ${reset.last} — not reset; nothing else sent`,
+      );
+      return;
+    }
+    const { data } = await researchInventory(session, fx, category);
+    found = { category, state: 'available', enabled: data.available.some(i => i.inventionId === id && i.enabled === true) };
+  }
+  if (!found.enabled) {
+    assertions.unproven(
+      'RDOQueueResearch',
+      `${name} at ${at}: listed but not enabled — its prerequisite Bars is not owned, or the tier / nobility does not match ` +
+        '(TInvention.Enabled, Inventions/Inventions.pas:658-693); nothing sent',
+    );
     return;
   }
-  const { category } = found;
 
   const details = await readResearchDetails(session, fx, id);
   const properties = details.properties.trim().replace(/\s+/g, ' ');
@@ -7285,7 +7297,6 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     return;
   }
 
-  const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
   const url = await survivalUrl(ctx);
   const key = `research-roundtrip:${randomUUID()}`;
   ctx.lock.addPendingRestore({
@@ -7294,8 +7305,9 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     y: fx.y,
     propertyName: 'RDOCancelResearch',
     what:
-      `cancel research ${id} at (${fx.x},${fx.y}) — queued by research-roundtrip; if it reads owned it was bought at ` +
-      'once and must NOT be cancelled (RDOCancelResearch on an owned invention sells it, Kernel/ResearchCenter.pas:372)',
+      `cancel/sell research ${id} at (${fx.x},${fx.y}) — queued by research-roundtrip; RDOCancelResearch removes a queued ` +
+      `invention and sells an owned one (Kernel/ResearchCenter.pas:354-372); ${name} is an isolated test invention, so ` +
+      'selling it is the intended undo',
     originalValue: 'available',
   });
 
@@ -7320,7 +7332,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
         `${id} is listed in development, not owned`,
         false,
         `bought at once: ${id} (${properties}) — an invention with Time = 0 is bought on the spot ` +
-          '(Kernel/ResearchCenter.pas:319-334); not cancelled: cancel would sell it',
+          '(Kernel/ResearchCenter.pas:319-334) — sold back by the cancel',
       );
     } else if (listed.last === 'available') {
       // Reads exactly what the pending restore would put back: the server dropped the queue and
@@ -7337,7 +7349,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
       assertions.check(
         `${id} is listed in development, not owned`,
         listed.ok,
-        listed.ok ? `${id} in development` : `never listed in development — reads ${listed.last}; not cancelled`,
+        listed.ok ? `${id} in development` : `never listed in development — reads ${listed.last}; cancel sent anyway`,
       );
     }
   } catch (err: unknown) {
@@ -7347,8 +7359,9 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
 }
 
 /**
- * The cancel, only on an invention that reads in development right before it — never one that
- * reads owned (a sell) or one the flow never saw queued. Anything else keeps the pending restore.
+ * The cancel, always sent whatever the state — a queued invention is removed, an owned one sold,
+ * an absent one is harmless for the isolated target (RESEARCH_TARGET). The inventory reading
+ * `available` clears the pending restore whatever the log said; one retry before it is kept.
  */
 async function cancelQueuedResearch(
   session: LiveSession,
@@ -7358,31 +7371,25 @@ async function cancelQueuedResearch(
   assertions: Assertions,
 ): Promise<void> {
   try {
-    const state = await q.stateOf();
-    if (state !== 'developing') {
-      assertions.check(
-        `${q.id} is cancelled`,
-        false,
-        `reads ${state}, not in development — not cancelled (RDOCancelResearch on an owned invention sells it, ` +
-          'Kernel/ResearchCenter.pas:372); pending restore kept',
+    let line: string | null = null;
+    let back: { ok: boolean; last: ResearchState } = { ok: false, last: 'absent' };
+    for (let attempt = 1; attempt <= 2 && !back.ok; attempt++) {
+      const window = await openLogWindow(q.url);
+      await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: q.id });
+      line ??= await awaitMarker(
+        window,
+        { marker: LOG_MARKERS.RDOCancelResearch, match: l => cancelResearchLineMatches(l, q.id) },
+        TIMEOUTS.logSettle,
+        undefined,
+        ctx.now,
+        ctx.sleep,
       );
-      return;
+      back = await pollUntil(q.stateOf, s => s === 'available', ctx);
     }
-    const window = await openLogWindow(q.url);
-    await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: q.id });
-    const line = await awaitMarker(
-      window,
-      { marker: LOG_MARKERS.RDOCancelResearch, match: l => cancelResearchLineMatches(l, q.id) },
-      TIMEOUTS.logSettle,
-      undefined,
-      ctx.now,
-      ctx.sleep,
-    );
-    const gone = await pollUntil(q.stateOf, s => s !== 'developing' && s !== 'owned', ctx);
-    const kept = line !== null && gone.ok ? '' : ' — pending restore kept';
-    assertions.check('the cancel logged its Cancel Research: line', line !== null, (line ?? `(no Cancel Research: line for ${q.id})`) + kept);
-    assertions.check(`the inventory no longer lists ${q.id} as queued`, gone.ok, `reads ${gone.last}${kept}`);
-    if (line !== null && gone.ok) ctx.lock.clearPendingRestore(q.key);
+    if (back.ok) ctx.lock.clearPendingRestore(q.key);
+    const kept = back.ok ? '' : ' — pending restore kept';
+    assertions.check('the cancel logged its Cancel Research: line', line !== null, line ?? `(no Cancel Research: line for ${q.id})`);
+    assertions.check(`the inventory reads ${q.id} available again`, back.ok, `reads ${back.last}${kept}`);
   } catch (err: unknown) {
     assertions.check('the research cancel ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
   }
