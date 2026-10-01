@@ -4892,6 +4892,38 @@ export function salariesLineMatches(line: string, hi: string, mid: string, lo: s
   return new RegExp(`${escapeRegExp(`Setting salaries: ${hi}, ${mid}, ${lo}`)}(?=\\s|$)`).test(line);
 }
 
+/**
+ * A salary slot the server left unpublished reads `""`: `TWorkCenter.StoreToCache` writes
+ * `Salaries<k>` only for a class the block has capacity for (Kernel/WorkCenterBlock.pas:567-571).
+ * It is sent as 0, as the inspector sends it (`collectSalaryTriplet`, property-utils.ts) — an
+ * empty slot must never reach `RdoValue.int` as `parseInt('')`.
+ */
+export function salaryArg(value: string): string {
+  return value.trim() === '' ? '0' : value;
+}
+
+/**
+ * The triplet with the first **published** class nudged, the unpublished slots kept empty so the
+ * read-back can tell them apart. Throws when no class is published — nothing is written then.
+ */
+export function salariesNudge(original: string): string {
+  const slots = original.split(',');
+  const k = slots.findIndex(s => s.trim() !== '');
+  if (k < 0) throw new Error(`no salary class is published ("${original}") — nothing to nudge`);
+  slots[k] = nudgeWithin(slots[k], 0, 255);
+  return slots.join(',');
+}
+
+/**
+ * The read-back compares the published classes only — a slot `expected` leaves empty was never
+ * published, so its value cannot be read back (Kernel/WorkCenterBlock.pas:567-571).
+ */
+export function publishedSalariesMatch(last: string, expected: string): boolean {
+  const got = last.split(',');
+  const want = expected.split(',');
+  return got.length === want.length && want.every((w, i) => w.trim() === '' || got[i] === w);
+}
+
 const linkKey = (c: BuildingConnectionData): string => `${c.x},${c.y},${c.facilityName}`;
 const linkLabel = (c: BuildingConnectionData): string => `${c.facilityName} (${c.x},${c.y}) of ${c.companyName}`;
 
@@ -5066,6 +5098,10 @@ const NO_WORKFORCE_REASON =
   "the store fixture's template carries no workforce group (WORKFORCE_GROUP) — FIXTURE_KINDS' store kind " +
   'does not require it (#1149)';
 
+const NO_SALARY_CLASS_REASON =
+  "the store fixture publishes no salary class — TWorkCenter.StoreToCache writes Salaries<k> only for a " +
+  'class with capacity (Kernel/WorkCenterBlock.pas:567-571), so no write could be read back';
+
 /**
  * The store's owner settings: service 0's price (`TServiceBlock.RDOSetPrice`,
  * StdBlocks/ServiceBlock.pas:1578) and the salary triplet (`TWorkCenter.RDOSetSalaries`,
@@ -5121,32 +5157,38 @@ const storePriceSalaries: Flow = {
         const values = WORKER_KINDS.map(i => propertyValue(groups, 'workforce', `Salaries${i}`));
         return values.some(v => v === undefined) ? undefined : values.join(',');
       };
+      const before = await readSalaries();
+      if (before !== undefined && before.split(',').every(s => s.trim() === '')) {
+        assertions.unproven('RDOSetSalaries', NO_SALARY_CLASS_REASON);
+        return report('store-price-salaries', assertions, probes, session);
+      }
       const salaries = await roundTripProbe(ctx, url, {
         what: `${fixtureLabel(fx)} salaries (hi,mid,lo)`,
         member: 'RDOSetSalaries',
         read: readSalaries,
         write: async value => {
-          const [salary0, salary1, salary2] = value.split(',');
+          const [salary0, salary1, salary2] = value.split(',').map(salaryArg);
           // The whole triplet, the untouched two unchanged — buildRdoCommandArgs requires all three.
           await setBuildingProperty(session, fx.x, fx.y, 'RDOSetSalaries', salary0, { salary0, salary1, salary2 });
         },
-        testValue: original => {
-          const [hi, mid, lo] = original.split(',');
-          return [nudgeWithin(hi, 0, 255), mid, lo].join(',');
-        },
+        testValue: salariesNudge,
         proof: {
           log: {
             marker: LOG_MARKERS.RDOSetSalaries,
             match: (line, written) => {
-              const [hi, mid, lo] = written.split(',');
+              const [hi, mid, lo] = written.split(',').map(salaryArg);
               return salariesLineMatches(line, hi, mid, lo);
             },
           },
-          readBack: readBackOn(
-            `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read`,
-            `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593)`,
-            readSalaries,
-          ),
+          readBack: {
+            ...readBackOn(
+              `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read, published classes only`,
+              `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593), ` +
+                'and only a class with capacity is published (:567-571)',
+              readSalaries,
+            ),
+            matches: publishedSalariesMatch,
+          },
         },
         restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetSalaries' },
       });
@@ -6988,6 +7030,20 @@ export function startUpgradeLineMatches(line: string, count: number): boolean {
   return new RegExp(`${escapeRegExp(`Facility Start Upgrade count: ${count}`)}(?=\\s|$)`).test(line);
 }
 
+/**
+ * What queueing an invention costs, in dollars: the `Price:` and `License:` lines of its details
+ * (`TInvention.GetProperties`, Inventions/Inventions.pas:715-727; labels Kernel/SimHints.pas:482-483;
+ * amounts from `FormatMoney`, Utils/Misc/MathUtils.pas:87-99). A line the details do not show is 0. The server starts a
+ * research only when `Budget >= Price + GetFeePrice` (Kernel/ResearchCenter.pas:240).
+ */
+export function researchCost(properties: string): number {
+  const dollars = (label: string): number => {
+    const m = new RegExp(`(?:^|\\s)${label}:\\s*\\$([0-9][0-9,.]*)`, 'i').exec(properties);
+    return m ? Number(m[1].replace(/[^0-9]/g, '')) : 0;
+  };
+  return dollars('Price') + dollars('Licen[cs]e');
+}
+
 export type ResearchState = 'developing' | 'owned' | 'available' | 'absent';
 
 /**
@@ -7329,14 +7385,20 @@ const acceptCloning = fixtureFlow(
 );
 
 /**
- * Queue one invention, prove it is in development, cancel it. Queueing can buy on the spot —
+ * The one invention research-roundtrip drives (maintainer, PR #1214): Commerce > Bars > Happy Hour,
+ * id `HappyHour` in research.0.dat — Price $25,000,000, requires `Bars`.
+ */
+export const RESEARCH_TARGET = { id: 'HappyHour', name: 'Happy Hour' } as const;
+
+/**
+ * Queue Happy Hour, prove it is in development, cancel it. Queueing can buy on the spot —
  * an invention with `Time = 0` is paid for and declared at once (Kernel/ResearchCenter.pas:319-334)
  * — and a cancel on an owned invention reaches `RetireInvention` (:372), the excluded sell. So the
  * cancel is sent only on an invention that reads in development right before it.
  */
 const researchRoundTrip = fixtureFlow(
   'research-roundtrip',
-  "REQ_RESEARCH_INVENTORY + DETAILS on SPO_test3's research fixture → RDOQueueResearch (Queue Research: line, " +
+  "REQ_RESEARCH_INVENTORY + DETAILS for Happy Hour on SPO_test3's research fixture → RDOQueueResearch (Queue Research: line, " +
     'in development) → RDOCancelResearch (Cancel Research: line, no longer queued)',
   'research',
   'hqInventions',
@@ -7363,18 +7425,40 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   const parsed = Number(propertyValue(groups, 'hqInventions', 'CatCount') ?? '0');
   const catMax = Number.isFinite(parsed) ? parsed : 0;
 
-  let pick: { id: string; name: string; category: number } | undefined;
-  for (let category = 0; category <= catMax && !pick; category++) {
-    const { data } = await researchInventory(session, fx, category);
-    const held = new Set([...data.developing, ...data.completed].map(i => i.inventionId));
-    const hit = data.available.find(i => i.enabled === true && !held.has(i.inventionId));
-    if (hit) pick = { id: hit.inventionId, name: hit.name, category };
-  }
-  if (!pick) {
-    assertions.unproven('RDOQueueResearch', `no enabled invention available to queue in categories 0..${catMax}`);
+  const cash = await readCash(session);
+  if (cash === null) {
+    assertions.unproven('RDOQueueResearch', 'cash unknown — no EVENT_TYCOON_UPDATE received');
     return;
   }
-  const { id, category } = pick;
+
+  // The one pinned invention (maintainer, PR #1214), wherever the building lists it — the
+  // category index is read, not assumed. The three lists are exclusive (researchState).
+  const { id, name } = RESEARCH_TARGET;
+  const at = `${fx.name} (${fx.x},${fx.y})`;
+  let found: { category: number; state: ResearchState; enabled: boolean } | undefined;
+  for (let category = 0; category <= catMax && !found; category++) {
+    const { data } = await researchInventory(session, fx, category);
+    const state = researchState(data, id);
+    if (state !== 'absent') {
+      found = { category, state, enabled: data.available.some(i => i.inventionId === id && i.enabled === true) };
+    }
+  }
+  if (!found) {
+    assertions.unproven('RDOQueueResearch', `${name} not listed at ${at} (categories 0..${catMax})`);
+    return;
+  }
+  if (found.state !== 'available' || !found.enabled) {
+    const why =
+      found.state === 'owned'
+        ? 'already owned — a cancel on it would sell it (Kernel/ResearchCenter.pas:372)'
+        : found.state === 'developing'
+          ? 'already in development — not queued by this flow, so not its to cancel'
+          : 'listed but not enabled — its prerequisite Bars is not owned, or the tier / nobility does not match ' +
+            '(TInvention.Enabled, Inventions/Inventions.pas:658-693)';
+    assertions.unproven('RDOQueueResearch', `${name} at ${at}: ${why}; nothing sent`);
+    return;
+  }
+  const { category } = found;
 
   const { details } = await session.driver.request<WsRespResearchDetails>(
     { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: id },
@@ -7386,6 +7470,13 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     details.inventionId === id && properties !== '',
     `${details.inventionId}: ${properties || '(no properties)'}`,
   );
+  // One the account cannot pay for is accepted, then dropped at once (StartResearch,
+  // Kernel/ResearchCenter.pas:240-253) — it would never read queued.
+  const cost = researchCost(details.properties);
+  if (cost > cash) {
+    assertions.unproven('RDOQueueResearch', `${name} costs $${cost} (Price + License), above the cash ($${cash}); nothing sent`);
+    return;
+  }
 
   const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
   const url = await survivalUrl(ctx);
@@ -7402,6 +7493,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   });
 
   let queued = false;
+  let refused = false;
   try {
     const window = await openLogWindow(url);
     queued = true;
@@ -7423,6 +7515,17 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
         `bought at once: ${id} (${properties}) — an invention with Time = 0 is bought on the spot ` +
           '(Kernel/ResearchCenter.pas:319-334); not cancelled: cancel would sell it',
       );
+    } else if (listed.last === 'available') {
+      // Reads exactly what the pending restore would put back: the server dropped the queue and
+      // nothing is owed. No cancel — nothing is queued (Kernel/ResearchCenter.pas:240-253).
+      refused = true;
+      ctx.lock.clearPendingRestore(key);
+      assertions.check(
+        `${id} is listed in development, not owned`,
+        false,
+        `the server did not take the queue — ${id} (${properties}) still reads available; nothing to cancel, ` +
+          'world unchanged, pending restore cleared',
+      );
     } else {
       assertions.check(
         `${id} is listed in development, not owned`,
@@ -7433,7 +7536,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   } catch (err: unknown) {
     assertions.check('the queue steps ran without a throw', false, toErrorMessage(err));
   }
-  if (queued) await cancelQueuedResearch(session, ctx, fx, { id, key, url, stateOf }, assertions);
+  if (queued && !refused) await cancelQueuedResearch(session, ctx, fx, { id, key, url, stateOf }, assertions);
 }
 
 /**
@@ -7635,10 +7738,64 @@ async function startUpgrade(
   );
 }
 
+/** `readUpgrade` that answers a rejected read with its error text instead of a throw — "not yet". */
+async function tryReadUpgrade(session: LiveSession, fx: OwnFixture): Promise<UpgradeState | string> {
+  try {
+    return await readUpgrade(session, fx);
+  } catch (err: unknown) {
+    return toErrorMessage(err);
+  }
+}
+
+/** Nothing upgrading or pending, at the original level — the STOP is proven. */
+function idleAt(u: UpgradeState | string | undefined, level0: number): boolean {
+  return typeof u === 'object' && u.upgrading === 0 && u.pending === 0 && u.level === level0;
+}
+
+const upgradeOrError = (u: UpgradeState | string | undefined): string =>
+  typeof u === 'object' ? upgradeText(u) : `read failed: ${u ?? '(no read)'}`;
+
+/**
+ * AcceptCloning back to its original's truthiness, then one read of the upgrade tab — returned so
+ * the caller can use it as a second proof of the STOP.
+ */
+async function restoreCloning(
+  session: LiveSession,
+  fx: OwnFixture,
+  run: UpgradeRun,
+  assertions: Assertions,
+  suffix: string,
+): Promise<{ back: boolean; after: UpgradeState | string | undefined }> {
+  try {
+    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', run.cloning0);
+    assertions.check(
+      `AcceptCloning set back to ${run.cloning0 === '1' ? 'true' : 'false'}, confirmed by the gateway's live get${suffix}`,
+      r.confirmed === true,
+      `live get holds "${r.newValue}"`,
+    );
+    const after = await tryReadUpgrade(session, fx);
+    const cloning = typeof after === 'object' ? after.cloning : undefined;
+    assertions.check(
+      `AcceptCloning reads its original truthiness${suffix}`,
+      cloning === run.cloning0,
+      typeof after === 'object' ? `reads ${cloning ?? '(unread)'}, original ${run.cloning0}` : `read failed: ${after}`,
+    );
+    return { back: r.confirmed === true && cloning === run.cloning0, after };
+  } catch (err: unknown) {
+    assertions.check(`the AcceptCloning restore ran without a throw${suffix}`, false, `${toErrorMessage(err)} — pending restore kept`);
+    return { back: false, after: undefined };
+  }
+}
+
 /**
  * The STOP when the START went out, then — always — AcceptCloning back to its original's
- * truthiness, which also undoes the handler's own `-1`. The pending restore is cleared only when
- * the STOP is proven (line + zeros + the original level) and AcceptCloning reads its original.
+ * truthiness, which also undoes the handler's own `-1`. The read-back after the STOP polls past
+ * a failed read ("not yet"); the server's cached counters can read stale for ~2 min after a STOP
+ * (`TBlock.StopUpgrading` refreshes the cache before zeroing, Kernel/Kernel.pas:6554-6560;
+ * Kernel/KernelCache.pas:405), so the AcceptCloning restore's own read is a second chance. If that
+ * read still shows an upgrade running, one more STOP is sent (ignored when idle,
+ * Kernel/Kernel.pas:4694) and re-checked once. The pending restore is kept only when the upgrade
+ * is still provably running, every read failed, or AcceptCloning does not read its original.
  */
 async function undoUpgrade(
   session: LiveSession,
@@ -7647,7 +7804,9 @@ async function undoUpgrade(
   run: UpgradeRun,
   assertions: Assertions,
 ): Promise<void> {
-  let stopped = !run.startSent;
+  let proof: UpgradeState | string | undefined;
+  let polled = false;
+  let reachedPoll = false;
   if (run.startSent) {
     try {
       const window = await openLogWindow(run.url);
@@ -7656,41 +7815,75 @@ async function undoUpgrade(
       // The line carries no coordinates (Kernel/Kernel.pas:4689): the read-back attributes it.
       const line = await awaitMarker(window, { marker: LOG_MARKERS.RDOStopUpgrade }, TIMEOUTS.logSettle, undefined, ctx.now, ctx.sleep);
       assertions.check('the STOP logged Facility Stop Upgrade..', line !== null, line ?? '(no Facility Stop Upgrade.. line)');
-      const idle = await pollUntil(() => readUpgrade(session, fx), u => u.upgrading === 0 && u.pending === 0, ctx);
-      assertions.check('Upgrading and Pending read 0 after the STOP', idle.ok, upgradeText(idle.last));
-      const sameLevel = idle.last.level === run.level0;
+      const idle = await pollUntil(
+        () => tryReadUpgrade(session, fx),
+        u => typeof u === 'object' && u.upgrading === 0 && u.pending === 0,
+        ctx,
+      );
+      reachedPoll = true;
+      polled = idle.ok;
+      proof = idle.last;
+    } catch (err: unknown) {
+      assertions.check('the upgrade STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+    }
+  }
+  const lastPoll = proof;
+
+  let restored = await restoreCloning(session, fx, run, assertions, '');
+  if (!run.startSent) {
+    if (restored.back) ctx.lock.clearPendingRestore(run.key);
+    return;
+  }
+
+  let source = '';
+  if (!polled) {
+    // A failed restore read falls back on the poll's last state, never on a worse proof.
+    proof = typeof restored.after === 'object' || typeof lastPoll !== 'object' ? (restored.after ?? lastPoll) : lastPoll;
+    if (typeof restored.after === 'object') source = ' (from the read after the AcceptCloning restore)';
+  }
+  if (typeof proof === 'object' && (proof.upgrading > 0 || proof.pending > 0)) {
+    try {
+      if (run.cloning0 === '0') {
+        const set = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', '1');
+        assertions.check(
+          'AcceptCloning set true before the second STOP (manageConstructionImpl refuses otherwise)',
+          set.confirmed === true,
+          `live get holds "${set.newValue}"`,
+        );
+      }
+      const r = await requestUpgrade(session, fx, 'STOP_UPGRADE');
+      assertions.check('the gateway accepted the second STOP_UPGRADE', r.success === true, r.message);
+      restored = await restoreCloning(session, fx, run, assertions, ' (after the second STOP)');
+      proof = restored.after;
+      source = ' (after a second STOP)';
+    } catch (err: unknown) {
+      assertions.check('the second STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+    }
+  }
+
+  if (reachedPoll && proof !== undefined) {
+    const zeros = typeof proof === 'object' && proof.upgrading === 0 && proof.pending === 0;
+    assertions.check(
+      'Upgrading and Pending read 0 after the STOP',
+      zeros,
+      zeros
+        ? `${upgradeOrError(proof)}${source}`
+        : typeof proof === 'object'
+          ? `${upgradeText(proof)}${source} — still upgrading, pending restore kept`
+          : `every read failed: ${proof}, pending restore kept`,
+    );
+    if (typeof proof === 'object') {
+      const sameLevel = proof.level === run.level0;
       assertions.check(
         'UpgradeLevel equals its original after the STOP',
         sameLevel,
         sameLevel
           ? `level ${run.level0}`
-          : `a level completed before the STOP — downgrade is excluded, level ${run.level0}→${idle.last.level} kept`,
+          : `a level completed before the STOP — downgrade is excluded, level ${run.level0}→${proof.level} kept`,
       );
-      stopped = line !== null && idle.ok && sameLevel;
-    } catch (err: unknown) {
-      assertions.check('the upgrade STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
     }
   }
-
-  let cloningBack = false;
-  try {
-    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', run.cloning0);
-    assertions.check(
-      `AcceptCloning set back to ${run.cloning0 === '1' ? 'true' : 'false'}, confirmed by the gateway's live get`,
-      r.confirmed === true,
-      `live get holds "${r.newValue}"`,
-    );
-    const after = await readUpgrade(session, fx);
-    assertions.check(
-      'AcceptCloning reads its original truthiness',
-      after.cloning === run.cloning0,
-      `reads ${after.cloning ?? '(unread)'}, original ${run.cloning0}`,
-    );
-    cloningBack = r.confirmed === true && after.cloning === run.cloning0;
-  } catch (err: unknown) {
-    assertions.check('the AcceptCloning restore ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
-  }
-  if (stopped && cloningBack) ctx.lock.clearPendingRestore(run.key);
+  if (idleAt(proof, run.level0) && restored.back) ctx.lock.clearPendingRestore(run.key);
 }
 
 /** A chat name is SPO_test3's own — `ChatMsg`'s `From` may still carry `/AccDesc`. */

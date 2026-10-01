@@ -118,6 +118,8 @@ export interface WorkerDeps {
    * from the failed connect the drive already logged.
    */
   gameServerReachable: (driveLog: string) => Promise<ReachabilityResult>;
+  /** The flows `dist/e2e/run.js` drives when given no `--flows` — FLOWS minus GATE_ONLY, read from the checkout (readCheckoutDefaultFlows). */
+  defaultLiveFlows: (worktree: string) => string[] | undefined;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   log: (line: string) => void;
@@ -490,6 +492,154 @@ export function countUnprovenFlows(artifactPath: string | undefined): number {
   }
 }
 
+/** A live drive's artifact name — `live-<startedAt>.json`, as src/e2e/run.ts writes it. */
+const LIVE_ARTIFACT_NAME = /^live-.*\.json$/;
+
+/** The `live-*.json` names in `<worktree>/report/e2e`; empty when the directory does not exist. */
+export function liveArtifactNames(worktree: string): Set<string> {
+  try {
+    return new Set(fs.readdirSync(path.join(worktree, 'report', 'e2e')).filter(n => LIVE_ARTIFACT_NAME.test(n)));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * The `live-*.json` present now that was not in `before` — what "written by THIS run" means
+ * for a live drive. A set difference, not a clock: a file an earlier run left behind can
+ * never count, however recent. Several new ones → the lexicographically last (the names are
+ * ISO timestamps); none → undefined.
+ */
+export function newLiveArtifact(worktree: string, before: Set<string>): string | undefined {
+  const fresh = [...liveArtifactNames(worktree)].filter(n => !before.has(n)).sort();
+  const last = fresh[fresh.length - 1];
+  return last === undefined ? undefined : path.join(worktree, 'report', 'e2e', last);
+}
+
+/** The shape of `report/e2e/live-*.json` this module reads — `LiveRunResult` in src/e2e/run.ts. */
+interface LiveArtifactShape {
+  sha?: unknown;
+  flows?: { name?: unknown; status?: unknown }[];
+}
+
+/** The flow names an artifact's `flows` array carries, strings only. */
+function flowNamesOf(flows: { name?: unknown }[] | undefined): string[] {
+  return Array.isArray(flows)
+    ? flows.map(f => f?.name).filter((n): n is string => typeof n === 'string')
+    : [];
+}
+
+/** Each flow's name and status from a readable live artifact; undefined when absent or unreadable. */
+export function liveFlowStatuses(artifactPath: string | undefined): { name: string; status: string }[] | undefined {
+  if (!artifactPath) return undefined;
+  try {
+    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as LiveArtifactShape;
+    if (!Array.isArray(artifact.flows)) return undefined;
+    return artifact.flows
+      .filter(f => typeof f?.name === 'string')
+      .map(f => ({ name: f.name as string, status: typeof f.status === 'string' ? f.status : 'UNKNOWN' }));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * How the flows driven differ from the flows asked for, compared as sorted sets — or
+ * undefined when they match. Names only the non-empty halves.
+ */
+function flowMismatch(driven: string[], asked: string[]): string | undefined {
+  const drivenSet = new Set(driven);
+  const askedSet = new Set(asked);
+  const missing = [...askedSet].filter(n => !drivenSet.has(n)).sort();
+  const unexpected = [...drivenSet].filter(n => !askedSet.has(n)).sort();
+  if (missing.length === 0 && unexpected.length === 0) return undefined;
+  const halves = [
+    ...(missing.length > 0 ? [`missing: ${missing.join(', ')}`] : []),
+    ...(unexpected.length > 0 ? [`unexpected: ${unexpected.join(', ')}`] : []),
+  ];
+  return `drove [${[...driven].sort().join(', ')}], not the flows asked for (${halves.join('; ')})`;
+}
+
+/**
+ * Why a `live` / `nightly` PASS cannot stand on this artifact — or undefined when it can.
+ * An exit code alone is not a PASS: the drive must have written its artifact in this run,
+ * for this sha, with exactly the flows the job asked for. `asked` undefined means the flow
+ * list could not be read from the checkout, which is itself a reason to refuse.
+ */
+export function liveArtifactProblem(
+  artifactPath: string | undefined,
+  sha: string,
+  asked: string[] | undefined,
+): string | undefined {
+  if (!artifactPath) return 'no report/e2e/live-*.json was written by this run';
+  let artifact: LiveArtifactShape;
+  try {
+    artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as LiveArtifactShape;
+  } catch (err: unknown) {
+    return `the live artifact at ${artifactPath} could not be read (${toErrorMessage(err)})`;
+  }
+  if (artifact.sha !== sha) {
+    const named = typeof artifact.sha === 'string' ? artifact.sha : 'none';
+    return `the live artifact at ${artifactPath} names sha ${named}, not ${sha}`;
+  }
+  if (asked === undefined) {
+    return 'the flow list this job asked for could not be read from the checkout (dist/e2e/flows.js, dist/e2e/routing.js)';
+  }
+  const mismatch = flowMismatch(flowNamesOf(artifact.flows), asked);
+  return mismatch === undefined ? undefined : `the live artifact ${mismatch}`;
+}
+
+/** What a `ref` job's gate artifact must name to back this run's PASS. */
+export interface GateArtifactExpectation {
+  gatedSha: string;
+  depositedSha: string;
+  attempt: number;
+  /** `--flows=` when the job forwarded one; otherwise the artifact's own `routing.required`. */
+  askedFlows: string[] | undefined;
+}
+
+/**
+ * Why a `ref` PASS cannot stand on its gate artifact — or undefined when it can. The
+ * artifact must be this run's (gated and deposited shas, and the attempt number the worker
+ * passed as `--attempt`), and its live stage must have driven exactly the flows asked for,
+ * or legitimately skipped with none routed — the static-only PASS verify-gate itself writes.
+ */
+export function gateArtifactProblem(
+  artifactPath: string | undefined,
+  expected: GateArtifactExpectation,
+): string | undefined {
+  if (!artifactPath) return 'no readable gate artifact was recorded for this run';
+  const read = readGateArtifact(artifactPath);
+  if (!read.ok) return `no readable gate artifact at ${artifactPath} (${read.error})`;
+  const artifact = read.artifact;
+  if (artifact.head !== expected.gatedSha) {
+    return `the gate artifact names head ${String(artifact.head ?? 'none')}, not the gated sha ${expected.gatedSha}`;
+  }
+  if (artifact.depositedSha !== expected.depositedSha) {
+    return `the gate artifact names deposited sha ${String(artifact.depositedSha ?? 'none')}, not ${expected.depositedSha}`;
+  }
+  if (artifact.attempt !== expected.attempt) {
+    return `the gate artifact is from attempt ${String(artifact.attempt ?? 'none')}, not this run's attempt ${expected.attempt} — an earlier run wrote it`;
+  }
+  // Mirrors verify-gate.js: `requested ? requested.split(',') : decision.required`.
+  const asked =
+    expected.askedFlows ??
+    (Array.isArray(artifact.routing?.required)
+      ? artifact.routing.required.filter((f): f is string => typeof f === 'string')
+      : []);
+  const live = artifact.live;
+  if (live?.skipped) {
+    return asked.length > 0
+      ? `the gate artifact skipped the live stage while ${asked.join(', ')} were asked for`
+      : undefined;
+  }
+  if (live && (live.status === 'PASS' || live.status === 'FAIL')) {
+    const mismatch = flowMismatch(flowNamesOf(live.flows), asked);
+    return mismatch === undefined ? undefined : `the gate artifact ${mismatch}`;
+  }
+  return 'the gate artifact records no completed live stage';
+}
+
 /** Where `verify-gate.js` files a gate artifact for a sha, inside a given worktree. */
 function gateArtifactPath(worktree: string, sha: string): string {
   return path.join(worktree, 'report', 'e2e', `gate-${sha}.json`);
@@ -595,6 +745,9 @@ export function nextGateAttempt(root: string, depositedSha: string, log?: (line:
 
 /** The shape of `report/e2e/gate-<sha>.json` this module reads — see scripts/verify-gate.js. */
 interface GateArtifactShape {
+  head?: unknown;
+  depositedSha?: unknown;
+  attempt?: unknown;
   live?: {
     skipped?: boolean;
     why?: string;
@@ -602,7 +755,7 @@ interface GateArtifactShape {
     status?: unknown;
     /** `LiveRunResult['error']` — set on BLOCKED/ENVIRONMENT/FAIL. */
     error?: unknown;
-    flows?: { name?: unknown }[];
+    flows?: { name?: unknown; status?: unknown }[];
   } | null;
   routing?: { required?: unknown[] };
 }
@@ -637,7 +790,10 @@ function readGateArtifact(artifactPath: string): GateArtifactRead {
  * the world; `'BLOCKED'` (a rate-limit or dirty-world refusal — run.ts's own comment:
  * "nothing ran") and `'ENVIRONMENT'` (a preflight abort) both mean the flows were never
  * driven, exactly like a missing artifact, so they — and any `status` this code has never
- * seen — read `'unknown'`, not `'ran'`.
+ * seen — read `'unknown'`, not `'ran'`. One exception: a `'BLOCKED'` run whose flows
+ * include at least one `SKIPPED` flow (run.ts blocks on a skip, not a lock) reads
+ * `'blocked-skip'`, naming those flows — a lock-refusal `'BLOCKED'` (`flows: []`) still
+ * reads `'unknown'`.
  *
  * Ways to land on `'unknown'`: no artifact path at all (`report.gateArtifact` unset —
  * most `NON_ATTESTING` outcomes never reach here anyway), a path that does not read as
@@ -679,6 +835,13 @@ export function liveAttestationFrom(artifactPath: string | undefined): LiveAttes
           .filter((name): name is string => name !== undefined)
       : [];
     return { status: 'ran', flows };
+  }
+  if (live.status === 'BLOCKED' && Array.isArray(live.flows)) {
+    const skipped = live.flows
+      .filter(f => f?.status === 'SKIPPED')
+      .map(f => (typeof f?.name === 'string' ? f.name : undefined))
+      .filter((name): name is string => name !== undefined);
+    if (skipped.length > 0) return { status: 'blocked-skip', skipped };
   }
   const reason =
     typeof live.error === 'string'
@@ -759,10 +922,10 @@ function mergeShaByFirstParent(
  *  - `verdict.merged` is true — a non-merge verdict has no business being looked up this way.
  *
  * Any failure along this path — no artifact directory, no `git`, no match, a match that
- * fails validation — resolves to `'unknown'`, never a thrown error and never a refusal
- * invented out of missing evidence: `'unknown'` is exactly what {@link mayReuseVerdict}
- * (./merge-queue) already treats as "allow", precisely the disposition a verdict with no
- * answer on file has always had.
+ * fails validation — resolves to `'unknown'`, never a thrown error. Since #1182 that verdict
+ * stays readable but proves nothing live: {@link mayReuseVerdict} (./merge-queue) re-gates
+ * it rather than reusing it, so a verdict with no answer on file costs a live slot instead
+ * of lending a PASS it cannot back.
  */
 export function resolveLegacyLiveness(
   refCheckout: string,
@@ -943,7 +1106,10 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
   // own drive. Gateway only: the body's env is unchanged, so a replayed Jest suite never sees
   // it. A loopback exemption was rejected: behind nginx without TRUST_PROXY every public
   // client is 127.0.0.1 too.
-  const gatewayEnv = { ...env, SINGLE_USER_MODE: 'true' };
+  // It also names the LOCKED primary account SPO_test3 as GM, so the GM broadcast can be
+  // driven live: handleGmChatSend makes no RDO / game-server call and reaches only the
+  // clients of this gateway process — on the bench, the drive's own sessions. Gateway only.
+  const gatewayEnv = { ...env, SINGLE_USER_MODE: 'true', SPO_GM_USERS: 'SPO_test3' };
 
   let gateway: RunningGateway;
   try {
@@ -1007,6 +1173,20 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
         bodyDetail = `verify-gate exited ${code} (${bodyVerdict})`;
       }
       report.gateArtifact = gateArtifactPath(request.worktree, report.fingerprints.atStart.head);
+      if (bodyVerdict === 'PASS') {
+        // An exit code alone is not a PASS (#1182): the gate artifact THIS run wrote must
+        // back it — see gateArtifactProblem.
+        const problem = gateArtifactProblem(report.gateArtifact, {
+          gatedSha: report.fingerprints.atStart.head,
+          depositedSha: request.fingerprint.head,
+          attempt,
+          askedFlows: flowsFromArgs(request.args),
+        });
+        if (problem !== undefined) {
+          bodyVerdict = 'FAIL';
+          bodyDetail = `${bodyDetail}, but ${problem} — an exit code alone is not a PASS`;
+        }
+      }
     } else if (request.type === 'live' || request.type === 'nightly') {
       // Same reasoning as the `ref` bookkeeping above: placed AHEAD of `request.args` so
       // they win over anything a caller happened to forward (run.ts's `flagged()` takes
@@ -1020,6 +1200,9 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
       // is caught independently by `targetMoved` below and turned into STALE, so this
       // sha is never trusted past the run it names.
       const bookkeeping = [`--branch=${request.branch}`, `--sha=${report.fingerprints.atStart.head}`];
+      // Taken immediately before the drive, so the set difference after it names exactly the
+      // artifact THIS run wrote — see newLiveArtifact.
+      const before = liveArtifactNames(request.worktree);
       const code = await deps.runCommand('node', ['dist/e2e/run.js', ...bookkeeping, ...request.args], {
         cwd: request.worktree,
         env,
@@ -1033,6 +1216,9 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
         bodyVerdict = 'ENVIRONMENT';
         bodyDetail = `live drive exceeded its deadline and was killed — see ${logFile}`;
       } else {
+        report.liveArtifact = newLiveArtifact(request.worktree, before);
+        const liveFlows = liveFlowStatuses(report.liveArtifact);
+        if (liveFlows !== undefined) report.liveFlows = liveFlows;
         bodyVerdict = GATE_EXIT_VERDICT[code] ?? 'FAIL';
         bodyDetail = `live drive exited ${code} (${bodyVerdict})`;
         const reconsidered = await downgradeUnreachable(
@@ -1043,6 +1229,18 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
         );
         bodyVerdict = reconsidered.verdict;
         bodyDetail = reconsidered.detail;
+        // After the reachability probe, on purpose: the drive claimed success, so whether the
+        // world was reachable is not the question and must never downgrade this FAIL. An exit
+        // code alone is not a PASS (#1182) — the artifact this run wrote must back it: this
+        // sha, and exactly the flows asked (`--flows=`, else FLOWS minus GATE_ONLY).
+        if (bodyVerdict === 'PASS') {
+          const asked = flowsFromArgs(request.args) ?? deps.defaultLiveFlows(request.worktree);
+          const problem = liveArtifactProblem(report.liveArtifact, report.fingerprints.atStart.head, asked);
+          if (problem !== undefined) {
+            bodyVerdict = 'FAIL';
+            bodyDetail = `${bodyDetail}, but ${problem} — an exit code alone is not a PASS`;
+          }
+        }
       }
     } else {
       // Lease: the report is written EARLY — it is what the waiting session unblocks on.
@@ -1437,11 +1635,16 @@ export function runWithDeadline(
   });
 }
 
-/** The `--flows=` count, read the way `run.ts` reads it (first flag wins); undefined when absent. */
-export function flowCountFromArgs(args: string[]): number | undefined {
+/** The `--flows=` list, read the way `run.ts` / `verify-gate.js` read it (first flag wins, blanks dropped); undefined when absent. */
+export function flowsFromArgs(args: string[]): string[] | undefined {
   const flag = args.find(a => a.startsWith('--flows='));
   if (flag === undefined) return undefined;
-  return flag.split('=').slice(1).join('=').split(',').filter(Boolean).length;
+  return flag.split('=').slice(1).join('=').split(',').filter(Boolean);
+}
+
+/** The `--flows=` count, read the way `run.ts` reads it (first flag wins); undefined when absent. */
+export function flowCountFromArgs(args: string[]): number | undefined {
+  return flowsFromArgs(args)?.length;
 }
 
 /** Bounds the child that loads `dist/e2e/flows.js` — a module load, so a hang cannot wedge the worker. */
@@ -1469,6 +1672,35 @@ export function readCheckoutFlowCount(cwd: string): number | undefined {
       timeout: FLOW_COUNT_READ_TIMEOUT_MS,
     }).trim();
     return /^\d+$/.test(out) ? Number(out) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const READ_DEFAULT_FLOWS_SCRIPT =
+  "const p = require('path');" +
+  " const f = require(p.resolve('dist/e2e/flows.js'));" +
+  " const r = require(p.resolve('dist/e2e/routing.js'));" +
+  " if (Array.isArray(f.FLOWS) && r.GATE_ONLY && typeof r.GATE_ONLY === 'object')" +
+  " process.stdout.write(JSON.stringify(f.FLOWS.map(x => x && x.name).filter(n => !(n in r.GATE_ONLY))));";
+
+/**
+ * The flows `dist/e2e/run.js` drives when given no `--flows` — every `FLOWS` entry minus
+ * `GATE_ONLY`, exactly run.ts `main()`'s default — read from the checkout at `cwd` in a CHILD
+ * process, for the same reasons as {@link readCheckoutFlowCount}. Undefined when either module
+ * is missing, throws, exports the wrong shape, or the answer is not an array of strings.
+ */
+export function readCheckoutDefaultFlows(cwd: string): string[] | undefined {
+  try {
+    const out = execFileSync(process.execPath, ['-e', READ_DEFAULT_FLOWS_SCRIPT], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: FLOW_COUNT_READ_TIMEOUT_MS,
+    }).trim();
+    if (out === '') return undefined;
+    const parsed: unknown = JSON.parse(out);
+    return Array.isArray(parsed) && parsed.every(n => typeof n === 'string') ? (parsed as string[]) : undefined;
   } catch {
     return undefined;
   }
@@ -1689,6 +1921,7 @@ export function realWorkerDeps(
     renewLease: nowMs => renewLease(ownerDeps, lease, nowMs),
     processAlive,
     gameServerReachable: driveLog => probeDriveEndpoints(driveLog),
+    defaultLiveFlows: readCheckoutDefaultFlows,
     now: () => Date.now(),
     sleep,
     gitAuthEnv,

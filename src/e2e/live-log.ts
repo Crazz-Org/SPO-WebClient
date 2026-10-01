@@ -15,6 +15,7 @@
 
 import { toErrorMessage } from '../shared/error-utils';
 import { LIVE_LOG_BASE } from './config';
+import { sleep as defaultSleep } from './sleep';
 
 /**
  * Markers proving a write entered its handler — doc/E2E-POLICY.md §5. `member -> prefix`;
@@ -238,10 +239,4 @@ async function fetchText(url: string): Promise<string> {
     (wrapped as Error & { cause?: unknown }).cause = err;
     throw wrapped;
   }
-}
-
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise(resolve => {
-    setTimeout(resolve, ms).unref?.();
-  });
 }

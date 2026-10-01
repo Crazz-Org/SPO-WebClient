@@ -23,15 +23,11 @@ import { ZoneTypePicker } from './ZoneTypePicker';
 describe('BuildMenu', () => {
   beforeEach(resetStores);
 
-  it('renders nothing when modal is not buildMenu', () => {
-    const { container } = renderWithProviders(<BuildMenu />);
-    expect(container.innerHTML).toBe('');
-  });
-
-  it('renders when buildMenu modal is open', () => {
-    useUiStore.getState().openModal('buildMenu');
+  it('renders the Build surface content inline — no dialog, no Close of its own', () => {
     renderWithProviders(<BuildMenu />);
-    expect(screen.getByLabelText('Close')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Build' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByLabelText('Close')).toBeNull();
   });
 });
 

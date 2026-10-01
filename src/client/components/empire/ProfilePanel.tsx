@@ -12,7 +12,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   GraduationCap, Landmark, TrendingUp, Factory, Link, Flag, X, Plus,
-  RotateCcw, LogOut, Wrench, ChevronUp, ChevronRight, ArrowLeft, User, Camera,
+  RotateCcw, LogOut, ChevronUp, ChevronRight, ArrowLeft, User, Camera,
 } from 'lucide-react';
 import { Skeleton, SkeletonLines, ConfirmDialog, Switch, Sparkline, ErrorState, IconButton } from '../common';
 import { useProfileStore, type ProfileTab, type CompanyProfitLossView } from '../../store/profile-store';
@@ -328,10 +328,6 @@ function CurriculumTab() {
         <button className={styles.dangerBtn} onClick={() => handleAction('abandonRole')}>
           <LogOut size={12} />
           Abandon Role
-        </button>
-        <button className={styles.utilityBtn} onClick={() => handleAction('rebuildLinks')}>
-          <Wrench size={12} />
-          Rebuild Links
         </button>
       </div>
 

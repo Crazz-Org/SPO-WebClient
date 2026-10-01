@@ -12,13 +12,13 @@ import {
   otherPublicityLevel, publicityLogMatches, taxLogMatches, circuitLogMatches, zoneLogMatches,
   loanDelta, newLoan, receiverLimitRefusal, pictureCheck, testPortraitJpeg, portraitUrl, PROFILE_LEVEL_NAMES,
   nudgeWithin, evenPriceNudge, roundHalfEven, servicePriceQuantised, facLineMatches, servicePriceLineMatches,
-  salariesLineMatches, clientLinksDiff, outputPriceRefusal, stoppedBit, workerCountsProblem, refreshMissingKeys,
+  salariesLineMatches, salaryArg, salariesNudge, publishedSalariesMatch, clientLinksDiff, outputPriceRefusal, stoppedBit, workerCountsProblem, refreshMissingKeys,
   fixtureKind,
   pickPlacement, ownsPlacement, delFacilityLineMatches,
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
-  researchState, lowerInterest,
+  researchState, researchCost, lowerInterest,
   RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent,
   type Flow, type FlowResult, type GateLinks,
 } from './flows';
@@ -5467,6 +5467,28 @@ describe('inspector helpers (#1152)', () => {
     expect(salariesLineMatches('Setting salaries: 150, 100, 90', '149', '100', '90')).toBe(false);
   });
 
+  it('salaryArg sends an unpublished (empty) slot as 0 and keeps a published one', () => {
+    expect(salaryArg('')).toBe('0');
+    expect(salaryArg('  ')).toBe('0');
+    expect(salaryArg('100')).toBe('100');
+  });
+
+  it('salariesNudge moves the first published class only, keeps empty slots empty, and refuses when none is published', () => {
+    expect(salariesNudge('150,100,90')).toBe('149,100,90');
+    expect(salariesNudge(',100,100')).toBe(',101,100');
+    expect(salariesNudge(',,40')).toBe(',,41');
+    expect(() => salariesNudge(',,')).toThrow(/no salary class is published/);
+  });
+
+  it('publishedSalariesMatch compares only the classes the expected triplet publishes', () => {
+    expect(publishedSalariesMatch(',99,100', ',99,100')).toBe(true);
+    // The server never publishes the executive slot, whatever was written to it.
+    expect(publishedSalariesMatch('0,99,100', ',99,100')).toBe(true);
+    expect(publishedSalariesMatch(',100,100', ',99,100')).toBe(false);
+    expect(publishedSalariesMatch(',99,101', ',99,100')).toBe(false);
+    expect(publishedSalariesMatch(',99', ',99,100')).toBe(false);
+  });
+
   it('clientLinksDiff compares links by lot and name, and labels them', () => {
     const a = conn('Shop A', 'SPO_test3 - Green', 1, 2);
     const b = conn('Shop B', 'Other Co', 3, 4);
@@ -5840,6 +5862,59 @@ describe('inspector flows (#1152)', () => {
       const result = await run('store-price-salaries');
       expect(result.status).toBe('UNPROVEN');
       expect(setProps(world)).toEqual([]);
+    });
+
+    it('nudges a published class when the executive slot is unpublished, compares only published classes, and restores it as 0', async () => {
+      // Book Store 1: no executive capacity, so StoreToCache never publishes Salaries0 (WorkCenterBlock.pas:567-571).
+      const world = makeWorld({
+        salaries: ['', '100', '100'],
+        after: w => { if (w.property === 'RDOSetSalaries') world.salaries[0] = ''; },
+      });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('store-price-salaries', lock);
+      expect(result.status).toBe('PASS');
+      expect(result.probes[1]).toMatchObject({
+        status: 'PASS', original: ',100,100', written: ',101,100', readBack: 'CONFIRMED', restoreReadBack: 'CONFIRMED',
+        logLine: '1/1 12:00 Setting salaries: 0, 101, 100',
+      });
+      expect(world.writes.slice(2)).toEqual([
+        { property: 'RDOSetSalaries', value: '0', params: { salary0: '0', salary1: '101', salary2: '100' } },
+        { property: 'RDOSetSalaries', value: '0', params: { salary0: '0', salary1: '100', salary2: '100' } },
+      ]);
+      expect(world.salaries).toEqual(['', '100', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('never sends an empty or non-numeric salary field, forward or restore', async () => {
+      const world = makeWorld({
+        salaries: ['', '', '70'],
+        after: w => { if (w.property === 'RDOSetSalaries') { world.salaries[0] = ''; world.salaries[1] = ''; } },
+      });
+      arrange(world);
+      const result = await run('store-price-salaries');
+      expect(result.status).toBe('PASS');
+      const sent = world.writes.filter(w => w.property === 'RDOSetSalaries');
+      expect(sent).toHaveLength(2);
+      for (const w of sent) {
+        for (const v of [w.value, ...Object.values(w.params ?? {})]) expect(v).toMatch(/^\d+$/);
+      }
+      expect(sent.map(w => w.params)).toEqual([
+        { salary0: '0', salary1: '0', salary2: '71' },
+        { salary0: '0', salary1: '0', salary2: '70' },
+      ]);
+    });
+
+    it('is UNPROVEN for RDOSetSalaries, and sends nothing for it, when the store publishes no salary class', async () => {
+      const world = makeWorld({ salaries: ['', '', ''] });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('store-price-salaries', lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetSalaries — .*publishes no salary class.*WorkCenterBlock\.pas:567-571/)]);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOSetPrice', 'RDOSetPrice']);
+      expect(result.probes).toHaveLength(1);
+      expect(lock.read().pendingRestores).toEqual([]);
     });
 
     it('refuses to write salaries it cannot read in full', async () => {
@@ -7530,6 +7605,15 @@ describe('inspector helpers (#1154)', () => {
     expect(queueResearchLineMatches('12:00 Cancel Research: R1', 'R1')).toBe(false);
   });
 
+  it('researchCost adds the Price and License lines of the details, in whole dollars', () => {
+    expect(researchCost('Price: $50,000,000\r\nLicense: $2,097,152,000,000\r\nPrestige: +5 pts\r\n')).toBe(2_097_202_000_000);
+    expect(researchCost('Price: $50,000,000 License: $2,097,152,000,000')).toBe(2_097_202_000_000);
+    expect(researchCost('Price: $1,000\nLicence: $0')).toBe(1000);
+    expect(researchCost('Price: $1,000\nImplementation: $5 a year/fac')).toBe(1000);
+    expect(researchCost('Prestige: +5 pts')).toBe(0);
+    expect(researchCost('')).toBe(0);
+  });
+
   it('cancelResearchLineMatches needs the exact id', () => {
     expect(cancelResearchLineMatches('12:00 Cancel Research: R1', 'R1')).toBe(true);
     expect(cancelResearchLineMatches('12:00 Cancel Research: R1.Level2', 'R1')).toBe(false);
@@ -7606,11 +7690,24 @@ describe('inspector flows (#1154)', () => {
     silent: Set<string>;
     /** A queued invention is bought at once (Time = 0). */
     queueBuys?: boolean;
+    /** The research details' properties text by invention id; default `Price: $1,000\nLicence: $0`. */
+    details?: Record<string, string>;
+    /** SPO_test3's cash (`readCash`); default $100,000,000, `null` when unknown. */
+    cash?: number | null;
     /** The START moves Pending; default yes. */
     upgradeMoves?: boolean;
     /** A level completes before the STOP. */
     levelUpOnStop?: boolean;
     startThrows?: boolean;
+    /** Upgrade-tab reads after the first STOP that still return the stale `Upgrading 1, Pending 1`. */
+    staleReads?: number;
+    /** 1-based indices of upgrade-tab reads after the first STOP that time out. */
+    throwReads?: number[];
+    /** STOPs that leave the upgrade running. */
+    stopsIgnored?: number;
+    secondStopThrows?: boolean;
+    stops?: number;
+    readsAfterStop?: number;
     events: string[];
     writes: Write[];
     lines: string[];
@@ -7626,7 +7723,7 @@ describe('inspector flows (#1154)', () => {
       hq: { CatCount: '1' },
       categories: [
         { available: [{ id: 'OFF', enabled: false }, { id: 'D1', enabled: true }], developing: ['D1'], completed: ['C1'] },
-        { available: [{ id: 'R1', enabled: true }, { id: 'R2', enabled: true }], developing: [], completed: [] },
+        { available: [{ id: 'R1', enabled: true }, { id: 'HappyHour', enabled: true }], developing: [], completed: [] },
       ],
       apply: () => true,
       silent: new Set(),
@@ -7692,8 +7789,11 @@ describe('inspector flows (#1154)', () => {
       if (world.upgradeMoves !== false) world.upgrade.Pending = '1';
     } else {
       world.lines.push('12:00 Facility Stop Upgrade..');
-      world.upgrade.Upgrading = '0';
-      world.upgrade.Pending = '0';
+      world.stops = (world.stops ?? 0) + 1;
+      if (world.secondStopThrows && world.stops === 2) throw new Error('socket died on the second STOP');
+      const ignored = world.stops <= (world.stopsIgnored ?? 0);
+      world.upgrade.Upgrading = ignored ? '1' : '0';
+      world.upgrade.Pending = ignored ? '1' : '0';
       if (world.levelUpOnStop) world.upgrade.UpgradeLevel = String(Number(world.upgrade.UpgradeLevel) + 1);
     }
     return { type: WsMessageType.RESP_BUILDING_UPGRADE, success: true, action };
@@ -7711,7 +7811,13 @@ describe('inspector flows (#1154)', () => {
         case WsMessageType.REQ_BUILDING_TAB_DATA: {
           const kind = kindAt(m);
           if (m.tabId !== TAB[kind]) throw new Error(`unexpected tab ${String(m.tabId)}`);
-          return { groups: { [TAB[kind]]: Object.entries(groupOf(world, kind)).map(([k, v]) => pv(k, v)) } };
+          let held = groupOf(world, kind);
+          if (kind === 'industry' && world.stops) {
+            const n = (world.readsAfterStop = (world.readsAfterStop ?? 0) + 1);
+            if (world.throwReads?.includes(n)) throw new Error('Timed out after 30000 ms waiting for RESP_BUILDING_TAB_DATA');
+            if (n <= (world.staleReads ?? 0)) held = { ...held, Upgrading: '1', Pending: '1' };
+          }
+          return { groups: { [TAB[kind]]: Object.entries(held).map(([k, v]) => pv(k, v)) } };
         }
         case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
           const kind = kindAt(m);
@@ -7743,8 +7849,10 @@ describe('inspector flows (#1154)', () => {
             },
           };
         }
-        case WsMessageType.REQ_RESEARCH_DETAILS:
-          return { details: { inventionId: m.inventionId, properties: 'Price: $1,000\nLicence: $0', description: '' } };
+        case WsMessageType.REQ_RESEARCH_DETAILS: {
+          const properties = world.details?.[String(m.inventionId)] ?? 'Price: $1,000\nLicence: $0';
+          return { details: { inventionId: m.inventionId, properties, description: '' } };
+        }
         case WsMessageType.REQ_BUILDING_UPGRADE:
           return upgrade(world, String(m.action), m.count);
         default:
@@ -7761,6 +7869,7 @@ describe('inspector flows (#1154)', () => {
       if (typeof proof !== 'object') return null;
       return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
     });
+    jest.spyOn(fixtures, 'readCash').mockResolvedValue(world.cash === undefined ? 100_000_000 : world.cash);
     return { stub, off };
   }
 
@@ -7985,34 +8094,105 @@ describe('inspector flows (#1154)', () => {
   });
 
   describe('research-roundtrip', () => {
-    it('scans CatCount inclusively, reads the details, queues then cancels the one invention it chose', async () => {
+    const HH = 'HappyHour';
+    const inventoryCats = (world: World) =>
+      world.requests
+        .filter(r => r.type === WsMessageType.REQ_RESEARCH_INVENTORY)
+        .map(r => (r as WsMessage & { categoryIndex: number }).categoryIndex);
+
+    it('finds Happy Hour by scanning CatCount inclusively, queues then cancels it and nothing else', async () => {
       const world = makeWorld();
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('PASS');
-      const cats = world.requests
-        .filter(r => r.type === WsMessageType.REQ_RESEARCH_INVENTORY)
-        .map(r => (r as WsMessage & { categoryIndex: number }).categoryIndex);
-      expect(cats.slice(0, 2)).toEqual([0, 1]);
-      expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_RESEARCH_DETAILS, inventionId: 'R1' }));
+      expect(inventoryCats(world).slice(0, 2)).toEqual([0, 1]);
+      const detailIds = world.requests
+        .filter(r => r.type === WsMessageType.REQ_RESEARCH_DETAILS)
+        .map(r => (r as WsMessage & { inventionId: string }).inventionId);
+      expect(detailIds).toEqual([HH]);
       expect(world.writes).toEqual([
-        { property: 'RDOQueueResearch', value: '0', params: { inventionId: 'R1', priority: '10' } },
-        { property: 'RDOCancelResearch', value: '0', params: { inventionId: 'R1' } },
+        { property: 'RDOQueueResearch', value: '0', params: { inventionId: HH, priority: '10' } },
+        { property: 'RDOCancelResearch', value: '0', params: { inventionId: HH } },
       ]);
       expect(world.categories[1].developing).toEqual([]);
       expect(pending(lock)).toEqual([]);
     });
 
-    it('is UNPROVEN and sends nothing when no enabled invention is free to queue', async () => {
+    it('reads the category Happy Hour is listed in, whatever its index', async () => {
       const world = makeWorld({
-        hq: { CatCount: '0' },
-        categories: [{ available: [{ id: 'OFF', enabled: false }, { id: 'D1', enabled: true }], developing: ['D1'], completed: [] }],
+        categories: [
+          { available: [{ id: HH, enabled: true }], developing: [], completed: [] },
+          { available: [{ id: 'R1', enabled: true }], developing: [], completed: [] },
+        ],
+      });
+      arrange(world);
+      const result = await run('research-roundtrip');
+      expect(result.status).toBe('PASS');
+      expect(new Set(inventoryCats(world))).toEqual(new Set([0]));
+      expect(world.writes.map(w => `${w.property}:${w.params?.inventionId}`)).toEqual([`RDOQueueResearch:${HH}`, `RDOCancelResearch:${HH}`]);
+    });
+
+    it('is UNPROVEN and sends nothing when Happy Hour is not listed', async () => {
+      const world = makeWorld({
+        categories: [
+          { available: [{ id: 'R1', enabled: true }], developing: ['D1'], completed: ['C1'] },
+          { available: [{ id: 'R2', enabled: true }], developing: [], completed: [] },
+        ],
       });
       arrange(world);
       const result = await run('research-roundtrip');
       expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual(['RDOQueueResearch — no enabled invention available to queue in categories 0..0']);
+      expect(result.unproven).toEqual(['RDOQueueResearch — Happy Hour not listed at HQ (9,10) (categories 0..1)']);
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_RESEARCH_DETAILS)).toBe(false);
+      expect(setProps(world)).toEqual([]);
+    });
+
+    it.each([
+      ['owned', { available: [], developing: [], completed: [HH] }, /: already owned — a cancel on it would sell it/],
+      ['in development', { available: [], developing: [HH], completed: [] }, /: already in development — not queued by this flow/],
+      ['listed but not enabled', { available: [{ id: HH, enabled: false }], developing: [], completed: [] }, /: listed but not enabled — its prerequisite Bars is not owned/],
+    ])('is UNPROVEN and sends nothing when Happy Hour is %s', async (_label, cat, reason) => {
+      const world = makeWorld({ categories: [{ available: [], developing: [], completed: [] }, cat] });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toHaveLength(1);
+      expect(result.unproven[0]).toMatch(/^RDOQueueResearch — Happy Hour at HQ \(9,10\): /);
+      expect(result.unproven[0]).toMatch(reason);
+      expect(result.unproven[0]).toMatch(/; nothing sent$/);
+      expect(setProps(world)).toEqual([]);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('is UNPROVEN and sends nothing when Happy Hour costs more than the cash', async () => {
+      const world = makeWorld({ cash: 30_000_000, details: { [HH]: 'Price: $25,000,000\r\nLicense: $8,000,000\r\n' } });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual([
+        'RDOQueueResearch — Happy Hour costs $33000000 (Price + License), above the cash ($30000000); nothing sent',
+      ]);
+      expect(setProps(world)).toEqual([]);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('queues Happy Hour when its Price + License is exactly the cash', async () => {
+      const world = makeWorld({ cash: 33_000_000, details: { [HH]: 'Price: $25,000,000\r\nLicense: $8,000,000\r\n' } });
+      arrange(world);
+      const result = await run('research-roundtrip');
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch']);
+    });
+
+    it('is UNPROVEN and sends nothing when the cash is unknown', async () => {
+      const world = makeWorld({ cash: null });
+      arrange(world);
+      const result = await run('research-roundtrip');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toEqual(['RDOQueueResearch — cash unknown — no EVENT_TYCOON_UPDATE received']);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -8022,19 +8202,46 @@ describe('inspector flows (#1154)', () => {
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
-      expect(result.assertions.find(a => /in development, not owned/.test(a.what))?.detail).toMatch(/^bought at once: R1 \(Price: \$1,000 Licence: \$0\)/);
+      expect(result.assertions.find(a => /in development, not owned/.test(a.what))?.detail).toMatch(/^bought at once: HappyHour \(Price: \$1,000 Licence: \$0\)/);
       expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
       expect(pending(lock)).toHaveLength(1);
       expect(pending(lock)[0].what).toMatch(/must NOT be cancelled/);
     });
 
-    it('FAILs, with no cancel, when the queue never shows in development', async () => {
-      const world = makeWorld({ apply: w => w.property !== 'RDOQueueResearch' });
+    it('FAILs, with no cancel, and clears the pending restore when the queue still reads available', async () => {
+      // The server logs the queue, then drops it: StartResearch refuses one the owner cannot pay
+      // for (Kernel/ResearchCenter.pas:240-253) — the 2026-09-30 Banking run.
+      const world = makeWorld();
+      world.apply = w => {
+        if (w.property !== 'RDOQueueResearch') return true;
+        world.lines.push(`12:00 Queue Research: ${w.params?.inventionId}, 10`);
+        return false;
+      };
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
-      expect(failed(result)).toEqual(expect.arrayContaining(['R1 is listed in development, not owned']));
+      expect(failed(result)).toEqual(['HappyHour is listed in development, not owned']);
+      expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/still reads available; nothing to cancel, world unchanged, pending restore cleared$/);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
+      expect(pending(lock)).toEqual([]);
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.read().dirty).toBe(false);
+    });
+
+    it('FAILs, with no cancel, and keeps the pending restore when Happy Hour reads absent after the queue', async () => {
+      const world = makeWorld();
+      world.apply = w => {
+        if (w.property !== 'RDOQueueResearch') return true;
+        world.categories[1].available = world.categories[1].available.filter(i => i.id !== HH);
+        world.lines.push(`12:00 Queue Research: ${w.params?.inventionId}, 10`);
+        return false;
+      };
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['HappyHour is listed in development, not owned', 'HappyHour is cancelled']);
       expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
       expect(pending(lock)).toHaveLength(1);
     });
@@ -8046,7 +8253,7 @@ describe('inspector flows (#1154)', () => {
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
       expect(failed(result)).toEqual(['the queue steps ran without a throw']);
-      expect(world.writes.map(w => `${w.property}:${w.params?.inventionId}`)).toEqual(['RDOQueueResearch:R1', 'RDOCancelResearch:R1']);
+      expect(world.writes.map(w => `${w.property}:${w.params?.inventionId}`)).toEqual([`RDOQueueResearch:${HH}`, `RDOCancelResearch:${HH}`]);
       expect(pending(lock)).toEqual([]);
     });
 
@@ -8060,17 +8267,17 @@ describe('inspector flows (#1154)', () => {
       expect(pending(lock)).toHaveLength(1);
     });
 
-    it('FAILs details that do not answer for the chosen invention', async () => {
+    it('FAILs details that do not answer for Happy Hour', async () => {
       const world = makeWorld();
       const { stub } = arrange(world);
       const request = stub.driver.request as jest.Mock;
       const base = request.getMockImplementation() as (m: WsMessage) => Promise<unknown>;
       request.mockImplementation(async (m: WsMessage) =>
-        m.type === WsMessageType.REQ_RESEARCH_DETAILS ? { details: { inventionId: 'R1', properties: ' ', description: '' } } : base(m),
+        m.type === WsMessageType.REQ_RESEARCH_DETAILS ? { details: { inventionId: HH, properties: ' ', description: '' } } : base(m),
       );
       const result = await run('research-roundtrip');
       expect(result.status).toBe('FAIL');
-      expect(failed(result)).toEqual(['REQ_RESEARCH_DETAILS answers for R1 with its properties']);
+      expect(failed(result)).toEqual(['REQ_RESEARCH_DETAILS answers for HappyHour with its properties']);
     });
 
     it('turns a throw before the queue into a FAIL, sending nothing', async () => {
@@ -8205,6 +8412,96 @@ describe('inspector flows (#1154)', () => {
         "AcceptCloning set back to false, confirmed by the gateway's live get",
         'AcceptCloning reads its original truthiness',
       ]);
+      expect(pending(lock)).toHaveLength(1);
+    });
+
+    const zerosDetail = (r: FlowResult) => r.assertions.find(a => a.what === 'Upgrading and Pending read 0 after the STOP')?.detail;
+
+    it('counts a read-back read that times out as "not yet" and proves the STOP on the next read', async () => {
+      const world = makeWorld({ throwReads: [1] });
+      const lock = cleanLock();
+      arrange(world);
+      let t = 0;
+      const result = await flowByName('upgrade-stop').run({ lock, survivalLogUrl: 'u', now: () => (t += 1_000), sleep: async () => undefined });
+      expect(failed(result)).toEqual([]);
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+      expect(upgrades(world).filter(u => (u as WsMessage & { action?: string }).action === 'STOP_UPGRADE')).toHaveLength(1);
+      expect(world.readsAfterStop).toBe(3);
+      expect(zerosDetail(result)).not.toMatch(/AcceptCloning restore/);
+    });
+
+    it('proves the STOP from the read after the AcceptCloning restore when the read-back stays stale', async () => {
+      const world = makeWorld({ staleReads: 1 });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+      expect(world.stops).toBe(1);
+      expect(zerosDetail(result)).toMatch(/from the read after the AcceptCloning restore/);
+    });
+
+    it('sends a second STOP when the final read still shows an upgrade, and clears the restore once idle', async () => {
+      const world = makeWorld({ stopsIgnored: 1 });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(world.events).toEqual([
+        'upgrade:START_UPGRADE', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=1', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=1',
+      ]);
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+      expect(zerosDetail(result)).toMatch(/after a second STOP/);
+    });
+
+    it('FAILs and keeps the restore when the upgrade still runs after the second STOP', async () => {
+      const world = makeWorld({ stopsIgnored: 2 });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toContain('Upgrading and Pending read 0 after the STOP');
+      expect(zerosDetail(result)).toMatch(/still upgrading.*pending restore kept/);
+      expect(pending(lock)).toHaveLength(1);
+      expect(world.stops).toBe(2);
+    });
+
+    it('sets a falsy AcceptCloning true again before the second STOP and back to false after it', async () => {
+      const world = makeWorld({
+        upgrade: { UpgradeLevel: '1', Upgrading: '0', Pending: '0', MaxUpgrade: '5', AcceptCloning: '0' },
+        stopsIgnored: 1,
+      });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(world.events).toEqual([
+        'set:RDOAcceptCloning=1', 'upgrade:START_UPGRADE', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=0',
+        'set:RDOAcceptCloning=1', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=0',
+      ]);
+      expect(world.upgrade.AcceptCloning).toBe('0');
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('FAILs and keeps the restore when every read after the STOP fails, sending no second STOP', async () => {
+      const world = makeWorld({ throwReads: [1, 2, 3, 4, 5, 6, 7, 8] });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(pending(lock)).toHaveLength(1);
+      expect(world.stops).toBe(1);
+      expect(zerosDetail(result)).toMatch(/every read failed.*pending restore kept/);
+    });
+
+    it('FAILs and keeps the restore when the second STOP throws', async () => {
+      const world = makeWorld({ stopsIgnored: 1, secondStopThrows: true });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toContain('the second STOP ran without a throw');
       expect(pending(lock)).toHaveLength(1);
     });
   });
