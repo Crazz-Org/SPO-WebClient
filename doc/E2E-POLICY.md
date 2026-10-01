@@ -176,6 +176,37 @@ is refused (`BLOCKED`) unless it names every required flow — a gate cannot att
 having driven only the spine. No separate `test:live` run proves a card's flows: its own gate
 does.
 
+### Proof and regression flows — what a PR names
+
+A pull request that changes shipped code carries two lines in its body:
+
+```
+Proof flows: mail-roundtrip, new:mail-delete-refresh
+Regression flows: mail-drafts, mail-reply
+```
+
+- **Proof flows** — the flows whose assertions show the change working. A new feature is
+  proven by a live flow; when no flow drives it yet, the PR writes one and names it
+  `new:<flow>`.
+- **Regression flows** — the few existing flows that drive the features next to the change,
+  as the agents judge. Related flows, never a full nightly.
+- `none — <reason>` replaces the list on either line for a change nothing on the wire or the
+  screen can observe (docs, tests, build tooling).
+
+The lines are required when the diff changes a file under `src/client/`, `src/server/` or
+`src/shared/` — tests (`*.test.ts(x)`, `__tests__/`) and mocks (`__mocks__/`) aside. A PR
+that changes none of those needs neither line. `scripts/check-pr-rules.js`, inside the
+required `typecheck + tests` check, fails such a PR when a line is missing, when a named flow
+— proof or regression alike — is not in `FLOWS` (`src/e2e/flows.ts`) at the head, or when a
+`new:` flow is not added by the diff. The gate drives the named flows with
+`npm run gate -- --also-flows=a,b` (above).
+
+**The nightly is the global review.** It drives every flow over `main`
+(`doc/bench-worker.md` §8); a card's gate drives only what the card touches and names. When
+a full pass is wanted before the next scheduled one, the maintainer asks for it mid-day with
+`npm run bench:nightly-request -- --reason="…"` — refused from inside a Claude Code session
+(`doc/bench-worker.md` §5, exit 5).
+
 ---
 
 ## 5. The round-trip probe
