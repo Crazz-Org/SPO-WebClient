@@ -18,6 +18,7 @@ import { useMailStore } from '../../store/mail-store';
 import { useChatStore } from '../../store/chat-store';
 import { useClient } from '../../context';
 import { Button } from '../common';
+import { DEBUG_MARKERS } from '../../debug-markers';
 import styles from './CommandBar.module.css';
 
 interface Tile {
@@ -106,7 +107,7 @@ function MoreMenu({ onClose }: { onClose: () => void }) {
   );
 
   return (
-    <div ref={ref} className={styles.menu} role="menu" aria-label="More actions">
+    <div ref={ref} className={styles.menu} role="menu" aria-label="More actions" data-testid={DEBUG_MARKERS.moreMenu}>
       {!isVisitor && item(isRoadBuild ? 'Stop building roads' : 'Build road', <Route size={16} />, () => client.onBuildRoad(), isRoadBuild)}
       {!isVisitor && item(isRoadDemolish ? 'Stop demolishing roads' : 'Demolish road', <Eraser size={16} />, () => client.onDemolishRoad(), isRoadDemolish)}
       {isPublicOfficeRole && item(isZone ? 'Stop zone painting' : 'Zone painting', <Grid2x2 size={16} />, () => (isZone ? client.onCancelZonePainting() : openModal('zonePicker')), isZone)}

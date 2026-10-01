@@ -15,6 +15,7 @@ import { useGameStore } from '../../store/game-store';
 import { useClient } from '../../context';
 import { GlassCard, Skeleton } from '../common';
 import type { BuildingCategory, BuildingInfo } from '@/shared/types';
+import { DEBUG_MARKERS } from '../../debug-markers';
 import styles from './BuildMenu.module.css';
 
 const RESIDENCE_GROUPS: { key: BuildingInfo['residenceClass']; label: string; styleClass: string }[] = [
@@ -282,7 +283,12 @@ export function BuildMenu({ onClose }: BuildMenuProps = {}) {
   );
 
   return (
-    <div>
+    <div
+      data-testid={DEBUG_MARKERS.buildMenu}
+      data-phase={phase}
+      data-loading={isLoading ? 'true' : 'false'}
+      data-category={phase === 'facilities' ? selectedCategory : undefined}
+    >
       {/* Header */}
       <div className={styles.header}>
         {phase === 'facilities' && (
