@@ -849,7 +849,7 @@ const voteRoundTrip: Flow = {
  */
 const permissionNegative: Flow = {
   name: 'permission-negative',
-  what: 'Crazz at the governed town hall sees canGovern=false',
+  what: `${SECONDARY_ACCOUNT.username} at the governed town hall sees canGovern=false`,
   mutates: false,
   run: async () => {
     const assertions = new Assertions();
@@ -878,14 +878,14 @@ const permissionNegative: Flow = {
  */
 const mailRoundTrip: Flow = {
   name: 'mail-roundtrip',
-  what: 'SPO_test3 sends -> Crazz receives -> delete',
+  what: `SPO_test3 sends -> ${SECONDARY_ACCOUNT.username} receives -> delete`,
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `e2e ${new Date().toISOString()}`;
 
-    // Crazz first, before the compose: a refused login then leaves no mail behind.
+    // The secondary account first, before the compose: a refused login then leaves no mail behind.
     const recipient = await loginSecondary();
     if ('skipped' in recipient) return skippedResult('mail-roundtrip', recipient.skipped);
     try {
@@ -1519,10 +1519,10 @@ async function purgeSeededAlerts(
   }
 }
 
-/** Crazz-sent alerts in SPO_test3's Inbox — a server-sent alert has another sender and is spared. */
+/** Alerts sent by the secondary account in SPO_test3's Inbox — a server-sent alert has another sender and is spared. */
 const seededInInbox = (m: MailMessageHeader): boolean =>
   m.subject === ZONING_ALERT_SUBJECT && sameAccount(m.from, SECONDARY_ACCOUNT);
-/** Crazz's own copies in `Sent`, filed there by Post — Mail Server/MailServer.pas:802-811. */
+/** The secondary's own copies in `Sent`, filed there by Post — Mail Server/MailServer.pas:802-811. */
 const seededInSent = (m: MailMessageHeader): boolean =>
   m.subject === ZONING_ALERT_SUBJECT && sameAccount(m.to, PRIMARY_ACCOUNT);
 
@@ -1535,7 +1535,7 @@ async function sweepSeededAlerts(): Promise<FlowCheck[]> {
 }
 
 /**
- * Crazz sends SPO_test3 one look-alike of the server's zoning alert, pointing at the governed
+ * The secondary account sends SPO_test3 one look-alike of the server's zoning alert, pointing at the governed
  * town hall — a building that exists, so the flow's focus lands. The cleanup deletes it from
  * both mailboxes.
  */
@@ -1590,7 +1590,7 @@ async function seedZoningAlert(): Promise<FlowSeed> {
  * through `parseLocalAspUrl` — the same translator the client's link interceptor uses —
  * and sends the very REQ_BUILDING_FOCUS the client sends on a click.
  *
- * The seed (`seedZoningAlert`, #1009) feeds the flow: Crazz sends SPO_test3 one look-alike
+ * The seed (`seedZoningAlert`, #1009) feeds the flow: the secondary account sends SPO_test3 one look-alike
  * alert before the run, and it is deleted from both mailboxes after. Read without the seed,
  * no zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
  * was zoned out of this account lately, so the flow proved nothing. A demolished building is
@@ -1817,7 +1817,7 @@ async function purgeFolder(
 /**
  * The cleanup of one mailbox: a fresh login — the cleanup matters most after a failure, which
  * is when the drive's socket may be dead — then `purgeFolder` on each folder. One check per
- * folder; never throws. A Crazz refusal here comes after the flow's first write, so its checks
+ * folder; never throws. A refusal of the secondary account here comes after the flow's first write, so its checks
  * are not ok and name the leftover.
  */
 async function purgeMailbox(
@@ -1987,7 +1987,7 @@ const mailDrafts: Flow = {
 };
 
 async function driveSendFromDraft(
-  crazz: LiveSession,
+  secondary: LiveSession,
   subject: string,
   sleep: (ms: number) => Promise<void>,
 ): Promise<FlowResult> {
@@ -1997,11 +1997,11 @@ async function driveSendFromDraft(
   try {
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      await mailConnect(crazz);
+      await mailConnect(secondary);
       await mailConnect(session);
       const swept = await preSweep(
         assertions,
-        [[session, 'Draft'], [session, 'Sent'], [crazz, 'Inbox']],
+        [[session, 'Draft'], [session, 'Sent'], [secondary, 'Inbox']],
         hasMarker(MAIL_SEND_FROM_DRAFT_MARKER),
         sleep,
         markerLabel(MAIL_SEND_FROM_DRAFT_MARKER),
@@ -2020,7 +2020,7 @@ async function driveSendFromDraft(
       const sent = await sendMail(session, { ...mail, existingDraftId: draft.messageId });
       assertions.check('the send from the draft was accepted', sent.success === true, sent.message);
 
-      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      const delivered = await rereadUntil(secondary, 'Inbox', msgs => msgs.some(bySubject), sleep);
       assertions.check(
         `${SECONDARY_ACCOUNT.username}'s Inbox holds it`,
         delivered.settled,
@@ -2038,29 +2038,29 @@ async function driveSendFromDraft(
       await logoff(session);
     }
   } finally {
-    await logoff(crazz);
+    await logoff(secondary);
   }
 }
 
 /**
  * Send from an opened draft: `REQ_MAIL_COMPOSE` with `existingDraftId`, which deletes the Draft
- * copy once `Post` succeeds (#510). Crazz logs in first, so a refusal writes nothing (SKIPPED);
+ * copy once `Post` succeeds (#510). The secondary account logs in first, so a refusal writes nothing (SKIPPED);
  * a refusal at the cleanup, after the send, is a FAIL naming the leftover.
  */
 const mailSendFromDraft: Flow = {
   name: 'mail-send-from-draft',
-  what: 'Crazz first -> SPO_test3 saves a draft to Crazz -> sends it from the draft -> Crazz receives it, Draft copy gone',
+  what: `${SECONDARY_ACCOUNT.username} first -> SPO_test3 saves a draft to ${SECONDARY_ACCOUNT.username} -> sends it from the draft -> ${SECONDARY_ACCOUNT.username} receives it, Draft copy gone`,
   mutates: true,
   run: async ctx => {
     const name = 'mail-send-from-draft';
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `${MAIL_SEND_FROM_DRAFT_MARKER}${new Date().toISOString()}`;
-    // Crazz first, before any write: a refused login then leaves nothing behind.
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    // The secondary account first, before any write: a refused login then leaves nothing behind.
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveSendFromDraft(crazz, subject, sleep);
+      result = await driveSendFromDraft(secondary, subject, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     }
@@ -2075,7 +2075,7 @@ const mailSendFromDraft: Flow = {
 };
 
 async function driveReply(
-  crazz: LiveSession,
+  secondary: LiveSession,
   subject: string,
   sleep: (ms: number) => Promise<void>,
 ): Promise<FlowResult> {
@@ -2086,11 +2086,11 @@ async function driveReply(
   try {
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      await mailConnect(crazz);
+      await mailConnect(secondary);
       await mailConnect(session);
       const swept = await preSweep(
         assertions,
-        [[session, 'Inbox'], [session, 'Sent'], [crazz, 'Inbox'], [crazz, 'Sent']],
+        [[session, 'Inbox'], [session, 'Sent'], [secondary, 'Inbox'], [secondary, 'Sent']],
         hasMarker(MAIL_REPLY_MARKER),
         sleep,
         markerLabel(MAIL_REPLY_MARKER),
@@ -2100,7 +2100,7 @@ async function driveReply(
       const sent = await sendMail(session, { to: SECONDARY_ACCOUNT.username, subject, body: [MAIL_PROBE_BODY] });
       assertions.check('the compose was accepted', sent.success === true, sent.message);
 
-      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      const delivered = await rereadUntil(secondary, 'Inbox', msgs => msgs.some(bySubject), sleep);
       const received = delivered.messages.find(bySubject);
       assertions.check(
         `${SECONDARY_ACCOUNT.username}'s Inbox holds the message`,
@@ -2109,7 +2109,7 @@ async function driveReply(
       );
       if (!received) return report(name, assertions, [], session);
 
-      const { message } = await crazz.driver.request<WsRespMailMessage>(
+      const { message } = await secondary.driver.request<WsRespMailMessage>(
         { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder: 'Inbox', messageId: received.messageId },
         WsMessageType.RESP_MAIL_MESSAGE,
       );
@@ -2117,8 +2117,8 @@ async function driveReply(
       if (!message.fromAddr) return report(name, assertions, [], session);
 
       // The client's Reply (`startReply` in mail-store.ts): to the sender, `Re: ` subject, and
-      // the four In-Reply-To* lines as headers. Crazz's one write — a pair the flow undoes.
-      const reply = await sendMail(crazz, {
+      // the four In-Reply-To* lines as headers. The secondary's one write — a pair the flow undoes.
+      const reply = await sendMail(secondary, {
         to: message.fromAddr,
         subject: `Re: ${message.subject}`,
         body: ['Automated L2 reply probe. Safe to delete.'],
@@ -2137,7 +2137,7 @@ async function driveReply(
       await logoff(session);
     }
   } finally {
-    await logoff(crazz);
+    await logoff(secondary);
   }
 }
 
@@ -2150,18 +2150,18 @@ async function driveReply(
  */
 const mailReply: Flow = {
   name: 'mail-reply',
-  what: 'Crazz first -> SPO_test3 sends -> Crazz reads and replies (Re:, In-Reply-To* headers) -> SPO_test3 receives the reply',
+  what: `${SECONDARY_ACCOUNT.username} first -> SPO_test3 sends -> ${SECONDARY_ACCOUNT.username} reads and replies (Re:, In-Reply-To* headers) -> SPO_test3 receives the reply`,
   mutates: true,
   run: async ctx => {
     const name = 'mail-reply';
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `${MAIL_REPLY_MARKER}${new Date().toISOString()}`;
-    // Crazz first, before any write: a refused login then leaves nothing behind.
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    // The secondary account first, before any write: a refused login then leaves nothing behind.
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveReply(crazz, subject, sleep);
+      result = await driveReply(secondary, subject, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     }
@@ -3053,7 +3053,7 @@ async function roundTripProbe(
   }
 }
 
-/** SPO_test3's row towards Crazz as `"<yours>:<theirs>"`, or `"none"` — no row, both neutral. */
+/** SPO_test3's row towards the secondary account as `"<yours>:<theirs>"`, or `"none"` — no row, both neutral. */
 async function policyTowardsSecondary(session: LiveSession): Promise<string> {
   const policy = await readPolicy(session);
   const row = policy.policies.find(p => sameAccount(p.tycoonName, SECONDARY_ACCOUNT));
@@ -3066,13 +3066,13 @@ function policyStatus(value: string): number {
 }
 
 /**
- * The strategy towards Crazz, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
- * broadcasts a world event naming Crazz (Kernel/Kernel.pas:11790-11800). The restore from "no
+ * The strategy towards the secondary account, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
+ * broadcasts a world event naming the secondary account (Kernel/Kernel.pas:11790-11800). The restore from "no
  * row" expects the row gone — a neutral row left behind is not the original.
  */
 const policyRoundTrip: Flow = {
   name: 'policy-roundtrip',
-  what: "strategy towards Crazz: read -> set another status -> read back -> restore -> read back",
+  what: `strategy towards ${SECONDARY_ACCOUNT.username}: read -> set another status -> read back -> restore -> read back`,
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -3609,7 +3609,7 @@ function transferRefusal(bank: BankAccountData): string | null {
   return null;
 }
 
-async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
+async function driveSendReturn(secondary: LiveSession, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
   const name = 'bank-send-return';
   const ME = PRIMARY_ACCOUNT.username;
   const HIM = SECONDARY_ACCOUNT.username;
@@ -3619,7 +3619,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
   const me = await login(PRIMARY_ACCOUNT);
   try {
     await mailConnect(me);
-    await mailConnect(crazz);
+    await mailConnect(secondary);
 
     // RDOSendMoney clips the amount to fBudget - LoanAmount - AprFee and answers
     // ERROR_InvalidMoneyValue when that is ≤ 0 (Kernel/Kernel.pas:11507-11512, :11535); the page
@@ -3629,13 +3629,13 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
       assertions.unproven(what, `${ME} cannot send $1: ${mine}; nothing sent`);
       return report(name, assertions, probes, me);
     }
-    const theirs = transferRefusal(await readBank(crazz));
+    const theirs = transferRefusal(await readBank(secondary));
     if (theirs) {
       assertions.unproven(what, `${HIM} cannot send $1 back: ${theirs}; nothing sent`);
       return report(name, assertions, probes, me);
     }
     // The :11499 receiver limits, each profile read through its own session.
-    for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, crazz]] as const) {
+    for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, secondary]] as const) {
       const refusal = receiverLimitRefusal(account, await readProfile(s));
       if (refusal) {
         assertions.unproven(what, `${refusal}; nothing sent`);
@@ -3644,7 +3644,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
     }
 
     for (const [s, folder, counterpart] of [
-      [me, 'Inbox', HIM], [me, 'Sent', HIM], [crazz, 'Inbox', ME], [crazz, 'Sent', ME],
+      [me, 'Inbox', HIM], [me, 'Sent', HIM], [secondary, 'Inbox', ME], [secondary, 'Sent', ME],
     ] as const) {
       const check = await purgeTransferFolder(s, folder, counterpart, sleep);
       assertions.check(`pre-sweep: ${check.what}`, check.ok, check.detail);
@@ -3658,7 +3658,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
     const has = async (s: LiveSession, from: string, marker: string): Promise<boolean> =>
       (await noticeIds(s, 'Inbox', from, `Reason=${marker}&`)).size > 0;
     const owed = async (): Promise<string> =>
-      String((await has(crazz, ME, out) ? 1 : 0) - (await has(me, HIM, back) ? 1 : 0));
+      String((await has(secondary, ME, out) ? 1 : 0) - (await has(me, HIM, back) ? 1 : 0));
     const send = (s: LiveSession, toTycoon: string, reason: string) =>
       s.driver.request<WsRespProfileBankAction>(
         { type: WsMessageType.REQ_PROFILE_BANK_ACTION, action: 'send', amount: '1', toTycoon, reason },
@@ -3683,9 +3683,9 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
           firstLegSent = true;
         },
         restore: async () => {
-          // Crazz writes only to complete the pair: nothing to send back unless the $1 arrived.
-          if (!firstLegSent && !(await has(crazz, ME, out))) return;
-          const answer = await send(crazz, ME, back);
+          // The secondary account writes only to complete the pair: nothing to send back unless the $1 arrived.
+          if (!firstLegSent && !(await has(secondary, ME, out))) return;
+          const answer = await send(secondary, ME, back);
           if (answer.result?.success !== true) throw new Error(`send back refused: ${answer.result?.message ?? '(no result)'}`);
         },
         proof: {
@@ -3708,29 +3708,29 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
 }
 
 /**
- * Send $1 to Crazz, and Crazz sends it back (#1147). Both accounts log in before the first send;
- * a refusal of Crazz then is SKIPPED with nothing sent. Nothing is sent unless both bank pages
+ * Send $1 to the secondary account, and it sends it back (#1147). Both accounts log in before the first send;
+ * a refusal of the secondary account then is SKIPPED with nothing sent. Nothing is sent unless both bank pages
  * offer the transfer and both profiles are under the receiver limits (Kernel/Kernel.pas:11499).
- * Two residual risks remain, each a FAIL with the pending restore kept ($1 stays with Crazz): a
+ * Two residual risks remain, each a FAIL with the pending restore kept ($1 stays with the secondary account): a
  * Transcended item (not readable over the WS contract), and a nobility of 0 that cannot be told
  * from "Nobility label not found". Any failure after the first send is a FAIL, never SKIPPED.
  */
 const bankSendReturn: Flow = {
   name: 'bank-send-return',
-  what: 'both log in -> both pages offer $1 -> receiver limits -> send $1 to Crazz -> notice -> Crazz sends $1 back -> notice',
+  what: `both log in -> both pages offer $1 -> receiver limits -> send $1 to ${SECONDARY_ACCOUNT.username} -> notice -> ${SECONDARY_ACCOUNT.username} sends $1 back -> notice`,
   mutates: true,
   run: async ctx => {
     const name = 'bank-send-return';
     const sleep = ctx.sleep ?? defaultSleep;
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveSendReturn(crazz, ctx, sleep);
+      result = await driveSendReturn(secondary, ctx, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     } finally {
-      await logoff(crazz);
+      await logoff(secondary);
     }
     const cleanup = [
       ...(await purgeTransferMailbox(PRIMARY_ACCOUNT, SECONDARY_ACCOUNT.username, ['Inbox', 'Sent'], sleep)),
@@ -8035,22 +8035,22 @@ const chatPrivateChannel: Flow = {
 };
 
 /**
- * SPO_test3 chases Crazz, then stops (#1148, proof #1188). `TClientView.Chase` inserts the
+ * SPO_test3 chases the secondary account, then stops (#1148, proof #1188). `TClientView.Chase` inserts the
  * chaser in the target's list and moves the chaser's own view (`Interface Server/
  * InterfaceServer.pas:1579-1608`, `MoveTo` at `:1590`). The proof is SPO_test3's view
- * following Crazz: Crazz sends one camera update, `SetViewedArea` ends with `UpdateChasers`
+ * following the secondary account: it sends one camera update, `SetViewedArea` ends with `UpdateChasers`
  * (`:742`), which pushes every chaser `MoveTo(x + dx div 2, y + dy div 2)` (`:705-718`,
  * `TClientView.MoveTo` `:2215-2219`), and the gateway forwards it as `EVENT_MOVE_TO`. The
- * camera sits on Crazz's own saved position, so its logoff cookie is unchanged. `DoLogOff`
+ * camera sits on the secondary's own saved position, so its logoff cookie is unchanged. `DoLogOff`
  * (`:2002`) and `Destroy` (`:654`) end any chase a dead run leaves.
  */
 const chatChase: Flow = {
   name: 'chat-chase',
-  what: 'Crazz online -> SPO_test3 chases Crazz -> stop chase',
+  what: `${SECONDARY_ACCOUNT.username} online -> SPO_test3 chases ${SECONDARY_ACCOUNT.username} -> stop chase`,
   mutates: false,
   run: async () => {
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult('chat-chase', crazz.skipped);
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult('chat-chase', secondary.skipped);
     try {
       const assertions = new Assertions();
       const session = await login(PRIMARY_ACCOUNT);
@@ -8064,7 +8064,7 @@ const chatChase: Flow = {
           ),
         );
         if (chased) {
-          const view = sendCamera(crazz, crazz.playerX, crazz.playerY);
+          const view = sendCamera(secondary, secondary.playerX, secondary.playerY);
           const ex = view.viewX + CAMERA_VIEW_SIZE / 2;
           const ey = view.viewY + CAMERA_VIEW_SIZE / 2;
           const label =
@@ -8093,7 +8093,7 @@ const chatChase: Flow = {
         await logoff(session);
       }
     } finally {
-      await logoff(crazz);
+      await logoff(secondary);
     }
   },
 };

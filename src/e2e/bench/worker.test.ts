@@ -53,6 +53,7 @@ import {
 } from './worker';
 import { ROUTES, SPINE_FLOW } from '../routing';
 import type { LiveRunResult } from '../run';
+import { SECONDARY_ACCOUNT } from '../config';
 
 interface Harness {
   deps: WorkerDeps;
@@ -660,8 +661,8 @@ describe('processOldest — the queue discipline', () => {
     it('a skip-BLOCKED run reads "blocked-skip", naming only the SKIPPED flows', () => {
       const file = writeArtifact(
         blockedRun(
-          [flow('login-spine', 'PASS'), flow('permission-negative', 'SKIPPED', 'Crazz refused')],
-          'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused)',
+          [flow('login-spine', 'PASS'), flow('permission-negative', 'SKIPPED', `${SECONDARY_ACCOUNT.username} refused`)],
+          `skipped — a flow that did not run is not a pass: permission-negative (${SECONDARY_ACCOUNT.username} refused)`,
         ),
         ['login-spine', 'permission-negative'],
       );

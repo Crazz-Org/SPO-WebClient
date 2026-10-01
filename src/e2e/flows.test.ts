@@ -36,6 +36,9 @@ import * as liveLog from './live-log';
 import * as fixtures from './fixtures';
 import { LIMITS, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
 
+/** The secondary account's name, as the flows read it — a rename touches config.ts only. */
+const SECONDARY_NAME = SECONDARY_ACCOUNT.username;
+
 function stubSession(responder: (msg: WsMessage) => unknown): session.LiveSession {
   return {
     driver: {
@@ -248,13 +251,13 @@ describe('runFlow', () => {
     it('a seed skipped by a login refusal ends SKIPPED, and run is never called', async () => {
       const { flow, calls } = seeded({
         seed: async () => ({
-          outcome: { what: 'plant', ok: false, skipped: 'Crazz refused' },
+          outcome: { what: 'plant', ok: false, skipped: `${SECONDARY_NAME} refused` },
           cleanup: async () => [{ what: 'mailbox', ok: true }],
         }),
       });
       const result = await runFlow(flow, { lock: cleanLock() });
       expect(calls).toEqual([]);
-      expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused', unproven: [] });
+      expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused`, unproven: [] });
     });
 
     it('a flow without a seed carries no seed or cleanup keys', async () => {
@@ -268,13 +271,13 @@ describe('runFlow', () => {
 
 describe('runFlow and a SKIPPED flow', () => {
   const skipping: Flow = {
-    name: 'needs-crazz',
+    name: 'needs-secondary',
     what: '',
     mutates: true,
     run: async () => ({
-      name: 'needs-crazz',
+      name: 'needs-secondary',
       status: 'SKIPPED',
-      skipped: 'Crazz refused',
+      skipped: `${SECONDARY_NAME} refused`,
       assertions: [],
       unproven: [],
       probes: [],
@@ -286,7 +289,7 @@ describe('runFlow and a SKIPPED flow', () => {
 
   it('passes a skip through as SKIPPED when the lock holds no pending restore', async () => {
     const result = await runFlow(skipping, { lock: cleanLock() });
-    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused` });
   });
 
   it('turns a skip into a FAIL while the lock holds a pending restore', async () => {
@@ -294,14 +297,14 @@ describe('runFlow and a SKIPPED flow', () => {
     lock.addPendingRestore({ what: 'tax', x: 1, y: 2, propertyName: 'Tax0', originalValue: '5' });
     const result = await runFlow(skipping, { lock });
     expect(result.status).toBe('FAIL');
-    expect(result.error).toMatch(/skipped after a write \(Crazz refused\) — 1 pending restore/);
+    expect(result.error).toMatch(`skipped after a write (${SECONDARY_NAME} refused) — 1 pending restore`);
   });
 
   it('turns a seeded flow\'s skip into a FAIL while the lock holds a pending restore', async () => {
     const lock = cleanLock();
     lock.addPendingRestore({ what: 'tax', x: 1, y: 2, propertyName: 'Tax0', originalValue: '5' });
     const result = await runFlow(
-      { ...skipping, seed: async () => ({ outcome: { what: 'plant', ok: false, skipped: 'Crazz refused' } }) },
+      { ...skipping, seed: async () => ({ outcome: { what: 'plant', ok: false, skipped: `${SECONDARY_NAME} refused` } }) },
       { lock },
     );
     expect(result.status).toBe('FAIL');
@@ -385,9 +388,9 @@ describe('permission-negative', () => {
 
   it('ends SKIPPED, not FAIL, when the second account is refused at login', async () => {
     arrange(false);
-    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: `${SECONDARY_NAME} refused` });
     const result = await runFlow(flowByName('permission-negative'), { lock: cleanLock() });
-    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused` });
     expect(session.findTown).not.toHaveBeenCalled();
     expect(session.logoff).not.toHaveBeenCalled();
   });
@@ -1147,7 +1150,7 @@ describe('mail-roundtrip', () => {
   // in-memory speed.
   const mailCtx = { ...ctx, sleep: async () => {} };
 
-  // Crazz logs in first (before the compose), through the same stub `login` as SPO_test3.
+  // The secondary account logs in first (before the compose), through the same stub `login` as SPO_test3.
   beforeEach(() => {
     jest.spyOn(session, 'loginSecondary').mockImplementation(async () => session.login(SECONDARY_ACCOUNT));
   });
@@ -1353,17 +1356,17 @@ describe('mail-roundtrip', () => {
   it('ends SKIPPED with no compose sent when the second account is refused at login', async () => {
     const sent: WsMessage[] = [];
     const primary = jest.spyOn(session, 'login').mockResolvedValue(mailSession([], msg => sent.push(msg)));
-    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: `${SECONDARY_NAME} refused` });
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
 
     const result = await flowByName('mail-roundtrip').run(mailCtx);
 
-    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused` });
     expect(sent.some(m => m.type === WsMessageType.REQ_MAIL_COMPOSE)).toBe(false);
     expect(primary).not.toHaveBeenCalled();
   });
 
-  it('logs Crazz in before the compose', async () => {
+  it('logs the secondary account in before the compose', async () => {
     const order: string[] = [];
     jest.spyOn(session, 'login').mockImplementation(async account => {
       order.push(`login ${account.username}`);
@@ -1375,7 +1378,7 @@ describe('mail-roundtrip', () => {
 
     await flowByName('mail-roundtrip').run(mailCtx);
 
-    expect(order.slice(0, 3)).toEqual(['login Crazz', 'login SPO_test3', 'compose']);
+    expect(order.slice(0, 3)).toEqual([`login ${SECONDARY_NAME}`, 'login SPO_test3', 'compose']);
   });
 
   it('addresses the probe message to the second account', async () => {
@@ -1386,7 +1389,7 @@ describe('mail-roundtrip', () => {
     await flowByName('mail-roundtrip').run(mailCtx);
 
     const compose = sent.find(m => m.type === WsMessageType.REQ_MAIL_COMPOSE);
-    expect(compose).toMatchObject({ to: 'Crazz' });
+    expect(compose).toMatchObject({ to: SECONDARY_NAME });
   });
 });
 
@@ -2077,11 +2080,11 @@ describe('zoning-alert-read seed', () => {
         world: over.noIp ? undefined : { name: 'planitia', url: '', ip: '10.1.2.3', port: 0 },
       };
     });
-    // Crazz goes through loginSecondary; call N (1-based) of it is refused when listed.
+    // The secondary account goes through loginSecondary; call N (1-based) of it is refused when listed.
     let secondaryCalls = 0;
     jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
       secondaryCalls++;
-      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `Crazz refused (call ${secondaryCalls})` };
+      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `${SECONDARY_NAME} refused (call ${secondaryCalls})` };
       return session.login(SECONDARY_ACCOUNT);
     });
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
@@ -2098,7 +2101,7 @@ describe('zoning-alert-read seed', () => {
     (r.msg as WsMessage & { folder: string }).folder === folder &&
     (r.msg as WsMessage & { messageId: string }).messageId === messageId;
 
-  it('sends the compose as Crazz, to SPO_test3, with the server alert\'s subject and header', async () => {
+  it('sends the compose as the secondary account, to SPO_test3, with the server alert\'s subject and header', async () => {
     const { requests } = arrange();
 
     const result = await runFlow(flowByName('zoning-alert-read'), ctx);
@@ -2133,20 +2136,20 @@ describe('zoning-alert-read seed', () => {
     expect(url.searchParams.get('BuildName0')).toContain('e2e-seed');
   });
 
-  it('sweeps stale Crazz-sent alerts from both mailboxes before the compose, sparing a server alert', async () => {
+  it('sweeps stale secondary-sent alerts from both mailboxes before the compose, sparing a server alert', async () => {
     const { requests } = arrange({
       inbox: [
-        header('stale', 'Zoning Alert!', 'Crazz', 'SPO_test3'),
+        header('stale', 'Zoning Alert!', SECONDARY_NAME, 'SPO_test3'),
         header('srv', 'Zoning Alert!', 'mailer@GlobalPlanitia.net', 'SPO_test3'),
       ],
-      sent: [header('staleSent', 'Zoning Alert!', 'Crazz', 'SPO_test3')],
+      sent: [header('staleSent', 'Zoning Alert!', SECONDARY_NAME, 'SPO_test3')],
     });
 
     const result = await runFlow(flowByName('zoning-alert-read'), ctx);
 
     const compose = indexOf(requests, r => r.msg.type === WsMessageType.REQ_MAIL_COMPOSE);
     const inboxDelete = indexOf(requests, isDelete('SPO_test3', 'Inbox', 'stale'));
-    const sentDelete = indexOf(requests, isDelete('Crazz', 'Sent', 'staleSent'));
+    const sentDelete = indexOf(requests, isDelete(SECONDARY_NAME, 'Sent', 'staleSent'));
     expect(inboxDelete).toBeGreaterThanOrEqual(0);
     expect(sentDelete).toBeGreaterThanOrEqual(0);
     expect(inboxDelete).toBeLessThan(compose);
@@ -2164,11 +2167,11 @@ describe('zoning-alert-read seed', () => {
     const focus = indexOf(requests, r => r.msg.type === WsMessageType.REQ_BUILDING_FOCUS);
     expect(focus).toBeGreaterThanOrEqual(0);
     expect(indexOf(requests, isDelete('SPO_test3', 'Inbox', 'seeded1'))).toBeGreaterThan(focus);
-    expect(indexOf(requests, isDelete('Crazz', 'Sent', 'seededSent1'))).toBeGreaterThan(focus);
+    expect(indexOf(requests, isDelete(SECONDARY_NAME, 'Sent', 'seededSent1'))).toBeGreaterThan(focus);
     expect(result.cleanup).toHaveLength(2);
     expect(result.cleanup?.every(c => c.ok)).toBe(true);
     expect(mailboxes['SPO_test3/Inbox']).toEqual([]);
-    expect(mailboxes['Crazz/Sent']).toEqual([]);
+    expect(mailboxes[`${SECONDARY_NAME}/Sent`]).toEqual([]);
   });
 
   it('still deletes the seeded message from both mailboxes when the flow throws', async () => {
@@ -2179,7 +2182,7 @@ describe('zoning-alert-read seed', () => {
     expect(result.status).toBe('FAIL');
     expect(result.error).toBe('read blew up');
     expect(indexOf(requests, isDelete('SPO_test3', 'Inbox', 'seeded1'))).toBeGreaterThanOrEqual(0);
-    expect(indexOf(requests, isDelete('Crazz', 'Sent', 'seededSent1'))).toBeGreaterThanOrEqual(0);
+    expect(indexOf(requests, isDelete(SECONDARY_NAME, 'Sent', 'seededSent1'))).toBeGreaterThanOrEqual(0);
   });
 
   it('a refused compose fails the seed, and the flow is not PASS and never focuses', async () => {
@@ -2215,23 +2218,23 @@ describe('zoning-alert-read seed', () => {
     expect(composeOf(requests)).toBeUndefined();
   });
 
-  it('ends SKIPPED when Crazz is refused in the pre-sweep, and sends no compose', async () => {
+  it('ends SKIPPED when the secondary account is refused in the pre-sweep, and sends no compose', async () => {
     const { requests } = arrange({ refuseSecondaryOn: [1] });
 
     const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
 
-    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
-    expect(result.seed).toMatchObject({ ok: false, skipped: 'Crazz refused (call 1)' });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused (call 1)` });
+    expect(result.seed).toMatchObject({ ok: false, skipped: `${SECONDARY_NAME} refused (call 1)` });
     expect(composeOf(requests)).toBeUndefined();
     expect(result.cleanup?.every(c => c.ok)).toBe(true);
   });
 
-  it('ends SKIPPED when Crazz is refused at the seed login, and sends no compose', async () => {
+  it('ends SKIPPED when the secondary account is refused at the seed login, and sends no compose', async () => {
     const { requests } = arrange({ refuseSecondaryOn: [2] });
 
     const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
 
-    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 2)' });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused (call 2)` });
     expect(composeOf(requests)).toBeUndefined();
     expect(requests.some(r => r.msg.type === WsMessageType.REQ_BUILDING_FOCUS)).toBe(false);
   });
@@ -2242,19 +2245,19 @@ describe('zoning-alert-read seed', () => {
     const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
 
     expect(result.status).toBe('SKIPPED');
-    expect(result.cleanup?.[1]).toMatchObject({ ok: false, skipped: 'Crazz refused (call 3)' });
+    expect(result.cleanup?.[1]).toMatchObject({ ok: false, skipped: `${SECONDARY_NAME} refused (call 3)` });
   });
 
-  it('FAILs, naming the leftover, when Crazz is refused in the cleanup after a successful seed', async () => {
+  it('FAILs, naming the leftover, when the secondary account is refused in the cleanup after a successful seed', async () => {
     const { mailboxes } = arrange({ refuseSecondaryOn: [3] });
 
     const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
 
     expect(result.seed?.ok).toBe(true);
     expect(result.status).toBe('FAIL');
-    expect(result.cleanup?.[1]).toMatchObject({ ok: false, skipped: 'Crazz refused (call 3)' });
-    expect(result.cleanup?.[1].detail).toMatch(/left in Crazz's Sent/);
-    expect(mailboxes['Crazz/Sent']).toHaveLength(1);
+    expect(result.cleanup?.[1]).toMatchObject({ ok: false, skipped: `${SECONDARY_NAME} refused (call 3)` });
+    expect(result.cleanup?.[1].detail).toMatch(`left in ${SECONDARY_NAME}'s Sent`);
+    expect(mailboxes[`${SECONDARY_NAME}/Sent`]).toHaveLength(1);
   });
 
   it('a stale sweep that cannot log in fails the seed, and the cleanup reports it', async () => {
@@ -3611,7 +3614,7 @@ describe('profile-read', () => {
     },
     [T.REQ_PROFILE_COMPANY_PROFITLOSS]: { companyName: 'SPO_test3 - Green', data: tree([{ label: 'Sales', level: 1, amount: '5' }]) },
     [T.REQ_PROFILE_AUTOCONNECTIONS]: { data: { fluids: [{ fluidId: 'Food', fluidName: 'Food', suppliers: [] }] } },
-    [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: 'Crazz', yourPolicy: 1, theirPolicy: 1 }], alliesAllowed: true } },
+    [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: SECONDARY_NAME, yourPolicy: 1, theirPolicy: 1 }], alliesAllowed: true } },
   });
 
   function arrange(over: Pages = {}) {
@@ -3675,7 +3678,7 @@ describe('profile-read', () => {
     ['a company P&L that failed', { [T.REQ_PROFILE_COMPANY_PROFITLOSS]: { companyName: 'x', data: null, error: 'x' } }, 'the company P&L parses'],
     ['a response without data', { [T.REQ_PROFILE_BANK]: {} }, 'NewTycoon/TycoonBankAccount.asp answered without cacheUnavailable'],
     ['a rejected request', { [T.REQ_PROFILE_POLICY]: new WsDriverError('boom', 1, 'REQ_PROFILE_POLICY') }, 'NewTycoon/TycoonPolicy.asp answered without cacheUnavailable'],
-    ['an out-of-range Crazz status', { [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: 'Crazz', yourPolicy: 7, theirPolicy: 1 }] } } }, 'the Crazz strategy row carries a status'],
+    [`an out-of-range ${SECONDARY_NAME} status`, { [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: SECONDARY_NAME, yourPolicy: 7, theirPolicy: 1 }] } } }, `the ${SECONDARY_NAME} strategy row carries a status`],
   ])('fails on %s', async (_label, over, what) => {
     arrange(over);
     const result = await run();
@@ -3693,12 +3696,12 @@ describe('profile-read', () => {
     expect(sent.some(m => m.type === T.REQ_PROFILE_COMPANY_PROFITLOSS)).toBe(false);
   });
 
-  it('passes with no Crazz strategy row, never unproven', async () => {
+  it('passes with no strategy row towards the secondary account, never unproven', async () => {
     arrange({ [T.REQ_PROFILE_POLICY]: { data: { policies: [], alliesAllowed: true } } });
     const result = await run();
     expect(result.status).toBe('PASS');
     expect(result.unproven).toEqual([]);
-    expect(result.assertions.find(a => a.what === 'no Crazz strategy row')?.detail).toMatch(/Kernel\.pas:11348/);
+    expect(result.assertions.find(a => a.what === `no ${SECONDARY_NAME} strategy row`)?.detail).toMatch(/Kernel\.pas:11348/);
   });
 
   it('passes on an empty initial-suppliers list', async () => {
@@ -3836,7 +3839,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
     let secondaryCalls = 0;
     jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
       secondaryCalls++;
-      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `Crazz refused (call ${secondaryCalls})` };
+      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `${SECONDARY_NAME} refused (call ${secondaryCalls})` };
       return session.login(SECONDARY_ACCOUNT);
     });
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
@@ -4010,7 +4013,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
   });
 
   describe('mail-send-from-draft', () => {
-    it('sends the draft with its id, Crazz receives it, the Draft copy is gone, and every box is empty after', async () => {
+    it('sends the draft with its id, the secondary account receives it, the Draft copy is gone, and every box is empty after', async () => {
       const { result, requests, boxes } = run('mail-send-from-draft');
       const r = await result;
 
@@ -4042,27 +4045,27 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
       expect(nonEmpty(boxes)).toEqual([]);
     });
 
-    it('ends SKIPPED when Crazz is refused before the first write, and SPO_test3 sends nothing', async () => {
+    it('ends SKIPPED when the secondary account is refused before the first write, and SPO_test3 sends nothing', async () => {
       const { result, requests, logins } = run('mail-send-from-draft', { refuseSecondaryOn: [1] });
       const r = await result;
 
-      expect(r).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
+      expect(r).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused (call 1)` });
       expect(logins()).toBe(0);
       expect(writes(requests)).toEqual([]);
     });
 
-    it('FAILs naming the leftover when Crazz is refused at the cleanup, after the send', async () => {
+    it('FAILs naming the leftover when the secondary account is refused at the cleanup, after the send', async () => {
       const { result, boxes } = run('mail-send-from-draft', { refuseSecondaryOn: [2] });
       const r = await result;
 
       expect(r.status).toBe('FAIL');
-      const crazz = r.cleanup?.find(c => c.skipped !== undefined);
-      expect(crazz).toMatchObject({ ok: false, skipped: 'Crazz refused (call 2)' });
-      expect(crazz?.detail).toMatch(/left in Crazz's Inbox/);
+      const secondary = r.cleanup?.find(c => c.skipped !== undefined);
+      expect(secondary).toMatchObject({ ok: false, skipped: `${SECONDARY_NAME} refused (call 2)` });
+      expect(secondary?.detail).toMatch(`left in ${SECONDARY_NAME}'s Inbox`);
       expect(boxes[`${C}/Inbox`]).toHaveLength(1);
     });
 
-    it('pre-sweeps SPO_test3\'s Draft and Sent and Crazz\'s Inbox before the first write', async () => {
+    it('pre-sweeps SPO_test3\'s Draft and Sent and the secondary\'s Inbox before the first write', async () => {
       const stale = 'e2e-mail-send-from-draft 2020';
       const { result, requests, boxes } = run('mail-send-from-draft', {
         boxes: {
@@ -4083,7 +4086,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
       expect(boxes[`${C}/Inbox`].map(m => m.messageId)).toEqual(['real']);
     });
 
-    it('FAILs and writes nothing when a pre-sweep cannot clear Crazz\'s Inbox', async () => {
+    it('FAILs and writes nothing when a pre-sweep cannot clear the secondary\'s Inbox', async () => {
       const { result, requests } = run('mail-send-from-draft', {
         boxes: { [`${C}/Inbox`]: [stored('x3', 'e2e-mail-send-from-draft 2020', P, C)] },
         ignoreDeleteIn: [`${C}/Inbox`],
@@ -4094,7 +4097,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
       expect(writes(requests)).toEqual([]);
     });
 
-    it('a leftover in Crazz\'s Inbox after the cleanup turns the flow FAIL', async () => {
+    it('a leftover in the secondary\'s Inbox after the cleanup turns the flow FAIL', async () => {
       const { result } = run('mail-send-from-draft', { ignoreDeleteIn: [`${C}/Inbox`] });
       const r = await result;
 
@@ -4154,24 +4157,24 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
       expect(nonEmpty(boxes)).toEqual([]);
     });
 
-    it('ends SKIPPED when Crazz is refused before the first write, and SPO_test3 sends nothing', async () => {
+    it('ends SKIPPED when the secondary account is refused before the first write, and SPO_test3 sends nothing', async () => {
       const { result, requests, logins } = run('mail-reply', { refuseSecondaryOn: [1] });
       const r = await result;
 
-      expect(r).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
+      expect(r).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused (call 1)` });
       expect(logins()).toBe(0);
       expect(writes(requests)).toEqual([]);
     });
 
-    it('FAILs naming the leftover when Crazz is refused at the cleanup, after the writes', async () => {
+    it('FAILs naming the leftover when the secondary account is refused at the cleanup, after the writes', async () => {
       const { result, boxes } = run('mail-reply', { refuseSecondaryOn: [2] });
       const r = await result;
 
       expect(r.status).toBe('FAIL');
       const refused = r.cleanup?.filter(c => c.skipped !== undefined) ?? [];
       expect(refused).toHaveLength(2);
-      expect(refused[0].detail).toMatch(/left in Crazz's Inbox/);
-      expect(refused[1].detail).toMatch(/left in Crazz's Sent/);
+      expect(refused[0].detail).toMatch(`left in ${SECONDARY_NAME}'s Inbox`);
+      expect(refused[1].detail).toMatch(`left in ${SECONDARY_NAME}'s Sent`);
       expect(boxes[`${P}/Inbox`]).toEqual([]);
     });
 
@@ -4200,7 +4203,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
 
     it('FAILs and writes nothing when a pre-sweep folder read throws', async () => {
       const { result, requests } = run('mail-reply', {
-        // Login 1 is Crazz's drive session; the cleanup logs in afresh and is spared.
+        // Login 1 is the secondary's drive session; the cleanup logs in afresh and is spared.
         throwWhen: l => l.login === 1 && l.msg.type === WsMessageType.REQ_MAIL_GET_FOLDER && l.msg.folder === 'Sent',
       });
       const r = await result;
@@ -4210,7 +4213,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
       expect(writes(requests)).toEqual([]);
     });
 
-    it('fails, and still cleans up, when the message never reaches Crazz', async () => {
+    it('fails, and still cleans up, when the message never reaches the secondary account', async () => {
       const { result, requests, boxes } = run('mail-reply', { dropDelivery: true });
       const r = await result;
 
@@ -4367,7 +4370,7 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
       expect(result.status).toBe('FAIL');
       expect(result.probes[0].restored).toBe(false);
       expect(lock.read().pendingRestores).toHaveLength(1);
-      expect(lock.read().pendingRestores[0].what).toMatch(/strategy towards Crazz.*put back "none"/);
+      expect(lock.read().pendingRestores[0].what).toMatch(new RegExp(`strategy towards ${SECONDARY_NAME}.*put back "none"`));
     });
 
     it('from enemy writes neutral and restores enemy', async () => {
@@ -4796,7 +4799,7 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       refuseSecondary?: number[];
       refuseOut?: boolean;
       refuseBack?: boolean;
-      /** The send answers success, but no notice ever reaches Crazz. */
+      /** The send answers success, but no notice ever reaches the secondary account. */
       dropOutNotice?: boolean;
       /** REQ_MAIL_DELETE is a no-op. */
       deletesIgnored?: boolean;
@@ -4867,7 +4870,7 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       jest.spyOn(session, 'login').mockImplementation(async account => stubFor(account, responder(w, account)));
       jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
         secondary++;
-        if (w.refuseSecondary?.includes(secondary)) return { skipped: 'Crazz refused' };
+        if (w.refuseSecondary?.includes(secondary)) return { skipped: `${SECONDARY_NAME} refused` };
         return stubFor(SECONDARY_ACCOUNT, responder(w, SECONDARY_ACCOUNT));
       });
     }
@@ -4875,7 +4878,7 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       sentOf(WsMessageType.REQ_PROFILE_BANK_ACTION).map(e => `${e.account}->${e.msg.toTycoon} ${e.msg.amount} ${e.msg.reason}`);
     const run = () => flowByName('bank-send-return').run(flowCtx());
 
-    it('mutates; sends $1 to Crazz and back, matched by Reason=<marker>, and the cleanup deletes four notices — PASS', async () => {
+    it('mutates; sends $1 to the secondary account and back, matched by Reason=<marker>, and the cleanup deletes four notices — PASS', async () => {
       expect(flowByName('bank-send-return').mutates).toBe(true);
       const w = world();
       // A decoy with the same subject and another reason: never matched, never deleted.
@@ -4895,11 +4898,11 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('ends SKIPPED with nothing sent when Crazz is refused before the first send', async () => {
+    it('ends SKIPPED with nothing sent when the secondary account is refused before the first send', async () => {
       drive(world({ refuseSecondary: [1] }));
       const result = await runFlow(flowByName('bank-send-return'), flowCtx());
       expect(result.status).toBe('SKIPPED');
-      expect(result.skipped).toBe('Crazz refused');
+      expect(result.skipped).toBe(`${SECONDARY_NAME} refused`);
       expect(sends()).toEqual([]);
     });
 
@@ -4917,7 +4920,7 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(sends()).toEqual([]);
     });
 
-    it('sends nothing when Crazz\'s page does not offer the transfer back — UNPROVEN', async () => {
+    it('sends nothing when the secondary\'s page does not offer the transfer back — UNPROVEN', async () => {
       const w = world();
       w.banks[HIM] = { transferDenied: 'loans' };
       drive(w);
@@ -4945,16 +4948,16 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(reads).toEqual(who === ME ? [ME] : [ME, HIM]);
     });
 
-    it('FAILs, never SKIPPED, with the pending restore kept when the notice never reaches Crazz', async () => {
+    it('FAILs, never SKIPPED, with the pending restore kept when the notice never reaches the secondary account', async () => {
       drive(world({ dropOutNotice: true }));
       const result = await runFlow(flowByName('bank-send-return'), flowCtx());
       expect(result.status).toBe('FAIL');
       expect(result.probes[0].readBack).toBe('UNCONFIRMED');
       expect(lock.read().pendingRestores).toHaveLength(1);
-      expect(lock.read().pendingRestores[0].what).toMatch(/\$1 sent by SPO_test3 to Crazz .* owes SPO_test3 \$1 back/);
+      expect(lock.read().pendingRestores[0].what).toMatch(new RegExp(`\\$1 sent by SPO_test3 to ${SECONDARY_NAME} .* owes SPO_test3 \\$1 back`));
     });
 
-    it('FAILs with the pending restore kept when Crazz\'s send back is refused', async () => {
+    it('FAILs with the pending restore kept when the secondary\'s send back is refused', async () => {
       drive(world({ refuseBack: true }));
       const result = await run();
       expect(result.status).toBe('FAIL');
@@ -4978,15 +4981,15 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       drive(w);
       const result = await run();
       expect(result.status).toBe('FAIL');
-      expect(result.assertions.find(a => a.what.startsWith('pre-sweep:') && !a.ok)?.what).toMatch(/Crazz's Inbox/);
+      expect(result.assertions.find(a => a.what.startsWith('pre-sweep:') && !a.ok)?.what).toMatch(`${SECONDARY_NAME}'s Inbox`);
       expect(sends()).toEqual([]);
     });
 
-    it('FAILs when Crazz is refused at the cleanup, after the pair', async () => {
+    it('FAILs when the secondary account is refused at the cleanup, after the pair', async () => {
       drive(world({ refuseSecondary: [2] }));
       const result = await run();
       expect(result.status).toBe('FAIL');
-      expect(result.cleanup?.filter(c => c.skipped === 'Crazz refused')).toHaveLength(2);
+      expect(result.cleanup?.filter(c => c.skipped === `${SECONDARY_NAME} refused`)).toHaveLength(2);
     });
 
     it('turns a drive that throws into a FAIL, and a cleanup login that throws into failed checks', async () => {
@@ -5215,7 +5218,7 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(receiverLimitRefusal(PRIMARY_ACCOUNT, profile({ levelTier: 6 }))).toMatch(/≥ 6/);
     });
     it('refuses an empty or unmapped level name', () => {
-      expect(receiverLimitRefusal(SECONDARY_ACCOUNT, profile({ levelName: '  ' }))).toMatch(/Crazz's profile has no level name/);
+      expect(receiverLimitRefusal(SECONDARY_ACCOUNT, profile({ levelName: '  ' }))).toMatch(`${SECONDARY_NAME}'s profile has no level name`);
       expect(receiverLimitRefusal(SECONDARY_ACCOUNT, profile({ levelName: 'Unknown' }))).toMatch(/not one parseCurriculumHtml/);
     });
   });
@@ -9156,18 +9159,18 @@ describe('chat flows (#1148)', () => {
   });
 
   describe('chat-chase', () => {
-    it('ends SKIPPED when Crazz is refused, before any login or chase', async () => {
-      jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+    it('ends SKIPPED when the secondary account is refused, before any login or chase', async () => {
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: `${SECONDARY_NAME} refused` });
       const login = jest.spyOn(session, 'login');
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
-      expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+      expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused` });
       expect(login).not.toHaveBeenCalled();
     });
 
-    it('chases Crazz then stops, and logs both off', async () => {
+    it('chases the secondary account then stops, and logs both off', async () => {
       const primary = chatWorld();
-      const crazz = chatWorld();
-      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz.session);
+      const secondary = chatWorld();
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(secondary.session);
       jest.spyOn(session, 'login').mockResolvedValue(primary.session);
       const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
@@ -9176,22 +9179,22 @@ describe('chat flows (#1148)', () => {
         { type: WsMessageType.REQ_CHAT_CHASE, userName: SECONDARY_ACCOUNT.username },
         { type: WsMessageType.REQ_CHAT_STOP_CHASE },
       ]);
-      // Crazz's one camera update, on its own saved position (0,0): the view centre is (16,16).
-      expect(crazz.sent).toEqual([
+      // The secondary's one camera update, on its own saved position (0,0): the view centre is (16,16).
+      expect(secondary.sent).toEqual([
         { type: WsMessageType.REQ_UPDATE_CAMERA, x: 0, y: 0, viewX: 0, viewY: 0, viewW: 32, viewH: 32 },
       ]);
-      expect(result.assertions.find(a => /view follows Crazz/.test(a.what))).toMatchObject({
+      expect(result.assertions.find(a => a.what.includes(`view follows ${SECONDARY_NAME}`))).toMatchObject({
         what: expect.stringContaining('EVENT_MOVE_TO at (16,16)'),
         ok: true,
       });
       expect(off).toHaveBeenCalledWith(primary.session);
-      expect(off).toHaveBeenCalledWith(crazz.session);
+      expect(off).toHaveBeenCalledWith(secondary.session);
       expect(flowByName('chat-chase').mutates).toBe(false);
     });
 
     it.each([
       ['no EVENT_MOVE_TO arrives', null],
-      ['the EVENT_MOVE_TO is not at Crazz\'s view centre', { x: 17, y: 16 }],
+      ['the EVENT_MOVE_TO is not at the secondary\'s view centre', { x: 17, y: 16 }],
     ])('fails when %s, though the chase answered — and still stops', async (_label, moveTo) => {
       const primary = chatWorld({ moveTo });
       jest.spyOn(session, 'loginSecondary').mockResolvedValue(chatWorld().session);
@@ -9206,17 +9209,17 @@ describe('chat flows (#1148)', () => {
       expect(types(primary)).toEqual([WsMessageType.REQ_CHAT_CHASE, WsMessageType.REQ_CHAT_STOP_CHASE]);
     });
 
-    it('expects the view centre of Crazz\'s saved position', async () => {
+    it('expects the view centre of the secondary\'s saved position', async () => {
       const primary = chatWorld({ moveTo: { x: 500, y: 300 } });
-      const crazz = chatWorld();
-      crazz.session.playerX = 500;
-      crazz.session.playerY = 300;
-      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz.session);
+      const secondary = chatWorld();
+      secondary.session.playerX = 500;
+      secondary.session.playerY = 300;
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(secondary.session);
       jest.spyOn(session, 'login').mockResolvedValue(primary.session);
       jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
       expect(result.status).toBe('PASS');
-      expect(crazz.sent).toEqual([
+      expect(secondary.sent).toEqual([
         { type: WsMessageType.REQ_UPDATE_CAMERA, x: 500, y: 300, viewX: 484, viewY: 284, viewW: 32, viewH: 32 },
       ]);
     });
@@ -9247,14 +9250,14 @@ describe('chat flows (#1148)', () => {
       expect(failedWhats(result)).toEqual(['STOP_CHASE answered']);
     });
 
-    it('logs Crazz off even when the primary login throws', async () => {
-      const crazz = chatWorld();
-      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz.session);
+    it('logs the secondary account off even when the primary login throws', async () => {
+      const secondary = chatWorld();
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(secondary.session);
       jest.spyOn(session, 'login').mockRejectedValue(new Error('login refused'));
       const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
       expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
-      expect(off).toHaveBeenCalledWith(crazz.session);
+      expect(off).toHaveBeenCalledWith(secondary.session);
     });
   });
 });

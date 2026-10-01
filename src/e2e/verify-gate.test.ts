@@ -13,6 +13,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { SECONDARY_ACCOUNT } from './config';
 
 const SCRIPT = path.join(process.cwd(), 'scripts', 'verify-gate.js');
 
@@ -458,10 +459,10 @@ describe('stage 4 — live', () => {
   it('never passes a live result BLOCKED by a skipped flow', () => {
     const live = {
       status: 'BLOCKED',
-      error: 'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused)',
+      error: `skipped — a flow that did not run is not a pass: permission-negative (${SECONDARY_ACCOUNT.username} refused)`,
       flows: [
         { name: 'login-spine', status: 'PASS' },
-        { name: 'permission-negative', status: 'SKIPPED', skipped: 'Crazz refused' },
+        { name: 'permission-negative', status: 'SKIPPED', skipped: `${SECONDARY_ACCOUNT.username} refused` },
       ],
     };
     const run = runGate(scratchRepo(), ['--live'], {

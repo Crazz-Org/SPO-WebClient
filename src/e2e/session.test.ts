@@ -18,7 +18,7 @@ import {
   switchToMayor,
   type LiveSession,
 } from './session';
-import { PRIMARY_ACCOUNT } from './config';
+import { PRIMARY_ACCOUNT, SECONDARY_ACCOUNT } from './config';
 import { DIR_ERROR_InvalidPassword, DIR_ERROR_Unknown } from '@/shared/directory-error-codes';
 import { ERROR_InvalidLogonData, ERROR_InvalidPassword, ERROR_Unknown } from '@/shared/error-codes';
 
@@ -408,7 +408,7 @@ describe('loginSecondary', () => {
         case WsMessageType.REQ_CONNECT_DIRECTORY:
           return { type: WsMessageType.RESP_CONNECT_SUCCESS, worlds: [{ name: 'planitia' }] };
         case WsMessageType.REQ_LOGIN_WORLD:
-          return { type: WsMessageType.RESP_LOGIN_SUCCESS, companies: [{ id: '5', name: 'Crazz - Red' }] };
+          return { type: WsMessageType.RESP_LOGIN_SUCCESS, companies: [{ id: '5', name: `${SECONDARY_ACCOUNT.username} - Red` }] };
         default:
           return { type: WsMessageType.RESP_RDO_RESULT, result: '' };
       }
@@ -424,7 +424,7 @@ describe('loginSecondary', () => {
     expect('skipped' in result).toBe(false);
     expect(driver.request.mock.calls[0][0]).toMatchObject({
       type: WsMessageType.REQ_AUTH_CHECK,
-      username: 'Crazz',
+      username: SECONDARY_ACCOUNT.username,
     });
   });
 
@@ -432,7 +432,7 @@ describe('loginSecondary', () => {
     const driver = refusing(WsMessageType.REQ_AUTH_CHECK, typed(DIR_ERROR_InvalidPassword));
     const result = await loginSecondary();
     expect(result).toEqual({
-      skipped: expect.stringMatching(/^Crazz refused at REQ_AUTH_CHECK \(code 7\): refused$/),
+      skipped: `${SECONDARY_ACCOUNT.username} refused at REQ_AUTH_CHECK (code 7): refused`,
     });
     expect(driver.close).toHaveBeenCalledTimes(1);
   });
