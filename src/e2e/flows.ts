@@ -89,6 +89,7 @@ import type {
   WsEventChatMsg,
   WsEventChatUserTyping,
   WsEventChatChannelChange,
+  WsEventMoveTo,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
 import { CLUSTER_IDS } from '../shared/cluster-data';
@@ -101,6 +102,7 @@ import type {
   BuildingProductData,
   BuildingSupplyData,
   BuildingInfo,
+  ChatUser,
   CompaniesData,
   CompInputData,
   CurriculumData,
@@ -1373,9 +1375,9 @@ const newspaperRead: Flow = {
  * (`boardmsg.asp?top=TRUE` + `boardlist.asp`) is read. Read-only — the read branch of
  * `boardmsg.asp` only opens `NewsBoard.NewsObject`; `action=post` is the only write branch
  * and is never sent (posting is excluded, maintainer 2026-09-29: no member deletes a post,
- * `News Server/NewsObject.pas:11-53`). An empty board is a pass, not UNPROVEN: the page
- * answering is what is proven, and the detail records the counts. Unlike `newspaper-read`
- * it is not data-gated, so routing requires it.
+ * `News Server/NewsObject.pas:11-53`). The detail records the counts. A board with no column
+ * and no tree entry ends UNPROVEN (#1188): the page answering proves no read of a post, and
+ * the flow cannot post one. Routing still requires it.
  */
 const newspaperBoardRead: Flow = {
   name: 'newspaper-board-read',
@@ -1415,6 +1417,13 @@ const newspaperBoardRead: Flow = {
         wellFormed,
         `${board.columns.length} columns, ${board.tree.length} tree entries`,
       );
+      if (board.columns.length === 0 && board.tree.length === 0) {
+        assertions.unproven(
+          'the board lists a column',
+          `${paperName}: 0 columns, 0 tree entries — nothing is posted, and posting is excluded ` +
+            '(News Server/NewsObject.pas:11-53)',
+        );
+      }
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);
       return report('newspaper-board-read', assertions, [], session);
@@ -1423,6 +1432,15 @@ const newspaperBoardRead: Flow = {
     }
   },
 };
+
+/**
+ * What a focus on an empty tile answers: `parseBuildingFocusResponse` (`src/server/map-parsers.ts`)
+ * throws it on an empty reply, and `withErrorHandler` (`src/server/ws-handlers/ws-utils.ts`)
+ * forwards the message under `ERROR_FacilityNotFound` — the code is the same for every focus
+ * error, so only the message proves the tile is empty. A copy: the e2e build does not import
+ * server code; the unit test pins it to the parser.
+ */
+export const EMPTY_TILE_FOCUS_ERROR = 'Invalid building focus header format - no data';
 
 const ZONING_ALERT_SUBJECT = 'Zoning Alert!'; // World.pas:2721
 /** The header the server's own alert carries — Mail Server/ModelServer.pas:883. */
@@ -1575,8 +1593,11 @@ async function seedZoningAlert(): Promise<FlowSeed> {
  * The seed (`seedZoningAlert`, #1009) feeds the flow: Crazz sends SPO_test3 one look-alike
  * alert before the run, and it is deleted from both mailboxes after. Read without the seed,
  * no zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
- * was zoned out of this account lately, so the flow proved nothing. A demolished building answering `ERROR_FacilityNotFound`
- * is also accepted: the whole point of the alert is that the building is gone.
+ * was zoned out of this account lately, so the flow proved nothing. A demolished building is
+ * also accepted — the whole point of the alert is that the building is gone — but only on the
+ * empty-tile message (`EMPTY_TILE_FOCUS_ERROR`). The error code proves nothing: every focus
+ * error is wrapped as `ERROR_FacilityNotFound` (#1188). Any other error, a timeout included,
+ * fails.
  */
 const zoningAlertRead: Flow = {
   name: 'zoning-alert-read',
@@ -1631,11 +1652,11 @@ const zoningAlertRead: Flow = {
             WsMessageType.RESP_BUILDING_FOCUS,
           );
         } catch (err: unknown) {
-          // The building the alert names was, by definition, demolished — a gateway
-          // "not found" for that exact tile is an accepted outcome, not a wire failure.
+          // The building the alert names was, by definition, demolished — the empty-tile
+          // message for that exact tile is an accepted outcome, not a wire failure.
           assertions.check(
-            'REQ_BUILDING_FOCUS answered — either the tile focused, or the building is gone',
-            err instanceof WsDriverError,
+            'REQ_BUILDING_FOCUS answered — either the tile focused, or the building is gone (empty tile)',
+            err instanceof WsDriverError && err.message === EMPTY_TILE_FOCUS_ERROR,
             toErrorMessage(err),
           );
         }
@@ -2208,6 +2229,75 @@ const nearestTownHall: Flow = {
   },
 };
 
+/** The side of the square view a camera update carries. */
+const CAMERA_VIEW_SIZE = 32;
+
+/**
+ * Fire-and-forget camera update centred on (x, y), with its view — `handleUpdateCamera`
+ * answers nothing; with the view fields `updateCameraPosition` also emits `SetViewedArea`.
+ */
+function sendCamera(session: LiveSession, x: number, y: number): { viewX: number; viewY: number } {
+  const viewX = Math.max(0, x - CAMERA_VIEW_SIZE / 2);
+  const viewY = Math.max(0, y - CAMERA_VIEW_SIZE / 2);
+  session.driver.send({
+    type: WsMessageType.REQ_UPDATE_CAMERA,
+    x,
+    y,
+    viewX,
+    viewY,
+    viewW: CAMERA_VIEW_SIZE,
+    viewH: CAMERA_VIEW_SIZE,
+  });
+  return { viewX, viewY };
+}
+
+interface Tile { x: number; y: number }
+const tileText = (p: Tile): string => `(${p.x},${p.y})`;
+const sameTile = (a: Tile, b: Tile): boolean => a.x === b.x && a.y === b.y;
+
+/**
+ * A fresh SPO_test3 login's saved camera — `selectCompany` reads it from the `LastX.0` /
+ * `LastY.0` cookie (`login-handler.ts`) — then, when given, one camera update before the
+ * logoff that saves it (`savePlayerPosition`).
+ */
+async function readSavedCamera(then?: Tile): Promise<Tile> {
+  const s = await login(PRIMARY_ACCOUNT);
+  try {
+    const saved = { x: s.playerX, y: s.playerY };
+    if (then) sendCamera(s, then.x, then.y);
+    return saved;
+  } finally {
+    await logoff(s);
+  }
+}
+
+/**
+ * The camera cookie read back at a new login (#1188): it must hold `sent`; the camera is then
+ * put back on `original`, and a third login confirms it. Never throws. `savePlayerPosition`
+ * never writes (0,0) (`spo_session.ts`), so an original (0,0) cannot be restored — UNPROVEN.
+ */
+async function cameraReadBack(assertions: Assertions, original: Tile, sent: Tile): Promise<void> {
+  const readBack = 'the camera cookie reads back the camera sent';
+  try {
+    const read = await readSavedCamera(original);
+    assertions.check(readBack, sameTile(read, sent), `read ${tileText(read)}, sent ${tileText(sent)}`);
+  } catch (err: unknown) {
+    assertions.check(readBack, false, toErrorMessage(err));
+    return;
+  }
+  const restored = 'the camera cookie is restored';
+  if (original.x === 0 && original.y === 0) {
+    assertions.unproven(restored, 'the saved position was (0,0), which savePlayerPosition never writes (spo_session.ts)');
+    return;
+  }
+  try {
+    const read = await readSavedCamera();
+    assertions.check(restored, sameTile(read, original), `read ${tileText(read)}, original ${tileText(original)}`);
+  } catch (err: unknown) {
+    assertions.check(restored, false, toErrorMessage(err));
+  }
+}
+
 /** One `REQ_CONTEXT_STATUS` read at (x, y). */
 async function contextStatusAt(session: LiveSession, x: number, y: number): Promise<string> {
   const response = await session.driver.request<WsRespContextStatus>(
@@ -2260,9 +2350,12 @@ function surfaceShape(rows: number[][], rect: Rect): { ok: boolean; detail: stri
  * Two persistent effects, both bounded. The world event is **consumed** — `PickEvent`
  * extracts and frees the head of SPO_test3's event queue (`Kernel/Kernel.pas:11255-11271`,
  * `Kernel/World.pas:4840-4871`), the same pop every login's `selectCompany` makes, so the
- * flow costs one more login's worth. The camera is sent **to the saved position** the
- * select-company reply carried, so `savePlayerPosition` rewrites the same cookie values at
- * logoff. Nothing in the world is written: `mutates: false`.
+ * flow costs one more login's worth. The camera is sent **to the town hall** (one tile off it
+ * when the saved position is the hall), so it differs from the saved position the
+ * select-company reply carried; `savePlayerPosition` writes it at logoff, and a fresh login
+ * reads it back (#1188). That login puts the camera back on the saved position, and a third
+ * confirms it. The only write is SPO_test3's own camera bookmark, which every logoff already
+ * rewrites, moved and put back — nothing in the world is written: `mutates: false`.
  */
 const worldReaders: Flow = {
   name: 'world-readers',
@@ -2272,6 +2365,8 @@ const worldReaders: Flow = {
     const sleep = ctx.sleep ?? defaultSleep;
     const assertions = new Assertions();
     const session = await login(PRIMARY_ACCOUNT);
+    const saved: Tile = { x: session.playerX, y: session.playerY };
+    let camera: Tile | undefined;
     try {
       const here = (await listTowns(session)).find(t => t.name === GOVERNED_TOWN);
       assertions.check('the governed town is still listed', here !== undefined);
@@ -2322,25 +2417,20 @@ const worldReaders: Flow = {
       assertions.check('the facility dimensions are not empty', count > 0, String(count));
       assertions.check('the facility dimensions hold the town hall class', visualClass in dimensions, visualClass);
 
-      // Fire-and-forget: handleUpdateCamera answers nothing. With the view fields,
-      // updateCameraPosition emits SetViewedArea (session-only).
-      session.driver.send({
-        type: WsMessageType.REQ_UPDATE_CAMERA,
-        x: session.playerX,
-        y: session.playerY,
-        viewX: Math.max(0, session.playerX - 16),
-        viewY: Math.max(0, session.playerY - 16),
-        viewW: 32,
-        viewH: 32,
-      });
+      // A camera that differs from the saved position, so the read-back can tell it was sent.
+      const hall: Tile = { x: here.x, y: here.y };
+      camera = sameTile(hall, saved) ? { x: hall.x + 1, y: hall.y + 1 } : hall;
+      sendCamera(session, camera.x, camera.y);
       const after = await contextStatusAt(session, here.x, here.y);
       assertions.check('the gateway still answers after the camera update', typeof after === 'string');
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);
-      return report('world-readers', assertions, [], session);
     } finally {
       await logoff(session);
+      // Also after a throw: once the camera moved, it is put back. Never throws.
+      if (camera) await cameraReadBack(assertions, saved, camera);
     }
+    return report('world-readers', assertions, [], session);
   },
 };
 
@@ -2496,8 +2586,9 @@ function firstOpenableRanking(categories: RankingCategory[]): RankingCategory | 
  *
  * The profiles are read for a tycoon other than the session's own — the own branch of
  * `resolveTycoon` answers with the gateway's name — and never assert the echoed name
- * (`RenderTycoon.asp:55` renders the request's `Tycoon`). Banks and newspapers prove
- * reachability only: an empty list passes and its count is in the detail.
+ * (`RenderTycoon.asp:55` renders the request's `Tycoon`). Banks and newspapers are checked
+ * well-formed, their count in the detail; an empty one ends UNPROVEN (#1188) — a page that
+ * lists nothing proves only that it answered.
  */
 const searchMenuRead: Flow = {
   name: 'search-menu-read',
@@ -2570,6 +2661,9 @@ const searchMenuRead: Flow = {
         Array.isArray(banks.banks) && banks.banks.every(b => b.name !== ''),
         `${banks.banks.length} banks`,
       );
+      if (banks.banks.length === 0) {
+        assertions.unproven('a bank is listed', '0 banks — Banks.asp lists none on this world');
+      }
 
       const papers = await session.driver.request<WsRespSearchMenuNewspapers>(
         { type: WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS },
@@ -2580,6 +2674,12 @@ const searchMenuRead: Flow = {
         Array.isArray(papers.newspapers) && papers.newspapers.every(p => p.paperName !== ''),
         `${papers.newspapers.length} newspapers`,
       );
+      if (papers.newspapers.length === 0) {
+        assertions.unproven(
+          'a newspaper is listed',
+          '0 newspapers — Newspapers.asp:61-62 lists none on this world',
+        );
+      }
 
       const letter = PRIMARY_ACCOUNT.username.charAt(0).toUpperCase();
       const people = await session.driver.request<WsRespSearchMenuPeopleSearch>(
@@ -2631,16 +2731,34 @@ async function hallRead(
   }
 }
 
+/** One Lobby user-list read recorded as a check; never throws. */
+async function userListCheck(
+  session: LiveSession,
+  assertions: Assertions,
+  label: string,
+  holds: (users: ChatUser[]) => boolean,
+): Promise<void> {
+  try {
+    const users = await readChatUsers(session);
+    assertions.check(label, holds(users), users.map(u => u.name).join(', ') || '(empty)');
+  } catch (err: unknown) {
+    assertions.check(label, false, toErrorMessage(err));
+  }
+}
+
 /**
  * Live drive of the company list's Political Offices half (#1142): switch into the Mayor of
  * the governed town, read the world, switch back, read again.
  *
  * Side effects are session-only: the Interface Server drops a ClientView when its socket
  * closes (`TClientView.OnDisconnect`, `Interface Server/InterfaceServer.pas:1799-1813`). The
- * proof is the gateway answering `RESP_RDO_RESULT` only after `loginWorld` under the role
- * name and `selectCompany` succeeded. No check claims the reads answer "as the role":
- * `TTycoon.GetAllCompaniesCount` / `GetAllCompanies` walk the MasterRole
- * (`Kernel/Kernel.pas:10972-10992`), so neither can tell the identities apart.
+ * switch reply carries no identity (`result: ''` plus the position), and the identity is not
+ * proven by `GetAllCompaniesCount` / `GetAllCompanies`, which walk the MasterRole
+ * (`Kernel/Kernel.pas:10972-10992`). It is proven by the Lobby user list (#1188): the role
+ * ClientView logs on under the role name (`Interface Server/InterfaceServer.pas:3238`) and
+ * `GetUserList` lists clients by that name (`:3342-3358`) — the role after the switch,
+ * SPO_test3 after the switch back. A role already listed before the switch cannot tell this
+ * session's switch apart, so that step ends UNPROVEN.
  */
 const companySwitch: Flow = {
   name: 'company-switch',
@@ -2659,6 +2777,18 @@ const companySwitch: Flow = {
       const town = await findTown(session, GOVERNED_TOWN);
       const visualClass = await resolveVisualClass(session, town.x, town.y);
 
+      const roleName = role.ownerRole ?? '';
+      const namesRole = (users: ChatUser[]): boolean => users.some(u => sameName(u.name, roleName));
+      const roleLabel =
+        `the Lobby user list names ${roleName} — the role ClientView logged on under the role name ` +
+        '(Interface Server/InterfaceServer.pas:3238, :3342-3358)';
+      let before: ChatUser[] | undefined;
+      try {
+        before = await readChatUsers(session);
+      } catch (err: unknown) {
+        assertions.check('the Lobby user list answers before the switch', false, toErrorMessage(err));
+      }
+
       let back: { ok: boolean; detail: string };
       try {
         const there = await trySwitch(session, role);
@@ -2671,6 +2801,14 @@ const companySwitch: Flow = {
             assertions,
             'a world read answers on the role ClientView (REQ_BUILDING_DETAILS at the town hall)',
           );
+          if (before !== undefined && namesRole(before)) {
+            assertions.unproven(
+              roleLabel,
+              'the role was already listed before the switch — the list cannot tell this session’s switch apart',
+            );
+          } else if (before !== undefined) {
+            await userListCheck(session, assertions, roleLabel, namesRole);
+          }
         }
       } finally {
         back = await trySwitch(session, session.company);
@@ -2678,6 +2816,9 @@ const companySwitch: Flow = {
       assertions.check('the switch back to the own company answers RESP_RDO_RESULT', back.ok, back.detail);
       if (back.ok) {
         await hallRead(session, town, visualClass, assertions, 'the same world read answers after switching back');
+        await userListCheck(session, assertions, 'the Lobby user list names SPO_test3 after switching back', users =>
+          users.some(u => isSelf(u.name)),
+        );
       }
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);
@@ -7610,9 +7751,29 @@ async function attempt(assertions: Assertions, what: string, step: () => Promise
 }
 
 /**
- * The chat channel list and the Lobby's info (#1148). Read-only. The gateway prepends the
- * Lobby to every list (`getChatChannelList` in `chat-handler.ts`), so its presence proves
- * nothing — the assertion is that every entry is well-formed.
+ * The Lobby user list, as the session's own ClientView answers it: `TClientView.GetUserList`
+ * -> `TInterfaceServer.GetUserList(fCurrChannel)` walks every client whose current channel is
+ * the caller's, by the name it logged on under (`Interface Server/InterfaceServer.pas:
+ * 1635-1646`, `:3342-3358`, name set at `:3238`).
+ */
+async function readChatUsers(session: LiveSession): Promise<ChatUser[]> {
+  const resp = await session.driver.request<WsRespChatUserList>(
+    { type: WsMessageType.REQ_CHAT_GET_USERS },
+    WsMessageType.RESP_CHAT_USER_LIST,
+  );
+  return resp.users;
+}
+
+/**
+ * The chat channel list, the Lobby's user list and the Lobby's info (#1148, proof #1188).
+ * Read-only. The gateway prepends the Lobby to every list (`getChatChannelList` in
+ * `chat-handler.ts`), so its presence proves nothing — the list check is that every entry is
+ * well-formed. The membership proof is the user list, not the channel info: the info read
+ * lists `fHomeChannel.fMembers` (`Interface Server/InterfaceServer.pas:3419-3437`,
+ * `:4565-4575`), which `Logon` never fills — it only sets `fCurrChannel := fHomeChannel`
+ * (`:3227`), and only `ClientEnteredChannel` inserts (`:4601-4615`). `GetUserList` walks the
+ * clients by `fCurrChannel` (`:3342-3358`), so it names SPO_test3 once logged on. The info is
+ * still read, by the Lobby's server name `''`, and must be non-empty text.
  */
 const chatRead: Flow = {
   name: 'chat-read',
@@ -7638,12 +7799,22 @@ const chatRead: Flow = {
         wellFormed,
         Array.isArray(channels) ? `${channels.length} channel(s)` : 'not a list',
       );
+      const users = await readChatUsers(session);
+      assertions.check(
+        'the Lobby user list names SPO_test3 (GetUserList — Interface Server/InterfaceServer.pas:3227, :3342-3358)',
+        users.some(u => isSelf(u.name)),
+        `${users.length} user(s)`,
+      );
       // '' is the Lobby's server name (Interface Server/InterfaceServer.pas:2623, :4565-4575).
       const info = await session.driver.request<WsRespChatChannelInfo>(
         { type: WsMessageType.REQ_CHAT_GET_CHANNEL_INFO, channelName: '' },
         WsMessageType.RESP_CHAT_CHANNEL_INFO,
       );
-      assertions.check('the Lobby channel info is a string', typeof info.info === 'string');
+      assertions.check(
+        'the Lobby channel info is non-empty text',
+        typeof info.info === 'string' && info.info.trim() !== '',
+        typeof info.info === 'string' ? info.info || "''" : 'not a string',
+      );
       assertions.check('no gateway errors on the chat reads', session.driver.errors.length === 0);
       return report('chat-read', assertions, [], session);
     } finally {
@@ -7662,8 +7833,11 @@ const chatRead: Flow = {
  * - `ChatMsg` delivers only to the sender's channel, sender included (`:3902-3924`) — the
  *   `EVENT_CHAT_MSG` echo is a real server witness.
  * - `MsgCompositionChanged` loops over every client, sender included (`:3968-3980`,
- *   `TClientView.NotifyMsgCompositionState` `:2426-2430`) — typing and away are proven by the
- *   sender's own echo. AFK sticks until another state (`:1495-1502`), so the cleanup pushes idle.
+ *   `TClientView.NotifyMsgCompositionState` `:2426-2430`) — typing is proven by the sender's
+ *   own echo. The echo cannot carry away (the gateway maps only state '1' to typing), so away
+ *   is proven by the user list's AFK flag, which `MsgCompositionChanged` sets before the
+ *   broadcast (`:1495-1502`, listed by `GetUserList` `:3342-3358`). AFK sticks until another
+ *   state, so the cleanup pushes idle.
  * - The Lobby's server name is `''` (`:2623`, `:4565-4575`), never `'Lobby'`.
  * - A killed run cleans itself up: `DoLogOff` -> `ClientLeavedChannel` (`:2000`).
  */
@@ -7756,13 +7930,20 @@ const chatPrivateChannel: Flow = {
           false,
           'the typing-off self-echo (isTyping: false)',
         );
-        // The gateway maps only state '1' to typing (push-dispatcher.ts), so away is not
-        // distinguishable from idle over the WS contract: the claim is only that an event for
-        // SPO_test3 arrived after the AWAY push.
-        await awaitSelfTyping(
+        // The echo orders what follows: MsgCompositionChanged sets AFK before it broadcasts
+        // (:1495-1502), so after it the user list carries the away flag.
+        const awayEchoed = await awaitSelfTyping(
           { type: WsMessageType.REQ_CHAT_AWAY },
           false,
-          'a self-echo for SPO_test3 after AWAY (away reads as isTyping: false)',
+          'the AWAY self-echo for SPO_test3',
+        );
+        if (!awayEchoed) return;
+        await userListCheck(
+          session,
+          assertions,
+          'the channel user list marks SPO_test3 away (isAway) — ' +
+            'Interface Server/InterfaceServer.pas:1495-1502, :3342-3358',
+          users => users.some(u => isSelf(u.name) && u.isAway === true),
         );
       };
 
@@ -7854,10 +8035,14 @@ const chatPrivateChannel: Flow = {
 };
 
 /**
- * SPO_test3 chases Crazz, then stops (#1148). `TClientView.Chase` only inserts the chaser in
- * the target's list and moves the chaser's own view (`Interface Server/InterfaceServer.pas:
- * 1579-1607`) — nothing is broadcast, Crazz writes nothing. `DoLogOff` (`:2002`) and `Destroy`
- * (`:654`) end any chase a dead run leaves.
+ * SPO_test3 chases Crazz, then stops (#1148, proof #1188). `TClientView.Chase` inserts the
+ * chaser in the target's list and moves the chaser's own view (`Interface Server/
+ * InterfaceServer.pas:1579-1608`, `MoveTo` at `:1590`). The proof is SPO_test3's view
+ * following Crazz: Crazz sends one camera update, `SetViewedArea` ends with `UpdateChasers`
+ * (`:742`), which pushes every chaser `MoveTo(x + dx div 2, y + dy div 2)` (`:705-718`,
+ * `TClientView.MoveTo` `:2215-2219`), and the gateway forwards it as `EVENT_MOVE_TO`. The
+ * camera sits on Crazz's own saved position, so its logoff cookie is unchanged. `DoLogOff`
+ * (`:2002`) and `Destroy` (`:654`) end any chase a dead run leaves.
  */
 const chatChase: Flow = {
   name: 'chat-chase',
@@ -7871,12 +8056,32 @@ const chatChase: Flow = {
       const session = await login(PRIMARY_ACCOUNT);
       try {
         // attempt() never throws, so STOP_CHASE is sent whatever the chase answered.
-        await attempt(assertions, `CHASE ${SECONDARY_ACCOUNT.username} answered without error`, () =>
+        const from = session.driver.receivedCount();
+        const chased = await attempt(assertions, `CHASE ${SECONDARY_ACCOUNT.username} answered without error`, () =>
           session.driver.request<WsRespChatSuccess>(
             { type: WsMessageType.REQ_CHAT_CHASE, userName: SECONDARY_ACCOUNT.username },
             WsMessageType.RESP_CHAT_SUCCESS,
           ),
         );
+        if (chased) {
+          const view = sendCamera(crazz, crazz.playerX, crazz.playerY);
+          const ex = view.viewX + CAMERA_VIEW_SIZE / 2;
+          const ey = view.viewY + CAMERA_VIEW_SIZE / 2;
+          const label =
+            `SPO_test3's view follows ${SECONDARY_ACCOUNT.username}: EVENT_MOVE_TO at (${ex},${ey}) — ` +
+            'Interface Server/InterfaceServer.pas:705-718, :742, :1590';
+          await attempt(assertions, label, () =>
+            session.driver.waitFor(
+              m => {
+                const e = m as WsEventMoveTo;
+                return m.type === WsMessageType.EVENT_MOVE_TO && e.x === ex && e.y === ey;
+              },
+              TIMEOUTS.request,
+              label,
+              from,
+            ),
+          );
+        }
         await attempt(assertions, 'STOP_CHASE answered', () =>
           session.driver.request<WsRespChatSuccess>(
             { type: WsMessageType.REQ_CHAT_STOP_CHASE },

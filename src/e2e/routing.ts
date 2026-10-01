@@ -215,11 +215,11 @@ export const ROUTES: RouteRule[] = [
     // Before the broad wire-level rule below: the paper is not on the RDO wire
     // at all, so the governance flows would say nothing about it. newspaper-read itself is
     // not required (#1009): planitia keeps no newspaper issue and the bench cannot create
-    // one (News.pas:986), so it could only end UNPROVEN. The columns board read is required
-    // instead: it answers with or without columns.
+    // one (News.pas:986), so it could only end UNPROVEN. The columns board read stays required
+    // instead; a board with no column ends UNPROVEN too (#1188).
     test: /newspaper-handlers?\.ts$|^src\/client\/store\/newspaper-store\.ts$/,
     flows: ['newspaper-board-read'],
-    why: 'the town paper — newspaper-board-read reads the columns board, which answers with or without columns; newspaper-read stays nightly-only (News.pas:986, #1009)',
+    why: 'the town paper — newspaper-board-read reads the columns board, required, and an empty board ends UNPROVEN (#1188); newspaper-read stays nightly-only (News.pas:986, #1009)',
   },
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.
