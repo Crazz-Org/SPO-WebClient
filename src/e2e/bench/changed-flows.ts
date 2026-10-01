@@ -2,7 +2,7 @@
  * Diff -> the live flows it changed (doc/E2E-POLICY.md §4, "Changed and declared flows").
  *
  * The routing table sends a diff under src/e2e/ to no flow, so a card that adds or edits a
- * flow used to reach its gate with nothing to drive. This module reads the diff of the six
+ * flow used to reach its gate with nothing to drive. This module reads the diff of the seven
  * flow sources and names the flows it touched: a hunk inside a `FLOWS` entry requires that
  * flow; a hunk inside a shared helper requires every flow that reaches the helper, directly
  * or through another helper. scripts/verify-gate.js adds the result to `routing.required`.

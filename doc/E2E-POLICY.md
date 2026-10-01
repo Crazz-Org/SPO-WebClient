@@ -112,7 +112,7 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 | `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip` |
 | `src/client/renderer/**`; the component folders `mobile`, `hud`, `sheet`, `modals`, `map`, `search`, `chat`, `building`, `politics`, `mail`, `empire`, `login`, `common`, `command-palette`, `startup`, `tutorial` under `src/client/components/`; `src/client/report/*.tsx`; `src/client/App.tsx`, `main.tsx`, `client.ts`; `src/client/ui/**`, `src/client/hooks/**`; `src/client/store/ui-store.ts`; `*.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
-| `src/e2e/flows.ts`, `src/e2e/{fixtures,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
+| `src/e2e/flows.ts`, `src/e2e/{fixtures,research,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
 | `doc/**`, `*.md`, CI config, tooling | static only |
 
 The **login spine** (connect -> auth -> directory -> world login -> company select ->
@@ -158,8 +158,8 @@ requires that a flow the file's rule routes to sends each one, or that the reque
 The routing table sends `src/e2e/` to no flow, so the gate adds two more sets to the routed
 one and drives **routed ∪ changed ∪ declared** (`scripts/verify-gate.js`, stage 3):
 
-- **Changed** — `src/e2e/bench/changed-flows.ts` reads the diff of the six flow sources
-  (`src/e2e/flows.ts`, `fixtures.ts`, `probe.ts`, `session.ts`, `ws-driver.ts`,
+- **Changed** — `src/e2e/bench/changed-flows.ts` reads the diff of the seven flow sources
+  (`src/e2e/flows.ts`, `fixtures.ts`, `research.ts`, `probe.ts`, `session.ts`, `ws-driver.ts`,
   `live-log.ts`). A hunk inside a `FLOWS` entry requires that flow — an edited body, an added
   flow, a renamed flow under its new name — even when it is `NIGHTLY_ONLY`. A hunk inside a
   shared helper requires every flow that reaches the helper, directly or through another
