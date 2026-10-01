@@ -7837,7 +7837,9 @@ describe('inspector flows (#1154)', () => {
 
   function applyWrite(world: World, kind: Kind, w: Write): string {
     const p = w.params ?? {};
-    const cat = world.categories.find(c => c.available.some(i => i.id === p.inventionId) || c.developing.includes(p.inventionId));
+    const cat = world.categories.find(
+      c => c.available.some(i => i.id === p.inventionId) || c.developing.includes(p.inventionId) || c.completed.includes(p.inventionId),
+    );
     switch (w.property) {
       case 'property': {
         const key = p.propertyName === 'Commercials' ? 'Comercials' : p.propertyName;
@@ -7857,8 +7859,10 @@ describe('inspector flows (#1154)', () => {
         return `12:00 Queue Research: ${p.inventionId}, ${p.priority}`;
       case 'RDOCancelResearch':
         if (cat) {
+          // Removes a queued one, sells an owned one (Kernel/ResearchCenter.pas:354-372).
           cat.developing = move(cat.developing, p.inventionId);
-          cat.available.push({ id: p.inventionId, enabled: true });
+          cat.completed = move(cat.completed, p.inventionId);
+          if (!cat.available.some(i => i.id === p.inventionId)) cat.available.push({ id: p.inventionId, enabled: true });
         }
         return `12:00 Cancel Research: ${p.inventionId}`;
       default:
@@ -8235,8 +8239,6 @@ describe('inspector flows (#1154)', () => {
     });
 
     it.each([
-      ['owned', { available: [], developing: [], completed: [HH] }, /: already owned — a cancel on it would sell it/],
-      ['in development', { available: [], developing: [HH], completed: [] }, /: already in development — not queued by this flow/],
       ['listed but not enabled', { available: [{ id: HH, enabled: false }], developing: [], completed: [] }, /: listed but not enabled — its prerequisite Bars is not owned/],
     ])('is UNPROVEN and sends nothing when Happy Hour is %s', async (_label, cat, reason) => {
       const world = makeWorld({ categories: [{ available: [], developing: [], completed: [] }, cat] });
@@ -8282,16 +8284,75 @@ describe('inspector flows (#1154)', () => {
       expect(setProps(world)).toEqual([]);
     });
 
-    it('FAILs loudly and never cancels an invention bought at once', async () => {
+    it('FAILs loudly and sells back an invention bought at once, clearing the restore', async () => {
       const world = makeWorld({ queueBuys: true });
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['HappyHour is listed in development, not owned']);
       expect(result.assertions.find(a => /in development, not owned/.test(a.what))?.detail).toMatch(/^bought at once: HappyHour \(Price: \$1,000 Licence: \$0\)/);
-      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch']);
+      expect(world.categories[1].available.some(i => i.id === HH)).toBe(true);
+      expect(world.categories[1].completed).toEqual([]);
+      expect(pending(lock)).toEqual([]);
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.read().dirty).toBe(false);
+    });
+
+    it.each([
+      ['owned', { available: [], developing: [], completed: [HH] }],
+      ['in development', { available: [], developing: [HH], completed: [] }],
+    ])('cancels/sells Happy Hour first when it reads %s, then runs the round trip', async (_label, cat) => {
+      const world = makeWorld({ categories: [{ available: [], developing: [], completed: [] }, cat] });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.property)).toEqual(['RDOCancelResearch', 'RDOQueueResearch', 'RDOCancelResearch']);
+      expect(pending(lock)).toEqual([]);
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.read().dirty).toBe(false);
+    });
+
+    it('is UNPROVEN, queues nothing and records no restore when the pre-reset never reads available', async () => {
+      const world = makeWorld({ categories: [{ available: [], developing: [], completed: [] }, { available: [], developing: [], completed: [HH] }] });
+      world.apply = w => w.property !== 'RDOCancelResearch';
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toHaveLength(1);
+      expect(result.unproven[0]).toMatch(/^RDOQueueResearch — Happy Hour at HQ \(9,10\): read owned, cancel\/sell sent, still reads owned/);
+      expect(result.unproven[0]).toMatch(/nothing else sent$/);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOCancelResearch']);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('sends a second cancel when the first read-back is stale, then clears the restore', async () => {
+      const world = makeWorld();
+      let cancels = 0;
+      world.apply = w => w.property !== 'RDOCancelResearch' || ++cancels > 1;
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch', 'RDOCancelResearch']);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('keeps the pending restore, naming cancel/sell, when Happy Hour is still not available after the retry', async () => {
+      const world = makeWorld();
+      world.apply = w => w.property !== 'RDOCancelResearch';
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['the cancel logged its Cancel Research: line', 'the inventory reads HappyHour available again']);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch', 'RDOCancelResearch']);
       expect(pending(lock)).toHaveLength(1);
-      expect(pending(lock)[0].what).toMatch(/must NOT be cancelled/);
+      expect(pending(lock)[0].what).toMatch(/cancel\/sell research HappyHour/);
+      expect(pending(lock)[0].what).not.toMatch(/must NOT be cancelled/);
     });
 
     it('FAILs, with no cancel, and clears the pending restore when the queue still reads available', async () => {
@@ -8315,10 +8376,14 @@ describe('inspector flows (#1154)', () => {
       expect(lock.read().dirty).toBe(false);
     });
 
-    it('FAILs, with no cancel, and keeps the pending restore when Happy Hour reads absent after the queue', async () => {
+    it('FAILs, cancels anyway, and clears the pending restore when Happy Hour reads absent after the queue then available', async () => {
       const world = makeWorld();
       world.apply = w => {
-        if (w.property !== 'RDOQueueResearch') return true;
+        if (w.property === 'RDOCancelResearch') {
+          world.categories[1].available.push({ id: HH, enabled: true });
+          world.lines.push(`12:00 Cancel Research: ${HH}`);
+          return false;
+        }
         world.categories[1].available = world.categories[1].available.filter(i => i.id !== HH);
         world.lines.push(`12:00 Queue Research: ${w.params?.inventionId}, 10`);
         return false;
@@ -8327,9 +8392,10 @@ describe('inspector flows (#1154)', () => {
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
-      expect(failed(result)).toEqual(['HappyHour is listed in development, not owned', 'HappyHour is cancelled']);
-      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
-      expect(pending(lock)).toHaveLength(1);
+      expect(failed(result)).toEqual(['HappyHour is listed in development, not owned']);
+      expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/reads absent; cancel sent anyway$/);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch']);
+      expect(pending(lock)).toEqual([]);
     });
 
     it('still cancels after a throw that follows the queue', async () => {
@@ -8343,14 +8409,16 @@ describe('inspector flows (#1154)', () => {
       expect(pending(lock)).toEqual([]);
     });
 
-    it('keeps the pending restore when the cancel logs no line', async () => {
+    it('clears the pending restore when the inventory reads available but the cancel logs no line', async () => {
       const world = makeWorld({ silent: new Set(['RDOCancelResearch']) });
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
       expect(failed(result)).toEqual(['the cancel logged its Cancel Research: line']);
-      expect(pending(lock)).toHaveLength(1);
+      expect(pending(lock)).toEqual([]);
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.read().dirty).toBe(false);
     });
 
     it('FAILs details that do not answer for Happy Hour', async () => {
