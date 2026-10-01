@@ -7430,10 +7430,64 @@ async function startUpgrade(
   );
 }
 
+/** `readUpgrade` that answers a rejected read with its error text instead of a throw — "not yet". */
+async function tryReadUpgrade(session: LiveSession, fx: OwnFixture): Promise<UpgradeState | string> {
+  try {
+    return await readUpgrade(session, fx);
+  } catch (err: unknown) {
+    return toErrorMessage(err);
+  }
+}
+
+/** Nothing upgrading or pending, at the original level — the STOP is proven. */
+function idleAt(u: UpgradeState | string | undefined, level0: number): boolean {
+  return typeof u === 'object' && u.upgrading === 0 && u.pending === 0 && u.level === level0;
+}
+
+const upgradeOrError = (u: UpgradeState | string | undefined): string =>
+  typeof u === 'object' ? upgradeText(u) : `read failed: ${u ?? '(no read)'}`;
+
+/**
+ * AcceptCloning back to its original's truthiness, then one read of the upgrade tab — returned so
+ * the caller can use it as a second proof of the STOP.
+ */
+async function restoreCloning(
+  session: LiveSession,
+  fx: OwnFixture,
+  run: UpgradeRun,
+  assertions: Assertions,
+  suffix: string,
+): Promise<{ back: boolean; after: UpgradeState | string | undefined }> {
+  try {
+    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', run.cloning0);
+    assertions.check(
+      `AcceptCloning set back to ${run.cloning0 === '1' ? 'true' : 'false'}, confirmed by the gateway's live get${suffix}`,
+      r.confirmed === true,
+      `live get holds "${r.newValue}"`,
+    );
+    const after = await tryReadUpgrade(session, fx);
+    const cloning = typeof after === 'object' ? after.cloning : undefined;
+    assertions.check(
+      `AcceptCloning reads its original truthiness${suffix}`,
+      cloning === run.cloning0,
+      typeof after === 'object' ? `reads ${cloning ?? '(unread)'}, original ${run.cloning0}` : `read failed: ${after}`,
+    );
+    return { back: r.confirmed === true && cloning === run.cloning0, after };
+  } catch (err: unknown) {
+    assertions.check(`the AcceptCloning restore ran without a throw${suffix}`, false, `${toErrorMessage(err)} — pending restore kept`);
+    return { back: false, after: undefined };
+  }
+}
+
 /**
  * The STOP when the START went out, then — always — AcceptCloning back to its original's
- * truthiness, which also undoes the handler's own `-1`. The pending restore is cleared only when
- * the STOP is proven (line + zeros + the original level) and AcceptCloning reads its original.
+ * truthiness, which also undoes the handler's own `-1`. The read-back after the STOP polls past
+ * a failed read ("not yet"); the server's cached counters can read stale for ~2 min after a STOP
+ * (`TBlock.StopUpgrading` refreshes the cache before zeroing, Kernel/Kernel.pas:6554-6560;
+ * Kernel/KernelCache.pas:405), so the AcceptCloning restore's own read is a second chance. If that
+ * read still shows an upgrade running, one more STOP is sent (ignored when idle,
+ * Kernel/Kernel.pas:4694) and re-checked once. The pending restore is kept only when the upgrade
+ * is still provably running, every read failed, or AcceptCloning does not read its original.
  */
 async function undoUpgrade(
   session: LiveSession,
@@ -7442,7 +7496,9 @@ async function undoUpgrade(
   run: UpgradeRun,
   assertions: Assertions,
 ): Promise<void> {
-  let stopped = !run.startSent;
+  let proof: UpgradeState | string | undefined;
+  let polled = false;
+  let reachedPoll = false;
   if (run.startSent) {
     try {
       const window = await openLogWindow(run.url);
@@ -7451,41 +7507,75 @@ async function undoUpgrade(
       // The line carries no coordinates (Kernel/Kernel.pas:4689): the read-back attributes it.
       const line = await awaitMarker(window, { marker: LOG_MARKERS.RDOStopUpgrade }, TIMEOUTS.logSettle, undefined, ctx.now, ctx.sleep);
       assertions.check('the STOP logged Facility Stop Upgrade..', line !== null, line ?? '(no Facility Stop Upgrade.. line)');
-      const idle = await pollUntil(() => readUpgrade(session, fx), u => u.upgrading === 0 && u.pending === 0, ctx);
-      assertions.check('Upgrading and Pending read 0 after the STOP', idle.ok, upgradeText(idle.last));
-      const sameLevel = idle.last.level === run.level0;
+      const idle = await pollUntil(
+        () => tryReadUpgrade(session, fx),
+        u => typeof u === 'object' && u.upgrading === 0 && u.pending === 0,
+        ctx,
+      );
+      reachedPoll = true;
+      polled = idle.ok;
+      proof = idle.last;
+    } catch (err: unknown) {
+      assertions.check('the upgrade STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+    }
+  }
+  const lastPoll = proof;
+
+  let restored = await restoreCloning(session, fx, run, assertions, '');
+  if (!run.startSent) {
+    if (restored.back) ctx.lock.clearPendingRestore(run.key);
+    return;
+  }
+
+  let source = '';
+  if (!polled) {
+    // A failed restore read falls back on the poll's last state, never on a worse proof.
+    proof = typeof restored.after === 'object' || typeof lastPoll !== 'object' ? (restored.after ?? lastPoll) : lastPoll;
+    if (typeof restored.after === 'object') source = ' (from the read after the AcceptCloning restore)';
+  }
+  if (typeof proof === 'object' && (proof.upgrading > 0 || proof.pending > 0)) {
+    try {
+      if (run.cloning0 === '0') {
+        const set = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', '1');
+        assertions.check(
+          'AcceptCloning set true before the second STOP (manageConstructionImpl refuses otherwise)',
+          set.confirmed === true,
+          `live get holds "${set.newValue}"`,
+        );
+      }
+      const r = await requestUpgrade(session, fx, 'STOP_UPGRADE');
+      assertions.check('the gateway accepted the second STOP_UPGRADE', r.success === true, r.message);
+      restored = await restoreCloning(session, fx, run, assertions, ' (after the second STOP)');
+      proof = restored.after;
+      source = ' (after a second STOP)';
+    } catch (err: unknown) {
+      assertions.check('the second STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+    }
+  }
+
+  if (reachedPoll && proof !== undefined) {
+    const zeros = typeof proof === 'object' && proof.upgrading === 0 && proof.pending === 0;
+    assertions.check(
+      'Upgrading and Pending read 0 after the STOP',
+      zeros,
+      zeros
+        ? `${upgradeOrError(proof)}${source}`
+        : typeof proof === 'object'
+          ? `${upgradeText(proof)}${source} — still upgrading, pending restore kept`
+          : `every read failed: ${proof}, pending restore kept`,
+    );
+    if (typeof proof === 'object') {
+      const sameLevel = proof.level === run.level0;
       assertions.check(
         'UpgradeLevel equals its original after the STOP',
         sameLevel,
         sameLevel
           ? `level ${run.level0}`
-          : `a level completed before the STOP — downgrade is excluded, level ${run.level0}→${idle.last.level} kept`,
+          : `a level completed before the STOP — downgrade is excluded, level ${run.level0}→${proof.level} kept`,
       );
-      stopped = line !== null && idle.ok && sameLevel;
-    } catch (err: unknown) {
-      assertions.check('the upgrade STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
     }
   }
-
-  let cloningBack = false;
-  try {
-    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', run.cloning0);
-    assertions.check(
-      `AcceptCloning set back to ${run.cloning0 === '1' ? 'true' : 'false'}, confirmed by the gateway's live get`,
-      r.confirmed === true,
-      `live get holds "${r.newValue}"`,
-    );
-    const after = await readUpgrade(session, fx);
-    assertions.check(
-      'AcceptCloning reads its original truthiness',
-      after.cloning === run.cloning0,
-      `reads ${after.cloning ?? '(unread)'}, original ${run.cloning0}`,
-    );
-    cloningBack = r.confirmed === true && after.cloning === run.cloning0;
-  } catch (err: unknown) {
-    assertions.check('the AcceptCloning restore ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
-  }
-  if (stopped && cloningBack) ctx.lock.clearPendingRestore(run.key);
+  if (idleAt(proof, run.level0) && restored.back) ctx.lock.clearPendingRestore(run.key);
 }
 
 /** A chat name is SPO_test3's own — `ChatMsg`'s `From` may still carry `/AccDesc`. */
