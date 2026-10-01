@@ -522,6 +522,48 @@ describe('findFreeLot', () => {
       .toEqual({ x: 99, y: 199 });
   });
 
+  it('returns an all-unzoned lot for a blue zone requirement', async () => {
+    const w = oneLot();
+    w.zones = () => 0;
+    expect(await lot(w, 'blue zone')).toEqual({ x: 120, y: 220 });
+  });
+
+  it('returns a lot mixing blue and unzoned tiles', async () => {
+    const w = oneLot();
+    w.zones = (x, y) => ((x === 120 && y === 220) || (x === 121 && y === 221) ? 7 : 0);
+    expect(await lot(w)).toEqual({ x: 120, y: 220 });
+  });
+
+  it('refuses an unzoned lot holding one tile of another non-zero zone', async () => {
+    const w = new World();
+    w.towns = () => HELARTIA;
+    const plain = await lot(w);
+    expect(plain).not.toBeNull();
+    w.zones = (x, y) => (x === 99 && y === 199 ? 2 : 0);
+    const r = await lot(w);
+    expect(r).not.toBeNull();
+    expect(r).not.toEqual(plain);
+    const covers = r !== null && 99 >= r.x && 99 < r.x + 2 && 199 >= r.y && 199 < r.y + 2;
+    expect(covers).toBe(false);
+  });
+
+  it('refuses a reserved tile on unzoned land, with a zone requirement and without', async () => {
+    const w = oneLot();
+    w.zones = () => 0;
+    expect(await lot(w, 'blue zone')).toEqual({ x: 120, y: 220 });
+    w.zones = (x, y) => (x === 120 && y === 220 ? 1 : 0);
+    expect(await lot(w, 'blue zone')).toBeNull();
+    expect(await lot(w, '')).toBeNull();
+  });
+
+  it('keeps the nearest-to-the-hall order when the nearer lot is unzoned', async () => {
+    const w = new World();
+    w.towns = () => HELARTIA;
+    w.zones = (x, y) => (x === 120 && y === 220 ? 7 : 0);
+    expect(await findFreeLot(w.session(), { xsize: 1, ysize: 1 }, 'blue zone', { fetchImpl: w.fetchImpl() as unknown as typeof fetch }))
+      .toEqual({ x: 99, y: 199 });
+  });
+
   it('finds nothing when the hall tile reads no town value', async () => {
     const w = new World();
     const s = w.session();
@@ -675,6 +717,19 @@ describe('ensureFixtures', () => {
     expect(out.industry).toMatchObject({ x: 110, y: 228, visualClass: '4116' });
     expect(w.placed()).toHaveLength(0);
     expect(w.requests.some(r => r.type === WsMessageType.REQ_GET_BUILDING_CATEGORIES)).toBe(false);
+  });
+
+  it('builds the warehouse on an unzoned 4×4 lot when no yellow tile is in the window', async () => {
+    const w = new World();
+    ownAllBut(w, 'warehouse');
+    spyLog(w);
+    w.offer('PGIWHCOMMONUWMegaStorage', 1, '531', {
+      zoneRequirement: 'Building must be located in yellow zone or no zone at all.',
+      xsize: 4,
+      ysize: 4,
+    });
+    expect((await ensure(w)).warehouse).toMatchObject({ status: 'built', facilityClass: 'PGIWHCOMMONUWMegaStorage' });
+    expect(w.placed()).toHaveLength(1);
   });
 
   it('blocks every placement while the directory lists an owned construction site', async () => {
