@@ -18,9 +18,11 @@ import {
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
-  researchState, researchCost, lowerInterest,
+  researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
   type Flow, type FlowResult, type GateLinks,
 } from './flows';
+import { parseBuildingFocusResponse } from '@/server/map-parsers';
+import { ERROR_FacilityNotFound } from '@/shared/error-codes';
 import { buildReplyHeaders } from '@/client/store/mail-store';
 import { validatePicture } from '@/server/session/picture-transfer';
 import type { LoanInfo, TycoonProfileFull } from '@/shared/types/domain-types';
@@ -1780,11 +1782,25 @@ describe('newspaper-board-read', () => {
   const wellFormed = (r: { assertions: { what: string; detail?: string }[] }) =>
     r.assertions.find(a => /well-formed/.test(a.what));
 
-  it('passes on an empty board, its detail naming both counts', async () => {
+  it('ends UNPROVEN on an empty board, its detail naming both counts', async () => {
     arrange();
     const result = await flowByName('newspaper-board-read').run(ctx);
+    expect(result.status).toBe('UNPROVEN');
+    expect(wellFormed(result)).toMatchObject({ ok: true, detail: '0 columns, 0 tree entries' });
+    expect(result.unproven).toEqual([
+      'the board lists a column — Helartia Herald: 0 columns, 0 tree entries — nothing is posted, ' +
+        'and posting is excluded (News Server/NewsObject.pas:11-53)',
+    ]);
+  });
+
+  it.each([
+    ['a column only', { columns: [COLUMN] }],
+    ['a tree entry only', { tree: [{ ...COLUMN, depth: 0 }] }],
+  ])('passes on a board with %s', async (_label, board) => {
+    arrange({ board });
+    const result = await flowByName('newspaper-board-read').run(ctx);
     expect(result.status).toBe('PASS');
-    expect(wellFormed(result)?.detail).toBe('0 columns, 0 tree entries');
+    expect(result.unproven).toEqual([]);
   });
 
   it('passes on a populated board and counts it', async () => {
@@ -1848,6 +1864,8 @@ describe('zoning-alert-read', () => {
     noHtmlBody?: boolean;
     onRequest?: (msg: WsMessage) => void;
     focusResult?: 'ok' | 'error';
+    /** What the focus throws when `focusResult` is 'error' (default: the empty-tile message). */
+    focusError?: Error;
     focusBuildingId?: string;
   } = {}) {
     const {
@@ -1876,7 +1894,8 @@ describe('zoning-alert-read', () => {
             return { type: WsMessageType.RESP_MAIL_MESSAGE, message: { htmlBody } };
           case WsMessageType.REQ_BUILDING_FOCUS:
             if (focusResult === 'error') {
-              throw new WsDriverError('not found', 404, WsMessageType.REQ_BUILDING_FOCUS);
+              throw over.focusError ??
+                new WsDriverError(EMPTY_TILE_FOCUS_ERROR, ERROR_FacilityNotFound, WsMessageType.REQ_BUILDING_FOCUS);
             }
             return { type: WsMessageType.RESP_BUILDING_FOCUS, building: { buildingId: focusBuildingId } };
           case WsMessageType.REQ_BUILDING_UNFOCUS:
@@ -1937,7 +1956,31 @@ describe('zoning-alert-read', () => {
     const result = await flowByName('zoning-alert-read').run(ctx);
 
     expect(result.status).toBe('PASS');
-    expect(result.assertions.find(a => /building is gone/.test(a.what))).toMatchObject({ ok: true });
+    expect(result.assertions.find(a => /building is gone/.test(a.what))).toMatchObject({
+      ok: true,
+      detail: EMPTY_TILE_FOCUS_ERROR,
+    });
+  });
+
+  it.each([
+    ['a RESP_ERROR with another message, under the same code', new WsDriverError('not found', ERROR_FacilityNotFound, WsMessageType.REQ_BUILDING_FOCUS)],
+    ['a RESP_ERROR 404', new WsDriverError('not found', 404, WsMessageType.REQ_BUILDING_FOCUS)],
+    ['a timeout', new Error('Timed out after 20000 ms waiting for RESP_BUILDING_FOCUS')],
+    ['the empty-tile message outside a RESP_ERROR', new Error(EMPTY_TILE_FOCUS_ERROR)],
+  ])('FAILs on %s — only the empty-tile message proves the building is gone', async (_label, focusError) => {
+    arrange({ focusResult: 'error', focusError });
+
+    const result = await flowByName('zoning-alert-read').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.filter(a => !a.ok)).toEqual([
+      expect.objectContaining({ what: expect.stringMatching(/building is gone/), detail: focusError.message }),
+    ]);
+  });
+
+  it('pins EMPTY_TILE_FOCUS_ERROR to what parseBuildingFocusResponse throws on an empty tile', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(() => parseBuildingFocusResponse('', 0, 0)).toThrow(EMPTY_TILE_FOCUS_ERROR);
   });
 });
 
@@ -2590,12 +2633,24 @@ describe('search-menu-read', () => {
     expect(flowByName('search-menu-read').mutates).toBe(false);
   });
 
-  it('passes on an empty newspaper list and records the counts', async () => {
+  it('ends UNPROVEN on an empty newspaper list and records the counts', async () => {
     arrange({ newspapers: [] });
     const result = await run();
-    expect(result.status).toBe('PASS');
+    expect(result.status).toBe('UNPROVEN');
+    expect(failed(result)).toEqual([]);
     expect(result.assertions.find(a => a.what.includes('newspapers'))?.detail).toBe('0 newspapers');
     expect(result.assertions.find(a => a.what.includes('banks'))?.detail).toBe('1 banks');
+    expect(result.unproven).toEqual([
+      'a newspaper is listed — 0 newspapers — Newspapers.asp:61-62 lists none on this world',
+    ]);
+  });
+
+  it('ends UNPROVEN on an empty bank list, naming the count', async () => {
+    arrange({ banks: [] });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(failed(result)).toEqual([]);
+    expect(result.unproven).toEqual(['a bank is listed — 0 banks — Banks.asp lists none on this world']);
   });
 
   it('fails on a malformed bank or newspaper row', async () => {
@@ -3063,6 +3118,12 @@ describe('world-readers', () => {
     event?: unknown;
     surface?: (r: SurfaceReq) => { width: number; height: number; rows: number[][] };
     dimensions?: Record<string, unknown>;
+    /** The camera cookie (LastX.0/LastY.0) the first login reads. */
+    cookie?: { x: number; y: number };
+    /** Whether the n-th logoff (1-based) saves the session's last camera. */
+    saves?: (n: number) => boolean;
+    /** The n-th login (1-based) throws. */
+    loginFails?: (n: number) => boolean;
   } = {}) {
     const {
       towns = [HELARTIA],
@@ -3070,7 +3131,10 @@ describe('world-readers', () => {
       event = null,
       surface = (r: SurfaceReq) => ({ width: r.y2 - r.y1 + 1, height: r.x2 - r.x1 + 1, rows: grid(r.y2 - r.y1 + 1, r.x2 - r.x1 + 1) }),
       dimensions = { '5': { visualClass: '5' } },
+      saves = () => true,
+      loginFails = () => false,
     } = over;
+    const cookie = { ...(over.cookie ?? { x: 120, y: 80 }) };
     const requests: WsMessage[] = [];
     let statusReads = 0;
     const stub = { ...stubSession(msg => {
@@ -3091,12 +3155,30 @@ describe('world-readers', () => {
         default:
           return undefined;
       }
-    }), playerX: 120, playerY: 80 };
-    jest.spyOn(session, 'login').mockResolvedValue(stub);
-    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    }), playerX: 0, playerY: 0 };
+    // savePlayerPosition at logoff: the session's last camera, never (0,0) (spo_session.ts).
+    let camera: { x: number; y: number } | undefined;
+    let logins = 0;
+    let logoffs = 0;
+    const cameraSends = stub.driver.send as unknown as jest.Mock;
+    cameraSends.mockImplementation((msg: { type: string; x: number; y: number }) => {
+      if (msg.type === WsMessageType.REQ_UPDATE_CAMERA) camera = { x: msg.x, y: msg.y };
+    });
+    jest.spyOn(session, 'login').mockImplementation(async () => {
+      if (loginFails(++logins)) throw new Error(`login ${logins} refused`);
+      camera = undefined;
+      stub.playerX = cookie.x;
+      stub.playerY = cookie.y;
+      return stub;
+    });
+    jest.spyOn(session, 'logoff').mockImplementation(async () => {
+      if (saves(++logoffs) && camera && !(camera.x === 0 && camera.y === 0)) Object.assign(cookie, camera);
+    });
     const sleep = jest.fn(async (_ms: number) => undefined);
     const run = () => runFlow(flowByName('world-readers'), { ...ctx, sleep });
-    return { requests, sleep, run, driver: stub.driver as unknown as { send: jest.Mock; request: jest.Mock } };
+    const cameras = () =>
+      cameraSends.mock.calls.map(([m]) => m as { type: string }).filter(m => m.type === WsMessageType.REQ_UPDATE_CAMERA);
+    return { requests, sleep, run, cookie, cameras, logins: () => logins, driver: stub.driver as unknown as { send: jest.Mock; request: jest.Mock } };
   }
   const detail = (r: FlowResult, what: RegExp) => r.assertions.find(a => what.test(a.what));
 
@@ -3194,11 +3276,93 @@ describe('world-readers', () => {
     expect(requests[requests.length - 1].type).toBe(WsMessageType.REQ_CONTEXT_STATUS);
   });
 
+  it('moves the camera to the hall, reads the cookie back at a new login, puts it back, and confirms it', async () => {
+    const { run, cameras, cookie, logins } = arrange();
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(cameras()).toEqual([
+      { type: WsMessageType.REQ_UPDATE_CAMERA, x: 100, y: 50, viewX: 84, viewY: 34, viewW: 32, viewH: 32 },
+      { type: WsMessageType.REQ_UPDATE_CAMERA, x: 120, y: 80, viewX: 104, viewY: 64, viewW: 32, viewH: 32 },
+    ]);
+    expect(detail(result, /reads back the camera sent/)).toMatchObject({ ok: true, detail: 'read (100,50), sent (100,50)' });
+    expect(detail(result, /cookie is restored/)).toMatchObject({ ok: true, detail: 'read (120,80), original (120,80)' });
+    expect(logins()).toBe(3);
+    expect(cookie).toEqual({ x: 120, y: 80 });
+  });
+
+  it('FAILs when the camera never reaches the cookie — a sent camera is not a proof', async () => {
+    const { run } = arrange({ saves: () => false });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.filter(a => !a.ok)).toEqual([
+      { what: 'the camera cookie reads back the camera sent', ok: false, detail: 'read (120,80), sent (100,50)' },
+    ]);
+  });
+
+  it('FAILs when the camera is not put back', async () => {
+    const { run } = arrange({ saves: n => n !== 2 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.filter(a => !a.ok)).toEqual([
+      { what: 'the camera cookie is restored', ok: false, detail: 'read (100,50), original (120,80)' },
+    ]);
+  });
+
+  it('ends UNPROVEN on the restore when the saved position is (0,0), with no third login', async () => {
+    const { run, logins } = arrange({ cookie: { x: 0, y: 0 } });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toEqual([
+      'the camera cookie is restored — the saved position was (0,0), which savePlayerPosition never writes (spo_session.ts)',
+    ]);
+    expect(logins()).toBe(2);
+  });
+
+  it('moves the camera one tile off the hall when the saved position is the hall', async () => {
+    const { run, cameras } = arrange({ cookie: { x: 100, y: 50 } });
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(cameras()[0]).toMatchObject({ x: 101, y: 51 });
+    expect(detail(result, /reads back the camera sent/)?.detail).toBe('read (101,51), sent (101,51)');
+  });
+
+  it('FAILs the read-back when its login is refused, and tries no restore login', async () => {
+    const { run, logins } = arrange({ loginFails: n => n === 2 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.filter(a => !a.ok)).toEqual([
+      { what: 'the camera cookie reads back the camera sent', ok: false, detail: 'login 2 refused' },
+    ]);
+    expect(logins()).toBe(2);
+  });
+
+  it('FAILs the restore when its login is refused', async () => {
+    const { run } = arrange({ loginFails: n => n === 3 });
+    const result = await run();
+    expect(result.assertions.filter(a => !a.ok)).toEqual([
+      { what: 'the camera cookie is restored', ok: false, detail: 'login 3 refused' },
+    ]);
+  });
+
+  it('still puts the camera back when a read after the camera update throws', async () => {
+    const { run, cookie, driver } = arrange();
+    const request = driver.request.getMockImplementation() as (m: WsMessage) => Promise<unknown>;
+    let statusReads = 0;
+    driver.request.mockImplementation(async (m: WsMessage) => {
+      if (m.type === WsMessageType.REQ_CONTEXT_STATUS && ++statusReads === 2) throw new Error('status timed out');
+      return request(m);
+    });
+    const result = await run();
+    expect(result).toMatchObject({ status: 'FAIL', error: 'status timed out' });
+    expect(cookie).toEqual({ x: 120, y: 80 });
+  });
+
   it('FAILs when the governed town is missing', async () => {
-    const { run } = arrange({ towns: [] });
+    const { run, logins } = arrange({ towns: [] });
     const result = await run();
     expect(result.status).toBe('FAIL');
     expect(result.assertions.find(a => !a.ok)?.what).toMatch(/still listed/);
+    expect(logins()).toBe(1);
   });
 });
 
@@ -3213,14 +3377,32 @@ describe('company-switch', () => {
     companies?: { id: string; name: string; ownerRole?: string }[];
     switchFails?: (n: number) => boolean;
     readFails?: (n: number) => boolean;
+    /** The Lobby user list's names, given the current identity (default: that identity only). */
+    users?: (identity: string) => string[];
+    /** The n-th user-list read (1-based) times out. */
+    usersFail?: (n: number) => boolean;
   } = {}) {
-    const { companies = [OWN, MINISTRY, MAYOR], switchFails = () => false, readFails = () => false } = over;
+    const {
+      companies = [OWN, MINISTRY, MAYOR],
+      switchFails = () => false,
+      readFails = () => false,
+      users = (identity: string) => [identity],
+      usersFail = () => false,
+    } = over;
     const requests: WsMessage[] = [];
     let switches = 0;
     let reads = 0;
+    let userReadCount = 0;
+    let identity = 'SPO_test3';
     const stub = { ...stubSession(msg => {
       requests.push(msg);
       switch (msg.type) {
+        case WsMessageType.REQ_CHAT_GET_USERS:
+          if (usersFail(++userReadCount)) throw new Error('user list timed out');
+          return {
+            type: WsMessageType.RESP_CHAT_USER_LIST,
+            users: users(identity).map(name => ({ name, id: '1', isAway: false })),
+          };
         case WsMessageType.REQ_SEARCH_MENU_TOWNS:
           return { type: WsMessageType.RESP_SEARCH_MENU_TOWNS, towns: [HELARTIA] };
         case WsMessageType.REQ_MAP_LOAD:
@@ -3230,6 +3412,7 @@ describe('company-switch', () => {
           return { type: WsMessageType.RESP_BUILDING_DETAILS, details: { templateName: 'TownHall', tabs: [] } };
         case WsMessageType.REQ_SWITCH_COMPANY:
           if (switchFails(++switches)) throw rdoError(msg);
+          identity = (msg as unknown as { company: { ownerRole?: string } }).company.ownerRole ?? 'SPO_test3';
           return { type: WsMessageType.RESP_RDO_RESULT, result: '' };
         default:
           return undefined;
@@ -3242,8 +3425,13 @@ describe('company-switch', () => {
       .filter(m => m.type === WsMessageType.REQ_SWITCH_COMPANY)
       .map(m => (m as unknown as { company: { id: string } }).company.id);
     const detailReads = () => requests.filter(m => m.type === WsMessageType.REQ_BUILDING_DETAILS).length;
-    return { run, switched, detailReads, logoff };
+    const userReads = () => requests.filter(m => m.type === WsMessageType.REQ_CHAT_GET_USERS).length;
+    return { run, switched, detailReads, userReads, logoff };
   }
+  const ROLE_CHECK =
+    'the Lobby user list names Mayor of Helartia — the role ClientView logged on under the role name ' +
+    '(Interface Server/InterfaceServer.pas:3238, :3342-3358)';
+  const BACK_CHECK = 'the Lobby user list names SPO_test3 after switching back';
 
   it('is read-only and required', () => {
     expect(flowByName('company-switch').mutates).toBe(false);
@@ -3252,12 +3440,55 @@ describe('company-switch', () => {
   });
 
   it('PASSes: switches to the Mayor entry (not the Minister listed first), reads, switches back, reads', async () => {
-    const { run, switched, detailReads, logoff } = arrange();
+    const { run, switched, detailReads, userReads, logoff } = arrange();
     const result = await run();
     expect(result.status).toBe('PASS');
     expect(switched()).toEqual(['7', '1']);
     expect(detailReads()).toBe(2);
+    // before the switch, as the role, after the switch back
+    expect(userReads()).toBe(3);
+    expect(result.assertions.find(a => a.what === ROLE_CHECK)).toMatchObject({ ok: true, detail: 'Mayor of Helartia' });
+    expect(result.assertions.find(a => a.what === BACK_CHECK)).toMatchObject({ ok: true, detail: 'SPO_test3' });
     expect(logoff).toHaveBeenCalled();
+  });
+
+  it('FAILs when the user list never names the role — a switch that answered is not a proof', async () => {
+    const { run } = arrange({ users: () => ['SPO_test3'] });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.filter(a => !a.ok).map(a => a.what)).toEqual([ROLE_CHECK]);
+  });
+
+  it('FAILs when the user list does not name SPO_test3 after switching back', async () => {
+    const { run } = arrange({ users: identity => (identity === 'SPO_test3' ? [] : [identity]) });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.filter(a => !a.ok)).toEqual([{ what: BACK_CHECK, ok: false, detail: '(empty)' }]);
+  });
+
+  it('ends UNPROVEN when the role was already listed before the switch', async () => {
+    const { run } = arrange({ users: identity => [identity, 'Mayor of Helartia'] });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven).toEqual([
+      `${ROLE_CHECK} — the role was already listed before the switch — the list cannot tell this session’s switch apart`,
+    ]);
+  });
+
+  it('FAILs when the user list read before the switch throws, and still switches back', async () => {
+    const { run, switched } = arrange({ usersFail: n => n === 1 });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(switched()).toEqual(['7', '1']);
+    expect(result.assertions.filter(a => !a.ok)).toEqual([
+      { what: 'the Lobby user list answers before the switch', ok: false, detail: 'user list timed out' },
+    ]);
+  });
+
+  it('FAILs the role check when the user list read as the role throws', async () => {
+    const { run } = arrange({ usersFail: n => n === 2 });
+    const result = await run();
+    expect(result.assertions.filter(a => !a.ok)).toEqual([{ what: ROLE_CHECK, ok: false, detail: 'user list timed out' }]);
   });
 
   it('matches the Mayor entry case-insensitively', async () => {
@@ -5503,6 +5734,27 @@ describe('inspector helpers (#1152)', () => {
     expect(outputPriceRefusal(undefined, 'SPO_test3 - Green')).toMatch(/header/);
   });
 
+  it('outputPriceRefusal accepts clients of any of several own companies', () => {
+    const own = { companies: new Set(['SPO_test3 - Green', 'Yellow Inc. TEST']), lots: new Set<string>() };
+    const conns = [conn('Shop A', 'SPO_test3 - Green', 1, 2), conn('Import Storage 4', 'Yellow Inc. TEST', 928, 820)];
+    expect(outputPriceRefusal(product({ connections: conns, connectionCount: 2 }), own)).toBeNull();
+  });
+
+  it("outputPriceRefusal accepts a client of unknown company on one of the tycoon's lots", () => {
+    const own = { companies: new Set(['SPO_test3 - Green']), lots: new Set(['924,820']) };
+    expect(outputPriceRefusal(product({ connections: [conn('Export Storage 4', '?', 924, 820)], connectionCount: 1 }), own)).toBeNull();
+  });
+
+  it('outputPriceRefusal with an own set still refuses a foreign client, the row cap and a missing header', () => {
+    const own = { companies: new Set(['SPO_test3 - Green', 'Yellow Inc. TEST']), lots: new Set(['924,820']) };
+    const mine = conn('Shop A', 'Yellow Inc. TEST', 1, 2);
+    expect(outputPriceRefusal(product({ connections: [mine, conn('X', 'Other Co', 5, 6)], connectionCount: 2 }), own))
+      .toMatch(/another company: X \(5,6\) of Other Co$/);
+    expect(outputPriceRefusal(product({ connections: [mine], connectionCount: 25 }), own)).toMatch(/25 client/);
+    expect(outputPriceRefusal(product({ pricePc: undefined }), own)).toMatch(/header/);
+    expect(outputPriceRefusal(undefined, own)).toMatch(/header/);
+  });
+
   it('stoppedBit reads bit $04 of Trouble', () => {
     expect(stoppedBit('0')).toBe('0');
     expect(stoppedBit('4')).toBe('1');
@@ -5590,10 +5842,13 @@ describe('inspector flows (#1152)', () => {
     writes: Write[];
     lines: string[];
     requests: WsMessage[];
+    /** What the directory lists for SPO_test3 (`listTycoonFacilities`). */
+    tycoon?: { companies: string[]; facilities: fixtures.TycoonFacility[] };
   }
 
   function makeWorld(over: Partial<World> = {}): World {
     return {
+      tycoon: { companies: ['SPO_test3 - Green'], facilities: [] },
       storeTabs: ['srvGeneral', 'supplies', 'workforce'],
       srvPrices0: '120',
       salaries: ['150', '100', '90'],
@@ -5706,6 +5961,7 @@ describe('inspector flows (#1152)', () => {
       if (kind.id === 'store') return found.store === false ? { kind: 'store', reason: 'none in Helartia' } : { kind: 'store', found: STORE };
       return found.industry === false ? { kind: 'industry', reason: 'under construction' } : { kind: 'industry', found: INDUSTRY };
     });
+    jest.spyOn(fixtures, 'listTycoonFacilities').mockImplementation(async () => world.tycoon ?? { companies: [], facilities: [] });
     jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
     jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
       if (typeof proof !== 'object') return null;
@@ -5934,6 +6190,38 @@ describe('inspector flows (#1152)', () => {
       ]);
       expect(result.probes[0].logLine).toBe('12:00 - Fac(30,40) Output price set: Chemicals to 101');
       expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    const gate1221 = () => product({
+      name: 'Raw Chemicals',
+      connections: [conn('Import Storage 4', 'Yellow Inc. TEST', 928, 820), conn('Export Storage 4', 'Yellow Inc. TEST', 924, 820)],
+      connectionCount: 2,
+    });
+
+    it("drives a gate whose clients belong only to SPO_test3's second company (gate of #1221)", async () => {
+      const world = makeWorld({ products: [gate1221()], tycoon: { companies: ['SPO_test3 - Green', 'Yellow Inc. TEST'], facilities: [] } });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('industry-output-price', lock);
+      expect(result.status).toBe('PASS');
+      expect(result.unproven.filter(u => u.startsWith('RDOSetOutputPrice'))).toEqual([]);
+      expect(world.writes).toEqual([
+        { property: 'RDOSetOutputPrice', value: '101', params: { fluidId: 'Chemicals' } },
+        { property: 'RDOSetOutputPrice', value: '100', params: { fluidId: 'Chemicals' } },
+      ]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it("drives a gate whose clients sit on SPO_test3's facility lots", async () => {
+      const facilities = [
+        { company: 'Yellow Inc. TEST', x: 928, y: 820, name: 'Import Storage 4' },
+        { company: 'Yellow Inc. TEST', x: 924, y: 820, name: 'Export Storage 4' },
+      ];
+      const world = makeWorld({ products: [gate1221()], tycoon: { companies: ['SPO_test3 - Green'], facilities } });
+      arrange(world);
+      const result = await run('industry-output-price');
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.property)).toEqual(['RDOSetOutputPrice', 'RDOSetOutputPrice']);
     });
 
     it('writes nothing when a product client belongs to another company (UNPROVEN)', async () => {
@@ -7728,6 +8016,15 @@ describe('inspector flows (#1154)', () => {
     /** A level completes before the STOP. */
     levelUpOnStop?: boolean;
     startThrows?: boolean;
+    /** Upgrade-tab reads after the first STOP that still return the stale `Upgrading 1, Pending 1`. */
+    staleReads?: number;
+    /** 1-based indices of upgrade-tab reads after the first STOP that time out. */
+    throwReads?: number[];
+    /** STOPs that leave the upgrade running. */
+    stopsIgnored?: number;
+    secondStopThrows?: boolean;
+    stops?: number;
+    readsAfterStop?: number;
     events: string[];
     writes: Write[];
     lines: string[];
@@ -7771,7 +8068,7 @@ describe('inspector flows (#1154)', () => {
 
   function applyWrite(world: World, kind: Kind, w: Write): string {
     const p = w.params ?? {};
-    const cat = world.categories.find(c => c.available.some(i => i.id === p.inventionId) || c.developing.includes(p.inventionId));
+    const cat = world.categories.find(c => c.available.some(i => i.id === p.inventionId) || c.developing.includes(p.inventionId) || c.completed.includes(p.inventionId));
     switch (w.property) {
       case 'property': {
         const key = p.propertyName === 'Commercials' ? 'Comercials' : p.propertyName;
@@ -7791,8 +8088,10 @@ describe('inspector flows (#1154)', () => {
         return `12:00 Queue Research: ${p.inventionId}, ${p.priority}`;
       case 'RDOCancelResearch':
         if (cat) {
+          // Removes a queued invention, sells an owned one (Kernel/ResearchCenter.pas:354-372).
           cat.developing = move(cat.developing, p.inventionId);
-          cat.available.push({ id: p.inventionId, enabled: true });
+          cat.completed = move(cat.completed, p.inventionId);
+          if (!cat.available.some(i => i.id === p.inventionId)) cat.available.push({ id: p.inventionId, enabled: true });
         }
         return `12:00 Cancel Research: ${p.inventionId}`;
       default:
@@ -7809,8 +8108,11 @@ describe('inspector flows (#1154)', () => {
       if (world.upgradeMoves !== false) world.upgrade.Pending = '1';
     } else {
       world.lines.push('12:00 Facility Stop Upgrade..');
-      world.upgrade.Upgrading = '0';
-      world.upgrade.Pending = '0';
+      world.stops = (world.stops ?? 0) + 1;
+      if (world.secondStopThrows && world.stops === 2) throw new Error('socket died on the second STOP');
+      const ignored = world.stops <= (world.stopsIgnored ?? 0);
+      world.upgrade.Upgrading = ignored ? '1' : '0';
+      world.upgrade.Pending = ignored ? '1' : '0';
       if (world.levelUpOnStop) world.upgrade.UpgradeLevel = String(Number(world.upgrade.UpgradeLevel) + 1);
     }
     return { type: WsMessageType.RESP_BUILDING_UPGRADE, success: true, action };
@@ -7828,7 +8130,13 @@ describe('inspector flows (#1154)', () => {
         case WsMessageType.REQ_BUILDING_TAB_DATA: {
           const kind = kindAt(m);
           if (m.tabId !== TAB[kind]) throw new Error(`unexpected tab ${String(m.tabId)}`);
-          return { groups: { [TAB[kind]]: Object.entries(groupOf(world, kind)).map(([k, v]) => pv(k, v)) } };
+          let held = groupOf(world, kind);
+          if (kind === 'industry' && world.stops) {
+            const n = (world.readsAfterStop = (world.readsAfterStop ?? 0) + 1);
+            if (world.throwReads?.includes(n)) throw new Error('Timed out after 30000 ms waiting for RESP_BUILDING_TAB_DATA');
+            if (n <= (world.staleReads ?? 0)) held = { ...held, Upgrading: '1', Pending: '1' };
+          }
+          return { groups: { [TAB[kind]]: Object.entries(held).map(([k, v]) => pv(k, v)) } };
         }
         case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
           const kind = kindAt(m);
@@ -8160,8 +8468,6 @@ describe('inspector flows (#1154)', () => {
     });
 
     it.each([
-      ['owned', { available: [], developing: [], completed: [HH] }, /: already owned — a cancel on it would sell it/],
-      ['in development', { available: [], developing: [HH], completed: [] }, /: already in development — not queued by this flow/],
       ['listed but not enabled', { available: [{ id: HH, enabled: false }], developing: [], completed: [] }, /: listed but not enabled — its prerequisite Bars is not owned/],
     ])('is UNPROVEN and sends nothing when Happy Hour is %s', async (_label, cat, reason) => {
       const world = makeWorld({ categories: [{ available: [], developing: [], completed: [] }, cat] });
@@ -8207,16 +8513,75 @@ describe('inspector flows (#1154)', () => {
       expect(setProps(world)).toEqual([]);
     });
 
-    it('FAILs loudly and never cancels an invention bought at once', async () => {
+    it.each([
+      ['owned', { available: [], developing: [], completed: [HH] }],
+      ['in development', { available: [], developing: [HH], completed: [] }],
+    ])('cancels/sells Happy Hour first when it reads %s, then runs the round trip clean', async (_label, cat) => {
+      const world = makeWorld({ categories: [{ available: [], developing: [], completed: [] }, cat] });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.property)).toEqual(['RDOCancelResearch', 'RDOQueueResearch', 'RDOCancelResearch']);
+      expect(pending(lock)).toEqual([]);
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.read().dirty).toBe(false);
+    });
+
+    it('is UNPROVEN, queues nothing and records no restore when the pre-reset never reads available', async () => {
+      const world = makeWorld({
+        categories: [{ available: [], developing: [], completed: [] }, { available: [], developing: [], completed: [HH] }],
+        apply: w => w.property !== 'RDOCancelResearch',
+      });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toHaveLength(1);
+      expect(result.unproven[0]).toMatch(/^RDOQueueResearch — Happy Hour at HQ \(9,10\): read owned/);
+      expect(result.unproven[0]).toMatch(/nothing else sent$/);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOCancelResearch']);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('FAILs an invention bought at once, sells it back and clears the restore', async () => {
       const world = makeWorld({ queueBuys: true });
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
+      expect(failed(result)).toEqual(['HappyHour is listed in development, not owned']);
       expect(result.assertions.find(a => /in development, not owned/.test(a.what))?.detail).toMatch(/^bought at once: HappyHour \(Price: \$1,000 Licence: \$0\)/);
-      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch']);
+      expect(world.categories[1].available.map(i => i.id)).toContain(HH);
+      expect(world.categories[1].completed).toEqual([]);
+      expect(pending(lock)).toEqual([]);
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.read().dirty).toBe(false);
+    });
+
+    it('sends a second cancel when the first read-back is stale, then clears the restore', async () => {
+      let cancels = 0;
+      const world = makeWorld({ apply: w => w.property !== 'RDOCancelResearch' || ++cancels > 1 });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch', 'RDOCancelResearch']);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('keeps a cancel/sell restore when Happy Hour is still not available after the retry', async () => {
+      const world = makeWorld({ apply: w => w.property !== 'RDOCancelResearch' });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('research-roundtrip', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toContain('the inventory reads HappyHour available again');
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch', 'RDOCancelResearch']);
       expect(pending(lock)).toHaveLength(1);
-      expect(pending(lock)[0].what).toMatch(/must NOT be cancelled/);
+      expect(pending(lock)[0].what).toMatch(/cancel\/sell research HappyHour/);
+      expect(pending(lock)[0].what).not.toMatch(/must NOT be cancelled/);
     });
 
     it('FAILs, with no cancel, and clears the pending restore when the queue still reads available', async () => {
@@ -8240,9 +8605,14 @@ describe('inspector flows (#1154)', () => {
       expect(lock.read().dirty).toBe(false);
     });
 
-    it('FAILs, with no cancel, and keeps the pending restore when Happy Hour reads absent after the queue', async () => {
+    it('FAILs, still cancels, and clears the pending restore when Happy Hour reads absent after the queue', async () => {
       const world = makeWorld();
       world.apply = w => {
+        if (w.property === 'RDOCancelResearch') {
+          world.categories[1].available.push({ id: HH, enabled: true });
+          world.lines.push(`12:00 Cancel Research: ${w.params?.inventionId}`);
+          return false;
+        }
         if (w.property !== 'RDOQueueResearch') return true;
         world.categories[1].available = world.categories[1].available.filter(i => i.id !== HH);
         world.lines.push(`12:00 Queue Research: ${w.params?.inventionId}, 10`);
@@ -8252,9 +8622,10 @@ describe('inspector flows (#1154)', () => {
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
-      expect(failed(result)).toEqual(['HappyHour is listed in development, not owned', 'HappyHour is cancelled']);
-      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch']);
-      expect(pending(lock)).toHaveLength(1);
+      expect(failed(result)).toEqual(['HappyHour is listed in development, not owned']);
+      expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/cancel sent anyway$/);
+      expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch']);
+      expect(pending(lock)).toEqual([]);
     });
 
     it('still cancels after a throw that follows the queue', async () => {
@@ -8268,14 +8639,16 @@ describe('inspector flows (#1154)', () => {
       expect(pending(lock)).toEqual([]);
     });
 
-    it('keeps the pending restore when the cancel logs no line', async () => {
+    it('clears the pending restore when the inventory reads available but the cancel logs no line', async () => {
       const world = makeWorld({ silent: new Set(['RDOCancelResearch']) });
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
       expect(result.status).toBe('FAIL');
       expect(failed(result)).toEqual(['the cancel logged its Cancel Research: line']);
-      expect(pending(lock)).toHaveLength(1);
+      expect(pending(lock)).toEqual([]);
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.read().dirty).toBe(false);
     });
 
     it('FAILs details that do not answer for Happy Hour', async () => {
@@ -8425,6 +8798,96 @@ describe('inspector flows (#1154)', () => {
       ]);
       expect(pending(lock)).toHaveLength(1);
     });
+
+    const zerosDetail = (r: FlowResult) => r.assertions.find(a => a.what === 'Upgrading and Pending read 0 after the STOP')?.detail;
+
+    it('counts a read-back read that times out as "not yet" and proves the STOP on the next read', async () => {
+      const world = makeWorld({ throwReads: [1] });
+      const lock = cleanLock();
+      arrange(world);
+      let t = 0;
+      const result = await flowByName('upgrade-stop').run({ lock, survivalLogUrl: 'u', now: () => (t += 1_000), sleep: async () => undefined });
+      expect(failed(result)).toEqual([]);
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+      expect(upgrades(world).filter(u => (u as WsMessage & { action?: string }).action === 'STOP_UPGRADE')).toHaveLength(1);
+      expect(world.readsAfterStop).toBe(3);
+      expect(zerosDetail(result)).not.toMatch(/AcceptCloning restore/);
+    });
+
+    it('proves the STOP from the read after the AcceptCloning restore when the read-back stays stale', async () => {
+      const world = makeWorld({ staleReads: 1 });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+      expect(world.stops).toBe(1);
+      expect(zerosDetail(result)).toMatch(/from the read after the AcceptCloning restore/);
+    });
+
+    it('sends a second STOP when the final read still shows an upgrade, and clears the restore once idle', async () => {
+      const world = makeWorld({ stopsIgnored: 1 });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(world.events).toEqual([
+        'upgrade:START_UPGRADE', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=1', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=1',
+      ]);
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+      expect(zerosDetail(result)).toMatch(/after a second STOP/);
+    });
+
+    it('FAILs and keeps the restore when the upgrade still runs after the second STOP', async () => {
+      const world = makeWorld({ stopsIgnored: 2 });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toContain('Upgrading and Pending read 0 after the STOP');
+      expect(zerosDetail(result)).toMatch(/still upgrading.*pending restore kept/);
+      expect(pending(lock)).toHaveLength(1);
+      expect(world.stops).toBe(2);
+    });
+
+    it('sets a falsy AcceptCloning true again before the second STOP and back to false after it', async () => {
+      const world = makeWorld({
+        upgrade: { UpgradeLevel: '1', Upgrading: '0', Pending: '0', MaxUpgrade: '5', AcceptCloning: '0' },
+        stopsIgnored: 1,
+      });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(world.events).toEqual([
+        'set:RDOAcceptCloning=1', 'upgrade:START_UPGRADE', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=0',
+        'set:RDOAcceptCloning=1', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=0',
+      ]);
+      expect(world.upgrade.AcceptCloning).toBe('0');
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('FAILs and keeps the restore when every read after the STOP fails, sending no second STOP', async () => {
+      const world = makeWorld({ throwReads: [1, 2, 3, 4, 5, 6, 7, 8] });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(pending(lock)).toHaveLength(1);
+      expect(world.stops).toBe(1);
+      expect(zerosDetail(result)).toMatch(/every read failed.*pending restore kept/);
+    });
+
+    it('FAILs and keeps the restore when the second STOP throws', async () => {
+      const world = makeWorld({ stopsIgnored: 1, secondStopThrows: true });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toContain('the second STOP ran without a throw');
+      expect(pending(lock)).toHaveLength(1);
+    });
   });
 });
 
@@ -8439,6 +8902,14 @@ describe('chat flows (#1148)', () => {
     keepChannel?: boolean;
     channels?: unknown;
     chaseFails?: boolean;
+    /** Whether REQ_CHAT_AWAY raises SPO_test3's isAway in the user list (default true). */
+    awayFlag?: boolean;
+    /** The EVENT_MOVE_TO a successful CHASE pushes; null pushes none. */
+    moveTo?: { x: number; y: number } | null;
+    /** The user list's names, overriding SPO_test3. */
+    userNames?: string[];
+    /** The Lobby channel info text. */
+    info?: unknown;
   }
 
   interface ChatWorld {
@@ -8453,6 +8924,7 @@ describe('chat flows (#1148)', () => {
     const channels = new Set<string>();
     let current = '';
     let pushes = 0;
+    let away = false;
     const push = (msg: Record<string, unknown>): void => {
       received.push(msg as unknown as WsMessage);
     };
@@ -8463,6 +8935,8 @@ describe('chat flows (#1148)', () => {
       receivedCount: () => received.length,
       send: (msg: Record<string, unknown>) => {
         sent.push(msg);
+        if (msg.type === WsMessageType.REQ_CHAT_AWAY) away = options.awayFlag ?? true;
+        if (msg.type === WsMessageType.REQ_CHAT_TYPING_STATUS) away = false;
         if (msg.type === WsMessageType.REQ_CHAT_TYPING_STATUS || msg.type === WsMessageType.REQ_CHAT_AWAY) {
           pushes += 1;
           if (options.typingEcho?.(pushes) ?? true) {
@@ -8492,7 +8966,12 @@ describe('chat flows (#1148)', () => {
               ],
             };
           case WsMessageType.REQ_CHAT_GET_CHANNEL_INFO:
-            return { type: WsMessageType.RESP_CHAT_CHANNEL_INFO, info: 'Lobby: 3 users' };
+            return { type: WsMessageType.RESP_CHAT_CHANNEL_INFO, info: 'info' in options ? options.info : 'Lobby: 3 users' };
+          case WsMessageType.REQ_CHAT_GET_USERS:
+            return {
+              type: WsMessageType.RESP_CHAT_USER_LIST,
+              users: (options.userNames ?? ['SPO_test3']).map(name => ({ name, id: '1', isAway: away })),
+            };
           case WsMessageType.REQ_CHAT_CREATE_CHANNEL:
             if (options.createFails) throw new WsDriverError('channel exists', 1, String(msg.type));
             channels.add(String(msg.channelName));
@@ -8511,6 +8990,10 @@ describe('chat flows (#1148)', () => {
             return { type: WsMessageType.RESP_CHAT_SUCCESS };
           case WsMessageType.REQ_CHAT_CHASE:
             if (options.chaseFails) throw new WsDriverError('invalid user', 12, String(msg.type));
+            {
+              const moveTo = options.moveTo === undefined ? { x: 16, y: 16 } : options.moveTo;
+              if (moveTo) push({ type: WsMessageType.EVENT_MOVE_TO, ...moveTo });
+            }
             return { type: WsMessageType.RESP_CHAT_SUCCESS };
           case WsMessageType.REQ_CHAT_STOP_CHASE:
             return { type: WsMessageType.RESP_CHAT_SUCCESS };
@@ -8561,8 +9044,37 @@ describe('chat flows (#1148)', () => {
       const result = await runFlow(flowByName('chat-read'), { lock: cleanLock() });
       expect(result.status).toBe('PASS');
       expect(world.sent.find(m => m.type === WsMessageType.REQ_CHAT_GET_CHANNEL_INFO)).toMatchObject({ channelName: '' });
+      expect(types(world)).toContain(WsMessageType.REQ_CHAT_GET_USERS);
+      expect(result.assertions.find(a => /user list names SPO_test3/.test(a.what))).toMatchObject({ ok: true, detail: '1 user(s)' });
+      expect(result.assertions.find(a => /channel info/.test(a.what))).toMatchObject({ ok: true, detail: 'Lobby: 3 users' });
       expect(off).toHaveBeenCalledWith(world.session);
       expect(flowByName('chat-read').mutates).toBe(false);
+    });
+
+    it('fails when the Lobby user list does not name SPO_test3 — a well-formed channel list is not enough', async () => {
+      const world = chatWorld({ userNames: ['Crazz'] });
+      jest.spyOn(session, 'login').mockResolvedValue(world.session);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-read'), { lock: cleanLock() });
+      expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toEqual([
+        'the Lobby user list names SPO_test3 (GetUserList — Interface Server/InterfaceServer.pas:3227, :3342-3358)',
+      ]);
+    });
+
+    it.each([
+      ['empty', '', "''"],
+      ['blank', '  ', '  '],
+      ['not a string', 7, 'not a string'],
+    ])('fails when the Lobby channel info is %s', async (_label, info, detail) => {
+      const world = chatWorld({ info });
+      jest.spyOn(session, 'login').mockResolvedValue(world.session);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-read'), { lock: cleanLock() });
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.filter(a => !a.ok)).toEqual([
+        { what: 'the Lobby channel info is non-empty text', ok: false, detail },
+      ]);
     });
 
     it.each([
@@ -8595,6 +9107,7 @@ describe('chat flows (#1148)', () => {
         WsMessageType.REQ_CHAT_TYPING_STATUS,
         WsMessageType.REQ_CHAT_TYPING_STATUS,
         WsMessageType.REQ_CHAT_AWAY,
+        WsMessageType.REQ_CHAT_GET_USERS,
         WsMessageType.REQ_CHAT_TYPING_STATUS,
         WsMessageType.REQ_CHAT_JOIN_CHANNEL,
         WsMessageType.REQ_CHAT_GET_CHANNELS,
@@ -8603,7 +9116,8 @@ describe('chat flows (#1148)', () => {
       expect(create.channelName).toMatch(/^e2e-[0-9a-f]{8}$/);
       expect(String(create.password).length).toBeGreaterThan(0);
       expect(typingPushes(world).map(m => m.isTyping)).toEqual([true, false, undefined, false]);
-      expect(world.sent[8]).toMatchObject({ channelName: '' });
+      expect(result.assertions.find(a => /marks SPO_test3 away/.test(a.what))?.ok).toBe(true);
+      expect(world.sent[9]).toMatchObject({ channelName: '' });
       expect(world.channels.size).toBe(0);
       expect(result.probes[0]).toMatchObject({ readBack: 'CONFIRMED', restoreReadBack: 'CONFIRMED' });
       expect(lock.read().pendingRestores).toHaveLength(0);
@@ -8630,9 +9144,33 @@ describe('chat flows (#1148)', () => {
     it('does not let the buffered typing-off echo satisfy the AWAY wait', async () => {
       const { result } = await runChannel({ typingEcho: n => n !== 3 });
       expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toEqual(['the AWAY self-echo for SPO_test3']);
+    });
+
+    it('fails when the user list never marks SPO_test3 away, though the AWAY echo arrived', async () => {
+      const { world, result } = await runChannel({ awayFlag: false });
+      expect(result.status).toBe('FAIL');
       expect(failedWhats(result)).toEqual([
-        'a self-echo for SPO_test3 after AWAY (away reads as isTyping: false)',
+        'the channel user list marks SPO_test3 away (isAway) — Interface Server/InterfaceServer.pas:1495-1502, :3342-3358',
       ]);
+      expect(types(world)).toContain(WsMessageType.REQ_CHAT_JOIN_CHANNEL);
+    });
+
+    it('fails the away check when the user list read throws, and still cleans up', async () => {
+      const world = chatWorld();
+      const request = (world.session.driver as unknown as { request: (m: Record<string, unknown>) => Promise<unknown> }).request;
+      (world.session.driver as unknown as { request: unknown }).request = async (m: Record<string, unknown>) => {
+        if (m.type === WsMessageType.REQ_CHAT_GET_USERS) throw new Error('timed out');
+        return request(m);
+      };
+      jest.spyOn(session, 'login').mockResolvedValue(world.session);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-private-channel'), chatCtx());
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.filter(a => !a.ok)).toEqual([
+        expect.objectContaining({ what: expect.stringMatching(/marks SPO_test3 away/), detail: 'timed out' }),
+      ]);
+      expect(types(world)).toContain(WsMessageType.REQ_CHAT_JOIN_CHANNEL);
     });
 
     it('sends no Lobby join when the cleanup idle push is never echoed, though earlier idle echoes are buffered', async () => {
@@ -8705,10 +9243,49 @@ describe('chat flows (#1148)', () => {
         { type: WsMessageType.REQ_CHAT_CHASE, userName: SECONDARY_ACCOUNT.username },
         { type: WsMessageType.REQ_CHAT_STOP_CHASE },
       ]);
-      expect(crazz.sent).toEqual([]);
+      // Crazz's one camera update, on its own saved position (0,0): the view centre is (16,16).
+      expect(crazz.sent).toEqual([
+        { type: WsMessageType.REQ_UPDATE_CAMERA, x: 0, y: 0, viewX: 0, viewY: 0, viewW: 32, viewH: 32 },
+      ]);
+      expect(result.assertions.find(a => /view follows Crazz/.test(a.what))).toMatchObject({
+        what: expect.stringContaining('EVENT_MOVE_TO at (16,16)'),
+        ok: true,
+      });
       expect(off).toHaveBeenCalledWith(primary.session);
       expect(off).toHaveBeenCalledWith(crazz.session);
       expect(flowByName('chat-chase').mutates).toBe(false);
+    });
+
+    it.each([
+      ['no EVENT_MOVE_TO arrives', null],
+      ['the EVENT_MOVE_TO is not at Crazz\'s view centre', { x: 17, y: 16 }],
+    ])('fails when %s, though the chase answered — and still stops', async (_label, moveTo) => {
+      const primary = chatWorld({ moveTo });
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(chatWorld().session);
+      jest.spyOn(session, 'login').mockResolvedValue(primary.session);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
+      expect(result.status).toBe('FAIL');
+      expect(failedWhats(result)).toEqual([
+        `SPO_test3's view follows ${SECONDARY_ACCOUNT.username}: EVENT_MOVE_TO at (16,16) — ` +
+          'Interface Server/InterfaceServer.pas:705-718, :742, :1590',
+      ]);
+      expect(types(primary)).toEqual([WsMessageType.REQ_CHAT_CHASE, WsMessageType.REQ_CHAT_STOP_CHASE]);
+    });
+
+    it('expects the view centre of Crazz\'s saved position', async () => {
+      const primary = chatWorld({ moveTo: { x: 500, y: 300 } });
+      const crazz = chatWorld();
+      crazz.session.playerX = 500;
+      crazz.session.playerY = 300;
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz.session);
+      jest.spyOn(session, 'login').mockResolvedValue(primary.session);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
+      expect(result.status).toBe('PASS');
+      expect(crazz.sent).toEqual([
+        { type: WsMessageType.REQ_UPDATE_CAMERA, x: 500, y: 300, viewX: 484, viewY: 284, viewW: 32, viewH: 32 },
+      ]);
     });
 
     it('still sends STOP_CHASE when the chase is refused, and fails', async () => {

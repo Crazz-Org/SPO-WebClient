@@ -40,16 +40,23 @@ import type { JobVerdict } from './job';
  *   unreadable, or (a readable artifact, but no `live` block — the gate failed before it
  *   got that far, e.g. a static/build/routing failure). Also covers a `live` block that
  *   is not a skip but is not a completed run either — `runLive()`'s own `status` came
- *   back `BLOCKED` (rate limit / dirty world) or `ENVIRONMENT` (preflight abort), or a
+ *   back `BLOCKED` with no SKIPPED flow on file (the lock refusal: rate limit / dirty
+ *   world / world held by another run) or `ENVIRONMENT` (preflight abort), or a
  *   value this code has never seen: the gate did try to ask the live world something, but
  *   never got an answer, so it is exactly as unanswered as a missing artifact. This must
  *   never collapse into `'skipped'`: skipped states a known reason, unknown admits there
  *   isn't one on file — and never into `'ran'`: nothing here proves the live stage drove
  *   the world.
+ * - `'blocked-skip'` — `runLive()` returned `BLOCKED` because one or more flows ended
+ *   `SKIPPED` (and none FAILed). `skipped` names only those SKIPPED flows, not the flows
+ *   that passed beside them. This is a known, non-transient outcome: retrying the gate
+ *   does not clear it. It must never be read as `'ran'` — a flow that did not run is not
+ *   a pass — nor as `'unknown'`, since its reason is on file.
  */
 export type LiveAttestation =
   | { status: 'ran'; flows: string[] }
   | { status: 'skipped'; why: string; required: string[] }
+  | { status: 'blocked-skip'; skipped: string[] }
   | { status: 'unknown'; why: string };
 
 /**
@@ -358,8 +365,8 @@ export const STATUS_DESCRIPTION_MAX = 140;
  *
  * The liveness marker is the fix for the 3.5-day class this action closes: a static-only
  * PASS used to render byte-identical to a live one. `verdict.live` present renders
- * "— live" (ran), "— static-only" (skipped) or "— live unknown" (unreadable/absent
- * artifact) immediately after the verdict word; `verdict.live` absent — a verdict written
+ * "— live" (ran), "— static-only" (skipped), "— live blocked-skip" (BLOCKED by SKIPPED
+ * flows) or "— live unknown" (unreadable/absent artifact) immediately after the verdict word; `verdict.live` absent — a verdict written
  * before this field existed — renders nothing, same as before this fix.
  */
 export function statusDescription(verdict: BenchVerdict): string {
@@ -376,7 +383,9 @@ export function statusDescription(verdict: BenchVerdict): string {
         ? ' — live'
         : verdict.live.status === 'skipped'
           ? ' — static-only'
-          : ' — live unknown';
+          : verdict.live.status === 'blocked-skip'
+            ? ' — live blocked-skip'
+            : ' — live unknown';
   const tail =
     verdict.verdict +
     live +

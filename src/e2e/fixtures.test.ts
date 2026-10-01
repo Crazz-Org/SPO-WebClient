@@ -522,6 +522,53 @@ describe('findFreeLot', () => {
       .toEqual({ x: 99, y: 199 });
   });
 
+  it('accepts an unzoned lot for a zone requirement', async () => {
+    const w = oneLot();
+    w.zones = () => 0;
+    expect(await lot(w, 'blue zone')).toEqual({ x: 120, y: 220 });
+  });
+
+  it('accepts a lot mixing the required zone and zone 0', async () => {
+    const w = oneLot();
+    w.zones = (x, y) => ((x === 120 && y === 220) || (x === 121 && y === 221) ? 7 : 0);
+    expect(await lot(w, 'blue zone')).toEqual({ x: 120, y: 220 });
+  });
+
+  it('refuses an otherwise unzoned lot holding one tile of another non-zero zone', async () => {
+    const run = (w: World) =>
+      findFreeLot(w.session(), { xsize: 2, ysize: 2 }, 'blue zone', { fetchImpl: w.fetchImpl() as unknown as typeof fetch });
+    const clean = new World();
+    clean.towns = () => HELARTIA;
+    const plain = await run(clean);
+    expect(plain).not.toBeNull();
+    const w = new World();
+    w.towns = () => HELARTIA;
+    const red = { x: plain!.x, y: plain!.y };
+    w.zones = (x, y) => (x === red.x && y === red.y ? 2 : 0);
+    const got = await run(w);
+    expect(got).not.toBeNull();
+    expect(got).not.toEqual(plain);
+    const covers = red.x >= got!.x && red.x < got!.x + 2 && red.y >= got!.y && red.y < got!.y + 2;
+    expect(covers).toBe(false);
+  });
+
+  it('refuses a reserved tile with a zone requirement and without', async () => {
+    const w = oneLot();
+    w.zones = () => 0;
+    expect(await lot(w, 'blue zone')).toEqual({ x: 120, y: 220 });
+    w.zones = (x, y) => (x === 120 && y === 220 ? 1 : 0);
+    expect(await lot(w, 'blue zone')).toBeNull();
+    expect(await lot(w, '')).toBeNull();
+  });
+
+  it('keeps the nearest-to-the-hall order when the nearer lot is unzoned', async () => {
+    const w = new World();
+    w.towns = () => HELARTIA;
+    w.zones = (x, y) => (x === 120 && y === 220 ? 7 : 0);
+    expect(await findFreeLot(w.session(), { xsize: 1, ysize: 1 }, 'blue zone', { fetchImpl: w.fetchImpl() as unknown as typeof fetch }))
+      .toEqual({ x: 99, y: 199 });
+  });
+
   it('finds nothing when the hall tile reads no town value', async () => {
     const w = new World();
     const s = w.session();
@@ -675,6 +722,17 @@ describe('ensureFixtures', () => {
     expect(out.industry).toMatchObject({ x: 110, y: 228, visualClass: '4116' });
     expect(w.placed()).toHaveLength(0);
     expect(w.requests.some(r => r.type === WsMessageType.REQ_GET_BUILDING_CATEGORIES)).toBe(false);
+  });
+
+  it('builds the warehouse on an unzoned 4×4 lot when no tile holds its zone', async () => {
+    const w = new World();
+    ownAllBut(w, 'warehouse');
+    spyLog(w);
+    w.offer('PGIWHCOMMONUWMegaStorage', 1, '531', {
+      zoneRequirement: 'Building must be located in yellow zone or no zone at all.', xsize: 4, ysize: 4,
+    });
+    expect((await ensure(w)).warehouse).toMatchObject({ status: 'built', facilityClass: 'PGIWHCOMMONUWMegaStorage' });
+    expect(w.placed()).toHaveLength(1);
   });
 
   it('blocks every placement while the directory lists an owned construction site', async () => {

@@ -110,7 +110,7 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 | `src/shared/types/message-types.ts`, `src/server/session/*-handler.ts` | L2 flows for the affected message types |
 | `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `town-min-wage`, `publicity-roundtrip` |
 | `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip` |
-| `src/client/renderer/**`, `src/client/components/{mobile,hud,sheet,modals,map}/**`, `*.module.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
+| `src/client/renderer/**`; the component folders `mobile`, `hud`, `sheet`, `modals`, `map`, `search`, `chat`, `building`, `politics`, `mail`, `empire`, `login`, `common`, `command-palette`, `startup`, `tutorial` under `src/client/components/`; `src/client/report/*.tsx`; `src/client/App.tsx`, `main.tsx`, `client.ts`; `src/client/ui/**`, `src/client/hooks/**`; `src/client/store/ui-store.ts`; `*.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
 | `src/e2e/flows.ts`, `src/e2e/{fixtures,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
 | `doc/**`, `*.md`, CI config, tooling | static only |
@@ -121,9 +121,9 @@ regression detector and it is where session-lifecycle breakage surfaces first.
 
 Unmapped path -> the gate fails closed and asks for a routing entry. Silence is never a pass.
 
-Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`File.pas:Line`,
+Five exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`File.pas:Line`,
 `file.asp:Line` or `#<issue>`), where a flow or a handler departs from that table;
-`src/e2e/routing.test.ts` holds all three.
+`src/e2e/routing.test.ts` holds all five.
 
 - **`NIGHTLY_ONLY`** lists the flows no routing rule requires — a data-gated flow (a required
   `UNPROVEN` fails the gate), a reading that asserts nothing, or the fixture builder
@@ -138,7 +138,20 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
   `gate-only, not driven`; the gate still runs them when their code changes.
 - **`FALLBACK_ONLY`** lists the handler files only a broad fallback rule routes, each `awaiting
   card #<n>` or `excluded: <reason>`. An area card adds its rule before the fallbacks and removes
-  its file from the set, so a new handler cannot land unrouted.
+  its file from the set, so a new handler cannot land unrouted. The handler set is
+  `src/server/session/*-handler.ts`, `src/server/ws-handlers/*-handlers.ts` and
+  `src/client/handlers/*-handler.ts`.
+- **`EXCLUDED`** lists the request types no gate-required flow sends (no flow yet, a
+  nightly-only sender, or a request the gateway answers alone); it excuses that request in every
+  handler file.
+- **`NOT_ROUTED`** maps a handler file to the requests a gate flow does send but that file's rule
+  leaves out (a rule pinned by an exact routing test).
+
+The handler ratchet (#1187) derives the `WsMessageType` requests each handler file serves or
+sends — server session handlers through `spo_session.ts` and the ws-handlers registry, ws-handlers
+through the registry, client handlers from their text — and the requests each flow sends, and
+requires that a flow the file's rule routes to sends each one, or that the request is listed in
+`EXCLUDED`, `NOT_ROUTED` or (the whole file) `FALLBACK_ONLY`.
 
 ### Changed and declared flows
 
@@ -380,6 +393,18 @@ capability — and then the gate demands the flow.
 (`{ flow, required, reasons }`, §10) — outside `exclusions`, because a required entry is a
 failure, not an exclusion — and the `bench/gate` status shows the count as
 `— N unproven flow(s)`.
+
+### Parked flows — never built, by maintainer decision
+
+A flow no account can ever exercise is not kept failing: it is not written at all, and its
+handler stays in `FALLBACK_ONLY` (`src/e2e/routing.ts`). It comes back only when the reason
+below stops holding.
+
+| Flow | Why no live drive is possible | Covered by | Revisit when |
+|---|---|---|---|
+| `tutorial-read` (read the tutorial assignment, next/back) | No E2E account holds a tutorial, and none can be given one. The server builds a tutorial only when a tycoon is **created** on a world whose `Tutorial` setting is `enabled` (default `disabled`, `Kernel/Kernel.pas:10907-10908`), and skips it if the tycoon holds a role, has 10+ nobility points, or carries the `tutorial` cookie (`Kernel/Kernel.pas:12959`). It is deleted for good, cookie `tutorial=done`, once the tycoon's level tier passes 0 (`Kernel/Kernel.pas:12206-12214`). An account reset (`Kernel/World.pas:6203`, `:6368`) only rebuilds a tutorial that still exists (`Kernel/Kernel.pas:12924-12939`), and "Get New Assignment" only steps an existing one (`NewTycoon/Tasks/ModifyTask.asp:25-34`). SPO_test3 is Mayor and has none; the secondary accounts show none either. | the mock-server suite, `src/mock-server/scenarios/tutorial-scenario.ts` | a brand-new account is created on a world with `Tutorial` enabled |
+
+Not project-critical (maintainer, 2026-10-01 — [#1199](https://github.com/Crazz-Org/SPO-WebClient/issues/1199#issuecomment-5937034602)).
 
 ---
 
