@@ -456,6 +456,15 @@ line, result code 0 and the lot read-back. While SPO_test3 owns a construction s
 the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
 (placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
 and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
+**Research queued by the fixture builder is permanent setup data too** (maintainer, 2026-10-01,
+#1233). The bank and TV classes stay locked until *SPO_test3 - Green* owns the invention that
+unlocks them (`RESEARCH_UNLOCKS`); the builder then queues one research step per run at
+SPO_test3's research fixture: the first missing link of the chain that reads enabled and fits
+under cash − the cash floor − `research-roundtrip`'s own cost. It is proven by its
+`Queue Research:` line and an inventory read-back. It never sends `RDOCancelResearch` (on an
+owned invention that sells it, `Kernel/ResearchCenter.pas:372`), never queues
+`research-roundtrip`'s target, and records no pending restore, so no restore or unlock step can
+cancel it.
 
 **Build → demolish (#1150).** `place-rename-demolish` places the cheapest buildable facility —
 never a mausoleum, never the Capitol (`isRefusedClass`) — on a free Helartia lot as

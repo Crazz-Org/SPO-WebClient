@@ -79,10 +79,7 @@ import type {
   WsRespBuildingFacilities,
   WsRespRenameFacility,
   WsRespDeleteFacility,
-  WsRespResearchInventory,
-  WsRespResearchDetails,
   WsRespBuildingUpgrade,
-  ResearchCategoryData,
   WsRespChatChannelList,
   WsRespChatChannelInfo,
   WsRespChatSuccess,
@@ -169,6 +166,15 @@ import {
 } from './session';
 import type { WorldLock } from './world-lock';
 import {
+  RESEARCH_TARGET,
+  queueResearchLineMatches,
+  readResearchDetails,
+  researchCost,
+  researchInventory,
+  researchState,
+  type ResearchState,
+} from './research';
+import {
   FIXTURE_KINDS,
   ensureFixtures,
   facilityDimensions,
@@ -190,6 +196,9 @@ import {
   type FixtureKindId,
   type FixtureOutcome,
 } from './fixtures';
+
+/** Moved to ./research (#1233) — re-exported for research-roundtrip's tests. */
+export { RESEARCH_TARGET, queueResearchLineMatches, researchCost, researchState, type ResearchState } from './research';
 
 export interface FlowContext {
   lock: WorldLock;
@@ -6862,11 +6871,6 @@ export function repairLineMatches(line: string, name: string): boolean {
   return new RegExp(`(?<!Stop )${escapeRegExp(`Repairing: ${name}`)}(?=\\s|$)`).test(line);
 }
 
-/** `Queue Research: <id>, <priority>` (Kernel/ResearchCenter.pas:384). */
-export function queueResearchLineMatches(line: string, id: string): boolean {
-  return line.includes(`Queue Research: ${id}, `);
-}
-
 /** `Cancel Research: <id>` (Kernel/ResearchCenter.pas:396). */
 export function cancelResearchLineMatches(line: string, id: string): boolean {
   return new RegExp(`${escapeRegExp(`Cancel Research: ${id}`)}(?=\\s|$)`).test(line);
@@ -6875,34 +6879,6 @@ export function cancelResearchLineMatches(line: string, id: string): boolean {
 /** `Facility Start Upgrade count: <count>` (Kernel/Kernel.pas:4675). */
 export function startUpgradeLineMatches(line: string, count: number): boolean {
   return new RegExp(`${escapeRegExp(`Facility Start Upgrade count: ${count}`)}(?=\\s|$)`).test(line);
-}
-
-/**
- * What queueing an invention costs, in dollars: the `Price:` and `License:` lines of its details
- * (`TInvention.GetProperties`, Inventions/Inventions.pas:715-727; labels Kernel/SimHints.pas:482-483;
- * amounts from `FormatMoney`, Utils/Misc/MathUtils.pas:87-99). A line the details do not show is 0. The server starts a
- * research only when `Budget >= Price + GetFeePrice` (Kernel/ResearchCenter.pas:240).
- */
-export function researchCost(properties: string): number {
-  const dollars = (label: string): number => {
-    const m = new RegExp(`(?:^|\\s)${label}:\\s*\\$([0-9][0-9,.]*)`, 'i').exec(properties);
-    return m ? Number(m[1].replace(/[^0-9]/g, '')) : 0;
-  };
-  return dollars('Price') + dollars('Licen[cs]e');
-}
-
-export type ResearchState = 'developing' | 'owned' | 'available' | 'absent';
-
-/**
- * Where an invention stands in one category's inventory. The three lists are mutually exclusive
- * by construction (`TResearchCenter.StoreToCache`, Kernel/ResearchCenter.pas:797-817).
- */
-export function researchState(data: ResearchCategoryData, id: string): ResearchState {
-  const has = (list: { inventionId: string }[]): boolean => list.some(i => i.inventionId === id);
-  if (has(data.developing)) return 'developing';
-  if (has(data.completed)) return 'owned';
-  if (has(data.available)) return 'available';
-  return 'absent';
 }
 
 /**
@@ -7232,12 +7208,6 @@ const acceptCloning = fixtureFlow(
 );
 
 /**
- * The one invention research-roundtrip drives (maintainer, PR #1214): Commerce > Bars > Happy Hour,
- * id `HappyHour` in research.0.dat — Price $25,000,000, requires `Bars`.
- */
-export const RESEARCH_TARGET = { id: 'HappyHour', name: 'Happy Hour' } as const;
-
-/**
  * Queue Happy Hour, prove it is in development, cancel it. Queueing can buy on the spot —
  * an invention with `Time = 0` is paid for and declared at once (Kernel/ResearchCenter.pas:319-334)
  * — and a cancel on an owned invention reaches `RetireInvention` (:372), the excluded sell. So the
@@ -7258,13 +7228,6 @@ const researchRoundTrip = fixtureFlow(
     }
   },
 );
-
-function researchInventory(session: LiveSession, fx: OwnFixture, categoryIndex: number): Promise<WsRespResearchInventory> {
-  return session.driver.request<WsRespResearchInventory>(
-    { type: WsMessageType.REQ_RESEARCH_INVENTORY, buildingX: fx.x, buildingY: fx.y, categoryIndex },
-    WsMessageType.RESP_RESEARCH_INVENTORY,
-  );
-}
 
 async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixture, assertions: Assertions): Promise<void> {
   // CatCount is the highest category index, not a count (Kernel/ResearchCenter.pas:820).
@@ -7307,10 +7270,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   }
   const { category } = found;
 
-  const { details } = await session.driver.request<WsRespResearchDetails>(
-    { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: id },
-    WsMessageType.RESP_RESEARCH_DETAILS,
-  );
+  const details = await readResearchDetails(session, fx, id);
   const properties = details.properties.trim().replace(/\s+/g, ' ');
   assertions.check(
     `REQ_RESEARCH_DETAILS answers for ${id} with its properties`,

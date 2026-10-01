@@ -17,6 +17,7 @@ import { NIGHTLY_ONLY } from '../routing';
 export const FLOW_SOURCES = [
   'src/e2e/flows.ts',
   'src/e2e/fixtures.ts',
+  'src/e2e/research.ts',
   'src/e2e/probe.ts',
   'src/e2e/session.ts',
   'src/e2e/ws-driver.ts',
