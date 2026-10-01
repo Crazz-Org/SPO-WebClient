@@ -4699,18 +4699,27 @@ export function clientLinksDiff(
   };
 }
 
+/** SPO_test3's own side: every company the directory lists for the tycoon, and every facility lot as `x,y`. */
+export interface OwnClients {
+  companies: ReadonlySet<string>;
+  lots: ReadonlySet<string>;
+}
+
 /**
  * Why a product gate's price must not be driven, or `null` when it may. A price change re-checks
  * every client link (`TOutput.SetPricePerc`, Kernel/Kernel.pas:7193-7205) and
  * `TGate.ConnectionChanged` drops any that no longer passes (:6664-6676, :6737-6750) — so the
- * gate must have no client, or only clients of SPO_test3's own company, all of them read.
+ * gate must have no client, or only clients of any of SPO_test3's companies (a company the
+ * directory lists for the tycoon, or a lot that is one of its facilities — the rule
+ * `quick-trade-roundtrip`'s guard 1 applies), all of them read. A plain string is one company, no lots.
  */
-export function outputPriceRefusal(product: BuildingProductData | undefined, ownCompany: string): string | null {
+export function outputPriceRefusal(product: BuildingProductData | undefined, own: string | OwnClients): string | null {
   if (!product?.metaFluid || product.pricePc === undefined) return 'its header was not read';
   if (product.connectionCount !== product.connections.length) {
     return `${product.connectionCount ?? '?'} client(s) listed but ${product.connections.length} read (the row cap) — unread clients cannot be checked`;
   }
-  const foreign = product.connections.filter(c => c.companyName !== ownCompany);
+  const set: OwnClients = typeof own === 'string' ? { companies: new Set([own]), lots: new Set() } : own;
+  const foreign = product.connections.filter(c => !set.companies.has(c.companyName) && !set.lots.has(`${c.x},${c.y}`));
   if (foreign.length > 0) return `client(s) of another company: ${foreign.map(linkLabel).join('; ')}`;
   return null;
 }
@@ -4962,14 +4971,14 @@ const storePriceSalaries: Flow = {
 
 /**
  * A product gate's price (`TFacility.RDOSetOutputPrice`, Kernel/Kernel.pas:4332), driven only on
- * a gate whose clients are all SPO_test3's own — a price change can drop another player's link
+ * a gate whose clients all belong to one of SPO_test3's companies — a price change can drop another player's link
  * (`outputPriceRefusal`). The client list after the restore must equal its snapshot.
  */
 const industryOutputPrice: Flow = {
   name: 'industry-output-price',
   what:
-    "round trip on RDOSetOutputPrice at SPO_test3's industry fixture, on a product gate with no foreign " +
-    'client — Survival line + read-back, restored, client links unchanged',
+    "round trip on RDOSetOutputPrice at SPO_test3's industry fixture, on a product gate with no client of " +
+    "another player's company — Survival line + read-back, restored, client links unchanged",
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -4979,11 +4988,16 @@ const industryOutputPrice: Flow = {
       const fx = await ownFixture(session, 'industry', assertions);
       if (!fx) return report('industry-output-price', assertions, probes, session);
 
+      const tycoon = await listTycoonFacilities(session);
+      const own: OwnClients = {
+        companies: new Set([session.company.name, ...tycoon.companies]),
+        lots: new Set(tycoon.facilities.map(f => `${f.x},${f.y}`)),
+      };
       const refusals: string[] = [];
       let chosen: { name: string; product: BuildingProductData; fluid: string } | undefined;
       for (const stub of await gateStubs(session, fx, 'products')) {
         const product = (await gateConnections(session, fx, 'products', stub)).product;
-        const refusal = outputPriceRefusal(product, session.company.name);
+        const refusal = outputPriceRefusal(product, own);
         if (refusal === null && product?.metaFluid) {
           chosen = { name: stub.name, product, fluid: product.metaFluid };
           break;
