@@ -197,6 +197,23 @@ describe('CommandBar', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('More offers "Search", which opens the search surface and closes the menu', () => {
+    renderWithProviders(<CommandBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Search' }));
+    expect(useUiStore.getState().rightPanel).toBe('search');
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('a visitor sees the Search item in More', () => {
+    useGameStore.setState({ isVisitor: true });
+    renderWithProviders(<CommandBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByRole('menuitem', { name: 'Search' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Search' }));
+    expect(useUiStore.getState().rightPanel).toBe('search');
+  });
+
   it('a visitor is offered no gated panel', () => {
     useGameStore.setState({ isVisitor: true });
     renderWithProviders(<CommandBar />);
