@@ -6,7 +6,7 @@
  * error rather than a silent pass.
  */
 
-import { PRESIDENT_MEMBERS } from './config';
+import { PRESIDENT_MEMBERS, SECONDARY_ACCOUNT } from './config';
 
 export interface RouteRule {
   /** Matched against the repo-relative path. */
@@ -63,7 +63,7 @@ export const GATE_ONLY: Record<string, string> = {
   'politics-write':
     'each RDOSetTaxValue by the mayor posts a world event every online player sees (Kernel/Population.pas:1264-1284, WorldLocator.SendEvent) — driven only at the gate, when its code changes',
   'policy-roundtrip':
-    'RDOSetPolicyStatus broadcasts a world event naming Crazz to every online tycoon, twice per run (Kernel/Kernel.pas:11790-11800, Kernel/World.pas:5179-5196, texts Kernel/Kernel.pas:13495-13497); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly',
+    `RDOSetPolicyStatus broadcasts a world event naming ${SECONDARY_ACCOUNT.username} to every online tycoon, twice per run (Kernel/Kernel.pas:11790-11800, Kernel/World.pas:5179-5196, texts Kernel/Kernel.pas:13495-13497); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly`,
   'chat-private-channel':
     'creating and deleting a channel and the typing / away states broadcast to every connected client (Interface Server/InterfaceServer.pas:4594, :4049-4060, :4690, :3968-3980); accepted by the maintainer (2026-09-29) at the gate only, when chat code changes — never in the nightly',
   'bank-borrow-payoff':
@@ -260,7 +260,7 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
     // zoning-alert-read is left out: its one REQ_BUILDING_FOCUS is incidental to reading the
-    // alert, it needs Crazz, and the mail rules route it.
+    // alert, it needs the secondary account, and the mail rules route it.
     test: /^src\/server\/ws-handlers\/building-handlers\.ts$/,
     flows: [
       'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall',
@@ -321,7 +321,7 @@ export const ROUTES: RouteRule[] = [
     // Before the fallbacks below (#1148): chat-private-channel is GATE_ONLY — it broadcasts.
     test: /^src\/server\/session\/chat-handler\.ts$|^src\/server\/ws-handlers\/chat-handlers\.ts$|^src\/client\/store\/chat-store\.ts$/,
     flows: ['chat-read', 'chat-private-channel', 'chat-chase'],
-    why: 'the chat handlers and store — the channel list read, the password channel the flow creates and removes (send, typing, away), and the chase of Crazz',
+    why: `the chat handlers and store — the channel list read, the password channel the flow creates and removes (send, typing, away), and the chase of ${SECONDARY_ACCOUNT.username}`,
   },
   {
     // After the pixel rule, which keeps the chat CSS.

@@ -10,7 +10,7 @@
 > | L2 = system E2E against a **mock backend**, the core investment | **Never built, and cancelled.** A mock validates the client against our *model* of the Delphi server; `OB-29` — a tax write that lands while the cached copy the client reads is never invalidated — cannot be found that way by construction |
 > | Live server is **smoke-only**, manual, pre-release | **Live is the gate.** Every code change is verified over a real socket against planitia before it may be pushed |
 > | `@playwright/test` specs are the regression layer | The regression layer is a **headless WebSocket drive** (`src/e2e/`, zero new dependencies). Playwright stays for pixels |
-> | F2: the locked account caps coverage at ~40% of the surface | **Resolved.** `SPO_test3` now holds the **mayor** role and `Crazz` exists as a second party |
+> | F2: the locked account caps coverage at ~40% of the surface | **Resolved.** `SPO_test3` now holds the **mayor** role and `SPO_test` exists as a second party |
 > | Phase E ships a desktop-shell test project | **Moot.** The desktop shell was removed from the repo (#149); the release workflow is `release.yml` and publishes no installer |
 >
 > The five-layer stack in §2 is now four layers; the traceability gate in §4 is now the

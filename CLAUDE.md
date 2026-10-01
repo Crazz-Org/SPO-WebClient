@@ -241,7 +241,7 @@ L1  Protocol conformance      Jest + src/mock-server/ (rdo-mock, strict   CI: ev
                               validator) — NOT a mock backend for E2E
 L2  LIVE WS drive  <- gate    src/e2e/, headless `ws` -> gateway ->       PRE-MERGE: every code change
                               planitia. `npm run test:live`
-L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / Crazz       every screen once, pixels only, + pre-release
+L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / SPO_test    every screen once, pixels only, + pre-release
 ```
 
 **The gate.** The bench gates a **pushed commit**, not your worktree, so the order is
@@ -306,7 +306,7 @@ Model routing. Never delegate understanding — synthesise an agent's result you
 
 ## E2E credentials — LOCKED
 
-Accounts `SPO_test3`/`test3` (Mayor of Helartia, primary) and `Crazz`/`test` (secondary), zone
+Accounts `SPO_test3`/`test3` (Mayor of Helartia, primary) and `SPO_test`/`test` (secondary), zone
 Free Space, world planitia. **Never change without explicit developer approval.** Mutations only
 on Helartia; capability exceptions are read from the server, never overridden —
 `doc/E2E-POLICY.md` §7 and §9, procedure `doc/E2E-TESTING.md`.
