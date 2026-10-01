@@ -1195,6 +1195,20 @@ describe('ensureFixtures — research that unlocks a kind (#1233)', () => {
     expect(out.bank).toMatchObject({ status: 'unproven', reason: 'server did not take the queue for Banking Basics; not retried' });
   });
 
+  it('sends a refused prerequisite once per run, even when bank and TV both wait on it', async () => {
+    const w = track(lockedWorld('bank', 'tv'));
+    w.research[0] = {
+      available: [{ id: 'DistributedDirection', enabled: true }, { id: 'Banking', enabled: false }, { id: 'BasicTelevision', enabled: false }],
+      developing: [],
+      completed: [],
+    };
+    w.takesQueue = () => false;
+    const out = await ensure(w);
+    expect(queued(w)).toEqual(['DistributedDirection']);
+    expect(out.bank.reason).toBe('server did not take the queue for Distributed Direction (for Banking Basics); not retried');
+    expect(out.tv.reason).toBe('server did not take the queue for Distributed Direction (for Television); not retried');
+  });
+
   it('FAILs a taken queue that logs no Queue Research: line', async () => {
     const w = track(lockedWorld());
     w.logsQueue = false;

@@ -1014,6 +1014,8 @@ interface ResearchRun {
   index?: ResearchIndex;
   inventory?: Map<string, Listed>;
   reserve?: number | null;
+  /** Inventions whose queue the server did not take this run — never sent again in the run. */
+  refused?: Set<string>;
 }
 
 async function runIndex(run: ResearchRun): Promise<ResearchIndex> {
@@ -1139,6 +1141,7 @@ async function researchUnlock(
   if (nextState === 'developing') return done(`researching ${label}`);
   if (nextState === 'absent') return done(`${label} is not listed at ${at}`);
   if (next.id === RESEARCH_TARGET.id) return done(`${label} is research-roundtrip's own target; the builder never queues it`);
+  if (run.refused?.has(next.id)) return done(`server did not take the queue for ${label}; not retried`);
 
   const details = await readResearchDetails(session, hq, next.id);
   if (!(inventory.get(next.id) as Listed).enabled) {
@@ -1183,7 +1186,10 @@ async function researchUnlock(
     if (after !== 'available' || now() >= deadline) break;
     await sleep(TIMEOUTS.readBackPoll);
   }
-  if (after === 'available') return done(`server did not take the queue for ${label}; not retried`);
+  if (after === 'available') {
+    (run.refused ??= new Set()).add(next.id);
+    return done(`server did not take the queue for ${label}; not retried`);
+  }
   if (after === 'absent') return done(`${next.id} reads absent at ${at} after the queue`, 'FAIL');
   inventory.set(next.id, { ...listed, state: after });
   if (line === null) return { ...done(`no Queue Research: line for ${next.id} at ${at}`, 'FAIL'), spent: cost };
