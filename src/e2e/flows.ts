@@ -89,6 +89,7 @@ import type {
   WsEventChatMsg,
   WsEventChatUserTyping,
   WsEventChatChannelChange,
+  WsEventMoveTo,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
 import { CLUSTER_IDS } from '../shared/cluster-data';
@@ -101,6 +102,7 @@ import type {
   BuildingProductData,
   BuildingSupplyData,
   BuildingInfo,
+  ChatUser,
   CompaniesData,
   CompInputData,
   CurriculumData,
@@ -1373,9 +1375,9 @@ const newspaperRead: Flow = {
  * (`boardmsg.asp?top=TRUE` + `boardlist.asp`) is read. Read-only — the read branch of
  * `boardmsg.asp` only opens `NewsBoard.NewsObject`; `action=post` is the only write branch
  * and is never sent (posting is excluded, maintainer 2026-09-29: no member deletes a post,
- * `News Server/NewsObject.pas:11-53`). An empty board is a pass, not UNPROVEN: the page
- * answering is what is proven, and the detail records the counts. Unlike `newspaper-read`
- * it is not data-gated, so routing requires it.
+ * `News Server/NewsObject.pas:11-53`). The detail records the counts. A board with no column
+ * and no tree entry ends UNPROVEN (#1188): the page answering proves no read of a post, and
+ * the flow cannot post one. Routing still requires it.
  */
 const newspaperBoardRead: Flow = {
   name: 'newspaper-board-read',
@@ -1415,6 +1417,13 @@ const newspaperBoardRead: Flow = {
         wellFormed,
         `${board.columns.length} columns, ${board.tree.length} tree entries`,
       );
+      if (board.columns.length === 0 && board.tree.length === 0) {
+        assertions.unproven(
+          'the board lists a column',
+          `${paperName}: 0 columns, 0 tree entries — nothing is posted, and posting is excluded ` +
+            '(News Server/NewsObject.pas:11-53)',
+        );
+      }
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);
       return report('newspaper-board-read', assertions, [], session);
@@ -1423,6 +1432,15 @@ const newspaperBoardRead: Flow = {
     }
   },
 };
+
+/**
+ * What a focus on an empty tile answers: `parseBuildingFocusResponse` (`src/server/map-parsers.ts`)
+ * throws it on an empty reply, and `withErrorHandler` (`src/server/ws-handlers/ws-utils.ts`)
+ * forwards the message under `ERROR_FacilityNotFound` — the code is the same for every focus
+ * error, so only the message proves the tile is empty. A copy: the e2e build does not import
+ * server code; the unit test pins it to the parser.
+ */
+export const EMPTY_TILE_FOCUS_ERROR = 'Invalid building focus header format - no data';
 
 const ZONING_ALERT_SUBJECT = 'Zoning Alert!'; // World.pas:2721
 /** The header the server's own alert carries — Mail Server/ModelServer.pas:883. */
@@ -1575,8 +1593,11 @@ async function seedZoningAlert(): Promise<FlowSeed> {
  * The seed (`seedZoningAlert`, #1009) feeds the flow: Crazz sends SPO_test3 one look-alike
  * alert before the run, and it is deleted from both mailboxes after. Read without the seed,
  * no zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
- * was zoned out of this account lately, so the flow proved nothing. A demolished building answering `ERROR_FacilityNotFound`
- * is also accepted: the whole point of the alert is that the building is gone.
+ * was zoned out of this account lately, so the flow proved nothing. A demolished building is
+ * also accepted — the whole point of the alert is that the building is gone — but only on the
+ * empty-tile message (`EMPTY_TILE_FOCUS_ERROR`). The error code proves nothing: every focus
+ * error is wrapped as `ERROR_FacilityNotFound` (#1188). Any other error, a timeout included,
+ * fails.
  */
 const zoningAlertRead: Flow = {
   name: 'zoning-alert-read',
@@ -1631,11 +1652,11 @@ const zoningAlertRead: Flow = {
             WsMessageType.RESP_BUILDING_FOCUS,
           );
         } catch (err: unknown) {
-          // The building the alert names was, by definition, demolished — a gateway
-          // "not found" for that exact tile is an accepted outcome, not a wire failure.
+          // The building the alert names was, by definition, demolished — the empty-tile
+          // message for that exact tile is an accepted outcome, not a wire failure.
           assertions.check(
-            'REQ_BUILDING_FOCUS answered — either the tile focused, or the building is gone',
-            err instanceof WsDriverError,
+            'REQ_BUILDING_FOCUS answered — either the tile focused, or the building is gone (empty tile)',
+            err instanceof WsDriverError && err.message === EMPTY_TILE_FOCUS_ERROR,
             toErrorMessage(err),
           );
         }
@@ -2208,6 +2229,75 @@ const nearestTownHall: Flow = {
   },
 };
 
+/** The side of the square view a camera update carries. */
+const CAMERA_VIEW_SIZE = 32;
+
+/**
+ * Fire-and-forget camera update centred on (x, y), with its view — `handleUpdateCamera`
+ * answers nothing; with the view fields `updateCameraPosition` also emits `SetViewedArea`.
+ */
+function sendCamera(session: LiveSession, x: number, y: number): { viewX: number; viewY: number } {
+  const viewX = Math.max(0, x - CAMERA_VIEW_SIZE / 2);
+  const viewY = Math.max(0, y - CAMERA_VIEW_SIZE / 2);
+  session.driver.send({
+    type: WsMessageType.REQ_UPDATE_CAMERA,
+    x,
+    y,
+    viewX,
+    viewY,
+    viewW: CAMERA_VIEW_SIZE,
+    viewH: CAMERA_VIEW_SIZE,
+  });
+  return { viewX, viewY };
+}
+
+interface Tile { x: number; y: number }
+const tileText = (p: Tile): string => `(${p.x},${p.y})`;
+const sameTile = (a: Tile, b: Tile): boolean => a.x === b.x && a.y === b.y;
+
+/**
+ * A fresh SPO_test3 login's saved camera — `selectCompany` reads it from the `LastX.0` /
+ * `LastY.0` cookie (`login-handler.ts`) — then, when given, one camera update before the
+ * logoff that saves it (`savePlayerPosition`).
+ */
+async function readSavedCamera(then?: Tile): Promise<Tile> {
+  const s = await login(PRIMARY_ACCOUNT);
+  try {
+    const saved = { x: s.playerX, y: s.playerY };
+    if (then) sendCamera(s, then.x, then.y);
+    return saved;
+  } finally {
+    await logoff(s);
+  }
+}
+
+/**
+ * The camera cookie read back at a new login (#1188): it must hold `sent`; the camera is then
+ * put back on `original`, and a third login confirms it. Never throws. `savePlayerPosition`
+ * never writes (0,0) (`spo_session.ts`), so an original (0,0) cannot be restored — UNPROVEN.
+ */
+async function cameraReadBack(assertions: Assertions, original: Tile, sent: Tile): Promise<void> {
+  const readBack = 'the camera cookie reads back the camera sent';
+  try {
+    const read = await readSavedCamera(original);
+    assertions.check(readBack, sameTile(read, sent), `read ${tileText(read)}, sent ${tileText(sent)}`);
+  } catch (err: unknown) {
+    assertions.check(readBack, false, toErrorMessage(err));
+    return;
+  }
+  const restored = 'the camera cookie is restored';
+  if (original.x === 0 && original.y === 0) {
+    assertions.unproven(restored, 'the saved position was (0,0), which savePlayerPosition never writes (spo_session.ts)');
+    return;
+  }
+  try {
+    const read = await readSavedCamera();
+    assertions.check(restored, sameTile(read, original), `read ${tileText(read)}, original ${tileText(original)}`);
+  } catch (err: unknown) {
+    assertions.check(restored, false, toErrorMessage(err));
+  }
+}
+
 /** One `REQ_CONTEXT_STATUS` read at (x, y). */
 async function contextStatusAt(session: LiveSession, x: number, y: number): Promise<string> {
   const response = await session.driver.request<WsRespContextStatus>(
@@ -2260,9 +2350,12 @@ function surfaceShape(rows: number[][], rect: Rect): { ok: boolean; detail: stri
  * Two persistent effects, both bounded. The world event is **consumed** — `PickEvent`
  * extracts and frees the head of SPO_test3's event queue (`Kernel/Kernel.pas:11255-11271`,
  * `Kernel/World.pas:4840-4871`), the same pop every login's `selectCompany` makes, so the
- * flow costs one more login's worth. The camera is sent **to the saved position** the
- * select-company reply carried, so `savePlayerPosition` rewrites the same cookie values at
- * logoff. Nothing in the world is written: `mutates: false`.
+ * flow costs one more login's worth. The camera is sent **to the town hall** (one tile off it
+ * when the saved position is the hall), so it differs from the saved position the
+ * select-company reply carried; `savePlayerPosition` writes it at logoff, and a fresh login
+ * reads it back (#1188). That login puts the camera back on the saved position, and a third
+ * confirms it. The only write is SPO_test3's own camera bookmark, which every logoff already
+ * rewrites, moved and put back — nothing in the world is written: `mutates: false`.
  */
 const worldReaders: Flow = {
   name: 'world-readers',
@@ -2272,6 +2365,8 @@ const worldReaders: Flow = {
     const sleep = ctx.sleep ?? defaultSleep;
     const assertions = new Assertions();
     const session = await login(PRIMARY_ACCOUNT);
+    const saved: Tile = { x: session.playerX, y: session.playerY };
+    let camera: Tile | undefined;
     try {
       const here = (await listTowns(session)).find(t => t.name === GOVERNED_TOWN);
       assertions.check('the governed town is still listed', here !== undefined);
@@ -2322,25 +2417,20 @@ const worldReaders: Flow = {
       assertions.check('the facility dimensions are not empty', count > 0, String(count));
       assertions.check('the facility dimensions hold the town hall class', visualClass in dimensions, visualClass);
 
-      // Fire-and-forget: handleUpdateCamera answers nothing. With the view fields,
-      // updateCameraPosition emits SetViewedArea (session-only).
-      session.driver.send({
-        type: WsMessageType.REQ_UPDATE_CAMERA,
-        x: session.playerX,
-        y: session.playerY,
-        viewX: Math.max(0, session.playerX - 16),
-        viewY: Math.max(0, session.playerY - 16),
-        viewW: 32,
-        viewH: 32,
-      });
+      // A camera that differs from the saved position, so the read-back can tell it was sent.
+      const hall: Tile = { x: here.x, y: here.y };
+      camera = sameTile(hall, saved) ? { x: hall.x + 1, y: hall.y + 1 } : hall;
+      sendCamera(session, camera.x, camera.y);
       const after = await contextStatusAt(session, here.x, here.y);
       assertions.check('the gateway still answers after the camera update', typeof after === 'string');
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);
-      return report('world-readers', assertions, [], session);
     } finally {
       await logoff(session);
+      // Also after a throw: once the camera moved, it is put back. Never throws.
+      if (camera) await cameraReadBack(assertions, saved, camera);
     }
+    return report('world-readers', assertions, [], session);
   },
 };
 
@@ -2496,8 +2586,9 @@ function firstOpenableRanking(categories: RankingCategory[]): RankingCategory | 
  *
  * The profiles are read for a tycoon other than the session's own — the own branch of
  * `resolveTycoon` answers with the gateway's name — and never assert the echoed name
- * (`RenderTycoon.asp:55` renders the request's `Tycoon`). Banks and newspapers prove
- * reachability only: an empty list passes and its count is in the detail.
+ * (`RenderTycoon.asp:55` renders the request's `Tycoon`). Banks and newspapers are checked
+ * well-formed, their count in the detail; an empty one ends UNPROVEN (#1188) — a page that
+ * lists nothing proves only that it answered.
  */
 const searchMenuRead: Flow = {
   name: 'search-menu-read',
@@ -2570,6 +2661,9 @@ const searchMenuRead: Flow = {
         Array.isArray(banks.banks) && banks.banks.every(b => b.name !== ''),
         `${banks.banks.length} banks`,
       );
+      if (banks.banks.length === 0) {
+        assertions.unproven('a bank is listed', '0 banks — Banks.asp lists none on this world');
+      }
 
       const papers = await session.driver.request<WsRespSearchMenuNewspapers>(
         { type: WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS },
@@ -2580,6 +2674,12 @@ const searchMenuRead: Flow = {
         Array.isArray(papers.newspapers) && papers.newspapers.every(p => p.paperName !== ''),
         `${papers.newspapers.length} newspapers`,
       );
+      if (papers.newspapers.length === 0) {
+        assertions.unproven(
+          'a newspaper is listed',
+          '0 newspapers — Newspapers.asp:61-62 lists none on this world',
+        );
+      }
 
       const letter = PRIMARY_ACCOUNT.username.charAt(0).toUpperCase();
       const people = await session.driver.request<WsRespSearchMenuPeopleSearch>(
@@ -2631,16 +2731,34 @@ async function hallRead(
   }
 }
 
+/** One Lobby user-list read recorded as a check; never throws. */
+async function userListCheck(
+  session: LiveSession,
+  assertions: Assertions,
+  label: string,
+  holds: (users: ChatUser[]) => boolean,
+): Promise<void> {
+  try {
+    const users = await readChatUsers(session);
+    assertions.check(label, holds(users), users.map(u => u.name).join(', ') || '(empty)');
+  } catch (err: unknown) {
+    assertions.check(label, false, toErrorMessage(err));
+  }
+}
+
 /**
  * Live drive of the company list's Political Offices half (#1142): switch into the Mayor of
  * the governed town, read the world, switch back, read again.
  *
  * Side effects are session-only: the Interface Server drops a ClientView when its socket
  * closes (`TClientView.OnDisconnect`, `Interface Server/InterfaceServer.pas:1799-1813`). The
- * proof is the gateway answering `RESP_RDO_RESULT` only after `loginWorld` under the role
- * name and `selectCompany` succeeded. No check claims the reads answer "as the role":
- * `TTycoon.GetAllCompaniesCount` / `GetAllCompanies` walk the MasterRole
- * (`Kernel/Kernel.pas:10972-10992`), so neither can tell the identities apart.
+ * switch reply carries no identity (`result: ''` plus the position), and the identity is not
+ * proven by `GetAllCompaniesCount` / `GetAllCompanies`, which walk the MasterRole
+ * (`Kernel/Kernel.pas:10972-10992`). It is proven by the Lobby user list (#1188): the role
+ * ClientView logs on under the role name (`Interface Server/InterfaceServer.pas:3238`) and
+ * `GetUserList` lists clients by that name (`:3342-3358`) — the role after the switch,
+ * SPO_test3 after the switch back. A role already listed before the switch cannot tell this
+ * session's switch apart, so that step ends UNPROVEN.
  */
 const companySwitch: Flow = {
   name: 'company-switch',
@@ -2659,6 +2777,18 @@ const companySwitch: Flow = {
       const town = await findTown(session, GOVERNED_TOWN);
       const visualClass = await resolveVisualClass(session, town.x, town.y);
 
+      const roleName = role.ownerRole ?? '';
+      const namesRole = (users: ChatUser[]): boolean => users.some(u => sameName(u.name, roleName));
+      const roleLabel =
+        `the Lobby user list names ${roleName} — the role ClientView logged on under the role name ` +
+        '(Interface Server/InterfaceServer.pas:3238, :3342-3358)';
+      let before: ChatUser[] | undefined;
+      try {
+        before = await readChatUsers(session);
+      } catch (err: unknown) {
+        assertions.check('the Lobby user list answers before the switch', false, toErrorMessage(err));
+      }
+
       let back: { ok: boolean; detail: string };
       try {
         const there = await trySwitch(session, role);
@@ -2671,6 +2801,14 @@ const companySwitch: Flow = {
             assertions,
             'a world read answers on the role ClientView (REQ_BUILDING_DETAILS at the town hall)',
           );
+          if (before !== undefined && namesRole(before)) {
+            assertions.unproven(
+              roleLabel,
+              'the role was already listed before the switch — the list cannot tell this session’s switch apart',
+            );
+          } else if (before !== undefined) {
+            await userListCheck(session, assertions, roleLabel, namesRole);
+          }
         }
       } finally {
         back = await trySwitch(session, session.company);
@@ -2678,6 +2816,9 @@ const companySwitch: Flow = {
       assertions.check('the switch back to the own company answers RESP_RDO_RESULT', back.ok, back.detail);
       if (back.ok) {
         await hallRead(session, town, visualClass, assertions, 'the same world read answers after switching back');
+        await userListCheck(session, assertions, 'the Lobby user list names SPO_test3 after switching back', users =>
+          users.some(u => isSelf(u.name)),
+        );
       }
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);
@@ -4651,6 +4792,38 @@ export function salariesLineMatches(line: string, hi: string, mid: string, lo: s
   return new RegExp(`${escapeRegExp(`Setting salaries: ${hi}, ${mid}, ${lo}`)}(?=\\s|$)`).test(line);
 }
 
+/**
+ * A salary slot the server left unpublished reads `""`: `TWorkCenter.StoreToCache` writes
+ * `Salaries<k>` only for a class the block has capacity for (Kernel/WorkCenterBlock.pas:567-571).
+ * It is sent as 0, as the inspector sends it (`collectSalaryTriplet`, property-utils.ts) — an
+ * empty slot must never reach `RdoValue.int` as `parseInt('')`.
+ */
+export function salaryArg(value: string): string {
+  return value.trim() === '' ? '0' : value;
+}
+
+/**
+ * The triplet with the first **published** class nudged, the unpublished slots kept empty so the
+ * read-back can tell them apart. Throws when no class is published — nothing is written then.
+ */
+export function salariesNudge(original: string): string {
+  const slots = original.split(',');
+  const k = slots.findIndex(s => s.trim() !== '');
+  if (k < 0) throw new Error(`no salary class is published ("${original}") — nothing to nudge`);
+  slots[k] = nudgeWithin(slots[k], 0, 255);
+  return slots.join(',');
+}
+
+/**
+ * The read-back compares the published classes only — a slot `expected` leaves empty was never
+ * published, so its value cannot be read back (Kernel/WorkCenterBlock.pas:567-571).
+ */
+export function publishedSalariesMatch(last: string, expected: string): boolean {
+  const got = last.split(',');
+  const want = expected.split(',');
+  return got.length === want.length && want.every((w, i) => w.trim() === '' || got[i] === w);
+}
+
 const linkKey = (c: BuildingConnectionData): string => `${c.x},${c.y},${c.facilityName}`;
 const linkLabel = (c: BuildingConnectionData): string => `${c.facilityName} (${c.x},${c.y}) of ${c.companyName}`;
 
@@ -4667,18 +4840,27 @@ export function clientLinksDiff(
   };
 }
 
+/** SPO_test3's own side: every company the directory lists for the tycoon, and every facility lot as `x,y`. */
+export interface OwnClients {
+  companies: ReadonlySet<string>;
+  lots: ReadonlySet<string>;
+}
+
 /**
  * Why a product gate's price must not be driven, or `null` when it may. A price change re-checks
  * every client link (`TOutput.SetPricePerc`, Kernel/Kernel.pas:7193-7205) and
  * `TGate.ConnectionChanged` drops any that no longer passes (:6664-6676, :6737-6750) — so the
- * gate must have no client, or only clients of SPO_test3's own company, all of them read.
+ * gate must have no client, or only clients of any of SPO_test3's companies (a company the
+ * directory lists for the tycoon, or a lot that is one of its facilities — the rule
+ * `quick-trade-roundtrip`'s guard 1 applies), all of them read. A plain string is one company, no lots.
  */
-export function outputPriceRefusal(product: BuildingProductData | undefined, ownCompany: string): string | null {
+export function outputPriceRefusal(product: BuildingProductData | undefined, own: string | OwnClients): string | null {
   if (!product?.metaFluid || product.pricePc === undefined) return 'its header was not read';
   if (product.connectionCount !== product.connections.length) {
     return `${product.connectionCount ?? '?'} client(s) listed but ${product.connections.length} read (the row cap) — unread clients cannot be checked`;
   }
-  const foreign = product.connections.filter(c => c.companyName !== ownCompany);
+  const set: OwnClients = typeof own === 'string' ? { companies: new Set([own]), lots: new Set() } : own;
+  const foreign = product.connections.filter(c => !set.companies.has(c.companyName) && !set.lots.has(`${c.x},${c.y}`));
   if (foreign.length > 0) return `client(s) of another company: ${foreign.map(linkLabel).join('; ')}`;
   return null;
 }
@@ -4825,6 +5007,10 @@ const NO_WORKFORCE_REASON =
   "the store fixture's template carries no workforce group (WORKFORCE_GROUP) — FIXTURE_KINDS' store kind " +
   'does not require it (#1149)';
 
+const NO_SALARY_CLASS_REASON =
+  "the store fixture publishes no salary class — TWorkCenter.StoreToCache writes Salaries<k> only for a " +
+  'class with capacity (Kernel/WorkCenterBlock.pas:567-571), so no write could be read back';
+
 /**
  * The store's owner settings: service 0's price (`TServiceBlock.RDOSetPrice`,
  * StdBlocks/ServiceBlock.pas:1578) and the salary triplet (`TWorkCenter.RDOSetSalaries`,
@@ -4880,32 +5066,38 @@ const storePriceSalaries: Flow = {
         const values = WORKER_KINDS.map(i => propertyValue(groups, 'workforce', `Salaries${i}`));
         return values.some(v => v === undefined) ? undefined : values.join(',');
       };
+      const before = await readSalaries();
+      if (before !== undefined && before.split(',').every(s => s.trim() === '')) {
+        assertions.unproven('RDOSetSalaries', NO_SALARY_CLASS_REASON);
+        return report('store-price-salaries', assertions, probes, session);
+      }
       const salaries = await roundTripProbe(ctx, url, {
         what: `${fixtureLabel(fx)} salaries (hi,mid,lo)`,
         member: 'RDOSetSalaries',
         read: readSalaries,
         write: async value => {
-          const [salary0, salary1, salary2] = value.split(',');
+          const [salary0, salary1, salary2] = value.split(',').map(salaryArg);
           // The whole triplet, the untouched two unchanged — buildRdoCommandArgs requires all three.
           await setBuildingProperty(session, fx.x, fx.y, 'RDOSetSalaries', salary0, { salary0, salary1, salary2 });
         },
-        testValue: original => {
-          const [hi, mid, lo] = original.split(',');
-          return [nudgeWithin(hi, 0, 255), mid, lo].join(',');
-        },
+        testValue: salariesNudge,
         proof: {
           log: {
             marker: LOG_MARKERS.RDOSetSalaries,
             match: (line, written) => {
-              const [hi, mid, lo] = written.split(',');
+              const [hi, mid, lo] = written.split(',').map(salaryArg);
               return salariesLineMatches(line, hi, mid, lo);
             },
           },
-          readBack: readBackOn(
-            `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read`,
-            `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593)`,
-            readSalaries,
-          ),
+          readBack: {
+            ...readBackOn(
+              `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read, published classes only`,
+              `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593), ` +
+                'and only a class with capacity is published (:567-571)',
+              readSalaries,
+            ),
+            matches: publishedSalariesMatch,
+          },
         },
         restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetSalaries' },
       });
@@ -4920,14 +5112,14 @@ const storePriceSalaries: Flow = {
 
 /**
  * A product gate's price (`TFacility.RDOSetOutputPrice`, Kernel/Kernel.pas:4332), driven only on
- * a gate whose clients are all SPO_test3's own — a price change can drop another player's link
+ * a gate whose clients all belong to one of SPO_test3's companies — a price change can drop another player's link
  * (`outputPriceRefusal`). The client list after the restore must equal its snapshot.
  */
 const industryOutputPrice: Flow = {
   name: 'industry-output-price',
   what:
-    "round trip on RDOSetOutputPrice at SPO_test3's industry fixture, on a product gate with no foreign " +
-    'client — Survival line + read-back, restored, client links unchanged',
+    "round trip on RDOSetOutputPrice at SPO_test3's industry fixture, on a product gate with no client of " +
+    "another player's company — Survival line + read-back, restored, client links unchanged",
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -4937,11 +5129,16 @@ const industryOutputPrice: Flow = {
       const fx = await ownFixture(session, 'industry', assertions);
       if (!fx) return report('industry-output-price', assertions, probes, session);
 
+      const tycoon = await listTycoonFacilities(session);
+      const own: OwnClients = {
+        companies: new Set([session.company.name, ...tycoon.companies]),
+        lots: new Set(tycoon.facilities.map(f => `${f.x},${f.y}`)),
+      };
       const refusals: string[] = [];
       let chosen: { name: string; product: BuildingProductData; fluid: string } | undefined;
       for (const stub of await gateStubs(session, fx, 'products')) {
         const product = (await gateConnections(session, fx, 'products', stub)).product;
-        const refusal = outputPriceRefusal(product, session.company.name);
+        const refusal = outputPriceRefusal(product, own);
         if (refusal === null && product?.metaFluid) {
           chosen = { name: stub.name, product, fluid: product.metaFluid };
           break;
@@ -6680,6 +6877,20 @@ export function startUpgradeLineMatches(line: string, count: number): boolean {
   return new RegExp(`${escapeRegExp(`Facility Start Upgrade count: ${count}`)}(?=\\s|$)`).test(line);
 }
 
+/**
+ * What queueing an invention costs, in dollars: the `Price:` and `License:` lines of its details
+ * (`TInvention.GetProperties`, Inventions/Inventions.pas:715-727; labels Kernel/SimHints.pas:482-483;
+ * amounts from `FormatMoney`, Utils/Misc/MathUtils.pas:87-99). A line the details do not show is 0. The server starts a
+ * research only when `Budget >= Price + GetFeePrice` (Kernel/ResearchCenter.pas:240).
+ */
+export function researchCost(properties: string): number {
+  const dollars = (label: string): number => {
+    const m = new RegExp(`(?:^|\\s)${label}:\\s*\\$([0-9][0-9,.]*)`, 'i').exec(properties);
+    return m ? Number(m[1].replace(/[^0-9]/g, '')) : 0;
+  };
+  return dollars('Price') + dollars('Licen[cs]e');
+}
+
 export type ResearchState = 'developing' | 'owned' | 'available' | 'absent';
 
 /**
@@ -7021,14 +7232,20 @@ const acceptCloning = fixtureFlow(
 );
 
 /**
- * Queue one invention, prove it is in development, cancel it. Queueing can buy on the spot —
+ * The one invention research-roundtrip drives (maintainer, PR #1214): Commerce > Bars > Happy Hour,
+ * id `HappyHour` in research.0.dat — Price $25,000,000, requires `Bars`.
+ */
+export const RESEARCH_TARGET = { id: 'HappyHour', name: 'Happy Hour' } as const;
+
+/**
+ * Queue Happy Hour, prove it is in development, cancel it. Queueing can buy on the spot —
  * an invention with `Time = 0` is paid for and declared at once (Kernel/ResearchCenter.pas:319-334)
  * — and a cancel on an owned invention reaches `RetireInvention` (:372), the excluded sell. So the
  * cancel is sent only on an invention that reads in development right before it.
  */
 const researchRoundTrip = fixtureFlow(
   'research-roundtrip',
-  "REQ_RESEARCH_INVENTORY + DETAILS on SPO_test3's research fixture → RDOQueueResearch (Queue Research: line, " +
+  "REQ_RESEARCH_INVENTORY + DETAILS for Happy Hour on SPO_test3's research fixture → RDOQueueResearch (Queue Research: line, " +
     'in development) → RDOCancelResearch (Cancel Research: line, no longer queued)',
   'research',
   'hqInventions',
@@ -7055,18 +7272,40 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   const parsed = Number(propertyValue(groups, 'hqInventions', 'CatCount') ?? '0');
   const catMax = Number.isFinite(parsed) ? parsed : 0;
 
-  let pick: { id: string; name: string; category: number } | undefined;
-  for (let category = 0; category <= catMax && !pick; category++) {
-    const { data } = await researchInventory(session, fx, category);
-    const held = new Set([...data.developing, ...data.completed].map(i => i.inventionId));
-    const hit = data.available.find(i => i.enabled === true && !held.has(i.inventionId));
-    if (hit) pick = { id: hit.inventionId, name: hit.name, category };
-  }
-  if (!pick) {
-    assertions.unproven('RDOQueueResearch', `no enabled invention available to queue in categories 0..${catMax}`);
+  const cash = await readCash(session);
+  if (cash === null) {
+    assertions.unproven('RDOQueueResearch', 'cash unknown — no EVENT_TYCOON_UPDATE received');
     return;
   }
-  const { id, category } = pick;
+
+  // The one pinned invention (maintainer, PR #1214), wherever the building lists it — the
+  // category index is read, not assumed. The three lists are exclusive (researchState).
+  const { id, name } = RESEARCH_TARGET;
+  const at = `${fx.name} (${fx.x},${fx.y})`;
+  let found: { category: number; state: ResearchState; enabled: boolean } | undefined;
+  for (let category = 0; category <= catMax && !found; category++) {
+    const { data } = await researchInventory(session, fx, category);
+    const state = researchState(data, id);
+    if (state !== 'absent') {
+      found = { category, state, enabled: data.available.some(i => i.inventionId === id && i.enabled === true) };
+    }
+  }
+  if (!found) {
+    assertions.unproven('RDOQueueResearch', `${name} not listed at ${at} (categories 0..${catMax})`);
+    return;
+  }
+  if (found.state !== 'available' || !found.enabled) {
+    const why =
+      found.state === 'owned'
+        ? 'already owned — a cancel on it would sell it (Kernel/ResearchCenter.pas:372)'
+        : found.state === 'developing'
+          ? 'already in development — not queued by this flow, so not its to cancel'
+          : 'listed but not enabled — its prerequisite Bars is not owned, or the tier / nobility does not match ' +
+            '(TInvention.Enabled, Inventions/Inventions.pas:658-693)';
+    assertions.unproven('RDOQueueResearch', `${name} at ${at}: ${why}; nothing sent`);
+    return;
+  }
+  const { category } = found;
 
   const { details } = await session.driver.request<WsRespResearchDetails>(
     { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: id },
@@ -7078,6 +7317,13 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     details.inventionId === id && properties !== '',
     `${details.inventionId}: ${properties || '(no properties)'}`,
   );
+  // One the account cannot pay for is accepted, then dropped at once (StartResearch,
+  // Kernel/ResearchCenter.pas:240-253) — it would never read queued.
+  const cost = researchCost(details.properties);
+  if (cost > cash) {
+    assertions.unproven('RDOQueueResearch', `${name} costs $${cost} (Price + License), above the cash ($${cash}); nothing sent`);
+    return;
+  }
 
   const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
   const url = await survivalUrl(ctx);
@@ -7094,6 +7340,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   });
 
   let queued = false;
+  let refused = false;
   try {
     const window = await openLogWindow(url);
     queued = true;
@@ -7115,6 +7362,17 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
         `bought at once: ${id} (${properties}) — an invention with Time = 0 is bought on the spot ` +
           '(Kernel/ResearchCenter.pas:319-334); not cancelled: cancel would sell it',
       );
+    } else if (listed.last === 'available') {
+      // Reads exactly what the pending restore would put back: the server dropped the queue and
+      // nothing is owed. No cancel — nothing is queued (Kernel/ResearchCenter.pas:240-253).
+      refused = true;
+      ctx.lock.clearPendingRestore(key);
+      assertions.check(
+        `${id} is listed in development, not owned`,
+        false,
+        `the server did not take the queue — ${id} (${properties}) still reads available; nothing to cancel, ` +
+          'world unchanged, pending restore cleared',
+      );
     } else {
       assertions.check(
         `${id} is listed in development, not owned`,
@@ -7125,7 +7383,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   } catch (err: unknown) {
     assertions.check('the queue steps ran without a throw', false, toErrorMessage(err));
   }
-  if (queued) await cancelQueuedResearch(session, ctx, fx, { id, key, url, stateOf }, assertions);
+  if (queued && !refused) await cancelQueuedResearch(session, ctx, fx, { id, key, url, stateOf }, assertions);
 }
 
 /**
@@ -7327,10 +7585,64 @@ async function startUpgrade(
   );
 }
 
+/** `readUpgrade` that answers a rejected read with its error text instead of a throw — "not yet". */
+async function tryReadUpgrade(session: LiveSession, fx: OwnFixture): Promise<UpgradeState | string> {
+  try {
+    return await readUpgrade(session, fx);
+  } catch (err: unknown) {
+    return toErrorMessage(err);
+  }
+}
+
+/** Nothing upgrading or pending, at the original level — the STOP is proven. */
+function idleAt(u: UpgradeState | string | undefined, level0: number): boolean {
+  return typeof u === 'object' && u.upgrading === 0 && u.pending === 0 && u.level === level0;
+}
+
+const upgradeOrError = (u: UpgradeState | string | undefined): string =>
+  typeof u === 'object' ? upgradeText(u) : `read failed: ${u ?? '(no read)'}`;
+
+/**
+ * AcceptCloning back to its original's truthiness, then one read of the upgrade tab — returned so
+ * the caller can use it as a second proof of the STOP.
+ */
+async function restoreCloning(
+  session: LiveSession,
+  fx: OwnFixture,
+  run: UpgradeRun,
+  assertions: Assertions,
+  suffix: string,
+): Promise<{ back: boolean; after: UpgradeState | string | undefined }> {
+  try {
+    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', run.cloning0);
+    assertions.check(
+      `AcceptCloning set back to ${run.cloning0 === '1' ? 'true' : 'false'}, confirmed by the gateway's live get${suffix}`,
+      r.confirmed === true,
+      `live get holds "${r.newValue}"`,
+    );
+    const after = await tryReadUpgrade(session, fx);
+    const cloning = typeof after === 'object' ? after.cloning : undefined;
+    assertions.check(
+      `AcceptCloning reads its original truthiness${suffix}`,
+      cloning === run.cloning0,
+      typeof after === 'object' ? `reads ${cloning ?? '(unread)'}, original ${run.cloning0}` : `read failed: ${after}`,
+    );
+    return { back: r.confirmed === true && cloning === run.cloning0, after };
+  } catch (err: unknown) {
+    assertions.check(`the AcceptCloning restore ran without a throw${suffix}`, false, `${toErrorMessage(err)} — pending restore kept`);
+    return { back: false, after: undefined };
+  }
+}
+
 /**
  * The STOP when the START went out, then — always — AcceptCloning back to its original's
- * truthiness, which also undoes the handler's own `-1`. The pending restore is cleared only when
- * the STOP is proven (line + zeros + the original level) and AcceptCloning reads its original.
+ * truthiness, which also undoes the handler's own `-1`. The read-back after the STOP polls past
+ * a failed read ("not yet"); the server's cached counters can read stale for ~2 min after a STOP
+ * (`TBlock.StopUpgrading` refreshes the cache before zeroing, Kernel/Kernel.pas:6554-6560;
+ * Kernel/KernelCache.pas:405), so the AcceptCloning restore's own read is a second chance. If that
+ * read still shows an upgrade running, one more STOP is sent (ignored when idle,
+ * Kernel/Kernel.pas:4694) and re-checked once. The pending restore is kept only when the upgrade
+ * is still provably running, every read failed, or AcceptCloning does not read its original.
  */
 async function undoUpgrade(
   session: LiveSession,
@@ -7339,7 +7651,9 @@ async function undoUpgrade(
   run: UpgradeRun,
   assertions: Assertions,
 ): Promise<void> {
-  let stopped = !run.startSent;
+  let proof: UpgradeState | string | undefined;
+  let polled = false;
+  let reachedPoll = false;
   if (run.startSent) {
     try {
       const window = await openLogWindow(run.url);
@@ -7348,41 +7662,75 @@ async function undoUpgrade(
       // The line carries no coordinates (Kernel/Kernel.pas:4689): the read-back attributes it.
       const line = await awaitMarker(window, { marker: LOG_MARKERS.RDOStopUpgrade }, TIMEOUTS.logSettle, undefined, ctx.now, ctx.sleep);
       assertions.check('the STOP logged Facility Stop Upgrade..', line !== null, line ?? '(no Facility Stop Upgrade.. line)');
-      const idle = await pollUntil(() => readUpgrade(session, fx), u => u.upgrading === 0 && u.pending === 0, ctx);
-      assertions.check('Upgrading and Pending read 0 after the STOP', idle.ok, upgradeText(idle.last));
-      const sameLevel = idle.last.level === run.level0;
+      const idle = await pollUntil(
+        () => tryReadUpgrade(session, fx),
+        u => typeof u === 'object' && u.upgrading === 0 && u.pending === 0,
+        ctx,
+      );
+      reachedPoll = true;
+      polled = idle.ok;
+      proof = idle.last;
+    } catch (err: unknown) {
+      assertions.check('the upgrade STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+    }
+  }
+  const lastPoll = proof;
+
+  let restored = await restoreCloning(session, fx, run, assertions, '');
+  if (!run.startSent) {
+    if (restored.back) ctx.lock.clearPendingRestore(run.key);
+    return;
+  }
+
+  let source = '';
+  if (!polled) {
+    // A failed restore read falls back on the poll's last state, never on a worse proof.
+    proof = typeof restored.after === 'object' || typeof lastPoll !== 'object' ? (restored.after ?? lastPoll) : lastPoll;
+    if (typeof restored.after === 'object') source = ' (from the read after the AcceptCloning restore)';
+  }
+  if (typeof proof === 'object' && (proof.upgrading > 0 || proof.pending > 0)) {
+    try {
+      if (run.cloning0 === '0') {
+        const set = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', '1');
+        assertions.check(
+          'AcceptCloning set true before the second STOP (manageConstructionImpl refuses otherwise)',
+          set.confirmed === true,
+          `live get holds "${set.newValue}"`,
+        );
+      }
+      const r = await requestUpgrade(session, fx, 'STOP_UPGRADE');
+      assertions.check('the gateway accepted the second STOP_UPGRADE', r.success === true, r.message);
+      restored = await restoreCloning(session, fx, run, assertions, ' (after the second STOP)');
+      proof = restored.after;
+      source = ' (after a second STOP)';
+    } catch (err: unknown) {
+      assertions.check('the second STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+    }
+  }
+
+  if (reachedPoll && proof !== undefined) {
+    const zeros = typeof proof === 'object' && proof.upgrading === 0 && proof.pending === 0;
+    assertions.check(
+      'Upgrading and Pending read 0 after the STOP',
+      zeros,
+      zeros
+        ? `${upgradeOrError(proof)}${source}`
+        : typeof proof === 'object'
+          ? `${upgradeText(proof)}${source} — still upgrading, pending restore kept`
+          : `every read failed: ${proof}, pending restore kept`,
+    );
+    if (typeof proof === 'object') {
+      const sameLevel = proof.level === run.level0;
       assertions.check(
         'UpgradeLevel equals its original after the STOP',
         sameLevel,
         sameLevel
           ? `level ${run.level0}`
-          : `a level completed before the STOP — downgrade is excluded, level ${run.level0}→${idle.last.level} kept`,
+          : `a level completed before the STOP — downgrade is excluded, level ${run.level0}→${proof.level} kept`,
       );
-      stopped = line !== null && idle.ok && sameLevel;
-    } catch (err: unknown) {
-      assertions.check('the upgrade STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
     }
   }
-
-  let cloningBack = false;
-  try {
-    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', run.cloning0);
-    assertions.check(
-      `AcceptCloning set back to ${run.cloning0 === '1' ? 'true' : 'false'}, confirmed by the gateway's live get`,
-      r.confirmed === true,
-      `live get holds "${r.newValue}"`,
-    );
-    const after = await readUpgrade(session, fx);
-    assertions.check(
-      'AcceptCloning reads its original truthiness',
-      after.cloning === run.cloning0,
-      `reads ${after.cloning ?? '(unread)'}, original ${run.cloning0}`,
-    );
-    cloningBack = r.confirmed === true && after.cloning === run.cloning0;
-  } catch (err: unknown) {
-    assertions.check('the AcceptCloning restore ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
-  }
-  if (stopped && cloningBack) ctx.lock.clearPendingRestore(run.key);
+  if (idleAt(proof, run.level0) && restored.back) ctx.lock.clearPendingRestore(run.key);
 }
 
 /** A chat name is SPO_test3's own — `ChatMsg`'s `From` may still carry `/AccDesc`. */
@@ -7403,9 +7751,29 @@ async function attempt(assertions: Assertions, what: string, step: () => Promise
 }
 
 /**
- * The chat channel list and the Lobby's info (#1148). Read-only. The gateway prepends the
- * Lobby to every list (`getChatChannelList` in `chat-handler.ts`), so its presence proves
- * nothing — the assertion is that every entry is well-formed.
+ * The Lobby user list, as the session's own ClientView answers it: `TClientView.GetUserList`
+ * -> `TInterfaceServer.GetUserList(fCurrChannel)` walks every client whose current channel is
+ * the caller's, by the name it logged on under (`Interface Server/InterfaceServer.pas:
+ * 1635-1646`, `:3342-3358`, name set at `:3238`).
+ */
+async function readChatUsers(session: LiveSession): Promise<ChatUser[]> {
+  const resp = await session.driver.request<WsRespChatUserList>(
+    { type: WsMessageType.REQ_CHAT_GET_USERS },
+    WsMessageType.RESP_CHAT_USER_LIST,
+  );
+  return resp.users;
+}
+
+/**
+ * The chat channel list, the Lobby's user list and the Lobby's info (#1148, proof #1188).
+ * Read-only. The gateway prepends the Lobby to every list (`getChatChannelList` in
+ * `chat-handler.ts`), so its presence proves nothing — the list check is that every entry is
+ * well-formed. The membership proof is the user list, not the channel info: the info read
+ * lists `fHomeChannel.fMembers` (`Interface Server/InterfaceServer.pas:3419-3437`,
+ * `:4565-4575`), which `Logon` never fills — it only sets `fCurrChannel := fHomeChannel`
+ * (`:3227`), and only `ClientEnteredChannel` inserts (`:4601-4615`). `GetUserList` walks the
+ * clients by `fCurrChannel` (`:3342-3358`), so it names SPO_test3 once logged on. The info is
+ * still read, by the Lobby's server name `''`, and must be non-empty text.
  */
 const chatRead: Flow = {
   name: 'chat-read',
@@ -7431,12 +7799,22 @@ const chatRead: Flow = {
         wellFormed,
         Array.isArray(channels) ? `${channels.length} channel(s)` : 'not a list',
       );
+      const users = await readChatUsers(session);
+      assertions.check(
+        'the Lobby user list names SPO_test3 (GetUserList — Interface Server/InterfaceServer.pas:3227, :3342-3358)',
+        users.some(u => isSelf(u.name)),
+        `${users.length} user(s)`,
+      );
       // '' is the Lobby's server name (Interface Server/InterfaceServer.pas:2623, :4565-4575).
       const info = await session.driver.request<WsRespChatChannelInfo>(
         { type: WsMessageType.REQ_CHAT_GET_CHANNEL_INFO, channelName: '' },
         WsMessageType.RESP_CHAT_CHANNEL_INFO,
       );
-      assertions.check('the Lobby channel info is a string', typeof info.info === 'string');
+      assertions.check(
+        'the Lobby channel info is non-empty text',
+        typeof info.info === 'string' && info.info.trim() !== '',
+        typeof info.info === 'string' ? info.info || "''" : 'not a string',
+      );
       assertions.check('no gateway errors on the chat reads', session.driver.errors.length === 0);
       return report('chat-read', assertions, [], session);
     } finally {
@@ -7455,8 +7833,11 @@ const chatRead: Flow = {
  * - `ChatMsg` delivers only to the sender's channel, sender included (`:3902-3924`) — the
  *   `EVENT_CHAT_MSG` echo is a real server witness.
  * - `MsgCompositionChanged` loops over every client, sender included (`:3968-3980`,
- *   `TClientView.NotifyMsgCompositionState` `:2426-2430`) — typing and away are proven by the
- *   sender's own echo. AFK sticks until another state (`:1495-1502`), so the cleanup pushes idle.
+ *   `TClientView.NotifyMsgCompositionState` `:2426-2430`) — typing is proven by the sender's
+ *   own echo. The echo cannot carry away (the gateway maps only state '1' to typing), so away
+ *   is proven by the user list's AFK flag, which `MsgCompositionChanged` sets before the
+ *   broadcast (`:1495-1502`, listed by `GetUserList` `:3342-3358`). AFK sticks until another
+ *   state, so the cleanup pushes idle.
  * - The Lobby's server name is `''` (`:2623`, `:4565-4575`), never `'Lobby'`.
  * - A killed run cleans itself up: `DoLogOff` -> `ClientLeavedChannel` (`:2000`).
  */
@@ -7549,13 +7930,20 @@ const chatPrivateChannel: Flow = {
           false,
           'the typing-off self-echo (isTyping: false)',
         );
-        // The gateway maps only state '1' to typing (push-dispatcher.ts), so away is not
-        // distinguishable from idle over the WS contract: the claim is only that an event for
-        // SPO_test3 arrived after the AWAY push.
-        await awaitSelfTyping(
+        // The echo orders what follows: MsgCompositionChanged sets AFK before it broadcasts
+        // (:1495-1502), so after it the user list carries the away flag.
+        const awayEchoed = await awaitSelfTyping(
           { type: WsMessageType.REQ_CHAT_AWAY },
           false,
-          'a self-echo for SPO_test3 after AWAY (away reads as isTyping: false)',
+          'the AWAY self-echo for SPO_test3',
+        );
+        if (!awayEchoed) return;
+        await userListCheck(
+          session,
+          assertions,
+          'the channel user list marks SPO_test3 away (isAway) — ' +
+            'Interface Server/InterfaceServer.pas:1495-1502, :3342-3358',
+          users => users.some(u => isSelf(u.name) && u.isAway === true),
         );
       };
 
@@ -7647,10 +8035,14 @@ const chatPrivateChannel: Flow = {
 };
 
 /**
- * SPO_test3 chases Crazz, then stops (#1148). `TClientView.Chase` only inserts the chaser in
- * the target's list and moves the chaser's own view (`Interface Server/InterfaceServer.pas:
- * 1579-1607`) — nothing is broadcast, Crazz writes nothing. `DoLogOff` (`:2002`) and `Destroy`
- * (`:654`) end any chase a dead run leaves.
+ * SPO_test3 chases Crazz, then stops (#1148, proof #1188). `TClientView.Chase` inserts the
+ * chaser in the target's list and moves the chaser's own view (`Interface Server/
+ * InterfaceServer.pas:1579-1608`, `MoveTo` at `:1590`). The proof is SPO_test3's view
+ * following Crazz: Crazz sends one camera update, `SetViewedArea` ends with `UpdateChasers`
+ * (`:742`), which pushes every chaser `MoveTo(x + dx div 2, y + dy div 2)` (`:705-718`,
+ * `TClientView.MoveTo` `:2215-2219`), and the gateway forwards it as `EVENT_MOVE_TO`. The
+ * camera sits on Crazz's own saved position, so its logoff cookie is unchanged. `DoLogOff`
+ * (`:2002`) and `Destroy` (`:654`) end any chase a dead run leaves.
  */
 const chatChase: Flow = {
   name: 'chat-chase',
@@ -7664,12 +8056,32 @@ const chatChase: Flow = {
       const session = await login(PRIMARY_ACCOUNT);
       try {
         // attempt() never throws, so STOP_CHASE is sent whatever the chase answered.
-        await attempt(assertions, `CHASE ${SECONDARY_ACCOUNT.username} answered without error`, () =>
+        const from = session.driver.receivedCount();
+        const chased = await attempt(assertions, `CHASE ${SECONDARY_ACCOUNT.username} answered without error`, () =>
           session.driver.request<WsRespChatSuccess>(
             { type: WsMessageType.REQ_CHAT_CHASE, userName: SECONDARY_ACCOUNT.username },
             WsMessageType.RESP_CHAT_SUCCESS,
           ),
         );
+        if (chased) {
+          const view = sendCamera(crazz, crazz.playerX, crazz.playerY);
+          const ex = view.viewX + CAMERA_VIEW_SIZE / 2;
+          const ey = view.viewY + CAMERA_VIEW_SIZE / 2;
+          const label =
+            `SPO_test3's view follows ${SECONDARY_ACCOUNT.username}: EVENT_MOVE_TO at (${ex},${ey}) — ` +
+            'Interface Server/InterfaceServer.pas:705-718, :742, :1590';
+          await attempt(assertions, label, () =>
+            session.driver.waitFor(
+              m => {
+                const e = m as WsEventMoveTo;
+                return m.type === WsMessageType.EVENT_MOVE_TO && e.x === ex && e.y === ey;
+              },
+              TIMEOUTS.request,
+              label,
+              from,
+            ),
+          );
+        }
         await attempt(assertions, 'STOP_CHASE answered', () =>
           session.driver.request<WsRespChatSuccess>(
             { type: WsMessageType.REQ_CHAT_STOP_CHASE },

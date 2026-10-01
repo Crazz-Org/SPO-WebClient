@@ -150,10 +150,9 @@ src/
 │   ├── layouts/                 # LoginScreen, GameScreen
 │   ├── components/              # React components (CSS Modules)
 │   │   ├── common/              # Badge, Toast, GlassCard, Skeleton, SliderInput, ...
-│   │   ├── hud/                 # TopBar, LeftRail, RightRail, StatusTicker
-│   │   ├── panels/              # RightPanel, LeftPanel (slide-in)
+│   │   ├── hud/                 # StatusPill, CommandBar, RightRail, WorldEventTicker
 │   │   ├── building/            # BuildingInspector, QuickStats, PropertyGroup, InspectorTabs
-│   │   ├── empire/              # EmpireOverview, FacilityList, FinancialSummary, ProfilePanel
+│   │   ├── empire/              # EmpireOverview, FacilityList, ProfilePanel
 │   │   ├── mail/                # MailPanel, HtmlMailBody
 │   │   ├── chat/                # ChatStrip
 │   │   ├── search/              # SearchPanel, TycoonProfileView
@@ -162,7 +161,6 @@ src/
 │   │   ├── mobile/              # MobileShell, BottomNav, BottomSheet
 │   │   ├── command-palette/     # CommandPalette (Ctrl+K)
 │   │   ├── login/               # AuthStage, ZoneStage, WorldStage, CompanyStage
-│   │   ├── icons/               # ZoneIcon, RoadIcons
 │   │   └── map/                 # Map-related UI components
 │   ├── renderer/                # Canvas 2D isometric engine
 │   │   ├── isometric-map-renderer.ts      # Main renderer orchestrator
