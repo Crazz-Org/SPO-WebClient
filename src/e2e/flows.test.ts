@@ -5503,6 +5503,31 @@ describe('inspector helpers (#1152)', () => {
     expect(outputPriceRefusal(undefined, 'SPO_test3 - Green')).toMatch(/header/);
   });
 
+  describe('outputPriceRefusal with a set of own companies and lots', () => {
+    const own = { companies: new Set(['SPO_test3 - Green', 'Yellow Inc. TEST']), lots: new Set(['928,820']) };
+    const green = conn('Shop A', 'SPO_test3 - Green', 1, 2);
+    const yellow = conn('Export Storage 4', 'Yellow Inc. TEST', 924, 820);
+
+    it('accepts clients of any of several own companies', () => {
+      expect(outputPriceRefusal(product({ connections: [green, yellow], connectionCount: 2 }), own)).toBeNull();
+    });
+
+    it("accepts a client of unknown company sitting on one of the tycoon's lots", () => {
+      expect(outputPriceRefusal(product({ connections: [conn('Import Storage 4', '?', 928, 820)], connectionCount: 1 }), own)).toBeNull();
+    });
+
+    it('refuses a client of a company outside the set, naming it', () => {
+      expect(outputPriceRefusal(product({ connections: [yellow, conn('X', 'Other Co', 5, 6)], connectionCount: 2 }), own))
+        .toMatch(/another company: X \(5,6\) of Other Co$/);
+    });
+
+    it('refuses on the row cap and on a missing header', () => {
+      expect(outputPriceRefusal(product({ connections: [yellow], connectionCount: 25 }), own)).toMatch(/25 client/);
+      expect(outputPriceRefusal(product({ pricePc: undefined }), own)).toMatch(/header/);
+      expect(outputPriceRefusal(undefined, own)).toMatch(/header/);
+    });
+  });
+
   it('stoppedBit reads bit $04 of Trouble', () => {
     expect(stoppedBit('0')).toBe('0');
     expect(stoppedBit('4')).toBe('1');
@@ -5590,10 +5615,13 @@ describe('inspector flows (#1152)', () => {
     writes: Write[];
     lines: string[];
     requests: WsMessage[];
+    /** What `listTycoonFacilities` returns for SPO_test3. */
+    tycoon?: { companies: string[]; facilities: fixtures.TycoonFacility[] };
   }
 
   function makeWorld(over: Partial<World> = {}): World {
     return {
+      tycoon: { companies: ['SPO_test3 - Green'], facilities: [] },
       storeTabs: ['srvGeneral', 'supplies', 'workforce'],
       srvPrices0: '120',
       salaries: ['150', '100', '90'],
@@ -5706,6 +5734,7 @@ describe('inspector flows (#1152)', () => {
       if (kind.id === 'store') return found.store === false ? { kind: 'store', reason: 'none in Helartia' } : { kind: 'store', found: STORE };
       return found.industry === false ? { kind: 'industry', reason: 'under construction' } : { kind: 'industry', found: INDUSTRY };
     });
+    jest.spyOn(fixtures, 'listTycoonFacilities').mockImplementation(async () => world.tycoon ?? { companies: [], facilities: [] });
     jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
     jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
       if (typeof proof !== 'object') return null;
@@ -5943,6 +5972,38 @@ describe('inspector flows (#1152)', () => {
       expect(result.status).toBe('UNPROVEN');
       expect(result.unproven[0]).toMatch(/^RDOSetOutputPrice — .*Kernel\/Kernel\.pas:7193-7205.*Their Shop \(5,6\) of Other Co/);
       expect(setProps(world)).toEqual([]);
+    });
+
+    it("drives a gate whose clients belong only to SPO_test3's second company (gate of #1221)", async () => {
+      const world = makeWorld({
+        products: [product({
+          name: 'Raw Chemicals',
+          connections: [conn('Import Storage 4', 'Yellow Inc. TEST', 928, 820), conn('Export Storage 4', 'Yellow Inc. TEST', 924, 820)],
+          connectionCount: 2,
+        })],
+        tycoon: { companies: ['SPO_test3 - Green', 'Yellow Inc. TEST'], facilities: [] },
+      });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('industry-output-price', lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes).toEqual([
+        { property: 'RDOSetOutputPrice', value: '101', params: { fluidId: 'Chemicals' } },
+        { property: 'RDOSetOutputPrice', value: '100', params: { fluidId: 'Chemicals' } },
+      ]);
+      expect(result.unproven.filter(u => u.startsWith('RDOSetOutputPrice'))).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it("drives a gate whose clients sit on SPO_test3's facility lots, whatever their company name", async () => {
+      const world = makeWorld({
+        products: [product({ connections: [conn('Import Storage 4', '?', 928, 820)], connectionCount: 1 })],
+        tycoon: { companies: ['SPO_test3 - Green'], facilities: [{ company: 'Yellow Inc. TEST', x: 928, y: 820, name: 'Import Storage 4' }] },
+      });
+      arrange(world);
+      const result = await run('industry-output-price');
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => w.params?.fluidId)).toEqual(['Chemicals', 'Chemicals']);
     });
 
     it('takes the first safe gate when an earlier one is not', async () => {
