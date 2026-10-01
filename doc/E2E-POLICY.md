@@ -394,6 +394,18 @@ capability — and then the gate demands the flow.
 failure, not an exclusion — and the `bench/gate` status shows the count as
 `— N unproven flow(s)`.
 
+### Parked flows — never built, by maintainer decision
+
+A flow no account can ever exercise is not kept failing: it is not written at all, and its
+handler stays in `FALLBACK_ONLY` (`src/e2e/routing.ts`). It comes back only when the reason
+below stops holding.
+
+| Flow | Why no live drive is possible | Covered by | Revisit when |
+|---|---|---|---|
+| `tutorial-read` (read the tutorial assignment, next/back) | No E2E account holds a tutorial, and none can be given one. The server builds a tutorial only when a tycoon is **created** on a world whose `Tutorial` setting is `enabled` (default `disabled`, `Kernel/Kernel.pas:10907-10908`), and skips it if the tycoon holds a role, has 10+ nobility points, or carries the `tutorial` cookie (`Kernel/Kernel.pas:12959`). It is deleted for good, cookie `tutorial=done`, once the tycoon's level tier passes 0 (`Kernel/Kernel.pas:12206-12214`). An account reset (`Kernel/World.pas:6203`, `:6368`) only rebuilds a tutorial that still exists (`Kernel/Kernel.pas:12924-12939`), and "Get New Assignment" only steps an existing one (`NewTycoon/Tasks/ModifyTask.asp:25-34`). SPO_test3 is Mayor and has none; the secondary accounts show none either. | the mock-server suite, `src/mock-server/scenarios/tutorial-scenario.ts` | a brand-new account is created on a world with `Tutorial` enabled |
+
+Not project-critical (maintainer, 2026-10-01 — [#1199](https://github.com/Crazz-Org/SPO-WebClient/issues/1199#issuecomment-5937034602)).
+
 ---
 
 ## 8. The failure loop
