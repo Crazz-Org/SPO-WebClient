@@ -7728,6 +7728,15 @@ describe('inspector flows (#1154)', () => {
     /** A level completes before the STOP. */
     levelUpOnStop?: boolean;
     startThrows?: boolean;
+    /** Upgrade-tab reads after the first STOP that still return the stale `Upgrading 1, Pending 1`. */
+    staleReads?: number;
+    /** 1-based indices of upgrade-tab reads after the first STOP that time out. */
+    throwReads?: number[];
+    /** STOPs that leave the upgrade running. */
+    stopsIgnored?: number;
+    secondStopThrows?: boolean;
+    stops?: number;
+    readsAfterStop?: number;
     events: string[];
     writes: Write[];
     lines: string[];
@@ -7809,8 +7818,11 @@ describe('inspector flows (#1154)', () => {
       if (world.upgradeMoves !== false) world.upgrade.Pending = '1';
     } else {
       world.lines.push('12:00 Facility Stop Upgrade..');
-      world.upgrade.Upgrading = '0';
-      world.upgrade.Pending = '0';
+      world.stops = (world.stops ?? 0) + 1;
+      if (world.secondStopThrows && world.stops === 2) throw new Error('socket died on the second STOP');
+      const ignored = world.stops <= (world.stopsIgnored ?? 0);
+      world.upgrade.Upgrading = ignored ? '1' : '0';
+      world.upgrade.Pending = ignored ? '1' : '0';
       if (world.levelUpOnStop) world.upgrade.UpgradeLevel = String(Number(world.upgrade.UpgradeLevel) + 1);
     }
     return { type: WsMessageType.RESP_BUILDING_UPGRADE, success: true, action };
@@ -7828,7 +7840,13 @@ describe('inspector flows (#1154)', () => {
         case WsMessageType.REQ_BUILDING_TAB_DATA: {
           const kind = kindAt(m);
           if (m.tabId !== TAB[kind]) throw new Error(`unexpected tab ${String(m.tabId)}`);
-          return { groups: { [TAB[kind]]: Object.entries(groupOf(world, kind)).map(([k, v]) => pv(k, v)) } };
+          let held = groupOf(world, kind);
+          if (kind === 'industry' && world.stops) {
+            const n = (world.readsAfterStop = (world.readsAfterStop ?? 0) + 1);
+            if (world.throwReads?.includes(n)) throw new Error('Timed out after 30000 ms waiting for RESP_BUILDING_TAB_DATA');
+            if (n <= (world.staleReads ?? 0)) held = { ...held, Upgrading: '1', Pending: '1' };
+          }
+          return { groups: { [TAB[kind]]: Object.entries(held).map(([k, v]) => pv(k, v)) } };
         }
         case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
           const kind = kindAt(m);
@@ -8423,6 +8441,96 @@ describe('inspector flows (#1154)', () => {
         "AcceptCloning set back to false, confirmed by the gateway's live get",
         'AcceptCloning reads its original truthiness',
       ]);
+      expect(pending(lock)).toHaveLength(1);
+    });
+
+    const zerosDetail = (r: FlowResult) => r.assertions.find(a => a.what === 'Upgrading and Pending read 0 after the STOP')?.detail;
+
+    it('counts a read-back read that times out as "not yet" and proves the STOP on the next read', async () => {
+      const world = makeWorld({ throwReads: [1] });
+      const lock = cleanLock();
+      arrange(world);
+      let t = 0;
+      const result = await flowByName('upgrade-stop').run({ lock, survivalLogUrl: 'u', now: () => (t += 1_000), sleep: async () => undefined });
+      expect(failed(result)).toEqual([]);
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+      expect(upgrades(world).filter(u => (u as WsMessage & { action?: string }).action === 'STOP_UPGRADE')).toHaveLength(1);
+      expect(world.readsAfterStop).toBe(3);
+      expect(zerosDetail(result)).not.toMatch(/AcceptCloning restore/);
+    });
+
+    it('proves the STOP from the read after the AcceptCloning restore when the read-back stays stale', async () => {
+      const world = makeWorld({ staleReads: 1 });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+      expect(world.stops).toBe(1);
+      expect(zerosDetail(result)).toMatch(/from the read after the AcceptCloning restore/);
+    });
+
+    it('sends a second STOP when the final read still shows an upgrade, and clears the restore once idle', async () => {
+      const world = makeWorld({ stopsIgnored: 1 });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(world.events).toEqual([
+        'upgrade:START_UPGRADE', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=1', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=1',
+      ]);
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+      expect(zerosDetail(result)).toMatch(/after a second STOP/);
+    });
+
+    it('FAILs and keeps the restore when the upgrade still runs after the second STOP', async () => {
+      const world = makeWorld({ stopsIgnored: 2 });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toContain('Upgrading and Pending read 0 after the STOP');
+      expect(zerosDetail(result)).toMatch(/still upgrading.*pending restore kept/);
+      expect(pending(lock)).toHaveLength(1);
+      expect(world.stops).toBe(2);
+    });
+
+    it('sets a falsy AcceptCloning true again before the second STOP and back to false after it', async () => {
+      const world = makeWorld({
+        upgrade: { UpgradeLevel: '1', Upgrading: '0', Pending: '0', MaxUpgrade: '5', AcceptCloning: '0' },
+        stopsIgnored: 1,
+      });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(world.events).toEqual([
+        'set:RDOAcceptCloning=1', 'upgrade:START_UPGRADE', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=0',
+        'set:RDOAcceptCloning=1', 'upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=0',
+      ]);
+      expect(world.upgrade.AcceptCloning).toBe('0');
+      expect(result.status).toBe('PASS');
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('FAILs and keeps the restore when every read after the STOP fails, sending no second STOP', async () => {
+      const world = makeWorld({ throwReads: [1, 2, 3, 4, 5, 6, 7, 8] });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(pending(lock)).toHaveLength(1);
+      expect(world.stops).toBe(1);
+      expect(zerosDetail(result)).toMatch(/every read failed.*pending restore kept/);
+    });
+
+    it('FAILs and keeps the restore when the second STOP throws', async () => {
+      const world = makeWorld({ stopsIgnored: 1, secondStopThrows: true });
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('upgrade-stop', lock);
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toContain('the second STOP ran without a throw');
       expect(pending(lock)).toHaveLength(1);
     });
   });
