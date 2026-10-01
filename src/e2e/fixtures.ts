@@ -407,11 +407,29 @@ function cell(rows: number[][], area: LotArea, x: number, y: number): number | u
 /**
  * A free NW corner for a `xsize × ysize` facility in Helartia, nearest the hall first, or null.
  *
- * Every footprint tile must: sit inside the window with a margin (a building anchored outside it
- * can reach in); read Helartia's value on TOWNS; hold the required zone exactly (stricter than the
- * server, which accepts a lot where any tile `ZoneMatches`, `Kernel/World.pas:5767`), or with no
- * requirement any zone but reserved; not be water (`AreaIsClear`, `Kernel/World.pas:5724-5726` —
- * WaterQuest is not assumed); and carry no building footprint and no road.
+ * The server rule: `TWorld.NewFacility` checks the zone only through
+ * `MatchesZone(x, y, XSize, YSize, ZoneType)`, unless the class has `mfcIgnoreZoning`
+ * (`Kernel/World.pas:3077`). `MatchesZone` ORs over the footprint, so one matching tile is enough
+ * (`Kernel/World.pas:5767-5788`). Per tile, `ZoneMatches` (`Protocol/Protocol.pas:433-445`): tile 0
+ * matches every class; tile reserved (1) also matches every class (`result := true;//false;`,
+ * `:438-439`); tile residential (2) matches classes 3/4/5; any other tile matches the same zone, or
+ * a class with no zone. `AreaIsClear` separately needs every tile free of objects and roads, and
+ * not water (`Kernel/World.pas:5700-5742`).
+ *
+ * The client rule — a strict subset (if every tile matches, at least one does). Every footprint
+ * tile must: sit inside the window with a margin (a building anchored outside it can reach in);
+ * read Helartia's value on TOWNS; hold the required zone or zone 0, or with no requirement any
+ * zone but reserved; not be water (`Kernel/World.pas:5724-5726` — WaterQuest is not assumed); and
+ * carry no building footprint and no road. Reserved is refused for every class, stricter than the
+ * server on purpose: reserved land is the mayor's.
+ *
+ * Accepted consequence: Helartia has a mayor and SPO_test3 holds the role (`TTycoon.AssumeRole`
+ * sets `SuperRole`, `Kernel/Kernel.pas:11377`), so a footprint more than half unzoned
+ * (`AreaIsZoned`, `Kernel/World.pas:5790-5810`) gets the `facForbiddenZone` trouble bit when built
+ * (`Kernel/World.pas:3128-3133`) and keeps it every period (`Kernel/Kernel.pas:4093-4095`). Its
+ * only effect: a demolition ordered by a later zoning change pays no refund
+ * (`Kernel/World.pas:1556-1559`). An owner's own demolition (`place-rename-demolish`) still takes
+ * the level-based refund (`Kernel/World.pas:1561-1563`).
  */
 export async function findFreeLot(
   session: LiveSession,
@@ -446,7 +464,7 @@ export async function findFreeLot(
     if (cell(area.towns, area, x, y) !== area.helartia) return false;
     const zone = cell(area.zones, area, x, y);
     if (zone === undefined || zone === ZONE_RESERVED) return false;
-    if (required > 0 && zone !== required) return false;
+    if (required > 0 && zone !== required && zone !== 0) return false;
     const land = terrain.landId(x, y);
     if (land === undefined || isWater(land)) return false;
     return !blocked.has(key(x, y));
