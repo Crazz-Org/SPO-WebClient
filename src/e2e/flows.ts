@@ -5557,19 +5557,22 @@ const ADVERTISEMENT = 'Advertisement';
  * (Kernel/Headquarters.pas:130-143). The gateway binds the write to that input's own ObjectId, as
  * Voyager does (Voyager/AdvSheetForm.pas:456-457).
  *
- * The read-back may never show the write, and that is not the write failing: Advertisement is a
- * company fluid (StdBlocks/StdFluids.pas:499, mfCompanyFluid), so the input joins its company's
- * TCompanyInput (Kernel/Kernel.pas:5232-5233, :10323-10329), whose `Spread` runs every company
- * cycle (:10160) and overwrites ActualMaxFluid from the demand slices (`UpdateMaxFluids`,
- * :10003-10008). A write whose line is present and whose value stays at the original — restored
- * and confirmed — ends UNPROVEN with that reason, never PASS; a read-back that never returns to
- * the original still FAILs.
+ * The proof is the Survival log line, not a read-back (maintainer decision 2026-10-01, #1195
+ * option c). A read-back can never show the write: Advertisement is a company fluid
+ * (StdBlocks/StdFluids.pas:499, mfCompanyFluid), so the input joins its company's TCompanyInput
+ * (Kernel/Kernel.pas:5232-5233, :10323-10329), whose `Spread` runs every company cycle (:10160)
+ * and overwrites ActualMaxFluid from the demand slices (`UpdateMaxFluids`, :10003-10008) — so the
+ * percentage read back is the spread's, whatever was written. The write PASSes on its own
+ * `Setting Input fluid perc: <value>` line at the fixture's coordinates (Kernel/Kernel.pas:7156);
+ * the original percentage is still read first, written back afterwards, and the restore is proven
+ * by its own line. A missing write line FAILs; a missing restore line FAILs and keeps the pending
+ * restore. This exception is this flow's alone — every other round trip still needs its read-back.
  */
 const adBudgetRoundTrip: Flow = {
   name: 'ad-budget-roundtrip',
   what:
     "round trip on RDOSetInputFluidPerc at the Advertisement input of SPO_test3's research (HQ) fixture — " +
-    'Survival line + read-back of the ad percentage, restored',
+    'proven by the Survival line of the write and of the restore (no read-back: Kernel/Kernel.pas:10003-10008, :10160)',
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -5599,56 +5602,110 @@ const adBudgetRoundTrip: Flow = {
       }
 
       const { name } = gate;
-      const readPerc = async (): Promise<string | undefined> => {
-        const supply = await readSupply(session, fx, name);
-        return adPercent(supply?.actualMaxFluid, supply?.capacity);
-      };
-      const url = await survivalUrl(ctx);
-      const probe = await roundTripProbe(ctx, url, {
-        what: `${fixtureLabel(fx)} ${name} input fluid percentage (the ad budget)`,
-        member: 'RDOSetInputFluidPerc',
-        read: readPerc,
-        write: async value => {
-          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetInputFluidPerc', value, { fluidId: ADVERTISEMENT });
-        },
-        testValue: original => nudgeWithin(original, 0, 100),
-        proof: {
-          log: {
-            marker: LOG_MARKERS.RDOSetInputFluidPerc,
-            match: (line, written) => facLineMatches(line, fx.x, fx.y, `Setting Input fluid perc: ${written}`),
-          },
-          readBack: readBackOn(
-            `the ${name} input's nfActualMaxFluidValue / nfCapacity via REQ_BUILDING_GATE_CONNECTIONS ` +
-              '(Voyager/AdvSheetForm.pas:651-660)',
-            `${GATE_CACHE_WHY}; the write sets ActualMaxFluid = MaxFluid*min(1, perc/100) (Kernel/Kernel.pas:7157-7158)`,
-            readPerc,
-          ),
-        },
-        restoreRecord: {
-          x: fx.x,
-          y: fx.y,
-          propertyName: 'RDOSetInputFluidPerc',
-          additionalParams: { fluidId: ADVERTISEMENT },
-        },
-      });
-      if (probe.status === 'FAIL' && probe.logLine !== null && probe.readBack === 'UNCONFIRMED' && probe.restored) {
-        assertions.unproven(
-          'RDOSetInputFluidPerc',
-          `the ad percentage stayed at "${probe.original}" after writing "${probe.written}" — the company's ` +
-            'TCompanyInput.Spread overwrites ActualMaxFluid every cycle (Kernel/Kernel.pas:10003-10008, :10160; ' +
-            'Advertisement is a company fluid, StdBlocks/StdFluids.pas:499), so the read-back cannot prove the write; ' +
-            `restored; Survival line: ${probe.logLine}`,
+      const supply = await readSupply(session, fx, name);
+      const original = adPercent(supply?.actualMaxFluid, supply?.capacity);
+      if (original === undefined) {
+        assertions.check(
+          'RDOSetInputFluidPerc: the original ad percentage is readable',
+          false,
+          `${fixtureLabel(fx)} ${name} input has no readable percentage — nothing to restore to, nothing written`,
         );
         return report('ad-budget-roundtrip', assertions, probes, session);
       }
-      probes.push(probe);
-      checkProbe(assertions, probe);
+      const url = await survivalUrl(ctx);
+      probes.push(await adBudgetLogRoundTrip(ctx, url, session, fx, name, original, assertions));
       return report('ad-budget-roundtrip', assertions, probes, session);
     } finally {
       await logoff(session);
     }
   },
 };
+
+/**
+ * The ad budget's write and restore, each proven by its own Survival line — no read-back (see
+ * `adBudgetRoundTrip`). The pending restore is recorded before the write and cleared only when
+ * the restore's line is seen.
+ */
+async function adBudgetLogRoundTrip(
+  ctx: FlowContext,
+  url: string,
+  session: LiveSession,
+  fx: OwnFixture,
+  name: string,
+  original: string,
+  assertions: Assertions,
+): Promise<ProbeResult> {
+  const written = nudgeWithin(original, 0, 100);
+  const set = async (value: string): Promise<void> => {
+    await setBuildingProperty(session, fx.x, fx.y, 'RDOSetInputFluidPerc', value, { fluidId: ADVERTISEMENT });
+  };
+  const lineFor = (window: Awaited<ReturnType<typeof openLogWindow>>, value: string): Promise<string | null> =>
+    awaitMarker(
+      window,
+      {
+        marker: LOG_MARKERS.RDOSetInputFluidPerc,
+        match: l => facLineMatches(l, fx.x, fx.y, `Setting Input fluid perc: ${value}`),
+      },
+      TIMEOUTS.logSettle,
+    );
+  const what = `${fixtureLabel(fx)} ${name} input fluid percentage (the ad budget)`;
+  const key = `RDOSetInputFluidPerc:${randomUUID()}`;
+  ctx.lock.addPendingRestore({
+    key,
+    what: `${what} — put back "${original}"`,
+    originalValue: original,
+    x: fx.x,
+    y: fx.y,
+    propertyName: 'RDOSetInputFluidPerc',
+    additionalParams: { fluidId: ADVERTISEMENT },
+  });
+
+  let logLine: string | null = null;
+  try {
+    const window = await openLogWindow(url);
+    await set(written);
+    logLine = await lineFor(window, written);
+    assertions.check(
+      `RDOSetInputFluidPerc: the write of ${written} logged its Setting Input fluid perc line`,
+      logLine !== null,
+      logLine ?? 'no model-server log line — the write never reached the object',
+    );
+  } catch (err: unknown) {
+    assertions.check(`RDOSetInputFluidPerc: the write of ${written} was accepted`, false, toErrorMessage(err));
+  }
+
+  // The restore runs whatever happened above.
+  let restoreLine: string | null = null;
+  try {
+    const window = await openLogWindow(url);
+    await set(original);
+    restoreLine = await lineFor(window, original);
+  } catch (err: unknown) {
+    assertions.check(`RDOSetInputFluidPerc: the restore to ${original} was accepted`, false, toErrorMessage(err));
+  }
+  const restored = restoreLine !== null;
+  if (restored) ctx.lock.clearPendingRestore(key);
+  assertions.check(
+    `RDOSetInputFluidPerc: the restore to ${original} logged its Setting Input fluid perc line`,
+    restored,
+    restoreLine ?? 'no restore line — pending restore kept',
+  );
+
+  const failed = logLine === null || !restored;
+  return {
+    what,
+    member: 'RDOSetInputFluidPerc',
+    status: failed ? 'FAIL' : 'PASS',
+    original,
+    written,
+    logLine,
+    readBack: 'UNCONFIRMED',
+    restored,
+    note:
+      'proven by the Survival lines alone — TCompanyInput.Spread overwrites the read-back every cycle ' +
+      '(Kernel/Kernel.pas:10003-10008, :10160; maintainer decision 2026-10-01)',
+  };
+}
 
 /**
  * Stop and restart the store (`TFacility.SetStopped`, Kernel/Kernel.pas:3948). `Stopped` is

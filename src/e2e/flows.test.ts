@@ -9522,6 +9522,10 @@ describe('player actions (#1195)', () => {
       supplies: BuildingSupplyData[];
       apply: boolean;
       silent: boolean;
+      /** Which writes log no line: the write (first), the restore (second), or both. */
+      silentOn?: 'write' | 'restore';
+      /** Which write the gateway refuses with a throw. */
+      throwOn?: 'write' | 'restore';
       writes: { property: string; value: string; params?: Record<string, string> }[];
       lines: string[];
     }
@@ -9556,7 +9560,9 @@ describe('player actions (#1195)', () => {
           case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
             const w = { property: String(m.propertyName), value: String(m.value), params: m.additionalParams as Record<string, string> };
             world.writes.push(w);
-            if (!world.silent) world.lines.push(`12:00 - Fac(${HQ.x},${HQ.y}) Setting Input fluid perc: ${w.value}`);
+            const leg = world.writes.length === 1 ? 'write' : 'restore';
+            if (world.throwOn === leg) throw new Error(`gateway refused the ${leg}`);
+            if (!world.silent && world.silentOn !== leg) world.lines.push(`12:00 - Fac(${HQ.x},${HQ.y}) Setting Input fluid perc: ${w.value}`);
             const gate = world.supplies.find(s => s.metaFluid === w.params?.fluidId);
             if (world.apply && gate) gate.actualMaxFluid = String((Number(gate.capacity) * Number(w.value)) / 100);
             return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: '' };
@@ -9581,7 +9587,9 @@ describe('player actions (#1195)', () => {
     const run = (lock = cleanLock()) =>
       flowByName('ad-budget-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
 
-    it('writes the Advertisement input of the research fixture, reads the percentage back, and restores it', async () => {
+    const labels = (r: { assertions: { what: string; ok: boolean }[] }) => r.assertions.map(a => [a.what, a.ok]);
+
+    it('writes the Advertisement input of the research fixture and restores it, each proven by its Survival line', async () => {
       const world = adWorld();
       const { find } = arrange(world);
       const lock = cleanLock();
@@ -9595,52 +9603,121 @@ describe('player actions (#1195)', () => {
         { property: 'RDOSetInputFluidPerc', value: '99', params: { fluidId: 'Advertisement' } },
         { property: 'RDOSetInputFluidPerc', value: '100', params: { fluidId: 'Advertisement' } },
       ]);
-      expect(world.supplies[1].actualMaxFluid).toBe('200');
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('is UNPROVEN, not PASS, when the line is present but the company spread holds the percentage at its original', async () => {
+    it('PASSes on the Survival lines when the company spread holds the percentage at its original (maintainer decision 2026-10-01)', async () => {
       const world = adWorld({ apply: false });
       arrange(world);
       const lock = cleanLock();
       const result = await run(lock);
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.probes).toEqual([]);
-      expect(result.unproven[0]).toMatch(/^RDOSetInputFluidPerc — the ad percentage stayed at "100" after writing "99"/);
-      expect(result.unproven[0]).toMatch(/Kernel\/Kernel\.pas:10003-10008, :10160/);
-      expect(result.unproven[0]).toMatch(/Survival line: 12:00 - Fac\(50,60\) Setting Input fluid perc: 99$/);
+      expect(result.status).toBe('PASS');
+      expect(result.unproven).toEqual([]);
+      expect(result.probes[0]).toMatchObject({
+        status: 'PASS',
+        written: '99',
+        original: '100',
+        logLine: '12:00 - Fac(50,60) Setting Input fluid perc: 99',
+        restored: true,
+      });
+      expect(result.probes[0].note).toMatch(/Kernel\/Kernel\.pas:10003-10008, :10160; maintainer decision 2026-10-01/);
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', true],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', true],
+      ]);
       expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('FAILs a read-back that never shows the written percentage nor returns to the original', async () => {
-      const world = adWorld({ apply: false });
+    it('FAILs when the write logs no Setting Input fluid perc line, and still restores', async () => {
+      const world = adWorld({ apply: false, silentOn: 'write' });
       arrange(world);
-      // After the write the percentage moves to 50 — neither the written 99 nor the original 100 — and stays.
-      const ad = world.supplies[1];
       const lock = cleanLock();
-      jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async () => {
-        ad.actualMaxFluid = '100';
-        return '12:00 - Fac(50,60) Setting Input fluid perc: 99';
-      });
       const result = await run(lock);
       expect(result.status).toBe('FAIL');
-      expect(result.probes[0]).toMatchObject({
-        status: 'FAIL',
-        logLine: '12:00 - Fac(50,60) Setting Input fluid perc: 99',
-        restored: false,
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', logLine: null, restored: true });
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', false],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', true],
+      ]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs and keeps the pending restore when the restore logs no line', async () => {
+      const world = adWorld({ silentOn: 'restore' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', restored: false });
+      expect(result.assertions.find(a => a.what.startsWith('RDOSetInputFluidPerc: the restore'))).toEqual({
+        what: 'RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line',
+        ok: false,
+        detail: 'no restore line — pending restore kept',
       });
-      expect(result.probes[0].note).toMatch(/read-back never showed "99"/);
+      expect(lock.read().pendingRestores).toEqual([
+        expect.objectContaining({
+          originalValue: '100',
+          x: 50,
+          y: 60,
+          propertyName: 'RDOSetInputFluidPerc',
+          additionalParams: { fluidId: 'Advertisement' },
+        }),
+      ]);
+    });
+
+    it('FAILs when neither the write nor the restore logs a line', async () => {
+      const world = adWorld({ silent: true });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(labels(result).map(([, ok]) => ok)).toEqual([false, false]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
       expect(lock.read().pendingRestores).toHaveLength(1);
     });
 
-    it('FAILs when the write logs no Setting Input fluid perc line', async () => {
-      const world = adWorld({ silent: true });
+    it('FAILs a refused write and still restores', async () => {
+      const world = adWorld({ throwOn: 'write' });
       arrange(world);
-      const result = await run();
+      const lock = cleanLock();
+      const result = await run(lock);
       expect(result.status).toBe('FAIL');
-      expect(result.probes[0].note).toMatch(/no model-server log line/);
+      expect(result.assertions[0]).toMatchObject({
+        what: 'RDOSetInputFluidPerc: the write of 99 was accepted',
+        ok: false,
+        detail: expect.stringMatching(/gateway refused the write/),
+      });
       expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a refused restore and keeps the pending restore', async () => {
+      const world = adWorld({ throwOn: 'restore' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', true],
+        ['RDOSetInputFluidPerc: the restore to 100 was accepted', false],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', false],
+      ]);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs and writes nothing when the original percentage is unreadable', async () => {
+      const world = adWorld({ supplies: [supplyGate(), adGate({ capacity: '0' })] });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions).toEqual([
+        expect.objectContaining({ what: 'RDOSetInputFluidPerc: the original ad percentage is readable', ok: false }),
+      ]);
+      expect(world.writes).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
     });
 
     it('is UNPROVEN and writes nothing when the fixture lists no Advertisement input', async () => {
