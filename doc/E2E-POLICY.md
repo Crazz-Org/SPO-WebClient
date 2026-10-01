@@ -42,7 +42,7 @@ the absence of an exception.
 L0  Unit + component          Jest node/jsdom, coverage ratchet             CI: every PR
 L1  Protocol conformance      Jest + rdo-mock + RdoStrictValidator          CI: every PR
 L2  LIVE WS drive  ← the gate headless `ws` client -> gateway -> planitia   PRE-PUSH: every code change
-L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / Crazz         every screen once, pixels only, + pre-release
+L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / SPO_test      every screen once, pixels only, + pre-release
 ```
 
 L2 replaces both the abandoned mock-E2E plan and most of the browser smoke. L3 survives only
@@ -476,7 +476,7 @@ ahead of zero.
 | Account | Password | Holds | Used for |
 |---|---|---|---|
 | `SPO_test3` | `test3` | Mayor of **Helartia**, Minister of Agriculture, company *SPO_test3 - Green* | Primary. Governance reads and writes, roads, zones |
-| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. |
+| `SPO_test` | `test` | dedicated basic test account, no special buildings (maintainer, 2026-10-01) | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from SPO_test's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. |
 
 Both are **LOCKED** — never changed without explicit developer approval. Zone **Free Space**,
 world **planitia**.
@@ -485,15 +485,15 @@ Two accounts unlock four things that were structurally impossible:
 
 | Now testable | Why it matters |
 |---|---|
-| **Negative permission** — drive `Crazz` at the Town Hall, assert `canGovern=false` and that the control is *absent*, not merely disabled | Catches the `tycoonratings.asp:24-25` failure mode (guard commented out, result hardcoded `true`) in our own client |
+| **Negative permission** — drive `SPO_test` at the Town Hall, assert `canGovern=false` and that the control is *absent*, not merely disabled | Catches the `tycoonratings.asp:24-25` failure mode (guard commented out, result hardcoded `true`) in our own client |
 | **Mail send -> receive** | Genuinely end-to-end for the first time; send was previously untestable |
-| **Ratings** | `OB-30`: nobody can rate their own term. `Crazz` rating `SPO_test3` is a real path |
+| **Ratings** | `OB-30`: nobody can rate their own term. `SPO_test` rating `SPO_test3` is a real path |
 | **Roads / zones** | Mayor role removes these from the "structurally untestable" list |
 
 **Blast radius.** All mutations happen on `SPO_test3`'s own town (Helartia). The second
 account is touched only by mail: `mail-roundtrip` sends it one message and deletes it
 in the same run, and the `zoning-alert-read` seed has it send SPO_test3 one look-alike
-`Zoning Alert!`, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run.
+`Zoning Alert!`, deleted from SPO_test3's Inbox and from SPO_test's `Sent` in the same run.
 `mail-send-from-draft` sends it one message, and in `mail-reply` it sends SPO_test3 one
 reply; each flow sweeps and deletes every copy it created in the same run.
 No flow reads or writes its buildings (`flows.ts`: it appears at the login in

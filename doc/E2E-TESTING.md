@@ -22,16 +22,16 @@ pointers to this file.
 
 | Field | Primary | Secondary |
 |-------|---------|-----------|
-| **Username** | `SPO_test3` | `Crazz` |
+| **Username** | `SPO_test3` | `SPO_test` |
 | **Password** | `test3` | `test` |
 | **Region** | `Free Space` | `Free Space` |
 | **World** | `planitia` | `planitia` |
 | **Company** | `SPO_test3 - Green` | (its own) |
-| **Holds** | **Mayor of Helartia**, Minister of Agriculture | a real player account — holdings not enumerated, and no flow depends on them |
+| **Holds** | **Mayor of Helartia**, Minister of Agriculture | a dedicated basic test account, no special buildings — no flow depends on its holdings |
 
 - Pick **Free Space**, not BETA — the live directory hosts `planitia`/`shamba`/`zorcon` under Free Space; BETA only has `aries`.
 - `SPO_test3` **has mayor powers** (verified live 2026-08-20, [civic-roles-reference.md](civic-roles-reference.md): `canGovern` true on the Town Hall). Road building, zone overlays and town governance are testable live. It is **not** president — see the exclusion in [E2E-POLICY.md](E2E-POLICY.md) §7.
-- `Crazz` exists for what one account cannot do: permission-negative checks, mail
+- `SPO_test` exists for what one account cannot do: permission-negative checks, mail
   send→receive, and rating another tycoon's term.
 - **Blast radius** ([E2E-POLICY.md](E2E-POLICY.md) §9): mutations only on Helartia. The
   second account is touched only by the mail round-trip, which deletes what it sent in the
@@ -249,7 +249,7 @@ screenshot for state — and closes it. Nothing is submitted, bought, sent or sa
 Phase 5 chat ping. Every player *action* belongs to L2 (`npm run test:live`).
 
 A screen whose data the world may not hold — the world-event ticker, the tutorial, the chase
-badge with Crazz online — is recorded **absent**, not failed. Crazz is never required. A pass
+badge with the secondary account (`SPO_test`) online — is recorded **absent**, not failed. `SPO_test` is never required. A pass
 against the production URL runs only when the maintainer asks for one.
 
 ### Phase 0 — Lease the bench
