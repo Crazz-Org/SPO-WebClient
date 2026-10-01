@@ -8,9 +8,20 @@
  *
  * Reading a log is not probing the server (CLAUDE.md) — it is an open IIS listing.
  *
- * Windowing is done by **byte offset**, not by timestamp: we record the log's length
- * before the write and read only what was appended after. That needs no knowledge of the
- * Delphi timestamp format and no assumption about the server's timezone.
+ * Windowing applies two rules, and a line must pass both to count as proof:
+ *
+ * 1. **Byte offset.** We record the log's length before the write (a HEAD request sent with
+ *    `Accept-Encoding: identity`) and read only what was appended after. A HEAD answered with
+ *    any other `Content-Encoding` is refused: its length is the compressed size, which opens
+ *    the window a fraction of the way into the file (#1228).
+ * 2. **Timestamp.** Every Survival line starts with its own `h:mm:ss AM/PM` stamp
+ *    (`TimeToStr(Now)`, `Kernel/Kernel.pas:4689`); it must be at or after
+ *    `LogWindow.openedAt`, compared as a time of day within one day's file. A line earlier
+ *    than the window never counts, whatever the byte offset says. A line without a stamp
+ *    falls back to the byte offset alone.
+ *
+ * Assumption: **Survival log time = UTC** — verified 2026-09-30 and 2026-10-01 (tail line
+ * `6:28:28 AM` read at `06:28:30 UTC`).
  */
 
 import { toErrorMessage } from '../shared/error-utils';
@@ -154,12 +165,16 @@ export async function findCurrentSurvivalLog(base: string = LIVE_LOG_BASE): Prom
 
 /** Record where the log currently ends, before the write is issued. */
 export async function openLogWindow(url: string): Promise<LogWindow> {
-  return { url, offset: await logLength(url), openedAt: new Date().toISOString() };
+  const openedAt = new Date().toISOString();
+  const offset = await logLength(url);
+  return { url, offset, openedAt };
 }
 
 /** Everything appended to the log since the window opened. */
 export async function readSince(window: LogWindow): Promise<string> {
-  const response = await fetch(window.url, { headers: { Range: `bytes=${window.offset}-` } });
+  const response = await fetch(window.url, {
+    headers: { Range: `bytes=${window.offset}-`, 'Accept-Encoding': 'identity' },
+  });
   if (response.status === 416) return ''; // Nothing appended yet.
   if (!response.ok) {
     throw new Error(`Log read failed (${response.status}) for ${window.url}`);
@@ -167,6 +182,19 @@ export async function readSince(window: LogWindow): Promise<string> {
   const text = await response.text();
   // A server that ignores Range returns 200 and the whole file — slice it ourselves.
   return response.status === 206 ? text : text.slice(window.offset);
+}
+
+/** True unless the line carries an `h:mm:ss AM|PM` stamp earlier (UTC, same day) than window.openedAt. */
+export function loggedInWindow(line: string, window: LogWindow): boolean {
+  const stamp = /^\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)\b/i.exec(line);
+  const opened = new Date(window.openedAt);
+  if (!stamp || Number.isNaN(opened.getTime())) return true;
+  const pm = stamp[4].toUpperCase() === 'PM';
+  const lineSeconds =
+    ((Number(stamp[1]) % 12) + (pm ? 12 : 0)) * 3600 + Number(stamp[2]) * 60 + Number(stamp[3]);
+  const windowSeconds =
+    opened.getUTCHours() * 3600 + opened.getUTCMinutes() * 60 + opened.getUTCSeconds();
+  return lineSeconds >= windowSeconds;
 }
 
 /**
@@ -204,7 +232,7 @@ export async function awaitMarker(
     const tail = await readSince(window);
     const line = tail
       .split(/\r?\n/)
-      .find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true));
+      .find(l => l.includes(proof.marker) && loggedInWindow(l, window) && (proof.match?.(l) ?? true));
     if (line) return line.trim();
     if (now() >= deadline) return null;
     await sleep(pollMs);
@@ -212,9 +240,15 @@ export async function awaitMarker(
 }
 
 async function logLength(url: string): Promise<number> {
-  const response = await fetch(url, { method: 'HEAD' });
+  const response = await fetch(url, { method: 'HEAD', headers: { 'Accept-Encoding': 'identity' } });
   if (!response.ok) {
     throw new Error(`Cannot read log length (${response.status}) for ${url}`);
+  }
+  const encoding = response.headers.get('content-encoding');
+  if (encoding !== null && encoding.trim().toLowerCase() !== 'identity') {
+    throw new Error(
+      `Log at ${url} was served with Content-Encoding: ${encoding} despite Accept-Encoding: identity — its content-length is not the file's length`,
+    );
   }
   const header = response.headers.get('content-length');
   const length = Number(header);
