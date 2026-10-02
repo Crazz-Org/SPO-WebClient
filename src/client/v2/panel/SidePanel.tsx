@@ -108,8 +108,9 @@ export function SidePanel() {
       </div>
 
       {/* The only scroller. No padding: the inspector pads itself and its section tabs stick
-          to the top of this box. */}
-      <div className={styles.body}>
+          to the top of this box. data-surface lets the panel CSS fit one surface's content to
+          the box (the Map's square canvas). */}
+      <div className={styles.body} data-surface={kind}>
         {/* Keyed by kind: a crashed surface does not follow the player to the next one. */}
         <ErrorBoundary key={kind}>
           <Suspense fallback={null}>

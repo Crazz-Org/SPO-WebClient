@@ -6,6 +6,8 @@ import { SidePanel } from './SidePanel';
 import * as barrel from './index';
 import { FocusCard } from './FocusCard';
 import { surfaceTitle } from './surface-route';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // The panel's job is chrome + routing; the contents are stubbed.
 jest.mock('../inspector/InspectorV2', () => ({ InspectorV2: () => <div>INSPECTOR V2</div> }));
@@ -79,6 +81,23 @@ describe('SidePanel', () => {
       expect(hidden.previousElementSibling?.getAttribute('title')).toBe(name);
     }
   );
+
+  it('tags its scroller with the surface on screen, so the panel CSS can fit that surface', () => {
+    open('map');
+    renderWithProviders(<SidePanel />);
+    const body = screen.getByText('CLASSIC map').parentElement as HTMLElement;
+    expect(body.className).toContain('body');
+    expect(body.getAttribute('data-surface')).toBe('map');
+  });
+
+  it('fits the Map surface\'s square canvas to the visible body height (CSS)', () => {
+    const css = readFileSync(join(__dirname, 'SidePanel.module.css'), 'utf8');
+    // the scroller is a size container, so cqh is its visible height
+    expect(css).toMatch(/\.body \{[^}]*overflow-y: auto;[^}]*container: v2panel \/ size;/);
+    const rule = css.match(/\.body\[data-surface='map'\] div:has\(> canvas\) \{([^}]*)\}/)?.[1] ?? '';
+    expect(rule).toMatch(/max-width: max\(240px, calc\(100cqh - 360px\)\);/);
+    expect(rule).toMatch(/align-self: center;/);
+  });
 
   it('shows the stack as a breadcrumb; a crumb returns to that surface', () => {
     open('building', 'search');

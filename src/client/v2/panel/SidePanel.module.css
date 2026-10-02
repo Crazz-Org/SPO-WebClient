@@ -207,6 +207,21 @@
   overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: var(--surface-border-strong) transparent;
+  /* Its height is the flex share, never its content's: a size container, so a surface can be
+     fitted to the visible box (cqh below). */
+  container: v2panel / size;
+}
+
+/* Map surface: the classic MapSurface sizes its square canvas to its wrapper's width, so at
+   the panel's full width (~450 px) the canvas pushed the legend under the fold at 1600 × 900
+   (804 px of content in a 782 px box). Here the wrapper's width — hence the canvas — is capped
+   to the body height minus the rest of the surface (toolbar, bookmarks heading, legend,
+   padding and gaps ≈ 360 px), never under 240 px, and centred. More bookmarks than that still
+   scroll, as any surface does. The wrapper is reached by shape (v1's class names are hashed):
+   the div that holds the canvas. */
+.body[data-surface='map'] div:has(> canvas) {
+  max-width: max(240px, calc(100cqh - 360px));
+  align-self: center;
 }
 
 /* Below 1024 px the MobileShell routes the stack into its BottomSheet instead. */
