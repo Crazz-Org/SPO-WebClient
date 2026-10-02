@@ -201,6 +201,13 @@ describe('mayReuseVerdict — a live slot only where it proves something', () =>
     expect(decision.why).toBe('no passing attestation shares this tree');
   });
 
+  it('refuses reuse from a source whose live run was BLOCKED by a SKIPPED flow', () => {
+    const blockedSkip = { status: 'blocked-skip' as const, skipped: ['permission-negative'] };
+    const decision = mayReuseVerdict('T1', [{ ...passing, live: blockedSkip }]);
+    expect(decision.reuseFrom).toBeNull();
+    expect(decision.why).toBe('no passing attestation shares this tree');
+  });
+
   it('reuses a source that legitimately skipped — nothing was owed, nothing is missing', () => {
     expect(mayReuseVerdict('T1', [{ ...passing, live: legitSkip }]).reuseFrom).toBe(SHA_B);
   });

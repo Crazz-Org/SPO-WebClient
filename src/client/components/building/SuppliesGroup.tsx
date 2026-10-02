@@ -46,11 +46,9 @@ export function SuppliesPanel({
   // and fHandler.fOwnsFac` (Voyager/SupplySheetForm.pas:359), where `i` is the
   // facility's trade role (`tidTradeRole`, :349). The three roles are the same
   // three the mode combo offers, so the predicate is shared rather than
-  // restated. `Role` is the warehouse template's name for it.
+  // restated.
   const groups = useBuildingStore((s) => s.details?.groups);
-  const tradeRole = groups
-    ? (findPropertyValue(groups, 'TradeRole') ?? findPropertyValue(groups, 'Role'))
-    : undefined;
+  const tradeRole = groups ? findPropertyValue(groups, 'TradeRole') : undefined;
   const autoBuyOffered = canEdit && tradeRole !== undefined && isTradeModeValue(tradeRole);
 
   if (supplies.length === 0) {

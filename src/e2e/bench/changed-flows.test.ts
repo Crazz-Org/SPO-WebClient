@@ -230,6 +230,14 @@ describe('flowsChangedInWorktree — the real tree', () => {
     for (const flow of result.notDriven) expect(NIGHTLY_ONLY).toHaveProperty(flow);
   });
 
+  it('a change to a research.ts helper drives research-roundtrip and lists fixtures-ensure (#1233)', () => {
+    const research = fs.readFileSync(path.join(root, 'src/e2e/research.ts'), 'utf8').split('\n');
+    const line = research.findIndex(l => l.startsWith('export function researchCost(')) + 2;
+    const result = flowsChangedInWorktree(hunk('src/e2e/research.ts', `@@ -${line} +${line} @@`), root);
+    expect(result.required).toContain('research-roundtrip');
+    expect(result.notDriven).toContain('fixtures-ensure');
+  });
+
   it('reads a missing flow source as empty', () => {
     expect(FLOW_SOURCES).toContain('src/e2e/flows.ts');
     expect(() => flowsChangedInWorktree('', '/nonexistent-dir')).toThrow(/lists 0 binding\(s\)/);

@@ -34,7 +34,6 @@ export const SPINE_FLOW = 'login-spine';
 export const NIGHTLY_ONLY: Record<string, string> = {
   'newspaper-read':
     'data-gated: planitia keeps no newspaper issue and the bench cannot create one (News.pas:986, #1009) — a required run could only end UNPROVEN, which fails the gate',
-  'warehouse-role-reading': 'a reading, recorded and never asserted (#1006) — nothing a gate could require',
   'vote-roundtrip':
     'data-gated: a prior vote cannot be seeded (a vote with no prior cannot be retracted) and goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
   'fixtures-ensure':
@@ -63,7 +62,7 @@ export const GATE_ONLY: Record<string, string> = {
   'politics-write':
     'each RDOSetTaxValue by the mayor posts a world event every online player sees (Kernel/Population.pas:1264-1284, WorldLocator.SendEvent) — driven only at the gate, when its code changes',
   'policy-roundtrip':
-    'RDOSetPolicyStatus broadcasts a world event naming Crazz to every online tycoon, twice per run (Kernel/Kernel.pas:11790-11800, Kernel/World.pas:5179-5196, texts Kernel/Kernel.pas:13495-13497); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly',
+    'RDOSetPolicyStatus broadcasts a world event naming the secondary account to every online tycoon, twice per run (Kernel/Kernel.pas:11790-11800, Kernel/World.pas:5179-5196, texts Kernel/Kernel.pas:13495-13497); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly',
   'chat-private-channel':
     'creating and deleting a channel and the typing / away states broadcast to every connected client (Interface Server/InterfaceServer.pas:4594, :4049-4060, :4690, :3968-3980); accepted by the maintainer (2026-09-29) at the gate only, when chat code changes — never in the nightly',
   'bank-borrow-payoff':
@@ -71,7 +70,8 @@ export const GATE_ONLY: Record<string, string> = {
 };
 
 /**
- * Handler file (repo-relative) -> why only a fallback rule routes it:
+ * Handler file (repo-relative; src/server/session/*-handler.ts, src/server/ws-handlers/*-handlers.ts
+ * and src/client/handlers/*-handler.ts) -> why only a fallback rule routes it:
  * `awaiting card #<n>` or `excluded: <reason>`. An area card that gives a file its own rule
  * (placed before the fallbacks) removes it from here.
  */
@@ -81,6 +81,83 @@ export const FALLBACK_ONLY: Record<string, string> = {
   'src/server/session/tutorial-handler.ts':
     'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
 };
+
+const NO_FLOW_YET = 'no flow sends it yet — recorded by the E2E coverage audit (#1187)';
+
+/**
+ * Request type -> why no gate-required flow sends it. It excuses that request in every handler
+ * file (server session, ws-handlers, client handlers) of the request ratchet in routing.test.ts.
+ * A key a gate flow does send, or that no handler file requests, fails that ratchet.
+ */
+export const EXCLUDED: Record<string, string> = {
+  REQ_CREATE_COMPANY: NO_FLOW_YET,
+  REQ_TYCOON_ROLE: NO_FLOW_YET,
+  REQ_BUILD_CAPITOL: NO_FLOW_YET,
+  REQ_BUILDING_LOAN_REQUEST: NO_FLOW_YET,
+  REQ_CLONE_FACILITY: NO_FLOW_YET,
+  REQ_GM_CHAT_SEND: NO_FLOW_YET,
+  REQ_NEWSPAPER_POST: NO_FLOW_YET,
+  REQ_POLITICS_LAUNCH_CAMPAIGN: NO_FLOW_YET,
+  REQ_POLITICS_CANCEL_CAMPAIGN: NO_FLOW_YET,
+  REQ_POLITICS_SET_RATING: NO_FLOW_YET,
+  REQ_POLITICS_SET_PROJECT: NO_FLOW_YET,
+  REQ_PROFILE_CURRICULUM_ACTION:
+    'no flow sends it — one of its actions abandons a role, which is never driven (maintainer, 2026-09-29 — recorded in card #1134)',
+  REQ_CONNECT_FACILITIES: 'sent only by connect-on-map, which is NIGHTLY_ONLY (data-gated: Kernel/World.pas:3710-3726)',
+  REQ_POLITICS_VOTE: 'sent only by vote-roundtrip, which is NIGHTLY_ONLY (data-gated: Kernel/TownPolitics.pas:690)',
+  REQ_NEWSPAPER_ISSUES: 'sent only by newspaper-read, which is NIGHTLY_ONLY (planitia keeps no issue: News.pas:986, #1009)',
+  REQ_NEWSPAPER_ISSUE: 'sent only by newspaper-read, which is NIGHTLY_ONLY (planitia keeps no issue: News.pas:986, #1009)',
+  REQ_TUTORIAL_STATE:
+    'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
+  REQ_TUTORIAL_ACTION:
+    'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
+  REQ_GET_ROAD_COST:
+    'answered by the gateway alone — getRoadCostEstimate in session/road-handler.ts is synchronous and sends no RDO frame, so no live drive can observe it (#1151)',
+};
+
+/**
+ * Handler file (repo-relative) -> request -> why that file's rule leaves out the gate flow that
+ * sends it. Per file, not per request: a request-wide key would blind the ratchet in every other
+ * file that serves the same request. Each of these rules is pinned by an exact routing test.
+ */
+export const NOT_ROUTED: Record<string, Record<string, string>> = {
+  'src/server/session/building-templates-handler.ts': {
+    REQ_CLUSTER_INFO: "cluster-info-read sends it; this rule's flows are pinned by routing.test.ts (#1150)",
+    REQ_CLUSTER_FACILITIES: "cluster-info-read sends it; this rule's flows are pinned by routing.test.ts (#1150)",
+  },
+  'src/server/session/politics-handler.ts': {
+    REQ_SEARCH_CONNECTIONS: "supplier-search-read sends it; the governance rule's flows are pinned by routing.test.ts (#1134, #1145)",
+    REQ_CONNECTION_REACHABILITY:
+      "supplier-search-read sends it; the governance rule's flows are pinned by routing.test.ts (#1134, #1145)",
+  },
+  'src/server/session/profile-finance-handler.ts': {
+    REQ_SEARCH_MENU_TYCOON_FULL_PROFILE: "search-menu-read sends it; the profile rule's flows are pinned by routing.test.ts (#1141)",
+  },
+  'src/server/ws-handlers/search-handlers.ts': {
+    REQ_SEARCH_MENU_DIRECTORY: 'directory-browse sends it, but #526 keeps the search WS handler off directory-browse',
+  },
+};
+
+/**
+ * The facility inspector flows — shared by the inspector UI (components/building/) and its
+ * template groups (src/shared/building-details/), which only the UI half flags for a browser look.
+ */
+const INSPECTOR_UI_FLOWS: string[] = [
+  'building-details', 'town-min-wage',
+  'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
+  'trade-settings',
+  'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+];
+
+const INSPECTOR_UI_WHY =
+  "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in " +
+  'template-groups.ts, the store and industry owner setters the panels send (#1152), the trade role and ' +
+  'level (trade-settings.ts, #1153), and the residential, bank, TV, accept-cloning and research controls ' +
+  '(ResearchPanel.tsx, HQ_INVENTIONS_GROUP) (#1154)';
+
+const MAIL_FLOWS = ['mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply'];
+
+const CHAT_FLOWS = ['chat-read', 'chat-private-channel', 'chat-chase'];
 
 export const ROUTES: RouteRule[] = [
   // Order matters: the first matching rule wins, so the paths that need no live drive
@@ -95,11 +172,13 @@ export const ROUTES: RouteRule[] = [
   // on that basis). Each exemption carries a cited reason: `File.pas:Line`, `file.asp:Line`
   // or `#<issue>`. The tooling rule below routes no flow for a diff under src/e2e/; the gate
   // itself adds the flows. verify-gate.js stage 3 adds the flows the diff CHANGED — a hunk
-  // inside a `FLOWS` entry, or inside a shared helper of the six flow sources, which drives
+  // inside a `FLOWS` entry, or inside a shared helper of the seven flow sources, which drives
   // every flow that reaches it (src/e2e/bench/changed-flows.ts) — and the flows a card
   // DECLARES with `npm run gate -- --also-flows=a,b`. All of them land in `routing.required`,
   // so the card's own gate drives them and a required flow that ends UNPROVEN fails it.
   // `--flows=` replaces the set and is refused unless it names every required flow.
+  // Every request a handler file (server session, ws-handlers, client handlers) serves or
+  // sends must be sent by a flow its rule routes to, or appear in EXCLUDED / NOT_ROUTED (#1187).
   {
     test: /^doc\/|\.md$|^src\/mock-server\/|\.test\.tsx?$|^src\/__tests__\//,
     flows: [],
@@ -151,7 +230,8 @@ export const ROUTES: RouteRule[] = [
     // Before the favorites rule: the Empire panel shows the Favorites tree and the profile tabs.
     test: /^src\/client\/components\/empire\//,
     flows: ['favorites-roundtrip', 'favorites-folders', 'profile-read'],
-    why: 'the Empire panel — the Favorites tree it shows and the profile & finance pages it reads',
+    needsL3: true,
+    why: 'the Empire panel — the Favorites tree it shows and the profile & finance pages it reads, plus a browser look',
   },
   {
     // Before the broad wire-level rule below, which would otherwise swallow
@@ -215,11 +295,11 @@ export const ROUTES: RouteRule[] = [
     // Before the broad wire-level rule below: the paper is not on the RDO wire
     // at all, so the governance flows would say nothing about it. newspaper-read itself is
     // not required (#1009): planitia keeps no newspaper issue and the bench cannot create
-    // one (News.pas:986), so it could only end UNPROVEN. The columns board read is required
-    // instead: it answers with or without columns.
+    // one (News.pas:986), so it could only end UNPROVEN. The columns board read stays required
+    // instead; a board with no column ends UNPROVEN too (#1188).
     test: /newspaper-handlers?\.ts$|^src\/client\/store\/newspaper-store\.ts$/,
     flows: ['newspaper-board-read'],
-    why: 'the town paper — newspaper-board-read reads the columns board, which answers with or without columns; newspaper-read stays nightly-only (News.pas:986, #1009)',
+    why: 'the town paper — newspaper-board-read reads the columns board, required, and an empty board ends UNPROVEN (#1188); newspaper-read stays nightly-only (News.pas:986, #1009)',
   },
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.
@@ -260,7 +340,7 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
     // zoning-alert-read is left out: its one REQ_BUILDING_FOCUS is incidental to reading the
-    // alert, it needs Crazz, and the mail rules route it.
+    // alert, it needs the secondary account, and the mail rules route it.
     test: /^src\/server\/ws-handlers\/building-handlers\.ts$/,
     flows: [
       'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall',
@@ -277,12 +357,12 @@ export const ROUTES: RouteRule[] = [
     test: /^src\/server\/ws-handlers\/misc-handlers\.ts$/,
     flows: [
       'favorites-roundtrip', 'favorites-folders', 'world-readers', 'cluster-info-read', 'zone-roundtrip',
-      'supplier-search-read', 'research-roundtrip',
+      'supplier-search-read', 'research-roundtrip', 'autoconnection-roundtrip',
     ],
     why:
       'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_* / REQ_WORLD_EVENT / ' +
       'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES / REQ_DEFINE_ZONE, REQ_SEARCH_CONNECTIONS / ' +
-      'REQ_CONNECTION_REACHABILITY (supplier-search-read, #1153) and REQ_RESEARCH_INVENTORY / REQ_RESEARCH_DETAILS ' +
+      'REQ_CONNECTION_REACHABILITY (supplier-search-read, #1153; autoconnection-roundtrip also sends REQ_SEARCH_CONNECTIONS, #1187) and REQ_RESEARCH_INVENTORY / REQ_RESEARCH_DETAILS ' +
       '(research-roundtrip, #1154); not driven by any flow yet: REQ_CREATE_COMPANY',
   },
   {
@@ -296,9 +376,9 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below. src/shared/road-circuits.ts is deliberately not here: it is
     // connection-candidate reachability (NearCircuits), which road-roundtrip never sends.
-    test: /^src\/server\/ws-handlers\/road-handlers\.ts$|^src\/server\/session\/road-handler\.ts$/,
+    test: /^src\/server\/ws-handlers\/road-handlers\.ts$|^src\/server\/session\/road-handler\.ts$|^src\/client\/handlers\/road-handler\.ts$/,
     flows: ['road-roundtrip'],
-    why: 'the road handlers changed — the flow that builds, breaks and wipes a road as the Mayor of the governed town',
+    why: 'the road handlers changed (gateway and client halves) — the flow that builds, breaks and wipes a road as the Mayor of the governed town',
   },
   {
     // Before the fallbacks below: the build menu, placement, rename and demolition (#1150).
@@ -319,9 +399,9 @@ export const ROUTES: RouteRule[] = [
   },
   {
     // Before the fallbacks below (#1148): chat-private-channel is GATE_ONLY — it broadcasts.
-    test: /^src\/server\/session\/chat-handler\.ts$|^src\/server\/ws-handlers\/chat-handlers\.ts$|^src\/client\/store\/chat-store\.ts$/,
+    test: /^src\/server\/session\/chat-handler\.ts$|^src\/server\/ws-handlers\/chat-handlers\.ts$|^src\/client\/store\/chat-store\.ts$|^src\/client\/handlers\/chat-handler\.ts$/,
     flows: ['chat-read', 'chat-private-channel', 'chat-chase'],
-    why: 'the chat handlers and store — the channel list read, the password channel the flow creates and removes (send, typing, away), and the chase of Crazz',
+    why: 'the chat handlers (gateway and client halves) and store — the channel list read, the password channel the flow creates and removes (send, typing, away), and the chase of the secondary account',
   },
   {
     // After the pixel rule, which keeps the chat CSS.
@@ -329,6 +409,42 @@ export const ROUTES: RouteRule[] = [
     flows: ['chat-read', 'chat-private-channel', 'chat-chase'],
     needsL3: true,
     why: 'the chat strip and chase badge — the chat flows, plus a browser look',
+  },
+  {
+    // Before the session fallback (#1187): the pushes a flow observes are the chat events.
+    test: /^src\/server\/session\/push-dispatcher\.ts$/,
+    flows: CHAT_FLOWS,
+    why:
+      'the push dispatcher — the pushes a flow observes are the chat events (EVENT_CHAT_MSG / _USER_TYPING / ' +
+      '_CHANNEL_CHANGE, EVENT_MOVE_TO), driven by the chat flows; never politics-write',
+  },
+  {
+    // Before the client fallback (#1187): the client half of the push dispatcher, and the unread-mail count.
+    test: /^src\/client\/handlers\/event-handler\.ts$/,
+    flows: [...CHAT_FLOWS, 'mail-roundtrip'],
+    why: 'the client event handler — the chat pushes it receives, and the REQ_MAIL_GET_UNREAD_COUNT mail-roundtrip sends',
+  },
+  {
+    // Before the client fallback (#1187): the client half of the zone paint.
+    test: /^src\/client\/handlers\/zone-handler\.ts$/,
+    flows: ['zone-roundtrip'],
+    why: 'the client zone handler — the flow that sends its REQ_DEFINE_ZONE',
+  },
+  {
+    // Before the client fallback (#1187). politics-write is deliberately left out: it is a
+    // world-broadcast GATE_ONLY flow, and REQ_POLITICS_VOTE is EXCLUDED (vote-roundtrip is nightly-only).
+    test: /^src\/client\/handlers\/building-action-handler\.ts$/,
+    flows: [...INSPECTOR_UI_FLOWS, 'upgrade-stop', 'place-rename-demolish', 'supplier-search-read'],
+    why:
+      'the client facility actions — the setter, upgrade, research, place/rename/demolish and connection-search flows ' +
+      'that send its SET_PROPERTY / UPGRADE / RENAME / DELETE / RESEARCH_* / SEARCH_CONNECTIONS / GATE_CONNECTIONS requests',
+  },
+  {
+    // Before the client fallback (#1187). zoning-alert-read is left out for the reason the
+    // building-handlers rule gives.
+    test: /^src\/client\/handlers\/building-focus-handler\.ts$/,
+    flows: ['nearest-town-hall'],
+    why: 'the client focus handler — the flow that sends its REQ_BUILDING_FOCUS / REQ_BUILDING_UNFOCUS',
   },
   {
     test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$/,
@@ -362,25 +478,29 @@ export const ROUTES: RouteRule[] = [
   {
     test: /^src\/client\/components\/politics\//,
     flows: ['politics-read', 'politics-write', 'permission-negative', 'town-min-wage', 'publicity-roundtrip'],
-    why: 'governance UI — including who is offered the controls',
+    needsL3: true,
+    why: 'governance UI — including who is offered the controls, plus a browser look',
   },
   {
-    test: /^src\/client\/components\/building\/|^src\/shared\/building-details\//,
-    flows: [
-      'building-details', 'town-min-wage',
-      'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
-      'trade-settings',
-      'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
-    ],
-    why:
-      "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in " +
-      'template-groups.ts, the store and industry owner setters the panels send (#1152), the trade role and ' +
-      'level (trade-settings.ts, #1153), and the residential, bank, TV, accept-cloning and research controls ' +
-      '(ResearchPanel.tsx, HQ_INVENTIONS_GROUP) (#1154)',
+    test: /^src\/client\/components\/building\//,
+    flows: INSPECTOR_UI_FLOWS,
+    needsL3: true,
+    why: `${INSPECTOR_UI_WHY}, plus a browser look`,
   },
   {
-    test: /^src\/client\/components\/mail\/|^src\/server\/mail/,
-    flows: ['mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply'],
+    test: /^src\/shared\/building-details\//,
+    flows: INSPECTOR_UI_FLOWS,
+    why: INSPECTOR_UI_WHY,
+  },
+  {
+    test: /^src\/client\/components\/mail\//,
+    flows: MAIL_FLOWS,
+    needsL3: true,
+    why: 'mail path — plus a browser look at the mail panel',
+  },
+  {
+    test: /^src\/server\/mail/,
+    flows: MAIL_FLOWS,
     why: 'mail path',
   },
   {
@@ -412,7 +532,8 @@ export const ROUTES: RouteRule[] = [
     // Before the broad src/ rule below: the company list's switch into a Political Office.
     test: /^src\/client\/components\/login\/CompanyStage\.tsx$/,
     flows: ['company-switch'],
-    why: 'the company list — the flow that drives its REQ_SWITCH_COMPANY',
+    needsL3: true,
+    why: 'the company list — the flow that drives its REQ_SWITCH_COMPANY, plus a browser look',
   },
   {
     // Before the modals/ rule below: the company-creation dialog's cluster reads.
@@ -428,12 +549,14 @@ export const ROUTES: RouteRule[] = [
     why: 'the client auth handler — the flows that drive its company switch and cluster reads',
   },
   {
-    // Before the broad src/ rule below: the rest of these component folders gets the same
-    // flows that rule gives, plus a browser look.
-    test: /^src\/client\/components\/hud\/|^src\/client\/components\/sheet\/|^src\/client\/components\/modals\/|^src\/client\/components\/map\//,
+    // Before the broad src/ rule below: the rest of these UI surfaces gets the same flows that
+    // rule gives, plus a browser look — the component folders, the report modal, the app
+    // shell and entry points (client.ts hosts getDebugState), the minimap canvas (ui/), the
+    // hooks and the UI store (#1187). components/panels/ is not listed: no tracked file lives there.
+    test: /^src\/client\/components\/hud\/|^src\/client\/components\/sheet\/|^src\/client\/components\/modals\/|^src\/client\/components\/map\/|^src\/client\/components\/login\/|^src\/client\/components\/common\/|^src\/client\/components\/command-palette\/|^src\/client\/components\/startup\/|^src\/client\/components\/tutorial\/|^src\/client\/report\/[^/]+\.tsx$|^src\/client\/App\.tsx$|^src\/client\/main\.tsx$|^src\/client\/client\.ts$|^src\/client\/ui\/|^src\/client\/hooks\/|^src\/client\/store\/ui-store\.ts$/,
     flows: ['building-details'],
     needsL3: true,
-    why: 'HUD, sheets, modals and map surface — the gateway contract, plus a browser look',
+    why: 'the UI surfaces (HUD, sheets, modals, map, login, common, command palette, startup, tutorial, report, app shell, minimap, hooks, UI store) — the gateway contract, plus a browser look',
   },
   {
     test: /^src\/client\/|^src\/shared\/|^src\/server\//,

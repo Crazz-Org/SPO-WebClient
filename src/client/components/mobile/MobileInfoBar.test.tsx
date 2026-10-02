@@ -20,6 +20,11 @@ describe('MobileInfoBar', () => {
     expect(useUiStore.getState().stack.map((s) => s.kind)).toEqual(['empire']);
   });
 
+  it('carries the debug marker getState() reads (issue 1192)', () => {
+    renderWithProviders(<MobileInfoBar />);
+    expect(screen.getByTestId('mobile-info-bar')).toBeTruthy();
+  });
+
   it('shows no Debt tag while the tycoon is healthy', () => {
     renderWithProviders(<MobileInfoBar />);
     expect(screen.queryByText('Debt')).toBeNull();

@@ -755,7 +755,7 @@ interface GateArtifactShape {
     status?: unknown;
     /** `LiveRunResult['error']` — set on BLOCKED/ENVIRONMENT/FAIL. */
     error?: unknown;
-    flows?: { name?: unknown }[];
+    flows?: { name?: unknown; status?: unknown }[];
   } | null;
   routing?: { required?: unknown[] };
 }
@@ -790,7 +790,10 @@ function readGateArtifact(artifactPath: string): GateArtifactRead {
  * the world; `'BLOCKED'` (a rate-limit or dirty-world refusal — run.ts's own comment:
  * "nothing ran") and `'ENVIRONMENT'` (a preflight abort) both mean the flows were never
  * driven, exactly like a missing artifact, so they — and any `status` this code has never
- * seen — read `'unknown'`, not `'ran'`.
+ * seen — read `'unknown'`, not `'ran'`. One exception: a `'BLOCKED'` run whose flows
+ * include at least one `SKIPPED` flow (run.ts blocks on a skip, not a lock) reads
+ * `'blocked-skip'`, naming those flows — a lock-refusal `'BLOCKED'` (`flows: []`) still
+ * reads `'unknown'`.
  *
  * Ways to land on `'unknown'`: no artifact path at all (`report.gateArtifact` unset —
  * most `NON_ATTESTING` outcomes never reach here anyway), a path that does not read as
@@ -832,6 +835,13 @@ export function liveAttestationFrom(artifactPath: string | undefined): LiveAttes
           .filter((name): name is string => name !== undefined)
       : [];
     return { status: 'ran', flows };
+  }
+  if (live.status === 'BLOCKED' && Array.isArray(live.flows)) {
+    const skipped = live.flows
+      .filter(f => f?.status === 'SKIPPED')
+      .map(f => (typeof f?.name === 'string' ? f.name : undefined))
+      .filter((name): name is string => name !== undefined);
+    if (skipped.length > 0) return { status: 'blocked-skip', skipped };
   }
   const reason =
     typeof live.error === 'string'
@@ -1096,7 +1106,10 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
   // own drive. Gateway only: the body's env is unchanged, so a replayed Jest suite never sees
   // it. A loopback exemption was rejected: behind nginx without TRUST_PROXY every public
   // client is 127.0.0.1 too.
-  const gatewayEnv = { ...env, SINGLE_USER_MODE: 'true' };
+  // It also names the LOCKED primary account SPO_test3 as GM, so the GM broadcast can be
+  // driven live: handleGmChatSend makes no RDO / game-server call and reaches only the
+  // clients of this gateway process — on the bench, the drive's own sessions. Gateway only.
+  const gatewayEnv = { ...env, SINGLE_USER_MODE: 'true', SPO_GM_USERS: 'SPO_test3' };
 
   let gateway: RunningGateway;
   try {

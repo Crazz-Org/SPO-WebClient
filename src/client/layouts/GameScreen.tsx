@@ -11,7 +11,7 @@
  * - ChatStrip (z-150): bottom-edge persistent chat, hidden when the player closed it (#610)
  * - StatusPill / CommandBar are hidden together while the HUD is collapsed (H, #613)
  * - Sheet (z-400): the universal surface — one stack (inspector, mail, search, politics, profile…)
- * - Modals (z-400): build menu, settings, keyboard shortcut help (`?`)
+ * - Modals (z-400): settings, keyboard shortcut help (`?`)
  * - While the HUD is hidden, a toast says how to bring it back (H, or its "Show" action)
  * - CommandPalette (z-500)
  */
@@ -33,11 +33,8 @@ import { showToast, dismissToast } from '../components/common/Toast';
 import { Sheet } from '../components/sheet';
 
 // Lazy-loaded modals — not needed on initial render
-const BuildMenu = lazy(() => import('../components/modals/BuildMenu').then(m => ({ default: m.BuildMenu })));
-const BuildingInspectorModal = lazy(() => import('../components/modals/BuildingInspectorModal').then(m => ({ default: m.BuildingInspectorModal })));
 const ChangelogModal = lazy(() => import('../components/modals/ChangelogModal').then(m => ({ default: m.ChangelogModal })));
 const ChatHistoryModal = lazy(() => import('../components/modals/ChatHistoryModal').then(m => ({ default: m.ChatHistoryModal })));
-const ConnectionPickerModal = lazy(() => import('../components/modals/ConnectionPickerModal').then(m => ({ default: m.ConnectionPickerModal })));
 const CreateChannelModal = lazy(() => import('../components/modals/CreateChannelModal').then(m => ({ default: m.CreateChannelModal })));
 const NewspaperModal = lazy(() => import('../components/modals/NewspaperModal').then(m => ({ default: m.NewspaperModal })));
 const SettingsDialog = lazy(() => import('../components/modals/SettingsDialog').then(m => ({ default: m.SettingsDialog })));
@@ -104,10 +101,7 @@ export function GameScreen() {
 
       {/* Modals — z-400 (lazy-loaded, not needed on initial render) */}
       <Suspense fallback={null}>
-        <BuildingInspectorModal />
-        <BuildMenu />
         <ChatHistoryModal />
-        <ConnectionPickerModal />
         <CreateChannelModal />
         <SupplierSearchModal />
         <NewspaperModal />

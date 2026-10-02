@@ -59,7 +59,9 @@ import { reloadPage as reloadWindow } from './page-reload';
 import { checkServedBundle } from './stale-bundle';
 import { connectionPendingKey } from './handlers/connection-pending-key';
 import { connectionStats, utf8ByteLength } from './connection-stats';
-import { ZOOM_LEVELS } from '../shared/map-config';
+import { ZOOM_LEVELS, SEASON_NAMES, type Season } from '../shared/map-config';
+import { config } from '../shared/config';
+import { DEBUG_MARKERS } from './debug-markers';
 
 /** WebSocket close code 1012 "Service Restart" (IANA registry, RFC 6455 §7.4): the gateway is restarting. */
 const WS_CLOSE_SERVICE_RESTART = 1012;
@@ -124,7 +126,8 @@ export interface SpoDebugState {
   } | null;
   /**
    * Panel flags. `panels.chat` means the chat strip is EXPANDED (not merely shown — see
-   * `chat.shown`); `panels.buildMenu` means the top of the surface stack is the `build` surface.
+   * `chat.shown`); `panels.buildMenu` means the top of the surface stack is the `build` surface,
+   * or the mobile Build tab's content is on screen.
    */
   panels: Record<string, boolean>;
   tycoonStats: Record<string, string>;
@@ -135,6 +138,10 @@ export interface SpoDebugState {
     shown: boolean;
     messageCount: number;
     lastMessage: string;
+    /** The channel picker dropdown is on screen. */
+    channelPickerOpen: boolean;
+    /** The online-users list is on screen (also on the mobile embedded chat, where `visible` may be false). */
+    usersListShown: boolean;
   };
   /** Surface stack and modal state (values only, never surface params). */
   ui: {
@@ -151,6 +158,48 @@ export interface SpoDebugState {
     serverSwitchMode: boolean;
     mobileTab: string;
     mobileSheetSnap: string;
+    /** The command bar's More menu is open. */
+    moreMenuOpen: boolean;
+  };
+  /** The Build surface (desktop panel or mobile Build tab). */
+  build: {
+    /** Which BuildMenu screen is shown; null when no BuildMenu is on screen. */
+    phase: 'categories' | 'facilities' | null;
+    /** The chosen category label while phase is `facilities`. */
+    category: string | null;
+    loading: boolean;
+    /** Facilities listed for the chosen category (0 unless phase is `facilities` and loaded). */
+    facilityCount: number;
+    /** Mobile Build sub-tab (`buildings` / `roads` / `demolish`); null when not on screen. */
+    mobileSubTab: string | null;
+  };
+  bugReporter: {
+    /** Settings offers the Support section (config.server.bugReportMode). */
+    available: boolean;
+    /** The report-mode overlay is on screen. */
+    armed: boolean;
+    /** The report modal is on screen. */
+    modalOpen: boolean;
+  };
+  layers: {
+    /** Active map overlay (SurfaceType value, `ZONES` for city zones); null when none. */
+    overlay: string | null;
+    /** Debug overlay sub-layers (keys 1–5); null without a renderer. */
+    debugSubLayers: {
+      tileInfo: boolean;
+      buildingInfo: boolean;
+      concreteInfo: boolean;
+      waterGrid: boolean;
+      roadInfo: boolean;
+    } | null;
+    /** Renderer season name (`Winter`/`Spring`/`Summer`/`Autumn`); null without a renderer. */
+    season: string | null;
+  };
+  mobile: {
+    /** MobileInfoBar is on screen. */
+    infoBar: boolean;
+    /** The mobile new-message ChatBanner is on screen. */
+    chatBanner: boolean;
   };
   modes: {
     placingBuilding: boolean;
@@ -1607,6 +1656,8 @@ export class StarpeaceClient implements ClientHandlerContext {
       } catch (_: unknown) { /* security or empty canvas */ }
     }
 
+    const marker = (id: string): HTMLElement | null =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
     const uiState = useUiStore.getState();
     const gameState = useGameStore.getState();
     const panels: Record<string, boolean> = {
@@ -1617,7 +1668,8 @@ export class StarpeaceClient implements ClientHandlerContext {
       politics: uiState.rightPanel === 'politics',
       settings: uiState.modal === 'settings',
       minimap: this.minimapUI?.isVisible() ?? false,
-      buildMenu: uiState.stack[uiState.stack.length - 1]?.kind === 'build',
+      buildMenu: uiState.stack[uiState.stack.length - 1]?.kind === 'build'
+        || marker(DEBUG_MARKERS.mobileBuildContent) !== null,
       buildingDetails: uiState.rightPanel === 'building',
       searchMenu: uiState.rightPanel === 'search',
     };
@@ -1658,6 +1710,11 @@ export class StarpeaceClient implements ClientHandlerContext {
     const settingsValues = ClientBridge.getSettings();
     const mailState = useMailStore.getState();
 
+    const buildEl = marker(DEBUG_MARKERS.buildMenu);
+    const buildPhase: 'categories' | 'facilities' | null = buildEl === null ? null
+      : buildEl.dataset.phase === 'facilities' ? 'facilities' : 'categories';
+    const buildLoading = buildEl?.dataset.loading === 'true';
+
     return {
       session: {
         connected: this.isConnected,
@@ -1684,6 +1741,8 @@ export class StarpeaceClient implements ClientHandlerContext {
         shown: chatStoreState.chatVisible,
         messageCount: channelMsgs.length,
         lastMessage: lastMsg,
+        channelPickerOpen: marker(DEBUG_MARKERS.chatChannelPicker) !== null,
+        usersListShown: marker(DEBUG_MARKERS.chatUsers) !== null,
       },
       ui: {
         stack: uiState.stack.map(s => s.kind),
@@ -1696,6 +1755,34 @@ export class StarpeaceClient implements ClientHandlerContext {
         serverSwitchMode: gameState.serverSwitchMode,
         mobileTab: uiState.mobileTab,
         mobileSheetSnap: uiState.mobileSheetSnap,
+        moreMenuOpen: marker(DEBUG_MARKERS.moreMenu) !== null,
+      },
+      build: {
+        phase: buildPhase,
+        category: buildEl?.dataset.category ?? null,
+        loading: buildLoading,
+        facilityCount: buildPhase === 'facilities' && !buildLoading ? uiState.buildMenuFacilities.length : 0,
+        mobileSubTab: marker(DEBUG_MARKERS.mobileBuildContent)?.dataset.subtab ?? null,
+      },
+      bugReporter: {
+        available: config.server.bugReportMode,
+        armed: marker(DEBUG_MARKERS.reportModeOverlay) !== null,
+        modalOpen: marker(DEBUG_MARKERS.reportModal) !== null,
+      },
+      layers: {
+        overlay: gameState.isCityZonesEnabled ? SurfaceType.ZONES : gameState.activeOverlay,
+        debugSubLayers: rendererAny ? {
+          tileInfo: rendererAny.debugShowTileInfo === true,
+          buildingInfo: rendererAny.debugShowBuildingInfo === true,
+          concreteInfo: rendererAny.debugShowConcreteInfo === true,
+          waterGrid: rendererAny.debugShowWaterGrid === true,
+          roadInfo: rendererAny.debugShowRoadInfo === true,
+        } : null,
+        season: renderer ? (SEASON_NAMES[renderer.getSeason() as Season] ?? null) : null,
+      },
+      mobile: {
+        infoBar: marker(DEBUG_MARKERS.mobileInfoBar) !== null,
+        chatBanner: marker(DEBUG_MARKERS.chatBanner) !== null,
       },
       modes: {
         placingBuilding: uiState.isPlacingBuilding,

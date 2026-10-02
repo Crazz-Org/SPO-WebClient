@@ -95,6 +95,22 @@ describe('change-validator agent', () => {
     });
   });
 
+  describe('the proof axis', () => {
+    it('opens every Proof flows entry in src/e2e/flows.ts and REJECTs one that asserts only no error', () => {
+      const text = collapse(agent);
+      expect(agent).toMatch(/### 3 · Proof/);
+      expect(text).toMatch(/`Proof flows:`.{0,200}src\/e2e\/flows\.ts/);
+      expect(text).toMatch(/A demanded proof flow whose checks assert only that no error occurred is `REJECT`/);
+    });
+
+    it('REJECTs a live-run clause the gate did not drive, and precedent never waives it', () => {
+      const text = collapse(agent);
+      expect(text).toMatch(/Asked for and not driven: `REJECT`, never `PASS` and never `PASS WITH FINDINGS`/);
+      expect(text).toMatch(/\*\*Precedent is not a reason\*\*/);
+      expect(text).toMatch(/`"live"`/);
+    });
+  });
+
   describe('the verdict contract', () => {
     const verdicts = ['PASS', 'PASS WITH FINDINGS', 'REJECT'] as const;
 

@@ -52,6 +52,8 @@ import {
   type WorkerDeps,
 } from './worker';
 import { ROUTES, SPINE_FLOW } from '../routing';
+import type { LiveRunResult } from '../run';
+import { SECONDARY_ACCOUNT } from '../config';
 
 interface Harness {
   deps: WorkerDeps;
@@ -627,6 +629,59 @@ describe('processOldest — the queue discipline', () => {
   });
 
   describe('liveAttestationFrom — unit', () => {
+    // #1225 — one test per runLive() BLOCKED producer, each the literal LiveRunResult shape.
+    const blockedRun = (flows: LiveRunResult['flows'], error: string): LiveRunResult => ({
+      world: 'planitia',
+      branch: 'feature/x',
+      startedAt: '2026-09-30T00:00:00.000Z',
+      finishedAt: '2026-09-30T00:01:00.000Z',
+      status: 'BLOCKED',
+      preflight: { ok: flows.length > 0, checks: [], environmentAbort: false },
+      flows,
+      capabilities: [],
+      error,
+    });
+    const flow = (name: string, status: LiveRunResult['flows'][number]['status'], skipped?: string) => ({
+      name,
+      status,
+      ...(skipped ? { skipped } : {}),
+      assertions: [],
+      unproven: [],
+      probes: [],
+      messagesSent: 0,
+      messagesReceived: 0,
+      wireErrors: 0,
+    });
+    const writeArtifact = (live: LiveRunResult, required: string[]): string => {
+      const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-art-')), 'gate.json');
+      fs.writeFileSync(file, JSON.stringify({ live, routing: { required } }));
+      return file;
+    };
+
+    it('a skip-BLOCKED run reads "blocked-skip", naming only the SKIPPED flows', () => {
+      const file = writeArtifact(
+        blockedRun(
+          [flow('login-spine', 'PASS'), flow('permission-negative', 'SKIPPED', `${SECONDARY_ACCOUNT.username} refused`)],
+          `skipped — a flow that did not run is not a pass: permission-negative (${SECONDARY_ACCOUNT.username} refused)`,
+        ),
+        ['login-spine', 'permission-negative'],
+      );
+      expect(liveAttestationFrom(file)).toEqual({ status: 'blocked-skip', skipped: ['permission-negative'] });
+    });
+
+    it('a lock-refusal BLOCKED run (typed LiveRunResult, flows: []) still reads "unknown"', () => {
+      const file = writeArtifact(blockedRun([], 'world lock held by another branch'), ['login-spine']);
+      expect(liveAttestationFrom(file)).toEqual({
+        status: 'unknown',
+        why: 'world lock held by another branch; routed flows: login-spine',
+      });
+    });
+
+    it('a BLOCKED run with flows but none SKIPPED reads "unknown"', () => {
+      const file = writeArtifact(blockedRun([flow('login-spine', 'PASS')], 'blocked'), []);
+      expect(liveAttestationFrom(file).status).toBe('unknown');
+    });
+
     it('reads a "ran" live block with named flows', () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-art-'));
       const file = path.join(dir, 'gate.json');
@@ -797,16 +852,18 @@ describe('runJob — gate', () => {
     ['gate (ref)', 'ref'],
     ['live', 'live'],
     ['nightly', 'nightly'],
-  ] as const)('starts the %s gateway in single-user mode, and keeps it out of the body env', async (_label, type) => {
+  ] as const)('starts the %s gateway in single-user mode with a GM, and keeps both out of the body env', async (_label, type) => {
     const h = harness();
     const job = deposit(h, type);
     await runJob(h.deps, job);
     expect(h.gatewayEnvs).toHaveLength(1);
     expect(h.gatewayEnvs[0].SINGLE_USER_MODE).toBe('true');
+    expect(h.gatewayEnvs[0].SPO_GM_USERS).toBe('SPO_test3');
     // A replayed Jest suite reads SINGLE_USER_MODE through src/shared/config.ts.
     const body = h.commands.find(c => c.cmd === 'node');
     expect(body).toBeDefined();
     expect(body?.env?.SINGLE_USER_MODE).toBeUndefined();
+    expect(body?.env?.SPO_GM_USERS).toBeUndefined();
   });
 
   it('points the gateway and the body at the bench-wide asset cache, not the worktree', async () => {
@@ -816,7 +873,7 @@ describe('runJob — gate', () => {
     // The gateway is what primes and reads the mirror; without this it would download
     // all ~570 files into a fresh worktree on the bench's exclusive time.
     expect(h.gatewayEnvs).toEqual([
-      { E2E_WORLD_STATE_DIR: h.paths.world, SPO_CACHE_DIR: h.paths.cache, SINGLE_USER_MODE: 'true' },
+      { E2E_WORLD_STATE_DIR: h.paths.world, SPO_CACHE_DIR: h.paths.cache, SINGLE_USER_MODE: 'true', SPO_GM_USERS: 'SPO_test3' },
     ]);
     // verify-gate replays the Jest suite when there is no receipt, and tests that read
     // real assets must be pointed at the same mirror or they silently self-skip.

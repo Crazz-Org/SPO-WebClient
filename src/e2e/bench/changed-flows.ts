@@ -2,7 +2,7 @@
  * Diff -> the live flows it changed (doc/E2E-POLICY.md §4, "Changed and declared flows").
  *
  * The routing table sends a diff under src/e2e/ to no flow, so a card that adds or edits a
- * flow used to reach its gate with nothing to drive. This module reads the diff of the six
+ * flow used to reach its gate with nothing to drive. This module reads the diff of the seven
  * flow sources and names the flows it touched: a hunk inside a `FLOWS` entry requires that
  * flow; a hunk inside a shared helper requires every flow that reaches the helper, directly
  * or through another helper. scripts/verify-gate.js adds the result to `routing.required`.
@@ -17,6 +17,7 @@ import { NIGHTLY_ONLY } from '../routing';
 export const FLOW_SOURCES = [
   'src/e2e/flows.ts',
   'src/e2e/fixtures.ts',
+  'src/e2e/research.ts',
   'src/e2e/probe.ts',
   'src/e2e/session.ts',
   'src/e2e/ws-driver.ts',
@@ -43,7 +44,7 @@ export interface ChangedFlowsInput {
   nightlyOnly: Record<string, string>;
 }
 
-interface Declaration {
+export interface Declaration {
   file: string;
   name: string;
   /** 1-based, inclusive. */
@@ -92,7 +93,7 @@ function touchedLines(diff: string): Map<string, Touches> {
   return touches;
 }
 
-function declarationsOf(file: string, source: string): Declaration[] {
+export function declarationsOf(file: string, source: string): Declaration[] {
   const lines = source.split('\n');
   const spans: Array<{ name: string; start: number; end: number }> = [];
   let open: { name: string; start: number } | null = null;

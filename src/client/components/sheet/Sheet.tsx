@@ -86,7 +86,7 @@ export function SurfaceContent({ kind }: { kind: SurfaceKind }) {
     case 'overlays':
       return <OverlayMenu />;
     case 'build':
-      return <BuildMenu embedded onClose={() => useUiStore.getState().popSurface()} />;
+      return <BuildMenu onClose={() => useUiStore.getState().popSurface()} />;
     case 'supplierSearch':
       return <SupplierSearchSurface />;
     case 'map':

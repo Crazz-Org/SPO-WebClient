@@ -79,16 +79,14 @@ import type {
   WsRespBuildingFacilities,
   WsRespRenameFacility,
   WsRespDeleteFacility,
-  WsRespResearchInventory,
-  WsRespResearchDetails,
   WsRespBuildingUpgrade,
-  ResearchCategoryData,
   WsRespChatChannelList,
   WsRespChatChannelInfo,
   WsRespChatSuccess,
   WsEventChatMsg,
   WsEventChatUserTyping,
   WsEventChatChannelChange,
+  WsEventMoveTo,
 } from '../shared/types/message-types';
 import { SurfaceType } from '../shared/types/domain-types';
 import { CLUSTER_IDS } from '../shared/cluster-data';
@@ -101,6 +99,7 @@ import type {
   BuildingProductData,
   BuildingSupplyData,
   BuildingInfo,
+  ChatUser,
   CompaniesData,
   CompInputData,
   CurriculumData,
@@ -146,7 +145,7 @@ import {
   type RoundTripSpec,
 } from './probe';
 import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
-import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES, isTradeModeValue } from '../shared/building-details/trade-settings';
+import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES } from '../shared/building-details/trade-settings';
 import {
   awaitResumeToken,
   findTown,
@@ -166,6 +165,15 @@ import {
   type SecondaryLogin,
 } from './session';
 import type { WorldLock } from './world-lock';
+import {
+  RESEARCH_TARGET,
+  queueResearchLineMatches,
+  readResearchDetails,
+  researchCost,
+  researchInventory,
+  researchState,
+  type ResearchState,
+} from './research';
 import {
   FIXTURE_KINDS,
   ensureFixtures,
@@ -188,6 +196,9 @@ import {
   type FixtureKindId,
   type FixtureOutcome,
 } from './fixtures';
+
+/** Moved to ./research (#1233) — re-exported for research-roundtrip's tests. */
+export { RESEARCH_TARGET, queueResearchLineMatches, researchCost, researchState, type ResearchState } from './research';
 
 export interface FlowContext {
   lock: WorldLock;
@@ -847,7 +858,7 @@ const voteRoundTrip: Flow = {
  */
 const permissionNegative: Flow = {
   name: 'permission-negative',
-  what: 'Crazz at the governed town hall sees canGovern=false',
+  what: `${SECONDARY_ACCOUNT.username} at the governed town hall sees canGovern=false`,
   mutates: false,
   run: async () => {
     const assertions = new Assertions();
@@ -876,14 +887,14 @@ const permissionNegative: Flow = {
  */
 const mailRoundTrip: Flow = {
   name: 'mail-roundtrip',
-  what: 'SPO_test3 sends -> Crazz receives -> delete',
+  what: `SPO_test3 sends -> ${SECONDARY_ACCOUNT.username} receives -> delete`,
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `e2e ${new Date().toISOString()}`;
 
-    // Crazz first, before the compose: a refused login then leaves no mail behind.
+    // The secondary account first, before the compose: a refused login then leaves no mail behind.
     const recipient = await loginSecondary();
     if ('skipped' in recipient) return skippedResult('mail-roundtrip', recipient.skipped);
     try {
@@ -1373,9 +1384,9 @@ const newspaperRead: Flow = {
  * (`boardmsg.asp?top=TRUE` + `boardlist.asp`) is read. Read-only — the read branch of
  * `boardmsg.asp` only opens `NewsBoard.NewsObject`; `action=post` is the only write branch
  * and is never sent (posting is excluded, maintainer 2026-09-29: no member deletes a post,
- * `News Server/NewsObject.pas:11-53`). An empty board is a pass, not UNPROVEN: the page
- * answering is what is proven, and the detail records the counts. Unlike `newspaper-read`
- * it is not data-gated, so routing requires it.
+ * `News Server/NewsObject.pas:11-53`). The detail records the counts. A board with no column
+ * and no tree entry ends UNPROVEN (#1188): the page answering proves no read of a post, and
+ * the flow cannot post one. Routing still requires it.
  */
 const newspaperBoardRead: Flow = {
   name: 'newspaper-board-read',
@@ -1415,6 +1426,13 @@ const newspaperBoardRead: Flow = {
         wellFormed,
         `${board.columns.length} columns, ${board.tree.length} tree entries`,
       );
+      if (board.columns.length === 0 && board.tree.length === 0) {
+        assertions.unproven(
+          'the board lists a column',
+          `${paperName}: 0 columns, 0 tree entries — nothing is posted, and posting is excluded ` +
+            '(News Server/NewsObject.pas:11-53)',
+        );
+      }
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);
       return report('newspaper-board-read', assertions, [], session);
@@ -1423,6 +1441,15 @@ const newspaperBoardRead: Flow = {
     }
   },
 };
+
+/**
+ * What a focus on an empty tile answers: `parseBuildingFocusResponse` (`src/server/map-parsers.ts`)
+ * throws it on an empty reply, and `withErrorHandler` (`src/server/ws-handlers/ws-utils.ts`)
+ * forwards the message under `ERROR_FacilityNotFound` — the code is the same for every focus
+ * error, so only the message proves the tile is empty. A copy: the e2e build does not import
+ * server code; the unit test pins it to the parser.
+ */
+export const EMPTY_TILE_FOCUS_ERROR = 'Invalid building focus header format - no data';
 
 const ZONING_ALERT_SUBJECT = 'Zoning Alert!'; // World.pas:2721
 /** The header the server's own alert carries — Mail Server/ModelServer.pas:883. */
@@ -1501,10 +1528,10 @@ async function purgeSeededAlerts(
   }
 }
 
-/** Crazz-sent alerts in SPO_test3's Inbox — a server-sent alert has another sender and is spared. */
+/** Alerts sent by the secondary account in SPO_test3's Inbox — a server-sent alert has another sender and is spared. */
 const seededInInbox = (m: MailMessageHeader): boolean =>
   m.subject === ZONING_ALERT_SUBJECT && sameAccount(m.from, SECONDARY_ACCOUNT);
-/** Crazz's own copies in `Sent`, filed there by Post — Mail Server/MailServer.pas:802-811. */
+/** The secondary's own copies in `Sent`, filed there by Post — Mail Server/MailServer.pas:802-811. */
 const seededInSent = (m: MailMessageHeader): boolean =>
   m.subject === ZONING_ALERT_SUBJECT && sameAccount(m.to, PRIMARY_ACCOUNT);
 
@@ -1517,7 +1544,7 @@ async function sweepSeededAlerts(): Promise<FlowCheck[]> {
 }
 
 /**
- * Crazz sends SPO_test3 one look-alike of the server's zoning alert, pointing at the governed
+ * The secondary account sends SPO_test3 one look-alike of the server's zoning alert, pointing at the governed
  * town hall — a building that exists, so the flow's focus lands. The cleanup deletes it from
  * both mailboxes.
  */
@@ -1572,11 +1599,14 @@ async function seedZoningAlert(): Promise<FlowSeed> {
  * through `parseLocalAspUrl` — the same translator the client's link interceptor uses —
  * and sends the very REQ_BUILDING_FOCUS the client sends on a click.
  *
- * The seed (`seedZoningAlert`, #1009) feeds the flow: Crazz sends SPO_test3 one look-alike
+ * The seed (`seedZoningAlert`, #1009) feeds the flow: the secondary account sends SPO_test3 one look-alike
  * alert before the run, and it is deleted from both mailboxes after. Read without the seed,
  * no zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
- * was zoned out of this account lately, so the flow proved nothing. A demolished building answering `ERROR_FacilityNotFound`
- * is also accepted: the whole point of the alert is that the building is gone.
+ * was zoned out of this account lately, so the flow proved nothing. A demolished building is
+ * also accepted — the whole point of the alert is that the building is gone — but only on the
+ * empty-tile message (`EMPTY_TILE_FOCUS_ERROR`). The error code proves nothing: every focus
+ * error is wrapped as `ERROR_FacilityNotFound` (#1188). Any other error, a timeout included,
+ * fails.
  */
 const zoningAlertRead: Flow = {
   name: 'zoning-alert-read',
@@ -1631,11 +1661,11 @@ const zoningAlertRead: Flow = {
             WsMessageType.RESP_BUILDING_FOCUS,
           );
         } catch (err: unknown) {
-          // The building the alert names was, by definition, demolished — a gateway
-          // "not found" for that exact tile is an accepted outcome, not a wire failure.
+          // The building the alert names was, by definition, demolished — the empty-tile
+          // message for that exact tile is an accepted outcome, not a wire failure.
           assertions.check(
-            'REQ_BUILDING_FOCUS answered — either the tile focused, or the building is gone',
-            err instanceof WsDriverError,
+            'REQ_BUILDING_FOCUS answered — either the tile focused, or the building is gone (empty tile)',
+            err instanceof WsDriverError && err.message === EMPTY_TILE_FOCUS_ERROR,
             toErrorMessage(err),
           );
         }
@@ -1796,7 +1826,7 @@ async function purgeFolder(
 /**
  * The cleanup of one mailbox: a fresh login — the cleanup matters most after a failure, which
  * is when the drive's socket may be dead — then `purgeFolder` on each folder. One check per
- * folder; never throws. A Crazz refusal here comes after the flow's first write, so its checks
+ * folder; never throws. A refusal of the secondary account here comes after the flow's first write, so its checks
  * are not ok and name the leftover.
  */
 async function purgeMailbox(
@@ -1966,7 +1996,7 @@ const mailDrafts: Flow = {
 };
 
 async function driveSendFromDraft(
-  crazz: LiveSession,
+  secondary: LiveSession,
   subject: string,
   sleep: (ms: number) => Promise<void>,
 ): Promise<FlowResult> {
@@ -1976,11 +2006,11 @@ async function driveSendFromDraft(
   try {
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      await mailConnect(crazz);
+      await mailConnect(secondary);
       await mailConnect(session);
       const swept = await preSweep(
         assertions,
-        [[session, 'Draft'], [session, 'Sent'], [crazz, 'Inbox']],
+        [[session, 'Draft'], [session, 'Sent'], [secondary, 'Inbox']],
         hasMarker(MAIL_SEND_FROM_DRAFT_MARKER),
         sleep,
         markerLabel(MAIL_SEND_FROM_DRAFT_MARKER),
@@ -1999,7 +2029,7 @@ async function driveSendFromDraft(
       const sent = await sendMail(session, { ...mail, existingDraftId: draft.messageId });
       assertions.check('the send from the draft was accepted', sent.success === true, sent.message);
 
-      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      const delivered = await rereadUntil(secondary, 'Inbox', msgs => msgs.some(bySubject), sleep);
       assertions.check(
         `${SECONDARY_ACCOUNT.username}'s Inbox holds it`,
         delivered.settled,
@@ -2017,29 +2047,29 @@ async function driveSendFromDraft(
       await logoff(session);
     }
   } finally {
-    await logoff(crazz);
+    await logoff(secondary);
   }
 }
 
 /**
  * Send from an opened draft: `REQ_MAIL_COMPOSE` with `existingDraftId`, which deletes the Draft
- * copy once `Post` succeeds (#510). Crazz logs in first, so a refusal writes nothing (SKIPPED);
+ * copy once `Post` succeeds (#510). The secondary account logs in first, so a refusal writes nothing (SKIPPED);
  * a refusal at the cleanup, after the send, is a FAIL naming the leftover.
  */
 const mailSendFromDraft: Flow = {
   name: 'mail-send-from-draft',
-  what: 'Crazz first -> SPO_test3 saves a draft to Crazz -> sends it from the draft -> Crazz receives it, Draft copy gone',
+  what: `${SECONDARY_ACCOUNT.username} first -> SPO_test3 saves a draft to ${SECONDARY_ACCOUNT.username} -> sends it from the draft -> ${SECONDARY_ACCOUNT.username} receives it, Draft copy gone`,
   mutates: true,
   run: async ctx => {
     const name = 'mail-send-from-draft';
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `${MAIL_SEND_FROM_DRAFT_MARKER}${new Date().toISOString()}`;
-    // Crazz first, before any write: a refused login then leaves nothing behind.
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    // The secondary account first, before any write: a refused login then leaves nothing behind.
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveSendFromDraft(crazz, subject, sleep);
+      result = await driveSendFromDraft(secondary, subject, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     }
@@ -2054,7 +2084,7 @@ const mailSendFromDraft: Flow = {
 };
 
 async function driveReply(
-  crazz: LiveSession,
+  secondary: LiveSession,
   subject: string,
   sleep: (ms: number) => Promise<void>,
 ): Promise<FlowResult> {
@@ -2065,11 +2095,11 @@ async function driveReply(
   try {
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      await mailConnect(crazz);
+      await mailConnect(secondary);
       await mailConnect(session);
       const swept = await preSweep(
         assertions,
-        [[session, 'Inbox'], [session, 'Sent'], [crazz, 'Inbox'], [crazz, 'Sent']],
+        [[session, 'Inbox'], [session, 'Sent'], [secondary, 'Inbox'], [secondary, 'Sent']],
         hasMarker(MAIL_REPLY_MARKER),
         sleep,
         markerLabel(MAIL_REPLY_MARKER),
@@ -2079,7 +2109,7 @@ async function driveReply(
       const sent = await sendMail(session, { to: SECONDARY_ACCOUNT.username, subject, body: [MAIL_PROBE_BODY] });
       assertions.check('the compose was accepted', sent.success === true, sent.message);
 
-      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      const delivered = await rereadUntil(secondary, 'Inbox', msgs => msgs.some(bySubject), sleep);
       const received = delivered.messages.find(bySubject);
       assertions.check(
         `${SECONDARY_ACCOUNT.username}'s Inbox holds the message`,
@@ -2088,7 +2118,7 @@ async function driveReply(
       );
       if (!received) return report(name, assertions, [], session);
 
-      const { message } = await crazz.driver.request<WsRespMailMessage>(
+      const { message } = await secondary.driver.request<WsRespMailMessage>(
         { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder: 'Inbox', messageId: received.messageId },
         WsMessageType.RESP_MAIL_MESSAGE,
       );
@@ -2096,8 +2126,8 @@ async function driveReply(
       if (!message.fromAddr) return report(name, assertions, [], session);
 
       // The client's Reply (`startReply` in mail-store.ts): to the sender, `Re: ` subject, and
-      // the four In-Reply-To* lines as headers. Crazz's one write — a pair the flow undoes.
-      const reply = await sendMail(crazz, {
+      // the four In-Reply-To* lines as headers. The secondary's one write — a pair the flow undoes.
+      const reply = await sendMail(secondary, {
         to: message.fromAddr,
         subject: `Re: ${message.subject}`,
         body: ['Automated L2 reply probe. Safe to delete.'],
@@ -2116,7 +2146,7 @@ async function driveReply(
       await logoff(session);
     }
   } finally {
-    await logoff(crazz);
+    await logoff(secondary);
   }
 }
 
@@ -2129,18 +2159,18 @@ async function driveReply(
  */
 const mailReply: Flow = {
   name: 'mail-reply',
-  what: 'Crazz first -> SPO_test3 sends -> Crazz reads and replies (Re:, In-Reply-To* headers) -> SPO_test3 receives the reply',
+  what: `${SECONDARY_ACCOUNT.username} first -> SPO_test3 sends -> ${SECONDARY_ACCOUNT.username} reads and replies (Re:, In-Reply-To* headers) -> SPO_test3 receives the reply`,
   mutates: true,
   run: async ctx => {
     const name = 'mail-reply';
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `${MAIL_REPLY_MARKER}${new Date().toISOString()}`;
-    // Crazz first, before any write: a refused login then leaves nothing behind.
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    // The secondary account first, before any write: a refused login then leaves nothing behind.
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveReply(crazz, subject, sleep);
+      result = await driveReply(secondary, subject, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     }
@@ -2208,6 +2238,75 @@ const nearestTownHall: Flow = {
   },
 };
 
+/** The side of the square view a camera update carries. */
+const CAMERA_VIEW_SIZE = 32;
+
+/**
+ * Fire-and-forget camera update centred on (x, y), with its view — `handleUpdateCamera`
+ * answers nothing; with the view fields `updateCameraPosition` also emits `SetViewedArea`.
+ */
+function sendCamera(session: LiveSession, x: number, y: number): { viewX: number; viewY: number } {
+  const viewX = Math.max(0, x - CAMERA_VIEW_SIZE / 2);
+  const viewY = Math.max(0, y - CAMERA_VIEW_SIZE / 2);
+  session.driver.send({
+    type: WsMessageType.REQ_UPDATE_CAMERA,
+    x,
+    y,
+    viewX,
+    viewY,
+    viewW: CAMERA_VIEW_SIZE,
+    viewH: CAMERA_VIEW_SIZE,
+  });
+  return { viewX, viewY };
+}
+
+interface Tile { x: number; y: number }
+const tileText = (p: Tile): string => `(${p.x},${p.y})`;
+const sameTile = (a: Tile, b: Tile): boolean => a.x === b.x && a.y === b.y;
+
+/**
+ * A fresh SPO_test3 login's saved camera — `selectCompany` reads it from the `LastX.0` /
+ * `LastY.0` cookie (`login-handler.ts`) — then, when given, one camera update before the
+ * logoff that saves it (`savePlayerPosition`).
+ */
+async function readSavedCamera(then?: Tile): Promise<Tile> {
+  const s = await login(PRIMARY_ACCOUNT);
+  try {
+    const saved = { x: s.playerX, y: s.playerY };
+    if (then) sendCamera(s, then.x, then.y);
+    return saved;
+  } finally {
+    await logoff(s);
+  }
+}
+
+/**
+ * The camera cookie read back at a new login (#1188): it must hold `sent`; the camera is then
+ * put back on `original`, and a third login confirms it. Never throws. `savePlayerPosition`
+ * never writes (0,0) (`spo_session.ts`), so an original (0,0) cannot be restored — UNPROVEN.
+ */
+async function cameraReadBack(assertions: Assertions, original: Tile, sent: Tile): Promise<void> {
+  const readBack = 'the camera cookie reads back the camera sent';
+  try {
+    const read = await readSavedCamera(original);
+    assertions.check(readBack, sameTile(read, sent), `read ${tileText(read)}, sent ${tileText(sent)}`);
+  } catch (err: unknown) {
+    assertions.check(readBack, false, toErrorMessage(err));
+    return;
+  }
+  const restored = 'the camera cookie is restored';
+  if (original.x === 0 && original.y === 0) {
+    assertions.unproven(restored, 'the saved position was (0,0), which savePlayerPosition never writes (spo_session.ts)');
+    return;
+  }
+  try {
+    const read = await readSavedCamera();
+    assertions.check(restored, sameTile(read, original), `read ${tileText(read)}, original ${tileText(original)}`);
+  } catch (err: unknown) {
+    assertions.check(restored, false, toErrorMessage(err));
+  }
+}
+
 /** One `REQ_CONTEXT_STATUS` read at (x, y). */
 async function contextStatusAt(session: LiveSession, x: number, y: number): Promise<string> {
   const response = await session.driver.request<WsRespContextStatus>(
@@ -2260,9 +2359,12 @@ function surfaceShape(rows: number[][], rect: Rect): { ok: boolean; detail: stri
  * Two persistent effects, both bounded. The world event is **consumed** — `PickEvent`
  * extracts and frees the head of SPO_test3's event queue (`Kernel/Kernel.pas:11255-11271`,
  * `Kernel/World.pas:4840-4871`), the same pop every login's `selectCompany` makes, so the
- * flow costs one more login's worth. The camera is sent **to the saved position** the
- * select-company reply carried, so `savePlayerPosition` rewrites the same cookie values at
- * logoff. Nothing in the world is written: `mutates: false`.
+ * flow costs one more login's worth. The camera is sent **to the town hall** (one tile off it
+ * when the saved position is the hall), so it differs from the saved position the
+ * select-company reply carried; `savePlayerPosition` writes it at logoff, and a fresh login
+ * reads it back (#1188). That login puts the camera back on the saved position, and a third
+ * confirms it. The only write is SPO_test3's own camera bookmark, which every logoff already
+ * rewrites, moved and put back — nothing in the world is written: `mutates: false`.
  */
 const worldReaders: Flow = {
   name: 'world-readers',
@@ -2272,6 +2374,8 @@ const worldReaders: Flow = {
     const sleep = ctx.sleep ?? defaultSleep;
     const assertions = new Assertions();
     const session = await login(PRIMARY_ACCOUNT);
+    const saved: Tile = { x: session.playerX, y: session.playerY };
+    let camera: Tile | undefined;
     try {
       const here = (await listTowns(session)).find(t => t.name === GOVERNED_TOWN);
       assertions.check('the governed town is still listed', here !== undefined);
@@ -2322,25 +2426,20 @@ const worldReaders: Flow = {
       assertions.check('the facility dimensions are not empty', count > 0, String(count));
       assertions.check('the facility dimensions hold the town hall class', visualClass in dimensions, visualClass);
 
-      // Fire-and-forget: handleUpdateCamera answers nothing. With the view fields,
-      // updateCameraPosition emits SetViewedArea (session-only).
-      session.driver.send({
-        type: WsMessageType.REQ_UPDATE_CAMERA,
-        x: session.playerX,
-        y: session.playerY,
-        viewX: Math.max(0, session.playerX - 16),
-        viewY: Math.max(0, session.playerY - 16),
-        viewW: 32,
-        viewH: 32,
-      });
+      // A camera that differs from the saved position, so the read-back can tell it was sent.
+      const hall: Tile = { x: here.x, y: here.y };
+      camera = sameTile(hall, saved) ? { x: hall.x + 1, y: hall.y + 1 } : hall;
+      sendCamera(session, camera.x, camera.y);
       const after = await contextStatusAt(session, here.x, here.y);
       assertions.check('the gateway still answers after the camera update', typeof after === 'string');
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);
-      return report('world-readers', assertions, [], session);
     } finally {
       await logoff(session);
+      // Also after a throw: once the camera moved, it is put back. Never throws.
+      if (camera) await cameraReadBack(assertions, saved, camera);
     }
+    return report('world-readers', assertions, [], session);
   },
 };
 
@@ -2496,8 +2595,9 @@ function firstOpenableRanking(categories: RankingCategory[]): RankingCategory | 
  *
  * The profiles are read for a tycoon other than the session's own — the own branch of
  * `resolveTycoon` answers with the gateway's name — and never assert the echoed name
- * (`RenderTycoon.asp:55` renders the request's `Tycoon`). Banks and newspapers prove
- * reachability only: an empty list passes and its count is in the detail.
+ * (`RenderTycoon.asp:55` renders the request's `Tycoon`). Banks and newspapers are checked
+ * well-formed, their count in the detail; an empty one ends UNPROVEN (#1188) — a page that
+ * lists nothing proves only that it answered.
  */
 const searchMenuRead: Flow = {
   name: 'search-menu-read',
@@ -2570,6 +2670,9 @@ const searchMenuRead: Flow = {
         Array.isArray(banks.banks) && banks.banks.every(b => b.name !== ''),
         `${banks.banks.length} banks`,
       );
+      if (banks.banks.length === 0) {
+        assertions.unproven('a bank is listed', '0 banks — Banks.asp lists none on this world');
+      }
 
       const papers = await session.driver.request<WsRespSearchMenuNewspapers>(
         { type: WsMessageType.REQ_SEARCH_MENU_NEWSPAPERS },
@@ -2580,6 +2683,12 @@ const searchMenuRead: Flow = {
         Array.isArray(papers.newspapers) && papers.newspapers.every(p => p.paperName !== ''),
         `${papers.newspapers.length} newspapers`,
       );
+      if (papers.newspapers.length === 0) {
+        assertions.unproven(
+          'a newspaper is listed',
+          '0 newspapers — Newspapers.asp:61-62 lists none on this world',
+        );
+      }
 
       const letter = PRIMARY_ACCOUNT.username.charAt(0).toUpperCase();
       const people = await session.driver.request<WsRespSearchMenuPeopleSearch>(
@@ -2631,16 +2740,34 @@ async function hallRead(
   }
 }
 
+/** One Lobby user-list read recorded as a check; never throws. */
+async function userListCheck(
+  session: LiveSession,
+  assertions: Assertions,
+  label: string,
+  holds: (users: ChatUser[]) => boolean,
+): Promise<void> {
+  try {
+    const users = await readChatUsers(session);
+    assertions.check(label, holds(users), users.map(u => u.name).join(', ') || '(empty)');
+  } catch (err: unknown) {
+    assertions.check(label, false, toErrorMessage(err));
+  }
+}
+
 /**
  * Live drive of the company list's Political Offices half (#1142): switch into the Mayor of
  * the governed town, read the world, switch back, read again.
  *
  * Side effects are session-only: the Interface Server drops a ClientView when its socket
  * closes (`TClientView.OnDisconnect`, `Interface Server/InterfaceServer.pas:1799-1813`). The
- * proof is the gateway answering `RESP_RDO_RESULT` only after `loginWorld` under the role
- * name and `selectCompany` succeeded. No check claims the reads answer "as the role":
- * `TTycoon.GetAllCompaniesCount` / `GetAllCompanies` walk the MasterRole
- * (`Kernel/Kernel.pas:10972-10992`), so neither can tell the identities apart.
+ * switch reply carries no identity (`result: ''` plus the position), and the identity is not
+ * proven by `GetAllCompaniesCount` / `GetAllCompanies`, which walk the MasterRole
+ * (`Kernel/Kernel.pas:10972-10992`). It is proven by the Lobby user list (#1188): the role
+ * ClientView logs on under the role name (`Interface Server/InterfaceServer.pas:3238`) and
+ * `GetUserList` lists clients by that name (`:3342-3358`) — the role after the switch,
+ * SPO_test3 after the switch back. A role already listed before the switch cannot tell this
+ * session's switch apart, so that step ends UNPROVEN.
  */
 const companySwitch: Flow = {
   name: 'company-switch',
@@ -2659,6 +2786,18 @@ const companySwitch: Flow = {
       const town = await findTown(session, GOVERNED_TOWN);
       const visualClass = await resolveVisualClass(session, town.x, town.y);
 
+      const roleName = role.ownerRole ?? '';
+      const namesRole = (users: ChatUser[]): boolean => users.some(u => sameName(u.name, roleName));
+      const roleLabel =
+        `the Lobby user list names ${roleName} — the role ClientView logged on under the role name ` +
+        '(Interface Server/InterfaceServer.pas:3238, :3342-3358)';
+      let before: ChatUser[] | undefined;
+      try {
+        before = await readChatUsers(session);
+      } catch (err: unknown) {
+        assertions.check('the Lobby user list answers before the switch', false, toErrorMessage(err));
+      }
+
       let back: { ok: boolean; detail: string };
       try {
         const there = await trySwitch(session, role);
@@ -2671,6 +2810,14 @@ const companySwitch: Flow = {
             assertions,
             'a world read answers on the role ClientView (REQ_BUILDING_DETAILS at the town hall)',
           );
+          if (before !== undefined && namesRole(before)) {
+            assertions.unproven(
+              roleLabel,
+              'the role was already listed before the switch — the list cannot tell this session’s switch apart',
+            );
+          } else if (before !== undefined) {
+            await userListCheck(session, assertions, roleLabel, namesRole);
+          }
         }
       } finally {
         back = await trySwitch(session, session.company);
@@ -2678,6 +2825,9 @@ const companySwitch: Flow = {
       assertions.check('the switch back to the own company answers RESP_RDO_RESULT', back.ok, back.detail);
       if (back.ok) {
         await hallRead(session, town, visualClass, assertions, 'the same world read answers after switching back');
+        await userListCheck(session, assertions, 'the Lobby user list names SPO_test3 after switching back', users =>
+          users.some(u => isSelf(u.name)),
+        );
       }
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);
@@ -2912,7 +3062,7 @@ async function roundTripProbe(
   }
 }
 
-/** SPO_test3's row towards Crazz as `"<yours>:<theirs>"`, or `"none"` — no row, both neutral. */
+/** SPO_test3's row towards the secondary account as `"<yours>:<theirs>"`, or `"none"` — no row, both neutral. */
 async function policyTowardsSecondary(session: LiveSession): Promise<string> {
   const policy = await readPolicy(session);
   const row = policy.policies.find(p => sameAccount(p.tycoonName, SECONDARY_ACCOUNT));
@@ -2925,13 +3075,13 @@ function policyStatus(value: string): number {
 }
 
 /**
- * The strategy towards Crazz, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
- * broadcasts a world event naming Crazz (Kernel/Kernel.pas:11790-11800). The restore from "no
+ * The strategy towards the secondary account, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
+ * broadcasts a world event naming the secondary account (Kernel/Kernel.pas:11790-11800). The restore from "no
  * row" expects the row gone — a neutral row left behind is not the original.
  */
 const policyRoundTrip: Flow = {
   name: 'policy-roundtrip',
-  what: "strategy towards Crazz: read -> set another status -> read back -> restore -> read back",
+  what: `strategy towards ${SECONDARY_ACCOUNT.username}: read -> set another status -> read back -> restore -> read back`,
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -3468,7 +3618,7 @@ function transferRefusal(bank: BankAccountData): string | null {
   return null;
 }
 
-async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
+async function driveSendReturn(secondary: LiveSession, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
   const name = 'bank-send-return';
   const ME = PRIMARY_ACCOUNT.username;
   const HIM = SECONDARY_ACCOUNT.username;
@@ -3478,7 +3628,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
   const me = await login(PRIMARY_ACCOUNT);
   try {
     await mailConnect(me);
-    await mailConnect(crazz);
+    await mailConnect(secondary);
 
     // RDOSendMoney clips the amount to fBudget - LoanAmount - AprFee and answers
     // ERROR_InvalidMoneyValue when that is ≤ 0 (Kernel/Kernel.pas:11507-11512, :11535); the page
@@ -3488,13 +3638,13 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
       assertions.unproven(what, `${ME} cannot send $1: ${mine}; nothing sent`);
       return report(name, assertions, probes, me);
     }
-    const theirs = transferRefusal(await readBank(crazz));
+    const theirs = transferRefusal(await readBank(secondary));
     if (theirs) {
       assertions.unproven(what, `${HIM} cannot send $1 back: ${theirs}; nothing sent`);
       return report(name, assertions, probes, me);
     }
     // The :11499 receiver limits, each profile read through its own session.
-    for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, crazz]] as const) {
+    for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, secondary]] as const) {
       const refusal = receiverLimitRefusal(account, await readProfile(s));
       if (refusal) {
         assertions.unproven(what, `${refusal}; nothing sent`);
@@ -3503,7 +3653,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
     }
 
     for (const [s, folder, counterpart] of [
-      [me, 'Inbox', HIM], [me, 'Sent', HIM], [crazz, 'Inbox', ME], [crazz, 'Sent', ME],
+      [me, 'Inbox', HIM], [me, 'Sent', HIM], [secondary, 'Inbox', ME], [secondary, 'Sent', ME],
     ] as const) {
       const check = await purgeTransferFolder(s, folder, counterpart, sleep);
       assertions.check(`pre-sweep: ${check.what}`, check.ok, check.detail);
@@ -3517,7 +3667,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
     const has = async (s: LiveSession, from: string, marker: string): Promise<boolean> =>
       (await noticeIds(s, 'Inbox', from, `Reason=${marker}&`)).size > 0;
     const owed = async (): Promise<string> =>
-      String((await has(crazz, ME, out) ? 1 : 0) - (await has(me, HIM, back) ? 1 : 0));
+      String((await has(secondary, ME, out) ? 1 : 0) - (await has(me, HIM, back) ? 1 : 0));
     const send = (s: LiveSession, toTycoon: string, reason: string) =>
       s.driver.request<WsRespProfileBankAction>(
         { type: WsMessageType.REQ_PROFILE_BANK_ACTION, action: 'send', amount: '1', toTycoon, reason },
@@ -3542,9 +3692,9 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
           firstLegSent = true;
         },
         restore: async () => {
-          // Crazz writes only to complete the pair: nothing to send back unless the $1 arrived.
-          if (!firstLegSent && !(await has(crazz, ME, out))) return;
-          const answer = await send(crazz, ME, back);
+          // The secondary account writes only to complete the pair: nothing to send back unless the $1 arrived.
+          if (!firstLegSent && !(await has(secondary, ME, out))) return;
+          const answer = await send(secondary, ME, back);
           if (answer.result?.success !== true) throw new Error(`send back refused: ${answer.result?.message ?? '(no result)'}`);
         },
         proof: {
@@ -3567,29 +3717,29 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
 }
 
 /**
- * Send $1 to Crazz, and Crazz sends it back (#1147). Both accounts log in before the first send;
- * a refusal of Crazz then is SKIPPED with nothing sent. Nothing is sent unless both bank pages
+ * Send $1 to the secondary account, and it sends it back (#1147). Both accounts log in before the first send;
+ * a refusal of the secondary account then is SKIPPED with nothing sent. Nothing is sent unless both bank pages
  * offer the transfer and both profiles are under the receiver limits (Kernel/Kernel.pas:11499).
- * Two residual risks remain, each a FAIL with the pending restore kept ($1 stays with Crazz): a
+ * Two residual risks remain, each a FAIL with the pending restore kept ($1 stays with the secondary account): a
  * Transcended item (not readable over the WS contract), and a nobility of 0 that cannot be told
  * from "Nobility label not found". Any failure after the first send is a FAIL, never SKIPPED.
  */
 const bankSendReturn: Flow = {
   name: 'bank-send-return',
-  what: 'both log in -> both pages offer $1 -> receiver limits -> send $1 to Crazz -> notice -> Crazz sends $1 back -> notice',
+  what: `both log in -> both pages offer $1 -> receiver limits -> send $1 to ${SECONDARY_ACCOUNT.username} -> notice -> ${SECONDARY_ACCOUNT.username} sends $1 back -> notice`,
   mutates: true,
   run: async ctx => {
     const name = 'bank-send-return';
     const sleep = ctx.sleep ?? defaultSleep;
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveSendReturn(crazz, ctx, sleep);
+      result = await driveSendReturn(secondary, ctx, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     } finally {
-      await logoff(crazz);
+      await logoff(secondary);
     }
     const cleanup = [
       ...(await purgeTransferMailbox(PRIMARY_ACCOUNT, SECONDARY_ACCOUNT.username, ['Inbox', 'Sent'], sleep)),
@@ -4340,108 +4490,6 @@ const zoneRoundTrip: Flow = {
     }),
 };
 
-/** A property's raw value from any group of an opening read, or 'absent'. */
-function rawProperty(groups: { [groupId: string]: BuildingPropertyValue[] }, name: string): string {
-  for (const group of Object.values(groups)) {
-    const hit = group.find(p => p.name === name);
-    if (hit) return hit.value;
-  }
-  return 'absent';
-}
-
-/** The gateway's default loadMapArea chunk — one window centred on the town hall. */
-const ROLE_PROBE_SPAN = 64;
-const ROLE_PROBE_MAX_READS = 40;
-const INDUSTRY_TRADE_ROLES = ['2', '5', '6'];
-
-/**
- * Read-only bench probe (#1006): what a real WHGeneral warehouse's cached `Role` holds, and,
- * if one exists nearby, an IndGeneral facility's `Role`/`TradeRole`. The values are recorded
- * in the run artifact and never asserted; the flow fails only when a read fails, and reports
- * UNPROVEN when no warehouse is found. It is removed by the follow-up card that acts on the
- * reading.
- */
-const warehouseRoleReading: Flow = {
-  name: 'warehouse-role-reading',
-  what: "a warehouse's cached Role / TradeRole near the governed town — recorded, never asserted",
-  mutates: false,
-  async run() {
-    const assertions = new Assertions();
-    const session = await login(PRIMARY_ACCOUNT);
-    try {
-      const town = await findTown(session, GOVERNED_TOWN);
-      const response = await session.driver.request<WsRespMapData>(
-        {
-          type: WsMessageType.REQ_MAP_LOAD,
-          x: Math.max(0, town.x - ROLE_PROBE_SPAN / 2),
-          y: Math.max(0, town.y - ROLE_PROBE_SPAN / 2),
-          width: ROLE_PROBE_SPAN,
-          height: ROLE_PROBE_SPAN,
-        },
-        [WsMessageType.RESP_MAP_DATA, WsMessageType.EVENT_MAP_DATA],
-        TIMEOUTS.login,
-      );
-      const buildings: MapBuilding[] = response.data?.buildings ?? [];
-      const dist = (b: MapBuilding): number => Math.abs(b.x - town.x) + Math.abs(b.y - town.y);
-      const sorted = [...buildings].sort((a, b) => dist(a) - dist(b));
-
-      const handlerByClass = new Map<string, string>();
-      let reads = 0;
-      let warehouse: TradeRoleReading | undefined;
-      let industry: TradeRoleReading | undefined;
-      for (const b of sorted) {
-        if ((warehouse && industry) || reads >= ROLE_PROBE_MAX_READS) break;
-        const known = handlerByClass.get(b.visualClass);
-        if (known !== undefined) {
-          if (known !== 'WHGeneral' && known !== 'IndGeneral') continue;
-          if (known === 'WHGeneral' && warehouse) continue;
-          if (known === 'IndGeneral' && industry) continue;
-        }
-        const details = await readBuildingDetails(session, b.x, b.y, b.visualClass);
-        reads++;
-        const handlers = details.tabs.map(t => t.handlerName);
-        const handler = handlers.includes('WHGeneral')
-          ? 'WHGeneral'
-          : handlers.includes('IndGeneral')
-            ? 'IndGeneral'
-            : (handlers[0] ?? '');
-        handlerByClass.set(b.visualClass, handler);
-        const reading: TradeRoleReading = {
-          facility: handler === 'WHGeneral' ? 'warehouse' : 'industry',
-          x: b.x,
-          y: b.y,
-          visualClass: b.visualClass,
-          templateName: details.templateName,
-          role: rawProperty(details.groups, 'Role'),
-          tradeRole: rawProperty(details.groups, 'TradeRole'),
-        };
-        if (handler === 'WHGeneral' && !warehouse) warehouse = reading;
-        else if (
-          handler === 'IndGeneral' &&
-          !industry &&
-          INDUSTRY_TRADE_ROLES.includes(reading.tradeRole)
-        ) {
-          industry = reading;
-        }
-      }
-
-      const readings: TradeRoleReading[] = [];
-      if (warehouse) readings.push(warehouse);
-      if (industry) readings.push(industry);
-      if (!warehouse) {
-        assertions.unproven(
-          `a WHGeneral warehouse's cached Role near ${GOVERNED_TOWN}`,
-          `none among ${buildings.length} building(s) in the ${ROLE_PROBE_SPAN}×${ROLE_PROBE_SPAN} ` +
-            `window (${reads} inspector read(s))`,
-        );
-      }
-      return { ...report('warehouse-role-reading', assertions, [], session), readings };
-    } finally {
-      await logoff(session);
-    }
-  },
-};
-
 /**
  * The permanent fixtures (#1149): SPO_test3's own finished facility of each kind in Helartia,
  * found by kind — and, when one is missing, built once and kept (the sanctioned permanent fixture
@@ -4691,6 +4739,38 @@ export function salariesLineMatches(line: string, hi: string, mid: string, lo: s
   return new RegExp(`${escapeRegExp(`Setting salaries: ${hi}, ${mid}, ${lo}`)}(?=\\s|$)`).test(line);
 }
 
+/**
+ * A salary slot the server left unpublished reads `""`: `TWorkCenter.StoreToCache` writes
+ * `Salaries<k>` only for a class the block has capacity for (Kernel/WorkCenterBlock.pas:567-571).
+ * It is sent as 0, as the inspector sends it (`collectSalaryTriplet`, property-utils.ts) — an
+ * empty slot must never reach `RdoValue.int` as `parseInt('')`.
+ */
+export function salaryArg(value: string): string {
+  return value.trim() === '' ? '0' : value;
+}
+
+/**
+ * The triplet with the first **published** class nudged, the unpublished slots kept empty so the
+ * read-back can tell them apart. Throws when no class is published — nothing is written then.
+ */
+export function salariesNudge(original: string): string {
+  const slots = original.split(',');
+  const k = slots.findIndex(s => s.trim() !== '');
+  if (k < 0) throw new Error(`no salary class is published ("${original}") — nothing to nudge`);
+  slots[k] = nudgeWithin(slots[k], 0, 255);
+  return slots.join(',');
+}
+
+/**
+ * The read-back compares the published classes only — a slot `expected` leaves empty was never
+ * published, so its value cannot be read back (Kernel/WorkCenterBlock.pas:567-571).
+ */
+export function publishedSalariesMatch(last: string, expected: string): boolean {
+  const got = last.split(',');
+  const want = expected.split(',');
+  return got.length === want.length && want.every((w, i) => w.trim() === '' || got[i] === w);
+}
+
 const linkKey = (c: BuildingConnectionData): string => `${c.x},${c.y},${c.facilityName}`;
 const linkLabel = (c: BuildingConnectionData): string => `${c.facilityName} (${c.x},${c.y}) of ${c.companyName}`;
 
@@ -4707,18 +4787,27 @@ export function clientLinksDiff(
   };
 }
 
+/** SPO_test3's own side: every company the directory lists for the tycoon, and every facility lot as `x,y`. */
+export interface OwnClients {
+  companies: ReadonlySet<string>;
+  lots: ReadonlySet<string>;
+}
+
 /**
  * Why a product gate's price must not be driven, or `null` when it may. A price change re-checks
  * every client link (`TOutput.SetPricePerc`, Kernel/Kernel.pas:7193-7205) and
  * `TGate.ConnectionChanged` drops any that no longer passes (:6664-6676, :6737-6750) — so the
- * gate must have no client, or only clients of SPO_test3's own company, all of them read.
+ * gate must have no client, or only clients of any of SPO_test3's companies (a company the
+ * directory lists for the tycoon, or a lot that is one of its facilities — the rule
+ * `quick-trade-roundtrip`'s guard 1 applies), all of them read. A plain string is one company, no lots.
  */
-export function outputPriceRefusal(product: BuildingProductData | undefined, ownCompany: string): string | null {
+export function outputPriceRefusal(product: BuildingProductData | undefined, own: string | OwnClients): string | null {
   if (!product?.metaFluid || product.pricePc === undefined) return 'its header was not read';
   if (product.connectionCount !== product.connections.length) {
     return `${product.connectionCount ?? '?'} client(s) listed but ${product.connections.length} read (the row cap) — unread clients cannot be checked`;
   }
-  const foreign = product.connections.filter(c => c.companyName !== ownCompany);
+  const set: OwnClients = typeof own === 'string' ? { companies: new Set([own]), lots: new Set() } : own;
+  const foreign = product.connections.filter(c => !set.companies.has(c.companyName) && !set.lots.has(`${c.x},${c.y}`));
   if (foreign.length > 0) return `client(s) of another company: ${foreign.map(linkLabel).join('; ')}`;
   return null;
 }
@@ -4867,6 +4956,10 @@ const NO_WORKFORCE_REASON =
   "the store fixture's template carries no workforce group (WORKFORCE_GROUP) — FIXTURE_KINDS' store kind " +
   'does not require it (#1149)';
 
+const NO_SALARY_CLASS_REASON =
+  "the store fixture publishes no salary class — TWorkCenter.StoreToCache writes Salaries<k> only for a " +
+  'class with capacity (Kernel/WorkCenterBlock.pas:567-571), so no write could be read back';
+
 /**
  * The store's owner settings: service 0's price (`TServiceBlock.RDOSetPrice`,
  * StdBlocks/ServiceBlock.pas:1578) and the salary triplet (`TWorkCenter.RDOSetSalaries`,
@@ -4923,32 +5016,38 @@ const storePriceSalaries: Flow = {
         const values = WORKER_KINDS.map(i => propertyValue(groups, 'workforce', `Salaries${i}`));
         return values.some(v => v === undefined) ? undefined : values.join(',');
       };
+      const before = await readSalaries();
+      if (before !== undefined && before.split(',').every(s => s.trim() === '')) {
+        assertions.unproven('RDOSetSalaries', NO_SALARY_CLASS_REASON);
+        return report('store-price-salaries', assertions, probes, session);
+      }
       const salaries = await roundTripProbe(ctx, url, {
         what: `${fixtureLabel(fx)} salaries (hi,mid,lo)`,
         member: 'RDOSetSalaries',
         read: readSalaries,
         write: async value => {
-          const [salary0, salary1, salary2] = value.split(',');
+          const [salary0, salary1, salary2] = value.split(',').map(salaryArg);
           // The whole triplet, the untouched two unchanged — buildRdoCommandArgs requires all three.
           await setBuildingProperty(session, fx.x, fx.y, 'RDOSetSalaries', salary0, { salary0, salary1, salary2 });
         },
-        testValue: original => {
-          const [hi, mid, lo] = original.split(',');
-          return [nudgeWithin(hi, 0, 255), mid, lo].join(',');
-        },
+        testValue: salariesNudge,
         proof: {
           log: {
             marker: LOG_MARKERS.RDOSetSalaries,
             match: (line, written) => {
-              const [hi, mid, lo] = written.split(',');
+              const [hi, mid, lo] = written.split(',').map(salaryArg);
               return salariesLineMatches(line, hi, mid, lo);
             },
           },
-          readBack: readBackOn(
-            `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read`,
-            `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593)`,
-            readSalaries,
-          ),
+          readBack: {
+            ...readBackOn(
+              `workforce.Salaries0..2 at (${fx.x},${fx.y}) via the gateway's section read, published classes only`,
+              `${FACILITY_CACHE_WHY}; the three values are stored verbatim (Kernel/WorkCenterBlock.pas:590-593), ` +
+                'and only a class with capacity is published (:567-571)',
+              readSalaries,
+            ),
+            matches: publishedSalariesMatch,
+          },
         },
         restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetSalaries' },
       });
@@ -4963,14 +5062,14 @@ const storePriceSalaries: Flow = {
 
 /**
  * A product gate's price (`TFacility.RDOSetOutputPrice`, Kernel/Kernel.pas:4332), driven only on
- * a gate whose clients are all SPO_test3's own — a price change can drop another player's link
+ * a gate whose clients all belong to one of SPO_test3's companies — a price change can drop another player's link
  * (`outputPriceRefusal`). The client list after the restore must equal its snapshot.
  */
 const industryOutputPrice: Flow = {
   name: 'industry-output-price',
   what:
-    "round trip on RDOSetOutputPrice at SPO_test3's industry fixture, on a product gate with no foreign " +
-    'client — Survival line + read-back, restored, client links unchanged',
+    "round trip on RDOSetOutputPrice at SPO_test3's industry fixture, on a product gate with no client of " +
+    "another player's company — Survival line + read-back, restored, client links unchanged",
   mutates: true,
   seed: fixtureSeed('industry'),
   run: async ctx => {
@@ -4981,11 +5080,16 @@ const industryOutputPrice: Flow = {
       const fx = await ownFixture(session, 'industry', assertions);
       if (!fx) return report('industry-output-price', assertions, probes, session);
 
+      const tycoon = await listTycoonFacilities(session);
+      const own: OwnClients = {
+        companies: new Set([session.company.name, ...tycoon.companies]),
+        lots: new Set(tycoon.facilities.map(f => `${f.x},${f.y}`)),
+      };
       const refusals: string[] = [];
       let chosen: { name: string; product: BuildingProductData; fluid: string } | undefined;
       for (const stub of await gateStubs(session, fx, 'products')) {
         const product = (await gateConnections(session, fx, 'products', stub)).product;
-        const refusal = outputPriceRefusal(product, session.company.name);
+        const refusal = outputPriceRefusal(product, own);
         if (refusal === null && product?.metaFluid) {
           chosen = { name: stub.name, product, fluid: product.metaFluid };
           break;
@@ -6014,15 +6118,14 @@ const companyInputDemand: Flow = {
 };
 
 /**
- * The trade role (warehouse only — `RDOSetRole` is published by `TWarehouse`,
- * StdBlocks/Warehouses.pas:95) and the trade level (warehouse and industry,
- * `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408). Only values the client offers are written.
+ * The trade level (warehouse and industry, `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408).
+ * Only values the client offers are written. The trade role is not driven here: `RDOSetRole` is
+ * offered only on an IndGeneral storage, and the warehouse fixture is a WHGeneral Import Storage (#1255).
  */
 const tradeSettings: Flow = {
   name: 'trade-settings',
   what:
-    "RDOSetRole on SPO_test3's warehouse fixture (a role the client offers, read-back) and RDOSetTradeLevel on the " +
-    'warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored',
+    "RDOSetTradeLevel on SPO_test3's warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored",
   mutates: true,
   seed: fixtureSeed('industry', 'warehouse'),
   run: async ctx => {
@@ -6067,38 +6170,11 @@ const tradeSettings: Flow = {
         checkProbe(assertions, probe);
       };
 
+      // No RDOSetRole: the warehouse fixture is an Import Storage (WHGeneral), whose sheet never
+      // offered a trade mode (Voyager/WHGeneralSheet.pas carries cbTrade only, :46) — its role is
+      // preset by class (Model Extensions/General/GeneralPack1.dpr:719). Proving RDOSetRole needs an
+      // IndGeneral storage fixture (follow-up to #1255).
       if (warehouse) {
-        const readRole = readField(warehouse, 'whGeneral', 'Role');
-        const role = await readRole();
-        if (role !== undefined && isTradeModeValue(role)) {
-          const probe = await roundTripProbe(ctx, url, {
-            what: `${fixtureLabel(warehouse)} trade role`,
-            member: 'RDOSetRole',
-            read: readRole,
-            testValue: tradeRoleNudge,
-            write: async value => {
-              await setBuildingProperty(session, warehouse.x, warehouse.y, 'RDOSetRole', value);
-            },
-            // RDOSetRole logs nothing (StdBlocks/Warehouses.pas:527): the read-back alone proves it.
-            proof: {
-              readBack: readBackOn(
-                `whGeneral.Role at (${warehouse.x},${warehouse.y}) via the gateway's section read`,
-                `RDOSetRole prints no Survival line; ${FACILITY_CACHE_WHY}`,
-                tolerantRead(readRole),
-              ),
-            },
-            restoreRecord: { x: warehouse.x, y: warehouse.y, propertyName: 'RDOSetRole' },
-          });
-          probes.push(probe);
-          checkProbe(assertions, probe);
-        } else {
-          assertions.unproven(
-            'RDOSetRole',
-            `${fixtureLabel(warehouse)}'s Role "${role ?? 'absent'}" is not one the client offers (isTradeModeValue, ` +
-              `TRADE_MODE_VALUES ${TRADE_MODE_VALUES.join('/')}; Voyager/IndustryGeneralSheet.pas:189-235) — RDOSetRole ` +
-              'range-checks nothing (StdBlocks/Warehouses.pas:527), so nothing is sent',
-          );
-        }
         await tradeLevel(warehouse, 'whGeneral');
       }
       // RDOSetRole is never sent to the industry: only TWarehouse publishes it (StdBlocks/Warehouses.pas:95).
@@ -6721,11 +6797,6 @@ export function repairLineMatches(line: string, name: string): boolean {
   return new RegExp(`(?<!Stop )${escapeRegExp(`Repairing: ${name}`)}(?=\\s|$)`).test(line);
 }
 
-/** `Queue Research: <id>, <priority>` (Kernel/ResearchCenter.pas:384). */
-export function queueResearchLineMatches(line: string, id: string): boolean {
-  return line.includes(`Queue Research: ${id}, `);
-}
-
 /** `Cancel Research: <id>` (Kernel/ResearchCenter.pas:396). */
 export function cancelResearchLineMatches(line: string, id: string): boolean {
   return new RegExp(`${escapeRegExp(`Cancel Research: ${id}`)}(?=\\s|$)`).test(line);
@@ -6734,34 +6805,6 @@ export function cancelResearchLineMatches(line: string, id: string): boolean {
 /** `Facility Start Upgrade count: <count>` (Kernel/Kernel.pas:4675). */
 export function startUpgradeLineMatches(line: string, count: number): boolean {
   return new RegExp(`${escapeRegExp(`Facility Start Upgrade count: ${count}`)}(?=\\s|$)`).test(line);
-}
-
-/**
- * What queueing an invention costs, in dollars: the `Price:` and `License:` lines of its details
- * (`TInvention.GetProperties`, Inventions/Inventions.pas:715-727; labels Kernel/SimHints.pas:482-483;
- * amounts from `FormatMoney`, Utils/Misc/MathUtils.pas:87-99). A line the details do not show is 0. The server starts a
- * research only when `Budget >= Price + GetFeePrice` (Kernel/ResearchCenter.pas:240).
- */
-export function researchCost(properties: string): number {
-  const dollars = (label: string): number => {
-    const m = new RegExp(`(?:^|\\s)${label}:\\s*\\$([0-9][0-9,.]*)`, 'i').exec(properties);
-    return m ? Number(m[1].replace(/[^0-9]/g, '')) : 0;
-  };
-  return dollars('Price') + dollars('Licen[cs]e');
-}
-
-export type ResearchState = 'developing' | 'owned' | 'available' | 'absent';
-
-/**
- * Where an invention stands in one category's inventory. The three lists are mutually exclusive
- * by construction (`TResearchCenter.StoreToCache`, Kernel/ResearchCenter.pas:797-817).
- */
-export function researchState(data: ResearchCategoryData, id: string): ResearchState {
-  const has = (list: { inventionId: string }[]): boolean => list.some(i => i.inventionId === id);
-  if (has(data.developing)) return 'developing';
-  if (has(data.completed)) return 'owned';
-  if (has(data.available)) return 'available';
-  return 'absent';
 }
 
 /**
@@ -7095,16 +7138,10 @@ const acceptCloning = fixtureFlow(
 );
 
 /**
- * The one invention research-roundtrip drives (maintainer, PR #1214): Commerce > Bars > Happy Hour,
- * id `HappyHour` in research.0.dat — Price $25,000,000, requires `Bars`.
- */
-export const RESEARCH_TARGET = { id: 'HappyHour', name: 'Happy Hour' } as const;
-
-/**
- * Queue Happy Hour, prove it is in development, cancel it. Queueing can buy on the spot —
- * an invention with `Time = 0` is paid for and declared at once (Kernel/ResearchCenter.pas:319-334)
- * — and a cancel on an owned invention reaches `RetireInvention` (:372), the excluded sell. So the
- * cancel is sent only on an invention that reads in development right before it.
+ * Queue Happy Hour, prove it is in development, cancel it. It starts from any state: one left owned
+ * or in development by an earlier run is cancelled/sold first (Kernel/ResearchCenter.pas:354-372).
+ * After the queue the cancel is always sent — it removes a queued invention and sells one bought at
+ * once (`Time = 0`, :319-334) — and the inventory reading `available` again decides the restore.
  */
 const researchRoundTrip = fixtureFlow(
   'research-roundtrip',
@@ -7121,13 +7158,6 @@ const researchRoundTrip = fixtureFlow(
     }
   },
 );
-
-function researchInventory(session: LiveSession, fx: OwnFixture, categoryIndex: number): Promise<WsRespResearchInventory> {
-  return session.driver.request<WsRespResearchInventory>(
-    { type: WsMessageType.REQ_RESEARCH_INVENTORY, buildingX: fx.x, buildingY: fx.y, categoryIndex },
-    WsMessageType.RESP_RESEARCH_INVENTORY,
-  );
-}
 
 async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixture, assertions: Assertions): Promise<void> {
   // CatCount is the highest category index, not a count (Kernel/ResearchCenter.pas:820).
@@ -7157,23 +7187,32 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     assertions.unproven('RDOQueueResearch', `${name} not listed at ${at} (categories 0..${catMax})`);
     return;
   }
-  if (found.state !== 'available' || !found.enabled) {
-    const why =
-      found.state === 'owned'
-        ? 'already owned — a cancel on it would sell it (Kernel/ResearchCenter.pas:372)'
-        : found.state === 'developing'
-          ? 'already in development — not queued by this flow, so not its to cancel'
-          : 'listed but not enabled — its prerequisite Bars is not owned, or the tier / nobility does not match ' +
-            '(TInvention.Enabled, Inventions/Inventions.pas:658-693)';
-    assertions.unproven('RDOQueueResearch', `${name} at ${at}: ${why}; nothing sent`);
+  const { category } = found;
+  const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
+  // Isolated target (RESEARCH_TARGET): a leftover is cancelled/sold first, with no pending restore.
+  if (found.state === 'owned' || found.state === 'developing') {
+    await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: id });
+    const reset = await pollUntil(stateOf, s => s === 'available', ctx);
+    if (!reset.ok) {
+      assertions.unproven(
+        'RDOQueueResearch',
+        `${name} at ${at}: read ${found.state}, cancel/sell sent, still reads ${reset.last} — not reset; nothing else sent`,
+      );
+      return;
+    }
+    const { data } = await researchInventory(session, fx, category);
+    found = { category, state: 'available', enabled: data.available.some(i => i.inventionId === id && i.enabled === true) };
+  }
+  if (!found.enabled) {
+    assertions.unproven(
+      'RDOQueueResearch',
+      `${name} at ${at}: listed but not enabled — its prerequisite Bars is not owned, or the tier / nobility does not match ` +
+        '(TInvention.Enabled, Inventions/Inventions.pas:658-693); nothing sent',
+    );
     return;
   }
-  const { category } = found;
 
-  const { details } = await session.driver.request<WsRespResearchDetails>(
-    { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: id },
-    WsMessageType.RESP_RESEARCH_DETAILS,
-  );
+  const details = await readResearchDetails(session, fx, id);
   const properties = details.properties.trim().replace(/\s+/g, ' ');
   assertions.check(
     `REQ_RESEARCH_DETAILS answers for ${id} with its properties`,
@@ -7188,7 +7227,6 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     return;
   }
 
-  const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
   const url = await survivalUrl(ctx);
   const key = `research-roundtrip:${randomUUID()}`;
   ctx.lock.addPendingRestore({
@@ -7197,8 +7235,9 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     y: fx.y,
     propertyName: 'RDOCancelResearch',
     what:
-      `cancel research ${id} at (${fx.x},${fx.y}) — queued by research-roundtrip; if it reads owned it was bought at ` +
-      'once and must NOT be cancelled (RDOCancelResearch on an owned invention sells it, Kernel/ResearchCenter.pas:372)',
+      `cancel/sell research ${id} at (${fx.x},${fx.y}) — queued by research-roundtrip; RDOCancelResearch removes a queued ` +
+      `invention and sells an owned one (Kernel/ResearchCenter.pas:354-372); ${name} is an isolated test invention, so ` +
+      'selling it is the intended undo',
     originalValue: 'available',
   });
 
@@ -7223,7 +7262,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
         `${id} is listed in development, not owned`,
         false,
         `bought at once: ${id} (${properties}) — an invention with Time = 0 is bought on the spot ` +
-          '(Kernel/ResearchCenter.pas:319-334); not cancelled: cancel would sell it',
+          '(Kernel/ResearchCenter.pas:319-334) — sold back by the cancel',
       );
     } else if (listed.last === 'available') {
       // Reads exactly what the pending restore would put back: the server dropped the queue and
@@ -7240,7 +7279,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
       assertions.check(
         `${id} is listed in development, not owned`,
         listed.ok,
-        listed.ok ? `${id} in development` : `never listed in development — reads ${listed.last}; not cancelled`,
+        listed.ok ? `${id} in development` : `never listed in development — reads ${listed.last}; cancel sent anyway`,
       );
     }
   } catch (err: unknown) {
@@ -7250,8 +7289,9 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
 }
 
 /**
- * The cancel, only on an invention that reads in development right before it — never one that
- * reads owned (a sell) or one the flow never saw queued. Anything else keeps the pending restore.
+ * The cancel, always sent whatever the state — a queued invention is removed, an owned one sold,
+ * an absent one is harmless for the isolated target (RESEARCH_TARGET). The inventory reading
+ * `available` clears the pending restore whatever the log said; one retry before it is kept.
  */
 async function cancelQueuedResearch(
   session: LiveSession,
@@ -7261,31 +7301,25 @@ async function cancelQueuedResearch(
   assertions: Assertions,
 ): Promise<void> {
   try {
-    const state = await q.stateOf();
-    if (state !== 'developing') {
-      assertions.check(
-        `${q.id} is cancelled`,
-        false,
-        `reads ${state}, not in development — not cancelled (RDOCancelResearch on an owned invention sells it, ` +
-          'Kernel/ResearchCenter.pas:372); pending restore kept',
+    let line: string | null = null;
+    let back: { ok: boolean; last: ResearchState } = { ok: false, last: 'absent' };
+    for (let attempt = 1; attempt <= 2 && !back.ok; attempt++) {
+      const window = await openLogWindow(q.url);
+      await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: q.id });
+      line ??= await awaitMarker(
+        window,
+        { marker: LOG_MARKERS.RDOCancelResearch, match: l => cancelResearchLineMatches(l, q.id) },
+        TIMEOUTS.logSettle,
+        undefined,
+        ctx.now,
+        ctx.sleep,
       );
-      return;
+      back = await pollUntil(q.stateOf, s => s === 'available', ctx);
     }
-    const window = await openLogWindow(q.url);
-    await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: q.id });
-    const line = await awaitMarker(
-      window,
-      { marker: LOG_MARKERS.RDOCancelResearch, match: l => cancelResearchLineMatches(l, q.id) },
-      TIMEOUTS.logSettle,
-      undefined,
-      ctx.now,
-      ctx.sleep,
-    );
-    const gone = await pollUntil(q.stateOf, s => s !== 'developing' && s !== 'owned', ctx);
-    const kept = line !== null && gone.ok ? '' : ' — pending restore kept';
-    assertions.check('the cancel logged its Cancel Research: line', line !== null, (line ?? `(no Cancel Research: line for ${q.id})`) + kept);
-    assertions.check(`the inventory no longer lists ${q.id} as queued`, gone.ok, `reads ${gone.last}${kept}`);
-    if (line !== null && gone.ok) ctx.lock.clearPendingRestore(q.key);
+    if (back.ok) ctx.lock.clearPendingRestore(q.key);
+    const kept = back.ok ? '' : ' — pending restore kept';
+    assertions.check('the cancel logged its Cancel Research: line', line !== null, line ?? `(no Cancel Research: line for ${q.id})`);
+    assertions.check(`the inventory reads ${q.id} available again`, back.ok, `reads ${back.last}${kept}`);
   } catch (err: unknown) {
     assertions.check('the research cancel ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
   }
@@ -7448,10 +7482,64 @@ async function startUpgrade(
   );
 }
 
+/** `readUpgrade` that answers a rejected read with its error text instead of a throw — "not yet". */
+async function tryReadUpgrade(session: LiveSession, fx: OwnFixture): Promise<UpgradeState | string> {
+  try {
+    return await readUpgrade(session, fx);
+  } catch (err: unknown) {
+    return toErrorMessage(err);
+  }
+}
+
+/** Nothing upgrading or pending, at the original level — the STOP is proven. */
+function idleAt(u: UpgradeState | string | undefined, level0: number): boolean {
+  return typeof u === 'object' && u.upgrading === 0 && u.pending === 0 && u.level === level0;
+}
+
+const upgradeOrError = (u: UpgradeState | string | undefined): string =>
+  typeof u === 'object' ? upgradeText(u) : `read failed: ${u ?? '(no read)'}`;
+
+/**
+ * AcceptCloning back to its original's truthiness, then one read of the upgrade tab — returned so
+ * the caller can use it as a second proof of the STOP.
+ */
+async function restoreCloning(
+  session: LiveSession,
+  fx: OwnFixture,
+  run: UpgradeRun,
+  assertions: Assertions,
+  suffix: string,
+): Promise<{ back: boolean; after: UpgradeState | string | undefined }> {
+  try {
+    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', run.cloning0);
+    assertions.check(
+      `AcceptCloning set back to ${run.cloning0 === '1' ? 'true' : 'false'}, confirmed by the gateway's live get${suffix}`,
+      r.confirmed === true,
+      `live get holds "${r.newValue}"`,
+    );
+    const after = await tryReadUpgrade(session, fx);
+    const cloning = typeof after === 'object' ? after.cloning : undefined;
+    assertions.check(
+      `AcceptCloning reads its original truthiness${suffix}`,
+      cloning === run.cloning0,
+      typeof after === 'object' ? `reads ${cloning ?? '(unread)'}, original ${run.cloning0}` : `read failed: ${after}`,
+    );
+    return { back: r.confirmed === true && cloning === run.cloning0, after };
+  } catch (err: unknown) {
+    assertions.check(`the AcceptCloning restore ran without a throw${suffix}`, false, `${toErrorMessage(err)} — pending restore kept`);
+    return { back: false, after: undefined };
+  }
+}
+
 /**
  * The STOP when the START went out, then — always — AcceptCloning back to its original's
- * truthiness, which also undoes the handler's own `-1`. The pending restore is cleared only when
- * the STOP is proven (line + zeros + the original level) and AcceptCloning reads its original.
+ * truthiness, which also undoes the handler's own `-1`. The read-back after the STOP polls past
+ * a failed read ("not yet"); the server's cached counters can read stale for ~2 min after a STOP
+ * (`TBlock.StopUpgrading` refreshes the cache before zeroing, Kernel/Kernel.pas:6554-6560;
+ * Kernel/KernelCache.pas:405), so the AcceptCloning restore's own read is a second chance. If that
+ * read still shows an upgrade running, one more STOP is sent (ignored when idle,
+ * Kernel/Kernel.pas:4694) and re-checked once. The pending restore is kept only when the upgrade
+ * is still provably running, every read failed, or AcceptCloning does not read its original.
  */
 async function undoUpgrade(
   session: LiveSession,
@@ -7460,7 +7548,9 @@ async function undoUpgrade(
   run: UpgradeRun,
   assertions: Assertions,
 ): Promise<void> {
-  let stopped = !run.startSent;
+  let proof: UpgradeState | string | undefined;
+  let polled = false;
+  let reachedPoll = false;
   if (run.startSent) {
     try {
       const window = await openLogWindow(run.url);
@@ -7469,41 +7559,75 @@ async function undoUpgrade(
       // The line carries no coordinates (Kernel/Kernel.pas:4689): the read-back attributes it.
       const line = await awaitMarker(window, { marker: LOG_MARKERS.RDOStopUpgrade }, TIMEOUTS.logSettle, undefined, ctx.now, ctx.sleep);
       assertions.check('the STOP logged Facility Stop Upgrade..', line !== null, line ?? '(no Facility Stop Upgrade.. line)');
-      const idle = await pollUntil(() => readUpgrade(session, fx), u => u.upgrading === 0 && u.pending === 0, ctx);
-      assertions.check('Upgrading and Pending read 0 after the STOP', idle.ok, upgradeText(idle.last));
-      const sameLevel = idle.last.level === run.level0;
+      const idle = await pollUntil(
+        () => tryReadUpgrade(session, fx),
+        u => typeof u === 'object' && u.upgrading === 0 && u.pending === 0,
+        ctx,
+      );
+      reachedPoll = true;
+      polled = idle.ok;
+      proof = idle.last;
+    } catch (err: unknown) {
+      assertions.check('the upgrade STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+    }
+  }
+  const lastPoll = proof;
+
+  let restored = await restoreCloning(session, fx, run, assertions, '');
+  if (!run.startSent) {
+    if (restored.back) ctx.lock.clearPendingRestore(run.key);
+    return;
+  }
+
+  let source = '';
+  if (!polled) {
+    // A failed restore read falls back on the poll's last state, never on a worse proof.
+    proof = typeof restored.after === 'object' || typeof lastPoll !== 'object' ? (restored.after ?? lastPoll) : lastPoll;
+    if (typeof restored.after === 'object') source = ' (from the read after the AcceptCloning restore)';
+  }
+  if (typeof proof === 'object' && (proof.upgrading > 0 || proof.pending > 0)) {
+    try {
+      if (run.cloning0 === '0') {
+        const set = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', '1');
+        assertions.check(
+          'AcceptCloning set true before the second STOP (manageConstructionImpl refuses otherwise)',
+          set.confirmed === true,
+          `live get holds "${set.newValue}"`,
+        );
+      }
+      const r = await requestUpgrade(session, fx, 'STOP_UPGRADE');
+      assertions.check('the gateway accepted the second STOP_UPGRADE', r.success === true, r.message);
+      restored = await restoreCloning(session, fx, run, assertions, ' (after the second STOP)');
+      proof = restored.after;
+      source = ' (after a second STOP)';
+    } catch (err: unknown) {
+      assertions.check('the second STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
+    }
+  }
+
+  if (reachedPoll && proof !== undefined) {
+    const zeros = typeof proof === 'object' && proof.upgrading === 0 && proof.pending === 0;
+    assertions.check(
+      'Upgrading and Pending read 0 after the STOP',
+      zeros,
+      zeros
+        ? `${upgradeOrError(proof)}${source}`
+        : typeof proof === 'object'
+          ? `${upgradeText(proof)}${source} — still upgrading, pending restore kept`
+          : `every read failed: ${proof}, pending restore kept`,
+    );
+    if (typeof proof === 'object') {
+      const sameLevel = proof.level === run.level0;
       assertions.check(
         'UpgradeLevel equals its original after the STOP',
         sameLevel,
         sameLevel
           ? `level ${run.level0}`
-          : `a level completed before the STOP — downgrade is excluded, level ${run.level0}→${idle.last.level} kept`,
+          : `a level completed before the STOP — downgrade is excluded, level ${run.level0}→${proof.level} kept`,
       );
-      stopped = line !== null && idle.ok && sameLevel;
-    } catch (err: unknown) {
-      assertions.check('the upgrade STOP ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
     }
   }
-
-  let cloningBack = false;
-  try {
-    const r = await setBuildingProperty(session, fx.x, fx.y, 'RDOAcceptCloning', run.cloning0);
-    assertions.check(
-      `AcceptCloning set back to ${run.cloning0 === '1' ? 'true' : 'false'}, confirmed by the gateway's live get`,
-      r.confirmed === true,
-      `live get holds "${r.newValue}"`,
-    );
-    const after = await readUpgrade(session, fx);
-    assertions.check(
-      'AcceptCloning reads its original truthiness',
-      after.cloning === run.cloning0,
-      `reads ${after.cloning ?? '(unread)'}, original ${run.cloning0}`,
-    );
-    cloningBack = r.confirmed === true && after.cloning === run.cloning0;
-  } catch (err: unknown) {
-    assertions.check('the AcceptCloning restore ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
-  }
-  if (stopped && cloningBack) ctx.lock.clearPendingRestore(run.key);
+  if (idleAt(proof, run.level0) && restored.back) ctx.lock.clearPendingRestore(run.key);
 }
 
 /** A chat name is SPO_test3's own — `ChatMsg`'s `From` may still carry `/AccDesc`. */
@@ -7524,9 +7648,29 @@ async function attempt(assertions: Assertions, what: string, step: () => Promise
 }
 
 /**
- * The chat channel list and the Lobby's info (#1148). Read-only. The gateway prepends the
- * Lobby to every list (`getChatChannelList` in `chat-handler.ts`), so its presence proves
- * nothing — the assertion is that every entry is well-formed.
+ * The Lobby user list, as the session's own ClientView answers it: `TClientView.GetUserList`
+ * -> `TInterfaceServer.GetUserList(fCurrChannel)` walks every client whose current channel is
+ * the caller's, by the name it logged on under (`Interface Server/InterfaceServer.pas:
+ * 1635-1646`, `:3342-3358`, name set at `:3238`).
+ */
+async function readChatUsers(session: LiveSession): Promise<ChatUser[]> {
+  const resp = await session.driver.request<WsRespChatUserList>(
+    { type: WsMessageType.REQ_CHAT_GET_USERS },
+    WsMessageType.RESP_CHAT_USER_LIST,
+  );
+  return resp.users;
+}
+
+/**
+ * The chat channel list, the Lobby's user list and the Lobby's info (#1148, proof #1188).
+ * Read-only. The gateway prepends the Lobby to every list (`getChatChannelList` in
+ * `chat-handler.ts`), so its presence proves nothing — the list check is that every entry is
+ * well-formed. The membership proof is the user list, not the channel info: the info read
+ * lists `fHomeChannel.fMembers` (`Interface Server/InterfaceServer.pas:3419-3437`,
+ * `:4565-4575`), which `Logon` never fills — it only sets `fCurrChannel := fHomeChannel`
+ * (`:3227`), and only `ClientEnteredChannel` inserts (`:4601-4615`). `GetUserList` walks the
+ * clients by `fCurrChannel` (`:3342-3358`), so it names SPO_test3 once logged on. The info is
+ * still read, by the Lobby's server name `''`, and must be non-empty text.
  */
 const chatRead: Flow = {
   name: 'chat-read',
@@ -7552,12 +7696,22 @@ const chatRead: Flow = {
         wellFormed,
         Array.isArray(channels) ? `${channels.length} channel(s)` : 'not a list',
       );
+      const users = await readChatUsers(session);
+      assertions.check(
+        'the Lobby user list names SPO_test3 (GetUserList — Interface Server/InterfaceServer.pas:3227, :3342-3358)',
+        users.some(u => isSelf(u.name)),
+        `${users.length} user(s)`,
+      );
       // '' is the Lobby's server name (Interface Server/InterfaceServer.pas:2623, :4565-4575).
       const info = await session.driver.request<WsRespChatChannelInfo>(
         { type: WsMessageType.REQ_CHAT_GET_CHANNEL_INFO, channelName: '' },
         WsMessageType.RESP_CHAT_CHANNEL_INFO,
       );
-      assertions.check('the Lobby channel info is a string', typeof info.info === 'string');
+      assertions.check(
+        'the Lobby channel info is non-empty text',
+        typeof info.info === 'string' && info.info.trim() !== '',
+        typeof info.info === 'string' ? info.info || "''" : 'not a string',
+      );
       assertions.check('no gateway errors on the chat reads', session.driver.errors.length === 0);
       return report('chat-read', assertions, [], session);
     } finally {
@@ -7576,8 +7730,11 @@ const chatRead: Flow = {
  * - `ChatMsg` delivers only to the sender's channel, sender included (`:3902-3924`) — the
  *   `EVENT_CHAT_MSG` echo is a real server witness.
  * - `MsgCompositionChanged` loops over every client, sender included (`:3968-3980`,
- *   `TClientView.NotifyMsgCompositionState` `:2426-2430`) — typing and away are proven by the
- *   sender's own echo. AFK sticks until another state (`:1495-1502`), so the cleanup pushes idle.
+ *   `TClientView.NotifyMsgCompositionState` `:2426-2430`) — typing is proven by the sender's
+ *   own echo. The echo cannot carry away (the gateway maps only state '1' to typing), so away
+ *   is proven by the user list's AFK flag, which `MsgCompositionChanged` sets before the
+ *   broadcast (`:1495-1502`, listed by `GetUserList` `:3342-3358`). AFK sticks until another
+ *   state, so the cleanup pushes idle.
  * - The Lobby's server name is `''` (`:2623`, `:4565-4575`), never `'Lobby'`.
  * - A killed run cleans itself up: `DoLogOff` -> `ClientLeavedChannel` (`:2000`).
  */
@@ -7670,13 +7827,20 @@ const chatPrivateChannel: Flow = {
           false,
           'the typing-off self-echo (isTyping: false)',
         );
-        // The gateway maps only state '1' to typing (push-dispatcher.ts), so away is not
-        // distinguishable from idle over the WS contract: the claim is only that an event for
-        // SPO_test3 arrived after the AWAY push.
-        await awaitSelfTyping(
+        // The echo orders what follows: MsgCompositionChanged sets AFK before it broadcasts
+        // (:1495-1502), so after it the user list carries the away flag.
+        const awayEchoed = await awaitSelfTyping(
           { type: WsMessageType.REQ_CHAT_AWAY },
           false,
-          'a self-echo for SPO_test3 after AWAY (away reads as isTyping: false)',
+          'the AWAY self-echo for SPO_test3',
+        );
+        if (!awayEchoed) return;
+        await userListCheck(
+          session,
+          assertions,
+          'the channel user list marks SPO_test3 away (isAway) — ' +
+            'Interface Server/InterfaceServer.pas:1495-1502, :3342-3358',
+          users => users.some(u => isSelf(u.name) && u.isAway === true),
         );
       };
 
@@ -7768,29 +7932,53 @@ const chatPrivateChannel: Flow = {
 };
 
 /**
- * SPO_test3 chases Crazz, then stops (#1148). `TClientView.Chase` only inserts the chaser in
- * the target's list and moves the chaser's own view (`Interface Server/InterfaceServer.pas:
- * 1579-1607`) — nothing is broadcast, Crazz writes nothing. `DoLogOff` (`:2002`) and `Destroy`
- * (`:654`) end any chase a dead run leaves.
+ * SPO_test3 chases the secondary account, then stops (#1148, proof #1188). `TClientView.Chase` inserts the
+ * chaser in the target's list and moves the chaser's own view (`Interface Server/
+ * InterfaceServer.pas:1579-1608`, `MoveTo` at `:1590`). The proof is SPO_test3's view
+ * following the secondary account: it sends one camera update, `SetViewedArea` ends with `UpdateChasers`
+ * (`:742`), which pushes every chaser `MoveTo(x + dx div 2, y + dy div 2)` (`:705-718`,
+ * `TClientView.MoveTo` `:2215-2219`), and the gateway forwards it as `EVENT_MOVE_TO`. The
+ * camera sits on the secondary's own saved position, so its logoff cookie is unchanged. `DoLogOff`
+ * (`:2002`) and `Destroy` (`:654`) end any chase a dead run leaves.
  */
 const chatChase: Flow = {
   name: 'chat-chase',
-  what: 'Crazz online -> SPO_test3 chases Crazz -> stop chase',
+  what: `${SECONDARY_ACCOUNT.username} online -> SPO_test3 chases ${SECONDARY_ACCOUNT.username} -> stop chase`,
   mutates: false,
   run: async () => {
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult('chat-chase', crazz.skipped);
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult('chat-chase', secondary.skipped);
     try {
       const assertions = new Assertions();
       const session = await login(PRIMARY_ACCOUNT);
       try {
         // attempt() never throws, so STOP_CHASE is sent whatever the chase answered.
-        await attempt(assertions, `CHASE ${SECONDARY_ACCOUNT.username} answered without error`, () =>
+        const from = session.driver.receivedCount();
+        const chased = await attempt(assertions, `CHASE ${SECONDARY_ACCOUNT.username} answered without error`, () =>
           session.driver.request<WsRespChatSuccess>(
             { type: WsMessageType.REQ_CHAT_CHASE, userName: SECONDARY_ACCOUNT.username },
             WsMessageType.RESP_CHAT_SUCCESS,
           ),
         );
+        if (chased) {
+          const view = sendCamera(secondary, secondary.playerX, secondary.playerY);
+          const ex = view.viewX + CAMERA_VIEW_SIZE / 2;
+          const ey = view.viewY + CAMERA_VIEW_SIZE / 2;
+          const label =
+            `SPO_test3's view follows ${SECONDARY_ACCOUNT.username}: EVENT_MOVE_TO at (${ex},${ey}) — ` +
+            'Interface Server/InterfaceServer.pas:705-718, :742, :1590';
+          await attempt(assertions, label, () =>
+            session.driver.waitFor(
+              m => {
+                const e = m as WsEventMoveTo;
+                return m.type === WsMessageType.EVENT_MOVE_TO && e.x === ex && e.y === ey;
+              },
+              TIMEOUTS.request,
+              label,
+              from,
+            ),
+          );
+        }
         await attempt(assertions, 'STOP_CHASE answered', () =>
           session.driver.request<WsRespChatSuccess>(
             { type: WsMessageType.REQ_CHAT_STOP_CHASE },
@@ -7802,7 +7990,7 @@ const chatChase: Flow = {
         await logoff(session);
       }
     } finally {
-      await logoff(crazz);
+      await logoff(secondary);
     }
   },
 };
@@ -7844,7 +8032,6 @@ export const FLOWS: Flow[] = [
   portraitRoundTrip,
   roadRoundTrip,
   zoneRoundTrip,
-  warehouseRoleReading,
   fixturesEnsure,
   inspectorReads,
   storePriceSalaries,

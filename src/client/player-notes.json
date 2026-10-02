@@ -1,5 +1,29 @@
 [
   {
+    "id": 1255,
+    "type": "fixed",
+    "text": "Import and export storage owners now see the automatic-buying option on their warehouse's supplies.",
+    "date": "2026-10-02"
+  },
+  {
+    "id": 1221,
+    "type": "fixed",
+    "text": "The Close/Open button in the building inspector now actually closes and reopens your facility.",
+    "date": "2026-09-30"
+  },
+  {
+    "id": 1216,
+    "type": "fixed",
+    "text": "On desktop, the search directory with towns, people, rankings and banks opens again from the More menu.",
+    "date": "2026-09-30"
+  },
+  {
+    "id": 1191,
+    "type": "changed",
+    "text": "The Rebuild Links button in your profile, which did nothing, has been removed.",
+    "date": "2026-09-30"
+  },
+  {
     "id": 1132,
     "type": "fixed",
     "text": "Changing a product's price from a factory's General tab now actually changes it, and both price sliders now show whether the change was saved.",

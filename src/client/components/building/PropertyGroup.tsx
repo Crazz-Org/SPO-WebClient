@@ -613,21 +613,28 @@ function DefinedProperties({
     }
 
     // Facility kind, read by the industry sheet for the Quick Trade gate only
-    // (IndustryGeneralSheet.pas:143). Declared TEXT there; the warehouse sheet's
-    // ENUM `Role` is the trade-mode alias handled just below. Never a row.
-    if (def.rdoName === 'Role' && def.type === PropertyType.TEXT) {
+    // (IndustryGeneralSheet.pas:143). Never a row.
+    if (def.rdoName === 'Role') {
       rendered.add(def.rdoName);
       continue;
     }
 
-    // Trade mode — Voyager's cbMode (IndustryGeneralSheet.pas:189-235). Declared
-    // as `TradeRole` in most templates and `Role` on the warehouse sheet; both
-    // are the same cache value (Kernel/Kernel.pas:5893) and both write through
-    // RDOSetRole. The member is named here rather than resolved through
-    // `rdoCommands` because WH_GENERAL_GROUP maps no `Role` and TRADE_GROUP maps
-    // nothing at all — resolution would emit `call Role`, which the server does
-    // not publish. WarehouseWares (:412) takes the same direct route.
-    if (def.rdoName === 'TradeRole' || def.rdoName === 'Role') {
+    // The warehouse sheet's `TradeRole`, declared TEXT: read for the Supplies
+    // tab's automatic-buying gate only (SupplySheetForm.pas:349-359). Voyager's
+    // warehouse sheet offers no trade mode (WHGeneralSheet.pas:46). Never a row.
+    if (def.rdoName === 'TradeRole' && def.type === PropertyType.TEXT) {
+      rendered.add(def.rdoName);
+      continue;
+    }
+
+    // Trade mode — Voyager's cbMode (IndustryGeneralSheet.pas:189-235). The
+    // cache holds it as `TradeRole` only (Kernel/Kernel.pas:5893, warehouses
+    // included — StdBlocks/Warehouses.pas:614-617), written through RDOSetRole.
+    // The member is named here rather than resolved through `rdoCommands`
+    // because TRADE_GROUP maps no `TradeRole` — resolution
+    // would emit `call TradeRole`, which the server does not publish.
+    // WarehouseWares (:412) takes the same direct route.
+    if (def.rdoName === 'TradeRole') {
       rendered.add(def.rdoName);
       const role = valueMap.get(def.rdoName);
       if (role !== undefined) {

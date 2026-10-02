@@ -324,6 +324,34 @@ describe('ClientBridge building overlay (stale data prevention)', () => {
   });
 });
 
+describe('ClientBridge hideBuildingPanel', () => {
+  beforeEach(() => {
+    useBuildingStore.getState().clearFocus();
+    useUiStore.getState().clearSurfaces();
+  });
+
+  it('clears the focus and unstacks the building surface, uncovering what was under it', () => {
+    useUiStore.getState().setRootSurface({ kind: 'politics' });
+    useUiStore.getState().pushSurface({ kind: 'building' });
+    useBuildingStore.getState().setFocus({ x: 10, y: 20, buildingId: 'B1' } as never);
+
+    ClientBridge.hideBuildingPanel();
+
+    expect(useBuildingStore.getState().focusedBuilding).toBeNull();
+    expect(useUiStore.getState().stack.map((s) => s.kind)).toEqual(['politics']);
+  });
+
+  it('clears the focus but leaves the stack alone when the building is not on top', () => {
+    useUiStore.getState().setRootSurface({ kind: 'mail' });
+    useBuildingStore.getState().setFocus({ x: 10, y: 20, buildingId: 'B1' } as never);
+
+    ClientBridge.hideBuildingPanel();
+
+    expect(useBuildingStore.getState().focusedBuilding).toBeNull();
+    expect(useUiStore.getState().stack.map((s) => s.kind)).toEqual(['mail']);
+  });
+});
+
 describe('ClientBridge mail responses (T6)', () => {
   const { useMailStore } = jest.requireActual('../store/mail-store') as typeof import('../store/mail-store');
   const { WsMessageType } = jest.requireActual('../../shared/types') as typeof import('../../shared/types');

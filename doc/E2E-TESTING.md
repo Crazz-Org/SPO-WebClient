@@ -22,16 +22,16 @@ pointers to this file.
 
 | Field | Primary | Secondary |
 |-------|---------|-----------|
-| **Username** | `SPO_test3` | `Crazz` |
+| **Username** | `SPO_test3` | `SPO_test` |
 | **Password** | `test3` | `test` |
 | **Region** | `Free Space` | `Free Space` |
 | **World** | `planitia` | `planitia` |
 | **Company** | `SPO_test3 - Green` | (its own) |
-| **Holds** | **Mayor of Helartia**, Minister of Agriculture | a real player account — holdings not enumerated, and no flow depends on them |
+| **Holds** | **Mayor of Helartia**, Minister of Agriculture | a dedicated basic test account, no special buildings — no flow depends on its holdings |
 
 - Pick **Free Space**, not BETA — the live directory hosts `planitia`/`shamba`/`zorcon` under Free Space; BETA only has `aries`.
 - `SPO_test3` **has mayor powers** (verified live 2026-08-20, [civic-roles-reference.md](civic-roles-reference.md): `canGovern` true on the Town Hall). Road building, zone overlays and town governance are testable live. It is **not** president — see the exclusion in [E2E-POLICY.md](E2E-POLICY.md) §7.
-- `Crazz` exists for what one account cannot do: permission-negative checks, mail
+- `SPO_test` exists for what one account cannot do: permission-negative checks, mail
   send→receive, and rating another tycoon's term.
 - **Blast radius** ([E2E-POLICY.md](E2E-POLICY.md) §9): mutations only on Helartia. The
   second account is touched only by the mail round-trip, which deletes what it sent in the
@@ -97,7 +97,7 @@ Desktop layout (viewport ≥ 1024 px):
   `Search or run a command (Ctrl+K)` opens the command palette. While a mode runs, that button
   is replaced by a mode row whose exit button is `Done` (`Cancel` in connect mode).
 - **More menu** (`role="menu"` named `More actions`, items `role="menuitem"`): `Build road`,
-  `Demolish road`, `Zone painting` (only for a public-office role), `Map overlays`,
+  `Demolish road`, `Zone painting` (only for a public-office role), `Search`, `Map overlays`,
   `Docked minimap`, `My facilities`, `Settings`, `Keyboard shortcuts`, `Switch server`.
 - **RightRail** (`nav[aria-label="Map controls"]`): `Zoom In (+)`, `Zoom Out (-)`,
   `Rotate view (Q)`, `Rotate view (W)`, `Toggle Minimap`, `Debug (D)`, `Refresh (R)`.
@@ -165,7 +165,8 @@ window.__spoDebug.getState()                         // full snapshot, see below
 mapDimensions, debugMode, canvasSize, canvasHasContent}`,
 `panels {login, chat, mail, profile, politics, settings, minimap, buildMenu,
 buildingDetails, searchMenu}` (note: `minimap` is `true` by default after login),
-`tycoonStats`, `wire`. `panels.buildMenu` = the top surface of the stack is `build`;
+`tycoonStats`, `wire`. `panels.buildMenu` = the top surface of the stack is `build` or, on
+mobile, the Build tab's content is on screen;
 `panels.chat` = the chat strip is expanded.
 
 Added by #1133, unit-tested in `client.test.tsx`:
@@ -176,6 +177,26 @@ contextMenuOpen, hudVisible, serverSwitchMode, mobileTab, mobileSheetSnap}`,
 `login {stage, authError (boolean only), isVisitor, isPublicOfficeRole}`,
 `subViews {profileTab, searchPage, mailFolder, mailView, tutorialAssigned, buildingPreview}`.
 Values only — never a player name, message text beyond `chat.lastMessage`, or error text.
+
+Added by #1192, unit-tested in `client.test.tsx` (read from on-screen `data-testid` markers
+listed in `src/client/debug-markers.ts`, the stores, and the renderer):
+`ui.moreMenuOpen` (the command bar's More menu),
+`chat {channelPickerOpen, usersListShown}` (`usersListShown` is also true on the mobile
+embedded chat, where `chat.visible` may be false),
+`build {phase (categories|facilities|null), category, loading, facilityCount, mobileSubTab}`
+(`phase` is null when no BuildMenu is on screen; `category` is the chosen category label while
+`phase === 'facilities'`; `facilityCount` is 0 until loaded; `mobileSubTab` =
+`buildings`/`roads`/`demolish`, null off the mobile Build tab),
+`bugReporter {available (Settings shows Support), armed (report-mode overlay), modalOpen}`,
+`layers {overlay (the SurfaceType value, `ZONES` for city zones, null for none),
+debugSubLayers {tileInfo, buildingInfo, concreteInfo, waterGrid, roadInfo} (keys 1–5, null
+without a renderer), season (`Winter`/`Spring`/`Summer`/`Autumn`, what F1–F4 force)}`,
+`mobile {infoBar, chatBanner}` (booleans only — never the banner's text).
+
+Reading the existing `buildingDetails.currentTab` (non-null while `panels.buildingDetails`):
+on a standard facility a section drawer is open iff `buildingDetails.tabs` has an entry whose
+`id === currentTab` (no match = the section menu is showing); on a civic building the shown tab
+is `currentTab` when it names a civic tab, else the first one.
 
 **Standard post-login assertion set:**
 `session.connected === true`, `session.worldName === "planitia"`,
@@ -249,7 +270,7 @@ screenshot for state — and closes it. Nothing is submitted, bought, sent or sa
 Phase 5 chat ping. Every player *action* belongs to L2 (`npm run test:live`).
 
 A screen whose data the world may not hold — the world-event ticker, the tutorial, the chase
-badge with Crazz online — is recorded **absent**, not failed. Crazz is never required. A pass
+badge with the secondary account (`SPO_test`) online — is recorded **absent**, not failed. `SPO_test` is never required. A pass
 against the production URL runs only when the maintainer asks for one.
 
 ### Phase 0 — Lease the bench
@@ -300,14 +321,14 @@ result.
    close the sheet, assert `ui.stack` is empty. `Chat` toggles the strip: assert `chat.shown`
    flips, click again to restore. The screens behind the tiles are walked in Phase 3.
 4. **More menu** — click `More`; assert the menu "More actions" lists `Build road`,
-   `Demolish road`, `Map overlays`, `Docked minimap`, `My facilities`, `Settings`,
+   `Demolish road`, `Search`, `Map overlays`, `Docked minimap`, `My facilities`, `Settings`,
    `Keyboard shortcuts`, `Switch server`. Here open only:
    - `Docked minimap` — assert `panels.minimap` flips, click again to restore.
    - `Switch server` — assert `ui.serverSwitchMode === true` and the region picker; leave with
      `Back to planitia`, assert `ui.serverSwitchMode === false` and the map still loaded. Pick
      nothing in it.
 
-   `My facilities` and `Map overlays` are opened in Phase 3; `Build road`, `Demolish road`,
+   `Search`, `My facilities` and `Map overlays` are opened in Phase 3; `Build road`, `Demolish road`,
    `Settings` and `Keyboard shortcuts` in Phase 6.
 5. **RightRail** — `Zoom In (+)` then `Zoom Out (-)`: `renderer.zoom` changes and restores.
    `Rotate view (Q)` four times: `renderer.rotation` steps NORTH→WEST→SOUTH→EAST→NORTH; then
@@ -348,7 +369,7 @@ Each surface opens as a sheet; open it, assert, close it (`ui.stack` back to emp
    `markInboxMessageRead` (`src/server/session/mail-handler.ts`) clear the mail server's unread
    flag, and no RDO member can set it back — `Mail Server/MailServer.pas:557`,
    `Mail/MailMessageAuto.pas:165-166`. Never click Compose, Reply, Forward or Delete.
-6. **Search** — Ctrl+K → `Open Search` (there is no desktop tile). Assert `panels.searchMenu`
+6. **Search** — More → `Search`. Assert `panels.searchMenu`
    and `subViews.searchPage === "home"`. Open each page the home offers once — `towns`,
    `people`, `rankings`, `banks`, `media`, `directory`, and a tycoon's `tycoon-profile` /
    `tycoon-full-profile` when reachable — asserting `subViews.searchPage`, and return with
@@ -457,8 +478,8 @@ facility offering `Connect` is recorded *absent* with that reason.
 3. **MobileMenu** — the `More` tab lists the groups Communication, Exploration, Map Controls,
    System; confirm each is present. Do not tap Logout or Switch Server here.
 4. **Mobile build content** — the `Build` tab shows the sub-tabs Buildings, Roads, Demolish;
-   open each, start no mode. `panels.buildMenu` stays false on mobile (it is a tab, not the
-   `build` surface) — do not assert it here.
+   open each, start no mode. Assert `panels.buildMenu === true` while the tab is shown, and
+   `build.mobileSubTab` reads `buildings` / `roads` / `demolish` per sub-tab.
 
 `browser_resize` → 1440×900 before Phase 8.
 

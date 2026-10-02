@@ -2,13 +2,13 @@
  * Integration test: Build Menu flow.
  *
  * Tests the full user journey:
- * 1. Open build menu modal → categories request fires
+ * 1. Mount the Build surface content → categories request fires
  * 2. Store receives categories → category grid renders (no level badge)
  * 3. Click category → facilities request fires
  * 4. Store receives facilities → facility list renders with tile badges
  * 5. Click facility → card expands (accordion behavior)
- * 6. Click "Place Building" → modal closes, placement mode starts
- * 7. Capitol card (public office role) → fires onBuildCapitol
+ * 6. Click "Place Building" → onClose (the sheet pops the surface), placement mode starts
+ * 7. Capitol card (public office role) → fires onBuildCapitol and onClose
  */
 
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
@@ -83,16 +83,9 @@ describe('Build Menu — integration flow', () => {
     });
   });
 
-  it('renders nothing when modal is not buildMenu', () => {
-    const { container } = renderWithProviders(<BuildMenu />);
-    expect(container.innerHTML).toBe('');
-  });
-
-  it('requests categories when modal opens', () => {
+  it('requests categories on mount', () => {
     const catSpy = jest.fn();
     const mockCallbacks = createSpiedCallbacks({ onRequestBuildingCategories: catSpy });
-
-    useUiStore.setState({ modal: 'buildMenu' });
 
     renderWithProviders(<BuildMenu />, { clientCallbacks: mockCallbacks });
 
@@ -101,7 +94,6 @@ describe('Build Menu — integration flow', () => {
 
   it('renders category cards without level badge', () => {
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -118,7 +110,6 @@ describe('Build Menu — integration flow', () => {
     const mockCallbacks = createSpiedCallbacks({ onRequestBuildingFacilities: facSpy });
 
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -129,9 +120,26 @@ describe('Build Menu — integration flow', () => {
     expect(facSpy).toHaveBeenCalledWith('1', 'default');
   });
 
+  it('carries the debug marker with its phase and category (issue 1192)', () => {
+    useUiStore.setState({ buildMenuCategories: mockCategories });
+    renderWithProviders(<BuildMenu />);
+    const root = screen.getByTestId('build-menu');
+    expect(root.dataset.phase).toBe('categories');
+    expect(root.dataset.category).toBeUndefined();
+    expect(root.dataset.loading).toBe('false');
+
+    fireEvent.click(screen.getByText('Commerce'));
+    expect(root.dataset.phase).toBe('facilities');
+    expect(root.dataset.category).toBe('Commerce');
+    expect(root.dataset.loading).toBe('true');
+    act(() => {
+      useUiStore.setState({ buildMenuFacilities: [...mockFacilities] });
+    });
+    expect(root.dataset.loading).toBe('false');
+  });
+
   it('renders facility list with tile badges when store receives facilities', () => {
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
       buildMenuFacilities: mockFacilities,
     });
@@ -155,7 +163,6 @@ describe('Build Menu — integration flow', () => {
 
   it('expands facility card on click and shows Place Building button', () => {
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -171,23 +178,23 @@ describe('Build Menu — integration flow', () => {
     expect(screen.getByText('Tiles: 2 × 2 (4 tiles)')).toBeTruthy();
   });
 
-  it('closes modal and starts placement when Place Building is clicked', () => {
+  it('closes the surface and starts placement when Place Building is clicked', () => {
     const placeSpy = jest.fn();
+    const onClose = jest.fn();
     const mockCallbacks = createSpiedCallbacks({ onPlaceBuilding: placeSpy });
 
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
-    renderWithProviders(<BuildMenu />, { clientCallbacks: mockCallbacks });
+    renderWithProviders(<BuildMenu onClose={onClose} />, { clientCallbacks: mockCallbacks });
     goToFacilitiesPhase();
 
     // Expand then place
     fireEvent.click(screen.getByText('Small Store'));
     fireEvent.click(screen.getByText('Place Building'));
 
-    expect(useUiStore.getState().modal).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
     expect(placeSpy).toHaveBeenCalledWith('SmallStore', '101');
   });
 
@@ -199,7 +206,6 @@ describe('Build Menu — integration flow', () => {
     ];
 
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -218,7 +224,6 @@ describe('Build Menu — integration flow', () => {
 
   it('does not expand unavailable facility', () => {
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -235,7 +240,6 @@ describe('Build Menu — integration flow', () => {
 
   it('falls back to "Not available yet" when a locked facility carries no requirement', () => {
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -247,7 +251,6 @@ describe('Build Menu — integration flow', () => {
 
   it('shows the server\'s own requirement sentence under the Locked badge', () => {
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -263,7 +266,6 @@ describe('Build Menu — integration flow', () => {
 
   it('facility card has correct accessibility attributes', () => {
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -288,7 +290,6 @@ describe('Build Menu — integration flow', () => {
 
   it('shows Capitol card for public office role', () => {
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
       capitolIconUrl: '/icons/capitol.png',
     });
@@ -300,36 +301,23 @@ describe('Build Menu — integration flow', () => {
     expect(screen.getByText('Public Office')).toBeTruthy();
   });
 
-  it('Capitol card calls onBuildCapitol and closes modal', () => {
+  it('Capitol card calls onBuildCapitol and closes the surface', () => {
     const capitolSpy = jest.fn();
+    const onClose = jest.fn();
     const mockCallbacks = createSpiedCallbacks({ onBuildCapitol: capitolSpy });
 
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
       capitolIconUrl: '/icons/capitol.png',
     });
     useGameStore.setState({ isPublicOfficeRole: true });
 
-    renderWithProviders(<BuildMenu />, { clientCallbacks: mockCallbacks });
+    renderWithProviders(<BuildMenu onClose={onClose} />, { clientCallbacks: mockCallbacks });
 
     fireEvent.click(screen.getByText('Capitol'));
 
     expect(capitolSpy).toHaveBeenCalled();
-    expect(useUiStore.getState().modal).toBeNull();
-  });
-
-  it('close button dismisses modal', () => {
-    useUiStore.setState({
-      modal: 'buildMenu',
-      buildMenuCategories: mockCategories,
-    });
-
-    renderWithProviders(<BuildMenu />);
-
-    fireEvent.click(screen.getByLabelText('Close'));
-
-    expect(useUiStore.getState().modal).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -355,7 +343,6 @@ describe('Build Menu — residential grouping', () => {
 
   it('renders grouped residential facilities with High/Mid/Low headers', () => {
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -383,7 +370,6 @@ describe('Build Menu — residential grouping', () => {
     ];
 
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -403,7 +389,6 @@ describe('Build Menu — residential grouping', () => {
 
   it('renders flat list when no facility has residenceClass', () => {
     useUiStore.setState({
-      modal: 'buildMenu',
       buildMenuCategories: mockCategories,
     });
 
@@ -424,7 +409,7 @@ describe('Build Menu — residential grouping', () => {
   });
 });
 
-describe('Build Menu — T1 sheet behaviour (embedded)', () => {
+describe('Build Menu — T1 sheet behaviour', () => {
   beforeEach(() => {
     resetStores();
     useUiStore.setState({ buildMenuCategories: [], buildMenuFacilities: [], capitolIconUrl: '' });
@@ -434,14 +419,14 @@ describe('Build Menu — T1 sheet behaviour (embedded)', () => {
   it('does not re-request categories when the store already has them (session cache)', () => {
     const catSpy = jest.fn();
     useUiStore.setState({ buildMenuCategories: mockCategories });
-    renderWithProviders(<BuildMenu embedded />, { clientCallbacks: createSpiedCallbacks({ onRequestBuildingCategories: catSpy }) });
+    renderWithProviders(<BuildMenu />, { clientCallbacks: createSpiedCallbacks({ onRequestBuildingCategories: catSpy }) });
     expect(catSpy).not.toHaveBeenCalled();
     expect(screen.getByText('Commerce')).toBeTruthy();
   });
 
   it('filters categories and buildings locally', () => {
     useUiStore.setState({ buildMenuCategories: mockCategories });
-    renderWithProviders(<BuildMenu embedded />);
+    renderWithProviders(<BuildMenu />);
     fireEvent.change(screen.getByLabelText('Filter categories'), { target: { value: 'zzz' } });
     expect(screen.queryByText('Commerce')).toBeNull();
     fireEvent.change(screen.getByLabelText('Filter categories'), { target: { value: '' } });
@@ -456,7 +441,7 @@ describe('Build Menu — T1 sheet behaviour (embedded)', () => {
   it('shows cash after and blocks an unaffordable placement', () => {
     useUiStore.setState({ buildMenuCategories: mockCategories });
     useGameStore.setState({ tycoonStats: { cash: '40000', incomePerHour: '0', failureLevel: 0 } as never });
-    renderWithProviders(<BuildMenu embedded />);
+    renderWithProviders(<BuildMenu />);
     goToFacilitiesPhase();
     fireEvent.click(screen.getByText('Small Store')); // costs 50 000, cash 40 000
     expect(screen.getByText(/Cash after:/).textContent).toContain('-');
@@ -466,9 +451,21 @@ describe('Build Menu — T1 sheet behaviour (embedded)', () => {
     expect((screen.getByText('Place Building') as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('the back arrow returns from a category to the category grid', () => {
+    useUiStore.setState({ buildMenuCategories: mockCategories });
+    const { container } = renderWithProviders(<BuildMenu />);
+    goToFacilitiesPhase();
+    expect(screen.getByText('Small Store')).toBeTruthy();
+    // The header's first button is the back arrow, shown only in the facilities phase.
+    fireEvent.click(container.querySelector('button')!);
+    expect(screen.getByRole('heading', { name: 'Build' })).toBeTruthy();
+    expect(screen.getByText('Industry')).toBeTruthy();
+    expect(screen.queryByText('Small Store')).toBeNull();
+  });
+
   it('filters residential groups too', () => {
     useUiStore.setState({ buildMenuCategories: mockCategories });
-    renderWithProviders(<BuildMenu embedded />);
+    renderWithProviders(<BuildMenu />);
     goToFacilitiesPhase(mockResidentialFacilities);
     fireEvent.change(screen.getByLabelText('Filter buildings by name'), { target: { value: 'luxury' } });
     expect(screen.getByText('Luxury Apartments')).toBeTruthy();
