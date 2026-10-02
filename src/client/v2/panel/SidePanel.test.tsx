@@ -5,6 +5,7 @@ import { useUiStore, type SurfaceKind } from '../../store/ui-store';
 import { SidePanel } from './SidePanel';
 import * as barrel from './index';
 import { FocusCard } from './FocusCard';
+import { surfaceTitle } from './surface-route';
 
 // The panel's job is chrome + routing; the contents are stubbed.
 jest.mock('../inspector/InspectorV2', () => ({ InspectorV2: () => <div>INSPECTOR V2</div> }));
@@ -65,6 +66,19 @@ describe('SidePanel', () => {
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(1);
   });
+
+  it.each(['build', 'building', 'supplierSearch'] as const)(
+    '%s draws its own heading: the header keeps the name for assistive tech only, never drawn twice',
+    (kind) => {
+      open(kind);
+      renderWithProviders(<SidePanel />);
+      const name = surfaceTitle(kind);
+      expect(screen.getByRole('region', { name })).toBeTruthy();
+      const hidden = screen.getByText(name);
+      expect(hidden.className).toContain('srOnly');
+      expect(hidden.previousElementSibling?.getAttribute('title')).toBe(name);
+    }
+  );
 
   it('shows the stack as a breadcrumb; a crumb returns to that surface', () => {
     open('building', 'search');

@@ -47,6 +47,10 @@ describe('dockActions', () => {
     expect(actions.every((a) => a.badge === 0)).toBe(true);
   });
 
+  it('only Government needs a short label for the compact dock', () => {
+    expect(dockActions(base).filter((a) => a.shortLabel).map((a) => [a.id, a.shortLabel])).toEqual([['politics', 'Gov.']]);
+  });
+
   it('drops every visitor-gated panel for a visitor, and only those', () => {
     const visitor = ids({ isVisitor: true });
     expect(visitor).toEqual(['map', 'politics', 'mail', 'chat', 'more']);

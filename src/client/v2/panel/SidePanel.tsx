@@ -43,10 +43,12 @@ export function SidePanel() {
 
   const current = (
     <span className={styles.current}>
-      <span className={styles.icon} aria-hidden="true">{SURFACE_ICONS[kind]}</span>
+      <span className={styles.icon} aria-hidden="true" title={OWN_HEADER.has(kind) ? title : undefined}>{SURFACE_ICONS[kind]}</span>
       {OWN_HEADER.has(kind) ? (
-        // The content draws its own heading; this is only the surface's name.
-        <span className={styles.title} aria-current={previous.length > 0 ? 'page' : undefined}>{title}</span>
+        // The content draws its own heading ("Build", the building's name…): showing the name
+        // here too printed it twice. It stays for assistive tech — the current crumb and the
+        // region's name — but is not drawn.
+        <span className={styles.srOnly} aria-current={previous.length > 0 ? 'page' : undefined}>{title}</span>
       ) : (
         <h2 className={styles.title} tabIndex={-1} aria-current={previous.length > 0 ? 'page' : undefined}>{title}</h2>
       )}

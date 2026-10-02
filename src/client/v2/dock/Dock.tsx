@@ -7,7 +7,9 @@
  * DockMenu. The placement / road / zone mode row is not here: v2 shows it in ModeBanner.
  *
  * The dock only narrows (never moves) while the side panel is open, so its buttons stay where
- * the hand expects them.
+ * the hand expects them. Narrowed below 640 px (the side panel open on a narrow screen) it goes
+ * compact — a container query in Dock.module.css: the search pill keeps only its icon and
+ * long labels switch to their `shortLabel`.
  */
 
 import { useCallback, useRef, useState, type ReactNode } from 'react';
@@ -111,8 +113,10 @@ export function Dock() {
                   {ICONS[a.id]}
                   {a.badge > 0 && <span className={styles.badge}>{badgeText(a.badge)}</span>}
                 </span>
-                <span className={styles.label}>{a.label}</span>
-                {a.kbd && <kbd className={styles.kbd} aria-hidden="true">{a.kbd}</kbd>}
+                <span className={`${styles.label} ${a.shortLabel ? styles.labelLong : ''}`}>{a.label}</span>
+                {a.shortLabel && <span className={`${styles.label} ${styles.labelShort}`} aria-hidden="true">{a.shortLabel}</span>}
+                {/* The unread badge takes the corner the hint sits in; the title keeps the key. */}
+                {a.kbd && a.badge === 0 && <kbd className={styles.kbd} aria-hidden="true">{a.kbd}</kbd>}
               </button>
               {isMore && moreOpen && <DockMenu onClose={closeMore} anchorRef={moreRef} />}
             </span>

@@ -98,7 +98,7 @@ export function TopBar() {
   const identity = (
     <>
       <span className={styles.name}>{username || 'Unknown'}</span>
-      {companyName && <span className={styles.company}>{companyName}</span>}
+      {companyName && <span className={styles.company} title={companyName}>{companyName}</span>}
     </>
   );
 

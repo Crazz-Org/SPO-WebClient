@@ -8,8 +8,11 @@
  * stays byte-for-byte the classic one.
  */
 
-import type { BuildingDetailsResponse, BuildingDetailsTab, BuildingFocusInfo } from '@/shared/types';
+import type { BuildingDetailsResponse, BuildingDetailsTab, BuildingFocusInfo, PoliticsData } from '@/shared/types';
+import type { FacilityDiagnosis } from '@/shared/building-details/facility-diagnosis';
 import { parseConstructionPercent, parseDetailsText } from '../../components/building/QuickStats';
+import type { SectionDisplayState } from '../../components/building/inspector-sections';
+import { isCapitolBuilding } from '../../components/politics/CivicTabConfig';
 
 /**
  * Id of the synthetic first tab of a standard facility. Never sent to the server and never
@@ -24,11 +27,34 @@ export interface SectionTabItem {
 }
 
 /**
+ * A section name as the strip shows it. The server sends its tab names in capitals
+ * ("HISTORY", "SUPPLIES") while the synthetic and civic tabs are title case ("Overview",
+ * "Elections"); an all-capitals name is title-cased so the strip reads as one list. A name
+ * that already has a lower-case letter is the author's own casing and is kept.
+ */
+export function sectionLabel(name: string): string {
+  if (/\p{Ll}/u.test(name)) return name;
+  return name.toLowerCase().replace(/(^|[\s/&(-])(\p{L})/gu, (_m, sep: string, ch: string) => sep + ch.toUpperCase());
+}
+
+/**
  * Tabs of a standard facility: Overview first, then the server tabs in their declared order.
  */
 export function buildStandardTabs(tabs: BuildingDetailsTab[]): SectionTabItem[] {
   const sorted = [...tabs].sort((a, b) => a.order - b.order);
-  return [{ id: OVERVIEW_TAB_ID, label: 'Overview' }, ...sorted.map((t) => ({ id: t.id, label: t.name }))];
+  return [{ id: OVERVIEW_TAB_ID, label: 'Overview' }, ...sorted.map((t) => ({ id: t.id, label: sectionLabel(t.name) }))];
+}
+
+/**
+ * Do the details in hand describe the focused facility? A new focus is pushed before its
+ * details arrive, so for a moment the store holds the new focus beside the previous
+ * facility's details — those must never be drawn under the new name.
+ */
+export function detailsMatchFocus(
+  details: Pick<BuildingDetailsResponse, 'x' | 'y'> | null,
+  focus: Pick<BuildingFocusInfo, 'x' | 'y'> | null,
+): boolean {
+  return !!details && !!focus && details.x === focus.x && details.y === focus.y;
 }
 
 /** The open server tab of a standard facility, or null when Overview is showing. */
@@ -39,6 +65,37 @@ export function activeStandardTabId(tabs: BuildingDetailsTab[], currentTab: stri
 /** The open civic tab: the stored one when it exists, otherwise the first offered. */
 export function activeCivicTabId(civicTabs: SectionTabItem[], currentTab: string): string | undefined {
   return civicTabs.some((t) => t.id === currentTab) ? currentTab : civicTabs[0]?.id;
+}
+
+/**
+ * The tab whose data the open section needs — what the lazy read is asked about. It is the
+ * tab the strip shows as open, never a stale `currentTab` left over from another facility
+ * (an HQ's "upgrade" while a Town Hall is open): a standard facility with no matching server
+ * tab is on Overview (`''`, which reads nothing), a civic one on its first civic tab.
+ */
+export function sectionReadTab(
+  isCivic: boolean,
+  activeServerTab: string | null,
+  activeCivicTab: string | undefined,
+): string {
+  return isCivic ? (activeCivicTab ?? '') : (activeServerTab ?? '');
+}
+
+/**
+ * What the open server section shows. v1's `sectionDisplayState` answers from the values in
+ * hand; on top of it a section with no rows yet is still loading while its read is in flight
+ * — or owed and about to be sent (the load state is still idle on the render before the
+ * read effect fires). A section that has rows keeps them on screen while it is re-read.
+ */
+export function sectionBodyState(input: {
+  base: SectionDisplayState;
+  loadState: string | undefined;
+  readPending: boolean;
+  hasRows: boolean;
+}): SectionDisplayState {
+  if (input.base !== 'ready') return input.base;
+  if (!input.hasRows && (input.loadState === 'loading' || input.readPending)) return 'loading';
+  return 'ready';
 }
 
 /** What `setCurrentTab` receives when the player picks a tab. */
@@ -100,6 +157,44 @@ export function buildHeroKpis(focus: BuildingFocusInfo, roi: string | undefined)
     if (workers) kpis.push({ key: 'workers', label: 'Workers', value: workers.value, tone: 'neutral' });
   }
   return kpis;
+}
+
+/**
+ * "Mayor: <name>" / "President: <name>" for a civic facility, or `''` when the name is not
+ * known. Same sources as v1's `getCivicSubtitle` — the politics page's ruler, then the
+ * `ActualRuler` / `RulerName` properties — but never its last fallback, `ownerName`: on a
+ * Town Hall that is the town itself, which printed "Mayor: Helartia". The politics page is
+ * only trusted when it describes this office (same kind, same town, a ruler in place).
+ */
+export function civicRulerLine(details: BuildingDetailsResponse, politics: PoliticsData | null): string {
+  const isCapitol = isCapitolBuilding(details.tabs);
+  const town = findGroupValue(details, 'Town');
+  const fromPolitics = politics
+    && politics.isCapitol === isCapitol
+    && (isCapitol || (!!town && politics.townName === town))
+    && politics.hasRuler
+    && politics.mayorName
+    ? politics.mayorName
+    : undefined;
+  const name = fromPolitics ?? findGroupValue(details, 'ActualRuler') ?? findGroupValue(details, 'RulerName');
+  if (!name) return '';
+  return `${isCapitol ? 'President' : 'Mayor'}: ${name}`;
+}
+
+/**
+ * A server hint that sends the player to the inspector ("Go to INSPECT to carry out new
+ * researchs", "Check the Services Tab on the INSPECT panel") is noise once the inspector is
+ * the thing open. Read off the sentence the banner would print, so a hint the parser already
+ * rewrote into its own words (and its action button) is kept.
+ */
+export function inspectorDiagnosis(diagnosis: FacilityDiagnosis): FacilityDiagnosis {
+  if (/\binspect\b/i.test(diagnosis.message)) return { severity: 'none', label: '', message: '' };
+  return diagnosis;
+}
+
+/** Which scroll arrows the section strip offers: only towards tabs that are out of view. */
+export function scrollEdges(scrollLeft: number, clientWidth: number, scrollWidth: number): { left: boolean; right: boolean } {
+  return { left: scrollLeft > 1, right: scrollLeft + clientWidth < scrollWidth - 1 };
 }
 
 /** "Society, Owner", collapsing to whichever half exists — never a dangling comma. */

@@ -12,8 +12,9 @@ import type { DiagnosisAction } from '@/shared/building-details/facility-diagnos
 
 jest.mock('../../components/building/DiagnosisBanner', () => ({
   ...jest.requireActual<typeof import('../../components/building/DiagnosisBanner')>('../../components/building/DiagnosisBanner'),
-  DiagnosisBanner: ({ onAction }: { onAction: (a: DiagnosisAction) => void }) => (
+  DiagnosisBanner: ({ onAction, diagnosis }: { onAction: (a: DiagnosisAction) => void; diagnosis: { severity: string } }) => (
     <>
+      <span>{`DIAG_SEVERITY:${diagnosis.severity}`}</span>
       <button type="button" onClick={() => onAction({ kind: 'openWorkforce' } as DiagnosisAction)}>DIAG_WORKFORCE</button>
       <button type="button" onClick={() => onAction({ kind: 'openResearch' } as DiagnosisAction)}>DIAG_RESEARCH</button>
     </>
@@ -37,8 +38,8 @@ const focus: BuildingFocusInfo = {
 };
 
 const tabs: BuildingDetailsTab[] = [
-  { id: 'indGeneral', name: 'GENERAL', order: 0, icon: 'G', handlerName: 'IndGeneral' },
-  { id: 'workforce', name: 'WORKFORCE', order: 1, icon: 'W', handlerName: 'Workforce' },
+  { id: 'indGeneral', name: 'General', order: 0, icon: 'G', handlerName: 'IndGeneral' },
+  { id: 'workforce', name: 'Workforce', order: 1, icon: 'W', handlerName: 'Workforce' },
   { id: 'supplies', name: 'SUPPLIES', order: 2, icon: 'S', handlerName: 'Supplies', special: 'supplies' },
 ];
 
@@ -124,7 +125,7 @@ describe('InspectorV2 — standard facility', () => {
     show();
     renderWithProviders(<InspectorV2 />, { clientCallbacks: s.clientCallbacks });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'WORKFORCE' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Workforce' }));
     expect(useBuildingStore.getState().currentTab).toBe('workforce');
     expect(s.onRequestTabData).toHaveBeenCalledTimes(1);
     expect(s.onRequestTabData).toHaveBeenCalledWith(150, 300, 'workforce', '200', ['workforce']);
@@ -143,7 +144,7 @@ describe('InspectorV2 — standard facility', () => {
     show();
     renderWithProviders(<InspectorV2 />, { clientCallbacks: s.clientCallbacks });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'GENERAL' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'General' }));
     expect(s.onRequestTabData).not.toHaveBeenCalled();
     expect(screen.getByText('Value')).toBeTruthy();
     expect(screen.queryByText('Sales')).toBeNull();
@@ -156,7 +157,7 @@ describe('InspectorV2 — standard facility', () => {
   it('opens a section from its Overview card', () => {
     show();
     renderWithProviders(<InspectorV2 />);
-    fireEvent.click(screen.getByRole('button', { name: 'WORKFORCE' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workforce' }));
     expect(useBuildingStore.getState().currentTab).toBe('workforce');
   });
 
@@ -179,7 +180,39 @@ describe('InspectorV2 — standard facility', () => {
     expect(useBuildingStore.getState().currentTab).toBe('overview');
     fireEvent.click(screen.getByRole('button', { name: 'DIAG_WORKFORCE' }));
     expect(useBuildingStore.getState().currentTab).toBe('workforce');
-    expect(screen.getByRole('tab', { name: 'WORKFORCE' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Workforce' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('shows a skeleton, not an empty section, while a section with no rows is owed its read', () => {
+    const s = spied();
+    show({}, 'workforce');
+    renderWithProviders(<InspectorV2 />, { clientCallbacks: s.clientCallbacks });
+    expect(screen.getByRole('tabpanel').querySelector('[aria-busy="true"]')).toBeTruthy();
+    expect(s.onRequestTabData).toHaveBeenCalledTimes(1);
+    expect(s.onRequestTabData).toHaveBeenCalledWith(150, 300, 'workforce', '200', ['workforce']);
+  });
+
+  it('keeps the skeleton while the read is in flight, and draws the rows when they land', () => {
+    show({}, 'workforce');
+    useBuildingStore.getState().setTabLoading('workforce');
+    renderWithProviders(<InspectorV2 />);
+    expect(screen.getByRole('tabpanel').querySelector('[aria-busy="true"]')).toBeTruthy();
+
+    act(() => {
+      useBuildingStore.getState().mergeTabData('workforce', { groups: { workforce: [{ name: 'Workers', value: '12' }] } } as never, 150, 300);
+    });
+    expect(screen.getByRole('tabpanel').querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
+  it('drops a hint that sends the player to the inspector, keeps any other', () => {
+    show({}, 'overview', { ...focus, hintsText: 'Hint: Go to INSPECT to carry out new researchs.' });
+    const { unmount } = renderWithProviders(<InspectorV2 />);
+    expect(screen.getByText('DIAG_SEVERITY:none')).toBeTruthy();
+    unmount();
+
+    show({}, 'overview', { ...focus, hintsText: 'Warning: Not enough company support.' });
+    renderWithProviders(<InspectorV2 />);
+    expect(screen.getByText('DIAG_SEVERITY:warning')).toBeTruthy();
   });
 
   it('reads nothing while disconnected', () => {
@@ -188,6 +221,52 @@ describe('InspectorV2 — standard facility', () => {
     useGameStore.setState({ status: 'reconnecting' });
     renderWithProviders(<InspectorV2 />, { clientCallbacks: s.clientCallbacks });
     expect(s.onRequestTabData).not.toHaveBeenCalled();
+  });
+});
+
+describe('InspectorV2 — switching facilities', () => {
+  beforeEach(resetStores);
+
+  const college: BuildingFocusInfo = { ...focus, buildingName: 'College', ownerName: 'Yellow Inc. TEST', x: 10, y: 20 };
+
+  it('never draws the previous facility under a new focus: loading state with the new name, no read', () => {
+    const s = spied();
+    show();
+    useBuildingStore.getState().setFocus(college);
+    renderWithProviders(<InspectorV2 />, { clientCallbacks: s.clientCallbacks });
+
+    expect(screen.getByRole('heading', { name: 'College' })).toBeTruthy();
+    expect(screen.getByText('Yellow Inc. TEST')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Small Farm' })).toBeNull();
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(s.onRequestTabData).not.toHaveBeenCalled();
+  });
+
+  it('names nothing while a new facility is read and the store still holds the one being left', () => {
+    show();
+    useBuildingStore.getState().setLoading(true);
+    renderWithProviders(<InspectorV2 />);
+    expect(screen.getByRole('heading', { name: 'Loading facility…' })).toBeTruthy();
+    expect(screen.queryByText('Small Farm')).toBeNull();
+  });
+
+  it('falls back to Overview, and reads nothing, when the open tab does not exist on this facility', () => {
+    const s = spied();
+    show({}, 'upgrade');
+    renderWithProviders(<InspectorV2 />, { clientCallbacks: s.clientCallbacks });
+    expect(screen.getByRole('tab', { name: 'Overview' }).getAttribute('aria-selected')).toBe('true');
+    expect(s.onRequestTabData).not.toHaveBeenCalled();
+  });
+
+  it('keeps the remembered section when the new facility has it (the store restores it on purpose)', () => {
+    const s = spied();
+    show();
+    act(() => { useBuildingStore.getState().setCurrentTab('workforce'); });
+    useBuildingStore.getState().setFocus(college);
+    useBuildingStore.getState().setDetails({ ...details, x: 10, y: 20 });
+    renderWithProviders(<InspectorV2 />, { clientCallbacks: s.clientCallbacks });
+    expect(screen.getByRole('tab', { name: 'Workforce' }).getAttribute('aria-selected')).toBe('true');
+    expect(s.onRequestTabData).toHaveBeenCalledWith(10, 20, 'workforce', '200', ['workforce']);
   });
 });
 
@@ -242,7 +321,7 @@ describe('InspectorV2 — civic building', () => {
   const townHall: Partial<BuildingDetailsResponse> = {
     visualClass: '9999', buildingName: 'Helartia Town Hall',
     tabs: [
-      { id: 'townGeneral', name: 'GENERAL', order: 0, icon: '', handlerName: 'townGeneral' },
+      { id: 'townGeneral', name: 'General', order: 0, icon: '', handlerName: 'townGeneral' },
       { id: 'votes', name: 'VOTES', order: 1, icon: '', handlerName: 'Votes' },
     ],
     groups: { townGeneral: [{ name: 'Town', value: 'Helartia' }] },
@@ -263,9 +342,13 @@ describe('InspectorV2 — civic building', () => {
     expect(screen.getByText('CIVIC_ELECTIONS')).toBeTruthy();
   });
 
-  it('falls back to the first civic tab when the stored one is not civic', () => {
-    show(townHall, 'workforce', { ...focus, visualClass: '9999' });
-    renderWithProviders(<InspectorV2 />);
+  it('falls back to the first civic tab when the stored one is not civic — and reads that one', () => {
+    const s = spied();
+    show(townHall, 'upgrade', { ...focus, visualClass: '9999' });
+    renderWithProviders(<InspectorV2 />, { clientCallbacks: s.clientCallbacks });
     expect(screen.getByText('CIVIC_OVERVIEW')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Overview' }).getAttribute('aria-selected')).toBe('true');
+    expect(s.onRequestTabData).toHaveBeenCalledTimes(1);
+    expect(s.onRequestTabData).toHaveBeenCalledWith(150, 300, 'overview', '9999', ['townGeneral', 'votes']);
   });
 });

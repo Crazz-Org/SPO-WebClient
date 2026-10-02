@@ -83,6 +83,23 @@ describe('GameScreenV2', () => {
     expect(screen.queryByText('CHASEBADGE')).toBeNull();
   });
 
+  it('mounts the v1 VersionBadge inside the v2 slot that places it', async () => {
+    useUiStore.getState().clearSurfaces();
+    useUiStore.setState({ connectMode: { active: false, subject: '' } });
+    await renderScreen();
+    const slot = screen.getByText('VERSIONBADGE').parentElement as HTMLElement;
+    expect(slot.className.trim()).toBe('versionSlot');
+    // the side panel covers its corner: the slot hides while one is open, not in connect mode
+    act(() => useUiStore.getState().toggleRightPanel('mail'));
+    expect(slot.className).toContain('versionSlotUnderPanel');
+    act(() => useUiStore.setState({ connectMode: { active: true, subject: 'x' } }));
+    expect(slot.className).not.toContain('versionSlotUnderPanel');
+    act(() => {
+      useUiStore.getState().clearSurfaces();
+      useUiStore.setState({ connectMode: { active: false, subject: '' } });
+    });
+  });
+
   it('below 1024 px drops the desktop chrome and keeps v1\'s ticker and context strip', async () => {
     setWidth(800);
     await renderScreen();

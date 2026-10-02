@@ -7,6 +7,8 @@ import { useMailStore } from '../../store/mail-store';
 import { useChatStore } from '../../store/chat-store';
 import { DEBUG_MARKERS } from '../../debug-markers';
 import { Dock } from './Dock';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 describe('v2 Dock', () => {
   beforeEach(() => {
@@ -123,6 +125,40 @@ describe('v2 Dock', () => {
     expect(mail.textContent).toContain('99+');
     act(() => useMailStore.setState({ unreadCount: 0 }));
     expect(screen.getByRole('button', { name: 'Mail' }).textContent).not.toContain('99+');
+  });
+
+  it('an unread badge takes the shortcut hint\'s corner; the title keeps the key', () => {
+    useMailStore.setState({ unreadCount: 4 });
+    renderWithProviders(<Dock />);
+    const mail = screen.getByRole('button', { name: 'Mail, 4 unread' });
+    expect(mail.querySelector('kbd')).toBeNull();
+    expect(mail.getAttribute('title')).toBe('Mail (L)');
+    act(() => useMailStore.setState({ unreadCount: 0 }));
+    expect(screen.getByRole('button', { name: 'Mail' }).querySelector('kbd')?.textContent).toBe('L');
+  });
+
+  it('Government carries a short label for the compact dock, hidden from assistive tech', () => {
+    renderWithProviders(<Dock />);
+    const gov = screen.getByRole('button', { name: 'Government' });
+    const long = screen.getByText('Government');
+    const short = screen.getByText('Gov.');
+    expect(gov.contains(long) && gov.contains(short)).toBe(true);
+    expect(long.className).toContain('labelLong');
+    expect(short.className).toContain('labelShort');
+    expect(short.getAttribute('aria-hidden')).toBe('true');
+    // Labels that fit carry no short form
+    expect(screen.getByRole('button', { name: 'Build' }).querySelectorAll('[class*="label"]')).toHaveLength(1);
+  });
+
+  it('goes compact under 640 px of its own width: icon-only search, short labels (CSS)', () => {
+    const css = readFileSync(join(__dirname, 'Dock.module.css'), 'utf8');
+    expect(css).toMatch(/\.dock \{[^}]*container: v2dock \/ inline-size;/);
+    const compact = css.match(/@container v2dock \(max-width: 640px\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(compact).toMatch(/\.searchText,\s*\.searchKbds \{\s*display: none;/);
+    expect(compact).toMatch(/\.labelLong \{\s*display: none;/);
+    expect(compact).toMatch(/\.labelShort \{\s*display: inline;/);
+    // No fixed label cap any more: "Government" is never cut at full width
+    expect(css).not.toMatch(/\.label \{[^}]*max-width/);
   });
 
   it('a visitor is not offered Build or Empire', () => {

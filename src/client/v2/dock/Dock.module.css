@@ -21,6 +21,8 @@
   box-shadow: var(--shadow-lg);
   z-index: var(--z-hud);
   transition: max-width var(--duration-panel) var(--ease-out);
+  /* Its own width drives the compact layout below (it narrows while the side panel is open) */
+  container: v2dock / inline-size;
 }
 
 /* The side panel is open: the dock keeps its left anchor and only gives up width */
@@ -130,14 +132,15 @@
 
 .action {
   position: relative;
-  width: 64px;
+  /* At least 64 px, wider when a label needs it — "Government" fits whole */
+  min-width: 64px;
   height: 48px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 3px;
-  padding: 0;
+  padding: 0 var(--space-1);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-lg);
@@ -163,6 +166,17 @@
 
 .action:active {
   background: var(--bg-hover);
+}
+
+/* Keyboard focus only: a ring that is not the gold "active" fill, so focus handed back to
+   More after its menu closes does not read as More still being open. */
+.action:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 1px;
 }
 
 .action:active .iconWrap {
@@ -203,10 +217,12 @@
 
 .label {
   white-space: nowrap;
-  max-width: 60px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   line-height: 1.2;
+}
+
+/* The short label only shows in the compact dock */
+.labelShort {
+  display: none;
 }
 
 /* Keyboard hint — top-right corner of the button */
@@ -242,6 +258,29 @@
   font-weight: var(--font-bold);
   line-height: 14px;
   text-align: center;
+}
+
+/* Compact — the dock narrowed under 640 px (side panel open on a narrow screen, 564 px at
+   1024): the search pill keeps its icon (its name stays in the accessible label and the
+   tooltip), long labels switch to their short form. */
+@container v2dock (max-width: 640px) {
+  .search {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .searchText,
+  .searchKbds {
+    display: none;
+  }
+
+  .labelLong {
+    display: none;
+  }
+
+  .labelShort {
+    display: inline;
+  }
 }
 
 @media (max-width: 1023px) {

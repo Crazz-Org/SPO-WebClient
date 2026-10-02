@@ -13,7 +13,8 @@
  *   CommandBar mode row → ModeBanner · CommandBar + MoreMenu → Dock · RightRail → MapTools
  *   ChatStrip → ChatDrawer · Sheet → SidePanel · StatusOverlay → FocusCard
  * Everything else (dialogs, modals, palette, version badge, server switch) is the same
- * component GameScreen mounts; the chase badge too, except while the TopBar is up (it carries
+ * component GameScreen mounts (the version badge in a v2 slot that places it and gives it a
+ * backdrop); the chase badge too, except while the TopBar is up (it carries
  * the chase control itself — the badge's corner is the bar's right end).
  *
  * H hides TopBar, SignalLine, Dock, MapTools and ChatDrawer together; ModeBanner, the side
@@ -56,6 +57,8 @@ export function GameScreenV2() {
   const closeModal = useUiStore((s) => s.closeModal);
   const hudVisible = useUiStore((s) => s.hudVisible);
   const chatVisible = useChatStore((s) => s.chatVisible);
+  // The side panel is up (connect mode hides it): it covers the version badge's corner.
+  const panelOpen = useUiStore((s) => s.stack.length > 0 && !s.connectMode.active);
   const { isDesktop } = useResponsive();
 
   useChangelogCheck();
@@ -148,8 +151,12 @@ export function GameScreenV2() {
       {/* Server Switch Overlay — z-450, between modals and command palette */}
       <ServerSwitchOverlay />
 
-      {/* Version badge — bottom-right, desktop only */}
-      <VersionBadge />
+      {/* Version badge — desktop only. v2 lifts it one dock row up at the right edge, clear
+          of the dock at 1024 px, on a glass backdrop so it reads over the map; hidden while the
+          side panel covers that corner */}
+      <div className={`${styles.versionSlot} ${panelOpen ? styles.versionSlotUnderPanel : ''}`}>
+        <VersionBadge />
+      </div>
 
       {/* Mobile shell — only renders below 1024 px */}
       <MobileShell />

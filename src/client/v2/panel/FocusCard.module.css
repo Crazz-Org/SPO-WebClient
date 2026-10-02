@@ -1,13 +1,13 @@
-/* FocusCard — UI v2 compact card above the focused building (replaces StatusOverlay).
- * Anchored on the building every frame (left/top inline), so it is centred with a transform
- * like the classic popover; it is not a fixed HUD band. z-index 250: above the map, under
- * the overlay panels — the classic popover's layer. */
+/* FocusCard — UI v2 compact card by the focused building (replaces StatusOverlay).
+ * Placed every frame (left/top inline = the card's top-left corner, from placeFocusCard in
+ * focus-card-model.ts): above the building, or below it when the top deck leaves no room,
+ * always inside the viewport. Not a fixed HUD band. z-index 250: above the map, under the
+ * overlay panels — the classic popover's layer. */
 
 .card {
   position: fixed;
   z-index: calc(var(--z-overlay) - 50);
   pointer-events: auto;
-  transform: translateX(-50%) translateY(-100%);
   width: max-content;
   min-width: 208px;
   max-width: 280px;
@@ -29,19 +29,18 @@
 @keyframes focusCardIn {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(-100%) translateY(6px) scale(0.97);
+    transform: scale(0.97);
   }
   to {
     opacity: 1;
-    transform: translateX(-50%) translateY(-100%) scale(1);
+    transform: scale(1);
   }
 }
 
-/* Downward caret pointing at the building */
+/* Caret pointing at the building — down by default (card above); its left is set inline */
 .caret {
   position: absolute;
   bottom: -7px;
-  left: 50%;
   width: 12px;
   height: 12px;
   margin-left: -6px;
@@ -49,6 +48,13 @@
   border-right: 1px solid var(--surface-border-active);
   border-bottom: 1px solid var(--surface-border-active);
   transform: rotate(45deg);
+}
+
+/* Card below the building: the caret sits on the top edge and points up */
+.caretBelow {
+  top: -7px;
+  bottom: auto;
+  transform: rotate(225deg);
 }
 
 /* ---- identity ---- */

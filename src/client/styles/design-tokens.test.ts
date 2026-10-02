@@ -1121,7 +1121,9 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/hud/VersionBadge.module.css',
       selector: '.badge',
       mounted: true,
-      ui: 'both',
+      // Both interfaces mount the component, but only v1 at this geometry: GameScreenV2 wraps
+      // it in a slot that places it itself (the VersionBadgeV2 row, guarded below).
+      ui: 'v1',
       band: (vp, d) => {
         const right = d.num('right');
         const h = 2 * d.num('font-size') * d.num('line-height'); // two lines
@@ -1252,6 +1254,24 @@ describe('HUD band table (issue 931)', () => {
         const top = d.len((d.decls.get('top') ?? '').replace(/%/g, 'vh'));
         const right = d.num('right');
         return { x0: vp.w - right - d.num('width'), x1: vp.w - right, y0: top, y1: top + d.num('height') };
+      },
+    },
+    {
+      name: 'VersionBadgeV2',
+      css: 'v2/GameScreenV2.module.css',
+      selector: '.versionSlot',
+      mounted: true,
+      ui: 'v2',
+      // Hidden (display: none) while the side panel covers its corner.
+      shifted: '.versionSlotUnderPanel',
+      band: (vp, d) => {
+        const right = d.num('right');
+        const badge = d.other('.versionSlot > div');
+        const padY = d.len((badge.get('padding') ?? '').split(/\s+/)[0] ?? '');
+        const border = d.len((badge.get('border') ?? '').split(/\s+/)[0] ?? '');
+        // Stated max band: the slot's max-width, two lines of text, the backdrop's padding and border.
+        const h = 2 * d.num('font-size') * d.num('line-height') + 2 * padY + 2 * border;
+        return { x0: vp.w - right - d.num('max-width'), x1: vp.w - right, ...fromBottom(vp, d.num('bottom'), h) };
       },
     },
   ];
@@ -1468,9 +1488,9 @@ describe('HUD band table (issue 931)', () => {
   const DESKTOP = VIEWPORTS.filter((vp) => vp.w >= 1024);
   const MOBILE = VIEWPORTS.filter((vp) => vp.w < 1024);
 
-  it('names the six v2 HUD elements, each fixed and hidden below 1024 px', () => {
+  it('names the seven v2 HUD elements, each fixed and hidden below 1024 px', () => {
     expect(V2_BANDS.map((r) => r.name).sort()).toEqual(
-      ['TopBar', 'SignalLine', 'ModeBanner', 'Dock', 'ChatDrawer', 'MapTools'].sort()
+      ['TopBar', 'SignalLine', 'ModeBanner', 'Dock', 'ChatDrawer', 'MapTools', 'VersionBadgeV2'].sort()
     );
     for (const row of V2_BANDS) {
       expect({ row: row.name, ui: row.ui }).toEqual({ row: row.name, ui: 'v2' });
@@ -1503,6 +1523,20 @@ describe('HUD band table (issue 931)', () => {
     expect(shell).toMatch(/\{!isDesktop && <ContextStatusStrip \/>\}/);
     // and the TopBar carries the chase control the badge would have shown
     expect(read('v2/topbar/TopBar.tsx')).toMatch(/client\.onStopChase\(\)/);
+    // VersionBadge is a 'v1' row: in v2 it is only ever inside the slot the VersionBadgeV2 row reads
+    expect(shell).toMatch(/<div className=\{`\$\{styles\.versionSlot\} \$\{panelOpen \? styles\.versionSlotUnderPanel : ''\}`\}>\s*<VersionBadge \/>\s*<\/div>/);
+    expect((shell.match(/<VersionBadge \/>/g) ?? []).length).toBe(1);
+    // the badge inside drops its own fixed position, so the slot's geometry is the badge's
+    expect(declsAt(cssOf('v2/GameScreenV2.module.css'), '.versionSlot > div', null).get('position')).toBe('static');
+  });
+
+  it('the FocusCard keeps below the top deck: TOP_DECK_BOTTOM is the signal line\'s bottom edge', () => {
+    const constant = read('v2/panel/focus-card-model.ts').match(/export const TOP_DECK_BOTTOM = (\d+);/);
+    expect(constant).not.toBeNull();
+    for (const vp of DESKTOP) {
+      expect({ vp: vp.label, px: evalLength('calc(var(--v2-signal-top) + var(--v2-signal-height))', vp, tokensAt(vp)) })
+        .toEqual({ vp: vp.label, px: Number(constant![1]) });
+    }
   });
 
   it('design-tokens-v2.css only adds --v2-* names, never redefines a classic token', () => {
@@ -1521,7 +1555,10 @@ describe('HUD band table (issue 931)', () => {
     const len = (prop: string): number => evalLength(panel.get(prop) ?? '', vp, tokens);
     const box: Box = { x0: vp.w - len('right') - len('width'), x1: vp.w - len('right'), y0: len('top'), y1: vp.h - len('bottom') };
     expect(box.x1 - box.x0).toBeGreaterThan(0);
-    const offenders = V2_BANDS.map((row) => ({ name: row.name, b: row.band(vp, ctxFor(row, vp, true)) }))
+    // A row whose shifted class hides it is not on screen while the panel is open.
+    const shown = V2_BANDS.filter((row) => ctxFor(row, vp, true).decls.get('display') !== 'none');
+    expect(shown.length).toBe(V2_BANDS.length - 1); // only VersionBadgeV2 hides
+    const offenders = shown.map((row) => ({ name: row.name, b: row.band(vp, ctxFor(row, vp, true)) }))
       .filter(({ b }) => strictlyOverlap(b, box))
       .map(({ name, b }) => `${vp.label} ${name} [${fmt(b.x0)}, ${fmt(b.x1)}] × SidePanel [${fmt(box.x0)}, ${fmt(box.x1)}]`);
     expect(offenders).toEqual([]);

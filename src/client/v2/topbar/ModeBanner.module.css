@@ -110,10 +110,12 @@
 .pos { color: var(--money-positive); }
 .neg { color: var(--money-negative); }
 
-/* The hint never truncates mid-word on one line: it wraps, two lines at most */
+/* The hint never truncates mid-word on one line: it wraps, two lines at most, balanced so a
+   wrap never strands one word on the second line */
 .hint {
   flex: 1 1 160px;
   min-width: 0;
+  text-wrap: balance;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;

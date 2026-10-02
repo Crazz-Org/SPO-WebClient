@@ -58,13 +58,31 @@ describe('FocusCard', () => {
     expect(screenFn).toHaveBeenCalledWith(100, 200, 2, 2);
   });
 
-  it('sits above the building, at the projected point minus the caret gap', async () => {
+  // jsdom lays nothing out (offset sizes are 0), so the card is placed with FALLBACK_CARD_SIZE
+  // (280 × 220) on jsdom's 1024 × 768 window; placeFocusCard's own tests cover the maths.
+  it('sits centred above the building, its bottom the caret gap over the texture top', async () => {
+    screenFn.mockImplementation(() => ({ x: 400, y: 400, textureHeight: 64 }));
     show();
     renderWithProviders(<FocusCard />);
     const card = await screen.findByTestId('status-overlay');
-    expect(card.style.left).toBe('400px');
-    expect(card.style.top).toBe('292px');
+    expect(card.style.left).toBe(`${400 - 140}px`);
+    expect(card.style.top).toBe(`${400 - 8 - 220}px`);
+    expect(card.getAttribute('data-side')).toBe('above');
     expect(card.getAttribute('aria-label')).toBe('Drug Store summary');
+  });
+
+  it('flips below a building near the top of the view, clamped inside the viewport', async () => {
+    screenFn.mockImplementation(() => ({ x: 1010, y: 60, textureHeight: 64 }));
+    show();
+    renderWithProviders(<FocusCard />);
+    const card = await screen.findByTestId('status-overlay');
+    expect(card.getAttribute('data-side')).toBe('below');
+    expect(card.style.top).toBe(`${60 + 64 + 8}px`);
+    expect(card.style.left).toBe(`${1024 - 8 - 280}px`);
+    const caret = card.lastElementChild as HTMLElement;
+    expect(caret.getAttribute('aria-hidden')).toBe('true');
+    expect(caret.className).toContain('caretBelow');
+    expect(caret.style.left).toBe(`${280 - 16}px`);
   });
 
   it('states identity, revenue, diagnosis, two figures, top sales and what was left out', async () => {
@@ -146,9 +164,9 @@ describe('FocusCard', () => {
     show();
     const { unmount } = renderWithProviders(<FocusCard />);
     const card = await screen.findByTestId('status-overlay');
-    screenFn.mockImplementation(() => ({ x: 500, y: 100, textureHeight: 64 }));
+    screenFn.mockImplementation(() => ({ x: 500, y: 400, textureHeight: 64 }));
     await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
-    expect(card.style.left).toBe('500px');
+    expect(card.style.left).toBe(`${500 - 140}px`);
     unmount();
     expect(cancel).toHaveBeenCalled();
   });

@@ -38,7 +38,7 @@
 
   /* Chat drawer — above the dock */
   --v2-chat-bottom: calc(var(--v2-dock-bottom) + var(--v2-dock-height) + var(--space-2));
-  --v2-chat-width: 440px;
+  --v2-chat-width: 480px; /* messages + ChatStrip's 130 px online-users sidebar */
   --v2-chat-height: 300px;
 
   /* Map tools — right edge, vertically centred */

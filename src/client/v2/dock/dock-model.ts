@@ -18,6 +18,8 @@ export type DockActionId = 'build' | 'map' | 'empire' | 'politics' | 'mail' | 'c
 export interface DockAction {
   id: DockActionId;
   label: string;
+  /** Shorter label for the compact dock (side panel open on a narrow screen); absent = `label` fits. */
+  shortLabel?: string;
   /** The panel this action opens — checked against the visitor-gating list. */
   panel?: SurfaceKind;
   /** Keyboard hint (the shortcut itself is bound in useKeyboardShortcuts). */
@@ -49,7 +51,7 @@ export function dockActions(s: DockState): DockAction[] {
     { id: 'build', label: 'Build', panel: 'build', kbd: 'B', active: s.topKind === 'build' || s.isPlacing, badge: 0 },
     { id: 'map', label: 'Map', panel: 'map', kbd: 'M', active: s.topKind === 'map', badge: 0 },
     { id: 'empire', label: 'Empire', panel: 'empire', kbd: 'E', active: s.leftPanel === 'empire', badge: 0 },
-    { id: 'politics', label: 'Government', panel: 'politics', kbd: 'P', active: s.rightPanel === 'politics', badge: 0 },
+    { id: 'politics', label: 'Government', shortLabel: 'Gov.', panel: 'politics', kbd: 'P', active: s.rightPanel === 'politics', badge: 0 },
     { id: 'mail', label: 'Mail', panel: 'mail', kbd: 'L', active: s.rightPanel === 'mail', badge: Math.max(0, s.unreadMail) },
     { id: 'chat', label: 'Chat', active: s.chatVisible, badge: s.chatVisible ? 0 : Math.max(0, s.unreadChat) },
     { id: 'more', label: 'More', active: s.moreOpen || s.isRoadBuild || s.isRoadDemolish || s.isZone, badge: 0 },

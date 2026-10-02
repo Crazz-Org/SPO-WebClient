@@ -158,7 +158,7 @@ describe('InspectorHero — civic building', () => {
   beforeEach(() => {
     resetStores();
     useBuildingStore.setState({ isOwner: true, inFlightActions: new Set() });
-    usePoliticsStore.setState({ data: { mayorName: 'SPO_test3' } as never });
+    usePoliticsStore.setState({ data: { mayorName: 'SPO_test3', townName: 'Helartia', isCapitol: false, hasRuler: true } as never });
   });
 
   it('names the mayor, offers write-to-mayor, refresh and map, and no figures or owner tools', () => {
@@ -177,6 +177,13 @@ describe('InspectorHero — civic building', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(s.onRefreshBuilding).toHaveBeenCalledWith(150, 300, { userInitiated: true });
+  });
+
+  it('never prints the town as the mayor: no known ruler, no line', () => {
+    usePoliticsStore.setState({ data: null });
+    renderWithProviders(<InspectorHero details={{ ...townHall, ownerName: 'Helartia' }} focus={focus} isCivic />);
+    expect(screen.queryByText(/Mayor:/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Write to Mayor' })).toBeTruthy();
   });
 
   it('offers no mayor mail on the Capitol', () => {

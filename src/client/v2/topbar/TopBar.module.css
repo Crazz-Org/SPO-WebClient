@@ -310,10 +310,16 @@
   color: var(--text-primary);
 }
 
-/* Narrow desktop: the trend line goes and the lamps keep only their icon — their words stay
-   in the accessible name and the tooltip. */
+/* Narrow desktop: the lower-priority segments give way so the identity (name + company)
+   stays readable — the trend line and the "updated Xs ago" note go, the gaps tighten, and the
+   lamps keep only their icon (their words stay in the accessible name and the tooltip). */
 @media (max-width: 1279px) {
-  .sparkline {
+  .bar {
+    gap: var(--space-2);
+  }
+
+  .sparkline,
+  .freshness {
     display: none;
   }
 
@@ -327,7 +333,7 @@
   }
 
   .who {
-    max-width: 160px;
+    max-width: 220px;
   }
 }
 

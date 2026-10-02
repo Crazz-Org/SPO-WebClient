@@ -9,8 +9,16 @@
  * Feature parity with v1's BuildingSurface + BuildingInspector + BuildingSheetActions. The
  * read pattern is v1's exactly: the same 30 s auto-refresh effect (paused while the tab is
  * hidden), and the same lazy section read through `resolveSectionFetch` on the raw
- * `currentTab`. The synthetic Overview tab is stored as `''` — the state v1 called "menu
+ * open tab. The synthetic Overview tab is stored as `''` — the state v1 called "menu
  * showing" — so it matches no server tab and asks the server for nothing.
+ *
+ * Two departures from v1, both about switching facilities:
+ *  - the details in hand are drawn only when they describe the focused facility; until the
+ *    new one's arrive the inspector shows the loading state, never the previous facility;
+ *  - the open tab is the one that exists on THIS facility. The store remembers the section
+ *    across facilities on purpose (`rememberedSection`) and restores it when the new
+ *    facility has it; when it does not, a stale `currentTab` (an HQ's "upgrade" on a Town
+ *    Hall) falls back to Overview — for the strip AND for the lazy read.
  */
 
 import { useEffect, useMemo, useRef } from 'react';
@@ -38,6 +46,11 @@ import {
   activeCivicTabId,
   activeStandardTabId,
   buildStandardTabs,
+  detailsMatchFocus,
+  inspectorDiagnosis,
+  sectionBodyState,
+  sectionLabel,
+  sectionReadTab,
   storeValueForTab,
   type SectionTabItem,
 } from './inspector-model';
@@ -60,15 +73,18 @@ export function InspectorV2() {
   const client = useClient();
 
   const isCivic = details ? isCivicBuilding(details.visualClass) : false;
+  const detailsCurrent = detailsMatchFocus(details, focusedBuilding);
 
   const tabs = useMemo<SectionTabItem[]>(() => {
     if (!details) return [];
     return isCivic
-      ? buildCivicTabs(details.tabs).map((t) => ({ id: t.id, label: t.label }))
+      ? buildCivicTabs(details.tabs).map((t) => ({ id: t.id, label: sectionLabel(t.label) }))
       : buildStandardTabs(details.tabs);
   }, [details, isCivic]);
 
   const activeServerTab = details && !isCivic ? activeStandardTabId(details.tabs, currentTab) : null;
+  const activeCivicTab = isCivic ? activeCivicTabId(tabs, currentTab) : undefined;
+  const readTab = sectionReadTab(isCivic, activeServerTab, activeCivicTab);
   const activeGroup = details && activeServerTab ? details.groups[activeServerTab] : undefined;
   const properties = useMemo(
     () => (activeGroup ? activeGroup.filter((p) => p.name !== 'Name') : []),
@@ -103,22 +119,27 @@ export function InspectorV2() {
     };
   }, [detailX, detailY, detailClass, detailTabs, currentTab, isConnected, client]);
 
-  // Lazy read of the open section — v1's effect, unchanged.
+  // Lazy read of the open section — v1's effect, asked about the tab actually open on this
+  // facility (see `sectionReadTab`), and only once the details are this facility's.
   useEffect(() => {
-    if (!details || !isConnected) return;
-    const fetch = resolveSectionFetch(details, currentTab, isCivic, tabLoadingStates);
+    if (!details || !detailsCurrent || !isConnected) return;
+    const fetch = resolveSectionFetch(details, readTab, isCivic, tabLoadingStates);
     if (fetch) {
       client.onRequestTabData(details.x, details.y, fetch.tabId, details.visualClass, fetch.groupIds);
     }
-  }, [currentTab, details, isCivic, isConnected, tabLoadingStates, client]);
+  }, [readTab, details, detailsCurrent, isCivic, isConnected, tabLoadingStates, client]);
 
-  if (isLoading || (!details && !detailsError && focusedBuilding)) {
+  if (isLoading || (!detailsCurrent && !detailsError && focusedBuilding)) {
+    // While loading with details that match the focus, the focus itself is the outgoing
+    // facility (a new one is being read and has not been pushed yet): name nothing rather
+    // than the facility the player just left.
+    const named = focusedBuilding && !detailsCurrent ? focusedBuilding : null;
     return (
       <div className={styles.inspector} aria-busy="true">
         {focusedBuilding && (
           <header className={styles.placeholderHero}>
-            <h2 className={styles.placeholderName} tabIndex={-1}>{focusedBuilding.buildingName}</h2>
-            {focusedBuilding.ownerName && <span className={styles.placeholderOwner}>{focusedBuilding.ownerName}</span>}
+            <h2 className={styles.placeholderName} tabIndex={-1}>{named ? named.buildingName : 'Loading facility…'}</h2>
+            {named?.ownerName && <span className={styles.placeholderOwner}>{named.ownerName}</span>}
           </header>
         )}
         <div className={styles.stateBox}>
@@ -148,7 +169,7 @@ export function InspectorV2() {
     );
   }
 
-  if (!details || !focusedBuilding) {
+  if (!details || !focusedBuilding || !detailsCurrent) {
     return (
       <div className={styles.inspector}>
         <p className={styles.empty}>Click a building on the map to inspect it</p>
@@ -156,7 +177,7 @@ export function InspectorV2() {
     );
   }
 
-  const activeId = isCivic ? activeCivicTabId(tabs, currentTab) : (activeServerTab ?? OVERVIEW_TAB_ID);
+  const activeId = isCivic ? activeCivicTab : (activeServerTab ?? OVERVIEW_TAB_ID);
   const refresh = () => client.onRefreshBuilding(details.x, details.y, { userInitiated: true });
 
   return (
@@ -166,7 +187,7 @@ export function InspectorV2() {
       {!isCivic && (
         <div className={styles.diagnosis}>
           <DiagnosisBanner
-            diagnosis={parseFacilityDiagnosis(focusedBuilding.detailsText, focusedBuilding.hintsText)}
+            diagnosis={inspectorDiagnosis(parseFacilityDiagnosis(focusedBuilding.detailsText, focusedBuilding.hintsText))}
             onAction={(action) => {
               const tab = tabForAction(action, details.tabs);
               if (tab) setCurrentTab(tab);
@@ -191,12 +212,14 @@ export function InspectorV2() {
         className={styles.body}
       >
         {isCivic ? (
-          <CivicBody
-            activeTab={activeId ?? 'overview'}
-            details={details}
-            canGovern={details.canGovern ?? false}
-            demographics={focusedBuilding.demographics ?? null}
-          />
+          <div className={styles.properties}>
+            <CivicBody
+              activeTab={activeId ?? 'overview'}
+              details={details}
+              canGovern={details.canGovern ?? false}
+              demographics={focusedBuilding.demographics ?? null}
+            />
+          </div>
         ) : activeServerTab === null ? (
           <OverviewSection
             focus={focusedBuilding}
@@ -205,7 +228,12 @@ export function InspectorV2() {
           />
         ) : (
           <SectionBody
-            state={sectionDisplayState(details, activeServerTab, tabLoadingStates)}
+            state={sectionBodyState({
+              base: sectionDisplayState(details, activeServerTab, tabLoadingStates),
+              loadState: tabLoadingStates[activeServerTab],
+              readPending: isConnected && resolveSectionFetch(details, readTab, false, tabLoadingStates) !== null,
+              hasRows: properties.length > 0,
+            })}
             properties={properties}
             buildingX={details.x}
             buildingY={details.y}
@@ -248,5 +276,9 @@ function SectionBody({
       </div>
     );
   }
-  return <PropertyGroup properties={properties} buildingX={buildingX} buildingY={buildingY} />;
+  return (
+    <div className={styles.properties}>
+      <PropertyGroup properties={properties} buildingX={buildingX} buildingY={buildingY} />
+    </div>
+  );
 }

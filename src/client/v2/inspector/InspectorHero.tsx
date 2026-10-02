@@ -2,7 +2,7 @@
  * InspectorHero — the facility's identity and every action on it, in one block.
  *
  *   [icon] NAME  [Lvl n]
- *   Society, Owner · x, y        (civic: "Mayor: …" / "President: …")
+ *   Society, Owner · x, y        (civic: "Mayor: …" / "President: …", when the name is known)
  *   [Revenue] [ROI] [Construction | Workers]
  *   View on map · Refresh · Write to … · Add to Empire · Rename   [save state]
  *
@@ -22,13 +22,13 @@ import { useClient } from '../../context';
 import { Button, IconButton } from '../../components/common';
 import { SaveIndicator } from '../../components/building/SaveIndicator';
 import { parseRichDetails } from '../../components/building/RichDetails';
-import { getCivicSubtitle } from '../../components/building/civic-subtitle';
 import { isCapitolBuilding } from '../../components/politics/CivicTabConfig';
 import { mayorAddress, tycoonAddress, writeTo } from '../../components/mail/write-to';
 import { RENAME_PENDING_KEY } from '../../handlers/building-action-handler';
 import {
   attributionLine,
   buildHeroKpis,
+  civicRulerLine,
   findGroupValue,
   heroActionFlags,
   isFavorited,
@@ -77,7 +77,7 @@ export function InspectorHero({ details, focus, isCivic }: InspectorHeroProps) {
     townName,
   });
   const level = focus.detailsText ? parseRichDetails(focus.detailsText)?.upgradeLevel : undefined;
-  const subtitle = isCivic ? getCivicSubtitle(details, politicsData) : attributionLine(details.ownerName, ownerTycoon);
+  const subtitle = isCivic ? civicRulerLine(details, politicsData) : attributionLine(details.ownerName, ownerTycoon);
   const kpis = isCivic ? [] : buildHeroKpis(focus, findGroupValue(details, 'ROI'));
   const favorited = isFavorited(favorites, details.x, details.y);
   const { writeOwner, writeMayorTown, ownerTools } = flags;

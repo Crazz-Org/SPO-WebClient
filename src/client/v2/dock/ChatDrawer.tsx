@@ -1,9 +1,11 @@
 /**
  * ChatDrawer — the v2 chat box above the Dock (replaces v1's desktop ChatStrip).
  *
- * A fixed 440 × 300 frame holding the same ChatStrip the mobile Chat tab uses, in its
+ * A fixed 480 × 300 frame holding the same ChatStrip the mobile Chat tab uses, in its
  * `embedded` mode (always expanded, fills its parent; channel picker, history, users and the
- * input are all ChatStrip's own). GameScreenV2 mounts it only while `chatVisible` — the Dock's
+ * input are all ChatStrip's own). Embedded mode hides the online-users sidebar for the narrow
+ * mobile tab; the drawer's CSS shows it again, so the drawer lists who is online as v1's
+ * desktop strip does. GameScreenV2 mounts it only while `chatVisible` — the Dock's
  * Chat button and the minimise button here both call `toggleChatVisible`, the v1 chat toggle.
  */
 

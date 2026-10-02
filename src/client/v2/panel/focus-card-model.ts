@@ -169,3 +169,76 @@ export function buildFocusCard(b: BuildingFocusInfo): FocusCardModel {
     salesText: lines.length === 0 && b.salesInfo ? b.salesInfo : null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Placement — where the card goes on screen, so it never leaves the visible map
+// ---------------------------------------------------------------------------
+
+/** Gap between the caret tip and the building texture (pixels). */
+export const CARET_GAP = 8;
+/** The card never comes closer than this to the viewport edge or the top deck (pixels). */
+export const EDGE_MARGIN = 8;
+/**
+ * Bottom edge of the v2 top deck: TopBar + SignalLine (8 + 44 + 4 + 24 px, design-tokens-v2.css
+ * — design-tokens.test.ts asserts the two stay equal). The card stays below it.
+ */
+export const TOP_DECK_BOTTOM = 80;
+/** The caret stays this far from the card's rounded corners (pixels). */
+export const CARET_INSET = 16;
+/** Size used before the card has been laid out once (its CSS max-width, a typical height). */
+export const FALLBACK_CARD_SIZE = { width: 280, height: 220 } as const;
+
+export interface FocusCardPlacementInput {
+  /** Horizontal centre of the building on screen. */
+  anchorX: number;
+  /** Top of the building texture on screen. */
+  textureTop: number;
+  textureHeight: number;
+  cardWidth: number;
+  cardHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  /** Everything above this y belongs to the top deck. */
+  topInset: number;
+}
+
+export interface FocusCardPlacement {
+  left: number;
+  top: number;
+  /** Which side of the building the card sits on; the caret points at it. */
+  side: 'above' | 'below';
+  /** Caret centre, from the card's left edge. */
+  caretX: number;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return hi < lo ? lo : Math.min(hi, Math.max(lo, v));
+}
+
+/**
+ * Card placement: above the building when it fits under the top deck, else below it when it
+ * fits above the bottom edge, else on the roomier side, clamped into the visible area.
+ * Horizontally centred on the building, clamped within the viewport; the caret keeps pointing
+ * at the building as long as the building is on the card's span.
+ */
+export function placeFocusCard(p: FocusCardPlacementInput): FocusCardPlacement {
+  const minTop = p.topInset + EDGE_MARGIN;
+  const maxTop = p.viewportHeight - EDGE_MARGIN - p.cardHeight;
+  const aboveTop = p.textureTop - CARET_GAP - p.cardHeight;
+  const belowTop = p.textureTop + p.textureHeight + CARET_GAP;
+
+  let side: FocusCardPlacement['side'];
+  if (aboveTop >= minTop) side = 'above';
+  else if (belowTop <= maxTop) side = 'below';
+  else side = p.textureTop - minTop >= p.viewportHeight - (p.textureTop + p.textureHeight) ? 'above' : 'below';
+
+  const top = clamp(side === 'above' ? aboveTop : belowTop, minTop, maxTop);
+  const left = clamp(p.anchorX - p.cardWidth / 2, EDGE_MARGIN, p.viewportWidth - EDGE_MARGIN - p.cardWidth);
+  const caretX = clamp(p.anchorX - left, CARET_INSET, p.cardWidth - CARET_INSET);
+  return { left, top, side, caretX };
+}
+
+/** Two placements are the same on screen (lets the rAF loop skip a re-render). */
+export function samePlacement(a: FocusCardPlacement | null, b: FocusCardPlacement): boolean {
+  return a !== null && a.left === b.left && a.top === b.top && a.side === b.side && a.caretX === b.caretX;
+}

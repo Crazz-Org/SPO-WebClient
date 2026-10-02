@@ -1,8 +1,10 @@
 /**
  * FocusCard — UI v2: the compact card over the focused building (replaces StatusOverlay).
  *
- * Follows the building on screen exactly as the classic popover does (worldToScreenCentered,
- * one rAF loop, cancelled on unmount or when the focus goes) and opens the inspector with the
+ * Follows the building on screen as the classic popover does (worldToScreenCentered, one rAF
+ * loop, cancelled on unmount or when the focus goes), but never leaves the visible map: it sits
+ * above the building, flips below it when the top deck leaves no room, and is clamped within
+ * the viewport (placeFocusCard). It opens the inspector with the
  * same `onInspectFocusedBuilding` call. At most 280 px wide: identity, revenue, the diagnosis
  * sentence, two headline figures and the top sales lines — the inspector carries the rest.
  * The data-testids "status-overlay" and "inspect-button" are kept for the E2E selectors.
@@ -14,11 +16,17 @@ import { useBuildingStore } from '../../store/building-store';
 import { worldToScreenCentered } from '../../bridge/client-bridge';
 import { useClient } from '../../context/ClientContext';
 import { DiagnosisBanner } from '../../components/building/DiagnosisBanner';
-import { buildFocusCard, salesTone, type FactTone } from './focus-card-model';
+import {
+  buildFocusCard,
+  salesTone,
+  placeFocusCard,
+  samePlacement,
+  FALLBACK_CARD_SIZE,
+  TOP_DECK_BOTTOM,
+  type FactTone,
+  type FocusCardPlacement,
+} from './focus-card-model';
 import styles from './FocusCard.module.css';
-
-/** Gap between the caret tip and the top of the building texture (pixels). */
-const CARET_GAP = 8;
 
 const TONE_CLASS: Record<FactTone, string> = {
   positive: styles.tonePositive,
@@ -41,19 +49,33 @@ export function FocusCard() {
   const building = useBuildingStore((s) => s.focusedBuilding);
   const isOverlay = useBuildingStore((s) => s.isOverlayMode);
   const client = useClient();
-  const [screenPos, setScreenPos] = useState<{ x: number; y: number } | null>(null);
+  const [placement, setPlacement] = useState<FocusCardPlacement | null>(null);
   const rafRef = useRef(0);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!building || !isOverlay) {
-      setScreenPos(null);
+      setPlacement(null);
       return;
     }
     const update = () => {
       const pos = worldToScreenCentered(building.x, building.y, building.xsize ?? 1, building.ysize ?? 1);
       if (pos) {
-        // Only re-render when the building actually moved on screen.
-        setScreenPos((prev) => (prev && prev.x === pos.x && prev.y === pos.y ? prev : { x: pos.x, y: pos.y }));
+        // offsetWidth/Height: the laid-out size, unaffected by the entry animation's scale.
+        // Layout is clean at the start of a frame, so this read costs no extra reflow.
+        const el = cardRef.current;
+        const next = placeFocusCard({
+          anchorX: pos.x,
+          textureTop: pos.y,
+          textureHeight: pos.textureHeight,
+          cardWidth: el?.offsetWidth || FALLBACK_CARD_SIZE.width,
+          cardHeight: el?.offsetHeight || FALLBACK_CARD_SIZE.height,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          topInset: TOP_DECK_BOTTOM,
+        });
+        // Only re-render when the card actually moves on screen.
+        setPlacement((prev) => (samePlacement(prev, next) ? prev : next));
       }
       rafRef.current = requestAnimationFrame(update);
     };
@@ -63,12 +85,14 @@ export function FocusCard() {
 
   const model = useMemo(() => (building ? buildFocusCard(building) : null), [building]);
 
-  if (!building || !isOverlay || !screenPos || !model) return null;
+  if (!building || !isOverlay || !placement || !model) return null;
 
   return (
     <div
+      ref={cardRef}
       className={styles.card}
-      style={{ left: screenPos.x, top: screenPos.y - CARET_GAP }}
+      style={{ left: placement.left, top: placement.top }}
+      data-side={placement.side}
       data-testid="status-overlay"
       role="group"
       aria-label={`${model.name} summary`}
@@ -148,7 +172,11 @@ export function FocusCard() {
         <ChevronRight size={14} aria-hidden="true" className={styles.actionChevron} />
       </button>
 
-      <span className={styles.caret} aria-hidden="true" />
+      <span
+        className={`${styles.caret} ${placement.side === 'below' ? styles.caretBelow : ''}`}
+        style={{ left: placement.caretX }}
+        aria-hidden="true"
+      />
     </div>
   );
 }

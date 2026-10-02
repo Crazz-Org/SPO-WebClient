@@ -3,6 +3,8 @@
  * (Hide interface, the visitor reading).
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { createSpiedCallbacks, renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
 import { useChatStore } from '../../store/chat-store';
@@ -91,10 +93,18 @@ describe('TopBar', () => {
     expect(screen.getByText('#12')).toBeTruthy();
     const profile = screen.getByRole('button', { name: 'Open profile' });
     expect(within(profile).getByText('SPO_test3')).toBeTruthy();
-    expect(within(profile).getByText('SPO_test3 - Green')).toBeTruthy();
+    expect(within(profile).getByText('SPO_test3 - Green').getAttribute('title')).toBe('SPO_test3 - Green');
     expect(screen.getByText('Mayor')).toBeTruthy();
     expect(screen.getByTitle('Facilities: 14 of 50').textContent).toBe('14/50');
     expect(screen.queryByText('Debt')).toBeNull();
+  });
+
+  it('below 1280 px the low-priority segments give way so the name and company stay readable (CSS)', () => {
+    const css = readFileSync(join(__dirname, 'TopBar.module.css'), 'utf8');
+    const narrow = css.match(/@media \(max-width: 1279px\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(narrow).toMatch(/\.bar \{\s*gap: var\(--space-2\);/);
+    expect(narrow).toMatch(/\.sparkline,\s*\.freshness \{\s*display: none;/);
+    expect(narrow).toMatch(/\.who \{\s*max-width: 220px;/);
   });
 
   it('falls back to "Unknown", colours negative and zero income, and omits company and role when absent', () => {

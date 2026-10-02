@@ -4,6 +4,8 @@
  * and the shift beside an open surface.
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, fireEvent, screen } from '@testing-library/react';
 import { renderWithProviders, createSpiedCallbacks } from '../../__tests__/setup/render-helpers';
 import { useUiStore } from '../../store/ui-store';
@@ -114,5 +116,10 @@ describe('ModeBanner', () => {
       useUiStore.getState().toggleLeftPanel('empire');
     });
     expect(screen.getByTestId('v2-mode-banner').className).toContain('shifted');
+  });
+
+  it('balances the wrapped hint so no word is stranded alone on line two (CSS)', () => {
+    const css = readFileSync(join(__dirname, 'ModeBanner.module.css'), 'utf8');
+    expect(css).toMatch(/\.hint \{[^}]*text-wrap: balance;[^}]*line-clamp: 2;/);
   });
 });
