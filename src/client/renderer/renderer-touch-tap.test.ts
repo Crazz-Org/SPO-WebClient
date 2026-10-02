@@ -41,7 +41,7 @@ function makeRenderer(opts: {
     onConnectModeClick: jest.fn(),
     onBuildingClick: jest.fn(),
     onEmptyMapClick: jest.fn(),
-    getBuildingAt: jest.fn(() => opts.building),
+    getBuildingAt: jest.fn((_mapJ: number, _mapI: number) => opts.building),
   };
 }
 
