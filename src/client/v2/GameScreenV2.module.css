@@ -1,0 +1,21 @@
+/* GameScreenV2 — the v2 overlay shell; same contract as layouts/GameScreen.module.css */
+
+.screen {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+}
+
+/* Re-enable pointer events for every slot (top deck, dock, side panel, dialogs…) */
+.screen > * {
+  pointer-events: auto;
+}
+
+/* On mobile, leave room for BottomNav — as the classic shell does */
+@media (max-width: 1023px) {
+  .screen {
+    padding-bottom: 56px; /* BottomNav height */
+  }
+}

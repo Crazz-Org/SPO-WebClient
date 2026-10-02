@@ -1,0 +1,55 @@
+/*
+ * Design tokens — UI v2 ("Command Deck", src/client/v2/).
+ *
+ * Layout tokens only, every one prefixed --v2-. Colours, type, spacing and z-index come from
+ * design-tokens.css unchanged; nothing here redefines a v1 token, so the classic interface
+ * renders exactly as before whichever interface is mounted.
+ *
+ * Imported once, from main.tsx, right after design-tokens.css. It lives under styles/ because
+ * design-tokens.test.ts only counts custom properties declared there as defined.
+ *
+ * Every v2 fixed element: position: fixed, explicit top|bottom and left|right, a height (or
+ * min-height for one-line elements) through these tokens or px, no transform centring, and
+ * display: none under 1024 px (MobileShell owns that range in both interfaces).
+ */
+
+:root {
+  /* Top deck — starts after the docked minimap (minimap-ui.ts, DESKTOP_PAD = 12 px each side) */
+  --v2-topbar-top: var(--space-2);
+  --v2-topbar-height: 44px;
+  --v2-topbar-left: calc(var(--minimap-size) + 24px);
+  --v2-topbar-right: var(--space-4);
+
+  /* Signal line — town sentence + newest world event, under the top bar */
+  --v2-signal-top: calc(var(--v2-topbar-top) + var(--v2-topbar-height) + var(--space-1));
+  --v2-signal-height: 24px;
+
+  /* Mode banner — placement / road / zones / connect, top-centre under the signal line */
+  --v2-mode-top: calc(var(--v2-signal-top) + var(--v2-signal-height) + var(--space-2));
+  --v2-mode-height: 40px;
+  --v2-mode-max-width: 720px;
+
+  /* Dock — bottom-left action row */
+  --v2-dock-bottom: var(--space-4);
+  --v2-dock-left: var(--space-4);
+  --v2-dock-height: 56px;
+  --v2-dock-max-width: 780px;
+
+  /* Chat drawer — above the dock */
+  --v2-chat-bottom: calc(var(--v2-dock-bottom) + var(--v2-dock-height) + var(--space-2));
+  --v2-chat-width: 440px;
+  --v2-chat-height: 300px;
+
+  /* Map tools — right edge, vertically centred */
+  --v2-tools-right: var(--space-3);
+  --v2-tools-width: 40px;
+  --v2-tools-height: 336px;
+
+  /* Side panel — docked right, under the top deck */
+  --v2-panel-top: var(--v2-signal-top);
+  --v2-panel-inset: var(--space-3);
+  --v2-panel-width: var(--panel-width-desktop);
+
+  /* How far right-anchored chrome moves left while the side panel is open */
+  --v2-shift-right: calc(var(--v2-panel-width) + var(--v2-panel-inset) + var(--space-3));
+}
