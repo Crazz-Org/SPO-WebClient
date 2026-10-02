@@ -42,7 +42,7 @@ the absence of an exception.
 L0  Unit + component          Jest node/jsdom, coverage ratchet             CI: every PR
 L1  Protocol conformance      Jest + rdo-mock + RdoStrictValidator          CI: every PR
 L2  LIVE WS drive  ← the gate headless `ws` client -> gateway -> planitia   PRE-PUSH: every code change
-L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / Crazz         every screen once, pixels only, + pre-release
+L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / SPO_test      every screen once, pixels only, + pre-release
 ```
 
 L2 replaces both the abandoned mock-E2E plan and most of the browser smoke. L3 survives only
@@ -110,9 +110,9 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 | `src/shared/types/message-types.ts`, `src/server/session/*-handler.ts` | L2 flows for the affected message types |
 | `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `permission-negative`, `town-min-wage`, `publicity-roundtrip`, `mayor-rating-roundtrip` |
 | `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip`, `ad-budget-roundtrip` |
-| `src/client/renderer/**`, `src/client/components/{mobile,hud,sheet,modals,map}/**`, `*.module.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
+| `src/client/renderer/**`; the component folders `mobile`, `hud`, `sheet`, `modals`, `map`, `search`, `chat`, `building`, `politics`, `mail`, `empire`, `login`, `common`, `command-palette`, `startup`, `tutorial` under `src/client/components/`; `src/client/report/*.tsx`; `src/client/App.tsx`, `main.tsx`, `client.ts`; `src/client/ui/**`, `src/client/hooks/**`; `src/client/store/ui-store.ts`; `*.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
-| `src/e2e/flows.ts`, `src/e2e/{fixtures,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
+| `src/e2e/flows.ts`, `src/e2e/{fixtures,research,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
 | `doc/**`, `*.md`, CI config, tooling | static only |
 
 The **login spine** (connect -> auth -> directory -> world login -> company select ->
@@ -121,9 +121,9 @@ regression detector and it is where session-lifecycle breakage surfaces first.
 
 Unmapped path -> the gate fails closed and asks for a routing entry. Silence is never a pass.
 
-Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`File.pas:Line`,
+Five exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`File.pas:Line`,
 `file.asp:Line` or `#<issue>`), where a flow or a handler departs from that table;
-`src/e2e/routing.test.ts` holds all three.
+`src/e2e/routing.test.ts` holds all five.
 
 - **`NIGHTLY_ONLY`** lists the flows no routing rule requires — a data-gated flow (a required
   `UNPROVEN` fails the gate), a reading that asserts nothing, or the fixture builder
@@ -138,15 +138,28 @@ Three exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`
   `gate-only, not driven`; the gate still runs them when their code changes.
 - **`FALLBACK_ONLY`** lists the handler files only a broad fallback rule routes, each `awaiting
   card #<n>` or `excluded: <reason>`. An area card adds its rule before the fallbacks and removes
-  its file from the set, so a new handler cannot land unrouted.
+  its file from the set, so a new handler cannot land unrouted. The handler set is
+  `src/server/session/*-handler.ts`, `src/server/ws-handlers/*-handlers.ts` and
+  `src/client/handlers/*-handler.ts`.
+- **`EXCLUDED`** lists the request types no gate-required flow sends (no flow yet, a
+  nightly-only sender, or a request the gateway answers alone); it excuses that request in every
+  handler file.
+- **`NOT_ROUTED`** maps a handler file to the requests a gate flow does send but that file's rule
+  leaves out (a rule pinned by an exact routing test).
+
+The handler ratchet (#1187) derives the `WsMessageType` requests each handler file serves or
+sends — server session handlers through `spo_session.ts` and the ws-handlers registry, ws-handlers
+through the registry, client handlers from their text — and the requests each flow sends, and
+requires that a flow the file's rule routes to sends each one, or that the request is listed in
+`EXCLUDED`, `NOT_ROUTED` or (the whole file) `FALLBACK_ONLY`.
 
 ### Changed and declared flows
 
 The routing table sends `src/e2e/` to no flow, so the gate adds two more sets to the routed
 one and drives **routed ∪ changed ∪ declared** (`scripts/verify-gate.js`, stage 3):
 
-- **Changed** — `src/e2e/bench/changed-flows.ts` reads the diff of the six flow sources
-  (`src/e2e/flows.ts`, `fixtures.ts`, `probe.ts`, `session.ts`, `ws-driver.ts`,
+- **Changed** — `src/e2e/bench/changed-flows.ts` reads the diff of the seven flow sources
+  (`src/e2e/flows.ts`, `fixtures.ts`, `research.ts`, `probe.ts`, `session.ts`, `ws-driver.ts`,
   `live-log.ts`). A hunk inside a `FLOWS` entry requires that flow — an edited body, an added
   flow, a renamed flow under its new name — even when it is `NIGHTLY_ONLY`. A hunk inside a
   shared helper requires every flow that reaches the helper, directly or through another
@@ -162,6 +175,37 @@ required flow that ends `UNPROVEN` fails (§7). `--flows=` still **replaces** th
 is refused (`BLOCKED`) unless it names every required flow — a gate cannot attest `PASS`
 having driven only the spine. No separate `test:live` run proves a card's flows: its own gate
 does.
+
+### Proof and regression flows — what a PR names
+
+A pull request that changes shipped code carries two lines in its body:
+
+```
+Proof flows: mail-roundtrip, new:mail-delete-refresh
+Regression flows: mail-drafts, mail-reply
+```
+
+- **Proof flows** — the flows whose assertions show the change working. A new feature is
+  proven by a live flow; when no flow drives it yet, the PR writes one and names it
+  `new:<flow>`.
+- **Regression flows** — the few existing flows that drive the features next to the change,
+  as the agents judge. Related flows, never a full nightly.
+- `none — <reason>` replaces the list on either line for a change nothing on the wire or the
+  screen can observe (docs, tests, build tooling).
+
+The lines are required when the diff changes a file under `src/client/`, `src/server/` or
+`src/shared/` — tests (`*.test.ts(x)`, `__tests__/`) and mocks (`__mocks__/`) aside. A PR
+that changes none of those needs neither line. `scripts/check-pr-rules.js`, inside the
+required `typecheck + tests` check, fails such a PR when a line is missing, when a named flow
+— proof or regression alike — is not in `FLOWS` (`src/e2e/flows.ts`) at the head, or when a
+`new:` flow is not added by the diff. The gate drives the named flows with
+`npm run gate -- --also-flows=a,b` (above).
+
+**The nightly is the global review.** It drives every flow over `main`
+(`doc/bench-worker.md` §8); a card's gate drives only what the card touches and names. When
+a full pass is wanted before the next scheduled one, the maintainer asks for it mid-day with
+`npm run bench:nightly-request -- --reason="…"` — refused from inside a Claude Code session
+(`doc/bench-worker.md` §5, exit 5).
 
 ---
 
@@ -382,6 +426,18 @@ capability — and then the gate demands the flow.
 failure, not an exclusion — and the `bench/gate` status shows the count as
 `— N unproven flow(s)`.
 
+### Parked flows — never built, by maintainer decision
+
+A flow no account can ever exercise is not kept failing: it is not written at all, and its
+handler stays in `FALLBACK_ONLY` (`src/e2e/routing.ts`). It comes back only when the reason
+below stops holding.
+
+| Flow | Why no live drive is possible | Covered by | Revisit when |
+|---|---|---|---|
+| `tutorial-read` (read the tutorial assignment, next/back) | No E2E account holds a tutorial, and none can be given one. The server builds a tutorial only when a tycoon is **created** on a world whose `Tutorial` setting is `enabled` (default `disabled`, `Kernel/Kernel.pas:10907-10908`), and skips it if the tycoon holds a role, has 10+ nobility points, or carries the `tutorial` cookie (`Kernel/Kernel.pas:12959`). It is deleted for good, cookie `tutorial=done`, once the tycoon's level tier passes 0 (`Kernel/Kernel.pas:12206-12214`). An account reset (`Kernel/World.pas:6203`, `:6368`) only rebuilds a tutorial that still exists (`Kernel/Kernel.pas:12924-12939`), and "Get New Assignment" only steps an existing one (`NewTycoon/Tasks/ModifyTask.asp:25-34`). SPO_test3 is Mayor and has none; the secondary accounts show none either. | the mock-server suite, `src/mock-server/scenarios/tutorial-scenario.ts` | a brand-new account is created on a world with `Tutorial` enabled |
+
+Not project-critical (maintainer, 2026-10-01 — [#1199](https://github.com/Crazz-Org/SPO-WebClient/issues/1199#issuecomment-5937034602)).
+
 ---
 
 ## 8. The failure loop
@@ -421,7 +477,7 @@ ahead of zero.
 | Account | Password | Holds | Used for |
 |---|---|---|---|
 | `SPO_test3` | `test3` | Mayor of **Helartia**, Minister of Agriculture, company *SPO_test3 - Green* | Primary. Governance reads and writes, roads, zones |
-| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. In `mayor-rating-roundtrip` it rates SPO_test3's term at Helartia `0`, then back to the flow's baseline `100` (maintainer, 2026-09-29): its opinion cannot be read back, so the first run leaves it at `100` for good — a test account's opinion of a test account. |
+| `SPO_test` | `test` | dedicated basic test account, no special buildings (maintainer, 2026-10-01) | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from SPO_test's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. In `mayor-rating-roundtrip` it rates SPO_test3's term at Helartia `0`, then back to the flow's baseline `100` (maintainer, 2026-09-29): its opinion cannot be read back, so the first run leaves it at `100` for good — a test account's opinion of a test account. |
 
 Both are **LOCKED** — never changed without explicit developer approval. Zone **Free Space**,
 world **planitia**.
@@ -430,15 +486,15 @@ Two accounts unlock four things that were structurally impossible:
 
 | Now testable | Why it matters |
 |---|---|
-| **Negative permission** — drive `Crazz` at the Town Hall, assert `canGovern=false` and that the control is *absent*, not merely disabled | Catches the `tycoonratings.asp:24-25` failure mode (guard commented out, result hardcoded `true`) in our own client |
+| **Negative permission** — drive `SPO_test` at the Town Hall, assert `canGovern=false` and that the control is *absent*, not merely disabled | Catches the `tycoonratings.asp:24-25` failure mode (guard commented out, result hardcoded `true`) in our own client |
 | **Mail send -> receive** | Genuinely end-to-end for the first time; send was previously untestable |
-| **Ratings** | `OB-30`: nobody can rate their own term. `Crazz` rating `SPO_test3` is a real path |
+| **Ratings** | `OB-30`: nobody can rate their own term. `SPO_test` rating `SPO_test3` is a real path |
 | **Roads / zones** | Mayor role removes these from the "structurally untestable" list |
 
 **Blast radius.** All mutations happen on `SPO_test3`'s own town (Helartia). The second
 account takes part through mail and one rating: `mail-roundtrip` sends it one message and deletes it
 in the same run, and the `zoning-alert-read` seed has it send SPO_test3 one look-alike
-`Zoning Alert!`, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run.
+`Zoning Alert!`, deleted from SPO_test3's Inbox and from SPO_test's `Sent` in the same run.
 `mail-send-from-draft` sends it one message, and in `mail-reply` it sends SPO_test3 one
 reply; each flow sweeps and deletes every copy it created in the same run. In
 `mayor-rating-roundtrip` it rates SPO_test3's term at Helartia `0`, then `100` again — the
@@ -460,6 +516,15 @@ line, result code 0 and the lot read-back. While SPO_test3 owns a construction s
 the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
 (placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
 and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
+**Research queued by the fixture builder is permanent setup data too** (maintainer, 2026-10-01,
+#1233). The bank and TV classes stay locked until *SPO_test3 - Green* owns the invention that
+unlocks them (`RESEARCH_UNLOCKS`); the builder then queues one research step per run at
+SPO_test3's research fixture: the first missing link of the chain that reads enabled and fits
+under cash − the cash floor − `research-roundtrip`'s own cost. It is proven by its
+`Queue Research:` line and an inventory read-back. It never sends `RDOCancelResearch` (on an
+owned invention that sells it, `Kernel/ResearchCenter.pas:372`), never queues
+`research-roundtrip`'s target, and records no pending restore, so no restore or unlock step can
+cancel it.
 
 **Build → demolish (#1150).** `place-rename-demolish` places the cheapest buildable facility —
 never a mausoleum, never the Capitol (`isRefusedClass`) — on a free Helartia lot as

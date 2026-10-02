@@ -1,5 +1,5 @@
 /**
- * scripts/check-pr-rules.js — the two rules the ruleset cannot express, made mechanical.
+ * scripts/check-pr-rules.js — the rules the ruleset cannot express, made mechanical.
  *
  * The pure predicates, plus the one way the script used to fail OPEN: an unresolvable diff
  * base. That needs a real git repository, so it gets one — a throwaway in tmp, not the
@@ -9,6 +9,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { FLOWS } from '../e2e/flows';
 
 interface RuleResult {
   ok: boolean;
@@ -32,12 +33,25 @@ interface CheckPrRulesModule {
   thresholdRegressions(base: Thresholds, head: Thresholds): Regression[];
   checkThresholds(base: Thresholds, head: Thresholds): RuleResult;
   ratchetResult(baseState: BaseThresholdState, head: Thresholds): RuleResult;
+  SHIPPED_PREFIXES: string[];
+  isShippedSource(file: string): boolean;
+  parseFlowLine(body: string, label: string): FlowLine;
+  flowNamesFromSource(text: string): string[];
+  checkFlows(files: string[], body: string, head: FlowNames, base: FlowNames): RuleResult;
 }
 
 type BaseThresholdState =
   | { state: 'ok'; thresholds: Thresholds }
   | { state: 'absent' }
   | { state: 'unreadable'; reason: string };
+
+type FlowLine =
+  | { state: 'absent' }
+  | { state: 'none'; reason: string }
+  | { state: 'invalid'; why: string }
+  | { state: 'list'; flows: { name: string; isNew: boolean }[] };
+
+type FlowNames = { state: 'ok'; names: Set<string> } | { state: 'absent' } | { state: 'unreadable'; reason: string };
 
 const rules: CheckPrRulesModule = require('../../scripts/check-pr-rules.js');
 
@@ -270,6 +284,14 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
   let repo: string;
   let referenceRoot: string;
 
+  // #1194 changed this contract: every test here changes src/shared/rdo-members.ts, which is
+  // shipped source, so every PR body now carries the two flow lines. They are `none — …` so
+  // the flows rule passes on its own and each test still passes or fails for the citation
+  // reason only. No `.pas:<n>` text here — it would satisfy the citation fallback.
+  const FLOW_LINES =
+    'Proof flows: none — hermetic catalogue fixture, no live flow observes it\n' +
+    'Regression flows: none — hermetic catalogue fixture';
+
   const git = (...args: string[]): string =>
     execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
 
@@ -279,7 +301,7 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
         cwd: repo,
         encoding: 'utf8',
         stdio: 'pipe',
-        env: { ...process.env, PR_BODY: '', BASE_SHA: '', SPO_ORIGINAL_DIR: referenceRoot, ...env },
+        env: { ...process.env, PR_BODY: FLOW_LINES, BASE_SHA: '', SPO_ORIGINAL_DIR: referenceRoot, ...env },
       });
       return { code: 0, out };
     } catch (err) {
@@ -372,7 +394,7 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
     fs.writeFileSync(path.join(repo, 'src/shared/rdo-members.ts'), withEntry(BAD_ARITY));
     git('add', '-A');
     git('commit', '-qm', 'add BadArity');
-    const { code, out } = run({ PR_BODY: '' });
+    const { code, out } = run({ PR_BODY: FLOW_LINES });
     expect(code).toBe(1);
     expect(out).toContain('DoThing');
     expect(out).toContain('MISMATCH(arity)');
@@ -382,7 +404,7 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
     fs.writeFileSync(path.join(repo, 'src/shared/rdo-members.ts'), withEntry(BAD_ARITY));
     git('add', '-A');
     git('commit', '-qm', 'add BadArity');
-    const { code, out } = run({ PR_BODY: 'see SomeOther.pas:1 for context' });
+    const { code, out } = run({ PR_BODY: `${FLOW_LINES}\nsee SomeOther.pas:1 for context` });
     expect(code).toBe(0);
     expect(out).toContain('DoThing');
     expect(out).toContain('MISMATCH(arity)');
@@ -443,7 +465,7 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
       git('add', '-A');
       git('commit', '-qm', 'a good entry and an unreadable one');
       // No citation anywhere in the body: the ONLY thing that could pass this is the fast path.
-      const { code, out } = run({ PR_BODY: 'no citation of any kind in this body' });
+      const { code, out } = run({ PR_BODY: `${FLOW_LINES}\nno citation of any kind in this body` });
       expect(code).toBe(1);
       expect(out).not.toContain('all parser-verified MATCH');
       expect(out).toContain('the entry parser cannot read');
@@ -463,7 +485,7 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
       );
       git('add', '-A');
       git('commit', '-qm', 'a good entry and an unreadable one');
-      const { code, out } = run({ PR_BODY: 'cites Something.pas:1 elsewhere' });
+      const { code, out } = run({ PR_BODY: `${FLOW_LINES}\ncites Something.pas:1 elsewhere` });
       expect(code).toBe(0); // the legacy fallback's posture, unchanged
       expect(out).toContain('BadNoComma'); // but the human is told what went unverified
       expect(out).toContain('NOT parser-verified');
@@ -486,7 +508,7 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
       );
       git('add', '-A');
       git('commit', '-qm', 'add GoodOne with a comment above it');
-      const { code, out } = run({ PR_BODY: '' });
+      const { code, out } = run({ PR_BODY: FLOW_LINES });
       expect(code).toBe(0);
       expect(out).toContain('all parser-verified MATCH');
     });
@@ -498,12 +520,12 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
     git('commit', '-qm', 'add GoodOne');
     const missingRoot = path.join(os.tmpdir(), 'definitely-does-not-exist-xyz-12345');
 
-    const failing = run({ SPO_ORIGINAL_DIR: missingRoot, PR_BODY: '' });
+    const failing = run({ SPO_ORIGINAL_DIR: missingRoot, PR_BODY: FLOW_LINES });
     expect(failing.code).toBe(1);
     expect(failing.out).toContain('parser verification skipped');
     expect(failing.out).toContain('not available');
 
-    const passing = run({ SPO_ORIGINAL_DIR: missingRoot, PR_BODY: 'cites Foo.pas:1 for context' });
+    const passing = run({ SPO_ORIGINAL_DIR: missingRoot, PR_BODY: `${FLOW_LINES}\ncites Foo.pas:1 for context` });
     expect(passing.code).toBe(0);
     expect(passing.out).toContain('parser verification skipped');
   });
@@ -525,7 +547,7 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
     fs.writeFileSync(path.join(repo, 'src/shared/rdo-members.ts'), withEntry(WRONG_DECL));
     git('add', '-A');
     git('commit', '-qm', 'cite DoOther while claiming to be DoThing');
-    const { code, out } = run({ PR_BODY: '' });
+    const { code, out } = run({ PR_BODY: FLOW_LINES });
     expect(code).toBe(1);
     expect(out).not.toContain('all parser-verified MATCH');
     expect(out).toContain('DoThing');
@@ -552,7 +574,7 @@ describe('checkCitation — the parser-backed gate (Part A wiring)', () => {
     );
     git('add', '-A');
     git('commit', '-qm', 'add GoodOne under an unlocatable literal shape');
-    const { code, out } = run({ PR_BODY: '' });
+    const { code, out } = run({ PR_BODY: FLOW_LINES });
     expect(code).toBe(1);
     expect(out).not.toContain('all parser-verified MATCH');
     expect(out).toContain('could not locate the RDO_MEMBERS catalogue literal boundaries');
@@ -670,5 +692,400 @@ describe('extractPasCitations — pulling File.pas:Line citations out of a trail
     // as uncited and routed to review. Reading an incidental mention as the citation would let
     // it authorise the zero-LLM fast path by happening to agree with the claim.
     expect(rules.extractPasCitations('declared at Kernel/Foo.pas:40 in the server')).toEqual([]);
+  });
+});
+
+/**
+ * The proof & regression flows rule (#1194): a PR that changes shipped src/{client,server,shared}
+ * names the live flows that prove it and the ones that guard its neighbours, and both lists are
+ * checked against FLOWS — a gate, not prose.
+ */
+describe('isShippedSource — which changed paths need the two lines', () => {
+  it.each(['src/client/App.tsx', 'src/server/spo_session.ts', 'src/shared/rdo-members.ts', 'src\\shared\\x.ts'])(
+    '%s is shipped',
+    (file) => {
+      expect(rules.isShippedSource(file)).toBe(true);
+    },
+  );
+
+  it.each([
+    'src/client/App.test.tsx',
+    'src/server/x.test.ts',
+    'src/server/__tests__/x.ts',
+    'src/client/__mocks__/y.ts',
+    'src/e2e/flows.ts',
+    'src/mock-server/rdo-mock.ts',
+    'src/__tests__/x.test.ts',
+    'doc/x.md',
+    'scripts/x.js',
+  ])('%s is not', (file) => {
+    expect(rules.isShippedSource(file)).toBe(false);
+  });
+
+  it('names exactly the three shipped trees', () => {
+    expect(rules.SHIPPED_PREFIXES).toEqual(['src/client/', 'src/server/', 'src/shared/']);
+  });
+});
+
+describe('parseFlowLine', () => {
+  it('reports a missing line as absent', () => {
+    expect(rules.parseFlowLine('nothing here', 'Proof flows')).toEqual({ state: 'absent' });
+  });
+
+  it('reads a list, marks new: flows and strips backticks', () => {
+    expect(rules.parseFlowLine('x\nProof flows: `mail-roundtrip`, new:`mail-delete`,  new: other ,\ny', 'Proof flows')).toEqual({
+      state: 'list',
+      flows: [
+        { name: 'mail-roundtrip', isNew: false },
+        { name: 'mail-delete', isNew: true },
+        { name: 'other', isNew: true },
+      ],
+    });
+  });
+
+  it('reads a GitHub body with CRLF line ends', () => {
+    expect(rules.parseFlowLine('Proof flows: a, b\r\nRegression flows: c\r\n', 'Proof flows')).toEqual({
+      state: 'list',
+      flows: [
+        { name: 'a', isNew: false },
+        { name: 'b', isNew: false },
+      ],
+    });
+  });
+
+  it('reads `none — <reason>` in its dash forms', () => {
+    expect(rules.parseFlowLine('Proof flows: none — docs only', 'Proof flows')).toEqual({ state: 'none', reason: 'docs only' });
+    expect(rules.parseFlowLine('Regression flows: none -- tests only', 'Regression flows')).toEqual({
+      state: 'none',
+      reason: 'tests only',
+    });
+  });
+
+  it('refuses `none` without a reason, and an empty value', () => {
+    for (const body of ['Proof flows: none', 'Proof flows: none —', 'Proof flows: none - ']) {
+      const parsed = rules.parseFlowLine(body, 'Proof flows');
+      expect(parsed.state).toBe('invalid');
+      expect(parsed.state === 'invalid' && parsed.why).toContain('needs a reason');
+    }
+    const empty = rules.parseFlowLine('Proof flows:   \nnext', 'Proof flows');
+    expect(empty.state).toBe('invalid');
+    expect(empty.state === 'invalid' && empty.why).toContain('names no flow');
+    expect(rules.parseFlowLine('Proof flows: new:, ``', 'Proof flows').state).toBe('invalid');
+  });
+});
+
+describe('flowNamesFromSource', () => {
+  const src = (...lines: string[]): string => lines.join('\n');
+
+  it('agrees with FLOWS in the real src/e2e/flows.ts, in order', () => {
+    const text = fs.readFileSync(path.resolve(__dirname, '../e2e/flows.ts'), 'utf8');
+    expect(rules.flowNamesFromSource(text)).toEqual(FLOWS.map((f) => f.name));
+  });
+
+  it('reads a Flow literal and a factory call, CRLF included', () => {
+    const text = src(
+      'const alpha: Flow = {',
+      "  name: 'alpha',",
+      '};',
+      'const beta = fixtureFlow(',
+      "  'beta',",
+      "  'desc',",
+      ');',
+      'export const FLOWS: Flow[] = [',
+      '  alpha,',
+      '  beta',
+      '];',
+    ).replace(/\n/g, '\r\n');
+    expect(rules.flowNamesFromSource(text)).toEqual(['alpha', 'beta']);
+  });
+
+  it('throws when the FLOWS literal is missing or never closed', () => {
+    expect(() => rules.flowNamesFromSource('const alpha = 1;\n')).toThrow('no `export const FLOWS');
+    expect(() => rules.flowNamesFromSource(src('export const FLOWS: Flow[] = [', '  alpha,'))).toThrow('no closing');
+    expect(() => rules.flowNamesFromSource(src('export const FLOWS: Flow[] = [', '];'))).toThrow('lists no flow');
+  });
+
+  it('throws on a binding with no declaration, or whose name cannot be read', () => {
+    expect(() => rules.flowNamesFromSource(src('export const FLOWS: Flow[] = [', '  ghost,', '];'))).toThrow(
+      'no `const ghost` declaration',
+    );
+    expect(() =>
+      rules.flowNamesFromSource(
+        src('const alpha: Flow = {', '  run: go,', '};', '', '', 'export const FLOWS: Flow[] = [', '  alpha,', '];'),
+      ),
+    ).toThrow('name of `alpha` could not be read');
+  });
+
+  it('throws on two bindings with the same name', () => {
+    const text = src(
+      'const alpha: Flow = {',
+      "  name: 'same',",
+      '};',
+      'const beta: Flow = {',
+      "  name: 'same',",
+      '};',
+      'export const FLOWS: Flow[] = [',
+      '  alpha,',
+      '  beta,',
+      '];',
+    );
+    expect(() => rules.flowNamesFromSource(text)).toThrow('two FLOWS entries are named `same`');
+  });
+});
+
+describe('checkFlows — the rule, pure', () => {
+  const ok = (...names: string[]): FlowNames => ({ state: 'ok', names: new Set(names) });
+  const HEAD = ok('alpha', 'beta', 'gamma');
+  const BASE = ok('alpha', 'beta');
+  const SHIPPED = ['src/client/app.ts'];
+  const both = (proof: string, regression: string): string => `Proof flows: ${proof}\nRegression flows: ${regression}`;
+
+  it('does not ask a docs/tests-only PR for anything', () => {
+    const result = rules.checkFlows(['doc/x.md', 'src/client/app.test.ts', 'src/e2e/flows.ts'], '', HEAD, BASE);
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('not required');
+  });
+
+  it('passes a shipped change naming flows that exist, and a new flow the diff adds', () => {
+    const result = rules.checkFlows(SHIPPED, both('alpha, new:gamma', 'beta'), HEAD, BASE);
+    expect(result).toEqual({
+      ok: true,
+      detail: '1 shipped src/ file(s) changed; proof: alpha, new:gamma; regression: beta',
+    });
+  });
+
+  it('fails a shipped change with no Proof flows line', () => {
+    const result = rules.checkFlows(SHIPPED, 'Regression flows: beta', HEAD, BASE);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('no `Proof flows:` line');
+    expect(result.detail).toContain('doc/E2E-POLICY.md § Proof and regression flows');
+  });
+
+  it('fails a shipped change with no Regression flows line', () => {
+    const result = rules.checkFlows(SHIPPED, 'Proof flows: alpha', HEAD, BASE);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('no `Regression flows:` line');
+    expect(result.detail).not.toContain('no `Proof flows:` line');
+  });
+
+  it('fails a line that is `none` with no reason', () => {
+    const result = rules.checkFlows(SHIPPED, both('none', 'beta'), HEAD, BASE);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('`Proof flows:` `none` needs a reason');
+  });
+
+  it('fails a proof flow that is not in FLOWS at HEAD', () => {
+    const result = rules.checkFlows(SHIPPED, both('ghost', 'beta'), HEAD, BASE);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('Proof flows: `ghost` is not a flow in FLOWS at HEAD');
+  });
+
+  it('fails a regression flow that is not in FLOWS at HEAD — the same gate', () => {
+    const result = rules.checkFlows(SHIPPED, both('alpha', 'beta, phantom'), HEAD, BASE);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('Regression flows: `phantom` is not a flow in FLOWS at HEAD');
+  });
+
+  it('fails a new: flow that was already in FLOWS at the base', () => {
+    const result = rules.checkFlows(SHIPPED, both('new:alpha', 'beta'), HEAD, BASE);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('`new:alpha` is already in FLOWS at the base -- not added by this diff');
+  });
+
+  it('fails a new: flow absent at HEAD', () => {
+    const result = rules.checkFlows(SHIPPED, both('new:delta', 'beta'), HEAD, BASE);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('`new:delta` is not a flow in FLOWS at HEAD');
+  });
+
+  it('accepts a new: flow when the base has no flows.ts at all', () => {
+    expect(rules.checkFlows(SHIPPED, both('new:alpha', 'beta'), HEAD, { state: 'absent' }).ok).toBe(true);
+  });
+
+  it('fails closed on a new: flow when the base flows.ts cannot be read', () => {
+    const result = rules.checkFlows(SHIPPED, both('new:gamma', 'beta'), HEAD, { state: 'unreadable', reason: 'boom' });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('`new:gamma` cannot be checked');
+    expect(result.detail).toContain('boom');
+  });
+
+  it('fails closed when FLOWS at HEAD cannot be read or does not exist', () => {
+    const unreadable = rules.checkFlows(SHIPPED, both('alpha', 'beta'), { state: 'unreadable', reason: 'no literal' }, BASE);
+    expect(unreadable.ok).toBe(false);
+    expect(unreadable.detail).toContain('could not be read: no literal');
+    const absent = rules.checkFlows(SHIPPED, both('alpha', 'beta'), { state: 'absent' }, BASE);
+    expect(absent.ok).toBe(false);
+    expect(absent.detail).toContain('does not exist');
+  });
+
+  it('passes `none — <reason>` on both lines without reading FLOWS', () => {
+    const result = rules.checkFlows(
+      SHIPPED,
+      both('none — nothing observes it', 'none — neither'),
+      { state: 'unreadable', reason: 'x' },
+      { state: 'unreadable', reason: 'y' },
+    );
+    expect(result).toEqual({
+      ok: true,
+      detail: '1 shipped src/ file(s) changed; proof: none — nothing observes it; regression: none — neither',
+    });
+  });
+
+  it('reports every problem, not only the first, and names the files', () => {
+    const files = ['src/client/a.ts', 'src/client/b.ts', 'src/server/c.ts', 'src/shared/d.ts'];
+    const result = rules.checkFlows(files, 'Proof flows: ghost', HEAD, BASE);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('4 shipped src/ file(s) changed (src/client/a.ts, src/client/b.ts, src/server/c.ts, …)');
+    expect(result.detail).toContain('`ghost` is not a flow');
+    expect(result.detail).toContain('no `Regression flows:` line');
+  });
+});
+
+describe('the flows rule, run as CI runs it', () => {
+  const SCRIPT = path.resolve(__dirname, '../../scripts/check-pr-rules.js');
+  let repo: string;
+
+  const git = (...args: string[]): string => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+
+  const run = (body: string): { code: number; out: string } => {
+    try {
+      const out = execFileSync('node', [SCRIPT], {
+        cwd: repo,
+        encoding: 'utf8',
+        stdio: 'pipe',
+        env: { ...process.env, PR_BODY: body, BASE_SHA: 'main' },
+      });
+      return { code: 0, out };
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      return { code: e.status ?? -1, out: `${e.stdout ?? ''}${e.stderr ?? ''}` };
+    }
+  };
+
+  const flowsTs = (...extra: string[]): string =>
+    [
+      'const alpha: Flow = {',
+      "  name: 'alpha',",
+      '};',
+      'const beta = fixtureFlow(',
+      "  'beta',",
+      "  'desc',",
+      ');',
+      ...extra,
+      'export const FLOWS: Flow[] = [',
+      '  alpha,',
+      '  beta,',
+      ...(extra.length > 0 ? ['  gamma,'] : []),
+      '];',
+      '',
+    ].join('\n');
+
+  const write = (file: string, text: string): void => {
+    fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
+    fs.writeFileSync(path.join(repo, file), text);
+  };
+
+  const commit = (): void => {
+    git('add', '-A');
+    git('commit', '-qm', 'change');
+  };
+
+  const shippedChange = (): void => {
+    write('src/client/app.ts', 'export const app = 2;\n');
+    commit();
+  };
+
+  beforeEach(() => {
+    repo = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-rules-flows-test-'));
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@t.t');
+    git('config', 'user.name', 'test');
+    write('jest.config.js', 'module.exports = { coverageThreshold: { global: { lines: 38 } } };\n');
+    write('src/client/app.ts', 'export const app = 1;\n');
+    write('src/e2e/flows.ts', flowsTs());
+    commit();
+    git('checkout', '-q', '-b', 'work');
+  });
+
+  afterEach(() => {
+    fs.rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('fails a shipped change with an empty body', () => {
+    shippedChange();
+    const { code, out } = run('');
+    expect(code).toBe(1);
+    expect(out).toContain('FAIL proof & regression flows');
+    expect(out).toContain('no `Proof flows:` line');
+  });
+
+  it('fails a shipped change with only the proof line', () => {
+    shippedChange();
+    const { code, out } = run('Proof flows: alpha');
+    expect(code).toBe(1);
+    expect(out).toContain('no `Regression flows:` line');
+  });
+
+  it('passes a shipped change naming real flows', () => {
+    shippedChange();
+    const { code, out } = run('Proof flows: alpha\r\nRegression flows: beta\r\n');
+    expect(out).toContain('proof: alpha; regression: beta');
+    expect(code).toBe(0);
+  });
+
+  it('fails an unknown proof flow, and an unknown regression flow', () => {
+    shippedChange();
+    const proof = run('Proof flows: ghost\nRegression flows: beta');
+    expect(proof.code).toBe(1);
+    expect(proof.out).toContain('`ghost` is not a flow in FLOWS at HEAD');
+    const regression = run('Proof flows: alpha\nRegression flows: phantom');
+    expect(regression.code).toBe(1);
+    expect(regression.out).toContain('`phantom` is not a flow in FLOWS at HEAD');
+  });
+
+  it('passes a new: flow the branch adds', () => {
+    write('src/e2e/flows.ts', flowsTs('const gamma: Flow = {', "  name: 'gamma',", '};'));
+    shippedChange();
+    const { code, out } = run('Proof flows: new:gamma\nRegression flows: alpha');
+    expect(out).toContain('proof: new:gamma');
+    expect(code).toBe(0);
+  });
+
+  it('fails a new: flow the base already had, and one HEAD does not have', () => {
+    shippedChange();
+    const old = run('Proof flows: new:alpha\nRegression flows: beta');
+    expect(old.code).toBe(1);
+    expect(old.out).toContain('not added by this diff');
+    const missing = run('Proof flows: new:delta\nRegression flows: beta');
+    expect(missing.code).toBe(1);
+    expect(missing.out).toContain('`new:delta` is not a flow in FLOWS at HEAD');
+  });
+
+  it('passes `none — <reason>` on both lines, refuses a bare `none`', () => {
+    shippedChange();
+    expect(run('Proof flows: none — docs only\nRegression flows: none — docs only').code).toBe(0);
+    const bare = run('Proof flows: none\nRegression flows: none — docs only');
+    expect(bare.code).toBe(1);
+    expect(bare.out).toContain('needs a reason');
+  });
+
+  it('passes docs-only and tests-only changes with an empty body', () => {
+    write('doc/x.md', 'x\n');
+    commit();
+    expect(run('').code).toBe(0);
+    write('src/client/app.test.ts', 'test\n');
+    write('src/server/__tests__/x.ts', 'test\n');
+    commit();
+    const { code, out } = run('');
+    expect(out).toContain('not required');
+    expect(code).toBe(0);
+  });
+
+  it('fails closed when FLOWS at HEAD cannot be read', () => {
+    write('src/e2e/flows.ts', 'export const nothing = 1;\n');
+    shippedChange();
+    const { code, out } = run('Proof flows: alpha\nRegression flows: beta');
+    expect(code).toBe(1);
+    expect(out).toContain('src/e2e/flows.ts at HEAD could not be read');
   });
 });

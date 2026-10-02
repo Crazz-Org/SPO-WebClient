@@ -1,7 +1,7 @@
 /**
  * The two trade controls on a facility sheet (issue 551).
  *
- * `TradeRole`/`Role` and `TradeLevel` were hidden rows: the gateway could emit
+ * `TradeRole` and `TradeLevel` were hidden rows: the gateway could emit
  * `RDOSetRole` and `RDOSetTradeLevel`, the catalogue knew both, and nothing in
  * the UI could reach either. These tests pin the shape the reference client
  * offered — the mode combo only for the three roles it can express, the level
@@ -102,20 +102,22 @@ describe('trade mode control', () => {
     expect(screen.queryByText('TradeRole')).toBeNull();
   });
 
-  /** The warehouse sheet spells the same value `Role`; it writes RDOSetRole too. */
-  it('renders from the warehouse sheet alias `Role`', () => {
+  /**
+   * The warehouse sheet (Import/Export Storage) never offered a trade mode:
+   * Voyager/WHGeneralSheet.pas carries cbTrade only (:46), and each class is
+   * preset (GeneralPack1.dpr:719, :753). It reads `TradeRole` — the name the
+   * cache holds (Kernel/Kernel.pas:5893) — for the Supplies tab only (#1255).
+   */
+  it('offers no trade mode on the warehouse sheet, and shows no raw TradeRole row', () => {
     seed({ tabs: WH_TABS, visualClass: WH_CLASS, currentTab: 'whGeneral' });
-    const onSetBuildingProperty = jest.fn();
     renderWithProviders(
-      <PropertyGroup properties={props({ Role: '2', TradeLevel: '2' })} buildingX={100} buildingY={200} />,
-      { clientCallbacks: createSpiedCallbacks({ onSetBuildingProperty }) },
+      <PropertyGroup properties={props({ TradeRole: '6', Role: '2', TradeLevel: '2' })} buildingX={100} buildingY={200} />,
     );
 
-    const select = screen.getByRole('combobox', { name: 'Trade mode' });
-    expect(optionValues(select)).toEqual(['2', '5', '6']);
-
-    fireEvent.change(select, { target: { value: '5' } });
-    expect(onSetBuildingProperty).toHaveBeenCalledWith(100, 200, 'RDOSetRole', '5');
+    expect(screen.queryByRole('combobox', { name: 'Trade mode' })).toBeNull();
+    expect(screen.queryByText('Trade mode')).toBeNull();
+    expect(screen.queryByText('Trade Role')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Trade level' })).toBeTruthy();
   });
 });
 

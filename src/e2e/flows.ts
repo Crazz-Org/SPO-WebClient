@@ -81,10 +81,7 @@ import type {
   WsRespBuildingFacilities,
   WsRespRenameFacility,
   WsRespDeleteFacility,
-  WsRespResearchInventory,
-  WsRespResearchDetails,
   WsRespBuildingUpgrade,
-  ResearchCategoryData,
   WsRespChatChannelList,
   WsRespChatChannelInfo,
   WsRespChatSuccess,
@@ -150,7 +147,7 @@ import {
   type RoundTripSpec,
 } from './probe';
 import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
-import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES, isTradeModeValue } from '../shared/building-details/trade-settings';
+import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES } from '../shared/building-details/trade-settings';
 import {
   awaitResumeToken,
   findTown,
@@ -170,6 +167,15 @@ import {
   type SecondaryLogin,
 } from './session';
 import type { WorldLock } from './world-lock';
+import {
+  RESEARCH_TARGET,
+  queueResearchLineMatches,
+  readResearchDetails,
+  researchCost,
+  researchInventory,
+  researchState,
+  type ResearchState,
+} from './research';
 import {
   FIXTURE_KINDS,
   ensureFixtures,
@@ -192,6 +198,9 @@ import {
   type FixtureKindId,
   type FixtureOutcome,
 } from './fixtures';
+
+/** Moved to ./research (#1233) — re-exported for research-roundtrip's tests. */
+export { RESEARCH_TARGET, queueResearchLineMatches, researchCost, researchState, type ResearchState } from './research';
 
 export interface FlowContext {
   lock: WorldLock;
@@ -731,12 +740,12 @@ const publicityRoundTrip: Flow = {
 const sameName = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /**
- * The test-owned value of `mayor-rating-roundtrip`: Crazz's opinion of SPO_test3's term.
+ * The test-owned value of `mayor-rating-roundtrip`: SPO_test's opinion of SPO_test3's term.
  *
  * The baseline is 100 and the probe 0 — the two ends of the 0..100 range — so the direction of
- * every move is known whatever Crazz's prior opinion P was on the very first run: P lies in
+ * every move is known whatever SPO_test's prior opinion P was on the very first run: P lies in
  * [0, 100], so writing 0 can only move the aggregate down (or leave it), and writing 100 can only
- * move it up (or leave it). The first run leaves Crazz's opinion at 100 for good — accepted by the
+ * move it up (or leave it). The first run leaves SPO_test's opinion at 100 for good — accepted by the
  * maintainer (2026-09-29): a test account's opinion of a test account.
  */
 export const RATING_BASELINE = 100;
@@ -765,14 +774,14 @@ export function ratingMove(before: number, after: number, from: number, to: numb
 const RATING_STILL_REASON =
   'the aggregate TycoonsRating did not move — it is round(Σ (prestige+1)·ethics·opinion / Σ (prestige+1)) ' +
   'over every survey (Kernel/Politics.pas:374-392, evaluated from Kernel/TownPolitics.pas:210), so it equals ' +
-  "Crazz's opinion only when Crazz is the sole survey; the other surveys' weight, the rounding, or a Crazz " +
+  "SPO_test's opinion only when SPO_test is the sole survey; the other surveys' weight, the rounding, or a SPO_test " +
   'campaign in the town (ethics 0, Kernel/TownPolitics.pas:550-553) can hold it still';
 
 /**
- * Crazz rates SPO_test3's term at Helartia (`TPoliticalTownHall.RDOSetRatingFrom`,
+ * SPO_test rates SPO_test3's term at Helartia (`TPoliticalTownHall.RDOSetRatingFrom`,
  * Kernel/TownPolitics.pas:186, log :192) — the maintainer's decision of 2026-09-29 (E2E-POLICY §9).
  *
- * Crazz's own opinion cannot be read: the gateway reads only the aggregate `TycoonsRating`
+ * SPO_test's own opinion cannot be read: the gateway reads only the aggregate `TycoonsRating`
  * (`parsePoliticsRatings`, tycoonratings.asp:147), and the per-rater `RDOGetRatingFrom`
  * (Kernel/TownPolitics.pas:163-184) is uncatalogued. So the opinion is a test-owned value with the
  * fixed baseline `RATING_BASELINE`: write `RATING_PROBE`, see the line and the aggregate move towards
@@ -781,7 +790,7 @@ const RATING_STILL_REASON =
 const mayorRatingRoundTrip: Flow = {
   name: 'mayor-rating-roundtrip',
   what:
-    `Crazz rates SPO_test3's term at ${GOVERNED_TOWN} ${RATING_PROBE}, then back to ${RATING_BASELINE} — ` +
+    `SPO_test rates SPO_test3's term at ${GOVERNED_TOWN} ${RATING_PROBE}, then back to ${RATING_BASELINE} — ` +
     'Survival line + the aggregate Tycoons rating moving each way',
   mutates: true,
   run: async ctx => {
@@ -1090,7 +1099,7 @@ const voteRoundTrip: Flow = {
  */
 const permissionNegative: Flow = {
   name: 'permission-negative',
-  what: 'Crazz at the governed town hall sees canGovern=false',
+  what: `${SECONDARY_ACCOUNT.username} at the governed town hall sees canGovern=false`,
   mutates: false,
   run: async () => {
     const assertions = new Assertions();
@@ -1119,14 +1128,14 @@ const permissionNegative: Flow = {
  */
 const mailRoundTrip: Flow = {
   name: 'mail-roundtrip',
-  what: 'SPO_test3 sends -> Crazz receives -> delete',
+  what: `SPO_test3 sends -> ${SECONDARY_ACCOUNT.username} receives -> delete`,
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `e2e ${new Date().toISOString()}`;
 
-    // Crazz first, before the compose: a refused login then leaves no mail behind.
+    // The secondary account first, before the compose: a refused login then leaves no mail behind.
     const recipient = await loginSecondary();
     if ('skipped' in recipient) return skippedResult('mail-roundtrip', recipient.skipped);
     try {
@@ -1760,10 +1769,10 @@ async function purgeSeededAlerts(
   }
 }
 
-/** Crazz-sent alerts in SPO_test3's Inbox — a server-sent alert has another sender and is spared. */
+/** Alerts sent by the secondary account in SPO_test3's Inbox — a server-sent alert has another sender and is spared. */
 const seededInInbox = (m: MailMessageHeader): boolean =>
   m.subject === ZONING_ALERT_SUBJECT && sameAccount(m.from, SECONDARY_ACCOUNT);
-/** Crazz's own copies in `Sent`, filed there by Post — Mail Server/MailServer.pas:802-811. */
+/** The secondary's own copies in `Sent`, filed there by Post — Mail Server/MailServer.pas:802-811. */
 const seededInSent = (m: MailMessageHeader): boolean =>
   m.subject === ZONING_ALERT_SUBJECT && sameAccount(m.to, PRIMARY_ACCOUNT);
 
@@ -1776,7 +1785,7 @@ async function sweepSeededAlerts(): Promise<FlowCheck[]> {
 }
 
 /**
- * Crazz sends SPO_test3 one look-alike of the server's zoning alert, pointing at the governed
+ * The secondary account sends SPO_test3 one look-alike of the server's zoning alert, pointing at the governed
  * town hall — a building that exists, so the flow's focus lands. The cleanup deletes it from
  * both mailboxes.
  */
@@ -1831,7 +1840,7 @@ async function seedZoningAlert(): Promise<FlowSeed> {
  * through `parseLocalAspUrl` — the same translator the client's link interceptor uses —
  * and sends the very REQ_BUILDING_FOCUS the client sends on a click.
  *
- * The seed (`seedZoningAlert`, #1009) feeds the flow: Crazz sends SPO_test3 one look-alike
+ * The seed (`seedZoningAlert`, #1009) feeds the flow: the secondary account sends SPO_test3 one look-alike
  * alert before the run, and it is deleted from both mailboxes after. Read without the seed,
  * no zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
  * was zoned out of this account lately, so the flow proved nothing. A demolished building is
@@ -2058,7 +2067,7 @@ async function purgeFolder(
 /**
  * The cleanup of one mailbox: a fresh login — the cleanup matters most after a failure, which
  * is when the drive's socket may be dead — then `purgeFolder` on each folder. One check per
- * folder; never throws. A Crazz refusal here comes after the flow's first write, so its checks
+ * folder; never throws. A refusal of the secondary account here comes after the flow's first write, so its checks
  * are not ok and name the leftover.
  */
 async function purgeMailbox(
@@ -2228,7 +2237,7 @@ const mailDrafts: Flow = {
 };
 
 async function driveSendFromDraft(
-  crazz: LiveSession,
+  secondary: LiveSession,
   subject: string,
   sleep: (ms: number) => Promise<void>,
 ): Promise<FlowResult> {
@@ -2238,11 +2247,11 @@ async function driveSendFromDraft(
   try {
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      await mailConnect(crazz);
+      await mailConnect(secondary);
       await mailConnect(session);
       const swept = await preSweep(
         assertions,
-        [[session, 'Draft'], [session, 'Sent'], [crazz, 'Inbox']],
+        [[session, 'Draft'], [session, 'Sent'], [secondary, 'Inbox']],
         hasMarker(MAIL_SEND_FROM_DRAFT_MARKER),
         sleep,
         markerLabel(MAIL_SEND_FROM_DRAFT_MARKER),
@@ -2261,7 +2270,7 @@ async function driveSendFromDraft(
       const sent = await sendMail(session, { ...mail, existingDraftId: draft.messageId });
       assertions.check('the send from the draft was accepted', sent.success === true, sent.message);
 
-      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      const delivered = await rereadUntil(secondary, 'Inbox', msgs => msgs.some(bySubject), sleep);
       assertions.check(
         `${SECONDARY_ACCOUNT.username}'s Inbox holds it`,
         delivered.settled,
@@ -2279,29 +2288,29 @@ async function driveSendFromDraft(
       await logoff(session);
     }
   } finally {
-    await logoff(crazz);
+    await logoff(secondary);
   }
 }
 
 /**
  * Send from an opened draft: `REQ_MAIL_COMPOSE` with `existingDraftId`, which deletes the Draft
- * copy once `Post` succeeds (#510). Crazz logs in first, so a refusal writes nothing (SKIPPED);
+ * copy once `Post` succeeds (#510). The secondary account logs in first, so a refusal writes nothing (SKIPPED);
  * a refusal at the cleanup, after the send, is a FAIL naming the leftover.
  */
 const mailSendFromDraft: Flow = {
   name: 'mail-send-from-draft',
-  what: 'Crazz first -> SPO_test3 saves a draft to Crazz -> sends it from the draft -> Crazz receives it, Draft copy gone',
+  what: `${SECONDARY_ACCOUNT.username} first -> SPO_test3 saves a draft to ${SECONDARY_ACCOUNT.username} -> sends it from the draft -> ${SECONDARY_ACCOUNT.username} receives it, Draft copy gone`,
   mutates: true,
   run: async ctx => {
     const name = 'mail-send-from-draft';
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `${MAIL_SEND_FROM_DRAFT_MARKER}${new Date().toISOString()}`;
-    // Crazz first, before any write: a refused login then leaves nothing behind.
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    // The secondary account first, before any write: a refused login then leaves nothing behind.
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveSendFromDraft(crazz, subject, sleep);
+      result = await driveSendFromDraft(secondary, subject, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     }
@@ -2316,7 +2325,7 @@ const mailSendFromDraft: Flow = {
 };
 
 async function driveReply(
-  crazz: LiveSession,
+  secondary: LiveSession,
   subject: string,
   sleep: (ms: number) => Promise<void>,
 ): Promise<FlowResult> {
@@ -2327,11 +2336,11 @@ async function driveReply(
   try {
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      await mailConnect(crazz);
+      await mailConnect(secondary);
       await mailConnect(session);
       const swept = await preSweep(
         assertions,
-        [[session, 'Inbox'], [session, 'Sent'], [crazz, 'Inbox'], [crazz, 'Sent']],
+        [[session, 'Inbox'], [session, 'Sent'], [secondary, 'Inbox'], [secondary, 'Sent']],
         hasMarker(MAIL_REPLY_MARKER),
         sleep,
         markerLabel(MAIL_REPLY_MARKER),
@@ -2341,7 +2350,7 @@ async function driveReply(
       const sent = await sendMail(session, { to: SECONDARY_ACCOUNT.username, subject, body: [MAIL_PROBE_BODY] });
       assertions.check('the compose was accepted', sent.success === true, sent.message);
 
-      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      const delivered = await rereadUntil(secondary, 'Inbox', msgs => msgs.some(bySubject), sleep);
       const received = delivered.messages.find(bySubject);
       assertions.check(
         `${SECONDARY_ACCOUNT.username}'s Inbox holds the message`,
@@ -2350,7 +2359,7 @@ async function driveReply(
       );
       if (!received) return report(name, assertions, [], session);
 
-      const { message } = await crazz.driver.request<WsRespMailMessage>(
+      const { message } = await secondary.driver.request<WsRespMailMessage>(
         { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder: 'Inbox', messageId: received.messageId },
         WsMessageType.RESP_MAIL_MESSAGE,
       );
@@ -2358,8 +2367,8 @@ async function driveReply(
       if (!message.fromAddr) return report(name, assertions, [], session);
 
       // The client's Reply (`startReply` in mail-store.ts): to the sender, `Re: ` subject, and
-      // the four In-Reply-To* lines as headers. Crazz's one write — a pair the flow undoes.
-      const reply = await sendMail(crazz, {
+      // the four In-Reply-To* lines as headers. The secondary's one write — a pair the flow undoes.
+      const reply = await sendMail(secondary, {
         to: message.fromAddr,
         subject: `Re: ${message.subject}`,
         body: ['Automated L2 reply probe. Safe to delete.'],
@@ -2378,7 +2387,7 @@ async function driveReply(
       await logoff(session);
     }
   } finally {
-    await logoff(crazz);
+    await logoff(secondary);
   }
 }
 
@@ -2391,18 +2400,18 @@ async function driveReply(
  */
 const mailReply: Flow = {
   name: 'mail-reply',
-  what: 'Crazz first -> SPO_test3 sends -> Crazz reads and replies (Re:, In-Reply-To* headers) -> SPO_test3 receives the reply',
+  what: `${SECONDARY_ACCOUNT.username} first -> SPO_test3 sends -> ${SECONDARY_ACCOUNT.username} reads and replies (Re:, In-Reply-To* headers) -> SPO_test3 receives the reply`,
   mutates: true,
   run: async ctx => {
     const name = 'mail-reply';
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `${MAIL_REPLY_MARKER}${new Date().toISOString()}`;
-    // Crazz first, before any write: a refused login then leaves nothing behind.
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    // The secondary account first, before any write: a refused login then leaves nothing behind.
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveReply(crazz, subject, sleep);
+      result = await driveReply(secondary, subject, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     }
@@ -3294,7 +3303,7 @@ async function roundTripProbe(
   }
 }
 
-/** SPO_test3's row towards Crazz as `"<yours>:<theirs>"`, or `"none"` — no row, both neutral. */
+/** SPO_test3's row towards the secondary account as `"<yours>:<theirs>"`, or `"none"` — no row, both neutral. */
 async function policyTowardsSecondary(session: LiveSession): Promise<string> {
   const policy = await readPolicy(session);
   const row = policy.policies.find(p => sameAccount(p.tycoonName, SECONDARY_ACCOUNT));
@@ -3307,13 +3316,13 @@ function policyStatus(value: string): number {
 }
 
 /**
- * The strategy towards Crazz, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
- * broadcasts a world event naming Crazz (Kernel/Kernel.pas:11790-11800). The restore from "no
+ * The strategy towards the secondary account, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
+ * broadcasts a world event naming the secondary account (Kernel/Kernel.pas:11790-11800). The restore from "no
  * row" expects the row gone — a neutral row left behind is not the original.
  */
 const policyRoundTrip: Flow = {
   name: 'policy-roundtrip',
-  what: "strategy towards Crazz: read -> set another status -> read back -> restore -> read back",
+  what: `strategy towards ${SECONDARY_ACCOUNT.username}: read -> set another status -> read back -> restore -> read back`,
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -3850,7 +3859,7 @@ function transferRefusal(bank: BankAccountData): string | null {
   return null;
 }
 
-async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
+async function driveSendReturn(secondary: LiveSession, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
   const name = 'bank-send-return';
   const ME = PRIMARY_ACCOUNT.username;
   const HIM = SECONDARY_ACCOUNT.username;
@@ -3860,7 +3869,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
   const me = await login(PRIMARY_ACCOUNT);
   try {
     await mailConnect(me);
-    await mailConnect(crazz);
+    await mailConnect(secondary);
 
     // RDOSendMoney clips the amount to fBudget - LoanAmount - AprFee and answers
     // ERROR_InvalidMoneyValue when that is ≤ 0 (Kernel/Kernel.pas:11507-11512, :11535); the page
@@ -3870,13 +3879,13 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
       assertions.unproven(what, `${ME} cannot send $1: ${mine}; nothing sent`);
       return report(name, assertions, probes, me);
     }
-    const theirs = transferRefusal(await readBank(crazz));
+    const theirs = transferRefusal(await readBank(secondary));
     if (theirs) {
       assertions.unproven(what, `${HIM} cannot send $1 back: ${theirs}; nothing sent`);
       return report(name, assertions, probes, me);
     }
     // The :11499 receiver limits, each profile read through its own session.
-    for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, crazz]] as const) {
+    for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, secondary]] as const) {
       const refusal = receiverLimitRefusal(account, await readProfile(s));
       if (refusal) {
         assertions.unproven(what, `${refusal}; nothing sent`);
@@ -3885,7 +3894,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
     }
 
     for (const [s, folder, counterpart] of [
-      [me, 'Inbox', HIM], [me, 'Sent', HIM], [crazz, 'Inbox', ME], [crazz, 'Sent', ME],
+      [me, 'Inbox', HIM], [me, 'Sent', HIM], [secondary, 'Inbox', ME], [secondary, 'Sent', ME],
     ] as const) {
       const check = await purgeTransferFolder(s, folder, counterpart, sleep);
       assertions.check(`pre-sweep: ${check.what}`, check.ok, check.detail);
@@ -3899,7 +3908,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
     const has = async (s: LiveSession, from: string, marker: string): Promise<boolean> =>
       (await noticeIds(s, 'Inbox', from, `Reason=${marker}&`)).size > 0;
     const owed = async (): Promise<string> =>
-      String((await has(crazz, ME, out) ? 1 : 0) - (await has(me, HIM, back) ? 1 : 0));
+      String((await has(secondary, ME, out) ? 1 : 0) - (await has(me, HIM, back) ? 1 : 0));
     const send = (s: LiveSession, toTycoon: string, reason: string) =>
       s.driver.request<WsRespProfileBankAction>(
         { type: WsMessageType.REQ_PROFILE_BANK_ACTION, action: 'send', amount: '1', toTycoon, reason },
@@ -3924,9 +3933,9 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
           firstLegSent = true;
         },
         restore: async () => {
-          // Crazz writes only to complete the pair: nothing to send back unless the $1 arrived.
-          if (!firstLegSent && !(await has(crazz, ME, out))) return;
-          const answer = await send(crazz, ME, back);
+          // The secondary account writes only to complete the pair: nothing to send back unless the $1 arrived.
+          if (!firstLegSent && !(await has(secondary, ME, out))) return;
+          const answer = await send(secondary, ME, back);
           if (answer.result?.success !== true) throw new Error(`send back refused: ${answer.result?.message ?? '(no result)'}`);
         },
         proof: {
@@ -3949,29 +3958,29 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
 }
 
 /**
- * Send $1 to Crazz, and Crazz sends it back (#1147). Both accounts log in before the first send;
- * a refusal of Crazz then is SKIPPED with nothing sent. Nothing is sent unless both bank pages
+ * Send $1 to the secondary account, and it sends it back (#1147). Both accounts log in before the first send;
+ * a refusal of the secondary account then is SKIPPED with nothing sent. Nothing is sent unless both bank pages
  * offer the transfer and both profiles are under the receiver limits (Kernel/Kernel.pas:11499).
- * Two residual risks remain, each a FAIL with the pending restore kept ($1 stays with Crazz): a
+ * Two residual risks remain, each a FAIL with the pending restore kept ($1 stays with the secondary account): a
  * Transcended item (not readable over the WS contract), and a nobility of 0 that cannot be told
  * from "Nobility label not found". Any failure after the first send is a FAIL, never SKIPPED.
  */
 const bankSendReturn: Flow = {
   name: 'bank-send-return',
-  what: 'both log in -> both pages offer $1 -> receiver limits -> send $1 to Crazz -> notice -> Crazz sends $1 back -> notice',
+  what: `both log in -> both pages offer $1 -> receiver limits -> send $1 to ${SECONDARY_ACCOUNT.username} -> notice -> ${SECONDARY_ACCOUNT.username} sends $1 back -> notice`,
   mutates: true,
   run: async ctx => {
     const name = 'bank-send-return';
     const sleep = ctx.sleep ?? defaultSleep;
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveSendReturn(crazz, ctx, sleep);
+      result = await driveSendReturn(secondary, ctx, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     } finally {
-      await logoff(crazz);
+      await logoff(secondary);
     }
     const cleanup = [
       ...(await purgeTransferMailbox(PRIMARY_ACCOUNT, SECONDARY_ACCOUNT.username, ['Inbox', 'Sent'], sleep)),
@@ -4720,108 +4729,6 @@ const zoneRoundTrip: Flow = {
         assertions.check('the repaint to the original logged its Defining Zone: line', repaint !== null, repaint ?? '(no line)');
       }
     }),
-};
-
-/** A property's raw value from any group of an opening read, or 'absent'. */
-function rawProperty(groups: { [groupId: string]: BuildingPropertyValue[] }, name: string): string {
-  for (const group of Object.values(groups)) {
-    const hit = group.find(p => p.name === name);
-    if (hit) return hit.value;
-  }
-  return 'absent';
-}
-
-/** The gateway's default loadMapArea chunk — one window centred on the town hall. */
-const ROLE_PROBE_SPAN = 64;
-const ROLE_PROBE_MAX_READS = 40;
-const INDUSTRY_TRADE_ROLES = ['2', '5', '6'];
-
-/**
- * Read-only bench probe (#1006): what a real WHGeneral warehouse's cached `Role` holds, and,
- * if one exists nearby, an IndGeneral facility's `Role`/`TradeRole`. The values are recorded
- * in the run artifact and never asserted; the flow fails only when a read fails, and reports
- * UNPROVEN when no warehouse is found. It is removed by the follow-up card that acts on the
- * reading.
- */
-const warehouseRoleReading: Flow = {
-  name: 'warehouse-role-reading',
-  what: "a warehouse's cached Role / TradeRole near the governed town — recorded, never asserted",
-  mutates: false,
-  async run() {
-    const assertions = new Assertions();
-    const session = await login(PRIMARY_ACCOUNT);
-    try {
-      const town = await findTown(session, GOVERNED_TOWN);
-      const response = await session.driver.request<WsRespMapData>(
-        {
-          type: WsMessageType.REQ_MAP_LOAD,
-          x: Math.max(0, town.x - ROLE_PROBE_SPAN / 2),
-          y: Math.max(0, town.y - ROLE_PROBE_SPAN / 2),
-          width: ROLE_PROBE_SPAN,
-          height: ROLE_PROBE_SPAN,
-        },
-        [WsMessageType.RESP_MAP_DATA, WsMessageType.EVENT_MAP_DATA],
-        TIMEOUTS.login,
-      );
-      const buildings: MapBuilding[] = response.data?.buildings ?? [];
-      const dist = (b: MapBuilding): number => Math.abs(b.x - town.x) + Math.abs(b.y - town.y);
-      const sorted = [...buildings].sort((a, b) => dist(a) - dist(b));
-
-      const handlerByClass = new Map<string, string>();
-      let reads = 0;
-      let warehouse: TradeRoleReading | undefined;
-      let industry: TradeRoleReading | undefined;
-      for (const b of sorted) {
-        if ((warehouse && industry) || reads >= ROLE_PROBE_MAX_READS) break;
-        const known = handlerByClass.get(b.visualClass);
-        if (known !== undefined) {
-          if (known !== 'WHGeneral' && known !== 'IndGeneral') continue;
-          if (known === 'WHGeneral' && warehouse) continue;
-          if (known === 'IndGeneral' && industry) continue;
-        }
-        const details = await readBuildingDetails(session, b.x, b.y, b.visualClass);
-        reads++;
-        const handlers = details.tabs.map(t => t.handlerName);
-        const handler = handlers.includes('WHGeneral')
-          ? 'WHGeneral'
-          : handlers.includes('IndGeneral')
-            ? 'IndGeneral'
-            : (handlers[0] ?? '');
-        handlerByClass.set(b.visualClass, handler);
-        const reading: TradeRoleReading = {
-          facility: handler === 'WHGeneral' ? 'warehouse' : 'industry',
-          x: b.x,
-          y: b.y,
-          visualClass: b.visualClass,
-          templateName: details.templateName,
-          role: rawProperty(details.groups, 'Role'),
-          tradeRole: rawProperty(details.groups, 'TradeRole'),
-        };
-        if (handler === 'WHGeneral' && !warehouse) warehouse = reading;
-        else if (
-          handler === 'IndGeneral' &&
-          !industry &&
-          INDUSTRY_TRADE_ROLES.includes(reading.tradeRole)
-        ) {
-          industry = reading;
-        }
-      }
-
-      const readings: TradeRoleReading[] = [];
-      if (warehouse) readings.push(warehouse);
-      if (industry) readings.push(industry);
-      if (!warehouse) {
-        assertions.unproven(
-          `a WHGeneral warehouse's cached Role near ${GOVERNED_TOWN}`,
-          `none among ${buildings.length} building(s) in the ${ROLE_PROBE_SPAN}×${ROLE_PROBE_SPAN} ` +
-            `window (${reads} inspector read(s))`,
-        );
-      }
-      return { ...report('warehouse-role-reading', assertions, [], session), readings };
-    } finally {
-      await logoff(session);
-    }
-  },
 };
 
 /**
@@ -6523,15 +6430,14 @@ const companyInputDemand: Flow = {
 };
 
 /**
- * The trade role (warehouse only — `RDOSetRole` is published by `TWarehouse`,
- * StdBlocks/Warehouses.pas:95) and the trade level (warehouse and industry,
- * `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408). Only values the client offers are written.
+ * The trade level (warehouse and industry, `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408).
+ * Only values the client offers are written. The trade role is not driven here: `RDOSetRole` is
+ * offered only on an IndGeneral storage, and the warehouse fixture is a WHGeneral Import Storage (#1255).
  */
 const tradeSettings: Flow = {
   name: 'trade-settings',
   what:
-    "RDOSetRole on SPO_test3's warehouse fixture (a role the client offers, read-back) and RDOSetTradeLevel on the " +
-    'warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored',
+    "RDOSetTradeLevel on SPO_test3's warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored",
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -6575,38 +6481,11 @@ const tradeSettings: Flow = {
         checkProbe(assertions, probe);
       };
 
+      // No RDOSetRole: the warehouse fixture is an Import Storage (WHGeneral), whose sheet never
+      // offered a trade mode (Voyager/WHGeneralSheet.pas carries cbTrade only, :46) — its role is
+      // preset by class (Model Extensions/General/GeneralPack1.dpr:719). Proving RDOSetRole needs an
+      // IndGeneral storage fixture (follow-up to #1255).
       if (warehouse) {
-        const readRole = readField(warehouse, 'whGeneral', 'Role');
-        const role = await readRole();
-        if (role !== undefined && isTradeModeValue(role)) {
-          const probe = await roundTripProbe(ctx, url, {
-            what: `${fixtureLabel(warehouse)} trade role`,
-            member: 'RDOSetRole',
-            read: readRole,
-            testValue: tradeRoleNudge,
-            write: async value => {
-              await setBuildingProperty(session, warehouse.x, warehouse.y, 'RDOSetRole', value);
-            },
-            // RDOSetRole logs nothing (StdBlocks/Warehouses.pas:527): the read-back alone proves it.
-            proof: {
-              readBack: readBackOn(
-                `whGeneral.Role at (${warehouse.x},${warehouse.y}) via the gateway's section read`,
-                `RDOSetRole prints no Survival line; ${FACILITY_CACHE_WHY}`,
-                tolerantRead(readRole),
-              ),
-            },
-            restoreRecord: { x: warehouse.x, y: warehouse.y, propertyName: 'RDOSetRole' },
-          });
-          probes.push(probe);
-          checkProbe(assertions, probe);
-        } else {
-          assertions.unproven(
-            'RDOSetRole',
-            `${fixtureLabel(warehouse)}'s Role "${role ?? 'absent'}" is not one the client offers (isTradeModeValue, ` +
-              `TRADE_MODE_VALUES ${TRADE_MODE_VALUES.join('/')}; Voyager/IndustryGeneralSheet.pas:189-235) — RDOSetRole ` +
-              'range-checks nothing (StdBlocks/Warehouses.pas:527), so nothing is sent',
-          );
-        }
         await tradeLevel(warehouse, 'whGeneral');
       }
       // RDOSetRole is never sent to the industry: only TWarehouse publishes it (StdBlocks/Warehouses.pas:95).
@@ -7227,11 +7106,6 @@ export function repairLineMatches(line: string, name: string): boolean {
   return new RegExp(`(?<!Stop )${escapeRegExp(`Repairing: ${name}`)}(?=\\s|$)`).test(line);
 }
 
-/** `Queue Research: <id>, <priority>` (Kernel/ResearchCenter.pas:384). */
-export function queueResearchLineMatches(line: string, id: string): boolean {
-  return line.includes(`Queue Research: ${id}, `);
-}
-
 /** `Cancel Research: <id>` (Kernel/ResearchCenter.pas:396). */
 export function cancelResearchLineMatches(line: string, id: string): boolean {
   return new RegExp(`${escapeRegExp(`Cancel Research: ${id}`)}(?=\\s|$)`).test(line);
@@ -7240,34 +7114,6 @@ export function cancelResearchLineMatches(line: string, id: string): boolean {
 /** `Facility Start Upgrade count: <count>` (Kernel/Kernel.pas:4675). */
 export function startUpgradeLineMatches(line: string, count: number): boolean {
   return new RegExp(`${escapeRegExp(`Facility Start Upgrade count: ${count}`)}(?=\\s|$)`).test(line);
-}
-
-/**
- * What queueing an invention costs, in dollars: the `Price:` and `License:` lines of its details
- * (`TInvention.GetProperties`, Inventions/Inventions.pas:715-727; labels Kernel/SimHints.pas:482-483;
- * amounts from `FormatMoney`, Utils/Misc/MathUtils.pas:87-99). A line the details do not show is 0. The server starts a
- * research only when `Budget >= Price + GetFeePrice` (Kernel/ResearchCenter.pas:240).
- */
-export function researchCost(properties: string): number {
-  const dollars = (label: string): number => {
-    const m = new RegExp(`(?:^|\\s)${label}:\\s*\\$([0-9][0-9,.]*)`, 'i').exec(properties);
-    return m ? Number(m[1].replace(/[^0-9]/g, '')) : 0;
-  };
-  return dollars('Price') + dollars('Licen[cs]e');
-}
-
-export type ResearchState = 'developing' | 'owned' | 'available' | 'absent';
-
-/**
- * Where an invention stands in one category's inventory. The three lists are mutually exclusive
- * by construction (`TResearchCenter.StoreToCache`, Kernel/ResearchCenter.pas:797-817).
- */
-export function researchState(data: ResearchCategoryData, id: string): ResearchState {
-  const has = (list: { inventionId: string }[]): boolean => list.some(i => i.inventionId === id);
-  if (has(data.developing)) return 'developing';
-  if (has(data.completed)) return 'owned';
-  if (has(data.available)) return 'available';
-  return 'absent';
 }
 
 /**
@@ -7597,16 +7443,10 @@ const acceptCloning = fixtureFlow(
 );
 
 /**
- * The one invention research-roundtrip drives (maintainer, PR #1214): Commerce > Bars > Happy Hour,
- * id `HappyHour` in research.0.dat — Price $25,000,000, requires `Bars`.
- */
-export const RESEARCH_TARGET = { id: 'HappyHour', name: 'Happy Hour' } as const;
-
-/**
- * Queue Happy Hour, prove it is in development, cancel it. Queueing can buy on the spot —
- * an invention with `Time = 0` is paid for and declared at once (Kernel/ResearchCenter.pas:319-334)
- * — and a cancel on an owned invention reaches `RetireInvention` (:372), the excluded sell. So the
- * cancel is sent only on an invention that reads in development right before it.
+ * Queue Happy Hour, prove it is in development, cancel it. It starts from any state: one left owned
+ * or in development by an earlier run is cancelled/sold first (Kernel/ResearchCenter.pas:354-372).
+ * After the queue the cancel is always sent — it removes a queued invention and sells one bought at
+ * once (`Time = 0`, :319-334) — and the inventory reading `available` again decides the restore.
  */
 const researchRoundTrip = fixtureFlow(
   'research-roundtrip',
@@ -7623,13 +7463,6 @@ const researchRoundTrip = fixtureFlow(
     }
   },
 );
-
-function researchInventory(session: LiveSession, fx: OwnFixture, categoryIndex: number): Promise<WsRespResearchInventory> {
-  return session.driver.request<WsRespResearchInventory>(
-    { type: WsMessageType.REQ_RESEARCH_INVENTORY, buildingX: fx.x, buildingY: fx.y, categoryIndex },
-    WsMessageType.RESP_RESEARCH_INVENTORY,
-  );
-}
 
 async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixture, assertions: Assertions): Promise<void> {
   // CatCount is the highest category index, not a count (Kernel/ResearchCenter.pas:820).
@@ -7659,23 +7492,32 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     assertions.unproven('RDOQueueResearch', `${name} not listed at ${at} (categories 0..${catMax})`);
     return;
   }
-  if (found.state !== 'available' || !found.enabled) {
-    const why =
-      found.state === 'owned'
-        ? 'already owned — a cancel on it would sell it (Kernel/ResearchCenter.pas:372)'
-        : found.state === 'developing'
-          ? 'already in development — not queued by this flow, so not its to cancel'
-          : 'listed but not enabled — its prerequisite Bars is not owned, or the tier / nobility does not match ' +
-            '(TInvention.Enabled, Inventions/Inventions.pas:658-693)';
-    assertions.unproven('RDOQueueResearch', `${name} at ${at}: ${why}; nothing sent`);
+  const { category } = found;
+  const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
+  // Isolated target (RESEARCH_TARGET): a leftover is cancelled/sold first, with no pending restore.
+  if (found.state === 'owned' || found.state === 'developing') {
+    await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: id });
+    const reset = await pollUntil(stateOf, s => s === 'available', ctx);
+    if (!reset.ok) {
+      assertions.unproven(
+        'RDOQueueResearch',
+        `${name} at ${at}: read ${found.state}, cancel/sell sent, still reads ${reset.last} — not reset; nothing else sent`,
+      );
+      return;
+    }
+    const { data } = await researchInventory(session, fx, category);
+    found = { category, state: 'available', enabled: data.available.some(i => i.inventionId === id && i.enabled === true) };
+  }
+  if (!found.enabled) {
+    assertions.unproven(
+      'RDOQueueResearch',
+      `${name} at ${at}: listed but not enabled — its prerequisite Bars is not owned, or the tier / nobility does not match ` +
+        '(TInvention.Enabled, Inventions/Inventions.pas:658-693); nothing sent',
+    );
     return;
   }
-  const { category } = found;
 
-  const { details } = await session.driver.request<WsRespResearchDetails>(
-    { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: id },
-    WsMessageType.RESP_RESEARCH_DETAILS,
-  );
+  const details = await readResearchDetails(session, fx, id);
   const properties = details.properties.trim().replace(/\s+/g, ' ');
   assertions.check(
     `REQ_RESEARCH_DETAILS answers for ${id} with its properties`,
@@ -7690,7 +7532,6 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     return;
   }
 
-  const stateOf = async (): Promise<ResearchState> => researchState((await researchInventory(session, fx, category)).data, id);
   const url = await survivalUrl(ctx);
   const key = `research-roundtrip:${randomUUID()}`;
   ctx.lock.addPendingRestore({
@@ -7699,8 +7540,9 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     y: fx.y,
     propertyName: 'RDOCancelResearch',
     what:
-      `cancel research ${id} at (${fx.x},${fx.y}) — queued by research-roundtrip; if it reads owned it was bought at ` +
-      'once and must NOT be cancelled (RDOCancelResearch on an owned invention sells it, Kernel/ResearchCenter.pas:372)',
+      `cancel/sell research ${id} at (${fx.x},${fx.y}) — queued by research-roundtrip; RDOCancelResearch removes a queued ` +
+      `invention and sells an owned one (Kernel/ResearchCenter.pas:354-372); ${name} is an isolated test invention, so ` +
+      'selling it is the intended undo',
     originalValue: 'available',
   });
 
@@ -7725,7 +7567,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
         `${id} is listed in development, not owned`,
         false,
         `bought at once: ${id} (${properties}) — an invention with Time = 0 is bought on the spot ` +
-          '(Kernel/ResearchCenter.pas:319-334); not cancelled: cancel would sell it',
+          '(Kernel/ResearchCenter.pas:319-334) — sold back by the cancel',
       );
     } else if (listed.last === 'available') {
       // Reads exactly what the pending restore would put back: the server dropped the queue and
@@ -7742,7 +7584,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
       assertions.check(
         `${id} is listed in development, not owned`,
         listed.ok,
-        listed.ok ? `${id} in development` : `never listed in development — reads ${listed.last}; not cancelled`,
+        listed.ok ? `${id} in development` : `never listed in development — reads ${listed.last}; cancel sent anyway`,
       );
     }
   } catch (err: unknown) {
@@ -7752,8 +7594,9 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
 }
 
 /**
- * The cancel, only on an invention that reads in development right before it — never one that
- * reads owned (a sell) or one the flow never saw queued. Anything else keeps the pending restore.
+ * The cancel, always sent whatever the state — a queued invention is removed, an owned one sold,
+ * an absent one is harmless for the isolated target (RESEARCH_TARGET). The inventory reading
+ * `available` clears the pending restore whatever the log said; one retry before it is kept.
  */
 async function cancelQueuedResearch(
   session: LiveSession,
@@ -7763,31 +7606,25 @@ async function cancelQueuedResearch(
   assertions: Assertions,
 ): Promise<void> {
   try {
-    const state = await q.stateOf();
-    if (state !== 'developing') {
-      assertions.check(
-        `${q.id} is cancelled`,
-        false,
-        `reads ${state}, not in development — not cancelled (RDOCancelResearch on an owned invention sells it, ` +
-          'Kernel/ResearchCenter.pas:372); pending restore kept',
+    let line: string | null = null;
+    let back: { ok: boolean; last: ResearchState } = { ok: false, last: 'absent' };
+    for (let attempt = 1; attempt <= 2 && !back.ok; attempt++) {
+      const window = await openLogWindow(q.url);
+      await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: q.id });
+      line ??= await awaitMarker(
+        window,
+        { marker: LOG_MARKERS.RDOCancelResearch, match: l => cancelResearchLineMatches(l, q.id) },
+        TIMEOUTS.logSettle,
+        undefined,
+        ctx.now,
+        ctx.sleep,
       );
-      return;
+      back = await pollUntil(q.stateOf, s => s === 'available', ctx);
     }
-    const window = await openLogWindow(q.url);
-    await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: q.id });
-    const line = await awaitMarker(
-      window,
-      { marker: LOG_MARKERS.RDOCancelResearch, match: l => cancelResearchLineMatches(l, q.id) },
-      TIMEOUTS.logSettle,
-      undefined,
-      ctx.now,
-      ctx.sleep,
-    );
-    const gone = await pollUntil(q.stateOf, s => s !== 'developing' && s !== 'owned', ctx);
-    const kept = line !== null && gone.ok ? '' : ' — pending restore kept';
-    assertions.check('the cancel logged its Cancel Research: line', line !== null, (line ?? `(no Cancel Research: line for ${q.id})`) + kept);
-    assertions.check(`the inventory no longer lists ${q.id} as queued`, gone.ok, `reads ${gone.last}${kept}`);
-    if (line !== null && gone.ok) ctx.lock.clearPendingRestore(q.key);
+    if (back.ok) ctx.lock.clearPendingRestore(q.key);
+    const kept = back.ok ? '' : ' — pending restore kept';
+    assertions.check('the cancel logged its Cancel Research: line', line !== null, line ?? `(no Cancel Research: line for ${q.id})`);
+    assertions.check(`the inventory reads ${q.id} available again`, back.ok, `reads ${back.last}${kept}`);
   } catch (err: unknown) {
     assertions.check('the research cancel ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
   }
@@ -8400,22 +8237,22 @@ const chatPrivateChannel: Flow = {
 };
 
 /**
- * SPO_test3 chases Crazz, then stops (#1148, proof #1188). `TClientView.Chase` inserts the
+ * SPO_test3 chases the secondary account, then stops (#1148, proof #1188). `TClientView.Chase` inserts the
  * chaser in the target's list and moves the chaser's own view (`Interface Server/
  * InterfaceServer.pas:1579-1608`, `MoveTo` at `:1590`). The proof is SPO_test3's view
- * following Crazz: Crazz sends one camera update, `SetViewedArea` ends with `UpdateChasers`
+ * following the secondary account: it sends one camera update, `SetViewedArea` ends with `UpdateChasers`
  * (`:742`), which pushes every chaser `MoveTo(x + dx div 2, y + dy div 2)` (`:705-718`,
  * `TClientView.MoveTo` `:2215-2219`), and the gateway forwards it as `EVENT_MOVE_TO`. The
- * camera sits on Crazz's own saved position, so its logoff cookie is unchanged. `DoLogOff`
+ * camera sits on the secondary's own saved position, so its logoff cookie is unchanged. `DoLogOff`
  * (`:2002`) and `Destroy` (`:654`) end any chase a dead run leaves.
  */
 const chatChase: Flow = {
   name: 'chat-chase',
-  what: 'Crazz online -> SPO_test3 chases Crazz -> stop chase',
+  what: `${SECONDARY_ACCOUNT.username} online -> SPO_test3 chases ${SECONDARY_ACCOUNT.username} -> stop chase`,
   mutates: false,
   run: async () => {
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult('chat-chase', crazz.skipped);
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult('chat-chase', secondary.skipped);
     try {
       const assertions = new Assertions();
       const session = await login(PRIMARY_ACCOUNT);
@@ -8429,7 +8266,7 @@ const chatChase: Flow = {
           ),
         );
         if (chased) {
-          const view = sendCamera(crazz, crazz.playerX, crazz.playerY);
+          const view = sendCamera(secondary, secondary.playerX, secondary.playerY);
           const ex = view.viewX + CAMERA_VIEW_SIZE / 2;
           const ey = view.viewY + CAMERA_VIEW_SIZE / 2;
           const label =
@@ -8458,7 +8295,7 @@ const chatChase: Flow = {
         await logoff(session);
       }
     } finally {
-      await logoff(crazz);
+      await logoff(secondary);
     }
   },
 };
@@ -8502,7 +8339,6 @@ export const FLOWS: Flow[] = [
   portraitRoundTrip,
   roadRoundTrip,
   zoneRoundTrip,
-  warehouseRoleReading,
   fixturesEnsure,
   inspectorReads,
   storePriceSalaries,

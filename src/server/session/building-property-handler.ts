@@ -52,6 +52,28 @@ export const RDO_SET_PROPERTIES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Inspector properties published by the FACILITY, not by its block — so the
+ * `set` goes to ObjectId, not to CurrBlock.
+ *
+ * A `set` on an object that does not publish the name is refused with
+ * errUnexistentProperty (Rdo/Server/RDOObjectServer.pas:176) and, the write
+ * being fire-and-forget, nobody hears it: this is why Close/Open did nothing.
+ *
+ * - `Stopped` — `TFacility`, Kernel/Kernel.pas:1043 (SetStopped :3948). The
+ *   reference client binds to the facility id then assigns it:
+ *   Voyager/URLHandlers/ObjectInspectorHandleViewer.pas:618/:626 then
+ *   Voyager/SrvGeneralSheetForm.pas:488; SPO-ASP
+ *   Five/0/Visual/Voyager/IsoMap/StopFacility.asp:12-15.
+ * - `Name` — `TFacility`, Kernel/Kernel.pas:1029 (SetName :3860); Voyager
+ *   assigns it on the same facility proxy, SrvGeneralSheetForm.pas:248.
+ *
+ * Every other name the 'property' branch can receive (Rent, Maintenance,
+ * Interest, Term, HoursOnAir, Commercials) is published by a block class and
+ * stays on CurrBlock.
+ */
+export const FACILITY_PROPERTIES: ReadonlySet<string> = new Set(['Name', 'Stopped']);
+
+/**
  * Narrow a runtime-chosen name to a catalogued `procedure`.
  *
  * Both call sites (the synchronous `RDOConnectInput/Output` path and the
@@ -121,8 +143,11 @@ async function setBuildingPropertyImpl(
     }
 
     // Get the building's CurrBlock and ObjectId via map service.
-    // For most buildings ObjectId === CurrBlock, but warehouses differ:
-    // output/input gate commands (RDOSetOutputPrice, etc.) must target ObjectId.
+    // They are two different server objects, never the same id: ObjectId is
+    // the facility itself (`integer(Obj)`, Cache/CacheAgent.pas:89), CurrBlock
+    // is the separate block the facility runs (Kernel/Kernel.pas:1036, cached
+    // at Kernel/KernelCache.pas:426). A member must be sent to the object that
+    // declares it — see RDO_OBJECTID_COMMANDS and FACILITY_PROPERTIES below.
     await ctx.connectMapService();
     const tempObjectId = await ctx.cacherCreateObject();
     let currBlock: string;
@@ -225,7 +250,6 @@ async function setBuildingPropertyImpl(
     // Ref: Live capture: RDODisconnectInput "*" "%Plastics","%706,436,"
 
     // Output/input gate commands bind to ObjectId, not CurrBlock.
-    // For warehouses these differ; for other buildings they are equal.
     // RDOSetOutputPrice BindTo: objectId (direct)
     //
     // The choice is three-way, not two: RDOSelSelected and RDOSetInputFluidPerc bind to neither of
@@ -278,7 +302,8 @@ async function setBuildingPropertyImpl(
       // check and the compiler's check are the same check — no cast.
       const actualPropName = additionalParams.propertyName;
       assertSettable(actualPropName);
-      fireAndForget(rdoSet(actualPropName, currBlock, onlyArg(actualPropName, rdoArgs)).toFrame());
+      const target = FACILITY_PROPERTIES.has(actualPropName) ? objectId : currBlock;
+      fireAndForget(rdoSet(actualPropName, target, onlyArg(actualPropName, rdoArgs)).toFrame());
       await new Promise(resolve => setTimeout(resolve, 200));
     } else if (RDO_SET_PROPERTIES.has(propertyName)) {
       // Published property: use SET verb (not CALL)

@@ -1233,13 +1233,59 @@ describe('direct property set', () => {
   });
 
   it('writes Name as a widestring — the only WIDESTRING_PROPERTIES entry (:637)', async () => {
+    // Target changed from CurrBlock to ObjectId: `Name` is published by
+    // TFacility (Kernel/Kernel.pas:1029), not by the block, and Voyager assigns
+    // it on the facility proxy (Voyager/SrvGeneralSheetForm.pas:248).
     const fake = makeConstructionCtx();
 
     await settle(setBuildingProperty(fake.ctx, X, Y, 'property', 'Café de la Gare', { propertyName: 'Name' }));
 
     expect(onlyFrame(fake)).toEqual(
-      RdoCommand.sel(CURR_BLOCK).set('Name').args(RdoValue.string('Café de la Gare')).build(),
+      RdoCommand.sel(OBJECT_ID).set('Name').args(RdoValue.string('Café de la Gare')).build(),
     );
+  });
+
+  // Close / Open. `Stopped` is published by TFacility (Kernel/Kernel.pas:1043),
+  // the object whose id the cacher calls ObjectId (Cache/CacheAgent.pas:89).
+  // Sent to CurrBlock — a TBlock, which does not publish it — the server
+  // answered errUnexistentProperty (Rdo/Server/RDOObjectServer.pas:176) to
+  // nobody, and the building never closed. The reference client binds to the
+  // facility first: StopFacility.asp:12-15, SrvGeneralSheetForm.pas:488.
+  it.each([
+    { label: 'Close', value: '-1', wire: -1 },
+    { label: 'Open', value: '0', wire: 0 },
+  ])('sends Stopped ($label) to the facility ObjectId, never to CurrBlock', async ({ value, wire }) => {
+    const fake = makeConstructionCtx();
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName: 'Stopped' }));
+
+    const frame = onlyFrame(fake);
+    expect(frame).toMatchRdoSetFormat('Stopped');
+    expect(frame).toEqual(RdoCommand.sel(OBJECT_ID).set('Stopped').args(RdoValue.int(wire)).build());
+    expect(frame).not.toContain(CURR_BLOCK);
+  });
+
+  it('keeps Stopped on CurrBlock only when the building publishes no ObjectId (the fallback)', async () => {
+    const fake = makeConstructionCtx({ objectId: null });
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }));
+
+    expect(onlyFrame(fake)).toEqual(RdoCommand.sel(CURR_BLOCK).set('Stopped').args(RdoValue.int(-1)).build());
+  });
+
+  // Rent and Maintenance are published by TPopulatedBlock
+  // (Kernel/PopulatedBlock.pas:148-149) — a block — so they stay on CurrBlock.
+  it.each([
+    { propertyName: 'Rent', value: '120' },
+    { propertyName: 'Maintenance', value: '80' },
+  ])('keeps $propertyName on CurrBlock, where the block publishes it', async ({ propertyName, value }) => {
+    const fake = makeConstructionCtx();
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName }));
+
+    const frame = onlyFrame(fake);
+    expect(frame).toMatchRdoSetFormat(propertyName);
+    expect(frame).toEqual(RdoCommand.sel(CURR_BLOCK).set(propertyName).args(RdoValue.int(Number(value))).build());
   });
 
   it('reads the property back under its own name', async () => {
@@ -1251,7 +1297,7 @@ describe('direct property set', () => {
     expect(listCalls[listCalls.length - 1][1]).toEqual(['Interest']);
   });
 
-  it('never targets ObjectId, even for a warehouse', async () => {
+  it('never targets ObjectId for a block-published property, even for a warehouse', async () => {
     // Was `AcceptCloning`, a name this path cannot receive: template-groups.ts:540
     // maps it to `command: 'RDOAcceptCloning'`, not to `'property'`. Now that the
     // settable set is closed, the test has to use a name the UI actually produces.

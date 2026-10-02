@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * Two rules CLAUDE.md states as binding that the GitHub ruleset cannot express on its own —
- * made mechanical, so they hold without a human keeping watch.
+ * The rules the GitHub ruleset cannot express on its own — made mechanical, so they hold
+ * without a human keeping watch.
  *
  *   1. Coverage ratchet      — "thresholds only go UP" is a numeric comparison between
  *                              jest.config.js on the base and on this branch.
  *   2. RDO catalogue         — adding to the catalogue needs the server declaration cited
  *                              as `File.pas:Line`; the PR body must carry at least one.
+ *   3. Proof & regression    — a PR that changes shipped src/{client,server,shared} names the
+ *      flows                   live flows that prove it and guard its neighbours
+ *                              (doc/E2E-POLICY.md § Proof and regression flows).
  *
  * Runs as a step of the `typecheck + tests` job, which is a required status check — so it
  * blocks a merge without any ruleset change. Skipped outside a pull request, where there
@@ -29,6 +32,12 @@ const CITATION_FILES = ['src/shared/rdo-members.ts'];
 const CITATION_PATTERN = /\b[\w.-]+\.pas:\d+/i;
 
 const THRESHOLD_METRICS = ['lines', 'functions', 'branches', 'statements'];
+
+/** The live flows a PR may name: the `name:` of each entry of `FLOWS` in this file. */
+const FLOWS_FILE = 'src/e2e/flows.ts';
+/** The code a player runs. A change here must name the flows that prove it. */
+const SHIPPED_PREFIXES = ['src/client/', 'src/server/', 'src/shared/'];
+const FLOWS_POINTER = 'see doc/E2E-POLICY.md § Proof and regression flows';
 
 function normalise(file) {
   return String(file).replace(/\\/g, '/').trim();
@@ -530,6 +539,173 @@ function ratchetResult(baseState, headThresholds) {
   return checkThresholds(baseState.thresholds, headThresholds);
 }
 
+/**
+ * Shipped source: a changed path under src/client/, src/server/ or src/shared/ that is not a
+ * test or a mock. src/e2e/, src/mock-server/ and src/__tests__/ are tooling, not shipped.
+ */
+function isShippedSource(file) {
+  const f = normalise(file);
+  if (!SHIPPED_PREFIXES.some(p => f.startsWith(p))) return false;
+  return !/(^|\/)__tests__\//.test(f) && !/(^|\/)__mocks__\//.test(f) && !/\.test\.tsx?$/.test(f);
+}
+
+/** Strips the backticks a flow name is commonly written in. */
+function unquote(s) {
+  return s.replace(/^`+/, '').replace(/`+$/, '').trim();
+}
+
+/**
+ * The first `<label>: …` line of a PR body, read as a flow list.
+ *
+ * Returns `{ state: 'absent' }` | `{ state: 'none', reason }` | `{ state: 'invalid', why }` |
+ * `{ state: 'list', flows: [{ name, isNew }] }`. `new:<flow>` marks a flow the PR adds.
+ */
+function parseFlowLine(body, label) {
+  const m = new RegExp(`^[ \\t]*${label}:[ \\t]*(.*)$`, 'm').exec(body ?? '');
+  if (!m) return { state: 'absent' };
+  // `.` stops at `\r`, so a GitHub body's `\r\n` never reaches the value; trim the rest.
+  const value = m[1].trim();
+  const none = /^none\s*(?:—|–|--?|:)\s*(\S.*)$/.exec(value);
+  if (none) return { state: 'none', reason: none[1].trim() };
+  if (/^none\s*(?:—|–|--?|:)?\s*$/.test(value)) {
+    return { state: 'invalid', why: '`none` needs a reason: `none — <reason>`' };
+  }
+  const flows = value
+    .split(',')
+    .map(unquote)
+    .filter(Boolean)
+    .map(item => {
+      const n = /^new:\s*(.*)$/.exec(item);
+      return n ? { name: unquote(n[1]), isNew: true } : { name: item, isNew: false };
+    })
+    .filter(f => f.name !== '');
+  if (flows.length === 0) {
+    return { state: 'invalid', why: 'names no flow: write `<flow>, new:<flow>` or `none — <reason>`' };
+  }
+  return { state: 'list', flows };
+}
+
+/**
+ * The flow names of `FLOWS` in flows.ts, in array order, read from the text alone — the file
+ * imports the whole e2e harness, so it is never executed here. `FLOWS` lists bindings; each
+ * binding's declaration carries the name on one of its next three lines, either as
+ * `name: 'x',` (a `Flow` literal) or as the first argument `'x',` of a factory such as
+ * `fixtureFlow(`. Throws on anything it cannot read: an unread name must never let a wrong
+ * one pass.
+ */
+function flowNamesFromSource(text) {
+  const lines = String(text).split('\n').map(l => l.replace(/\r$/, ''));
+  const open = lines.findIndex(l => /^export const FLOWS\b.*\[\s*$/.test(l));
+  if (open === -1) throw new Error(`no \`export const FLOWS … = [\` literal in ${FLOWS_FILE}`);
+  const bindings = [];
+  let closed = false;
+  for (let i = open + 1; i < lines.length; i++) {
+    if (lines[i] === '];') {
+      closed = true;
+      break;
+    }
+    const m = /^\s*([A-Za-z_$][\w$]*),?\s*$/.exec(lines[i]);
+    if (m) bindings.push(m[1]);
+  }
+  if (!closed) throw new Error(`the FLOWS literal in ${FLOWS_FILE} has no closing \`];\` line`);
+  if (bindings.length === 0) throw new Error(`the FLOWS literal in ${FLOWS_FILE} lists no flow`);
+
+  const names = [];
+  for (const binding of bindings) {
+    const decl = lines.findIndex(l => l.startsWith(`const ${binding} `) || l.startsWith(`const ${binding}:`));
+    if (decl === -1) throw new Error(`FLOWS lists \`${binding}\`, but no \`const ${binding}\` declaration was found`);
+    let name = null;
+    for (let k = decl + 1; k <= decl + 3 && k < lines.length && name === null; k++) {
+      const r = /^\s*(?:name:\s*)?(['"])([^'"]+)\1,\s*$/.exec(lines[k]);
+      if (r) name = r[2];
+    }
+    if (name === null) throw new Error(`the name of \`${binding}\` could not be read in ${FLOWS_FILE}`);
+    if (names.includes(name)) throw new Error(`two FLOWS entries are named \`${name}\``);
+    names.push(name);
+  }
+  return names;
+}
+
+/**
+ * The flow names of `FLOWS` at a commit. Mirrors thresholdsAt: the file genuinely absent is
+ * not the same as present and unreadable.
+ *
+ * Returns `{ state: 'ok', names: Set }` | `{ state: 'absent' }` | `{ state: 'unreadable', reason }`.
+ */
+function flowNamesAt(ref) {
+  try {
+    git(['cat-file', '-e', `${ref}:${FLOWS_FILE}`]);
+  } catch {
+    return { state: 'absent' };
+  }
+  try {
+    return { state: 'ok', names: new Set(flowNamesFromSource(git(['show', `${ref}:${FLOWS_FILE}`]))) };
+  } catch (err) {
+    return { state: 'unreadable', reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function describeFlowLine(parsed) {
+  if (parsed.state === 'none') return `none — ${parsed.reason}`;
+  return parsed.flows.map(f => (f.isNew ? `new:${f.name}` : f.name)).join(', ');
+}
+
+/**
+ * The proof & regression flows rule — pure, so every branch is testable without git.
+ *
+ * A PR that changes shipped source carries `Proof flows:` and `Regression flows:` lines. Both
+ * are judged the same way: every named flow is in FLOWS at HEAD, and a `new:` flow is also
+ * absent from FLOWS at the base. `none — <reason>` needs no FLOWS at all. Every problem is
+ * reported, not only the first.
+ */
+function checkFlows(files, body, headFlows, baseFlows) {
+  const shipped = files.map(normalise).filter(isShippedSource);
+  if (shipped.length === 0) {
+    return { ok: true, detail: 'no shipped src/{client,server,shared} file changed -- Proof/Regression flows not required' };
+  }
+
+  const parsedLines = ['Proof flows', 'Regression flows'].map(label => ({ label, parsed: parseFlowLine(body, label) }));
+  const problems = [];
+  const named = [];
+  for (const { label, parsed } of parsedLines) {
+    if (parsed.state === 'absent') problems.push(`no \`${label}:\` line in the PR body`);
+    else if (parsed.state === 'invalid') problems.push(`\`${label}:\` ${parsed.why}`);
+    else if (parsed.state === 'list') named.push(...parsed.flows.map(f => ({ label, ...f })));
+  }
+
+  if (named.length > 0 && headFlows.state !== 'ok') {
+    problems.push(
+      `${FLOWS_FILE} at HEAD ${headFlows.state === 'absent' ? 'does not exist' : `could not be read: ${headFlows.reason}`}` +
+        ' -- the named flows cannot be checked, and an unchecked name is not a passed one',
+    );
+  } else {
+    for (const f of named) {
+      const written = f.isNew ? `new:${f.name}` : f.name;
+      if (!headFlows.names.has(f.name)) {
+        problems.push(`${f.label}: \`${written}\` is not a flow in FLOWS at HEAD`);
+      } else if (f.isNew && baseFlows.state === 'unreadable') {
+        problems.push(`${f.label}: \`${written}\` cannot be checked -- ${FLOWS_FILE} at the base could not be read: ${baseFlows.reason}`);
+      } else if (f.isNew && baseFlows.state === 'ok' && baseFlows.names.has(f.name)) {
+        problems.push(`${f.label}: \`${written}\` is already in FLOWS at the base -- not added by this diff`);
+      }
+    }
+  }
+
+  const count = `${shipped.length} shipped src/ file(s) changed`;
+  if (problems.length === 0) {
+    const [proof, regression] = parsedLines.map(l => describeFlowLine(l.parsed));
+    return { ok: true, detail: `${count}; proof: ${proof}; regression: ${regression}` };
+  }
+  return {
+    ok: false,
+    detail:
+      `${count} (${shipped.slice(0, 3).join(', ')}${shipped.length > 3 ? ', …' : ''}), and the flows it names do not hold:\n` +
+      problems.map(p => `      - ${p}`).join('\n') +
+      `\n    The PR body needs \`Proof flows: <flow>, new:<flow>\` and \`Regression flows: <flow>, <flow>\`\n` +
+      `    (or \`none — <reason>\`) -- ${FLOWS_POINTER}.`,
+  };
+}
+
 function main() {
   const base = diffBase(process.env.BASE_SHA);
   if (!base) {
@@ -549,6 +725,7 @@ function main() {
 
   const results = [
     ['RDO citation', checkCitation(files, body, base)],
+    ['proof & regression flows', checkFlows(files, body, flowNamesAt('HEAD'), flowNamesAt(base))],
   ];
 
   let headThresholds;
@@ -580,6 +757,13 @@ module.exports = {
   parseAddedLineNumbers,
   extractPasCitations,
   findChangedCatalogueEntries,
+  // The proof & regression flows rule.
+  SHIPPED_PREFIXES,
+  isShippedSource,
+  parseFlowLine,
+  flowNamesFromSource,
+  flowNamesAt,
+  checkFlows,
 };
 
 if (require.main === module) {

@@ -599,6 +599,30 @@ Player note (fixed): Your mailbox now updates as soon as you delete a message.
   § Working rules): `id` = the card's number, `type` and `text` verbatim, `date` = the day it
   is written.
 
+### Proof and regression flows — the two lines a shipped-code card carries
+
+A card that changes shipped code (`src/client/`, `src/server/`, `src/shared/`) names the live
+flows that prove it and the ones that guard its neighbours:
+
+```
+Proof flows: mail-roundtrip, new:mail-delete-refresh
+Regression flows: mail-drafts, mail-reply
+```
+
+- **Where:** in the acceptance section (`## Done when` / `## Done means`), in its first
+  paragraph, after the `Player note` line when there is one — only that paragraph reaches
+  PLAN and IMPLEMENT.
+- **What:** a flow is a `name:` of `FLOWS` in `src/e2e/flows.ts`. `new:<flow>` is a flow the
+  card must write, because a new feature is proven by a live flow. Regression flows are the
+  related features, as the author judges — never the whole nightly. `none — <reason>` for a
+  change nothing on the wire or the screen observes.
+- **Done means:** the PR body carries both lines and its gate drives them
+  (`npm run gate -- --also-flows=`). `scripts/check-pr-rules.js` fails a shipped-code PR
+  without them, or naming a flow that is not in `FLOWS`, or a `new:` flow the diff does not
+  add (doc/E2E-POLICY.md § Proof and regression flows).
+- **The nightly stays the global review** — every flow over `main`; the maintainer can
+  request one mid-day (`npm run bench:nightly-request`).
+
 ### The card review — a neutral reader before the pool
 
 **Before the `gh issue create`, the draft card goes to the `card-reviewer` sub-agent**
