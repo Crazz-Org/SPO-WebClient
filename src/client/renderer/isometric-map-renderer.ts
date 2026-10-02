@@ -1006,17 +1006,22 @@ export class IsometricMapRenderer {
           // In placement mode on mobile: ignore taps — user confirms via PlacementHUD button only.
           // Pan to position the centered preview, then tap the green check.
           return;
-        } else {
-          // Normal map tap: building selection (same logic as mouse left-click)
-          const raw = this.terrainRenderer.screenToMap(x, y);
-          const mapI = Math.floor(raw.x); // row
-          const mapJ = Math.floor(raw.y); // col
-          const building = this.getBuildingAt(mapJ, mapI);
-          if (building && !IsometricMapRenderer.isPortal(building) && this.onBuildingClick) {
-            this.onBuildingClick(building.x, building.y, building.visualClass);
-          } else if (!building && this.onEmptyMapClick) {
-            this.onEmptyMapClick();
+        }
+        const raw = this.terrainRenderer.screenToMap(x, y);
+        const mapI = Math.floor(raw.x); // row
+        const mapJ = Math.floor(raw.y); // col
+        const building = this.getBuildingAt(mapJ, mapI);
+        if (this.connectMode) {
+          // Connect mode — a tap picks the building to connect, as a mouse click does
+          // (performLeftClick); it never opens an inspector, and empty ground does nothing.
+          if (building && this.onConnectModeClick) {
+            this.onConnectModeClick(building.x, building.y);
           }
+        } else if (building && !IsometricMapRenderer.isPortal(building) && this.onBuildingClick) {
+          // Normal map tap: building selection (same logic as mouse left-click)
+          this.onBuildingClick(building.x, building.y, building.visualClass);
+        } else if (!building && this.onEmptyMapClick) {
+          this.onEmptyMapClick();
         }
       },
     });
