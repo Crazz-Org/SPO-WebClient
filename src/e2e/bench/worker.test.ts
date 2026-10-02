@@ -52,6 +52,8 @@ import {
   type WorkerDeps,
 } from './worker';
 import { ROUTES, SPINE_FLOW } from '../routing';
+import type { LiveRunResult } from '../run';
+import { SECONDARY_ACCOUNT } from '../config';
 
 interface Harness {
   deps: WorkerDeps;
@@ -627,6 +629,59 @@ describe('processOldest — the queue discipline', () => {
   });
 
   describe('liveAttestationFrom — unit', () => {
+    // #1225 — one test per runLive() BLOCKED producer, each the literal LiveRunResult shape.
+    const blockedRun = (flows: LiveRunResult['flows'], error: string): LiveRunResult => ({
+      world: 'planitia',
+      branch: 'feature/x',
+      startedAt: '2026-09-30T00:00:00.000Z',
+      finishedAt: '2026-09-30T00:01:00.000Z',
+      status: 'BLOCKED',
+      preflight: { ok: flows.length > 0, checks: [], environmentAbort: false },
+      flows,
+      capabilities: [],
+      error,
+    });
+    const flow = (name: string, status: LiveRunResult['flows'][number]['status'], skipped?: string) => ({
+      name,
+      status,
+      ...(skipped ? { skipped } : {}),
+      assertions: [],
+      unproven: [],
+      probes: [],
+      messagesSent: 0,
+      messagesReceived: 0,
+      wireErrors: 0,
+    });
+    const writeArtifact = (live: LiveRunResult, required: string[]): string => {
+      const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-art-')), 'gate.json');
+      fs.writeFileSync(file, JSON.stringify({ live, routing: { required } }));
+      return file;
+    };
+
+    it('a skip-BLOCKED run reads "blocked-skip", naming only the SKIPPED flows', () => {
+      const file = writeArtifact(
+        blockedRun(
+          [flow('login-spine', 'PASS'), flow('permission-negative', 'SKIPPED', `${SECONDARY_ACCOUNT.username} refused`)],
+          `skipped — a flow that did not run is not a pass: permission-negative (${SECONDARY_ACCOUNT.username} refused)`,
+        ),
+        ['login-spine', 'permission-negative'],
+      );
+      expect(liveAttestationFrom(file)).toEqual({ status: 'blocked-skip', skipped: ['permission-negative'] });
+    });
+
+    it('a lock-refusal BLOCKED run (typed LiveRunResult, flows: []) still reads "unknown"', () => {
+      const file = writeArtifact(blockedRun([], 'world lock held by another branch'), ['login-spine']);
+      expect(liveAttestationFrom(file)).toEqual({
+        status: 'unknown',
+        why: 'world lock held by another branch; routed flows: login-spine',
+      });
+    });
+
+    it('a BLOCKED run with flows but none SKIPPED reads "unknown"', () => {
+      const file = writeArtifact(blockedRun([flow('login-spine', 'PASS')], 'blocked'), []);
+      expect(liveAttestationFrom(file).status).toBe('unknown');
+    });
+
     it('reads a "ran" live block with named flows', () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-art-'));
       const file = path.join(dir, 'gate.json');

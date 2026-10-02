@@ -205,10 +205,13 @@ export interface ReuseCandidate {
  * identical tree? Only two states do: it ran live, or it skipped with nothing routed
  * (nothing was owed). A skip with flows routed is B2.4's "15-record case" — a static-only
  * PASS that would propagate as if it were live. Absent or `'unknown'` carries no `required`
- * list to judge by (see {@link LiveAttestation}), so it proves nothing live either.
+ * list to judge by (see {@link LiveAttestation}), so it proves nothing live either; nor
+ * does `'blocked-skip'`, where a flow the router asked for never ran.
  */
 function provesItsLiveness(live: LiveAttestation | undefined): boolean {
   if (live?.status === 'ran') return true;
+  // A skipped flow proves nothing live.
+  if (live?.status === 'blocked-skip') return false;
   return live?.status === 'skipped' && live.required.length === 0;
 }
 
@@ -229,6 +232,8 @@ function provesItsLiveness(live: LiveAttestation | undefined): boolean {
  *    missing to propagate — reuse it.
  *  - `'skipped'` with a non-empty `required` is the hole this rule closes — refuse it,
  *    and drive the entry instead.
+ *  - `'blocked-skip'` — a flow the router asked for was not driven (it ended SKIPPED) —
+ *    refuse it, and drive the entry instead.
  *  - `'unknown'` — whether asserted directly, or because nothing on file could answer the
  *    question for this candidate at all (the field did not exist yet, the gate artifact
  *    was never written or is unreadable, or its recovery failed validation — see

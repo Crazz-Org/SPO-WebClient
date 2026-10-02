@@ -85,6 +85,15 @@ describe('CommandBar', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('the More menu carries the debug marker only while open (issue 1192)', () => {
+    renderWithProviders(<CommandBar />);
+    expect(screen.queryByTestId('more-menu')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByTestId('more-menu')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByTestId('more-menu')).toBeNull();
+  });
+
   it('More offers "Keyboard shortcuts", which opens the shortcut list and closes the menu', () => {
     renderWithProviders(<CommandBar />);
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
@@ -195,6 +204,23 @@ describe('CommandBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('More offers "Search", which opens the search surface and closes the menu', () => {
+    renderWithProviders(<CommandBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Search' }));
+    expect(useUiStore.getState().rightPanel).toBe('search');
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('a visitor sees the Search item in More', () => {
+    useGameStore.setState({ isVisitor: true });
+    renderWithProviders(<CommandBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByRole('menuitem', { name: 'Search' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Search' }));
+    expect(useUiStore.getState().rightPanel).toBe('search');
   });
 
   it('a visitor is offered no gated panel', () => {

@@ -33,7 +33,7 @@ const makeSupply = (overrides: Partial<BuildingSupplyData>): BuildingSupplyData 
 
 /**
  * The facility's role, where the panel reads it: the first property group of
- * the opening read. `Role` is the warehouse template's name for the same value.
+ * the opening read.
  */
 function seedRole(role: string | undefined, key: 'TradeRole' | 'Role' = 'TradeRole'): void {
   useBuildingStore.setState({
@@ -86,11 +86,13 @@ describe('the state the gate opens with', () => {
     expect(checkbox().checked).toBe(false);
   });
 
-  it('reads the warehouse template’s `Role` property too', () => {
+  // `Role` is not the trade mode: the cache holds it as `TradeRole` only, warehouses
+  // included (Kernel/Kernel.pas:5893; StdBlocks/Warehouses.pas:614-617) — #1255.
+  it('never reads the trade mode from `Role`', () => {
     seedRole('5', 'Role');
     openGate(makeSupply({ selected: '1' }));
 
-    expect(checkbox().checked).toBe(true);
+    expect(screen.queryByRole('checkbox', { name: 'Automatic buying' })).toBeNull();
   });
 
   it('follows a Selected the server sends after the card has already rendered', () => {

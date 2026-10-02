@@ -25,9 +25,9 @@ export const PRIMARY_ACCOUNT: E2eAccount = {
   role: 'mayor + minister',
 };
 
-/** Secondary: basic account, two buildings. Drives permission-negative and two-party flows. */
+/** Secondary: a dedicated basic test account, no special buildings. Drives permission-negative and two-party flows. */
 export const SECONDARY_ACCOUNT: E2eAccount = {
-  username: 'Crazz',
+  username: 'SPO_test',
   password: 'test',
   role: 'basic',
 };
