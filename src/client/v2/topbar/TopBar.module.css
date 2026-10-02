@@ -1,0 +1,329 @@
+/* TopBar — the v2 top deck: one glass bar along the top edge, from the docked minimap to the
+   right inset (design-tokens-v2.css). The side panel docks under it, so it never shifts. */
+
+.bar {
+  position: fixed;
+  top: var(--v2-topbar-top);
+  left: var(--v2-topbar-left);
+  right: var(--v2-topbar-right);
+  height: var(--v2-topbar-height);
+  z-index: var(--z-hud);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-1) 0 var(--space-4);
+  background: linear-gradient(180deg, var(--glass-bg-light) 0%, var(--glass-bg) 100%);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border-active);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: var(--leading-dense);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* A gold hairline along the bottom edge — the deck's signature, fading out at both ends */
+.bar::after {
+  content: '';
+  position: absolute;
+  left: var(--space-8);
+  right: var(--space-8);
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-gold-dark), transparent);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.divider {
+  width: 1px;
+  height: 24px;
+  flex-shrink: 0;
+  background: var(--surface-border-strong);
+}
+
+.spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* --- World + date: two stacked lines --- */
+.world {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.worldName {
+  color: var(--accent-gold);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-semibold);
+  letter-spacing: 0.1em;
+}
+
+.date {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Shared: a two-line block, and the 36 px click target --- */
+.stack {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.target {
+  height: 36px;
+  padding: 0 var(--space-2);
+  margin: 0 calc(-1 * var(--space-1));
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default), border-color var(--duration-fast) var(--ease-default);
+}
+
+.target:hover {
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-active);
+}
+
+.target:focus-visible,
+.hide:focus-visible,
+.debt:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 1px;
+}
+
+/* --- Treasury --- */
+.cash {
+  color: var(--accent-gold);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-weight: var(--font-bold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.incomePositive,
+.incomeNegative,
+.incomeNeutral {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.incomePositive { color: var(--money-positive); }
+.incomeNegative { color: var(--money-negative); }
+.incomeNeutral { color: var(--money-neutral); }
+
+.sparkline {
+  flex-shrink: 0;
+}
+
+/* --- Alert lamps --- */
+.lamps {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.lamp {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-full);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-medium);
+}
+
+.debt {
+  height: 32px;
+  background: var(--error-bg);
+  border: 1px solid var(--error);
+  color: var(--money-negative);
+  cursor: pointer;
+}
+
+.debt:hover {
+  background: var(--glass-bg-hover);
+}
+
+/* Critical (failureLevel >= 2) — pulsing red */
+.alertPulse {
+  animation: debtPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes debtPulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 3px var(--error-bg), 0 0 12px var(--error); }
+}
+
+.backup {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning);
+  color: var(--warning);
+}
+
+.watchers {
+  background: var(--accent-gold-subtle);
+  border: 1px solid var(--accent-gold-dark);
+  color: var(--accent-gold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Identity --- */
+.identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.rank {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--accent-gold-dark);
+  border-radius: var(--radius-full);
+  background: var(--accent-gold-subtle);
+  color: var(--accent-gold);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-bold);
+  font-variant-numeric: tabular-nums;
+}
+
+.who {
+  flex-shrink: 1;
+  max-width: 240px;
+}
+
+.name,
+.company {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.name {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+}
+
+.company {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+.role {
+  flex-shrink: 0;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent-gold-subtle);
+  color: var(--accent-gold);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.facilities {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.freshness {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Hide interface --- */
+.hide {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default);
+}
+
+.hide:hover {
+  background: var(--glass-bg-hover);
+  color: var(--text-primary);
+}
+
+/* Narrow desktop: the trend line goes and the lamps keep only their icon — their words stay
+   in the accessible name and the tooltip. */
+@media (max-width: 1279px) {
+  .sparkline {
+    display: none;
+  }
+
+  .lampText {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .who {
+    max-width: 160px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alertPulse {
+    animation: none;
+  }
+
+  .target,
+  .hide {
+    transition: none;
+  }
+}
+
+/* Mobile and tablet — MobileShell's info bar owns that range in both interfaces */
+@media (max-width: 1023px) {
+  .bar {
+    display: none;
+  }
+}
