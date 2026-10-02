@@ -104,7 +104,8 @@
 
 .target:focus-visible,
 .hide:focus-visible,
-.debt:focus-visible {
+.debt:focus-visible,
+.chase:focus-visible {
   outline: 2px solid var(--accent-gold);
   outline-offset: 1px;
 }
@@ -191,6 +192,26 @@
 }
 
 /* --- Identity --- */
+.chase {
+  min-width: 0;
+  flex-shrink: 1;
+  background: var(--glass-bg-light);
+  border: 1px solid var(--glass-border-active);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default);
+}
+
+.chase:hover {
+  background: var(--bg-tertiary);
+}
+
+.chaseName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
 .identity {
   display: flex;
   align-items: center;

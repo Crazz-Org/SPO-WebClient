@@ -12,8 +12,9 @@
  *   StatusPill → TopBar · ContextStatusStrip + WorldEventTicker → SignalLine
  *   CommandBar mode row → ModeBanner · CommandBar + MoreMenu → Dock · RightRail → MapTools
  *   ChatStrip → ChatDrawer · Sheet → SidePanel · StatusOverlay → FocusCard
- * Everything else (dialogs, modals, palette, chase badge, version badge, server switch) is the
- * same component GameScreen mounts.
+ * Everything else (dialogs, modals, palette, version badge, server switch) is the same
+ * component GameScreen mounts; the chase badge too, except while the TopBar is up (it carries
+ * the chase control itself — the badge's corner is the bar's right end).
  *
  * H hides TopBar, SignalLine, Dock, MapTools and ChatDrawer together; ModeBanner, the side
  * panel and dialogs stay.
@@ -91,8 +92,9 @@ export function GameScreenV2() {
       {!isDesktop && <WorldEventTicker />}
       {!isDesktop && <ContextStatusStrip />}
 
-      {/* ChaseBadge — top-right, shown only while following another player's camera */}
-      <ChaseBadge />
+      {/* ChaseBadge — top-right while following another player's camera. Its corner is the
+          TopBar's right end, so while the TopBar is mounted the bar carries the same control */}
+      {!chrome && <ChaseBadge />}
 
       {/* Dock (bottom-left), map tools (right edge), chat drawer (above the dock) */}
       {chrome && <Dock />}

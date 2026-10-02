@@ -21,6 +21,8 @@ import { useEffect, useState } from 'react';
 import { Building2, DatabaseBackup, Eye, EyeOff, TriangleAlert } from 'lucide-react';
 import { useGameStore } from '../../store/game-store';
 import { useUiStore } from '../../store/ui-store';
+import { useChatStore } from '../../store/chat-store';
+import { useClient } from '../../context';
 import { isPanelOffered } from '../../visitor-gating';
 import { Sparkline } from '../../components/common';
 import { formatGroupedIncome, formatGroupedMoney } from '../../components/hud/StatusPill';
@@ -72,6 +74,8 @@ export function TopBar() {
   const lastStatsUpdate = useGameStore((s) => s.lastStatsUpdate);
   const watchers = useGameStore((s) => s.watchers);
   const serverBusy = useGameStore((s) => s.serverBusy);
+  const chasedUser = useChatStore((s) => s.chasedUser);
+  const client = useClient();
   const timeAgo = useTimeAgo(lastStatsUpdate);
 
   const canOpenEmpire = isPanelOffered('empire', isVisitor);
@@ -158,6 +162,22 @@ export function TopBar() {
             </span>
           )}
         </div>
+      )}
+
+      {chasedUser && (
+        <>
+          <Divider />
+          <button
+            type="button"
+            className={cx(styles.lamp, styles.chase)}
+            onClick={() => client.onStopChase()}
+            aria-label={`Stop following ${chasedUser}`}
+            title="Click to stop following"
+          >
+            <Eye size={14} aria-hidden="true" />
+            <span className={styles.chaseName}>Following {chasedUser}</span>
+          </button>
+        </>
       )}
 
       <span className={styles.spacer} />

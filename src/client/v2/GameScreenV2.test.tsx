@@ -72,13 +72,15 @@ describe('GameScreenV2', () => {
     await renderScreen();
     for (const text of [
       ...DESKTOP_CHROME, 'MODEBANNER', 'SIDEPANEL', 'FOCUSCARD',
-      'MAPCONTEXTMENU', 'CHASEBADGE', 'ZONEPICKER', 'SERVERSWITCH', 'VERSIONBADGE', 'MOBILESHELL', 'PALETTE',
+      'MAPCONTEXTMENU', 'ZONEPICKER', 'SERVERSWITCH', 'VERSIONBADGE', 'MOBILESHELL', 'PALETTE',
     ]) {
       expect({ text, found: screen.queryByText(text) !== null }).toEqual({ text, found: true });
     }
     // v1's ticker and context strip are replaced by the signal line on desktop
     expect(screen.queryByText('V1_WORLDEVENT')).toBeNull();
     expect(screen.queryByText('V1_CONTEXTSTATUS')).toBeNull();
+    // the TopBar carries the chase control; v1's badge would sit on the bar's right end
+    expect(screen.queryByText('CHASEBADGE')).toBeNull();
   });
 
   it('below 1024 px drops the desktop chrome and keeps v1\'s ticker and context strip', async () => {
@@ -89,6 +91,7 @@ describe('GameScreenV2', () => {
     expect(screen.getByText('V1_CONTEXTSTATUS')).toBeTruthy();
     expect(screen.getByText('MOBILESHELL')).toBeTruthy();
     expect(screen.getByText('SIDEPANEL')).toBeTruthy();
+    expect(screen.getByText('CHASEBADGE')).toBeTruthy();
   });
 
   it('H hides the top deck, dock, map tools and chat drawer — the mode banner and side panel stay', async () => {
@@ -96,6 +99,8 @@ describe('GameScreenV2', () => {
     act(() => useUiStore.getState().toggleHudVisible());
     for (const text of DESKTOP_CHROME) expect(screen.queryByText(text)).toBeNull();
     expect(screen.getByText('MODEBANNER')).toBeTruthy();
+    // with the TopBar gone, v1's chase badge takes the top-right corner back
+    expect(screen.getByText('CHASEBADGE')).toBeTruthy();
     expect(screen.getByText('SIDEPANEL')).toBeTruthy();
     expect(screen.getByText('FOCUSCARD')).toBeTruthy();
     act(() => useUiStore.getState().toggleHudVisible());

@@ -29,11 +29,12 @@
   --v2-mode-height: 40px;
   --v2-mode-max-width: 720px;
 
-  /* Dock — bottom-left action row */
+  /* Dock — bottom-left action row. 752 px keeps its right end clear of the bottom-right
+     VersionBadge (240 px + --space-3) at 1024 px: 16 + 752 = 768 < 1024 - 252 */
   --v2-dock-bottom: var(--space-4);
   --v2-dock-left: var(--space-4);
   --v2-dock-height: 56px;
-  --v2-dock-max-width: 780px;
+  --v2-dock-max-width: 752px;
 
   /* Chat drawer — above the dock */
   --v2-chat-bottom: calc(var(--v2-dock-bottom) + var(--v2-dock-height) + var(--space-2));

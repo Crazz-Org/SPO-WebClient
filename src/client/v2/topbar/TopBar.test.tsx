@@ -4,7 +4,8 @@
  */
 
 import { act, fireEvent, screen, within } from '@testing-library/react';
-import { renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
+import { createSpiedCallbacks, renderWithProviders, resetStores } from '../../__tests__/setup/render-helpers';
+import { useChatStore } from '../../store/chat-store';
 import { useGameStore, type TycoonStats } from '../../store/game-store';
 import { useUiStore } from '../../store/ui-store';
 import * as barrel from './index';
@@ -204,5 +205,30 @@ describe('TopBar', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('TopBar — the chase control (v1 ChaseBadge, carried by the bar)', () => {
+  beforeEach(() => {
+    resetStores();
+    useChatStore.setState({ chasedUser: null });
+  });
+  afterEach(() => {
+    useChatStore.setState({ chasedUser: null });
+  });
+
+  it('shows nothing while no camera is followed', () => {
+    renderWithProviders(<TopBar />);
+    expect(screen.queryByRole('button', { name: /Stop following/ })).toBeNull();
+  });
+
+  it('shows "Following X" while chasing, and a click stops the chase', () => {
+    useChatStore.setState({ chasedUser: 'Alice' });
+    const callbacks = createSpiedCallbacks({ onStopChase: jest.fn() });
+    renderWithProviders(<TopBar />, { clientCallbacks: callbacks });
+    const button = screen.getByRole('button', { name: 'Stop following Alice' });
+    expect(button).toHaveTextContent('Following Alice');
+    fireEvent.click(button);
+    expect(callbacks.onStopChase).toHaveBeenCalledTimes(1);
   });
 });
