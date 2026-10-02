@@ -17,6 +17,7 @@ import { loadDefaultChannel, saveDefaultChannel } from '../../store/default-chan
 import { NobilityBadge } from './NobilityBadge';
 import { roleClassKeyFor } from '../../chat-line-format';
 import { runChatCommand, splitChatCoordinates, type ChatCommandContext } from '../../chat-commands';
+import { DEBUG_MARKERS } from '../../debug-markers';
 import styles from './ChatStrip.module.css';
 
 /** How long a pause retracts the "typing..." notice, in ms. */
@@ -259,7 +260,7 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
               {currentChannel || 'Channel'}
             </button>
             {channelDropdownOpen && (
-              <div className={styles.channelDropdown}>
+              <div className={styles.channelDropdown} data-testid={DEBUG_MARKERS.chatChannelPicker}>
                 {channels.map((ch) => (
                   <button
                     key={ch.name}
@@ -385,7 +386,7 @@ export function ChatStrip({ mode = 'desktop' }: ChatStripProps) {
           </div>
 
           {/* Online users (right sidebar) */}
-          <div className={styles.userSidebar}>
+          <div className={styles.userSidebar} data-testid={DEBUG_MARKERS.chatUsers}>
             <div className={styles.userSidebarHeader}>
               <Users size={11} />
               <span>Online ({onlineCount})</span>

@@ -159,15 +159,15 @@ export function secondaryRefusal(err: unknown): string | null {
 }
 
 /**
- * Log the optional second account (Crazz) in — or report that it was refused.
+ * Log the optional second account (`SECONDARY_ACCOUNT`) in — or report that it was refused.
  *
  * Returns `{ skipped }` only on a typed credential refusal (see {@link secondaryRefusal});
  * anything else is rethrown and fails the flow. The flow then ends `SKIPPED`, recorded but
  * never a gate PASS (doc/E2E-POLICY.md §7).
  *
- * The rule for every flow: log Crazz in with `loginSecondary()` **before the flow's first
+ * The rule for every flow: log the secondary account in with `loginSecondary()` **before the flow's first
  * write**. A skip after a write is a `FAIL` (`runFlow` checks the world lock for a pending
- * restore). Crazz writes only to complete a pair the test undoes.
+ * restore). The secondary account writes only to complete a pair the test undoes.
  */
 export async function loginSecondary(): Promise<SecondaryLogin> {
   try {

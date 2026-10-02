@@ -9,6 +9,7 @@ import { useState, useEffect, useRef } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { useChatStore, type ChatMessage } from '../../store/chat-store';
 import { useUiStore } from '../../store/ui-store';
+import { DEBUG_MARKERS } from '../../debug-markers';
 import styles from './ChatBanner.module.css';
 
 const BANNER_DURATION = 4000;
@@ -50,7 +51,7 @@ export function ChatBanner() {
   };
 
   return (
-    <button className={styles.banner} onClick={handleClick} aria-label="Open chat">
+    <button className={styles.banner} onClick={handleClick} aria-label="Open chat" data-testid={DEBUG_MARKERS.chatBanner}>
       <MessageSquare size={16} className={styles.icon} />
       <span className={styles.sender}>{lastMessage.from}:</span>
       <span className={styles.text}>{lastMessage.text}</span>

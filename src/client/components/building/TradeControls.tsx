@@ -1,9 +1,9 @@
 /**
  * TradeControls — the two trade settings of a facility sheet.
  *
- * Voyager put a combo box beside each (`Voyager/IndustryGeneralSheet.pas`,
- * `Voyager/WHGeneralSheet.pas`), and both are narrower than the property they
- * write:
+ * Voyager put a combo box beside each on `Voyager/IndustryGeneralSheet.pas`
+ * (`Voyager/WHGeneralSheet.pas` carries `cbTrade` only, `:46`, `:210-219`),
+ * and both are narrower than the property they write:
  *
  *  - `cbMode` (→ `RDOSetRole`) appears at all only when the facility's current
  *    role is one of the three it can express (`:189-235`). A producer or a

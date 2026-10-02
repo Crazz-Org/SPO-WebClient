@@ -8,6 +8,7 @@ import * as preflightModule from './preflight';
 import * as flowsModule from './flows';
 import * as capabilityModule from './capability';
 import { GATE_ONLY } from './routing';
+import { SECONDARY_ACCOUNT } from './config';
 
 function tempLock(): WorldLock {
   return new WorldLock(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-run-')));
@@ -110,7 +111,7 @@ describe('runLive', () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
     jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow =>
       flow.name === 'permission-negative'
-        ? { ...passingFlow(flow.name), status: 'SKIPPED', skipped: 'Crazz refused at REQ_AUTH_CHECK (code 7)' }
+        ? { ...passingFlow(flow.name), status: 'SKIPPED', skipped: `${SECONDARY_ACCOUNT.username} refused at REQ_AUTH_CHECK (code 7)` }
         : passingFlow(flow.name),
     );
 
@@ -122,7 +123,7 @@ describe('runLive', () => {
 
     expect(result.status).toBe('BLOCKED');
     expect(result.error).toBe(
-      'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused at REQ_AUTH_CHECK (code 7))',
+      `skipped — a flow that did not run is not a pass: permission-negative (${SECONDARY_ACCOUNT.username} refused at REQ_AUTH_CHECK (code 7))`,
     );
   });
 
@@ -370,18 +371,18 @@ describe('formatSummary', () => {
           messagesSent: 1,
           messagesReceived: 1,
           wireErrors: 0,
-          seed: { what: 'Crazz sends SPO_test3 one alert', ok: true, detail: 'hall (220,41) via 10.1.2.3' },
+          seed: { what: `${SECONDARY_ACCOUNT.username} sends SPO_test3 one alert`, ok: true, detail: 'hall (220,41) via 10.1.2.3' },
           cleanup: [
             { what: "removed from SPO_test3's Inbox", ok: true, detail: '1/1 deleted' },
-            { what: "removed from Crazz's Sent", ok: false },
+            { what: `removed from ${SECONDARY_ACCOUNT.username}'s Sent`, ok: false },
           ],
         },
       ],
     });
-    expect(summary).toContain('seed ok: Crazz sends SPO_test3 one alert (hall (220,41) via 10.1.2.3)');
+    expect(summary).toContain(`seed ok: ${SECONDARY_ACCOUNT.username} sends SPO_test3 one alert (hall (220,41) via 10.1.2.3)`);
     expect(summary).toContain("cleanup ok: removed from SPO_test3's Inbox (1/1 deleted)");
-    expect(summary).toContain("cleanup FAIL: removed from Crazz's Sent");
-    expect(summary).not.toContain("Crazz's Sent (");
+    expect(summary).toContain(`cleanup FAIL: removed from ${SECONDARY_ACCOUNT.username}'s Sent`);
+    expect(summary).not.toContain(`${SECONDARY_ACCOUNT.username}'s Sent (`);
   });
 
   it('shows a failed seed as FAIL', () => {
@@ -414,7 +415,7 @@ describe('formatSummary', () => {
         {
           name: 'permission-negative',
           status: 'SKIPPED',
-          skipped: 'Crazz refused',
+          skipped: `${SECONDARY_ACCOUNT.username} refused`,
           assertions: [],
           unproven: [],
           probes: [],
@@ -424,7 +425,7 @@ describe('formatSummary', () => {
         },
       ],
     });
-    expect(summary).toContain('  SKIP  permission-negative — Crazz refused');
+    expect(summary).toContain(`  SKIP  permission-negative — ${SECONDARY_ACCOUNT.username} refused`);
     expect(summary).not.toContain('SKIPPED  permission-negative');
   });
 
@@ -568,12 +569,12 @@ describe('main', () => {
     const skippedRun: LiveRunResult = {
       ...result,
       status: 'BLOCKED',
-      error: 'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused)',
+      error: `skipped — a flow that did not run is not a pass: permission-negative (${SECONDARY_ACCOUNT.username} refused)`,
       flows: [
         {
           name: 'permission-negative',
           status: 'SKIPPED',
-          skipped: 'Crazz refused',
+          skipped: `${SECONDARY_ACCOUNT.username} refused`,
           assertions: [],
           unproven: [],
           probes: [],
@@ -592,10 +593,10 @@ describe('main', () => {
       const out = sink();
       expect(await main([], async () => skippedRun, out.stream)).toBe(0);
       expect(out.text()).toContain('L2 live drive on planitia — PASS');
-      expect(out.text()).toContain('  SKIP  permission-negative — Crazz refused');
+      expect(out.text()).toContain(`  SKIP  permission-negative — ${SECONDARY_ACCOUNT.username} refused`);
       const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
       expect(artifact.status).toBe('PASS');
-      expect(artifact.flows[0]).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+      expect(artifact.flows[0]).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_ACCOUNT.username} refused` });
     });
 
     it('stays BLOCKED, exit 2, when the caller named the flows', async () => {
