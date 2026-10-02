@@ -6,6 +6,12 @@
     "date": "2026-10-02"
   },
   {
+    "id": 1221,
+    "type": "fixed",
+    "text": "The Close/Open button in the building inspector now actually closes and reopens your facility.",
+    "date": "2026-09-30"
+  },
+  {
     "id": 1216,
     "type": "fixed",
     "text": "On desktop, the search directory with towns, people, rankings and banks opens again from the More menu.",
