@@ -223,6 +223,8 @@ export interface FlowResult {
   messagesReceived: number;
   wireErrors: number;
   error?: string;
+  /** Values recorded, never asserted — a reading for a later card (see warehouseRoleReading). */
+  readings?: TradeRoleReading[];
   /** What the flow's seed produced — only on a flow that has one. */
   seed?: FlowCheck;
   /** One entry per mailbox (or store) the seed's cleanup restored — only on a seeded flow. */
@@ -244,6 +246,19 @@ export interface FlowCheck {
 export interface FlowSeed {
   outcome: FlowCheck;
   cleanup?: () => Promise<FlowCheck[]>;
+}
+
+/** One facility's trade fields, as the inspector's opening read served them (#1006). */
+export interface TradeRoleReading {
+  facility: 'warehouse' | 'industry';
+  x: number;
+  y: number;
+  visualClass: string;
+  templateName: string;
+  /** The raw cached `Role` value, verbatim — `'absent'` when the read did not return it. */
+  role: string;
+  /** The raw cached `TradeRole` value, verbatim — `'absent'` when the read did not return it. */
+  tradeRole: string;
 }
 
 export interface Flow {
