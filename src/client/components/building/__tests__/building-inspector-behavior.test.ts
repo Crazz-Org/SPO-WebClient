@@ -482,11 +482,11 @@ describe('WHGeneral', () => {
   });
 
   // G9d — WHGeneral render/read-only property checks
-  it('Role: type is ENUM, read-only (no editable flag)', () => {
-    const prop = getProp(WH_GENERAL_GROUP, 'Role');
+  it('TradeRole: type is ENUM, editable (owner can change the trade mode)', () => {
+    const prop = getProp(WH_GENERAL_GROUP, 'TradeRole');
     expect(prop).toBeDefined();
     expect(prop!.type).toBe(PropertyType.ENUM);
-    expect(prop!.editable).toBeUndefined();
+    expect(prop!.editable).toBe(true);
   });
 
   it('TradeLevel: type is ENUM, editable (owner can change)', () => {

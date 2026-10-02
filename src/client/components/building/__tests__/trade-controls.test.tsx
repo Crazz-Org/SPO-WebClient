@@ -1,7 +1,7 @@
 /**
  * The two trade controls on a facility sheet (issue 551).
  *
- * `TradeRole`/`Role` and `TradeLevel` were hidden rows: the gateway could emit
+ * `TradeRole` and `TradeLevel` were hidden rows: the gateway could emit
  * `RDOSetRole` and `RDOSetTradeLevel`, the catalogue knew both, and nothing in
  * the UI could reach either. These tests pin the shape the reference client
  * offered — the mode combo only for the three roles it can express, the level
@@ -102,20 +102,35 @@ describe('trade mode control', () => {
     expect(screen.queryByText('TradeRole')).toBeNull();
   });
 
-  /** The warehouse sheet spells the same value `Role`; it writes RDOSetRole too. */
-  it('renders from the warehouse sheet alias `Role`', () => {
+  /**
+   * A warehouse's trade mode is cached as `TradeRole` like any block's
+   * (Kernel/Kernel.pas:5893; TWarehouse.StoreToCache only calls inherited,
+   * StdBlocks/Warehouses.pas:614-617), and no `Role` is cached — the live read
+   * served `Role` empty (#1255). Every warehouse starts as rolCompInport = 6.
+   */
+  it('renders on the warehouse sheet from `TradeRole`, as the cache serves it', () => {
     seed({ tabs: WH_TABS, visualClass: WH_CLASS, currentTab: 'whGeneral' });
     const onSetBuildingProperty = jest.fn();
     renderWithProviders(
-      <PropertyGroup properties={props({ Role: '2', TradeLevel: '2' })} buildingX={100} buildingY={200} />,
+      <PropertyGroup properties={props({ TradeRole: '6', TradeLevel: '2' })} buildingX={100} buildingY={200} />,
       { clientCallbacks: createSpiedCallbacks({ onSetBuildingProperty }) },
     );
 
-    const select = screen.getByRole('combobox', { name: 'Trade mode' });
+    const select = screen.getByRole('combobox', { name: 'Trade mode' }) as HTMLSelectElement;
     expect(optionValues(select)).toEqual(['2', '5', '6']);
+    expect(select.value).toBe('6');
 
     fireEvent.change(select, { target: { value: '5' } });
     expect(onSetBuildingProperty).toHaveBeenCalledWith(100, 200, 'RDOSetRole', '5');
+  });
+
+  it('never reads the trade mode from `Role` on the warehouse sheet', () => {
+    seed({ tabs: WH_TABS, visualClass: WH_CLASS, currentTab: 'whGeneral' });
+    renderWithProviders(
+      <PropertyGroup properties={props({ Role: '2', TradeLevel: '2' })} buildingX={100} buildingY={200} />,
+    );
+
+    expect(screen.queryByRole('combobox', { name: 'Trade mode' })).toBeNull();
   });
 });
 

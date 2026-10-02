@@ -330,7 +330,9 @@ export const WH_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
-    { rdoName: 'Role', displayName: 'Trade Role', type: PropertyType.ENUM },
+    // The trade mode is cached as `TradeRole` (TBlock.StoreToCache, Kernel/Kernel.pas:5893,
+    // inherited by TWarehouse.StoreToCache, StdBlocks/Warehouses.pas:614-617); no `Role` is cached.
+    { rdoName: 'TradeRole', displayName: 'Trade Role', type: PropertyType.ENUM, editable: true },
     { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true },
     { rdoName: 'GateMap', displayName: 'Wares', type: PropertyType.WARE_CHECKLIST },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },

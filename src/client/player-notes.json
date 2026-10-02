@@ -1,5 +1,11 @@
 [
   {
+    "id": 1255,
+    "type": "fixed",
+    "text": "Warehouse owners can now switch their warehouse between company warehouse, exporter and importer, and see the automatic-buying option on its supplies.",
+    "date": "2026-10-02"
+  },
+  {
     "id": 1216,
     "type": "fixed",
     "text": "On desktop, the search directory with towns, people, rankings and banks opens again from the More menu.",
