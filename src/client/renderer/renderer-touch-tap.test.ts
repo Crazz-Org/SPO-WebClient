@@ -81,4 +81,19 @@ describe('touch single tap in connect mode (#1253)', () => {
     expect(r.onBuildingClick).toHaveBeenCalledWith(7, 3, '200');
     expect(r.onConnectModeClick).not.toHaveBeenCalled();
   });
+
+  it('still reports an empty-ground tap when connect mode is off', () => {
+    const r = makeRenderer({ connectMode: false, building: null });
+    captureTap(r)(70, 30);
+    expect(r.onEmptyMapClick).toHaveBeenCalledTimes(1);
+    expect(r.onBuildingClick).not.toHaveBeenCalled();
+  });
+
+  it('ignores taps while placing a building', () => {
+    const r = makeRenderer({ connectMode: true, building: { x: 7, y: 3, visualClass: '200' } });
+    Object.assign(r, { placementMode: true, placementPreview: { i: 0, j: 0 } });
+    captureTap(r)(70, 30);
+    expect(r.getBuildingAt).not.toHaveBeenCalled();
+    expect(r.onConnectModeClick).not.toHaveBeenCalled();
+  });
 });
