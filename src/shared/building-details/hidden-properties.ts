@@ -13,7 +13,7 @@
  * `OwnerName`) or raw fields with no reading for a player (`Trouble`,
  * `UpgradeActions`).
  *
- * `TradeRole`/`Role` and `TradeLevel` were once on this list and are not any
+ * `TradeRole` and `TradeLevel` were once on this list and are not any
  * more: they are the two trade settings the owner changes, and PropertyGroup
  * renders them as controls (TradeControls.tsx), not as raw rows.
  */

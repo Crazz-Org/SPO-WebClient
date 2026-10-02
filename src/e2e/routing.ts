@@ -34,7 +34,6 @@ export const SPINE_FLOW = 'login-spine';
 export const NIGHTLY_ONLY: Record<string, string> = {
   'newspaper-read':
     'data-gated: planitia keeps no newspaper issue and the bench cannot create one (News.pas:986, #1009) — a required run could only end UNPROVEN, which fails the gate',
-  'warehouse-role-reading': 'a reading, recorded and never asserted (#1006) — nothing a gate could require',
   'vote-roundtrip':
     'data-gated: a prior vote cannot be seeded (a vote with no prior cannot be retracted) and goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
   'fixtures-ensure':

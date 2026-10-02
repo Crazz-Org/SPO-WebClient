@@ -2809,146 +2809,6 @@ describe('fixtures-ensure', () => {
   });
 });
 
-describe('warehouse-role-reading', () => {
-  type B = { x: number; y: number; visualClass: string; handler: string; props?: { name: string; value: string }[] };
-
-  function arrange(buildings: B[] | undefined, fail = false) {
-    const stub = stubSession(msg =>
-      msg.type === WsMessageType.REQ_MAP_LOAD
-        ? { type: WsMessageType.RESP_MAP_DATA, ...(buildings ? { data: { buildings } } : {}) }
-        : undefined,
-    );
-    jest.spyOn(session, 'login').mockResolvedValue(stub);
-    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
-    jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
-    const read = jest.spyOn(session, 'readBuildingDetails').mockImplementation(async (_s, x, y) => {
-      if (fail) throw new Error('details timed out');
-      const b = (buildings ?? []).find(c => c.x === x && c.y === y)!;
-      return {
-        templateName: `T-${b.handler}`,
-        visualClass: b.visualClass,
-        tabs: [{ id: 'g', name: 'G', icon: '', order: 0, handlerName: b.handler }],
-        groups: { g: [{ name: 'Name', value: 'x' }], h: b.props ?? [] },
-      } as unknown as Awaited<ReturnType<typeof session.readBuildingDetails>>;
-    });
-    return { off, read, stub };
-  }
-
-  it('is read-only and listed', () => {
-    expect(flowByName('warehouse-role-reading').mutates).toBe(false);
-  });
-
-  it('records Role as absent when the read does not serve it, asserting nothing', async () => {
-    const { off, stub } = arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral' }]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.status).toBe('PASS');
-    expect(result.assertions).toEqual([]);
-    expect(result.readings).toEqual([
-      {
-        facility: 'warehouse', x: 101, y: 201, visualClass: '4001',
-        templateName: 'T-WHGeneral', role: 'absent', tradeRole: 'absent',
-      },
-    ]);
-    expect(stub.driver.request).toHaveBeenCalledWith(
-      expect.objectContaining({ type: WsMessageType.REQ_MAP_LOAD, x: 68, y: 168, width: 64, height: 64 }),
-      expect.anything(),
-      expect.anything(),
-    );
-    expect(off).toHaveBeenCalledTimes(1);
-  });
-
-  it("records Role = 'Warehouse' verbatim", async () => {
-    arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral', props: [{ name: 'Role', value: 'Warehouse' }] }]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.assertions).toEqual([]);
-    expect(result.readings?.[0]).toMatchObject({ role: 'Warehouse' });
-  });
-
-  it('records a numeric Role verbatim, and an empty one as empty', async () => {
-    arrange([
-      { x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral', props: [{ name: 'Role', value: '2' }, { name: 'TradeRole', value: '' }] },
-    ]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.assertions).toEqual([]);
-    expect(result.readings?.[0]).toMatchObject({ role: '2', tradeRole: '' });
-  });
-
-  it('records the nearest trading industry, skipping one whose TradeRole is not 2/5/6', async () => {
-    arrange([
-      { x: 150, y: 230, visualClass: '4001', handler: 'WHGeneral' },
-      { x: 100, y: 201, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '1' }] },
-      { x: 100, y: 202, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'Role', value: '0' }, { name: 'TradeRole', value: '5' }] },
-      { x: 100, y: 203, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '6' }] },
-    ]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.status).toBe('PASS');
-    expect(result.readings).toEqual([
-      expect.objectContaining({ facility: 'warehouse', x: 150, y: 230 }),
-      { facility: 'industry', x: 100, y: 202, visualClass: '5001', templateName: 'T-IndGeneral', role: '0', tradeRole: '5' },
-    ]);
-  });
-
-  it('does not re-read a class already known to be neither warehouse nor industry, nor a second warehouse', async () => {
-    const { read } = arrange([
-      { x: 100, y: 201, visualClass: '7', handler: 'Residential' },
-      { x: 100, y: 202, visualClass: '7', handler: 'Residential' },
-      { x: 100, y: 203, visualClass: '4001', handler: 'WHGeneral' },
-      { x: 100, y: 204, visualClass: '4001', handler: 'WHGeneral' },
-      { x: 100, y: 205, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
-      { x: 100, y: 206, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
-    ]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(read).toHaveBeenCalledTimes(3);
-    expect(result.readings).toHaveLength(2);
-  });
-
-  it('skips a known industry class once an industry is recorded', async () => {
-    const { read } = arrange([
-      { x: 100, y: 201, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
-      { x: 100, y: 202, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
-      { x: 100, y: 203, visualClass: '8', handler: '' },
-    ]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(read).toHaveBeenCalledTimes(2);
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.readings).toEqual([expect.objectContaining({ facility: 'industry', x: 100, y: 201 })]);
-  });
-
-  it('reports UNPROVEN, never PASS, when no warehouse is in the window', async () => {
-    arrange([{ x: 100, y: 201, visualClass: '7', handler: 'Residential' }]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven).toHaveLength(1);
-    expect(result.unproven[0]).toMatch(/WHGeneral/);
-    expect(result.unproven[0]).toMatch(/1 building\(s\).*1 inspector read/);
-    expect(result.readings).toEqual([]);
-  });
-
-  it('stops after 40 inspector reads and reports UNPROVEN', async () => {
-    const many = Array.from({ length: 45 }, (_, i) => ({ x: 100, y: 201 + i, visualClass: `c${i}`, handler: 'Other' }));
-    many.push({ x: 150, y: 250, visualClass: '4001', handler: 'WHGeneral' });
-    const { read } = arrange(many);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(read).toHaveBeenCalledTimes(40);
-    expect(result.status).toBe('UNPROVEN');
-  });
-
-  it('reports UNPROVEN with zero buildings when the map answer carries no data', async () => {
-    arrange(undefined);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven[0]).toMatch(/0 building\(s\)/);
-  });
-
-  it('fails when the read itself fails, and still logs off', async () => {
-    const { off } = arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral' }], true);
-    const result = await runFlow(flowByName('warehouse-role-reading'), ctx);
-    expect(result.status).toBe('FAIL');
-    expect(result.error).toMatch(/details timed out/);
-    expect(off).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe('session-resume', () => {
   const MARKER = 'Start Disconnecting SPO_test3';
   const window = { url: 'http://logs/FIVEINTERFACESERVER/S.log', offset: 100, openedAt: '' };
@@ -7089,7 +6949,8 @@ describe('inspector connections & trade (#1153)', () => {
           if (m.tabId === 'products') return { products: fac.products.map(o => ({ path: o.path, name: o.name, connections: [] })) };
           if (m.tabId === 'compInputs') return fac.compInputs ? { compInputs: clone(fac.compInputs) } : {};
           const g: BuildingPropertyValue[] = [];
-          if (fac.role !== undefined) g.push(pv('Role', fac.role));
+          // As the live cache serves it: the trade mode under `TradeRole`, and no `Role` (#1255).
+          if (fac.role !== undefined) g.push(pv('TradeRole', fac.role), pv('Role', ''));
           if (fac.tradeLevel !== undefined) g.push(pv('TradeLevel', fac.tradeLevel));
           return { groups: { [String(m.tabId)]: g } };
         }
@@ -7650,45 +7511,34 @@ describe('inspector connections & trade (#1153)', () => {
   describe('trade-settings', () => {
     const atIndustry = (world: ConnWorld) => world.writes.filter(w => w.x === 30 && w.y === 40);
 
-    it('nudges the warehouse role and both trade levels, proves each, restores each — and never sends RDOSetRole to the industry', async () => {
+    it('nudges both trade levels, proves each, restores each — and never sends RDOSetRole (#1255)', async () => {
       const world = new ConnWorld();
       const lock = cleanLock();
       arrange(world);
       const result = await run('trade-settings', lock);
       expect(result.status).toBe('PASS');
       expect(world.writes.map(w => [w.x, w.y, w.property, w.value])).toEqual([
-        [50, 60, 'RDOSetRole', '5'],
-        [50, 60, 'RDOSetRole', '2'],
         [50, 60, 'RDOSetTradeLevel', '3'],
         [50, 60, 'RDOSetTradeLevel', '0'],
         [30, 40, 'RDOSetTradeLevel', '2'],
         [30, 40, 'RDOSetTradeLevel', '3'],
       ]);
       expect(result.probes.map(p => p.logLine)).toEqual([
-        null, '12:00 - Fac(50,60) SetTradeLevel', '12:00 - Fac(30,40) SetTradeLevel',
+        '12:00 - Fac(50,60) SetTradeLevel', '12:00 - Fac(30,40) SetTradeLevel',
       ]);
-      expect(atIndustry(world).some(w => w.property === 'RDOSetRole')).toBe(false);
+      expect(result.unproven).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it.each(['2', '5', '6'])('never writes a role outside TRADE_MODE_VALUES (from %s)', async role => {
+    // The Import Storage fixture's sheet never offered a trade mode (Voyager/WHGeneralSheet.pas:46):
+    // whatever role it holds, nothing is sent and nothing is reported missing.
+    it.each(['2', '5', '6', '1'])('sends no RDOSetRole to the warehouse whose TradeRole is %s', async role => {
       const world = new ConnWorld();
       world.facs.warehouse.role = role;
       arrange(world);
-      await run('trade-settings');
-      for (const w of world.writes.filter(x => x.property === 'RDOSetRole')) expect(['2', '5', '6']).toContain(w.value);
-      expect(world.writes.filter(x => x.property === 'RDOSetRole').map(w => w.value)[1]).toBe(role);
-    });
-
-    it('writes no role when the current one is not offered, and still drives the trade levels', async () => {
-      const world = new ConnWorld();
-      world.facs.warehouse.role = '1';
-      arrange(world);
       const result = await run('trade-settings');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetRole — .*Role "1".*isTradeModeValue.*StdBlocks\/Warehouses\.pas:527/)]);
+      expect(result.status).toBe('PASS');
       expect(world.writes.some(w => w.property === 'RDOSetRole')).toBe(false);
-      expect(world.writes.filter(w => w.property === 'RDOSetTradeLevel')).toHaveLength(4);
     });
 
     it('writes no trade level the client could not send back', async () => {
@@ -7706,7 +7556,7 @@ describe('inspector connections & trade (#1153)', () => {
       arrange(world);
       const result = await run('trade-settings');
       expect(result.status).toBe('FAIL');
-      expect(result.probes[1]).toMatchObject({ status: 'FAIL', logLine: '12:00 - Fac(50,60) SetTradeLevel' });
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', logLine: '12:00 - Fac(50,60) SetTradeLevel' });
     });
 
     it('runs the industry half when the warehouse fixture is missing, and writes nothing when both are', async () => {

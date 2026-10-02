@@ -145,7 +145,7 @@ import {
   type RoundTripSpec,
 } from './probe';
 import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
-import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES, isTradeModeValue } from '../shared/building-details/trade-settings';
+import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES } from '../shared/building-details/trade-settings';
 import {
   awaitResumeToken,
   findTown,
@@ -4490,108 +4490,6 @@ const zoneRoundTrip: Flow = {
     }),
 };
 
-/** A property's raw value from any group of an opening read, or 'absent'. */
-function rawProperty(groups: { [groupId: string]: BuildingPropertyValue[] }, name: string): string {
-  for (const group of Object.values(groups)) {
-    const hit = group.find(p => p.name === name);
-    if (hit) return hit.value;
-  }
-  return 'absent';
-}
-
-/** The gateway's default loadMapArea chunk — one window centred on the town hall. */
-const ROLE_PROBE_SPAN = 64;
-const ROLE_PROBE_MAX_READS = 40;
-const INDUSTRY_TRADE_ROLES = ['2', '5', '6'];
-
-/**
- * Read-only bench probe (#1006): what a real WHGeneral warehouse's cached `Role` holds, and,
- * if one exists nearby, an IndGeneral facility's `Role`/`TradeRole`. The values are recorded
- * in the run artifact and never asserted; the flow fails only when a read fails, and reports
- * UNPROVEN when no warehouse is found. It is removed by the follow-up card that acts on the
- * reading.
- */
-const warehouseRoleReading: Flow = {
-  name: 'warehouse-role-reading',
-  what: "a warehouse's cached Role / TradeRole near the governed town — recorded, never asserted",
-  mutates: false,
-  async run() {
-    const assertions = new Assertions();
-    const session = await login(PRIMARY_ACCOUNT);
-    try {
-      const town = await findTown(session, GOVERNED_TOWN);
-      const response = await session.driver.request<WsRespMapData>(
-        {
-          type: WsMessageType.REQ_MAP_LOAD,
-          x: Math.max(0, town.x - ROLE_PROBE_SPAN / 2),
-          y: Math.max(0, town.y - ROLE_PROBE_SPAN / 2),
-          width: ROLE_PROBE_SPAN,
-          height: ROLE_PROBE_SPAN,
-        },
-        [WsMessageType.RESP_MAP_DATA, WsMessageType.EVENT_MAP_DATA],
-        TIMEOUTS.login,
-      );
-      const buildings: MapBuilding[] = response.data?.buildings ?? [];
-      const dist = (b: MapBuilding): number => Math.abs(b.x - town.x) + Math.abs(b.y - town.y);
-      const sorted = [...buildings].sort((a, b) => dist(a) - dist(b));
-
-      const handlerByClass = new Map<string, string>();
-      let reads = 0;
-      let warehouse: TradeRoleReading | undefined;
-      let industry: TradeRoleReading | undefined;
-      for (const b of sorted) {
-        if ((warehouse && industry) || reads >= ROLE_PROBE_MAX_READS) break;
-        const known = handlerByClass.get(b.visualClass);
-        if (known !== undefined) {
-          if (known !== 'WHGeneral' && known !== 'IndGeneral') continue;
-          if (known === 'WHGeneral' && warehouse) continue;
-          if (known === 'IndGeneral' && industry) continue;
-        }
-        const details = await readBuildingDetails(session, b.x, b.y, b.visualClass);
-        reads++;
-        const handlers = details.tabs.map(t => t.handlerName);
-        const handler = handlers.includes('WHGeneral')
-          ? 'WHGeneral'
-          : handlers.includes('IndGeneral')
-            ? 'IndGeneral'
-            : (handlers[0] ?? '');
-        handlerByClass.set(b.visualClass, handler);
-        const reading: TradeRoleReading = {
-          facility: handler === 'WHGeneral' ? 'warehouse' : 'industry',
-          x: b.x,
-          y: b.y,
-          visualClass: b.visualClass,
-          templateName: details.templateName,
-          role: rawProperty(details.groups, 'Role'),
-          tradeRole: rawProperty(details.groups, 'TradeRole'),
-        };
-        if (handler === 'WHGeneral' && !warehouse) warehouse = reading;
-        else if (
-          handler === 'IndGeneral' &&
-          !industry &&
-          INDUSTRY_TRADE_ROLES.includes(reading.tradeRole)
-        ) {
-          industry = reading;
-        }
-      }
-
-      const readings: TradeRoleReading[] = [];
-      if (warehouse) readings.push(warehouse);
-      if (industry) readings.push(industry);
-      if (!warehouse) {
-        assertions.unproven(
-          `a WHGeneral warehouse's cached Role near ${GOVERNED_TOWN}`,
-          `none among ${buildings.length} building(s) in the ${ROLE_PROBE_SPAN}×${ROLE_PROBE_SPAN} ` +
-            `window (${reads} inspector read(s))`,
-        );
-      }
-      return { ...report('warehouse-role-reading', assertions, [], session), readings };
-    } finally {
-      await logoff(session);
-    }
-  },
-};
-
 /**
  * The permanent fixtures (#1149): SPO_test3's own finished facility of each kind in Helartia,
  * found by kind — and, when one is missing, built once and kept (the one sanctioned permanent
@@ -6167,15 +6065,14 @@ const companyInputDemand: Flow = {
 };
 
 /**
- * The trade role (warehouse only — `RDOSetRole` is published by `TWarehouse`,
- * StdBlocks/Warehouses.pas:95) and the trade level (warehouse and industry,
- * `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408). Only values the client offers are written.
+ * The trade level (warehouse and industry, `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408).
+ * Only values the client offers are written. The trade role is not driven here: `RDOSetRole` is
+ * offered only on an IndGeneral storage, and the warehouse fixture is a WHGeneral Import Storage (#1255).
  */
 const tradeSettings: Flow = {
   name: 'trade-settings',
   what:
-    "RDOSetRole on SPO_test3's warehouse fixture (a role the client offers, read-back) and RDOSetTradeLevel on the " +
-    'warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored',
+    "RDOSetTradeLevel on SPO_test3's warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored",
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -6219,38 +6116,11 @@ const tradeSettings: Flow = {
         checkProbe(assertions, probe);
       };
 
+      // No RDOSetRole: the warehouse fixture is an Import Storage (WHGeneral), whose sheet never
+      // offered a trade mode (Voyager/WHGeneralSheet.pas carries cbTrade only, :46) — its role is
+      // preset by class (Model Extensions/General/GeneralPack1.dpr:719). Proving RDOSetRole needs an
+      // IndGeneral storage fixture (follow-up to #1255).
       if (warehouse) {
-        const readRole = readField(warehouse, 'whGeneral', 'Role');
-        const role = await readRole();
-        if (role !== undefined && isTradeModeValue(role)) {
-          const probe = await roundTripProbe(ctx, url, {
-            what: `${fixtureLabel(warehouse)} trade role`,
-            member: 'RDOSetRole',
-            read: readRole,
-            testValue: tradeRoleNudge,
-            write: async value => {
-              await setBuildingProperty(session, warehouse.x, warehouse.y, 'RDOSetRole', value);
-            },
-            // RDOSetRole logs nothing (StdBlocks/Warehouses.pas:527): the read-back alone proves it.
-            proof: {
-              readBack: readBackOn(
-                `whGeneral.Role at (${warehouse.x},${warehouse.y}) via the gateway's section read`,
-                `RDOSetRole prints no Survival line; ${FACILITY_CACHE_WHY}`,
-                tolerantRead(readRole),
-              ),
-            },
-            restoreRecord: { x: warehouse.x, y: warehouse.y, propertyName: 'RDOSetRole' },
-          });
-          probes.push(probe);
-          checkProbe(assertions, probe);
-        } else {
-          assertions.unproven(
-            'RDOSetRole',
-            `${fixtureLabel(warehouse)}'s Role "${role ?? 'absent'}" is not one the client offers (isTradeModeValue, ` +
-              `TRADE_MODE_VALUES ${TRADE_MODE_VALUES.join('/')}; Voyager/IndustryGeneralSheet.pas:189-235) — RDOSetRole ` +
-              'range-checks nothing (StdBlocks/Warehouses.pas:527), so nothing is sent',
-          );
-        }
         await tradeLevel(warehouse, 'whGeneral');
       }
       // RDOSetRole is never sent to the industry: only TWarehouse publishes it (StdBlocks/Warehouses.pas:95).
@@ -8102,7 +7972,6 @@ export const FLOWS: Flow[] = [
   portraitRoundTrip,
   roadRoundTrip,
   zoneRoundTrip,
-  warehouseRoleReading,
   fixturesEnsure,
   inspectorReads,
   storePriceSalaries,
