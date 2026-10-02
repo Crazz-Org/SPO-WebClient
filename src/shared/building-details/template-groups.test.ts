@@ -525,7 +525,7 @@ describe('ENUM type properties', () => {
   // is covered by src/client/components/building/__tests__/trade-controls.test.tsx.
   const cases: Array<[string, typeof IND_GENERAL_GROUP, string[]]> = [
     ['IND_GENERAL_GROUP', IND_GENERAL_GROUP, ['TradeRole', 'TradeLevel']],
-    ['WH_GENERAL_GROUP', WH_GENERAL_GROUP, ['TradeRole', 'TradeLevel']],
+    ['WH_GENERAL_GROUP', WH_GENERAL_GROUP, ['TradeLevel']],
     ['TRADE_GROUP', TRADE_GROUP, ['TradeRole', 'TradeLevel']],
   ];
 
@@ -545,11 +545,14 @@ describe('ENUM type properties', () => {
   });
 
   // #1255: the warehouse trade mode is cached as `TradeRole` (Kernel/Kernel.pas:5893, inherited by
-  // TWarehouse.StoreToCache, StdBlocks/Warehouses.pas:614-617); no `Role` is cached, so asking for
-  // `Role` read an empty value and the trade-mode control never appeared.
-  it('reads the warehouse trade mode from TradeRole, editable, and never from Role', () => {
+  // TWarehouse.StoreToCache, StdBlocks/Warehouses.pas:614-617); no `Role` is cached. The warehouse
+  // sheet reads it for the Supplies tab's automatic buying only — TEXT, not an editable control
+  // (Voyager/WHGeneralSheet.pas offers no trade mode, :46).
+  it('reads the warehouse TradeRole as a read-only TEXT, and never Role', () => {
     const wh = WH_GENERAL_GROUP.properties;
-    expect(wh.find(p => p.rdoName === 'TradeRole')).toMatchObject({ type: PropertyType.ENUM, editable: true });
+    const def = wh.find(p => p.rdoName === 'TradeRole');
+    expect(def?.type).toBe(PropertyType.TEXT);
+    expect(def?.editable).toBeUndefined();
     expect(wh.some(p => p.rdoName === 'Role')).toBe(false);
   });
 });

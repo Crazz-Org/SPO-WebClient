@@ -145,7 +145,7 @@ import {
   type RoundTripSpec,
 } from './probe';
 import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
-import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES, isTradeModeValue } from '../shared/building-details/trade-settings';
+import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES } from '../shared/building-details/trade-settings';
 import {
   awaitResumeToken,
   findTown,
@@ -6050,15 +6050,14 @@ const companyInputDemand: Flow = {
 };
 
 /**
- * The trade role (warehouse only — `RDOSetRole` is published by `TWarehouse`,
- * StdBlocks/Warehouses.pas:95) and the trade level (warehouse and industry,
- * `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408). Only values the client offers are written.
+ * The trade level (warehouse and industry, `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408).
+ * Only values the client offers are written. The trade role is not driven here: `RDOSetRole` is
+ * offered only on an IndGeneral storage, and the warehouse fixture is a WHGeneral Import Storage (#1255).
  */
 const tradeSettings: Flow = {
   name: 'trade-settings',
   what:
-    "RDOSetRole on SPO_test3's warehouse fixture (a role the client offers, read-back) and RDOSetTradeLevel on the " +
-    'warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored',
+    "RDOSetTradeLevel on SPO_test3's warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored",
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -6102,40 +6101,11 @@ const tradeSettings: Flow = {
         checkProbe(assertions, probe);
       };
 
+      // No RDOSetRole: the warehouse fixture is an Import Storage (WHGeneral), whose sheet never
+      // offered a trade mode (Voyager/WHGeneralSheet.pas carries cbTrade only, :46) — its role is
+      // preset by class (Model Extensions/General/GeneralPack1.dpr:719). Proving RDOSetRole needs an
+      // IndGeneral storage fixture (follow-up to #1255).
       if (warehouse) {
-        // The trade mode is cached as `TradeRole` — TBlock.StoreToCache (Kernel/Kernel.pas:5893),
-        // inherited by TWarehouse.StoreToCache (StdBlocks/Warehouses.pas:614-617). No `Role` is cached.
-        const readRole = readField(warehouse, 'whGeneral', 'TradeRole');
-        const role = await readRole();
-        if (role !== undefined && isTradeModeValue(role)) {
-          const probe = await roundTripProbe(ctx, url, {
-            what: `${fixtureLabel(warehouse)} trade role`,
-            member: 'RDOSetRole',
-            read: readRole,
-            testValue: tradeRoleNudge,
-            write: async value => {
-              await setBuildingProperty(session, warehouse.x, warehouse.y, 'RDOSetRole', value);
-            },
-            // RDOSetRole logs nothing (StdBlocks/Warehouses.pas:527): the read-back alone proves it.
-            proof: {
-              readBack: readBackOn(
-                `whGeneral.TradeRole at (${warehouse.x},${warehouse.y}) via the gateway's section read`,
-                `RDOSetRole prints no Survival line; ${FACILITY_CACHE_WHY}`,
-                tolerantRead(readRole),
-              ),
-            },
-            restoreRecord: { x: warehouse.x, y: warehouse.y, propertyName: 'RDOSetRole' },
-          });
-          probes.push(probe);
-          checkProbe(assertions, probe);
-        } else {
-          assertions.unproven(
-            'RDOSetRole',
-            `${fixtureLabel(warehouse)}'s TradeRole "${role ?? 'absent'}" is not one the client offers (isTradeModeValue, ` +
-              `TRADE_MODE_VALUES ${TRADE_MODE_VALUES.join('/')}; Voyager/IndustryGeneralSheet.pas:189-235) — RDOSetRole ` +
-              'range-checks nothing (StdBlocks/Warehouses.pas:527), so nothing is sent',
-          );
-        }
         await tradeLevel(warehouse, 'whGeneral');
       }
       // RDOSetRole is never sent to the industry: only TWarehouse publishes it (StdBlocks/Warehouses.pas:95).

@@ -330,9 +330,14 @@ export const WH_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
-    // The trade mode is cached as `TradeRole` (TBlock.StoreToCache, Kernel/Kernel.pas:5893,
+    // Read for the Supplies tab's automatic-buying gate only (Voyager/SupplySheetForm.pas:225,
+    // :349-359). The trade mode is cached as `TradeRole` (TBlock.StoreToCache, Kernel/Kernel.pas:5893,
     // inherited by TWarehouse.StoreToCache, StdBlocks/Warehouses.pas:614-617); no `Role` is cached.
-    { rdoName: 'TradeRole', displayName: 'Trade Role', type: PropertyType.ENUM, editable: true },
+    // Declared TEXT, never a control: Voyager's warehouse sheet offers no trade mode (it has only
+    // cbTrade, WHGeneralSheet.pas:46; its cbMode line sits in a commented-out block, :250-258), and each class
+    // is preset — Import Storage rolCompInport, Export Storage rolCompExport (GeneralPack1.dpr:719, :753).
+    // PropertyGroup skips the row.
+    { rdoName: 'TradeRole', displayName: 'Trade Role', type: PropertyType.TEXT },
     { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true },
     { rdoName: 'GateMap', displayName: 'Wares', type: PropertyType.WARE_CHECKLIST },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },

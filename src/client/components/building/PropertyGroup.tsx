@@ -619,11 +619,19 @@ function DefinedProperties({
       continue;
     }
 
+    // The warehouse sheet's `TradeRole`, declared TEXT: read for the Supplies
+    // tab's automatic-buying gate only (SupplySheetForm.pas:349-359). Voyager's
+    // warehouse sheet offers no trade mode (WHGeneralSheet.pas:46). Never a row.
+    if (def.rdoName === 'TradeRole' && def.type === PropertyType.TEXT) {
+      rendered.add(def.rdoName);
+      continue;
+    }
+
     // Trade mode — Voyager's cbMode (IndustryGeneralSheet.pas:189-235). The
     // cache holds it as `TradeRole` only (Kernel/Kernel.pas:5893, warehouses
     // included — StdBlocks/Warehouses.pas:614-617), written through RDOSetRole.
     // The member is named here rather than resolved through `rdoCommands`
-    // because WH_GENERAL_GROUP and TRADE_GROUP map no `TradeRole` — resolution
+    // because TRADE_GROUP maps no `TradeRole` — resolution
     // would emit `call TradeRole`, which the server does not publish.
     // WarehouseWares (:412) takes the same direct route.
     if (def.rdoName === 'TradeRole') {

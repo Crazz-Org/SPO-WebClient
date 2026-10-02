@@ -7511,45 +7511,34 @@ describe('inspector connections & trade (#1153)', () => {
   describe('trade-settings', () => {
     const atIndustry = (world: ConnWorld) => world.writes.filter(w => w.x === 30 && w.y === 40);
 
-    it('nudges the warehouse role and both trade levels, proves each, restores each — and never sends RDOSetRole to the industry', async () => {
+    it('nudges both trade levels, proves each, restores each — and never sends RDOSetRole (#1255)', async () => {
       const world = new ConnWorld();
       const lock = cleanLock();
       arrange(world);
       const result = await run('trade-settings', lock);
       expect(result.status).toBe('PASS');
       expect(world.writes.map(w => [w.x, w.y, w.property, w.value])).toEqual([
-        [50, 60, 'RDOSetRole', '5'],
-        [50, 60, 'RDOSetRole', '2'],
         [50, 60, 'RDOSetTradeLevel', '3'],
         [50, 60, 'RDOSetTradeLevel', '0'],
         [30, 40, 'RDOSetTradeLevel', '2'],
         [30, 40, 'RDOSetTradeLevel', '3'],
       ]);
       expect(result.probes.map(p => p.logLine)).toEqual([
-        null, '12:00 - Fac(50,60) SetTradeLevel', '12:00 - Fac(30,40) SetTradeLevel',
+        '12:00 - Fac(50,60) SetTradeLevel', '12:00 - Fac(30,40) SetTradeLevel',
       ]);
-      expect(atIndustry(world).some(w => w.property === 'RDOSetRole')).toBe(false);
+      expect(result.unproven).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it.each(['2', '5', '6'])('never writes a role outside TRADE_MODE_VALUES (from %s)', async role => {
+    // The Import Storage fixture's sheet never offered a trade mode (Voyager/WHGeneralSheet.pas:46):
+    // whatever role it holds, nothing is sent and nothing is reported missing.
+    it.each(['2', '5', '6', '1'])('sends no RDOSetRole to the warehouse whose TradeRole is %s', async role => {
       const world = new ConnWorld();
       world.facs.warehouse.role = role;
       arrange(world);
-      await run('trade-settings');
-      for (const w of world.writes.filter(x => x.property === 'RDOSetRole')) expect(['2', '5', '6']).toContain(w.value);
-      expect(world.writes.filter(x => x.property === 'RDOSetRole').map(w => w.value)[1]).toBe(role);
-    });
-
-    it('writes no role when the current one is not offered, and still drives the trade levels', async () => {
-      const world = new ConnWorld();
-      world.facs.warehouse.role = '1';
-      arrange(world);
       const result = await run('trade-settings');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetRole — .*TradeRole "1".*isTradeModeValue.*StdBlocks\/Warehouses\.pas:527/)]);
+      expect(result.status).toBe('PASS');
       expect(world.writes.some(w => w.property === 'RDOSetRole')).toBe(false);
-      expect(world.writes.filter(w => w.property === 'RDOSetTradeLevel')).toHaveLength(4);
     });
 
     it('writes no trade level the client could not send back', async () => {
@@ -7567,7 +7556,7 @@ describe('inspector connections & trade (#1153)', () => {
       arrange(world);
       const result = await run('trade-settings');
       expect(result.status).toBe('FAIL');
-      expect(result.probes[1]).toMatchObject({ status: 'FAIL', logLine: '12:00 - Fac(50,60) SetTradeLevel' });
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', logLine: '12:00 - Fac(50,60) SetTradeLevel' });
     });
 
     it('runs the industry half when the warehouse fixture is missing, and writes nothing when both are', async () => {

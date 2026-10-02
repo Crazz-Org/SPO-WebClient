@@ -482,11 +482,11 @@ describe('WHGeneral', () => {
   });
 
   // G9d — WHGeneral render/read-only property checks
-  it('TradeRole: type is ENUM, editable (owner can change the trade mode)', () => {
+  it('TradeRole: type is TEXT, read-only (the warehouse sheet offers no trade mode)', () => {
     const prop = getProp(WH_GENERAL_GROUP, 'TradeRole');
     expect(prop).toBeDefined();
-    expect(prop!.type).toBe(PropertyType.ENUM);
-    expect(prop!.editable).toBe(true);
+    expect(prop!.type).toBe(PropertyType.TEXT);
+    expect(prop!.editable).toBeUndefined();
   });
 
   it('TradeLevel: type is ENUM, editable (owner can change)', () => {
