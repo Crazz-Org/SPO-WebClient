@@ -28,6 +28,13 @@ import {
   parseDirectoryPage
 } from './search-menu-parser';
 import { toProxyUrl, isProxyUrl } from '../shared/proxy-utils';
+import { createLogger } from '../shared/logger';
+import { toErrorMessage } from '../shared/error-utils';
+
+const logger = createLogger('SearchMenuService');
+
+/** The directory server answered, with a status other than 200 — a reply, so never retried. */
+class DirectoryHttpStatusError extends Error {}
 
 const DIRECTORY_BASE = '/five/0/visual/voyager/new%20directory';
 
@@ -116,8 +123,23 @@ export class SearchMenuService {
   /**
    * Fetch HTML content from ASP page
    * Uses DAAddr (Directory Agent) host on HTTP port 80, not the RDO DAPort.
+   *
+   * Every caller is a read — a GET of a directory `.asp` page — so a request that got
+   * no answer (timeout, socket error) is retried exactly once. About one request in 150
+   * gets no reply while the rest answer in 0.1-0.7 s (bench gates of 2026-10-02, #1255).
+   * An HTTP error status is an answer, and is not retried.
    */
   private async fetchPage(path: string): Promise<string> {
+    try {
+      return await this.fetchPageOnce(path);
+    } catch (err: unknown) {
+      if (err instanceof DirectoryHttpStatusError) throw err;
+      logger.warn(`[SearchMenuService] ${toErrorMessage(err)} on ${path} — retrying once`);
+      return this.fetchPageOnce(path);
+    }
+  }
+
+  private fetchPageOnce(path: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const options = {
         hostname: this.daAddr,
@@ -140,7 +162,7 @@ export class SearchMenuService {
           if (res.statusCode === 200) {
             resolve(data);
           } else {
-            reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+            reject(new DirectoryHttpStatusError(`HTTP ${res.statusCode}: ${res.statusMessage}`));
           }
         });
       });

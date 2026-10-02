@@ -229,3 +229,62 @@ describe('the session language on a directory page', () => {
     expect(asked[0]).toContain(`LangId=${SESSION_LANG}`);
   });
 });
+
+describe('fetchPage retries a directory GET that got no answer (#1255)', () => {
+  type Outcome = 'ok' | 'timeout' | 'socket' | 500;
+
+  /** Each http.request call plays the next outcome; returns the number of requests made. */
+  function script(outcomes: Outcome[]): { calls: () => number } {
+    let n = 0;
+    jest.spyOn(http, 'request').mockImplementation(((
+      _options: http.RequestOptions,
+      callback?: (res: EventEmitter & { statusCode?: number; statusMessage?: string }) => void,
+    ) => {
+      const outcome = outcomes[n++];
+      const req = new EventEmitter() as unknown as http.ClientRequest;
+      let onTimeout: (() => void) | undefined;
+      Object.assign(req, {
+        setTimeout: (_ms: number, cb: () => void) => { onTimeout = cb; return req; },
+        destroy: () => {},
+        end: () => {
+          if (outcome === 'timeout') { onTimeout?.(); return; }
+          if (outcome === 'socket') { req.emit('error', new Error('socket hang up')); return; }
+          const res = new EventEmitter() as EventEmitter & { statusCode?: number; statusMessage?: string };
+          res.statusCode = outcome === 'ok' ? 200 : outcome;
+          res.statusMessage = outcome === 'ok' ? 'OK' : 'Internal Server Error';
+          callback?.(res);
+          res.emit('data', '<html><body></body></html>');
+          res.emit('end');
+        },
+      });
+      return req;
+    }) as unknown as typeof http.request);
+    return { calls: () => n };
+  }
+
+  const read = (svc: SearchMenuService) => svc.getDirectoryPage({ kind: 'town-facilities', town: 'Helartia' });
+
+  it('retries once after a timeout and returns the second answer', async () => {
+    const http1 = script(['timeout', 'ok']);
+    await expect(read(service())).resolves.toBeDefined();
+    expect(http1.calls()).toBe(2);
+  });
+
+  it('retries once after a socket error', async () => {
+    const http1 = script(['socket', 'ok']);
+    await expect(read(service())).resolves.toBeDefined();
+    expect(http1.calls()).toBe(2);
+  });
+
+  it('fails as before when the retry also times out — and never tries a third time', async () => {
+    const http1 = script(['timeout', 'timeout', 'ok']);
+    await expect(read(service())).rejects.toThrow('Request timeout');
+    expect(http1.calls()).toBe(2);
+  });
+
+  it('does not retry an HTTP error status — the server answered', async () => {
+    const http1 = script([500, 'ok']);
+    await expect(read(service())).rejects.toThrow('HTTP 500');
+    expect(http1.calls()).toBe(1);
+  });
+});
