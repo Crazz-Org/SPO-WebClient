@@ -149,7 +149,7 @@ import {
   type RoundTripSpec,
 } from './probe';
 import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
-import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES } from '../shared/building-details/trade-settings';
+import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES, isTradeModeValue } from '../shared/building-details/trade-settings';
 import { bankLoanOutcomeOf } from '../shared/building-details/bank-loan';
 import {
   awaitResumeToken,
@@ -6435,14 +6435,17 @@ const companyInputDemand: Flow = {
 };
 
 /**
- * The trade level (warehouse and industry, `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408).
- * Only values the client offers are written. The trade role is not driven here: `RDOSetRole` is
- * offered only on an IndGeneral storage, and the warehouse fixture is a WHGeneral Import Storage (#1255).
+ * The trade level (warehouse and industry, `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408), and
+ * the trade mode (`TWarehouse.RDOSetRole`, StdBlocks/Warehouses.pas:527-540) on the IndGeneral
+ * `storage` fixture, proven by its read-back alone: the member logs nothing (doc/E2E-POLICY.md §5).
+ * Only values the client offers are written. The Import Storage `warehouse` never gets
+ * `RDOSetRole`: its sheet offers no trade mode (Voyager/WHGeneralSheet.pas:46, #1255).
  */
 const tradeSettings: Flow = {
   name: 'trade-settings',
   what:
-    "RDOSetTradeLevel on SPO_test3's warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored",
+    "RDOSetTradeLevel on SPO_test3's warehouse and industry fixtures (SetTradeLevel line + read-back), and RDOSetRole " +
+    'on its storage fixture (read-back alone) — each restored',
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -6451,7 +6454,8 @@ const tradeSettings: Flow = {
     try {
       const warehouse = await ownFixture(session, 'warehouse', assertions);
       const industry = await ownFixture(session, 'industry', assertions);
-      if (!warehouse && !industry) return report('trade-settings', assertions, probes, session);
+      const storage = await ownFixture(session, 'storage', assertions);
+      if (!warehouse && !industry && !storage) return report('trade-settings', assertions, probes, session);
       const url = await survivalUrl(ctx);
       const readField = (fx: OwnFixture, groupId: string, name: string) => async (): Promise<string | undefined> =>
         propertyValue(await readSectionGroups(session, fx.x, fx.y, groupId, fx.visualClass), groupId, name);
@@ -6486,15 +6490,66 @@ const tradeSettings: Flow = {
         checkProbe(assertions, probe);
       };
 
-      // No RDOSetRole: the warehouse fixture is an Import Storage (WHGeneral), whose sheet never
-      // offered a trade mode (Voyager/WHGeneralSheet.pas carries cbTrade only, :46) — its role is
-      // preset by class (Model Extensions/General/GeneralPack1.dpr:719). Proving RDOSetRole needs an
-      // IndGeneral storage fixture (follow-up to #1255).
+      const tradeRole = async (fx: OwnFixture): Promise<void> => {
+        // RDOSetRole moves the lot's visual class (TWarehouse.GetVisualClassId, StdBlocks/Warehouses.pas:595),
+        // so every read resolves the current class — never fx.visualClass.
+        const read = async (): Promise<string | undefined> =>
+          propertyValue(
+            await readSectionGroups(session, fx.x, fx.y, 'indGeneral', await resolveVisualClass(session, fx.x, fx.y)),
+            'indGeneral',
+            'TradeRole',
+          );
+        const original = await read();
+        if (original === undefined || !isTradeModeValue(original)) {
+          assertions.unproven(
+            `RDOSetRole on ${fixtureLabel(fx)}`,
+            `its TradeRole "${original ?? 'absent'}" is not a trade mode the client offers (TRADE_MODE_VALUES ` +
+              `${TRADE_MODE_VALUES.join('/')}, trade-settings.ts) — Voyager hides cbMode for it ` +
+              '(Voyager/IndustryGeneralSheet.pas:191-215); nothing sent',
+          );
+          return;
+        }
+        const write = async (value: string): Promise<void> => {
+          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetRole', value);
+        };
+        const probe = await roundTripProbe(ctx, url, {
+          what: `${fixtureLabel(fx)} trade mode (indGeneral.TradeRole)`,
+          member: 'RDOSetRole',
+          read: async () => original,
+          testValue: tradeRoleNudge,
+          write,
+          // A restore that reads stale is sent once more; only then is the pending restore kept
+          // (doc/E2E-POLICY.md §5, #1257).
+          restore: async value => {
+            await write(value);
+            const first = await pollUntil(tolerantRead(read), v => v === value, ctx);
+            if (!first.ok) await write(value);
+          },
+          proof: {
+            // No log part: TWarehouse.RDOSetRole writes no line (StdBlocks/Warehouses.pas:527-540).
+            readBack: readBackOn(
+              `indGeneral.TradeRole at (${fx.x},${fx.y}) via the gateway's section read, on the lot's current visual class`,
+              'RDOSetRole rewrites the cache itself (Facility.UpdateCache, StdBlocks/Warehouses.pas:537; TradeRole at ' +
+                `Kernel/Kernel.pas:5893); ${FACILITY_CACHE_WHY}`,
+              tolerantRead(read),
+            ),
+          },
+          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetRole' },
+        });
+        probes.push(probe);
+        checkProbe(assertions, probe);
+      };
+
+      // The warehouse fixture is an Import Storage (WHGeneral), whose sheet never offered a trade
+      // mode (Voyager/WHGeneralSheet.pas carries cbTrade only, :46) — its role is preset by class
+      // (Model Extensions/General/GeneralPack1.dpr:719). RDOSetRole is never sent to it.
       if (warehouse) {
         await tradeLevel(warehouse, 'whGeneral');
       }
       // RDOSetRole is never sent to the industry: only TWarehouse publishes it (StdBlocks/Warehouses.pas:95).
       if (industry) await tradeLevel(industry, 'indGeneral');
+      // The trade mode is proven on the IndGeneral storage alone (#1257).
+      if (storage) await tradeRole(storage);
       return report('trade-settings', assertions, probes, session);
     } finally {
       await logoff(session);
