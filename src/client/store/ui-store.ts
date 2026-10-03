@@ -9,6 +9,7 @@ import { ALL_CONNECTION_ROLES, type ConnectionRoleFlags } from '@/shared/connect
 import { useGameStore } from './game-store';
 import type { SnapPoint } from '../hooks/useSheetGesture';
 import { isDialogSuppressed, type DialogKind, type DialogRow } from '../components/common/Dialog';
+import { loadUiVersion, saveUiVersion, type UiVersion } from './ui-version';
 
 /**
  * How a confirmation is asked. `kind` picks the initial focus (safe action for a
@@ -125,6 +126,12 @@ interface UiState {
   /** The HUD chrome (StatusPill + CommandBar) is shown; session-only, never persisted, so a reload always comes back visible (#613). */
   hudVisible: boolean;
 
+  /**
+   * Which in-game interface is mounted: the classic HUD (`v1`) or the experimental one
+   * (`src/client/v2/`). Persisted in localStorage (`ui-version.ts`); a logout keeps it.
+   */
+  uiVersion: UiVersion;
+
   // Mobile
   mobileTab: MobileTab;
   mobileSheetSnap: SnapPoint;
@@ -199,6 +206,10 @@ interface UiState {
   setHudVisible: (v: boolean) => void;
   toggleHudVisible: () => void;
 
+  // Actions — UI version (classic / new interface)
+  setUiVersion: (v: UiVersion) => void;
+  toggleUiVersion: () => void;
+
   // Actions — Mobile
   setMobileTab: (tab: MobileTab) => void;
   setMobileSheetSnap: (snap: SnapPoint) => void;
@@ -239,6 +250,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   commandPaletteOpen: false,
   reportModeRequest: 0,
   hudVisible: true,
+  uiVersion: loadUiVersion(),
   mobileTab: 'map',
   mobileSheetSnap: 'half' as SnapPoint,
   isPlacingBuilding: false,
@@ -353,6 +365,13 @@ export const useUiStore = create<UiState>((set, get) => ({
   // HUD visibility
   setHudVisible: (v) => set({ hudVisible: v }),
   toggleHudVisible: () => set((s) => ({ hudVisible: !s.hudVisible })),
+
+  // UI version — every change is remembered for the next visit
+  setUiVersion: (v) => {
+    saveUiVersion(v);
+    set({ uiVersion: v });
+  },
+  toggleUiVersion: () => get().setUiVersion(get().uiVersion === 'v2' ? 'v1' : 'v2'),
 
   // Mobile
   setMobileTab: (tab) => set({ mobileTab: tab }),

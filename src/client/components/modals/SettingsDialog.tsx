@@ -2,6 +2,7 @@
  * SettingsDialog — Game settings modal.
  *
  * Toggle switches for visual/audio settings + keyboard shortcuts reference.
+ * The first section picks the in-game interface: the classic one or the new one (src/client/v2/).
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -9,6 +10,7 @@ import { X } from 'lucide-react';
 import { useGameStore, type GameSettings, type MinimapSize } from '../../store/game-store';
 import { useChatStore } from '../../store/chat-store';
 import { useUiStore } from '../../store/ui-store';
+import type { UiVersion } from '../../store/ui-version';
 import { useClient } from '../../context';
 import { Switch, confirmLogout } from '../common';
 import { ShortcutList } from '../common/ShortcutList';
@@ -27,6 +29,8 @@ export function SettingsDialog() {
   const unignoreUser = useChatStore((s) => s.unignoreUser);
   const clearIgnored = useChatStore((s) => s.clearIgnored);
   const requestReportMode = useUiStore((s) => s.requestReportMode);
+  const uiVersion = useUiStore((s) => s.uiVersion);
+  const setUiVersion = useUiStore((s) => s.setUiVersion);
   // Update store + notify client.ts to apply to renderer/sound/localStorage
   const handleSettingChange = useCallback(
     (partial: Partial<GameSettings>) => {
@@ -56,6 +60,12 @@ export function SettingsDialog() {
         </div>
 
         <div className={styles.content}>
+          {/* Interface — classic HUD or the experimental one; V switches too */}
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>Interface</h3>
+            <InterfaceSelector value={uiVersion} onChange={setUiVersion} />
+          </section>
+
           {/* Visual settings */}
           <section className={styles.section}>
             <h3 className={styles.sectionTitle}>Visual</h3>
@@ -264,6 +274,33 @@ function SizeSelector({
             onClick={() => onChange(opt)}
           >
             {opt.charAt(0).toUpperCase() + opt.slice(1)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const INTERFACE_OPTIONS: ReadonlyArray<{ value: UiVersion; label: string }> = [
+  { value: 'v1', label: 'Classic' },
+  { value: 'v2', label: 'New (experimental)' },
+];
+
+/** Classic / New — the same pressed-button pair as the minimap size, so it reads as one choice. */
+function InterfaceSelector({ value, onChange }: { value: UiVersion; onChange: (v: UiVersion) => void }) {
+  return (
+    <div className={styles.sizeRow}>
+      <span className={styles.sizeLabel}>In-game interface</span>
+      <div className={styles.sizeButtons} role="group" aria-label="In-game interface">
+        {INTERFACE_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            className={`${styles.sizeBtn} ${value === opt.value ? styles.sizeBtnActive : ''}`}
+            aria-pressed={value === opt.value}
+            onClick={() => onChange(opt.value)}
+          >
+            {opt.label}
           </button>
         ))}
       </div>

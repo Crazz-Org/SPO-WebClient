@@ -91,6 +91,18 @@ Schema: `src/shared/bug-report-schema.ts`.
 
 `App.tsx` routes between `LoginScreen` and `GameScreen` based on `useGameStore.status`. Shows `ServerStartupScreen` until backend is ready.
 
+## UI v2 ("Command Deck", experimental)
+
+`v2/` holds a second in-game interface, `GameScreenV2`, mounted by `App.tsx` instead of
+`GameScreen` when `useUiStore.uiVersion === 'v2'`. The switch: Settings → Interface, the **V**
+key, or the v2 dock menu's "Switch to classic interface"; it persists in localStorage under
+`UI_VERSION_KEY` (`store/ui-version.ts`) and a fresh browser gets `v1`. `V2Boundary` catches a
+render error, flips back to v1 and toasts. v2 reuses the stores and `useClient()` — no new
+server path — and work on v2 never edits v1 files (`components/hud`, `sheet`, `building`,
+`layouts/`); it reuses them. Below 1024 px both interfaces render the same `MobileShell`, and
+every v2 fixed element is `display: none`. Its layout tokens are `--v2-*` in
+`styles/design-tokens-v2.css`, and its fixed elements are rows (`ui: 'v2'`) of the band table.
+
 ## Legacy images
 
 Cross-origin legacy images go through `/proxy-image`; the CSP blocks the rest and no test layer will tell you.
