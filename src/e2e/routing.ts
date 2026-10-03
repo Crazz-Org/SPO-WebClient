@@ -67,6 +67,8 @@ export const GATE_ONLY: Record<string, string> = {
     'creating and deleting a channel and the typing / away states broadcast to every connected client (Interface Server/InterfaceServer.pas:4594, :4049-4060, :4690, :3968-3980); accepted by the maintainer (2026-09-29) at the gate only, when chat code changes — never in the nightly',
   'bank-borrow-payoff':
     "TBank.AskLoan broadcasts 'SPO_test3 borrowed $X from the <bank>.' to every online tycoon (Kernel/Kernel.pas:8849-8859, text Kernel/Kernel.pas:13487); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly",
+  'facility-bank-loan':
+    "TBank.AskLoan broadcasts 'SPO_test borrowed $1 from the Bank of SPO_test3.' to every online tycoon (Kernel/Kernel.pas:8849-8859, text Kernel/Kernel.pas:13487); lifted by the maintainer (2026-09-29, #1189) — at the gate only, when this code changes, never in the nightly",
 };
 
 /**
@@ -92,8 +94,6 @@ const NO_FLOW_YET = 'no flow sends it yet — recorded by the E2E coverage audit
 export const EXCLUDED: Record<string, string> = {
   REQ_CREATE_COMPANY: NO_FLOW_YET,
   REQ_BUILD_CAPITOL: NO_FLOW_YET,
-  REQ_BUILDING_LOAN_REQUEST: NO_FLOW_YET,
-  REQ_CLONE_FACILITY: NO_FLOW_YET,
   REQ_GM_CHAT_SEND: NO_FLOW_YET,
   REQ_NEWSPAPER_POST: NO_FLOW_YET,
   REQ_POLITICS_LAUNCH_CAMPAIGN: NO_FLOW_YET,
@@ -333,6 +333,7 @@ export const ROUTES: RouteRule[] = [
       'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
       'trade-settings',
       'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+      'facility-bank-loan',
       'ad-budget-roundtrip',
     ],
     why:
@@ -341,8 +342,8 @@ export const ROUTES: RouteRule[] = [
       "flow sends (gate connections, service figures, worker counts, refresh), the owner setters on SPO_test3's " +
       'store and industry fixtures (#1152), the trade role and level on its warehouse and industry (#1153), and its ' +
       'residential, bank, TV, industry and research fixtures — including the RDOQueueResearch / RDOCancelResearch ' +
-      "cases of buildRdoCommandArgs (#1154), and the Advertisement input's RDOSetInputFluidPerc, bound to the gate " +
-      '(#1195)',
+      'cases of buildRdoCommandArgs (#1154), the loan a visitor asks at the bank fixture (requestBankLoan, #1189), ' +
+      "and the Advertisement input's RDOSetInputFluidPerc, bound to the gate (#1195)",
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
@@ -352,12 +353,14 @@ export const ROUTES: RouteRule[] = [
     flows: [
       'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall',
       'build-menu-read', 'place-rename-demolish', 'inspector-reads', 'upgrade-stop',
+      'facility-bank-loan', 'clone-salaries-roundtrip',
     ],
     why:
       'the building WS handlers changed — the flows sending its REQ_BUILDING_DETAILS / TAB_DATA / SET_PROPERTY / FOCUS, ' +
       'REQ_GET_BUILDING_CATEGORIES / _FACILITIES / REQ_PLACE_BUILDING / REQ_RENAME_FACILITY / REQ_DELETE_FACILITY, ' +
       'the one sending GATE_CONNECTIONS / SERVICE_FIGURES / WORKER_COUNTS / REFRESH_PROPERTIES, and the one sending ' +
-      'REQ_BUILDING_UPGRADE (#1154)',
+      'REQ_BUILDING_UPGRADE (#1154), and REQ_BUILDING_LOAN_REQUEST (facility-bank-loan) and REQ_CLONE_FACILITY ' +
+      '(clone-salaries-roundtrip) (#1189)',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
@@ -449,10 +452,14 @@ export const ROUTES: RouteRule[] = [
     // Before the client fallback (#1187). politics-write is deliberately left out: it is a
     // world-broadcast GATE_ONLY flow, and REQ_POLITICS_VOTE is EXCLUDED (vote-roundtrip is nightly-only).
     test: /^src\/client\/handlers\/building-action-handler\.ts$/,
-    flows: [...INSPECTOR_UI_FLOWS, 'upgrade-stop', 'place-rename-demolish', 'supplier-search-read'],
+    flows: [
+      ...INSPECTOR_UI_FLOWS, 'upgrade-stop', 'place-rename-demolish', 'supplier-search-read',
+      'facility-bank-loan', 'clone-salaries-roundtrip',
+    ],
     why:
-      'the client facility actions — the setter, upgrade, research, place/rename/demolish and connection-search flows ' +
-      'that send its SET_PROPERTY / UPGRADE / RENAME / DELETE / RESEARCH_* / SEARCH_CONNECTIONS / GATE_CONNECTIONS requests',
+      'the client facility actions — the setter, upgrade, research, place/rename/demolish, connection-search, ' +
+      'facility-loan and clone flows that send its SET_PROPERTY / UPGRADE / RENAME / DELETE / RESEARCH_* / ' +
+      'SEARCH_CONNECTIONS / GATE_CONNECTIONS / BUILDING_LOAN_REQUEST / CLONE_FACILITY requests (#1189)',
   },
   {
     // Before the client fallback (#1187). zoning-alert-read is left out for the reason the
