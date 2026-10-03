@@ -1,5 +1,11 @@
 [
   {
+    "id": 1298,
+    "type": "fixed",
+    "text": "In the town newspaper, Post a column opens the writing form again instead of jumping back to the column list.",
+    "date": "2026-10-03"
+  },
+  {
     "id": 1258,
     "type": "fixed",
     "text": "Import and Export Storage no longer offer a \"connect all your warehouses\" button that the original game never had.",
