@@ -408,7 +408,10 @@ async function setBuildingPropertyImpl(
       // not throw" — several legitimate commands (the disconnect family) have no
       // read-back property at all, and the client uses `success` to drive its
       // notifications. `confirmed` is the honest signal.
-      const readBack = readValues[0] ?? '';
+      const readBack =
+        propertyName === 'property' && additionalParams?.propertyName === 'Stopped'
+          ? stoppedFromTrouble(readValues[0] ?? '')
+          : (readValues[0] ?? '');
 
       // OB-28: the verdict used to be `readBack !== ''`, i.e. "the witness is
       // readable". That is a different question from "the write landed", and it
@@ -1079,8 +1082,13 @@ function expectedWitnessValues(
 
     // Direct property set: the witness IS the property that was written, read
     // from the cache under the same name. Same assumption the read-back itself
-    // already makes (mapRdoCommandToPropertyName, `case 'property'`).
+    // already makes (mapRdoCommandToPropertyName, `case 'property'`). One
+    // exception: `Stopped` is witnessed by the facStoppedByTycoon bit of
+    // `Trouble` (stoppedFromTrouble), and compares by truthiness.
     case 'property':
+      if (params.propertyName === 'Stopped') {
+        return parseInt(value, 10) !== 0 ? ['-1'] : ['0'];
+      }
       return params.propertyName === undefined ? null : [value.trim()];
 
     // Direct field assignment, no scaling — `fRole := TFacilityRole(aRole)`
@@ -1159,6 +1167,16 @@ function expectedWitnessValues(
  * decimals. Otherwise a trimmed, case-insensitive string compare, which is what
  * the word booleans (`YES`/`NO`) and the widestring witnesses need.
  */
+/** `Trouble` read as the `Stopped` it witnesses: '-1' when facStoppedByTycoon ($04,
+ *  Kernel/Kernel.pas:107) is set, '0' when clear, '' when absent or not an integer. */
+function stoppedFromTrouble(trouble: string): string {
+  const held = trouble.trim();
+  if (held === '') return '';
+  const n = Number(held);
+  if (!Number.isInteger(n)) return '';
+  return (n & 0x04) !== 0 ? '-1' : '0';
+}
+
 function witnessMatches(readBack: string, accepted: readonly string[]): boolean {
   const held = readBack.trim();
   return accepted.some(candidate => {
@@ -1343,6 +1361,10 @@ function mapRdoCommandToPropertyName(
       return 'nfActualMaxFluidValue';
 
     case 'property':
+      // The facility cache writes `Trouble` and no `Stopped`
+      // (Kernel/KernelCache.pas:417); the tycoon stop is its facStoppedByTycoon
+      // bit, $04 (Kernel/Kernel.pas:107).
+      if (params.propertyName === 'Stopped') return 'Trouble';
       return params.propertyName || rdoCommand;
 
     default:
