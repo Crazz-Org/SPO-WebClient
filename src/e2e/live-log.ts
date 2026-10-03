@@ -14,11 +14,15 @@
  *    `Accept-Encoding: identity`) and read only what was appended after. A HEAD answered with
  *    any other `Content-Encoding` is refused: its length is the compressed size, which opens
  *    the window a fraction of the way into the file (#1228).
- * 2. **Timestamp.** Every Survival line starts with its own `h:mm:ss AM/PM` stamp
- *    (`TimeToStr(Now)`, `Kernel/Kernel.pas:4689`); it must be at or after
- *    `LogWindow.openedAt`, compared as a time of day within one day's file, less a
- *    `CLOCK_SKEW_SECONDS` allowance. A line earlier than that never counts, whatever the byte
- *    offset says. A line without a stamp falls back to the byte offset alone.
+ * 2. **Timestamp.** A Survival line is stamped in one of two forms. `TimeToStr(Now)` writes
+ *    `h:mm:ss AM/PM` (e.g. `Kernel/Kernel.pas:4689`), compared as a time of day within one
+ *    day's file. `DateTimeToStr(Now)` writes `YYYY-MM-DD h:mm:ss AM/PM` — the `Voting:`
+ *    (`Kernel/TownPolitics.pas:400`, `Kernel/WorldPolitics.pas:1822`), `Service SetPrice:`
+ *    (`StdBlocks/ServiceBlock.pas:1580`) and `Setting salaries:`
+ *    (`Kernel/WorkCenterBlock.pas:584`) markers — compared as a full UTC date-time. Either way
+ *    the stamp must be at or after `LogWindow.openedAt`, less a `CLOCK_SKEW_SECONDS`
+ *    allowance. A line earlier than that never counts, whatever the byte offset says. A line
+ *    without a stamp falls back to the byte offset alone.
  *
  * Assumption: **Survival log time = UTC** — verified 2026-09-30 and 2026-10-01 (tail line
  * `6:28:28 AM` read at `06:28:30 UTC`). The server clock can trail the bench by a second or
@@ -191,16 +195,24 @@ export async function readSince(window: LogWindow): Promise<string> {
 export const CLOCK_SKEW_SECONDS = 10;
 
 /**
- * True unless the line carries an `h:mm:ss AM|PM` stamp earlier (UTC, same day) than
- * window.openedAt less `CLOCK_SKEW_SECONDS`.
+ * True unless the line carries a stamp earlier than window.openedAt less
+ * `CLOCK_SKEW_SECONDS`: a `YYYY-MM-DD h:mm:ss AM|PM` stamp is compared as a full UTC
+ * date-time, an `h:mm:ss AM|PM` stamp as a UTC time of day (same day).
  */
 export function loggedInWindow(line: string, window: LogWindow): boolean {
-  const stamp = /^\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)\b/i.exec(line);
+  const stamp = /^\s*(?:(\d{4})-(\d{2})-(\d{2})\s+)?(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)\b/i.exec(line);
   const opened = new Date(window.openedAt);
   if (!stamp || Number.isNaN(opened.getTime())) return true;
-  const pm = stamp[4].toUpperCase() === 'PM';
-  const lineSeconds =
-    ((Number(stamp[1]) % 12) + (pm ? 12 : 0)) * 3600 + Number(stamp[2]) * 60 + Number(stamp[3]);
+  const hours = (Number(stamp[4]) % 12) + (stamp[7].toUpperCase() === 'PM' ? 12 : 0);
+  const minutes = Number(stamp[5]);
+  const seconds = Number(stamp[6]);
+  if (stamp[1] !== undefined) {
+    // DateTimeToStr(Now): full UTC date-time against openedAt.
+    const lineMs = Date.UTC(Number(stamp[1]), Number(stamp[2]) - 1, Number(stamp[3]), hours, minutes, seconds);
+    return lineMs >= opened.getTime() - CLOCK_SKEW_SECONDS * 1000;
+  }
+  // TimeToStr(Now): time of day within one day's file.
+  const lineSeconds = hours * 3600 + minutes * 60 + seconds;
   const windowSeconds =
     opened.getUTCHours() * 3600 + opened.getUTCMinutes() * 60 + opened.getUTCSeconds();
   return lineSeconds >= windowSeconds - CLOCK_SKEW_SECONDS;
