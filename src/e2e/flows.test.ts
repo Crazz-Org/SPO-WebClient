@@ -19,6 +19,7 @@ import {
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
+  RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent,
   type Flow, type FlowResult, type GateLinks,
 } from './flows';
 import { parseBuildingFocusResponse } from '@/server/map-parsers';
@@ -83,13 +84,18 @@ describe('the catalogue', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
     expect(mutating).toEqual(
       [
-        'accept-cloning', 'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'bank-settings',
+        'accept-cloning',
+        // #1195
+        'ad-budget-roundtrip',
+        'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'bank-settings',
         'chat-private-channel',
         // #1153
         'client-hire-remove', 'company-input-demand', 'connect-on-map',
         'facility-open-close',
         'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
         'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
+        // #1195
+        'mayor-rating-roundtrip',
         'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
         // #1153
@@ -6140,7 +6146,9 @@ describe('inspector flows (#1152)', () => {
   });
 
   describe('industry-supply-limits', () => {
-    it('drives max price, min K, sort mode and overprice on a sortable gate with a supplier, restoring each', async () => {
+    // #1195: sort mode and overprice are excluded — no fixture carries them (Kernel/MediaGates.pas:388-389,
+    // StdBlocks/Movie.pas:84; the overprice needs an own supplier row, #1153).
+    it('drives only max price and min K, even on a sortable gate with a supplier row, restoring each', async () => {
       const world = makeWorld({ supplies: [supplyGate({ qpSorted: '1', sortMode: '0' })] });
       const lock = cleanLock();
       arrange(world);
@@ -6149,62 +6157,25 @@ describe('inspector flows (#1152)', () => {
       expect(result.probes.map(p => [p.member, p.written, p.original])).toEqual([
         ['RDOSetInputMaxPrice', '199', '200'],
         ['RDOSetInputMinK', '11', '10'],
-        ['RDOSetInputSortMode', '1', '0'],
-        ['RDOSetInputOverPrice', '21', '20'],
       ]);
-      expect(result.probes[2].logLine).toBe('12:00 Changing Sort Mode.. ');
+      expect(result.unproven).toEqual([]);
+      const members = world.writes.map(w => w.property);
+      expect(members).not.toContain('RDOSetInputSortMode');
+      expect(members).not.toContain('RDOSetInputOverPrice');
       expect(world.supplies[0]).toMatchObject({ maxPrice: '200', minK: '10', sortMode: '0' });
-      expect(world.supplies[0].connections[0].overprice).toBe('20');
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('records the sort mode and the overprice unproven by name on a plain gate with no supplier, and runs the others', async () => {
+    it('records nothing unproven for the excluded members on a plain gate with no supplier', async () => {
       const world = makeWorld({ supplies: [supplyGate({ connections: [], connectionCount: 0 })] });
       arrange(world);
       const result = await run('industry-supply-limits');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([
-        expect.stringMatching(/^RDOSetInputSortMode — the Water gate publishes no sort mode/),
-        expect.stringMatching(/^RDOSetInputOverPrice — the Water gate has no supplier row/),
-      ]);
+      expect(result.status).toBe('PASS');
+      expect(result.unproven).toEqual([]);
       expect(result.probes.map(p => [p.member, p.status])).toEqual([
         ['RDOSetInputMaxPrice', 'PASS'],
         ['RDOSetInputMinK', 'PASS'],
       ]);
-    });
-
-    it('restores the overprice on the same supplier after its row shifted', async () => {
-      const world = makeWorld({
-        after: (w, n) => {
-          if (w.property === 'RDOSetInputOverPrice' && n === 5) {
-            world.supplies[0].connections.unshift(conn('New Well', 'Other Co', 9, 9, '0'));
-          }
-        },
-      });
-      arrange(world);
-      const result = await run('industry-supply-limits');
-      const over = world.writes.filter(w => w.property === 'RDOSetInputOverPrice');
-      expect(over).toEqual([
-        { property: 'RDOSetInputOverPrice', value: '21', params: { fluidId: 'Water', index: '0' } },
-        { property: 'RDOSetInputOverPrice', value: '20', params: { fluidId: 'Water', index: '1' } },
-      ]);
-      expect(world.supplies[0].connections.map(c => [c.facilityName, c.overprice])).toEqual([['New Well', '0'], ['Well', '20']]);
-      expect(result.probes.find(p => p.member === 'RDOSetInputOverPrice')?.status).toBe('PASS');
-    });
-
-    it('never writes the overprice onto another row when its supplier left the gate', async () => {
-      const world = makeWorld({
-        after: (w, n) => {
-          if (n === 5) world.supplies[0].connections = [conn('Other Well', 'Other Co', 9, 9, '0')];
-        },
-      });
-      arrange(world);
-      const result = await run('industry-supply-limits');
-      const over = result.probes.find(p => p.member === 'RDOSetInputOverPrice');
-      expect(over?.status).toBe('FAIL');
-      expect(over?.note).toMatch(/restore failed/);
-      expect(world.writes.filter(w => w.property === 'RDOSetInputOverPrice')).toHaveLength(1);
-      expect(world.supplies[0].connections[0].overprice).toBe('0');
     });
 
     it('FAILs a max-price read-back that never moves though its line is present', async () => {
@@ -9175,6 +9146,524 @@ describe('chat flows (#1148)', () => {
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
       expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
       expect(off).toHaveBeenCalledWith(secondary.session);
+    });
+  });
+});
+
+describe('player actions (#1195)', () => {
+  describe('ratingLogMatches and ratingMove', () => {
+    it('matches only the line ending with the rater, the RatingId and the value, case-insensitively', () => {
+      const line = '12:00:00 Setting town politics Tycoon rating: Crazz, 7, 0';
+      expect(ratingLogMatches(line, 'Crazz', '7', '0')).toBe(true);
+      expect(ratingLogMatches(line.toUpperCase(), 'crazz', '7', '0')).toBe(true);
+      expect(ratingLogMatches(line, 'SPO_test3', '7', '0')).toBe(false);
+      expect(ratingLogMatches(line, 'Crazz', '8', '0')).toBe(false);
+      expect(ratingLogMatches(line, 'Crazz', '7', '100')).toBe(false);
+      expect(ratingLogMatches('12:00:00 Setting town politics Tycoon rating: Crazz, 7, 10', 'Crazz', '7', '0')).toBe(false);
+    });
+
+    it('says whether the aggregate moved towards the write, away from it, or not at all', () => {
+      expect(ratingMove(60, 40, 100, 0)).toBe('towards');
+      expect(ratingMove(60, 70, 100, 0)).toBe('away');
+      expect(ratingMove(60, 60, 100, 0)).toBe('still');
+      expect(ratingMove(40, 60, 0, 100)).toBe('towards');
+      expect(ratingMove(40, 30, 0, 100)).toBe('away');
+    });
+
+    it('rates at the two ends of the range, baseline 100 and probe 0', () => {
+      expect([RATING_BASELINE, RATING_PROBE]).toEqual([100, 0]);
+    });
+  });
+
+  describe('mayor-rating-roundtrip', () => {
+    interface RatingWorld {
+      mayorName: string;
+      rows: { id?: string; name: string; value: number }[];
+      /** The aggregate after the n-th write of `value`; default: 60 -> 40 -> 60. */
+      move: (value: number, n: number, current: number) => number;
+      refuse?: number;
+      /** Write numbers whose Survival line never appears. */
+      silent: number[];
+      writes: number[];
+      lines: string[];
+    }
+
+    function ratingWorld(over: Partial<RatingWorld> = {}): RatingWorld {
+      return {
+        mayorName: 'SPO_test3',
+        rows: [{ id: '7', name: 'Overall', value: 60 }],
+        move: value => (value === 0 ? 40 : 60),
+        silent: [],
+        writes: [],
+        lines: [],
+        ...over,
+      };
+    }
+
+    function arrange(world: RatingWorld) {
+      const crazz = stubSession(msg => {
+        if (msg.type === WsMessageType.REQ_POLITICS_DATA) {
+          return {
+            type: WsMessageType.RESP_POLITICS_DATA,
+            data: { mayorName: world.mayorName, tycoonsRatings: world.rows.map(r => ({ ...r })) },
+          };
+        }
+        if (msg.type === WsMessageType.REQ_POLITICS_SET_RATING) {
+          const m = msg as unknown as { ratingId: string; value: number };
+          world.writes.push(m.value);
+          const n = world.writes.length;
+          if (world.refuse === n) return { type: WsMessageType.RESP_POLITICS_SET_RATING, success: false, message: 'no' };
+          if (!world.silent.includes(n)) {
+            world.lines.push(`12:00:00 Setting town politics Tycoon rating: ${SECONDARY_ACCOUNT.username}, ${m.ratingId}, ${m.value}`);
+          }
+          const row = world.rows.find(r => r.id === m.ratingId);
+          if (row) row.value = world.move(m.value, n, row.value);
+          return { type: WsMessageType.RESP_POLITICS_SET_RATING, success: true, ratingId: m.ratingId, value: m.value };
+        }
+        throw new Error(`unexpected request ${msg.type}`);
+      });
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz);
+      const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+      jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+      jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+        if (typeof proof !== 'object') return null;
+        return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+      });
+      return { off };
+    }
+
+    const run = (lock = cleanLock()) =>
+      flowByName('mayor-rating-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+    it('PASSes when the aggregate moves down with the 0 and back up with the 100, both lines present', async () => {
+      const world = ratingWorld();
+      const { off } = arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes).toEqual([0, 100]);
+      expect(result.assertions.every(a => a.ok)).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+      expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('ends SKIPPED, writing nothing, when Crazz is refused at login', async () => {
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+      const find = jest.spyOn(session, 'findTown');
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+      expect(find).not.toHaveBeenCalled();
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is UNPROVEN, citing the aggregate formula, when the aggregate never moves — and still restores', async () => {
+      const world = ratingWorld({ move: (_v, _n, current) => current });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(world.writes).toEqual([0, 100]);
+      expect(result.unproven[0]).toMatch(/Kernel\/Politics\.pas:374-392/);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the mayor is not SPO_test3', async () => {
+      const world = ratingWorld({ mayorName: 'Someone Else' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Someone Else/);
+      expect(world.writes).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs when the aggregate moves away from the written 0', async () => {
+      const world = ratingWorld({ move: value => (value === 0 ? 70 : 70) });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the aggregate moved towards the written 0')).toMatchObject({
+        ok: false,
+        detail: '60 -> 70',
+      });
+      expect(world.writes).toEqual([0, 100]);
+    });
+
+    it('FAILs when the write logs no line, though the aggregate moved', async () => {
+      const world = ratingWorld({ silent: [1] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the write of 0 logged its Tycoon rating line')).toMatchObject({
+        ok: false,
+        detail: '(no line)',
+      });
+    });
+
+    it('FAILs and keeps the pending restore when the restore never moves the aggregate back', async () => {
+      const world = ratingWorld({ move: (value, _n, current) => (value === 0 ? 40 : current) });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the aggregate moved back towards 100')).toMatchObject({ ok: false });
+      expect(lock.read().pendingRestores).toHaveLength(1);
+      expect(lock.read().pendingRestores[0]).toMatchObject({ originalValue: '100' });
+      expect(lock.read().pendingRestores[0].what).toMatch(/put back 100/);
+    });
+
+    it('FAILs and keeps the pending restore when the restore logs no line', async () => {
+      const world = ratingWorld({ silent: [2] });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a refused write, and still sends the restore', async () => {
+      const world = ratingWorld({ refuse: 1 });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the write of 0 was accepted')?.detail).toMatch(/SET_RATING 0 refused/);
+      expect(world.writes).toEqual([0, 100]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs and keeps the pending restore when the restore itself is refused', async () => {
+      const world = ratingWorld({ refuse: 2 });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the restore to 100 was accepted')?.ok).toBe(false);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs when the rated row vanishes after the write', async () => {
+      const world = ratingWorld();
+      arrange(world);
+      world.move = () => {
+        world.rows = [];
+        return 0;
+      };
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the rating row reads back after the write')?.ok).toBe(false);
+    });
+
+    it('FAILs and writes nothing when no rated row carries an id', async () => {
+      const world = ratingWorld({ rows: [{ name: 'Overall', value: 60 }] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(world.writes).toEqual([]);
+    });
+  });
+
+  describe('tycoon-role-read', () => {
+    function arrange(role: Record<string, unknown>) {
+      const requests: WsMessage[] = [];
+      jest.spyOn(session, 'login').mockResolvedValue(
+        stubSession(msg => {
+          requests.push(msg);
+          if (msg.type === WsMessageType.REQ_TYCOON_ROLE) return { type: WsMessageType.RESP_TYCOON_ROLE, role };
+          throw new Error(`unexpected request ${msg.type}`);
+        }),
+      );
+      const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      return { requests, off };
+    }
+    const mayor = { tycoonName: 'SPO_test3', isMayor: true, town: 'Helartia' };
+
+    it('PASSes when the role names SPO_test3 as the Mayor of Helartia', async () => {
+      const { requests, off } = arrange(mayor);
+      const result = await flowByName('tycoon-role-read').run(ctx);
+      expect(result.status).toBe('PASS');
+      expect(requests).toEqual([expect.objectContaining({ type: WsMessageType.REQ_TYCOON_ROLE, tycoonName: 'SPO_test3' })]);
+      expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('FAILs when the role is not a mayor', async () => {
+      arrange({ ...mayor, isMayor: false });
+      const result = await flowByName('tycoon-role-read').run(ctx);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('isMayor=false');
+    });
+
+    it('FAILs when the mayor governs another town', async () => {
+      arrange({ ...mayor, town: 'Elsewhere' });
+      const result = await flowByName('tycoon-role-read').run(ctx);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('Elsewhere');
+    });
+
+    it('FAILs when the answer names another tycoon', async () => {
+      arrange({ ...mayor, tycoonName: 'Crazz' });
+      expect((await flowByName('tycoon-role-read').run(ctx)).status).toBe('FAIL');
+    });
+  });
+
+  describe('adPercent', () => {
+    it.each([
+      ['150', '200', '75'],
+      ['200', '200', '100'],
+      ['250', '200', '100'],
+      ['1', '8', '12'],
+      ['3', '8', '38'],
+      ['0', '200', '0'],
+    ])('reads %s of %s as %s%%', (fld, cap, expected) => {
+      expect(adPercent(fld, cap)).toBe(expected);
+    });
+
+    it.each([
+      [undefined, '200'],
+      ['100', undefined],
+      ['', '200'],
+      ['100', ' '],
+      ['abc', '200'],
+      ['100', '0'],
+      ['100', '-5'],
+    ])('has no percentage for %p of %p', (fld, cap) => {
+      expect(adPercent(fld, cap)).toBeUndefined();
+    });
+  });
+
+  describe('ad-budget-roundtrip', () => {
+    const HQ = { x: 50, y: 60, visualClass: '4711', name: 'Headquarters' };
+
+    interface AdWorld {
+      tabs: string[];
+      supplies: BuildingSupplyData[];
+      apply: boolean;
+      silent: boolean;
+      /** Which writes log no line: the write (first), the restore (second), or both. */
+      silentOn?: 'write' | 'restore';
+      /** Which write the gateway refuses with a throw. */
+      throwOn?: 'write' | 'restore';
+      writes: { property: string; value: string; params?: Record<string, string> }[];
+      lines: string[];
+    }
+
+    const adGate = (over: Partial<BuildingSupplyData> = {}): BuildingSupplyData => ({
+      path: 'Inputs\\00000001.Advertisement.five\\', name: 'Advertisement', metaFluid: 'Advertisement',
+      capacity: '200', actualMaxFluid: '200', connectionCount: 0, connections: [], ...over,
+    });
+
+    function adWorld(over: Partial<AdWorld> = {}): AdWorld {
+      return {
+        tabs: ['hqGeneral', 'supplies'],
+        supplies: [supplyGate(), adGate()],
+        apply: true,
+        silent: false,
+        writes: [],
+        lines: [],
+        ...over,
+      };
+    }
+
+    function arrange(world: AdWorld, found = true) {
+      const stub = stubSession(msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        switch (msg.type) {
+          case WsMessageType.REQ_BUILDING_DETAILS:
+            return { details: { tabs: world.tabs.map(id => ({ id })), groups: {} } };
+          case WsMessageType.REQ_BUILDING_TAB_DATA:
+            return { supplies: world.supplies.map(s => ({ path: s.path, name: s.name, connections: [] })) };
+          case WsMessageType.REQ_BUILDING_GATE_CONNECTIONS:
+            return { supply: { ...world.supplies.find(s => s.path === m.path) } };
+          case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
+            const w = { property: String(m.propertyName), value: String(m.value), params: m.additionalParams as Record<string, string> };
+            world.writes.push(w);
+            const leg = world.writes.length === 1 ? 'write' : 'restore';
+            if (world.throwOn === leg) throw new Error(`gateway refused the ${leg}`);
+            if (!world.silent && world.silentOn !== leg) world.lines.push(`12:00 - Fac(${HQ.x},${HQ.y}) Setting Input fluid perc: ${w.value}`);
+            const gate = world.supplies.find(s => s.metaFluid === w.params?.fluidId);
+            if (world.apply && gate) gate.actualMaxFluid = String((Number(gate.capacity) * Number(w.value)) / 100);
+            return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: '' };
+          }
+          default:
+            throw new Error(`unexpected request ${msg.type}`);
+        }
+      });
+      jest.spyOn(session, 'login').mockResolvedValue(stub);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const find = jest.spyOn(fixtures, 'findFixture').mockImplementation(async (_s, kind) =>
+        found ? { kind: kind.id, found: HQ } : { kind: kind.id, reason: 'none in Helartia' },
+      );
+      jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+      jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+        if (typeof proof !== 'object') return null;
+        return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+      });
+      return { find };
+    }
+
+    const run = (lock = cleanLock()) =>
+      flowByName('ad-budget-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+    const labels = (r: { assertions: { what: string; ok: boolean }[] }) => r.assertions.map(a => [a.what, a.ok]);
+
+    it('writes the Advertisement input of the research fixture and restores it, each proven by its Survival line', async () => {
+      const world = adWorld();
+      const { find } = arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('PASS');
+      expect(find.mock.calls[0][1].id).toBe('research');
+      expect(result.probes.map(p => [p.member, p.written, p.original, p.status])).toEqual([
+        ['RDOSetInputFluidPerc', '99', '100', 'PASS'],
+      ]);
+      expect(world.writes).toEqual([
+        { property: 'RDOSetInputFluidPerc', value: '99', params: { fluidId: 'Advertisement' } },
+        { property: 'RDOSetInputFluidPerc', value: '100', params: { fluidId: 'Advertisement' } },
+      ]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('PASSes on the Survival lines when the company spread holds the percentage at its original (maintainer decision 2026-10-01)', async () => {
+      const world = adWorld({ apply: false });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('PASS');
+      expect(result.unproven).toEqual([]);
+      expect(result.probes[0]).toMatchObject({
+        status: 'PASS',
+        written: '99',
+        original: '100',
+        logLine: '12:00 - Fac(50,60) Setting Input fluid perc: 99',
+        restored: true,
+      });
+      expect(result.probes[0].note).toMatch(/Kernel\/Kernel\.pas:10003-10008, :10160; maintainer decision 2026-10-01/);
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', true],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', true],
+      ]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs when the write logs no Setting Input fluid perc line, and still restores', async () => {
+      const world = adWorld({ apply: false, silentOn: 'write' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', logLine: null, restored: true });
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', false],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', true],
+      ]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs and keeps the pending restore when the restore logs no line', async () => {
+      const world = adWorld({ silentOn: 'restore' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', restored: false });
+      expect(result.assertions.find(a => a.what.startsWith('RDOSetInputFluidPerc: the restore'))).toEqual({
+        what: 'RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line',
+        ok: false,
+        detail: 'no restore line — pending restore kept',
+      });
+      expect(lock.read().pendingRestores).toEqual([
+        expect.objectContaining({
+          originalValue: '100',
+          x: 50,
+          y: 60,
+          propertyName: 'RDOSetInputFluidPerc',
+          additionalParams: { fluidId: 'Advertisement' },
+        }),
+      ]);
+    });
+
+    it('FAILs when neither the write nor the restore logs a line', async () => {
+      const world = adWorld({ silent: true });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(labels(result).map(([, ok]) => ok)).toEqual([false, false]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a refused write and still restores', async () => {
+      const world = adWorld({ throwOn: 'write' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions[0]).toMatchObject({
+        what: 'RDOSetInputFluidPerc: the write of 99 was accepted',
+        ok: false,
+        detail: expect.stringMatching(/gateway refused the write/),
+      });
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a refused restore and keeps the pending restore', async () => {
+      const world = adWorld({ throwOn: 'restore' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', true],
+        ['RDOSetInputFluidPerc: the restore to 100 was accepted', false],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', false],
+      ]);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs and writes nothing when the original percentage is unreadable', async () => {
+      const world = adWorld({ supplies: [supplyGate(), adGate({ capacity: '0' })] });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions).toEqual([
+        expect.objectContaining({ what: 'RDOSetInputFluidPerc: the original ad percentage is readable', ok: false }),
+      ]);
+      expect(world.writes).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the fixture lists no Advertisement input', async () => {
+      const world = adWorld({ supplies: [supplyGate()] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Kernel\/Headquarters\.pas:130-143/);
+      expect(world.writes).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the fixture has no supplies tab', async () => {
+      const world = adWorld({ tabs: ['hqGeneral'] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(world.writes).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the research fixture is missing', async () => {
+      const world = adWorld();
+      arrange(world, false);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^research fixture — none in Helartia/);
+      expect(world.writes).toEqual([]);
     });
   });
 });

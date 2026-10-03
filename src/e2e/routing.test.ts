@@ -32,6 +32,8 @@ describe('route', () => {
     const decision = route(['src/server/session/politics-handler.ts']);
     expect(decision.required).toEqual([
       'login-spine', 'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
+      // #1195: SPO_test's rating of the mayor's term and the tycoon role read.
+      'mayor-rating-roundtrip', 'tycoon-role-read',
     ]);
     expect(decision.staticOnly).toBe(false);
   });
@@ -56,6 +58,8 @@ describe('route', () => {
       'trade-settings',
       // #1154: the residential, bank, TV, accept-cloning and research controls.
       'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+      // #1195: ADS_GROUP's AdPerc slider (RDOSetInputFluidPerc).
+      'ad-budget-roundtrip',
     ]);
   });
 
@@ -711,6 +715,8 @@ describe('route — handler rules seeded by #1134', () => {
         'trade-settings',
         // #1154: the residential, bank, TV, accept-cloning and research setters.
         'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+        // #1195: the Advertisement input's RDOSetInputFluidPerc, bound to the gate.
+        'ad-budget-roundtrip',
       ]);
     },
   );
@@ -718,6 +724,8 @@ describe('route — handler rules seeded by #1134', () => {
   it('routes the politics WS handlers like the session one', () => {
     expect(route(['src/server/ws-handlers/politics-handlers.ts']).required).toEqual([
       SPINE_FLOW, 'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
+      // #1195: handleTycoonRole and the rating write.
+      'mayor-rating-roundtrip', 'tycoon-role-read',
     ]);
   });
 
@@ -811,9 +819,10 @@ describe('route — session & company (#1142)', () => {
     expect(d.needsL3).toBe(true);
   });
 
-  it('the client auth handler routes to both flows', () => {
+  it('the client auth handler routes to company-switch, cluster-info-read and tycoon-role-read', () => {
     const d = route(['src/client/handlers/auth-handler.ts']);
-    expect(d.required).toEqual([SPINE_FLOW, 'company-switch', 'cluster-info-read']);
+    // #1195: tycoon-role-read sends REQ_TYCOON_ROLE, which this handler sends.
+    expect(d.required).toEqual([SPINE_FLOW, 'company-switch', 'cluster-info-read', 'tycoon-role-read']);
     expect(d.needsL3).toBe(false);
   });
 
@@ -1033,7 +1042,9 @@ describe('route — build & demolish (#1150)', () => {
     'src/client/handlers/build-menu-handler.ts',
   ])('%s requires build-menu-read and place-rename-demolish', file => {
     // #1154: the rule gains upgrade-stop (manageConstruction).
-    expect(route([file]).required).toEqual([SPINE_FLOW, 'build-menu-read', 'place-rename-demolish', 'upgrade-stop']);
+    // #1195: the management handler also answers REQ_TYCOON_ROLE, so it adds tycoon-role-read.
+    const extra = file.endsWith('building-management-handler.ts') ? ['tycoon-role-read'] : [];
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'build-menu-read', 'place-rename-demolish', 'upgrade-stop', ...extra]);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
 
@@ -1081,6 +1092,46 @@ describe('route — inspector flows (#1154)', () => {
       expect(GATE_ONLY).not.toHaveProperty(flow);
       expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
     }
+  });
+});
+
+describe('route — player actions (#1195)', () => {
+  const NEW_FLOWS = ['mayor-rating-roundtrip', 'tycoon-role-read', 'ad-budget-roundtrip'];
+
+  it.each([
+    ['src/server/session/politics-handler.ts', 'mayor-rating-roundtrip'],
+    ['src/server/ws-handlers/politics-handlers.ts', 'mayor-rating-roundtrip'],
+    ['src/client/components/politics/RatingsRail.tsx', 'mayor-rating-roundtrip'],
+    ['src/server/session/politics-handler.ts', 'tycoon-role-read'],
+    ['src/server/ws-handlers/politics-handlers.ts', 'tycoon-role-read'],
+    ['src/client/handlers/auth-handler.ts', 'tycoon-role-read'],
+    ['src/server/session/building-property-handler.ts', 'ad-budget-roundtrip'],
+    ['src/server/session/building-details-handler.ts', 'ad-budget-roundtrip'],
+    ['src/shared/building-details/template-groups.ts', 'ad-budget-roundtrip'],
+    ['src/client/components/building/PropertyGroup.tsx', 'ad-budget-roundtrip'],
+  ])('%s requires %s', (file, flow) => {
+    expect(route([file]).required).toContain(flow);
+  });
+
+  it('every new flow is in the catalogue', () => {
+    const names = FLOWS.map(f => f.name);
+    for (const flow of NEW_FLOWS) expect(names).toContain(flow);
+  });
+
+  it('none of the three is nightly-only or gate-only', () => {
+    for (const flow of NEW_FLOWS) {
+      expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
+      expect(GATE_ONLY).not.toHaveProperty(flow);
+    }
+  });
+
+  it('records the sort-mode and overprice exclusion of industry-supply-limits with its citations', () => {
+    const reason = NIGHTLY_ONLY['industry-supply-limits'];
+    expect(reason).toMatch(/Kernel\/MediaGates\.pas:388-389/);
+    expect(reason).toMatch(/StdBlocks\/Movie\.pas:84/);
+    expect(reason).toMatch(/excluded/);
+    expect(reason).not.toMatch(/end UNPROVEN/);
+    expect(uncited({ 'industry-supply-limits': reason })).toEqual([]);
   });
 });
 

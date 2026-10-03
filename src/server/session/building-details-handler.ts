@@ -1242,10 +1242,15 @@ const MAX_CONNECTIONS_PER_GATE = 20;
 const SUPPLY_GATES: GateSpec<BuildingSupplyData> = {
   tabId: 'supplies',
   listMember: 'GetInputNames',
-  // Same list, same order, as Voyager/SupplySheetForm.pas:460.
+  // The first ten: same list, same order, as Voyager/SupplySheetForm.pas:460.
+  // The two appended are the names Voyager's ad sheet reads off the same input
+  // cache object (Voyager/AdvSheetForm.pas:316-321, used at :651-660) — every
+  // TInput writes both (Kernel/KernelCache.pas:617-619) — so the ad percentage
+  // can be read back (#1195). Appended, never interleaved: indices 0-9 hold.
   headerProps: [
     'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
     'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
+    'nfCapacity', 'nfActualMaxFluidValue',
   ],
   // Same list, same order, as Voyager/SupplySheetForm.pas:480-490.
   connectionProps: [
@@ -1271,6 +1276,8 @@ const SUPPLY_GATES: GateSpec<BuildingSupplyData> = {
     // '1'/'0' (Cache/CacheAgent.pas:150-152). Undefined means "not published /
     // not read", the convention every other header field here already uses.
     selected: header[8] || undefined,
+    capacity: header[10] || undefined,
+    actualMaxFluid: header[11] || undefined,
     connectionCount,
     connections,
   }),

@@ -47,6 +47,7 @@ describe('LOG_MARKERS', () => {
       RDOSetInputMaxPrice: 'Input max price set:',
       RDOSetInputMinK: 'Input min K set:',
       RDOSetInputSortMode: 'Changing Sort Mode..',
+      RDOSetInputFluidPerc: 'Setting Input fluid perc:',
       RDOConnectInput: 'Input connected:',
       RDOConnectOutput: 'Output connected:',
       RDODisconnectInput: 'Input disconnect:',
