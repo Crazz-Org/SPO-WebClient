@@ -54,6 +54,7 @@ import {
 import { ROUTES, SPINE_FLOW } from '../routing';
 import type { LiveRunResult } from '../run';
 import { SECONDARY_ACCOUNT } from '../config';
+import { main as cliMain, type CliDeps } from './cli';
 
 interface Harness {
   deps: WorkerDeps;
@@ -390,6 +391,40 @@ describe('processOldest — the queue discipline', () => {
     // ABANDONED is written before runJob is ever called (there is no worktree to run
     // against) — the other non-attesting verdict that must not depend on reaching finish().
     expect(jobsLogVerdicts(h)).toEqual([{ id: job.id, verdict: 'ABANDONED' }]);
+  });
+
+  it('runs a job whose waiting submitter exited 3 — wait detached it, so it is not ABANDONED (#1300)', async () => {
+    const h = harness();
+    const job = deposit(h);
+    const out: string[] = [];
+    const err: string[] = [];
+    const cliDeps: CliDeps = {
+      paths: h.paths,
+      spool: h.spool,
+      fingerprint: () => {
+        throw new Error('unused');
+      },
+      git: () => {
+        throw new Error('unused');
+      },
+      workerAlive: () => ({ alive: false, reason: 'heartbeat is 45 s old' }),
+      now: () => (h.clock.nowMs += 10),
+      sleep: async () => {},
+      pid: 4321,
+      out: line => out.push(line),
+      err: line => err.push(line),
+      env: {},
+      isInteractive: () => false,
+      promptLine: async () => null,
+      requesterIdentity: () => ({ user: 'u', host: 'h', tty: 'unknown' }),
+    };
+    expect(await cliMain(['wait', job.id], cliDeps)).toBe(3);
+
+    h.submitterAlive = false; // the waiting process is gone
+    expect(await processOldest(h.deps)).toBe(true);
+    expect(h.spool.readReport(job.id)?.verdict).toBe('PASS');
+    expect(h.commands.length).toBeGreaterThan(0);
+    expect(jobsLogVerdicts(h).map(line => line.verdict)).not.toContain('ABANDONED');
   });
 
   it('runs the oldest job end to end: claim, execute, report, release', async () => {

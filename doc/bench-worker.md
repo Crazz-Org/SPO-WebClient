@@ -76,12 +76,16 @@ comment in `job.ts` for the measured line size and growth rate.
 ## 3. A job's life
 
 1. **Deposit** (`npm run gate` / `test:live` / `dev`): the client checks the worker is
-   alive (pid + heartbeat < 20 s) — **a dead worker is exit 3, immediately, at deposit
+   alive (pid + heartbeat < 120 s — §4 says why not tighter) — **a dead worker is exit 3, immediately, at deposit
    time**. It fingerprints the tree, writes the request, returns the job id. `--wait`
    folds into the wait loop so the whole round trip is one background command —
    a queued session spends **zero tokens** waiting.
 2. **Claim**: the worker takes the oldest deposit. If the depositing session's pid is
-   dead → report `ABANDONED`, nothing runs, the queue cleans itself.
+   dead → report `ABANDONED`, nothing runs, the queue cleans itself. A `wait` that exits
+   early — 3 (the worker reads as down) or 4 (timeout) — first detaches its still-queued job
+   (`Spool.detach`, `submitter.pid` → 0), so the job runs anyway and its report lands in
+   `done/<id>.json` (`bash scripts/bench-wait.sh <id>`). Only a session killed outright
+   (SIGKILL, closed terminal) is abandoned.
 3. **Owner lease** (§9): the worker must hold `BENCH_OWNER`, or the job is `ENVIRONMENT`
    and **nothing runs** — checked before the port is cleared, because clearing it SIGKILLs
    whatever holds 8080 and on a second host that would be the other worker's gateway.
@@ -185,8 +189,14 @@ queued job** (exit 2) — what a retry-after-edit wants is the newest tree teste
 systemd (`Restart=always`, `RestartSec=2`, linger enabled) revives a dead worker; the
 spool survives; `running/` jobs are reported `INTERRUPTED` at startup. What systemd cannot
 see — a worker wedged in a crash loop, deposits silently piling up — is caught by the
-**heartbeat**: submitters check its mtime at deposit and during waits, and fail loudly
-(`WORKER DOWN`, exit 3) the moment it goes stale. The failure mode "requests accumulate
+**heartbeat**: submitters check the timestamp it carries at deposit and during waits, and
+fail loudly (`WORKER DOWN`, exit 3) the moment it goes stale. "Stale" means older than 120 s
+(`HEARTBEAT_STALE_MS`), not tighter: the beat rides a timer on the worker's main thread, and
+the worker's synchronous `gh` / `git` calls (`ciStaticProof`, `publishPendingStatuses`, the
+owner lease, `serveMergeQueue`) block that timer — up to ~34 s for one `gh api` call,
+measured from the worker journal on 2026-10-03 (#1300). At 20 s a healthy worker read as
+dead. The beat deliberately stays on the main loop: a beat on a separate thread would keep
+ticking while the loop is wedged and hide exactly the failure it exists to show. The failure mode "requests accumulate
 and nobody notices" is structurally announced at the deposit.
 
 ```bash
@@ -300,8 +310,8 @@ the `bench/gate` description renders `merged base <sha8>` in place of the plain
 | 0 | `PASS` — or `LEASED`, for `npm run dev` | push |
 | 1 | the job ran and the verdict is not passing (`FAIL`, `BLOCKED`, `STALE`, `ABANDONED`, `INTERRUPTED`, `ENVIRONMENT`) | read the report, fix, retry — 3 attempts, each naming a different root cause. `ENVIRONMENT` and `ABANDONED` are the exceptions: they judged nothing, so they cost no attempt and leave `verdicts/<sha>.json` exactly as they found it — resubmit |
 | 2 | refused at deposit: a gate on a **dirty tree**, or a duplicate of a job already queued | commit (an attestation names a sha, so the tested tree must BE that sha), then re-deposit |
-| 3 | **worker down** — nothing was queued | `systemctl --user restart spo-bench-worker`, then re-deposit |
-| 4 | the wait timed out; the job may still be queued or running | `npm run bench:status` before assuming anything |
+| 3 | **worker down** — at deposit, nothing was queued; from a `wait`, the job stays queued, detached (`submitter.pid` → 0), and still runs — `bash scripts/bench-wait.sh <id>` for its report. A re-deposit while it is still queued is refused with exit 2, naming it | `systemctl --user restart spo-bench-worker`, then re-deposit |
+| 4 | the wait timed out; the job may still be queued or running — a still-queued job is detached (`submitter.pid` → 0) and still runs | `npm run bench:status` before assuming anything |
 | 5 | refused: `npm run bench:nightly-request` from somewhere that may not make one — a Claude Code session (`CLAUDECODE`) or no terminal | nothing — a manual nightly is the maintainer's to ask for, at a real terminal (§8) |
 | 6 | `npm run bench:nightly-request` could not read `origin/main`'s tip (`git ls-remote` failed or answered no sha) | check the network and the `origin` remote, then ask again |
 
@@ -1006,6 +1016,8 @@ believe a mechanism is in place. It was restored by reverting #178 once the repo
   `ABANDONED`, queue cleaned — no orphan gateway is possible since sessions start none.
   Killed mid-lease: the gateway lives until the lease expires, then the worker tears it
   down. `worker.test.ts`.
+- A `wait` that exits 3 or 4 detaches its still-queued job, which then runs and is not
+  `ABANDONED` — `cli.test.ts`, `job.test.ts`, `worker.test.ts`.
 - A killed worker restarts (systemd) and resumes the queue; mid-flight jobs are reported
   `INTERRUPTED`. `worker.test.ts`.
 - No gateway survives between jobs — teardown re-verifies the port. `gateway.test.ts`.

@@ -399,3 +399,51 @@ describe('the duplicate guard keys on the subject, not the directory', () => {
     expect(() => spool.submit(base, 2000)).toThrow(DuplicateJobError);
   });
 });
+
+describe('Spool — detach (#1300)', () => {
+  function leftovers(paths: BenchPaths): string[] {
+    return fs.readdirSync(paths.spool).filter(name => !name.endsWith('.json'));
+  }
+
+  it('hands a queued job to the worker: pid 0, every other field and its id unchanged', () => {
+    const paths = tempBench();
+    const spool = new Spool(paths);
+    const job = spool.submit(requestFor('/wt/a'), 1_000);
+    expect(spool.detach(job.id)).toBe(true);
+    const queued = spool.queued();
+    expect(queued).toHaveLength(1);
+    expect(queued[0].file).toBe(path.join(paths.spool, `${job.id}.json`));
+    expect(queued[0].request).toEqual({ ...job, submitter: { pid: 0 } });
+    expect(leftovers(paths)).toEqual([]);
+  });
+
+  it('leaves a claimed (running) job untouched', () => {
+    const paths = tempBench();
+    const spool = new Spool(paths);
+    const job = spool.submit(requestFor('/wt/a'), 1_000);
+    const running = spool.claim(spool.queued()[0].file);
+    const before = fs.readFileSync(running, 'utf8');
+    expect(spool.detach(job.id)).toBe(false);
+    expect(fs.readFileSync(running, 'utf8')).toBe(before);
+    expect(fs.readdirSync(paths.spool)).toEqual([]);
+  });
+
+  it('leaves a finished or unknown job alone, creating nothing in spool/', () => {
+    const paths = tempBench();
+    const spool = new Spool(paths);
+    spool.writeReport(reportFor('job-done'));
+    expect(spool.detach('job-done')).toBe(false);
+    expect(spool.detach('job-never')).toBe(false);
+    expect(fs.readdirSync(paths.spool)).toEqual([]);
+  });
+
+  it('puts a corrupt entry back exactly as it was', () => {
+    const paths = tempBench();
+    const spool = new Spool(paths);
+    const file = path.join(paths.spool, 'job-corrupt.json');
+    fs.writeFileSync(file, '{ not json', 'utf8');
+    expect(spool.detach('job-corrupt')).toBe(false);
+    expect(fs.readFileSync(file, 'utf8')).toBe('{ not json');
+    expect(leftovers(paths)).toEqual([]);
+  });
+});

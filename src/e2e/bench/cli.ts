@@ -23,7 +23,10 @@
  *
  *   wait <job-id> [--timeout-min=N]
  *     Sleeps until the report exists (exit 0 on PASS/LEASED, 1 otherwise), the worker
- *     dies (exit 3), or the timeout passes (exit 4).
+ *     dies (exit 3), or the timeout passes (exit 4). On exit 3 or 4 a still-queued job is
+ *     detached (`submitter.pid` → 0, `Spool.detach`): it still runs, and its report lands in
+ *     `done/<id>.json`. Only a waiting process killed outright (SIGKILL, closed terminal)
+ *     leaves its job to be reported ABANDONED.
  *
  *   release
  *     End the running lease held for the CURRENT worktree early (`npm run dev:release`).
@@ -316,13 +319,29 @@ async function wait(id: string, timeoutMinutes: number, deps: CliDeps): Promise<
       deps.err(`WORKER DIED while job ${id} was pending: ${worker.reason ?? 'unknown'}`);
       deps.err('The queue is preserved; restart the worker and it will resume:');
       deps.err('  systemctl --user restart spo-bench-worker');
+      reportDetach(id, deps);
       return 3;
     }
     if (deps.now() > deadline) {
       deps.err(`timed out after ${timeoutMinutes} min waiting for job ${id} (still queued or running)`);
+      reportDetach(id, deps);
       return 4;
     }
     await deps.sleep(2_000);
+  }
+}
+
+/**
+ * The waiting process is about to exit before its report: hand a still-queued job over to the
+ * worker (`Spool.detach`, submitter pid → 0) so it runs instead of being reported ABANDONED.
+ */
+function reportDetach(id: string, deps: CliDeps): void {
+  const report = `${deps.paths.done}/${id}.json`;
+  if (deps.spool.detach(id)) {
+    deps.out(`detached: ${id} stays queued — the worker runs it when it serves it; report: ${report}`);
+    deps.err(`wait for its report again with:  bash scripts/bench-wait.sh ${id}`);
+  } else {
+    deps.err(`job ${id} is no longer queued (running or done) — its report lands in ${report}`);
   }
 }
 
