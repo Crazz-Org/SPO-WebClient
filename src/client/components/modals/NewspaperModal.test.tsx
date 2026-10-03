@@ -18,6 +18,8 @@ import { useNewspaperStore } from '../../store/newspaper-store';
 import { usePoliticsStore } from '../../store/politics-store';
 import { useUiStore } from '../../store/ui-store';
 import { NewspaperModal } from './NewspaperModal';
+import { ClientBridge } from '../../bridge/client-bridge';
+import { WsMessageType, type WsMessage } from '@/shared/types';
 import type {
   NewspaperBoard, NewspaperIssue, NewspaperIssueRef, PoliticsData,
 } from '@/shared/types';
@@ -59,6 +61,14 @@ const ARTICLE: NewspaperBoard = {
     photoUrl: 'http://host/fivedata/userinfo/Planitia/SPO_test3/largephoto.jpg',
   },
 };
+
+function postAnswer(success: boolean, board: NewspaperBoard | null): void {
+  act(() => {
+    ClientBridge.handleNewspaperResponse({
+      type: WsMessageType.RESP_NEWSPAPER_POST, success, message: success ? 'ok' : 'refused', board,
+    } as unknown as WsMessage);
+  });
+}
 
 function openWith(
   board: NewspaperBoard | null,
@@ -324,6 +334,50 @@ describe('NewspaperModal', () => {
     expect(screen.queryByLabelText('Subject')).toBeNull();
   });
 
+  it('opens the form on a board whose index holds a blank-subject entry', () => {
+    const blank: NewspaperBoard = { ...INDEX, tree: [], columns: [{ author: '', subject: '', summary: '', path: ROOT }] };
+    openWith(blank);
+    renderWithProviders(<NewspaperModal />);
+    fireEvent.click(screen.getByText('Post a column'));
+    expect(screen.getByLabelText('Subject')).toBeTruthy();
+    act(() => { useNewspaperStore.setState({ board: { ...blank } }); });
+    expect(screen.getByLabelText('Subject')).toBeTruthy();
+  });
+
+  it("keeps the form open while typing an existing column's subject", () => {
+    openWith(INDEX);
+    renderWithProviders(<NewspaperModal />);
+    fireEvent.click(screen.getByText('Post a column'));
+    fireEvent.change(screen.getByLabelText('Column'), { target: { value: 'Agreed' } });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'VERY NICE GUY' } });
+    expect((screen.getByLabelText('Subject') as HTMLInputElement).value).toBe('VERY NICE GUY');
+    expect((screen.getByLabelText('Column') as HTMLTextAreaElement).value).toBe('Agreed');
+  });
+
+  it('a successful post response closes and empties the form', () => {
+    openWith(INDEX);
+    renderWithProviders(<NewspaperModal />);
+    fireEvent.click(screen.getByText('Post a column'));
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Roads' } });
+    fireEvent.change(screen.getByLabelText('Column'), { target: { value: 'More roads' } });
+    postAnswer(true, INDEX);
+    expect(screen.queryByLabelText('Subject')).toBeNull();
+    fireEvent.click(screen.getByText('Post a column'));
+    expect((screen.getByLabelText('Subject') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('Column') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it.each([null, INDEX])('a refused post response keeps the form with what was typed (board %#)', (board) => {
+    openWith(INDEX);
+    renderWithProviders(<NewspaperModal />);
+    fireEvent.click(screen.getByText('Post a column'));
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Roads' } });
+    fireEvent.change(screen.getByLabelText('Column'), { target: { value: 'More roads' } });
+    postAnswer(false, board);
+    expect((screen.getByLabelText('Subject') as HTMLInputElement).value).toBe('Roads');
+    expect((screen.getByLabelText('Column') as HTMLTextAreaElement).value).toBe('More roads');
+  });
+
   it('the refresh control puts the board back in the read path', () => {
     openWith(INDEX);
     renderWithProviders(<NewspaperModal />);
@@ -504,16 +558,17 @@ describe('NewspaperModal — the ratings a column carries', () => {
     expect(screen.queryByLabelText('Rate Taxation')).toBeNull();
   });
 
-  // A published column closes the composer and empties it — the ratings with
-  // it, so the next column does not re-send what this one already sent.
-  it('a published column clears the chosen ratings', () => {
+  // An accepted post empties the form — the ratings with it, so the next
+  // column does not re-send what this one already sent.
+  it('an accepted post clears the chosen ratings', () => {
     openWith(INDEX);
     withPolitics();
     renderWithProviders(<NewspaperModal />);
     openComposer();
     fireEvent.change(screen.getByLabelText('Rate Taxation'), { target: { value: '80' } });
-    // The subject the board already carries: the publish oracle has landed.
-    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'VERY NICE GUY' } });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Roads' } });
+    // The server's answer to the post is what empties the form.
+    postAnswer(true, INDEX);
 
     expect(screen.queryByLabelText('Rate Taxation')).toBeNull();
     openComposer();

@@ -30,6 +30,15 @@ beforeEach(() => {
 });
 
 describe('newspaper-store', () => {
+  it('markPublished counts each accepted post', () => {
+    expect(useNewspaperStore.getState().publishedCount).toBe(0);
+    useNewspaperStore.getState().markPublished();
+    useNewspaperStore.getState().markPublished();
+    expect(useNewspaperStore.getState().publishedCount).toBe(2);
+    useNewspaperStore.getState().reset();
+    expect(useNewspaperStore.getState().publishedCount).toBe(0);
+  });
+
   it('starts empty', () => {
     const s = useNewspaperStore.getState();
     expect(s.context).toBeNull();

@@ -61,6 +61,7 @@ export function NewspaperModal() {
   const board = useNewspaperStore((s) => s.board);
   const loadState = useNewspaperStore((s) => s.loadState);
   const isPosting = useNewspaperStore((s) => s.isPosting);
+  const publishedCount = useNewspaperStore((s) => s.publishedCount);
 
   const issues = useNewspaperStore((s) => s.issues);
   const issuesState = useNewspaperStore((s) => s.issuesState);
@@ -104,15 +105,16 @@ export function NewspaperModal() {
     }
   }, [isOpen, view, issuesState, issues, selectedFolder, client]);
 
-  // A published column clears the form; a refused one keeps what was typed.
+  // Only the server's answer to a post closes the form: an accepted column
+  // clears it (ratings included); a refused one keeps what was typed. Nothing
+  // in the board's index or tree opens or closes it.
   useEffect(() => {
-    if (!isPosting && composing && board?.columns.some((c) => c.subject === subject.trim())) {
-      setComposing(false);
-      setSubject('');
-      setBody('');
-      setChoices(new Map());
-    }
-  }, [isPosting, composing, board, subject]);
+    if (publishedCount === 0) return;
+    setComposing(false);
+    setSubject('');
+    setBody('');
+    setChoices(new Map());
+  }, [publishedCount]);
 
   if (!isOpen) return null;
 
