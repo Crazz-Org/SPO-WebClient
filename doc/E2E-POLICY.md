@@ -134,7 +134,7 @@ Five exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`F
   (`politics-write`, `Kernel/Population.pas:1264-1284`; `policy-roundtrip`,
   `Kernel/Kernel.pas:11790-11800`; `chat-private-channel`,
   `Interface Server/InterfaceServer.pas:4594`, `:3968-3980`; `bank-borrow-payoff`,
-  `Kernel/Kernel.pas:8849-8859`). The nightly leaves them out and prints them as
+  `Kernel/Kernel.pas:8849-8859`; `facility-bank-loan`, `Kernel/Kernel.pas:8849-8859`). The nightly leaves them out and prints them as
   `gate-only, not driven`; the gate still runs them when their code changes.
 - **`FALLBACK_ONLY`** lists the handler files only a broad fallback rule routes, each `awaiting
   card #<n>` or `excluded: <reason>`. An area card adds its rule before the fallbacks and removes
@@ -280,6 +280,8 @@ town, `Fac(x,y)`, voter, circuit id, the value — go in each flow's `match`:
 | `RDODefineZone` | `Defining Zone: <ZoneId>, <TycoonId>, <x1>, <y1>, <x2>, <y2>` | `Kernel/World.pas:4502` (log `:4526`) |
 | `RDOAskLoan` | `AskLoan: <tycoon>, $<amount>` | `Kernel/Kernel.pas:11451` |
 | `RDOSetPolicyStatus` | `Setting policy status: <tycoon>, <to>, <status>` | `Kernel/Kernel.pas:11772` |
+| `TBankBlock.RDOAskLoan` | `Fac(<x>,<y>) AskLoan` — no tycoon, no amount; its own key, since `RDOAskLoan` is the tycoon form above, and its `match` is `facLineMatches` so neither `AskLoan:` nor `Error in AskLoan` satisfies it | `StdBlocks/Banks.pas:160` (log `:162`) |
+| `CloneFacility` | `CloneFacility: <TycoonId>` — the clone is only queued (`:4815`) | `Kernel/World.pas:4794` (log `:4801`) |
 | `CacheTown` (not a write, no flow's proof) | `Caching Town..` | `Kernel/PoliticsCache.pas:139` |
 
 - The three circuit lines log the gateway's tycoon **object reference**, not the tycoon id
@@ -492,7 +494,7 @@ Two accounts unlock four things that were structurally impossible:
 | **Roads / zones** | Mayor role removes these from the "structurally untestable" list |
 
 **Blast radius.** All mutations happen on `SPO_test3`'s own town (Helartia). The second
-account takes part through mail and one rating: `mail-roundtrip` sends it one message and deletes it
+account takes part through mail, one rating and one loan: `mail-roundtrip` sends it one message and deletes it
 in the same run, and the `zoning-alert-read` seed has it send SPO_test3 one look-alike
 `Zoning Alert!`, deleted from SPO_test3's Inbox and from SPO_test's `Sent` in the same run.
 `mail-send-from-draft` sends it one message, and in `mail-reply` it sends SPO_test3 one
@@ -502,6 +504,8 @@ flow's fixed baseline; the aggregate `TycoonsRating` is the read-back, and a run
 not move ends `UNPROVEN` (`Kernel/Politics.pas:374-392`).
 No flow reads or writes its buildings (`flows.ts`: it appears at the login in
 `permission-negative`, which does not mutate, as the mail recipient, as the reply sender, as the seed sender, and as the rater).
+`facility-bank-loan` (#1189, lifted by the maintainer on 2026-09-29) has SPO_test borrow $1 at
+SPO_test3's own bank fixture and pay it off in the same run.
 Never another player's assets. Never a world-scope value. Every mutation is restored in
 the same run (§5).
 
@@ -545,8 +549,16 @@ touch, and undo every new link in the same run. `quick-trade-roundtrip` runs onl
 cannot reach beyond the test: no SPO_test3 facility already a client of the fixture
 (`Kernel/Kernel.pas:4593-4600`), the fixture not an initial supplier (`:4564-4565`,
 `:4606-4607`), and no SPO_test3 warehouse outside Helartia (`:4537-4553`) — otherwise `UNPROVEN`,
-nothing sent. Clone facility is never driven: it overwrites every same-type facility in scope
-with no snapshot (maintainer, 2026-09-29).
+nothing sent.
+
+**Clone facility (#1189).** Clone facility is driven only as `clone-salaries-roundtrip` (lifted
+by the maintainer on 2026-09-29, limited to salaries): options same town + same company +
+salaries (`0x103`, `Kernel/CloneOptions.pas:7-13`). `TWorld.CloneFacility` writes every facility
+of the source's kind in that scope (`Kernel/World.pas:3494`), so the flow snapshots the salaries
+of every SPO_test3 work center in Helartia, and each same-class target's `AcceptCloning`, before
+it sends anything. A target that refuses cloning (`Kernel/Kernel.pas:5101-5104`) must read back
+unchanged. Every facility is restored in the same run. An unreadable target, or no accepting
+target, is `UNPROVEN` with nothing sent.
 
 **Excluded members (#1195).** `industry-supply-limits` drives the max price and the min K only.
 `RDOSetInputSortMode` is never driven: only `TMediaInput` caches `QPSorted` / `SortMode`

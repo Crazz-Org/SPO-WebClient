@@ -19,6 +19,7 @@ import {
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
+  bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
   RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent,
   type Flow, type FlowResult, type GateLinks,
 } from './flows';
@@ -90,7 +91,12 @@ describe('the catalogue', () => {
         'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'bank-settings',
         'chat-private-channel',
         // #1153
-        'client-hire-remove', 'company-input-demand', 'connect-on-map',
+        'client-hire-remove',
+        // #1189
+        'clone-salaries-roundtrip',
+        'company-input-demand', 'connect-on-map',
+        // #1189
+        'facility-bank-loan',
         'facility-open-close',
         'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
         'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
@@ -9147,6 +9153,501 @@ describe('chat flows (#1148)', () => {
       expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
       expect(off).toHaveBeenCalledWith(secondary.session);
     });
+  });
+});
+
+describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
+  const HIM = SECONDARY_ACCOUNT.username;
+  let lines: string[];
+  let lock: WorldLock;
+  let sent: { account: string; msg: Record<string, unknown> }[];
+
+  /** A stub session for `account`, recording every request with the account that sent it. */
+  function stubFor(account: typeof PRIMARY_ACCOUNT, responder: (msg: WsMessage) => unknown): session.LiveSession {
+    return {
+      ...stubSession(msg => {
+        sent.push({ account: account.username, msg: msg as unknown as Record<string, unknown> });
+        return responder(msg);
+      }),
+      account,
+    };
+  }
+  const sentOf = (type: WsMessageType) => sent.filter(e => e.msg.type === type);
+  const flowCtx = () => ({ lock, survivalLogUrl: 'http://logs/S.log', ...fastClock() });
+
+  beforeEach(() => {
+    lines = [];
+    sent = [];
+    lock = cleanLock();
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      if (typeof proof !== 'object') return null;
+      return lines.find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+    });
+  });
+
+  describe('bankDebtorCount', () => {
+    it('is undefined when the group carries no LoanCount', () => {
+      expect(bankDebtorCount({}, SECONDARY_ACCOUNT)).toBeUndefined();
+      expect(bankDebtorCount({ bankLoans: [pv('Debtor0', HIM)] }, SECONDARY_ACCOUNT)).toBeUndefined();
+    });
+
+    it('counts every Debtor<i> naming the account, case-insensitively, across a gap in the index', () => {
+      const groups = {
+        bankLoans: [
+          pv('LoanCount', '3'), pv('Debtor0', 'spo_test '), pv('Debtor1', 'Yellow Inc.'), pv('Debtor3', 'SPO_TEST'),
+          pv('Amount0', HIM),
+        ],
+      };
+      expect(bankDebtorCount(groups, SECONDARY_ACCOUNT)).toBe(2);
+      expect(bankDebtorCount({ bankLoans: [pv('LoanCount', '0')] }, SECONDARY_ACCOUNT)).toBe(0);
+    });
+  });
+
+  describe('facility-bank-loan', () => {
+    const BANK = { x: 3, y: 4, visualClass: '200', name: 'Bank' };
+    interface LoanWorld {
+      perc?: string;
+      ownerBalance: string;
+      secondaryBalance: string;
+      secondaryLoans: LoanInfo[];
+      /** The bank's Debtor<i> rows by index; `undefined` is a gap. */
+      debtors: (string | undefined)[];
+      noLoanCount?: boolean;
+      /** The ordinal the block answers; default 0. */
+      result?: number;
+      /** The loan reaches SPO_test's list but never the bank's rows. */
+      bankIgnores?: boolean;
+      payoffRefused?: boolean;
+      logLine?: string;
+      missingBank?: boolean;
+      skipped?: boolean;
+    }
+    const loan = (over: Partial<LoanInfo> = {}): LoanInfo => ({
+      bank: 'Main Bank', date: '1/1/2100', amount: '500', interest: 3, term: 10, slice: '50', loanIndex: 0, ...over,
+    });
+    const bankData = (balance: string, loans: LoanInfo[]) => ({
+      data: { balance, maxLoan: '0', totalLoans: '0', totalNextPayment: '0', loans: structuredClone(loans), defaultInterest: 0, defaultTerm: 0 },
+    });
+
+    function drive(w: LoanWorld): { login: jest.SpyInstance } {
+      const me = stubFor(PRIMARY_ACCOUNT, msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        if (msg.type === WsMessageType.REQ_BUILDING_DETAILS) return { details: { tabs: [], groups: {} } };
+        if (msg.type === WsMessageType.REQ_BUILDING_TAB_DATA) {
+          if (m.tabId === 'bankGeneral') return { groups: { bankGeneral: w.perc === undefined ? [] : [pv('BudgetPerc', w.perc)] } };
+          if (m.tabId === 'bankLoans') {
+            const rows = w.debtors.flatMap((d, i) => (d === undefined ? [] : [pv(`Debtor${i}`, d)]));
+            return { groups: { bankLoans: w.noLoanCount ? rows : [pv('LoanCount', String(rows.length)), ...rows] } };
+          }
+        }
+        if (msg.type === WsMessageType.REQ_PROFILE_BANK) return bankData(w.ownerBalance, []);
+        throw new Error(`unexpected ${msg.type} from ${PRIMARY_ACCOUNT.username}`);
+      });
+      const secondary = stubFor(SECONDARY_ACCOUNT, msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        if (msg.type === WsMessageType.REQ_PROFILE_BANK) return bankData(w.secondaryBalance, w.secondaryLoans);
+        if (msg.type === WsMessageType.REQ_BUILDING_LOAN_REQUEST) {
+          const result = w.result ?? 0;
+          lines.push(w.logLine ?? `9/30/2026 12:00 - Fac(${String(m.x)},${String(m.y)}) AskLoan`);
+          if (result === 0 || result === 2) {
+            w.secondaryLoans.push(loan({ bank: 'Bank of SPO_test3', date: '3/3/2100', amount: String(m.amount), loanIndex: w.secondaryLoans.length }));
+            if (!w.bankIgnores) w.debtors.push(HIM);
+          }
+          return { x: m.x, y: m.y, result };
+        }
+        if (msg.type === WsMessageType.REQ_PROFILE_BANK_ACTION) {
+          if (w.payoffRefused) return { result: { success: false, message: 'payoff was not applied' } };
+          w.secondaryLoans = w.secondaryLoans.filter(l => l.loanIndex !== m.loanIndex).map((l, i) => ({ ...l, loanIndex: i }));
+          const i = w.debtors.lastIndexOf(HIM);
+          if (i >= 0) w.debtors.splice(i, 1);
+          return { result: { success: true, message: 'ok' } };
+        }
+        throw new Error(`unexpected ${msg.type} from ${HIM}`);
+      });
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(w.skipped ? { skipped: `${HIM} refused` } : secondary);
+      const login = jest.spyOn(session, 'login').mockResolvedValue(me);
+      jest.spyOn(fixtures, 'findFixture').mockResolvedValue(
+        w.missingBank ? { kind: 'bank', reason: 'none in Helartia' } : { kind: 'bank', found: BANK },
+      );
+      return { login };
+    }
+    const happy = (over: Partial<LoanWorld> = {}): LoanWorld => ({
+      perc: '40', ownerBalance: '1000', secondaryBalance: '500', secondaryLoans: [loan()],
+      debtors: ['Yellow Inc.', undefined, 'spo_test'], ...over,
+    });
+    const run = () => flowByName('facility-bank-loan').run(flowCtx());
+    const loanRequests = () => sentOf(WsMessageType.REQ_BUILDING_LOAN_REQUEST);
+    const payoffs = () => sentOf(WsMessageType.REQ_PROFILE_BANK_ACTION);
+
+    it('SPO_test borrows $1 at the fixture, both lists show it, SPO_test pays it off — PASS, both lists as before', async () => {
+      expect(flowByName('facility-bank-loan').mutates).toBe(true);
+      const world = happy();
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(loanRequests()).toEqual([
+        { account: HIM, msg: expect.objectContaining({ x: 3, y: 4, amount: '1' }) },
+      ]);
+      expect(payoffs()).toEqual([
+        { account: HIM, msg: expect.objectContaining({ action: 'payoff', loanIndex: 1 }) },
+      ]);
+      expect(result.probes[0]).toMatchObject({
+        member: 'TBankBlock.RDOAskLoan',
+        original: 'secondary new=none gone=0; bank +0',
+        written: 'secondary new=1 gone=0; bank +1',
+        readBack: 'CONFIRMED',
+        restoreReadBack: 'CONFIRMED',
+        restored: true,
+      });
+      expect(result.probes[0].logLine).toContain('Fac(3,4) AskLoan');
+      expect(world.secondaryLoans).toEqual([loan()]);
+      expect(world.debtors).toEqual(['Yellow Inc.', undefined, 'spo_test']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is SKIPPED, sending nothing to the bank, when SPO_test is refused at login', async () => {
+      const { login } = drive(happy({ skipped: true }));
+      const result = await run();
+      expect(result.status).toBe('SKIPPED');
+      expect(result.skipped).toBe(`${HIM} refused`);
+      expect(login).not.toHaveBeenCalled();
+      expect(sent).toEqual([]);
+    });
+
+    it.each<[string, Partial<LoanWorld>, RegExp]>([
+      ['the bank fixture is missing', { missingBank: true }, /^bank fixture — none in Helartia$/],
+      ['the owner cannot cover $1', { perc: '0' }, /loan limit is 0 .*Kernel\/Kernel\.pas:9095-9097/],
+      ['BudgetPerc is unreadable', { perc: undefined }, /BudgetPerc \(unreadable\)/],
+      ["SPO_test's balance is not above 0", { secondaryBalance: '0' }, /balance 0 is not > 0 .*Kernel\/Kernel\.pas:11572/],
+      ['the bank lists no LoanCount', { noLoanCount: true }, /carries no LoanCount/],
+    ])('is UNPROVEN, borrowing nothing, when %s', async (_label, over, reason) => {
+      drive(happy(over));
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(reason);
+      expect(loanRequests()).toEqual([]);
+      expect(payoffs()).toEqual([]);
+    });
+
+    it("FAILs a loan the bank's rows never list, and still pays it off", async () => {
+      const world = happy({ bankIgnores: true });
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(result.probes[0].note).toMatch(/read-back never showed "secondary new=1 gone=0; bank \+1"/);
+      expect(payoffs()).toHaveLength(1);
+      expect(result.probes[0].restoreReadBack).toBe('CONFIRMED');
+      expect(world.secondaryLoans).toEqual([loan()]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a rejected loan and still runs the restore: no loan to pay off, pending cleared', async () => {
+      drive(happy({ result: 1 }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/answered 1: rejected \(StdBlocks\/Banks\.pas:164-166\)/);
+      expect(result.probes[0].restored).toBe(true);
+      expect(payoffs()).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a loan granted uncovered (brqNotEnoughFunds) and pays it off', async () => {
+      const world = happy({ result: 2 });
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/Kernel\/Kernel\.pas:8866-8870/);
+      expect(payoffs()).toHaveLength(1);
+      expect(world.secondaryLoans).toEqual([loan()]);
+    });
+
+    it('names an answer no TBankRequestResult has', async () => {
+      drive(happy({ result: -1 }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/answered -1: no answer from the block/);
+    });
+
+    it('FAILs a refused payoff and keeps the pending restore naming the bank and the loan', async () => {
+      drive(happy({ payoffRefused: true }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].restored).toBe(false);
+      expect(result.probes[0].note).toMatch(/restore failed — the world is left dirty/);
+      const pending = lock.read().pendingRestores;
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ x: 3, y: 4, propertyName: 'RDOPayOff' });
+      expect(pending[0].what).toMatch(/SPO_test's \$1 loan at SPO_test3's bank Bank \(3,4\) — SPO_test pays off the \$1 loan not among the 1 loans/);
+    });
+
+    it.each([` AskLoan: ${HIM}, $1`, '12:00 - Fac(5,4) AskLoan', '12:00 - Fac(3,4) Error in AskLoan'])(
+      'does not take "%s" as the proof of the block borrow',
+      async line => {
+        drive(happy({ logLine: line }));
+        const result = await run();
+        expect(result.status).toBe('FAIL');
+        expect(result.probes[0].logLine).toBeNull();
+      },
+    );
+  });
+
+  describe('distinctSalaries and cloneLineMatches', () => {
+    it('moves hi toward the middle, skipping a triplet already taken', () => {
+      expect(distinctSalaries('100,80,60', [])).toBe('101,80,60');
+      expect(distinctSalaries('100,80,60', ['101,80,60'])).toBe('99,80,60');
+      expect(distinctSalaries('200,1,1', ['199,1,1'])).toBe('201,1,1');
+    });
+
+    it('stays inside 0..255', () => {
+      expect(distinctSalaries('255,1,1', [])).toBe('254,1,1');
+      expect(distinctSalaries('0,1,1', ['1,1,1'])).toBe('2,1,1');
+      const all = Array.from({ length: 256 }, (_v, i) => `${i},1,1`);
+      expect(() => distinctSalaries('0,1,1', all)).toThrow(/no salary triplet/);
+    });
+
+    it('moves the first published class only, keeps unpublished slots empty, and refuses when none is published', () => {
+      expect(distinctSalaries(',80,60', [])).toBe(',81,60');
+      expect(distinctSalaries(',,60', [',,61'])).toBe(',,59');
+      expect(() => distinctSalaries(',,', [])).toThrow(/no salary class is published/);
+    });
+
+    it('matches the tycoon id whole', () => {
+      expect(cloneLineMatches('12:00 CloneFacility: 1', '1')).toBe(true);
+      expect(cloneLineMatches('12:00 CloneFacility: 1 ', '1')).toBe(true);
+      expect(cloneLineMatches('12:00 CloneFacility: 12', '1')).toBe(false);
+      expect(cloneLineMatches('12:00 CloneFacility: 1', '12')).toBe(false);
+    });
+
+    it('asks for same town + same company + salaries (Kernel/CloneOptions.pas:7-13)', () => {
+      expect(CLONE_SALARIES_OPTIONS).toBe(0x1 | 0x2 | 0x100);
+    });
+  });
+
+  describe('clone-salaries-roundtrip', () => {
+    const at = (x: number, visualClass: string, name: string, tabIds = ['workforce']) =>
+      ({ x, y: 10, visualClass, name, tabIds });
+    const SOURCE = at(10, '700', 'Shop A');
+    const T1 = at(11, '700', 'Shop B');
+    const T2 = at(12, '700', 'Shop C');
+    const REFUSING = at(13, '700', 'Shop D');
+    const GUARD = at(14, '800', 'Farm');
+    const PARK = at(15, '900', 'Park', ['general']);
+
+    interface CloneWorld {
+      holdings: ReturnType<typeof at>[];
+      salaries: Record<string, string>;
+      accept: Record<string, string | undefined>;
+      unreadable?: string;
+      /** Facilities whose executive slot (Salaries0) is never published — it reads "". */
+      noExecutives?: Set<string>;
+      /** The queued clone never lands. */
+      cloneIgnored?: boolean;
+      cloneSuccess?: boolean;
+      cloneThrows?: boolean;
+      /** The refusing target is written anyway. */
+      refusingWritten?: boolean;
+      /** Throw on this salaries write. */
+      failWrite?: (key: string, triplet: string) => boolean;
+      /** The tycoon id the CloneFacility: line carries; null = no line. */
+      logId?: string | null;
+      events: string[];
+    }
+    function makeWorld(over: Partial<CloneWorld> = {}): CloneWorld {
+      return {
+        holdings: [SOURCE, T1, T2, REFUSING, GUARD, PARK],
+        salaries: {
+          '10,10': '100,80,60', '11,10': '101,80,60', '12,10': '50,40,30', '13,10': '70,60,50', '14,10': '30,20,10',
+        },
+        accept: { '11,10': '-1', '12,10': '1', '13,10': '0' },
+        events: [],
+        ...over,
+      };
+    }
+    function arrange(w: CloneWorld): void {
+      const stub = stubFor(PRIMARY_ACCOUNT, msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        const key = `${String(m.x)},${String(m.y)}`;
+        switch (msg.type) {
+          case WsMessageType.REQ_BUILDING_DETAILS:
+            return { details: { tabs: [], groups: {} } };
+          case WsMessageType.REQ_BUILDING_TAB_DATA: {
+            if (!(key in w.salaries)) throw new Error(`read of an unlisted facility ${key}`);
+            if (m.tabId === 'workforce') {
+              const [s0, s1, s2] = w.salaries[key].split(',');
+              const rows = [pv('Salaries0', w.noExecutives?.has(key) ? '' : s0), pv('Salaries1', s1), pv('Salaries2', s2)];
+              return { groups: { workforce: w.unreadable === key ? rows.slice(0, 2) : rows } };
+            }
+            const flag = w.accept[key];
+            return { groups: { upgrade: flag === undefined ? [] : [pv('AcceptCloning', flag)] } };
+          }
+          case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
+            const p = m.additionalParams as Record<string, string>;
+            const triplet = [p.salary0, p.salary1, p.salary2].join(',');
+            w.events.push(`set ${key}=${triplet}`);
+            if (m.propertyName !== 'RDOSetSalaries' || m.value !== p.salary0) throw new Error('not a salaries write');
+            if (w.failWrite?.(key, triplet)) throw new Error(`write at ${key} refused`);
+            w.salaries[key] = triplet;
+            return { success: true };
+          }
+          case WsMessageType.REQ_CLONE_FACILITY: {
+            w.events.push(`clone ${key} ${String(m.options)}`);
+            if (w.cloneThrows) throw new Error('socket died');
+            if (w.logId !== null) lines.push(`12:00 CloneFacility: ${w.logId ?? '42'}`);
+            if (!w.cloneIgnored) {
+              for (const h of w.holdings) {
+                const k = `${h.x},${h.y}`;
+                if (k === key || h.visualClass !== SOURCE.visualClass) continue;
+                if (truthyFlag(w.accept[k]) === '1' || w.refusingWritten) w.salaries[k] = w.salaries[key];
+              }
+            }
+            return { success: w.cloneSuccess ?? true };
+          }
+          default:
+            throw new Error(`unexpected ${msg.type}`);
+        }
+      });
+      jest.spyOn(session, 'login').mockResolvedValue(stub);
+      jest.spyOn(fixtures, 'scanHoldings').mockResolvedValue({ holdings: w.holdings, sites: [] });
+      jest.spyOn(fixtures, 'ownTycoonId').mockReturnValue('42');
+    }
+    const run = () => flowByName('clone-salaries-roundtrip').run(flowCtx());
+    const writes = () => sentOf(WsMessageType.REQ_BUILDING_SET_PROPERTY);
+    const clones = () => sentOf(WsMessageType.REQ_CLONE_FACILITY);
+    const ORIGINAL = '10,10=100,80,60;11,10=101,80,60;12,10=50,40,30;13,10=70,60,50;14,10=30,20,10';
+
+    it('writes a distinct salary on the source, clones 0x103 once, proves every target, restores what moved — PASS', async () => {
+      expect(flowByName('clone-salaries-roundtrip').mutates).toBe(true);
+      const world = makeWorld();
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(clones()).toEqual([{ account: PRIMARY_ACCOUNT.username, msg: expect.objectContaining({ x: 10, y: 10, options: 0x103 }) }]);
+      expect(world.events).toEqual([
+        'set 10,10=99,80,60', 'clone 10,10 259',
+        'set 10,10=100,80,60', 'set 11,10=101,80,60', 'set 12,10=50,40,30',
+      ]);
+      expect(result.probes[0]).toMatchObject({
+        member: 'CloneFacility',
+        original: ORIGINAL,
+        written: '10,10=99,80,60;11,10=99,80,60;12,10=99,80,60;13,10=70,60,50;14,10=30,20,10',
+        readBack: 'CONFIRMED',
+        restoreReadBack: 'CONFIRMED',
+        restored: true,
+      });
+      expect(result.probes[0].logLine).toBe('12:00 CloneFacility: 42');
+      expect(world.salaries).toEqual(makeWorld().salaries);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each<[string, Partial<CloneWorld>, RegExp]>([
+      ['only one holding of each class', { holdings: [SOURCE, GUARD] }, /no two finished .*Kernel\/World\.pas:3529/],
+      ['no target accepts cloning', { accept: { '11,10': '0', '12,10': '0', '13,10': '0' } }, /no 700 target accepts cloning .*Kernel\/Kernel\.pas:5101-5104/],
+      ["a target's salaries are unreadable", { unreadable: '12,10' }, /salaries of Shop C \(12,10\) cannot be read/],
+      ["a guard's salaries are unreadable", { unreadable: '14,10' }, /salaries of Farm \(14,10\) cannot be read/],
+      ["a target's AcceptCloning is unreadable", { accept: { '11,10': '1', '13,10': '0' } }, /Shop C \(12,10\)'s AcceptCloning cannot be read/],
+      [
+        'the source publishes no salary class',
+        { salaries: { '10,10': ',,', '11,10': ',,', '12,10': ',,', '13,10': ',,', '14,10': '30,20,10' } },
+        /Shop A \(10,10\) publishes no salary class .*WorkCenterBlock\.pas:567-571.*nothing sent/,
+      ],
+    ])('is UNPROVEN, sending nothing, when %s', async (_label, over, reason) => {
+      const world = makeWorld(over);
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(reason);
+      expect(writes()).toEqual([]);
+      expect(clones()).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('never sends an empty salary field when the class publishes no executive slot — nudges a published one, PASS', async () => {
+      const world = makeWorld({
+        noExecutives: new Set(['10,10', '11,10', '12,10', '13,10']),
+        salaries: { '10,10': ',80,60', '11,10': ',81,60', '12,10': ',40,30', '13,10': ',60,50', '14,10': '30,20,10' },
+      });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual([
+        'set 10,10=0,79,60', 'clone 10,10 259',
+        'set 10,10=0,80,60', 'set 11,10=0,81,60', 'set 12,10=0,40,30',
+      ]);
+      for (const { msg } of writes()) {
+        const m = msg as WsMessage & Record<string, unknown>;
+        const p = m.additionalParams as Record<string, string>;
+        for (const v of [m.value, p.salary0, p.salary1, p.salary2]) expect(v).toMatch(/^\d+$/);
+      }
+      expect(result.probes[0]).toMatchObject({
+        written: '10,10=,79,60;11,10=,79,60;12,10=,79,60;13,10=,60,50;14,10=30,20,10',
+        readBack: 'CONFIRMED',
+        restoreReadBack: 'CONFIRMED',
+      });
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a clone that never lands, and restores the source', async () => {
+      const world = makeWorld({ cloneIgnored: true });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(result.probes[0].note).toMatch(/read-back never showed/);
+      expect(world.events.slice(2)).toEqual(['set 10,10=100,80,60']);
+      expect(result.probes[0].restoreReadBack).toBe('CONFIRMED');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each<[string, Partial<CloneWorld>, RegExp]>([
+      ['answers success false', { cloneSuccess: false, cloneIgnored: true }, /REQ_CLONE_FACILITY answered success false/],
+      ['throws', { cloneThrows: true }, /socket died/],
+    ])('restores the source after a clone that %s', async (_label, over, note) => {
+      const world = makeWorld(over);
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(note);
+      expect(world.events).toContain('set 10,10=100,80,60');
+      expect(world.salaries['10,10']).toBe('100,80,60');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a refusing target that changes anyway, and writes it back', async () => {
+      const world = makeWorld({ refusingWritten: true });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(world.events).toContain('set 13,10=70,60,50');
+      expect(world.salaries['13,10']).toBe('70,60,50');
+    });
+
+    it('FAILs a refused restore write and keeps the pending restore listing every facility', async () => {
+      const world = makeWorld({ failWrite: (key, triplet) => key === '11,10' && triplet === '101,80,60' });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/restore failed/);
+      // The other facilities are still written back.
+      expect(world.events).toContain('set 12,10=50,40,30');
+      const pending = lock.read().pendingRestores;
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ originalValue: ORIGINAL, x: 10, y: 10, propertyName: 'RDOSetSalaries' });
+    });
+
+    it.each<[string, string | null]>([['no line', null], ['a line for another tycoon', '421']])(
+      'FAILs with %s',
+      async (_label, logId) => {
+        arrange(makeWorld({ logId }));
+        const result = await run();
+        expect(result.status).toBe('FAIL');
+        expect(result.probes[0].logLine).toBeNull();
+        expect(result.probes[0].note).toMatch(/no model-server log line/);
+      },
+    );
   });
 });
 
