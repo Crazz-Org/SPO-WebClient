@@ -28,6 +28,8 @@ function stripComments(css: string): string {
 }
 
 const tokensCss = stripComments(readFileSync(join(STYLES_DIR, 'design-tokens.css'), 'utf8'));
+/** UI v2 layout tokens (`--v2-*` only, nothing redefined) — read by the band table's evaluator. */
+const tokensV2Css = stripComments(readFileSync(join(STYLES_DIR, 'design-tokens-v2.css'), 'utf8'));
 
 /** Declaration block text for `selector {`, e.g. rule(bar, '.tiles'). */
 function rule(css: string, selector: string): string {
@@ -166,9 +168,12 @@ function declsAt(css: string, selector: string, vp: Viewport | null): Map<string
   return out;
 }
 
-/** The `:root` custom properties at `vp` — base, then every matching `@media` override. */
+/**
+ * The `:root` custom properties at `vp` — base, then every matching `@media` override; the
+ * UI v2 tokens follow (they only add `--v2-*` names, asserted in the band table).
+ */
 function tokensAt(vp: Viewport): Vars {
-  return declsAt(tokensCss, ':root', vp);
+  return declsAt(`${tokensCss}\n${tokensV2Css}`, ':root', vp);
 }
 
 function unitScale(unit: string | undefined, vp: Viewport): number {
@@ -894,6 +899,14 @@ describe('HUD band table (issue 931)', () => {
     selector: string;
     /** true, or the reason the component is never rendered. */
     mounted: true | string;
+    /**
+     * Which interface mounts it: the classic GameScreen ('v1'), GameScreenV2 ('v2'), or both
+     * (App-level pieces, MobileShell, the shared badges). Two rows of different interfaces are
+     * never on screen together.
+     */
+    ui: 'v1' | 'v2' | 'both';
+    /** v2 only: the class the element adds while the side panel is open (its shifted band). */
+    shifted?: string;
     band: (vp: Viewport, d: Ctx) => Box;
   }
 
@@ -954,6 +967,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/hud/StatusPill.module.css',
       selector: '.pill',
       mounted: true,
+      ui: 'v1',
       // Stated: width: max-content and no max-width outside .shifted — nothing caps it at rest.
       band: (vp, d) => ({ x0: 0, x1: vp.w, y0: d.num('top'), y1: d.num('top') + d.num('height') }),
     },
@@ -962,6 +976,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/chat/ChaseBadge.module.css',
       selector: '.badge',
       mounted: true,
+      ui: 'both',
       band: (vp, d) => {
         const padX = d.len((d.decls.get('padding') ?? '').split(/\s+/)[1] ?? '');
         const border = d.len((d.decls.get('border') ?? '').split(/\s+/)[0] ?? '');
@@ -977,6 +992,9 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/hud/WorldEventTicker.module.css',
       selector: '.ticker',
       mounted: true,
+      // GameScreenV2 mounts it only below 1024 px, where every v2 row is display: none —
+      // so 'v1' already checks every pair it can form there (asserted below).
+      ui: 'v1',
       // Stated: one nowrap line, so min-height is the height.
       band: (vp, d) => ({
         ...centred(vp, d.num('left'), d.num('right'), d.num('max-width')),
@@ -989,6 +1007,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/common/NewVersionBanner.module.css',
       selector: '.banner',
       mounted: true,
+      ui: 'both',
       // Stated max band: one nowrap line, so min-height is the height.
       band: (vp, d) => ({
         ...centred(vp, d.num('left'), d.num('right'), d.num('max-width')),
@@ -1001,6 +1020,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/common/Toast.module.css',
       selector: '.container',
       mounted: true,
+      ui: 'both',
       band: (vp, d) => {
         const maxW = d.decls.get('max-width') === 'none' ? Infinity : d.num('max-width');
         const w = Math.min(d.num('width'), maxW);
@@ -1014,6 +1034,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/mobile/ChatBanner.module.css',
       selector: '.banner',
       mounted: true,
+      ui: 'both',
       // Stated max band: white-space: nowrap, so min-height is the maximum.
       band: (vp, d) => ({
         x0: d.num('left'),
@@ -1027,6 +1048,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/mobile/MobileInfoBar.module.css',
       selector: '.bar',
       mounted: true,
+      ui: 'both',
       band: (vp, d) => ({
         x0: d.num('left'),
         x1: vp.w - d.num('right'),
@@ -1039,6 +1061,9 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/hud/ContextStatusStrip.module.css',
       selector: '.strip',
       mounted: true,
+      // GameScreenV2 mounts it only below 1024 px, where every v2 row is display: none —
+      // so 'v1' already checks every pair it can form there (asserted below).
+      ui: 'v1',
       // Stated: one nowrap line, so min-height is the height.
       band: (vp, d) => ({
         ...centred(vp, d.num('left'), d.num('right'), d.num('max-width')),
@@ -1050,6 +1075,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/chat/ChatStrip.module.css',
       selector: '.strip',
       mounted: true,
+      ui: 'v1',
       // Max band = the expanded state: its height and its --chat-strip-width.
       band: (vp, d) => {
         const expanded = d.other('.strip.expanded');
@@ -1067,6 +1093,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/hud/CommandBar.module.css',
       selector: '.bar',
       mounted: true,
+      ui: 'v1',
       // Height: --command-bar-height, proven equal to the bar's geometry by the issue-875 describe.
       band: (vp, d) => {
         const left = d.num('left');
@@ -1082,6 +1109,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/hud/RightRail.module.css',
       selector: '.rail',
       mounted: true,
+      ui: 'v1',
       band: (vp, d) => {
         const right = d.num('right');
         const button = 40; // the `md` IconButton width, read as its height in rightRailHeight
@@ -1093,6 +1121,9 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/hud/VersionBadge.module.css',
       selector: '.badge',
       mounted: true,
+      // Both interfaces mount the component, but only v1 at this geometry: GameScreenV2 wraps
+      // it in a slot that places it itself (the VersionBadgeV2 row, guarded below).
+      ui: 'v1',
       band: (vp, d) => {
         const right = d.num('right');
         const h = 2 * d.num('font-size') * d.num('line-height'); // two lines
@@ -1104,6 +1135,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/mobile/BottomNav.module.css',
       selector: '.nav',
       mounted: true,
+      ui: 'both',
       band: (vp, d) => ({
         x0: d.num('left'),
         x1: vp.w - d.num('right'),
@@ -1115,6 +1147,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/mobile/MobileSearchPill.module.css',
       selector: '.pill',
       mounted: true,
+      ui: 'both',
       // Stated: one nowrap line, so min-height is the height.
       band: (vp, d) => ({
         ...centred(vp, d.num('left'), d.num('right'), d.num('max-width')),
@@ -1126,6 +1159,7 @@ describe('HUD band table (issue 931)', () => {
       css: 'components/mobile/BottomSheet.module.css',
       selector: '.sheet',
       mounted: true,
+      ui: 'both',
       // Stated max band: its max-height (the .full snap).
       band: (vp, d) => ({
         x0: d.num('left'),
@@ -1135,10 +1169,123 @@ describe('HUD band table (issue 931)', () => {
     },
   ];
 
-  /** Pairs that are never rendered at the same time (MobileShell guards, asserted below). */
+  /** The `sm` Button height, read for the ModeBanner's stated max band. */
+  const smButtonHeight = (vp: Viewport): number =>
+    evalLength(declsAt(cssOf('components/common/Button.module.css'), '.sm', vp).get('height') ?? '', vp, tokensAt(vp));
+
+  /*
+   * UI v2 ("Command Deck", src/client/v2/) — every fixed element GameScreenV2 adds. The side
+   * panel is not a row: like v1's Sheet it is a surface, not a HUD band; the panel-open test
+   * below checks the shifted v2 bands against it instead. FocusCard is anchored to a building
+   * each frame, like StatusOverlay, and is not a row either.
+   */
+  const V2_BANDS: HudRow[] = [
+    {
+      name: 'TopBar',
+      css: 'v2/topbar/TopBar.module.css',
+      selector: '.bar',
+      mounted: true,
+      ui: 'v2',
+      band: (vp, d) => ({ x0: d.num('left'), x1: vp.w - d.num('right'), y0: d.num('top'), y1: d.num('top') + d.num('height') }),
+    },
+    {
+      name: 'SignalLine',
+      css: 'v2/topbar/SignalLine.module.css',
+      selector: '.line',
+      mounted: true,
+      ui: 'v2',
+      shifted: '.shifted',
+      band: (vp, d) => ({ x0: d.num('left'), x1: vp.w - d.num('right'), y0: d.num('top'), y1: d.num('top') + d.num('height') }),
+    },
+    {
+      name: 'ModeBanner',
+      css: 'v2/topbar/ModeBanner.module.css',
+      selector: '.banner',
+      mounted: true,
+      ui: 'v2',
+      shifted: '.shifted',
+      band: (vp, d) => {
+        const padY = d.len((d.decls.get('padding') ?? '').split(/\s+/)[0] ?? '');
+        const border = d.len((d.decls.get('border') ?? '').split(/\s+/)[0] ?? '');
+        // Stated max band: the hint is clamped to two lines (.hint line-clamp: 2) and the
+        // actions are `sm` Buttons — the taller of the two, plus padding and border.
+        const twoLines = 2 * d.num('font-size') * d.num('line-height');
+        const h = Math.max(d.num('min-height'), Math.max(twoLines, smButtonHeight(vp)) + 2 * padY + 2 * border);
+        return { ...centred(vp, d.num('left'), d.num('right'), d.num('max-width')), y0: d.num('top'), y1: d.num('top') + h };
+      },
+    },
+    {
+      name: 'Dock',
+      css: 'v2/dock/Dock.module.css',
+      selector: '.dock',
+      mounted: true,
+      ui: 'v2',
+      shifted: '.shifted',
+      // Left-anchored, no `right`: its width is min(width, max-width) — max-width keeps it off
+      // the map tools rail, and off the side panel while shifted.
+      band: (vp, d) => {
+        const left = d.num('left');
+        return { x0: left, x1: left + Math.min(d.num('width'), d.num('max-width')), ...fromBottom(vp, d.num('bottom'), d.num('height')) };
+      },
+    },
+    {
+      name: 'ChatDrawer',
+      css: 'v2/dock/ChatDrawer.module.css',
+      selector: '.drawer',
+      mounted: true,
+      ui: 'v2',
+      band: (vp, d) => {
+        const left = d.num('left');
+        const box = fromBottom(vp, d.num('bottom'), d.num('height'));
+        // The minimise tab sits above the drawer's top edge (.hide top is negative).
+        const tab = d.len(d.other('.hide').get('top') ?? '');
+        return { x0: left, x1: left + d.num('width'), y0: box.y0 + Math.min(0, tab), y1: box.y1 };
+      },
+    },
+    {
+      name: 'MapTools',
+      css: 'v2/dock/MapTools.module.css',
+      selector: '.rail',
+      mounted: true,
+      ui: 'v2',
+      shifted: '.shifted',
+      band: (vp, d) => {
+        // `top: calc(50% - …)` on a fixed element: that 50% is of the viewport height.
+        const top = d.len((d.decls.get('top') ?? '').replace(/%/g, 'vh'));
+        const right = d.num('right');
+        return { x0: vp.w - right - d.num('width'), x1: vp.w - right, y0: top, y1: top + d.num('height') };
+      },
+    },
+    {
+      name: 'VersionBadgeV2',
+      css: 'v2/GameScreenV2.module.css',
+      selector: '.versionSlot',
+      mounted: true,
+      ui: 'v2',
+      // Hidden (display: none) while the side panel covers its corner.
+      shifted: '.versionSlotUnderPanel',
+      band: (vp, d) => {
+        const right = d.num('right');
+        const badge = d.other('.versionSlot > div');
+        const padY = d.len((badge.get('padding') ?? '').split(/\s+/)[0] ?? '');
+        const border = d.len((badge.get('border') ?? '').split(/\s+/)[0] ?? '');
+        // Stated max band: the slot's max-width, two lines of text, the backdrop's padding and border.
+        const h = 2 * d.num('font-size') * d.num('line-height') + 2 * padY + 2 * border;
+        return { x0: vp.w - right - d.num('max-width'), x1: vp.w - right, ...fromBottom(vp, d.num('bottom'), h) };
+      },
+    },
+  ];
+
+  /** Every row the overlap check reads: the classic table, then the v2 rows. */
+  const ALL_BANDS: HudRow[] = [...HUD_BANDS, ...V2_BANDS];
+
+  /** Pairs that are never rendered at the same time (MobileShell / GameScreenV2 guards, asserted below). */
   const NEVER_TOGETHER: [string, string][] = [
     ['BottomSheet', 'ChatBanner'],
     ['BottomSheet', 'MobileSearchPill'],
+    // GameScreenV2 mounts v1's ChaseBadge only while the TopBar is not mounted; the bar
+    // carries the same "Following X" control itself.
+    ['ChaseBadge', 'TopBar'],
   ];
 
   /** The whitelist: `over` may sit over `under`, for the stated reason. */
@@ -1171,6 +1318,16 @@ describe('HUD band table (issue 931)', () => {
       under,
       reason: 'shown only after a reconnect finds a new deploy, until the player reloads (issue 1050); a --z-toast notice in the content-top band that sits over it by design',
     })),
+    ...['SignalLine', 'ModeBanner'].map((under) => ({
+      over: 'Toast',
+      under,
+      reason: 'UI v2: the toast stack keeps its --content-top anchor (App-level, shared by both interfaces) — the top layer (--z-toast), transient, as over the v1 ticker (issue 889)',
+    })),
+    ...['SignalLine', 'ModeBanner'].map((under) => ({
+      over: 'NewVersionBanner',
+      under,
+      reason: 'UI v2: the same reload notice (issue 1050), --z-toast in the content-top band, shown until the player reloads',
+    })),
     ...['MobileInfoBar', 'WorldEventTicker', 'ContextStatusStrip', 'ChaseBadge'].map((under) => ({
       over: 'BottomSheet',
       under,
@@ -1178,10 +1335,12 @@ describe('HUD band table (issue 931)', () => {
     })),
   ];
 
-  function ctxFor(row: HudRow, vp: Viewport): Ctx {
+  /** `panelOpen`: the row's `shifted` class declarations apply over its own (v2 rows). */
+  function ctxFor(row: HudRow, vp: Viewport, panelOpen = false): Ctx {
     const css = cssOf(row.css);
     const tokens = tokensAt(vp);
     const decls = declsAt(css, row.selector, vp);
+    if (panelOpen && row.shifted) for (const [k, v] of declsAt(css, row.shifted, vp)) decls.set(k, v);
     const len = (expr: string, extra?: Vars): number => evalLength(expr, vp, tokens, extra);
     return {
       vp,
@@ -1202,8 +1361,19 @@ describe('HUD band table (issue 931)', () => {
   const strictlyOverlap = (a: Box, b: Box): boolean =>
     a.y0 < b.y1 && b.y0 < a.y1 && a.x0 < b.x1 && b.x0 < a.x1;
 
-  const neverTogether = (a: string, b: string): boolean =>
-    NEVER_TOGETHER.some(([p, q]) => (p === a && q === b) || (p === b && q === a));
+  const uiOf = (name: string): HudRow['ui'] => {
+    const row = ALL_BANDS.find((r) => r.name === name);
+    if (!row) throw new Error(`no table row named ${name}`);
+    return row.ui;
+  };
+
+  /** Listed in NEVER_TOGETHER, or mounted by two different interfaces (v1 vs v2). */
+  const neverTogether = (a: string, b: string): boolean => {
+    const ua = uiOf(a);
+    const ub = uiOf(b);
+    if (ua !== 'both' && ub !== 'both' && ua !== ub) return true;
+    return NEVER_TOGETHER.some(([p, q]) => (p === a && q === b) || (p === b && q === a));
+  };
 
   const whitelisted = (a: string, b: string): boolean =>
     MAY_SIT_OVER.some((w) => (w.over === a && w.under === b) || (w.over === b && w.under === a));
@@ -1212,7 +1382,7 @@ describe('HUD band table (issue 931)', () => {
 
   /** Every overlapping pair of rows visible together at `vp`, whitelisted or not. */
   function overlapsAt(vp: Viewport): { a: string; b: string; text: string }[] {
-    const bands = HUD_BANDS.filter((row) => visible(row, vp)).map((row) => ({
+    const bands = ALL_BANDS.filter((row) => visible(row, vp)).map((row) => ({
       name: row.name,
       box: row.band(vp, ctxFor(row, vp)),
     }));
@@ -1266,7 +1436,7 @@ describe('HUD band table (issue 931)', () => {
   it('every whitelist row names a real overlap, and its `over` element stacks at or above its `under`', () => {
     const seen = VIEWPORTS.flatMap((vp) => overlapsAt(vp));
     const zIndex = (name: string, vp: Viewport): number => {
-      const row = HUD_BANDS.find((r) => r.name === name);
+      const row = ALL_BANDS.find((r) => r.name === name);
       if (!row) throw new Error(`no table row named ${name}`);
       return ctxFor(row, vp).num('z-index');
     };
@@ -1312,5 +1482,85 @@ describe('HUD band table (issue 931)', () => {
     expect(evalLength('calc(-1 * 2rem / 4 + 10vh - 1dvh + 50%)', vp, tokens)).toBeCloseTo(-8 + 76.8 - 7.68 + 512);
     expect(matchesQuery('(max-height: 900px)', vp)).toBe(true);
     expect(matchesQuery('(hover: none)', vp)).toBe(false);
+  });
+  /* ---- UI v2 rows ---- */
+
+  const DESKTOP = VIEWPORTS.filter((vp) => vp.w >= 1024);
+  const MOBILE = VIEWPORTS.filter((vp) => vp.w < 1024);
+
+  it('names the seven v2 HUD elements, each fixed and hidden below 1024 px', () => {
+    expect(V2_BANDS.map((r) => r.name).sort()).toEqual(
+      ['TopBar', 'SignalLine', 'ModeBanner', 'Dock', 'ChatDrawer', 'MapTools', 'VersionBadgeV2'].sort()
+    );
+    for (const row of V2_BANDS) {
+      expect({ row: row.name, ui: row.ui }).toEqual({ row: row.name, ui: 'v2' });
+      expect({ row: row.name, position: declsAt(cssOf(row.css), row.selector, null).get('position') }).toEqual({
+        row: row.name,
+        position: 'fixed',
+      });
+      for (const vp of MOBILE) expect({ row: row.name, vp: vp.label, visible: visible(row, vp) }).toEqual({ row: row.name, vp: vp.label, visible: false });
+      for (const vp of DESKTOP) expect({ row: row.name, vp: vp.label, visible: visible(row, vp) }).toEqual({ row: row.name, vp: vp.label, visible: true });
+    }
+  });
+
+  it('every row of different interfaces is never together; same-interface and shared rows are checked', () => {
+    expect(neverTogether('StatusPill', 'TopBar')).toBe(true);
+    expect(neverTogether('CommandBar', 'Dock')).toBe(true);
+    expect(neverTogether('Toast', 'TopBar')).toBe(false);
+    expect(neverTogether('TopBar', 'Dock')).toBe(false);
+    expect(neverTogether('StatusPill', 'CommandBar')).toBe(false);
+    expect(() => uiOf('NoSuchRow')).toThrow(/no table row/);
+  });
+
+  it('GameScreenV2 keeps the guards the v2 rows rely on', () => {
+    const shell = read('v2/GameScreenV2.tsx');
+    expect(shell).toMatch(/const chrome = isDesktop && hudVisible;/);
+    expect(shell).toMatch(/\{chrome && <TopBar \/>\}/);
+    // ChaseBadge × TopBar (NEVER_TOGETHER): the badge only while the bar is not mounted
+    expect(shell).toMatch(/\{!chrome && <ChaseBadge \/>\}/);
+    // WorldEventTicker / ContextStatusStrip are 'v1' rows: in v2 they exist only below 1024 px
+    expect(shell).toMatch(/\{!isDesktop && <WorldEventTicker \/>\}/);
+    expect(shell).toMatch(/\{!isDesktop && <ContextStatusStrip \/>\}/);
+    // and the TopBar carries the chase control the badge would have shown
+    expect(read('v2/topbar/TopBar.tsx')).toMatch(/client\.onStopChase\(\)/);
+    // VersionBadge is a 'v1' row: in v2 it is only ever inside the slot the VersionBadgeV2 row reads
+    expect(shell).toMatch(/<div className=\{`\$\{styles\.versionSlot\} \$\{panelOpen \? styles\.versionSlotUnderPanel : ''\}`\}>\s*<VersionBadge \/>\s*<\/div>/);
+    expect((shell.match(/<VersionBadge \/>/g) ?? []).length).toBe(1);
+    // the badge inside drops its own fixed position, so the slot's geometry is the badge's
+    expect(declsAt(cssOf('v2/GameScreenV2.module.css'), '.versionSlot > div', null).get('position')).toBe('static');
+  });
+
+  it('the FocusCard keeps below the top deck: TOP_DECK_BOTTOM is the signal line\'s bottom edge', () => {
+    const constant = read('v2/panel/focus-card-model.ts').match(/export const TOP_DECK_BOTTOM = (\d+);/);
+    expect(constant).not.toBeNull();
+    for (const vp of DESKTOP) {
+      expect({ vp: vp.label, px: evalLength('calc(var(--v2-signal-top) + var(--v2-signal-height))', vp, tokensAt(vp)) })
+        .toEqual({ vp: vp.label, px: Number(constant![1]) });
+    }
+  });
+
+  it('design-tokens-v2.css only adds --v2-* names, never redefines a classic token', () => {
+    const v2 = declsAt(tokensV2Css, ':root', null);
+    expect(v2.size).toBeGreaterThan(0);
+    const classic = declsAt(tokensCss, ':root', null);
+    for (const name of v2.keys()) {
+      expect({ name, prefixed: name.startsWith('--v2-'), classic: classic.has(name) }).toEqual({ name, prefixed: true, classic: false });
+    }
+  });
+
+  it.each(DESKTOP)('at $label with the side panel open: no shifted v2 band reaches the panel', (vp) => {
+    const css = cssOf('v2/panel/SidePanel.module.css');
+    const panel = declsAt(css, '.panel', vp);
+    const tokens = tokensAt(vp);
+    const len = (prop: string): number => evalLength(panel.get(prop) ?? '', vp, tokens);
+    const box: Box = { x0: vp.w - len('right') - len('width'), x1: vp.w - len('right'), y0: len('top'), y1: vp.h - len('bottom') };
+    expect(box.x1 - box.x0).toBeGreaterThan(0);
+    // A row whose shifted class hides it is not on screen while the panel is open.
+    const shown = V2_BANDS.filter((row) => ctxFor(row, vp, true).decls.get('display') !== 'none');
+    expect(shown.length).toBe(V2_BANDS.length - 1); // only VersionBadgeV2 hides
+    const offenders = shown.map((row) => ({ name: row.name, b: row.band(vp, ctxFor(row, vp, true)) }))
+      .filter(({ b }) => strictlyOverlap(b, box))
+      .map(({ name, b }) => `${vp.label} ${name} [${fmt(b.x0)}, ${fmt(b.x1)}] × SidePanel [${fmt(box.x0)}, ${fmt(box.x1)}]`);
+    expect(offenders).toEqual([]);
   });
 });

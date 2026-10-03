@@ -32,6 +32,8 @@ describe('route', () => {
     const decision = route(['src/server/session/politics-handler.ts']);
     expect(decision.required).toEqual([
       'login-spine', 'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
+      // #1195: SPO_test's rating of the mayor's term and the tycoon role read.
+      'mayor-rating-roundtrip', 'tycoon-role-read',
     ]);
     expect(decision.staticOnly).toBe(false);
   });
@@ -56,6 +58,8 @@ describe('route', () => {
       'trade-settings',
       // #1154: the residential, bank, TV, accept-cloning and research controls.
       'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+      // #1195: ADS_GROUP's AdPerc slider (RDOSetInputFluidPerc).
+      'ad-budget-roundtrip',
     ]);
   });
 
@@ -564,11 +568,14 @@ describe('routing invariants (#1134)', () => {
   });
 
   // #1145: the vote is data-gated — never required, never nightly-excluded by GATE_ONLY.
-  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip, chat-private-channel and bank-borrow-payoff alone', () => {
+  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip, chat-private-channel, bank-borrow-payoff and facility-bank-loan alone', () => {
     expect(NIGHTLY_ONLY['vote-roundtrip']).toMatch(/Kernel\/TownPolitics\.pas:690/);
     expect(uncited({ 'vote-roundtrip': NIGHTLY_ONLY['vote-roundtrip'] })).toEqual([]);
     expect(ROUTES.some(r => r.flows.includes('vote-roundtrip'))).toBe(false);
-    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip', 'chat-private-channel', 'bank-borrow-payoff']);
+    // #1189: facility-bank-loan broadcasts the approved loan like bank-borrow-payoff (Kernel/Kernel.pas:8849-8859).
+    expect(Object.keys(GATE_ONLY)).toEqual([
+      'politics-write', 'policy-roundtrip', 'chat-private-channel', 'bank-borrow-payoff', 'facility-bank-loan',
+    ]);
   });
 
   // #1149: the all-kinds fixture builder is nightly only, no gate requires it (a fixture flow's own seed builds its kind, #1185).
@@ -697,6 +704,8 @@ describe('route — handler rules seeded by #1134', () => {
       'build-menu-read', 'place-rename-demolish', 'inspector-reads',
       // #1154: upgrade-stop sends REQ_BUILDING_UPGRADE.
       'upgrade-stop',
+      // #1189: REQ_BUILDING_LOAN_REQUEST and REQ_CLONE_FACILITY.
+      'facility-bank-loan', 'clone-salaries-roundtrip',
     ]);
   });
 
@@ -711,6 +720,10 @@ describe('route — handler rules seeded by #1134', () => {
         'trade-settings',
         // #1154: the residential, bank, TV, accept-cloning and research setters.
         'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+        // #1189: requestBankLoan lives in building-details-handler.ts.
+        'facility-bank-loan',
+        // #1195: the Advertisement input's RDOSetInputFluidPerc, bound to the gate.
+        'ad-budget-roundtrip',
       ]);
     },
   );
@@ -718,6 +731,8 @@ describe('route — handler rules seeded by #1134', () => {
   it('routes the politics WS handlers like the session one', () => {
     expect(route(['src/server/ws-handlers/politics-handlers.ts']).required).toEqual([
       SPINE_FLOW, 'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
+      // #1195: handleTycoonRole and the rating write.
+      'mayor-rating-roundtrip', 'tycoon-role-read',
     ]);
   });
 
@@ -811,9 +826,10 @@ describe('route — session & company (#1142)', () => {
     expect(d.needsL3).toBe(true);
   });
 
-  it('the client auth handler routes to both flows', () => {
+  it('the client auth handler routes to company-switch, cluster-info-read and tycoon-role-read', () => {
     const d = route(['src/client/handlers/auth-handler.ts']);
-    expect(d.required).toEqual([SPINE_FLOW, 'company-switch', 'cluster-info-read']);
+    // #1195: tycoon-role-read sends REQ_TYCOON_ROLE, which this handler sends.
+    expect(d.required).toEqual([SPINE_FLOW, 'company-switch', 'cluster-info-read', 'tycoon-role-read']);
     expect(d.needsL3).toBe(false);
   });
 
@@ -1033,7 +1049,9 @@ describe('route — build & demolish (#1150)', () => {
     'src/client/handlers/build-menu-handler.ts',
   ])('%s requires build-menu-read and place-rename-demolish', file => {
     // #1154: the rule gains upgrade-stop (manageConstruction).
-    expect(route([file]).required).toEqual([SPINE_FLOW, 'build-menu-read', 'place-rename-demolish', 'upgrade-stop']);
+    // #1195: the management handler also answers REQ_TYCOON_ROLE, so it adds tycoon-role-read.
+    const extra = file.endsWith('building-management-handler.ts') ? ['tycoon-role-read'] : [];
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'build-menu-read', 'place-rename-demolish', 'upgrade-stop', ...extra]);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
 
@@ -1081,6 +1099,65 @@ describe('route — inspector flows (#1154)', () => {
       expect(GATE_ONLY).not.toHaveProperty(flow);
       expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
     }
+  });
+});
+
+describe('route — the bank-fixture loan and the salaries clone (#1189)', () => {
+  it('keeps facility-bank-loan gate-only with its broadcast cited, and the clone neither gate- nor nightly-only', () => {
+    expect(GATE_ONLY['facility-bank-loan']).toMatch(/Kernel\/Kernel\.pas:8849-8859/);
+    expect(uncited({ 'facility-bank-loan': GATE_ONLY['facility-bank-loan'] })).toEqual([]);
+    expect(GATE_ONLY).not.toHaveProperty('clone-salaries-roundtrip');
+    expect(NIGHTLY_ONLY).not.toHaveProperty('clone-salaries-roundtrip');
+    expect(NIGHTLY_ONLY).not.toHaveProperty('facility-bank-loan');
+  });
+
+  it('building-handlers.ts requires both flows; building-details-handler.ts the loan only', () => {
+    const building = route(['src/server/ws-handlers/building-handlers.ts']).required;
+    expect(building).toContain('facility-bank-loan');
+    expect(building).toContain('clone-salaries-roundtrip');
+    const details = route(['src/server/session/building-details-handler.ts']).required;
+    expect(details).toContain('facility-bank-loan');
+    expect(details).not.toContain('clone-salaries-roundtrip');
+  });
+});
+
+describe('route — player actions (#1195)', () => {
+  const NEW_FLOWS = ['mayor-rating-roundtrip', 'tycoon-role-read', 'ad-budget-roundtrip'];
+
+  it.each([
+    ['src/server/session/politics-handler.ts', 'mayor-rating-roundtrip'],
+    ['src/server/ws-handlers/politics-handlers.ts', 'mayor-rating-roundtrip'],
+    ['src/client/components/politics/RatingsRail.tsx', 'mayor-rating-roundtrip'],
+    ['src/server/session/politics-handler.ts', 'tycoon-role-read'],
+    ['src/server/ws-handlers/politics-handlers.ts', 'tycoon-role-read'],
+    ['src/client/handlers/auth-handler.ts', 'tycoon-role-read'],
+    ['src/server/session/building-property-handler.ts', 'ad-budget-roundtrip'],
+    ['src/server/session/building-details-handler.ts', 'ad-budget-roundtrip'],
+    ['src/shared/building-details/template-groups.ts', 'ad-budget-roundtrip'],
+    ['src/client/components/building/PropertyGroup.tsx', 'ad-budget-roundtrip'],
+  ])('%s requires %s', (file, flow) => {
+    expect(route([file]).required).toContain(flow);
+  });
+
+  it('every new flow is in the catalogue', () => {
+    const names = FLOWS.map(f => f.name);
+    for (const flow of NEW_FLOWS) expect(names).toContain(flow);
+  });
+
+  it('none of the three is nightly-only or gate-only', () => {
+    for (const flow of NEW_FLOWS) {
+      expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
+      expect(GATE_ONLY).not.toHaveProperty(flow);
+    }
+  });
+
+  it('records the sort-mode and overprice exclusion of industry-supply-limits with its citations', () => {
+    const reason = NIGHTLY_ONLY['industry-supply-limits'];
+    expect(reason).toMatch(/Kernel\/MediaGates\.pas:388-389/);
+    expect(reason).toMatch(/StdBlocks\/Movie\.pas:84/);
+    expect(reason).toMatch(/excluded/);
+    expect(reason).not.toMatch(/end UNPROVEN/);
+    expect(uncited({ 'industry-supply-limits': reason })).toEqual([]);
   });
 });
 

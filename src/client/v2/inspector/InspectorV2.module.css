@@ -1,0 +1,161 @@
+/* InspectorV2 — single-column building inspector (UI v2).
+   The side panel's body is the scroll container; the section tabs stick to its top. */
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.placeholderHero {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.placeholderName {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--font-bold);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.placeholderName:focus {
+  outline: none;
+}
+
+.placeholderName:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
+.placeholderOwner {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.stateBox {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.stateText {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-8) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.diagnosis {
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+.diagnosis:empty {
+  display: none;
+}
+
+/* The banner is v1's, which carries its own side margin for v1's sheet; here the wrapper
+   already sits on the content gutter, so the margin would indent it twice. */
+.diagnosis > div {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* Property grids inside a section (v1 PropertyGroup, also used by the civic sections).
+   v1 lays them out for a wide sheet: two columns with a 1 px gap and values that never
+   wrap, so in the ~480 px panel a long value ("Helartia Herald") ran into the next
+   column's label. Here: one column while the panel is under 520 px, a real gutter between
+   columns above that, and values that wrap instead of overflowing. v1's class names are
+   hashed, so the grid and its rows are reached by shape: a row is a block whose first
+   child is the label span and whose last is the value span. */
+.properties {
+  container-type: inline-size;
+}
+
+.properties div:has(> div > span:first-child + span:last-child) {
+  column-gap: var(--space-6);
+}
+
+@container (max-width: 520px) {
+  .properties div:has(> div > span:first-child + span:last-child) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.properties div > span:first-child + span:last-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4) var(--space-6);
+}
+
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sectionCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-2);
+}
+
+.sectionCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+.sectionCard:hover {
+  border-color: var(--accent-gold-dark);
+  color: var(--text-primary);
+}
+
+.sectionCard:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 1px;
+}
+
+.sectionCardLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

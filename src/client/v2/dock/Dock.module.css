@@ -1,0 +1,304 @@
+/* Dock — UI v2 bottom-left action row (replaces CommandBar tiles + MoreMenu) */
+
+.dock {
+  position: fixed;
+  bottom: var(--v2-dock-bottom);
+  left: var(--v2-dock-left);
+  height: var(--v2-dock-height);
+  width: var(--v2-dock-max-width);
+  /* Never under the map tools rail on the right edge */
+  max-width: calc(100vw - var(--v2-dock-left) - var(--v2-tools-right) - var(--v2-tools-width) - var(--space-4));
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-hud);
+  transition: max-width var(--duration-panel) var(--ease-out);
+  /* Its own width drives the compact layout below (it narrows while the side panel is open) */
+  container: v2dock / inline-size;
+}
+
+/* The side panel is open: the dock keeps its left anchor and only gives up width */
+.shifted {
+  max-width: calc(100vw - var(--v2-dock-left) - var(--v2-shift-right));
+}
+
+/* ---- search pill ---- */
+.search {
+  flex: 1 1 auto;
+  min-width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    border-color var(--duration-fast) var(--ease-default),
+    background var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+.search:hover {
+  background: var(--bg-elevated);
+  border-color: var(--accent-gold-dark);
+  color: var(--text-primary);
+}
+
+.search:active {
+  background: var(--bg-hover);
+}
+
+.searchIcon {
+  flex-shrink: 0;
+}
+
+.searchText {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-placeholder);
+}
+
+.search:hover .searchText {
+  color: var(--text-secondary);
+}
+
+.searchKbds {
+  display: inline-flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.searchKbds kbd,
+.kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-medium);
+  line-height: 1.4;
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  border: 1px solid var(--surface-border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+}
+
+.divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: 32px;
+  margin: 0 var(--space-1);
+  background: var(--surface-divider);
+}
+
+/* ---- actions ---- */
+.actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+}
+
+.slot {
+  position: relative;
+  display: flex;
+}
+
+/* "More" is set apart from the six panel actions */
+.slotMore {
+  margin-left: var(--space-1);
+  padding-left: var(--space-1);
+  border-left: 1px solid var(--surface-divider);
+}
+
+.action {
+  position: relative;
+  /* At least 64 px, wider when a label needs it — "Government" fits whole */
+  min-width: 64px;
+  height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 var(--space-1);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-medium);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default),
+    border-color var(--duration-fast) var(--ease-default);
+}
+
+.action:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.action:hover .iconWrap {
+  transform: translateY(-1px);
+}
+
+.action:active {
+  background: var(--bg-hover);
+}
+
+/* Keyboard focus only: a ring that is not the gold "active" fill, so focus handed back to
+   More after its menu closes does not read as More still being open. */
+.action:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 1px;
+}
+
+.action:active .iconWrap {
+  transform: translateY(0) scale(0.94);
+}
+
+/* Active: gold tint plus an indicator bar under the label */
+.active {
+  background: var(--accent-gold-subtle);
+  border-color: var(--accent-gold-dark);
+  color: var(--accent-gold);
+}
+
+.active:hover {
+  background: var(--accent-gold-subtle);
+  color: var(--accent-gold-light);
+}
+
+.active::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: 20px;
+  height: 2px;
+  margin-left: -10px;
+  border-radius: var(--radius-full);
+  background: var(--accent-gold);
+  box-shadow: var(--shadow-gold-glow);
+}
+
+.iconWrap {
+  position: relative;
+  display: inline-flex;
+  line-height: 0;
+  transition: transform var(--duration-fast) var(--ease-default);
+}
+
+.label {
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+/* The short label only shows in the compact dock */
+.labelShort {
+  display: none;
+}
+
+/* Keyboard hint — top-right corner of the button */
+.kbd {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  padding: 0 3px;
+  opacity: 0.8;
+}
+
+.action:hover .kbd,
+.active .kbd {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
+/* Unread badge — on the icon's top-right */
+.badge {
+  position: absolute;
+  top: -6px;
+  left: 12px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: var(--radius-full);
+  background: var(--error);
+  border: 1px solid var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-bold);
+  line-height: 14px;
+  text-align: center;
+}
+
+/* Compact — the dock narrowed under 640 px (side panel open on a narrow screen, 564 px at
+   1024): the search pill keeps its icon (its name stays in the accessible label and the
+   tooltip), long labels switch to their short form. */
+@container v2dock (max-width: 640px) {
+  .search {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .searchText,
+  .searchKbds {
+    display: none;
+  }
+
+  .labelLong {
+    display: none;
+  }
+
+  .labelShort {
+    display: inline;
+  }
+}
+
+@media (max-width: 1023px) {
+  .dock {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock,
+  .search,
+  .action,
+  .iconWrap {
+    transition: none;
+  }
+
+  .action:hover .iconWrap,
+  .action:active .iconWrap {
+    transform: none;
+  }
+}
