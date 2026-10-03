@@ -1291,6 +1291,37 @@ describe('direct property set', () => {
     expect(listCalls[listCalls.length - 1][1]).toEqual(['Interest']);
   });
 
+  // Close/Open witness: `Stopped` is never cached; `SetStopped` toggles bit
+  // `facStoppedByTycoon = $04` of `Trouble` (Kernel/Kernel.pas:107, :3962/:3968;
+  // KernelCache.pas:417 writes `Trouble`).
+  it.each(['4', '5', '36'])('confirms a Close when Trouble %s has bit $04 set', async held => {
+    const fake = makeConstructionCtx({ readBack: [held] });
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }));
+    expect(result.confirmed).toBe(true);
+  });
+
+  it.each(['0', '1'])('confirms an Open when Trouble %s has bit $04 clear', async held => {
+    const fake = makeConstructionCtx({ readBack: [held] });
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'property', '0', { propertyName: 'Stopped' }));
+    expect(result.confirmed).toBe(true);
+  });
+
+  it.each(['0', '1'])('does not confirm a Close when Trouble %s keeps bit $04 clear', async held => {
+    const fake = makeConstructionCtx({ readBack: [held] });
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }));
+    expect(result.confirmed).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining(`"Trouble" holds ${held}`));
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('one of 128 values'));
+    expect(fake.log.warn).not.toHaveBeenCalledWith(expect.stringContaining('came back empty'));
+  });
+
+  it('reads a Stopped write back through Trouble, never Stopped', async () => {
+    const fake = makeConstructionCtx({ readBack: ['4'] });
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }));
+    const listCalls = fake.cacher.getPropertyList.mock.calls;
+    expect(listCalls[listCalls.length - 1][1]).toEqual(['Trouble']);
+  });
+
   it('never targets ObjectId for a block-published property, even for a warehouse', async () => {
     // Was `AcceptCloning`, a name this path cannot receive: template-groups.ts:540
     // maps it to `command: 'RDOAcceptCloning'`, not to `'property'`. Now that the

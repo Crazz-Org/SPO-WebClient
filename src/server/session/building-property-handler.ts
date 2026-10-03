@@ -440,7 +440,7 @@ async function setBuildingPropertyImpl(
         // `false` here would paint "Failed" over writes that landed.
         ctx.log.warn(
           `[BuildingDetails] ${propertyName} was issued but could not be confirmed — ` +
-          `"${propertyToRead}" holds ${readBack}, the write sent ${accepted.join(' or ')}`
+          `"${propertyToRead}" holds ${readBack}, the write sent ${accepted.length > 2 ? `one of ${accepted.length} values` : accepted.join(' or ')}`
         );
       }
 
@@ -1011,6 +1011,15 @@ async function readGateWitness(
  * client reads lags a civic write by 30-90 s (OB-29), so a mismatch cannot be
  * told apart from a write that landed and has not surfaced yet.
  */
+// `facStoppedByTycoon = $04` (Kernel/Kernel.pas:107) inside `fTrouble : byte`
+// (Kernel/Kernel.pas:1000), so 0..255 is the full domain of the `Trouble` read-back.
+const FAC_STOPPED_BY_TYCOON = 0x04;
+const TROUBLE_BYTES = Array.from({ length: 256 }, (_, n) => n);
+const TROUBLE_STOPPED_BY_TYCOON: readonly string[] = TROUBLE_BYTES
+  .filter(n => (n & FAC_STOPPED_BY_TYCOON) !== 0).map(String);
+const TROUBLE_NOT_STOPPED_BY_TYCOON: readonly string[] = TROUBLE_BYTES
+  .filter(n => (n & FAC_STOPPED_BY_TYCOON) === 0).map(String);
+
 function expectedWitnessValues(
   rdoCommand: string,
   value: string,
@@ -1080,7 +1089,12 @@ function expectedWitnessValues(
     // Direct property set: the witness IS the property that was written, read
     // from the cache under the same name. Same assumption the read-back itself
     // already makes (mapRdoCommandToPropertyName, `case 'property'`).
+    // `Stopped` is witnessed through bit `$04` of `Trouble` (see
+    // TROUBLE_STOPPED_BY_TYCOON) — other trouble bits may be set alongside.
     case 'property':
+      if (params.propertyName === 'Stopped') {
+        return parseInt(value, 10) !== 0 ? TROUBLE_STOPPED_BY_TYCOON : TROUBLE_NOT_STOPPED_BY_TYCOON;
+      }
       return params.propertyName === undefined ? null : [value.trim()];
 
     // Direct field assignment, no scaling — `fRole := TFacilityRole(aRole)`
@@ -1343,6 +1357,10 @@ function mapRdoCommandToPropertyName(
       return 'nfActualMaxFluidValue';
 
     case 'property':
+      // `Stopped` is never cached: `TFacilityCacheAgent.UpdateCache` writes
+      // `Trouble` (Kernel/KernelCache.pas:417), and `SetStopped` sets/clears
+      // its `facStoppedByTycoon` bit (Kernel/Kernel.pas:3962 / :3968).
+      if (params.propertyName === 'Stopped') return 'Trouble';
       return params.propertyName || rdoCommand;
 
     default:
