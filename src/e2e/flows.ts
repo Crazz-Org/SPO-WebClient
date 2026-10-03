@@ -25,6 +25,7 @@ import type {
   WsRespMailSent,
   WsRespMailUnreadCount,
   WsRespNewspaperBoard,
+  WsRespNewspaperPost,
   WsRespNewspaperIssue,
   WsRespNewspaperIssues,
   WsRespPoliticsData,
@@ -1625,40 +1626,113 @@ const newspaperRead: Flow = {
   },
 };
 
+/** Where the Helartia Herald lives: the paper the town hall names, and the hall itself. */
+async function heraldTarget(session: LiveSession): Promise<{
+  paperName: string;
+  townName: string;
+  isCapitol: boolean;
+  buildingX: number;
+  buildingY: number;
+}> {
+  const town = await findTown(session, GOVERNED_TOWN);
+  const visualClass = await resolveVisualClass(session, town.x, town.y);
+  const details = await readBuildingDetails(session, town.x, town.y, visualClass);
+  const paperName = propertyValue(details.groups, 'townGeneral', 'NewspaperName') ?? '';
+  return { paperName, townName: town.name, isCapitol: false, buildingX: town.x, buildingY: town.y };
+}
+
+/** The subject prefix of the column the board seed posts. */
+const BOARD_SEED_SUBJECT = 'E2E board check';
+/** The subject the seed posted in this run, handed to `run` — `null` when it posted nothing. */
+let seededBoardSubject: string | null = null;
+
+/**
+ * Posts one test column as SPO_test3 on the paper's board, only when the board holds no column
+ * and no tree entry (maintainer decision 2026-10-02, #1260). Seeding only on an empty board
+ * limits the flow to one column each time the board empties.
+ *
+ * It returns no cleanup and records no pending restore: no member deletes a post
+ * (`News Server/NewsObject.pas:9-34`; `boardmsg.asp` has only `action=post`,
+ * `SPO-ASP/Five/0/Visual/News/boardmsg.asp:46`, `:83`), so nothing could undo it, and a recorded
+ * restore would leave the world lock dirty for good. With `ratings: []` the post sends no RDO
+ * (`boardmsg.asp:96`).
+ */
+async function seedNewspaperBoard(ctx: FlowContext): Promise<FlowSeed> {
+  seededBoardSubject = null;
+  const what = `${PRIMARY_ACCOUNT.username} posts one test column on the board when it is empty`;
+  try {
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const target = await heraldTarget(session);
+      if (target.paperName === '') {
+        return { outcome: { what, ok: true, detail: 'the town hall names no paper — nothing posted' } };
+      }
+      const { board } = await session.driver.request<WsRespNewspaperBoard>(
+        { type: WsMessageType.REQ_NEWSPAPER_BOARD, ...target },
+        WsMessageType.RESP_NEWSPAPER_BOARD,
+      );
+      if (board.error !== '') {
+        return { outcome: { what, ok: true, detail: `the board read failed (${board.error}) — nothing posted` } };
+      }
+      if (board.columns.length > 0 || board.tree.length > 0) {
+        return { outcome: { what, ok: true, detail: `${board.columns.length} columns already — nothing posted` } };
+      }
+      const subject = `${BOARD_SEED_SUBJECT} ${new Date((ctx.now ?? Date.now)()).toISOString()}`;
+      const resp = await session.driver.request<WsRespNewspaperPost>(
+        {
+          type: WsMessageType.REQ_NEWSPAPER_POST,
+          ...target,
+          subject,
+          body: 'Test column posted by the E2E gate to check the board reads back. It cannot be deleted.',
+          ratings: [],
+        },
+        WsMessageType.RESP_NEWSPAPER_POST,
+        TIMEOUTS.login,
+      );
+      if (resp.success !== true) {
+        return { outcome: { what, ok: false, detail: resp.message || 'post refused' } };
+      }
+      if (!resp.board || !resp.board.columns.some(c => c.subject === subject)) {
+        return { outcome: { what, ok: false, detail: `the post answered, but its board lists no "${subject}"` } };
+      }
+      seededBoardSubject = subject;
+      return { outcome: { what, ok: true, detail: `posted "${subject}"` } };
+    } finally {
+      await logoff(session);
+    }
+  } catch (err: unknown) {
+    return { outcome: { what, ok: false, detail: toErrorMessage(err) } };
+  }
+}
+
 /**
  * The paper's columns board: the town hall names its paper, then the board index
- * (`boardmsg.asp?top=TRUE` + `boardlist.asp`) is read. Read-only — the read branch of
- * `boardmsg.asp` only opens `NewsBoard.NewsObject`; `action=post` is the only write branch
- * and is never sent (posting is excluded, maintainer 2026-09-29: no member deletes a post,
- * `News Server/NewsObject.pas:11-53`). The detail records the counts. A board with no column
- * and no tree entry ends UNPROVEN (#1188): the page answering proves no read of a post, and
- * the flow cannot post one. Routing still requires it.
+ * (`boardmsg.asp?top=TRUE` + `boardlist.asp`) is read. The seed (`seedNewspaperBoard`) posts one
+ * column as SPO_test3 when the board is empty — maintainer decision 2026-10-02 (#1260), which
+ * lifts the earlier read-only rule for this flow only. That column is permanent: no member
+ * deletes a post (`News Server/NewsObject.pas:9-34`). When the seed posted, `run` finds the
+ * column in the index and opens it. An empty board without a seed post ends UNPROVEN.
  */
 const newspaperBoardRead: Flow = {
   name: 'newspaper-board-read',
   what: 'town hall -> its paper -> the columns board',
-  mutates: false,
+  // The seed may post one permanent, public, unrated column on an empty board.
+  mutates: true,
+  seed: seedNewspaperBoard,
   run: async () => {
+    const seeded = seededBoardSubject;
+    seededBoardSubject = null;
     const assertions = new Assertions();
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      const town = await findTown(session, GOVERNED_TOWN);
-      const visualClass = await resolveVisualClass(session, town.x, town.y);
-      const details = await readBuildingDetails(session, town.x, town.y, visualClass);
-      const paperName = propertyValue(details.groups, 'townGeneral', 'NewspaperName') ?? '';
+      const target = await heraldTarget(session);
+      const { paperName } = target;
       assertions.check('the town hall names its paper', paperName !== '', paperName || '(none)');
       // Never ask for the board of a paper with no name.
       if (paperName === '') return report('newspaper-board-read', assertions, [], session);
 
       const { board } = await session.driver.request<WsRespNewspaperBoard>(
-        {
-          type: WsMessageType.REQ_NEWSPAPER_BOARD,
-          paperName,
-          townName: town.name,
-          isCapitol: false,
-          buildingX: town.x,
-          buildingY: town.y,
-        },
+        { type: WsMessageType.REQ_NEWSPAPER_BOARD, ...target },
         WsMessageType.RESP_NEWSPAPER_BOARD,
       );
       assertions.check('the columns board was read', board.error === '', board.error);
@@ -1672,11 +1746,31 @@ const newspaperBoardRead: Flow = {
         wellFormed,
         `${board.columns.length} columns, ${board.tree.length} tree entries`,
       );
-      if (board.columns.length === 0 && board.tree.length === 0) {
+      if (seeded !== null) {
+        const col = board.columns.find(c => c.subject === seeded);
+        assertions.check(
+          `the index lists the seeded column by ${PRIMARY_ACCOUNT.username}`,
+          col !== undefined && sameAccount(col.author, PRIMARY_ACCOUNT),
+          col ? `${col.author}: ${col.subject}` : `no "${seeded}"`,
+        );
+        if (col) {
+          const opened = await session.driver.request<WsRespNewspaperBoard>(
+            { type: WsMessageType.REQ_NEWSPAPER_BOARD, ...target, path: col.path },
+            WsMessageType.RESP_NEWSPAPER_BOARD,
+          );
+          const article = opened.board.article;
+          assertions.check('the seeded column opens', opened.board.error === '', opened.board.error);
+          assertions.check('the opened column carries the marker subject', article?.subject === seeded, article?.subject ?? '(no article)');
+          assertions.check(
+            `the opened column's byline names ${PRIMARY_ACCOUNT.username}`,
+            (article?.byline ?? '').toLowerCase().includes(PRIMARY_ACCOUNT.username.toLowerCase()),
+            article?.byline ?? '(no article)',
+          );
+        }
+      } else if (board.columns.length === 0 && board.tree.length === 0) {
         assertions.unproven(
           'the board lists a column',
-          `${paperName}: 0 columns, 0 tree entries — nothing is posted, and posting is excluded ` +
-            '(News Server/NewsObject.pas:11-53)',
+          `${paperName}: 0 columns, 0 tree entries — nothing is posted, and the seed did not post`,
         );
       }
 

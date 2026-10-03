@@ -507,9 +507,9 @@ No flow reads or writes its buildings (`flows.ts`: it appears at the login in
 `facility-bank-loan` (#1189, lifted by the maintainer on 2026-09-29) has SPO_test borrow $1 at
 SPO_test3's own bank fixture and pay it off in the same run.
 Never another player's assets. Never a world-scope value. Every mutation is restored in
-the same run (§5).
+the same run (§5), except the permanent fixtures and the one board column described below.
 
-**Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29, the
+**Permanent fixtures.** Sanctioned by the maintainer on 2026-09-29, the
 nightly-only flow `fixtures-ensure` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
 kind the owner-setter flows need — `industry`, `store`, `warehouse`, `residential`, `research`,
 `bank`, `tv` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
@@ -529,6 +529,14 @@ under cash − the cash floor − `research-roundtrip`'s own cost. It is proven 
 owned invention that sells it, `Kernel/ResearchCenter.pas:372`), never queues
 `research-roundtrip`'s target, and records no pending restore, so no restore or unlock step can
 cancel it.
+
+**One permanent board column.** Posting was excluded until the maintainer lifted it for one flow
+on 2026-10-02 (#1260): `newspaper-board-read` posts one column as SPO_test3 on the Helartia
+Herald, and only when the board holds no column and no tree entry. The column is permanent,
+because no member deletes a post (`News Server/NewsObject.pas:9-34`; `boardmsg.asp` has only
+`action=post`), so the seed returns no cleanup and records no pending restore. It is public —
+every reader of the paper sees it — and it carries no rating (no `Rate`, so no RDO,
+`boardmsg.asp:96`). It is the only board post any flow makes.
 
 **Build → demolish (#1150).** `place-rename-demolish` places the cheapest buildable facility —
 never a mausoleum, never the Capitol (`isRefusedClass`) — on a free Helartia lot as

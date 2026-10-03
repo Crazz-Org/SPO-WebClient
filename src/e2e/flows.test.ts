@@ -102,6 +102,7 @@ describe('the catalogue', () => {
         'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
         // #1195
         'mayor-rating-roundtrip',
+        'newspaper-board-read',
         'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
         // #1153
@@ -1770,15 +1771,40 @@ describe('newspaper-board-read', () => {
   const ROOT = 'boards\\Planitia\\Helartia Herald\\';
   const COLUMN = { author: 'Crazz', subject: 'Hello', path: ROOT + '1\\', summary: '' };
 
-  function arrange(over: { paper?: string; board?: Partial<NewspaperBoard> } = {}) {
-    const { paper = 'Helartia Herald' } = over;
+  function arrange(over: {
+    paper?: string;
+    board?: Partial<NewspaperBoard>;
+    post?: { success: boolean; message?: string; listsMarker?: boolean };
+    article?: Partial<NonNullable<NewspaperBoard['article']>>;
+  } = {}) {
+    const { paper = 'Helartia Herald', post = { success: true } } = over;
     const board: NewspaperBoard = {
       paperName: paper, root: ROOT, path: ROOT, columns: [], tree: [], article: null, error: '',
       ...over.board,
     };
+    let posted = '';
     const requests: WsMessage[] = [];
-    jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+    jest.spyOn(session, 'login').mockImplementation(async () => stubSession((msg) => {
       requests.push(msg);
+      const m = msg as WsMessage & { path?: string; subject?: string };
+      if (msg.type === WsMessageType.REQ_NEWSPAPER_POST) {
+        if (post.success) {
+          posted = m.subject ?? '';
+          if (post.listsMarker !== false) {
+            board.columns = [...board.columns, { author: 'SPO_test3', subject: posted, path: ROOT + '9\\', summary: '' }];
+          }
+        }
+        return { success: post.success, message: post.message ?? '', board: post.success ? { ...board } : null };
+      }
+      if (msg.type === WsMessageType.REQ_NEWSPAPER_BOARD && m.path !== undefined) {
+        return { board: {
+          ...board, path: m.path, columns: [], tree: [],
+          article: {
+            subject: posted, byline: 'By SPO_test3 Mayor', body: 'test', replies: [], parentPath: '', photoUrl: '',
+            ...over.article,
+          },
+        } };
+      }
       if (msg.type === WsMessageType.REQ_NEWSPAPER_BOARD) return { board };
       return undefined;
     }));
@@ -1797,15 +1823,91 @@ describe('newspaper-board-read', () => {
   const wellFormed = (r: { assertions: { what: string; detail?: string }[] }) =>
     r.assertions.find(a => /well-formed/.test(a.what));
 
-  it('ends UNPROVEN on an empty board, its detail naming both counts', async () => {
+  it('ends UNPROVEN on an empty board without a seed, its detail naming both counts', async () => {
     arrange();
     const result = await flowByName('newspaper-board-read').run(ctx);
     expect(result.status).toBe('UNPROVEN');
     expect(wellFormed(result)).toMatchObject({ ok: true, detail: '0 columns, 0 tree entries' });
     expect(result.unproven).toEqual([
       'the board lists a column — Helartia Herald: 0 columns, 0 tree entries — nothing is posted, ' +
-        'and posting is excluded (News Server/NewsObject.pas:11-53)',
+        'and the seed did not post',
     ]);
+  });
+
+  const posts = (requests: WsMessage[]) => requests.filter(m => m.type === WsMessageType.REQ_NEWSPAPER_POST);
+  const opens = (requests: WsMessage[]) =>
+    requests.filter(m => m.type === WsMessageType.REQ_NEWSPAPER_BOARD && (m as { path?: string }).path !== undefined);
+
+  it('seeds one column on an empty board, reads it back and passes', async () => {
+    const requests = arrange();
+    const lock = cleanLock();
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock, now: () => Date.UTC(2026, 9, 2) });
+    expect(posts(requests)).toHaveLength(1);
+    const post = posts(requests)[0] as WsMessage & { ratings?: unknown[]; replyToPath?: string };
+    expect(post).toMatchObject({
+      paperName: 'Helartia Herald', townName: 'Helartia', buildingX: 1, buildingY: 2, isCapitol: false,
+      subject: 'E2E board check 2026-10-02T00:00:00.000Z',
+    });
+    expect(post.ratings ?? []).toEqual([]);
+    expect(post.replyToPath).toBeUndefined();
+    expect(opens(requests)).toHaveLength(1);
+    expect((opens(requests)[0] as { path?: string }).path).toBe(ROOT + '9\\');
+    expect(result.status).toBe('PASS');
+    expect(result.seed?.ok).toBe(true);
+    expect(result.cleanup ?? []).toEqual([]);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('posts nothing on a board that already holds a column, and passes', async () => {
+    const requests = arrange({ board: { columns: [COLUMN] } });
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(posts(requests)).toHaveLength(0);
+    expect(opens(requests)).toHaveLength(0);
+    expect(result.status).toBe('PASS');
+  });
+
+  it('is UNPROVEN, skips the run and records no restore, when the post is refused', async () => {
+    const requests = arrange({ post: { success: false, message: 'Subject required' } });
+    const lock = cleanLock();
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock });
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toContain('Subject required');
+    expect(opens(requests)).toHaveLength(0);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('is UNPROVEN when the post answers but its board lacks the marker', async () => {
+    arrange({ post: { success: true, listsMarker: false } });
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/lists no "E2E board check/);
+  });
+
+  it.each([
+    ['its subject is not the marker', { subject: 'Something else' }, /marker subject/],
+    ['its byline lacks SPO_test3', { byline: 'By Crazz' }, /byline names SPO_test3/],
+  ])('fails when the opened column %s', async (_label, article, what) => {
+    arrange({ article });
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(what);
+  });
+
+  it('is UNPROVEN when the seed throws', async () => {
+    arrange();
+    jest.spyOn(session, 'findTown').mockRejectedValue(new Error('no town'));
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toContain('no town');
+  });
+
+  it('posts nothing when the town hall names no paper or the board read fails', async () => {
+    const requests = arrange({ paper: '' });
+    expect((await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() })).status).toBe('FAIL');
+    expect(posts(requests)).toHaveLength(0);
+    const again = arrange({ board: { error: 'HTTP 500' } });
+    expect((await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() })).status).toBe('FAIL');
+    expect(posts(again)).toHaveLength(0);
   });
 
   it.each([
@@ -1862,7 +1964,7 @@ describe('newspaper-board-read', () => {
   it('asks for the index of the paper the town hall named', async () => {
     const requests = arrange();
     await flowByName('newspaper-board-read').run(ctx);
-    const req = requests.find(m => m.type === WsMessageType.REQ_NEWSPAPER_BOARD);
+    const req = requests.filter(m => m.type === WsMessageType.REQ_NEWSPAPER_BOARD)[0];
     expect(req).toMatchObject({
       paperName: 'Helartia Herald', townName: 'Helartia', isCapitol: false, buildingX: 1, buildingY: 2,
     });
