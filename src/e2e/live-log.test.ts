@@ -24,6 +24,10 @@ function response(init: {
   } as unknown as Response;
 }
 
+function listing(): Response {
+  return response({ body: 'Survival 26-10-02.log' });
+}
+
 let fetchMock: FetchLike;
 
 beforeEach(() => {
@@ -110,54 +114,55 @@ describe('findCurrentSurvivalLog', () => {
 
 describe('openLogWindow', () => {
   it('records where the log currently ends', async () => {
-    fetchMock.mockResolvedValueOnce(response({ headers: { 'content-length': '1024' } }));
-    const window = await openLogWindow('http://logs/Survival.log');
+    fetchMock.mockResolvedValueOnce(listing()).mockResolvedValueOnce(response({ headers: { 'content-length': '1024' } }));
+    const window = await openLogWindow('http://logs/Survival%2026-10-02.log');
     expect(window.offset).toBe(1024);
-    expect(fetchMock).toHaveBeenCalledWith('http://logs/Survival.log', {
+    expect(fetchMock).toHaveBeenCalledWith('http://logs/Survival%2026-10-02.log', {
       method: 'HEAD',
       headers: { 'Accept-Encoding': 'identity' },
     });
   });
 
   it('refuses a log that reports no length — the window would be meaningless', async () => {
-    fetchMock.mockResolvedValueOnce(response({ headers: {} }));
-    await expect(openLogWindow('http://logs/Survival.log')).rejects.toThrow(/content-length/);
+    fetchMock.mockResolvedValueOnce(listing()).mockResolvedValueOnce(response({ headers: {} }));
+    await expect(openLogWindow('http://logs/Survival%2026-10-02.log')).rejects.toThrow(/content-length/);
   });
 
   it('asks for the uncompressed length — a gzip HEAD reports the compressed size (#1228)', async () => {
     fetchMock.mockImplementation(async (_url, init) => {
+      if (init?.method !== 'HEAD') return listing();
       const enc = new Headers(init?.headers).get('accept-encoding') ?? 'gzip, deflate';
       return enc === 'identity'
         ? response({ headers: { 'content-length': '3525784' } })
         : response({ headers: { 'content-length': '505265', 'content-encoding': 'gzip' } });
     });
-    const window = await openLogWindow('http://logs/Survival.log');
+    const window = await openLogWindow('http://logs/Survival%2026-10-02.log');
     expect(window.offset).toBe(3525784);
   });
 
   it('refuses a compressed answer, naming the Content-Encoding', async () => {
-    fetchMock.mockResolvedValueOnce(
+    fetchMock.mockResolvedValueOnce(listing()).mockResolvedValueOnce(
       response({ headers: { 'content-length': '505265', 'content-encoding': 'gzip' } }),
     );
-    await expect(openLogWindow('http://logs/Survival.log')).rejects.toThrow(/Content-Encoding: gzip/);
+    await expect(openLogWindow('http://logs/Survival%2026-10-02.log')).rejects.toThrow(/Content-Encoding: gzip/);
   });
 
   it('accepts an explicit content-encoding: identity', async () => {
-    fetchMock.mockResolvedValueOnce(
+    fetchMock.mockResolvedValueOnce(listing()).mockResolvedValueOnce(
       response({ headers: { 'content-length': '42', 'content-encoding': 'Identity ' } }),
     );
-    expect((await openLogWindow('http://logs/Survival.log')).offset).toBe(42);
+    expect((await openLogWindow('http://logs/Survival%2026-10-02.log')).offset).toBe(42);
   });
 
   it('stamps the window with a valid ISO date', async () => {
-    fetchMock.mockResolvedValueOnce(response({ headers: { 'content-length': '1' } }));
-    const window = await openLogWindow('http://logs/Survival.log');
+    fetchMock.mockResolvedValueOnce(listing()).mockResolvedValueOnce(response({ headers: { 'content-length': '1' } }));
+    const window = await openLogWindow('http://logs/Survival%2026-10-02.log');
     expect(Number.isNaN(Date.parse(window.openedAt))).toBe(false);
   });
 
   it('surfaces an HTTP failure rather than assuming offset zero', async () => {
-    fetchMock.mockResolvedValueOnce(response({ ok: false, status: 503 }));
-    await expect(openLogWindow('http://logs/Survival.log')).rejects.toThrow(/503/);
+    fetchMock.mockResolvedValueOnce(listing()).mockResolvedValueOnce(response({ ok: false, status: 503 }));
+    await expect(openLogWindow('http://logs/Survival%2026-10-02.log')).rejects.toThrow(/503/);
   });
 });
 
@@ -295,5 +300,115 @@ describe('loggedInWindow', () => {
   it('falls back to the byte offset for a stamp-less line or an invalid openedAt', () => {
     expect(loggedInWindow('Setting Tax value: 1', at('2026-10-01T23:59:59.000Z'))).toBe(true);
     expect(loggedInWindow('1:00:00 AM x', at('now'))).toBe(true);
+  });
+});
+
+describe('day rollover (#1269)', () => {
+  const DIR = 'http://logs/';
+  const OLD = `${DIR}Survival%2026-10-02.log`;
+  const NEW = `${DIR}Survival%2026-10-03.log`;
+  const MIN_WAGE = { marker: LOG_MARKERS.RDOSetMinSalaryValue, match: (l: string) => l.includes('Helartia') };
+  let files: Record<string, string>;
+
+  /** A log host: the listing names every file in `files`; HEAD, ranged and whole GETs per file. */
+  function serveLogs(): void {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === DIR) {
+        return response({ body: Object.keys(files).map(f => `<a href="${f}">${f.replace('%20', ' ')}</a>`).join('\n') });
+      }
+      const name = url.slice(DIR.length);
+      const body = files[name];
+      if (body === undefined) return response({ ok: false, status: 404 });
+      if (init?.method === 'HEAD') return response({ headers: { 'content-length': String(body.length) } });
+      const range = new Headers(init?.headers).get('range');
+      if (range === null) return response({ body });
+      const from = Number(/bytes=(\d+)-/.exec(range)?.[1]);
+      return from >= body.length
+        ? response({ ok: false, status: 416 })
+        : response({ status: 206, body: body.slice(from) });
+    });
+  }
+
+  beforeEach(() => {
+    files = { 'Survival%2026-10-02.log': '11:00:00 PM boot\n' };
+    serveLogs();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('finds a line logged after midnight in the new day file', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-02T23:59:50Z') });
+    const window = await openLogWindow(OLD);
+    expect(window.url).toBe(OLD);
+    jest.setSystemTime(new Date('2026-10-03T00:00:35Z'));
+    files['Survival%2026-10-03.log'] = '12:00:30 AM Setting Min Wage: Helartia, 0, 95\n';
+    const line = await awaitMarker(window, MIN_WAGE, 1_000, 0, mockClock([0, 2_000]), noSleep);
+    expect(line).toBe('12:00:30 AM Setting Min Wage: Helartia, 0, 95');
+  });
+
+  it('opens on the newest file even when handed the file preflight resolved yesterday', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-03T00:05:00Z') });
+    files['Survival%2026-10-03.log'] = '12:01:00 AM chatter\n';
+    const window = await openLogWindow(OLD);
+    expect(window.url).toBe(NEW);
+    files['Survival%2026-10-03.log'] += '12:05:10 AM Setting Min Wage: Helartia, 0, 95\n';
+    const line = await awaitMarker(window, MIN_WAGE, 1_000, 0, mockClock([0, 2_000]), noSleep);
+    expect(line).toBe('12:05:10 AM Setting Min Wage: Helartia, 0, 95');
+  });
+
+  it('still refuses a line in the old file stamped before the window opened', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-02T23:59:50Z') });
+    const window = await openLogWindow(OLD);
+    files['Survival%2026-10-02.log'] += '11:30:00 PM Setting Min Wage: Helartia, 0, 95\n';
+    jest.setSystemTime(new Date('2026-10-03T00:00:35Z'));
+    files['Survival%2026-10-03.log'] = '12:00:30 AM unrelated chatter\n';
+    const line = await awaitMarker(window, MIN_WAGE, 5, 0, mockClock([0, 100]), noSleep);
+    expect(line).toBeNull();
+  });
+
+  it('reads exactly as before when the day has not changed', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-02T12:00:00Z') });
+    const window = { url: OLD, offset: 5, openedAt: '2026-10-02T11:59:00.000Z' };
+    expect(await readSince(window)).toBe(files['Survival%2026-10-02.log'].slice(5));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(OLD, {
+      headers: { Range: 'bytes=5-', 'Accept-Encoding': 'identity' },
+    });
+  });
+
+  it('returns the tail alone past midnight when no newer file has appeared', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-03T00:01:00Z') });
+    const window = { url: OLD, offset: 5, openedAt: '2026-10-02T23:59:00.000Z' };
+    expect(await readSince(window)).toBe(files['Survival%2026-10-02.log'].slice(5));
+  });
+
+  it('separates the old tail from the new file with a newline', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-03T00:01:00Z') });
+    files['Survival%2026-10-02.log'] = '11:00:00 PM no newline';
+    files['Survival%2026-10-03.log'] = '12:00:30 AM first';
+    const window = { url: OLD, offset: 0, openedAt: '2026-10-02T23:59:00.000Z' };
+    expect(await readSince(window)).toBe('11:00:00 PM no newline\n12:00:30 AM first');
+  });
+
+  it('raises a failed read of the newer file', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-03T00:01:00Z') });
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === DIR) return response({ body: 'Survival 26-10-02.log Survival 26-10-03.log' });
+      if (new Headers(init?.headers).get('range') !== null) return response({ ok: false, status: 416 });
+      return response({ ok: false, status: 500 });
+    });
+    const window = { url: OLD, offset: 0, openedAt: '2026-10-02T23:59:00.000Z' };
+    await expect(readSince(window)).rejects.toThrow(/Log read failed \(500\)/);
+  });
+
+  it('counts a line from a file dated after the window day as later than the window', () => {
+    const window = { url: OLD, offset: 0, openedAt: '2026-10-02T23:58:00.000Z' };
+    expect(loggedInWindow('12:00:30 AM x', window, NEW)).toBe(true);
+    expect(loggedInWindow('12:00:30 AM x', window, OLD)).toBe(false);
+    expect(loggedInWindow('12:00:30 AM x', window)).toBe(false);
   });
 });
