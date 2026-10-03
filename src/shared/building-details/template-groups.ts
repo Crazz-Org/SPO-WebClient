@@ -49,6 +49,7 @@ export const UNK_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
+    { rdoName: 'connectMap', displayName: 'Connect', type: PropertyType.ACTION_BUTTON, actionId: 'connectMap', buttonLabel: 'Connect' },
     { rdoName: 'demolish', displayName: 'Demolish', type: PropertyType.ACTION_BUTTON, actionId: 'demolish', buttonLabel: 'Demolish' },
   ],
   rdoCommands: {

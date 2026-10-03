@@ -40,7 +40,7 @@ describe('DiagnosisBanner', () => {
     expect(tabForAction({ kind: 'openServices' }, TABS)).toBe('svc');
     expect(tabForAction({ kind: 'openWorkforce' }, TABS)).toBe('workforce');
     expect(tabForAction({ kind: 'openResearch' }, TABS)).toBe('research');
-    expect(tabForAction({ kind: 'connect' }, TABS)).toBe('supplies');
+    expect(tabForAction({ kind: 'connect' }, TABS)).toBeNull();
     expect(tabForAction({ kind: 'openSupplies' }, [] as never)).toBeNull();
     expect(tabForAction(undefined, TABS)).toBeNull();
   });

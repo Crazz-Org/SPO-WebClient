@@ -1205,3 +1205,14 @@ describe('ordinary-facility general groups declare kind, cluster and town', () =
     }
   });
 });
+
+describe('UNK_GENERAL_GROUP Connect (UnkFacilitySheet.pas:130)', () => {
+  it('carries a connectMap action button before demolish', () => {
+    const props = UNK_GENERAL_GROUP.properties;
+    const ci = props.findIndex((p) => p.actionId === 'connectMap');
+    const di = props.findIndex((p) => p.actionId === 'demolish');
+    expect(ci).toBeGreaterThan(-1);
+    expect(ci).toBeLessThan(di);
+    expect(props[ci]).toMatchObject({ rdoName: 'connectMap', type: PropertyType.ACTION_BUTTON, buttonLabel: 'Connect' });
+  });
+});
