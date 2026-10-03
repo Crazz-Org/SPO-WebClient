@@ -152,7 +152,7 @@ async function setBuildingPropertyImpl(
     const tempObjectId = await ctx.cacherCreateObject();
     let currBlock: string;
     let objectId: string;
-    /** The gate's own id, for the one member that is declared on a gate. */
+    /** The gate's own id, for the two members declared on an input gate (RDOSelSelected, RDOSetInputFluidPerc). */
     let gateObjectId: string | null = null;
 
     try {
@@ -176,18 +176,30 @@ async function setBuildingPropertyImpl(
       // Cache/CacheCommon.pas:30). Neither CurrBlock nor the facility's own
       // ObjectId is that object — both are the block, which does not publish
       // the member. Resolve the gate the way the read-back does: by fluid name.
-      if (propertyName === 'RDOSelSelected') {
-        gateObjectId = await readGateWitness(
+      const resolveInputGateId = async (): Promise<string> => {
+        const id = await readGateWitness(
           ctx, tempObjectId, 'Input',
           additionalParams?.fluidId || additionalParams?.metaFluid, 'ObjectId',
         );
-        if (!gateObjectId) {
+        if (!id) {
           throw new Error(
-            'RDOSelSelected cannot be addressed: no input gate ObjectId resolved for ' +
+            `${propertyName} cannot be addressed: no input gate ObjectId resolved for ` +
             `fluid "${additionalParams?.fluidId ?? additionalParams?.metaFluid ?? ''}" — ` +
             'the member lives on the gate, not on the block'
           );
         }
+        return id;
+      };
+      if (propertyName === 'RDOSelSelected') {
+        gateObjectId = await resolveInputGateId();
+      } else if (propertyName === 'RDOSetInputFluidPerc') {
+        // Same shape: `published procedure RDOSetInputFluidPerc(Perc : integer)`
+        // is declared on TInput, the gate (Kernel/Kernel.pas:1508), not on the
+        // block. Voyager binds it to the ad input's own ObjectId —
+        // `MSProxy.BindTo(fAdInputId); MSProxy.RDOSetInputFluidPerc(Perc)`
+        // (Voyager/AdvSheetForm.pas:456-457), with fAdInputId read off that
+        // input's `ObjectId` (:645). Rule 2 of CLAUDE.md: follow the reference.
+        gateObjectId = await resolveInputGateId();
       }
     } finally {
       await ctx.cacherCloseObject(tempObjectId);
@@ -240,7 +252,7 @@ async function setBuildingPropertyImpl(
     // Output/input gate commands bind to ObjectId, not CurrBlock.
     // RDOSetOutputPrice BindTo: objectId (direct)
     //
-    // The choice is three-way, not two: RDOSelSelected binds to neither of
+    // The choice is three-way, not two: RDOSelSelected and RDOSetInputFluidPerc bind to neither of
     // these ids but to the GATE's own ObjectId, resolved above. Both entries
     // here name the facility's block, which does not publish that member.
     const RDO_OBJECTID_COMMANDS: ReadonlySet<string> = new Set([
