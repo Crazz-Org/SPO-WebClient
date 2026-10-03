@@ -2092,7 +2092,7 @@ describe('getBuildingGateConnections', () => {
     expect(setPath?.category).toBe(TimeoutCategory.SLOW);
   });
 
-  it("asks for the ten header names Voyager asks for, in its order", async () => {
+  it("asks for the ten header names Voyager asks for, in its order, then the ad sheet's two", async () => {
     // `SheetUtils.GetPropertyArray(Proxy, [tidFluidId, tidFluidValue,
     // tidLastCost, tidKmin, tidPmax, tidQPSorted, tidSortMode, tidCnxCount,
     // tidSelected, tidObjectId], ...)` — Voyager/SupplySheetForm.pas:460.
@@ -2102,10 +2102,29 @@ describe('getBuildingGateConnections', () => {
 
     await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Fresh Food');
 
+    // The first ten stay Voyager's, in order; #1195 appends the two names the ad
+    // sheet reads off the same input (Voyager/AdvSheetForm.pas:316-321).
     expect(fake.cacher.getPropertyList).toHaveBeenCalledWith(FIRST_TEMP, [
       'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
       'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
+      'nfCapacity', 'nfActualMaxFluidValue',
     ]);
+  });
+
+  it('maps nfCapacity and nfActualMaxFluidValue to capacity / actualMaxFluid (#1195)', async () => {
+    // Every TInput cache object writes both (Kernel/KernelCache.pas:617-619);
+    // Voyager's ad percentage is min(100, round(100*fld/cap)) of them
+    // (Voyager/AdvSheetForm.pas:651-660).
+    const fake = gateCtx('supplies', {
+      MetaFluid: 'Advertisement', cnxCount: '0', nfCapacity: '200', nfActualMaxFluidValue: '150',
+    }, '');
+
+    const { supply } = await getBuildingGateConnections(
+      fake.ctx, X, Y, 'supplies', 'Seg0', 'Advertisement',
+    );
+
+    expect(supply?.capacity).toBe('200');
+    expect(supply?.actualMaxFluid).toBe('150');
   });
 
   it('leaves the auto-buy flag undefined on a gate that does not publish it', async () => {

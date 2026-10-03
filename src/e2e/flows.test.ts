@@ -19,6 +19,8 @@ import {
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
+  bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
+  RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent,
   type Flow, type FlowResult, type GateLinks,
 } from './flows';
 import { parseBuildingFocusResponse } from '@/server/map-parsers';
@@ -83,13 +85,23 @@ describe('the catalogue', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
     expect(mutating).toEqual(
       [
-        'accept-cloning', 'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'bank-settings',
+        'accept-cloning',
+        // #1195
+        'ad-budget-roundtrip',
+        'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'bank-settings',
         'chat-private-channel',
         // #1153
-        'client-hire-remove', 'company-input-demand', 'connect-on-map',
+        'client-hire-remove',
+        // #1189
+        'clone-salaries-roundtrip',
+        'company-input-demand', 'connect-on-map',
+        // #1189
+        'facility-bank-loan',
         'facility-open-close',
         'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
         'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
+        // #1195
+        'mayor-rating-roundtrip',
         'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
         // #1153
@@ -6140,7 +6152,9 @@ describe('inspector flows (#1152)', () => {
   });
 
   describe('industry-supply-limits', () => {
-    it('drives max price, min K, sort mode and overprice on a sortable gate with a supplier, restoring each', async () => {
+    // #1195: sort mode and overprice are excluded — no fixture carries them (Kernel/MediaGates.pas:388-389,
+    // StdBlocks/Movie.pas:84; the overprice needs an own supplier row, #1153).
+    it('drives only max price and min K, even on a sortable gate with a supplier row, restoring each', async () => {
       const world = makeWorld({ supplies: [supplyGate({ qpSorted: '1', sortMode: '0' })] });
       const lock = cleanLock();
       arrange(world);
@@ -6149,62 +6163,25 @@ describe('inspector flows (#1152)', () => {
       expect(result.probes.map(p => [p.member, p.written, p.original])).toEqual([
         ['RDOSetInputMaxPrice', '199', '200'],
         ['RDOSetInputMinK', '11', '10'],
-        ['RDOSetInputSortMode', '1', '0'],
-        ['RDOSetInputOverPrice', '21', '20'],
       ]);
-      expect(result.probes[2].logLine).toBe('12:00 Changing Sort Mode.. ');
+      expect(result.unproven).toEqual([]);
+      const members = world.writes.map(w => w.property);
+      expect(members).not.toContain('RDOSetInputSortMode');
+      expect(members).not.toContain('RDOSetInputOverPrice');
       expect(world.supplies[0]).toMatchObject({ maxPrice: '200', minK: '10', sortMode: '0' });
-      expect(world.supplies[0].connections[0].overprice).toBe('20');
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('records the sort mode and the overprice unproven by name on a plain gate with no supplier, and runs the others', async () => {
+    it('records nothing unproven for the excluded members on a plain gate with no supplier', async () => {
       const world = makeWorld({ supplies: [supplyGate({ connections: [], connectionCount: 0 })] });
       arrange(world);
       const result = await run('industry-supply-limits');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([
-        expect.stringMatching(/^RDOSetInputSortMode — the Water gate publishes no sort mode/),
-        expect.stringMatching(/^RDOSetInputOverPrice — the Water gate has no supplier row/),
-      ]);
+      expect(result.status).toBe('PASS');
+      expect(result.unproven).toEqual([]);
       expect(result.probes.map(p => [p.member, p.status])).toEqual([
         ['RDOSetInputMaxPrice', 'PASS'],
         ['RDOSetInputMinK', 'PASS'],
       ]);
-    });
-
-    it('restores the overprice on the same supplier after its row shifted', async () => {
-      const world = makeWorld({
-        after: (w, n) => {
-          if (w.property === 'RDOSetInputOverPrice' && n === 5) {
-            world.supplies[0].connections.unshift(conn('New Well', 'Other Co', 9, 9, '0'));
-          }
-        },
-      });
-      arrange(world);
-      const result = await run('industry-supply-limits');
-      const over = world.writes.filter(w => w.property === 'RDOSetInputOverPrice');
-      expect(over).toEqual([
-        { property: 'RDOSetInputOverPrice', value: '21', params: { fluidId: 'Water', index: '0' } },
-        { property: 'RDOSetInputOverPrice', value: '20', params: { fluidId: 'Water', index: '1' } },
-      ]);
-      expect(world.supplies[0].connections.map(c => [c.facilityName, c.overprice])).toEqual([['New Well', '0'], ['Well', '20']]);
-      expect(result.probes.find(p => p.member === 'RDOSetInputOverPrice')?.status).toBe('PASS');
-    });
-
-    it('never writes the overprice onto another row when its supplier left the gate', async () => {
-      const world = makeWorld({
-        after: (w, n) => {
-          if (n === 5) world.supplies[0].connections = [conn('Other Well', 'Other Co', 9, 9, '0')];
-        },
-      });
-      arrange(world);
-      const result = await run('industry-supply-limits');
-      const over = result.probes.find(p => p.member === 'RDOSetInputOverPrice');
-      expect(over?.status).toBe('FAIL');
-      expect(over?.note).toMatch(/restore failed/);
-      expect(world.writes.filter(w => w.property === 'RDOSetInputOverPrice')).toHaveLength(1);
-      expect(world.supplies[0].connections[0].overprice).toBe('0');
     });
 
     it('FAILs a max-price read-back that never moves though its line is present', async () => {
@@ -9294,6 +9271,1019 @@ describe('chat flows (#1148)', () => {
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
       expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
       expect(off).toHaveBeenCalledWith(secondary.session);
+    });
+  });
+});
+
+describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
+  const HIM = SECONDARY_ACCOUNT.username;
+  let lines: string[];
+  let lock: WorldLock;
+  let sent: { account: string; msg: Record<string, unknown> }[];
+
+  /** A stub session for `account`, recording every request with the account that sent it. */
+  function stubFor(account: typeof PRIMARY_ACCOUNT, responder: (msg: WsMessage) => unknown): session.LiveSession {
+    return {
+      ...stubSession(msg => {
+        sent.push({ account: account.username, msg: msg as unknown as Record<string, unknown> });
+        return responder(msg);
+      }),
+      account,
+    };
+  }
+  const sentOf = (type: WsMessageType) => sent.filter(e => e.msg.type === type);
+  const flowCtx = () => ({ lock, survivalLogUrl: 'http://logs/S.log', ...fastClock() });
+
+  beforeEach(() => {
+    lines = [];
+    sent = [];
+    lock = cleanLock();
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      if (typeof proof !== 'object') return null;
+      return lines.find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+    });
+  });
+
+  describe('bankDebtorCount', () => {
+    it('is undefined when the group carries no LoanCount', () => {
+      expect(bankDebtorCount({}, SECONDARY_ACCOUNT)).toBeUndefined();
+      expect(bankDebtorCount({ bankLoans: [pv('Debtor0', HIM)] }, SECONDARY_ACCOUNT)).toBeUndefined();
+    });
+
+    it('counts every Debtor<i> naming the account, case-insensitively, across a gap in the index', () => {
+      const groups = {
+        bankLoans: [
+          pv('LoanCount', '3'), pv('Debtor0', 'spo_test '), pv('Debtor1', 'Yellow Inc.'), pv('Debtor3', 'SPO_TEST'),
+          pv('Amount0', HIM),
+        ],
+      };
+      expect(bankDebtorCount(groups, SECONDARY_ACCOUNT)).toBe(2);
+      expect(bankDebtorCount({ bankLoans: [pv('LoanCount', '0')] }, SECONDARY_ACCOUNT)).toBe(0);
+    });
+  });
+
+  describe('facility-bank-loan', () => {
+    const BANK = { x: 3, y: 4, visualClass: '200', name: 'Bank' };
+    interface LoanWorld {
+      perc?: string;
+      ownerBalance: string;
+      secondaryBalance: string;
+      secondaryLoans: LoanInfo[];
+      /** The bank's Debtor<i> rows by index; `undefined` is a gap. */
+      debtors: (string | undefined)[];
+      noLoanCount?: boolean;
+      /** The ordinal the block answers; default 0. */
+      result?: number;
+      /** The loan reaches SPO_test's list but never the bank's rows. */
+      bankIgnores?: boolean;
+      payoffRefused?: boolean;
+      logLine?: string;
+      missingBank?: boolean;
+      skipped?: boolean;
+    }
+    const loan = (over: Partial<LoanInfo> = {}): LoanInfo => ({
+      bank: 'Main Bank', date: '1/1/2100', amount: '500', interest: 3, term: 10, slice: '50', loanIndex: 0, ...over,
+    });
+    const bankData = (balance: string, loans: LoanInfo[]) => ({
+      data: { balance, maxLoan: '0', totalLoans: '0', totalNextPayment: '0', loans: structuredClone(loans), defaultInterest: 0, defaultTerm: 0 },
+    });
+
+    function drive(w: LoanWorld): { login: jest.SpyInstance } {
+      const me = stubFor(PRIMARY_ACCOUNT, msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        if (msg.type === WsMessageType.REQ_BUILDING_DETAILS) return { details: { tabs: [], groups: {} } };
+        if (msg.type === WsMessageType.REQ_BUILDING_TAB_DATA) {
+          if (m.tabId === 'bankGeneral') return { groups: { bankGeneral: w.perc === undefined ? [] : [pv('BudgetPerc', w.perc)] } };
+          if (m.tabId === 'bankLoans') {
+            const rows = w.debtors.flatMap((d, i) => (d === undefined ? [] : [pv(`Debtor${i}`, d)]));
+            return { groups: { bankLoans: w.noLoanCount ? rows : [pv('LoanCount', String(rows.length)), ...rows] } };
+          }
+        }
+        if (msg.type === WsMessageType.REQ_PROFILE_BANK) return bankData(w.ownerBalance, []);
+        throw new Error(`unexpected ${msg.type} from ${PRIMARY_ACCOUNT.username}`);
+      });
+      const secondary = stubFor(SECONDARY_ACCOUNT, msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        if (msg.type === WsMessageType.REQ_PROFILE_BANK) return bankData(w.secondaryBalance, w.secondaryLoans);
+        if (msg.type === WsMessageType.REQ_BUILDING_LOAN_REQUEST) {
+          const result = w.result ?? 0;
+          lines.push(w.logLine ?? `9/30/2026 12:00 - Fac(${String(m.x)},${String(m.y)}) AskLoan`);
+          if (result === 0 || result === 2) {
+            w.secondaryLoans.push(loan({ bank: 'Bank of SPO_test3', date: '3/3/2100', amount: String(m.amount), loanIndex: w.secondaryLoans.length }));
+            if (!w.bankIgnores) w.debtors.push(HIM);
+          }
+          return { x: m.x, y: m.y, result };
+        }
+        if (msg.type === WsMessageType.REQ_PROFILE_BANK_ACTION) {
+          if (w.payoffRefused) return { result: { success: false, message: 'payoff was not applied' } };
+          w.secondaryLoans = w.secondaryLoans.filter(l => l.loanIndex !== m.loanIndex).map((l, i) => ({ ...l, loanIndex: i }));
+          const i = w.debtors.lastIndexOf(HIM);
+          if (i >= 0) w.debtors.splice(i, 1);
+          return { result: { success: true, message: 'ok' } };
+        }
+        throw new Error(`unexpected ${msg.type} from ${HIM}`);
+      });
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(w.skipped ? { skipped: `${HIM} refused` } : secondary);
+      const login = jest.spyOn(session, 'login').mockResolvedValue(me);
+      jest.spyOn(fixtures, 'findFixture').mockResolvedValue(
+        w.missingBank ? { kind: 'bank', reason: 'none in Helartia' } : { kind: 'bank', found: BANK },
+      );
+      return { login };
+    }
+    const happy = (over: Partial<LoanWorld> = {}): LoanWorld => ({
+      perc: '40', ownerBalance: '1000', secondaryBalance: '500', secondaryLoans: [loan()],
+      debtors: ['Yellow Inc.', undefined, 'spo_test'], ...over,
+    });
+    const run = () => flowByName('facility-bank-loan').run(flowCtx());
+    const loanRequests = () => sentOf(WsMessageType.REQ_BUILDING_LOAN_REQUEST);
+    const payoffs = () => sentOf(WsMessageType.REQ_PROFILE_BANK_ACTION);
+
+    it('SPO_test borrows $1 at the fixture, both lists show it, SPO_test pays it off — PASS, both lists as before', async () => {
+      expect(flowByName('facility-bank-loan').mutates).toBe(true);
+      const world = happy();
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(loanRequests()).toEqual([
+        { account: HIM, msg: expect.objectContaining({ x: 3, y: 4, amount: '1' }) },
+      ]);
+      expect(payoffs()).toEqual([
+        { account: HIM, msg: expect.objectContaining({ action: 'payoff', loanIndex: 1 }) },
+      ]);
+      expect(result.probes[0]).toMatchObject({
+        member: 'TBankBlock.RDOAskLoan',
+        original: 'secondary new=none gone=0; bank +0',
+        written: 'secondary new=1 gone=0; bank +1',
+        readBack: 'CONFIRMED',
+        restoreReadBack: 'CONFIRMED',
+        restored: true,
+      });
+      expect(result.probes[0].logLine).toContain('Fac(3,4) AskLoan');
+      expect(world.secondaryLoans).toEqual([loan()]);
+      expect(world.debtors).toEqual(['Yellow Inc.', undefined, 'spo_test']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is SKIPPED, sending nothing to the bank, when SPO_test is refused at login', async () => {
+      const { login } = drive(happy({ skipped: true }));
+      const result = await run();
+      expect(result.status).toBe('SKIPPED');
+      expect(result.skipped).toBe(`${HIM} refused`);
+      expect(login).not.toHaveBeenCalled();
+      expect(sent).toEqual([]);
+    });
+
+    it.each<[string, Partial<LoanWorld>, RegExp]>([
+      ['the bank fixture is missing', { missingBank: true }, /^bank fixture — none in Helartia$/],
+      ['the owner cannot cover $1', { perc: '0' }, /loan limit is 0 .*Kernel\/Kernel\.pas:9095-9097/],
+      ['BudgetPerc is unreadable', { perc: undefined }, /BudgetPerc \(unreadable\)/],
+      ["SPO_test's balance is not above 0", { secondaryBalance: '0' }, /balance 0 is not > 0 .*Kernel\/Kernel\.pas:11572/],
+      ['the bank lists no LoanCount', { noLoanCount: true }, /carries no LoanCount/],
+    ])('is UNPROVEN, borrowing nothing, when %s', async (_label, over, reason) => {
+      drive(happy(over));
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(reason);
+      expect(loanRequests()).toEqual([]);
+      expect(payoffs()).toEqual([]);
+    });
+
+    it("FAILs a loan the bank's rows never list, and still pays it off", async () => {
+      const world = happy({ bankIgnores: true });
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(result.probes[0].note).toMatch(/read-back never showed "secondary new=1 gone=0; bank \+1"/);
+      expect(payoffs()).toHaveLength(1);
+      expect(result.probes[0].restoreReadBack).toBe('CONFIRMED');
+      expect(world.secondaryLoans).toEqual([loan()]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a rejected loan and still runs the restore: no loan to pay off, pending cleared', async () => {
+      drive(happy({ result: 1 }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/answered 1: rejected \(StdBlocks\/Banks\.pas:164-166\)/);
+      expect(result.probes[0].restored).toBe(true);
+      expect(payoffs()).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a loan granted uncovered (brqNotEnoughFunds) and pays it off', async () => {
+      const world = happy({ result: 2 });
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/Kernel\/Kernel\.pas:8866-8870/);
+      expect(payoffs()).toHaveLength(1);
+      expect(world.secondaryLoans).toEqual([loan()]);
+    });
+
+    it('names an answer no TBankRequestResult has', async () => {
+      drive(happy({ result: -1 }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/answered -1: no answer from the block/);
+    });
+
+    it('FAILs a refused payoff and keeps the pending restore naming the bank and the loan', async () => {
+      drive(happy({ payoffRefused: true }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].restored).toBe(false);
+      expect(result.probes[0].note).toMatch(/restore failed — the world is left dirty/);
+      const pending = lock.read().pendingRestores;
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ x: 3, y: 4, propertyName: 'RDOPayOff' });
+      expect(pending[0].what).toMatch(/SPO_test's \$1 loan at SPO_test3's bank Bank \(3,4\) — SPO_test pays off the \$1 loan not among the 1 loans/);
+    });
+
+    it.each([` AskLoan: ${HIM}, $1`, '12:00 - Fac(5,4) AskLoan', '12:00 - Fac(3,4) Error in AskLoan'])(
+      'does not take "%s" as the proof of the block borrow',
+      async line => {
+        drive(happy({ logLine: line }));
+        const result = await run();
+        expect(result.status).toBe('FAIL');
+        expect(result.probes[0].logLine).toBeNull();
+      },
+    );
+  });
+
+  describe('distinctSalaries and cloneLineMatches', () => {
+    it('moves hi toward the middle, skipping a triplet already taken', () => {
+      expect(distinctSalaries('100,80,60', [])).toBe('101,80,60');
+      expect(distinctSalaries('100,80,60', ['101,80,60'])).toBe('99,80,60');
+      expect(distinctSalaries('200,1,1', ['199,1,1'])).toBe('201,1,1');
+    });
+
+    it('stays inside 0..255', () => {
+      expect(distinctSalaries('255,1,1', [])).toBe('254,1,1');
+      expect(distinctSalaries('0,1,1', ['1,1,1'])).toBe('2,1,1');
+      const all = Array.from({ length: 256 }, (_v, i) => `${i},1,1`);
+      expect(() => distinctSalaries('0,1,1', all)).toThrow(/no salary triplet/);
+    });
+
+    it('moves the first published class only, keeps unpublished slots empty, and refuses when none is published', () => {
+      expect(distinctSalaries(',80,60', [])).toBe(',81,60');
+      expect(distinctSalaries(',,60', [',,61'])).toBe(',,59');
+      expect(() => distinctSalaries(',,', [])).toThrow(/no salary class is published/);
+    });
+
+    it('matches the tycoon id whole', () => {
+      expect(cloneLineMatches('12:00 CloneFacility: 1', '1')).toBe(true);
+      expect(cloneLineMatches('12:00 CloneFacility: 1 ', '1')).toBe(true);
+      expect(cloneLineMatches('12:00 CloneFacility: 12', '1')).toBe(false);
+      expect(cloneLineMatches('12:00 CloneFacility: 1', '12')).toBe(false);
+    });
+
+    it('asks for same town + same company + salaries (Kernel/CloneOptions.pas:7-13)', () => {
+      expect(CLONE_SALARIES_OPTIONS).toBe(0x1 | 0x2 | 0x100);
+    });
+  });
+
+  describe('clone-salaries-roundtrip', () => {
+    const at = (x: number, visualClass: string, name: string, tabIds = ['workforce']) =>
+      ({ x, y: 10, visualClass, name, tabIds });
+    const SOURCE = at(10, '700', 'Shop A');
+    const T1 = at(11, '700', 'Shop B');
+    const T2 = at(12, '700', 'Shop C');
+    const REFUSING = at(13, '700', 'Shop D');
+    const GUARD = at(14, '800', 'Farm');
+    const PARK = at(15, '900', 'Park', ['general']);
+
+    interface CloneWorld {
+      holdings: ReturnType<typeof at>[];
+      salaries: Record<string, string>;
+      accept: Record<string, string | undefined>;
+      unreadable?: string;
+      /** Facilities whose executive slot (Salaries0) is never published — it reads "". */
+      noExecutives?: Set<string>;
+      /** The queued clone never lands. */
+      cloneIgnored?: boolean;
+      cloneSuccess?: boolean;
+      cloneThrows?: boolean;
+      /** The refusing target is written anyway. */
+      refusingWritten?: boolean;
+      /** Throw on this salaries write. */
+      failWrite?: (key: string, triplet: string) => boolean;
+      /** The tycoon id the CloneFacility: line carries; null = no line. */
+      logId?: string | null;
+      events: string[];
+    }
+    function makeWorld(over: Partial<CloneWorld> = {}): CloneWorld {
+      return {
+        holdings: [SOURCE, T1, T2, REFUSING, GUARD, PARK],
+        salaries: {
+          '10,10': '100,80,60', '11,10': '101,80,60', '12,10': '50,40,30', '13,10': '70,60,50', '14,10': '30,20,10',
+        },
+        accept: { '11,10': '-1', '12,10': '1', '13,10': '0' },
+        events: [],
+        ...over,
+      };
+    }
+    function arrange(w: CloneWorld): void {
+      const stub = stubFor(PRIMARY_ACCOUNT, msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        const key = `${String(m.x)},${String(m.y)}`;
+        switch (msg.type) {
+          case WsMessageType.REQ_BUILDING_DETAILS:
+            return { details: { tabs: [], groups: {} } };
+          case WsMessageType.REQ_BUILDING_TAB_DATA: {
+            if (!(key in w.salaries)) throw new Error(`read of an unlisted facility ${key}`);
+            if (m.tabId === 'workforce') {
+              const [s0, s1, s2] = w.salaries[key].split(',');
+              const rows = [pv('Salaries0', w.noExecutives?.has(key) ? '' : s0), pv('Salaries1', s1), pv('Salaries2', s2)];
+              return { groups: { workforce: w.unreadable === key ? rows.slice(0, 2) : rows } };
+            }
+            const flag = w.accept[key];
+            return { groups: { upgrade: flag === undefined ? [] : [pv('AcceptCloning', flag)] } };
+          }
+          case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
+            const p = m.additionalParams as Record<string, string>;
+            const triplet = [p.salary0, p.salary1, p.salary2].join(',');
+            w.events.push(`set ${key}=${triplet}`);
+            if (m.propertyName !== 'RDOSetSalaries' || m.value !== p.salary0) throw new Error('not a salaries write');
+            if (w.failWrite?.(key, triplet)) throw new Error(`write at ${key} refused`);
+            w.salaries[key] = triplet;
+            return { success: true };
+          }
+          case WsMessageType.REQ_CLONE_FACILITY: {
+            w.events.push(`clone ${key} ${String(m.options)}`);
+            if (w.cloneThrows) throw new Error('socket died');
+            if (w.logId !== null) lines.push(`12:00 CloneFacility: ${w.logId ?? '42'}`);
+            if (!w.cloneIgnored) {
+              for (const h of w.holdings) {
+                const k = `${h.x},${h.y}`;
+                if (k === key || h.visualClass !== SOURCE.visualClass) continue;
+                if (truthyFlag(w.accept[k]) === '1' || w.refusingWritten) w.salaries[k] = w.salaries[key];
+              }
+            }
+            return { success: w.cloneSuccess ?? true };
+          }
+          default:
+            throw new Error(`unexpected ${msg.type}`);
+        }
+      });
+      jest.spyOn(session, 'login').mockResolvedValue(stub);
+      jest.spyOn(fixtures, 'scanHoldings').mockResolvedValue({ holdings: w.holdings, sites: [] });
+      jest.spyOn(fixtures, 'ownTycoonId').mockReturnValue('42');
+    }
+    const run = () => flowByName('clone-salaries-roundtrip').run(flowCtx());
+    const writes = () => sentOf(WsMessageType.REQ_BUILDING_SET_PROPERTY);
+    const clones = () => sentOf(WsMessageType.REQ_CLONE_FACILITY);
+    const ORIGINAL = '10,10=100,80,60;11,10=101,80,60;12,10=50,40,30;13,10=70,60,50;14,10=30,20,10';
+
+    it('writes a distinct salary on the source, clones 0x103 once, proves every target, restores what moved — PASS', async () => {
+      expect(flowByName('clone-salaries-roundtrip').mutates).toBe(true);
+      const world = makeWorld();
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(clones()).toEqual([{ account: PRIMARY_ACCOUNT.username, msg: expect.objectContaining({ x: 10, y: 10, options: 0x103 }) }]);
+      expect(world.events).toEqual([
+        'set 10,10=99,80,60', 'clone 10,10 259',
+        'set 10,10=100,80,60', 'set 11,10=101,80,60', 'set 12,10=50,40,30',
+      ]);
+      expect(result.probes[0]).toMatchObject({
+        member: 'CloneFacility',
+        original: ORIGINAL,
+        written: '10,10=99,80,60;11,10=99,80,60;12,10=99,80,60;13,10=70,60,50;14,10=30,20,10',
+        readBack: 'CONFIRMED',
+        restoreReadBack: 'CONFIRMED',
+        restored: true,
+      });
+      expect(result.probes[0].logLine).toBe('12:00 CloneFacility: 42');
+      expect(world.salaries).toEqual(makeWorld().salaries);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each<[string, Partial<CloneWorld>, RegExp]>([
+      ['only one holding of each class', { holdings: [SOURCE, GUARD] }, /no two finished .*Kernel\/World\.pas:3529/],
+      ['no target accepts cloning', { accept: { '11,10': '0', '12,10': '0', '13,10': '0' } }, /no 700 target accepts cloning .*Kernel\/Kernel\.pas:5101-5104/],
+      ["a target's salaries are unreadable", { unreadable: '12,10' }, /salaries of Shop C \(12,10\) cannot be read/],
+      ["a guard's salaries are unreadable", { unreadable: '14,10' }, /salaries of Farm \(14,10\) cannot be read/],
+      ["a target's AcceptCloning is unreadable", { accept: { '11,10': '1', '13,10': '0' } }, /Shop C \(12,10\)'s AcceptCloning cannot be read/],
+      [
+        'the source publishes no salary class',
+        { salaries: { '10,10': ',,', '11,10': ',,', '12,10': ',,', '13,10': ',,', '14,10': '30,20,10' } },
+        /Shop A \(10,10\) publishes no salary class .*WorkCenterBlock\.pas:567-571.*nothing sent/,
+      ],
+    ])('is UNPROVEN, sending nothing, when %s', async (_label, over, reason) => {
+      const world = makeWorld(over);
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(reason);
+      expect(writes()).toEqual([]);
+      expect(clones()).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('never sends an empty salary field when the class publishes no executive slot — nudges a published one, PASS', async () => {
+      const world = makeWorld({
+        noExecutives: new Set(['10,10', '11,10', '12,10', '13,10']),
+        salaries: { '10,10': ',80,60', '11,10': ',81,60', '12,10': ',40,30', '13,10': ',60,50', '14,10': '30,20,10' },
+      });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual([
+        'set 10,10=0,79,60', 'clone 10,10 259',
+        'set 10,10=0,80,60', 'set 11,10=0,81,60', 'set 12,10=0,40,30',
+      ]);
+      for (const { msg } of writes()) {
+        const m = msg as WsMessage & Record<string, unknown>;
+        const p = m.additionalParams as Record<string, string>;
+        for (const v of [m.value, p.salary0, p.salary1, p.salary2]) expect(v).toMatch(/^\d+$/);
+      }
+      expect(result.probes[0]).toMatchObject({
+        written: '10,10=,79,60;11,10=,79,60;12,10=,79,60;13,10=,60,50;14,10=30,20,10',
+        readBack: 'CONFIRMED',
+        restoreReadBack: 'CONFIRMED',
+      });
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a clone that never lands, and restores the source', async () => {
+      const world = makeWorld({ cloneIgnored: true });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(result.probes[0].note).toMatch(/read-back never showed/);
+      expect(world.events.slice(2)).toEqual(['set 10,10=100,80,60']);
+      expect(result.probes[0].restoreReadBack).toBe('CONFIRMED');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each<[string, Partial<CloneWorld>, RegExp]>([
+      ['answers success false', { cloneSuccess: false, cloneIgnored: true }, /REQ_CLONE_FACILITY answered success false/],
+      ['throws', { cloneThrows: true }, /socket died/],
+    ])('restores the source after a clone that %s', async (_label, over, note) => {
+      const world = makeWorld(over);
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(note);
+      expect(world.events).toContain('set 10,10=100,80,60');
+      expect(world.salaries['10,10']).toBe('100,80,60');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a refusing target that changes anyway, and writes it back', async () => {
+      const world = makeWorld({ refusingWritten: true });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(world.events).toContain('set 13,10=70,60,50');
+      expect(world.salaries['13,10']).toBe('70,60,50');
+    });
+
+    it('FAILs a refused restore write and keeps the pending restore listing every facility', async () => {
+      const world = makeWorld({ failWrite: (key, triplet) => key === '11,10' && triplet === '101,80,60' });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/restore failed/);
+      // The other facilities are still written back.
+      expect(world.events).toContain('set 12,10=50,40,30');
+      const pending = lock.read().pendingRestores;
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ originalValue: ORIGINAL, x: 10, y: 10, propertyName: 'RDOSetSalaries' });
+    });
+
+    it.each<[string, string | null]>([['no line', null], ['a line for another tycoon', '421']])(
+      'FAILs with %s',
+      async (_label, logId) => {
+        arrange(makeWorld({ logId }));
+        const result = await run();
+        expect(result.status).toBe('FAIL');
+        expect(result.probes[0].logLine).toBeNull();
+        expect(result.probes[0].note).toMatch(/no model-server log line/);
+      },
+    );
+  });
+});
+
+describe('player actions (#1195)', () => {
+  describe('ratingLogMatches and ratingMove', () => {
+    it('matches only the line ending with the rater, the RatingId and the value, case-insensitively', () => {
+      const line = '12:00:00 Setting town politics Tycoon rating: Crazz, 7, 0';
+      expect(ratingLogMatches(line, 'Crazz', '7', '0')).toBe(true);
+      expect(ratingLogMatches(line.toUpperCase(), 'crazz', '7', '0')).toBe(true);
+      expect(ratingLogMatches(line, 'SPO_test3', '7', '0')).toBe(false);
+      expect(ratingLogMatches(line, 'Crazz', '8', '0')).toBe(false);
+      expect(ratingLogMatches(line, 'Crazz', '7', '100')).toBe(false);
+      expect(ratingLogMatches('12:00:00 Setting town politics Tycoon rating: Crazz, 7, 10', 'Crazz', '7', '0')).toBe(false);
+    });
+
+    it('says whether the aggregate moved towards the write, away from it, or not at all', () => {
+      expect(ratingMove(60, 40, 100, 0)).toBe('towards');
+      expect(ratingMove(60, 70, 100, 0)).toBe('away');
+      expect(ratingMove(60, 60, 100, 0)).toBe('still');
+      expect(ratingMove(40, 60, 0, 100)).toBe('towards');
+      expect(ratingMove(40, 30, 0, 100)).toBe('away');
+    });
+
+    it('rates at the two ends of the range, baseline 100 and probe 0', () => {
+      expect([RATING_BASELINE, RATING_PROBE]).toEqual([100, 0]);
+    });
+  });
+
+  describe('mayor-rating-roundtrip', () => {
+    interface RatingWorld {
+      mayorName: string;
+      rows: { id?: string; name: string; value: number }[];
+      /** The aggregate after the n-th write of `value`; default: 60 -> 40 -> 60. */
+      move: (value: number, n: number, current: number) => number;
+      refuse?: number;
+      /** Write numbers whose Survival line never appears. */
+      silent: number[];
+      writes: number[];
+      lines: string[];
+    }
+
+    function ratingWorld(over: Partial<RatingWorld> = {}): RatingWorld {
+      return {
+        mayorName: 'SPO_test3',
+        rows: [{ id: '7', name: 'Overall', value: 60 }],
+        move: value => (value === 0 ? 40 : 60),
+        silent: [],
+        writes: [],
+        lines: [],
+        ...over,
+      };
+    }
+
+    function arrange(world: RatingWorld) {
+      const crazz = stubSession(msg => {
+        if (msg.type === WsMessageType.REQ_POLITICS_DATA) {
+          return {
+            type: WsMessageType.RESP_POLITICS_DATA,
+            data: { mayorName: world.mayorName, tycoonsRatings: world.rows.map(r => ({ ...r })) },
+          };
+        }
+        if (msg.type === WsMessageType.REQ_POLITICS_SET_RATING) {
+          const m = msg as unknown as { ratingId: string; value: number };
+          world.writes.push(m.value);
+          const n = world.writes.length;
+          if (world.refuse === n) return { type: WsMessageType.RESP_POLITICS_SET_RATING, success: false, message: 'no' };
+          if (!world.silent.includes(n)) {
+            world.lines.push(`12:00:00 Setting town politics Tycoon rating: ${SECONDARY_ACCOUNT.username}, ${m.ratingId}, ${m.value}`);
+          }
+          const row = world.rows.find(r => r.id === m.ratingId);
+          if (row) row.value = world.move(m.value, n, row.value);
+          return { type: WsMessageType.RESP_POLITICS_SET_RATING, success: true, ratingId: m.ratingId, value: m.value };
+        }
+        throw new Error(`unexpected request ${msg.type}`);
+      });
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz);
+      const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+      jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+      jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+        if (typeof proof !== 'object') return null;
+        return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+      });
+      return { off };
+    }
+
+    const run = (lock = cleanLock()) =>
+      flowByName('mayor-rating-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+    it('PASSes when the aggregate moves down with the 0 and back up with the 100, both lines present', async () => {
+      const world = ratingWorld();
+      const { off } = arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes).toEqual([0, 100]);
+      expect(result.assertions.every(a => a.ok)).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+      expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('ends SKIPPED, writing nothing, when Crazz is refused at login', async () => {
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+      const find = jest.spyOn(session, 'findTown');
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+      expect(find).not.toHaveBeenCalled();
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is UNPROVEN, citing the aggregate formula, when the aggregate never moves — and still restores', async () => {
+      const world = ratingWorld({ move: (_v, _n, current) => current });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(world.writes).toEqual([0, 100]);
+      expect(result.unproven[0]).toMatch(/Kernel\/Politics\.pas:374-392/);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the mayor is not SPO_test3', async () => {
+      const world = ratingWorld({ mayorName: 'Someone Else' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Someone Else/);
+      expect(world.writes).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs when the aggregate moves away from the written 0', async () => {
+      const world = ratingWorld({ move: value => (value === 0 ? 70 : 70) });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the aggregate moved towards the written 0')).toMatchObject({
+        ok: false,
+        detail: '60 -> 70',
+      });
+      expect(world.writes).toEqual([0, 100]);
+    });
+
+    it('FAILs when the write logs no line, though the aggregate moved', async () => {
+      const world = ratingWorld({ silent: [1] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the write of 0 logged its Tycoon rating line')).toMatchObject({
+        ok: false,
+        detail: '(no line)',
+      });
+    });
+
+    it('FAILs and keeps the pending restore when the restore never moves the aggregate back', async () => {
+      const world = ratingWorld({ move: (value, _n, current) => (value === 0 ? 40 : current) });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the aggregate moved back towards 100')).toMatchObject({ ok: false });
+      expect(lock.read().pendingRestores).toHaveLength(1);
+      expect(lock.read().pendingRestores[0]).toMatchObject({ originalValue: '100' });
+      expect(lock.read().pendingRestores[0].what).toMatch(/put back 100/);
+    });
+
+    it('FAILs and keeps the pending restore when the restore logs no line', async () => {
+      const world = ratingWorld({ silent: [2] });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a refused write, and still sends the restore', async () => {
+      const world = ratingWorld({ refuse: 1 });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the write of 0 was accepted')?.detail).toMatch(/SET_RATING 0 refused/);
+      expect(world.writes).toEqual([0, 100]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs and keeps the pending restore when the restore itself is refused', async () => {
+      const world = ratingWorld({ refuse: 2 });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the restore to 100 was accepted')?.ok).toBe(false);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs when the rated row vanishes after the write', async () => {
+      const world = ratingWorld();
+      arrange(world);
+      world.move = () => {
+        world.rows = [];
+        return 0;
+      };
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the rating row reads back after the write')?.ok).toBe(false);
+    });
+
+    it('FAILs and writes nothing when no rated row carries an id', async () => {
+      const world = ratingWorld({ rows: [{ name: 'Overall', value: 60 }] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(world.writes).toEqual([]);
+    });
+  });
+
+  describe('tycoon-role-read', () => {
+    function arrange(role: Record<string, unknown>) {
+      const requests: WsMessage[] = [];
+      jest.spyOn(session, 'login').mockResolvedValue(
+        stubSession(msg => {
+          requests.push(msg);
+          if (msg.type === WsMessageType.REQ_TYCOON_ROLE) return { type: WsMessageType.RESP_TYCOON_ROLE, role };
+          throw new Error(`unexpected request ${msg.type}`);
+        }),
+      );
+      const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      return { requests, off };
+    }
+    const mayor = { tycoonName: 'SPO_test3', isMayor: true, town: 'Helartia' };
+
+    it('PASSes when the role names SPO_test3 as the Mayor of Helartia', async () => {
+      const { requests, off } = arrange(mayor);
+      const result = await flowByName('tycoon-role-read').run(ctx);
+      expect(result.status).toBe('PASS');
+      expect(requests).toEqual([expect.objectContaining({ type: WsMessageType.REQ_TYCOON_ROLE, tycoonName: 'SPO_test3' })]);
+      expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('FAILs when the role is not a mayor', async () => {
+      arrange({ ...mayor, isMayor: false });
+      const result = await flowByName('tycoon-role-read').run(ctx);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('isMayor=false');
+    });
+
+    it('FAILs when the mayor governs another town', async () => {
+      arrange({ ...mayor, town: 'Elsewhere' });
+      const result = await flowByName('tycoon-role-read').run(ctx);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('Elsewhere');
+    });
+
+    it('FAILs when the answer names another tycoon', async () => {
+      arrange({ ...mayor, tycoonName: 'Crazz' });
+      expect((await flowByName('tycoon-role-read').run(ctx)).status).toBe('FAIL');
+    });
+  });
+
+  describe('adPercent', () => {
+    it.each([
+      ['150', '200', '75'],
+      ['200', '200', '100'],
+      ['250', '200', '100'],
+      ['1', '8', '12'],
+      ['3', '8', '38'],
+      ['0', '200', '0'],
+    ])('reads %s of %s as %s%%', (fld, cap, expected) => {
+      expect(adPercent(fld, cap)).toBe(expected);
+    });
+
+    it.each([
+      [undefined, '200'],
+      ['100', undefined],
+      ['', '200'],
+      ['100', ' '],
+      ['abc', '200'],
+      ['100', '0'],
+      ['100', '-5'],
+    ])('has no percentage for %p of %p', (fld, cap) => {
+      expect(adPercent(fld, cap)).toBeUndefined();
+    });
+  });
+
+  describe('ad-budget-roundtrip', () => {
+    const HQ = { x: 50, y: 60, visualClass: '4711', name: 'Headquarters' };
+
+    interface AdWorld {
+      tabs: string[];
+      supplies: BuildingSupplyData[];
+      apply: boolean;
+      silent: boolean;
+      /** Which writes log no line: the write (first), the restore (second), or both. */
+      silentOn?: 'write' | 'restore';
+      /** Which write the gateway refuses with a throw. */
+      throwOn?: 'write' | 'restore';
+      writes: { property: string; value: string; params?: Record<string, string> }[];
+      lines: string[];
+    }
+
+    const adGate = (over: Partial<BuildingSupplyData> = {}): BuildingSupplyData => ({
+      path: 'Inputs\\00000001.Advertisement.five\\', name: 'Advertisement', metaFluid: 'Advertisement',
+      capacity: '200', actualMaxFluid: '200', connectionCount: 0, connections: [], ...over,
+    });
+
+    function adWorld(over: Partial<AdWorld> = {}): AdWorld {
+      return {
+        tabs: ['hqGeneral', 'supplies'],
+        supplies: [supplyGate(), adGate()],
+        apply: true,
+        silent: false,
+        writes: [],
+        lines: [],
+        ...over,
+      };
+    }
+
+    function arrange(world: AdWorld, found = true) {
+      const stub = stubSession(msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        switch (msg.type) {
+          case WsMessageType.REQ_BUILDING_DETAILS:
+            return { details: { tabs: world.tabs.map(id => ({ id })), groups: {} } };
+          case WsMessageType.REQ_BUILDING_TAB_DATA:
+            return { supplies: world.supplies.map(s => ({ path: s.path, name: s.name, connections: [] })) };
+          case WsMessageType.REQ_BUILDING_GATE_CONNECTIONS:
+            return { supply: { ...world.supplies.find(s => s.path === m.path) } };
+          case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
+            const w = { property: String(m.propertyName), value: String(m.value), params: m.additionalParams as Record<string, string> };
+            world.writes.push(w);
+            const leg = world.writes.length === 1 ? 'write' : 'restore';
+            if (world.throwOn === leg) throw new Error(`gateway refused the ${leg}`);
+            if (!world.silent && world.silentOn !== leg) world.lines.push(`12:00 - Fac(${HQ.x},${HQ.y}) Setting Input fluid perc: ${w.value}`);
+            const gate = world.supplies.find(s => s.metaFluid === w.params?.fluidId);
+            if (world.apply && gate) gate.actualMaxFluid = String((Number(gate.capacity) * Number(w.value)) / 100);
+            return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: '' };
+          }
+          default:
+            throw new Error(`unexpected request ${msg.type}`);
+        }
+      });
+      jest.spyOn(session, 'login').mockResolvedValue(stub);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const find = jest.spyOn(fixtures, 'findFixture').mockImplementation(async (_s, kind) =>
+        found ? { kind: kind.id, found: HQ } : { kind: kind.id, reason: 'none in Helartia' },
+      );
+      jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+      jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+        if (typeof proof !== 'object') return null;
+        return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+      });
+      return { find };
+    }
+
+    const run = (lock = cleanLock()) =>
+      flowByName('ad-budget-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+    const labels = (r: { assertions: { what: string; ok: boolean }[] }) => r.assertions.map(a => [a.what, a.ok]);
+
+    it('writes the Advertisement input of the research fixture and restores it, each proven by its Survival line', async () => {
+      const world = adWorld();
+      const { find } = arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('PASS');
+      expect(find.mock.calls[0][1].id).toBe('research');
+      expect(result.probes.map(p => [p.member, p.written, p.original, p.status])).toEqual([
+        ['RDOSetInputFluidPerc', '99', '100', 'PASS'],
+      ]);
+      expect(world.writes).toEqual([
+        { property: 'RDOSetInputFluidPerc', value: '99', params: { fluidId: 'Advertisement' } },
+        { property: 'RDOSetInputFluidPerc', value: '100', params: { fluidId: 'Advertisement' } },
+      ]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('PASSes on the Survival lines when the company spread holds the percentage at its original (maintainer decision 2026-10-01)', async () => {
+      const world = adWorld({ apply: false });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('PASS');
+      expect(result.unproven).toEqual([]);
+      expect(result.probes[0]).toMatchObject({
+        status: 'PASS',
+        written: '99',
+        original: '100',
+        logLine: '12:00 - Fac(50,60) Setting Input fluid perc: 99',
+        restored: true,
+      });
+      expect(result.probes[0].note).toMatch(/Kernel\/Kernel\.pas:10003-10008, :10160; maintainer decision 2026-10-01/);
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', true],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', true],
+      ]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs when the write logs no Setting Input fluid perc line, and still restores', async () => {
+      const world = adWorld({ apply: false, silentOn: 'write' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', logLine: null, restored: true });
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', false],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', true],
+      ]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs and keeps the pending restore when the restore logs no line', async () => {
+      const world = adWorld({ silentOn: 'restore' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', restored: false });
+      expect(result.assertions.find(a => a.what.startsWith('RDOSetInputFluidPerc: the restore'))).toEqual({
+        what: 'RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line',
+        ok: false,
+        detail: 'no restore line — pending restore kept',
+      });
+      expect(lock.read().pendingRestores).toEqual([
+        expect.objectContaining({
+          originalValue: '100',
+          x: 50,
+          y: 60,
+          propertyName: 'RDOSetInputFluidPerc',
+          additionalParams: { fluidId: 'Advertisement' },
+        }),
+      ]);
+    });
+
+    it('FAILs when neither the write nor the restore logs a line', async () => {
+      const world = adWorld({ silent: true });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(labels(result).map(([, ok]) => ok)).toEqual([false, false]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a refused write and still restores', async () => {
+      const world = adWorld({ throwOn: 'write' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions[0]).toMatchObject({
+        what: 'RDOSetInputFluidPerc: the write of 99 was accepted',
+        ok: false,
+        detail: expect.stringMatching(/gateway refused the write/),
+      });
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a refused restore and keeps the pending restore', async () => {
+      const world = adWorld({ throwOn: 'restore' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', true],
+        ['RDOSetInputFluidPerc: the restore to 100 was accepted', false],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', false],
+      ]);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs and writes nothing when the original percentage is unreadable', async () => {
+      const world = adWorld({ supplies: [supplyGate(), adGate({ capacity: '0' })] });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions).toEqual([
+        expect.objectContaining({ what: 'RDOSetInputFluidPerc: the original ad percentage is readable', ok: false }),
+      ]);
+      expect(world.writes).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the fixture lists no Advertisement input', async () => {
+      const world = adWorld({ supplies: [supplyGate()] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Kernel\/Headquarters\.pas:130-143/);
+      expect(world.writes).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the fixture has no supplies tab', async () => {
+      const world = adWorld({ tabs: ['hqGeneral'] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(world.writes).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the research fixture is missing', async () => {
+      const world = adWorld();
+      arrange(world, false);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^research fixture — none in Helartia/);
+      expect(world.writes).toEqual([]);
     });
   });
 });

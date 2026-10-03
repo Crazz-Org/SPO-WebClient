@@ -15,7 +15,7 @@
  *
  * Required checks in a merge queue must report on the speculative commit, and the worker
  * takes no inbound connection — it pulls its work. `git ls-remote` names every queue ref
- * and its sha in one round trip, which is cheap enough to do on an idle tick.
+ * and its sha in one round trip, which is cheap enough to do once per worker tick, before each job.
  *
  * ## Why an entry jumps the bench queue
  *
@@ -42,7 +42,7 @@
  * it can therefore only fail, which is how the dedup shipped and why it never hit once:
  * every entry fell through the safe branch — "tree unknown, drive it live" — and paid a
  * full live slot, including the common case where the tree had been driven minutes earlier.
- * So the objects come down first. That costs a round trip on an idle tick, against the
+ * So the objects come down first. That costs a round trip per entry acted on, against the
  * ~113 s of exclusive bench time a needless drive costs.
  *
  * ## Why tree equality is necessary but not sufficient (B2.4)
@@ -277,11 +277,10 @@ export interface MergeQueueDeps {
 }
 
 /**
- * One pass over GitHub's merge queue, called from the worker's idle tick.
- *
- * Idle, and not on every tick, for the same reason the nightly is: an entry takes the
- * bench like any other job, and jumping the line (see the module comment) is only sound
- * if we are not also interrupting something mid-flight.
+ * One pass over GitHub's merge queue, called once per worker tick, before the worker takes
+ * its next job — never while a job is running, which is what makes jumping the line (see the
+ * module comment) sound rather than interrupting. Calling it only when the spool was empty
+ * let a backlog hold an entry past the queue's timeout (#1268).
  *
  * Returns how many entries it acted on — 0 is the overwhelmingly common answer.
  */
