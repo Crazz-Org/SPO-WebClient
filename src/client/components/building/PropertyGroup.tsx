@@ -190,6 +190,7 @@ export function PropertyGroup({ properties, buildingX, buildingY }: PropertyGrou
         <DefinedProperties
           definitions={definitions}
           rdoCommands={activeGroup?.rdoCommands}
+          groupId={activeGroup?.id}
           valueMap={valueMap}
           properties={properties}
           canEdit={canEdit}
@@ -214,6 +215,8 @@ export function PropertyGroup({ properties, buildingX, buildingY }: PropertyGrou
 interface DefinedPropertiesProps {
   definitions: PropertyDefinition[];
   rdoCommands?: Record<string, RdoCommandMapping>;
+  /** Active template group id — lets the quick-trade grid match its sheet. */
+  groupId?: string;
   valueMap: Map<string, string>;
   properties: BuildingPropertyValue[];
   canEdit: boolean;
@@ -226,6 +229,7 @@ interface DefinedPropertiesProps {
 function DefinedProperties({
   definitions,
   rdoCommands,
+  groupId,
   valueMap,
   properties,
   canEdit,
@@ -428,6 +432,7 @@ function DefinedProperties({
           key="trade-connect"
           properties={properties}
           onAction={handleActionButton}
+          groupId={groupId}
         />,
       );
       rendered.add(def.rdoName);
