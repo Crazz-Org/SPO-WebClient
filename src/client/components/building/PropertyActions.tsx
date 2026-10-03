@@ -4,7 +4,9 @@
  * UpgradeActions: upgrade/downgrade building level controls
  * RepairControl: repair progress bar + start/stop buttons
  * TradeConnectButtons: quick trade connect/disconnect grid, disables the
- *   warehouse row when the facility's own Role is 'Warehouse'
+ *   warehouse row when the facility's own Role is 'Warehouse' (IndGeneral, #562);
+ *   the warehouse row is absent on the WHGeneral sheet, whose original menu
+ *   has no warehouse entry
  * ActionButton: generic action button from property definition
  * CloneSettings: clone configuration checklist + apply
  *
@@ -14,7 +16,7 @@
 import { useState, useCallback } from 'react';
 import type { BuildingPropertyValue, WarehouseWareData } from '@/shared/types';
 import type { PropertyDefinition } from '@/shared/building-details';
-import { formatCurrency } from '@/shared/building-details';
+import { formatCurrency, WH_GENERAL_GROUP } from '@/shared/building-details';
 import { parseCloneMenu, parseCurrencyInput, parseFilmMonths, FILM_MONTHS_MIN, FILM_MONTHS_MAX } from './property-utils';
 import { useBuildingStore } from '../../store/building-store';
 import { useUiStore } from '../../store/ui-store';
@@ -207,9 +209,11 @@ const TRADE_KINDS = [
 export function TradeConnectButtons({
   properties,
   onAction,
+  groupId,
 }: {
   properties: BuildingPropertyValue[];
   onAction: (id: string) => void;
+  groupId?: string;
 }) {
   const inFlightActions = useBuildingStore((s) => s.inFlightActions);
   const vm = new Map<string, string>();
@@ -221,9 +225,13 @@ export function TradeConnectButtons({
   const isWarehouse = vm.get('Role') === 'Warehouse';
   const nonWarehouseTradeRole = NON_WAREHOUSE_TRADE_ROLES.includes(vm.get('TradeRole') ?? '');
   const warehouseTradeOffered = !isWarehouse || nonWarehouseTradeRole;
+  // WHGeneral sheet (Import/Export Storage): the original ppMenu
+  // (WHGeneralSheet.dfm) holds Tags 4 and 2 only — no Tag 1 (ftpWarehouses);
+  // handlers pass the tag through (WHGeneralSheet.pas:524-532). Row omitted.
+  const kinds = groupId === WH_GENERAL_GROUP.id ? TRADE_KINDS.filter((k) => k.kind !== '1') : TRADE_KINDS;
   return (
     <div className={styles.tradeConnectGrid}>
-      {TRADE_KINDS.map(({ kind, label }) => {
+      {kinds.map(({ kind, label }) => {
         const connectBusy = inFlightActions.has(`tradeConnect:${kind}`);
         const disconnectBusy = inFlightActions.has(`tradeDisconnect:${kind}`);
         const kindOffered = kind !== '1' || warehouseTradeOffered;
