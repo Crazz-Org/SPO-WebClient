@@ -2,6 +2,7 @@ import {
   LOG_MARKERS,
   awaitMarker,
   findCurrentSurvivalLog,
+  loggedInWindow,
   openLogWindow,
   readSince,
 } from './live-log';
@@ -113,12 +114,46 @@ describe('openLogWindow', () => {
     fetchMock.mockResolvedValueOnce(response({ headers: { 'content-length': '1024' } }));
     const window = await openLogWindow('http://logs/Survival.log');
     expect(window.offset).toBe(1024);
-    expect(fetchMock).toHaveBeenCalledWith('http://logs/Survival.log', { method: 'HEAD' });
+    expect(fetchMock).toHaveBeenCalledWith('http://logs/Survival.log', {
+      method: 'HEAD',
+      headers: { 'Accept-Encoding': 'identity' },
+    });
   });
 
   it('refuses a log that reports no length — the window would be meaningless', async () => {
     fetchMock.mockResolvedValueOnce(response({ headers: {} }));
     await expect(openLogWindow('http://logs/Survival.log')).rejects.toThrow(/content-length/);
+  });
+
+  it('asks for the uncompressed length — a gzip HEAD reports the compressed size (#1228)', async () => {
+    fetchMock.mockImplementation(async (_url, init) => {
+      const enc = new Headers(init?.headers).get('accept-encoding') ?? 'gzip, deflate';
+      return enc === 'identity'
+        ? response({ headers: { 'content-length': '3525784' } })
+        : response({ headers: { 'content-length': '505265', 'content-encoding': 'gzip' } });
+    });
+    const window = await openLogWindow('http://logs/Survival.log');
+    expect(window.offset).toBe(3525784);
+  });
+
+  it('refuses a compressed answer, naming the Content-Encoding', async () => {
+    fetchMock.mockResolvedValueOnce(
+      response({ headers: { 'content-length': '505265', 'content-encoding': 'gzip' } }),
+    );
+    await expect(openLogWindow('http://logs/Survival.log')).rejects.toThrow(/Content-Encoding: gzip/);
+  });
+
+  it('accepts an explicit content-encoding: identity', async () => {
+    fetchMock.mockResolvedValueOnce(
+      response({ headers: { 'content-length': '42', 'content-encoding': 'Identity ' } }),
+    );
+    expect((await openLogWindow('http://logs/Survival.log')).offset).toBe(42);
+  });
+
+  it('stamps the window with a valid ISO date', async () => {
+    fetchMock.mockResolvedValueOnce(response({ headers: { 'content-length': '1' } }));
+    const window = await openLogWindow('http://logs/Survival.log');
+    expect(Number.isNaN(Date.parse(window.openedAt))).toBe(false);
   });
 
   it('surfaces an HTTP failure rather than assuming offset zero', async () => {
@@ -133,7 +168,9 @@ describe('readSince', () => {
   it('asks only for the bytes appended since the window opened', async () => {
     fetchMock.mockResolvedValueOnce(response({ status: 206, body: 'tail' }));
     expect(await readSince(window)).toBe('tail');
-    expect(fetchMock).toHaveBeenCalledWith(window.url, { headers: { Range: 'bytes=10-' } });
+    expect(fetchMock).toHaveBeenCalledWith(window.url, {
+      headers: { Range: 'bytes=10-', 'Accept-Encoding': 'identity' },
+    });
   });
 
   it('slices the response itself when the server ignores Range', async () => {
@@ -196,6 +233,30 @@ describe('awaitMarker', () => {
     expect(line).toBeNull();
   });
 
+  describe('timestamp rule', () => {
+    const opened = { url: 'http://logs/Survival.log', offset: 0, openedAt: '2026-09-30T20:06:00.000Z' };
+
+    it('never counts a matching line stamped before the window opened', async () => {
+      fetchMock.mockResolvedValue(response({ status: 206, body: '10:22:12 AM Facility Stop Upgrade..' }));
+      const line = await awaitMarker(opened, LOG_MARKERS.RDOStopUpgrade, 5, 0, mockClock([0, 100]), noSleep);
+      expect(line).toBeNull();
+    });
+
+    it('counts a matching line stamped after the window opened', async () => {
+      fetchMock.mockResolvedValueOnce(
+        response({ status: 206, body: '10:22:12 AM Facility Stop Upgrade..\n8:06:05 PM Facility Stop Upgrade..' }),
+      );
+      const line = await awaitMarker(opened, LOG_MARKERS.RDOStopUpgrade, 1_000);
+      expect(line).toBe('8:06:05 PM Facility Stop Upgrade..');
+    });
+
+    it('counts a matching line stamped exactly when the window opened', async () => {
+      fetchMock.mockResolvedValueOnce(response({ status: 206, body: '8:06:00 PM Facility Stop Upgrade..' }));
+      const line = await awaitMarker(opened, LOG_MARKERS.RDOStopUpgrade, 1_000);
+      expect(line).toBe('8:06:00 PM Facility Stop Upgrade..');
+    });
+  });
+
   it('returns null when the write never reaches the object', async () => {
     fetchMock.mockResolvedValue(response({ status: 206, body: 'unrelated chatter' }));
     const line = await awaitMarker(window, 'Setting Tax value:', 5, 0, mockClock([0, 100]), noSleep);
@@ -211,3 +272,29 @@ function mockClock(values: number[]): () => number {
 function noSleep(): Promise<void> {
   return Promise.resolve();
 }
+
+describe('loggedInWindow', () => {
+  const at = (openedAt: string) => ({ url: 'u', offset: 0, openedAt });
+
+  it('reads 12 AM as hour 0 and 12 PM as hour 12', () => {
+    expect(loggedInWindow('12:00:01 AM x', at('2026-10-01T00:00:00.000Z'))).toBe(true);
+    expect(loggedInWindow('12:00:01 AM x', at('2026-10-01T12:00:00.000Z'))).toBe(false);
+    expect(loggedInWindow('12:30:00 PM x', at('2026-10-01T12:29:59.000Z'))).toBe(true);
+  });
+
+  it('parses the interface-server form', () => {
+    expect(loggedInWindow('8:06:05 PM - Start Disconnecting SPO_test3', at('2026-10-01T20:06:30.000Z'))).toBe(false);
+  });
+
+  it('allows a server clock trailing the bench by up to CLOCK_SKEW_SECONDS', () => {
+    // A line logged right after the window opened, stamped 2 s early by a lagging server clock.
+    expect(loggedInWindow('8:05:58 PM Cancel Research: HappyHour', at('2026-10-01T20:06:00.000Z'))).toBe(true);
+    expect(loggedInWindow('8:05:50 PM x', at('2026-10-01T20:06:00.000Z'))).toBe(true);
+    expect(loggedInWindow('8:05:49 PM x', at('2026-10-01T20:06:00.000Z'))).toBe(false);
+  });
+
+  it('falls back to the byte offset for a stamp-less line or an invalid openedAt', () => {
+    expect(loggedInWindow('Setting Tax value: 1', at('2026-10-01T23:59:59.000Z'))).toBe(true);
+    expect(loggedInWindow('1:00:00 AM x', at('now'))).toBe(true);
+  });
+});

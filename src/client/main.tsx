@@ -14,6 +14,7 @@ import { AppErrorBoundary } from './components/common/CrashScreen';
 import { StarpeaceClient } from './client';
 import { config } from '../shared/config';
 import './styles/design-tokens.css';
+import './styles/design-tokens-v2.css';
 import './styles/reset.css';
 import './styles/typography.css';
 import './styles/animations.css';

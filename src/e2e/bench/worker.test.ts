@@ -1982,16 +1982,86 @@ describe('workerLoop and main', () => {
 });
 
 describe('the merge queue takes the bench first', () => {
-  it('serves the queue only on an idle tick, never over a waiting job', async () => {
+  function submitEntry(h: ReturnType<typeof harness>): { id: string } {
+    return h.spool.submit(
+      {
+        type: 'ref',
+        worktree: h.worktree,
+        branch: 'gh-readonly-queue/main/pr-1-abc',
+        fingerprint: { head: 'q'.repeat(40), hash: 'ref:q', clean: true },
+        submitter: { pid: 0 },
+        args: [],
+        ref: 'q'.repeat(40),
+        queueEntry: true,
+      },
+      h.clock.nowMs + 1000,
+    );
+  }
+
+  it('serves the queue before taking a waiting job, never while one is running', async () => {
     // An entry jumps the spool once deposited, but the pass that deposits it must not run
     // while something is mid-flight — otherwise "jumping the line" becomes "interrupting".
     const h = harness();
-    deposit(h);
-    await workerLoop(h.deps, 1, async () => false);
-    expect(h.queueServed).toBe(0);
-
+    const ordinary = deposit(h);
+    const commandsAtServe: number[] = [];
+    h.deps.serveMergeQueue = () => {
+      h.queueServed++;
+      commandsAtServe.push(h.commands.length);
+      return 0;
+    };
     await workerLoop(h.deps, 1, async () => false);
     expect(h.queueServed).toBe(1);
+    expect(commandsAtServe).toEqual([0]);
+    expect(h.spool.readReport(ordinary.id)).not.toBeNull();
+
+    await workerLoop(h.deps, 1, async () => false);
+    expect(h.queueServed).toBe(2);
+  });
+
+  it('takes a queue entry discovered on a busy tick before the waiting deposit', async () => {
+    const h = harness();
+    const ordinary = deposit(h);
+    let entry: { id: string } | undefined;
+    h.deps.serveMergeQueue = () => {
+      h.queueServed++;
+      if (!entry) entry = submitEntry(h);
+      return 1;
+    };
+    await workerLoop(h.deps, 1, async () => false);
+    expect(h.spool.readReport(entry!.id)?.verdict).toBe('PASS');
+    expect(h.spool.readReport(ordinary.id)).toBeNull();
+    expect(h.queueServed).toBe(1);
+  });
+
+  it('serves an entry that appears mid-backlog before the next ordinary job', async () => {
+    const h = harness();
+    const first = deposit(h);
+    h.clock.nowMs += 1000;
+    const second = deposit(h, 'ref', [], { ref: 's'.repeat(40) });
+    let entry: { id: string } | undefined;
+    h.deps.serveMergeQueue = () => {
+      h.queueServed++;
+      if (h.queueServed === 2) entry = submitEntry(h);
+      return entry ? 1 : 0;
+    };
+    await workerLoop(h.deps, 1, async () => false);
+    expect(h.spool.readReport(first.id)).not.toBeNull();
+    expect(h.spool.readReport(second.id)).toBeNull();
+    expect(entry).toBeUndefined();
+
+    await workerLoop(h.deps, 1, async () => false);
+    // The entry ran (its verdict depends on the fake gate artifact the first job left
+    // behind, not on scheduling) — the point is that it ran before the second deposit.
+    expect(h.spool.readReport(entry!.id)).not.toBeNull();
+    expect(h.spool.readReport(second.id)).toBeNull();
+    expect(h.queueServed).toBe(2);
+  });
+
+  it('calls the queue exactly once per tick, whether the spool is empty or not', async () => {
+    const h = harness();
+    deposit(h);
+    await workerLoop(h.deps, 3, async () => false);
+    expect(h.queueServed).toBe(3);
   });
 
   it('takes a queue entry ahead of an older ordinary deposit', async () => {

@@ -1,0 +1,92 @@
+/* ChatDrawer — UI v2 chat box, above the Dock (replaces the desktop ChatStrip) */
+
+.drawer {
+  position: fixed;
+  bottom: var(--v2-chat-bottom);
+  left: var(--v2-dock-left);
+  width: var(--v2-chat-width);
+  height: var(--v2-chat-height);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  /* Same layer as v1's ChatStrip */
+  z-index: calc(var(--z-sticky) - 50);
+  animation: drawerIn var(--duration-base) var(--ease-out);
+}
+
+@keyframes drawerIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+/* The online-users sidebar. ChatStrip's embedded mode hides it (it was written for the narrow
+   mobile Chat tab); the drawer is desktop-wide, so it shows it again, next to the messages as
+   in v1's desktop strip. Selected by its E2E marker (DEBUG_MARKERS.chatUsers, a stable
+   contract — client.ts reads it as chat.usersListShown) because ChatStrip's class names are
+   scoped to its own module; the three-part selector outranks `.embedded .userSidebar`. */
+.drawer .body [data-testid='chat-users'] {
+  display: flex;
+}
+
+/* Minimise tab, sitting on the drawer's top-right edge so it never covers ChatStrip's header */
+.hide {
+  position: absolute;
+  top: -22px;
+  right: var(--space-4);
+  width: 36px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-bottom: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-default),
+    background var(--duration-fast) var(--ease-default);
+}
+
+.hide:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+@media (max-width: 1023px) {
+  .drawer {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer {
+    animation: none;
+  }
+
+  .hide {
+    transition: none;
+  }
+}
