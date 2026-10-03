@@ -8,17 +8,23 @@
  *
  * Reading a log is not probing the server (CLAUDE.md) — it is an open IIS listing.
  *
- * Windowing applies two rules, and a line must pass both to count as proof:
+ * Windowing applies these rules, and a line must pass them to count as proof:
  *
  * 1. **Byte offset.** We record the log's length before the write (a HEAD request sent with
  *    `Accept-Encoding: identity`) and read only what was appended after. A HEAD answered with
  *    any other `Content-Encoding` is refused: its length is the compressed size, which opens
  *    the window a fraction of the way into the file (#1228).
  * 2. **Timestamp.** Every Survival line starts with its own `h:mm:ss AM/PM` stamp
- *    (`TimeToStr(Now)`, `Kernel/Kernel.pas:4689`); it must be at or after
- *    `LogWindow.openedAt`, compared as a time of day within one day's file, less a
- *    `CLOCK_SKEW_SECONDS` allowance. A line earlier than that never counts, whatever the byte
- *    offset says. A line without a stamp falls back to the byte offset alone.
+ *    (`TimeToStr(Now)`, `Kernel/Kernel.pas:4689`); a line from the window's own day must be
+ *    at or after `LogWindow.openedAt`, compared as a time of day, less a `CLOCK_SKEW_SECONDS`
+ *    allowance. A line earlier than that never counts, whatever the byte offset says. A line
+ *    without a stamp falls back to the byte offset alone.
+ * 3. **Day rollover.** The server starts a new `Survival <YY-MM-DD>.log` at 00:00 (UTC, see
+ *    below), so the file is resolved per window, never once per run: each window opens on the
+ *    newest `Survival` file in the directory of the URL it is given, at the moment it opens.
+ *    Once the UTC day has passed the window file's date, `readSince` also reads every newer
+ *    `Survival` file in that directory in full, and a line from a file dated after
+ *    `openedAt`'s UTC day counts as later than the window (#1269).
  *
  * Assumption: **Survival log time = UTC** — verified 2026-09-30 and 2026-10-01 (tail line
  * `6:28:28 AM` read at `06:28:30 UTC`). The server clock can trail the bench by a second or
@@ -154,25 +160,77 @@ export interface LogWindow {
 
 /** Newest `Survival <YY-MM-DD>.log` in the listing — avoids guessing the server's date. */
 export async function findCurrentSurvivalLog(base: string = LIVE_LOG_BASE): Promise<string> {
+  return (await listSurvivalLogs(base)).pop() as string;
+}
+
+/** Every `Survival <YY-MM-DD>.log` in the listing, as full URLs, oldest day first. */
+async function listSurvivalLogs(base: string): Promise<string[]> {
   const listing = await fetchText(base);
   const names = new Set<string>();
   const pattern = /Survival[%20\s][\d-]+\.log/gi;
-  for (const match of listing.matchAll(pattern)) names.add(match[0]);
+  for (const match of listing.matchAll(pattern)) names.add(match[0].replace(/\s/g, '%20'));
   if (names.size === 0) {
     throw new Error(`No Survival log found in the listing at ${base}`);
   }
   // YY-MM-DD sorts lexicographically, so the last name is the newest day.
-  const newest = Array.from(names).sort().pop() as string;
-  return base + newest.replace(/\s/g, '%20');
+  return Array.from(names)
+    .sort()
+    .map(name => base + name);
 }
 
-/** Record where the log currently ends, before the write is issued. */
+/** The directory a log URL lives in, trailing slash kept. */
+function logDirectory(url: string): string {
+  return url.slice(0, url.lastIndexOf('/') + 1);
+}
+
+/** The `YY-MM-DD` a Survival log is named after, or undefined for a name without one. */
+function logDay(url: string): string | undefined {
+  return /Survival(?:%20|\s)(\d{2}-\d{2}-\d{2})\.log/i.exec(url)?.[1];
+}
+
+/** `YY-MM-DD` of a date, in UTC — the server's file-naming clock. */
+function utcDay(date: Date): string {
+  return date.toISOString().slice(2, 10);
+}
+
+/**
+ * Record where the log currently ends, before the write is issued. The URL given only names
+ * the directory: the window opens on the newest Survival file there at this moment.
+ */
 export async function openLogWindow(url: string): Promise<LogWindow> {
-  return { url, offset: await logLength(url), openedAt: new Date().toISOString() };
+  const current = await findCurrentSurvivalLog(logDirectory(url));
+  return { url: current, offset: await logLength(current), openedAt: new Date().toISOString() };
 }
 
-/** Everything appended to the log since the window opened. */
+/** Everything appended to the log since the window opened — across a day rollover too. */
 export async function readSince(window: LogWindow): Promise<string> {
+  let joined = '';
+  for (const { text } of await readSegments(window)) {
+    if (joined !== '' && text !== '' && !joined.endsWith('\n')) joined += '\n';
+    joined += text;
+  }
+  return joined;
+}
+
+/** The window file's tail, then every newer Survival file in full, each tagged with its URL. */
+async function readSegments(window: LogWindow): Promise<{ url: string; text: string }[]> {
+  const segments = [{ url: window.url, text: await readTail(window) }];
+  const day = logDay(window.url);
+  // File names follow the server clock (UTC): no newer file can exist before the UTC day moves on.
+  if (day === undefined || utcDay(new Date()) <= day || true) return segments;
+  for (const url of await listSurvivalLogs(logDirectory(window.url))) {
+    const fileDay = logDay(url);
+    if (fileDay === undefined || fileDay <= day) continue;
+    const response = await fetch(url, { headers: { 'Accept-Encoding': 'identity' } });
+    if (!response.ok) {
+      throw new Error(`Log read failed (${response.status}) for ${url}`);
+    }
+    segments.push({ url, text: await response.text() });
+  }
+  return segments;
+}
+
+async function readTail(window: LogWindow): Promise<string> {
   const response = await fetch(window.url, {
     headers: { Range: `bytes=${window.offset}-`, 'Accept-Encoding': 'identity' },
   });
@@ -190,12 +248,15 @@ export const CLOCK_SKEW_SECONDS = 10;
 
 /**
  * True unless the line carries an `h:mm:ss AM|PM` stamp earlier (UTC, same day) than
- * window.openedAt less `CLOCK_SKEW_SECONDS`.
+ * window.openedAt less `CLOCK_SKEW_SECONDS`. A line read from `fileUrl` dated after
+ * `openedAt`'s UTC day is later than the window, whatever its time of day.
  */
-export function loggedInWindow(line: string, window: LogWindow): boolean {
+export function loggedInWindow(line: string, window: LogWindow, fileUrl: string = window.url): boolean {
   const stamp = /^\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)\b/i.exec(line);
   const opened = new Date(window.openedAt);
   if (!stamp || Number.isNaN(opened.getTime())) return true;
+  const fileDay = logDay(fileUrl);
+  if (fileDay !== undefined && fileDay > utcDay(opened)) return true;
   const pm = stamp[4].toUpperCase() === 'PM';
   const lineSeconds =
     ((Number(stamp[1]) % 12) + (pm ? 12 : 0)) * 3600 + Number(stamp[2]) * 60 + Number(stamp[3]);
@@ -236,11 +297,14 @@ export async function awaitMarker(
   const proof: LogProof = typeof markerOrProof === 'string' ? { marker: markerOrProof } : markerOrProof;
   const deadline = now() + timeoutMs;
   for (;;) {
-    const tail = await readSince(window);
-    const line = tail
-      .split(/\r?\n/)
-      .find(l => l.includes(proof.marker) && loggedInWindow(l, window) && (proof.match?.(l) ?? true));
-    if (line) return line.trim();
+    for (const segment of await readSegments(window)) {
+      const line = segment.text
+        .split(/\r?\n/)
+        .find(
+          l => l.includes(proof.marker) && loggedInWindow(l, window, segment.url) && (proof.match?.(l) ?? true),
+        );
+      if (line) return line.trim();
+    }
     if (now() >= deadline) return null;
     await sleep(pollMs);
   }

@@ -109,55 +109,61 @@ describe('findCurrentSurvivalLog', () => {
 });
 
 describe('openLogWindow', () => {
+  const dated = 'http://logs/Survival%2026-10-02.log';
+  const listing = () => response({ body: 'Survival 26-10-02.log' });
+
   it('records where the log currently ends', async () => {
-    fetchMock.mockResolvedValueOnce(response({ headers: { 'content-length': '1024' } }));
-    const window = await openLogWindow('http://logs/Survival.log');
+    fetchMock
+      .mockResolvedValueOnce(listing())
+      .mockResolvedValueOnce(response({ headers: { 'content-length': '1024' } }));
+    const window = await openLogWindow(dated);
     expect(window.offset).toBe(1024);
-    expect(fetchMock).toHaveBeenCalledWith('http://logs/Survival.log', {
+    expect(fetchMock).toHaveBeenCalledWith(dated, {
       method: 'HEAD',
       headers: { 'Accept-Encoding': 'identity' },
     });
   });
 
   it('refuses a log that reports no length — the window would be meaningless', async () => {
-    fetchMock.mockResolvedValueOnce(response({ headers: {} }));
-    await expect(openLogWindow('http://logs/Survival.log')).rejects.toThrow(/content-length/);
+    fetchMock.mockResolvedValueOnce(listing()).mockResolvedValueOnce(response({ headers: {} }));
+    await expect(openLogWindow(dated)).rejects.toThrow(/content-length/);
   });
 
   it('asks for the uncompressed length — a gzip HEAD reports the compressed size (#1228)', async () => {
     fetchMock.mockImplementation(async (_url, init) => {
+      if (init?.method !== 'HEAD') return listing();
       const enc = new Headers(init?.headers).get('accept-encoding') ?? 'gzip, deflate';
       return enc === 'identity'
         ? response({ headers: { 'content-length': '3525784' } })
         : response({ headers: { 'content-length': '505265', 'content-encoding': 'gzip' } });
     });
-    const window = await openLogWindow('http://logs/Survival.log');
+    const window = await openLogWindow(dated);
     expect(window.offset).toBe(3525784);
   });
 
   it('refuses a compressed answer, naming the Content-Encoding', async () => {
-    fetchMock.mockResolvedValueOnce(
-      response({ headers: { 'content-length': '505265', 'content-encoding': 'gzip' } }),
-    );
-    await expect(openLogWindow('http://logs/Survival.log')).rejects.toThrow(/Content-Encoding: gzip/);
+    fetchMock
+      .mockResolvedValueOnce(listing())
+      .mockResolvedValueOnce(response({ headers: { 'content-length': '505265', 'content-encoding': 'gzip' } }));
+    await expect(openLogWindow(dated)).rejects.toThrow(/Content-Encoding: gzip/);
   });
 
   it('accepts an explicit content-encoding: identity', async () => {
-    fetchMock.mockResolvedValueOnce(
-      response({ headers: { 'content-length': '42', 'content-encoding': 'Identity ' } }),
-    );
-    expect((await openLogWindow('http://logs/Survival.log')).offset).toBe(42);
+    fetchMock
+      .mockResolvedValueOnce(listing())
+      .mockResolvedValueOnce(response({ headers: { 'content-length': '42', 'content-encoding': 'Identity ' } }));
+    expect((await openLogWindow(dated)).offset).toBe(42);
   });
 
   it('stamps the window with a valid ISO date', async () => {
-    fetchMock.mockResolvedValueOnce(response({ headers: { 'content-length': '1' } }));
-    const window = await openLogWindow('http://logs/Survival.log');
+    fetchMock.mockResolvedValueOnce(listing()).mockResolvedValueOnce(response({ headers: { 'content-length': '1' } }));
+    const window = await openLogWindow(dated);
     expect(Number.isNaN(Date.parse(window.openedAt))).toBe(false);
   });
 
   it('surfaces an HTTP failure rather than assuming offset zero', async () => {
-    fetchMock.mockResolvedValueOnce(response({ ok: false, status: 503 }));
-    await expect(openLogWindow('http://logs/Survival.log')).rejects.toThrow(/503/);
+    fetchMock.mockResolvedValueOnce(listing()).mockResolvedValueOnce(response({ ok: false, status: 503 }));
+    await expect(openLogWindow(dated)).rejects.toThrow(/503/);
   });
 });
 
@@ -295,5 +301,132 @@ describe('loggedInWindow', () => {
   it('falls back to the byte offset for a stamp-less line or an invalid openedAt', () => {
     expect(loggedInWindow('Setting Tax value: 1', at('2026-10-01T23:59:59.000Z'))).toBe(true);
     expect(loggedInWindow('1:00:00 AM x', at('now'))).toBe(true);
+  });
+});
+
+describe('day rollover (#1269)', () => {
+  const base = 'http://logs/';
+  const day02 = `${base}Survival%2026-10-02.log`;
+  const day03 = `${base}Survival%2026-10-03.log`;
+  const minWage = { marker: LOG_MARKERS.RDOSetMinSalaryValue, match: (l: string) => l.includes('Helartia') };
+  let files: Record<string, string>;
+
+  /** A log host: the listing at `base`, HEAD lengths, ranged and whole-file GETs. */
+  function serveLogs(): void {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === base) {
+        const anchors = Object.keys(files).map(u => {
+          const name = u.slice(base.length);
+          return `<a href="${name}">${name.replace('%20', ' ')}</a>`;
+        });
+        return response({ body: anchors.join('\n') });
+      }
+      const text = files[url];
+      if (text === undefined) return response({ ok: false, status: 404 });
+      if (init?.method === 'HEAD') return response({ headers: { 'content-length': String(text.length) } });
+      const range = new Headers(init?.headers).get('range');
+      if (range === null) return response({ body: text });
+      const from = Number(/bytes=(\d+)-/.exec(range)?.[1]);
+      return from >= text.length
+        ? response({ ok: false, status: 416 })
+        : response({ status: 206, body: text.slice(from) });
+    });
+  }
+
+  beforeEach(() => {
+    files = {};
+    serveLogs();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('finds a line logged in the next day file by a window opened just before midnight', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-02T23:59:50Z') });
+    files[day02] = '11:59:40 PM chatter\n';
+    const window = await openLogWindow(day02);
+    expect(window.url).toBe(day02);
+
+    jest.setSystemTime(new Date('2026-10-03T00:00:35Z'));
+    files[day03] = '12:00:30 AM Setting Min Wage: Helartia, 0, 95\n';
+    const line = await awaitMarker(window, minWage, 1_000, 0, mockClock([0, 1]), noSleep);
+    expect(line).toBe('12:00:30 AM Setting Min Wage: Helartia, 0, 95');
+  });
+
+  it('opens on the current day file even when handed the one preflight resolved before midnight', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-03T00:05:00Z') });
+    files[day02] = '11:58:00 PM chatter\n';
+    files[day03] = '12:04:00 AM chatter\n';
+    const window = await openLogWindow(day02);
+    expect(window.url).toBe(day03);
+    expect(window.offset).toBe(files[day03].length);
+
+    files[day03] += '12:05:10 AM Setting Min Wage: Helartia, 0, 95\n';
+    const line = await awaitMarker(window, minWage, 1_000, 0, mockClock([0, 1]), noSleep);
+    expect(line).toBe('12:05:10 AM Setting Min Wage: Helartia, 0, 95');
+  });
+
+  it('still refuses a matching line the old day file holds from before the window opened', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-02T23:59:50Z') });
+    files[day02] = '11:59:40 PM chatter\n';
+    const window = await openLogWindow(day02);
+    files[day02] += '11:30:00 PM Setting Min Wage: Helartia, 0, 95\n';
+
+    jest.setSystemTime(new Date('2026-10-03T00:00:35Z'));
+    files[day03] = '12:00:30 AM unrelated chatter\n';
+    const line = await awaitMarker(window, minWage, 5, 0, mockClock([0, 100]), noSleep);
+    expect(line).toBeNull();
+  });
+
+  it('reads exactly as before when the day has not changed — one ranged GET, no listing', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-02T12:00:00Z') });
+    files[day02] = '11:59:00 AM chatter\n';
+    const window = await openLogWindow(day02);
+    files[day02] += '12:00:05 PM Setting Min Wage: Helartia, 0, 95\n';
+    fetchMock.mockClear();
+
+    expect(await readSince(window)).toBe('12:00:05 PM Setting Min Wage: Helartia, 0, 95\n');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(day02, {
+      headers: { Range: `bytes=${window.offset}-`, 'Accept-Encoding': 'identity' },
+    });
+  });
+
+  it('returns the tail alone past midnight while the listing holds no newer file', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-02T23:59:50Z') });
+    files[day02] = '11:59:40 PM chatter\n';
+    const window = await openLogWindow(day02);
+    files[day02] += '11:59:58 PM tail\n';
+    jest.setSystemTime(new Date('2026-10-03T00:00:35Z'));
+    expect(await readSince(window)).toBe('11:59:58 PM tail\n');
+  });
+
+  it('never merges the old file last line into the new file first line', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-03T00:00:35Z') });
+    files[day02] = '11:59:40 PM chatter\n11:59:59 PM partial';
+    files[day03] = '12:00:30 AM next\n';
+    const window = { url: day02, offset: '11:59:40 PM chatter\n'.length, openedAt: '2026-10-02T23:59:50.000Z' };
+    expect(await readSince(window)).toBe('11:59:59 PM partial\n12:00:30 AM next\n');
+  });
+
+  it('raises a failed read of the newer file', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-03T00:00:35Z') });
+    files[day02] = 'x\n';
+    files[day03] = 'y\n';
+    const window = { url: day02, offset: 2, openedAt: '2026-10-02T23:59:50.000Z' };
+    const route = fetchMock.getMockImplementation() as typeof fetch;
+    fetchMock.mockImplementation(async (input, init) =>
+      String(input) === day03 && init?.method !== 'HEAD' ? response({ ok: false, status: 500 }) : route(input, init),
+    );
+    await expect(readSince(window)).rejects.toThrow(/Log read failed \(500\)/);
+  });
+
+  it('counts a line from a file dated after the window day as later than the window', () => {
+    const window = { url: day02, offset: 0, openedAt: '2026-10-02T23:58:00.000Z' };
+    expect(loggedInWindow('12:00:30 AM Setting Min Wage: Helartia, 0, 95', window, day03)).toBe(true);
+    expect(loggedInWindow('12:00:30 AM Setting Min Wage: Helartia, 0, 95', window, day02)).toBe(false);
+    expect(loggedInWindow('12:00:30 AM Setting Min Wage: Helartia, 0, 95', window)).toBe(false);
   });
 });
