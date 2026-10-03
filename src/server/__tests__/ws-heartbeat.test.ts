@@ -147,14 +147,44 @@ describe('gateway WebSocket heartbeat and quiet camera', () => {
   });
 
   it('keeps a client that answers pings open across 5+ intervals', async () => {
-    const stop = mod.startWsHeartbeat(50);
+    const INTERVAL_MS = 50;
+    const TICKS = 6; // a terminate needs two ticks without a pong; 6 ticks = 5 pong checks
+    // Fake only the interval timers, so the test fires each heartbeat tick itself; ws's own
+    // timeouts, setImmediate (until) and the socket I/O stay real.
+    jest.useFakeTimers({
+      doNotFake: [
+        'Date', 'hrtime', 'nextTick', 'performance', 'queueMicrotask', 'setImmediate',
+        'clearImmediate', 'setTimeout', 'clearTimeout', 'requestAnimationFrame',
+        'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback',
+      ],
+    });
+    const stop = mod.startWsHeartbeat(INTERVAL_MS);
     try {
       const c = await connect();
-      await new Promise(r => setTimeout(r, 350));
+      await until(() => mockSessions.length === 1);
+      const s = mockSessions[0];
+      let pings = 0;
+      c.ws.on('ping', () => {
+        pings++;
+      });
+      const loggedProbes = () =>
+        s.log.info.mock.calls.filter((call: unknown[]) => call[0] === 'WS>> REQ_NOT_A_TYPE').length;
+
+      for (let i = 1; i <= TICKS; i++) {
+        jest.advanceTimersByTime(INTERVAL_MS); // one real tick: ping, or terminate
+        await until(() => pings >= i || c.ws.readyState !== WebSocket.OPEN);
+        if (c.ws.readyState !== WebSocket.OPEN) break; // terminated: the assertion reports it
+        // The client's auto-pong is already queued ahead of this message on the same connection:
+        // once the server logs it, the server has processed the pong.
+        c.ws.send(JSON.stringify({ type: 'REQ_NOT_A_TYPE', wsRequestId: `hb${i}` }));
+        await until(() => loggedProbes() >= i || c.ws.readyState !== WebSocket.OPEN);
+      }
+
       expect(c.ws.readyState).toBe(WebSocket.OPEN);
-      expect(mockSessions[0].endSession).not.toHaveBeenCalled();
+      expect(s.endSession).not.toHaveBeenCalled();
     } finally {
-      stop();
+      stop(); // clearInterval on the fake clock — before restoring real timers
+      jest.useRealTimers();
     }
   });
 
