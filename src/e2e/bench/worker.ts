@@ -1314,6 +1314,13 @@ export async function workerLoop(
   const publishFailures = new Map<string, number>();
   for (let tick = 0; tick < maxTicks; tick++) {
     try {
+      // The merge queue is served before each job, idle or not. Nothing is running here (the
+      // loop is single-flight), so an entry it deposits jumps the line without interrupting
+      // anything: processOldest picks a queueEntry first, and a tree-dedup reuse posts its
+      // status at once with no job. Serving it only when the spool was empty let a backlog
+      // hold an entry past the queue's 60-min check-response timeout, and GitHub ejected a
+      // healthy PR for a reason that was never about its code (#1268).
+      deps.serveMergeQueue();
       const worked = await processOldest(deps);
       deps.spool.purgeDone(DONE_RETENTION_MS, deps.now());
       if (deps.now() - lastPublish > 30_000) {
@@ -1321,13 +1328,8 @@ export async function workerLoop(
         publishPendingStatuses(deps.paths, deps.publishStatus, deps.log, deps.now(), deps.paths.verdicts, publishFailures);
       }
       if (!worked) {
-        // Only when the queue came back empty: these take the bench like any job, so they
-        // must never start while a session is waiting behind one.
-        //
-        // The merge queue goes first. An entry it deposits jumps the spool (processOldest),
-        // because GitHub ejects an entry whose required checks time out — and an ejection
-        // costs a session its turn for a reason that was never about its code.
-        deps.serveMergeQueue();
+        // Only when the spool came back empty: the nightly takes the bench like any job, so
+        // it must never start while a session is waiting behind one.
         await nightly(deps);
         await deps.sleep(2_000);
       }

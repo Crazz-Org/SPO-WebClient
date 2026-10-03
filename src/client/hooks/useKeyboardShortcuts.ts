@@ -9,6 +9,7 @@
  *  - the table is the single source of truth — Settings renders its list from SHORTCUTS.
  *
  * H hides/shows the HUD chrome (StatusPill + CommandBar); the state is session-only (#613).
+ * V switches between the classic interface and the new one (`src/client/v2/`); remembered.
  *
  * Keys the renderer binds itself (arrows pan, + / − zoom) are listed here for reference but not
  * handled again (one owner per key). The renderer's 1–5 debug sub-layer keys act only while the
@@ -42,6 +43,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: '+ / −', action: 'Zoom', rendererOwned: true },
   { keys: 'D', action: 'Debug overlay (tile data) — D again to hide' },
   { keys: 'H', action: 'Hide / show the interface' },
+  { keys: 'V', action: 'Switch interface (classic / new)' },
   { keys: 'F1–F4', action: 'Force the season' },
   { keys: '?', action: 'Show the keyboard shortcuts' },
   { keys: 'Ctrl+K', action: 'Command palette' },
@@ -152,6 +154,10 @@ export function useKeyboardShortcuts(client: ClientCallbacks | null): void {
         case 'h':
           e.preventDefault();
           store.toggleHudVisible();
+          break;
+        case 'v':
+          e.preventDefault();
+          store.toggleUiVersion();
           break;
       }
     };

@@ -8,9 +8,23 @@
  *
  * Reading a log is not probing the server (CLAUDE.md) — it is an open IIS listing.
  *
- * Windowing is done by **byte offset**, not by timestamp: we record the log's length
- * before the write and read only what was appended after. That needs no knowledge of the
- * Delphi timestamp format and no assumption about the server's timezone.
+ * Windowing applies two rules, and a line must pass both to count as proof:
+ *
+ * 1. **Byte offset.** We record the log's length before the write (a HEAD request sent with
+ *    `Accept-Encoding: identity`) and read only what was appended after. A HEAD answered with
+ *    any other `Content-Encoding` is refused: its length is the compressed size, which opens
+ *    the window a fraction of the way into the file (#1228).
+ * 2. **Timestamp.** Every Survival line starts with its own `h:mm:ss AM/PM` stamp
+ *    (`TimeToStr(Now)`, `Kernel/Kernel.pas:4689`); it must be at or after
+ *    `LogWindow.openedAt`, compared as a time of day within one day's file, less a
+ *    `CLOCK_SKEW_SECONDS` allowance. A line earlier than that never counts, whatever the byte
+ *    offset says. A line without a stamp falls back to the byte offset alone.
+ *
+ * Assumption: **Survival log time = UTC** — verified 2026-09-30 and 2026-10-01 (tail line
+ * `6:28:28 AM` read at `06:28:30 UTC`). The server clock can trail the bench by a second or
+ * two, and a line logged right after the window opens would then carry a stamp earlier than
+ * `openedAt` (research-roundtrip's `Cancel Research:` line, dropped on the first #1228 gate) —
+ * hence the allowance. It is seconds; the stale lines this rule exists to refuse are hours old.
  */
 
 import { toErrorMessage } from '../shared/error-utils';
@@ -71,6 +85,8 @@ export const LOG_MARKERS: Record<string, string> = {
   RDOSetInputMinK: 'Input min K set:',
   // Kernel/Kernel.pas:4442 (log :4446)
   RDOSetInputSortMode: 'Changing Sort Mode..',
+  // Kernel/Kernel.pas:7154 (log :7156) — "Fac(<x>,<y>) Setting Input fluid perc: <perc>"
+  RDOSetInputFluidPerc: 'Setting Input fluid perc:',
   // Kernel/Kernel.pas:4304 (log :4306) — "Fac(<x>,<y>) Input connected:"
   RDOConnectInput: 'Input connected:',
   // Kernel/Kernel.pas:4311 (log :4313) — "Fac(<x>,<y>) Output connected:"
@@ -170,7 +186,9 @@ export async function openLogWindow(url: string): Promise<LogWindow> {
 
 /** Everything appended to the log since the window opened. */
 export async function readSince(window: LogWindow): Promise<string> {
-  const response = await fetch(window.url, { headers: { Range: `bytes=${window.offset}-` } });
+  const response = await fetch(window.url, {
+    headers: { Range: `bytes=${window.offset}-`, 'Accept-Encoding': 'identity' },
+  });
   if (response.status === 416) return ''; // Nothing appended yet.
   if (!response.ok) {
     throw new Error(`Log read failed (${response.status}) for ${window.url}`);
@@ -178,6 +196,25 @@ export async function readSince(window: LogWindow): Promise<string> {
   const text = await response.text();
   // A server that ignores Range returns 200 and the whole file — slice it ourselves.
   return response.status === 206 ? text : text.slice(window.offset);
+}
+
+/** How far a line's stamp may trail `openedAt` and still count — the server clock can lag the bench. */
+export const CLOCK_SKEW_SECONDS = 10;
+
+/**
+ * True unless the line carries an `h:mm:ss AM|PM` stamp earlier (UTC, same day) than
+ * window.openedAt less `CLOCK_SKEW_SECONDS`.
+ */
+export function loggedInWindow(line: string, window: LogWindow): boolean {
+  const stamp = /^\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)\b/i.exec(line);
+  const opened = new Date(window.openedAt);
+  if (!stamp || Number.isNaN(opened.getTime())) return true;
+  const pm = stamp[4].toUpperCase() === 'PM';
+  const lineSeconds =
+    ((Number(stamp[1]) % 12) + (pm ? 12 : 0)) * 3600 + Number(stamp[2]) * 60 + Number(stamp[3]);
+  const windowSeconds =
+    opened.getUTCHours() * 3600 + opened.getUTCMinutes() * 60 + opened.getUTCSeconds();
+  return lineSeconds >= windowSeconds - CLOCK_SKEW_SECONDS;
 }
 
 /**
@@ -215,7 +252,7 @@ export async function awaitMarker(
     const tail = await readSince(window);
     const line = tail
       .split(/\r?\n/)
-      .find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true));
+      .find(l => l.includes(proof.marker) && loggedInWindow(l, window) && (proof.match?.(l) ?? true));
     if (line) return line.trim();
     if (now() >= deadline) return null;
     await sleep(pollMs);
@@ -223,9 +260,15 @@ export async function awaitMarker(
 }
 
 async function logLength(url: string): Promise<number> {
-  const response = await fetch(url, { method: 'HEAD' });
+  const response = await fetch(url, { method: 'HEAD', headers: { 'Accept-Encoding': 'identity' } });
   if (!response.ok) {
     throw new Error(`Cannot read log length (${response.status}) for ${url}`);
+  }
+  const encoding = response.headers.get('content-encoding');
+  if (encoding !== null && encoding.trim().toLowerCase() !== 'identity') {
+    throw new Error(
+      `Log at ${url} was served with Content-Encoding: ${encoding} despite Accept-Encoding: identity — its content-length is not the file's length`,
+    );
   }
   const header = response.headers.get('content-length');
   const length = Number(header);

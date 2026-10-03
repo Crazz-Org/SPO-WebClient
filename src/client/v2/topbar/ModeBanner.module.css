@@ -1,0 +1,158 @@
+/* ModeBanner — the active mode, centred on the map's free width under the signal line.
+   Centred with auto margins between explicit left/right edges (no transform), so the band
+   table can read its geometry. */
+
+.banner {
+  position: fixed;
+  top: var(--v2-mode-top);
+  left: var(--v2-topbar-left);
+  right: var(--v2-topbar-right);
+  min-height: var(--v2-mode-height);
+  width: fit-content;
+  max-width: var(--v2-mode-max-width);
+  margin: 0 auto;
+  z-index: var(--z-hud);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  background: linear-gradient(180deg, var(--glass-bg-light) 0%, var(--glass-bg) 100%);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--accent-gold-dark);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-gold-glow), var(--shadow-lg);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  transition: right var(--duration-panel) var(--ease-out), border-color var(--duration-fast) var(--ease-default);
+}
+
+/* A surface is open beside the map: centre on what is left of it */
+.shifted {
+  right: var(--v2-shift-right);
+}
+
+/* Placement on a spot the server would refuse */
+.invalid {
+  border-color: var(--error);
+  box-shadow: 0 0 12px var(--error-bg), var(--shadow-lg);
+}
+
+.kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent-gold-subtle);
+  color: var(--accent-gold);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-bold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.invalid .kind {
+  background: var(--error-bg);
+  color: var(--money-negative);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  animation: modePulse 1.6s ease-in-out infinite;
+}
+
+@keyframes modePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.title {
+  flex-shrink: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+}
+
+.money {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.cost {
+  color: var(--accent-gold);
+  font-family: var(--font-mono);
+  font-weight: var(--font-bold);
+}
+
+.after {
+  color: var(--text-tertiary);
+}
+
+.pos,
+.neg {
+  font-family: var(--font-mono);
+}
+
+.pos { color: var(--money-positive); }
+.neg { color: var(--money-negative); }
+
+/* The hint never truncates mid-word on one line: it wraps, two lines at most, balanced so a
+   wrap never strands one word on the second line */
+.hint {
+  flex: 1 1 160px;
+  min-width: 0;
+  text-wrap: balance;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  color: var(--text-secondary);
+}
+
+.hintInvalid {
+  color: var(--money-negative);
+  font-weight: var(--font-medium);
+}
+
+.note {
+  color: var(--text-tertiary);
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banner {
+    transition: none;
+  }
+
+  .dot {
+    animation: none;
+  }
+}
+
+/* Mobile and tablet — MobileShell's own mode bar takes over */
+@media (max-width: 1023px) {
+  .banner {
+    display: none;
+  }
+}

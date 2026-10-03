@@ -108,8 +108,8 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 |---|---|
 | `src/shared/rdo-*.ts`, `src/server/session/**`, `src/server/rdo.ts` | L1 + **L2 login spine + every flow touching the changed members** |
 | `src/shared/types/message-types.ts`, `src/server/session/*-handler.ts` | L2 flows for the affected message types |
-| `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `town-min-wage`, `publicity-roundtrip` |
-| `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip` |
+| `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `permission-negative`, `town-min-wage`, `publicity-roundtrip`, `mayor-rating-roundtrip` |
+| `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip`, `ad-budget-roundtrip` |
 | `src/client/renderer/**`; the component folders `mobile`, `hud`, `sheet`, `modals`, `map`, `search`, `chat`, `building`, `politics`, `mail`, `empire`, `login`, `common`, `command-palette`, `startup`, `tutorial` under `src/client/components/`; `src/client/report/*.tsx`; `src/client/App.tsx`, `main.tsx`, `client.ts`; `src/client/ui/**`, `src/client/hooks/**`; `src/client/store/ui-store.ts`; `*.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
 | `src/e2e/flows.ts`, `src/e2e/{fixtures,research,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
@@ -262,6 +262,7 @@ town, `Fac(x,y)`, voter, circuit id, the value — go in each flow's `match`:
 | `RDOSetInputMaxPrice` | `Fac(<x>,<y>) Input max price set:` | `Kernel/Kernel.pas:4390` |
 | `RDOSetInputMinK` | `Fac(<x>,<y>) Input min K set:` | `Kernel/Kernel.pas:4416` |
 | `RDOSetInputSortMode` | `Changing Sort Mode..` | `Kernel/Kernel.pas:4442` |
+| `RDOSetInputFluidPerc` | `Fac(<x>,<y>) Setting Input fluid perc:` | `Kernel/Kernel.pas:7154` (log `:7156`) |
 | `RDOConnectInput` / `RDOConnectOutput` | `Fac(<x>,<y>) Input connected:` / `Output connected:` | `Kernel/Kernel.pas:4304` / `:4311` |
 | `RDODisconnectInput` / `RDODisconnectOutput` | `Fac(<x>,<y>) Input disconnect:` / `Output disconnect:` | `Kernel/Kernel.pas:4320` / `:4327` |
 | `RDOConnectToTycoon` | `Fac(<x>,<y>) Connect to Tycoon:` | `Kernel/Kernel.pas:4521` |
@@ -478,7 +479,7 @@ ahead of zero.
 | Account | Password | Holds | Used for |
 |---|---|---|---|
 | `SPO_test3` | `test3` | Mayor of **Helartia**, Minister of Agriculture, company *SPO_test3 - Green* | Primary. Governance reads and writes, roads, zones |
-| `SPO_test` | `test` | dedicated basic test account, no special buildings (maintainer, 2026-10-01) | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from SPO_test's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. |
+| `SPO_test` | `test` | dedicated basic test account, no special buildings (maintainer, 2026-10-01) | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from SPO_test's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. In `mayor-rating-roundtrip` it rates SPO_test3's term at Helartia `0`, then back to the flow's baseline `100` (maintainer, 2026-09-29): its opinion cannot be read back, so the first run leaves it at `100` for good — a test account's opinion of a test account. |
 
 Both are **LOCKED** — never changed without explicit developer approval. Zone **Free Space**,
 world **planitia**.
@@ -493,13 +494,16 @@ Two accounts unlock four things that were structurally impossible:
 | **Roads / zones** | Mayor role removes these from the "structurally untestable" list |
 
 **Blast radius.** All mutations happen on `SPO_test3`'s own town (Helartia). The second
-account is touched by mail: `mail-roundtrip` sends it one message and deletes it
+account takes part through mail, one rating and one loan: `mail-roundtrip` sends it one message and deletes it
 in the same run, and the `zoning-alert-read` seed has it send SPO_test3 one look-alike
 `Zoning Alert!`, deleted from SPO_test3's Inbox and from SPO_test's `Sent` in the same run.
 `mail-send-from-draft` sends it one message, and in `mail-reply` it sends SPO_test3 one
-reply; each flow sweeps and deletes every copy it created in the same run.
+reply; each flow sweeps and deletes every copy it created in the same run. In
+`mayor-rating-roundtrip` it rates SPO_test3's term at Helartia `0`, then `100` again — the
+flow's fixed baseline; the aggregate `TycoonsRating` is the read-back, and a run where it does
+not move ends `UNPROVEN` (`Kernel/Politics.pas:374-392`).
 No flow reads or writes its buildings (`flows.ts`: it appears at the login in
-`permission-negative`, which does not mutate, as the mail recipient, as the reply sender, and as the seed sender).
+`permission-negative`, which does not mutate, as the mail recipient, as the reply sender, as the seed sender, and as the rater).
 `facility-bank-loan` (#1189, lifted by the maintainer on 2026-09-29) has SPO_test borrow $1 at
 SPO_test3's own bank fixture and pay it off in the same run.
 Never another player's assets. Never a world-scope value. Every mutation is restored in
@@ -555,6 +559,29 @@ of every SPO_test3 work center in Helartia, and each same-class target's `Accept
 it sends anything. A target that refuses cloning (`Kernel/Kernel.pas:5101-5104`) must read back
 unchanged. Every facility is restored in the same run. An unreadable target, or no accepting
 target, is `UNPROVEN` with nothing sent.
+
+**Excluded members (#1195).** `industry-supply-limits` drives the max price and the min K only.
+`RDOSetInputSortMode` is never driven: only `TMediaInput` caches `QPSorted` / `SortMode`
+(`Kernel/MediaGates.pas:388-389`), its sole user is the movie theatre's Films input
+(`StdBlocks/Movie.pas:84`), a plain input's `SetSortMode` is empty (`Kernel/Kernel.pas:7169-7171`),
+and no fixture kind is a movie theatre. `RDOSetInputOverPrice` is never driven: it is set per
+supplier row, overpaying another player's supplier touches that player's income, and an own row
+exists only after `supplier-hire-fire` (#1153), itself nightly-only and data-gated.
+
+**Ad budget (#1195).** `ad-budget-roundtrip` drives `RDOSetInputFluidPerc` on the Advertisement
+input of the `research` fixture — the general headquarters declares it
+(`Kernel/Headquarters.pas:130-143`); a store takes advertisement as a company input, with no gate
+to address (`StdBlocks/ServiceBlock.pas:540`). The write binds to the input's own ObjectId, as
+Voyager does (`Voyager/AdvSheetForm.pas:456-457`), and reads back as
+`min(100, round(100*nfActualMaxFluidValue/nfCapacity))` (`:651-660`). That read-back can never
+show the write: Advertisement is a company fluid (`StdBlocks/StdFluids.pas:499`), so the input joins
+its company's `TCompanyInput` (`Kernel/Kernel.pas:5232-5233`), whose `Spread` runs every company
+cycle (`:10160`) and overwrites `ActualMaxFluid` from the demand slices (`:10003-10008`). **The one
+log-proven round trip (maintainer decision 2026-10-01, #1195 option c):** the write PASSes on its
+own `Setting Input fluid perc` Survival line at the fixture's coordinates, and the restore — the
+percentage read before the write, put back — is proven by its own line. A missing write line
+FAILs; a missing restore line FAILs and keeps the pending restore. Every other round trip still
+needs its read-back.
 
 ---
 

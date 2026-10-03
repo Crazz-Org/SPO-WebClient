@@ -1,0 +1,56 @@
+/* GameScreenV2 — the v2 overlay shell; same contract as layouts/GameScreen.module.css */
+
+.screen {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+}
+
+/* Re-enable pointer events for every slot (top deck, dock, side panel, dialogs…) */
+.screen > * {
+  pointer-events: auto;
+}
+
+/* The v1 VersionBadge, placed by v2. Bottom-right, but one dock row higher: at the dock's own
+   bottom it sat under the dock's right end at 1024 px. The slot carries the geometry (the band
+   table's VersionBadgeV2 row reads it); the badge inside drops its own fixed position and
+   gets a glass backdrop, so its text reads over the map. */
+.versionSlot {
+  position: fixed;
+  bottom: var(--v2-chat-bottom);
+  right: var(--v2-tools-right);
+  max-width: 280px;
+  z-index: var(--z-dropdown);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.versionSlot > div {
+  position: static;
+  padding: var(--space-1) var(--space-2);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  opacity: 0.85;
+}
+
+/* The side panel is open and covers this corner: nothing to show under it */
+.versionSlotUnderPanel {
+  display: none;
+}
+
+/* On mobile, leave room for BottomNav — as the classic shell does */
+@media (max-width: 1023px) {
+  .screen {
+    padding-bottom: 56px; /* BottomNav height */
+  }
+
+  .versionSlot {
+    display: none;
+  }
+}

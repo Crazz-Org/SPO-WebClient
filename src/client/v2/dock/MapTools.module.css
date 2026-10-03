@@ -1,0 +1,160 @@
+/* MapTools — UI v2 map controls rail, right edge, vertically centred (replaces RightRail) */
+
+.rail {
+  position: fixed;
+  top: calc(50% - var(--v2-tools-height) / 2);
+  right: var(--v2-tools-right);
+  width: var(--v2-tools-width);
+  height: var(--v2-tools-height);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 2px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-hud);
+  transition: right var(--duration-panel) var(--ease-out);
+}
+
+/* The side panel is open: slide left of it */
+.shifted {
+  right: var(--v2-shift-right);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.divider {
+  width: 20px;
+  height: 1px;
+  margin: 3px 0;
+  background: var(--surface-divider);
+}
+
+.tool {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+.tool:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.tool:active {
+  background: var(--bg-hover);
+}
+
+.tool:active .icon {
+  transform: scale(0.9);
+}
+
+.active {
+  background: var(--accent-gold-subtle);
+  border-color: var(--accent-gold-dark);
+  color: var(--accent-gold);
+}
+
+.active:hover {
+  background: var(--accent-gold-subtle);
+  color: var(--accent-gold-light);
+}
+
+/* Developer tool: present, but quiet */
+.muted {
+  color: var(--text-muted);
+}
+
+.icon {
+  display: inline-flex;
+  line-height: 0;
+  transition: transform var(--duration-fast) var(--ease-default);
+}
+
+/* Tooltip — to the left of the button, on hover and keyboard focus */
+.tip {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + var(--space-3));
+  margin-top: -13px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+  background: var(--bg-secondary);
+  border: 1px solid var(--surface-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-fast) var(--ease-default),
+    visibility var(--duration-fast) var(--ease-default);
+}
+
+.tool:hover .tip,
+.tool:focus-visible .tip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-medium);
+  line-height: 1.4;
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  border: 1px solid var(--surface-border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+}
+
+@media (max-width: 1023px) {
+  .rail {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail,
+  .tool,
+  .icon,
+  .tip {
+    transition: none;
+  }
+
+  .tool:active .icon {
+    transform: none;
+  }
+}
