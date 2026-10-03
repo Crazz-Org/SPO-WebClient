@@ -41,12 +41,14 @@ import type {
 } from '../shared/types/domain-types';
 import { ERROR_TooManyFacilities } from '../shared/error-codes';
 import { isWater } from '../shared/land-utils';
+import { isTradeModeValue } from '../shared/building-details/trade-settings';
 import { GOVERNED_TOWN, HTTP_BASE, PRIMARY_ACCOUNT, TIMEOUTS, WORLD_NAME } from './config';
 import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, type LogWindow } from './live-log';
 import {
   findTown,
   propertyValue,
   readBuildingDetails,
+  readBuildingTabData,
   readSectionGroups,
   setBuildingProperty,
   type LiveSession,
@@ -69,7 +71,7 @@ import { sleep as defaultSleep } from './sleep';
 // 1. The kind table
 // ---------------------------------------------------------------------------------------------
 
-export type FixtureKindId = 'industry' | 'store' | 'warehouse' | 'residential' | 'research' | 'bank' | 'tv';
+export type FixtureKindId = 'industry' | 'store' | 'warehouse' | 'residential' | 'research' | 'bank' | 'tv' | 'storage';
 
 export interface FixtureCandidate {
   facilityClass: string;
@@ -170,6 +172,30 @@ export const FIXTURE_KINDS: readonly FixtureKind[] = [
       { facilityClass: 'MarikoTVStation', why: 'TVGeneral — Mariko/MarikoPack1.dpr:3376' },
       { facilityClass: 'MoabTVStation', why: 'TVGeneral — Moab/MoabPack1.dpr:2367' },
       { facilityClass: 'DissTVStation', why: 'TVGeneral — Dissidents/DissidentPack1.dpr:3430' },
+    ],
+  },
+  {
+    id: 'storage',
+    groups: ['indGeneral', 'supplies', 'products'],
+    neededBy: '#1257',
+    // Cluster + 'WHCOMMON' (Model Extensions/Standards.pas:209) + 'UWGeneralStorage' (UW/UWConst.pas:26),
+    // copied per cluster by CopyCommonFacilities (Standards.pas:243-269) from General/GeneralPack1.dpr:842.
+    // An ordinary storage carries the industry kind's groups: it is told from a farm by its cached
+    // TradeRole (2, 5 or 6 — see roleRefusal), not by its groups.
+    // UW General Storage carries Level := 1100 (GeneralPack1.dpr:846) and the build menu offers a
+    // class only when its level equals the tycoon's (Build/FacilityList.asp:208), so a level-100
+    // tycoon is never offered it. UW Cold Storage — also a TWarehouse (StdBlocks/ColdStorage.pas:21-22),
+    // 5×5, 1,000,000 (GeneralPack1.dpr:629), Level := 100 (:653), Cluster + 'WHCOMMON' +
+    // 'UWColdStorage' (UW/UWConst.pas:14) — is the fallback the menu does offer.
+    candidates: [
+      { facilityClass: 'PGIWHCOMMONUWGeneralStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:842, copied by PGI/PGIPack1.dpr:1595' },
+      { facilityClass: 'MarikoWHCOMMONUWGeneralStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:842, copied by Mariko/MarikoPack1.dpr:1372' },
+      { facilityClass: 'MoabWHCOMMONUWGeneralStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:842, copied by Moab/MoabPack1.dpr:922' },
+      { facilityClass: 'DissidentsWHCOMMONUWGeneralStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:842, copied by Dissidents/DissidentPack1.dpr:1270' },
+      { facilityClass: 'PGIWHCOMMONUWColdStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:649, copied by PGI/PGIPack1.dpr:1595' },
+      { facilityClass: 'MarikoWHCOMMONUWColdStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:649, copied by Mariko/MarikoPack1.dpr:1372' },
+      { facilityClass: 'MoabWHCOMMONUWColdStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:649, copied by Moab/MoabPack1.dpr:922' },
+      { facilityClass: 'DissidentsWHCOMMONUWColdStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:649, copied by Dissidents/DissidentPack1.dpr:1270' },
     ],
   },
 ];
@@ -594,6 +620,8 @@ export interface Holding {
   visualClass: string;
   name: string;
   tabIds: string[];
+  /** The cached `indGeneral` TradeRole, when the template carries `indGeneral`. */
+  tradeRole?: string;
 }
 
 export interface Site {
@@ -646,12 +674,18 @@ export async function scanHoldings(session: LiveSession): Promise<Holdings> {
         continue;
       }
       const details = await readBuildingDetails(session, row.x, row.y, b.visualClass);
+      const tabIds = details.tabs.map(t => t.id);
+      // Not swallowed: a role read failing silently would let a storage pass as the industry.
+      const tradeRole = tabIds.includes('indGeneral')
+        ? await readTradeRole(session, row.x, row.y, b.visualClass)
+        : undefined;
       out.holdings.push({
         x: row.x,
         y: row.y,
         visualClass: b.visualClass,
         name: row.name,
-        tabIds: details.tabs.map(t => t.id),
+        tabIds,
+        ...(tradeRole !== undefined ? { tradeRole } : {}),
       });
     }
   }
@@ -664,8 +698,33 @@ export interface FixtureLookup {
   reason?: string;
 }
 
+/**
+ * The cached `TradeRole` of an `indGeneral` facility (`Kernel/Kernel.pas:5893`), or undefined when
+ * the section carries none. Read right after a `readBuildingDetails` of the same lot, which
+ * recreates the inspector's temp object.
+ */
+async function readTradeRole(session: LiveSession, x: number, y: number, visualClass: string): Promise<string | undefined> {
+  const section = await readBuildingTabData(session, x, y, 'indGeneral', visualClass, ['indGeneral']);
+  return propertyValue(section.groups ?? {}, 'indGeneral', 'TradeRole');
+}
+
+const ROLE_WHY = "a storage's trade mode, Voyager/IndustryGeneralSheet.pas:191-215";
+
+/**
+ * Why a holding's TradeRole keeps it off a kind, or null. An ordinary storage carries the
+ * industry kind's groups; a warehouse's role is 2, 5 or 6 (`TWarehouse.GetRole`,
+ * `StdBlocks/Warehouses.pas:543-546`; `TFacilityRole`, `Cache/CacheCommon.pas:53`), and Voyager
+ * shows the trade-mode selector for those values only.
+ */
+function roleRefusal(kindId: FixtureKindId, tradeRole: string | undefined): string | null {
+  const isStorage = tradeRole !== undefined && isTradeModeValue(tradeRole);
+  if (kindId === 'storage' && !isStorage) return `TradeRole "${tradeRole ?? 'absent'}" is not 2, 5 or 6 (${ROLE_WHY})`;
+  if (kindId === 'industry' && isStorage) return `TradeRole "${tradeRole}" is 2, 5 or 6 — a storage, not an industry (${ROLE_WHY})`;
+  return null;
+}
+
 export function pickFixture(holdings: Holding[], sites: Site[], kind: FixtureKind): FixtureLookup {
-  const hit = holdings.find(h => carriesKind(h.tabIds.map(id => ({ id })), kind));
+  const hit = holdings.find(h => carriesKind(h.tabIds.map(id => ({ id })), kind) && roleRefusal(kind.id, h.tradeRole) === null);
   if (hit) return { kind: kind.id, found: { x: hit.x, y: hit.y, visualClass: hit.visualClass, name: hit.name } };
   // A site cannot be tied to a class: nothing read later says what it will become.
   if (sites.length > 0) return { kind: kind.id, reason: 'under construction' };
@@ -925,6 +984,19 @@ export async function ensureFixtures(session: LiveSession, deps: FixtureDeps = {
           reason: `candidate ${info.facilityClass} (visual class ${vc}) built a facility without ${missing.join(', ')} — a wrong FIXTURE_KINDS entry`,
         });
         continue;
+      }
+      if (kind.groups.includes('indGeneral')) {
+        const refusal = roleRefusal(kind.id, await readTradeRole(session, lot.x, lot.y, vc));
+        if (refusal !== null) {
+          set({
+            status: 'FAIL',
+            ...base,
+            visualClass: vc,
+            logLine: line,
+            reason: `candidate ${info.facilityClass} (visual class ${vc}) built a facility whose ${refusal} — a wrong FIXTURE_KINDS entry`,
+          });
+          continue;
+        }
       }
     }
     set({ status: 'built', ...base, visualClass: vc, logLine: line });
