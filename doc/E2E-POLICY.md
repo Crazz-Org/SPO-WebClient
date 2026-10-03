@@ -363,6 +363,9 @@ message (`handleGmChatSend`) makes no RDO or game-server call and is sent only t
 clients connected to that same gateway process — on the bench, only the drive's own
 sessions — so a live `/gm` drive reaches no player and mutates nothing in the world.
 Production gateways are untouched: their `SPO_GM_USERS` comes from their own deployment env.
+The flow `gm-broadcast` (#1199) drives this live — at the gate whenever the chat handlers
+change, and in the nightly: it proves delivery to the secondary account on channel `GM`, and
+the two refusals, a non-GM sender and a session not yet in the world.
 
 ---
 
