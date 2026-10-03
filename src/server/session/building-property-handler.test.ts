@@ -1267,6 +1267,58 @@ describe('direct property set', () => {
     expect(onlyFrame(fake)).toEqual(RdoCommand.sel(CURR_BLOCK).set('Stopped').args(RdoValue.int(-1)).build());
   });
 
+  // The cache never holds `Stopped`: TFacilityCacheAgent.UpdateCache writes
+  // `Trouble` (Kernel/KernelCache.pas:417), whose facStoppedByTycoon bit is
+  // $04 (Kernel/Kernel.pas:107).
+  it('reads Stopped back through Trouble, never under its own name', async () => {
+    const fake = makeConstructionCtx({ readBack: ['4'] });
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }));
+
+    const listCalls = fake.cacher.getPropertyList.mock.calls;
+    expect(listCalls[listCalls.length - 1][1]).toEqual(['Trouble']);
+  });
+
+  it.each([
+    { label: 'Close, bit set', value: '-1', trouble: '4', newValue: '-1' },
+    { label: 'Close, bit set among others', value: '-1', trouble: '12', newValue: '-1' },
+    { label: 'Open, bit clear', value: '0', trouble: '0', newValue: '0' },
+    { label: 'Open, other bit only', value: '0', trouble: '1', newValue: '0' },
+    { label: 'Close sent as a non -1 truthy value', value: '1', trouble: '4', newValue: '-1' },
+  ])('confirms Stopped by the facStoppedByTycoon bit ($label)', async ({ value, trouble, newValue }) => {
+    const fake = makeConstructionCtx({ readBack: [trouble] });
+
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName: 'Stopped' }));
+
+    expect(result).toEqual(expect.objectContaining({ success: true, confirmed: true, newValue }));
+  });
+
+  it.each([
+    { label: 'Close, bit clear', value: '-1', trouble: '0' },
+    { label: 'Open, bit still set', value: '0', trouble: '4' },
+  ])('does not confirm Stopped when the bit contradicts it ($label)', async ({ value, trouble }) => {
+    const fake = makeConstructionCtx({ readBack: [trouble] });
+
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName: 'Stopped' }));
+
+    expect(result.success).toBe(true);
+    expect(result.confirmed).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: 'empty', trouble: '' },
+    { label: 'non-numeric', trouble: 'x' },
+  ])('leaves Stopped unconfirmed when Trouble is $label', async ({ trouble }) => {
+    const fake = makeConstructionCtx({ readBack: [trouble] });
+
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }));
+
+    expect(result.confirmed).toBeUndefined();
+    expect(result.newValue).toBe('');
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('read-back of "Trouble" came back empty'));
+  });
+
   // Rent and Maintenance are published by TPopulatedBlock
   // (Kernel/PopulatedBlock.pas:148-149) — a block — so they stay on CurrBlock.
   it.each([
