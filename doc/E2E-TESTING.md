@@ -62,6 +62,11 @@ pointers to this file.
    above the map, so a map click there hits the chat, not the world, and nothing happens.
    Click `Collapse chat` before driving the map, and confirm the target with
    `document.elementFromPoint(x, y).id === 'game-canvas'`.
+7. **Close a dialog with its named button, not Escape or Enter.** The supplier picker and the
+   "Find supplier for …" dialog handle Escape without stopping it, so with focus on a button the
+   global dismiss also closes the layer beneath; the bug-report dialog has no Escape handler at
+   all; and a text prompt with a default value may submit on Enter, which writes. Click
+   `Close` / `Cancel`.
 
 ## Login Procedure (verified)
 
@@ -79,8 +84,10 @@ pointers to this file.
 | 10 | `browser_click` | button **"SPO_test3 - Green"** |
 | 11 | Poll `getState()` until `session.connected && renderer.mapLoaded` (up to 45 s) | |
 
-Company-select screen also shows **"Political Offices"** (Ministry of Agriculture) and
-**"Create New Company"** — do not click either during standard runs.
+Company-select screen also shows **"Political Offices"** (a Minister card first, then the card
+whose badge reads `Mayor of Helartia`) and **"Create New Company"**. Only Phase 8b clicks a
+Political Offices card — the `Mayor of Helartia` one; every other step logs into
+`SPO_test3 - Green`. "Create New Company" is only opened and closed (Phase 1), never submitted.
 
 **Login failure surfaces as a toast** (`status` role): e.g. *"World login failed: Unknown
 error"* with a **Dismiss** button. Dismiss and retry once; if it persists, check the gateway
@@ -269,19 +276,115 @@ release. It opens **every screen and panel once**, asserts it through `getState(
 screenshot for state — and closes it. Nothing is submitted, bought, sent or saved, except the
 Phase 5 chat ping. Every player *action* belongs to L2 (`npm run test:live`).
 
+Some screens live only in a component's local state, and `getState()` has **no field** for
+them: the Empire bank forms, the portrait dialog, the facility filter, the search ranking
+detail, the mobile search pill and the bug reporter's quick-pick grid. For those, assert the
+surrounding context through `getState()` (the open surface, `ui.modal`, the profile tab), then
+the element itself by role and accessible name — and say so in the report. Never invent a field.
+
+Requests sent outside the debug counters (`REQ_SEARCH_CONNECTIONS`,
+`REQ_CONNECTION_REACHABILITY`, `REQ_BUILDING_FOCUS` / `REQ_BUILDING_UNFOCUS`) never reach
+`__spoDebug.history` or `wire`: never assert on them.
+
+### Phase map
+
+Every screen a player can reach, with the step that opens it (`3.5` = Phase 3 step 5) or the
+reason it is not opened.
+
+| Screen | Mounted in | Opened by / reason |
+|---|---|---|
+| Server startup screen | `ServerStartupScreen` | 0 — shown while the leased gateway warms up; recorded present or absent |
+| Login intro, sign-in, language | `AuthStage` | 1.1, 1.2 |
+| Authentication Failed | `AuthErrorModal` | 1.3 |
+| Select a Region / a World | `ZoneStage`, `WorldStage` | 1.4 |
+| Select a Company — own companies | `CompanyStage` | 1.4, 1.6 |
+| Select a Company — Political Offices | `CompanyStage` | 8b.3 |
+| Select a Company — visitor, world-full, nobility, world-limit, access-denied views | `CompanyStage` | excluded — unreachable with the LOCKED accounts |
+| Create New Company | `CompanyCreationModal` | 1.5 (closed, never submitted) |
+| Map loading screen | `MapLoadingScreen` | 1.6 — shown during world entry |
+| StatusPill | `StatusPill` | 2.1, 2.2 |
+| CommandBar tiles, More menu | `CommandBar` | 2.3, 2.4 |
+| Mode row | `CommandBar` | 6 |
+| RightRail | `RightRail` | 2.5 |
+| Version badge, What's New | `VersionBadge`, changelog modal | 2.6 |
+| Context strip | `ContextStatusStrip` | 2.7 (absent when empty) |
+| World-event ticker | `WorldEventTicker` | 2.8 (absent until an event arrives) |
+| Toasts | notification stack | 1.3 / any step that raises one; recorded when seen |
+| Build surface | `build` | 3.1 |
+| Map surface, bookmark prompt | `map`, `PromptDialog` | 3.2 |
+| Empire tabs | `empire` | 3.3 |
+| Bank Account borrow / send forms | `ProfilePanel` | 3.3 (cancelled) |
+| Portrait uploader | `PortraitUploader` | 3.3 (cancelled) |
+| Initial Suppliers search | `SupplierSearchModal` | 3.3 (closed) |
+| Government home | `politics` | 3.4 |
+| Capitol inspector (Towns, Ministries) | `BuildingInspector` | 3.4 (read only) |
+| Helartia town hall | `BuildingInspector` | 4.5 |
+| Mail list / read | `MailPanel` | 3.5 |
+| Mail compose | `MailPanel` | 3.5 (closed unsent) |
+| Search pages | `SearchPanel` | 3.6 |
+| Search ranking detail | `SearchPanel` | 3.6 |
+| Newspaper | `NewspaperModal` | 3.6, 4.5 |
+| My facilities, new-folder prompt | `facilities`, `PromptDialog` | 3.7 (cancelled) |
+| Map overlays | `OverlayMenu` | 3.8 |
+| Facility filter | `FacilityFilter` | 3.8 (nothing toggled) |
+| Sheet chrome (pin, chip row) | `Sheet` | 3.9 |
+| Building preview | `StatusOverlay` | 4.1 |
+| Inspector, section menu, sections | `BuildingInspector` | 4.2–4.4 |
+| One inspector per fixture kind (industry, warehouse, residential, TV, research HQ, bank) | `PropertyGroup`, `template-groups.ts` | 4.7 |
+| Research panel | `ResearchPanel` | 4.7 |
+| Bank loan request | `BankLoanRequest` | recorded absent — renders only for a visitor of the bank |
+| Supplier-search surface | `supplierSearch` (`SupplierSearchSurface`) | 4.8 (closed) |
+| Map context menu | `MapContextMenu` | 4.6 |
+| Chat strip, users sidebar, channel picker | `ChatStrip` | 5, 5.1, 5.2 |
+| Chat history | `chatHistory` modal | 5.3 |
+| New Channel | `createChannel` modal | 5.4 |
+| Channel password prompt | `PromptDialog` | 5.5 (cancelled; absent when no protected channel) |
+| Placement, road build, road demolish, connect modes | mode row | 6 |
+| Command palette | `CommandPalette` | 6, 7.5, 7.9 |
+| Hidden HUD | — | 6 |
+| Debug overlay | renderer | 6 |
+| Keyboard shortcuts | `shortcuts` modal | 6 |
+| Settings, logout confirm | `settings`, `confirm` modals | 6, 9.2 |
+| Bug reporter — armed overlay, report dialog | `ReportModeOverlay`, `ReportModal` | 6 (normally absent under the lease) |
+| Bug reporter — quick-pick grid, report button | `QuickPickGrid`, `ReportFab` | 7.10 (normally absent: needs `SPO_BUG_REPORT=true` below 768 px) |
+| Zone Type Picker | `ZoneTypePicker` | 8b.5 (closed, nothing painted) |
+| Switch server | `ServerSwitchOverlay` | 2.4, 7.9 |
+| Docked minimap | minimap | 2.4, 2.5 |
+| Chase badge | `ChaseBadge` | absent unless `SPO_test` is online — never required |
+| Mobile BottomNav, sheet snaps, menu, build content | `MobileShell` | 7.1–7.4 |
+| Mobile info bar, chat banner | `MobileInfoBar`, `ChatBanner` | 7.1, 7b |
+| Mobile search pill | `MobileSearchPill` | 7.5 |
+| Placement HUD | `PlacementHUD` | 7.6 |
+| Mobile mode bar | `MobileModeBar` | 7.7 |
+| Inspector in the bottom sheet | `BottomSheet` | 7.8 |
+| Every MobileMenu destination | `MobileMenu` | 7.9 |
+| Bottom sheet `peek` snap | `BottomSheet` | recorded absent — touch drag only |
+| Tablet band 768–1023 px | `MobileShell` | 7b |
+| Reconnect overlay | `ReconnectingOverlay` | 8.2 (absent when offline does not close the socket) |
+| Tutorial surface | `tutorial` | recorded absent when no assignment; its Close finalises the task, never clicked |
+| New-version banner | `NewVersionBanner` | excluded — not safely triggerable |
+| Crash screen | `CrashScreen` | excluded — not safely triggerable |
+
+**Maintainer follow-up.** `.claude/commands/e2e.md` and `.claude/skills/e2e-test/SKILL.md`
+must follow these steps and the two sub-phases (Phase 7b, Phase 8b); the pipeline cannot write
+under `.claude/`, so a maintainer session mirrors them. Two stale lines to fix there as well:
+`SKILL.md` still names Phase 0's lease as 60 minutes (it is now 90), and `e2e.md` still names
+`Crazz / test` as the secondary account, while this file says `SPO_test` / `test`.
+
 A screen whose data the world may not hold — the world-event ticker, the tutorial, the chase
 badge with the secondary account (`SPO_test`) online — is recorded **absent**, not failed. `SPO_test` is never required. A pass
 against the production URL runs only when the maintainer asks for one.
 
 ### Phase 0 — Lease the bench
 ```
-Bash (background): npm run dev -- --lease-minutes=60   # bench lease — returns when THIS
+Bash (background): npm run dev -- --lease-minutes=90   # bench lease — returns when THIS
                                                        # worktree's gateway is ready on :8080
                                                        # (~2 min cold build)
 browser_navigate → http://localhost:8080
 browser_resize → 1440×900
 ```
-The walkthrough is longer than the old smoke, so the lease is 60 minutes. The lease is the only
+The walkthrough opens every screen once, including the tablet pass and the Mayor sub-phase, so
+the lease is 90 minutes. The lease is the only
 sanctioned way to get a gateway (see **Server Lifecycle**; `bench-port-guard.sh` refuses the
 others): the worker holds the gateway and tears it down at expiry, or when Phase 9 hands it
 back with `npm run dev:release`. `WORKER DOWN` at this step is a bench problem, not a test
@@ -322,7 +425,8 @@ result.
    flips, click again to restore. The screens behind the tiles are walked in Phase 3.
 4. **More menu** — click `More`; assert the menu "More actions" lists `Build road`,
    `Demolish road`, `Search`, `Map overlays`, `Docked minimap`, `My facilities`, `Settings`,
-   `Keyboard shortcuts`, `Switch server`. Here open only:
+   `Keyboard shortcuts`, `Switch server` — plus `Zone painting` while
+   `login.isPublicOfficeRole` is true (that item is opened only in Phase 8b). Here open only:
    - `Docked minimap` — assert `panels.minimap` flips, click again to restore.
    - `Switch server` — assert `ui.serverSwitchMode === true` and the region picker; leave with
      `Back to planitia`, assert `ui.serverSwitchMode === false` and the map still loaded. Pick
@@ -351,14 +455,36 @@ Each surface opens as a sheet; open it, assert, close it (`ui.stack` back to emp
    facility into "Place Building" here (Phase 6 does).
 2. **Map** — `Map` tile; assert the top of `ui.stack` is `map`. In the `Map tools` toolbar click
    `Back`, `Next`, then `Nearest Town Hall` (it opens that town hall's building surface —
-   `panels.buildingDetails === true`; close it). Never click "Bookmark this place", and never
-   rename or delete a bookmark.
+   `panels.buildingDetails === true`; close it). Click `Bookmark this place`: assert the dialog
+   "Bookmark this place" and `ui.modal === "prompt"`; click `Cancel` (never press Enter — the
+   field holds a default value, so Enter saves it), assert `ui.modal === null`. Never rename or
+   delete a bookmark.
 3. **Empire** — `Empire` tile (sheet "Profile"); in `Profile sections` open each of
    Curriculum, Bank Account, Profit & Loss, Companies, Initial Suppliers, Strategy and assert
    `subViews.profileTab` reads `curriculum`, `bank`, `profitloss`, `companies`,
    `autoconnections`, `policy`; close each with `Close section` (`subViews.profileTab === null`).
+   While a section is open, also:
+   - **Bank Account** — click `Request Loan`: assert the form with its `Borrow` and `Cancel`
+     buttons, click `Cancel`. Same for `Send Money` (`Send` / `Cancel`) when shown. Never
+     `Borrow`, `Send` or `Pay Off` (`Pay Off` writes with no confirmation). No `getState()`
+     field exists for these forms: assert `subViews.profileTab === "bank"` and the buttons by
+     name.
+   - **Initial Suppliers** — click `Add Supplier` under one fluid (`handleOpenSearch` in
+     `ProfilePanel`). Assert the dialog "Find supplier for <fluid>",
+     `ui.modal === "supplierSearch"` and `subViews.profileTab === "autoconnections"`; click its
+     `Close`, assert `ui.modal === null`. Never `Search`, never `Add Selected`; touch no switch
+     and no `Remove`.
+   - **Portrait** — click `Change portrait` (the profile header). Assert the dialog
+     "Change portrait" — `ui.modal` stays null, the dialog is local state — then click `Cancel`.
+     Never choose an image, never `Send`.
 4. **Government** — `Government` tile; assert `panels.politics === true` and the home shows its
-   "Capitol" and "Towns" sections. Open nothing from it here (the Helartia town hall is Phase 4).
+   "Capitol" and "Towns" sections. Click `Open the Capitol` (`PoliticsHome` →
+   `client.onOpenCapitol`); if it is disabled ("No Capitol found in this world"), record this
+   part *absent*. Assert `ui.stack` is `['building']`, `panels.buildingDetails === true` and
+   `buildingDetails.tabs` contains `capitolTowns` or `ministeries`. Open each civic tab present
+   (`role="tab"`: Overview, Administration, …), reading only — Administration shows Towns and
+   Ministries. **Never click `Elect`**: it opens a prompt that writes on Submit, and it is
+   president-only. Close the sheet. (The Helartia town hall is Phase 4.)
 5. **Mail** — `Mail` tile; assert `panels.mail === true`, `subViews.mailView === "list"`. Click
    each tab `Inbox`, `Sent`, `Drafts` and assert `subViews.mailFolder` = `Inbox`, `Sent`,
    `Draft`. Open **one** message — from `Sent` by default — assert `subViews.mailView === "read"`,
@@ -368,16 +494,35 @@ Each surface opens as a sheet; open it, assert, close it (`ui.stack` back to emp
    a count. **An unread Inbox message is never opened**: opening it makes the gateway's
    `markInboxMessageRead` (`src/server/session/mail-handler.ts`) clear the mail server's unread
    flag, and no RDO member can set it back — `Mail Server/MailServer.pas:557`,
-   `Mail/MailMessageAuto.pas:165-166`. Never click Compose, Reply, Forward or Delete.
+   `Mail/MailMessageAuto.pas:165-166`. Click `Compose`: assert `subViews.mailView === "compose"`,
+   then click `Cancel` (`clearCompose` saves no draft and sends nothing) and assert
+   `subViews.mailView === "list"`. Never `Send` or `Save draft`; Reply, Forward and Delete are
+   never clicked.
 6. **Search** — More → `Search`. Assert `panels.searchMenu`
    and `subViews.searchPage === "home"`. Open each page the home offers once — `towns`,
    `people`, `rankings`, `banks`, `media`, `directory`, and a tycoon's `tycoon-profile` /
    `tycoon-full-profile` when reachable — asserting `subViews.searchPage`, and return with
-   `← Back`. A page with no tile on the live home is recorded *absent*. `ranking-detail` is
-   never navigated to.
+   `← Back`. A page with no tile on the live home is recorded *absent*. Then:
+   - **Ranking detail** — on `rankings`, click one category row (rows have no role: use a text
+     locator). It sends `REQ_SEARCH_MENU_RANKING_DETAIL`, a read. The detail renders inline and
+     `subViews.searchPage` **stays `"rankings"`** — no store value ever reads `ranking-detail`,
+     so assert the request in `__spoDebug.history` and the detail's heading. Return with
+     `← Back to rankings`.
+   - **Newspaper** — on `media`, click one paper card (`role="button"`, named by paper and
+     town). Assert the dialog "<paper> — daily issue" and `ui.modal === "newspaper"`; it reads
+     `REQ_NEWSPAPER_ISSUES` / `REQ_NEWSPAPER_ISSUE`. Never `Post a column`. Click `Close`. The
+     second entry point — `Read News` on a town hall's Overview (`OverviewSection`, beside
+     `Rate the Mayor`) — is walked in Phase 4 step 5.
 7. **My facilities** — More → `My facilities`; assert the top of `ui.stack` is `facilities`.
-   Do not create or rename a folder.
-8. **Map overlays** — More → `Map overlays`; assert the top of `ui.stack` is `overlays`.
+   Click `New folder` (`+ New Folder`): assert the dialog "New folder" and
+   `ui.modal === "prompt"`, then click `Cancel`. Facility and folder rename is an inline field,
+   not a prompt, and committing it writes: leave it untouched. Do not create or rename a folder.
+8. **Map overlays** — More → `Map overlays`; assert the top of `ui.stack` is `overlays`. Click
+   one item (e.g. `Beauty`): assert `layers.overlay === "Beauty"` (the `SurfaceType` value);
+   click it again, assert `layers.overlay === null`. The **facility filter** in the same menu
+   (`FacilityFilter`): assert its `Show all` / `Hide all` buttons and its checkboxes, and toggle
+   nothing — a toggle writes `settings.hiddenFacIds` to the browser's localStorage (never the
+   server), and is still not touched. No `getState()` field exists for the filter.
 9. **Sheet chrome** — with My facilities open: click
    `Pin sheet — keep it open while clicking the map`, assert `ui.pinned === true`; click a
    facility row, assert `ui.stack.length === 2` and the `Open surfaces` chip row; press Escape,
@@ -404,7 +549,8 @@ then assert in order:
    the nearest, else Government → the Helartia row → "Open the Town Hall of Helartia". Open each
    civic tab present (`CIVIC_TABS` in `CivicTabConfig.ts`): Overview, Administration,
    Demographics, Elections, Politics. Which appear depends on the server's groups: a missing tab
-   is recorded *absent*. Read only — no rating, tax or vote control is touched.
+   is recorded *absent*. Read only — no rating, tax or vote control is touched. On its Overview,
+   if `Read News` is present, click it: assert `ui.modal === "newspaper"`, then `Close`.
 6. **Right-click menu** — on your own building, `page.mouse.click(x, y, { button: 'right' })`
    with no movement: assert `[data-testid="map-context-menu"]`, `ui.contextMenuOpen === true`
    and a `menuitem` reading `Inspect`; click it and assert the building surface opens
@@ -412,6 +558,36 @@ then assert in order:
    menu has no `Inspect` item (`Centre view here` only). Press Escape: the menu is gone
    (`ui.contextMenuOpen === false`). Right-drag 100 px (press, move, release, all with
    `button: 'right'`): no menu appears and the camera panned instead.
+7. **One inspector per fixture kind** — using the #1149 fixtures. They have no committed
+   coordinates (`findFixture` in `src/e2e/fixtures.ts` finds them by kind at run time): open
+   each from a More → My facilities row and identify it by its `buildingDetails.tabs` ids
+   (`template-groups.ts`):
+
+   | Kind | Tab ids |
+   |---|---|
+   | generic industry | `indGeneral` + `supplies` + `products` |
+   | warehouse | `whGeneral` |
+   | residential | `resGeneral` |
+   | TV | `tvGeneral` |
+   | research HQ | `hqGeneral` + `hqInventions` |
+   | bank | `bankGeneral` |
+
+   Open each kind's own section once and touch no control in it; close the sheet. A kind missing
+   from My facilities is recorded *absent*.
+   - **Research HQ** — the "Research" section mounts `ResearchPanel`, which reads
+     `/api/research-inventions` and sends `REQ_RESEARCH_INVENTORY`. Its `Research`, `Cancel` and
+     `Sell` buttons write: never click them.
+   - **Bank** — `BankLoanRequest` renders only for a **visitor** (`PropertyGroup`), so on
+     SPO_test3's own bank it is recorded *absent* with that reason. The owner sees sliders,
+     which stay untouched.
+8. **Supplier-search surface** — on the industry fixture's Supplies or Products section, expand
+   one gate card and click `Hire` (`handleHire` → `ClientBridge.showConnectionPicker`). Assert
+   `ui.stack` is `['building','supplierSearch']`, the region "Find Suppliers" and its heading
+   "Find Suppliers for:" (or "Find Clients for:" from Products); `panels.buildingDetails` reads
+   false while the picker is on top. Never `Search`, never `Connect Selected`, never
+   `Pick on map`. Leave with the picker's own `Close` — scope it inside the picker, the sheet
+   has a `Close` too — and assert `ui.stack` is `['building']`. If `Hire` is not offered (no
+   edit rights), record it *absent*.
 
 ### Phase 5 — Chat ping
 Type `E2E smoke ping` into the chat textbox and send (`Send message`). **Assert:**
@@ -429,6 +605,10 @@ Then, nothing created or joined:
    `ui.modal === "chatHistory"`; `Close`.
 4. **New Channel** — picker → `New Channel…`; assert the dialog "New Channel" and
    `ui.modal === "createChannel"`; `Cancel` (never `Create`).
+5. **Channel password prompt** — in the channel picker, if a protected channel is listed, click
+   it: assert the dialog `Join "<channel>"` and `ui.modal === "prompt"`, then click `Cancel`
+   (never type a password, never press Enter). With no protected channel, record it *absent*
+   with that reason.
 
 Blur the chat input before Phase 6 (rule 5: `document.activeElement?.blur()`).
 
@@ -446,11 +626,10 @@ runs.
 After each, assert the flag is back to `false`. A disabled `Place Building` (unaffordable) or no
 facility offering `Connect` is recorded *absent* with that reason.
 
-- **Zone paint — recorded absent**: CommandBar offers "Zone painting" only when
-  `isPublicOfficeRole` is true, and this pass logs into the company "SPO_test3 - Green", never
-  "Political Offices" (`login.isPublicOfficeRole === false`; a role switch is an L2 action, card
-  `C1` (#1142)). Should the flag read true anyway, open the `Zone Type Picker` dialog, close it
-  with `Close` without picking a zone (`modes.zonePainting` stays false), and say so.
+- **Zone painting** — opened in Phase 8b, not here. `login.isPublicOfficeRole` is set from the
+  account's real offices by the `REQ_TYCOON_ROLE` reply, and SPO_test3 is mayor and minister,
+  so `Zone painting` may already be listed in the More menu at this point. It is still opened
+  only in Phase 8b, which follows the chosen Mayor login. Never paint.
 - **Command palette** — Ctrl+K; assert `ui.commandPaletteOpen === true`; Escape, assert false.
 - **Hidden HUD** — `h`; assert `ui.hudVisible === false`; restore with the `Show` toast (or `h`),
   assert true.
@@ -462,9 +641,14 @@ facility offering `Connect` is recorded *absent* with that reason.
   and Support when the bug reporter is on — toggling nothing; `Close`.
 - **Bug reporter** — present only when the gateway runs with `SPO_BUG_REPORT`
   (`window.__SPO_BUG_REPORT__` defined, `src/server/runtime-config.ts`). When present: Settings →
-  Support → `Report a problem` arms it (`[data-testid="report-mode-overlay"]`); cancel with
-  Escape. Never click while armed (a click captures), never `Send report` — a submit files a
-  real report. The bench lease loads no production `.env`, so it is normally recorded *absent*.
+  Support → `Report a problem` arms it (`[data-testid="report-mode-overlay"]`,
+  `bugReporter.armed === true`). While armed, make **one** capture click on the map: `onCapture`
+  in `BugReportRoot.tsx` only sets local state — the sole POST is `send`, to `/api/bug-report`.
+  Assert the dialog "Report a bug" (`ReportModal`) and `bugReporter.modalOpen === true`. Click
+  its `Cancel` (Escape is not wired there) and assert
+  `bugReporter.modalOpen === false && bugReporter.armed === false`. Never `Send report` — a
+  submit files a real report. The bench lease loads no production `.env`, so it is normally
+  recorded *absent*.
 
 ### Phase 7 — Mobile pass
 `browser_resize` → 390×844 (below 1024 px the `MobileShell` replaces the desktop chrome).
@@ -476,15 +660,97 @@ facility offering `Connect` is recorded *absent* with that reason.
    `half` → `full` → `half`. `peek` is reachable only by a touch drag → recorded *absent*.
    `Close` the sheet.
 3. **MobileMenu** — the `More` tab lists the groups Communication, Exploration, Map Controls,
-   System; confirm each is present. Do not tap Logout or Switch Server here.
+   System; confirm each is present. Each destination is tapped in step 9.
 4. **Mobile build content** — the `Build` tab shows the sub-tabs Buildings, Roads, Demolish;
    open each, start no mode. Assert `panels.buildMenu === true` while the tab is shown, and
    `build.mobileSubTab` reads `buildings` / `roads` / `demolish` per sub-tab.
+5. **Search pill** (`MobileSearchPill`, button "Search or run a command") — shown on the Map
+   tab with no sheet open and no mode running. Tap it, assert `ui.commandPaletteOpen === true`;
+   Escape, assert `false`. No `getState()` field exists for the pill itself.
+6. **Placement HUD** (`PlacementHUD`) — from the Build tab, enter Placement on one facility.
+   Assert `modes.placingBuilding === true` and the buttons `Cancel placement`, `Rotate view`,
+   `Confirm placement`. Tap `Cancel placement`, assert `false`. **Never `Confirm placement`**:
+   it builds a real building.
+7. **Mode bar** (`MobileModeBar`) — from the Build tab's Roads sub-tab, enter Road mode. Assert
+   `modes.roadBuilding === true` and the button `Done — leave Road mode`. Tap it, assert
+   `false`. Nothing is drawn.
+8. **Inspector in the bottom sheet** — More → `My facilities`, then tap a facility row (named
+   after the facility). Assert the bottom sheet `role="dialog"` "Building Inspector",
+   `panels.buildingDetails === true` and `ui.mobileSheetSnap`. `Close`.
+9. **Every MobileMenu destination** — each tapped from the `More` tab, asserted, and closed:
+
+   | Group | Item | Assert |
+   |---|---|---|
+   | Communication | Mail | `ui.stack` is `['mail']` |
+   | Exploration | Search | `['search']` |
+   | Exploration | Command palette | `ui.commandPaletteOpen` |
+   | Exploration | Profile | `['empire']` |
+   | Exploration | My facilities | `['facilities']` |
+   | Exploration | Government | `['politics']` |
+   | Map Controls | Zoom In / Zoom Out | `renderer.zoom` changes and restores |
+   | Map Controls | Rotate view | `renderer.rotation` changes; rotate back to the start |
+   | Map Controls | Map Overlays | `['overlays']` |
+   | Map Controls | Refresh Map | `renderer.mapLoaded` stays true |
+   | System | Settings | `ui.modal === "settings"` |
+   | System | Debug Overlay | `renderer.debugMode` flips; restore it |
+   | System | Support | only when the bug reporter is on — Phase 6 rules |
+   | System | Switch Server | `ui.serverSwitchMode === true`; leave through its back control as in Phase 2, pick nothing |
+   | System | Logout | `ui.modal === "confirm"` and the dialog "Log out"; then **`Cancel`** — never `Log out` here |
+
+10. **Report button** (`ReportFab`) — renders only with `SPO_BUG_REPORT=true` and a width below
+    768 px. The lease does not set the variable, so it is normally recorded *absent*; when
+    present, its `QuickPickGrid` follows Phase 6's rules (one capture, `Cancel`, never send).
+
+`peek` stays recorded *absent* (touch drag only).
+
+### Phase 7b — Tablet pass
+`browser_resize` → 900×1000. `BREAKPOINTS` in `useResponsive` calls 768–1023 px `tablet`, and
+it gets the same `MobileShell` as a phone; only text sizes and panel widths differ, and there
+is no `ReportFab`. One pass:
+
+1. Each BottomNav tab, asserting `ui.mobileTab` as in Phase 7 step 1.
+2. One sheet open, assert `ui.mobileSheetSnap`, then `Close`.
+3. The `More` tab lists the four groups Communication, Exploration, Map Controls, System.
+4. `mobile.infoBar === true`.
+5. The desktop `nav[aria-label="Game actions"]` is hidden, while the BottomNav
+   `role="tablist"` "Game actions" is shown.
 
 `browser_resize` → 1440×900 before Phase 8.
 
 ### Phase 8 — Wire health
 **Assert:** `wire.sent > 10`, `wire.received > 10`, `wire.errors === 0`.
+
+1. **Reconnect overlay** — take the browser offline with `browser_run_code_unsafe`:
+   `async (page) => { await page.context().setOffline(true); }`.
+2. Wait up to 30 s for `ReconnectingOverlay` (mounted in `App.tsx`): a `role="status"` titled
+   "Connection lost", the line "Reconnecting… attempt N of 15", a `Try now` button, and
+   `panels.login === true` with `session.connected === false`. `getState()` has no status
+   field; `panels.login` reads `status !== 'connected'`.
+3. Bring the browser back with `setOffline(false)`, click `Try now`, and wait until
+   `panels.login === false && renderer.mapLoaded === true`.
+4. The client learns of a disconnect only from the socket's own `onclose`, and Chromium's
+   offline emulation may leave an open WebSocket untouched. If no overlay shows within 30 s,
+   restore online and record the step **absent: "a live WebSocket does not close offline"**.
+   Use no other way to kill the socket: only the offline route is allowed.
+5. Re-assert `wire.errors === 0`. Record any reconnect error; never re-run the step to hide it.
+
+### Phase 8b — Mayor of Helartia sub-phase
+1. Log out (More → `Settings` → `Logout` → `Log out`).
+2. Follow the login table again up to "Select a Company".
+3. Under the "Political Offices" heading (`CompanyStage.tsx`), click the card (`role="button"`)
+   whose badge reads `Mayor of Helartia`. A Minister card is listed first: never click the first
+   card blindly. The click sends `REQ_SWITCH_COMPANY` — a read-only role choice, driven live by
+   the L2 `company-switch` flow.
+4. Assert the standard post-login set — record `session.companyName` rather than match it
+   against `SPO_test3`, since this login enters through the office — and
+   `login.isPublicOfficeRole === true`.
+5. Open More → `Zone painting` (menuitem). Assert the dialog "Zone Type Picker",
+   `ui.modal === "zonePicker"` and `modes.zonePainting === false` — opening the picker sends
+   nothing.
+6. Click `Close` without picking a zone. Assert `ui.modal === null` and
+   `modes.zonePainting === false`. Nothing is painted; `REQ_DEFINE_ZONE` is never sent.
+
+Phase 9 then exits from this session.
 
 ### Phase 9 — Clean exit
 The logout reloads the page, which resets `__spoDebug.history`, so the history is captured on
@@ -513,9 +779,12 @@ the way out:
 | 5 Chat ping | |
 | 6 Modes and overlays | |
 | 7 Mobile pass | |
+| 7b Tablet pass | |
 | 8 Wire health | |
+| 8b Mayor sub-phase | |
 | 9 Clean exit | |
 
-Out of scope: the tutorial surface's buttons (its Close finalises the task); the visitor,
-world-full and denied screens (unreachable with the LOCKED accounts); the reconnect overlay,
-the new-version banner and the crash screen (not safely triggerable).
+Out of scope: the tutorial surface (`TutorialPanel`, recorded absent when there is no
+assignment; its Close finalises the task); the `CompanyStage` visitor, world-full, nobility,
+world-limit and access-denied views (unreachable with the LOCKED accounts); the new-version
+banner (`NewVersionBanner`) and the crash screen (`CrashScreen`) (not safely triggerable).
