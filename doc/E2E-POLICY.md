@@ -499,9 +499,9 @@ reply; each flow sweeps and deletes every copy it created in the same run.
 No flow reads or writes its buildings (`flows.ts`: it appears at the login in
 `permission-negative`, which does not mutate, as the mail recipient, as the reply sender, and as the seed sender).
 Never another player's assets. Never a world-scope value. Every mutation is restored in
-the same run (§5).
+the same run (§5), except the permanent fixtures and the one board column below.
 
-**Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29, the
+**Permanent fixtures.** Sanctioned by the maintainer on 2026-09-29, the
 nightly-only flow `fixtures-ensure` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
 kind the owner-setter flows need — `industry`, `store`, `warehouse`, `residential`, `research`,
 `bank`, `tv` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
@@ -521,6 +521,14 @@ under cash − the cash floor − `research-roundtrip`'s own cost. It is proven 
 owned invention that sells it, `Kernel/ResearchCenter.pas:372`), never queues
 `research-roundtrip`'s target, and records no pending restore, so no restore or unlock step can
 cancel it.
+
+**One permanent board column.** The earlier exclusion of posting is lifted for one flow
+(maintainer, 2026-10-02, #1260): `newspaper-board-read` posts one column as SPO_test3 on the
+Helartia Herald, and only when the board holds no column and no tree entry. The column is
+permanent, because no member deletes a post (`News Server/NewsObject.pas:9-34`), so the flow
+records no pending restore. It is public — every reader of the paper sees it. It carries no
+rating: the gateway never sends `Rate`, so the post sends no RDO (`boardmsg.asp:96`). It is the
+only board post any flow makes.
 
 **Build → demolish (#1150).** `place-rename-demolish` places the cheapest buildable facility —
 never a mausoleum, never the Capitol (`isRefusedClass`) — on a free Helartia lot as

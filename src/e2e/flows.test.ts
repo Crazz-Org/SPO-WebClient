@@ -5,7 +5,7 @@ import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage, FavoritesItem, WsRespResumeSession, ConnectionSearchResult } from '@/shared/types/message-types';
 import type {
   AutoConnectionsData, BuildingConnectionData, BuildingProductData, BuildingPropertyValue, BuildingSupplyData,
-  CompInputData, FacilityDimensions, MailMessageFull, MailMessageHeader, NewspaperBoard, WarehouseWareData,
+  CompInputData, FacilityDimensions, MailMessageFull, MailMessageHeader, NewspaperArticle, NewspaperBoard, WarehouseWareData,
 } from '@/shared/types/domain-types';
 import {
   FLOWS, flowByName, nudge, runFlow, readBank, readAutoConnections, readPolicy, readCurriculum, replyHeaders,
@@ -90,7 +90,7 @@ describe('the catalogue', () => {
         'facility-open-close',
         'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
         'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
-        'place-rename-demolish',
+        'newspaper-board-read', 'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
         // #1153
         'quick-trade-roundtrip',
@@ -1758,16 +1758,36 @@ describe('newspaper-board-read', () => {
   const ROOT = 'boards\\Planitia\\Helartia Herald\\';
   const COLUMN = { author: 'Crazz', subject: 'Hello', path: ROOT + '1\\', summary: '' };
 
-  function arrange(over: { paper?: string; board?: Partial<NewspaperBoard> } = {}) {
-    const { paper = 'Helartia Herald' } = over;
+  interface PostOpts { success: boolean; message?: string; listsMarker?: boolean }
+  function arrange(over: {
+    paper?: string; board?: Partial<NewspaperBoard>; post?: PostOpts; article?: Partial<NewspaperArticle>;
+  } = {}) {
+    const { paper = 'Helartia Herald', post = { success: true } } = over;
     const board: NewspaperBoard = {
       paperName: paper, root: ROOT, path: ROOT, columns: [], tree: [], article: null, error: '',
       ...over.board,
     };
+    let posted = '';
     const requests: WsMessage[] = [];
     jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
       requests.push(msg);
+      const m = msg as WsMessage & { path?: string; subject?: string };
+      if (msg.type === WsMessageType.REQ_NEWSPAPER_BOARD && m.path) {
+        return { board: { ...board, path: m.path, article: {
+          subject: posted, byline: 'By SPO_test3 Mayor', body: 'x', replies: [], parentPath: '', photoUrl: '',
+          ...over.article,
+        } as NewspaperArticle } };
+      }
       if (msg.type === WsMessageType.REQ_NEWSPAPER_BOARD) return { board };
+      if (msg.type === WsMessageType.REQ_NEWSPAPER_POST) {
+        if (post.success) {
+          posted = m.subject ?? '';
+          if (post.listsMarker !== false) {
+            board.columns = [...board.columns, { author: 'SPO_test3', subject: posted, path: ROOT + '9\\', summary: '' }];
+          }
+        }
+        return { success: post.success, message: post.message ?? '', board: post.success ? board : null };
+      }
       return undefined;
     }));
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
@@ -1782,17 +1802,131 @@ describe('newspaper-board-read', () => {
     return requests;
   }
 
+  const posts = (rs: WsMessage[]) => rs.filter(m => m.type === WsMessageType.REQ_NEWSPAPER_POST);
+  const opens = (rs: WsMessage[]) =>
+    rs.filter(m => m.type === WsMessageType.REQ_NEWSPAPER_BOARD && (m as { path?: string }).path);
+
+  it('seeds one column on an empty board, reads it back, and passes with a clean lock', async () => {
+    const requests = arrange();
+    const lock = cleanLock();
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock, now: () => Date.UTC(2026, 9, 2) });
+    expect(posts(requests)).toHaveLength(1);
+    const req = posts(requests)[0] as WsMessage & { ratings?: unknown[]; replyToPath?: string; subject: string };
+    expect(req).toMatchObject({
+      paperName: 'Helartia Herald', townName: 'Helartia', isCapitol: false, buildingX: 1, buildingY: 2,
+      subject: 'E2E board check 2026-10-02T00:00:00.000Z',
+    });
+    expect(req.ratings ?? []).toEqual([]);
+    expect(req.replyToPath).toBeUndefined();
+    expect(opens(requests)).toEqual([expect.objectContaining({ path: ROOT + '9\\' })]);
+    expect(result.status).toBe('PASS');
+    expect(result.seed?.ok).toBe(true);
+    expect(result.cleanup ?? []).toEqual([]);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('posts nothing on a board that already has a column, and passes', async () => {
+    const requests = arrange({ board: { columns: [COLUMN] } });
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(posts(requests)).toEqual([]);
+    expect(opens(requests)).toEqual([]);
+    expect(result.status).toBe('PASS');
+  });
+
+  it('posts nothing when the town hall names no paper, and the run fails on it', async () => {
+    const requests = arrange({ paper: '' });
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(posts(requests)).toEqual([]);
+    expect(result.status).toBe('FAIL');
+  });
+
+  it('posts nothing when the seed cannot read the board, and the run fails on it', async () => {
+    const requests = arrange({ board: { error: 'HTTP 500' } });
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(posts(requests)).toEqual([]);
+    expect(result.status).toBe('FAIL');
+  });
+
+  it('ends UNPROVEN with the post message, skips the run and records no restore, when the post is refused', async () => {
+    const requests = arrange({ post: { success: false, message: 'Subject required' } });
+    const lock = cleanLock();
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock });
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toContain('Subject required');
+    expect(opens(requests)).toEqual([]);
+    expect(requests.filter(m => m.type === WsMessageType.REQ_NEWSPAPER_BOARD)).toHaveLength(1);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('ends UNPROVEN when the post succeeds but its board lacks the marker', async () => {
+    arrange({ post: { success: true, listsMarker: false } });
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toMatch(/lists no "E2E board check /);
+  });
+
+  it('ends UNPROVEN with the error when the seed throws', async () => {
+    arrange();
+    jest.spyOn(session, 'findTown').mockRejectedValue(new Error('no towns'));
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(result.status).toBe('UNPROVEN');
+    expect(result.unproven[0]).toContain('no towns');
+  });
+
+  it.each([
+    ['its subject is not the marker', { subject: 'Other' }, /carries the marker/],
+    ['its byline lacks SPO_test3', { byline: 'By Crazz' }, /bylined SPO_test3/],
+    ['it opens with an error', { }, /seeded column opens/],
+  ])('FAILs when the opened seeded column: %s', async (label, article, failing) => {
+    const requests = arrange({ article });
+    if (label === 'it opens with an error') {
+      jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+        requests.push(msg);
+        const m = msg as WsMessage & { path?: string; subject?: string };
+        if (msg.type === WsMessageType.REQ_NEWSPAPER_POST) {
+          return { success: true, message: '', board: { columns: [{ author: 'SPO_test3', subject: m.subject, path: 'p', summary: '' }] } };
+        }
+        if (msg.type === WsMessageType.REQ_NEWSPAPER_BOARD && m.path) {
+          return { board: { columns: [], tree: [], article: null, error: 'gone' } };
+        }
+        const subj = (requests.find(r => r.type === WsMessageType.REQ_NEWSPAPER_POST) as { subject?: string } | undefined)?.subject;
+        return { board: { columns: subj ? [{ author: 'SPO_test3', subject: subj, path: 'p', summary: '' }] : [], tree: [], article: null, error: '' } };
+      }));
+    }
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.filter(a => !a.ok).map(a => a.what)).toEqual(expect.arrayContaining([expect.stringMatching(failing)]));
+  });
+
+  it('FAILs when the index no longer lists the seeded column', async () => {
+    const requests = arrange();
+    let reads = 0;
+    jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+      requests.push(msg);
+      const m = msg as WsMessage & { subject?: string };
+      if (msg.type === WsMessageType.REQ_NEWSPAPER_POST) {
+        return { success: true, message: '', board: { columns: [{ author: 'SPO_test3', subject: m.subject, path: 'p', summary: '' }] } };
+      }
+      reads++;
+      return { board: { columns: [], tree: [], article: null, error: '' } };
+    }));
+    const result = await runFlow(flowByName('newspaper-board-read'), { lock: cleanLock() });
+    expect(reads).toBe(2);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/index lists the seeded column/);
+  });
+
   const wellFormed = (r: { assertions: { what: string; detail?: string }[] }) =>
     r.assertions.find(a => /well-formed/.test(a.what));
 
-  it('ends UNPROVEN on an empty board, its detail naming both counts', async () => {
+  it('ends UNPROVEN on an empty board read without a seed, its detail naming both counts', async () => {
     arrange();
     const result = await flowByName('newspaper-board-read').run(ctx);
     expect(result.status).toBe('UNPROVEN');
     expect(wellFormed(result)).toMatchObject({ ok: true, detail: '0 columns, 0 tree entries' });
     expect(result.unproven).toEqual([
       'the board lists a column — Helartia Herald: 0 columns, 0 tree entries — nothing is posted, ' +
-        'and posting is excluded (News Server/NewsObject.pas:11-53)',
+        'and the seed did not post',
     ]);
   });
 
