@@ -763,6 +763,30 @@ export function getDefaultPoliticsData(townName: string, isCapitol = false): Pol
 // PUBLIC FUNCTIONS
 // =========================================================================
 
+/** The three ratings lists, read in page order. */
+async function fetchRatingsLists(
+  ctx: SessionContext, baseUrl: string, query: string,
+): Promise<{ popularRatings: PoliticsRatingEntry[]; ifelRatings: PoliticsRatingEntry[]; tycoonsRatings: PoliticsRatingEntry[] }> {
+  const popularRatings = await fetchRatingsPage(ctx, `${baseUrl}/popularratings.asp?${query}`, 'popular ratings');
+  const ifelRatings = await fetchRatingsPage(ctx, `${baseUrl}/ifelratings.asp?${query}`, 'IFEL ratings');
+
+  // `tycoonratings.asp` — SINGULAR. This call asked for `tycoonsratings.asp`
+  // for the whole life of the file; no such page exists among the 2 774 `.asp`
+  // of the Voyager tree, so every request 404'd and the tab was permanently
+  // empty (audit A-12 / B-4). The page reads the same five parameters as its
+  // two siblings (`tycoonratings.asp:6-22`), plus `Password` (`:103`), which
+  // `query` already carries.
+  let tycoonsRatings: PoliticsRatingEntry[] = [];
+  try {
+    tycoonsRatings = await fetchRatingsPage(ctx, `${baseUrl}/tycoonratings.asp?${query}`, 'tycoon ratings');
+  } catch (e: unknown) {
+    // Kept narrower than the outer catch on purpose: a transport failure on
+    // this optional tab must not empty the two ratings lists already read.
+    ctx.log.warn(`[Politics] Tycoons ratings fetch failed: ${toErrorMessage(e)}`);
+  }
+  return { popularRatings, ifelRatings, tycoonsRatings };
+}
+
 /**
  * Fetch politics data for a Town Hall building.
  * Fetches mayor info and ratings from the game server's politics ASP pages.
@@ -783,23 +807,20 @@ export async function getPoliticsData(
     const baseUrl = `http://${worldIp}/Five/0/Visual/Voyager/Politics`;
     const query = buildPoliticsParams(ctx, townName, buildingX, buildingY, isCapitol);
 
-    const popularRatings = await fetchRatingsPage(ctx, `${baseUrl}/popularratings.asp?${query}`, 'popular ratings');
-    const ifelRatings = await fetchRatingsPage(ctx, `${baseUrl}/ifelratings.asp?${query}`, 'IFEL ratings');
+    // The town read comes FIRST: the ratings pages list the town's `Ratings\`
+    // cache folder (`popularratings.asp:58-60`), which is refilled only when the
+    // town is re-cached (`Kernel/PoliticsCache.pas:139`, `:167-170`).
+    const rulerData = await fetchRulerData(ctx, isCapitol, townName, buildingX, buildingY, worldIp);
 
-    // `tycoonratings.asp` — SINGULAR. This call asked for `tycoonsratings.asp`
-    // for the whole life of the file; no such page exists among the 2 774 `.asp`
-    // of the Voyager tree, so every request 404'd and the tab was permanently
-    // empty (audit A-12 / B-4). The page reads the same five parameters as its
-    // two siblings (`tycoonratings.asp:6-22`), plus `Password` (`:103`), which
-    // `query` already carries.
-    let tycoonsRatings: PoliticsRatingEntry[] = [];
-    try {
-      tycoonsRatings = await fetchRatingsPage(ctx, `${baseUrl}/tycoonratings.asp?${query}`, 'tycoon ratings');
-    } catch (e: unknown) {
-      // Kept narrower than the outer catch on purpose: a transport failure on
-      // this optional tab must not empty the two ratings lists already read.
-      ctx.log.warn(`[Politics] Tycoons ratings fetch failed: ${toErrorMessage(e)}`);
+    // The re-cache may land on disk after the town read returns: when all three
+    // lists come back empty, read them once more — one retry, no wait loop.
+    let ratings = await fetchRatingsLists(ctx, baseUrl, query);
+    if (ratings.popularRatings.length === 0 && ratings.ifelRatings.length === 0
+      && ratings.tycoonsRatings.length === 0) {
+      ctx.log.debug('[Politics] All three ratings lists empty — re-reading once after the town re-cache');
+      ratings = await fetchRatingsLists(ctx, baseUrl, query);
     }
+    const { popularRatings, ifelRatings, tycoonsRatings } = ratings;
 
     // PUBLICITY — same folder, different property, and the level lives in the
     // `<select>` rather than in the text (`mayorpub.asp:180-191`).
@@ -812,8 +833,6 @@ export async function getPoliticsData(
     } catch (e: unknown) {
       ctx.log.warn(`[Politics] Publicity fetch failed: ${toErrorMessage(e)}`);
     }
-
-    const rulerData = await fetchRulerData(ctx, isCapitol, townName, buildingX, buildingY, worldIp);
 
     // Asked ONCE, here, and carried to every consumer in the payload. The
     // campaign panel below needs it, and so does the ratings rail in the
