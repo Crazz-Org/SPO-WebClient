@@ -153,14 +153,10 @@ const PROBE_INDEXED_GROUP: PropertyGroup = {
 /**
  * A group carrying `CurrBlock`.
  *
- * FINDING (lot 3): `enrichVotesTab` (:930) reads `CurrBlock` out of the values
- * the template collected, but `CurrBlock` appears in exactly one shipped group
- * — GENERIC_GROUP (template-groups.ts:25) — and GENERIC_GROUP is reachable only
- * through the fallback GENERIC_TEMPLATE, which has no `votes` tab. No
- * CLASSES.BIN registration can therefore produce a template with both, so on
- * the shipped data the RDOVoteOf enrichment never fires. The probe group makes
- * the enrichment reachable so its wire form can still be pinned; the
- * "never fires" case is pinned separately, on the real town-hall template.
+ * The probe group isolates the enrichment's wire form from template data: a
+ * minimal group whose read always carries `CurrBlock`. On shipped data
+ * VOTES_GROUP carries `CurrBlock` itself (Voyager/VotesSheet.pas:110), pinned
+ * by the real town-hall tests in `votes enrichment` below.
  */
 const PROBE_BLOCK_GROUP: PropertyGroup = {
   id: 'probeBlock',
@@ -960,8 +956,8 @@ describe('property collection and grouping', () => {
 describe('votes enrichment', () => {
   /**
    * townGeneral auto-injects the Votes tab (property-templates.ts:102-110); the
-   * probe group supplies the `CurrBlock` the enrichment needs and that no
-   * shipped group pairs with a votes tab — see PROBE_BLOCK_GROUP above.
+   * probe group supplies the `CurrBlock` the enrichment needs, independently of
+   * the shipped VOTES_GROUP — see PROBE_BLOCK_GROUP above.
    */
   function makeVotesCtx(over: DetailsCtxOptions = {}): FakeSessionCtx {
     const fake = makeDetailsCtx({ activeUsername: 'SPO_test3', ...over });
@@ -987,9 +983,9 @@ describe('votes enrichment', () => {
     return tab.groups ?? {};
   }
 
-  // The reason the enrichment exists — and the reason it never runs in
-  // production. Pinned on the real registration, with no probe group.
-  it('never fires on a real town hall: no shipped template carries CurrBlock', async () => {
+  // The opening read stays cheap: it never asks for CurrBlock, so no RDOVoteOf.
+  // Pinned on the real registration, with no probe group.
+  it('the opening read of a real town hall never asks for CurrBlock, so never sends RDOVoteOf', async () => {
     const fake = makeDetailsCtx({ activeUsername: 'SPO_test3' });
     registerTabs('9020', ['townGeneral']);
     focusReturns(fake, '40133602');
@@ -1005,6 +1001,33 @@ describe('votes enrichment', () => {
     expect(asked).not.toContain('CurrBlock');
     expect(fake.sent).toEqual([]);
     expect(details.groups['votes'].some(v => v.name === 'VoteOf')).toBe(false);
+  });
+
+  it('fires on a real town hall when the votes section is read: VOTES_GROUP carries CurrBlock', async () => {
+    const fake = makeDetailsCtx({ activeUsername: 'SPO_test3' });
+    registerTabs('9021', ['townGeneral']);
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { RulerName: 'Fred', RulerVotes: '120', CurrBlock: '40133888' });
+    rdoMembers(fake, { RDOVoteOf: 'res="%Fred"' });
+
+    await getBuildingBasicDetails(fake.ctx, X, Y, '9021');
+    const openingAsked = fake.cacher.getPropertyList.mock.calls.flatMap(([, names]) => names);
+    expect(openingAsked).not.toContain('CurrBlock');
+    expect(fake.sent).toEqual([]);
+
+    fake.cacher.getPropertyList.mockClear(); // keeps the cacheValues implementation
+    fake.sent.length = 0;
+    const tab = await getBuildingTabData(fake.ctx, X, Y, 'votes', '9021', ['votes']);
+
+    const sectionAsked = fake.cacher.getPropertyList.mock.calls.flatMap(([, names]) => names);
+    expect(sectionAsked).toContain('CurrBlock');
+    expect(fake.sent).toHaveLength(1);
+    const [{ packet }] = fake.sent;
+    expect(packet.member).toBe('RDOVoteOf');
+    expect(packet.targetId).toBe('40133888');
+    expect(packet.separator).toBe('"^"');
+    expect(packet.args).toEqual([RdoValue.string('SPO_test3').format()]);
+    expect(tab.groups?.['votes']).toContainEqual({ name: 'VoteOf', value: 'Fred' });
   });
 
   it('asks RDOVoteOf on CurrBlock and appends the answer to the votes tab', async () => {
