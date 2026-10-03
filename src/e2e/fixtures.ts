@@ -182,11 +182,20 @@ export const FIXTURE_KINDS: readonly FixtureKind[] = [
     // copied per cluster by CopyCommonFacilities (Standards.pas:243-269) from General/GeneralPack1.dpr:842.
     // An ordinary storage carries the industry kind's groups: it is told from a farm by its cached
     // TradeRole (2, 5 or 6 — see roleRefusal), not by its groups.
+    // UW General Storage carries Level := 1100 (GeneralPack1.dpr:846) and the build menu offers a
+    // class only when its level equals the tycoon's (Build/FacilityList.asp:208), so a level-100
+    // tycoon is never offered it. UW Cold Storage — also a TWarehouse (StdBlocks/ColdStorage.pas:21-22),
+    // 5×5, 1,000,000 (GeneralPack1.dpr:629), Level := 100 (:653), Cluster + 'WHCOMMON' +
+    // 'UWColdStorage' (UW/UWConst.pas:14) — is the fallback the menu does offer.
     candidates: [
       { facilityClass: 'PGIWHCOMMONUWGeneralStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:842, copied by PGI/PGIPack1.dpr:1595' },
       { facilityClass: 'MarikoWHCOMMONUWGeneralStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:842, copied by Mariko/MarikoPack1.dpr:1372' },
       { facilityClass: 'MoabWHCOMMONUWGeneralStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:842, copied by Moab/MoabPack1.dpr:922' },
       { facilityClass: 'DissidentsWHCOMMONUWGeneralStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:842, copied by Dissidents/DissidentPack1.dpr:1270' },
+      { facilityClass: 'PGIWHCOMMONUWColdStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:649, copied by PGI/PGIPack1.dpr:1595' },
+      { facilityClass: 'MarikoWHCOMMONUWColdStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:649, copied by Mariko/MarikoPack1.dpr:1372' },
+      { facilityClass: 'MoabWHCOMMONUWColdStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:649, copied by Moab/MoabPack1.dpr:922' },
+      { facilityClass: 'DissidentsWHCOMMONUWColdStorage', why: 'IndGeneral,Products,Supplies — General/GeneralPack1.dpr:649, copied by Dissidents/DissidentPack1.dpr:1270' },
     ],
   },
 ];

@@ -405,12 +405,16 @@ describe('FIXTURE_KINDS', () => {
     });
   });
 
-  it('builds the storage from the four UW General Storage classes, one per cluster (#1257)', () => {
+  it('builds the storage from the four UW General Storage classes, then the level-100 UW Cold Storage ones (#1257)', () => {
     expect(kind('storage').candidates.map(c => c.facilityClass)).toEqual([
       'PGIWHCOMMONUWGeneralStorage',
       'MarikoWHCOMMONUWGeneralStorage',
       'MoabWHCOMMONUWGeneralStorage',
       'DissidentsWHCOMMONUWGeneralStorage',
+      'PGIWHCOMMONUWColdStorage',
+      'MarikoWHCOMMONUWColdStorage',
+      'MoabWHCOMMONUWColdStorage',
+      'DissidentsWHCOMMONUWColdStorage',
     ]);
   });
 
@@ -883,6 +887,20 @@ describe('ensureFixtures', () => {
       status: 'built',
       facilityClass: 'PGIWHCOMMONUWGeneralStorage',
       logLine: expect.stringMatching(/New Facility: PGIWHCOMMONUWGeneralStorage/),
+    });
+    expect(w.placed()).toHaveLength(1);
+  });
+
+  it('builds the storage from UW Cold Storage when the menu offers no UW General Storage (level 1100, #1257)', async () => {
+    const w = new World();
+    ownAllBut(w, 'storage');
+    spyLog(w);
+    w.offer('MarikoWHCOMMONUWColdStorage', 1_000_000, '301', { xsize: 5, ysize: 5 });
+    const out = await ensure(w);
+    expect(out.storage).toMatchObject({
+      status: 'built',
+      facilityClass: 'MarikoWHCOMMONUWColdStorage',
+      logLine: expect.stringMatching(/New Facility: MarikoWHCOMMONUWColdStorage/),
     });
     expect(w.placed()).toHaveLength(1);
   });
