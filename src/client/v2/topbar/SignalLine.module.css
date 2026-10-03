@@ -1,0 +1,104 @@
+/* SignalLine — town sentence (left) and newest world event (right), under the TopBar.
+   The line itself is a transparent band; only its two chips are drawn and clickable. */
+
+.line {
+  position: fixed;
+  top: var(--v2-signal-top);
+  left: var(--v2-topbar-left);
+  right: var(--v2-topbar-right);
+  height: var(--v2-signal-height);
+  z-index: var(--z-hud);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  transition: right var(--duration-panel) var(--ease-out);
+}
+
+/* The band lets the map through; the chips take the pointer back. The doubled class outranks
+   the shell's `.screen > *` rule (GameScreenV2.module.css) that re-enables every slot. */
+.line.line {
+  pointer-events: none;
+}
+
+/* A surface is open: the side panel docks at this height, only the right edge moves. */
+.shifted {
+  right: var(--v2-shift-right);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 50%;
+  height: 100%;
+  padding: 0 var(--space-3);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.town {
+  pointer-events: none;
+}
+
+/* The event always sits on the right, with or without a town sentence beside it */
+.event {
+  margin-left: auto;
+  pointer-events: auto;
+}
+
+.icon {
+  flex-shrink: 0;
+  color: var(--accent-gold);
+}
+
+.text,
+.link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link {
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.link:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.link:focus-visible {
+  color: var(--text-primary);
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line {
+    transition: none;
+  }
+}
+
+/* Mobile and tablet — both interfaces show v1's ticker and context strip there */
+@media (max-width: 1023px) {
+  .line {
+    display: none;
+  }
+}

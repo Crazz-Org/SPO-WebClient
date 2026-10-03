@@ -120,6 +120,24 @@ describe('Build Menu — integration flow', () => {
     expect(facSpy).toHaveBeenCalledWith('1', 'default');
   });
 
+  it('carries the debug marker with its phase and category (issue 1192)', () => {
+    useUiStore.setState({ buildMenuCategories: mockCategories });
+    renderWithProviders(<BuildMenu />);
+    const root = screen.getByTestId('build-menu');
+    expect(root.dataset.phase).toBe('categories');
+    expect(root.dataset.category).toBeUndefined();
+    expect(root.dataset.loading).toBe('false');
+
+    fireEvent.click(screen.getByText('Commerce'));
+    expect(root.dataset.phase).toBe('facilities');
+    expect(root.dataset.category).toBe('Commerce');
+    expect(root.dataset.loading).toBe('true');
+    act(() => {
+      useUiStore.setState({ buildMenuFacilities: [...mockFacilities] });
+    });
+    expect(root.dataset.loading).toBe('false');
+  });
+
   it('renders facility list with tile badges when store receives facilities', () => {
     useUiStore.setState({
       buildMenuCategories: mockCategories,

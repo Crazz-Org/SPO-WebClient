@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { unlock } from './unlock';
 import { WorldLock } from './world-lock';
+import { SECONDARY_ACCOUNT } from './config';
 
 function tempLock(): WorldLock {
   return new WorldLock(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-unlock-')));
@@ -39,11 +40,11 @@ describe('unlock', () => {
     const lock = tempLock();
     lock.addPendingRestore({
       key: 'RDOSetPolicyStatus:k2',
-      what: 'SPO_test3 policy toward Crazz — put back "0"',
+      what: `SPO_test3 policy toward ${SECONDARY_ACCOUNT.username} — put back "0"`,
       originalValue: '0',
     });
     const message = unlock(lock);
-    expect(message).toContain('SPO_test3 policy toward Crazz — put back "0" -> "0" [key: RDOSetPolicyStatus:k2]');
+    expect(message).toContain(`SPO_test3 policy toward ${SECONDARY_ACCOUNT.username} — put back "0" -> "0" [key: RDOSetPolicyStatus:k2]`);
     expect(message).not.toContain('at (');
   });
 

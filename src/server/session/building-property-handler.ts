@@ -52,6 +52,28 @@ export const RDO_SET_PROPERTIES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Inspector properties published by the FACILITY, not by its block — so the
+ * `set` goes to ObjectId, not to CurrBlock.
+ *
+ * A `set` on an object that does not publish the name is refused with
+ * errUnexistentProperty (Rdo/Server/RDOObjectServer.pas:176) and, the write
+ * being fire-and-forget, nobody hears it: this is why Close/Open did nothing.
+ *
+ * - `Stopped` — `TFacility`, Kernel/Kernel.pas:1043 (SetStopped :3948). The
+ *   reference client binds to the facility id then assigns it:
+ *   Voyager/URLHandlers/ObjectInspectorHandleViewer.pas:618/:626 then
+ *   Voyager/SrvGeneralSheetForm.pas:488; SPO-ASP
+ *   Five/0/Visual/Voyager/IsoMap/StopFacility.asp:12-15.
+ * - `Name` — `TFacility`, Kernel/Kernel.pas:1029 (SetName :3860); Voyager
+ *   assigns it on the same facility proxy, SrvGeneralSheetForm.pas:248.
+ *
+ * Every other name the 'property' branch can receive (Rent, Maintenance,
+ * Interest, Term, HoursOnAir, Commercials) is published by a block class and
+ * stays on CurrBlock.
+ */
+export const FACILITY_PROPERTIES: ReadonlySet<string> = new Set(['Name', 'Stopped']);
+
+/**
  * Narrow a runtime-chosen name to a catalogued `procedure`.
  *
  * Both call sites (the synchronous `RDOConnectInput/Output` path and the
@@ -121,13 +143,16 @@ async function setBuildingPropertyImpl(
     }
 
     // Get the building's CurrBlock and ObjectId via map service.
-    // For most buildings ObjectId === CurrBlock, but warehouses differ:
-    // output/input gate commands (RDOSetOutputPrice, etc.) must target ObjectId.
+    // They are two different server objects, never the same id: ObjectId is
+    // the facility itself (`integer(Obj)`, Cache/CacheAgent.pas:89), CurrBlock
+    // is the separate block the facility runs (Kernel/Kernel.pas:1036, cached
+    // at Kernel/KernelCache.pas:426). A member must be sent to the object that
+    // declares it — see RDO_OBJECTID_COMMANDS and FACILITY_PROPERTIES below.
     await ctx.connectMapService();
     const tempObjectId = await ctx.cacherCreateObject();
     let currBlock: string;
     let objectId: string;
-    /** The gate's own id, for the one member that is declared on a gate. */
+    /** The gate's own id, for the two members declared on an input gate (RDOSelSelected, RDOSetInputFluidPerc). */
     let gateObjectId: string | null = null;
 
     try {
@@ -151,18 +176,30 @@ async function setBuildingPropertyImpl(
       // Cache/CacheCommon.pas:30). Neither CurrBlock nor the facility's own
       // ObjectId is that object — both are the block, which does not publish
       // the member. Resolve the gate the way the read-back does: by fluid name.
-      if (propertyName === 'RDOSelSelected') {
-        gateObjectId = await readGateWitness(
+      const resolveInputGateId = async (): Promise<string> => {
+        const id = await readGateWitness(
           ctx, tempObjectId, 'Input',
           additionalParams?.fluidId || additionalParams?.metaFluid, 'ObjectId',
         );
-        if (!gateObjectId) {
+        if (!id) {
           throw new Error(
-            'RDOSelSelected cannot be addressed: no input gate ObjectId resolved for ' +
+            `${propertyName} cannot be addressed: no input gate ObjectId resolved for ` +
             `fluid "${additionalParams?.fluidId ?? additionalParams?.metaFluid ?? ''}" — ` +
             'the member lives on the gate, not on the block'
           );
         }
+        return id;
+      };
+      if (propertyName === 'RDOSelSelected') {
+        gateObjectId = await resolveInputGateId();
+      } else if (propertyName === 'RDOSetInputFluidPerc') {
+        // Same shape: `published procedure RDOSetInputFluidPerc(Perc : integer)`
+        // is declared on TInput, the gate (Kernel/Kernel.pas:1508), not on the
+        // block. Voyager binds it to the ad input's own ObjectId —
+        // `MSProxy.BindTo(fAdInputId); MSProxy.RDOSetInputFluidPerc(Perc)`
+        // (Voyager/AdvSheetForm.pas:456-457), with fAdInputId read off that
+        // input's `ObjectId` (:645). Rule 2 of CLAUDE.md: follow the reference.
+        gateObjectId = await resolveInputGateId();
       }
     } finally {
       await ctx.cacherCloseObject(tempObjectId);
@@ -213,10 +250,9 @@ async function setBuildingPropertyImpl(
     // Ref: Live capture: RDODisconnectInput "*" "%Plastics","%706,436,"
 
     // Output/input gate commands bind to ObjectId, not CurrBlock.
-    // For warehouses these differ; for other buildings they are equal.
     // RDOSetOutputPrice BindTo: objectId (direct)
     //
-    // The choice is three-way, not two: RDOSelSelected binds to neither of
+    // The choice is three-way, not two: RDOSelSelected and RDOSetInputFluidPerc bind to neither of
     // these ids but to the GATE's own ObjectId, resolved above. Both entries
     // here name the facility's block, which does not publish that member.
     const RDO_OBJECTID_COMMANDS: ReadonlySet<string> = new Set([
@@ -266,7 +302,8 @@ async function setBuildingPropertyImpl(
       // check and the compiler's check are the same check — no cast.
       const actualPropName = additionalParams.propertyName;
       assertSettable(actualPropName);
-      fireAndForget(rdoSet(actualPropName, currBlock, onlyArg(actualPropName, rdoArgs)).toFrame());
+      const target = FACILITY_PROPERTIES.has(actualPropName) ? objectId : currBlock;
+      fireAndForget(rdoSet(actualPropName, target, onlyArg(actualPropName, rdoArgs)).toFrame());
       await new Promise(resolve => setTimeout(resolve, 200));
     } else if (RDO_SET_PROPERTIES.has(propertyName)) {
       // Published property: use SET verb (not CALL)

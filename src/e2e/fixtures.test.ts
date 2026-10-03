@@ -22,6 +22,9 @@ import {
   loadTerrain,
   missingGroups,
   newFacilityLineMatches,
+  loadResearchIndex,
+  RESEARCH_UNLOCKS,
+  requiredResearchAt,
   ownLotRefusal,
   parseTerrainBmp,
   placeFacility,
@@ -35,6 +38,7 @@ import { WsDriver, WsDriverError } from './ws-driver';
 import * as liveLog from './live-log';
 import { PRIMARY_ACCOUNT } from './config';
 import type { LiveSession } from './session';
+import { WorldLock } from './world-lock';
 
 // ---------------------------------------------------------------------------------------------
 // A fake world behind a fake driver
@@ -58,6 +62,28 @@ const KIND_VC: Record<FixtureKindId, string> = {
   industry: '4116', store: '4602', warehouse: '532', residential: '4452', research: '602', bank: '2262', tv: '4982',
 };
 const CONSTRUCTION_VC = '9001';
+
+interface ResearchCat {
+  available: { id: string; enabled: boolean }[];
+  developing: string[];
+  completed: string[];
+}
+
+/** research.0.dat as `/api/research-inventions` serves it — the entries the builder resolves. */
+const RESEARCH_INDEX = [
+  { id: 'DistributedDirection', name: 'Distributed Direction', requires: [] as string[] },
+  { id: 'Banking', name: 'Banking Basics', requires: ['Distributed Direction'] },
+  { id: 'BasicTelevision', name: 'Television', requires: ['Distributed Direction'] },
+  { id: 'Bars', name: 'Bars', requires: [] },
+  { id: 'HappyHour', name: 'Happy Hour', requires: ['Bars'] },
+];
+
+const RESEARCH_DETAILS: Record<string, string> = {
+  DistributedDirection: 'Price: $1,000,000\r\nLevel: Apprentice',
+  Banking: 'Price: $50,000,000\r\nLevel: Tycoon',
+  BasicTelevision: 'Price: $10,000,000\r\nPrestige: +10 pts\r\nLevel: Tycoon',
+  HappyHour: 'Price: $25,000,000\r\nLevel: Apprentice',
+};
 
 interface Row {
   x: number;
@@ -89,6 +115,21 @@ class World {
   });
   logLines: string[] = [];
   requests: WsMessage[] = [];
+  /** Locked build-menu rows (#1233), served under the second category. */
+  locked: BuildingInfo[] = [];
+  /** The research fixture's inventory, one entry per category (#1233). */
+  research: ResearchCat[] = [
+    { available: [], developing: [], completed: [] },
+    { available: [{ id: 'HappyHour', enabled: true }], developing: [], completed: [] },
+  ];
+  details: Record<string, string> = { ...RESEARCH_DETAILS };
+  levelName = 'Entrepreneur';
+  index: { id: string; name: string; requires: string[] }[] = RESEARCH_INDEX.map(i => ({ ...i }));
+  /** Whether the server takes an RDOQueueResearch (moves it to developing). */
+  takesQueue: (id: string) => boolean = () => true;
+  /** Whether a taken queue logs its `Queue Research:` line. */
+  logsQueue = true;
+  writes: { property: string; x: number; y: number; params?: Record<string, string> }[] = [];
 
   constructor() {
     for (const [k, vc] of Object.entries(KIND_VC)) {
@@ -103,6 +144,14 @@ class World {
     this.buildings.push(mb(vc, opts.owner ?? OWN, x, y));
     const company = opts.company ?? OWN_COMPANY;
     (this.facKinds[company][k] ??= []).push({ x, y, name: `${k} ${x},${y}` });
+  }
+
+  /** A locked build-menu row: an icon-guessed class and the server's requirement sentence. */
+  lock(facilityClass: string, requirement: string): void {
+    this.locked.push({
+      name: facilityClass, facilityClass, visualClassId: '', cost: 0, area: 0, description: '', zoneRequirement: '',
+      iconPath: '', available: false, requirement,
+    });
   }
 
   offer(facilityClass: string, cost: number, visualClassId = '4601', extra: Partial<BuildingInfo> = {}): void {
@@ -166,7 +215,44 @@ class World {
         // Everything under the first category, plus a locked row that must never be picked.
         return m.kind === 'K1'
           ? { facilities: this.buildable }
-          : { facilities: [{ ...this.buildable[0], facilityClass: 'PGITVStation', cost: 1, available: false }].filter(f => f.name) };
+          : {
+              facilities: [
+                ...[{ ...this.buildable[0], facilityClass: 'PGITVStation', cost: 1, available: false }].filter(f => f.name),
+                ...this.locked,
+              ],
+            };
+      case WsMessageType.REQ_BUILDING_TAB_DATA:
+        return { groups: { hqInventions: [{ name: 'CatCount', value: String(this.research.length - 1) }] } };
+      case WsMessageType.REQ_RESEARCH_INVENTORY: {
+        const c = this.research[m.categoryIndex as number] ?? { available: [], developing: [], completed: [] };
+        const item = (id: string) => ({ inventionId: id, name: id });
+        return {
+          data: {
+            categoryIndex: m.categoryIndex,
+            available: c.available.map(i => ({ ...item(i.id), enabled: i.enabled })),
+            developing: c.developing.map(item),
+            completed: c.completed.map(item),
+          },
+        };
+      }
+      case WsMessageType.REQ_RESEARCH_DETAILS:
+        return { details: { inventionId: m.inventionId, properties: this.details[m.inventionId as string] ?? '', description: '' } };
+      case WsMessageType.REQ_GET_PROFILE:
+        return { profile: { levelName: this.levelName } };
+      case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
+        const params = m.additionalParams as Record<string, string> | undefined;
+        this.writes.push({ property: m.propertyName as string, x: m.x as number, y: m.y as number, params });
+        const id = params?.inventionId ?? '';
+        if (m.propertyName === 'RDOQueueResearch' && this.takesQueue(id)) {
+          for (const c of this.research) {
+            if (!c.available.some(i => i.id === id)) continue;
+            c.available = c.available.filter(i => i.id !== id);
+            c.developing.push(id);
+          }
+          if (this.logsQueue) this.logLines.push(`12:00 Queue Research: ${id}, ${params?.priority}`);
+        }
+        return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true };
+      }
       case WsMessageType.REQ_PLACE_BUILDING: {
         const r = this.place(m.facilityClass as string, m.x as number, m.y as number);
         if (r.line) this.logLines.push(r.line);
@@ -220,7 +306,9 @@ class World {
     return jest.fn(async (url: string) =>
       url.includes('/api/map-data/')
         ? { ok: true, status: 200, json: async () => ({ bmpUrl: '/proxy/planitia.bmp' }) }
-        : { ok: true, status: 200, arrayBuffer: async () => bmp },
+        : url.includes('/api/research-inventions')
+          ? { ok: true, status: 200, json: async () => ({ inventions: this.index }) }
+          : { ok: true, status: 200, arrayBuffer: async () => bmp },
     );
   }
 
@@ -912,5 +1000,260 @@ describe('ensureFixtures', () => {
     const out = await ensure(w);
     expect(out.tv.status).toBe('unproven');
     expect(w.placed()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// ensureFixtures — research that unlocks a kind (#1233)
+// ---------------------------------------------------------------------------------------------
+
+describe('RESEARCH_UNLOCKS', () => {
+  it('maps DissBank to Banking and DissTVStation to BasicTelevision, each a candidate of its kind, outside FIXTURE_KINDS', () => {
+    expect(RESEARCH_UNLOCKS.map(u => [u.facilityClass, u.inventionId])).toEqual([
+      ['DissBank', 'Banking'],
+      ['DissTVStation', 'BasicTelevision'],
+    ]);
+    expect(kind('bank').candidates.map(c => c.facilityClass)).toContain('DissBank');
+    expect(kind('tv').candidates.map(c => c.facilityClass)).toContain('DissTVStation');
+    for (const u of RESEARCH_UNLOCKS) expect(u.why).toMatch(/DissidentPack1\.dpr:\d+.*Standards\.pas:\d+/);
+  });
+
+  it("reads the location out of the server's requirement sentence, for that invention only", () => {
+    expect(requiredResearchAt('Requires research Banking Basics at Headquarters.', 'Banking Basics')).toBe('Headquarters');
+    expect(requiredResearchAt('Requires research Television at Headquarters.', 'Banking Basics')).toBeUndefined();
+    expect(requiredResearchAt(undefined, 'Banking Basics')).toBeUndefined();
+  });
+
+  it('refuses a research index that does not answer, or carries no inventions', async () => {
+    const down = jest.fn(async () => ({ ok: false, status: 404 })) as unknown as typeof fetch;
+    await expect(loadResearchIndex(down)).rejects.toThrow('answered 404');
+    const empty = jest.fn(async () => ({ ok: true, json: async () => ({}) })) as unknown as typeof fetch;
+    await expect(loadResearchIndex(empty)).rejects.toThrow('no inventions array');
+  });
+});
+
+describe('ensureFixtures — research that unlocks a kind (#1233)', () => {
+  const HQ_AT = { x: 118, y: 228 }; // ownAllBut's slot for the research kind
+  let addRestore: jest.SpyInstance;
+
+  /** Bank (and optionally TV) missing, their Dissidents classes locked behind research, cash ample. */
+  function lockedWorld(...missing: FixtureKindId[]): World {
+    const w = new World();
+    ownAllBut(w, ...(missing.length ? missing : (['bank'] as FixtureKindId[])));
+    spyLog(w);
+    w.cash = '$500,000,000';
+    w.offer('PGIFoodStore', 1); // something available, so the menu is not empty
+    w.lock('DisBank', 'Requires research Banking Basics at Headquarters.');
+    w.lock('DisTV', 'Requires research Television at Headquarters.');
+    w.research[0] = {
+      available: [{ id: 'Banking', enabled: true }, { id: 'BasicTelevision', enabled: true }],
+      developing: [],
+      completed: ['DistributedDirection'],
+    };
+    return w;
+  }
+  const queued = (w: World) => w.writes.filter(x => x.property === 'RDOQueueResearch').map(x => x.params?.inventionId);
+
+  beforeEach(() => {
+    addRestore = jest.spyOn(WorldLock.prototype, 'addPendingRestore');
+  });
+
+  afterEach(() => {
+    // Never, in any of these: a cancel (a sell on an owned invention), a queue of research-roundtrip's
+    // target, or a pending restore for research.
+    expect(addRestore).not.toHaveBeenCalled();
+    for (const w of worlds) {
+      expect(w.writes.some(x => x.property === 'RDOCancelResearch')).toBe(false);
+      expect(queued(w)).not.toContain('HappyHour');
+    }
+    worlds.length = 0;
+  });
+  const worlds: World[] = [];
+  const track = (w: World): World => (worlds.push(w), w);
+
+  it('queues Banking once at the research fixture when it is enabled and affordable, and places nothing', async () => {
+    const w = track(lockedWorld());
+    const out = await ensure(w);
+    expect(w.writes).toEqual([
+      { property: 'RDOQueueResearch', x: HQ_AT.x, y: HQ_AT.y, params: { inventionId: 'Banking', priority: '10' } },
+    ]);
+    expect(w.placed()).toHaveLength(0);
+    expect(out.bank).toMatchObject({
+      status: 'unproven', facilityClass: 'DissBank', reason: 'researching Banking Basics',
+      logLine: expect.stringMatching(/Queue Research: Banking, 10/),
+    });
+  });
+
+  it('queues only the missing prerequisite, once, when bank and TV both wait on it', async () => {
+    const w = track(lockedWorld('bank', 'tv'));
+    w.research[0] = {
+      available: [{ id: 'DistributedDirection', enabled: true }, { id: 'Banking', enabled: false }, { id: 'BasicTelevision', enabled: false }],
+      developing: [],
+      completed: [],
+    };
+    const out = await ensure(w);
+    expect(queued(w)).toEqual(['DistributedDirection']);
+    expect(out.bank).toMatchObject({ status: 'unproven', reason: 'researching Distributed Direction (for Banking Basics)' });
+    expect(out.tv).toMatchObject({ status: 'unproven', reason: 'researching Distributed Direction (for Television)' });
+  });
+
+  it.each<[string, (w: World) => void, RegExp]>([
+    ['the invention reads developing', w => { w.research[0] = { available: [], developing: ['Banking'], completed: ['DistributedDirection'] }; }, /^researching Banking Basics$/],
+    ['it reads owned but the class is still locked', w => { w.research[0] = { available: [], developing: [], completed: ['DistributedDirection', 'Banking'] }; }, /^Banking Basics is owned but DissBank is still not offered to SPO_test3 - Green$/],
+    ["no locked row's requirement names it", w => { w.locked = w.locked.filter(r => r.facilityClass !== 'DisBank'); }, /^no locked row requires Banking Basics$/],
+    ['no research fixture is found', w => { w.facKinds[OWN_COMPANY].research = []; }, /^no research fixture/],
+    ['it is not listed at the HQ', w => { w.research[0].available = []; }, /^Banking Basics is not listed at research 118,228 \(118,228\); it is researched at Headquarters$/],
+    ['a prerequisite is not listed at the HQ', w => { w.research[0] = { available: [{ id: 'Banking', enabled: false }], developing: [], completed: [] }; }, /^Distributed Direction \(for Banking Basics\) is not listed at/],
+    ['a prerequisite reads developing', w => { w.research[0] = { available: [{ id: 'Banking', enabled: false }], developing: ['DistributedDirection'], completed: [] }; }, /^researching Distributed Direction \(for Banking Basics\)$/],
+  ])('sends nothing when %s', async (_label, arrange, reason) => {
+    const w = track(lockedWorld());
+    arrange(w);
+    const out = await ensure(w);
+    expect(w.writes).toEqual([]);
+    expect(w.placed()).toHaveLength(0);
+    expect(out.bank).toMatchObject({ status: 'unproven', reason: expect.stringMatching(reason) });
+  });
+
+  it('keeps "no candidate offered" when the build menu has no locked row at all', async () => {
+    const w = track(lockedWorld());
+    w.locked = [];
+    w.buildable = []; // the fake also serves a locked copy of the first offered row
+    const out = await ensure(w);
+    expect(out.bank).toMatchObject({ status: 'unproven', reason: `no candidate offered to ${OWN_COMPANY}` });
+    expect(w.requests.some(r => r.type === WsMessageType.REQ_RESEARCH_INVENTORY)).toBe(false);
+  });
+
+  it("names the level and SPO_test3's level when the prerequisites are owned and the row is not enabled", async () => {
+    const w = track(lockedWorld());
+    w.research[0].available = [{ id: 'Banking', enabled: false }];
+    const out = await ensure(w);
+    expect(w.writes).toEqual([]);
+    expect(out.bank.reason).toMatch(/^Banking Basics needs level Tycoon; SPO_test3 is Entrepreneur — a level can only be earned, not seeded/);
+  });
+
+  it('says the level is unread when neither the details nor the profile show it', async () => {
+    const w = track(lockedWorld());
+    w.research[0].available = [{ id: 'Banking', enabled: false }];
+    w.details.Banking = 'Price: $50,000,000';
+    w.levelName = '';
+    const out = await ensure(w);
+    expect(out.bank.reason).toMatch(/needs level \(unread\); SPO_test3 is \(unread\)/);
+  });
+
+  it.each<[string, (w: World) => void, RegExp]>([
+    ['the cost is above cash − floor − the Happy Hour reserve', w => { w.cash = '$84,999,999'; }, /^Banking Basics costs \$50000000 \(Price \+ License\), above cash \$84999999 − floor \$10000000 − Happy Hour reserve \$25000000; nothing sent$/],
+    ['cash is unknown', w => { w.cash = null; }, /^cash unknown/],
+    ['the reserve is unknown', w => { w.details.HappyHour = ''; }, /^research reserve unknown/],
+  ])('sends nothing when %s', async (_label, arrange, reason) => {
+    const w = track(lockedWorld());
+    arrange(w);
+    const out = await ensure(w);
+    expect(w.writes).toEqual([]);
+    expect(out.bank).toMatchObject({ status: 'unproven', reason: expect.stringMatching(reason) });
+  });
+
+  it('queues at exactly cash − floor − reserve, counting the license fee', async () => {
+    const w = track(lockedWorld());
+    w.cash = '$86,000,000';
+    w.details.Banking = 'Price: $50,000,000\r\nLicense: $1,000,000\r\nLevel: Tycoon';
+    await ensure(w);
+    expect(queued(w)).toEqual(['Banking']);
+  });
+
+  it('subtracts each queued cost from the cash the next kind sees', async () => {
+    const both = track(lockedWorld('bank', 'tv'));
+    both.cash = '$95,000,000'; // floor 10M + reserve 25M + Banking 50M + Television 10M
+    const ok = await ensure(both);
+    expect(queued(both)).toEqual(['Banking', 'BasicTelevision']);
+    expect(ok.tv).toMatchObject({ status: 'unproven', reason: 'researching Television' });
+
+    const short = track(lockedWorld('bank', 'tv'));
+    short.cash = '$94,999,999';
+    const out = await ensure(short);
+    expect(queued(short)).toEqual(['Banking']);
+    expect(out.tv.reason).toMatch(/above cash \$44999999 /);
+  });
+
+  it('subtracts a queued cost from the cash a later build in the same run sees', async () => {
+    const w = track(lockedWorld('bank', 'tv'));
+    w.offer('PGITVStation', 40_000_000);
+    w.cash = '$95,000,000';
+    const order = FIXTURE_KINDS.map(k => k.id);
+    expect(order.indexOf('bank')).toBeLessThan(order.indexOf('tv'));
+    const out = await ensure(w);
+    expect(queued(w)).toEqual(['Banking']);
+    // 95M − 50M leaves 45M: the 40M station no longer fits above the 10M floor.
+    expect(out.tv).toMatchObject({ status: 'unproven', reason: 'cost 40000000 exceeds the cash floor' });
+    expect(w.placed()).toHaveLength(0);
+  });
+
+  it('records the server refusing the queue as unproven, sent once and not retried', async () => {
+    const w = track(lockedWorld());
+    w.takesQueue = () => false;
+    const out = await ensure(w);
+    expect(queued(w)).toEqual(['Banking']);
+    expect(out.bank).toMatchObject({ status: 'unproven', reason: 'server did not take the queue for Banking Basics; not retried' });
+  });
+
+  it('sends a refused prerequisite once per run, even when bank and TV both wait on it', async () => {
+    const w = track(lockedWorld('bank', 'tv'));
+    w.research[0] = {
+      available: [{ id: 'DistributedDirection', enabled: true }, { id: 'Banking', enabled: false }, { id: 'BasicTelevision', enabled: false }],
+      developing: [],
+      completed: [],
+    };
+    w.takesQueue = () => false;
+    const out = await ensure(w);
+    expect(queued(w)).toEqual(['DistributedDirection']);
+    expect(out.bank.reason).toBe('server did not take the queue for Distributed Direction (for Banking Basics); not retried');
+    expect(out.tv.reason).toBe('server did not take the queue for Distributed Direction (for Television); not retried');
+  });
+
+  it('FAILs a taken queue that logs no Queue Research: line', async () => {
+    const w = track(lockedWorld());
+    w.logsQueue = false;
+    const out = await ensure(w);
+    expect(out.bank).toMatchObject({ status: 'FAIL', reason: expect.stringMatching(/^no Queue Research: line for Banking/) });
+  });
+
+  it('FAILs an invention that reads absent after the queue', async () => {
+    const w = track(lockedWorld());
+    w.takesQueue = id => {
+      w.research[0].available = w.research[0].available.filter(i => i.id !== id);
+      return false;
+    };
+    const out = await ensure(w);
+    expect(out.bank).toMatchObject({ status: 'FAIL', reason: expect.stringMatching(/Banking reads absent/) });
+  });
+
+  it("never queues research-roundtrip's Happy Hour, even as a prerequisite", async () => {
+    const w = track(lockedWorld());
+    w.index = w.index.map(i => (i.id === 'Banking' ? { ...i, requires: ['Happy Hour'] } : i));
+    w.research[0].completed.push('Bars');
+    const out = await ensure(w);
+    expect(w.writes).toEqual([]);
+    expect(out.bank.reason).toMatch(/Happy Hour \(for Banking Basics\) is research-roundtrip's own target/);
+  });
+
+  it.each<[string, (w: World) => void, RegExp]>([
+    ['the research index does not answer', w => { w.fetchImpl = () => jest.fn(async () => ({ ok: false, status: 404 })); }, /^research step: research index: .* 404$/],
+    ['the invention is not in the index', w => { w.index = w.index.filter(i => i.id !== 'Banking'); }, /^Banking is not in the research index$/],
+    ['a prerequisite is not in the index', w => { w.index = w.index.filter(i => i.id !== 'DistributedDirection'); }, /^research step: prerequisite "Distributed Direction" of Banking Basics/],
+  ])('is unproven and sends nothing when %s', async (_label, arrange, reason) => {
+    const w = track(lockedWorld());
+    arrange(w);
+    const out = await ensure(w);
+    expect(w.writes).toEqual([]);
+    expect(out.bank).toMatchObject({ status: 'unproven', reason: expect.stringMatching(reason) });
+  });
+
+  it('runs the existing build path when the class is offered (invention owned)', async () => {
+    const w = track(lockedWorld());
+    w.research[0].completed.push('Banking');
+    w.offer('DissBank', 1_000_000);
+    const out = await ensure(w);
+    expect(w.writes).toEqual([]);
+    expect(out.bank).toMatchObject({ status: 'built', facilityClass: 'DissBank', logLine: expect.stringMatching(/New Facility: DissBank/) });
+    expect(w.requests.some(r => r.type === WsMessageType.REQ_RESEARCH_INVENTORY)).toBe(false);
   });
 });

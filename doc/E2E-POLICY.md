@@ -42,7 +42,7 @@ the absence of an exception.
 L0  Unit + component          Jest node/jsdom, coverage ratchet             CI: every PR
 L1  Protocol conformance      Jest + rdo-mock + RdoStrictValidator          CI: every PR
 L2  LIVE WS drive  ← the gate headless `ws` client -> gateway -> planitia   PRE-PUSH: every code change
-L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / Crazz         every screen once, pixels only, + pre-release
+L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / SPO_test      every screen once, pixels only, + pre-release
 ```
 
 L2 replaces both the abandoned mock-E2E plan and most of the browser smoke. L3 survives only
@@ -108,11 +108,11 @@ nothing that changed; the routing table is what keeps the run pointed at the del
 |---|---|
 | `src/shared/rdo-*.ts`, `src/server/session/**`, `src/server/rdo.ts` | L1 + **L2 login spine + every flow touching the changed members** |
 | `src/shared/types/message-types.ts`, `src/server/session/*-handler.ts` | L2 flows for the affected message types |
-| `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `town-min-wage`, `publicity-roundtrip` |
-| `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip` |
+| `src/client/components/politics/**` | L2 `politics-read`, `politics-write`, `permission-negative`, `town-min-wage`, `publicity-roundtrip`, `mayor-rating-roundtrip` |
+| `src/client/components/building/**`, `src/shared/building-details/**` | L2 `building-details`, `town-min-wage`, `inspector-reads`, `store-price-salaries`, `industry-output-price`, `facility-open-close`, `industry-auto-buy`, `trade-settings`, `residential-settings`, `residential-repair`, `bank-settings`, `tv-settings`, `accept-cloning`, `research-roundtrip`, `ad-budget-roundtrip` |
 | `src/client/renderer/**`; the component folders `mobile`, `hud`, `sheet`, `modals`, `map`, `search`, `chat`, `building`, `politics`, `mail`, `empire`, `login`, `common`, `command-palette`, `startup`, `tutorial` under `src/client/components/`; `src/client/report/*.tsx`; `src/client/App.tsx`, `main.tsx`, `client.ts`; `src/client/ui/**`, `src/client/hooks/**`; `src/client/store/ui-store.ts`; `*.css` | **L3** browser smoke (a WS drive cannot see a pixel) — a printed note, nothing blocks on it |
 | `package.json`, `package-lock.json` | L2 spine + `building-details` — the shipped code moved even though no `src/` file did |
-| `src/e2e/flows.ts`, `src/e2e/{fixtures,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
+| `src/e2e/flows.ts`, `src/e2e/{fixtures,research,probe,session,ws-driver,live-log}.ts` | L2 spine + every flow the diff changed, and the flows reaching a changed helper |
 | `doc/**`, `*.md`, CI config, tooling | static only |
 
 The **login spine** (connect -> auth -> directory -> world login -> company select ->
@@ -134,7 +134,7 @@ Five exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`F
   (`politics-write`, `Kernel/Population.pas:1264-1284`; `policy-roundtrip`,
   `Kernel/Kernel.pas:11790-11800`; `chat-private-channel`,
   `Interface Server/InterfaceServer.pas:4594`, `:3968-3980`; `bank-borrow-payoff`,
-  `Kernel/Kernel.pas:8849-8859`). The nightly leaves them out and prints them as
+  `Kernel/Kernel.pas:8849-8859`; `facility-bank-loan`, `Kernel/Kernel.pas:8849-8859`). The nightly leaves them out and prints them as
   `gate-only, not driven`; the gate still runs them when their code changes.
 - **`FALLBACK_ONLY`** lists the handler files only a broad fallback rule routes, each `awaiting
   card #<n>` or `excluded: <reason>`. An area card adds its rule before the fallbacks and removes
@@ -158,8 +158,8 @@ requires that a flow the file's rule routes to sends each one, or that the reque
 The routing table sends `src/e2e/` to no flow, so the gate adds two more sets to the routed
 one and drives **routed ∪ changed ∪ declared** (`scripts/verify-gate.js`, stage 3):
 
-- **Changed** — `src/e2e/bench/changed-flows.ts` reads the diff of the six flow sources
-  (`src/e2e/flows.ts`, `fixtures.ts`, `probe.ts`, `session.ts`, `ws-driver.ts`,
+- **Changed** — `src/e2e/bench/changed-flows.ts` reads the diff of the seven flow sources
+  (`src/e2e/flows.ts`, `fixtures.ts`, `research.ts`, `probe.ts`, `session.ts`, `ws-driver.ts`,
   `live-log.ts`). A hunk inside a `FLOWS` entry requires that flow — an edited body, an added
   flow, a renamed flow under its new name — even when it is `NIGHTLY_ONLY`. A hunk inside a
   shared helper requires every flow that reaches the helper, directly or through another
@@ -175,6 +175,37 @@ required flow that ends `UNPROVEN` fails (§7). `--flows=` still **replaces** th
 is refused (`BLOCKED`) unless it names every required flow — a gate cannot attest `PASS`
 having driven only the spine. No separate `test:live` run proves a card's flows: its own gate
 does.
+
+### Proof and regression flows — what a PR names
+
+A pull request that changes shipped code carries two lines in its body:
+
+```
+Proof flows: mail-roundtrip, new:mail-delete-refresh
+Regression flows: mail-drafts, mail-reply
+```
+
+- **Proof flows** — the flows whose assertions show the change working. A new feature is
+  proven by a live flow; when no flow drives it yet, the PR writes one and names it
+  `new:<flow>`.
+- **Regression flows** — the few existing flows that drive the features next to the change,
+  as the agents judge. Related flows, never a full nightly.
+- `none — <reason>` replaces the list on either line for a change nothing on the wire or the
+  screen can observe (docs, tests, build tooling).
+
+The lines are required when the diff changes a file under `src/client/`, `src/server/` or
+`src/shared/` — tests (`*.test.ts(x)`, `__tests__/`) and mocks (`__mocks__/`) aside. A PR
+that changes none of those needs neither line. `scripts/check-pr-rules.js`, inside the
+required `typecheck + tests` check, fails such a PR when a line is missing, when a named flow
+— proof or regression alike — is not in `FLOWS` (`src/e2e/flows.ts`) at the head, or when a
+`new:` flow is not added by the diff. The gate drives the named flows with
+`npm run gate -- --also-flows=a,b` (above).
+
+**The nightly is the global review.** It drives every flow over `main`
+(`doc/bench-worker.md` §8); a card's gate drives only what the card touches and names. When
+a full pass is wanted before the next scheduled one, the maintainer asks for it mid-day with
+`npm run bench:nightly-request -- --reason="…"` — refused from inside a Claude Code session
+(`doc/bench-worker.md` §5, exit 5).
 
 ---
 
@@ -231,6 +262,7 @@ town, `Fac(x,y)`, voter, circuit id, the value — go in each flow's `match`:
 | `RDOSetInputMaxPrice` | `Fac(<x>,<y>) Input max price set:` | `Kernel/Kernel.pas:4390` |
 | `RDOSetInputMinK` | `Fac(<x>,<y>) Input min K set:` | `Kernel/Kernel.pas:4416` |
 | `RDOSetInputSortMode` | `Changing Sort Mode..` | `Kernel/Kernel.pas:4442` |
+| `RDOSetInputFluidPerc` | `Fac(<x>,<y>) Setting Input fluid perc:` | `Kernel/Kernel.pas:7154` (log `:7156`) |
 | `RDOConnectInput` / `RDOConnectOutput` | `Fac(<x>,<y>) Input connected:` / `Output connected:` | `Kernel/Kernel.pas:4304` / `:4311` |
 | `RDODisconnectInput` / `RDODisconnectOutput` | `Fac(<x>,<y>) Input disconnect:` / `Output disconnect:` | `Kernel/Kernel.pas:4320` / `:4327` |
 | `RDOConnectToTycoon` | `Fac(<x>,<y>) Connect to Tycoon:` | `Kernel/Kernel.pas:4521` |
@@ -248,6 +280,8 @@ town, `Fac(x,y)`, voter, circuit id, the value — go in each flow's `match`:
 | `RDODefineZone` | `Defining Zone: <ZoneId>, <TycoonId>, <x1>, <y1>, <x2>, <y2>` | `Kernel/World.pas:4502` (log `:4526`) |
 | `RDOAskLoan` | `AskLoan: <tycoon>, $<amount>` | `Kernel/Kernel.pas:11451` |
 | `RDOSetPolicyStatus` | `Setting policy status: <tycoon>, <to>, <status>` | `Kernel/Kernel.pas:11772` |
+| `TBankBlock.RDOAskLoan` | `Fac(<x>,<y>) AskLoan` — no tycoon, no amount; its own key, since `RDOAskLoan` is the tycoon form above, and its `match` is `facLineMatches` so neither `AskLoan:` nor `Error in AskLoan` satisfies it | `StdBlocks/Banks.pas:160` (log `:162`) |
+| `CloneFacility` | `CloneFacility: <TycoonId>` — the clone is only queued (`:4815`) | `Kernel/World.pas:4794` (log `:4801`) |
 | `CacheTown` (not a write, no flow's proof) | `Caching Town..` | `Kernel/PoliticsCache.pas:139` |
 
 - The three circuit lines log the gateway's tycoon **object reference**, not the tycoon id
@@ -445,7 +479,7 @@ ahead of zero.
 | Account | Password | Holds | Used for |
 |---|---|---|---|
 | `SPO_test3` | `test3` | Mayor of **Helartia**, Minister of Agriculture, company *SPO_test3 - Green* | Primary. Governance reads and writes, roads, zones |
-| `Crazz` | `test` | Second party — a real account, holdings not enumerated here | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. |
+| `SPO_test` | `test` | dedicated basic test account, no special buildings (maintainer, 2026-10-01) | Permission-negative, mail receive, mail reply, rating another tycoon's term. **Optional:** a flow logs it in with `loginSecondary()` **before its first write**; a typed login refusal (a named directory refusal, or a bad user name / password at world login) skips the flow — `SKIPPED`, recorded, not failed (§7). It **writes only to complete a pair the test undoes:** it receives the `mail-roundtrip` test mail, and sends one seed `Zoning Alert!` to SPO_test3 per `zoning-alert-read` run, deleted from SPO_test3's Inbox and from SPO_test's `Sent` in the same run. It receives the `mail-send-from-draft` mail, and in `mail-reply` receives SPO_test3's marker mail and sends one reply back — every copy (both Inboxes, both `Sent`) deleted in the same run. In `mayor-rating-roundtrip` it rates SPO_test3's term at Helartia `0`, then back to the flow's baseline `100` (maintainer, 2026-09-29): its opinion cannot be read back, so the first run leaves it at `100` for good — a test account's opinion of a test account. |
 
 Both are **LOCKED** — never changed without explicit developer approval. Zone **Free Space**,
 world **planitia**.
@@ -454,19 +488,24 @@ Two accounts unlock four things that were structurally impossible:
 
 | Now testable | Why it matters |
 |---|---|
-| **Negative permission** — drive `Crazz` at the Town Hall, assert `canGovern=false` and that the control is *absent*, not merely disabled | Catches the `tycoonratings.asp:24-25` failure mode (guard commented out, result hardcoded `true`) in our own client |
+| **Negative permission** — drive `SPO_test` at the Town Hall, assert `canGovern=false` and that the control is *absent*, not merely disabled | Catches the `tycoonratings.asp:24-25` failure mode (guard commented out, result hardcoded `true`) in our own client |
 | **Mail send -> receive** | Genuinely end-to-end for the first time; send was previously untestable |
-| **Ratings** | `OB-30`: nobody can rate their own term. `Crazz` rating `SPO_test3` is a real path |
+| **Ratings** | `OB-30`: nobody can rate their own term. `SPO_test` rating `SPO_test3` is a real path |
 | **Roads / zones** | Mayor role removes these from the "structurally untestable" list |
 
 **Blast radius.** All mutations happen on `SPO_test3`'s own town (Helartia). The second
-account is touched only by mail: `mail-roundtrip` sends it one message and deletes it
+account takes part through mail, one rating and one loan: `mail-roundtrip` sends it one message and deletes it
 in the same run, and the `zoning-alert-read` seed has it send SPO_test3 one look-alike
-`Zoning Alert!`, deleted from SPO_test3's Inbox and from Crazz's `Sent` in the same run.
+`Zoning Alert!`, deleted from SPO_test3's Inbox and from SPO_test's `Sent` in the same run.
 `mail-send-from-draft` sends it one message, and in `mail-reply` it sends SPO_test3 one
-reply; each flow sweeps and deletes every copy it created in the same run.
+reply; each flow sweeps and deletes every copy it created in the same run. In
+`mayor-rating-roundtrip` it rates SPO_test3's term at Helartia `0`, then `100` again — the
+flow's fixed baseline; the aggregate `TycoonsRating` is the read-back, and a run where it does
+not move ends `UNPROVEN` (`Kernel/Politics.pas:374-392`).
 No flow reads or writes its buildings (`flows.ts`: it appears at the login in
-`permission-negative`, which does not mutate, as the mail recipient, as the reply sender, and as the seed sender).
+`permission-negative`, which does not mutate, as the mail recipient, as the reply sender, as the seed sender, and as the rater).
+`facility-bank-loan` (#1189, lifted by the maintainer on 2026-09-29) has SPO_test borrow $1 at
+SPO_test3's own bank fixture and pay it off in the same run.
 Never another player's assets. Never a world-scope value. Every mutation is restored in
 the same run (§5).
 
@@ -481,6 +520,15 @@ line, result code 0 and the lot read-back. While SPO_test3 owns a construction s
 the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
 (placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
 and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
+**Research queued by the fixture builder is permanent setup data too** (maintainer, 2026-10-01,
+#1233). The bank and TV classes stay locked until *SPO_test3 - Green* owns the invention that
+unlocks them (`RESEARCH_UNLOCKS`); the builder then queues one research step per run at
+SPO_test3's research fixture: the first missing link of the chain that reads enabled and fits
+under cash − the cash floor − `research-roundtrip`'s own cost. It is proven by its
+`Queue Research:` line and an inventory read-back. It never sends `RDOCancelResearch` (on an
+owned invention that sells it, `Kernel/ResearchCenter.pas:372`), never queues
+`research-roundtrip`'s target, and records no pending restore, so no restore or unlock step can
+cancel it.
 
 **Build → demolish (#1150).** `place-rename-demolish` places the cheapest buildable facility —
 never a mausoleum, never the Capitol (`isRefusedClass`) — on a free Helartia lot as
@@ -501,8 +549,39 @@ touch, and undo every new link in the same run. `quick-trade-roundtrip` runs onl
 cannot reach beyond the test: no SPO_test3 facility already a client of the fixture
 (`Kernel/Kernel.pas:4593-4600`), the fixture not an initial supplier (`:4564-4565`,
 `:4606-4607`), and no SPO_test3 warehouse outside Helartia (`:4537-4553`) — otherwise `UNPROVEN`,
-nothing sent. Clone facility is never driven: it overwrites every same-type facility in scope
-with no snapshot (maintainer, 2026-09-29).
+nothing sent.
+
+**Clone facility (#1189).** Clone facility is driven only as `clone-salaries-roundtrip` (lifted
+by the maintainer on 2026-09-29, limited to salaries): options same town + same company +
+salaries (`0x103`, `Kernel/CloneOptions.pas:7-13`). `TWorld.CloneFacility` writes every facility
+of the source's kind in that scope (`Kernel/World.pas:3494`), so the flow snapshots the salaries
+of every SPO_test3 work center in Helartia, and each same-class target's `AcceptCloning`, before
+it sends anything. A target that refuses cloning (`Kernel/Kernel.pas:5101-5104`) must read back
+unchanged. Every facility is restored in the same run. An unreadable target, or no accepting
+target, is `UNPROVEN` with nothing sent.
+
+**Excluded members (#1195).** `industry-supply-limits` drives the max price and the min K only.
+`RDOSetInputSortMode` is never driven: only `TMediaInput` caches `QPSorted` / `SortMode`
+(`Kernel/MediaGates.pas:388-389`), its sole user is the movie theatre's Films input
+(`StdBlocks/Movie.pas:84`), a plain input's `SetSortMode` is empty (`Kernel/Kernel.pas:7169-7171`),
+and no fixture kind is a movie theatre. `RDOSetInputOverPrice` is never driven: it is set per
+supplier row, overpaying another player's supplier touches that player's income, and an own row
+exists only after `supplier-hire-fire` (#1153), itself nightly-only and data-gated.
+
+**Ad budget (#1195).** `ad-budget-roundtrip` drives `RDOSetInputFluidPerc` on the Advertisement
+input of the `research` fixture — the general headquarters declares it
+(`Kernel/Headquarters.pas:130-143`); a store takes advertisement as a company input, with no gate
+to address (`StdBlocks/ServiceBlock.pas:540`). The write binds to the input's own ObjectId, as
+Voyager does (`Voyager/AdvSheetForm.pas:456-457`), and reads back as
+`min(100, round(100*nfActualMaxFluidValue/nfCapacity))` (`:651-660`). That read-back can never
+show the write: Advertisement is a company fluid (`StdBlocks/StdFluids.pas:499`), so the input joins
+its company's `TCompanyInput` (`Kernel/Kernel.pas:5232-5233`), whose `Spread` runs every company
+cycle (`:10160`) and overwrites `ActualMaxFluid` from the demand slices (`:10003-10008`). **The one
+log-proven round trip (maintainer decision 2026-10-01, #1195 option c):** the write PASSes on its
+own `Setting Input fluid perc` Survival line at the fixture's coordinates, and the restore — the
+percentage read before the write, put back — is proven by its own line. A missing write line
+FAILs; a missing restore line FAILs and keeps the pending restore. Every other round trip still
+needs its read-back.
 
 ---
 

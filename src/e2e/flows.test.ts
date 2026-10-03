@@ -19,6 +19,8 @@ import {
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
+  bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
+  RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent,
   type Flow, type FlowResult, type GateLinks,
 } from './flows';
 import { parseBuildingFocusResponse } from '@/server/map-parsers';
@@ -35,6 +37,9 @@ import * as probeModule from './probe';
 import * as liveLog from './live-log';
 import * as fixtures from './fixtures';
 import { LIMITS, PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TIMEOUTS } from './config';
+
+/** The secondary account's name, as the flows read it — a rename touches config.ts only. */
+const SECONDARY_NAME = SECONDARY_ACCOUNT.username;
 
 function stubSession(responder: (msg: WsMessage) => unknown): session.LiveSession {
   return {
@@ -80,13 +85,23 @@ describe('the catalogue', () => {
     const mutating = FLOWS.filter(f => f.mutates).map(f => f.name).sort();
     expect(mutating).toEqual(
       [
-        'accept-cloning', 'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'bank-settings',
+        'accept-cloning',
+        // #1195
+        'ad-budget-roundtrip',
+        'autoconnection-roundtrip', 'bank-borrow-payoff', 'bank-send-return', 'bank-settings',
         'chat-private-channel',
         // #1153
-        'client-hire-remove', 'company-input-demand', 'connect-on-map',
+        'client-hire-remove',
+        // #1189
+        'clone-salaries-roundtrip',
+        'company-input-demand', 'connect-on-map',
+        // #1189
+        'facility-bank-loan',
         'facility-open-close',
         'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
         'industry-supply-limits', 'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
+        // #1195
+        'mayor-rating-roundtrip',
         'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
         // #1153
@@ -248,13 +263,13 @@ describe('runFlow', () => {
     it('a seed skipped by a login refusal ends SKIPPED, and run is never called', async () => {
       const { flow, calls } = seeded({
         seed: async () => ({
-          outcome: { what: 'plant', ok: false, skipped: 'Crazz refused' },
+          outcome: { what: 'plant', ok: false, skipped: `${SECONDARY_NAME} refused` },
           cleanup: async () => [{ what: 'mailbox', ok: true }],
         }),
       });
       const result = await runFlow(flow, { lock: cleanLock() });
       expect(calls).toEqual([]);
-      expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused', unproven: [] });
+      expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused`, unproven: [] });
     });
 
     it('a flow without a seed carries no seed or cleanup keys', async () => {
@@ -268,13 +283,13 @@ describe('runFlow', () => {
 
 describe('runFlow and a SKIPPED flow', () => {
   const skipping: Flow = {
-    name: 'needs-crazz',
+    name: 'needs-secondary',
     what: '',
     mutates: true,
     run: async () => ({
-      name: 'needs-crazz',
+      name: 'needs-secondary',
       status: 'SKIPPED',
-      skipped: 'Crazz refused',
+      skipped: `${SECONDARY_NAME} refused`,
       assertions: [],
       unproven: [],
       probes: [],
@@ -286,7 +301,7 @@ describe('runFlow and a SKIPPED flow', () => {
 
   it('passes a skip through as SKIPPED when the lock holds no pending restore', async () => {
     const result = await runFlow(skipping, { lock: cleanLock() });
-    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused` });
   });
 
   it('turns a skip into a FAIL while the lock holds a pending restore', async () => {
@@ -294,14 +309,14 @@ describe('runFlow and a SKIPPED flow', () => {
     lock.addPendingRestore({ what: 'tax', x: 1, y: 2, propertyName: 'Tax0', originalValue: '5' });
     const result = await runFlow(skipping, { lock });
     expect(result.status).toBe('FAIL');
-    expect(result.error).toMatch(/skipped after a write \(Crazz refused\) — 1 pending restore/);
+    expect(result.error).toMatch(`skipped after a write (${SECONDARY_NAME} refused) — 1 pending restore`);
   });
 
   it('turns a seeded flow\'s skip into a FAIL while the lock holds a pending restore', async () => {
     const lock = cleanLock();
     lock.addPendingRestore({ what: 'tax', x: 1, y: 2, propertyName: 'Tax0', originalValue: '5' });
     const result = await runFlow(
-      { ...skipping, seed: async () => ({ outcome: { what: 'plant', ok: false, skipped: 'Crazz refused' } }) },
+      { ...skipping, seed: async () => ({ outcome: { what: 'plant', ok: false, skipped: `${SECONDARY_NAME} refused` } }) },
       { lock },
     );
     expect(result.status).toBe('FAIL');
@@ -385,9 +400,9 @@ describe('permission-negative', () => {
 
   it('ends SKIPPED, not FAIL, when the second account is refused at login', async () => {
     arrange(false);
-    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: `${SECONDARY_NAME} refused` });
     const result = await runFlow(flowByName('permission-negative'), { lock: cleanLock() });
-    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused` });
     expect(session.findTown).not.toHaveBeenCalled();
     expect(session.logoff).not.toHaveBeenCalled();
   });
@@ -1147,7 +1162,7 @@ describe('mail-roundtrip', () => {
   // in-memory speed.
   const mailCtx = { ...ctx, sleep: async () => {} };
 
-  // Crazz logs in first (before the compose), through the same stub `login` as SPO_test3.
+  // The secondary account logs in first (before the compose), through the same stub `login` as SPO_test3.
   beforeEach(() => {
     jest.spyOn(session, 'loginSecondary').mockImplementation(async () => session.login(SECONDARY_ACCOUNT));
   });
@@ -1353,17 +1368,17 @@ describe('mail-roundtrip', () => {
   it('ends SKIPPED with no compose sent when the second account is refused at login', async () => {
     const sent: WsMessage[] = [];
     const primary = jest.spyOn(session, 'login').mockResolvedValue(mailSession([], msg => sent.push(msg)));
-    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: `${SECONDARY_NAME} refused` });
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
 
     const result = await flowByName('mail-roundtrip').run(mailCtx);
 
-    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused` });
     expect(sent.some(m => m.type === WsMessageType.REQ_MAIL_COMPOSE)).toBe(false);
     expect(primary).not.toHaveBeenCalled();
   });
 
-  it('logs Crazz in before the compose', async () => {
+  it('logs the secondary account in before the compose', async () => {
     const order: string[] = [];
     jest.spyOn(session, 'login').mockImplementation(async account => {
       order.push(`login ${account.username}`);
@@ -1375,7 +1390,7 @@ describe('mail-roundtrip', () => {
 
     await flowByName('mail-roundtrip').run(mailCtx);
 
-    expect(order.slice(0, 3)).toEqual(['login Crazz', 'login SPO_test3', 'compose']);
+    expect(order.slice(0, 3)).toEqual([`login ${SECONDARY_NAME}`, 'login SPO_test3', 'compose']);
   });
 
   it('addresses the probe message to the second account', async () => {
@@ -1386,7 +1401,7 @@ describe('mail-roundtrip', () => {
     await flowByName('mail-roundtrip').run(mailCtx);
 
     const compose = sent.find(m => m.type === WsMessageType.REQ_MAIL_COMPOSE);
-    expect(compose).toMatchObject({ to: 'Crazz' });
+    expect(compose).toMatchObject({ to: SECONDARY_NAME });
   });
 });
 
@@ -2077,11 +2092,11 @@ describe('zoning-alert-read seed', () => {
         world: over.noIp ? undefined : { name: 'planitia', url: '', ip: '10.1.2.3', port: 0 },
       };
     });
-    // Crazz goes through loginSecondary; call N (1-based) of it is refused when listed.
+    // The secondary account goes through loginSecondary; call N (1-based) of it is refused when listed.
     let secondaryCalls = 0;
     jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
       secondaryCalls++;
-      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `Crazz refused (call ${secondaryCalls})` };
+      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `${SECONDARY_NAME} refused (call ${secondaryCalls})` };
       return session.login(SECONDARY_ACCOUNT);
     });
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
@@ -2098,7 +2113,7 @@ describe('zoning-alert-read seed', () => {
     (r.msg as WsMessage & { folder: string }).folder === folder &&
     (r.msg as WsMessage & { messageId: string }).messageId === messageId;
 
-  it('sends the compose as Crazz, to SPO_test3, with the server alert\'s subject and header', async () => {
+  it('sends the compose as the secondary account, to SPO_test3, with the server alert\'s subject and header', async () => {
     const { requests } = arrange();
 
     const result = await runFlow(flowByName('zoning-alert-read'), ctx);
@@ -2133,20 +2148,20 @@ describe('zoning-alert-read seed', () => {
     expect(url.searchParams.get('BuildName0')).toContain('e2e-seed');
   });
 
-  it('sweeps stale Crazz-sent alerts from both mailboxes before the compose, sparing a server alert', async () => {
+  it('sweeps stale secondary-sent alerts from both mailboxes before the compose, sparing a server alert', async () => {
     const { requests } = arrange({
       inbox: [
-        header('stale', 'Zoning Alert!', 'Crazz', 'SPO_test3'),
+        header('stale', 'Zoning Alert!', SECONDARY_NAME, 'SPO_test3'),
         header('srv', 'Zoning Alert!', 'mailer@GlobalPlanitia.net', 'SPO_test3'),
       ],
-      sent: [header('staleSent', 'Zoning Alert!', 'Crazz', 'SPO_test3')],
+      sent: [header('staleSent', 'Zoning Alert!', SECONDARY_NAME, 'SPO_test3')],
     });
 
     const result = await runFlow(flowByName('zoning-alert-read'), ctx);
 
     const compose = indexOf(requests, r => r.msg.type === WsMessageType.REQ_MAIL_COMPOSE);
     const inboxDelete = indexOf(requests, isDelete('SPO_test3', 'Inbox', 'stale'));
-    const sentDelete = indexOf(requests, isDelete('Crazz', 'Sent', 'staleSent'));
+    const sentDelete = indexOf(requests, isDelete(SECONDARY_NAME, 'Sent', 'staleSent'));
     expect(inboxDelete).toBeGreaterThanOrEqual(0);
     expect(sentDelete).toBeGreaterThanOrEqual(0);
     expect(inboxDelete).toBeLessThan(compose);
@@ -2164,11 +2179,11 @@ describe('zoning-alert-read seed', () => {
     const focus = indexOf(requests, r => r.msg.type === WsMessageType.REQ_BUILDING_FOCUS);
     expect(focus).toBeGreaterThanOrEqual(0);
     expect(indexOf(requests, isDelete('SPO_test3', 'Inbox', 'seeded1'))).toBeGreaterThan(focus);
-    expect(indexOf(requests, isDelete('Crazz', 'Sent', 'seededSent1'))).toBeGreaterThan(focus);
+    expect(indexOf(requests, isDelete(SECONDARY_NAME, 'Sent', 'seededSent1'))).toBeGreaterThan(focus);
     expect(result.cleanup).toHaveLength(2);
     expect(result.cleanup?.every(c => c.ok)).toBe(true);
     expect(mailboxes['SPO_test3/Inbox']).toEqual([]);
-    expect(mailboxes['Crazz/Sent']).toEqual([]);
+    expect(mailboxes[`${SECONDARY_NAME}/Sent`]).toEqual([]);
   });
 
   it('still deletes the seeded message from both mailboxes when the flow throws', async () => {
@@ -2179,7 +2194,7 @@ describe('zoning-alert-read seed', () => {
     expect(result.status).toBe('FAIL');
     expect(result.error).toBe('read blew up');
     expect(indexOf(requests, isDelete('SPO_test3', 'Inbox', 'seeded1'))).toBeGreaterThanOrEqual(0);
-    expect(indexOf(requests, isDelete('Crazz', 'Sent', 'seededSent1'))).toBeGreaterThanOrEqual(0);
+    expect(indexOf(requests, isDelete(SECONDARY_NAME, 'Sent', 'seededSent1'))).toBeGreaterThanOrEqual(0);
   });
 
   it('a refused compose fails the seed, and the flow is not PASS and never focuses', async () => {
@@ -2215,23 +2230,23 @@ describe('zoning-alert-read seed', () => {
     expect(composeOf(requests)).toBeUndefined();
   });
 
-  it('ends SKIPPED when Crazz is refused in the pre-sweep, and sends no compose', async () => {
+  it('ends SKIPPED when the secondary account is refused in the pre-sweep, and sends no compose', async () => {
     const { requests } = arrange({ refuseSecondaryOn: [1] });
 
     const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
 
-    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
-    expect(result.seed).toMatchObject({ ok: false, skipped: 'Crazz refused (call 1)' });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused (call 1)` });
+    expect(result.seed).toMatchObject({ ok: false, skipped: `${SECONDARY_NAME} refused (call 1)` });
     expect(composeOf(requests)).toBeUndefined();
     expect(result.cleanup?.every(c => c.ok)).toBe(true);
   });
 
-  it('ends SKIPPED when Crazz is refused at the seed login, and sends no compose', async () => {
+  it('ends SKIPPED when the secondary account is refused at the seed login, and sends no compose', async () => {
     const { requests } = arrange({ refuseSecondaryOn: [2] });
 
     const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
 
-    expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 2)' });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused (call 2)` });
     expect(composeOf(requests)).toBeUndefined();
     expect(requests.some(r => r.msg.type === WsMessageType.REQ_BUILDING_FOCUS)).toBe(false);
   });
@@ -2242,19 +2257,19 @@ describe('zoning-alert-read seed', () => {
     const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
 
     expect(result.status).toBe('SKIPPED');
-    expect(result.cleanup?.[1]).toMatchObject({ ok: false, skipped: 'Crazz refused (call 3)' });
+    expect(result.cleanup?.[1]).toMatchObject({ ok: false, skipped: `${SECONDARY_NAME} refused (call 3)` });
   });
 
-  it('FAILs, naming the leftover, when Crazz is refused in the cleanup after a successful seed', async () => {
+  it('FAILs, naming the leftover, when the secondary account is refused in the cleanup after a successful seed', async () => {
     const { mailboxes } = arrange({ refuseSecondaryOn: [3] });
 
     const result = await runFlow(flowByName('zoning-alert-read'), { lock: cleanLock() });
 
     expect(result.seed?.ok).toBe(true);
     expect(result.status).toBe('FAIL');
-    expect(result.cleanup?.[1]).toMatchObject({ ok: false, skipped: 'Crazz refused (call 3)' });
-    expect(result.cleanup?.[1].detail).toMatch(/left in Crazz's Sent/);
-    expect(mailboxes['Crazz/Sent']).toHaveLength(1);
+    expect(result.cleanup?.[1]).toMatchObject({ ok: false, skipped: `${SECONDARY_NAME} refused (call 3)` });
+    expect(result.cleanup?.[1].detail).toMatch(`left in ${SECONDARY_NAME}'s Sent`);
+    expect(mailboxes[`${SECONDARY_NAME}/Sent`]).toHaveLength(1);
   });
 
   it('a stale sweep that cannot log in fails the seed, and the cleanup reports it', async () => {
@@ -2802,146 +2817,6 @@ describe('fixtures-ensure', () => {
     const { off, ensure } = arrange([]);
     ensure.mockRejectedValue(new Error('terrain: BMP 404'));
     await expect(flowByName('fixtures-ensure').run(ctx)).rejects.toThrow('terrain');
-    expect(off).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('warehouse-role-reading', () => {
-  type B = { x: number; y: number; visualClass: string; handler: string; props?: { name: string; value: string }[] };
-
-  function arrange(buildings: B[] | undefined, fail = false) {
-    const stub = stubSession(msg =>
-      msg.type === WsMessageType.REQ_MAP_LOAD
-        ? { type: WsMessageType.RESP_MAP_DATA, ...(buildings ? { data: { buildings } } : {}) }
-        : undefined,
-    );
-    jest.spyOn(session, 'login').mockResolvedValue(stub);
-    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
-    jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
-    const read = jest.spyOn(session, 'readBuildingDetails').mockImplementation(async (_s, x, y) => {
-      if (fail) throw new Error('details timed out');
-      const b = (buildings ?? []).find(c => c.x === x && c.y === y)!;
-      return {
-        templateName: `T-${b.handler}`,
-        visualClass: b.visualClass,
-        tabs: [{ id: 'g', name: 'G', icon: '', order: 0, handlerName: b.handler }],
-        groups: { g: [{ name: 'Name', value: 'x' }], h: b.props ?? [] },
-      } as unknown as Awaited<ReturnType<typeof session.readBuildingDetails>>;
-    });
-    return { off, read, stub };
-  }
-
-  it('is read-only and listed', () => {
-    expect(flowByName('warehouse-role-reading').mutates).toBe(false);
-  });
-
-  it('records Role as absent when the read does not serve it, asserting nothing', async () => {
-    const { off, stub } = arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral' }]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.status).toBe('PASS');
-    expect(result.assertions).toEqual([]);
-    expect(result.readings).toEqual([
-      {
-        facility: 'warehouse', x: 101, y: 201, visualClass: '4001',
-        templateName: 'T-WHGeneral', role: 'absent', tradeRole: 'absent',
-      },
-    ]);
-    expect(stub.driver.request).toHaveBeenCalledWith(
-      expect.objectContaining({ type: WsMessageType.REQ_MAP_LOAD, x: 68, y: 168, width: 64, height: 64 }),
-      expect.anything(),
-      expect.anything(),
-    );
-    expect(off).toHaveBeenCalledTimes(1);
-  });
-
-  it("records Role = 'Warehouse' verbatim", async () => {
-    arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral', props: [{ name: 'Role', value: 'Warehouse' }] }]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.assertions).toEqual([]);
-    expect(result.readings?.[0]).toMatchObject({ role: 'Warehouse' });
-  });
-
-  it('records a numeric Role verbatim, and an empty one as empty', async () => {
-    arrange([
-      { x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral', props: [{ name: 'Role', value: '2' }, { name: 'TradeRole', value: '' }] },
-    ]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.assertions).toEqual([]);
-    expect(result.readings?.[0]).toMatchObject({ role: '2', tradeRole: '' });
-  });
-
-  it('records the nearest trading industry, skipping one whose TradeRole is not 2/5/6', async () => {
-    arrange([
-      { x: 150, y: 230, visualClass: '4001', handler: 'WHGeneral' },
-      { x: 100, y: 201, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '1' }] },
-      { x: 100, y: 202, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'Role', value: '0' }, { name: 'TradeRole', value: '5' }] },
-      { x: 100, y: 203, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '6' }] },
-    ]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.status).toBe('PASS');
-    expect(result.readings).toEqual([
-      expect.objectContaining({ facility: 'warehouse', x: 150, y: 230 }),
-      { facility: 'industry', x: 100, y: 202, visualClass: '5001', templateName: 'T-IndGeneral', role: '0', tradeRole: '5' },
-    ]);
-  });
-
-  it('does not re-read a class already known to be neither warehouse nor industry, nor a second warehouse', async () => {
-    const { read } = arrange([
-      { x: 100, y: 201, visualClass: '7', handler: 'Residential' },
-      { x: 100, y: 202, visualClass: '7', handler: 'Residential' },
-      { x: 100, y: 203, visualClass: '4001', handler: 'WHGeneral' },
-      { x: 100, y: 204, visualClass: '4001', handler: 'WHGeneral' },
-      { x: 100, y: 205, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
-      { x: 100, y: 206, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
-    ]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(read).toHaveBeenCalledTimes(3);
-    expect(result.readings).toHaveLength(2);
-  });
-
-  it('skips a known industry class once an industry is recorded', async () => {
-    const { read } = arrange([
-      { x: 100, y: 201, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
-      { x: 100, y: 202, visualClass: '5001', handler: 'IndGeneral', props: [{ name: 'TradeRole', value: '2' }] },
-      { x: 100, y: 203, visualClass: '8', handler: '' },
-    ]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(read).toHaveBeenCalledTimes(2);
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.readings).toEqual([expect.objectContaining({ facility: 'industry', x: 100, y: 201 })]);
-  });
-
-  it('reports UNPROVEN, never PASS, when no warehouse is in the window', async () => {
-    arrange([{ x: 100, y: 201, visualClass: '7', handler: 'Residential' }]);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven).toHaveLength(1);
-    expect(result.unproven[0]).toMatch(/WHGeneral/);
-    expect(result.unproven[0]).toMatch(/1 building\(s\).*1 inspector read/);
-    expect(result.readings).toEqual([]);
-  });
-
-  it('stops after 40 inspector reads and reports UNPROVEN', async () => {
-    const many = Array.from({ length: 45 }, (_, i) => ({ x: 100, y: 201 + i, visualClass: `c${i}`, handler: 'Other' }));
-    many.push({ x: 150, y: 250, visualClass: '4001', handler: 'WHGeneral' });
-    const { read } = arrange(many);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(read).toHaveBeenCalledTimes(40);
-    expect(result.status).toBe('UNPROVEN');
-  });
-
-  it('reports UNPROVEN with zero buildings when the map answer carries no data', async () => {
-    arrange(undefined);
-    const result = await flowByName('warehouse-role-reading').run(ctx);
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven[0]).toMatch(/0 building\(s\)/);
-  });
-
-  it('fails when the read itself fails, and still logs off', async () => {
-    const { off } = arrange([{ x: 101, y: 201, visualClass: '4001', handler: 'WHGeneral' }], true);
-    const result = await runFlow(flowByName('warehouse-role-reading'), ctx);
-    expect(result.status).toBe('FAIL');
-    expect(result.error).toMatch(/details timed out/);
     expect(off).toHaveBeenCalledTimes(1);
   });
 });
@@ -3611,7 +3486,7 @@ describe('profile-read', () => {
     },
     [T.REQ_PROFILE_COMPANY_PROFITLOSS]: { companyName: 'SPO_test3 - Green', data: tree([{ label: 'Sales', level: 1, amount: '5' }]) },
     [T.REQ_PROFILE_AUTOCONNECTIONS]: { data: { fluids: [{ fluidId: 'Food', fluidName: 'Food', suppliers: [] }] } },
-    [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: 'Crazz', yourPolicy: 1, theirPolicy: 1 }], alliesAllowed: true } },
+    [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: SECONDARY_NAME, yourPolicy: 1, theirPolicy: 1 }], alliesAllowed: true } },
   });
 
   function arrange(over: Pages = {}) {
@@ -3675,7 +3550,7 @@ describe('profile-read', () => {
     ['a company P&L that failed', { [T.REQ_PROFILE_COMPANY_PROFITLOSS]: { companyName: 'x', data: null, error: 'x' } }, 'the company P&L parses'],
     ['a response without data', { [T.REQ_PROFILE_BANK]: {} }, 'NewTycoon/TycoonBankAccount.asp answered without cacheUnavailable'],
     ['a rejected request', { [T.REQ_PROFILE_POLICY]: new WsDriverError('boom', 1, 'REQ_PROFILE_POLICY') }, 'NewTycoon/TycoonPolicy.asp answered without cacheUnavailable'],
-    ['an out-of-range Crazz status', { [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: 'Crazz', yourPolicy: 7, theirPolicy: 1 }] } } }, 'the Crazz strategy row carries a status'],
+    [`an out-of-range ${SECONDARY_NAME} status`, { [T.REQ_PROFILE_POLICY]: { data: { policies: [{ tycoonName: SECONDARY_NAME, yourPolicy: 7, theirPolicy: 1 }] } } }, `the ${SECONDARY_NAME} strategy row carries a status`],
   ])('fails on %s', async (_label, over, what) => {
     arrange(over);
     const result = await run();
@@ -3693,12 +3568,12 @@ describe('profile-read', () => {
     expect(sent.some(m => m.type === T.REQ_PROFILE_COMPANY_PROFITLOSS)).toBe(false);
   });
 
-  it('passes with no Crazz strategy row, never unproven', async () => {
+  it('passes with no strategy row towards the secondary account, never unproven', async () => {
     arrange({ [T.REQ_PROFILE_POLICY]: { data: { policies: [], alliesAllowed: true } } });
     const result = await run();
     expect(result.status).toBe('PASS');
     expect(result.unproven).toEqual([]);
-    expect(result.assertions.find(a => a.what === 'no Crazz strategy row')?.detail).toMatch(/Kernel\.pas:11348/);
+    expect(result.assertions.find(a => a.what === `no ${SECONDARY_NAME} strategy row`)?.detail).toMatch(/Kernel\.pas:11348/);
   });
 
   it('passes on an empty initial-suppliers list', async () => {
@@ -3836,7 +3711,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
     let secondaryCalls = 0;
     jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
       secondaryCalls++;
-      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `Crazz refused (call ${secondaryCalls})` };
+      if (over.refuseSecondaryOn?.includes(secondaryCalls)) return { skipped: `${SECONDARY_NAME} refused (call ${secondaryCalls})` };
       return session.login(SECONDARY_ACCOUNT);
     });
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
@@ -4010,7 +3885,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
   });
 
   describe('mail-send-from-draft', () => {
-    it('sends the draft with its id, Crazz receives it, the Draft copy is gone, and every box is empty after', async () => {
+    it('sends the draft with its id, the secondary account receives it, the Draft copy is gone, and every box is empty after', async () => {
       const { result, requests, boxes } = run('mail-send-from-draft');
       const r = await result;
 
@@ -4042,27 +3917,27 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
       expect(nonEmpty(boxes)).toEqual([]);
     });
 
-    it('ends SKIPPED when Crazz is refused before the first write, and SPO_test3 sends nothing', async () => {
+    it('ends SKIPPED when the secondary account is refused before the first write, and SPO_test3 sends nothing', async () => {
       const { result, requests, logins } = run('mail-send-from-draft', { refuseSecondaryOn: [1] });
       const r = await result;
 
-      expect(r).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
+      expect(r).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused (call 1)` });
       expect(logins()).toBe(0);
       expect(writes(requests)).toEqual([]);
     });
 
-    it('FAILs naming the leftover when Crazz is refused at the cleanup, after the send', async () => {
+    it('FAILs naming the leftover when the secondary account is refused at the cleanup, after the send', async () => {
       const { result, boxes } = run('mail-send-from-draft', { refuseSecondaryOn: [2] });
       const r = await result;
 
       expect(r.status).toBe('FAIL');
-      const crazz = r.cleanup?.find(c => c.skipped !== undefined);
-      expect(crazz).toMatchObject({ ok: false, skipped: 'Crazz refused (call 2)' });
-      expect(crazz?.detail).toMatch(/left in Crazz's Inbox/);
+      const secondary = r.cleanup?.find(c => c.skipped !== undefined);
+      expect(secondary).toMatchObject({ ok: false, skipped: `${SECONDARY_NAME} refused (call 2)` });
+      expect(secondary?.detail).toMatch(`left in ${SECONDARY_NAME}'s Inbox`);
       expect(boxes[`${C}/Inbox`]).toHaveLength(1);
     });
 
-    it('pre-sweeps SPO_test3\'s Draft and Sent and Crazz\'s Inbox before the first write', async () => {
+    it('pre-sweeps SPO_test3\'s Draft and Sent and the secondary\'s Inbox before the first write', async () => {
       const stale = 'e2e-mail-send-from-draft 2020';
       const { result, requests, boxes } = run('mail-send-from-draft', {
         boxes: {
@@ -4083,7 +3958,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
       expect(boxes[`${C}/Inbox`].map(m => m.messageId)).toEqual(['real']);
     });
 
-    it('FAILs and writes nothing when a pre-sweep cannot clear Crazz\'s Inbox', async () => {
+    it('FAILs and writes nothing when a pre-sweep cannot clear the secondary\'s Inbox', async () => {
       const { result, requests } = run('mail-send-from-draft', {
         boxes: { [`${C}/Inbox`]: [stored('x3', 'e2e-mail-send-from-draft 2020', P, C)] },
         ignoreDeleteIn: [`${C}/Inbox`],
@@ -4094,7 +3969,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
       expect(writes(requests)).toEqual([]);
     });
 
-    it('a leftover in Crazz\'s Inbox after the cleanup turns the flow FAIL', async () => {
+    it('a leftover in the secondary\'s Inbox after the cleanup turns the flow FAIL', async () => {
       const { result } = run('mail-send-from-draft', { ignoreDeleteIn: [`${C}/Inbox`] });
       const r = await result;
 
@@ -4154,24 +4029,24 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
       expect(nonEmpty(boxes)).toEqual([]);
     });
 
-    it('ends SKIPPED when Crazz is refused before the first write, and SPO_test3 sends nothing', async () => {
+    it('ends SKIPPED when the secondary account is refused before the first write, and SPO_test3 sends nothing', async () => {
       const { result, requests, logins } = run('mail-reply', { refuseSecondaryOn: [1] });
       const r = await result;
 
-      expect(r).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused (call 1)' });
+      expect(r).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused (call 1)` });
       expect(logins()).toBe(0);
       expect(writes(requests)).toEqual([]);
     });
 
-    it('FAILs naming the leftover when Crazz is refused at the cleanup, after the writes', async () => {
+    it('FAILs naming the leftover when the secondary account is refused at the cleanup, after the writes', async () => {
       const { result, boxes } = run('mail-reply', { refuseSecondaryOn: [2] });
       const r = await result;
 
       expect(r.status).toBe('FAIL');
       const refused = r.cleanup?.filter(c => c.skipped !== undefined) ?? [];
       expect(refused).toHaveLength(2);
-      expect(refused[0].detail).toMatch(/left in Crazz's Inbox/);
-      expect(refused[1].detail).toMatch(/left in Crazz's Sent/);
+      expect(refused[0].detail).toMatch(`left in ${SECONDARY_NAME}'s Inbox`);
+      expect(refused[1].detail).toMatch(`left in ${SECONDARY_NAME}'s Sent`);
       expect(boxes[`${P}/Inbox`]).toEqual([]);
     });
 
@@ -4200,7 +4075,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
 
     it('FAILs and writes nothing when a pre-sweep folder read throws', async () => {
       const { result, requests } = run('mail-reply', {
-        // Login 1 is Crazz's drive session; the cleanup logs in afresh and is spared.
+        // Login 1 is the secondary's drive session; the cleanup logs in afresh and is spared.
         throwWhen: l => l.login === 1 && l.msg.type === WsMessageType.REQ_MAIL_GET_FOLDER && l.msg.folder === 'Sent',
       });
       const r = await result;
@@ -4210,7 +4085,7 @@ describe('mail-drafts, mail-send-from-draft, mail-reply (#1144)', () => {
       expect(writes(requests)).toEqual([]);
     });
 
-    it('fails, and still cleans up, when the message never reaches Crazz', async () => {
+    it('fails, and still cleans up, when the message never reaches the secondary account', async () => {
       const { result, requests, boxes } = run('mail-reply', { dropDelivery: true });
       const r = await result;
 
@@ -4367,7 +4242,7 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
       expect(result.status).toBe('FAIL');
       expect(result.probes[0].restored).toBe(false);
       expect(lock.read().pendingRestores).toHaveLength(1);
-      expect(lock.read().pendingRestores[0].what).toMatch(/strategy towards Crazz.*put back "none"/);
+      expect(lock.read().pendingRestores[0].what).toMatch(new RegExp(`strategy towards ${SECONDARY_NAME}.*put back "none"`));
     });
 
     it('from enemy writes neutral and restores enemy', async () => {
@@ -4796,7 +4671,7 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       refuseSecondary?: number[];
       refuseOut?: boolean;
       refuseBack?: boolean;
-      /** The send answers success, but no notice ever reaches Crazz. */
+      /** The send answers success, but no notice ever reaches the secondary account. */
       dropOutNotice?: boolean;
       /** REQ_MAIL_DELETE is a no-op. */
       deletesIgnored?: boolean;
@@ -4867,7 +4742,7 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       jest.spyOn(session, 'login').mockImplementation(async account => stubFor(account, responder(w, account)));
       jest.spyOn(session, 'loginSecondary').mockImplementation(async () => {
         secondary++;
-        if (w.refuseSecondary?.includes(secondary)) return { skipped: 'Crazz refused' };
+        if (w.refuseSecondary?.includes(secondary)) return { skipped: `${SECONDARY_NAME} refused` };
         return stubFor(SECONDARY_ACCOUNT, responder(w, SECONDARY_ACCOUNT));
       });
     }
@@ -4875,7 +4750,7 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       sentOf(WsMessageType.REQ_PROFILE_BANK_ACTION).map(e => `${e.account}->${e.msg.toTycoon} ${e.msg.amount} ${e.msg.reason}`);
     const run = () => flowByName('bank-send-return').run(flowCtx());
 
-    it('mutates; sends $1 to Crazz and back, matched by Reason=<marker>, and the cleanup deletes four notices — PASS', async () => {
+    it('mutates; sends $1 to the secondary account and back, matched by Reason=<marker>, and the cleanup deletes four notices — PASS', async () => {
       expect(flowByName('bank-send-return').mutates).toBe(true);
       const w = world();
       // A decoy with the same subject and another reason: never matched, never deleted.
@@ -4895,11 +4770,11 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('ends SKIPPED with nothing sent when Crazz is refused before the first send', async () => {
+    it('ends SKIPPED with nothing sent when the secondary account is refused before the first send', async () => {
       drive(world({ refuseSecondary: [1] }));
       const result = await runFlow(flowByName('bank-send-return'), flowCtx());
       expect(result.status).toBe('SKIPPED');
-      expect(result.skipped).toBe('Crazz refused');
+      expect(result.skipped).toBe(`${SECONDARY_NAME} refused`);
       expect(sends()).toEqual([]);
     });
 
@@ -4917,7 +4792,7 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(sends()).toEqual([]);
     });
 
-    it('sends nothing when Crazz\'s page does not offer the transfer back — UNPROVEN', async () => {
+    it('sends nothing when the secondary\'s page does not offer the transfer back — UNPROVEN', async () => {
       const w = world();
       w.banks[HIM] = { transferDenied: 'loans' };
       drive(w);
@@ -4945,16 +4820,16 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(reads).toEqual(who === ME ? [ME] : [ME, HIM]);
     });
 
-    it('FAILs, never SKIPPED, with the pending restore kept when the notice never reaches Crazz', async () => {
+    it('FAILs, never SKIPPED, with the pending restore kept when the notice never reaches the secondary account', async () => {
       drive(world({ dropOutNotice: true }));
       const result = await runFlow(flowByName('bank-send-return'), flowCtx());
       expect(result.status).toBe('FAIL');
       expect(result.probes[0].readBack).toBe('UNCONFIRMED');
       expect(lock.read().pendingRestores).toHaveLength(1);
-      expect(lock.read().pendingRestores[0].what).toMatch(/\$1 sent by SPO_test3 to Crazz .* owes SPO_test3 \$1 back/);
+      expect(lock.read().pendingRestores[0].what).toMatch(new RegExp(`\\$1 sent by SPO_test3 to ${SECONDARY_NAME} .* owes SPO_test3 \\$1 back`));
     });
 
-    it('FAILs with the pending restore kept when Crazz\'s send back is refused', async () => {
+    it('FAILs with the pending restore kept when the secondary\'s send back is refused', async () => {
       drive(world({ refuseBack: true }));
       const result = await run();
       expect(result.status).toBe('FAIL');
@@ -4978,15 +4853,15 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       drive(w);
       const result = await run();
       expect(result.status).toBe('FAIL');
-      expect(result.assertions.find(a => a.what.startsWith('pre-sweep:') && !a.ok)?.what).toMatch(/Crazz's Inbox/);
+      expect(result.assertions.find(a => a.what.startsWith('pre-sweep:') && !a.ok)?.what).toMatch(`${SECONDARY_NAME}'s Inbox`);
       expect(sends()).toEqual([]);
     });
 
-    it('FAILs when Crazz is refused at the cleanup, after the pair', async () => {
+    it('FAILs when the secondary account is refused at the cleanup, after the pair', async () => {
       drive(world({ refuseSecondary: [2] }));
       const result = await run();
       expect(result.status).toBe('FAIL');
-      expect(result.cleanup?.filter(c => c.skipped === 'Crazz refused')).toHaveLength(2);
+      expect(result.cleanup?.filter(c => c.skipped === `${SECONDARY_NAME} refused`)).toHaveLength(2);
     });
 
     it('turns a drive that throws into a FAIL, and a cleanup login that throws into failed checks', async () => {
@@ -5215,7 +5090,7 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(receiverLimitRefusal(PRIMARY_ACCOUNT, profile({ levelTier: 6 }))).toMatch(/≥ 6/);
     });
     it('refuses an empty or unmapped level name', () => {
-      expect(receiverLimitRefusal(SECONDARY_ACCOUNT, profile({ levelName: '  ' }))).toMatch(/Crazz's profile has no level name/);
+      expect(receiverLimitRefusal(SECONDARY_ACCOUNT, profile({ levelName: '  ' }))).toMatch(`${SECONDARY_NAME}'s profile has no level name`);
       expect(receiverLimitRefusal(SECONDARY_ACCOUNT, profile({ levelName: 'Unknown' }))).toMatch(/not one parseCurriculumHtml/);
     });
   });
@@ -6277,7 +6152,9 @@ describe('inspector flows (#1152)', () => {
   });
 
   describe('industry-supply-limits', () => {
-    it('drives max price, min K, sort mode and overprice on a sortable gate with a supplier, restoring each', async () => {
+    // #1195: sort mode and overprice are excluded — no fixture carries them (Kernel/MediaGates.pas:388-389,
+    // StdBlocks/Movie.pas:84; the overprice needs an own supplier row, #1153).
+    it('drives only max price and min K, even on a sortable gate with a supplier row, restoring each', async () => {
       const world = makeWorld({ supplies: [supplyGate({ qpSorted: '1', sortMode: '0' })] });
       const lock = cleanLock();
       arrange(world);
@@ -6286,62 +6163,25 @@ describe('inspector flows (#1152)', () => {
       expect(result.probes.map(p => [p.member, p.written, p.original])).toEqual([
         ['RDOSetInputMaxPrice', '199', '200'],
         ['RDOSetInputMinK', '11', '10'],
-        ['RDOSetInputSortMode', '1', '0'],
-        ['RDOSetInputOverPrice', '21', '20'],
       ]);
-      expect(result.probes[2].logLine).toBe('12:00 Changing Sort Mode.. ');
+      expect(result.unproven).toEqual([]);
+      const members = world.writes.map(w => w.property);
+      expect(members).not.toContain('RDOSetInputSortMode');
+      expect(members).not.toContain('RDOSetInputOverPrice');
       expect(world.supplies[0]).toMatchObject({ maxPrice: '200', minK: '10', sortMode: '0' });
-      expect(world.supplies[0].connections[0].overprice).toBe('20');
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('records the sort mode and the overprice unproven by name on a plain gate with no supplier, and runs the others', async () => {
+    it('records nothing unproven for the excluded members on a plain gate with no supplier', async () => {
       const world = makeWorld({ supplies: [supplyGate({ connections: [], connectionCount: 0 })] });
       arrange(world);
       const result = await run('industry-supply-limits');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([
-        expect.stringMatching(/^RDOSetInputSortMode — the Water gate publishes no sort mode/),
-        expect.stringMatching(/^RDOSetInputOverPrice — the Water gate has no supplier row/),
-      ]);
+      expect(result.status).toBe('PASS');
+      expect(result.unproven).toEqual([]);
       expect(result.probes.map(p => [p.member, p.status])).toEqual([
         ['RDOSetInputMaxPrice', 'PASS'],
         ['RDOSetInputMinK', 'PASS'],
       ]);
-    });
-
-    it('restores the overprice on the same supplier after its row shifted', async () => {
-      const world = makeWorld({
-        after: (w, n) => {
-          if (w.property === 'RDOSetInputOverPrice' && n === 5) {
-            world.supplies[0].connections.unshift(conn('New Well', 'Other Co', 9, 9, '0'));
-          }
-        },
-      });
-      arrange(world);
-      const result = await run('industry-supply-limits');
-      const over = world.writes.filter(w => w.property === 'RDOSetInputOverPrice');
-      expect(over).toEqual([
-        { property: 'RDOSetInputOverPrice', value: '21', params: { fluidId: 'Water', index: '0' } },
-        { property: 'RDOSetInputOverPrice', value: '20', params: { fluidId: 'Water', index: '1' } },
-      ]);
-      expect(world.supplies[0].connections.map(c => [c.facilityName, c.overprice])).toEqual([['New Well', '0'], ['Well', '20']]);
-      expect(result.probes.find(p => p.member === 'RDOSetInputOverPrice')?.status).toBe('PASS');
-    });
-
-    it('never writes the overprice onto another row when its supplier left the gate', async () => {
-      const world = makeWorld({
-        after: (w, n) => {
-          if (n === 5) world.supplies[0].connections = [conn('Other Well', 'Other Co', 9, 9, '0')];
-        },
-      });
-      arrange(world);
-      const result = await run('industry-supply-limits');
-      const over = result.probes.find(p => p.member === 'RDOSetInputOverPrice');
-      expect(over?.status).toBe('FAIL');
-      expect(over?.note).toMatch(/restore failed/);
-      expect(world.writes.filter(w => w.property === 'RDOSetInputOverPrice')).toHaveLength(1);
-      expect(world.supplies[0].connections[0].overprice).toBe('0');
     });
 
     it('FAILs a max-price read-back that never moves though its line is present', async () => {
@@ -7086,7 +6926,8 @@ describe('inspector connections & trade (#1153)', () => {
           if (m.tabId === 'products') return { products: fac.products.map(o => ({ path: o.path, name: o.name, connections: [] })) };
           if (m.tabId === 'compInputs') return fac.compInputs ? { compInputs: clone(fac.compInputs) } : {};
           const g: BuildingPropertyValue[] = [];
-          if (fac.role !== undefined) g.push(pv('Role', fac.role));
+          // As the live cache serves it: the trade mode under `TradeRole`, and no `Role` (#1255).
+          if (fac.role !== undefined) g.push(pv('TradeRole', fac.role), pv('Role', ''));
           if (fac.tradeLevel !== undefined) g.push(pv('TradeLevel', fac.tradeLevel));
           return { groups: { [String(m.tabId)]: g } };
         }
@@ -7647,45 +7488,34 @@ describe('inspector connections & trade (#1153)', () => {
   describe('trade-settings', () => {
     const atIndustry = (world: ConnWorld) => world.writes.filter(w => w.x === 30 && w.y === 40);
 
-    it('nudges the warehouse role and both trade levels, proves each, restores each — and never sends RDOSetRole to the industry', async () => {
+    it('nudges both trade levels, proves each, restores each — and never sends RDOSetRole (#1255)', async () => {
       const world = new ConnWorld();
       const lock = cleanLock();
       arrange(world);
       const result = await run('trade-settings', lock);
       expect(result.status).toBe('PASS');
       expect(world.writes.map(w => [w.x, w.y, w.property, w.value])).toEqual([
-        [50, 60, 'RDOSetRole', '5'],
-        [50, 60, 'RDOSetRole', '2'],
         [50, 60, 'RDOSetTradeLevel', '3'],
         [50, 60, 'RDOSetTradeLevel', '0'],
         [30, 40, 'RDOSetTradeLevel', '2'],
         [30, 40, 'RDOSetTradeLevel', '3'],
       ]);
       expect(result.probes.map(p => p.logLine)).toEqual([
-        null, '12:00 - Fac(50,60) SetTradeLevel', '12:00 - Fac(30,40) SetTradeLevel',
+        '12:00 - Fac(50,60) SetTradeLevel', '12:00 - Fac(30,40) SetTradeLevel',
       ]);
-      expect(atIndustry(world).some(w => w.property === 'RDOSetRole')).toBe(false);
+      expect(result.unproven).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it.each(['2', '5', '6'])('never writes a role outside TRADE_MODE_VALUES (from %s)', async role => {
+    // The Import Storage fixture's sheet never offered a trade mode (Voyager/WHGeneralSheet.pas:46):
+    // whatever role it holds, nothing is sent and nothing is reported missing.
+    it.each(['2', '5', '6', '1'])('sends no RDOSetRole to the warehouse whose TradeRole is %s', async role => {
       const world = new ConnWorld();
       world.facs.warehouse.role = role;
       arrange(world);
-      await run('trade-settings');
-      for (const w of world.writes.filter(x => x.property === 'RDOSetRole')) expect(['2', '5', '6']).toContain(w.value);
-      expect(world.writes.filter(x => x.property === 'RDOSetRole').map(w => w.value)[1]).toBe(role);
-    });
-
-    it('writes no role when the current one is not offered, and still drives the trade levels', async () => {
-      const world = new ConnWorld();
-      world.facs.warehouse.role = '1';
-      arrange(world);
       const result = await run('trade-settings');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetRole — .*Role "1".*isTradeModeValue.*StdBlocks\/Warehouses\.pas:527/)]);
+      expect(result.status).toBe('PASS');
       expect(world.writes.some(w => w.property === 'RDOSetRole')).toBe(false);
-      expect(world.writes.filter(w => w.property === 'RDOSetTradeLevel')).toHaveLength(4);
     });
 
     it('writes no trade level the client could not send back', async () => {
@@ -7703,7 +7533,7 @@ describe('inspector connections & trade (#1153)', () => {
       arrange(world);
       const result = await run('trade-settings');
       expect(result.status).toBe('FAIL');
-      expect(result.probes[1]).toMatchObject({ status: 'FAIL', logLine: '12:00 - Fac(50,60) SetTradeLevel' });
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', logLine: '12:00 - Fac(50,60) SetTradeLevel' });
     });
 
     it('runs the industry half when the warehouse fixture is missing, and writes nothing when both are', async () => {
@@ -9223,18 +9053,18 @@ describe('chat flows (#1148)', () => {
   });
 
   describe('chat-chase', () => {
-    it('ends SKIPPED when Crazz is refused, before any login or chase', async () => {
-      jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+    it('ends SKIPPED when the secondary account is refused, before any login or chase', async () => {
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: `${SECONDARY_NAME} refused` });
       const login = jest.spyOn(session, 'login');
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
-      expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+      expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused` });
       expect(login).not.toHaveBeenCalled();
     });
 
-    it('chases Crazz then stops, and logs both off', async () => {
+    it('chases the secondary account then stops, and logs both off', async () => {
       const primary = chatWorld();
-      const crazz = chatWorld();
-      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz.session);
+      const secondary = chatWorld();
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(secondary.session);
       jest.spyOn(session, 'login').mockResolvedValue(primary.session);
       const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
@@ -9243,22 +9073,22 @@ describe('chat flows (#1148)', () => {
         { type: WsMessageType.REQ_CHAT_CHASE, userName: SECONDARY_ACCOUNT.username },
         { type: WsMessageType.REQ_CHAT_STOP_CHASE },
       ]);
-      // Crazz's one camera update, on its own saved position (0,0): the view centre is (16,16).
-      expect(crazz.sent).toEqual([
+      // The secondary's one camera update, on its own saved position (0,0): the view centre is (16,16).
+      expect(secondary.sent).toEqual([
         { type: WsMessageType.REQ_UPDATE_CAMERA, x: 0, y: 0, viewX: 0, viewY: 0, viewW: 32, viewH: 32 },
       ]);
-      expect(result.assertions.find(a => /view follows Crazz/.test(a.what))).toMatchObject({
+      expect(result.assertions.find(a => a.what.includes(`view follows ${SECONDARY_NAME}`))).toMatchObject({
         what: expect.stringContaining('EVENT_MOVE_TO at (16,16)'),
         ok: true,
       });
       expect(off).toHaveBeenCalledWith(primary.session);
-      expect(off).toHaveBeenCalledWith(crazz.session);
+      expect(off).toHaveBeenCalledWith(secondary.session);
       expect(flowByName('chat-chase').mutates).toBe(false);
     });
 
     it.each([
       ['no EVENT_MOVE_TO arrives', null],
-      ['the EVENT_MOVE_TO is not at Crazz\'s view centre', { x: 17, y: 16 }],
+      ['the EVENT_MOVE_TO is not at the secondary\'s view centre', { x: 17, y: 16 }],
     ])('fails when %s, though the chase answered — and still stops', async (_label, moveTo) => {
       const primary = chatWorld({ moveTo });
       jest.spyOn(session, 'loginSecondary').mockResolvedValue(chatWorld().session);
@@ -9273,17 +9103,17 @@ describe('chat flows (#1148)', () => {
       expect(types(primary)).toEqual([WsMessageType.REQ_CHAT_CHASE, WsMessageType.REQ_CHAT_STOP_CHASE]);
     });
 
-    it('expects the view centre of Crazz\'s saved position', async () => {
+    it('expects the view centre of the secondary\'s saved position', async () => {
       const primary = chatWorld({ moveTo: { x: 500, y: 300 } });
-      const crazz = chatWorld();
-      crazz.session.playerX = 500;
-      crazz.session.playerY = 300;
-      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz.session);
+      const secondary = chatWorld();
+      secondary.session.playerX = 500;
+      secondary.session.playerY = 300;
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(secondary.session);
       jest.spyOn(session, 'login').mockResolvedValue(primary.session);
       jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
       expect(result.status).toBe('PASS');
-      expect(crazz.sent).toEqual([
+      expect(secondary.sent).toEqual([
         { type: WsMessageType.REQ_UPDATE_CAMERA, x: 500, y: 300, viewX: 484, viewY: 284, viewW: 32, viewH: 32 },
       ]);
     });
@@ -9314,14 +9144,1027 @@ describe('chat flows (#1148)', () => {
       expect(failedWhats(result)).toEqual(['STOP_CHASE answered']);
     });
 
-    it('logs Crazz off even when the primary login throws', async () => {
-      const crazz = chatWorld();
-      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz.session);
+    it('logs the secondary account off even when the primary login throws', async () => {
+      const secondary = chatWorld();
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(secondary.session);
       jest.spyOn(session, 'login').mockRejectedValue(new Error('login refused'));
       const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
       const result = await runFlow(flowByName('chat-chase'), { lock: cleanLock() });
       expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
-      expect(off).toHaveBeenCalledWith(crazz.session);
+      expect(off).toHaveBeenCalledWith(secondary.session);
+    });
+  });
+});
+
+describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
+  const HIM = SECONDARY_ACCOUNT.username;
+  let lines: string[];
+  let lock: WorldLock;
+  let sent: { account: string; msg: Record<string, unknown> }[];
+
+  /** A stub session for `account`, recording every request with the account that sent it. */
+  function stubFor(account: typeof PRIMARY_ACCOUNT, responder: (msg: WsMessage) => unknown): session.LiveSession {
+    return {
+      ...stubSession(msg => {
+        sent.push({ account: account.username, msg: msg as unknown as Record<string, unknown> });
+        return responder(msg);
+      }),
+      account,
+    };
+  }
+  const sentOf = (type: WsMessageType) => sent.filter(e => e.msg.type === type);
+  const flowCtx = () => ({ lock, survivalLogUrl: 'http://logs/S.log', ...fastClock() });
+
+  beforeEach(() => {
+    lines = [];
+    sent = [];
+    lock = cleanLock();
+    jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+    jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+      if (typeof proof !== 'object') return null;
+      return lines.find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+    });
+  });
+
+  describe('bankDebtorCount', () => {
+    it('is undefined when the group carries no LoanCount', () => {
+      expect(bankDebtorCount({}, SECONDARY_ACCOUNT)).toBeUndefined();
+      expect(bankDebtorCount({ bankLoans: [pv('Debtor0', HIM)] }, SECONDARY_ACCOUNT)).toBeUndefined();
+    });
+
+    it('counts every Debtor<i> naming the account, case-insensitively, across a gap in the index', () => {
+      const groups = {
+        bankLoans: [
+          pv('LoanCount', '3'), pv('Debtor0', 'spo_test '), pv('Debtor1', 'Yellow Inc.'), pv('Debtor3', 'SPO_TEST'),
+          pv('Amount0', HIM),
+        ],
+      };
+      expect(bankDebtorCount(groups, SECONDARY_ACCOUNT)).toBe(2);
+      expect(bankDebtorCount({ bankLoans: [pv('LoanCount', '0')] }, SECONDARY_ACCOUNT)).toBe(0);
+    });
+  });
+
+  describe('facility-bank-loan', () => {
+    const BANK = { x: 3, y: 4, visualClass: '200', name: 'Bank' };
+    interface LoanWorld {
+      perc?: string;
+      ownerBalance: string;
+      secondaryBalance: string;
+      secondaryLoans: LoanInfo[];
+      /** The bank's Debtor<i> rows by index; `undefined` is a gap. */
+      debtors: (string | undefined)[];
+      noLoanCount?: boolean;
+      /** The ordinal the block answers; default 0. */
+      result?: number;
+      /** The loan reaches SPO_test's list but never the bank's rows. */
+      bankIgnores?: boolean;
+      payoffRefused?: boolean;
+      logLine?: string;
+      missingBank?: boolean;
+      skipped?: boolean;
+    }
+    const loan = (over: Partial<LoanInfo> = {}): LoanInfo => ({
+      bank: 'Main Bank', date: '1/1/2100', amount: '500', interest: 3, term: 10, slice: '50', loanIndex: 0, ...over,
+    });
+    const bankData = (balance: string, loans: LoanInfo[]) => ({
+      data: { balance, maxLoan: '0', totalLoans: '0', totalNextPayment: '0', loans: structuredClone(loans), defaultInterest: 0, defaultTerm: 0 },
+    });
+
+    function drive(w: LoanWorld): { login: jest.SpyInstance } {
+      const me = stubFor(PRIMARY_ACCOUNT, msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        if (msg.type === WsMessageType.REQ_BUILDING_DETAILS) return { details: { tabs: [], groups: {} } };
+        if (msg.type === WsMessageType.REQ_BUILDING_TAB_DATA) {
+          if (m.tabId === 'bankGeneral') return { groups: { bankGeneral: w.perc === undefined ? [] : [pv('BudgetPerc', w.perc)] } };
+          if (m.tabId === 'bankLoans') {
+            const rows = w.debtors.flatMap((d, i) => (d === undefined ? [] : [pv(`Debtor${i}`, d)]));
+            return { groups: { bankLoans: w.noLoanCount ? rows : [pv('LoanCount', String(rows.length)), ...rows] } };
+          }
+        }
+        if (msg.type === WsMessageType.REQ_PROFILE_BANK) return bankData(w.ownerBalance, []);
+        throw new Error(`unexpected ${msg.type} from ${PRIMARY_ACCOUNT.username}`);
+      });
+      const secondary = stubFor(SECONDARY_ACCOUNT, msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        if (msg.type === WsMessageType.REQ_PROFILE_BANK) return bankData(w.secondaryBalance, w.secondaryLoans);
+        if (msg.type === WsMessageType.REQ_BUILDING_LOAN_REQUEST) {
+          const result = w.result ?? 0;
+          lines.push(w.logLine ?? `9/30/2026 12:00 - Fac(${String(m.x)},${String(m.y)}) AskLoan`);
+          if (result === 0 || result === 2) {
+            w.secondaryLoans.push(loan({ bank: 'Bank of SPO_test3', date: '3/3/2100', amount: String(m.amount), loanIndex: w.secondaryLoans.length }));
+            if (!w.bankIgnores) w.debtors.push(HIM);
+          }
+          return { x: m.x, y: m.y, result };
+        }
+        if (msg.type === WsMessageType.REQ_PROFILE_BANK_ACTION) {
+          if (w.payoffRefused) return { result: { success: false, message: 'payoff was not applied' } };
+          w.secondaryLoans = w.secondaryLoans.filter(l => l.loanIndex !== m.loanIndex).map((l, i) => ({ ...l, loanIndex: i }));
+          const i = w.debtors.lastIndexOf(HIM);
+          if (i >= 0) w.debtors.splice(i, 1);
+          return { result: { success: true, message: 'ok' } };
+        }
+        throw new Error(`unexpected ${msg.type} from ${HIM}`);
+      });
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(w.skipped ? { skipped: `${HIM} refused` } : secondary);
+      const login = jest.spyOn(session, 'login').mockResolvedValue(me);
+      jest.spyOn(fixtures, 'findFixture').mockResolvedValue(
+        w.missingBank ? { kind: 'bank', reason: 'none in Helartia' } : { kind: 'bank', found: BANK },
+      );
+      return { login };
+    }
+    const happy = (over: Partial<LoanWorld> = {}): LoanWorld => ({
+      perc: '40', ownerBalance: '1000', secondaryBalance: '500', secondaryLoans: [loan()],
+      debtors: ['Yellow Inc.', undefined, 'spo_test'], ...over,
+    });
+    const run = () => flowByName('facility-bank-loan').run(flowCtx());
+    const loanRequests = () => sentOf(WsMessageType.REQ_BUILDING_LOAN_REQUEST);
+    const payoffs = () => sentOf(WsMessageType.REQ_PROFILE_BANK_ACTION);
+
+    it('SPO_test borrows $1 at the fixture, both lists show it, SPO_test pays it off — PASS, both lists as before', async () => {
+      expect(flowByName('facility-bank-loan').mutates).toBe(true);
+      const world = happy();
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(loanRequests()).toEqual([
+        { account: HIM, msg: expect.objectContaining({ x: 3, y: 4, amount: '1' }) },
+      ]);
+      expect(payoffs()).toEqual([
+        { account: HIM, msg: expect.objectContaining({ action: 'payoff', loanIndex: 1 }) },
+      ]);
+      expect(result.probes[0]).toMatchObject({
+        member: 'TBankBlock.RDOAskLoan',
+        original: 'secondary new=none gone=0; bank +0',
+        written: 'secondary new=1 gone=0; bank +1',
+        readBack: 'CONFIRMED',
+        restoreReadBack: 'CONFIRMED',
+        restored: true,
+      });
+      expect(result.probes[0].logLine).toContain('Fac(3,4) AskLoan');
+      expect(world.secondaryLoans).toEqual([loan()]);
+      expect(world.debtors).toEqual(['Yellow Inc.', undefined, 'spo_test']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is SKIPPED, sending nothing to the bank, when SPO_test is refused at login', async () => {
+      const { login } = drive(happy({ skipped: true }));
+      const result = await run();
+      expect(result.status).toBe('SKIPPED');
+      expect(result.skipped).toBe(`${HIM} refused`);
+      expect(login).not.toHaveBeenCalled();
+      expect(sent).toEqual([]);
+    });
+
+    it.each<[string, Partial<LoanWorld>, RegExp]>([
+      ['the bank fixture is missing', { missingBank: true }, /^bank fixture — none in Helartia$/],
+      ['the owner cannot cover $1', { perc: '0' }, /loan limit is 0 .*Kernel\/Kernel\.pas:9095-9097/],
+      ['BudgetPerc is unreadable', { perc: undefined }, /BudgetPerc \(unreadable\)/],
+      ["SPO_test's balance is not above 0", { secondaryBalance: '0' }, /balance 0 is not > 0 .*Kernel\/Kernel\.pas:11572/],
+      ['the bank lists no LoanCount', { noLoanCount: true }, /carries no LoanCount/],
+    ])('is UNPROVEN, borrowing nothing, when %s', async (_label, over, reason) => {
+      drive(happy(over));
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(reason);
+      expect(loanRequests()).toEqual([]);
+      expect(payoffs()).toEqual([]);
+    });
+
+    it("FAILs a loan the bank's rows never list, and still pays it off", async () => {
+      const world = happy({ bankIgnores: true });
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(result.probes[0].note).toMatch(/read-back never showed "secondary new=1 gone=0; bank \+1"/);
+      expect(payoffs()).toHaveLength(1);
+      expect(result.probes[0].restoreReadBack).toBe('CONFIRMED');
+      expect(world.secondaryLoans).toEqual([loan()]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a rejected loan and still runs the restore: no loan to pay off, pending cleared', async () => {
+      drive(happy({ result: 1 }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/answered 1: rejected \(StdBlocks\/Banks\.pas:164-166\)/);
+      expect(result.probes[0].restored).toBe(true);
+      expect(payoffs()).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a loan granted uncovered (brqNotEnoughFunds) and pays it off', async () => {
+      const world = happy({ result: 2 });
+      drive(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/Kernel\/Kernel\.pas:8866-8870/);
+      expect(payoffs()).toHaveLength(1);
+      expect(world.secondaryLoans).toEqual([loan()]);
+    });
+
+    it('names an answer no TBankRequestResult has', async () => {
+      drive(happy({ result: -1 }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/answered -1: no answer from the block/);
+    });
+
+    it('FAILs a refused payoff and keeps the pending restore naming the bank and the loan', async () => {
+      drive(happy({ payoffRefused: true }));
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].restored).toBe(false);
+      expect(result.probes[0].note).toMatch(/restore failed — the world is left dirty/);
+      const pending = lock.read().pendingRestores;
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ x: 3, y: 4, propertyName: 'RDOPayOff' });
+      expect(pending[0].what).toMatch(/SPO_test's \$1 loan at SPO_test3's bank Bank \(3,4\) — SPO_test pays off the \$1 loan not among the 1 loans/);
+    });
+
+    it.each([` AskLoan: ${HIM}, $1`, '12:00 - Fac(5,4) AskLoan', '12:00 - Fac(3,4) Error in AskLoan'])(
+      'does not take "%s" as the proof of the block borrow',
+      async line => {
+        drive(happy({ logLine: line }));
+        const result = await run();
+        expect(result.status).toBe('FAIL');
+        expect(result.probes[0].logLine).toBeNull();
+      },
+    );
+  });
+
+  describe('distinctSalaries and cloneLineMatches', () => {
+    it('moves hi toward the middle, skipping a triplet already taken', () => {
+      expect(distinctSalaries('100,80,60', [])).toBe('101,80,60');
+      expect(distinctSalaries('100,80,60', ['101,80,60'])).toBe('99,80,60');
+      expect(distinctSalaries('200,1,1', ['199,1,1'])).toBe('201,1,1');
+    });
+
+    it('stays inside 0..255', () => {
+      expect(distinctSalaries('255,1,1', [])).toBe('254,1,1');
+      expect(distinctSalaries('0,1,1', ['1,1,1'])).toBe('2,1,1');
+      const all = Array.from({ length: 256 }, (_v, i) => `${i},1,1`);
+      expect(() => distinctSalaries('0,1,1', all)).toThrow(/no salary triplet/);
+    });
+
+    it('moves the first published class only, keeps unpublished slots empty, and refuses when none is published', () => {
+      expect(distinctSalaries(',80,60', [])).toBe(',81,60');
+      expect(distinctSalaries(',,60', [',,61'])).toBe(',,59');
+      expect(() => distinctSalaries(',,', [])).toThrow(/no salary class is published/);
+    });
+
+    it('matches the tycoon id whole', () => {
+      expect(cloneLineMatches('12:00 CloneFacility: 1', '1')).toBe(true);
+      expect(cloneLineMatches('12:00 CloneFacility: 1 ', '1')).toBe(true);
+      expect(cloneLineMatches('12:00 CloneFacility: 12', '1')).toBe(false);
+      expect(cloneLineMatches('12:00 CloneFacility: 1', '12')).toBe(false);
+    });
+
+    it('asks for same town + same company + salaries (Kernel/CloneOptions.pas:7-13)', () => {
+      expect(CLONE_SALARIES_OPTIONS).toBe(0x1 | 0x2 | 0x100);
+    });
+  });
+
+  describe('clone-salaries-roundtrip', () => {
+    const at = (x: number, visualClass: string, name: string, tabIds = ['workforce']) =>
+      ({ x, y: 10, visualClass, name, tabIds });
+    const SOURCE = at(10, '700', 'Shop A');
+    const T1 = at(11, '700', 'Shop B');
+    const T2 = at(12, '700', 'Shop C');
+    const REFUSING = at(13, '700', 'Shop D');
+    const GUARD = at(14, '800', 'Farm');
+    const PARK = at(15, '900', 'Park', ['general']);
+
+    interface CloneWorld {
+      holdings: ReturnType<typeof at>[];
+      salaries: Record<string, string>;
+      accept: Record<string, string | undefined>;
+      unreadable?: string;
+      /** Facilities whose executive slot (Salaries0) is never published — it reads "". */
+      noExecutives?: Set<string>;
+      /** The queued clone never lands. */
+      cloneIgnored?: boolean;
+      cloneSuccess?: boolean;
+      cloneThrows?: boolean;
+      /** The refusing target is written anyway. */
+      refusingWritten?: boolean;
+      /** Throw on this salaries write. */
+      failWrite?: (key: string, triplet: string) => boolean;
+      /** The tycoon id the CloneFacility: line carries; null = no line. */
+      logId?: string | null;
+      events: string[];
+    }
+    function makeWorld(over: Partial<CloneWorld> = {}): CloneWorld {
+      return {
+        holdings: [SOURCE, T1, T2, REFUSING, GUARD, PARK],
+        salaries: {
+          '10,10': '100,80,60', '11,10': '101,80,60', '12,10': '50,40,30', '13,10': '70,60,50', '14,10': '30,20,10',
+        },
+        accept: { '11,10': '-1', '12,10': '1', '13,10': '0' },
+        events: [],
+        ...over,
+      };
+    }
+    function arrange(w: CloneWorld): void {
+      const stub = stubFor(PRIMARY_ACCOUNT, msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        const key = `${String(m.x)},${String(m.y)}`;
+        switch (msg.type) {
+          case WsMessageType.REQ_BUILDING_DETAILS:
+            return { details: { tabs: [], groups: {} } };
+          case WsMessageType.REQ_BUILDING_TAB_DATA: {
+            if (!(key in w.salaries)) throw new Error(`read of an unlisted facility ${key}`);
+            if (m.tabId === 'workforce') {
+              const [s0, s1, s2] = w.salaries[key].split(',');
+              const rows = [pv('Salaries0', w.noExecutives?.has(key) ? '' : s0), pv('Salaries1', s1), pv('Salaries2', s2)];
+              return { groups: { workforce: w.unreadable === key ? rows.slice(0, 2) : rows } };
+            }
+            const flag = w.accept[key];
+            return { groups: { upgrade: flag === undefined ? [] : [pv('AcceptCloning', flag)] } };
+          }
+          case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
+            const p = m.additionalParams as Record<string, string>;
+            const triplet = [p.salary0, p.salary1, p.salary2].join(',');
+            w.events.push(`set ${key}=${triplet}`);
+            if (m.propertyName !== 'RDOSetSalaries' || m.value !== p.salary0) throw new Error('not a salaries write');
+            if (w.failWrite?.(key, triplet)) throw new Error(`write at ${key} refused`);
+            w.salaries[key] = triplet;
+            return { success: true };
+          }
+          case WsMessageType.REQ_CLONE_FACILITY: {
+            w.events.push(`clone ${key} ${String(m.options)}`);
+            if (w.cloneThrows) throw new Error('socket died');
+            if (w.logId !== null) lines.push(`12:00 CloneFacility: ${w.logId ?? '42'}`);
+            if (!w.cloneIgnored) {
+              for (const h of w.holdings) {
+                const k = `${h.x},${h.y}`;
+                if (k === key || h.visualClass !== SOURCE.visualClass) continue;
+                if (truthyFlag(w.accept[k]) === '1' || w.refusingWritten) w.salaries[k] = w.salaries[key];
+              }
+            }
+            return { success: w.cloneSuccess ?? true };
+          }
+          default:
+            throw new Error(`unexpected ${msg.type}`);
+        }
+      });
+      jest.spyOn(session, 'login').mockResolvedValue(stub);
+      jest.spyOn(fixtures, 'scanHoldings').mockResolvedValue({ holdings: w.holdings, sites: [] });
+      jest.spyOn(fixtures, 'ownTycoonId').mockReturnValue('42');
+    }
+    const run = () => flowByName('clone-salaries-roundtrip').run(flowCtx());
+    const writes = () => sentOf(WsMessageType.REQ_BUILDING_SET_PROPERTY);
+    const clones = () => sentOf(WsMessageType.REQ_CLONE_FACILITY);
+    const ORIGINAL = '10,10=100,80,60;11,10=101,80,60;12,10=50,40,30;13,10=70,60,50;14,10=30,20,10';
+
+    it('writes a distinct salary on the source, clones 0x103 once, proves every target, restores what moved — PASS', async () => {
+      expect(flowByName('clone-salaries-roundtrip').mutates).toBe(true);
+      const world = makeWorld();
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(clones()).toEqual([{ account: PRIMARY_ACCOUNT.username, msg: expect.objectContaining({ x: 10, y: 10, options: 0x103 }) }]);
+      expect(world.events).toEqual([
+        'set 10,10=99,80,60', 'clone 10,10 259',
+        'set 10,10=100,80,60', 'set 11,10=101,80,60', 'set 12,10=50,40,30',
+      ]);
+      expect(result.probes[0]).toMatchObject({
+        member: 'CloneFacility',
+        original: ORIGINAL,
+        written: '10,10=99,80,60;11,10=99,80,60;12,10=99,80,60;13,10=70,60,50;14,10=30,20,10',
+        readBack: 'CONFIRMED',
+        restoreReadBack: 'CONFIRMED',
+        restored: true,
+      });
+      expect(result.probes[0].logLine).toBe('12:00 CloneFacility: 42');
+      expect(world.salaries).toEqual(makeWorld().salaries);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each<[string, Partial<CloneWorld>, RegExp]>([
+      ['only one holding of each class', { holdings: [SOURCE, GUARD] }, /no two finished .*Kernel\/World\.pas:3529/],
+      ['no target accepts cloning', { accept: { '11,10': '0', '12,10': '0', '13,10': '0' } }, /no 700 target accepts cloning .*Kernel\/Kernel\.pas:5101-5104/],
+      ["a target's salaries are unreadable", { unreadable: '12,10' }, /salaries of Shop C \(12,10\) cannot be read/],
+      ["a guard's salaries are unreadable", { unreadable: '14,10' }, /salaries of Farm \(14,10\) cannot be read/],
+      ["a target's AcceptCloning is unreadable", { accept: { '11,10': '1', '13,10': '0' } }, /Shop C \(12,10\)'s AcceptCloning cannot be read/],
+      [
+        'the source publishes no salary class',
+        { salaries: { '10,10': ',,', '11,10': ',,', '12,10': ',,', '13,10': ',,', '14,10': '30,20,10' } },
+        /Shop A \(10,10\) publishes no salary class .*WorkCenterBlock\.pas:567-571.*nothing sent/,
+      ],
+    ])('is UNPROVEN, sending nothing, when %s', async (_label, over, reason) => {
+      const world = makeWorld(over);
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven.join()).toMatch(reason);
+      expect(writes()).toEqual([]);
+      expect(clones()).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('never sends an empty salary field when the class publishes no executive slot — nudges a published one, PASS', async () => {
+      const world = makeWorld({
+        noExecutives: new Set(['10,10', '11,10', '12,10', '13,10']),
+        salaries: { '10,10': ',80,60', '11,10': ',81,60', '12,10': ',40,30', '13,10': ',60,50', '14,10': '30,20,10' },
+      });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(world.events).toEqual([
+        'set 10,10=0,79,60', 'clone 10,10 259',
+        'set 10,10=0,80,60', 'set 11,10=0,81,60', 'set 12,10=0,40,30',
+      ]);
+      for (const { msg } of writes()) {
+        const m = msg as WsMessage & Record<string, unknown>;
+        const p = m.additionalParams as Record<string, string>;
+        for (const v of [m.value, p.salary0, p.salary1, p.salary2]) expect(v).toMatch(/^\d+$/);
+      }
+      expect(result.probes[0]).toMatchObject({
+        written: '10,10=,79,60;11,10=,79,60;12,10=,79,60;13,10=,60,50;14,10=30,20,10',
+        readBack: 'CONFIRMED',
+        restoreReadBack: 'CONFIRMED',
+      });
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a clone that never lands, and restores the source', async () => {
+      const world = makeWorld({ cloneIgnored: true });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(result.probes[0].note).toMatch(/read-back never showed/);
+      expect(world.events.slice(2)).toEqual(['set 10,10=100,80,60']);
+      expect(result.probes[0].restoreReadBack).toBe('CONFIRMED');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it.each<[string, Partial<CloneWorld>, RegExp]>([
+      ['answers success false', { cloneSuccess: false, cloneIgnored: true }, /REQ_CLONE_FACILITY answered success false/],
+      ['throws', { cloneThrows: true }, /socket died/],
+    ])('restores the source after a clone that %s', async (_label, over, note) => {
+      const world = makeWorld(over);
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(note);
+      expect(world.events).toContain('set 10,10=100,80,60');
+      expect(world.salaries['10,10']).toBe('100,80,60');
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a refusing target that changes anyway, and writes it back', async () => {
+      const world = makeWorld({ refusingWritten: true });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+      expect(world.events).toContain('set 13,10=70,60,50');
+      expect(world.salaries['13,10']).toBe('70,60,50');
+    });
+
+    it('FAILs a refused restore write and keeps the pending restore listing every facility', async () => {
+      const world = makeWorld({ failWrite: (key, triplet) => key === '11,10' && triplet === '101,80,60' });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].note).toMatch(/restore failed/);
+      // The other facilities are still written back.
+      expect(world.events).toContain('set 12,10=50,40,30');
+      const pending = lock.read().pendingRestores;
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ originalValue: ORIGINAL, x: 10, y: 10, propertyName: 'RDOSetSalaries' });
+    });
+
+    it.each<[string, string | null]>([['no line', null], ['a line for another tycoon', '421']])(
+      'FAILs with %s',
+      async (_label, logId) => {
+        arrange(makeWorld({ logId }));
+        const result = await run();
+        expect(result.status).toBe('FAIL');
+        expect(result.probes[0].logLine).toBeNull();
+        expect(result.probes[0].note).toMatch(/no model-server log line/);
+      },
+    );
+  });
+});
+
+describe('player actions (#1195)', () => {
+  describe('ratingLogMatches and ratingMove', () => {
+    it('matches only the line ending with the rater, the RatingId and the value, case-insensitively', () => {
+      const line = '12:00:00 Setting town politics Tycoon rating: Crazz, 7, 0';
+      expect(ratingLogMatches(line, 'Crazz', '7', '0')).toBe(true);
+      expect(ratingLogMatches(line.toUpperCase(), 'crazz', '7', '0')).toBe(true);
+      expect(ratingLogMatches(line, 'SPO_test3', '7', '0')).toBe(false);
+      expect(ratingLogMatches(line, 'Crazz', '8', '0')).toBe(false);
+      expect(ratingLogMatches(line, 'Crazz', '7', '100')).toBe(false);
+      expect(ratingLogMatches('12:00:00 Setting town politics Tycoon rating: Crazz, 7, 10', 'Crazz', '7', '0')).toBe(false);
+    });
+
+    it('says whether the aggregate moved towards the write, away from it, or not at all', () => {
+      expect(ratingMove(60, 40, 100, 0)).toBe('towards');
+      expect(ratingMove(60, 70, 100, 0)).toBe('away');
+      expect(ratingMove(60, 60, 100, 0)).toBe('still');
+      expect(ratingMove(40, 60, 0, 100)).toBe('towards');
+      expect(ratingMove(40, 30, 0, 100)).toBe('away');
+    });
+
+    it('rates at the two ends of the range, baseline 100 and probe 0', () => {
+      expect([RATING_BASELINE, RATING_PROBE]).toEqual([100, 0]);
+    });
+  });
+
+  describe('mayor-rating-roundtrip', () => {
+    interface RatingWorld {
+      mayorName: string;
+      rows: { id?: string; name: string; value: number }[];
+      /** The aggregate after the n-th write of `value`; default: 60 -> 40 -> 60. */
+      move: (value: number, n: number, current: number) => number;
+      refuse?: number;
+      /** Write numbers whose Survival line never appears. */
+      silent: number[];
+      writes: number[];
+      lines: string[];
+    }
+
+    function ratingWorld(over: Partial<RatingWorld> = {}): RatingWorld {
+      return {
+        mayorName: 'SPO_test3',
+        rows: [{ id: '7', name: 'Overall', value: 60 }],
+        move: value => (value === 0 ? 40 : 60),
+        silent: [],
+        writes: [],
+        lines: [],
+        ...over,
+      };
+    }
+
+    function arrange(world: RatingWorld) {
+      const crazz = stubSession(msg => {
+        if (msg.type === WsMessageType.REQ_POLITICS_DATA) {
+          return {
+            type: WsMessageType.RESP_POLITICS_DATA,
+            data: { mayorName: world.mayorName, tycoonsRatings: world.rows.map(r => ({ ...r })) },
+          };
+        }
+        if (msg.type === WsMessageType.REQ_POLITICS_SET_RATING) {
+          const m = msg as unknown as { ratingId: string; value: number };
+          world.writes.push(m.value);
+          const n = world.writes.length;
+          if (world.refuse === n) return { type: WsMessageType.RESP_POLITICS_SET_RATING, success: false, message: 'no' };
+          if (!world.silent.includes(n)) {
+            world.lines.push(`12:00:00 Setting town politics Tycoon rating: ${SECONDARY_ACCOUNT.username}, ${m.ratingId}, ${m.value}`);
+          }
+          const row = world.rows.find(r => r.id === m.ratingId);
+          if (row) row.value = world.move(m.value, n, row.value);
+          return { type: WsMessageType.RESP_POLITICS_SET_RATING, success: true, ratingId: m.ratingId, value: m.value };
+        }
+        throw new Error(`unexpected request ${msg.type}`);
+      });
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue(crazz);
+      const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
+      jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+      jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+        if (typeof proof !== 'object') return null;
+        return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+      });
+      return { off };
+    }
+
+    const run = (lock = cleanLock()) =>
+      flowByName('mayor-rating-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+    it('PASSes when the aggregate moves down with the 0 and back up with the 100, both lines present', async () => {
+      const world = ratingWorld();
+      const { off } = arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('PASS');
+      expect(world.writes).toEqual([0, 100]);
+      expect(result.assertions.every(a => a.ok)).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+      expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('ends SKIPPED, writing nothing, when Crazz is refused at login', async () => {
+      jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: 'Crazz refused' });
+      const find = jest.spyOn(session, 'findTown');
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+      expect(find).not.toHaveBeenCalled();
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is UNPROVEN, citing the aggregate formula, when the aggregate never moves — and still restores', async () => {
+      const world = ratingWorld({ move: (_v, _n, current) => current });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(world.writes).toEqual([0, 100]);
+      expect(result.unproven[0]).toMatch(/Kernel\/Politics\.pas:374-392/);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the mayor is not SPO_test3', async () => {
+      const world = ratingWorld({ mayorName: 'Someone Else' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Someone Else/);
+      expect(world.writes).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs when the aggregate moves away from the written 0', async () => {
+      const world = ratingWorld({ move: value => (value === 0 ? 70 : 70) });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the aggregate moved towards the written 0')).toMatchObject({
+        ok: false,
+        detail: '60 -> 70',
+      });
+      expect(world.writes).toEqual([0, 100]);
+    });
+
+    it('FAILs when the write logs no line, though the aggregate moved', async () => {
+      const world = ratingWorld({ silent: [1] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the write of 0 logged its Tycoon rating line')).toMatchObject({
+        ok: false,
+        detail: '(no line)',
+      });
+    });
+
+    it('FAILs and keeps the pending restore when the restore never moves the aggregate back', async () => {
+      const world = ratingWorld({ move: (value, _n, current) => (value === 0 ? 40 : current) });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the aggregate moved back towards 100')).toMatchObject({ ok: false });
+      expect(lock.read().pendingRestores).toHaveLength(1);
+      expect(lock.read().pendingRestores[0]).toMatchObject({ originalValue: '100' });
+      expect(lock.read().pendingRestores[0].what).toMatch(/put back 100/);
+    });
+
+    it('FAILs and keeps the pending restore when the restore logs no line', async () => {
+      const world = ratingWorld({ silent: [2] });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a refused write, and still sends the restore', async () => {
+      const world = ratingWorld({ refuse: 1 });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the write of 0 was accepted')?.detail).toMatch(/SET_RATING 0 refused/);
+      expect(world.writes).toEqual([0, 100]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs and keeps the pending restore when the restore itself is refused', async () => {
+      const world = ratingWorld({ refuse: 2 });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the restore to 100 was accepted')?.ok).toBe(false);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs when the rated row vanishes after the write', async () => {
+      const world = ratingWorld();
+      arrange(world);
+      world.move = () => {
+        world.rows = [];
+        return 0;
+      };
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the rating row reads back after the write')?.ok).toBe(false);
+    });
+
+    it('FAILs and writes nothing when no rated row carries an id', async () => {
+      const world = ratingWorld({ rows: [{ name: 'Overall', value: 60 }] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(world.writes).toEqual([]);
+    });
+  });
+
+  describe('tycoon-role-read', () => {
+    function arrange(role: Record<string, unknown>) {
+      const requests: WsMessage[] = [];
+      jest.spyOn(session, 'login').mockResolvedValue(
+        stubSession(msg => {
+          requests.push(msg);
+          if (msg.type === WsMessageType.REQ_TYCOON_ROLE) return { type: WsMessageType.RESP_TYCOON_ROLE, role };
+          throw new Error(`unexpected request ${msg.type}`);
+        }),
+      );
+      const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      return { requests, off };
+    }
+    const mayor = { tycoonName: 'SPO_test3', isMayor: true, town: 'Helartia' };
+
+    it('PASSes when the role names SPO_test3 as the Mayor of Helartia', async () => {
+      const { requests, off } = arrange(mayor);
+      const result = await flowByName('tycoon-role-read').run(ctx);
+      expect(result.status).toBe('PASS');
+      expect(requests).toEqual([expect.objectContaining({ type: WsMessageType.REQ_TYCOON_ROLE, tycoonName: 'SPO_test3' })]);
+      expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('FAILs when the role is not a mayor', async () => {
+      arrange({ ...mayor, isMayor: false });
+      const result = await flowByName('tycoon-role-read').run(ctx);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('isMayor=false');
+    });
+
+    it('FAILs when the mayor governs another town', async () => {
+      arrange({ ...mayor, town: 'Elsewhere' });
+      const result = await flowByName('tycoon-role-read').run(ctx);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => !a.ok)?.detail).toBe('Elsewhere');
+    });
+
+    it('FAILs when the answer names another tycoon', async () => {
+      arrange({ ...mayor, tycoonName: 'Crazz' });
+      expect((await flowByName('tycoon-role-read').run(ctx)).status).toBe('FAIL');
+    });
+  });
+
+  describe('adPercent', () => {
+    it.each([
+      ['150', '200', '75'],
+      ['200', '200', '100'],
+      ['250', '200', '100'],
+      ['1', '8', '12'],
+      ['3', '8', '38'],
+      ['0', '200', '0'],
+    ])('reads %s of %s as %s%%', (fld, cap, expected) => {
+      expect(adPercent(fld, cap)).toBe(expected);
+    });
+
+    it.each([
+      [undefined, '200'],
+      ['100', undefined],
+      ['', '200'],
+      ['100', ' '],
+      ['abc', '200'],
+      ['100', '0'],
+      ['100', '-5'],
+    ])('has no percentage for %p of %p', (fld, cap) => {
+      expect(adPercent(fld, cap)).toBeUndefined();
+    });
+  });
+
+  describe('ad-budget-roundtrip', () => {
+    const HQ = { x: 50, y: 60, visualClass: '4711', name: 'Headquarters' };
+
+    interface AdWorld {
+      tabs: string[];
+      supplies: BuildingSupplyData[];
+      apply: boolean;
+      silent: boolean;
+      /** Which writes log no line: the write (first), the restore (second), or both. */
+      silentOn?: 'write' | 'restore';
+      /** Which write the gateway refuses with a throw. */
+      throwOn?: 'write' | 'restore';
+      writes: { property: string; value: string; params?: Record<string, string> }[];
+      lines: string[];
+    }
+
+    const adGate = (over: Partial<BuildingSupplyData> = {}): BuildingSupplyData => ({
+      path: 'Inputs\\00000001.Advertisement.five\\', name: 'Advertisement', metaFluid: 'Advertisement',
+      capacity: '200', actualMaxFluid: '200', connectionCount: 0, connections: [], ...over,
+    });
+
+    function adWorld(over: Partial<AdWorld> = {}): AdWorld {
+      return {
+        tabs: ['hqGeneral', 'supplies'],
+        supplies: [supplyGate(), adGate()],
+        apply: true,
+        silent: false,
+        writes: [],
+        lines: [],
+        ...over,
+      };
+    }
+
+    function arrange(world: AdWorld, found = true) {
+      const stub = stubSession(msg => {
+        const m = msg as WsMessage & Record<string, unknown>;
+        switch (msg.type) {
+          case WsMessageType.REQ_BUILDING_DETAILS:
+            return { details: { tabs: world.tabs.map(id => ({ id })), groups: {} } };
+          case WsMessageType.REQ_BUILDING_TAB_DATA:
+            return { supplies: world.supplies.map(s => ({ path: s.path, name: s.name, connections: [] })) };
+          case WsMessageType.REQ_BUILDING_GATE_CONNECTIONS:
+            return { supply: { ...world.supplies.find(s => s.path === m.path) } };
+          case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
+            const w = { property: String(m.propertyName), value: String(m.value), params: m.additionalParams as Record<string, string> };
+            world.writes.push(w);
+            const leg = world.writes.length === 1 ? 'write' : 'restore';
+            if (world.throwOn === leg) throw new Error(`gateway refused the ${leg}`);
+            if (!world.silent && world.silentOn !== leg) world.lines.push(`12:00 - Fac(${HQ.x},${HQ.y}) Setting Input fluid perc: ${w.value}`);
+            const gate = world.supplies.find(s => s.metaFluid === w.params?.fluidId);
+            if (world.apply && gate) gate.actualMaxFluid = String((Number(gate.capacity) * Number(w.value)) / 100);
+            return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: '' };
+          }
+          default:
+            throw new Error(`unexpected request ${msg.type}`);
+        }
+      });
+      jest.spyOn(session, 'login').mockResolvedValue(stub);
+      jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+      const find = jest.spyOn(fixtures, 'findFixture').mockImplementation(async (_s, kind) =>
+        found ? { kind: kind.id, found: HQ } : { kind: kind.id, reason: 'none in Helartia' },
+      );
+      jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
+      jest.spyOn(liveLog, 'awaitMarker').mockImplementation(async (_w, proof) => {
+        if (typeof proof !== 'object') return null;
+        return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
+      });
+      return { find };
+    }
+
+    const run = (lock = cleanLock()) =>
+      flowByName('ad-budget-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+    const labels = (r: { assertions: { what: string; ok: boolean }[] }) => r.assertions.map(a => [a.what, a.ok]);
+
+    it('writes the Advertisement input of the research fixture and restores it, each proven by its Survival line', async () => {
+      const world = adWorld();
+      const { find } = arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('PASS');
+      expect(find.mock.calls[0][1].id).toBe('research');
+      expect(result.probes.map(p => [p.member, p.written, p.original, p.status])).toEqual([
+        ['RDOSetInputFluidPerc', '99', '100', 'PASS'],
+      ]);
+      expect(world.writes).toEqual([
+        { property: 'RDOSetInputFluidPerc', value: '99', params: { fluidId: 'Advertisement' } },
+        { property: 'RDOSetInputFluidPerc', value: '100', params: { fluidId: 'Advertisement' } },
+      ]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('PASSes on the Survival lines when the company spread holds the percentage at its original (maintainer decision 2026-10-01)', async () => {
+      const world = adWorld({ apply: false });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('PASS');
+      expect(result.unproven).toEqual([]);
+      expect(result.probes[0]).toMatchObject({
+        status: 'PASS',
+        written: '99',
+        original: '100',
+        logLine: '12:00 - Fac(50,60) Setting Input fluid perc: 99',
+        restored: true,
+      });
+      expect(result.probes[0].note).toMatch(/Kernel\/Kernel\.pas:10003-10008, :10160; maintainer decision 2026-10-01/);
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', true],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', true],
+      ]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs when the write logs no Setting Input fluid perc line, and still restores', async () => {
+      const world = adWorld({ apply: false, silentOn: 'write' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', logLine: null, restored: true });
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', false],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', true],
+      ]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs and keeps the pending restore when the restore logs no line', async () => {
+      const world = adWorld({ silentOn: 'restore' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', restored: false });
+      expect(result.assertions.find(a => a.what.startsWith('RDOSetInputFluidPerc: the restore'))).toEqual({
+        what: 'RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line',
+        ok: false,
+        detail: 'no restore line — pending restore kept',
+      });
+      expect(lock.read().pendingRestores).toEqual([
+        expect.objectContaining({
+          originalValue: '100',
+          x: 50,
+          y: 60,
+          propertyName: 'RDOSetInputFluidPerc',
+          additionalParams: { fluidId: 'Advertisement' },
+        }),
+      ]);
+    });
+
+    it('FAILs when neither the write nor the restore logs a line', async () => {
+      const world = adWorld({ silent: true });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(labels(result).map(([, ok]) => ok)).toEqual([false, false]);
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs a refused write and still restores', async () => {
+      const world = adWorld({ throwOn: 'write' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions[0]).toMatchObject({
+        what: 'RDOSetInputFluidPerc: the write of 99 was accepted',
+        ok: false,
+        detail: expect.stringMatching(/gateway refused the write/),
+      });
+      expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs a refused restore and keeps the pending restore', async () => {
+      const world = adWorld({ throwOn: 'restore' });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(labels(result)).toEqual([
+        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', true],
+        ['RDOSetInputFluidPerc: the restore to 100 was accepted', false],
+        ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', false],
+      ]);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs and writes nothing when the original percentage is unreadable', async () => {
+      const world = adWorld({ supplies: [supplyGate(), adGate({ capacity: '0' })] });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions).toEqual([
+        expect.objectContaining({ what: 'RDOSetInputFluidPerc: the original ad percentage is readable', ok: false }),
+      ]);
+      expect(world.writes).toEqual([]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the fixture lists no Advertisement input', async () => {
+      const world = adWorld({ supplies: [supplyGate()] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/Kernel\/Headquarters\.pas:130-143/);
+      expect(world.writes).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the fixture has no supplies tab', async () => {
+      const world = adWorld({ tabs: ['hqGeneral'] });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(world.writes).toEqual([]);
+    });
+
+    it('is UNPROVEN and writes nothing when the research fixture is missing', async () => {
+      const world = adWorld();
+      arrange(world, false);
+      const result = await run();
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^research fixture — none in Helartia/);
+      expect(world.writes).toEqual([]);
     });
   });
 });

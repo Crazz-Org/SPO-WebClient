@@ -85,6 +85,15 @@ describe('CommandBar', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('the More menu carries the debug marker only while open (issue 1192)', () => {
+    renderWithProviders(<CommandBar />);
+    expect(screen.queryByTestId('more-menu')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByTestId('more-menu')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByTestId('more-menu')).toBeNull();
+  });
+
   it('More offers "Keyboard shortcuts", which opens the shortcut list and closes the menu', () => {
     renderWithProviders(<CommandBar />);
     fireEvent.click(screen.getByRole('button', { name: 'More' }));

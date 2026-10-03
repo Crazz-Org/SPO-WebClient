@@ -874,7 +874,8 @@ and § The gate base still announces a moved base rather than refusing it.
 
 - **Discovery by polling.** Required checks in a merge queue report on the *speculative*
   commit, and the worker takes no inbound connection — it pulls. One `git ls-remote` names
-  every `gh-readonly-queue/main/*` ref and its sha per idle tick.
+  every `gh-readonly-queue/main/*` ref and its sha before each job (once per worker tick,
+  idle or not), so an entry jumps a spool backlog instead of waiting it out (#1268).
 - **Priority over the spool.** GitHub ejects an entry whose checks exceed the queue's
   response timeout. The bench is serialised machine-wide and a `lease` can hold it — median
   11 min, **max 33 min** measured. Without priority a lease would eject a healthy branch, and

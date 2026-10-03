@@ -29,7 +29,9 @@ import type {
   WsRespNewspaperIssues,
   WsRespPoliticsData,
   WsRespPoliticsSetPublicity,
+  WsRespPoliticsSetRating,
   WsRespPoliticsVote,
+  WsRespTycoonRole,
   WsRespSearchMenuPeopleSearch,
   WsRespSearchMenuDirectory,
   WsRespSearchMenuHome,
@@ -79,10 +81,9 @@ import type {
   WsRespBuildingFacilities,
   WsRespRenameFacility,
   WsRespDeleteFacility,
-  WsRespResearchInventory,
-  WsRespResearchDetails,
   WsRespBuildingUpgrade,
-  ResearchCategoryData,
+  WsRespBuildingLoanRequest,
+  WsRespCloneFacility,
   WsRespChatChannelList,
   WsRespChatChannelInfo,
   WsRespChatSuccess,
@@ -148,7 +149,8 @@ import {
   type RoundTripSpec,
 } from './probe';
 import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
-import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES, isTradeModeValue } from '../shared/building-details/trade-settings';
+import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES } from '../shared/building-details/trade-settings';
+import { bankLoanOutcomeOf } from '../shared/building-details/bank-loan';
 import {
   awaitResumeToken,
   findTown,
@@ -169,6 +171,15 @@ import {
 } from './session';
 import type { WorldLock } from './world-lock';
 import {
+  RESEARCH_TARGET,
+  queueResearchLineMatches,
+  readResearchDetails,
+  researchCost,
+  researchInventory,
+  researchState,
+  type ResearchState,
+} from './research';
+import {
   FIXTURE_KINDS,
   ensureFixtures,
   facilityDimensions,
@@ -184,12 +195,17 @@ import {
   ownTycoonId,
   placeFacility,
   readCash,
+  scanHoldings,
   townValueAt,
   FIXTURE_CASH_FLOOR,
   type FixtureKind,
   type FixtureKindId,
   type FixtureOutcome,
+  type Holding,
 } from './fixtures';
+
+/** Moved to ./research (#1233) — re-exported for research-roundtrip's tests. */
+export { RESEARCH_TARGET, queueResearchLineMatches, researchCost, researchState, type ResearchState } from './research';
 
 export interface FlowContext {
   lock: WorldLock;
@@ -729,6 +745,245 @@ const publicityRoundTrip: Flow = {
 const sameName = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /**
+ * The test-owned value of `mayor-rating-roundtrip`: SPO_test's opinion of SPO_test3's term.
+ *
+ * The baseline is 100 and the probe 0 — the two ends of the 0..100 range — so the direction of
+ * every move is known whatever SPO_test's prior opinion P was on the very first run: P lies in
+ * [0, 100], so writing 0 can only move the aggregate down (or leave it), and writing 100 can only
+ * move it up (or leave it). The first run leaves SPO_test's opinion at 100 for good — accepted by the
+ * maintainer (2026-09-29): a test account's opinion of a test account.
+ */
+export const RATING_BASELINE = 100;
+export const RATING_PROBE = 0;
+
+/**
+ * `Kernel/TownPolitics.pas:192` — "Setting town politics Tycoon rating: <TycoonId>, <RatingId>,
+ * <Value>". The rater is the gateway's login name (`politicsSetRating`), compared case-insensitively.
+ */
+export function ratingLogMatches(line: string, rater: string, ratingId: string, value: string): boolean {
+  return line
+    .trim()
+    .toLowerCase()
+    .endsWith(`Setting town politics Tycoon rating: ${rater}, ${ratingId}, ${value}`.toLowerCase());
+}
+
+export type RatingMove = 'towards' | 'away' | 'still';
+
+/** How the aggregate moved from `before` to `after`, against a write going from `from` to `to`. */
+export function ratingMove(before: number, after: number, from: number, to: number): RatingMove {
+  const moved = Math.sign(after - before);
+  if (moved === 0) return 'still';
+  return moved === Math.sign(to - from) ? 'towards' : 'away';
+}
+
+const RATING_STILL_REASON =
+  'the aggregate TycoonsRating did not move — it is round(Σ (prestige+1)·ethics·opinion / Σ (prestige+1)) ' +
+  'over every survey (Kernel/Politics.pas:374-392, evaluated from Kernel/TownPolitics.pas:210), so it equals ' +
+  "SPO_test's opinion only when SPO_test is the sole survey; the other surveys' weight, the rounding, or a SPO_test " +
+  'campaign in the town (ethics 0, Kernel/TownPolitics.pas:550-553) can hold it still';
+
+/**
+ * SPO_test rates SPO_test3's term at Helartia (`TPoliticalTownHall.RDOSetRatingFrom`,
+ * Kernel/TownPolitics.pas:186, log :192) — the maintainer's decision of 2026-09-29 (E2E-POLICY §9).
+ *
+ * SPO_test's own opinion cannot be read: the gateway reads only the aggregate `TycoonsRating`
+ * (`parsePoliticsRatings`, tycoonratings.asp:147), and the per-rater `RDOGetRatingFrom`
+ * (Kernel/TownPolitics.pas:163-184) is uncatalogued. So the opinion is a test-owned value with the
+ * fixed baseline `RATING_BASELINE`: write `RATING_PROBE`, see the line and the aggregate move towards
+ * it, rate the baseline again, see it move back. An aggregate that does not move is UNPROVEN.
+ */
+const mayorRatingRoundTrip: Flow = {
+  name: 'mayor-rating-roundtrip',
+  what:
+    `SPO_test rates SPO_test3's term at ${GOVERNED_TOWN} ${RATING_PROBE}, then back to ${RATING_BASELINE} — ` +
+    'Survival line + the aggregate Tycoons rating moving each way',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const crazz = await loginSecondary();
+    if ('skipped' in crazz) return skippedResult('mayor-rating-roundtrip', crazz.skipped);
+    try {
+      await mayorRatingSteps(crazz, ctx, assertions);
+      return report('mayor-rating-roundtrip', assertions, [], crazz);
+    } finally {
+      await logoff(crazz);
+    }
+  },
+};
+
+async function mayorRatingSteps(crazz: LiveSession, ctx: FlowContext, assertions: Assertions): Promise<void> {
+  const rater = SECONDARY_ACCOUNT.username;
+  const town = await findTown(crazz, GOVERNED_TOWN);
+  const data = await readPolitics(crazz, town);
+  const mayor = data?.mayorName ?? '';
+  if (!holdsGovernedOffice(mayor)) {
+    assertions.unproven(
+      'the rating round trip',
+      `${GOVERNED_TOWN}'s mayor is "${mayor}", not ${PRIMARY_ACCOUNT.username} — ${rater} rates only ` +
+        `${PRIMARY_ACCOUNT.username}'s term (maintainer, 2026-09-29); nothing written`,
+    );
+    return;
+  }
+  const row = (data?.tycoonsRatings ?? []).find(r => r.id !== undefined && r.id !== '');
+  assertions.check(
+    "a Tycoons' rating row with an id is listed",
+    row?.id !== undefined,
+    row ? `${row.name} (${String(row.id)}) = ${row.value}` : 'none — nothing written',
+  );
+  if (row?.id === undefined) return;
+
+  const ratingId = row.id;
+  const before = row.value;
+  const read = async (): Promise<number | undefined> =>
+    (await readPolitics(crazz, town))?.tycoonsRatings?.find(r => r.id === ratingId)?.value;
+  const rate = async (value: number): Promise<void> => {
+    const resp = await crazz.driver.request<WsRespPoliticsSetRating>(
+      { type: WsMessageType.REQ_POLITICS_SET_RATING, buildingX: town.x, buildingY: town.y, ratingId, value },
+      WsMessageType.RESP_POLITICS_SET_RATING,
+    );
+    if (resp.success === false) throw new Error(`SET_RATING ${value} refused: ${resp.message ?? 'no message'}`);
+  };
+  const lineOf = (window: Awaited<ReturnType<typeof openLogWindow>>, value: number): Promise<string | null> =>
+    awaitMarker(
+      window,
+      { marker: LOG_MARKERS.RDOSetRatingFrom, match: l => ratingLogMatches(l, rater, ratingId, String(value)) },
+      TIMEOUTS.logSettle,
+    );
+
+  const key = `RDOSetRatingFrom:${randomUUID()}`;
+  ctx.lock.addPendingRestore({
+    key,
+    what:
+      `${rater}'s rating of ${PRIMARY_ACCOUNT.username}'s term at ${town.name}, criterion ${row.name} (${ratingId}) — ` +
+      `put back ${RATING_BASELINE} (log in as ${rater}, Politics → Tycoons' ratings)`,
+    originalValue: String(RATING_BASELINE),
+  });
+  const url = await survivalUrl(ctx);
+
+  // The write leg. `move` stays undefined when the write threw or the row vanished.
+  let move: RatingMove | undefined;
+  let after: number | undefined;
+  try {
+    const window = await openLogWindow(url);
+    await rate(RATING_PROBE);
+    const polled = await pollUntil(
+      read,
+      v => v !== undefined && ratingMove(before, v, RATING_BASELINE, RATING_PROBE) !== 'still',
+      ctx,
+    );
+    after = polled.last;
+    const line = await lineOf(window, RATING_PROBE);
+    assertions.check(`the write of ${RATING_PROBE} logged its Tycoon rating line`, line !== null, line ?? '(no line)');
+    if (after === undefined) {
+      assertions.check('the rating row reads back after the write', false, `row ${ratingId} is no longer listed`);
+    } else {
+      move = ratingMove(before, after, RATING_BASELINE, RATING_PROBE);
+      if (move === 'still') assertions.unproven('the rating write', `${before} -> ${after}: ${RATING_STILL_REASON}`);
+      else {
+        assertions.check(
+          `the aggregate moved towards the written ${RATING_PROBE}`,
+          move === 'towards',
+          `${before} -> ${after}`,
+        );
+      }
+    }
+  } catch (err: unknown) {
+    assertions.check(`the write of ${RATING_PROBE} was accepted`, false, toErrorMessage(err));
+  } finally {
+    await restoreRating(ctx, key, assertions, {
+      url,
+      write: () => rate(RATING_BASELINE),
+      line: window => lineOf(window, RATING_BASELINE),
+      read,
+      anchor: after ?? before,
+      moved: move === 'towards',
+    });
+  }
+}
+
+/**
+ * The rating's restore — rate the baseline again, always, even after a failed write. After a proven
+ * write the aggregate must move back; otherwise it must at least not move away. The pending restore
+ * is cleared only when the restore line was seen and that condition holds.
+ */
+async function restoreRating(
+  ctx: FlowContext,
+  key: string,
+  assertions: Assertions,
+  leg: {
+    url: string;
+    write: () => Promise<void>;
+    line: (window: Awaited<ReturnType<typeof openLogWindow>>) => Promise<string | null>;
+    read: () => Promise<number | undefined>;
+    anchor: number;
+    moved: boolean;
+  },
+): Promise<void> {
+  let restored = false;
+  try {
+    const window = await openLogWindow(leg.url);
+    await leg.write();
+    const line = await leg.line(window);
+    assertions.check(`the restore to ${RATING_BASELINE} logged its Tycoon rating line`, line !== null, line ?? '(no line)');
+    let back: boolean;
+    let detail: string;
+    if (leg.moved) {
+      const polled = await pollUntil(
+        leg.read,
+        v => v !== undefined && ratingMove(leg.anchor, v, RATING_PROBE, RATING_BASELINE) === 'towards',
+        ctx,
+      );
+      back = polled.ok;
+      detail = `${leg.anchor} -> ${String(polled.last)}`;
+      assertions.check(`the aggregate moved back towards ${RATING_BASELINE}`, back, detail);
+    } else {
+      const now = await leg.read();
+      back = now !== undefined && ratingMove(leg.anchor, now, RATING_PROBE, RATING_BASELINE) !== 'away';
+      detail = `${leg.anchor} -> ${String(now)}`;
+      assertions.check(`the restore did not move the aggregate away from ${RATING_BASELINE}`, back, detail);
+    }
+    restored = line !== null && back;
+  } catch (err: unknown) {
+    assertions.check(`the restore to ${RATING_BASELINE} was accepted`, false, toErrorMessage(err));
+  }
+  if (restored) ctx.lock.clearPendingRestore(key);
+  else assertions.check('the rating restore is proven', false, 'pending restore kept');
+}
+
+/**
+ * The political role the gateway reads for a tycoon (`handleTycoonRole`, ws-handlers/politics-handlers.ts)
+ * — sent today only by `checkCapability`, never by a flow. `TMayor.StoreRoleInfoToCache` writes
+ * `IsMayor` and `Town` (Kernel/TownPolitics.pas:642-651), and the roles recursion reaches the human's
+ * cache (Kernel/KernelCache.pas:903-910). No write.
+ */
+const tycoonRoleRead: Flow = {
+  name: 'tycoon-role-read',
+  what: `REQ_TYCOON_ROLE for SPO_test3 -> the answer names the Mayor of ${GOVERNED_TOWN} — no write`,
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const { role } = await session.driver.request<WsRespTycoonRole>(
+        { type: WsMessageType.REQ_TYCOON_ROLE, tycoonName: PRIMARY_ACCOUNT.username },
+        WsMessageType.RESP_TYCOON_ROLE,
+      );
+      assertions.check(
+        `the answer names ${PRIMARY_ACCOUNT.username}`,
+        sameName(role?.tycoonName ?? '', PRIMARY_ACCOUNT.username),
+        role?.tycoonName,
+      );
+      assertions.check(`${PRIMARY_ACCOUNT.username} is a mayor`, role?.isMayor === true, `isMayor=${String(role?.isMayor)}`);
+      assertions.check(`the mayor's town is ${GOVERNED_TOWN}`, sameName(role?.town ?? '', GOVERNED_TOWN), role?.town);
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('tycoon-role-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
  * `TPoliticalTownHall.RDOVote` (`Kernel/TownPolitics.pas:395`, log `:400`). Data-gated: it
  * votes only when a prior vote exists and still names a current candidate or the mayor, so
  * the restore is a real vote and not a silent no-op (`Kernel/Politics.pas:916-933`).
@@ -849,7 +1104,7 @@ const voteRoundTrip: Flow = {
  */
 const permissionNegative: Flow = {
   name: 'permission-negative',
-  what: 'Crazz at the governed town hall sees canGovern=false',
+  what: `${SECONDARY_ACCOUNT.username} at the governed town hall sees canGovern=false`,
   mutates: false,
   run: async () => {
     const assertions = new Assertions();
@@ -878,14 +1133,14 @@ const permissionNegative: Flow = {
  */
 const mailRoundTrip: Flow = {
   name: 'mail-roundtrip',
-  what: 'SPO_test3 sends -> Crazz receives -> delete',
+  what: `SPO_test3 sends -> ${SECONDARY_ACCOUNT.username} receives -> delete`,
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `e2e ${new Date().toISOString()}`;
 
-    // Crazz first, before the compose: a refused login then leaves no mail behind.
+    // The secondary account first, before the compose: a refused login then leaves no mail behind.
     const recipient = await loginSecondary();
     if ('skipped' in recipient) return skippedResult('mail-roundtrip', recipient.skipped);
     try {
@@ -1519,10 +1774,10 @@ async function purgeSeededAlerts(
   }
 }
 
-/** Crazz-sent alerts in SPO_test3's Inbox — a server-sent alert has another sender and is spared. */
+/** Alerts sent by the secondary account in SPO_test3's Inbox — a server-sent alert has another sender and is spared. */
 const seededInInbox = (m: MailMessageHeader): boolean =>
   m.subject === ZONING_ALERT_SUBJECT && sameAccount(m.from, SECONDARY_ACCOUNT);
-/** Crazz's own copies in `Sent`, filed there by Post — Mail Server/MailServer.pas:802-811. */
+/** The secondary's own copies in `Sent`, filed there by Post — Mail Server/MailServer.pas:802-811. */
 const seededInSent = (m: MailMessageHeader): boolean =>
   m.subject === ZONING_ALERT_SUBJECT && sameAccount(m.to, PRIMARY_ACCOUNT);
 
@@ -1535,7 +1790,7 @@ async function sweepSeededAlerts(): Promise<FlowCheck[]> {
 }
 
 /**
- * Crazz sends SPO_test3 one look-alike of the server's zoning alert, pointing at the governed
+ * The secondary account sends SPO_test3 one look-alike of the server's zoning alert, pointing at the governed
  * town hall — a building that exists, so the flow's focus lands. The cleanup deletes it from
  * both mailboxes.
  */
@@ -1590,7 +1845,7 @@ async function seedZoningAlert(): Promise<FlowSeed> {
  * through `parseLocalAspUrl` — the same translator the client's link interceptor uses —
  * and sends the very REQ_BUILDING_FOCUS the client sends on a click.
  *
- * The seed (`seedZoningAlert`, #1009) feeds the flow: Crazz sends SPO_test3 one look-alike
+ * The seed (`seedZoningAlert`, #1009) feeds the flow: the secondary account sends SPO_test3 one look-alike
  * alert before the run, and it is deleted from both mailboxes after. Read without the seed,
  * no zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
  * was zoned out of this account lately, so the flow proved nothing. A demolished building is
@@ -1817,7 +2072,7 @@ async function purgeFolder(
 /**
  * The cleanup of one mailbox: a fresh login — the cleanup matters most after a failure, which
  * is when the drive's socket may be dead — then `purgeFolder` on each folder. One check per
- * folder; never throws. A Crazz refusal here comes after the flow's first write, so its checks
+ * folder; never throws. A refusal of the secondary account here comes after the flow's first write, so its checks
  * are not ok and name the leftover.
  */
 async function purgeMailbox(
@@ -1987,7 +2242,7 @@ const mailDrafts: Flow = {
 };
 
 async function driveSendFromDraft(
-  crazz: LiveSession,
+  secondary: LiveSession,
   subject: string,
   sleep: (ms: number) => Promise<void>,
 ): Promise<FlowResult> {
@@ -1997,11 +2252,11 @@ async function driveSendFromDraft(
   try {
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      await mailConnect(crazz);
+      await mailConnect(secondary);
       await mailConnect(session);
       const swept = await preSweep(
         assertions,
-        [[session, 'Draft'], [session, 'Sent'], [crazz, 'Inbox']],
+        [[session, 'Draft'], [session, 'Sent'], [secondary, 'Inbox']],
         hasMarker(MAIL_SEND_FROM_DRAFT_MARKER),
         sleep,
         markerLabel(MAIL_SEND_FROM_DRAFT_MARKER),
@@ -2020,7 +2275,7 @@ async function driveSendFromDraft(
       const sent = await sendMail(session, { ...mail, existingDraftId: draft.messageId });
       assertions.check('the send from the draft was accepted', sent.success === true, sent.message);
 
-      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      const delivered = await rereadUntil(secondary, 'Inbox', msgs => msgs.some(bySubject), sleep);
       assertions.check(
         `${SECONDARY_ACCOUNT.username}'s Inbox holds it`,
         delivered.settled,
@@ -2038,29 +2293,29 @@ async function driveSendFromDraft(
       await logoff(session);
     }
   } finally {
-    await logoff(crazz);
+    await logoff(secondary);
   }
 }
 
 /**
  * Send from an opened draft: `REQ_MAIL_COMPOSE` with `existingDraftId`, which deletes the Draft
- * copy once `Post` succeeds (#510). Crazz logs in first, so a refusal writes nothing (SKIPPED);
+ * copy once `Post` succeeds (#510). The secondary account logs in first, so a refusal writes nothing (SKIPPED);
  * a refusal at the cleanup, after the send, is a FAIL naming the leftover.
  */
 const mailSendFromDraft: Flow = {
   name: 'mail-send-from-draft',
-  what: 'Crazz first -> SPO_test3 saves a draft to Crazz -> sends it from the draft -> Crazz receives it, Draft copy gone',
+  what: `${SECONDARY_ACCOUNT.username} first -> SPO_test3 saves a draft to ${SECONDARY_ACCOUNT.username} -> sends it from the draft -> ${SECONDARY_ACCOUNT.username} receives it, Draft copy gone`,
   mutates: true,
   run: async ctx => {
     const name = 'mail-send-from-draft';
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `${MAIL_SEND_FROM_DRAFT_MARKER}${new Date().toISOString()}`;
-    // Crazz first, before any write: a refused login then leaves nothing behind.
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    // The secondary account first, before any write: a refused login then leaves nothing behind.
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveSendFromDraft(crazz, subject, sleep);
+      result = await driveSendFromDraft(secondary, subject, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     }
@@ -2075,7 +2330,7 @@ const mailSendFromDraft: Flow = {
 };
 
 async function driveReply(
-  crazz: LiveSession,
+  secondary: LiveSession,
   subject: string,
   sleep: (ms: number) => Promise<void>,
 ): Promise<FlowResult> {
@@ -2086,11 +2341,11 @@ async function driveReply(
   try {
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      await mailConnect(crazz);
+      await mailConnect(secondary);
       await mailConnect(session);
       const swept = await preSweep(
         assertions,
-        [[session, 'Inbox'], [session, 'Sent'], [crazz, 'Inbox'], [crazz, 'Sent']],
+        [[session, 'Inbox'], [session, 'Sent'], [secondary, 'Inbox'], [secondary, 'Sent']],
         hasMarker(MAIL_REPLY_MARKER),
         sleep,
         markerLabel(MAIL_REPLY_MARKER),
@@ -2100,7 +2355,7 @@ async function driveReply(
       const sent = await sendMail(session, { to: SECONDARY_ACCOUNT.username, subject, body: [MAIL_PROBE_BODY] });
       assertions.check('the compose was accepted', sent.success === true, sent.message);
 
-      const delivered = await rereadUntil(crazz, 'Inbox', msgs => msgs.some(bySubject), sleep);
+      const delivered = await rereadUntil(secondary, 'Inbox', msgs => msgs.some(bySubject), sleep);
       const received = delivered.messages.find(bySubject);
       assertions.check(
         `${SECONDARY_ACCOUNT.username}'s Inbox holds the message`,
@@ -2109,7 +2364,7 @@ async function driveReply(
       );
       if (!received) return report(name, assertions, [], session);
 
-      const { message } = await crazz.driver.request<WsRespMailMessage>(
+      const { message } = await secondary.driver.request<WsRespMailMessage>(
         { type: WsMessageType.REQ_MAIL_READ_MESSAGE, folder: 'Inbox', messageId: received.messageId },
         WsMessageType.RESP_MAIL_MESSAGE,
       );
@@ -2117,8 +2372,8 @@ async function driveReply(
       if (!message.fromAddr) return report(name, assertions, [], session);
 
       // The client's Reply (`startReply` in mail-store.ts): to the sender, `Re: ` subject, and
-      // the four In-Reply-To* lines as headers. Crazz's one write — a pair the flow undoes.
-      const reply = await sendMail(crazz, {
+      // the four In-Reply-To* lines as headers. The secondary's one write — a pair the flow undoes.
+      const reply = await sendMail(secondary, {
         to: message.fromAddr,
         subject: `Re: ${message.subject}`,
         body: ['Automated L2 reply probe. Safe to delete.'],
@@ -2137,7 +2392,7 @@ async function driveReply(
       await logoff(session);
     }
   } finally {
-    await logoff(crazz);
+    await logoff(secondary);
   }
 }
 
@@ -2150,18 +2405,18 @@ async function driveReply(
  */
 const mailReply: Flow = {
   name: 'mail-reply',
-  what: 'Crazz first -> SPO_test3 sends -> Crazz reads and replies (Re:, In-Reply-To* headers) -> SPO_test3 receives the reply',
+  what: `${SECONDARY_ACCOUNT.username} first -> SPO_test3 sends -> ${SECONDARY_ACCOUNT.username} reads and replies (Re:, In-Reply-To* headers) -> SPO_test3 receives the reply`,
   mutates: true,
   run: async ctx => {
     const name = 'mail-reply';
     const sleep = ctx.sleep ?? defaultSleep;
     const subject = `${MAIL_REPLY_MARKER}${new Date().toISOString()}`;
-    // Crazz first, before any write: a refused login then leaves nothing behind.
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    // The secondary account first, before any write: a refused login then leaves nothing behind.
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveReply(crazz, subject, sleep);
+      result = await driveReply(secondary, subject, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     }
@@ -3053,7 +3308,7 @@ async function roundTripProbe(
   }
 }
 
-/** SPO_test3's row towards Crazz as `"<yours>:<theirs>"`, or `"none"` — no row, both neutral. */
+/** SPO_test3's row towards the secondary account as `"<yours>:<theirs>"`, or `"none"` — no row, both neutral. */
 async function policyTowardsSecondary(session: LiveSession): Promise<string> {
   const policy = await readPolicy(session);
   const row = policy.policies.find(p => sameAccount(p.tycoonName, SECONDARY_ACCOUNT));
@@ -3066,13 +3321,13 @@ function policyStatus(value: string): number {
 }
 
 /**
- * The strategy towards Crazz, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
- * broadcasts a world event naming Crazz (Kernel/Kernel.pas:11790-11800). The restore from "no
+ * The strategy towards the secondary account, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
+ * broadcasts a world event naming the secondary account (Kernel/Kernel.pas:11790-11800). The restore from "no
  * row" expects the row gone — a neutral row left behind is not the original.
  */
 const policyRoundTrip: Flow = {
   name: 'policy-roundtrip',
-  what: "strategy towards Crazz: read -> set another status -> read back -> restore -> read back",
+  what: `strategy towards ${SECONDARY_ACCOUNT.username}: read -> set another status -> read back -> restore -> read back`,
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -3609,7 +3864,7 @@ function transferRefusal(bank: BankAccountData): string | null {
   return null;
 }
 
-async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
+async function driveSendReturn(secondary: LiveSession, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<FlowResult> {
   const name = 'bank-send-return';
   const ME = PRIMARY_ACCOUNT.username;
   const HIM = SECONDARY_ACCOUNT.username;
@@ -3619,7 +3874,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
   const me = await login(PRIMARY_ACCOUNT);
   try {
     await mailConnect(me);
-    await mailConnect(crazz);
+    await mailConnect(secondary);
 
     // RDOSendMoney clips the amount to fBudget - LoanAmount - AprFee and answers
     // ERROR_InvalidMoneyValue when that is ≤ 0 (Kernel/Kernel.pas:11507-11512, :11535); the page
@@ -3629,13 +3884,13 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
       assertions.unproven(what, `${ME} cannot send $1: ${mine}; nothing sent`);
       return report(name, assertions, probes, me);
     }
-    const theirs = transferRefusal(await readBank(crazz));
+    const theirs = transferRefusal(await readBank(secondary));
     if (theirs) {
       assertions.unproven(what, `${HIM} cannot send $1 back: ${theirs}; nothing sent`);
       return report(name, assertions, probes, me);
     }
     // The :11499 receiver limits, each profile read through its own session.
-    for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, crazz]] as const) {
+    for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, secondary]] as const) {
       const refusal = receiverLimitRefusal(account, await readProfile(s));
       if (refusal) {
         assertions.unproven(what, `${refusal}; nothing sent`);
@@ -3644,7 +3899,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
     }
 
     for (const [s, folder, counterpart] of [
-      [me, 'Inbox', HIM], [me, 'Sent', HIM], [crazz, 'Inbox', ME], [crazz, 'Sent', ME],
+      [me, 'Inbox', HIM], [me, 'Sent', HIM], [secondary, 'Inbox', ME], [secondary, 'Sent', ME],
     ] as const) {
       const check = await purgeTransferFolder(s, folder, counterpart, sleep);
       assertions.check(`pre-sweep: ${check.what}`, check.ok, check.detail);
@@ -3658,7 +3913,7 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
     const has = async (s: LiveSession, from: string, marker: string): Promise<boolean> =>
       (await noticeIds(s, 'Inbox', from, `Reason=${marker}&`)).size > 0;
     const owed = async (): Promise<string> =>
-      String((await has(crazz, ME, out) ? 1 : 0) - (await has(me, HIM, back) ? 1 : 0));
+      String((await has(secondary, ME, out) ? 1 : 0) - (await has(me, HIM, back) ? 1 : 0));
     const send = (s: LiveSession, toTycoon: string, reason: string) =>
       s.driver.request<WsRespProfileBankAction>(
         { type: WsMessageType.REQ_PROFILE_BANK_ACTION, action: 'send', amount: '1', toTycoon, reason },
@@ -3683,9 +3938,9 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
           firstLegSent = true;
         },
         restore: async () => {
-          // Crazz writes only to complete the pair: nothing to send back unless the $1 arrived.
-          if (!firstLegSent && !(await has(crazz, ME, out))) return;
-          const answer = await send(crazz, ME, back);
+          // The secondary account writes only to complete the pair: nothing to send back unless the $1 arrived.
+          if (!firstLegSent && !(await has(secondary, ME, out))) return;
+          const answer = await send(secondary, ME, back);
           if (answer.result?.success !== true) throw new Error(`send back refused: ${answer.result?.message ?? '(no result)'}`);
         },
         proof: {
@@ -3708,29 +3963,29 @@ async function driveSendReturn(crazz: LiveSession, ctx: FlowContext, sleep: (ms:
 }
 
 /**
- * Send $1 to Crazz, and Crazz sends it back (#1147). Both accounts log in before the first send;
- * a refusal of Crazz then is SKIPPED with nothing sent. Nothing is sent unless both bank pages
+ * Send $1 to the secondary account, and it sends it back (#1147). Both accounts log in before the first send;
+ * a refusal of the secondary account then is SKIPPED with nothing sent. Nothing is sent unless both bank pages
  * offer the transfer and both profiles are under the receiver limits (Kernel/Kernel.pas:11499).
- * Two residual risks remain, each a FAIL with the pending restore kept ($1 stays with Crazz): a
+ * Two residual risks remain, each a FAIL with the pending restore kept ($1 stays with the secondary account): a
  * Transcended item (not readable over the WS contract), and a nobility of 0 that cannot be told
  * from "Nobility label not found". Any failure after the first send is a FAIL, never SKIPPED.
  */
 const bankSendReturn: Flow = {
   name: 'bank-send-return',
-  what: 'both log in -> both pages offer $1 -> receiver limits -> send $1 to Crazz -> notice -> Crazz sends $1 back -> notice',
+  what: `both log in -> both pages offer $1 -> receiver limits -> send $1 to ${SECONDARY_ACCOUNT.username} -> notice -> ${SECONDARY_ACCOUNT.username} sends $1 back -> notice`,
   mutates: true,
   run: async ctx => {
     const name = 'bank-send-return';
     const sleep = ctx.sleep ?? defaultSleep;
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult(name, crazz.skipped);
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult(name, secondary.skipped);
     let result: FlowResult;
     try {
-      result = await driveSendReturn(crazz, ctx, sleep);
+      result = await driveSendReturn(secondary, ctx, sleep);
     } catch (err: unknown) {
       result = failedResult(name, err);
     } finally {
-      await logoff(crazz);
+      await logoff(secondary);
     }
     const cleanup = [
       ...(await purgeTransferMailbox(PRIMARY_ACCOUNT, SECONDARY_ACCOUNT.username, ['Inbox', 'Sent'], sleep)),
@@ -4481,108 +4736,6 @@ const zoneRoundTrip: Flow = {
     }),
 };
 
-/** A property's raw value from any group of an opening read, or 'absent'. */
-function rawProperty(groups: { [groupId: string]: BuildingPropertyValue[] }, name: string): string {
-  for (const group of Object.values(groups)) {
-    const hit = group.find(p => p.name === name);
-    if (hit) return hit.value;
-  }
-  return 'absent';
-}
-
-/** The gateway's default loadMapArea chunk — one window centred on the town hall. */
-const ROLE_PROBE_SPAN = 64;
-const ROLE_PROBE_MAX_READS = 40;
-const INDUSTRY_TRADE_ROLES = ['2', '5', '6'];
-
-/**
- * Read-only bench probe (#1006): what a real WHGeneral warehouse's cached `Role` holds, and,
- * if one exists nearby, an IndGeneral facility's `Role`/`TradeRole`. The values are recorded
- * in the run artifact and never asserted; the flow fails only when a read fails, and reports
- * UNPROVEN when no warehouse is found. It is removed by the follow-up card that acts on the
- * reading.
- */
-const warehouseRoleReading: Flow = {
-  name: 'warehouse-role-reading',
-  what: "a warehouse's cached Role / TradeRole near the governed town — recorded, never asserted",
-  mutates: false,
-  async run() {
-    const assertions = new Assertions();
-    const session = await login(PRIMARY_ACCOUNT);
-    try {
-      const town = await findTown(session, GOVERNED_TOWN);
-      const response = await session.driver.request<WsRespMapData>(
-        {
-          type: WsMessageType.REQ_MAP_LOAD,
-          x: Math.max(0, town.x - ROLE_PROBE_SPAN / 2),
-          y: Math.max(0, town.y - ROLE_PROBE_SPAN / 2),
-          width: ROLE_PROBE_SPAN,
-          height: ROLE_PROBE_SPAN,
-        },
-        [WsMessageType.RESP_MAP_DATA, WsMessageType.EVENT_MAP_DATA],
-        TIMEOUTS.login,
-      );
-      const buildings: MapBuilding[] = response.data?.buildings ?? [];
-      const dist = (b: MapBuilding): number => Math.abs(b.x - town.x) + Math.abs(b.y - town.y);
-      const sorted = [...buildings].sort((a, b) => dist(a) - dist(b));
-
-      const handlerByClass = new Map<string, string>();
-      let reads = 0;
-      let warehouse: TradeRoleReading | undefined;
-      let industry: TradeRoleReading | undefined;
-      for (const b of sorted) {
-        if ((warehouse && industry) || reads >= ROLE_PROBE_MAX_READS) break;
-        const known = handlerByClass.get(b.visualClass);
-        if (known !== undefined) {
-          if (known !== 'WHGeneral' && known !== 'IndGeneral') continue;
-          if (known === 'WHGeneral' && warehouse) continue;
-          if (known === 'IndGeneral' && industry) continue;
-        }
-        const details = await readBuildingDetails(session, b.x, b.y, b.visualClass);
-        reads++;
-        const handlers = details.tabs.map(t => t.handlerName);
-        const handler = handlers.includes('WHGeneral')
-          ? 'WHGeneral'
-          : handlers.includes('IndGeneral')
-            ? 'IndGeneral'
-            : (handlers[0] ?? '');
-        handlerByClass.set(b.visualClass, handler);
-        const reading: TradeRoleReading = {
-          facility: handler === 'WHGeneral' ? 'warehouse' : 'industry',
-          x: b.x,
-          y: b.y,
-          visualClass: b.visualClass,
-          templateName: details.templateName,
-          role: rawProperty(details.groups, 'Role'),
-          tradeRole: rawProperty(details.groups, 'TradeRole'),
-        };
-        if (handler === 'WHGeneral' && !warehouse) warehouse = reading;
-        else if (
-          handler === 'IndGeneral' &&
-          !industry &&
-          INDUSTRY_TRADE_ROLES.includes(reading.tradeRole)
-        ) {
-          industry = reading;
-        }
-      }
-
-      const readings: TradeRoleReading[] = [];
-      if (warehouse) readings.push(warehouse);
-      if (industry) readings.push(industry);
-      if (!warehouse) {
-        assertions.unproven(
-          `a WHGeneral warehouse's cached Role near ${GOVERNED_TOWN}`,
-          `none among ${buildings.length} building(s) in the ${ROLE_PROBE_SPAN}×${ROLE_PROBE_SPAN} ` +
-            `window (${reads} inspector read(s))`,
-        );
-      }
-      return { ...report('warehouse-role-reading', assertions, [], session), readings };
-    } finally {
-      await logoff(session);
-    }
-  },
-};
-
 /**
  * The permanent fixtures (#1149): SPO_test3's own finished facility of each kind in Helartia,
  * found by kind — and, when one is missing, built once and kept (the one sanctioned permanent
@@ -5197,15 +5350,23 @@ const industryOutputPrice: Flow = {
 };
 
 /**
- * A supply gate's limits: max price, min quality, sort mode and one supplier's overprice
- * (`TFacility.RDOSetInput*`, Kernel/Kernel.pas:4358-4442). Nightly only (routing.ts). A member the
- * gate cannot carry is recorded unproven by name; the others still run.
+ * A supply gate's limits: max price and min quality (`TFacility.RDOSetInputMaxPrice` /
+ * `RDOSetInputMinK`, Kernel/Kernel.pas:4390-4420). Nightly only (routing.ts).
+ *
+ * Sort mode and overprice are **excluded**, never driven (#1195):
+ * - `RDOSetInputSortMode` — only `TMediaInput` caches `QPSorted` / `SortMode`
+ *   (Kernel/MediaGates.pas:388-389), and its sole user is the movie theatre's Films input
+ *   (StdBlocks/Movie.pas:84); a plain input's `SetSortMode` is empty (Kernel/Kernel.pas:7169-7171).
+ *   No sanctioned fixture kind (FIXTURE_KINDS, E2E-POLICY §9) is a movie theatre.
+ * - `RDOSetInputOverPrice` — set per supplier row; overpaying another player's supplier touches
+ *   that player's income (§9), and an own row exists only after `supplier-hire-fire` (#1153),
+ *   itself nightly-only and data-gated.
  */
 const industrySupplyLimits: Flow = {
   name: 'industry-supply-limits',
   what:
-    "round trips on RDOSetInputMaxPrice / MinK / SortMode / OverPrice at SPO_test3's industry fixture — " +
-    'Survival line + read-back each, restored',
+    "round trips on RDOSetInputMaxPrice / MinK at SPO_test3's industry fixture — Survival line + read-back " +
+    'each, restored; RDOSetInputSortMode / RDOSetInputOverPrice are excluded (no fixture carries them)',
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -5231,7 +5392,7 @@ const industrySupplyLimits: Flow = {
         return report('industry-supply-limits', assertions, probes, session);
       }
 
-      const { name, supply, fluid } = gate;
+      const { name, fluid } = gate;
       const url = await survivalUrl(ctx);
       const fresh = (): Promise<BuildingSupplyData | undefined> => readSupply(session, fx, name);
       const source = (field: string): string => `the ${name} supply gate's ${field} via REQ_BUILDING_GATE_CONNECTIONS`;
@@ -5273,74 +5434,190 @@ const industrySupplyLimits: Flow = {
       probes.push(minK);
       checkProbe(assertions, minK);
 
-      // The control is offered only on a gate that publishes QPSorted = 1 and a SortMode (SuppliesGroup.tsx).
-      if (supply.qpSorted === '1' && supply.sortMode !== undefined) {
-        const readSortMode = async (): Promise<string | undefined> => (await fresh())?.sortMode;
-        const sortMode = await roundTripProbe(ctx, url, {
-          what: `${fixtureLabel(fx)} ${name} input sort mode`,
-          member: 'RDOSetInputSortMode',
-          read: readSortMode,
-          write: writeGate('RDOSetInputSortMode'),
-          testValue: original => (original === '1' ? '0' : '1'),
-          // The line carries no coordinates and no value (Kernel/Kernel.pas:4446): the read-back attributes it.
-          proof: {
-            log: { marker: LOG_MARKERS.RDOSetInputSortMode },
-            readBack: readBackOn(source('SortMode'), GATE_CACHE_WHY, readSortMode),
-          },
-          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputSortMode', additionalParams: { fluidId: fluid } },
-        });
-        probes.push(sortMode);
-        checkProbe(assertions, sortMode);
-      } else {
-        assertions.unproven(
-          'RDOSetInputSortMode',
-          `the ${fluid} gate publishes no sort mode — only TMediaInput caches QPSorted/SortMode ` +
-            "(Kernel/MediaGates.pas:388-389); a plain input's SetSortMode is empty (Kernel/Kernel.pas:7169-7171), " +
-            'so no sort control is offered and a write would change nothing',
-        );
-      }
-
-      const supplier = supply.connections[0];
-      if (supplier) {
-        // The supplier is identified by its lot, never by its row: a row can shift between reads.
-        const same = (c: BuildingConnectionData): boolean => c.x === supplier.x && c.y === supplier.y;
-        const readOverprice = async (): Promise<string | undefined> =>
-          (await fresh())?.connections.find(same)?.overprice;
-        const writeOverprice = async (value: string): Promise<void> => {
-          const index = (await fresh())?.connections.findIndex(same) ?? -1;
-          if (index < 0) throw new Error(`supplier (${supplier.x},${supplier.y}) is no longer on the ${fluid} gate`);
-          await setBuildingProperty(session, fx.x, fx.y, 'RDOSetInputOverPrice', value, {
-            fluidId: fluid,
-            index: String(index),
-          });
-        };
-        const overprice = await roundTripProbe(ctx, url, {
-          what: `${fixtureLabel(fx)} ${name} overprice of ${supplier.facilityName} (${supplier.x},${supplier.y})`,
-          member: 'RDOSetInputOverPrice',
-          read: readOverprice,
-          write: writeOverprice,
-          testValue: original => nudgeWithin(original, 0, 150),
-          proof: {
-            log: { marker: LOG_MARKERS.RDOSetInputOverPrice, match: facMatch('Input overprice set') },
-            // The gateway's own confirmed read is always empty for it (mapRdoCommandToPropertyName).
-            readBack: readBackOn(source(`supplier row overprice (BuildingConnectionData.overprice)`), GATE_CACHE_WHY, readOverprice),
-          },
-          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetInputOverPrice', additionalParams: { fluidId: fluid } },
-        });
-        probes.push(overprice);
-        checkProbe(assertions, overprice);
-      } else {
-        assertions.unproven(
-          'RDOSetInputOverPrice',
-          `the ${fluid} gate has no supplier row — the overprice is set per supplier, and a fixture built fresh has none (#1149)`,
-        );
-      }
       return report('industry-supply-limits', assertions, probes, session);
     } finally {
       await logoff(session);
     }
   },
 };
+
+/**
+ * The ad percentage Voyager shows: `min(100, round(100*nfActualMaxFluidValue/nfCapacity))`
+ * (Voyager/AdvSheetForm.pas:651-660). Undefined when either value is absent or not a number, or
+ * when the capacity is not positive — nothing to compare a write with.
+ */
+export function adPercent(actualMaxFluid: string | undefined, capacity: string | undefined): string | undefined {
+  if (actualMaxFluid === undefined || capacity === undefined) return undefined;
+  if (actualMaxFluid.trim() === '' || capacity.trim() === '') return undefined;
+  const fld = Number(actualMaxFluid);
+  const cap = Number(capacity);
+  if (!Number.isFinite(fld) || !Number.isFinite(cap) || cap <= 0) return undefined;
+  return String(Math.min(100, roundHalfEven((100 * fld) / cap)));
+}
+
+/** `tidFluid_Advertisement` (StdBlocks/StdFluids.pas:32) — the gate's fluid, and its name. */
+const ADVERTISEMENT = 'Advertisement';
+
+/**
+ * The ad budget — `TInput.RDOSetInputFluidPerc` (Kernel/Kernel.pas:1508, body :7154-7160, log :7156)
+ * on the Advertisement input of SPO_test3's research fixture.
+ *
+ * The research fixture, not the store: a food store declares only its food input gates
+ * (StdBlocks/FoodStore.pas:71-100) and takes advertisement as a company input
+ * (StdBlocks/ServiceBlock.pas:540), so the gate-bound member has nothing to address there. The
+ * general headquarters declares an Advertisement `TPullInput`, cacheable and editable
+ * (Kernel/Headquarters.pas:130-143). The gateway binds the write to that input's own ObjectId, as
+ * Voyager does (Voyager/AdvSheetForm.pas:456-457).
+ *
+ * The proof is the Survival log line, not a read-back (maintainer decision 2026-10-01, #1195
+ * option c). A read-back can never show the write: Advertisement is a company fluid
+ * (StdBlocks/StdFluids.pas:499, mfCompanyFluid), so the input joins its company's TCompanyInput
+ * (Kernel/Kernel.pas:5232-5233, :10323-10329), whose `Spread` runs every company cycle (:10160)
+ * and overwrites ActualMaxFluid from the demand slices (`UpdateMaxFluids`, :10003-10008) — so the
+ * percentage read back is the spread's, whatever was written. The write PASSes on its own
+ * `Setting Input fluid perc: <value>` line at the fixture's coordinates (Kernel/Kernel.pas:7156);
+ * the original percentage is still read first, written back afterwards, and the restore is proven
+ * by its own line. A missing write line FAILs; a missing restore line FAILs and keeps the pending
+ * restore. This exception is this flow's alone — every other round trip still needs its read-back.
+ */
+const adBudgetRoundTrip: Flow = {
+  name: 'ad-budget-roundtrip',
+  what:
+    "round trip on RDOSetInputFluidPerc at the Advertisement input of SPO_test3's research (HQ) fixture — " +
+    'proven by the Survival line of the write and of the restore (no read-back: Kernel/Kernel.pas:10003-10008, :10160)',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'research', assertions);
+      if (!fx) return report('ad-budget-roundtrip', assertions, probes, session);
+
+      const details = await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
+      let gate: GateStub | undefined;
+      if (details.tabs.some(t => t.id === 'supplies')) {
+        for (const stub of await gateStubs(session, fx, 'supplies')) {
+          if ((await gateConnections(session, fx, 'supplies', stub)).supply?.metaFluid === ADVERTISEMENT) {
+            gate = stub;
+            break;
+          }
+        }
+      }
+      if (!gate) {
+        assertions.unproven(
+          'RDOSetInputFluidPerc',
+          `${fixtureLabel(fx)} lists no ${ADVERTISEMENT} input — the HQ declares one (Kernel/Headquarters.pas:130-143); ` +
+            'nothing written',
+        );
+        return report('ad-budget-roundtrip', assertions, probes, session);
+      }
+
+      const { name } = gate;
+      const supply = await readSupply(session, fx, name);
+      const original = adPercent(supply?.actualMaxFluid, supply?.capacity);
+      if (original === undefined) {
+        assertions.check(
+          'RDOSetInputFluidPerc: the original ad percentage is readable',
+          false,
+          `${fixtureLabel(fx)} ${name} input has no readable percentage — nothing to restore to, nothing written`,
+        );
+        return report('ad-budget-roundtrip', assertions, probes, session);
+      }
+      const url = await survivalUrl(ctx);
+      probes.push(await adBudgetLogRoundTrip(ctx, url, session, fx, name, original, assertions));
+      return report('ad-budget-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
+/**
+ * The ad budget's write and restore, each proven by its own Survival line — no read-back (see
+ * `adBudgetRoundTrip`). The pending restore is recorded before the write and cleared only when
+ * the restore's line is seen.
+ */
+async function adBudgetLogRoundTrip(
+  ctx: FlowContext,
+  url: string,
+  session: LiveSession,
+  fx: OwnFixture,
+  name: string,
+  original: string,
+  assertions: Assertions,
+): Promise<ProbeResult> {
+  const written = nudgeWithin(original, 0, 100);
+  const set = async (value: string): Promise<void> => {
+    await setBuildingProperty(session, fx.x, fx.y, 'RDOSetInputFluidPerc', value, { fluidId: ADVERTISEMENT });
+  };
+  const lineFor = (window: Awaited<ReturnType<typeof openLogWindow>>, value: string): Promise<string | null> =>
+    awaitMarker(
+      window,
+      {
+        marker: LOG_MARKERS.RDOSetInputFluidPerc,
+        match: l => facLineMatches(l, fx.x, fx.y, `Setting Input fluid perc: ${value}`),
+      },
+      TIMEOUTS.logSettle,
+    );
+  const what = `${fixtureLabel(fx)} ${name} input fluid percentage (the ad budget)`;
+  const key = `RDOSetInputFluidPerc:${randomUUID()}`;
+  ctx.lock.addPendingRestore({
+    key,
+    what: `${what} — put back "${original}"`,
+    originalValue: original,
+    x: fx.x,
+    y: fx.y,
+    propertyName: 'RDOSetInputFluidPerc',
+    additionalParams: { fluidId: ADVERTISEMENT },
+  });
+
+  let logLine: string | null = null;
+  try {
+    const window = await openLogWindow(url);
+    await set(written);
+    logLine = await lineFor(window, written);
+    assertions.check(
+      `RDOSetInputFluidPerc: the write of ${written} logged its Setting Input fluid perc line`,
+      logLine !== null,
+      logLine ?? 'no model-server log line — the write never reached the object',
+    );
+  } catch (err: unknown) {
+    assertions.check(`RDOSetInputFluidPerc: the write of ${written} was accepted`, false, toErrorMessage(err));
+  }
+
+  // The restore runs whatever happened above.
+  let restoreLine: string | null = null;
+  try {
+    const window = await openLogWindow(url);
+    await set(original);
+    restoreLine = await lineFor(window, original);
+  } catch (err: unknown) {
+    assertions.check(`RDOSetInputFluidPerc: the restore to ${original} was accepted`, false, toErrorMessage(err));
+  }
+  const restored = restoreLine !== null;
+  if (restored) ctx.lock.clearPendingRestore(key);
+  assertions.check(
+    `RDOSetInputFluidPerc: the restore to ${original} logged its Setting Input fluid perc line`,
+    restored,
+    restoreLine ?? 'no restore line — pending restore kept',
+  );
+
+  const failed = logLine === null || !restored;
+  return {
+    what,
+    member: 'RDOSetInputFluidPerc',
+    status: failed ? 'FAIL' : 'PASS',
+    original,
+    written,
+    logLine,
+    readBack: 'UNCONFIRMED',
+    restored,
+    note:
+      'proven by the Survival lines alone — TCompanyInput.Spread overwrites the read-back every cycle ' +
+      '(Kernel/Kernel.pas:10003-10008, :10160; maintainer decision 2026-10-01)',
+  };
+}
 
 /**
  * Stop and restart the store (`TFacility.SetStopped`, Kernel/Kernel.pas:3948). `Stopped` is
@@ -6158,15 +6435,14 @@ const companyInputDemand: Flow = {
 };
 
 /**
- * The trade role (warehouse only — `RDOSetRole` is published by `TWarehouse`,
- * StdBlocks/Warehouses.pas:95) and the trade level (warehouse and industry,
- * `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408). Only values the client offers are written.
+ * The trade level (warehouse and industry, `TBlock.RDOSetTradeLevel`, Kernel/Kernel.pas:6408).
+ * Only values the client offers are written. The trade role is not driven here: `RDOSetRole` is
+ * offered only on an IndGeneral storage, and the warehouse fixture is a WHGeneral Import Storage (#1255).
  */
 const tradeSettings: Flow = {
   name: 'trade-settings',
   what:
-    "RDOSetRole on SPO_test3's warehouse fixture (a role the client offers, read-back) and RDOSetTradeLevel on the " +
-    'warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored',
+    "RDOSetTradeLevel on SPO_test3's warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored",
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -6210,38 +6486,11 @@ const tradeSettings: Flow = {
         checkProbe(assertions, probe);
       };
 
+      // No RDOSetRole: the warehouse fixture is an Import Storage (WHGeneral), whose sheet never
+      // offered a trade mode (Voyager/WHGeneralSheet.pas carries cbTrade only, :46) — its role is
+      // preset by class (Model Extensions/General/GeneralPack1.dpr:719). Proving RDOSetRole needs an
+      // IndGeneral storage fixture (follow-up to #1255).
       if (warehouse) {
-        const readRole = readField(warehouse, 'whGeneral', 'Role');
-        const role = await readRole();
-        if (role !== undefined && isTradeModeValue(role)) {
-          const probe = await roundTripProbe(ctx, url, {
-            what: `${fixtureLabel(warehouse)} trade role`,
-            member: 'RDOSetRole',
-            read: readRole,
-            testValue: tradeRoleNudge,
-            write: async value => {
-              await setBuildingProperty(session, warehouse.x, warehouse.y, 'RDOSetRole', value);
-            },
-            // RDOSetRole logs nothing (StdBlocks/Warehouses.pas:527): the read-back alone proves it.
-            proof: {
-              readBack: readBackOn(
-                `whGeneral.Role at (${warehouse.x},${warehouse.y}) via the gateway's section read`,
-                `RDOSetRole prints no Survival line; ${FACILITY_CACHE_WHY}`,
-                tolerantRead(readRole),
-              ),
-            },
-            restoreRecord: { x: warehouse.x, y: warehouse.y, propertyName: 'RDOSetRole' },
-          });
-          probes.push(probe);
-          checkProbe(assertions, probe);
-        } else {
-          assertions.unproven(
-            'RDOSetRole',
-            `${fixtureLabel(warehouse)}'s Role "${role ?? 'absent'}" is not one the client offers (isTradeModeValue, ` +
-              `TRADE_MODE_VALUES ${TRADE_MODE_VALUES.join('/')}; Voyager/IndustryGeneralSheet.pas:189-235) — RDOSetRole ` +
-              'range-checks nothing (StdBlocks/Warehouses.pas:527), so nothing is sent',
-          );
-        }
         await tradeLevel(warehouse, 'whGeneral');
       }
       // RDOSetRole is never sent to the industry: only TWarehouse publishes it (StdBlocks/Warehouses.pas:95).
@@ -6862,11 +7111,6 @@ export function repairLineMatches(line: string, name: string): boolean {
   return new RegExp(`(?<!Stop )${escapeRegExp(`Repairing: ${name}`)}(?=\\s|$)`).test(line);
 }
 
-/** `Queue Research: <id>, <priority>` (Kernel/ResearchCenter.pas:384). */
-export function queueResearchLineMatches(line: string, id: string): boolean {
-  return line.includes(`Queue Research: ${id}, `);
-}
-
 /** `Cancel Research: <id>` (Kernel/ResearchCenter.pas:396). */
 export function cancelResearchLineMatches(line: string, id: string): boolean {
   return new RegExp(`${escapeRegExp(`Cancel Research: ${id}`)}(?=\\s|$)`).test(line);
@@ -6875,34 +7119,6 @@ export function cancelResearchLineMatches(line: string, id: string): boolean {
 /** `Facility Start Upgrade count: <count>` (Kernel/Kernel.pas:4675). */
 export function startUpgradeLineMatches(line: string, count: number): boolean {
   return new RegExp(`${escapeRegExp(`Facility Start Upgrade count: ${count}`)}(?=\\s|$)`).test(line);
-}
-
-/**
- * What queueing an invention costs, in dollars: the `Price:` and `License:` lines of its details
- * (`TInvention.GetProperties`, Inventions/Inventions.pas:715-727; labels Kernel/SimHints.pas:482-483;
- * amounts from `FormatMoney`, Utils/Misc/MathUtils.pas:87-99). A line the details do not show is 0. The server starts a
- * research only when `Budget >= Price + GetFeePrice` (Kernel/ResearchCenter.pas:240).
- */
-export function researchCost(properties: string): number {
-  const dollars = (label: string): number => {
-    const m = new RegExp(`(?:^|\\s)${label}:\\s*\\$([0-9][0-9,.]*)`, 'i').exec(properties);
-    return m ? Number(m[1].replace(/[^0-9]/g, '')) : 0;
-  };
-  return dollars('Price') + dollars('Licen[cs]e');
-}
-
-export type ResearchState = 'developing' | 'owned' | 'available' | 'absent';
-
-/**
- * Where an invention stands in one category's inventory. The three lists are mutually exclusive
- * by construction (`TResearchCenter.StoreToCache`, Kernel/ResearchCenter.pas:797-817).
- */
-export function researchState(data: ResearchCategoryData, id: string): ResearchState {
-  const has = (list: { inventionId: string }[]): boolean => list.some(i => i.inventionId === id);
-  if (has(data.developing)) return 'developing';
-  if (has(data.completed)) return 'owned';
-  if (has(data.available)) return 'available';
-  return 'absent';
 }
 
 /**
@@ -7161,6 +7377,191 @@ const bankSettings = fixtureFlow(
   },
 );
 
+/**
+ * `account`'s rows among the bank's granted loans (`bankLoans`: `LoanCount`, `Debtor<i>`, …,
+ * `TBankBlock.StoreToCache`, StdBlocks/Banks.pas:194-204), or `undefined` when the group carries
+ * no `LoanCount`. A non-tycoon debtor leaves a gap in the index (:197), so every `Debtor<i>` is
+ * read, not `0..LoanCount-1`.
+ */
+export function bankDebtorCount(
+  groups: { [groupId: string]: BuildingPropertyValue[] },
+  account: E2eAccount,
+): number | undefined {
+  if (propertyValue(groups, 'bankLoans', 'LoanCount') === undefined) return undefined;
+  return (groups.bankLoans ?? []).filter(p => /^Debtor\d+$/.test(p.name) && sameAccount(p.value, account)).length;
+}
+
+/** A read that may throw (`cacheUnavailable`), as `undefined`. */
+async function readOrUndefined<T>(read: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await read();
+  } catch {
+    return undefined;
+  }
+}
+
+/** The block-form loan: the ordinal `TBankBlock.RDOAskLoan` answers, named. */
+function loanRefusal(result: number): string {
+  const outcome = bankLoanOutcomeOf(result);
+  const why: Record<string, string> = {
+    rejected: 'rejected (StdBlocks/Banks.pas:164-166)',
+    notEnoughFunds: "granted but the owner's budget could not cover it (Kernel/Kernel.pas:8866-8870)",
+    error: 'no answer from the block (the gateway sent no frame, or an unknown ordinal)',
+  };
+  return `the loan request answered ${result}: ${why[outcome] ?? outcome}`;
+}
+
+async function driveFacilityLoan(secondary: LiveSession, ctx: FlowContext): Promise<FlowResult> {
+  const name = 'facility-bank-loan';
+  const HIM = SECONDARY_ACCOUNT.username;
+  const what = `${HIM}'s loan at the bank fixture → pay off round trip`;
+  const assertions = new Assertions();
+  const probes: ProbeResult[] = [];
+  const me = await login(PRIMARY_ACCOUNT);
+  try {
+    const fx = await ownFixture(me, 'bank', assertions);
+    if (!fx) return report(name, assertions, probes, me);
+
+    // The owner must cover the loan: TBank.LoanApproved needs EstimateLoan >= Amount
+    // (Kernel/Kernel.pas:8911), EstimateLoan is Owner.BankLoanLimit for an owned bank (:8813-8814),
+    // min(1, BankLoanPerc/100) * Budget (:9095-9097). Short of it the loan is still granted with
+    // brqNotEnoughFunds and only Owner.Budget taken (:8866-8870) — so the flow borrows nothing then.
+    const general = await readOrUndefined(() => readSectionGroups(me, fx.x, fx.y, 'bankGeneral', fx.visualClass));
+    const perc = general ? propertyValue(general, 'bankGeneral', 'BudgetPerc') : undefined;
+    const balance = (await readOrUndefined(() => readBank(me)))?.balance;
+    if (perc === undefined || perc.trim() === '' || balance === undefined || balance.trim() === '') {
+      assertions.unproven(
+        what,
+        `the bank's BudgetPerc (${perc ?? 'unreadable'}) or ${PRIMARY_ACCOUNT.username}'s balance ` +
+          `(${balance ?? 'unreadable'}) cannot be read — the owner's cover (Kernel/Kernel.pas:8813-8814, ` +
+          ':9095-9097) is unknown; nothing borrowed',
+      );
+      return report(name, assertions, probes, me);
+    }
+    const cover = Math.min(1, Number(perc) / 100) * Number(balance);
+    if (!(cover >= Number(BORROW_AMOUNT))) {
+      assertions.unproven(
+        what,
+        `the owner's loan limit is ${cover} (BudgetPerc ${perc} of ${balance}, Kernel/Kernel.pas:9095-9097) < ` +
+          `$${BORROW_AMOUNT} — TBank.LoanApproved would refuse it (Kernel/Kernel.pas:8911) or grant it ` +
+          'uncovered (:8866-8870); nothing borrowed',
+      );
+      return report(name, assertions, probes, me);
+    }
+
+    const secondaryBank = await readOrUndefined(() => readBank(secondary));
+    if (!secondaryBank || !(Number(secondaryBank.balance) > 0)) {
+      assertions.unproven(
+        what,
+        `${HIM}'s balance ${secondaryBank?.balance ?? 'unreadable'} is not > 0 — RDOPayOff pays only if ` +
+          'Loan.Amount < Budget - AprFee (Kernel/Kernel.pas:11572); nothing borrowed',
+      );
+      return report(name, assertions, probes, me);
+    }
+    const secondaryLoans = secondaryBank.loans;
+    const readRows = async (): Promise<number | undefined> =>
+      bankDebtorCount(await readSectionGroups(me, fx.x, fx.y, 'bankLoans', fx.visualClass), SECONDARY_ACCOUNT);
+    const rows0 = await readOrUndefined(readRows);
+    if (rows0 === undefined) {
+      assertions.unproven(
+        what,
+        `${fixtureLabel(fx)}'s bankLoans group carries no LoanCount (StdBlocks/Banks.pas:194-204) — the ` +
+          "bank's side of the loan cannot be read back; nothing borrowed",
+      );
+      return report(name, assertions, probes, me);
+    }
+
+    const url = await survivalUrl(ctx);
+    const read = tolerantRead(async () => {
+      const rows = await readRows();
+      if (rows === undefined) return undefined;
+      const delta = rows - rows0;
+      return `secondary ${loanDelta(secondaryLoans, (await readBank(secondary)).loans)}; bank ${delta >= 0 ? '+' : ''}${delta}`;
+    });
+    const probe = await roundTripProbe(ctx, url, {
+      what:
+        `${HIM}'s $${BORROW_AMOUNT} loan at ${PRIMARY_ACCOUNT.username}'s bank ${fixtureLabel(fx)} — ${HIM} pays off ` +
+        `the $${BORROW_AMOUNT} loan not among the ${secondaryLoans.length} loans listed before`,
+      member: 'TBankBlock.RDOAskLoan',
+      read,
+      testValue: original => {
+        if (original !== 'secondary new=none gone=0; bank +0') throw new Error(`the loan lists moved before the borrow: ${original}`);
+        return `secondary new=${BORROW_AMOUNT} gone=0; bank +1`;
+      },
+      write: async () => {
+        // The borrower is the session that asks: the gateway sends SPO_test's own proxy id
+        // (requestBankLoan, building-details-handler.ts).
+        const answer = await secondary.driver.request<WsRespBuildingLoanRequest>(
+          { type: WsMessageType.REQ_BUILDING_LOAN_REQUEST, x: fx.x, y: fx.y, amount: BORROW_AMOUNT },
+          WsMessageType.RESP_BUILDING_LOAN_REQUEST,
+          TIMEOUTS.login,
+        );
+        if (answer.result !== 0) throw new Error(loanRefusal(answer.result));
+      },
+      restore: async () => {
+        // brqNotEnoughFunds still leaves a loan (Kernel/Kernel.pas:8866-8870): pay off whatever was granted.
+        const loan = newLoan(secondaryLoans, (await readBank(secondary)).loans);
+        if (!loan) return;
+        // TTycoon.RDOPayOff repays the bank owner and deletes the loan from the bank (Kernel/Kernel.pas:11555, :11592-11594).
+        const answer = await secondary.driver.request<WsRespProfileBankAction>(
+          { type: WsMessageType.REQ_PROFILE_BANK_ACTION, action: 'payoff', loanIndex: loan.loanIndex },
+          WsMessageType.RESP_PROFILE_BANK_ACTION,
+          TIMEOUTS.login,
+        );
+        if (answer.result?.success !== true) {
+          throw new Error(
+            `${HIM}'s payoff of loan ${loan.loanIndex} (${loan.bank}) refused: ${answer.result?.message ?? '(no result)'}`,
+          );
+        }
+      },
+      proof: {
+        log: {
+          marker: LOG_MARKERS['TBankBlock.RDOAskLoan'],
+          // "Fac(<x>,<y>) AskLoan" (StdBlocks/Banks.pas:162) — never the tycoon's "AskLoan:" line.
+          match: line => facLineMatches(line, fx.x, fx.y, 'AskLoan'),
+        },
+        readBack: {
+          source: `${HIM}'s loan list on ${PAGE_BANK} and the Debtor rows of the bank's bankLoans group`,
+          why:
+            'both are object-cache reads RDOAskLoan / RDOPayOff invalidate or refresh within the TTL ' +
+            '(Kernel/Kernel.pas:8873, :11594, :11596) — OB-29, bounded poll',
+          read,
+          boundMs: TIMEOUTS.readBack,
+        },
+      },
+      restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOPayOff' },
+    });
+    probes.push(probe);
+    checkProbe(assertions, probe);
+    return report(name, assertions, probes, me);
+  } finally {
+    await logoff(me);
+  }
+}
+
+/**
+ * SPO_test borrows $1 at SPO_test3's bank fixture and pays it off (#1189, lifted by the maintainer on
+ * 2026-09-29). GATE_ONLY: an approved loan posts a world event every online player sees
+ * (Kernel/Kernel.pas:8849-8859). SPO_test logs in first — refused → SKIPPED, nothing sent. Nothing is
+ * borrowed unless the owner covers the loan and SPO_test can pay it off.
+ */
+const facilityBankLoan: Flow = {
+  name: 'facility-bank-loan',
+  what:
+    "SPO_test asks $1 at SPO_test3's bank fixture -> Fac(x,y) AskLoan line + SPO_test's loan list and the bank's " +
+    'debtors show it -> SPO_test pays it off -> both lists as before',
+  mutates: true,
+  run: async ctx => {
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult('facility-bank-loan', secondary.skipped);
+    try {
+      return await driveFacilityLoan(secondary, ctx);
+    } finally {
+      await logoff(secondary);
+    }
+  },
+};
+
 /** Hours on air and commercials, stored verbatim (StdBlocks/Broadcast.pas:51-53). */
 const tvSettings = fixtureFlow(
   'tv-settings',
@@ -7232,20 +7633,219 @@ const acceptCloning = fixtureFlow(
 );
 
 /**
- * The one invention research-roundtrip drives (maintainer, PR #1214): Commerce > Bars > Happy Hour,
- * id `HappyHour` in research.0.dat — Price $25,000,000, requires `Bars`.
- *
- * Isolation: this flow may freely queue, cancel and **sell** Happy Hour (maintainer, #1236).
- * (a) Nothing else depends on it — `FIXTURE_KINDS` has no Bar class and no flow outside
- * research-roundtrip names `HappyHour`. (b) A sell's server-side cascade is empty —
- * `TCompany.RetireInvention` refunds `TotalCost - Subsidy` (Kernel/Kernel0.pas:10239) and retires
- * every owned invention whose `Req` includes the sold one (Kernel/Kernel0.pas:10284-10289), and no
- * entry in `cache/Inventions/research.0.dat` carries `Requires: Happy Hour`.
- * That cascade is exactly why a shared prerequisite (e.g. General Services, on which every shop
- * depends) must never be the target: selling it would retire inventions other flows need — the
- * only case that justifies a human lock.
+ * Same town + same company + salaries only: `cloneOption_SameTown = $1`, `cloneOption_SameCompany
+ * = $2`, `cloneOption_Salaries = $100` (Kernel/CloneOptions.pas:7-8, :13) — the scope the
+ * maintainer lifted the clone exclusion for (2026-09-29).
  */
-export const RESEARCH_TARGET = { id: 'HappyHour', name: 'Happy Hour' } as const;
+export const CLONE_SALARIES_OPTIONS = 0x103;
+
+/**
+ * A salary triplet `hi,mid,lo` differing from `source` and from every one of `others`: the first
+ * **published** class moved ±1, ±2, … inside 0..255, toward the middle first (as `nudgeWithin`),
+ * the unpublished slots kept empty (as `salariesNudge`, Kernel/WorkCenterBlock.pas:567-571). Throws
+ * when no class is published, or when no such triplet exists.
+ */
+export function distinctSalaries(source: string, others: string[]): string {
+  const slots = source.split(',');
+  const k = slots.findIndex(s => s.trim() !== '');
+  if (k < 0) throw new Error(`no salary class is published ("${source}") — nothing to nudge`);
+  const base = Math.round(Number(slots[k]));
+  const taken = new Set([source, ...others]);
+  const toward = base >= 127.5 ? -1 : 1;
+  for (let step = 1; step <= 255; step++) {
+    for (const candidate of [base + toward * step, base - toward * step]) {
+      if (candidate < 0 || candidate > 255) continue;
+      const triplet = slots.map((s, i) => (i === k ? String(candidate) : s)).join(',');
+      if (!taken.has(triplet)) return triplet;
+    }
+  }
+  throw new Error(`no salary triplet inside 0..255 differs from ${source} and ${others.join(' ')}`);
+}
+
+/** `CloneFacility: <TycoonId>` (Kernel/World.pas:4801) — the id whole, so 12 never matches 1. */
+export function cloneLineMatches(line: string, tycoonId: string): boolean {
+  return new RegExp(`${escapeRegExp(`CloneFacility: ${tycoonId}`)}(?=\\s|$)`).test(line);
+}
+
+/** `workforce.Salaries0..2` as `hi,mid,lo`, or `undefined` when any of the three is unreadable. */
+async function readSalaryTriplet(session: LiveSession, h: Holding): Promise<string | undefined> {
+  const groups = await readOrUndefined(() => readSectionGroups(session, h.x, h.y, 'workforce', h.visualClass));
+  if (!groups) return undefined;
+  const values = WORKER_KINDS.map(i => propertyValue(groups, 'workforce', `Salaries${i}`));
+  return values.some(v => v === undefined) ? undefined : values.join(',');
+}
+
+/** The live `AcceptCloning` get (`enrichUpgradeTab`), by truthiness. */
+async function readAcceptCloning(session: LiveSession, h: Holding): Promise<'1' | '0' | undefined> {
+  const groups = await readOrUndefined(() => readSectionGroups(session, h.x, h.y, 'upgrade', h.visualClass));
+  return groups ? truthyFlag(propertyValue(groups, 'upgrade', 'AcceptCloning')) : undefined;
+}
+
+const holdingKey = (h: { x: number; y: number }): string => `${h.x},${h.y}`;
+
+/** `x,y=hi,mid,lo;…` → one entry per facility. */
+function parseSalarySegments(value: string): { key: string; triplet: string }[] {
+  return value.split(';').map(segment => {
+    const [key, triplet] = segment.split('=');
+    return { key, triplet };
+  });
+}
+
+async function cloneSalariesSteps(
+  session: LiveSession,
+  ctx: FlowContext,
+  assertions: Assertions,
+  probes: ProbeResult[],
+): Promise<void> {
+  const what = 'the salaries clone round trip';
+  const holdings = (await scanHoldings(session)).holdings.filter(h => h.tabIds.includes('workforce'));
+  const cls = holdings.find(h => holdings.filter(o => o.visualClass === h.visualClass).length >= 2)?.visualClass;
+  if (cls === undefined) {
+    assertions.unproven(
+      what,
+      'no two finished SPO_test3 work centers of one class in Helartia; TWorld.CloneFacility writes only the ' +
+        'same FacId (Kernel/World.pas:3529); nothing sent',
+    );
+    return;
+  }
+  const [source, ...same] = holdings.filter(h => h.visualClass === cls);
+  const guards = holdings.filter(h => h.visualClass !== cls);
+  // Every other work center is listed too: the FacId is not readable over the WS, so a class that
+  // shares it would be written as well — it must read back unchanged, and is restored if it moved.
+  const listed = [source, ...same, ...guards];
+
+  const originals = new Map<string, string>();
+  for (const h of listed) {
+    const triplet = await readSalaryTriplet(session, h);
+    if (triplet === undefined) {
+      assertions.unproven(
+        what,
+        `the salaries of ${fixtureLabel(h)} cannot be read (workforce.Salaries0..2) — it could not be restored ` +
+          'or proven unchanged; nothing sent',
+      );
+      return;
+    }
+    originals.set(holdingKey(h), triplet);
+  }
+  const accepting = new Set<string>();
+  for (const h of same) {
+    const flag = await readAcceptCloning(session, h);
+    if (flag === undefined) {
+      assertions.unproven(
+        what,
+        `${fixtureLabel(h)}'s AcceptCloning cannot be read — whether the clone writes it is unknown ` +
+          '(Kernel/Kernel.pas:5101-5104); nothing sent',
+      );
+      return;
+    }
+    if (flag === '1') accepting.add(holdingKey(h));
+  }
+  if (accepting.size === 0) {
+    assertions.unproven(
+      what,
+      `no ${cls} target accepts cloning — TFacility.CopySettingsFrom skips it (Kernel/Kernel.pas:5101-5104); nothing sent`,
+    );
+    return;
+  }
+
+  const sourceTriplet = originals.get(holdingKey(source)) as string;
+  if (sourceTriplet.split(',').every(s => s.trim() === '')) {
+    assertions.unproven(
+      what,
+      `${fixtureLabel(source)} publishes no salary class — TWorkCenter.StoreToCache writes Salaries<k> only for ` +
+        'a class with capacity (Kernel/WorkCenterBlock.pas:567-571), so no clone could be read back; nothing sent',
+    );
+    return;
+  }
+  const written = distinctSalaries(sourceTriplet, same.map(h => originals.get(holdingKey(h)) as string));
+  const byKey = new Map(listed.map(h => [holdingKey(h), h]));
+  const tycoonId = ownTycoonId(session);
+  const writeSalaries = async (h: Holding, triplet: string): Promise<void> => {
+    // An unpublished slot reads "" and goes as 0 — never `parseInt('')` into RdoValue.int.
+    const [salary0, salary1, salary2] = triplet.split(',').map(salaryArg);
+    await setBuildingProperty(session, h.x, h.y, 'RDOSetSalaries', salary0, { salary0, salary1, salary2 });
+  };
+  const readAll = async (): Promise<string | undefined> => {
+    const segments: string[] = [];
+    for (const h of listed) {
+      const triplet = await readSalaryTriplet(session, h);
+      if (triplet === undefined) return undefined;
+      segments.push(`${holdingKey(h)}=${triplet}`);
+    }
+    return segments.join(';');
+  };
+
+  const probe = await roundTripProbe(ctx, await survivalUrl(ctx), {
+    what: `salaries clone (options 0x103) from ${fixtureLabel(source)} — put back every listed facility's hi,mid,lo`,
+    member: 'CloneFacility',
+    read: readAll,
+    // The source and each accepting target take the new triplet; a refusing target and every
+    // other work center keep their own.
+    testValue: original =>
+      parseSalarySegments(original)
+        .map(({ key, triplet }) => `${key}=${key === holdingKey(source) || accepting.has(key) ? written : triplet}`)
+        .join(';'),
+    write: async () => {
+      await writeSalaries(source, written);
+      const answer = await session.driver.request<WsRespCloneFacility>(
+        { type: WsMessageType.REQ_CLONE_FACILITY, x: source.x, y: source.y, options: CLONE_SALARIES_OPTIONS },
+        WsMessageType.RESP_CLONE_FACILITY,
+      );
+      if (answer.success !== true) throw new Error(`REQ_CLONE_FACILITY answered success ${String(answer.success)}`);
+    },
+    restore: async original => {
+      const failures: string[] = [];
+      for (const { key, triplet } of parseSalarySegments(original)) {
+        const h = byKey.get(key) as Holding;
+        if ((await readSalaryTriplet(session, h)) === triplet) continue;
+        try {
+          await writeSalaries(h, triplet);
+        } catch (err: unknown) {
+          failures.push(`${fixtureLabel(h)}: ${toErrorMessage(err)}`);
+        }
+      }
+      if (failures.length > 0) throw new Error(`salaries not put back: ${failures.join('; ')}`);
+    },
+    proof: {
+      log: { marker: LOG_MARKERS.CloneFacility, match: line => cloneLineMatches(line, tycoonId) },
+      readBack: readBackOn(
+        "workforce.Salaries0..2 of every listed facility via the gateway's section read",
+        'RDOCloneFacility only queues the clone (Kernel/World.pas:4815), drained once per simulation cycle ' +
+          "(:1996-1998); each target's cache then refreshes within its TTL (OB-29) — bounded poll",
+        tolerantRead(readAll),
+      ),
+    },
+    restoreRecord: { x: source.x, y: source.y, propertyName: 'RDOSetSalaries' },
+  });
+  probes.push(probe);
+  checkProbe(assertions, probe);
+}
+
+/**
+ * The salaries-only clone (#1189, lifted by the maintainer on 2026-09-29). `TWorld.CloneFacility`
+ * (Kernel/World.pas:3494) writes every facility of the source's kind of that company in that town,
+ * so every SPO_test3 work center in Helartia is snapshotted before anything is sent, and each one
+ * is restored in the same run. A target refusing cloning (Kernel/Kernel.pas:5101-5104) must read
+ * back unchanged. An unreadable target, or no accepting one, is UNPROVEN with nothing sent.
+ */
+const cloneSalariesRoundTrip: Flow = {
+  name: 'clone-salaries-roundtrip',
+  what:
+    "snapshot every SPO_test3 work center's salaries in Helartia -> a distinct salary on the source -> " +
+    'REQ_CLONE_FACILITY (0x103) -> CloneFacility: line + every accepting target equal to the source -> restore all',
+  mutates: true,
+  run: async ctx => {
+    const assertions = new Assertions();
+    const probes: ProbeResult[] = [];
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      await cloneSalariesSteps(session, ctx, assertions, probes);
+      return report('clone-salaries-roundtrip', assertions, probes, session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
 
 /**
  * Queue Happy Hour, prove it is in development, cancel it. It starts from any state: one left owned
@@ -7268,13 +7868,6 @@ const researchRoundTrip = fixtureFlow(
     }
   },
 );
-
-function researchInventory(session: LiveSession, fx: OwnFixture, categoryIndex: number): Promise<WsRespResearchInventory> {
-  return session.driver.request<WsRespResearchInventory>(
-    { type: WsMessageType.REQ_RESEARCH_INVENTORY, buildingX: fx.x, buildingY: fx.y, categoryIndex },
-    WsMessageType.RESP_RESEARCH_INVENTORY,
-  );
-}
 
 async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixture, assertions: Assertions): Promise<void> {
   // CatCount is the highest category index, not a count (Kernel/ResearchCenter.pas:820).
@@ -7329,10 +7922,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     return;
   }
 
-  const { details } = await session.driver.request<WsRespResearchDetails>(
-    { type: WsMessageType.REQ_RESEARCH_DETAILS, buildingX: fx.x, buildingY: fx.y, inventionId: id },
-    WsMessageType.RESP_RESEARCH_DETAILS,
-  );
+  const details = await readResearchDetails(session, fx, id);
   const properties = details.properties.trim().replace(/\s+/g, ' ');
   assertions.check(
     `REQ_RESEARCH_DETAILS answers for ${id} with its properties`,
@@ -8052,22 +8642,22 @@ const chatPrivateChannel: Flow = {
 };
 
 /**
- * SPO_test3 chases Crazz, then stops (#1148, proof #1188). `TClientView.Chase` inserts the
+ * SPO_test3 chases the secondary account, then stops (#1148, proof #1188). `TClientView.Chase` inserts the
  * chaser in the target's list and moves the chaser's own view (`Interface Server/
  * InterfaceServer.pas:1579-1608`, `MoveTo` at `:1590`). The proof is SPO_test3's view
- * following Crazz: Crazz sends one camera update, `SetViewedArea` ends with `UpdateChasers`
+ * following the secondary account: it sends one camera update, `SetViewedArea` ends with `UpdateChasers`
  * (`:742`), which pushes every chaser `MoveTo(x + dx div 2, y + dy div 2)` (`:705-718`,
  * `TClientView.MoveTo` `:2215-2219`), and the gateway forwards it as `EVENT_MOVE_TO`. The
- * camera sits on Crazz's own saved position, so its logoff cookie is unchanged. `DoLogOff`
+ * camera sits on the secondary's own saved position, so its logoff cookie is unchanged. `DoLogOff`
  * (`:2002`) and `Destroy` (`:654`) end any chase a dead run leaves.
  */
 const chatChase: Flow = {
   name: 'chat-chase',
-  what: 'Crazz online -> SPO_test3 chases Crazz -> stop chase',
+  what: `${SECONDARY_ACCOUNT.username} online -> SPO_test3 chases ${SECONDARY_ACCOUNT.username} -> stop chase`,
   mutates: false,
   run: async () => {
-    const crazz = await loginSecondary();
-    if ('skipped' in crazz) return skippedResult('chat-chase', crazz.skipped);
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult('chat-chase', secondary.skipped);
     try {
       const assertions = new Assertions();
       const session = await login(PRIMARY_ACCOUNT);
@@ -8081,7 +8671,7 @@ const chatChase: Flow = {
           ),
         );
         if (chased) {
-          const view = sendCamera(crazz, crazz.playerX, crazz.playerY);
+          const view = sendCamera(secondary, secondary.playerX, secondary.playerY);
           const ex = view.viewX + CAMERA_VIEW_SIZE / 2;
           const ey = view.viewY + CAMERA_VIEW_SIZE / 2;
           const label =
@@ -8110,7 +8700,7 @@ const chatChase: Flow = {
         await logoff(session);
       }
     } finally {
-      await logoff(crazz);
+      await logoff(secondary);
     }
   },
 };
@@ -8122,6 +8712,8 @@ export const FLOWS: Flow[] = [
   politicsWrite,
   townMinWage,
   publicityRoundTrip,
+  mayorRatingRoundTrip,
+  tycoonRoleRead,
   voteRoundTrip,
   buildingDetails,
   permissionNegative,
@@ -8152,12 +8744,12 @@ export const FLOWS: Flow[] = [
   portraitRoundTrip,
   roadRoundTrip,
   zoneRoundTrip,
-  warehouseRoleReading,
   fixturesEnsure,
   inspectorReads,
   storePriceSalaries,
   industryOutputPrice,
   industrySupplyLimits,
+  adBudgetRoundTrip,
   facilityOpenClose,
   industryAutoBuy,
   supplierSearchRead,
@@ -8177,6 +8769,8 @@ export const FLOWS: Flow[] = [
   researchRoundTrip,
   acceptCloning,
   upgradeStop,
+  facilityBankLoan,
+  cloneSalariesRoundTrip,
 ];
 
 export function flowByName(name: string): Flow {

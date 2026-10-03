@@ -346,6 +346,53 @@ describe('ui-store HUD visibility', () => {
   });
 });
 
+describe('ui-store UI version (classic / new interface)', () => {
+  const saved = new Map<string, string>();
+  beforeEach(() => {
+    saved.clear();
+    (globalThis as unknown as { localStorage: unknown }).localStorage = {
+      getItem: (k: string) => saved.get(k) ?? null,
+      setItem: (k: string, v: string) => { saved.set(k, v); },
+      removeItem: (k: string) => { saved.delete(k); },
+    };
+    useUiStore.setState({ uiVersion: 'v1' });
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: unknown }).localStorage; });
+
+  it('starts on the classic interface when nothing was chosen', () => {
+    // Module load ran with no storage at all: loadUiVersion() fell back to v1.
+    expect(useUiStore.getState().uiVersion).toBe('v1');
+  });
+
+  it('setUiVersion sets it and remembers the choice', () => {
+    useUiStore.getState().setUiVersion('v2');
+    expect(useUiStore.getState().uiVersion).toBe('v2');
+    expect(saved.get('spo_ui_version')).toBe('v2');
+    useUiStore.getState().setUiVersion('v1');
+    expect(useUiStore.getState().uiVersion).toBe('v1');
+    expect(saved.get('spo_ui_version')).toBe('v1');
+  });
+
+  it('toggleUiVersion flips between v1 and v2, remembering each step', () => {
+    useUiStore.getState().toggleUiVersion();
+    expect(useUiStore.getState().uiVersion).toBe('v2');
+    expect(saved.get('spo_ui_version')).toBe('v2');
+    useUiStore.getState().toggleUiVersion();
+    expect(useUiStore.getState().uiVersion).toBe('v1');
+    expect(saved.get('spo_ui_version')).toBe('v1');
+  });
+
+  it('switching interface leaves the surface stack and HUD flag alone', () => {
+    useUiStore.getState().setRootSurface({ kind: 'mail' });
+    useUiStore.setState({ hudVisible: false });
+    useUiStore.getState().toggleUiVersion();
+    expect(useUiStore.getState().stack).toEqual([{ kind: 'mail' }]);
+    expect(useUiStore.getState().hudVisible).toBe(false);
+    useUiStore.getState().clearSurfaces();
+    useUiStore.setState({ hudVisible: true });
+  });
+});
+
 describe('ui-store map context menu', () => {
   beforeEach(() => {
     useUiStore.getState().closeMapContextMenu();
