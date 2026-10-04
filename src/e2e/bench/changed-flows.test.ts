@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { FLOWS } from '../flows';
-import { NIGHTLY_ONLY } from '../routing';
+import { NIGHTLY_ONLY, SERVER_QUARANTINE, type QuarantineEntry } from '../routing';
 import { FLOW_SOURCES, changedFlows, flowsChangedInWorktree } from './changed-flows';
 
 /**
@@ -62,14 +62,27 @@ function hunk(file: string, ...headers: string[]): string {
   );
 }
 
-function run(diff: string, nightlyOnly: Record<string, string> = {}, flowsTs = FLOWS_TS) {
+function run(
+  diff: string,
+  nightlyOnly: Record<string, string> = {},
+  flowsTs = FLOWS_TS,
+  quarantine: Record<string, QuarantineEntry> = {},
+) {
   return changedFlows({
     diff,
     sources: { 'src/e2e/flows.ts': flowsTs, 'src/e2e/session.ts': SESSION_TS },
     flowNames: NAMES,
     nightlyOnly,
+    quarantine,
   });
 }
+
+const FAULT: QuarantineEntry = {
+  reason: 'a server fault',
+  link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1310',
+  lift: 'the flow passes',
+  added: '2026-10-04',
+};
 
 describe('changedFlows — direct changes', () => {
   it('a hunk in one flow body requires that flow only', () => {
@@ -77,6 +90,7 @@ describe('changedFlows — direct changes', () => {
     expect(result).toEqual({
       required: ['beta'],
       notDriven: [],
+      quarantined: [],
       reasons: ['flow changed in src/e2e/flows.ts: beta'],
     });
   });
@@ -109,8 +123,25 @@ describe('changedFlows — direct changes', () => {
     expect(run(hunk('src/e2e/flows.ts', '@@ -19,3 +19,0 @@'))).toEqual({
       required: [],
       notDriven: [],
+      quarantined: [],
       reasons: [],
     });
+  });
+
+  it('a SERVER_QUARANTINE flow whose own body changed is listed, never required (#1310)', () => {
+    const result = run(hunk('src/e2e/flows.ts', '@@ -22 +22 @@'), {}, FLOWS_TS, { beta: FAULT });
+    expect(result.required).toEqual([]);
+    expect(result.notDriven).toEqual([]);
+    expect(result.quarantined).toEqual(['beta']);
+  });
+
+  it('a SERVER_QUARANTINE flow reached through a helper is listed, never required, never notDriven (#1310)', () => {
+    const result = run(hunk('src/e2e/flows.ts', '@@ -11 +11 @@'), { alpha: 'data-gated' }, FLOWS_TS, {
+      alpha: FAULT,
+    });
+    expect(result.required).toEqual(['beta']);
+    expect(result.notDriven).toEqual([]);
+    expect(result.quarantined).toEqual(['alpha']);
   });
 
   it('a NIGHTLY_ONLY flow whose own body changed is required', () => {
@@ -170,7 +201,7 @@ describe('changedFlows — what changes nothing', () => {
     ['an import line', '@@ -1 +1 @@'],
     ['a multi-line import body', '@@ -3 +3 @@'],
   ])('%s', (_label, header) => {
-    expect(run(hunk('src/e2e/flows.ts', header))).toEqual({ required: [], notDriven: [], reasons: [] });
+    expect(run(hunk('src/e2e/flows.ts', header))).toEqual({ required: [], notDriven: [], quarantined: [], reasons: [] });
   });
 
   it('ignores a file outside the flow sources, and a deleted file', () => {
@@ -216,7 +247,10 @@ describe('flowsChangedInWorktree — the real tree', () => {
     bindings.forEach((binding, i) => {
       const line = flowsTs.findIndex(l => new RegExp(`^const ${binding}\\b`).test(l)) + 1;
       const diff = hunk('src/e2e/flows.ts', `@@ -${line} +${line} @@`);
-      expect(flowsChangedInWorktree(diff, root).required).toEqual([FLOWS[i].name]);
+      const result = flowsChangedInWorktree(diff, root);
+      const quarantined = FLOWS[i].name in SERVER_QUARANTINE;
+      expect(result.required).toEqual(quarantined ? [] : [FLOWS[i].name]);
+      expect(result.quarantined).toEqual(quarantined ? [FLOWS[i].name] : []);
     });
   });
 
@@ -230,12 +264,21 @@ describe('flowsChangedInWorktree — the real tree', () => {
     for (const flow of result.notDriven) expect(NIGHTLY_ONLY).toHaveProperty(flow);
   });
 
-  it('a change to session.ts readBuildingDetails lists newspaper-board-read, never requires it (#1307)', () => {
+  it('a change to session.ts readBuildingDetails lists newspaper-board-read as quarantined, never requires it (#1307, #1310)', () => {
     const session = fs.readFileSync(path.join(root, 'src/e2e/session.ts'), 'utf8').split('\n');
     const line = session.findIndex(l => l.startsWith('export async function readBuildingDetails(')) + 2;
     const result = flowsChangedInWorktree(hunk('src/e2e/session.ts', `@@ -${line} +${line} @@`), root);
     expect(result.required).not.toContain('newspaper-board-read');
-    expect(result.notDriven).toContain('newspaper-board-read');
+    expect(result.notDriven).not.toContain('newspaper-board-read');
+    expect(result.quarantined).toContain('newspaper-board-read');
+  });
+
+  it('a hunk inside portraitRoundTrip own body leaves portrait-roundtrip out of required, in quarantined (#1310)', () => {
+    const line = flowsTs.findIndex(l => l.startsWith('const portraitRoundTrip')) + 2;
+    const result = flowsChangedInWorktree(hunk('src/e2e/flows.ts', `@@ -${line} +${line} @@`), root);
+    expect(result.required).not.toContain('portrait-roundtrip');
+    expect(result.quarantined).toEqual(['portrait-roundtrip']);
+    expect(result.reasons).toContain('flow changed in src/e2e/flows.ts: portrait-roundtrip');
   });
 
   it('a change to a research.ts helper drives research-roundtrip and lists fixtures-ensure (#1233)', () => {

@@ -61,6 +61,7 @@ exports.route = files => ({
   ...decision,
 });
 exports.SPINE_FLOW = 'login-spine';
+exports.SERVER_QUARANTINE = JSON.parse(process.env.FAKE_QUARANTINE || '{}');
 exports.presidentMembersInDiff = diff => {
   if (process.env.FAKE_DIFF_OUT) fs.writeFileSync(process.env.FAKE_DIFF_OUT, diff, 'utf8');
   return JSON.parse(process.env.FAKE_PRESIDENT || '[]');
@@ -885,6 +886,85 @@ describe('stage 3 — changed and declared flows (#1183)', () => {
       required: ['login-spine', 'politics-read', 'mail-roundtrip'],
       declared: ['mail-roundtrip'],
       reasons: ['declared by --also-flows: mail-roundtrip'],
+    });
+  });
+
+  describe('the server quarantine (#1310)', () => {
+    const routingOf = (run: GateRun): Record<string, unknown> =>
+      (run.artifact?.routing ?? {}) as Record<string, unknown>;
+    const quarantine = JSON.stringify({
+      'portrait-roundtrip': {
+        reason: 'the picture server cannot store an upload',
+        link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1310',
+        lift: 'the flow passes',
+        added: '2026-10-04',
+      },
+    });
+
+    it('--also-flows= naming a quarantined flow never requires it, and records it in routing.quarantined', () => {
+      const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip,mail-roundtrip'], {
+        FAKE_ROUTING: flowOnly,
+        FAKE_QUARANTINE: quarantine,
+      });
+      expect(run.code).toBe(0);
+      expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'mail-roundtrip'] });
+      expect(routingOf(run).required).not.toContain('portrait-roundtrip');
+      expect(run.artifact?.routing).toMatchObject({
+        required: ['login-spine', 'mail-roundtrip'],
+        declared: ['mail-roundtrip'],
+        quarantined: ['portrait-roundtrip'],
+        reasons: [
+          'declared by --also-flows: mail-roundtrip',
+          'server quarantine: portrait-roundtrip — the picture server cannot store an upload',
+        ],
+      });
+    });
+
+    it('--also-flows= naming only a quarantined flow leaves a static decision static', () => {
+      const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip'], {
+        FAKE_ROUTING: flowOnly,
+        FAKE_QUARANTINE: quarantine,
+      });
+      expect(run.code).toBe(0);
+      expect(run.liveOptions).toBeNull();
+      expect(run.artifact?.routing).toMatchObject({ required: [], declared: [], quarantined: ['portrait-roundtrip'] });
+    });
+
+    it('records the changed flows the quarantine kept out of required', () => {
+      const run = runGate(scratchRepo(), ['--live'], {
+        FAKE_ROUTING: flowOnly,
+        FAKE_QUARANTINE: quarantine,
+        FAKE_CHANGED: JSON.stringify({
+          required: [],
+          notDriven: [],
+          quarantined: ['portrait-roundtrip'],
+          reasons: ['flow changed in src/e2e/flows.ts: portrait-roundtrip'],
+        }),
+      });
+      expect(run.code).toBe(0);
+      expect(run.artifact?.routing).toMatchObject({
+        required: [],
+        quarantined: ['portrait-roundtrip'],
+        reasons: [
+          'flow changed in src/e2e/flows.ts: portrait-roundtrip',
+          'server quarantine: portrait-roundtrip — the picture server cannot store an upload',
+        ],
+      });
+    });
+
+    it('records an empty routing.quarantined, and no reason, when nothing is quarantined', () => {
+      const run = runGate(scratchRepo(), ['--live', '--also-flows=mail-roundtrip'], { FAKE_ROUTING: flowOnly });
+      expect(routingOf(run).quarantined).toEqual([]);
+      expect(routingOf(run).reasons).toEqual(['declared by --also-flows: mail-roundtrip']);
+    });
+
+    it('--flows= naming a quarantined flow still drives it — the lift check', () => {
+      const run = runGate(scratchRepo(), ['--live', '--flows=login-spine,portrait-roundtrip'], {
+        FAKE_ROUTING: JSON.stringify({ required: ['login-spine'] }),
+        FAKE_QUARANTINE: quarantine,
+        FAKE_CHANGED: JSON.stringify({ required: [], notDriven: [], quarantined: ['portrait-roundtrip'], reasons: [] }),
+      });
+      expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'portrait-roundtrip'] });
     });
   });
 

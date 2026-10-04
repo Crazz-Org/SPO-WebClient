@@ -5,7 +5,8 @@
  *                 -> poll the read-back until it shows the value (up to the spec's bound)
  *                 -> assert the model-server log line (marker + match)
  *                 -> restore original (always, even after a throw)
- *                 -> poll the read-back until it shows the original
+ *                 -> poll the read-back until it shows the original (even when the
+ *                    restore write threw)
  *                 -> clear the pending restore
  *
  * A crash is a failure, but silence is not a pass. `OB-28` is a write reported confirmed
@@ -185,18 +186,19 @@ export async function runRoundTrip(
 
   // The restore runs whatever happened above.
   let restoreWriteFailed = false;
-  let restorePoll: PollOutcome = { verdict: 'UNCONFIRMED', last: undefined };
+  let restorePoll: PollOutcome;
   try {
     await (spec.restore ?? spec.write)(original);
   } catch {
     restoreWriteFailed = true;
   }
-  if (!restoreWriteFailed) {
-    try {
-      restorePoll = await pollReadBack(readBack, original, clock);
-    } catch {
-      restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
-    }
+  // The read-back runs even when the restore write threw: a server that refused both writes
+  // left the world as it was, and only the read-back can say so. A test write that did land
+  // shows here, and the pending restore stays — the world is dirty.
+  try {
+    restorePoll = await pollReadBack(readBack, original, clock);
+  } catch {
+    restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
   }
   const restored = restorePoll.verdict === 'CONFIRMED';
   const restoreReadBack = restorePoll.verdict;
@@ -214,7 +216,9 @@ export async function runRoundTrip(
     );
   }
   if (log && !logLine) failures.push('no model-server log line — the write never reached the object');
-  if (restoreWriteFailed) {
+  if (restoreWriteFailed && restored) {
+    failures.push('restore write failed, but the read-back shows the original — the world is unchanged');
+  } else if (restoreWriteFailed) {
     failures.push('restore failed — the world is left dirty');
   } else if (!restored) {
     failures.push(

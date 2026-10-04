@@ -127,8 +127,7 @@ Five exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`F
 
 - **`NIGHTLY_ONLY`** lists the flows no routing rule requires — a data-gated flow (a required
   `UNPROVEN` fails the gate), a reading that asserts nothing, or the fixture builder
-  `fixtures-ensure`, which builds only when a fixture is missing (§9), or a flow the maintainer
-  parked (§7, "Parked flows"). The nightly still runs
+  `fixtures-ensure`, which builds only when a fixture is missing (§9). The nightly still runs
   them; every other flow must be reached by some tracked path. A diff that changes such a
   flow's own body does require it (below).
 - **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
@@ -147,6 +146,10 @@ Five exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`F
   handler file.
 - **`NOT_ROUTED`** maps a handler file to the requests a gate flow does send but that file's rule
   leaves out (a rule pinned by an exact routing test).
+
+On top of these, the temporary `SERVER_QUARANTINE` (§7, "Server quarantine") is applied after
+the rules: `route()` never requires a quarantined flow, and says so in its reasons. The rules
+themselves keep describing a healthy server.
 
 The handler ratchet (#1187) derives the `WsMessageType` requests each handler file serves or
 sends — server session handlers through `spo_session.ts` and the ws-handlers registry, ws-handlers
@@ -169,6 +172,9 @@ one and drives **routed ∪ changed ∪ declared** (`scripts/verify-gate.js`, st
   mapping cannot pair with the `FLOWS` array fails the gate closed.
 - **Declared** — `npm run gate -- --also-flows=a,b` adds the card's own flows to the routed
   set (a union).
+
+A `SERVER_QUARANTINE` flow (§7, "Server quarantine") is never required, even on a direct hunk
+in its own body or when `--also-flows` names it: it is listed in `routing.quarantined`.
 
 When either set is non-empty the spine is added too. All of them land in `routing.required`,
 so a flow-only diff is no longer static-only: an undriven required flow is `BLOCKED`, and a
@@ -237,6 +243,8 @@ A lag (`OB-29`) is polled out up to the spec's `boundMs`; a read-back that never
 value FAILs, as does a missing line. A member with a marker must carry a log part; a member
 with none (e.g. `RDOPayOff`, `RDOSendMoney`) is proven by the read-back alone. The restore is
 proven the same way: its read-back must reach the original, or the pending restore is kept.
+The restore read-back runs even when the restore write threw: a read-back showing the original
+clears the pending restore — the world never changed — and the probe still FAILs on the error.
 
 The read-back is any authoritative channel, named in the spec with why it is authoritative —
 an object-cache property re-read after its refresh, a live RDO `get`, a server-generated mail
@@ -432,21 +440,42 @@ capability — and then the gate demands the flow.
 failure, not an exclusion — and the `bench/gate` status shows the count as
 `— N unproven flow(s)`.
 
-### Parked flows — never built, or out of the required set, by maintainer decision
+### Server quarantine — a known live-server fault, by maintainer decision
 
-A flow no account can ever exercise is not kept failing. Either it is not written at all, and
-its handler stays in `FALLBACK_ONLY` (`src/e2e/routing.ts`); or it is written but parked out of
-every gate's required set through `NIGHTLY_ONLY` (`src/e2e/routing.ts`) — it still runs in the
-nightly and is reported there, and no gate requires it. Either way it comes back only when the
-reason below stops holding.
+`SERVER_QUARANTINE` (`src/e2e/routing.ts`) names the flows a known **live-server** fault
+blocks — a fault the client cannot fix. It is temporary and a maintainer decision; it is never
+for a code defect or a flake (a failing flow is fixed, not waived). Each entry carries a
+`reason`, an `https://` `link` to where the fault is recorded, a `lift` condition and the date
+it was `added`, and **the entry is deleted the day its lift condition holds** — it is the only
+thing that changes then: `ROUTES`, `NIGHTLY_ONLY` and `EXCLUDED` keep describing a healthy server.
+
+What a quarantine does:
+
+- The flow **still runs in the nightly**, and its real outcome is printed and kept: in
+  `live-*.json` it keeps its own `status` and gains a `quarantined` note (`reason`, `link`, `lift`).
+- **No gate requires it**: `route()` drops it after the rules, `changed-flows.ts` lists it under
+  `quarantined` even on a direct hunk, and `--also-flows` naming it is filtered out. An explicit
+  `--flows=` naming it still drives and judges it — that is how the lift condition is checked.
+- The nightly (no `--flows`) reports `PASS` when its only FAILs are quarantined flows. Any FAIL
+  of another flow still FAILs the run, and **a dirty world still FAILs the run**, whatever flow
+  left it dirty — the quarantine never excuses a safety rail (§6).
+
+Where the list is printed: a `Server quarantine (N):` block closes every run summary, gate and
+nightly, with each entry's reason, link, lift condition, date added and this run's outcome;
+`"quarantined"` names the driven ones in `latest.json` (`doc/bench-worker.md` §8); and the gate
+artifact lists the ones its diff reached in `routing.quarantined` (§10).
+
+### Parked flows — never built, by maintainer decision
+
+A flow no account can ever exercise is not kept failing: it is not written at all, and its
+handler stays in `FALLBACK_ONLY` (`src/e2e/routing.ts`). It comes back only when the reason
+below stops holding.
 
 | Flow | Why no live drive is possible | Covered by | Revisit when |
 |---|---|---|---|
 | `tutorial-read` (read the tutorial assignment, next/back) | No E2E account holds a tutorial, and none can be given one. The server builds a tutorial only when a tycoon is **created** on a world whose `Tutorial` setting is `enabled` (default `disabled`, `Kernel/Kernel.pas:10907-10908`), and skips it if the tycoon holds a role, has 10+ nobility points, or carries the `tutorial` cookie (`Kernel/Kernel.pas:12959`). It is deleted for good, cookie `tutorial=done`, once the tycoon's level tier passes 0 (`Kernel/Kernel.pas:12206-12214`). An account reset (`Kernel/World.pas:6203`, `:6368`) only rebuilds a tutorial that still exists (`Kernel/Kernel.pas:12924-12939`), and "Get New Assignment" only steps an existing one (`NewTycoon/Tasks/ModifyTask.asp:25-34`). SPO_test3 is Mayor and has none; the secondary accounts show none either. | the mock-server suite, `src/mock-server/scenarios/tutorial-scenario.ts` | a brand-new account is created on a world with `Tutorial` enabled |
-| `newspaper-board-read` (read the Helartia Herald's columns board) | Every post to the Helartia Herald (`boardmsg.asp?action=post`) answers HTTP 500 server-side ([#1260 comment](https://github.com/Crazz-Org/SPO-WebClient/issues/1260#issuecomment-5973821564)), so the bench cannot seed a column, and an empty board ends UNPROVEN. | the nightly (`NIGHTLY_ONLY`, reported) and the `newspaper-board-read` unit tests in `src/e2e/flows.test.ts` | a post to the Helartia Herald succeeds; then #1260 lands its seed, removes the `NIGHTLY_ONLY` and `EXCLUDED` (`REQ_NEWSPAPER_BOARD`) entries, and puts the flow back in both newspaper rules |
 
 Not project-critical (maintainer, 2026-10-01 — [#1199](https://github.com/Crazz-Org/SPO-WebClient/issues/1199#issuecomment-5937034602)).
-`newspaper-board-read`: parked by the maintainer, 2026-10-04 (#1307).
 
 ---
 
@@ -608,7 +637,9 @@ needs its read-back.
                // except the NIGHTLY_ONLY flows a changed helper reaches, listed only.
                "changedFlows": ["zoning-alert-read"],
                "changedFlowsNotDriven": ["newspaper-read"],
-               "declared": ["politics-write"] },
+               "declared": ["politics-write"],
+               // §7, "Server quarantine" — reached by the diff or --also-flows, never required.
+               "quarantined": ["portrait-roundtrip"] },
   "live": {
     "world": "planitia", "account": "SPO_test3",
     "window": { "from": "…Z", "to": "…Z" },

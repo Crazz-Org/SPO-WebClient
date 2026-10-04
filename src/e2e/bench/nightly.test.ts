@@ -6,6 +6,7 @@ import { Spool, type ManualRequester } from './job';
 import type { GitRunner, TreeFingerprint } from './fingerprint';
 import {
   deleteManualRequest,
+  flowSummary,
   manualProofDue,
   manualRecordFile,
   manualRequestFile,
@@ -639,6 +640,21 @@ describe('nightlyResultFromReport', () => {
     expect(built.flows).toEqual(liveFlows);
     expect(built.unproven).toEqual(['b', 'd']);
     expect(built.skipped).toEqual(['c']);
+    expect(built.quarantined).toEqual([]);
+  });
+
+  it('names the driven flows that stand in SERVER_QUARANTINE (#1310)', () => {
+    const liveFlows = [
+      { name: 'portrait-roundtrip', status: 'FAIL' },
+      { name: 'a', status: 'PASS' },
+    ];
+    expect(flowSummary(liveFlows)).toEqual({
+      flows: liveFlows,
+      unproven: [],
+      skipped: [],
+      quarantined: ['portrait-roundtrip'],
+    });
+    expect(flowSummary([{ name: 'a', status: 'PASS' }]).quarantined).toEqual([]);
   });
 
   it('adds none of the per-flow keys when no live artifact was read', () => {
@@ -650,6 +666,7 @@ describe('nightlyResultFromReport', () => {
     expect(built).not.toHaveProperty('flows');
     expect(built).not.toHaveProperty('unproven');
     expect(built).not.toHaveProperty('skipped');
+    expect(built).not.toHaveProperty('quarantined');
   });
 });
 

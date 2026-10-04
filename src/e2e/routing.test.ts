@@ -9,11 +9,13 @@ import {
   FALLBACK_ONLY,
   EXCLUDED,
   NOT_ROUTED,
+  SERVER_QUARANTINE,
   route,
   presidentMembersInDiff,
   isCallSite,
   launderedTests,
   type RouteRule,
+  type QuarantineEntry,
 } from './routing';
 import { PRESIDENT_MEMBERS } from './config';
 import { FLOWS } from './flows';
@@ -345,8 +347,9 @@ describe('the town paper', () => {
   // The paper is not on the RDO wire at all — it is scraped off the ASP pages —
   // so the governance flows would prove nothing about a change to it.
   // newspaper-read stays nightly-only (#1009): the bench cannot create a kept issue,
-  // so it could only end UNPROVEN. The columns board read is parked too (#1260): every post
-  // answers HTTP 500 server-side, so no column can be seeded — neither flow is required.
+  // so it could only end UNPROVEN. The columns board read is routed by both newspaper rules,
+  // but it is in SERVER_QUARANTINE (#1260, #1310): every post answers HTTP 500 server-side, so
+  // route() drops it — neither flow is required while the quarantine holds.
   const paperPaths = [
     'src/server/session/newspaper-handler.ts',
     'src/client/components/modals/NewspaperModal.tsx',
@@ -361,16 +364,22 @@ describe('the town paper', () => {
   });
 
   it.each(['src/server/session/newspaper-handler.ts', 'src/client/store/newspaper-store.ts'])(
-    'routes %s to no flow — static verification only',
+    'routes %s to the spine alone while the board read is quarantined — observable live',
     file => {
       const d = route([file]);
-      expect(d.required).toEqual([]);
-      expect(d.staticOnly).toBe(true);
+      expect(d.required).toEqual([SPINE_FLOW]);
+      expect(d.staticOnly).toBe(false);
     },
   );
 
-  it('parks newspaper-board-read: no rule requires it, and its NIGHTLY_ONLY reason cites #1260', () => {
-    expect(ROUTES.some(r => r.flows.includes('newspaper-board-read'))).toBe(false);
+  it('quarantines newspaper-board-read: back in both newspaper rules, in no NIGHTLY_ONLY / EXCLUDED entry, never required', () => {
+    const modalRule = firstRule(ROUTES, 'src/client/components/modals/NewspaperModal.tsx');
+    const handlerRule = firstRule(ROUTES, 'src/server/session/newspaper-handler.ts');
+    expect(modalRule?.flows).toEqual(['newspaper-board-read']);
+    expect(handlerRule?.flows).toEqual(['newspaper-board-read']);
+    expect('newspaper-board-read' in NIGHTLY_ONLY).toBe(false);
+    expect('REQ_NEWSPAPER_BOARD' in EXCLUDED).toBe(false);
+    expect(SERVER_QUARANTINE['newspaper-board-read'].link).toMatch(/issues\/1260/);
     for (const f of [
       'src/server/session/newspaper-handler.ts',
       'src/server/ws-handlers/newspaper-handlers.ts',
@@ -379,9 +388,6 @@ describe('the town paper', () => {
     ]) {
       expect(route([f]).required).not.toContain('newspaper-board-read');
     }
-    expect(NIGHTLY_ONLY['newspaper-board-read']).toMatch(/#1260/);
-    expect(uncited({ 'newspaper-board-read': NIGHTLY_ONLY['newspaper-board-read'] })).toEqual([]);
-    expect(EXCLUDED.REQ_NEWSPAPER_BOARD).toMatch(/#1260/);
   });
 
   it.each(paperPaths)('does not route %s to the governance or inspector flows', file => {
@@ -391,12 +397,12 @@ describe('the town paper', () => {
     }
   });
 
-  it('routes the newspaper WS handler by the newspaper rule, not the ws-handlers fallback, and requires no flow', () => {
+  it('routes the newspaper WS handler by the newspaper rule, not the ws-handlers fallback, to the spine alone', () => {
     const file = 'src/server/ws-handlers/newspaper-handlers.ts';
     const rule = firstRule(ROUTES, file);
     expect(rule?.fallback).toBeFalsy();
     expect(rule?.test.test('src/client/store/newspaper-store.ts')).toBe(true);
-    expect(route([file]).required).toEqual([]);
+    expect(route([file]).required).toEqual([SPINE_FLOW]);
   });
 
   it('leaves no rule with a spine-alone option', () => {
@@ -712,7 +718,7 @@ describe('route — L3 on the component folders (#1134)', () => {
     expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).needsL3).toBe(false);
   });
 
-  it('flags the paper modal, on the spine alone', () => {
+  it('flags the paper modal, on the spine alone while the board read is quarantined', () => {
     const d = route(['src/client/components/modals/NewspaperModal.tsx']);
     expect(d.required).toEqual([SPINE_FLOW]);
     expect(d.needsL3).toBe(true);
@@ -876,18 +882,24 @@ describe('route — profile & finance reads (#1141)', () => {
     'src/client/store/profile-store.ts',
     'src/server/session/picture-transfer.ts',
   ])('%s requires profile-read and the profile write flows', file => {
+    // portrait-roundtrip is in the rule, but SERVER_QUARANTINE drops it (#1310).
     expect(route([file]).required).toEqual([
       SPINE_FLOW, 'profile-read', 'policy-roundtrip', 'autoconnection-roundtrip',
-      'bank-borrow-payoff', 'bank-send-return', 'portrait-roundtrip',
+      'bank-borrow-payoff', 'bank-send-return',
     ]);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
 
-  it('profile-finance-handler.ts requires both bank flows and picture-transfer.ts the portrait flow (#1147)', () => {
+  it('profile-finance-handler.ts requires both bank flows; picture-transfer.ts routes the portrait flow, quarantined (#1147, #1310)', () => {
     const bank = route(['src/server/session/profile-finance-handler.ts']).required;
     expect(bank).toContain('bank-borrow-payoff');
     expect(bank).toContain('bank-send-return');
-    expect(route(['src/server/session/picture-transfer.ts']).required).toContain('portrait-roundtrip');
+    expect(firstRule(ROUTES, 'src/server/session/picture-transfer.ts')?.flows).toContain('portrait-roundtrip');
+    const portrait = route(['src/server/session/picture-transfer.ts']);
+    expect(portrait.required).not.toContain('portrait-roundtrip');
+    expect(portrait.reasons).toContain(
+      `server quarantine: portrait-roundtrip — ${SERVER_QUARANTINE['portrait-roundtrip'].reason}`,
+    );
   });
 
   it('keeps bank-borrow-payoff gate-only with its cited broadcast, and the other two nightly (#1147)', () => {
@@ -1518,5 +1530,72 @@ describe('route — handler requests reach a flow that sends them (#1187)', () =
       expect(route(['src/shared/building-details/template-groups.ts']).needsL3).toBe(false);
       expect(route(['src/server/mail-list-parser.ts']).needsL3).toBe(false);
     });
+  });
+});
+
+// ---- #1310: the server quarantine -----------------------------------------------------------
+
+/** Every way an entry of a quarantine table breaks the rules (doc/E2E-POLICY.md §7). */
+function quarantineViolations(table: Record<string, Partial<QuarantineEntry>>, names: string[]): string[] {
+  const out: string[] = [];
+  for (const [flow, entry] of Object.entries(table)) {
+    if (!names.includes(flow)) out.push(`not a flow: ${flow}`);
+    if (!entry.reason?.trim()) out.push(`no reason: ${flow}`);
+    if (!/^https:\/\/\S+$/.test(entry.link ?? '')) out.push(`link not https: ${flow}`);
+    if (!entry.lift?.trim()) out.push(`no lift condition: ${flow}`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.added ?? '')) out.push(`added not YYYY-MM-DD: ${flow}`);
+  }
+  return out;
+}
+
+describe('server quarantine (#1310)', () => {
+  const good: QuarantineEntry = {
+    reason: 'a server fault',
+    link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1310',
+    lift: 'the flow passes',
+    added: '2026-10-04',
+  };
+
+  it('holds the two faults the maintainer quarantined, each well-formed', () => {
+    expect(Object.keys(SERVER_QUARANTINE).sort()).toEqual(['newspaper-board-read', 'portrait-roundtrip']);
+    expect(quarantineViolations(SERVER_QUARANTINE, flowNames)).toEqual([]);
+  });
+
+  it('accepts a well-formed entry', () => {
+    expect(quarantineViolations({ 'portrait-roundtrip': good }, flowNames)).toEqual([]);
+  });
+
+  it.each([
+    ['missing lift', 'portrait-roundtrip', { ...good, lift: undefined }, 'no lift condition: portrait-roundtrip'],
+    ['empty reason', 'portrait-roundtrip', { ...good, reason: ' ' }, 'no reason: portrait-roundtrip'],
+    ['an http link', 'portrait-roundtrip', { ...good, link: 'http://example.org' }, 'link not https: portrait-roundtrip'],
+    ['a bad date', 'portrait-roundtrip', { ...good, added: '4 Oct 2026' }, 'added not YYYY-MM-DD: portrait-roundtrip'],
+    ['an unknown flow', 'no-such-flow', good, 'not a flow: no-such-flow'],
+  ])('fails the guard on %s', (_label, flow, entry, violation) => {
+    expect(quarantineViolations({ [flow]: entry }, flowNames)).toEqual([violation]);
+  });
+
+  it('lists no entry in NIGHTLY_ONLY or GATE_ONLY, and each is reached by some ROUTES rule', () => {
+    const hit = reached(ROUTES, tracked);
+    for (const flow of Object.keys(SERVER_QUARANTINE)) {
+      expect(flow in NIGHTLY_ONLY).toBe(false);
+      expect(flow in GATE_ONLY).toBe(false);
+      expect(hit.has(flow)).toBe(true);
+    }
+  });
+
+  it.each([
+    ['src/server/session/picture-transfer.ts', 'portrait-roundtrip'],
+    ['src/server/session/newspaper-handler.ts', 'newspaper-board-read'],
+    ['src/client/components/modals/NewspaperModal.tsx', 'newspaper-board-read'],
+  ])('route(%s) never requires its quarantined flow %s, and says why', (file, flow) => {
+    const d = route([file]);
+    for (const q of Object.keys(SERVER_QUARANTINE)) expect(d.required).not.toContain(q);
+    expect(d.required[0]).toBe(SPINE_FLOW);
+    expect(d.reasons).toContain(`server quarantine: ${flow} — ${SERVER_QUARANTINE[flow].reason}`);
+  });
+
+  it('adds no quarantine reason when no quarantined flow was routed', () => {
+    expect(route(['src/shared/rdo-frame.ts']).reasons.some(r => r.startsWith('server quarantine:'))).toBe(false);
   });
 });

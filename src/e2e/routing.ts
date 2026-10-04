@@ -52,8 +52,6 @@ export const NIGHTLY_ONLY: Record<string, string> = {
     'data-gated: only a MegaStorage publishes RDOSelectWare (StdBlocks/MegaWarehouse.pas:25; a TWarehouse publishes RDOSetRole only, StdBlocks/Warehouses.pas:95), and findFixture takes the first holding that carries whGeneral (#1149), which need not be one',
   'quick-trade-roundtrip':
     "data-gated by three guards: the disconnect drops the fixture's outputs from every SPO_test3 facility's matching input, whatever its type (Kernel/Kernel.pas:4593-4600), across all its companies and towns (Kernel/Kernel.pas:4537-4553), and unregisters the fixture as an initial supplier (Kernel/Kernel.pas:4564-4565, :4606-4607); a guard that holds ends UNPROVEN, which fails a gate",
-  'newspaper-board-read':
-    'parked by the maintainer (2026-10-04): every post to the Helartia Herald (boardmsg.asp?action=post) answers HTTP 500 server-side, so the bench cannot seed a column and an empty board ends UNPROVEN, which fails a gate (#1260) — lift when a post succeeds and #1260 lands its seed',
 };
 
 /**
@@ -71,6 +69,42 @@ export const GATE_ONLY: Record<string, string> = {
     "TBank.AskLoan broadcasts 'SPO_test3 borrowed $X from the <bank>.' to every online tycoon (Kernel/Kernel.pas:8849-8859, text Kernel/Kernel.pas:13487); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly",
   'facility-bank-loan':
     "TBank.AskLoan broadcasts 'SPO_test borrowed $1 from the Bank of SPO_test3.' to every online tycoon (Kernel/Kernel.pas:8849-8859, text Kernel/Kernel.pas:13487); lifted by the maintainer (2026-09-29, #1189) — at the gate only, when this code changes, never in the nightly",
+};
+
+/** A temporary entry: a live-server fault the client cannot fix (doc/E2E-POLICY.md §7, "Server quarantine"). */
+export interface QuarantineEntry {
+  /** The server fault, as observed. */
+  reason: string;
+  /** Where the fault is recorded — an https:// URL. */
+  link: string;
+  /** The observable condition under which the entry is deleted. */
+  lift: string;
+  /** The day the entry was added, YYYY-MM-DD. */
+  added: string;
+}
+
+/**
+ * Flow -> the known live-server fault that blocks it, by maintainer decision (2026-10-04, #1310).
+ * ROUTES, NIGHTLY_ONLY and EXCLUDED describe a healthy server; this is applied on top of them:
+ * no gate requires a quarantined flow, the nightly still runs it and prints its real outcome,
+ * and its FAIL alone does not turn the nightly red — a dirty world still does. Never for a code
+ * defect. The entry is the only thing deleted the day its lift condition holds.
+ */
+export const SERVER_QUARANTINE: Record<string, QuarantineEntry> = {
+  'portrait-roundtrip': {
+    reason:
+      'the picture server cannot store an upload since the planitia maintenance of 2026-10-02 — every upload is refused with SERVER_ERROR The picture server could not store the picture (ERROR after the transfer)',
+    link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1310',
+    lift: '`npm run test:live -- --flows=portrait-roundtrip` PASSes on the bench',
+    added: '2026-10-04',
+  },
+  'newspaper-board-read': {
+    reason:
+      'every post to the Helartia Herald (boardmsg.asp?action=post) answers HTTP 500 server-side since the 2026-10-02 maintenance, so no column can be seeded',
+    link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1260#issuecomment-5973821564',
+    lift: 'a post to the Helartia Herald succeeds, so #1260 can land its seed',
+    added: '2026-10-04',
+  },
 };
 
 /**
@@ -106,7 +140,6 @@ export const EXCLUDED: Record<string, string> = {
   REQ_POLITICS_VOTE: 'sent only by vote-roundtrip, which is NIGHTLY_ONLY (data-gated: Kernel/TownPolitics.pas:690)',
   REQ_NEWSPAPER_ISSUES: 'sent only by newspaper-read, which is NIGHTLY_ONLY (planitia keeps no issue: News.pas:986, #1009)',
   REQ_NEWSPAPER_ISSUE: 'sent only by newspaper-read, which is NIGHTLY_ONLY (planitia keeps no issue: News.pas:986, #1009)',
-  REQ_NEWSPAPER_BOARD: 'sent only by newspaper-board-read, which is NIGHTLY_ONLY (parked: server HTTP 500 on post, #1260)',
   REQ_TUTORIAL_STATE:
     'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
   REQ_TUTORIAL_ACTION:
@@ -171,7 +204,8 @@ export const ROUTES: RouteRule[] = [
   // when the world holds no data, and a required UNPROVEN fails the gate, verify-gate.js
   // stage 6) goes in NIGHTLY_ONLY; a flow whose action posts a message every online player
   // sees goes in GATE_ONLY (the card states the maintainer accepts the broadcast at the gate
-  // on that basis). Each exemption carries a cited reason: `File.pas:Line`, `file.asp:Line`
+  // on that basis). A flow blocked by a known live-server fault stays in its rule and goes in
+  // SERVER_QUARANTINE, which route() applies on top. Each exemption carries a cited reason: `File.pas:Line`, `file.asp:Line`
   // or `#<issue>`. The tooling rule below routes no flow for a diff under src/e2e/; the gate
   // itself adds the flows. verify-gate.js stage 3 adds the flows the diff CHANGED — a hunk
   // inside a `FLOWS` entry, or inside a shared helper of the seven flow sources, which drives
@@ -287,23 +321,23 @@ export const ROUTES: RouteRule[] = [
     why: 'the mail handlers changed — the flows that drive them',
   },
   {
-    // The paper modal: a browser look at the modal. The board read it shows is parked (#1260) —
-    // NIGHTLY_ONLY, required by no gate.
+    // The paper modal: the board read the modal shows, plus a browser look at the modal.
+    // newspaper-board-read is in SERVER_QUARANTINE today (#1260), so route() drops it.
     test: /^src\/client\/components\/modals\/NewspaperModal\.tsx$/,
-    flows: [],
+    flows: ['newspaper-board-read'],
     needsL3: true,
-    why: 'the town paper modal — a browser look at the modal; newspaper-board-read is parked, nightly-only (server HTTP 500 on post, #1260)',
+    why: 'the town paper modal — newspaper-board-read reads the columns board it shows; a browser look at the modal',
   },
   {
     // Before the broad wire-level rule below: the paper is not on the RDO wire
     // at all, so the governance flows would say nothing about it. newspaper-read itself is
     // not required (#1009): planitia keeps no newspaper issue and the bench cannot create
-    // one (News.pas:986), so it could only end UNPROVEN. The columns board read is parked too
-    // (#1260): every post answers HTTP 500, so no column can be seeded, and it is no longer
-    // required. The rule stays here so it keeps shadowing the broader rules below.
+    // one (News.pas:986), so it could only end UNPROVEN. The columns board read stays required
+    // instead; a board with no column ends UNPROVEN too (#1188). It is in SERVER_QUARANTINE
+    // today (#1260), so route() drops it until the entry is lifted.
     test: /newspaper-handlers?\.ts$|^src\/client\/store\/newspaper-store\.ts$/,
-    flows: [],
-    why: 'the town paper — required by no gate: newspaper-read is nightly-only (News.pas:986, #1009) and newspaper-board-read is parked, nightly-only (server HTTP 500 on post, #1260)',
+    flows: ['newspaper-board-read'],
+    why: 'the town paper — newspaper-board-read reads the columns board, required, and an empty board ends UNPROVEN (#1188); newspaper-read stays nightly-only (News.pas:986, #1009)',
   },
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.
@@ -636,6 +670,14 @@ export function route(changedFiles: string[], deletedFiles: string[] = []): Rout
       reasons.add(rule.why);
     }
     for (const flow of rule.flows) required.add(flow);
+  }
+
+  // The quarantine is applied on top of the rules: a flow blocked by a known live-server fault
+  // is never required. The spine still rides along when a rule matched (touchedCode).
+  for (const flow of [...required]) {
+    if (!(flow in SERVER_QUARANTINE)) continue;
+    required.delete(flow);
+    reasons.add(`server quarantine: ${flow} — ${SERVER_QUARANTINE[flow].reason}`);
   }
 
   // The spine rides along whenever anything observable changed.
