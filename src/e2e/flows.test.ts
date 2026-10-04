@@ -1185,6 +1185,25 @@ describe('vote-roundtrip', () => {
     expect(votes).toEqual([]);
   });
 
+  it('re-votes the mayor when the prior is the mayor, still the ruler, and no other candidate exists', async () => {
+    const votes = voteHall({ prior: 'SPO_test3', ruler: 'SPO_test3', mayor: 'SPO_test3', candidates: [] });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(votes).toEqual(['SPO_test3']);
+    expect(result.assertions.find(a => a.what === 'the re-vote vote logged its Voting: line')?.ok).toBe(true);
+    expect(result.assertions.find(a => /re-vote vote for SPO_test3 read back/.test(a.what))?.ok).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails the re-vote of the mayor when it prints no log line', async () => {
+    const votes = voteHall({ prior: 'SPO_test3', ruler: 'SPO_test3', candidates: [], logs: () => false });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => a.what === 'the re-vote vote logged its Voting: line')?.ok).toBe(false);
+    expect(votes).toEqual(['SPO_test3']);
+  });
+
   it('fails when RDOVoteOf still shows the prior after the change vote, and still re-votes', async () => {
     const votes = voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'], apply: () => false });
     const result = await run();

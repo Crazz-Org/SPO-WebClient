@@ -998,7 +998,9 @@ const tycoonRoleRead: Flow = {
  * read-back. It records no pending restore: SPO_test3's own vote at the governed town is an
  * isolated target of a disposable test account (maintainer rule 2026-10-01, #1236), and a vote
  * cannot be retracted (`Kernel/Politics.pas:1035-1074`), so the vote the seed leaves is the
- * state the next run starts from.
+ * state the next run starts from. That next run, when the prior names the mayor, the mayor is
+ * still `RulerName` and no other candidate exists, re-votes the mayor through the same proof
+ * (line and read-back, no pending restore) instead of ending UNPROVEN.
  *
  * A prior that no longer names a current candidate or the mayor — stale after a town election
  * (`Kernel/TownPolitics.pas:690`, `:744`) — ends UNPROVEN, since its restore would be a silent
@@ -1037,12 +1039,36 @@ const voteRoundTrip: Flow = {
         if (resp.success === false) throw new Error(`VOTE refused: ${resp.message ?? 'no message'}`);
       };
 
+      // A vote for the mayor, proven by its Voting: line and a VoteOf read-back. No pending
+      // restore — an isolated target of a disposable account (see the doc comment).
+      const voteForMayor = async (kind: 'seed' | 're-vote'): Promise<void> => {
+        try {
+          const window = await openLogWindow(await survivalUrl(ctx));
+          await vote(mayor);
+          const back = await pollUntil(readVoteOf, v => v !== undefined && sameName(v, mayor), ctx, TIMEOUTS.logSettle);
+          assertions.check(
+            `the ${kind} vote for ${mayor} read back through votes.VoteOf (RDOVoteOf)`,
+            back.ok,
+            `last "${back.last ?? '(absent)'}" after ${TIMEOUTS.logSettle} ms`,
+          );
+          const line = await awaitMarker(
+            window,
+            { marker: LOG_MARKERS.RDOVote, match: l => votedBy(l, mayor) },
+            TIMEOUTS.logSettle,
+          );
+          assertions.check(`the ${kind} vote logged its Voting: line`, line !== null, line ?? '(no line)');
+        } catch (err: unknown) {
+          assertions.check(`the ${kind} vote was accepted`, false, toErrorMessage(err));
+        }
+      };
+
       const gate = await readSectionGroups(session, town.x, town.y, 'votes', visualClass);
       let prior = propertyValue(gate, 'votes', 'VoteOf');
+      const ruler = propertyValue(gate, 'votes', 'RulerName') ?? '';
+      const rulerIsMayor = ruler.trim() !== '' && mayor.trim() !== '' && sameName(ruler, mayor);
       let seeded = false;
       if (prior === undefined || prior.trim() === '') {
-        const ruler = propertyValue(gate, 'votes', 'RulerName') ?? '';
-        if (ruler.trim() === '' || mayor.trim() === '' || !sameName(ruler, mayor)) {
+        if (!rulerIsMayor) {
           assertions.unproven(
             'the vote round trip',
             `${voter} has no prior vote at ${town.name}, and RulerName "${ruler}" is not the mayor ` +
@@ -1052,25 +1078,7 @@ const voteRoundTrip: Flow = {
           );
           return report('vote-roundtrip', assertions, probes, session);
         }
-        // The seed: no pending restore — an isolated target of a disposable account (see the doc comment).
-        try {
-          const window = await openLogWindow(await survivalUrl(ctx));
-          await vote(mayor);
-          const back = await pollUntil(readVoteOf, v => v !== undefined && sameName(v, mayor), ctx, TIMEOUTS.logSettle);
-          assertions.check(
-            `the seed vote for ${mayor} read back through votes.VoteOf (RDOVoteOf)`,
-            back.ok,
-            `last "${back.last ?? '(absent)'}" after ${TIMEOUTS.logSettle} ms`,
-          );
-          const line = await awaitMarker(
-            window,
-            { marker: LOG_MARKERS.RDOVote, match: l => votedBy(l, mayor) },
-            TIMEOUTS.logSettle,
-          );
-          assertions.check('the seed vote logged its Voting: line', line !== null, line ?? '(no line)');
-        } catch (err: unknown) {
-          assertions.check('the seed vote was accepted', false, toErrorMessage(err));
-        }
+        await voteForMayor('seed');
         if (assertions.failed) return report('vote-roundtrip', assertions, probes, session);
         prior = mayor;
         seeded = true;
@@ -1089,6 +1097,12 @@ const voteRoundTrip: Flow = {
       if (other === undefined) {
         // After a proven seed, the seed itself is this run's vote proof.
         if (seeded) return report('vote-roundtrip', assertions, probes, session);
+        // The steady state a seed leaves: the prior already names the mayor, still the ruler.
+        // Re-voting the mayor through the seed's proof is this run's vote proof.
+        if (rulerIsMayor && sameName(prior, mayor)) {
+          await voteForMayor('re-vote');
+          return report('vote-roundtrip', assertions, probes, session);
+        }
         assertions.unproven('the vote round trip', `no other candidate to vote for than "${prior}"; nothing written`);
         return report('vote-roundtrip', assertions, probes, session);
       }
