@@ -1265,6 +1265,59 @@ describe('direct property set', () => {
     expect(frame).not.toContain(CURR_BLOCK);
   });
 
+  // The cache writes `Trouble` and no `Stopped` (Kernel/KernelCache.pas:417);
+  // the tycoon stop is its facStoppedByTycoon bit, $04 (Kernel/Kernel.pas:107).
+  it('reads Stopped back through Trouble, never under its own name', async () => {
+    const fake = makeConstructionCtx({ readBack: ['4'] });
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }));
+
+    const calls = fake.cacher.getPropertyList.mock.calls;
+    expect(calls[calls.length - 1][1]).toEqual(['Trouble']);
+  });
+
+  it.each([
+    { label: 'Close', value: '-1', trouble: '4', newValue: '-1' },
+    { label: 'Close', value: '-1', trouble: '12', newValue: '-1' },
+    { label: 'Close', value: '1', trouble: '4', newValue: '-1' },
+    { label: 'Open', value: '0', trouble: '0', newValue: '0' },
+    { label: 'Open', value: '0', trouble: '1', newValue: '0' },
+  ])('confirms Stopped ($label) when Trouble $trouble carries the matching bit', async ({ value, trouble, newValue }) => {
+    const fake = makeConstructionCtx({ readBack: [trouble] });
+
+    const result = await settle(
+      setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName: 'Stopped' }),
+    );
+
+    expect(result).toMatchObject({ success: true, confirmed: true, newValue });
+  });
+
+  it.each([
+    { label: 'Close', value: '-1', trouble: '0' },
+    { label: 'Open', value: '0', trouble: '4' },
+  ])('does not confirm Stopped ($label) when Trouble $trouble contradicts it', async ({ value, trouble }) => {
+    const fake = makeConstructionCtx({ readBack: [trouble] });
+
+    const result = await settle(
+      setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName: 'Stopped' }),
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.confirmed).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalled();
+  });
+
+  it.each(['', 'x'])('does not confirm Stopped when Trouble reads back %p', async (trouble) => {
+    const fake = makeConstructionCtx({ readBack: [trouble] });
+
+    const result = await settle(
+      setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }),
+    );
+
+    expect(result.confirmed).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('read-back of "Trouble" came back empty'));
+  });
+
   it('keeps Stopped on CurrBlock only when the building publishes no ObjectId (the fallback)', async () => {
     const fake = makeConstructionCtx({ objectId: null });
 

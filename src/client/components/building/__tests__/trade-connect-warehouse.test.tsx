@@ -129,6 +129,73 @@ describe('PropertyGroup warehouse gate integration', () => {
   });
 });
 
+function seedWarehouse(): void {
+  const details: BuildingDetailsResponse = {
+    buildingId: 'bld-532',
+    x: 100, y: 200,
+    visualClass: '532',
+    templateName: 'Warehouse',
+    buildingName: 'Import Storage',
+    ownerName: 'Bob - Green',
+    securityId: 'sec-1',
+    canGovern: false,
+    tabs: [{ id: 'whGeneral', name: 'GENERAL', order: 0, icon: 'i', handlerName: 'WHGeneral' }],
+    groups: { whGeneral: [] },
+    timestamp: Date.now(),
+  };
+  useBuildingStore.getState().setDetails(details);
+  useBuildingStore.setState({ isLoading: false, currentTab: 'whGeneral', isOwner: true });
+}
+
+describe('TradeConnectButtons on the WHGeneral sheet (issue 1258)', () => {
+  it('renders Stores and Factories only, no Warehouses row', () => {
+    const onAction = jest.fn();
+    renderWithProviders(
+      <TradeConnectButtons groupId="whGeneral" properties={props({ TradeRole: '6' })} onAction={onAction} />,
+    );
+
+    const stores = screen.getAllByRole('button', { name: 'Stores' });
+    const factories = screen.getAllByRole('button', { name: 'Factories' });
+    expect(stores).toHaveLength(2);
+    expect(factories).toHaveLength(2);
+    for (const btn of [...stores, ...factories]) {
+      expect((btn as HTMLButtonElement).disabled).toBe(false);
+    }
+    expect(screen.queryAllByRole('button', { name: 'Warehouses' })).toHaveLength(0);
+    expect(screen.getAllByRole('button')).toHaveLength(4);
+
+    fireEvent.click(stores[0]);
+    expect(onAction).toHaveBeenCalledWith('tradeConnect:4');
+  });
+
+  it('keeps all six buttons on another group', () => {
+    renderWithProviders(
+      <TradeConnectButtons groupId="indGeneral" properties={props({ Role: 'Industry' })} onAction={jest.fn()} />,
+    );
+    expect(screen.getAllByRole('button')).toHaveLength(6);
+    expect(screen.getAllByRole('button', { name: 'Warehouses' })).toHaveLength(2);
+  });
+});
+
+describe('PropertyGroup on an Import Storage (issue 1258)', () => {
+  beforeEach(resetStores);
+
+  it('offers no Warehouses quick-trade button', () => {
+    seedWarehouse();
+    renderWithProviders(
+      <PropertyGroup
+        properties={props({ TradeRole: '6', TradeLevel: '2' })}
+        buildingX={100}
+        buildingY={200}
+      />,
+    );
+
+    expect(screen.queryAllByRole('button', { name: 'Warehouses' })).toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: 'Stores' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Factories' }).length).toBeGreaterThan(0);
+  });
+});
+
 describe('IND_GENERAL_GROUP template', () => {
   it('declares Role as a TEXT property and maps no RDO command for it', () => {
     const roleDef = IND_GENERAL_GROUP.properties.find((p) => p.rdoName === 'Role');
