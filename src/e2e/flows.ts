@@ -987,9 +987,22 @@ const tycoonRoleRead: Flow = {
 };
 
 /**
- * `TPoliticalTownHall.RDOVote` (`Kernel/TownPolitics.pas:395`, log `:400`). Data-gated: it
- * votes only when a prior vote exists and still names a current candidate or the mayor, so
- * the restore is a real vote and not a silent no-op (`Kernel/Politics.pas:916-933`).
+ * `TPoliticalTownHall.RDOVote` (`Kernel/TownPolitics.pas:395`, log `:400`): vote for another
+ * candidate, then re-vote the prior choice.
+ *
+ * With no prior vote, the flow first seeds a vote for the mayor. That vote sticks only through
+ * the town's winning campaign (`Kernel/Politics.pas:1053-1060`), and the town hall caches
+ * `RulerName` only when that campaign exists (`Kernel/TownPolitics.pas:483-489`) — so the seed
+ * runs only when `RulerName` names the mayor, and ends UNPROVEN, nothing written, otherwise.
+ * The seed is proven by its `Voting:` line (`Kernel/TownPolitics.pas:400`) and a `VoteOf`
+ * read-back. It records no pending restore: SPO_test3's own vote at the governed town is an
+ * isolated target of a disposable test account (maintainer rule 2026-10-01, #1236), and a vote
+ * cannot be retracted (`Kernel/Politics.pas:1035-1074`), so the vote the seed leaves is the
+ * state the next run starts from.
+ *
+ * A prior that no longer names a current candidate or the mayor — stale after a town election
+ * (`Kernel/TownPolitics.pas:690`, `:744`) — ends UNPROVEN, since its restore would be a silent
+ * no-op (`Kernel/Politics.pas:916-933`).
  */
 const voteRoundTrip: Flow = {
   name: 'vote-roundtrip',
@@ -1008,16 +1021,59 @@ const voteRoundTrip: Flow = {
       const mayor = data?.mayorName ?? '';
       const readVoteOf = async (): Promise<string | undefined> =>
         propertyValue(await readSectionGroups(session, town.x, town.y, 'votes', visualClass), 'votes', 'VoteOf');
-
-      const prior = await readVoteOf();
-      if (prior === undefined || prior.trim() === '') {
-        assertions.unproven(
-          'the vote round trip',
-          `${voter} has no readable prior vote at ${town.name} — RDOVoteOf answered nothing, or the ` +
-            'gateway did not serve VoteOf (enrichVotesTab binds to CurrBlock, which no Town Hall ' +
-            'template requests); nothing written',
+      // The choice ends the line (TownPolitics.pas:400), so "by Bob" never matches "by Bobby".
+      const votedBy = (line: string, choice: string): boolean =>
+        line.trim().toLowerCase().endsWith(`voting: ${voter} by ${choice}`.toLowerCase());
+      const vote = async (value: string): Promise<void> => {
+        const resp = await session.driver.request<WsRespPoliticsVote>(
+          {
+            type: WsMessageType.REQ_POLITICS_VOTE,
+            buildingX: town.x,
+            buildingY: town.y,
+            candidateName: value,
+          },
+          WsMessageType.RESP_POLITICS_VOTE,
         );
-        return report('vote-roundtrip', assertions, probes, session);
+        if (resp.success === false) throw new Error(`VOTE refused: ${resp.message ?? 'no message'}`);
+      };
+
+      const gate = await readSectionGroups(session, town.x, town.y, 'votes', visualClass);
+      let prior = propertyValue(gate, 'votes', 'VoteOf');
+      let seeded = false;
+      if (prior === undefined || prior.trim() === '') {
+        const ruler = propertyValue(gate, 'votes', 'RulerName') ?? '';
+        if (ruler.trim() === '' || mayor.trim() === '' || !sameName(ruler, mayor)) {
+          assertions.unproven(
+            'the vote round trip',
+            `${voter} has no prior vote at ${town.name}, and RulerName "${ruler}" is not the mayor ` +
+              `"${mayor}": no winning campaign to vote for (a vote sticks only for a campaign or the ` +
+              'winning campaign — Kernel/Politics.pas:1053-1060; RulerName is cached only when that ' +
+              'campaign exists — Kernel/TownPolitics.pas:483-489); nothing written',
+          );
+          return report('vote-roundtrip', assertions, probes, session);
+        }
+        // The seed: no pending restore — an isolated target of a disposable account (see the doc comment).
+        try {
+          const window = await openLogWindow(await survivalUrl(ctx));
+          await vote(mayor);
+          const back = await pollUntil(readVoteOf, v => v !== undefined && sameName(v, mayor), ctx, TIMEOUTS.logSettle);
+          assertions.check(
+            `the seed vote for ${mayor} read back through votes.VoteOf (RDOVoteOf)`,
+            back.ok,
+            `last "${back.last ?? '(absent)'}" after ${TIMEOUTS.logSettle} ms`,
+          );
+          const line = await awaitMarker(
+            window,
+            { marker: LOG_MARKERS.RDOVote, match: l => votedBy(l, mayor) },
+            TIMEOUTS.logSettle,
+          );
+          assertions.check('the seed vote logged its Voting: line', line !== null, line ?? '(no line)');
+        } catch (err: unknown) {
+          assertions.check('the seed vote was accepted', false, toErrorMessage(err));
+        }
+        if (assertions.failed) return report('vote-roundtrip', assertions, probes, session);
+        prior = mayor;
+        seeded = true;
       }
       const choices = [...candidates, mayor].filter(n => n.trim() !== '');
       if (!choices.some(n => sameName(n, prior))) {
@@ -1031,16 +1087,15 @@ const voteRoundTrip: Flow = {
       }
       const other = choices.find(n => !sameName(n, prior));
       if (other === undefined) {
+        // After a proven seed, the seed itself is this run's vote proof.
+        if (seeded) return report('vote-roundtrip', assertions, probes, session);
         assertions.unproven('the vote round trip', `no other candidate to vote for than "${prior}"; nothing written`);
         return report('vote-roundtrip', assertions, probes, session);
       }
 
       const what = `${town.name} vote of ${voter} — prior choice ${prior}`;
       const member = 'RDOVote';
-      // The choice ends the line (TownPolitics.pas:400), so "by Bob" never matches "by Bobby".
-      const votedBy = (line: string, choice: string): boolean =>
-        line.trim().toLowerCase().endsWith(`voting: ${voter} by ${choice}`.toLowerCase());
-      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
+      const url = await survivalUrl(ctx);
       let restoreLine: string | null = null;
       try {
         // Opened before the change vote: the restore's line is the one naming the prior choice.
@@ -1051,18 +1106,7 @@ const voteRoundTrip: Flow = {
             member,
             read: async () => prior,
             testValue: () => other,
-            write: async value => {
-              const resp = await session.driver.request<WsRespPoliticsVote>(
-                {
-                  type: WsMessageType.REQ_POLITICS_VOTE,
-                  buildingX: town.x,
-                  buildingY: town.y,
-                  candidateName: value,
-                },
-                WsMessageType.RESP_POLITICS_VOTE,
-              );
-              if (resp.success === false) throw new Error(`VOTE refused: ${resp.message ?? 'no message'}`);
-            },
+            write: vote,
             proof: {
               // The voter in the match excludes the Capitol's identical line (WorldPolitics.pas:1822).
               log: { marker: LOG_MARKERS.RDOVote, match: votedBy },
@@ -6769,15 +6813,16 @@ async function lotBuilding(session: LiveSession, x: number, y: number): Promise<
   return buildings.find(b => b.x === x && b.y === y);
 }
 
-/** Read at least once, then every `readBackPoll` until `done` holds or `readBack` has elapsed. */
+/** Read at least once, then every `readBackPoll` until `done` holds or `boundMs` (default `readBack`) has elapsed. */
 async function pollUntil<T>(
   read: () => Promise<T>,
   done: (v: T) => boolean,
   ctx: FlowContext,
+  boundMs: number = TIMEOUTS.readBack,
 ): Promise<{ ok: boolean; last: T }> {
   const now = ctx.now ?? Date.now;
   const sleep = ctx.sleep ?? defaultSleep;
-  const deadline = now() + TIMEOUTS.readBack;
+  const deadline = now() + boundMs;
   for (;;) {
     const last = await read();
     if (done(last)) return { ok: true, last };
