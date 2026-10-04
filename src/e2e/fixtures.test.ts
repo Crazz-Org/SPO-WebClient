@@ -11,8 +11,10 @@ import type {
 import { SurfaceType } from '@/shared/types/domain-types';
 import { ERROR_AreaNotClear, ERROR_TooManyFacilities } from '@/shared/error-codes';
 import {
+  FID_CHEMICAL,
   FIXTURE_CASH_FLOOR,
   FIXTURE_KINDS,
+  acceptsFacId,
   carriesKind,
   ensureFixtures,
   findFixture,
@@ -27,12 +29,14 @@ import {
   requiredResearchAt,
   ownLotRefusal,
   parseTerrainBmp,
+  pickFixture,
   placeFacility,
   readCash,
   zoneValueOf,
   type FixtureKind,
   type FixtureKindId,
   type FixtureOutcome,
+  type Holding,
 } from './fixtures';
 import { WsDriver, WsDriverError } from './ws-driver';
 import * as liveLog from './live-log';
@@ -60,7 +64,10 @@ const kind = (id: FixtureKindId): FixtureKind => FIXTURE_KINDS.find(k => k.id ==
 /** One finished visual class per kind, and the tabs its inspector carries. */
 const KIND_VC: Record<FixtureKindId, string> = {
   industry: '4116', store: '4602', warehouse: '532', residential: '4452', research: '602', bank: '2262', tv: '4982',
+  chemical: '4042',
 };
+/** The `facId` a kind's visual class reads, where the kind table tells kinds apart by it (#1293). */
+const KIND_FACID: Partial<Record<FixtureKindId, number>> = { chemical: 44 };
 const CONSTRUCTION_VC = '9001';
 
 interface ResearchCat {
@@ -76,6 +83,7 @@ const RESEARCH_INDEX = [
   { id: 'BasicTelevision', name: 'Television', requires: ['Distributed Direction'] },
   { id: 'Bars', name: 'Bars', requires: [] },
   { id: 'HappyHour', name: 'Happy Hour', requires: ['Bars'] },
+  { id: 'ChemLic', name: 'Chemistry Basics', requires: ['Distributed Direction'] },
 ];
 
 const RESEARCH_DETAILS: Record<string, string> = {
@@ -83,6 +91,7 @@ const RESEARCH_DETAILS: Record<string, string> = {
   Banking: 'Price: $50,000,000\r\nLevel: Tycoon',
   BasicTelevision: 'Price: $10,000,000\r\nPrestige: +10 pts\r\nLevel: Tycoon',
   HappyHour: 'Price: $25,000,000\r\nLevel: Apprentice',
+  ChemLic: 'Price: $20,000,000\r\nLevel: Entrepreneur',
 };
 
 interface Row {
@@ -133,7 +142,7 @@ class World {
 
   constructor() {
     for (const [k, vc] of Object.entries(KIND_VC)) {
-      this.dims[vc] = dim(vc, 2, 2, `${k}.gif`);
+      this.dims[vc] = { ...dim(vc, 2, 2, `${k}.gif`), facId: KIND_FACID[k as FixtureKindId] };
       this.tabs[vc] = kind(k as FixtureKindId).groups.concat(['finances']);
     }
   }
@@ -382,7 +391,7 @@ afterEach(() => jest.restoreAllMocks());
 // ---------------------------------------------------------------------------------------------
 
 describe('FIXTURE_KINDS', () => {
-  it('names the seven kinds with the groups the card requires', () => {
+  it('names the eight kinds with the groups the card requires', () => {
     expect(Object.fromEntries(FIXTURE_KINDS.map(k => [k.id, k.groups]))).toEqual({
       industry: ['indGeneral', 'supplies', 'products'],
       store: ['srvGeneral', 'supplies'],
@@ -391,7 +400,26 @@ describe('FIXTURE_KINDS', () => {
       research: ['hqInventions'],
       bank: ['bankGeneral'],
       tv: ['tvGeneral'],
+      chemical: ['indGeneral', 'supplies', 'products'],
     });
+  });
+
+  it('lists the chemical kind (#1293) with the three groups and the seven TChemicalBlock classes', () => {
+    expect(kind('chemical').groups).toEqual(['indGeneral', 'supplies', 'products']);
+    expect(kind('chemical').candidates.map(c => c.facilityClass)).toEqual([
+      'DissChemicalSmall', 'DissChemical', 'PGISmallChemical', 'PGIChemical', 'MarikoSmallChemical', 'MarikoChemical', 'MoabChemical',
+    ]);
+    expect(FID_CHEMICAL).toBe(44);
+  });
+
+  it('tells industry from chemical by facId: only takes that facId, refuse takes any other, neither takes all', () => {
+    expect(acceptsFacId(kind('chemical'), 44)).toBe(true);
+    expect(acceptsFacId(kind('chemical'), 203)).toBe(false);
+    expect(acceptsFacId(kind('chemical'), undefined)).toBe(false);
+    expect(acceptsFacId(kind('industry'), 203)).toBe(true);
+    expect(acceptsFacId(kind('industry'), undefined)).toBe(true);
+    expect(acceptsFacId(kind('industry'), 44)).toBe(false);
+    expect(acceptsFacId(kind('store'), 44)).toBe(true);
   });
 
   it('commits no candidate placeFacility refuses, and no mausoleum or studio', () => {
@@ -721,11 +749,38 @@ describe('findFixture', () => {
     expect(await findFixture(w.session(), kind('industry'))).toEqual({ kind: 'industry', reason: 'none in Helartia' });
   });
 
+  it('finds a holding whose class reads facId 44 as chemical, never as industry', async () => {
+    const w = new World();
+    w.own('chemical', 120, 220);
+    expect((await findFixture(w.session(), kind('chemical'))).found).toMatchObject({ x: 120, y: 220, visualClass: '4042' });
+    expect(await findFixture(w.session(), kind('industry'))).toEqual({ kind: 'industry', reason: 'none in Helartia' });
+  });
+
   it('finds nothing when the own company is not listed', async () => {
     const w = new World();
     w.own('industry', 120, 220);
     w.companies = [ROLE_COMPANY];
     expect((await findFixture(w.session(), kind('industry'))).found).toBeUndefined();
+  });
+});
+
+describe('pickFixture — industry and chemical carry the same groups (#1293)', () => {
+  const groups = ['indGeneral', 'supplies', 'products'];
+  const mine: Holding = { x: 907, y: 824, visualClass: '4116', name: 'Chemical Mine 1', tabIds: groups, facId: 203 };
+  const plant: Holding = { x: 80, y: 90, visualClass: '4042', name: 'Chemical Plant', tabIds: groups, facId: 44 };
+
+  it.each([
+    ['mine first', [mine, plant]],
+    ['plant first', [plant, mine]],
+  ])('gives industry the facId 203 holding and chemical the facId 44 one, %s', (_label, holdings) => {
+    expect(pickFixture(holdings, [], kind('industry')).found).toMatchObject({ x: 907, y: 824 });
+    expect(pickFixture(holdings, [], kind('chemical')).found).toMatchObject({ x: 80, y: 90 });
+  });
+
+  it('takes a lone holding with no facId as industry, never as chemical', () => {
+    const bare: Holding = { x: 1, y: 2, visualClass: 'v', name: 'n', tabIds: groups };
+    expect(pickFixture([bare], [], kind('industry')).found).toMatchObject({ x: 1, y: 2 });
+    expect(pickFixture([bare], [], kind('chemical'))).toEqual({ kind: 'chemical', reason: 'none in Helartia' });
   });
 });
 
@@ -806,7 +861,7 @@ describe('ensureFixtures', () => {
     const w = new World();
     ownAllBut(w);
     const out = await ensure(w);
-    expect(Object.values(out).map(o => o.status)).toEqual(Array(7).fill('found'));
+    expect(Object.values(out).map(o => o.status)).toEqual(Array(8).fill('found'));
     expect(out.industry).toMatchObject({ x: 110, y: 228, visualClass: '4116' });
     expect(w.placed()).toHaveLength(0);
     expect(w.requests.some(r => r.type === WsMessageType.REQ_GET_BUILDING_CATEGORIES)).toBe(false);
@@ -919,6 +974,28 @@ describe('ensureFixtures', () => {
     expect(out.store.reason).toMatch(/candidate PGIFoodStore \(visual class 4602\) built a facility without supplies/);
   });
 
+  it('places a missing chemical fixture from an offered DissChemicalSmall', async () => {
+    const w = new World();
+    ownAllBut(w, 'chemical');
+    spyLog(w);
+    w.offer('DissChemicalSmall', 1, '4041');
+    expect((await ensure(w)).chemical).toMatchObject({ status: 'built', facilityClass: 'DissChemicalSmall' });
+    expect(w.placed()).toHaveLength(1);
+  });
+
+  it('FAILs naming the class when a finished chemical candidate reads another facId', async () => {
+    const w = new World();
+    ownAllBut(w, 'chemical');
+    spyLog(w);
+    w.offer('DissChemicalSmall', 1, '4042'); // finished = registered + 1
+    w.dims['4043'] = { ...dim('4043', 2, 2, 'mine.gif'), facId: 203 };
+    w.tabs['4043'] = ['indGeneral', 'supplies', 'products'];
+    w.place = (cls, x, y) => ({ code: 0, lands: mb('4043', OWN, x, y), line: `New Facility: ${cls} Company: 1 x: ${x} y: ${y}` });
+    const out = await ensure(w);
+    expect(out.chemical.status).toBe('FAIL');
+    expect(out.chemical.reason).toMatch(/candidate DissChemicalSmall \(visual class 4043\) built a facility with facId 203/);
+  });
+
   it.each<[string, (w: World) => void, RegExp]>([
     ['a kind not offered', () => undefined, /no candidate offered/],
     ['a cost above the cash floor', w => { w.cash = '$12,000,000'; w.offer('PGIFoodStore', 3_000_000); }, /cost 3000000 exceeds the cash floor/],
@@ -1012,8 +1089,10 @@ describe('RESEARCH_UNLOCKS', () => {
     expect(RESEARCH_UNLOCKS.map(u => [u.facilityClass, u.inventionId])).toEqual([
       ['DissBank', 'Banking'],
       ['DissTVStation', 'BasicTelevision'],
+      ['DissChemicalSmall', 'ChemLic'],
     ]);
     expect(kind('bank').candidates.map(c => c.facilityClass)).toContain('DissBank');
+    expect(kind('chemical').candidates.map(c => c.facilityClass)).toContain('DissChemicalSmall');
     expect(kind('tv').candidates.map(c => c.facilityClass)).toContain('DissTVStation');
     for (const u of RESEARCH_UNLOCKS) expect(u.why).toMatch(/DissidentPack1\.dpr:\d+.*Standards\.pas:\d+/);
   });
@@ -1082,6 +1161,17 @@ describe('ensureFixtures — research that unlocks a kind (#1233)', () => {
       status: 'unproven', facilityClass: 'DissBank', reason: 'researching Banking Basics',
       logLine: expect.stringMatching(/Queue Research: Banking, 10/),
     });
+  });
+
+  it('queues ChemLic once when DissChemicalSmall is locked and Chemistry Basics is enabled and affordable', async () => {
+    const w = track(lockedWorld('chemical'));
+    w.lock('DisChemSmall', 'Requires research Chemistry Basics at Headquarters.');
+    w.research[0].available.push({ id: 'ChemLic', enabled: true });
+    const out = await ensure(w);
+    expect(w.writes).toEqual([
+      { property: 'RDOQueueResearch', x: HQ_AT.x, y: HQ_AT.y, params: { inventionId: 'ChemLic', priority: '10' } },
+    ]);
+    expect(out.chemical).toMatchObject({ status: 'unproven', facilityClass: 'DissChemicalSmall', reason: 'researching Chemistry Basics' });
   });
 
   it('queues only the missing prerequisite, once, when bank and TV both wait on it', async () => {

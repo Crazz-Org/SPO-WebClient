@@ -550,16 +550,19 @@ the same run (§5).
 **Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29, the
 nightly-only flow `fixtures-ensure` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
 kind the owner-setter flows need — `industry`, `store`, `warehouse`, `residential`, `research`,
-`bank`, `tv` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
+`bank`, `tv`, `chemical` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
 missing, once, and keeps it. Fixtures are found **by kind at run time** (`findFixture`: the
 directory's tycoon branch, then the lot's owner and the inspector's template groups), never by
 coordinates committed to the tree — the world moves. A build is proven by its `New Facility:`
 line, result code 0 and the lot read-back. While SPO_test3 owns a construction site in Helartia,
 the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
 (placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
-and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
+and neither is a studio. `industry` and `chemical` carry the same template groups, so they are told
+apart by `facId`: `chemical` takes only a Chemical Plant (`FID_Chemical` = 44,
+`Model Extensions/FacIds.pas:35`), and `industry` takes anything else. The eight fixtures occupy
+eight of SPO_test3's facility slots for good.
 **Research queued by the fixture builder is permanent setup data too** (maintainer, 2026-10-01,
-#1233). The bank and TV classes stay locked until *SPO_test3 - Green* owns the invention that
+#1233). The bank, TV and small chemical plant classes stay locked until *SPO_test3 - Green* owns the invention that
 unlocks them (`RESEARCH_UNLOCKS`); the builder then queues one research step per run at
 SPO_test3's research fixture: the first missing link of the chain that reads enabled and fits
 under cash − the cash floor − `research-roundtrip`'s own cost. It is proven by its
@@ -580,14 +583,26 @@ cost is spent each run — accepted by the maintainer on 2026-09-29.
 
 **Supplier and client links (#1153).** A link is written on **both** gates (`TGate.ConnectTo`,
 `Kernel/Kernel.pas:6784-6785`), so a hire is another player's asset the moment the counterpart
-is theirs. `supplier-hire-fire`, `client-hire-remove` and `connect-on-map` link the industry
-fixture only to a facility of *SPO_test3 - Green* in Helartia (search filtered by town and
-company, the row's company checked, the lot's owner read back), snapshot every gate they can
-touch, and undo every new link in the same run. `quick-trade-roundtrip` runs only when its undo
-cannot reach beyond the test: no SPO_test3 facility already a client of the fixture
-(`Kernel/Kernel.pas:4593-4600`), the fixture not an initial supplier (`:4564-4565`,
-`:4606-4607`), and no SPO_test3 warehouse outside Helartia (`:4537-4553`) — otherwise `UNPROVEN`,
-nothing sent.
+is theirs. `supplier-hire-fire` and `client-hire-remove` hire on the industry fixture, and the
+`chemical` fixture (#1293: a Chemical Plant, Raw Chemicals in, Chemicals out — the industry
+fixture's opposite) is the expected own counterpart. `connect-on-map` links the industry and
+`chemical` fixtures. All three link the industry fixture only to a facility of
+*SPO_test3 - Green* in Helartia (search filtered by town and company, the row's company checked,
+the lot's owner read back), snapshot every gate they can touch, and undo every new link in the
+same run. `quick-trade-roundtrip` targets the `chemical` fixture and no longer touches the
+industry fixture. It runs only when its undo cannot reach beyond the test: no SPO_test3 facility
+already a client of the fixture (`Kernel/Kernel.pas:4593-4600`), the fixture not an initial
+supplier (`:4564-4565`, `:4606-4607`), and no SPO_test3 warehouse outside Helartia
+(`:4537-4553`) — otherwise `UNPROVEN`, nothing sent.
+
+All four first **reset the `chemical` fixture** (`resetChemical`): a new plant arrives linked to
+the tycoon's initial suppliers and own warehouses. This is **self-heal of an isolated target**
+(maintainer rule 2026-10-01, #1236) — only these four flows use the plant. The reset sends
+`RDODisconnectFromTycoon` when the plant is an initial supplier or has an own client, then
+`RDODisconnectInput` for its own suppliers only. Every link it removes has an SPO_test3 facility
+on both ends; a foreign link is never touched, and no pending restore is recorded. A gate it
+cannot read in full ends `UNPROVEN` with nothing sent, and a reset that does not take after one
+retry ends `UNPROVEN` with nothing else sent.
 
 **Clone facility (#1189).** Clone facility is driven only as `clone-salaries-roundtrip` (lifted
 by the maintainer on 2026-09-29, limited to salaries): options same town + same company +

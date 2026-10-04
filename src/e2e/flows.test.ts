@@ -6826,7 +6826,7 @@ describe('inspector connections & trade (#1153)', () => {
   const sg = (fluid: string): BuildingSupplyData => ({ path: `in:${fluid}`, name: fluid, metaFluid: fluid, connectionCount: 0, connections: [] });
   const pg = (fluid: string): BuildingProductData => ({ path: `out:${fluid}`, name: fluid, metaFluid: fluid, pricePc: '100', connectionCount: 0, connections: [] });
 
-  function makeFacilities(): { industry: Fac; warehouse: Fac; store: Fac } {
+  function makeFacilities(): { industry: Fac; warehouse: Fac; store: Fac; chemical: Fac } {
     return {
       industry: {
         x: 30, y: 40, name: 'Farm', company: OWN_CO, visualClass: '4116', tabs: ['indGeneral', 'supplies', 'products'],
@@ -6842,22 +6842,30 @@ describe('inspector connections & trade (#1153)', () => {
         supplies: [], products: [],
         compInputs: [{ name: 'Advertisement', supplied: 0, demanded: 50, ratio: 0, maxDemand: 100, editable: true, units: 'hits' }],
       },
+      // The chemical fixture (#1293) — clean by default: no link, not an initial supplier.
+      chemical: {
+        x: 80, y: 90, name: 'Chemical Plant', company: OWN_CO, visualClass: '4042', tabs: ['indGeneral', 'supplies', 'products'],
+        supplies: [sg('Chemicals')], products: [pg('Chemicals'), pg('Water')],
+      },
     };
   }
 
   class ConnWorld {
     facs = makeFacilities();
-    found: Partial<Record<'industry' | 'warehouse' | 'store', boolean>> = {};
+    found: Partial<Record<'industry' | 'warehouse' | 'store' | 'chemical', boolean>> = {};
+    /** The reason findFixture gives for a kind it does not find (default `none in Helartia`). */
+    reasons: Partial<Record<'industry' | 'warehouse' | 'store' | 'chemical', string>> = {};
     search: (direction: string, fluid: string) => ConnectionSearchResult[] = (direction, fluid) => {
       const w = this.facs.warehouse;
       const carries = direction === 'input' ? w.products.some(p => p.metaFluid === fluid) : w.supplies.some(s => s.metaFluid === fluid);
       return carries ? [{ facilityName: w.name, companyName: OWN_CO, x: w.x, y: w.y, town: 'Helartia' }] : [];
     };
     reach: (c: { x: number; y: number }) => string | undefined = () => 'connected';
-    ownLots = new Set(['50,60', '30,40', '10,20']);
+    ownLots = new Set(['50,60', '30,40', '10,20', '80,90']);
     tycoon: fixtures.TycoonFacility[] = [
       { company: OWN_CO, x: 30, y: 40, name: 'Farm' },
       { company: OWN_CO, x: 50, y: 60, name: 'Storage' },
+      { company: OWN_CO, x: 80, y: 90, name: 'Chemical Plant' },
     ];
     tycoonCompanies = [OWN_CO, 'Mayor of Helartia'];
     towns: Record<string, number> = {};
@@ -6883,7 +6891,7 @@ describe('inspector connections & trade (#1153)', () => {
     requests: WsMessage[] = [];
 
     all(): Fac[] {
-      return [this.facs.industry, this.facs.warehouse, this.facs.store];
+      return [this.facs.industry, this.facs.warehouse, this.facs.store, this.facs.chemical];
     }
 
     at(x: number, y: number): Fac | undefined {
@@ -6975,10 +6983,18 @@ describe('inspector connections & trade (#1153)', () => {
             if (this.facs.warehouse.supplies.some(s => s.metaFluid === g.metaFluid)) this.link(f, 'products', g.metaFluid as string, this.facs.warehouse);
           }
           break;
-        case 'RDODisconnectFromTycoon':
-          for (const g of f.products) this.unlink(f, 'products', g.metaFluid as string, this.facs.warehouse.x, this.facs.warehouse.y);
+        case 'RDODisconnectFromTycoon': {
+          // Kernel/Kernel.pas:4591-4607: every own client of the fixture's outputs is dropped, and the
+          // fixture is unregistered as an initial supplier.
+          const own = (c: BuildingConnectionData) =>
+            this.tycoonCompanies.includes(c.companyName) || this.tycoon.some(t => t.x === c.x && t.y === c.y);
+          for (const g of f.products) {
+            for (const c of g.connections.filter(own)) this.unlink(f, 'products', g.metaFluid as string, c.x, c.y);
+          }
+          for (const fl of this.auto.fluids) fl.suppliers = fl.suppliers.filter(s => s.facilityId !== `${f.x},${f.y},`);
           this.onUndoTycoon?.();
           break;
+        }
         case 'RDOSetCompanyInputDemand': {
           const input = (f.compInputs ?? [])[Number(p.index)];
           input.demanded = Math.ceil((Math.min(Number(w.value), 100) * input.maxDemand) / 100);
@@ -7055,9 +7071,9 @@ describe('inspector connections & trade (#1153)', () => {
     jest.spyOn(session, 'login').mockResolvedValue(stub);
     const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
     jest.spyOn(fixtures, 'findFixture').mockImplementation(async (_s, kind) => {
-      const id = kind.id as 'industry' | 'warehouse' | 'store';
+      const id = kind.id as 'industry' | 'warehouse' | 'store' | 'chemical';
       const fac = world.facs[id];
-      if (!fac || world.found[id] === false) return { kind: kind.id, reason: 'none in Helartia' };
+      if (!fac || world.found[id] === false) return { kind: kind.id, reason: world.reasons[id] ?? 'none in Helartia' };
       return { kind: kind.id, found: { x: fac.x, y: fac.y, visualClass: fac.visualClass, name: fac.name } };
     });
     const refusal = jest.spyOn(fixtures, 'ownLotRefusal').mockImplementation(async (_s, x, y) =>
@@ -7380,7 +7396,7 @@ describe('inspector connections & trade (#1153)', () => {
   });
 
   describe('connect-on-map', () => {
-    it("links the industry and the warehouse, then undoes every new link on both facilities' inputs and outputs", async () => {
+    it("links the industry and the chemical fixture, then undoes every new link on both facilities' inputs and outputs", async () => {
       const world = new ConnWorld();
       world.oneSided = true;
       const lock = cleanLock();
@@ -7388,15 +7404,15 @@ describe('inspector connections & trade (#1153)', () => {
       const result = await run('connect-on-map', lock);
       expect(result.status).toBe('PASS');
       expect(world.requests).toContainEqual(expect.objectContaining({
-        type: WsMessageType.REQ_CONNECT_FACILITIES, sourceX: 30, sourceY: 40, targetX: 50, targetY: 60,
+        type: WsMessageType.REQ_CONNECT_FACILITIES, sourceX: 30, sourceY: 40, targetX: 80, targetY: 90,
       }));
       expect(world.writes.map(w => [w.x, w.y, w.property, w.params])).toEqual([
-        [30, 40, 'RDODisconnectInput', { fluidId: 'Water', connectionList: '50,60,' }],
-        [30, 40, 'RDODisconnectOutput', { fluidId: 'Chemicals', connectionList: '50,60,' }],
-        [50, 60, 'RDODisconnectInput', { fluidId: 'Chemicals', connectionList: '30,40,' }],
-        [50, 60, 'RDODisconnectOutput', { fluidId: 'Water', connectionList: '30,40,' }],
+        [30, 40, 'RDODisconnectInput', { fluidId: 'Water', connectionList: '80,90,' }],
+        [30, 40, 'RDODisconnectOutput', { fluidId: 'Chemicals', connectionList: '80,90,' }],
+        [80, 90, 'RDODisconnectInput', { fluidId: 'Chemicals', connectionList: '30,40,' }],
+        [80, 90, 'RDODisconnectOutput', { fluidId: 'Water', connectionList: '30,40,' }],
       ]);
-      for (const g of [...world.facs.industry.supplies, ...world.facs.industry.products, ...world.facs.warehouse.supplies, ...world.facs.warehouse.products]) {
+      for (const g of [...world.facs.industry.supplies, ...world.facs.industry.products, ...world.facs.chemical.supplies, ...world.facs.chemical.products]) {
         expect(keysOf(g)).toEqual([]);
       }
       expect(result.probes[0]).toMatchObject({ original: 'snapshot', written: 'new-links', restored: true, logLine: null });
@@ -7447,8 +7463,8 @@ describe('inspector connections & trade (#1153)', () => {
 
     it('sends nothing when the two facilities share no fluid on opposite gates (UNPROVEN)', async () => {
       const world = new ConnWorld();
-      world.facs.warehouse.supplies = [sg('Ore')];
-      world.facs.warehouse.products = [pg('Fruit')];
+      world.facs.chemical.supplies = [sg('Ore')];
+      world.facs.chemical.products = [pg('Fruit')];
       arrange(world);
       const result = await run('connect-on-map');
       expect(result.status).toBe('UNPROVEN');
@@ -7459,17 +7475,17 @@ describe('inspector connections & trade (#1153)', () => {
 
     it('sends nothing when a gate of either facility was not read in full (UNPROVEN)', async () => {
       const world = new ConnWorld();
-      world.facs.warehouse.products[0].connectionCount = 4;
+      world.facs.chemical.products[1].connectionCount = 4;
       arrange(world);
       const result = await run('connect-on-map');
       expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/Storage \(50,60\) products:Water/);
+      expect(result.unproven[0]).toMatch(/Chemical Plant \(80,90\).*products:Water/);
       expect(world.requests.some(r => r.type === WsMessageType.REQ_CONNECT_FACILITIES)).toBe(false);
     });
 
-    it('is UNPROVEN and writes nothing when the warehouse fixture is missing', async () => {
+    it('is UNPROVEN and writes nothing when the chemical fixture is missing', async () => {
       const world = new ConnWorld();
-      world.found.warehouse = false;
+      world.found.chemical = false;
       arrange(world);
       expect((await run('connect-on-map')).status).toBe('UNPROVEN');
       expect(world.requests.some(r => r.type === WsMessageType.REQ_CONNECT_FACILITIES)).toBe(false);
@@ -7703,51 +7719,59 @@ describe('inspector connections & trade (#1153)', () => {
       const result = await run('quick-trade-roundtrip', lock);
       expect(result.status).toBe('PASS');
       expect(world.writes.map(w => [w.x, w.y, w.property, w.params])).toEqual([
-        [30, 40, 'RDOConnectToTycoon', { kind: '1' }],
-        [30, 40, 'RDODisconnectFromTycoon', { kind: '1' }],
+        [80, 90, 'RDOConnectToTycoon', { kind: '1' }],
+        [80, 90, 'RDODisconnectFromTycoon', { kind: '1' }],
       ]);
       expect(result.probes[0]).toMatchObject({
-        original: 'snapshot', written: 'new-links', logLine: '12:00 - Fac(30,40) Connect to Tycoon: 123456', restored: true,
+        original: 'snapshot', written: 'new-links', logLine: '12:00 - Fac(80,90) Connect to Tycoon: 123456', restored: true,
       });
       expect(result.assertions.find(a => a.what === 'the initial-supplier list equals its snapshot')?.ok).toBe(true);
-      expect(keysOf(world.facs.industry.products[0])).toEqual([]);
+      expect(keysOf(world.facs.chemical.products[0])).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('does nothing when an SPO_test3 facility is already a client — by company or by lot', async () => {
+    it('resets an SPO_test3 client of the plant first — by company or by lot — then runs the round trip', async () => {
       const byCompany = new ConnWorld();
-      byCompany.link(byCompany.facs.industry, 'products', 'Chemicals', { x: 90, y: 91, name: 'Mayor Shop', company: 'Mayor of Helartia' });
+      byCompany.link(byCompany.facs.chemical, 'products', 'Chemicals', { x: 90, y: 91, name: 'Mayor Shop', company: 'Mayor of Helartia' });
       arrange(byCompany);
       const r1 = await run('quick-trade-roundtrip');
-      expect(r1.status).toBe('UNPROVEN');
-      expect(r1.unproven[0]).toMatch(/^RDOConnectToTycoon — .*Kernel\/Kernel\.pas:4593-4600.*Mayor Shop \(90,91\)/);
-      expect(setProps(byCompany)).toEqual([]);
+      expect(r1.status).toBe('PASS');
+      expect(byCompany.writes.map(w => [w.x, w.y, w.property])).toEqual([
+        [80, 90, 'RDODisconnectFromTycoon'],
+        [80, 90, 'RDOConnectToTycoon'],
+        [80, 90, 'RDODisconnectFromTycoon'],
+      ]);
 
       const byLot = new ConnWorld();
       byLot.tycoon.push({ company: 'Renamed Co', x: 92, y: 93, name: 'Shop' });
-      byLot.link(byLot.facs.industry, 'products', 'Chemicals', { x: 92, y: 93, name: 'Shop', company: 'Unlisted Co' });
+      byLot.link(byLot.facs.chemical, 'products', 'Chemicals', { x: 92, y: 93, name: 'Shop', company: 'Unlisted Co' });
       arrange(byLot);
-      expect((await run('quick-trade-roundtrip')).status).toBe('UNPROVEN');
-      expect(setProps(byLot)).toEqual([]);
+      expect((await run('quick-trade-roundtrip')).status).toBe('PASS');
+      expect(byLot.writes[0]).toMatchObject({ x: 80, y: 90, property: 'RDODisconnectFromTycoon' });
     });
 
-    it('does nothing when a product gate lists more clients than it read', async () => {
+    it('does nothing when a product gate of the plant lists more clients than it read', async () => {
       const world = new ConnWorld();
-      world.facs.industry.products[0].connectionCount = 5;
-      arrange(world);
-      const result = await run('quick-trade-roundtrip');
-      expect(result.unproven[0]).toMatch(/5 client\(s\) listed but 0 read/);
-      expect(setProps(world)).toEqual([]);
-    });
-
-    it('does nothing when the fixture is an initial supplier', async () => {
-      const world = new ConnWorld();
-      world.auto.fluids[0].suppliers.push({ facilityName: 'Farm', facilityId: '30,40,', companyName: OWN_CO });
+      world.facs.chemical.products[0].connectionCount = 5;
       arrange(world);
       const result = await run('quick-trade-roundtrip');
       expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([expect.stringMatching(/initial suppliers.*Kernel\/Kernel\.pas:4564-4565, :4606-4607/)]);
+      expect(result.unproven[0]).toMatch(/^RDOConnectToTycoon — chemical fixture reset: cannot see every link of Chemical Plant \(80,90\) — products:Chemicals; nothing sent/);
       expect(setProps(world)).toEqual([]);
+    });
+
+    it('resets the plant first when it is an initial supplier, then runs the round trip', async () => {
+      const world = new ConnWorld();
+      world.auto.fluids[0].suppliers.push({ facilityName: 'Chemical Plant', facilityId: '80,90,', companyName: OWN_CO });
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('PASS');
+      expect(world.writes.map(w => [w.x, w.y, w.property])).toEqual([
+        [80, 90, 'RDODisconnectFromTycoon'],
+        [80, 90, 'RDOConnectToTycoon'],
+        [80, 90, 'RDODisconnectFromTycoon'],
+      ]);
+      expect(fixturesInitialSupplier(world)).toBe(false);
     });
 
     it('does nothing when an SPO_test3 warehouse lies outside Helartia, or cannot be read', async () => {
@@ -7786,7 +7810,7 @@ describe('inspector connections & trade (#1153)', () => {
       arrange(world);
       const result = await run('quick-trade-roundtrip');
       expect(result.status).toBe('FAIL');
-      expect(result.probes[0]).toMatchObject({ readBack: 'UNCONFIRMED', logLine: '12:00 - Fac(30,40) Connect to Tycoon: 123456' });
+      expect(result.probes[0]).toMatchObject({ readBack: 'UNCONFIRMED', logLine: '12:00 - Fac(80,90) Connect to Tycoon: 123456' });
     });
 
     it('reports an unreadable initial-supplier page after the undo as a difference', async () => {
@@ -7800,11 +7824,183 @@ describe('inspector connections & trade (#1153)', () => {
       expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/after: \(unreadable: .*cacheUnavailable/);
     });
 
-    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+    it('is UNPROVEN and writes nothing when the chemical fixture is missing', async () => {
       const world = new ConnWorld();
-      world.found.industry = false;
+      world.found.chemical = false;
       arrange(world);
       expect((await run('quick-trade-roundtrip')).status).toBe('UNPROVEN');
+      expect(setProps(world)).toEqual([]);
+    });
+  });
+
+  /** The plant's entry in the initial-supplier list. */
+  function fixturesInitialSupplier(world: ConnWorld): boolean {
+    return world.auto.fluids.some(f => f.suppliers.some(s => s.facilityId === '80,90,'));
+  }
+
+  describe('the chemical fixture and its reset (#1293)', () => {
+    const FOREIGN = { x: 300, y: 300, name: 'Their Mine', company: 'Other Co' };
+
+    /** Industry = the mine (Chemicals in, Raw Chemicals out); plant = its opposite, found linked. */
+    function chemWorld(): ConnWorld {
+      const world = new ConnWorld();
+      const { industry, chemical, warehouse } = world.facs;
+      industry.supplies = [sg('Chemicals')];
+      industry.products = [pg('Raw Chemicals')];
+      chemical.supplies = [sg('Raw Chemicals')];
+      chemical.products = [pg('Chemicals')];
+      world.search = (direction, fluid) =>
+        (direction === 'input' && fluid === 'Chemicals') || (direction === 'output' && fluid === 'Raw Chemicals')
+          ? [{ facilityName: chemical.name, companyName: OWN_CO, x: chemical.x, y: chemical.y, town: 'Helartia' }]
+          : [];
+      world.link(chemical, 'supplies', 'Raw Chemicals', industry);
+      world.link(chemical, 'supplies', 'Raw Chemicals', FOREIGN);
+      world.link(chemical, 'products', 'Chemicals', warehouse);
+      world.auto.fluids.push({
+        fluidName: 'Raw Chemicals', fluidId: 'Raw Chemicals', hireTradeCenter: false, onlyWarehouses: false, storable: true,
+        suppliers: [{ facilityName: 'Chemical Plant', facilityId: '80,90,', companyName: OWN_CO }],
+      });
+      return world;
+    }
+
+    const RESET: unknown[] = [
+      [80, 90, 'RDODisconnectFromTycoon', { kind: '1' }],
+      [80, 90, 'RDODisconnectInput', { fluidId: 'Raw Chemicals', connectionList: '30,40,' }],
+    ];
+    const writesOf = (world: ConnWorld) => world.writes.map(w => [w.x, w.y, w.property, w.params]);
+
+    it.each(['supplier-hire-fire', 'client-hire-remove', 'connect-on-map', 'quick-trade-roundtrip'])(
+      '%s resets own links only — never the foreign one — and records no pending restore',
+      async flow => {
+        const world = chemWorld();
+        const lock = cleanLock();
+        arrange(world);
+        await run(flow, lock);
+        expect(writesOf(world).slice(0, 2)).toEqual(RESET);
+        expect(world.writes.some(w => w.params.connectionList?.includes('300,300'))).toBe(false);
+        expect(keysOf(world.facs.chemical.supplies[0])).toEqual(['300,300']);
+        expect(fixturesInitialSupplier(world)).toBe(false);
+        expect(lock.read().pendingRestores).toEqual([]);
+      },
+    );
+
+    it('supplier-hire-fire hires the plant on the Chemicals input of the industry fixture, then fires it', async () => {
+      const world = chemWorld();
+      arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('PASS');
+      expect(writesOf(world)).toEqual([
+        ...RESET,
+        [30, 40, 'RDOConnectInput', { fluidId: 'Chemicals', connectionList: '80,90,' }],
+        [30, 40, 'RDODisconnectInput', { fluidId: 'Chemicals', connectionList: '80,90,' }],
+      ]);
+    });
+
+    it('client-hire-remove adds the plant as a Raw Chemicals client of the industry fixture, then removes it', async () => {
+      const world = chemWorld();
+      arrange(world);
+      const result = await run('client-hire-remove');
+      expect(result.status).toBe('PASS');
+      expect(writesOf(world)).toEqual([
+        ...RESET,
+        [30, 40, 'RDOConnectOutput', { fluidId: 'Raw Chemicals', connectionList: '80,90,' }],
+        [30, 40, 'RDODisconnectOutput', { fluidId: 'Raw Chemicals', connectionList: '80,90,' }],
+      ]);
+    });
+
+    it('connect-on-map connects the industry and the plant — never the warehouse', async () => {
+      const world = chemWorld();
+      arrange(world);
+      const result = await run('connect-on-map');
+      expect(result.status).toBe('PASS');
+      const connects = world.requests.filter(r => r.type === WsMessageType.REQ_CONNECT_FACILITIES);
+      expect(connects).toEqual([expect.objectContaining({ sourceX: 30, sourceY: 40, targetX: 80, targetY: 90 })]);
+      expect(world.writes.slice(2).some(w => w.x === 50 && w.y === 60)).toBe(false);
+    });
+
+    it('quick-trade-roundtrip runs on the plant — never on the industry fixture', async () => {
+      const world = chemWorld();
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('PASS');
+      expect(writesOf(world)).toEqual([
+        ...RESET,
+        [80, 90, 'RDOConnectToTycoon', { kind: '1' }],
+        [80, 90, 'RDODisconnectFromTycoon', { kind: '1' }],
+      ]);
+      expect(world.writes.some(w => w.x === 30 && w.y === 40)).toBe(false);
+    });
+
+    it.each(
+      ['supplier-hire-fire', 'client-hire-remove', 'connect-on-map', 'quick-trade-roundtrip'].flatMap(flow =>
+        ['none in Helartia', 'under construction'].map(reason => [flow, reason] as const),
+      ),
+    )('%s is UNPROVEN with nothing sent when the chemical fixture is %s', async (flow, reason) => {
+      const world = chemWorld();
+      world.found.chemical = false;
+      world.reasons.chemical = reason;
+      arrange(world);
+      const result = await run(flow);
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven).toContainEqual(`chemical fixture — ${reason}`);
+      expect(setProps(world)).toEqual([]);
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_CONNECT_FACILITIES)).toBe(false);
+    });
+
+    it('ends UNPROVEN when the reset does not take after one retry, and hires nothing', async () => {
+      const world = chemWorld();
+      world.inert.add('RDODisconnectInput');
+      arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^RDOConnectInput — chemical fixture reset did not take: .*30,40/);
+      expect(world.writes.filter(w => w.property === 'RDODisconnectInput')).toHaveLength(2);
+      expect(world.writes.some(w => w.property === 'RDOConnectInput')).toBe(false);
+    });
+
+    it('names every own link left, and the initial-supplier entry, when nothing of the reset takes', async () => {
+      const world = chemWorld();
+      world.inert.add('RDODisconnectInput');
+      world.inert.add('RDODisconnectFromTycoon');
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toBe(
+        'RDOConnectToTycoon — chemical fixture reset did not take: Raw Chemicals from 30,40 | ' +
+          'client Chemicals: Storage (50,60) of SPO_test3 - Green | initial supplier',
+      );
+      expect(world.writes.filter(w => w.property === 'RDODisconnectFromTycoon')).toHaveLength(2);
+      expect(world.writes.some(w => w.property === 'RDOConnectToTycoon')).toBe(false);
+    });
+
+    it('goes on when the reset takes on its retry', async () => {
+      const world = chemWorld();
+      world.inert.add('RDODisconnectInput');
+      const respond = world.respond.bind(world);
+      world.respond = msg => {
+        const answer = respond(msg);
+        if ((msg as { propertyName?: string }).propertyName === 'RDODisconnectInput') world.inert.delete('RDODisconnectInput');
+        return answer;
+      };
+      arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('PASS');
+      expect(writesOf(world).slice(0, 3)).toEqual([...RESET, RESET[1]]);
+    });
+
+    it.each<[string, (world: ConnWorld) => void, RegExp]>([
+      ['a plant gate lists more links than it read', w => { w.facs.chemical.supplies[0].connectionCount = 4; }, /supplies:Raw Chemicals/],
+      ['a plant gate has no header', w => { w.facs.chemical.supplies[0].metaFluid = undefined; }, /supplies:Raw Chemicals/],
+      ['a plant product gate lists more clients than it read', w => { w.facs.chemical.products[0].connectionCount = 3; }, /products:Chemicals/],
+      ['the initial-supplier list cannot be read', w => { w.auto = { fluids: [], cacheUnavailable: true }; }, /initial suppliers: .*cacheUnavailable/],
+    ])('sends nothing when %s', async (_label, arrange_, reason) => {
+      const world = chemWorld();
+      arrange_(world);
+      arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('UNPROVEN');
+      expect(result.unproven[0]).toMatch(/^RDOConnectInput — chemical fixture reset: cannot see every link of Chemical Plant \(80,90\) — /);
+      expect(result.unproven[0]).toMatch(reason);
       expect(setProps(world)).toEqual([]);
     });
   });

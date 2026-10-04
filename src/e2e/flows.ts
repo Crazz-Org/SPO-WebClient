@@ -6081,6 +6081,114 @@ const supplierSearchRead: Flow = {
   },
 };
 
+/** What a read of the chemical fixture shows that a reset must remove — or could not see. */
+interface ChemicalLinks {
+  /** Own suppliers, by supply fluid. */
+  ownSupplies: { fluid: string; keys: string[] }[];
+  /** Own clients, as `<gate>: <linkLabel>`. */
+  ownClients: string[];
+  initialSupplier: boolean;
+  /** Gates (or the initial-supplier list) that could not be read in full. */
+  unread: string[];
+}
+
+function chemicalClean(s: ChemicalLinks): boolean {
+  return s.ownSupplies.length === 0 && s.ownClients.length === 0 && !s.initialSupplier && s.unread.length === 0;
+}
+
+function chemicalRemains(s: ChemicalLinks): string {
+  return [
+    ...s.ownSupplies.map(g => `${g.fluid} from ${g.keys.join(' ')}`),
+    ...s.ownClients.map(c => `client ${c}`),
+    ...(s.initialSupplier ? ['initial supplier'] : []),
+    ...s.unread.map(u => `unread ${u}`),
+  ].join(' | ');
+}
+
+/**
+ * Bring the chemical fixture back to no own link (#1293) before a link flow uses it. A new plant
+ * arrives linked: its inputs are hired to the tycoon's initial suppliers (`TTycoon.AutoConnectFacility`,
+ * Kernel/Kernel.pas:12346-12390) and every own warehouse is linked both ways (`SearchOwner`,
+ * Kernel/World.pas:5216-5238). Only the four link flows use this fixture, so this is self-heal of
+ * an isolated target (maintainer rule 2026-10-01, #1236): reset from whatever state it is found in,
+ * no pending restore. Every link removed has an SPO_test3 facility on both ends, and a disconnect
+ * removes both sides (`TGate.DisconnectFrom`, Kernel/Kernel.pas:6794-6799). `RDODisconnectFromTycoon`
+ * drops the plant's outputs from every own facility's matching input (:4581-4600) and unregisters it
+ * as an initial supplier (:4606-4607); `RDODisconnectInput` carries own keys only — a foreign link is
+ * never touched (FOREIGN_WHY). Returns false after recording the flow unproven; one retry.
+ */
+async function resetChemical(
+  session: LiveSession,
+  fx: OwnFixture,
+  ctx: FlowContext,
+  assertions: Assertions,
+  member: string,
+): Promise<boolean> {
+  const own = await listTycoonFacilities(session);
+  const ownCompanies = new Set(own.companies);
+  const ownLots = new Set(own.facilities.map(f => `${f.x},${f.y}`));
+  const isOwn = (c: BuildingConnectionData): boolean => ownCompanies.has(c.companyName) || ownLots.has(`${c.x},${c.y}`);
+
+  const readState = async (): Promise<ChemicalLinks> => {
+    const state: ChemicalLinks = { ownSupplies: [], ownClients: [], initialSupplier: false, unread: [] };
+    for (const stub of await gateStubs(session, fx, 'supplies')) {
+      const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
+      if (!supply?.metaFluid || supply.connectionCount !== supply.connections.length) {
+        state.unread.push(`supplies:${stub.name}`);
+        continue;
+      }
+      const keys = [...new Set(supply.connections.filter(isOwn).map(c => `${c.x},${c.y}`))];
+      if (keys.length > 0) state.ownSupplies.push({ fluid: supply.metaFluid, keys });
+    }
+    for (const stub of await gateStubs(session, fx, 'products')) {
+      const product = (await gateConnections(session, fx, 'products', stub)).product;
+      if (!product || product.connectionCount !== product.connections.length) {
+        state.unread.push(`products:${stub.name}`);
+        continue;
+      }
+      for (const c of product.connections) if (isOwn(c)) state.ownClients.push(`${stub.name}: ${linkLabel(c)}`);
+    }
+    try {
+      state.initialSupplier = initialSupplierAt(await readAutoConnections(session), fx.x, fx.y);
+    } catch (err: unknown) {
+      state.unread.push(`initial suppliers: ${toErrorMessage(err)}`);
+    }
+    return state;
+  };
+
+  const apply = async (state: ChemicalLinks): Promise<void> => {
+    if (state.initialSupplier || state.ownClients.length > 0) {
+      await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: QUICK_TRADE_KIND });
+    }
+    for (const g of state.ownSupplies) {
+      await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectInput', '0', {
+        fluidId: g.fluid,
+        connectionList: connectionList(g.keys),
+      });
+    }
+  };
+
+  const first = await readState();
+  if (first.unread.length > 0) {
+    assertions.unproven(
+      member,
+      `chemical fixture reset: cannot see every link of ${fixtureLabel(fx)} — ${first.unread.join(' | ')}; nothing sent`,
+    );
+    return false;
+  }
+  if (chemicalClean(first)) return true;
+
+  let last = first;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await apply(last);
+    const polled = await pollUntil(readState, chemicalClean, ctx);
+    if (polled.ok) return true;
+    last = polled.last;
+  }
+  assertions.unproven(member, `chemical fixture reset did not take: ${chemicalRemains(last)}`);
+  return false;
+}
+
 /** One side of a hire: a supplier on an input gate, or a client on an output gate. */
 interface HireSide {
   flow: string;
@@ -6096,9 +6204,10 @@ interface HireSide {
 }
 
 /**
- * Hire one own counterpart on a gate of the industry fixture, then fire it. The candidate is
- * SPO_test3's own facility in Helartia and not already connected; the gate must list exactly its
- * snapshot again after the undo.
+ * Hire one own counterpart on a gate of the industry fixture, then fire it. The chemical fixture
+ * (#1293) is reset first (`resetChemical`) and is the expected counterpart: Chemicals for a supplier,
+ * Raw Chemicals for a client. The candidate is SPO_test3's own facility in Helartia and not already
+ * connected; the gate must list exactly its snapshot again after the undo.
  */
 async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
   const assertions = new Assertions();
@@ -6107,6 +6216,9 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
   try {
     const fx = await ownFixture(session, 'industry', assertions);
     if (!fx) return report(side.flow, assertions, probes, session);
+    const chem = await ownFixture(session, 'chemical', assertions);
+    if (!chem) return report(side.flow, assertions, probes, session);
+    if (!(await resetChemical(session, chem, ctx, assertions, side.connect))) return report(side.flow, assertions, probes, session);
 
     const refusals: string[] = [];
     let target: { name: string; fluid: string; candidate: ConnectionSearchResult } | undefined;
@@ -6218,12 +6330,12 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
   }
 }
 
-/** Hire an own supplier on an input gate of the industry fixture, then fire it. NIGHTLY_ONLY (routing.ts). */
+/** Hire an own supplier (the chemical fixture) on an input gate of the industry fixture, then fire it. NIGHTLY_ONLY (routing.ts). */
 const supplierHireFire: Flow = {
   name: 'supplier-hire-fire',
   what:
-    "hire an own supplier (Helartia, SPO_test3's company) on an input of the industry fixture -> Input connected: " +
-    'line + the gate lists it -> fire it -> the gate lists exactly its snapshot',
+    "reset the chemical fixture, then hire an own supplier (Helartia, SPO_test3's company; the chemical fixture " +
+    'expected) on an input of the industry fixture -> Input connected: line + the gate lists it -> fire it -> the gate lists exactly its snapshot',
   mutates: true,
   run: ctx =>
     runHire(
@@ -6241,12 +6353,12 @@ const supplierHireFire: Flow = {
     ),
 };
 
-/** Add an own client on an output gate of the industry fixture, then remove it. NIGHTLY_ONLY (routing.ts). */
+/** Add an own client (the chemical fixture) on an output gate of the industry fixture, then remove it. NIGHTLY_ONLY (routing.ts). */
 const clientHireRemove: Flow = {
   name: 'client-hire-remove',
   what:
-    "add an own client (Helartia, SPO_test3's company) on an output of the industry fixture -> Output connected: " +
-    'line + the gate lists it -> remove it -> the gate lists exactly its snapshot',
+    "reset the chemical fixture, then add an own client (Helartia, SPO_test3's company; the chemical fixture " +
+    'expected) on an output of the industry fixture -> Output connected: line + the gate lists it -> remove it -> the gate lists exactly its snapshot',
   mutates: true,
   run: ctx =>
     runHire(
@@ -6278,14 +6390,15 @@ function sharedFluids(from: GateLinks, to: GateLinks): string[] {
 
 /**
  * Connect on the map (`TWorld.RDOConnectFacilities`, Kernel/World.pas:3710-3726): the industry and
- * warehouse fixtures, both SPO_test3's own. It hires every matching fluid in both directions
+ * chemical fixtures (#1293), both SPO_test3's own; the chemical fixture is reset first
+ * (`resetChemical`). It hires every matching fluid in both directions
  * (Kernel/Kernel.pas:5470-5513), so every gate of both facilities is snapshotted and every new
  * link is undone. NIGHTLY_ONLY (routing.ts).
  */
 const connectOnMap: Flow = {
   name: 'connect-on-map',
   what:
-    'REQ_CONNECT_FACILITIES between the industry and warehouse fixtures -> a new link read back -> every new link ' +
+    'REQ_CONNECT_FACILITIES between the industry and chemical fixtures (the chemical one reset first) -> a new link read back -> every new link ' +
     'disconnected -> both facilities\' inputs and outputs equal their snapshot',
   mutates: true,
   run: async ctx => {
@@ -6294,14 +6407,17 @@ const connectOnMap: Flow = {
     const session = await login(PRIMARY_ACCOUNT);
     try {
       const industry = await ownFixture(session, 'industry', assertions);
-      const warehouse = industry ? await ownFixture(session, 'warehouse', assertions) : undefined;
-      if (!industry || !warehouse) return report('connect-on-map', assertions, probes, session);
+      const chemical = industry ? await ownFixture(session, 'chemical', assertions) : undefined;
+      if (!industry || !chemical) return report('connect-on-map', assertions, probes, session);
+      if (!(await resetChemical(session, chemical, ctx, assertions, 'ConnectFacilities'))) {
+        return report('connect-on-map', assertions, probes, session);
+      }
 
       const snapIndustry = await readGateLinks(session, industry, BOTH_TABS);
-      const snapWarehouse = await readGateLinks(session, warehouse, BOTH_TABS);
+      const snapChemical = await readGateLinks(session, chemical, BOTH_TABS);
       const incomplete = [
         ...Object.entries(snapIndustry).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(industry)} ${gate}`),
-        ...Object.entries(snapWarehouse).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(warehouse)} ${gate}`),
+        ...Object.entries(snapChemical).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(chemical)} ${gate}`),
       ];
       if (incomplete.length > 0) {
         assertions.unproven(
@@ -6310,11 +6426,11 @@ const connectOnMap: Flow = {
         );
         return report('connect-on-map', assertions, probes, session);
       }
-      const shared = sharedFluids(snapIndustry, snapWarehouse);
+      const shared = sharedFluids(snapIndustry, snapChemical);
       if (shared.length === 0) {
         assertions.unproven(
           'ConnectFacilities',
-          `${fixtureLabel(industry)} and ${fixtureLabel(warehouse)} share no fluid on opposite gates — ConnectFacilities ` +
+          `${fixtureLabel(industry)} and ${fixtureLabel(chemical)} share no fluid on opposite gates — ConnectFacilities ` +
             'hires only a matching fluid (Kernel/Kernel.pas:5470-5513), so nothing is sent',
         );
         return report('connect-on-map', assertions, probes, session);
@@ -6323,11 +6439,11 @@ const connectOnMap: Flow = {
       const read = async (): Promise<string> =>
         combinedState([
           linkState(snapIndustry, await readGateLinks(session, industry, BOTH_TABS)),
-          linkState(snapWarehouse, await readGateLinks(session, warehouse, BOTH_TABS)),
+          linkState(snapChemical, await readGateLinks(session, chemical, BOTH_TABS)),
         ]);
       const url = await survivalUrl(ctx);
       const probe = await roundTripProbe(ctx, url, {
-        what: `Connect ${fixtureLabel(industry)} with ${fixtureLabel(warehouse)} (shared: ${shared.join(', ')})`,
+        what: `Connect ${fixtureLabel(industry)} with ${fixtureLabel(chemical)} (shared: ${shared.join(', ')})`,
         member: 'ConnectFacilities',
         read,
         testValue: () => 'new-links',
@@ -6337,8 +6453,8 @@ const connectOnMap: Flow = {
               type: WsMessageType.REQ_CONNECT_FACILITIES,
               sourceX: industry.x,
               sourceY: industry.y,
-              targetX: warehouse.x,
-              targetY: warehouse.y,
+              targetX: chemical.x,
+              targetY: chemical.y,
             },
             WsMessageType.RESP_CONNECT_FACILITIES,
             TIMEOUTS.login,
@@ -6348,7 +6464,7 @@ const connectOnMap: Flow = {
         restore: async () => {
           for (const [fx, snap] of [
             [industry, snapIndustry],
-            [warehouse, snapWarehouse],
+            [chemical, snapChemical],
           ] as const) {
             for (const g of gainedLinks(snap, await readGateLinks(session, fx, BOTH_TABS))) {
               await setBuildingProperty(
@@ -6636,12 +6752,13 @@ const QUICK_TRADE_KIND = '1';
  * Quick Trade (`TFacility.RDOConnectToTycoon`, Kernel/Kernel.pas:4521) and its undo
  * (`RDODisconnectFromTycoon`), which reaches every SPO_test3 facility (:4537-4553, :4593-4600) and
  * unregisters the fixture as an initial supplier (:4564-4565, :4606-4607) — so it runs only
- * behind three data guards. NIGHTLY_ONLY (routing.ts).
+ * behind three data guards. Its target is the chemical fixture (#1293), reset first
+ * (`resetChemical`); the industry fixture is never touched. NIGHTLY_ONLY (routing.ts).
  */
 const quickTradeRoundTrip: Flow = {
   name: 'quick-trade-roundtrip',
   what:
-    "RDOConnectToTycoon on SPO_test3's industry fixture (warehouses) behind three guards -> Connect to Tycoon: line + " +
+    "RDOConnectToTycoon on SPO_test3's chemical fixture (reset first; warehouses) behind three guards -> Connect to Tycoon: line + " +
     'new links -> RDODisconnectFromTycoon -> the output links and the initial-supplier list equal their snapshots',
   mutates: true,
   run: async ctx => {
@@ -6649,8 +6766,11 @@ const quickTradeRoundTrip: Flow = {
     const probes: ProbeResult[] = [];
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      const fx = await ownFixture(session, 'industry', assertions);
+      const fx = await ownFixture(session, 'chemical', assertions);
       if (!fx) return report('quick-trade-roundtrip', assertions, probes, session);
+      if (!(await resetChemical(session, fx, ctx, assertions, 'RDOConnectToTycoon'))) {
+        return report('quick-trade-roundtrip', assertions, probes, session);
+      }
       const own = await listTycoonFacilities(session);
       const ownCompanies = new Set(own.companies);
       const ownLots = new Set(own.facilities.map(f => `${f.x},${f.y}`));

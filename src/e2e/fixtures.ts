@@ -69,7 +69,21 @@ import { sleep as defaultSleep } from './sleep';
 // 1. The kind table
 // ---------------------------------------------------------------------------------------------
 
-export type FixtureKindId = 'industry' | 'store' | 'warehouse' | 'residential' | 'research' | 'bank' | 'tv';
+export type FixtureKindId =
+  | 'industry'
+  | 'store'
+  | 'warehouse'
+  | 'residential'
+  | 'research'
+  | 'bank'
+  | 'tv'
+  | 'chemical';
+
+/**
+ * `FID_Chemical = 44` (`Model Extensions/FacIds.pas:35`) — the Chemical Plant, the `chemical`
+ * kind. Chemical Mine 1, the industry fixture, is `FID_ChemicalMine = 203` (`:53`).
+ */
+export const FID_CHEMICAL = 44;
 
 export interface FixtureCandidate {
   facilityClass: string;
@@ -89,6 +103,18 @@ export interface FixtureKind {
    * the classes the build menu offers are ever picked, so every cluster is listed.
    */
   candidates: readonly FixtureCandidate[];
+  /**
+   * The facility kind (`FacilityDimensions.facId`) a holding must, or must not, read. `industry`
+   * and `chemical` carry the same three groups, so the groups alone cannot tell them apart (#1293).
+   */
+  facId?: { only?: number; refuse?: number };
+}
+
+/** Whether a holding reading `facId` may be the kind's fixture. An absent `facId` passes only a kind with no `only`. */
+export function acceptsFacId(kind: FixtureKind, facId: number | undefined): boolean {
+  if (kind.facId?.only !== undefined) return facId === kind.facId.only;
+  if (kind.facId?.refuse !== undefined) return facId !== kind.facId.refuse;
+  return true;
 }
 
 export const FIXTURE_KINDS: readonly FixtureKind[] = [
@@ -96,6 +122,7 @@ export const FIXTURE_KINDS: readonly FixtureKind[] = [
     id: 'industry',
     groups: ['indGeneral', 'supplies', 'products'],
     neededBy: '#1152, #1153, #1154',
+    facId: { refuse: FID_CHEMICAL },
     candidates: [
       { facilityClass: 'PGISmallFarm', why: 'IndGeneral,Products,Supplies — PGI/PGIPack1.dpr:1626' },
       { facilityClass: 'MarikoSmallFarm', why: 'IndGeneral,Products,Supplies — Mariko/MarikoPack1.dpr:1405' },
@@ -170,6 +197,24 @@ export const FIXTURE_KINDS: readonly FixtureKind[] = [
       { facilityClass: 'MarikoTVStation', why: 'TVGeneral — Mariko/MarikoPack1.dpr:3376' },
       { facilityClass: 'MoabTVStation', why: 'TVGeneral — Moab/MoabPack1.dpr:2367' },
       { facilityClass: 'DissTVStation', why: 'TVGeneral — Dissidents/DissidentPack1.dpr:3430' },
+    ],
+  },
+  {
+    // TChemicalBlock: Raw Chemicals in (StdBlocks/Chemical.pas:67-80), Chemicals out (:89-98) —
+    // the industry fixture's (Chemical Mine 1) exact opposite, so the link flows have a counterpart.
+    // Kept last: the test world hands out lots in table order.
+    id: 'chemical',
+    groups: ['indGeneral', 'supplies', 'products'],
+    neededBy: '#1293',
+    facId: { only: FID_CHEMICAL },
+    candidates: [
+      { facilityClass: 'DissChemicalSmall', why: 'FID_Chemical — Dissidents/DissidentPack1.dpr:1385' },
+      { facilityClass: 'DissChemical', why: 'FID_Chemical — Dissidents/DissidentPack1.dpr:1423' },
+      { facilityClass: 'PGISmallChemical', why: 'FID_Chemical — PGI/PGIPack1.dpr:1705' },
+      { facilityClass: 'PGIChemical', why: 'FID_Chemical — PGI/PGIPack1.dpr:1744' },
+      { facilityClass: 'MarikoSmallChemical', why: 'FID_Chemical — Mariko/MarikoPack1.dpr:1482' },
+      { facilityClass: 'MarikoChemical', why: 'FID_Chemical — Mariko/MarikoPack1.dpr:1521' },
+      { facilityClass: 'MoabChemical', why: 'FID_Chemical — Moab/MoabPack1.dpr:991' },
     ],
   },
 ];
@@ -594,6 +639,8 @@ export interface Holding {
   visualClass: string;
   name: string;
   tabIds: string[];
+  /** `FacilityDimensions.facId` of the visual class — tells `industry` from `chemical` (#1293). */
+  facId?: number;
 }
 
 export interface Site {
@@ -620,6 +667,7 @@ async function readDirectory(session: LiveSession, ref: DirectoryRef): Promise<D
  * `TycoonCompany.asp` → `TycoonFacilities.asp`), descending only into its own company
  * (`session.company`, which `pickCompany` keeps off a role company). Each row must read Helartia
  * on TOWNS and carry SPO_test3's tycoon id on its lot; a construction-state class is a site.
+ * Each holding carries its visual class's `facId`, read from the same `facilityDimensions` map.
  */
 export async function scanHoldings(session: LiveSession): Promise<Holdings> {
   const tycoon = PRIMARY_ACCOUNT.username;
@@ -652,6 +700,7 @@ export async function scanHoldings(session: LiveSession): Promise<Holdings> {
         visualClass: b.visualClass,
         name: row.name,
         tabIds: details.tabs.map(t => t.id),
+        facId: dims[b.visualClass]?.facId,
       });
     }
   }
@@ -665,7 +714,7 @@ export interface FixtureLookup {
 }
 
 export function pickFixture(holdings: Holding[], sites: Site[], kind: FixtureKind): FixtureLookup {
-  const hit = holdings.find(h => carriesKind(h.tabIds.map(id => ({ id })), kind));
+  const hit = holdings.find(h => carriesKind(h.tabIds.map(id => ({ id })), kind) && acceptsFacId(kind, h.facId));
   if (hit) return { kind: kind.id, found: { x: hit.x, y: hit.y, visualClass: hit.visualClass, name: hit.name } };
   // A site cannot be tied to a class: nothing read later says what it will become.
   if (sites.length > 0) return { kind: kind.id, reason: 'under construction' };
@@ -926,6 +975,17 @@ export async function ensureFixtures(session: LiveSession, deps: FixtureDeps = {
         });
         continue;
       }
+      const facId = dims[vc]?.facId;
+      if (!acceptsFacId(kind, facId)) {
+        set({
+          status: 'FAIL',
+          ...base,
+          visualClass: vc,
+          logLine: line,
+          reason: `candidate ${info.facilityClass} (visual class ${vc}) built a facility with facId ${String(facId ?? 'absent')}, which the ${kind.id} kind does not take — a wrong FIXTURE_KINDS entry`,
+        });
+        continue;
+      }
     }
     set({ status: 'built', ...base, visualClass: vc, logLine: line });
   }
@@ -961,6 +1021,11 @@ export const RESEARCH_UNLOCKS: readonly ResearchUnlock[] = [
     facilityClass: 'DissTVStation',
     inventionId: 'BasicTelevision',
     why: "TechnologyKind := tidInventionKind_Television — Model Extensions/Dissidents/DissidentPack1.dpr:3441; 'TV', Model Extensions/Standards.pas:37",
+  },
+  {
+    facilityClass: 'DissChemicalSmall',
+    inventionId: 'ChemLic',
+    why: "TechnologyKind := tidLicence_Chemical — Model Extensions/Dissidents/DissidentPack1.dpr:1395; 'Chemical', Model Extensions/Standards.pas:87",
   },
 ];
 
