@@ -121,14 +121,13 @@ regression detector and it is where session-lifecycle breakage surfaces first.
 
 Unmapped path -> the gate fails closed and asks for a routing entry. Silence is never a pass.
 
-Five exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`File.pas:Line`,
-`file.asp:Line` or `#<issue>`), where a flow or a handler departs from that table;
-`src/e2e/routing.test.ts` holds all five.
+Six exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`File.pas:Line`,
+`file.asp:Line`, `#<issue>`, or a link), where a flow or a handler departs from that table;
+`src/e2e/routing.test.ts` holds all six.
 
 - **`NIGHTLY_ONLY`** lists the flows no routing rule requires — a data-gated flow (a required
   `UNPROVEN` fails the gate), a reading that asserts nothing, or the fixture builder
-  `fixtures-ensure`, which builds only when a fixture is missing (§9), or a flow the maintainer
-  parked (§7, "Parked flows"). The nightly still runs
+  `fixtures-ensure`, which builds only when a fixture is missing (§9). The nightly still runs
   them; every other flow must be reached by some tracked path. A diff that changes such a
   flow's own body does require it (below).
 - **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
@@ -147,6 +146,10 @@ Five exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`F
   handler file.
 - **`NOT_ROUTED`** maps a handler file to the requests a gate flow does send but that file's rule
   leaves out (a rule pinned by an exact routing test).
+- **`SERVER_QUARANTINE`** lists the flows a known live-server fault blocks, each with a `reason`,
+  a `link`, a `lift` condition and the date `added`. It sits on top of the five sets above, which
+  describe a healthy server: `route()` drops a quarantined flow from `required` and says so in its
+  reasons (§7, "Server quarantine").
 
 The handler ratchet (#1187) derives the `WsMessageType` requests each handler file serves or
 sends — server session handlers through `spo_session.ts` and the ws-handlers registry, ws-handlers
@@ -162,13 +165,15 @@ one and drives **routed ∪ changed ∪ declared** (`scripts/verify-gate.js`, st
 - **Changed** — `src/e2e/bench/changed-flows.ts` reads the diff of the seven flow sources
   (`src/e2e/flows.ts`, `fixtures.ts`, `research.ts`, `probe.ts`, `session.ts`, `ws-driver.ts`,
   `live-log.ts`). A hunk inside a `FLOWS` entry requires that flow — an edited body, an added
-  flow, a renamed flow under its new name — even when it is `NIGHTLY_ONLY`. A hunk inside a
+  flow, a renamed flow under its new name — a `NIGHTLY_ONLY` one included, but never one under
+  server quarantine (§7): that one is listed in `routing.quarantined`, not required. A hunk inside a
   shared helper requires every flow that reaches the helper, directly or through another
   helper: the related flows, never a full nightly. A `NIGHTLY_ONLY` flow reached only through
   a helper is listed in the artifact (`routing.changedFlowsNotDriven`), not driven. A diff the
   mapping cannot pair with the `FLOWS` array fails the gate closed.
 - **Declared** — `npm run gate -- --also-flows=a,b` adds the card's own flows to the routed
-  set (a union).
+  set (a union). A server-quarantined name is filtered out first and recorded in
+  `routing.quarantined`, with a reason line.
 
 When either set is non-empty the spine is added too. All of them land in `routing.required`,
 so a flow-only diff is no longer static-only: an undriven required flow is `BLOCKED`, and a
@@ -237,6 +242,9 @@ A lag (`OB-29`) is polled out up to the spec's `boundMs`; a read-back that never
 value FAILs, as does a missing line. A member with a marker must carry a log part; a member
 with none (e.g. `RDOPayOff`, `RDOSendMoney`) is proven by the read-back alone. The restore is
 proven the same way: its read-back must reach the original, or the pending restore is kept.
+When the restore write throws, the read-back is still polled: a confirmed original clears the
+pending restore (a server that refused both writes left the world unchanged), and the probe
+still FAILs.
 
 The read-back is any authoritative channel, named in the spec with why it is authoritative —
 an object-cache property re-read after its refresh, a live RDO `get`, a server-generated mail
@@ -432,21 +440,52 @@ capability — and then the gate demands the flow.
 failure, not an exclusion — and the `bench/gate` status shows the count as
 `— N unproven flow(s)`.
 
-### Parked flows — never built, or out of the required set, by maintainer decision
+### Server quarantine — a known live-server fault
 
-A flow no account can ever exercise is not kept failing. Either it is not written at all, and
-its handler stays in `FALLBACK_ONLY` (`src/e2e/routing.ts`); or it is written but parked out of
-every gate's required set through `NIGHTLY_ONLY` (`src/e2e/routing.ts`) — it still runs in the
-nightly and is reported there, and no gate requires it. Either way it comes back only when the
-reason below stops holding.
+`SERVER_QUARANTINE` (`src/e2e/routing.ts`) lists the flows a **known fault on the live server**
+blocks — a fault the client cannot fix. It is temporary, and a maintainer decision (2026-10-04,
+[#1310](https://github.com/Crazz-Org/SPO-WebClient/issues/1310)). It is **never** for a code
+defect: a failing flow whose cause is in this repository is fixed, not quarantined. Each entry
+carries a `reason`, an `https://` `link` to where the fault is recorded, a `lift` condition, and
+the date `added`; it is deleted the day its lift condition holds. The routing rules keep the flow
+as on a healthy server, so deleting the entry is the only edit that lifts the quarantine.
+
+What a quarantined flow does:
+
+- **The nightly still runs it**, and prints its real outcome. When the nightly's only failures
+  are FAILs of quarantined flows, the run is reported `PASS`; each such flow keeps its real
+  `status` in the artifact and gains `quarantined: { reason, link, lift }`. A FAIL of any other
+  flow still FAILs the run.
+- **No gate requires it** — not by routing (`route()` drops it and says why in its reasons), not
+  as a changed flow, even on a change to its own body, and not when `--also-flows` declares it.
+  The changed and declared names are listed in `routing.quarantined` (§10).
+- **An explicit `--flows=` that names it still drives and judges it**: that is how the lift
+  condition is checked (`npm run test:live -- --flows=<flow>`).
+- **It never excuses a dirty world.** A run that leaves a pending restore FAILs, whatever flow
+  left it.
+
+Where it is printed: every gate and every nightly ends its summary with a
+`Server quarantine (N):` block — each entry's flow, reason, link, lift condition, date added and
+the flow's real outcome (or `not run`) — so the list stays visible even when nothing fails. The
+nightly's `latest.json` lists the quarantined flows it drove under `quarantined`
+(`doc/bench-worker.md` §8).
+
+| Flow | Fault | Link | Lift when | Added |
+|---|---|---|---|---|
+| `portrait-roundtrip` | the picture server cannot store an upload since the 2026-10-02 maintenance (`SERVER_ERROR The picture server could not store the picture (ERROR after the transfer)`) | [#1310](https://github.com/Crazz-Org/SPO-WebClient/issues/1310) | `npm run test:live -- --flows=portrait-roundtrip` PASSes on the bench | 2026-10-04 |
+| `newspaper-board-read` | every post to the Helartia Herald (`boardmsg.asp?action=post`) answers HTTP 500 server-side, so no column can be seeded | [#1260 comment](https://github.com/Crazz-Org/SPO-WebClient/issues/1260#issuecomment-5973821564) | a post to the Helartia Herald succeeds, so #1260's seed can land | 2026-10-04 |
+
+### Parked flows — never built, by maintainer decision
+
+A flow no account can ever exercise is not kept failing: it is not written at all, and its
+handler stays in `FALLBACK_ONLY` (`src/e2e/routing.ts`). It comes back only when the reason
+below stops holding.
 
 | Flow | Why no live drive is possible | Covered by | Revisit when |
 |---|---|---|---|
 | `tutorial-read` (read the tutorial assignment, next/back) | No E2E account holds a tutorial, and none can be given one. The server builds a tutorial only when a tycoon is **created** on a world whose `Tutorial` setting is `enabled` (default `disabled`, `Kernel/Kernel.pas:10907-10908`), and skips it if the tycoon holds a role, has 10+ nobility points, or carries the `tutorial` cookie (`Kernel/Kernel.pas:12959`). It is deleted for good, cookie `tutorial=done`, once the tycoon's level tier passes 0 (`Kernel/Kernel.pas:12206-12214`). An account reset (`Kernel/World.pas:6203`, `:6368`) only rebuilds a tutorial that still exists (`Kernel/Kernel.pas:12924-12939`), and "Get New Assignment" only steps an existing one (`NewTycoon/Tasks/ModifyTask.asp:25-34`). SPO_test3 is Mayor and has none; the secondary accounts show none either. | the mock-server suite, `src/mock-server/scenarios/tutorial-scenario.ts` | a brand-new account is created on a world with `Tutorial` enabled |
-| `newspaper-board-read` (read the Helartia Herald's columns board) | Every post to the Helartia Herald (`boardmsg.asp?action=post`) answers HTTP 500 server-side ([#1260 comment](https://github.com/Crazz-Org/SPO-WebClient/issues/1260#issuecomment-5973821564)), so the bench cannot seed a column, and an empty board ends UNPROVEN. | the nightly (`NIGHTLY_ONLY`, reported) and the `newspaper-board-read` unit tests in `src/e2e/flows.test.ts` | a post to the Helartia Herald succeeds; then #1260 lands its seed, removes the `NIGHTLY_ONLY` and `EXCLUDED` (`REQ_NEWSPAPER_BOARD`) entries, and puts the flow back in both newspaper rules |
 
 Not project-critical (maintainer, 2026-10-01 — [#1199](https://github.com/Crazz-Org/SPO-WebClient/issues/1199#issuecomment-5937034602)).
-`newspaper-board-read`: parked by the maintainer, 2026-10-04 (#1307).
 
 ---
 
@@ -608,7 +647,9 @@ needs its read-back.
                // except the NIGHTLY_ONLY flows a changed helper reaches, listed only.
                "changedFlows": ["zoning-alert-read"],
                "changedFlowsNotDriven": ["newspaper-read"],
-               "declared": ["politics-write"] },
+               "declared": ["politics-write"],
+               // §7, "Server quarantine" — changed or declared, never required.
+               "quarantined": ["portrait-roundtrip"] },
   "live": {
     "world": "planitia", "account": "SPO_test3",
     "window": { "from": "…Z", "to": "…Z" },

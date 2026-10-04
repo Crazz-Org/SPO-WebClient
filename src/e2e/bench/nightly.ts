@@ -34,6 +34,7 @@ import type { BenchPaths } from './paths';
 import { runGit, type GitRunner, type TreeFingerprint } from './fingerprint';
 import { prepareCheckout as sharedPrepareCheckout } from './checkout';
 import { type GitAuthEnv } from './git-auth';
+import { SERVER_QUARANTINE } from '../routing';
 import type { Spool, JobRequest, JobVerdict, ManualRequester, NightlyTrigger } from './job';
 
 /**
@@ -99,6 +100,11 @@ export interface NightlyResult {
   unproven?: string[];
   /** The flows whose status is `SKIPPED`, by name. */
   skipped?: string[];
+  /**
+   * The flows this run drove that are under server quarantine (routing.ts SERVER_QUARANTINE), by
+   * name — their FAIL alone does not fail the nightly; `flows` keeps their real status.
+   */
+  quarantined?: string[];
   /** manual only: a summary of the record this one replaced. */
   supersedes?: {
     jobId?: string;
@@ -728,18 +734,20 @@ interface NightlyReportView {
 }
 
 /**
- * The per-flow keys `latest.json` carries: every flow's status, plus the UNPROVEN and
- * SKIPPED ones by name, so a flow that never proves anything is visible at a glance. `{}`
+ * The per-flow keys `latest.json` carries: every flow's status, plus the UNPROVEN,
+ * SKIPPED and server-quarantined ones by name, so a flow that never proves anything is visible at a glance. `{}`
  * when no live artifact was read — a conditional spread, so such a record gains no key.
  */
 export function flowSummary(
   liveFlows: NightlyFlowStatus[] | undefined,
-): Pick<NightlyResult, 'flows' | 'unproven' | 'skipped'> {
+  quarantine: Readonly<Record<string, unknown>> = SERVER_QUARANTINE,
+): Pick<NightlyResult, 'flows' | 'unproven' | 'skipped' | 'quarantined'> {
   if (!liveFlows) return {};
   return {
     flows: liveFlows,
     unproven: liveFlows.filter(f => f.status === 'UNPROVEN').map(f => f.name),
     skipped: liveFlows.filter(f => f.status === 'SKIPPED').map(f => f.name),
+    quarantined: liveFlows.filter(f => Object.prototype.hasOwnProperty.call(quarantine, f.name)).map(f => f.name),
   };
 }
 

@@ -6,6 +6,7 @@ import { Spool, type ManualRequester } from './job';
 import type { GitRunner, TreeFingerprint } from './fingerprint';
 import {
   deleteManualRequest,
+  flowSummary,
   manualProofDue,
   manualRecordFile,
   manualRequestFile,
@@ -1232,5 +1233,34 @@ describe('publishManualResult — attest-only replacement', () => {
     const expected = { flows: liveFlows, unproven: ['b'], skipped: ['c'] };
     expect(readNightlyResult(h.paths)).toMatchObject(expected);
     expect(readManualRecords(h.paths)).toEqual([expect.objectContaining(expected)]);
+  });
+});
+
+describe('flowSummary — server quarantine (#1310)', () => {
+  it('lists the quarantined flows the run drove, by name, with the default table', () => {
+    const summary = flowSummary([
+      { name: 'portrait-roundtrip', status: 'FAIL' },
+      { name: 'a', status: 'PASS' },
+    ]);
+    expect(summary.quarantined).toEqual(['portrait-roundtrip']);
+    expect(summary.flows).toEqual([
+      { name: 'portrait-roundtrip', status: 'FAIL' },
+      { name: 'a', status: 'PASS' },
+    ]);
+  });
+
+  it('reads the table it is given', () => {
+    const summary = flowSummary(
+      [
+        { name: 'portrait-roundtrip', status: 'FAIL' },
+        { name: 'a', status: 'PASS' },
+      ],
+      { a: {} },
+    );
+    expect(summary.quarantined).toEqual(['a']);
+  });
+
+  it('adds no key when no live artifact was read', () => {
+    expect(flowSummary(undefined)).toEqual({});
   });
 });

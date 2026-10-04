@@ -52,8 +52,6 @@ export const NIGHTLY_ONLY: Record<string, string> = {
     'data-gated: only a MegaStorage publishes RDOSelectWare (StdBlocks/MegaWarehouse.pas:25; a TWarehouse publishes RDOSetRole only, StdBlocks/Warehouses.pas:95), and findFixture takes the first holding that carries whGeneral (#1149), which need not be one',
   'quick-trade-roundtrip':
     "data-gated by three guards: the disconnect drops the fixture's outputs from every SPO_test3 facility's matching input, whatever its type (Kernel/Kernel.pas:4593-4600), across all its companies and towns (Kernel/Kernel.pas:4537-4553), and unregisters the fixture as an initial supplier (Kernel/Kernel.pas:4564-4565, :4606-4607); a guard that holds ends UNPROVEN, which fails a gate",
-  'newspaper-board-read':
-    'parked by the maintainer (2026-10-04): every post to the Helartia Herald (boardmsg.asp?action=post) answers HTTP 500 server-side, so the bench cannot seed a column and an empty board ends UNPROVEN, which fails a gate (#1260) — lift when a post succeeds and #1260 lands its seed',
 };
 
 /**
@@ -71,6 +69,48 @@ export const GATE_ONLY: Record<string, string> = {
     "TBank.AskLoan broadcasts 'SPO_test3 borrowed $X from the <bank>.' to every online tycoon (Kernel/Kernel.pas:8849-8859, text Kernel/Kernel.pas:13487); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly",
   'facility-bank-loan':
     "TBank.AskLoan broadcasts 'SPO_test borrowed $1 from the Bank of SPO_test3.' to every online tycoon (Kernel/Kernel.pas:8849-8859, text Kernel/Kernel.pas:13487); lifted by the maintainer (2026-09-29, #1189) — at the gate only, when this code changes, never in the nightly",
+};
+
+/** One server-quarantine entry: why, where it is recorded, when it goes, and since when. */
+export interface ServerQuarantineEntry {
+  /** The live-server fault that blocks the flow. */
+  reason: string;
+  /** An `https://` link to where the fault is recorded. */
+  link: string;
+  /** The observable condition under which this entry is deleted. */
+  lift: string;
+  /** The day the entry was added, `YYYY-MM-DD`. */
+  added: string;
+}
+
+/**
+ * Flow -> a known live-server fault that blocks it (doc/E2E-POLICY.md §7, "Server quarantine").
+ *
+ * Temporary, and a maintainer decision (2026-10-04, #1310): only for a fault on the live server
+ * the client cannot fix — never for a code defect. An entry is deleted the day its `lift`
+ * condition holds.
+ *
+ * It is applied on top of ROUTES / NIGHTLY_ONLY / EXCLUDED, which describe a healthy server: a
+ * quarantined flow stays in its rules, `route()` and the gate's changed/declared flows drop it
+ * from `required`, and the nightly still runs it and prints its real outcome, but its FAIL alone
+ * does not fail the nightly. It never excuses a dirty world. Lifting the quarantine changes this
+ * entry and nothing else.
+ */
+export const SERVER_QUARANTINE: Readonly<Record<string, ServerQuarantineEntry>> = {
+  'portrait-roundtrip': {
+    reason:
+      'the picture server cannot store an upload since the 2026-10-02 maintenance (SERVER_ERROR The picture server could not store the picture (ERROR after the transfer))',
+    link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1310',
+    lift: '`npm run test:live -- --flows=portrait-roundtrip` PASSes on the bench',
+    added: '2026-10-04',
+  },
+  'newspaper-board-read': {
+    reason:
+      'every post to the Helartia Herald (boardmsg.asp?action=post) answers HTTP 500 server-side, so no column can be seeded',
+    link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1260#issuecomment-5973821564',
+    lift: "a post to the Helartia Herald succeeds, so #1260's seed can land",
+    added: '2026-10-04',
+  },
 };
 
 /**
@@ -106,7 +146,6 @@ export const EXCLUDED: Record<string, string> = {
   REQ_POLITICS_VOTE: 'sent only by vote-roundtrip, which is NIGHTLY_ONLY (data-gated: Kernel/TownPolitics.pas:690)',
   REQ_NEWSPAPER_ISSUES: 'sent only by newspaper-read, which is NIGHTLY_ONLY (planitia keeps no issue: News.pas:986, #1009)',
   REQ_NEWSPAPER_ISSUE: 'sent only by newspaper-read, which is NIGHTLY_ONLY (planitia keeps no issue: News.pas:986, #1009)',
-  REQ_NEWSPAPER_BOARD: 'sent only by newspaper-board-read, which is NIGHTLY_ONLY (parked: server HTTP 500 on post, #1260)',
   REQ_TUTORIAL_STATE:
     'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
   REQ_TUTORIAL_ACTION:
@@ -172,7 +211,9 @@ export const ROUTES: RouteRule[] = [
   // stage 6) goes in NIGHTLY_ONLY; a flow whose action posts a message every online player
   // sees goes in GATE_ONLY (the card states the maintainer accepts the broadcast at the gate
   // on that basis). Each exemption carries a cited reason: `File.pas:Line`, `file.asp:Line`
-  // or `#<issue>`. The tooling rule below routes no flow for a diff under src/e2e/; the gate
+  // or `#<issue>`. A flow blocked by a known live-server fault keeps its rules and goes in
+  // SERVER_QUARANTINE instead: route() and the gate drop it from `required` while the entry
+  // stands, the nightly still runs it, and lifting it deletes that entry alone. The tooling rule below routes no flow for a diff under src/e2e/; the gate
   // itself adds the flows. verify-gate.js stage 3 adds the flows the diff CHANGED — a hunk
   // inside a `FLOWS` entry, or inside a shared helper of the seven flow sources, which drives
   // every flow that reaches it (src/e2e/bench/changed-flows.ts) — and the flows a card
@@ -287,23 +328,24 @@ export const ROUTES: RouteRule[] = [
     why: 'the mail handlers changed — the flows that drive them',
   },
   {
-    // The paper modal: a browser look at the modal. The board read it shows is parked (#1260) —
-    // NIGHTLY_ONLY, required by no gate.
+    // The paper modal: the board read the modal shows, plus a browser look at the modal.
+    // newspaper-board-read is under SERVER_QUARANTINE while every post answers HTTP 500 (#1260),
+    // so route() drops it from `required` until that entry is lifted.
     test: /^src\/client\/components\/modals\/NewspaperModal\.tsx$/,
-    flows: [],
+    flows: ['newspaper-board-read'],
     needsL3: true,
-    why: 'the town paper modal — a browser look at the modal; newspaper-board-read is parked, nightly-only (server HTTP 500 on post, #1260)',
+    why: 'the town paper modal — newspaper-board-read reads the columns board it shows; a browser look at the modal',
   },
   {
     // Before the broad wire-level rule below: the paper is not on the RDO wire
     // at all, so the governance flows would say nothing about it. newspaper-read itself is
     // not required (#1009): planitia keeps no newspaper issue and the bench cannot create
-    // one (News.pas:986), so it could only end UNPROVEN. The columns board read is parked too
-    // (#1260): every post answers HTTP 500, so no column can be seeded, and it is no longer
-    // required. The rule stays here so it keeps shadowing the broader rules below.
+    // one (News.pas:986), so it could only end UNPROVEN. The columns board read stays required
+    // instead; a board with no column ends UNPROVEN too (#1188). It is under SERVER_QUARANTINE
+    // while every post answers HTTP 500 (#1260), so route() drops it until that entry is lifted.
     test: /newspaper-handlers?\.ts$|^src\/client\/store\/newspaper-store\.ts$/,
-    flows: [],
-    why: 'the town paper — required by no gate: newspaper-read is nightly-only (News.pas:986, #1009) and newspaper-board-read is parked, nightly-only (server HTTP 500 on post, #1260)',
+    flows: ['newspaper-board-read'],
+    why: 'the town paper — newspaper-board-read reads the columns board, required, and an empty board ends UNPROVEN (#1188); newspaper-read stays nightly-only (News.pas:986, #1009)',
   },
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.
@@ -636,6 +678,12 @@ export function route(changedFiles: string[], deletedFiles: string[] = []): Rout
       reasons.add(rule.why);
     }
     for (const flow of rule.flows) required.add(flow);
+  }
+
+  // The server quarantine sits on top of the rules: a flow a known live-server fault blocks is
+  // never required, and the spine still rides along when a rule matched.
+  for (const [flow, entry] of Object.entries(SERVER_QUARANTINE)) {
+    if (required.delete(flow)) reasons.add(`server quarantine: ${flow} — ${entry.reason}`);
   }
 
   // The spine rides along whenever anything observable changed.

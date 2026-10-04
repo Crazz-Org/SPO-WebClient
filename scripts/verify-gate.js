@@ -13,7 +13,8 @@
  *                 server, whether the test account holds the capability (§7)
  *   routing       diff -> routed ∪ changed ∪ declared flows: the routing table, the flows
  *                 the diff changed in the flow sources (src/e2e/bench/changed-flows.ts) and
- *                 the flows named by --also-flows; all of them are required
+ *                 the flows named by --also-flows; all of them are required, except a
+ *                 server-quarantined flow (routing.ts SERVER_QUARANTINE), listed instead
  *   live          pre-flight, lock, capability reads, flows against planitia, restore, release
  *   judge         a capability the server GRANTS must be exercised by a flow (fail closed);
  *                 one it REFUSES is a recorded exception, never a human override
@@ -317,7 +318,12 @@ async function main() {
     return 1;
   }
 
-  const { route, presidentMembersInDiff, SPINE_FLOW } = require(path.resolve('dist/e2e/routing.js'));
+  const routing = require(path.resolve('dist/e2e/routing.js'));
+  const { route, presidentMembersInDiff, SPINE_FLOW } = routing;
+  // A flow a known live-server fault blocks is never required by a gate (doc/E2E-POLICY.md §7,
+  // "Server quarantine"); an explicit --flows= that names one still drives it.
+  const SERVER_QUARANTINE = routing.SERVER_QUARANTINE || {};
+  const isQuarantined = name => Object.prototype.hasOwnProperty.call(SERVER_QUARANTINE, name);
   const { FLOW_SOURCES, flowsChangedInWorktree } = require(
     path.resolve('dist/e2e/bench/changed-flows.js'),
   );
@@ -365,7 +371,9 @@ async function main() {
     return 1;
   }
   const alsoFlows = flag('also-flows');
-  const declared = !alsoFlows || alsoFlows === 'true' ? [] : alsoFlows.split(',').filter(Boolean);
+  const declaredAll = !alsoFlows || alsoFlows === 'true' ? [] : alsoFlows.split(',').filter(Boolean);
+  const declaredQuarantined = declaredAll.filter(isQuarantined);
+  const declared = declaredAll.filter(name => !isQuarantined(name));
   const extra = [...changed.required, ...declared];
   const required =
     extra.length > 0
@@ -375,10 +383,14 @@ async function main() {
   artifact.routing.changedFlows = changed.required;
   artifact.routing.changedFlowsNotDriven = changed.notDriven;
   artifact.routing.declared = declared;
+  artifact.routing.quarantined = Array.from(new Set([...(changed.quarantined || []), ...declaredQuarantined]));
   artifact.routing.reasons = [
     ...decision.reasons,
     ...changed.reasons,
     ...(declared.length > 0 ? [`declared by --also-flows: ${declared.join(', ')}`] : []),
+    ...declaredQuarantined.map(
+      name => `server quarantine: ${name} — declared by --also-flows, not required: ${SERVER_QUARANTINE[name].reason}`,
+    ),
   ];
 
   const liveRequested = flag('live') === 'true';
@@ -468,7 +480,7 @@ async function main() {
   const { runLive, formatSummary } = require(path.resolve('dist/e2e/run.js'));
   const live = await runLive({ flows: staticOnly ? [] : flows, branch, capabilities });
   artifact.live = live;
-  process.stdout.write(`${formatSummary(live)}\n`);
+  process.stdout.write(`${formatSummary(live, SERVER_QUARANTINE)}\n`);
 
   // The live status is CARRIED, not collapsed. An ENVIRONMENT abort used to arrive here and
   // leave as `FAIL`, and every reader downstream — the exit code, the worker's verdict, the

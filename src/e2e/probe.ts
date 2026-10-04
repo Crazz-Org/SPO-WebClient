@@ -183,20 +183,20 @@ export async function runRoundTrip(
     thrown = err;
   }
 
-  // The restore runs whatever happened above.
+  // The restore runs whatever happened above. The read-back is polled even when the restore
+  // write threw: a server that refused both writes left the world unchanged, and only a
+  // read-back showing the original may clear the pending restore.
   let restoreWriteFailed = false;
-  let restorePoll: PollOutcome = { verdict: 'UNCONFIRMED', last: undefined };
+  let restorePoll: PollOutcome;
   try {
     await (spec.restore ?? spec.write)(original);
   } catch {
     restoreWriteFailed = true;
   }
-  if (!restoreWriteFailed) {
-    try {
-      restorePoll = await pollReadBack(readBack, original, clock);
-    } catch {
-      restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
-    }
+  try {
+    restorePoll = await pollReadBack(readBack, original, clock);
+  } catch {
+    restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
   }
   const restored = restorePoll.verdict === 'CONFIRMED';
   const restoreReadBack = restorePoll.verdict;
@@ -214,7 +214,9 @@ export async function runRoundTrip(
     );
   }
   if (log && !logLine) failures.push('no model-server log line — the write never reached the object');
-  if (restoreWriteFailed) {
+  if (restoreWriteFailed && restored) {
+    failures.push('restore write failed — the read-back shows the original, so the world is unchanged');
+  } else if (restoreWriteFailed) {
     failures.push('restore failed — the world is left dirty');
   } else if (!restored) {
     failures.push(

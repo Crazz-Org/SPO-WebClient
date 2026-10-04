@@ -7,7 +7,7 @@ import { WorldLock } from './world-lock';
 import * as preflightModule from './preflight';
 import * as flowsModule from './flows';
 import * as capabilityModule from './capability';
-import { GATE_ONLY } from './routing';
+import { GATE_ONLY, SERVER_QUARANTINE } from './routing';
 import { SECONDARY_ACCOUNT } from './config';
 
 function tempLock(): WorldLock {
@@ -200,6 +200,14 @@ describe('runLive', () => {
 
     expect(result.status).toBe('FAIL');
     expect(result.error).toMatch(/dirty/);
+    expect(result.releaseError).toMatch(/dirty/);
+  });
+
+  it('carries no releaseError when the world was released clean', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => passingFlow(flow.name));
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+    expect(result).not.toHaveProperty('releaseError');
   });
 
   it('passes the resolved log url down to the flows', async () => {
@@ -429,6 +437,26 @@ describe('formatSummary', () => {
     expect(summary).not.toContain('SKIPPED  permission-negative');
   });
 
+  it('prints the server-quarantine block with every entry, and each real outcome or "not run" (#1310)', () => {
+    const quarantine = {
+      'portrait-roundtrip': { reason: 'r1', link: 'https://x/1', lift: 'l1', added: '2026-10-04' },
+      'newspaper-board-read': { reason: 'r2', link: 'https://x/2', lift: 'l2', added: '2026-10-03' },
+    };
+    const summary = formatSummary(
+      { ...base, status: 'PASS', flows: [{ ...passingFlow('portrait-roundtrip'), status: 'FAIL' }] },
+      quarantine,
+    );
+    expect(summary).toContain('  Server quarantine (2):');
+    expect(summary).toContain('    portrait-roundtrip — r1');
+    expect(summary).toContain('link: https://x/1 · lift: l1 · added: 2026-10-04 · outcome: FAIL');
+    expect(summary).toContain('    newspaper-board-read — r2');
+    expect(summary).toContain('link: https://x/2 · lift: l2 · added: 2026-10-03 · outcome: not run');
+  });
+
+  it('prints no quarantine block when the table is empty', () => {
+    expect(formatSummary({ ...base, status: 'PASS' }, {})).not.toContain('Server quarantine');
+  });
+
   it('surfaces failed pre-flight checks', () => {
     const summary = formatSummary({
       ...base,
@@ -621,5 +649,72 @@ describe('main', () => {
     expect(await main(['--flows=login-spine'], async () => outcome, sink().stream)).toBe(code);
     const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
     if (fs.existsSync(written)) fs.unlinkSync(written);
+  });
+
+  describe('server quarantine (#1310)', () => {
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    afterEach(() => {
+      if (fs.existsSync(written)) fs.unlinkSync(written);
+    });
+    const failing = (name: string) => ({ ...passingFlow(name), status: 'FAIL' as const, error: `${name} refused` });
+    const portraitOnly: LiveRunResult = {
+      ...result,
+      status: 'FAIL',
+      flows: [passingFlow('login-spine'), failing('portrait-roundtrip')],
+    };
+
+    it('a nightly whose only FAIL is a quarantined flow exits 0, PASS, the flow keeping its FAIL and its note', async () => {
+      const out = sink();
+      expect(await main([], async () => portraitOnly, out.stream)).toBe(0);
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('PASS');
+      const entry = SERVER_QUARANTINE['portrait-roundtrip'];
+      expect(artifact.flows[1]).toMatchObject({
+        name: 'portrait-roundtrip',
+        status: 'FAIL',
+        quarantined: { reason: entry.reason, link: entry.link, lift: entry.lift },
+      });
+      expect(artifact.flows[0]).not.toHaveProperty('quarantined');
+      expect(out.text()).toContain('L2 live drive on planitia — PASS');
+      expect(out.text()).toContain('  FAIL  portrait-roundtrip — portrait-roundtrip refused');
+      expect(out.text()).toContain('outcome: FAIL');
+    });
+
+    it('a quarantined FAIL beside a FAIL of a non-quarantined flow still exits 1', async () => {
+      const both = { ...portraitOnly, flows: [...portraitOnly.flows, failing('politics-read')] };
+      expect(await main([], async () => both, sink().stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+    });
+
+    it('a quarantined-only FAIL that left the world dirty still exits 1', async () => {
+      const dirty = { ...portraitOnly, releaseError: 'world is dirty: 1 pending restore', error: 'world is dirty: 1 pending restore' };
+      expect(await main([], async () => dirty, sink().stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+    });
+
+    it('a dirty world FAILs with no flow failing at all', async () => {
+      const dirty: LiveRunResult = { ...result, status: 'FAIL', flows: [passingFlow('portrait-roundtrip')], releaseError: 'dirty' };
+      expect(await main([], async () => dirty, sink().stream)).toBe(1);
+    });
+
+    it('an explicit --flows=portrait-roundtrip judges the flow: its FAIL exits 1, with no note', async () => {
+      const named = { ...portraitOnly, flows: [failing('portrait-roundtrip')] };
+      expect(await main(['--flows=portrait-roundtrip'], async () => named, sink().stream)).toBe(1);
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('FAIL');
+      expect(artifact.flows[0]).not.toHaveProperty('quarantined');
+    });
+
+    it('prints the Server quarantine block, every entry, on a passing run', async () => {
+      const out = sink();
+      expect(await main([], async () => result, out.stream)).toBe(0);
+      const entries = Object.entries(SERVER_QUARANTINE);
+      expect(entries.length).toBeGreaterThan(0);
+      expect(out.text()).toContain(`Server quarantine (${entries.length}):`);
+      for (const [flow, entry] of entries) {
+        expect(out.text()).toContain(`    ${flow} — ${entry.reason}`);
+        expect(out.text()).toContain(`link: ${entry.link} · lift: ${entry.lift} · added: ${entry.added} · outcome: not run`);
+      }
+    });
   });
 });
