@@ -520,14 +520,15 @@ the same run (§5).
 **Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29, the
 nightly-only flow `fixtures-ensure` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
 kind the owner-setter flows need — `industry`, `store`, `warehouse`, `residential`, `research`,
-`bank`, `tv` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
+`bank`, `tv`, `storage` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
 missing, once, and keeps it. Fixtures are found **by kind at run time** (`findFixture`: the
-directory's tycoon branch, then the lot's owner and the inspector's template groups), never by
+directory's tycoon branch, then the lot's owner and the inspector's template groups, and for `industry` / `storage` the cached
+`TradeRole` — a storage holds 2, 5 or 6), never by
 coordinates committed to the tree — the world moves. A build is proven by its `New Facility:`
 line, result code 0 and the lot read-back. While SPO_test3 owns a construction site in Helartia,
 the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
 (placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
-and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.
+and neither is a studio. The eight fixtures occupy eight of SPO_test3's facility slots for good.
 **Research queued by the fixture builder is permanent setup data too** (maintainer, 2026-10-01,
 #1233). The bank and TV classes stay locked until *SPO_test3 - Green* owns the invention that
 unlocks them (`RESEARCH_UNLOCKS`); the builder then queues one research step per run at

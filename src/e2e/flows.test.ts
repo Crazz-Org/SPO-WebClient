@@ -6826,7 +6826,7 @@ describe('inspector connections & trade (#1153)', () => {
   const sg = (fluid: string): BuildingSupplyData => ({ path: `in:${fluid}`, name: fluid, metaFluid: fluid, connectionCount: 0, connections: [] });
   const pg = (fluid: string): BuildingProductData => ({ path: `out:${fluid}`, name: fluid, metaFluid: fluid, pricePc: '100', connectionCount: 0, connections: [] });
 
-  function makeFacilities(): { industry: Fac; warehouse: Fac; store: Fac } {
+  function makeFacilities(): { industry: Fac; warehouse: Fac; store: Fac; storage: Fac } {
     return {
       industry: {
         x: 30, y: 40, name: 'Farm', company: OWN_CO, visualClass: '4116', tabs: ['indGeneral', 'supplies', 'products'],
@@ -6842,12 +6842,22 @@ describe('inspector connections & trade (#1153)', () => {
         supplies: [], products: [],
         compInputs: [{ name: 'Advertisement', supplied: 0, demanded: 50, ratio: 0, maxDemand: 100, editable: true, units: 'hits' }],
       },
+      // An ordinary IndGeneral storage (#1257): Importer, the built stage 324.
+      storage: {
+        x: 70, y: 80, name: 'General Storage', company: OWN_CO, visualClass: '324', tabs: ['indGeneral', 'supplies', 'products'],
+        supplies: [], products: [], role: '6',
+      },
     };
   }
 
   class ConnWorld {
     facs = makeFacilities();
-    found: Partial<Record<'industry' | 'warehouse' | 'store', boolean>> = {};
+    found: Partial<Record<'industry' | 'warehouse' | 'store' | 'storage', boolean>> = {};
+    /** The lookup's reason when a kind is not found (default: none in Helartia). */
+    reasons: Partial<Record<'industry' | 'warehouse' | 'store' | 'storage', string>> = {};
+    /** How many storage RDOSetRole writes back to its starting role are ignored (a stale restore). */
+    staleRoleRestores = 0;
+    private storageStartRole?: string;
     search: (direction: string, fluid: string) => ConnectionSearchResult[] = (direction, fluid) => {
       const w = this.facs.warehouse;
       const carries = direction === 'input' ? w.products.some(p => p.metaFluid === fluid) : w.supplies.some(s => s.metaFluid === fluid);
@@ -6883,7 +6893,7 @@ describe('inspector connections & trade (#1153)', () => {
     requests: WsMessage[] = [];
 
     all(): Fac[] {
-      return [this.facs.industry, this.facs.warehouse, this.facs.store];
+      return [this.facs.industry, this.facs.warehouse, this.facs.store, this.facs.storage];
     }
 
     at(x: number, y: number): Fac | undefined {
@@ -6985,7 +6995,16 @@ describe('inspector connections & trade (#1153)', () => {
           break;
         }
         case 'RDOSetTradeLevel': f.tradeLevel = w.value; break;
-        case 'RDOSetRole': f.role = w.value; break;
+        case 'RDOSetRole':
+          if (f === this.facs.storage) {
+            this.storageStartRole ??= f.role;
+            if (w.value === this.storageStartRole && this.staleRoleRestores > 0) {
+              this.staleRoleRestores -= 1;
+              break;
+            }
+          }
+          f.role = w.value;
+          break;
         case 'RDOSelectWare': (f.wares ?? [])[Number(p.index)].enabled = w.value === '-1'; break;
       }
     }
@@ -7055,9 +7074,9 @@ describe('inspector connections & trade (#1153)', () => {
     jest.spyOn(session, 'login').mockResolvedValue(stub);
     const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
     jest.spyOn(fixtures, 'findFixture').mockImplementation(async (_s, kind) => {
-      const id = kind.id as 'industry' | 'warehouse' | 'store';
+      const id = kind.id as 'industry' | 'warehouse' | 'store' | 'storage';
       const fac = world.facs[id];
-      if (!fac || world.found[id] === false) return { kind: kind.id, reason: 'none in Helartia' };
+      if (!fac || world.found[id] === false) return { kind: kind.id, reason: world.reasons[id] ?? 'none in Helartia' };
       return { kind: kind.id, found: { x: fac.x, y: fac.y, visualClass: fac.visualClass, name: fac.name } };
     });
     const refusal = jest.spyOn(fixtures, 'ownLotRefusal').mockImplementation(async (_s, x, y) =>
@@ -7568,7 +7587,7 @@ describe('inspector connections & trade (#1153)', () => {
   describe('trade-settings', () => {
     const atIndustry = (world: ConnWorld) => world.writes.filter(w => w.x === 30 && w.y === 40);
 
-    it('nudges both trade levels, proves each, restores each — and never sends RDOSetRole (#1255)', async () => {
+    it("nudges both trade levels and switches the storage's trade mode — each proven and restored (#1257)", async () => {
       const world = new ConnWorld();
       const lock = cleanLock();
       arrange(world);
@@ -7579,10 +7598,14 @@ describe('inspector connections & trade (#1153)', () => {
         [50, 60, 'RDOSetTradeLevel', '0'],
         [30, 40, 'RDOSetTradeLevel', '2'],
         [30, 40, 'RDOSetTradeLevel', '3'],
+        [70, 80, 'RDOSetRole', '2'],
+        [70, 80, 'RDOSetRole', '6'],
       ]);
+      // RDOSetRole logs nothing: its probe is proven by the read-back alone.
       expect(result.probes.map(p => p.logLine)).toEqual([
-        '12:00 - Fac(50,60) SetTradeLevel', '12:00 - Fac(30,40) SetTradeLevel',
+        '12:00 - Fac(50,60) SetTradeLevel', '12:00 - Fac(30,40) SetTradeLevel', null,
       ]);
+      expect(result.probes[2]).toMatchObject({ member: 'RDOSetRole', status: 'PASS', original: '6', written: '2', restored: true });
       expect(result.unproven).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
     });
@@ -7595,7 +7618,7 @@ describe('inspector connections & trade (#1153)', () => {
       arrange(world);
       const result = await run('trade-settings');
       expect(result.status).toBe('PASS');
-      expect(world.writes.some(w => w.property === 'RDOSetRole')).toBe(false);
+      expect(world.writes.some(w => w.property === 'RDOSetRole' && w.x === 50 && w.y === 60)).toBe(false);
     });
 
     it('writes no trade level the client could not send back', async () => {
@@ -7619,16 +7642,112 @@ describe('inspector connections & trade (#1153)', () => {
     it('runs the industry half when the warehouse fixture is missing, and writes nothing when both are', async () => {
       const world = new ConnWorld();
       world.found.warehouse = false;
+      world.found.storage = false;
       arrange(world);
       const result = await run('trade-settings');
       expect(result.status).toBe('UNPROVEN');
       expect(world.writes.map(w => [w.x, w.property])).toEqual([[30, 'RDOSetTradeLevel'], [30, 'RDOSetTradeLevel']]);
 
       const none = new ConnWorld();
-      none.found = { warehouse: false, industry: false };
+      none.found = { warehouse: false, industry: false, storage: false };
       arrange(none);
       expect((await run('trade-settings')).status).toBe('UNPROVEN');
       expect(setProps(none)).toEqual([]);
+    });
+  });
+
+  describe('trade-settings — RDOSetRole on the storage fixture (#1257)', () => {
+    const atStorage = (world: ConnWorld) => world.writes.filter(w => w.x === 70 && w.y === 80);
+    const roleWrites = (world: ConnWorld) => world.writes.filter(w => w.property === 'RDOSetRole');
+    const neverOffStorage = (world: ConnWorld) =>
+      expect(roleWrites(world).every(w => w.x === 70 && w.y === 80)).toBe(true);
+
+    it('switches a storage that reads 5 to 2 and back, the lock clean', async () => {
+      const world = new ConnWorld();
+      world.facs.storage.role = '5';
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('trade-settings', lock);
+      expect(result.status).toBe('PASS');
+      expect(atStorage(world).map(w => [w.property, w.value])).toEqual([['RDOSetRole', '2'], ['RDOSetRole', '5']]);
+      expect(lock.read().pendingRestores).toEqual([]);
+      neverOffStorage(world);
+    });
+
+    it('sends nothing to a storage whose TradeRole is not a trade mode', async () => {
+      const world = new ConnWorld();
+      world.facs.storage.role = '1';
+      arrange(world);
+      const result = await run('trade-settings');
+      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetRole on General Storage \(70,80\) — its TradeRole "1"/)]);
+      expect(roleWrites(world)).toEqual([]);
+    });
+
+    it('records the storage fixture as unproven when there is none', async () => {
+      const world = new ConnWorld();
+      world.found.storage = false;
+      arrange(world);
+      const result = await run('trade-settings');
+      expect(result.unproven).toEqual(['storage fixture — none in Helartia']);
+      expect(roleWrites(world)).toEqual([]);
+    });
+
+    it('records the storage fixture as unproven while it is under construction', async () => {
+      const world = new ConnWorld();
+      world.found.storage = false;
+      world.reasons.storage = 'under construction';
+      arrange(world);
+      const result = await run('trade-settings');
+      expect(result.unproven).toEqual(['storage fixture — under construction']);
+      expect(atStorage(world)).toEqual([]);
+    });
+
+    it('FAILs when the read-back never shows the new trade mode', async () => {
+      const world = new ConnWorld();
+      world.inert.add('RDOSetRole');
+      arrange(world);
+      const result = await run('trade-settings');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[2]).toMatchObject({ member: 'RDOSetRole', status: 'FAIL', readBack: 'UNCONFIRMED' });
+      neverOffStorage(world);
+    });
+
+    it('sends the restore once more when it reads stale, then clears the pending restore', async () => {
+      const world = new ConnWorld();
+      world.staleRoleRestores = 1;
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('trade-settings', lock);
+      expect(atStorage(world).map(w => w.value)).toEqual(['2', '6', '6']);
+      expect(result.probes[2]).toMatchObject({ status: 'PASS', restored: true });
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('keeps the pending restore when the restore never reaches the original', async () => {
+      const world = new ConnWorld();
+      world.staleRoleRestores = Infinity;
+      const lock = cleanLock();
+      arrange(world);
+      const result = await run('trade-settings', lock);
+      expect(result.status).toBe('FAIL');
+      expect(atStorage(world).map(w => w.value)).toEqual(['2', '6', '6']);
+      const pending = lock.read().pendingRestores;
+      expect(pending).toHaveLength(1);
+      expect(pending[0].what).toMatch(/General Storage \(70,80\).*put back "6"/);
+    });
+
+    it("reads the storage on the lot's current visual class, never the one the lookup saw", async () => {
+      const world = new ConnWorld();
+      arrange(world);
+      await run('trade-settings');
+      const reads = world.requests.filter(
+        r =>
+          (r.type === WsMessageType.REQ_BUILDING_DETAILS || r.type === WsMessageType.REQ_BUILDING_TAB_DATA) &&
+          (r as unknown as { x: number; y: number }).x === 70 &&
+          (r as unknown as { x: number; y: number }).y === 80,
+      );
+      expect(reads.length).toBeGreaterThan(0);
+      expect(reads.map(r => (r as unknown as { visualClass: string }).visualClass).every(vc => vc === '999')).toBe(true);
     });
   });
 

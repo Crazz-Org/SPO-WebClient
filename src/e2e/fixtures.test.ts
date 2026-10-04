@@ -27,12 +27,14 @@ import {
   requiredResearchAt,
   ownLotRefusal,
   parseTerrainBmp,
+  pickFixture,
   placeFacility,
   readCash,
   zoneValueOf,
   type FixtureKind,
   type FixtureKindId,
   type FixtureOutcome,
+  type Holding,
 } from './fixtures';
 import { WsDriver, WsDriverError } from './ws-driver';
 import * as liveLog from './live-log';
@@ -60,6 +62,7 @@ const kind = (id: FixtureKindId): FixtureKind => FIXTURE_KINDS.find(k => k.id ==
 /** One finished visual class per kind, and the tabs its inspector carries. */
 const KIND_VC: Record<FixtureKindId, string> = {
   industry: '4116', store: '4602', warehouse: '532', residential: '4452', research: '602', bank: '2262', tv: '4982',
+  storage: '324',
 };
 const CONSTRUCTION_VC = '9001';
 
@@ -130,6 +133,8 @@ class World {
   /** Whether a taken queue logs its `Queue Research:` line. */
   logsQueue = true;
   writes: { property: string; x: number; y: number; params?: Record<string, string> }[] = [];
+  /** The cached indGeneral TradeRole per visual class: a farm is a producer, a storage an importer. */
+  roles: Record<string, string> = { [KIND_VC.industry]: '1', [KIND_VC.storage]: '6' };
 
   constructor() {
     for (const [k, vc] of Object.entries(KIND_VC)) {
@@ -221,8 +226,13 @@ class World {
                 ...this.locked,
               ],
             };
-      case WsMessageType.REQ_BUILDING_TAB_DATA:
+      case WsMessageType.REQ_BUILDING_TAB_DATA: {
+        if (m.tabId === 'indGeneral') {
+          const role = this.roles[m.visualClass as string];
+          return { groups: { indGeneral: role !== undefined ? [{ name: 'TradeRole', value: role }] : [] } };
+        }
         return { groups: { hqInventions: [{ name: 'CatCount', value: String(this.research.length - 1) }] } };
+      }
       case WsMessageType.REQ_RESEARCH_INVENTORY: {
         const c = this.research[m.categoryIndex as number] ?? { available: [], developing: [], completed: [] };
         const item = (id: string) => ({ inventionId: id, name: id });
@@ -382,7 +392,7 @@ afterEach(() => jest.restoreAllMocks());
 // ---------------------------------------------------------------------------------------------
 
 describe('FIXTURE_KINDS', () => {
-  it('names the seven kinds with the groups the card requires', () => {
+  it('names the eight kinds with the groups the card requires', () => {
     expect(Object.fromEntries(FIXTURE_KINDS.map(k => [k.id, k.groups]))).toEqual({
       industry: ['indGeneral', 'supplies', 'products'],
       store: ['srvGeneral', 'supplies'],
@@ -391,7 +401,21 @@ describe('FIXTURE_KINDS', () => {
       research: ['hqInventions'],
       bank: ['bankGeneral'],
       tv: ['tvGeneral'],
+      storage: ['indGeneral', 'supplies', 'products'],
     });
+  });
+
+  it('builds the storage from the four UW General Storage classes, then the level-100 UW Cold Storage ones (#1257)', () => {
+    expect(kind('storage').candidates.map(c => c.facilityClass)).toEqual([
+      'PGIWHCOMMONUWGeneralStorage',
+      'MarikoWHCOMMONUWGeneralStorage',
+      'MoabWHCOMMONUWGeneralStorage',
+      'DissidentsWHCOMMONUWGeneralStorage',
+      'PGIWHCOMMONUWColdStorage',
+      'MarikoWHCOMMONUWColdStorage',
+      'MoabWHCOMMONUWColdStorage',
+      'DissidentsWHCOMMONUWColdStorage',
+    ]);
   });
 
   it('commits no candidate placeFacility refuses, and no mausoleum or studio', () => {
@@ -672,6 +696,28 @@ describe('findFreeLot', () => {
 // findFixture
 // ---------------------------------------------------------------------------------------------
 
+describe('pickFixture — the trade role (#1257)', () => {
+  const holding = (tradeRole?: string): Holding => ({
+    x: 1, y: 2, visualClass: '324', name: 'h', tabIds: ['indGeneral', 'supplies', 'products', 'finances'],
+    ...(tradeRole !== undefined ? { tradeRole } : {}),
+  });
+
+  it('takes a holding whose TradeRole is 6 as the storage, never as the industry', () => {
+    expect(pickFixture([holding('6')], [], kind('storage')).found).toMatchObject({ x: 1, y: 2 });
+    expect(pickFixture([holding('6')], [], kind('industry'))).toEqual({ kind: 'industry', reason: 'none in Helartia' });
+  });
+
+  it('takes a holding whose TradeRole is 1 as the industry, never as the storage', () => {
+    expect(pickFixture([holding('1')], [], kind('industry')).found).toMatchObject({ x: 1, y: 2 });
+    expect(pickFixture([holding('1')], [], kind('storage')).found).toBeUndefined();
+  });
+
+  it('takes a holding that reads no TradeRole as the industry, never as the storage', () => {
+    expect(pickFixture([holding()], [], kind('industry')).found).toBeDefined();
+    expect(pickFixture([holding()], [], kind('storage')).found).toBeUndefined();
+  });
+});
+
 describe('findFixture', () => {
   it("finds SPO_test3's own finished facility of the kind in Helartia", async () => {
     const w = new World();
@@ -719,6 +765,14 @@ describe('findFixture', () => {
     w.facKinds[OWN_COMPANY].industry = [{ x: 121, y: 221 }];
     w.own('store', 120, 224);
     expect(await findFixture(w.session(), kind('industry'))).toEqual({ kind: 'industry', reason: 'none in Helartia' });
+  });
+
+  it('keeps the industry on the farm when a storage is listed first (#1257)', async () => {
+    const w = new World();
+    w.own('storage', 116, 220);
+    w.own('industry', 120, 220);
+    expect((await findFixture(w.session(), kind('industry'))).found).toMatchObject({ x: 120, y: 220, visualClass: '4116' });
+    expect((await findFixture(w.session(), kind('storage'))).found).toMatchObject({ x: 116, y: 220, visualClass: '324' });
   });
 
   it('finds nothing when the own company is not listed', async () => {
@@ -806,7 +860,7 @@ describe('ensureFixtures', () => {
     const w = new World();
     ownAllBut(w);
     const out = await ensure(w);
-    expect(Object.values(out).map(o => o.status)).toEqual(Array(7).fill('found'));
+    expect(Object.values(out).map(o => o.status)).toEqual(Array(8).fill('found'));
     expect(out.industry).toMatchObject({ x: 110, y: 228, visualClass: '4116' });
     expect(w.placed()).toHaveLength(0);
     expect(w.requests.some(r => r.type === WsMessageType.REQ_GET_BUILDING_CATEGORIES)).toBe(false);
@@ -821,6 +875,57 @@ describe('ensureFixtures', () => {
     });
     expect((await ensure(w)).warehouse).toMatchObject({ status: 'built', facilityClass: 'PGIWHCOMMONUWMegaStorage' });
     expect(w.placed()).toHaveLength(1);
+  });
+
+  it('builds a missing storage from an offered UW General Storage (#1257)', async () => {
+    const w = new World();
+    ownAllBut(w, 'storage');
+    spyLog(w);
+    w.offer('PGIWHCOMMONUWGeneralStorage', 1_000_000, '321', { xsize: 5, ysize: 5 });
+    const out = await ensure(w);
+    expect(out.storage).toMatchObject({
+      status: 'built',
+      facilityClass: 'PGIWHCOMMONUWGeneralStorage',
+      logLine: expect.stringMatching(/New Facility: PGIWHCOMMONUWGeneralStorage/),
+    });
+    expect(w.placed()).toHaveLength(1);
+  });
+
+  it('builds the storage from UW Cold Storage when the menu offers no UW General Storage (level 1100, #1257)', async () => {
+    const w = new World();
+    ownAllBut(w, 'storage');
+    spyLog(w);
+    w.offer('MarikoWHCOMMONUWColdStorage', 1_000_000, '301', { xsize: 5, ysize: 5 });
+    const out = await ensure(w);
+    expect(out.storage).toMatchObject({
+      status: 'built',
+      facilityClass: 'MarikoWHCOMMONUWColdStorage',
+      logLine: expect.stringMatching(/New Facility: MarikoWHCOMMONUWColdStorage/),
+    });
+    expect(w.placed()).toHaveLength(1);
+  });
+
+  it('FAILs a finished storage candidate whose TradeRole is not 2, 5 or 6, naming the class (#1257)', async () => {
+    const w = new World();
+    ownAllBut(w, 'storage');
+    spyLog(w);
+    w.offer('PGIWHCOMMONUWGeneralStorage', 1_000_000, '323', { xsize: 5, ysize: 5 });
+    w.place = (cls, x, y) => ({ code: 0, lands: mb('324', OWN, x, y), line: `12:00 New Facility: ${cls} Company: ${COMPANY_ID} x: ${x} y: ${y}` });
+    w.roles['324'] = '1';
+    const out = await ensure(w);
+    expect(out.storage).toMatchObject({
+      status: 'FAIL',
+      reason: expect.stringMatching(/candidate PGIWHCOMMONUWGeneralStorage \(visual class 324\).*TradeRole "1"/),
+    });
+  });
+
+  it('accepts a finished storage candidate that reads TradeRole 6 (#1257)', async () => {
+    const w = new World();
+    ownAllBut(w, 'storage');
+    spyLog(w);
+    w.offer('PGIWHCOMMONUWGeneralStorage', 1_000_000, '323', { xsize: 5, ysize: 5 });
+    w.place = (cls, x, y) => ({ code: 0, lands: mb('324', OWN, x, y), line: `12:00 New Facility: ${cls} Company: ${COMPANY_ID} x: ${x} y: ${y}` });
+    expect((await ensure(w)).storage).toMatchObject({ status: 'built', visualClass: '324' });
   });
 
   it('blocks every placement while the directory lists an owned construction site', async () => {
