@@ -94,7 +94,6 @@ const NO_FLOW_YET = 'no flow sends it yet — recorded by the E2E coverage audit
 export const EXCLUDED: Record<string, string> = {
   REQ_CREATE_COMPANY: NO_FLOW_YET,
   REQ_BUILD_CAPITOL: NO_FLOW_YET,
-  REQ_GM_CHAT_SEND: NO_FLOW_YET,
   REQ_NEWSPAPER_POST: NO_FLOW_YET,
   REQ_POLITICS_LAUNCH_CAMPAIGN: NO_FLOW_YET,
   REQ_POLITICS_CANCEL_CAMPAIGN: NO_FLOW_YET,
@@ -418,8 +417,8 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below (#1148): chat-private-channel is GATE_ONLY — it broadcasts.
     test: /^src\/server\/session\/chat-handler\.ts$|^src\/server\/ws-handlers\/chat-handlers\.ts$|^src\/client\/store\/chat-store\.ts$|^src\/client\/handlers\/chat-handler\.ts$/,
-    flows: ['chat-read', 'chat-private-channel', 'chat-chase'],
-    why: 'the chat handlers (gateway and client halves) and store — the channel list read, the password channel the flow creates and removes (send, typing, away), and the chase of the secondary account',
+    flows: ['chat-read', 'chat-private-channel', 'chat-chase', 'gm-broadcast'],
+    why: 'the chat handlers (gateway and client halves) and store — the channel list read, the password channel the flow creates and removes (send, typing, away), the chase of the secondary account, and the GM broadcast delivered to the secondary account and refused to a non-GM and to a session not yet in the world',
   },
   {
     // After the pixel rule, which keeps the chat CSS.

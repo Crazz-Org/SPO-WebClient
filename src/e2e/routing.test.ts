@@ -745,7 +745,7 @@ describe('route — handler rules seeded by #1134', () => {
   // #1148: chat-handler.ts left FALLBACK_ONLY — its own rule is now the first match.
   it('routes the former FALLBACK_ONLY chat handler through its own rule', () => {
     expect(route(['src/server/session/chat-handler.ts']).required).toEqual([
-      SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase',
+      SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase', 'gm-broadcast',
     ]);
     expect('src/server/session/chat-handler.ts' in FALLBACK_ONLY).toBe(false);
   });
@@ -891,14 +891,16 @@ describe('route — profile & finance reads (#1141)', () => {
 
 describe('route — chat (#1148)', () => {
   const CHAT = [SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase'];
+  // #1199: the handler/store rule also drives the GM broadcast; the component rule does not.
+  const CHAT_RULE = [...CHAT, 'gm-broadcast'];
 
   it.each([
     'src/server/session/chat-handler.ts',
     'src/server/ws-handlers/chat-handlers.ts',
     'src/client/store/chat-store.ts',
-  ])('%s requires the three chat flows, and is not fallback-only', file => {
+  ])('%s requires the chat flows and the GM broadcast, and is not fallback-only', file => {
     const d = route([file]);
-    expect(d.required).toEqual(CHAT);
+    expect(d.required).toEqual(CHAT_RULE);
     expect(d.needsL3).toBe(false);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
@@ -921,7 +923,7 @@ describe('route — chat (#1148)', () => {
   it('keeps chat-private-channel gate-only with its broadcast cited, and the other two on both', () => {
     expect(GATE_ONLY['chat-private-channel']).toMatch(/InterfaceServer\.pas:4594/);
     expect(GATE_ONLY['chat-private-channel']).toMatch(/:3968-3980/);
-    for (const name of ['chat-read', 'chat-chase']) {
+    for (const name of ['chat-read', 'chat-chase', 'gm-broadcast']) {
       expect(name in GATE_ONLY).toBe(false);
       expect(name in NIGHTLY_ONLY).toBe(false);
     }
@@ -1331,6 +1333,8 @@ describe('route — handler requests reach a flow that sends them (#1187)', () =
   const requests = handlerRequests();
   const ROAD = ['REQ_BUILD_ROAD', 'REQ_DEMOLISH_ROAD', 'REQ_DEMOLISH_ROAD_AREA'];
   const CHAT = [SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase'];
+  // #1199: the chat-handlers rule also drives the GM broadcast; push-dispatcher does not.
+  const CHAT_RULE = [...CHAT, 'gm-broadcast'];
 
   describe('the derivation reads the tree (it must not pass vacuously)', () => {
     it('gives the spine exactly its five requests', () => {
@@ -1359,6 +1363,11 @@ describe('route — handler requests reach a flow that sends them (#1187)', () =
       expect(misc).toContain('REQ_SEARCH_CONNECTIONS');
       expect(misc).toContain('REQ_DEFINE_ZONE');
       expect(requests.get('src/server/session/chat-handler.ts')).toContain('REQ_CHAT_SEND_MESSAGE');
+    });
+
+    it('gives gm-broadcast the GM send, which has left EXCLUDED (#1199)', () => {
+      expect(sends.get('gm-broadcast')).toContain('REQ_GM_CHAT_SEND');
+      expect('REQ_GM_CHAT_SEND' in EXCLUDED).toBe(false);
     });
   });
 
@@ -1426,7 +1435,7 @@ describe('route — handler requests reach a flow that sends them (#1187)', () =
     it.each([
       ['src/client/handlers/road-handler.ts', [SPINE_FLOW, 'road-roundtrip']],
       ['src/client/handlers/zone-handler.ts', [SPINE_FLOW, 'zone-roundtrip']],
-      ['src/client/handlers/chat-handler.ts', CHAT],
+      ['src/client/handlers/chat-handler.ts', CHAT_RULE],
       ['src/server/session/push-dispatcher.ts', CHAT],
     ])('%s -> %j', (file, flows) => {
       const d = route([file]);

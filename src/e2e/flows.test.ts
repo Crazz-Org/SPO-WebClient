@@ -24,7 +24,7 @@ import {
   type Flow, type FlowResult, type GateLinks,
 } from './flows';
 import { parseBuildingFocusResponse } from '@/server/map-parsers';
-import { ERROR_FacilityNotFound } from '@/shared/error-codes';
+import { ERROR_AccessDenied, ERROR_FacilityNotFound } from '@/shared/error-codes';
 import { buildReplyHeaders } from '@/client/store/mail-store';
 import { validatePicture } from '@/server/session/picture-transfer';
 import type { LoanInfo, TycoonProfileFull } from '@/shared/types/domain-types';
@@ -9153,6 +9153,213 @@ describe('chat flows (#1148)', () => {
       expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
       expect(off).toHaveBeenCalledWith(secondary.session);
     });
+  });
+});
+
+describe('gm-broadcast (#1199)', () => {
+  const GM_REFUSAL = 'Only Game Masters can send GM messages';
+  const PHASE_REFUSAL = 'Operation not allowed in current session state';
+  const DELIVERED = `${SECONDARY_NAME} received the GM message on channel GM`;
+  const NON_GM = `a non-GM session (${SECONDARY_NAME}) is refused`;
+  const PHASE = 'a session not yet WORLD_CONNECTED is refused by the phase gate';
+
+  interface GmOptions {
+    /** What the primary's GM send delivers to the bus: the event, altered, or nothing. */
+    deliver?: (msg: Record<string, unknown>) => Record<string, unknown> | null;
+    /** The secondary's GM send ends in a plain timeout (accepted) instead of a refusal. */
+    secondaryAccepted?: boolean;
+    /** The refusal the directory-only session gets. */
+    dirRefusal?: { message: string; code: number };
+    connectFails?: boolean;
+  }
+
+  interface FakeDriver {
+    sent: Record<string, unknown>[];
+    received: WsMessage[];
+    close: jest.Mock;
+    driver: WsDriver;
+  }
+
+  function fakeDriver(
+    request: (msg: Record<string, unknown>) => Promise<unknown>,
+    onSend?: (msg: Record<string, unknown>) => void,
+  ): FakeDriver {
+    const sent: Record<string, unknown>[] = [];
+    const received: WsMessage[] = [];
+    const close = jest.fn(async () => undefined);
+    const driver = {
+      log: [] as unknown[],
+      errors: [] as WsMessage[],
+      close,
+      receivedCount: () => received.length,
+      send: (msg: Record<string, unknown>) => {
+        sent.push(msg);
+        onSend?.(msg);
+        return `e2e-${sent.length}`;
+      },
+      waitFor: async (match: (m: WsMessage) => boolean, _t?: number, label = 'message', from = 0) => {
+        const hit = received.slice(from).find(match);
+        if (!hit) throw new Error(`Timed out waiting for ${label}`);
+        return hit;
+      },
+      request: async (msg: Record<string, unknown>) => {
+        sent.push(msg);
+        return request(msg);
+      },
+    };
+    return { sent, received, close, driver: driver as unknown as WsDriver };
+  }
+
+  function asSession(d: FakeDriver, account = PRIMARY_ACCOUNT): session.LiveSession {
+    return { driver: d.driver, account, company: { id: '1', name: 'x' }, worlds: 3, companies: [], playerX: 0, playerY: 0 };
+  }
+
+  function gmWorld(options: GmOptions = {}) {
+    const secondary = fakeDriver(async msg => {
+      if (msg.type === WsMessageType.REQ_GM_CHAT_SEND) {
+        if (options.secondaryAccepted) throw new Error('Timed out after 30000 ms waiting for RESP_CHAT_SUCCESS');
+        throw new WsDriverError(GM_REFUSAL, 0, String(msg.type));
+      }
+      throw new Error(`unexpected ${String(msg.type)}`);
+    });
+    const primary: FakeDriver = fakeDriver(
+      async msg => {
+        throw new Error(`unexpected ${String(msg.type)}`);
+      },
+      msg => {
+        if (msg.type !== WsMessageType.REQ_GM_CHAT_SEND) return;
+        const event = { type: WsMessageType.EVENT_CHAT_MSG, channel: 'GM', from: 'SPO_test3', message: msg.message, isGM: true };
+        const delivered = options.deliver ? options.deliver(event) : event;
+        if (delivered === null) return;
+        secondary.received.push(delivered as unknown as WsMessage);
+        primary.received.push(delivered as unknown as WsMessage);
+      },
+    );
+    const dir = fakeDriver(async msg => {
+      switch (msg.type) {
+        case WsMessageType.REQ_AUTH_CHECK:
+          return { type: WsMessageType.RESP_AUTH_SUCCESS };
+        case WsMessageType.REQ_CONNECT_DIRECTORY:
+          return { type: WsMessageType.RESP_CONNECT_SUCCESS };
+        case WsMessageType.REQ_GM_CHAT_SEND: {
+          const r = options.dirRefusal ?? { message: PHASE_REFUSAL, code: ERROR_AccessDenied };
+          throw new WsDriverError(r.message, r.code, String(msg.type));
+        }
+        default:
+          throw new Error(`unexpected ${String(msg.type)}`);
+      }
+    });
+    const secondarySession = asSession(secondary, SECONDARY_ACCOUNT);
+    const primarySession = asSession(primary);
+    jest.spyOn(session, 'loginSecondary').mockResolvedValue(secondarySession);
+    const login = jest.spyOn(session, 'login').mockResolvedValue(primarySession);
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    const connect = options.connectFails
+      ? jest.spyOn(WsDriver, 'connect').mockRejectedValue(new Error('WebSocket failed to open: ECONNREFUSED'))
+      : jest.spyOn(WsDriver, 'connect').mockResolvedValue(dir.driver);
+    return { secondary, primary, dir, secondarySession, primarySession, login, off, connect };
+  }
+
+  const failed = (r: FlowResult): string[] => r.assertions.filter(a => !a.ok).map(a => a.what);
+  const run = () => runFlow(flowByName('gm-broadcast'), { lock: cleanLock() });
+
+  it('delivers the GM message to the secondary, refuses it and a directory-only session, and logs both off', async () => {
+    const w = gmWorld();
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    const gm = w.primary.sent.find(m => m.type === WsMessageType.REQ_GM_CHAT_SEND);
+    expect(String(gm?.message)).toMatch(/^e2e gm probe [0-9a-f]{8} — /);
+    const got = w.secondary.received.find(m => m.type === WsMessageType.EVENT_CHAT_MSG) as unknown as Record<string, unknown>;
+    expect(got).toMatchObject({ channel: 'GM', message: gm?.message, isGM: true });
+    expect(result.assertions.find(a => a.what === NON_GM)).toMatchObject({ ok: true, detail: GM_REFUSAL });
+    expect(w.dir.sent.map(m => m.type)).toEqual([
+      WsMessageType.REQ_AUTH_CHECK,
+      WsMessageType.REQ_CONNECT_DIRECTORY,
+      WsMessageType.REQ_GM_CHAT_SEND,
+    ]);
+    expect(w.dir.sent[0]).toMatchObject({ username: PRIMARY_ACCOUNT.username });
+    expect(w.dir.close).toHaveBeenCalled();
+    expect(w.off).toHaveBeenCalledWith(w.primarySession);
+    expect(w.off).toHaveBeenCalledWith(w.secondarySession);
+    expect(flowByName('gm-broadcast').mutates).toBe(false);
+  });
+
+  it('fails when the broadcast never reaches the secondary', async () => {
+    gmWorld({ deliver: () => null });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toEqual([DELIVERED]);
+  });
+
+  it.each([
+    ['another channel', (e: Record<string, unknown>) => ({ ...e, channel: 'Lobby' })],
+    ['another text', (e: Record<string, unknown>) => ({ ...e, message: 'hello' })],
+    ['no GM flag', (e: Record<string, unknown>) => ({ ...e, isGM: false })],
+    ['another sender', (e: Record<string, unknown>) => ({ ...e, from: SECONDARY_NAME })],
+  ])('fails when the message arrives with %s', async (_label, deliver) => {
+    gmWorld({ deliver });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toEqual([DELIVERED]);
+  });
+
+  it('fails, naming SPO_GM_USERS, when the GM sender gets a gateway error', async () => {
+    const w = gmWorld();
+    (w.primary.driver.errors as WsMessage[]).push({ type: WsMessageType.RESP_ERROR, errorMessage: GM_REFUSAL } as unknown as WsMessage);
+    const result = await run();
+    expect(failed(result)).toEqual(['no gateway errors on the GM sender']);
+    const errs = result.assertions.find(a => a.what === 'no gateway errors on the GM sender');
+    expect(errs?.detail).toMatch(/Only Game Masters.*SPO_GM_USERS=SPO_test3/);
+  });
+
+  it("fails when the secondary's GM send is accepted", async () => {
+    gmWorld({ secondaryAccepted: true });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toEqual([NON_GM]);
+    expect(result.assertions.find(a => a.what === NON_GM)?.detail).toMatch(/^not refused: Timed out/);
+  });
+
+  it('fails when the directory-only session is refused by the GM check rather than the phase gate', async () => {
+    gmWorld({ dirRefusal: { message: GM_REFUSAL, code: ERROR_AccessDenied } });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toEqual([PHASE]);
+  });
+
+  it('fails when the phase refusal carries another code', async () => {
+    gmWorld({ dirRefusal: { message: PHASE_REFUSAL, code: 0 } });
+    const result = await run();
+    expect(failed(result)).toEqual([PHASE]);
+    expect(result.assertions.find(a => a.what === PHASE)?.detail).toBe(`${PHASE_REFUSAL} (code 0)`);
+  });
+
+  it('turns a directory socket that will not open into a failed assertion, and still logs both off', async () => {
+    const w = gmWorld({ connectFails: true });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => a.what === PHASE)).toMatchObject({ ok: false, detail: expect.stringMatching(/ECONNREFUSED/) });
+    expect(w.off).toHaveBeenCalledWith(w.primarySession);
+    expect(w.off).toHaveBeenCalledWith(w.secondarySession);
+  });
+
+  it('ends SKIPPED when the secondary is refused, with nothing sent', async () => {
+    jest.spyOn(session, 'loginSecondary').mockResolvedValue({ skipped: `${SECONDARY_NAME} refused` });
+    const login = jest.spyOn(session, 'login');
+    const connect = jest.spyOn(WsDriver, 'connect');
+    const result = await run();
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused`, messagesSent: 0 });
+    expect(login).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('logs the secondary off even when the primary login throws', async () => {
+    const w = gmWorld();
+    w.login.mockRejectedValue(new Error('login refused'));
+    const result = await run();
+    expect(result).toMatchObject({ status: 'FAIL', error: 'login refused' });
+    expect(w.off).toHaveBeenCalledWith(w.secondarySession);
+    expect(w.connect).not.toHaveBeenCalled();
   });
 });
 

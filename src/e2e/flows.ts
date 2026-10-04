@@ -128,8 +128,10 @@ import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
 import { ERROR_AccessDenied, ERROR_TooManyFacilities } from '../shared/error-codes';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
-import { WsDriverError, type OutboundMessage } from './ws-driver';
+import { WsDriver, WsDriverError, type OutboundMessage } from './ws-driver';
 import {
+  GATEWAY_ORIGIN,
+  GATEWAY_URL,
   GOVERNED_TOWN,
   INTERFACE_LOG_BASE,
   LIMITS,
@@ -137,6 +139,7 @@ import {
   SECONDARY_ACCOUNT,
   TIMEOUTS,
   WORLD_NAME,
+  ZONE_PATH,
   type E2eAccount,
 } from './config';
 import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, readSince } from './live-log';
@@ -8705,6 +8708,145 @@ const chatChase: Flow = {
   },
 };
 
+/** The refusal `handleGmChatSend` answers a non-GM with (ws-handlers/chat-handlers.ts). */
+const GM_REFUSAL = 'Only Game Masters can send GM messages';
+/** The phase gate's refusal (`PHASE_ALLOWED_MESSAGES` in server.ts). */
+const PHASE_REFUSAL = 'Operation not allowed in current session state';
+
+/**
+ * Send one GM message expecting a refusal. The handler never answers an accepted GM send, so
+ * acceptance surfaces as a timeout (a plain Error), a refusal as a WsDriverError.
+ */
+async function gmSendRefusal(driver: WsDriver, message: string): Promise<WsDriverError | string> {
+  try {
+    await driver.request<WsRespChatSuccess>(
+      { type: WsMessageType.REQ_GM_CHAT_SEND, message },
+      WsMessageType.RESP_CHAT_SUCCESS,
+    );
+    return 'answered without an error';
+  } catch (err: unknown) {
+    return err instanceof WsDriverError ? err : `not refused: ${toErrorMessage(err)}`;
+  }
+}
+
+/**
+ * GM broadcast (#1199). `handleGmChatSend` (ws-handlers/chat-handlers.ts) makes no RDO call and
+ * sends only to the gateway's own `connectedClients` — on the bench, the drive's own sessions,
+ * where SPO_test3 is the named GM (#1197, doc/E2E-POLICY.md §6). Nothing reaches a player and
+ * there is nothing to undo. The secondary account logs in BEFORE the send, and is the receiver
+ * rather than a second SPO_test3 session: a second SPO_test3 world session would retire the first
+ * (Interface Server/InterfaceServer.pas:3138-3146).
+ */
+const gmBroadcast: Flow = {
+  name: 'gm-broadcast',
+  what:
+    `${SECONDARY_ACCOUNT.username} online -> SPO_test3 GM message -> ${SECONDARY_ACCOUNT.username} receives it on GM -> ` +
+    `${SECONDARY_ACCOUNT.username} refused -> a directory-only session refused by the phase gate`,
+  mutates: false,
+  run: async () => {
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult('gm-broadcast', secondary.skipped);
+    try {
+      const session = await login(PRIMARY_ACCOUNT);
+      try {
+        const assertions = new Assertions();
+        const id = randomUUID().slice(0, 8);
+        const text = `e2e gm probe ${id} — automated L2 check, safe to ignore`;
+
+        // 1. Delivered. Matched on channel, text, GM flag and sender — Lobby chat shares the event type.
+        const from = secondary.driver.receivedCount();
+        await attempt(assertions, `${SECONDARY_ACCOUNT.username} received the GM message on channel GM`, () => {
+          // send, not request: an accepted GM send gets no reply.
+          session.driver.send({ type: WsMessageType.REQ_GM_CHAT_SEND, message: text });
+          return secondary.driver.waitFor(
+            m => {
+              const e = m as WsEventChatMsg;
+              return (
+                m.type === WsMessageType.EVENT_CHAT_MSG &&
+                e.channel === 'GM' &&
+                e.message === text &&
+                e.isGM === true &&
+                isSelf(e.from)
+              );
+            },
+            TIMEOUTS.request,
+            `EVENT_CHAT_MSG on GM carrying "${text}"`,
+            from,
+          );
+        });
+        const senderErrors = session.driver.errors
+          .map(e => (e as { errorMessage?: string }).errorMessage ?? 'gateway error')
+          .join('; ');
+        assertions.check(
+          'no gateway errors on the GM sender',
+          session.driver.errors.length === 0,
+          senderErrors === ''
+            ? undefined
+            : `${senderErrors} — is the gateway started with SPO_GM_USERS=SPO_test3 (#1197)?`,
+        );
+
+        // 2. A non-GM is refused by the GM check.
+        const refusal = await gmSendRefusal(secondary.driver, `e2e gm refusal probe ${id} — safe to ignore`);
+        const refusalDetail = refusal instanceof WsDriverError ? refusal.message : refusal;
+        assertions.check(
+          `a non-GM session (${SECONDARY_ACCOUNT.username}) is refused`,
+          refusalDetail === GM_REFUSAL,
+          refusalDetail,
+        );
+
+        // 3. A session still DIRECTORY_CONNECTED — as the GM, so only the phase gate can refuse it
+        // (it is not in connectedClients, so the GM check would give the other message).
+        // No REQ_LOGIN_WORLD: no Interface Server logon, no eviction of the world session.
+        let phaseOk = false;
+        let phaseDetail: string;
+        try {
+          const dir = await WsDriver.connect(GATEWAY_URL, GATEWAY_ORIGIN);
+          try {
+            await dir.request(
+              {
+                type: WsMessageType.REQ_AUTH_CHECK,
+                username: PRIMARY_ACCOUNT.username,
+                password: PRIMARY_ACCOUNT.password,
+              },
+              WsMessageType.RESP_AUTH_SUCCESS,
+              TIMEOUTS.login,
+            );
+            await dir.request(
+              {
+                type: WsMessageType.REQ_CONNECT_DIRECTORY,
+                username: PRIMARY_ACCOUNT.username,
+                password: PRIMARY_ACCOUNT.password,
+                zonePath: ZONE_PATH,
+              },
+              WsMessageType.RESP_CONNECT_SUCCESS,
+              TIMEOUTS.login,
+            );
+            const outcome = await gmSendRefusal(dir, `e2e gm phase probe ${id} — safe to ignore`);
+            phaseOk =
+              outcome instanceof WsDriverError &&
+              outcome.message === PHASE_REFUSAL &&
+              outcome.code === ERROR_AccessDenied;
+            phaseDetail = outcome instanceof WsDriverError ? `${outcome.message} (code ${outcome.code})` : outcome;
+          } finally {
+            // A session never in the world is never parked: a bare close ends it.
+            await dir.close();
+          }
+        } catch (err: unknown) {
+          phaseOk = false;
+          phaseDetail = toErrorMessage(err);
+        }
+        assertions.check('a session not yet WORLD_CONNECTED is refused by the phase gate', phaseOk, phaseDetail);
+
+        return report('gm-broadcast', assertions, [], session);
+      } finally {
+        await logoff(session);
+      }
+    } finally {
+      await logoff(secondary);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   sessionResume,
@@ -8739,6 +8881,7 @@ export const FLOWS: Flow[] = [
   chatRead,
   chatPrivateChannel,
   chatChase,
+  gmBroadcast,
   bankBorrowPayoff,
   bankSendReturn,
   portraitRoundTrip,
