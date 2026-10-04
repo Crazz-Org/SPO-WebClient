@@ -35,6 +35,7 @@ import { runGit, type GitRunner, type TreeFingerprint } from './fingerprint';
 import { prepareCheckout as sharedPrepareCheckout } from './checkout';
 import { type GitAuthEnv } from './git-auth';
 import type { Spool, JobRequest, JobVerdict, ManualRequester, NightlyTrigger } from './job';
+import { SERVER_QUARANTINE } from '../routing';
 
 /**
  * The window, in **UTC** hours: the run may start at 02:00, 03:00 or 04:00 UTC.
@@ -99,6 +100,11 @@ export interface NightlyResult {
   unproven?: string[];
   /** The flows whose status is `SKIPPED`, by name. */
   skipped?: string[];
+  /**
+   * The SERVER_QUARANTINE flows this run drove, by name, whatever their status — a known
+   * live-server fault keeps them out of the verdict, never out of sight (doc/E2E-POLICY.md §7).
+   */
+  quarantined?: string[];
   /** manual only: a summary of the record this one replaced. */
   supersedes?: {
     jobId?: string;
@@ -728,18 +734,19 @@ interface NightlyReportView {
 }
 
 /**
- * The per-flow keys `latest.json` carries: every flow's status, plus the UNPROVEN and
- * SKIPPED ones by name, so a flow that never proves anything is visible at a glance. `{}`
+ * The per-flow keys `latest.json` carries: every flow's status, plus the UNPROVEN, SKIPPED
+ * and SERVER_QUARANTINE ones by name, so a flow that never proves anything is visible at a glance. `{}`
  * when no live artifact was read — a conditional spread, so such a record gains no key.
  */
 export function flowSummary(
   liveFlows: NightlyFlowStatus[] | undefined,
-): Pick<NightlyResult, 'flows' | 'unproven' | 'skipped'> {
+): Pick<NightlyResult, 'flows' | 'unproven' | 'skipped' | 'quarantined'> {
   if (!liveFlows) return {};
   return {
     flows: liveFlows,
     unproven: liveFlows.filter(f => f.status === 'UNPROVEN').map(f => f.name),
     skipped: liveFlows.filter(f => f.status === 'SKIPPED').map(f => f.name),
+    quarantined: liveFlows.filter(f => f.name in SERVER_QUARANTINE).map(f => f.name),
   };
 }
 

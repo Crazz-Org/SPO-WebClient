@@ -6,6 +6,7 @@ import { Spool, type ManualRequester } from './job';
 import type { GitRunner, TreeFingerprint } from './fingerprint';
 import {
   deleteManualRequest,
+  flowSummary,
   manualProofDue,
   manualRecordFile,
   manualRequestFile,
@@ -1232,5 +1233,20 @@ describe('publishManualResult — attest-only replacement', () => {
     const expected = { flows: liveFlows, unproven: ['b'], skipped: ['c'] };
     expect(readNightlyResult(h.paths)).toMatchObject(expected);
     expect(readManualRecords(h.paths)).toEqual([expect.objectContaining(expected)]);
+  });
+});
+
+describe('flowSummary — the server quarantine (#1310)', () => {
+  it('lists the quarantined flows the run drove, whatever their status, and leaves the others out', () => {
+    const summary = flowSummary([
+      { name: 'login-spine', status: 'PASS' },
+      { name: 'portrait-roundtrip', status: 'FAIL' },
+      { name: 'politics-read', status: 'FAIL' },
+    ]);
+    expect(summary.quarantined).toEqual(['portrait-roundtrip']);
+  });
+
+  it('carries no key when no live artifact was read', () => {
+    expect(flowSummary(undefined)).toEqual({});
   });
 });

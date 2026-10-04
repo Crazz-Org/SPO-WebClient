@@ -7,7 +7,7 @@ import { WorldLock } from './world-lock';
 import * as preflightModule from './preflight';
 import * as flowsModule from './flows';
 import * as capabilityModule from './capability';
-import { GATE_ONLY } from './routing';
+import { GATE_ONLY, SERVER_QUARANTINE } from './routing';
 import { SECONDARY_ACCOUNT } from './config';
 
 function tempLock(): WorldLock {
@@ -200,6 +200,28 @@ describe('runLive', () => {
 
     expect(result.status).toBe('FAIL');
     expect(result.error).toMatch(/dirty/);
+  });
+
+  it('records the release error apart, so the nightly never absorbs a dirty world (#1310)', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const lock = tempLock();
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => {
+      lock.addPendingRestore({ key: 'k', what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
+      return passingFlow(flow.name);
+    });
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock });
+
+    expect(result.releaseError).toMatch(/dirty/);
+  });
+
+  it('carries no releaseError key when the world was released clean', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => passingFlow(flow.name));
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+
+    expect(Object.prototype.hasOwnProperty.call(result, 'releaseError')).toBe(false);
   });
 
   it('passes the resolved log url down to the flows', async () => {
@@ -429,6 +451,25 @@ describe('formatSummary', () => {
     expect(summary).not.toContain('SKIPPED  permission-negative');
   });
 
+  it('prints the server quarantine block with each entry and its outcome in this run (#1310)', () => {
+    const summary = formatSummary(
+      { ...base, flows: [{ ...passingFlow('portrait-roundtrip'), status: 'FAIL' }] },
+      SERVER_QUARANTINE,
+    );
+    const entries = Object.keys(SERVER_QUARANTINE);
+    expect(summary).toContain(`Server quarantine (${entries.length}):`);
+    const portrait = SERVER_QUARANTINE['portrait-roundtrip'];
+    expect(summary).toContain(
+      `  portrait-roundtrip — ${portrait.reason} | link: ${portrait.link} | lift: ${portrait.lift} | ` +
+        `added: ${portrait.added} | this run: FAIL`,
+    );
+    expect(summary).toMatch(/ {2}newspaper-board-read — .* \| this run: not run$/m);
+  });
+
+  it('prints no quarantine block without a table', () => {
+    expect(formatSummary(base)).not.toContain('Server quarantine');
+  });
+
   it('surfaces failed pre-flight checks', () => {
     const summary = formatSummary({
       ...base,
@@ -608,6 +649,64 @@ describe('main', () => {
     it('a lock-refusal BLOCK (no flows) stays BLOCKED for the nightly too', async () => {
       const refused = { ...result, status: 'BLOCKED' as const, error: 'world dirty' };
       expect(await main([], async () => refused, sink().stream)).toBe(2);
+    });
+  });
+
+  describe('the server quarantine (#1310)', () => {
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    afterEach(() => {
+      if (fs.existsSync(written)) fs.unlinkSync(written);
+    });
+    const failing = (name: string): flowsModule.FlowResult => ({ ...passingFlow(name), status: 'FAIL', error: 'refused' });
+    const quarantinedFail: LiveRunResult = {
+      ...result,
+      status: 'FAIL',
+      flows: [passingFlow('login-spine'), failing('portrait-roundtrip')],
+    };
+
+    it('reports PASS, exit 0, when the only FAIL is a quarantined flow — the flow keeps its FAIL and is marked', async () => {
+      const out = sink();
+      expect(await main([], async () => quarantinedFail, out.stream)).toBe(0);
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('PASS');
+      const portrait = SERVER_QUARANTINE['portrait-roundtrip'];
+      expect(artifact.flows[1]).toMatchObject({
+        name: 'portrait-roundtrip',
+        status: 'FAIL',
+        quarantined: { reason: portrait.reason, link: portrait.link, lift: portrait.lift },
+      });
+      expect(artifact.flows[0].quarantined).toBeUndefined();
+      expect(out.text()).toContain('L2 live drive on planitia — PASS');
+      expect(out.text()).toContain('  FAIL  portrait-roundtrip — refused');
+    });
+
+    it('still FAILs, exit 1, when a non-quarantined flow FAILs beside it', async () => {
+      const both = { ...quarantinedFail, flows: [...quarantinedFail.flows, failing('politics-read')] };
+      expect(await main([], async () => both, sink().stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+    });
+
+    it('still FAILs, exit 1, on a dirty world — the quarantine never excuses a safety rail', async () => {
+      const dirty = { ...quarantinedFail, releaseError: 'world left dirty', error: 'world left dirty' };
+      expect(await main([], async () => dirty, sink().stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+    });
+
+    it('still FAILs, exit 1, when --flows names the quarantined flow, and marks nothing', async () => {
+      const named = { ...quarantinedFail, flows: [failing('portrait-roundtrip')] };
+      expect(await main(['--flows=portrait-roundtrip'], async () => named, sink().stream)).toBe(1);
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('FAIL');
+      expect(artifact.flows[0].quarantined).toBeUndefined();
+    });
+
+    it('prints the Server quarantine block, every entry, on a passing run', async () => {
+      const out = sink();
+      expect(await main([], async () => ({ ...result, flows: [passingFlow('login-spine')] }), out.stream)).toBe(0);
+      const entries = Object.keys(SERVER_QUARANTINE);
+      expect(out.text()).toContain(`Server quarantine (${entries.length}):`);
+      expect(entries.length).toBeGreaterThan(0);
+      for (const flow of entries) expect(out.text()).toContain(`  ${flow} — ${SERVER_QUARANTINE[flow].reason}`);
     });
   });
 
