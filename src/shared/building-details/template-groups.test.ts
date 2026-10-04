@@ -444,6 +444,13 @@ describe('Specialized handler RDO properties', () => {
     expect(rdoNames).toContain('Transcended');
   });
 
+  it('Votes requests the hidden CurrBlock enrichVotesTab binds RDOVoteOf to', () => {
+    const block = VOTES_GROUP.properties.find(p => p.rdoName === 'CurrBlock');
+    expect(block).toBeDefined();
+    expect(block!.notCached).toBeUndefined(); // it IS in the cache — it is what we read
+    expect(HIDDEN_PROPERTY_NAMES.has('CurrBlock')).toBe(true);
+  });
+
   it('Votes should have ruler properties and candidate TABLE', () => {
     const rdoNames = VOTES_GROUP.properties.map(p => p.rdoName);
     expect(rdoNames).toContain('RulerName');

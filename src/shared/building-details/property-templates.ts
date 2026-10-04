@@ -229,8 +229,9 @@ export function collectTemplatePropertyNamesForGroups(
  * `CurrBlock` is deliberately NOT here. It is the second `buildingId` fallback,
  * but asking for it on every open would hand `enrichVotesTab` the block id of
  * every town hall and turn a `RDOVoteOf` round-trip per candidate into part of
- * the opening cost — the exact traffic this read exists to avoid. No shipped
- * template requests it either.
+ * the opening cost — the exact traffic this read exists to avoid. `GENERIC_GROUP`
+ * requests it but reaches no `votes` tab; `VOTES_GROUP` requests it for
+ * `enrichVotesTab`, so it is read only when the votes section itself is read.
  */
 export const HEADER_PROPERTY_NAMES: readonly string[] = [
   'Name',
