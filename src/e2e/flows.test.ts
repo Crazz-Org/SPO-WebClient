@@ -1039,6 +1039,8 @@ describe('vote-roundtrip', () => {
     prior?: string;
     candidates?: string[];
     mayor?: string;
+    /** The town hall's cached RulerName in the votes section (absent when undefined). */
+    ruler?: string;
     /** Whether the server applies the n-th vote (1-based). */
     apply?: (call: number) => boolean;
     /** Whether the n-th vote prints its log line. */
@@ -1072,7 +1074,10 @@ describe('vote-roundtrip', () => {
     jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
     jest.spyOn(session, 'resolveVisualClass').mockResolvedValue('7010');
     jest.spyOn(session, 'readSectionGroups').mockImplementation(async () => ({
-      votes: current === undefined ? [] : [{ name: 'VoteOf', value: current }],
+      votes: [
+        ...(current === undefined ? [] : [{ name: 'VoteOf', value: current }]),
+        ...(opts.ruler === undefined ? [] : [{ name: 'RulerName', value: opts.ruler }]),
+      ],
     }));
     jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
     jest.spyOn(liveLog, 'awaitMarker').mockImplementation(
@@ -1100,11 +1105,67 @@ describe('vote-roundtrip', () => {
     expect(votes).toEqual(['Bob', 'spo_test3']);
   });
 
-  it('never votes without a prior vote', async () => {
+  it('seeds a vote for the mayor when there is no prior vote, and passes on its line and VoteOf read-back', async () => {
+    const votes = voteHall({ prior: undefined, ruler: 'SPO_test3', candidates: [] });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(votes).toEqual(['SPO_test3']);
+    expect(result.assertions.find(a => /read back through votes\.VoteOf/.test(a.what))?.ok).toBe(true);
+    expect(result.assertions.find(a => a.what === 'the seed vote logged its Voting: line')?.ok).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails the seed when VoteOf never reads back the mayor, with no pending restore', async () => {
+    const votes = voteHall({ prior: undefined, ruler: 'SPO_test3', candidates: ['Bob'], apply: () => false });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toMatch(/read back through votes\.VoteOf/);
+    expect(votes).toEqual(['SPO_test3']);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('never votes without a prior vote when RulerName is empty', async () => {
     const votes = voteHall({ prior: undefined, candidates: ['Alice', 'Bob'] });
     const result = await run();
     expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven[0]).toMatch(/no readable prior vote.*CurrBlock/);
+    expect(result.unproven[0]).toMatch(/RulerName.*Politics\.pas:1053-1060/);
+    expect(result.unproven[0]).not.toMatch(/no readable prior vote/);
+    expect(votes).toEqual([]);
+  });
+
+  it('never votes without a prior vote when RulerName is not the mayor', async () => {
+    const votes = voteHall({ prior: undefined, ruler: 'Carol', mayor: 'SPO_test3' });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(votes).toEqual([]);
+  });
+
+  it('seeds the mayor, then round-trips from the mayor when another candidate exists', async () => {
+    const votes = voteHall({ prior: undefined, ruler: 'spo_test3', candidates: ['Bob'] });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(votes).toEqual(['SPO_test3', 'Bob', 'SPO_test3']);
+    expect(result.assertions.find(a => a.what === 'the restore vote reached the object')?.ok).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails the seed when its vote prints no log line', async () => {
+    const votes = voteHall({ prior: undefined, ruler: 'SPO_test3', logs: () => false });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => a.what === 'the seed vote logged its Voting: line')?.ok).toBe(false);
+    expect(votes).toEqual(['SPO_test3']);
+  });
+
+  it('fails the seed when the log host throws, with nothing sent', async () => {
+    const votes = voteHall({ prior: undefined, ruler: 'SPO_test3' });
+    jest.spyOn(liveLog, 'openLogWindow').mockRejectedValue(new Error('log host vanished'));
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => a.what === 'the seed vote was accepted')?.ok).toBe(false);
     expect(votes).toEqual([]);
   });
 
@@ -1122,6 +1183,25 @@ describe('vote-roundtrip', () => {
     expect(result.status).toBe('UNPROVEN');
     expect(result.unproven[0]).toMatch(/no other candidate/);
     expect(votes).toEqual([]);
+  });
+
+  it('re-votes the mayor when the prior is the mayor, still the ruler, and no other candidate exists', async () => {
+    const votes = voteHall({ prior: 'SPO_test3', ruler: 'SPO_test3', mayor: 'SPO_test3', candidates: [] });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(votes).toEqual(['SPO_test3']);
+    expect(result.assertions.find(a => a.what === 'the re-vote vote logged its Voting: line')?.ok).toBe(true);
+    expect(result.assertions.find(a => /re-vote vote for SPO_test3 read back/.test(a.what))?.ok).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails the re-vote of the mayor when it prints no log line', async () => {
+    const votes = voteHall({ prior: 'SPO_test3', ruler: 'SPO_test3', candidates: [], logs: () => false });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => a.what === 'the re-vote vote logged its Voting: line')?.ok).toBe(false);
+    expect(votes).toEqual(['SPO_test3']);
   });
 
   it('fails when RDOVoteOf still shows the prior after the change vote, and still re-votes', async () => {
