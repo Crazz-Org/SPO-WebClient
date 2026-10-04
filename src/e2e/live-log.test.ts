@@ -301,4 +301,14 @@ describe('loggedInWindow', () => {
     expect(loggedInWindow('Setting Tax value: 1', at('2026-10-01T23:59:59.000Z'))).toBe(true);
     expect(loggedInWindow('1:00:00 AM x', at('now'))).toBe(true);
   });
+
+  it('compares a DateTimeToStr-stamped line as a full date-time', () => {
+    const w = at('2026-09-30T20:06:00.000Z');
+    expect(loggedInWindow('2026-09-30 10:22:12 AM Voting: a by b', w)).toBe(false);
+    expect(loggedInWindow('2026-09-30 8:06:05 PM Voting: a by b', w)).toBe(true);
+    expect(loggedInWindow('2026-09-29 9:00:00 PM Voting: a by b', w)).toBe(false);
+    expect(loggedInWindow('2026-09-30 8:05:50 PM Service SetPrice: 0, 290', w)).toBe(true);
+    expect(loggedInWindow('2026-09-30 8:05:49 PM Setting salaries: 128, 100, 100', w)).toBe(false);
+    expect(loggedInWindow('2026-10-01 1:00:00 AM x', w)).toBe(true);
+  });
 });
