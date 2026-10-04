@@ -117,7 +117,10 @@ const SHOWN_ORIGINAL_MAX = 64;
 
 /**
  * Run one round trip. Always attempts the restore, including after a failed proof or a
- * throw — a failing round trip must not be the reason the world is left dirty.
+ * throw — a failing round trip must not be the reason the world is left dirty. The restore
+ * read-back is polled even when the restore write throws: only a read-back that confirms the
+ * original clears the pending restore (a server that refused both writes left the world
+ * unchanged), and the probe still FAILs.
  */
 export async function runRoundTrip(
   spec: RoundTripSpec,
@@ -185,18 +188,18 @@ export async function runRoundTrip(
 
   // The restore runs whatever happened above.
   let restoreWriteFailed = false;
-  let restorePoll: PollOutcome = { verdict: 'UNCONFIRMED', last: undefined };
+  let restorePoll: PollOutcome;
   try {
     await (spec.restore ?? spec.write)(original);
   } catch {
     restoreWriteFailed = true;
   }
-  if (!restoreWriteFailed) {
-    try {
-      restorePoll = await pollReadBack(readBack, original, clock);
-    } catch {
-      restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
-    }
+  // Polled even after a throwing restore write: the read-back, not the write, says whether
+  // the world still holds the original.
+  try {
+    restorePoll = await pollReadBack(readBack, original, clock);
+  } catch {
+    restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
   }
   const restored = restorePoll.verdict === 'CONFIRMED';
   const restoreReadBack = restorePoll.verdict;
@@ -214,7 +217,9 @@ export async function runRoundTrip(
     );
   }
   if (log && !logLine) failures.push('no model-server log line — the write never reached the object');
-  if (restoreWriteFailed) {
+  if (restoreWriteFailed && restored) {
+    failures.push('restore write failed, but the read-back shows the original — the world is unchanged');
+  } else if (restoreWriteFailed) {
     failures.push('restore failed — the world is left dirty');
   } else if (!restored) {
     failures.push(

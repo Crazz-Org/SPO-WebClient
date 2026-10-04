@@ -61,6 +61,7 @@ exports.route = files => ({
   ...decision,
 });
 exports.SPINE_FLOW = 'login-spine';
+exports.SERVER_QUARANTINE = JSON.parse(process.env.FAKE_QUARANTINE || '{}');
 exports.presidentMembersInDiff = diff => {
   if (process.env.FAKE_DIFF_OUT) fs.writeFileSync(process.env.FAKE_DIFF_OUT, diff, 'utf8');
   return JSON.parse(process.env.FAKE_PRESIDENT || '[]');
@@ -894,6 +895,41 @@ describe('stage 3 — changed and declared flows (#1183)', () => {
     });
     expect(run.code).toBe(0);
     expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'politics-read'] });
+  });
+
+  it('--also-flows= naming a quarantined flow does not require it, and records it as quarantined (#1310)', () => {
+    const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['login-spine', 'politics-read'] }),
+      FAKE_QUARANTINE: JSON.stringify({ 'portrait-roundtrip': { reason: 'the picture server refuses' } }),
+    });
+    expect(run.code).toBe(0);
+    expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'politics-read'] });
+    expect((run.artifact?.routing as { required: string[] }).required).not.toContain('portrait-roundtrip');
+    expect(run.artifact?.routing).toMatchObject({
+      required: ['login-spine', 'politics-read'],
+      declared: [],
+      quarantined: ['portrait-roundtrip'],
+      reasons: ['server quarantine, not required: portrait-roundtrip — the picture server refuses'],
+    });
+  });
+
+  it('records a quarantined flow the diff changed, once, beside a declared one (#1310)', () => {
+    const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['login-spine', 'politics-read'] }),
+      FAKE_CHANGED: JSON.stringify({ required: [], notDriven: [], quarantined: ['portrait-roundtrip'], reasons: [] }),
+      FAKE_QUARANTINE: JSON.stringify({ 'portrait-roundtrip': { reason: 'refused' } }),
+    });
+    expect(run.code).toBe(0);
+    expect(run.artifact?.routing).toMatchObject({ quarantined: ['portrait-roundtrip'] });
+  });
+
+  it('--flows= naming a quarantined flow still drives it (#1310)', () => {
+    const run = runGate(scratchRepo(), ['--live', '--flows=login-spine,portrait-roundtrip'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['login-spine'] }),
+      FAKE_QUARANTINE: JSON.stringify({ 'portrait-roundtrip': { reason: 'refused' } }),
+    });
+    expect(run.code).toBe(0);
+    expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'portrait-roundtrip'] });
   });
 
   it('a bare --also-flows declares nothing', () => {
