@@ -230,6 +230,14 @@ describe('flowsChangedInWorktree — the real tree', () => {
     for (const flow of result.notDriven) expect(NIGHTLY_ONLY).toHaveProperty(flow);
   });
 
+  it('a change to session.ts readBuildingDetails lists newspaper-board-read, never requires it (#1307)', () => {
+    const session = fs.readFileSync(path.join(root, 'src/e2e/session.ts'), 'utf8').split('\n');
+    const line = session.findIndex(l => l.startsWith('export async function readBuildingDetails(')) + 2;
+    const result = flowsChangedInWorktree(hunk('src/e2e/session.ts', `@@ -${line} +${line} @@`), root);
+    expect(result.required).not.toContain('newspaper-board-read');
+    expect(result.notDriven).toContain('newspaper-board-read');
+  });
+
   it('a change to a research.ts helper drives research-roundtrip and lists fixtures-ensure (#1233)', () => {
     const research = fs.readFileSync(path.join(root, 'src/e2e/research.ts'), 'utf8').split('\n');
     const line = research.findIndex(l => l.startsWith('export function researchCost(')) + 2;

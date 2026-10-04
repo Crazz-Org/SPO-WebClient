@@ -345,17 +345,43 @@ describe('the town paper', () => {
   // The paper is not on the RDO wire at all — it is scraped off the ASP pages —
   // so the governance flows would prove nothing about a change to it.
   // newspaper-read stays nightly-only (#1009): the bench cannot create a kept issue,
-  // so it could only end UNPROVEN. The columns board read is required instead.
+  // so it could only end UNPROVEN. The columns board read is parked too (#1260): every post
+  // answers HTTP 500 server-side, so no column can be seeded — neither flow is required.
   const paperPaths = [
     'src/server/session/newspaper-handler.ts',
     'src/client/components/modals/NewspaperModal.tsx',
     'src/client/store/newspaper-store.ts',
   ];
 
-  it.each(paperPaths)('routes %s to the spine and the board read, and it is observable live', file => {
-    const d = route([file]);
-    expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
+  it('routes the paper modal to the spine alone, with a browser look', () => {
+    const d = route(['src/client/components/modals/NewspaperModal.tsx']);
+    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.needsL3).toBe(true);
     expect(d.staticOnly).toBe(false);
+  });
+
+  it.each(['src/server/session/newspaper-handler.ts', 'src/client/store/newspaper-store.ts'])(
+    'routes %s to no flow — static verification only',
+    file => {
+      const d = route([file]);
+      expect(d.required).toEqual([]);
+      expect(d.staticOnly).toBe(true);
+    },
+  );
+
+  it('parks newspaper-board-read: no rule requires it, and its NIGHTLY_ONLY reason cites #1260', () => {
+    expect(ROUTES.some(r => r.flows.includes('newspaper-board-read'))).toBe(false);
+    for (const f of [
+      'src/server/session/newspaper-handler.ts',
+      'src/server/ws-handlers/newspaper-handlers.ts',
+      'src/client/store/newspaper-store.ts',
+      'src/client/components/modals/NewspaperModal.tsx',
+    ]) {
+      expect(route([f]).required).not.toContain('newspaper-board-read');
+    }
+    expect(NIGHTLY_ONLY['newspaper-board-read']).toMatch(/#1260/);
+    expect(uncited({ 'newspaper-board-read': NIGHTLY_ONLY['newspaper-board-read'] })).toEqual([]);
+    expect(EXCLUDED.REQ_NEWSPAPER_BOARD).toMatch(/#1260/);
   });
 
   it.each(paperPaths)('does not route %s to the governance or inspector flows', file => {
@@ -365,9 +391,12 @@ describe('the town paper', () => {
     }
   });
 
-  it('routes the newspaper WS handler to the board read, not to the ws-handlers rule', () => {
-    expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).required)
-      .toEqual([SPINE_FLOW, 'newspaper-board-read']);
+  it('routes the newspaper WS handler by the newspaper rule, not the ws-handlers fallback, and requires no flow', () => {
+    const file = 'src/server/ws-handlers/newspaper-handlers.ts';
+    const rule = firstRule(ROUTES, file);
+    expect(rule?.fallback).toBeFalsy();
+    expect(rule?.test.test('src/client/store/newspaper-store.ts')).toBe(true);
+    expect(route([file]).required).toEqual([]);
   });
 
   it('leaves no rule with a spine-alone option', () => {
@@ -683,9 +712,9 @@ describe('route — L3 on the component folders (#1134)', () => {
     expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).needsL3).toBe(false);
   });
 
-  it('flags the paper modal, on the board read', () => {
+  it('flags the paper modal, on the spine alone', () => {
     const d = route(['src/client/components/modals/NewspaperModal.tsx']);
-    expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
+    expect(d.required).toEqual([SPINE_FLOW]);
     expect(d.needsL3).toBe(true);
   });
 });
