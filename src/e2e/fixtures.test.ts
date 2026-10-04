@@ -370,8 +370,16 @@ function ownAllBut(w: World, ...missing: FixtureKindId[]): void {
   }
 }
 
-async function ensure(w: World, deps: Parameters<typeof ensureFixtures>[1] = {}): Promise<Record<string, FixtureOutcome>> {
-  const out = await ensureFixtures(w.session(), { survivalLogUrl: 'log', fetchImpl: w.fetchImpl(), ...fastClock(), ...deps });
+async function ensure(
+  w: World,
+  deps: Parameters<typeof ensureFixtures>[1] = {},
+  kinds?: readonly FixtureKind[],
+): Promise<Record<string, FixtureOutcome>> {
+  const out = await ensureFixtures(
+    w.session(),
+    { survivalLogUrl: 'log', fetchImpl: w.fetchImpl(), ...fastClock(), ...deps },
+    kinds,
+  );
   return Object.fromEntries(out.map(o => [o.kind, o]));
 }
 
@@ -802,6 +810,49 @@ describe('listTycoonFacilities', () => {
 // ---------------------------------------------------------------------------------------------
 
 describe('ensureFixtures', () => {
+  describe("a fixture flow's own kinds (#1185)", () => {
+    it('builds only the kind passed, and reports only it, when several are absent', async () => {
+      const w = new World();
+      ownAllBut(w, 'store', 'tv');
+      spyLog(w);
+      w.offer('PGIFoodStore', 1);
+      w.offer('PGITVStation', 1);
+      const out = await ensure(w, {}, [kind('tv')]);
+      expect(Object.keys(out)).toEqual(['tv']);
+      expect(out.tv.status).toBe('built');
+      expect(w.placed().map(p => (p as unknown as { facilityClass: string }).facilityClass)).toEqual(['PGITVStation']);
+    });
+
+    it('reports a kind passed and already present as found, and places nothing', async () => {
+      const w = new World();
+      ownAllBut(w, 'store', 'tv');
+      w.offer('PGIFoodStore', 1);
+      const out = await ensure(w, {}, [kind('industry')]);
+      expect(Object.keys(out)).toEqual(['industry']);
+      expect(out.industry).toMatchObject({ status: 'found', x: 110, y: 228 });
+      expect(w.placed()).toHaveLength(0);
+      expect(w.requests.some(r => r.type === WsMessageType.REQ_GET_BUILDING_CATEGORIES)).toBe(false);
+    });
+
+    it('keeps the construction-site guard for the kind passed', async () => {
+      const w = new World();
+      ownAllBut(w, 'store', 'tv');
+      w.own('store', 126, 220, { vc: CONSTRUCTION_VC });
+      w.offer('PGITVStation', 1);
+      const out = await ensure(w, {}, [kind('tv')]);
+      expect(Object.keys(out)).toEqual(['tv']);
+      expect(out.tv).toMatchObject({ status: 'under construction', reason: expect.stringMatching(/construction site/) });
+      expect(w.placed()).toHaveLength(0);
+    });
+
+    it('still ensures every kind, in FIXTURE_KINDS order, when no kinds are passed', async () => {
+      const w = new World();
+      ownAllBut(w);
+      const out = await ensureFixtures(w.session(), { survivalLogUrl: 'log', fetchImpl: w.fetchImpl(), ...fastClock() });
+      expect(out.map(o => o.kind)).toEqual(FIXTURE_KINDS.map(k => k.id));
+    });
+  });
+
   it('places nothing, and lists nothing to build, when every kind is present', async () => {
     const w = new World();
     ownAllBut(w);

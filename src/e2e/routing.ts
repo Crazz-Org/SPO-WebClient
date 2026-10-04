@@ -37,7 +37,7 @@ export const NIGHTLY_ONLY: Record<string, string> = {
   'vote-roundtrip':
     'data-gated: a prior vote cannot be seeded (a vote with no prior cannot be retracted) and goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
   'fixtures-ensure':
-    'builds only when a fixture is missing — the one sanctioned permanent mutation (#1149); the nightly re-creates a fixture that disappeared, no gate requires it',
+    "ensures every fixture kind in one pass, building a missing one — the sanctioned permanent fixture build (#1149), which each fixture flow's own seed also runs for its kinds (#1185); the nightly re-creates a fixture that disappeared, no gate requires it",
   'industry-supply-limits':
     "data-gated: it needs the industry fixture's supply gate to publish MaxPrice — only a TPullInput caches it (Kernel/Kernel.pas:7813, #1149); none ends UNPROVEN, which fails a gate (E2E-POLICY §7). Its sort-mode and overprice writes are excluded, not unproven (#1195): a plain input's SetSortMode is empty (Kernel/Kernel.pas:7169-7171), only TMediaInput caches a sort mode (Kernel/MediaGates.pas:388-389) and only the movie theatre's Films input is one (StdBlocks/Movie.pas:84), which no fixture kind is; the overprice needs an own supplier row, which only supplier-hire-fire creates (#1153)",
   'supplier-hire-fire':

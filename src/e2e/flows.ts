@@ -4738,8 +4738,9 @@ const zoneRoundTrip: Flow = {
 
 /**
  * The permanent fixtures (#1149): SPO_test3's own finished facility of each kind in Helartia,
- * found by kind — and, when one is missing, built once and kept (the one sanctioned permanent
- * mutation, doc/E2E-POLICY.md §9). A build is proven by its `New Facility:` line, result code 0
+ * found by kind — and, when one is missing, built once and kept (the sanctioned permanent fixture
+ * build, doc/E2E-POLICY.md §9). This flow ensures every kind in one pass; each fixture flow's own
+ * seed ensures its own kinds (`fixtureSeed`, #1185). A build is proven by its `New Facility:` line, result code 0
  * and the lot read-back; nothing is restored, so no pending restore is recorded.
  */
 const fixturesEnsure: Flow = {
@@ -4804,8 +4805,47 @@ export function fixtureKind(id: FixtureKindId): FixtureKind {
 }
 
 /**
- * SPO_test3's own fixture of a kind, or `undefined` with the reason recorded as unproven. A flow
- * whose fixture is missing writes nothing, anywhere.
+ * A fixture flow's seed (#1185): log in as SPO_test3 and ensure only the kinds the flow reads —
+ * building a missing one once, as `fixtures-ensure` would — so the flow runs alone. Nothing is
+ * undone (permanent fixtures, doc/E2E-POLICY.md §9), so there is no cleanup. `found`, `built`,
+ * `under construction` and `unproven` leave the seed ok: the run then looks the fixture up and
+ * reports `pickFixture`'s own reason (a fixture placed now is still under construction in this
+ * run). Only a `FAIL` — a build that went wrong — fails the seed, so the run is skipped. A throw
+ * (login refused, terrain unreadable) propagates; `runFlow` records it as a failed seed.
+ */
+function fixtureSeed(...kindIds: FixtureKindId[]): (ctx: FlowContext) => Promise<FlowSeed> {
+  return async ctx => {
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const outcomes = await ensureFixtures(
+        session,
+        { survivalLogUrl: ctx.survivalLogUrl, now: ctx.now, sleep: ctx.sleep },
+        kindIds.map(fixtureKind),
+      );
+      const detail = outcomes
+        .map(o => {
+          const at = o.x !== undefined ? ` at (${o.x},${o.y})` : '';
+          const reason = o.reason ? ` — ${o.reason}` : '';
+          const line = o.logLine ? ` — ${o.logLine}` : '';
+          return `${o.kind}: ${o.status}${at}${reason}${line}`;
+        })
+        .join(' | ');
+      return {
+        outcome: {
+          what: `ensure ${kindIds.join(' + ')} fixture(s) in ${GOVERNED_TOWN}`,
+          ok: !outcomes.some(o => o.status === 'FAIL'),
+          detail,
+        },
+      };
+    } finally {
+      await logoff(session);
+    }
+  };
+}
+
+/**
+ * SPO_test3's own fixture of a kind, or `undefined` with the reason recorded as unproven. The run
+ * writes nothing when its fixture is missing — only the flow's seed may have built it.
  */
 async function ownFixture(
   session: LiveSession,
@@ -5139,7 +5179,9 @@ const inspectorReads: Flow = {
   what:
     "SPO_test3's industry and store fixtures: gate connections (one supply, one product), service 0 " +
     'figures, worker counts 0..2, refresh properties — no write',
-  mutates: false,
+  // Its seed may build a permanent fixture (#1185).
+  mutates: true,
+  seed: fixtureSeed('industry', 'store'),
   run: async () => {
     const assertions = new Assertions();
     const session = await login(PRIMARY_ACCOUNT);
@@ -5175,6 +5217,7 @@ const storePriceSalaries: Flow = {
     "round trips on SPO_test3's store fixture: RDOSetPrice (service 0, an even value) and RDOSetSalaries " +
     '(the whole triplet) — Survival line + read-back, restored',
   mutates: true,
+  seed: fixtureSeed('store'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -5274,6 +5317,7 @@ const industryOutputPrice: Flow = {
     "round trip on RDOSetOutputPrice at SPO_test3's industry fixture, on a product gate with no client of " +
     "another player's company — Survival line + read-back, restored, client links unchanged",
   mutates: true,
+  seed: fixtureSeed('industry'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -5368,6 +5412,7 @@ const industrySupplyLimits: Flow = {
     "round trips on RDOSetInputMaxPrice / MinK at SPO_test3's industry fixture — Survival line + read-back " +
     'each, restored; RDOSetInputSortMode / RDOSetInputOverPrice are excluded (no fixture carries them)',
   mutates: true,
+  seed: fixtureSeed('industry'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -5629,6 +5674,7 @@ const facilityOpenClose: Flow = {
     "round trip on Stopped at SPO_test3's store fixture — the Stopping Facility. line + the Trouble " +
     'facStoppedByTycoon bit read back, restored',
   mutates: true,
+  seed: fixtureSeed('store'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -5679,6 +5725,7 @@ const industryAutoBuy: Flow = {
   name: 'industry-auto-buy',
   what: "toggle RDOSelSelected on a supply gate of SPO_test3's industry fixture — read-back, toggled back",
   mutates: true,
+  seed: fixtureSeed('industry'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -5951,7 +5998,9 @@ const supplierSearchRead: Flow = {
   what:
     "REQ_SEARCH_CONNECTIONS for one input fluid of SPO_test3's industry fixture (Helartia, own company) -> " +
     'REQ_CONNECTION_REACHABILITY for the first candidates — no write',
-  mutates: false,
+  // Its seed may build a permanent fixture (#1185).
+  mutates: true,
+  seed: fixtureSeed('industry'),
   run: async () => {
     const assertions = new Assertions();
     const session = await login(PRIMARY_ACCOUNT);
@@ -6164,6 +6213,7 @@ const supplierHireFire: Flow = {
     "hire an own supplier (Helartia, SPO_test3's company) on an input of the industry fixture -> Input connected: " +
     'line + the gate lists it -> fire it -> the gate lists exactly its snapshot',
   mutates: true,
+  seed: fixtureSeed('industry'),
   run: ctx =>
     runHire(
       {
@@ -6187,6 +6237,7 @@ const clientHireRemove: Flow = {
     "add an own client (Helartia, SPO_test3's company) on an output of the industry fixture -> Output connected: " +
     'line + the gate lists it -> remove it -> the gate lists exactly its snapshot',
   mutates: true,
+  seed: fixtureSeed('industry'),
   run: ctx =>
     runHire(
       {
@@ -6227,6 +6278,7 @@ const connectOnMap: Flow = {
     'REQ_CONNECT_FACILITIES between the industry and warehouse fixtures -> a new link read back -> every new link ' +
     'disconnected -> both facilities\' inputs and outputs equal their snapshot',
   mutates: true,
+  seed: fixtureSeed('industry', 'warehouse'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -6343,6 +6395,7 @@ const companyInputDemand: Flow = {
     "RDOSetCompanyInputDemand on an editable company input of SPO_test3's fixtures — SetCompanyInputDemand line + " +
     'cInputDem moves, restored within one unit',
   mutates: true,
+  seed: fixtureSeed(...COMPANY_INPUT_KINDS),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -6444,6 +6497,7 @@ const tradeSettings: Flow = {
   what:
     "RDOSetTradeLevel on SPO_test3's warehouse and industry fixtures (SetTradeLevel line + read-back) — each restored",
   mutates: true,
+  seed: fixtureSeed('industry', 'warehouse'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -6510,6 +6564,7 @@ const warehouseWares: Flow = {
   name: 'warehouse-wares',
   what: "toggle one ware of SPO_test3's warehouse fixture when it is a MegaStorage (RDOSelectWare) — read-back, toggled back",
   mutates: true,
+  seed: fixtureSeed('warehouse'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -6583,6 +6638,7 @@ const quickTradeRoundTrip: Flow = {
     "RDOConnectToTycoon on SPO_test3's industry fixture (warehouses) behind three guards -> Connect to Tycoon: line + " +
     'new links -> RDODisconnectFromTycoon -> the output links and the initial-supplier list equal their snapshots',
   mutates: true,
+  seed: fixtureSeed('industry'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -7209,7 +7265,10 @@ type FixtureSteps = (
   probes: ProbeResult[],
 ) => Promise<void>;
 
-/** A flow on one fixture's tab: no fixture or no tab → unproven, nothing sent. */
+/**
+ * A flow on one fixture's tab: its seed ensures the kind (#1185); no fixture or no tab → unproven,
+ * the run sends no write.
+ */
 function fixtureFlow(
   name: string,
   what: string,
@@ -7222,6 +7281,7 @@ function fixtureFlow(
     name,
     what,
     mutates: true,
+    seed: fixtureSeed(kind),
     run: async ctx => {
       const assertions = new Assertions();
       const probes: ProbeResult[] = [];
