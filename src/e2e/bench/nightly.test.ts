@@ -16,6 +16,7 @@ import {
   nightlyPrepareLog,
   nightlyResultFile,
   nightlyResultFromReport,
+  flowSummary,
   NIGHTLY_MIN_GAP_MS,
   NIGHTLY_MOVE_RATE_LIMIT_MS,
   prepareCheckout,
@@ -650,6 +651,21 @@ describe('nightlyResultFromReport', () => {
     expect(built).not.toHaveProperty('flows');
     expect(built).not.toHaveProperty('unproven');
     expect(built).not.toHaveProperty('skipped');
+    expect(built).not.toHaveProperty('quarantined');
+  });
+
+  it('names the flows SERVER_QUARANTINE holds under quarantined, whatever their status (#1310)', () => {
+    const liveFlows = [
+      { name: 'portrait-roundtrip', status: 'FAIL' },
+      { name: 'a', status: 'PASS' },
+    ];
+    const built = nightlyResultFromReport(
+      { id: 'job-9', verdict: 'PASS', fingerprints: { atSubmit: fingerprint('s') }, liveFlows },
+      { submittedAt: 'deposited-at' },
+    );
+    expect(built.quarantined).toEqual(['portrait-roundtrip']);
+    expect(flowSummary(liveFlows, { a: {} }).quarantined).toEqual(['a']);
+    expect(flowSummary(liveFlows, {}).quarantined).toEqual([]);
   });
 });
 

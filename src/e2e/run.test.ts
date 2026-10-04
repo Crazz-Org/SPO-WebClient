@@ -7,7 +7,7 @@ import { WorldLock } from './world-lock';
 import * as preflightModule from './preflight';
 import * as flowsModule from './flows';
 import * as capabilityModule from './capability';
-import { GATE_ONLY } from './routing';
+import { GATE_ONLY, SERVER_QUARANTINE } from './routing';
 import { SECONDARY_ACCOUNT } from './config';
 
 function tempLock(): WorldLock {
@@ -20,6 +20,10 @@ const okPreflight = {
   environmentAbort: false,
   survivalLogUrl: 'http://logs/S.log',
 };
+
+function failingFlow(name: string): flowsModule.FlowResult {
+  return { ...passingFlow(name), status: 'FAIL' };
+}
 
 function passingFlow(name: string): flowsModule.FlowResult {
   return {
@@ -200,6 +204,14 @@ describe('runLive', () => {
 
     expect(result.status).toBe('FAIL');
     expect(result.error).toMatch(/dirty/);
+    expect(result.releaseError).toMatch(/dirty/);
+  });
+
+  it('sets no releaseError when the world is released clean', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockResolvedValue(passingFlow('login-spine'));
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+    expect(result).not.toHaveProperty('releaseError');
   });
 
   it('passes the resolved log url down to the flows', async () => {
@@ -355,7 +367,26 @@ describe('formatSummary', () => {
   });
 
   it('omits the sha suffix entirely when none was recorded, rather than printing a blank or "undefined"', () => {
-    expect(formatSummary({ ...base, status: 'PASS' })).toBe('L2 live drive on planitia — PASS');
+    expect(formatSummary({ ...base, status: 'PASS' }, {})).toBe('L2 live drive on planitia — PASS');
+  });
+
+  it('prints the server quarantine with each entry and the outcome of this run (#1310)', () => {
+    const quarantine = {
+      'portrait-roundtrip': { reason: 'r1', link: 'https://x/1', lift: 'l1', added: '2026-10-04' },
+      'newspaper-board-read': { reason: 'r2', link: 'https://x/2', lift: 'l2', added: '2026-10-03' },
+    };
+    const summary = formatSummary({ ...base, flows: [failingFlow('portrait-roundtrip')] }, quarantine);
+    expect(summary).toContain('  Server quarantine (2):');
+    expect(summary).toContain('    portrait-roundtrip — r1');
+    expect(summary).toContain('          link: https://x/1');
+    expect(summary).toContain('          lift: l1');
+    expect(summary).toContain('          added: 2026-10-04 · this run: FAIL');
+    expect(summary).toContain('    newspaper-board-read — r2');
+    expect(summary).toContain('          added: 2026-10-03 · this run: not run');
+  });
+
+  it('prints no quarantine block when the table is empty', () => {
+    expect(formatSummary({ ...base, status: 'PASS' }, {})).not.toContain('Server quarantine');
   });
 
   it('shows a seeded flow\'s seed and each cleanup, ok or FAIL', () => {
@@ -608,6 +639,71 @@ describe('main', () => {
     it('a lock-refusal BLOCK (no flows) stays BLOCKED for the nightly too', async () => {
       const refused = { ...result, status: 'BLOCKED' as const, error: 'world dirty' };
       expect(await main([], async () => refused, sink().stream)).toBe(2);
+    });
+  });
+
+  describe('the server quarantine (#1310)', () => {
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    afterEach(() => {
+      if (fs.existsSync(written)) fs.unlinkSync(written);
+    });
+    const portraitOnly: LiveRunResult = {
+      ...result,
+      status: 'FAIL',
+      flows: [failingFlow('portrait-roundtrip'), passingFlow('login-spine')],
+    };
+
+    it('reports a nightly whose only failure is a quarantined flow PASS, the flow keeping its FAIL', async () => {
+      const out = sink();
+      expect(await main([], async () => portraitOnly, out.stream)).toBe(0);
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('PASS');
+      const entry = SERVER_QUARANTINE['portrait-roundtrip'];
+      expect(artifact.flows[0]).toMatchObject({
+        name: 'portrait-roundtrip',
+        status: 'FAIL',
+        quarantined: { reason: entry.reason, link: entry.link, lift: entry.lift },
+      });
+      expect(artifact.flows[1]).not.toHaveProperty('quarantined');
+      expect(out.text()).toContain('L2 live drive on planitia — PASS');
+    });
+
+    it('still FAILs when a non-quarantined flow failed too', async () => {
+      const both = { ...portraitOnly, flows: [...portraitOnly.flows, failingFlow('politics-read')] };
+      expect(await main([], async () => both, sink().stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+    });
+
+    it('still FAILs on a dirty world, even when every failing flow is quarantined', async () => {
+      const dirty = { ...portraitOnly, error: 'world dirty', releaseError: 'world dirty' };
+      expect(await main([], async () => dirty, sink().stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+    });
+
+    it('a FAIL with no failing flow at all is not excused', async () => {
+      const bare = { ...result, status: 'FAIL' as const, flows: [passingFlow('portrait-roundtrip')] };
+      expect(await main([], async () => bare, sink().stream)).toBe(1);
+    });
+
+    it('judges a quarantined flow named by --flows, unannotated', async () => {
+      expect(await main(['--flows=portrait-roundtrip'], async () => portraitOnly, sink().stream)).toBe(1);
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('FAIL');
+      expect(artifact.flows[0]).not.toHaveProperty('quarantined');
+    });
+
+    it('prints the Server quarantine block, with every entry, on a passing run', async () => {
+      const out = sink();
+      expect(await main([], async () => result, out.stream)).toBe(0);
+      const text = out.text();
+      const entries = Object.entries(SERVER_QUARANTINE);
+      expect(text).toContain(`Server quarantine (${entries.length}):`);
+      for (const [flow, entry] of entries) {
+        expect(text).toContain(`${flow} — ${entry.reason}`);
+        expect(text).toContain(`link: ${entry.link}`);
+        expect(text).toContain(`lift: ${entry.lift}`);
+        expect(text).toContain(`added: ${entry.added}`);
+      }
     });
   });
 

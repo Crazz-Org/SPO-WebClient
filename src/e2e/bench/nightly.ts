@@ -30,6 +30,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { toErrorMessage } from '../../shared/error-utils';
+import { SERVER_QUARANTINE } from '../routing';
 import type { BenchPaths } from './paths';
 import { runGit, type GitRunner, type TreeFingerprint } from './fingerprint';
 import { prepareCheckout as sharedPrepareCheckout } from './checkout';
@@ -99,6 +100,8 @@ export interface NightlyResult {
   unproven?: string[];
   /** The flows whose status is `SKIPPED`, by name. */
   skipped?: string[];
+  /** The flows of this run that SERVER_QUARANTINE names, by name, whatever their status. */
+  quarantined?: string[];
   /** manual only: a summary of the record this one replaced. */
   supersedes?: {
     jobId?: string;
@@ -729,17 +732,20 @@ interface NightlyReportView {
 
 /**
  * The per-flow keys `latest.json` carries: every flow's status, plus the UNPROVEN and
- * SKIPPED ones by name, so a flow that never proves anything is visible at a glance. `{}`
- * when no live artifact was read — a conditional spread, so such a record gains no key.
+ * SKIPPED ones by name, so a flow that never proves anything is visible at a glance, and the
+ * ones SERVER_QUARANTINE names (doc/E2E-POLICY.md §7, "Server quarantine"). `{}` when no live
+ * artifact was read — a conditional spread, so such a record gains no key.
  */
 export function flowSummary(
   liveFlows: NightlyFlowStatus[] | undefined,
-): Pick<NightlyResult, 'flows' | 'unproven' | 'skipped'> {
+  quarantine: Record<string, unknown> = SERVER_QUARANTINE,
+): Pick<NightlyResult, 'flows' | 'unproven' | 'skipped' | 'quarantined'> {
   if (!liveFlows) return {};
   return {
     flows: liveFlows,
     unproven: liveFlows.filter(f => f.status === 'UNPROVEN').map(f => f.name),
     skipped: liveFlows.filter(f => f.status === 'SKIPPED').map(f => f.name),
+    quarantined: liveFlows.filter(f => f.name in quarantine).map(f => f.name),
   };
 }
 

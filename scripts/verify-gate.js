@@ -13,7 +13,8 @@
  *                 server, whether the test account holds the capability (§7)
  *   routing       diff -> routed ∪ changed ∪ declared flows: the routing table, the flows
  *                 the diff changed in the flow sources (src/e2e/bench/changed-flows.ts) and
- *                 the flows named by --also-flows; all of them are required
+ *                 the flows named by --also-flows; all of them are required, except a
+ *                 SERVER_QUARANTINE flow, recorded in routing.quarantined
  *   live          pre-flight, lock, capability reads, flows against planitia, restore, release
  *   judge         a capability the server GRANTS must be exercised by a flow (fail closed);
  *                 one it REFUSES is a recorded exception, never a human override
@@ -317,7 +318,11 @@ async function main() {
     return 1;
   }
 
-  const { route, presidentMembersInDiff, SPINE_FLOW } = require(path.resolve('dist/e2e/routing.js'));
+  const { route, presidentMembersInDiff, SPINE_FLOW, SERVER_QUARANTINE } = require(
+    path.resolve('dist/e2e/routing.js'),
+  );
+  // An old dist without the export behaves as an empty quarantine.
+  const quarantine = SERVER_QUARANTINE || {};
   const { FLOW_SOURCES, flowsChangedInWorktree } = require(
     path.resolve('dist/e2e/bench/changed-flows.js'),
   );
@@ -365,7 +370,11 @@ async function main() {
     return 1;
   }
   const alsoFlows = flag('also-flows');
-  const declared = !alsoFlows || alsoFlows === 'true' ? [] : alsoFlows.split(',').filter(Boolean);
+  const declaredAll = !alsoFlows || alsoFlows === 'true' ? [] : alsoFlows.split(',').filter(Boolean);
+  // A SERVER_QUARANTINE flow is never required, even when declared (doc/E2E-POLICY.md §7).
+  const declared = declaredAll.filter(f => !(f in quarantine));
+  const declaredQuarantined = declaredAll.filter(f => f in quarantine);
+  const quarantined = Array.from(new Set([...(changed.quarantined || []), ...declaredQuarantined]));
   const extra = [...changed.required, ...declared];
   const required =
     extra.length > 0
@@ -375,10 +384,14 @@ async function main() {
   artifact.routing.changedFlows = changed.required;
   artifact.routing.changedFlowsNotDriven = changed.notDriven;
   artifact.routing.declared = declared;
+  artifact.routing.quarantined = quarantined;
   artifact.routing.reasons = [
     ...decision.reasons,
     ...changed.reasons,
     ...(declared.length > 0 ? [`declared by --also-flows: ${declared.join(', ')}`] : []),
+    ...quarantined.map(
+      f => `server quarantine, not required: ${f} — ${quarantine[f] ? quarantine[f].reason : ''}`,
+    ),
   ];
 
   const liveRequested = flag('live') === 'true';

@@ -61,6 +61,8 @@ exports.route = files => ({
   ...decision,
 });
 exports.SPINE_FLOW = 'login-spine';
+// Unset: an old dist that predates SERVER_QUARANTINE, read as an empty quarantine.
+exports.SERVER_QUARANTINE = process.env.FAKE_QUARANTINE ? JSON.parse(process.env.FAKE_QUARANTINE) : undefined;
 exports.presidentMembersInDiff = diff => {
   if (process.env.FAKE_DIFF_OUT) fs.writeFileSync(process.env.FAKE_DIFF_OUT, diff, 'utf8');
   return JSON.parse(process.env.FAKE_PRESIDENT || '[]');
@@ -894,6 +896,67 @@ describe('stage 3 — changed and declared flows (#1183)', () => {
     });
     expect(run.code).toBe(0);
     expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'politics-read'] });
+  });
+
+  describe('the server quarantine (#1310)', () => {
+    const quarantine = JSON.stringify({
+      'portrait-roundtrip': { reason: 'picture server refuses', link: 'https://x/1', lift: 'l', added: '2026-10-04' },
+    });
+
+    it('--also-flows= naming a quarantined flow does not require it, and records it', () => {
+      const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip'], {
+        FAKE_ROUTING: flowOnly,
+        FAKE_QUARANTINE: quarantine,
+      });
+      expect(run.code).toBe(0);
+      expect(run.artifact?.routing?.required).not.toContain('portrait-roundtrip');
+      expect(run.artifact?.routing).toMatchObject({
+        declared: [],
+        quarantined: ['portrait-roundtrip'],
+        reasons: ['server quarantine, not required: portrait-roundtrip — picture server refuses'],
+      });
+    });
+
+    it('keeps a non-quarantined declared flow beside a quarantined one', () => {
+      const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip,politics-read'], {
+        FAKE_ROUTING: flowOnly,
+        FAKE_QUARANTINE: quarantine,
+      });
+      expect(run.code).toBe(0);
+      expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'politics-read'] });
+      expect(run.artifact?.routing).toMatchObject({
+        required: ['login-spine', 'politics-read'],
+        declared: ['politics-read'],
+        quarantined: ['portrait-roundtrip'],
+      });
+    });
+
+    it('carries the changed-flows quarantine into routing.quarantined', () => {
+      const run = runGate(scratchRepo(), ['--live'], {
+        FAKE_ROUTING: flowOnly,
+        FAKE_QUARANTINE: quarantine,
+        FAKE_CHANGED: JSON.stringify({
+          required: [],
+          notDriven: [],
+          quarantined: ['portrait-roundtrip'],
+          reasons: ['flow changed in src/e2e/flows.ts: portrait-roundtrip'],
+        }),
+      });
+      expect(run.code).toBe(0);
+      expect(run.artifact?.routing).toMatchObject({
+        required: [],
+        quarantined: ['portrait-roundtrip'],
+        reasons: [
+          'flow changed in src/e2e/flows.ts: portrait-roundtrip',
+          'server quarantine, not required: portrait-roundtrip — picture server refuses',
+        ],
+      });
+    });
+
+    it('records an empty quarantine when the dist predates it', () => {
+      const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip'], { FAKE_ROUTING: flowOnly });
+      expect(run.artifact?.routing).toMatchObject({ declared: ['portrait-roundtrip'], quarantined: [] });
+    });
   });
 
   it('a bare --also-flows declares nothing', () => {

@@ -5,7 +5,7 @@
  *                 -> poll the read-back until it shows the value (up to the spec's bound)
  *                 -> assert the model-server log line (marker + match)
  *                 -> restore original (always, even after a throw)
- *                 -> poll the read-back until it shows the original
+ *                 -> poll the read-back until it shows the original (also after a thrown restore write)
  *                 -> clear the pending restore
  *
  * A crash is a failure, but silence is not a pass. `OB-28` is a write reported confirmed
@@ -184,19 +184,20 @@ export async function runRoundTrip(
   }
 
   // The restore runs whatever happened above.
-  let restoreWriteFailed = false;
-  let restorePoll: PollOutcome = { verdict: 'UNCONFIRMED', last: undefined };
+  let restoreWriteError: unknown = null;
+  let restorePoll: PollOutcome;
   try {
     await (spec.restore ?? spec.write)(original);
-  } catch {
-    restoreWriteFailed = true;
+  } catch (err: unknown) {
+    restoreWriteError = err;
   }
-  if (!restoreWriteFailed) {
-    try {
-      restorePoll = await pollReadBack(readBack, original, clock);
-    } catch {
-      restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
-    }
+  // Read back even after a thrown restore write: a server that refused both writes left the
+  // world unchanged, and only the read-back can prove it — the pending restore is cleared on
+  // CONFIRMED alone, so a write that did land is still caught.
+  try {
+    restorePoll = await pollReadBack(readBack, original, clock);
+  } catch {
+    restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
   }
   const restored = restorePoll.verdict === 'CONFIRMED';
   const restoreReadBack = restorePoll.verdict;
@@ -214,8 +215,13 @@ export async function runRoundTrip(
     );
   }
   if (log && !logLine) failures.push('no model-server log line — the write never reached the object');
-  if (restoreWriteFailed) {
+  if (restoreWriteError !== null && !restored) {
     failures.push('restore failed — the world is left dirty');
+  } else if (restoreWriteError !== null) {
+    failures.push(
+      `restore write threw (${toErrorMessage(restoreWriteError)}) — the read-back shows the original, ` +
+        `so the world is unchanged`,
+    );
   } else if (!restored) {
     failures.push(
       `restore not confirmed: read-back still shows "${restorePoll.last ?? '(absent)'}" — ` +

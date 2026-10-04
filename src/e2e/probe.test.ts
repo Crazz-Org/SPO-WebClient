@@ -150,11 +150,16 @@ describe('runProbe', () => {
     jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: 8');
     const lock = tempLock();
     let writes = 0;
-    const session = sessionReading(['7', '8'], () => {
+    // The restore does not land: the read-back keeps showing the test value past its bound.
+    const session = sessionReading(['7', '8', '8'], () => {
       writes += 1;
       if (writes === 2) throw new Error('restore rejected');
     });
-    const result = await runProbe(session, spec, lock, factory, window.url);
+    const result = await runProbe(session, spec, lock, factory, window.url, {
+      readBackBoundMs: 50,
+      now: clock([0, 0, 100]),
+      sleep: noSleep,
+    });
     expect(result.status).toBe('FAIL');
     expect(result.note).toMatch(/world is left dirty/);
     expect(lock.read().pendingRestores).toHaveLength(1);
@@ -266,6 +271,56 @@ function timed() {
 }
 
 describe('runRoundTrip', () => {
+  describe('a restore write that throws (#1310)', () => {
+    const logged = (): void => {
+      jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
+    };
+
+    it('both writes refused, the read-back shows the original: FAIL, and the pending restore is cleared', async () => {
+      const w = world('7');
+      const write = jest.fn(async (_v: string): Promise<void> => {
+        throw new Error('upload refused: SERVER_ERROR');
+      });
+      const lock = tempLock();
+      const result = await runRoundTrip(roundTrip(w, { write }), lock, factory, window.url, timed());
+      expect(result.status).toBe('FAIL');
+      expect(result.note).toBe('upload refused: SERVER_ERROR');
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(result.restored).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('the restore throws and the read-back shows the test value: the pending restore stays', async () => {
+      logged();
+      const w = world('7');
+      const write = jest.fn(async (v: string) => {
+        if (v === '7') throw new Error('restore refused');
+        await w.write(v);
+      });
+      const lock = tempLock();
+      const result = await runRoundTrip(roundTrip(w, { write }), lock, factory, window.url, timed());
+      expect(result.status).toBe('FAIL');
+      expect(result.note).toMatch(/restore failed — the world is left dirty/);
+      expect(result.restored).toBe(false);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('the restore lands, then throws: FAIL, but the world is unchanged and the pending restore is cleared', async () => {
+      logged();
+      const w = world('7');
+      const write = jest.fn(async (v: string) => {
+        await w.write(v);
+        if (v === '7') throw new Error('restore answer lost');
+      });
+      const lock = tempLock();
+      const result = await runRoundTrip(roundTrip(w, { write }), lock, factory, window.url, timed());
+      expect(result.status).toBe('FAIL');
+      expect(result.note).toMatch(/restore write threw \(restore answer lost\) .* world is unchanged/);
+      expect(result.restored).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+  });
+
   it('passes when the log line matches and both read-backs confirm', async () => {
     jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Helartia, 0, 8');
     const w = world('7');

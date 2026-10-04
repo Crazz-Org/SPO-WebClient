@@ -6,12 +6,14 @@
  * flow sources and names the flows it touched: a hunk inside a `FLOWS` entry requires that
  * flow; a hunk inside a shared helper requires every flow that reaches the helper, directly
  * or through another helper. scripts/verify-gate.js adds the result to `routing.required`.
+ * A SERVER_QUARANTINE flow is never required, even on a change to its own body: it is listed
+ * in `quarantined` instead (doc/E2E-POLICY.md §7, "Server quarantine").
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { FLOWS } from '../flows';
-import { NIGHTLY_ONLY } from '../routing';
+import { NIGHTLY_ONLY, SERVER_QUARANTINE } from '../routing';
 
 /** The repo-relative files a live flow is written in, or reaches a helper through. */
 export const FLOW_SOURCES = [
@@ -30,6 +32,11 @@ export interface ChangedFlows {
   required: string[];
   /** NIGHTLY_ONLY flows reached only through a changed helper. Listed, not driven. */
   notDriven: string[];
+  /**
+   * Flows the diff changed or reached, left out because SERVER_QUARANTINE holds them.
+   * Listed, not driven.
+   */
+  quarantined: string[];
   reasons: string[];
 }
 
@@ -42,6 +49,8 @@ export interface ChangedFlowsInput {
   /** `FLOWS.map(f => f.name)`, in the order of the FLOWS array. */
   flowNames: string[];
   nightlyOnly: Record<string, string>;
+  /** Flow -> its SERVER_QUARANTINE entry. Defaults to none. */
+  quarantine?: Record<string, unknown>;
 }
 
 export interface Declaration {
@@ -143,13 +152,15 @@ function reach(declarations: Declaration[], seeds: string[]): Set<string> {
 }
 
 /**
- * Map a `-U0` diff of the flow sources to the flows it changed.
+ * Map a `-U0` diff of the flow sources to the flows it changed. A quarantined flow is never
+ * required, whether the diff changed its body or a helper it reaches.
  *
  * Throws when the `FLOWS` array and `flowNames` disagree in length: the gate must fail
  * closed rather than pair a hunk with the wrong flow.
  */
 export function changedFlows(input: ChangedFlowsInput): ChangedFlows {
   const { diff, sources, flowNames, nightlyOnly } = input;
+  const quarantine = input.quarantine ?? {};
   const declarations = FLOW_SOURCES.flatMap(file => declarationsOf(file, sources[file] ?? ''));
 
   // Pair each FLOWS binding, in order, with the loaded flow's name.
@@ -217,16 +228,20 @@ export function changedFlows(input: ChangedFlowsInput): ChangedFlows {
 
   return {
     required: flowNames.filter(
-      flow => direct.has(flow) || (related.has(flow) && !(flow in nightlyOnly)),
+      flow =>
+        (direct.has(flow) || (related.has(flow) && !(flow in nightlyOnly))) && !(flow in quarantine),
     ),
-    notDriven: flowNames.filter(flow => related.has(flow) && flow in nightlyOnly),
+    notDriven: flowNames.filter(
+      flow => related.has(flow) && flow in nightlyOnly && !(flow in quarantine),
+    ),
+    quarantined: flowNames.filter(flow => (direct.has(flow) || related.has(flow)) && flow in quarantine),
     reasons,
   };
 }
 
 /**
  * {@link changedFlows} over the flow sources as they stand on disk under `cwd`, paired with
- * the loaded `FLOWS` and the `NIGHTLY_ONLY` table.
+ * the loaded `FLOWS`, the `NIGHTLY_ONLY` table and the `SERVER_QUARANTINE` table.
  */
 export function flowsChangedInWorktree(diff: string, cwd: string = process.cwd()): ChangedFlows {
   const sources: Record<string, string> = {};
@@ -242,5 +257,6 @@ export function flowsChangedInWorktree(diff: string, cwd: string = process.cwd()
     sources,
     flowNames: FLOWS.map(flow => flow.name),
     nightlyOnly: NIGHTLY_ONLY,
+    quarantine: SERVER_QUARANTINE,
   });
 }
