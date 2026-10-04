@@ -1,5 +1,11 @@
 [
   {
+    "id": 1264,
+    "type": "fixed",
+    "text": "The Politics window no longer opens with empty ratings the first time it is viewed after the game server refreshes its data.",
+    "date": "2026-10-03"
+  },
+  {
     "id": 1258,
     "type": "fixed",
     "text": "Import and Export Storage no longer offer a \"connect all your warehouses\" button that the original game never had.",
