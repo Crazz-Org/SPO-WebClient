@@ -52,6 +52,8 @@ export const NIGHTLY_ONLY: Record<string, string> = {
     'data-gated: only a MegaStorage publishes RDOSelectWare (StdBlocks/MegaWarehouse.pas:25; a TWarehouse publishes RDOSetRole only, StdBlocks/Warehouses.pas:95), and findFixture takes the first holding that carries whGeneral (#1149), which need not be one',
   'quick-trade-roundtrip':
     "data-gated by three guards: the disconnect drops the fixture's outputs from every SPO_test3 facility's matching input, whatever its type (Kernel/Kernel.pas:4593-4600), across all its companies and towns (Kernel/Kernel.pas:4537-4553), and unregisters the fixture as an initial supplier (Kernel/Kernel.pas:4564-4565, :4606-4607); a guard that holds ends UNPROVEN, which fails a gate",
+  'newspaper-board-read':
+    'parked by the maintainer (2026-10-04): every post to the Helartia Herald (boardmsg.asp?action=post) answers HTTP 500 server-side, so the bench cannot seed a column and an empty board ends UNPROVEN, which fails a gate (#1260) — lift when a post succeeds and #1260 lands its seed',
 };
 
 /**
@@ -104,6 +106,7 @@ export const EXCLUDED: Record<string, string> = {
   REQ_POLITICS_VOTE: 'sent only by vote-roundtrip, which is NIGHTLY_ONLY (data-gated: Kernel/TownPolitics.pas:690)',
   REQ_NEWSPAPER_ISSUES: 'sent only by newspaper-read, which is NIGHTLY_ONLY (planitia keeps no issue: News.pas:986, #1009)',
   REQ_NEWSPAPER_ISSUE: 'sent only by newspaper-read, which is NIGHTLY_ONLY (planitia keeps no issue: News.pas:986, #1009)',
+  REQ_NEWSPAPER_BOARD: 'sent only by newspaper-board-read, which is NIGHTLY_ONLY (parked: server HTTP 500 on post, #1260)',
   REQ_TUTORIAL_STATE:
     'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
   REQ_TUTORIAL_ACTION:
@@ -284,21 +287,23 @@ export const ROUTES: RouteRule[] = [
     why: 'the mail handlers changed — the flows that drive them',
   },
   {
-    // The paper modal: the board read the modal shows, plus a browser look at the modal.
+    // The paper modal: a browser look at the modal. The board read it shows is parked (#1260) —
+    // NIGHTLY_ONLY, required by no gate.
     test: /^src\/client\/components\/modals\/NewspaperModal\.tsx$/,
-    flows: ['newspaper-board-read'],
+    flows: [],
     needsL3: true,
-    why: 'the town paper modal — newspaper-board-read reads the columns board it shows; a browser look at the modal',
+    why: 'the town paper modal — a browser look at the modal; newspaper-board-read is parked, nightly-only (server HTTP 500 on post, #1260)',
   },
   {
     // Before the broad wire-level rule below: the paper is not on the RDO wire
     // at all, so the governance flows would say nothing about it. newspaper-read itself is
     // not required (#1009): planitia keeps no newspaper issue and the bench cannot create
-    // one (News.pas:986), so it could only end UNPROVEN. The columns board read stays required
-    // instead; a board with no column ends UNPROVEN too (#1188).
+    // one (News.pas:986), so it could only end UNPROVEN. The columns board read is parked too
+    // (#1260): every post answers HTTP 500, so no column can be seeded, and it is no longer
+    // required. The rule stays here so it keeps shadowing the broader rules below.
     test: /newspaper-handlers?\.ts$|^src\/client\/store\/newspaper-store\.ts$/,
-    flows: ['newspaper-board-read'],
-    why: 'the town paper — newspaper-board-read reads the columns board, required, and an empty board ends UNPROVEN (#1188); newspaper-read stays nightly-only (News.pas:986, #1009)',
+    flows: [],
+    why: 'the town paper — required by no gate: newspaper-read is nightly-only (News.pas:986, #1009) and newspaper-board-read is parked, nightly-only (server HTTP 500 on post, #1260)',
   },
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.
