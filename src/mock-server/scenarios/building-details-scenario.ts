@@ -470,6 +470,8 @@ const MOCK_CAPITOL: MockBuilding = {
       { name: 'MinisterBudget2', value: '3000000', index: 2 },
     ],
     'votes': [
+      // Hidden: VOTES_GROUP asks for it so enrichVotesTab can bind RDOVoteOf.
+      { name: 'CurrBlock', value: '130400300' },
       { name: 'Trouble', value: '0' },
       { name: 'RulerName', value: 'President SPO_test3' },
       { name: 'RulerVotes', value: '15200' },
