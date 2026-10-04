@@ -61,6 +61,7 @@ exports.route = files => ({
   ...decision,
 });
 exports.SPINE_FLOW = 'login-spine';
+exports.SERVER_QUARANTINE = JSON.parse(process.env.FAKE_QUARANTINE || '{}');
 exports.presidentMembersInDiff = diff => {
   if (process.env.FAKE_DIFF_OUT) fs.writeFileSync(process.env.FAKE_DIFF_OUT, diff, 'utf8');
   return JSON.parse(process.env.FAKE_PRESIDENT || '[]');
@@ -87,7 +88,9 @@ exports.runLive = async options => {
   if (process.env.FAKE_LIVE_OUT) fs.writeFileSync(process.env.FAKE_LIVE_OUT, JSON.stringify(options), 'utf8');
   return JSON.parse(process.env.FAKE_LIVE || '{"status":"PASS"}');
 };
-exports.formatSummary = result => 'summary: ' + result.status;
+exports.formatSummary = (result, quarantine) =>
+  'summary: ' + result.status +
+  (quarantine && Object.keys(quarantine).length > 0 ? ' quarantine=' + Object.keys(quarantine).join(',') : '');
 `;
 
 function scratch(prefix: string): string {
@@ -894,6 +897,49 @@ describe('stage 3 — changed and declared flows (#1183)', () => {
     });
     expect(run.code).toBe(0);
     expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'politics-read'] });
+  });
+
+  describe('the server quarantine (#1310)', () => {
+    const quarantine = JSON.stringify({
+      'portrait-roundtrip': { reason: 'picture server refuses', link: 'https://x/1310', lift: 'l', added: '2026-10-04' },
+    });
+
+    it('--also-flows= naming a quarantined flow does not require it, and records it', () => {
+      const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip'], {
+        FAKE_ROUTING: flowOnly,
+        FAKE_QUARANTINE: quarantine,
+      });
+      expect(run.code).toBe(0);
+      const routing = run.artifact?.routing as { required: string[]; reasons: string[] };
+      expect(routing.required).not.toContain('portrait-roundtrip');
+      expect(run.artifact?.routing).toMatchObject({ declared: [], quarantined: ['portrait-roundtrip'] });
+      expect(routing.reasons).toContain(
+        'server quarantine: portrait-roundtrip — declared by --also-flows, not required: picture server refuses',
+      );
+    });
+
+    it('records the quarantined flows the diff changed', () => {
+      const run = runGate(scratchRepo(), ['--live'], {
+        FAKE_ROUTING: flowOnly,
+        FAKE_QUARANTINE: quarantine,
+        FAKE_CHANGED: JSON.stringify({ required: [], notDriven: [], quarantined: ['x'], reasons: [] }),
+      });
+      expect(run.code).toBe(0);
+      expect(run.artifact?.routing).toMatchObject({ quarantined: ['x'], required: [] });
+    });
+
+    it('passes the quarantine table to formatSummary, so the gate prints the block', () => {
+      const run = runGate(scratchRepo(), ['--live'], {
+        FAKE_ROUTING: JSON.stringify({ required: ['login-spine', 'politics-read'] }),
+        FAKE_QUARANTINE: quarantine,
+      });
+      expect(run.stdout).toContain('summary: PASS quarantine=portrait-roundtrip');
+    });
+
+    it('records an empty list when the routing module carries no quarantine', () => {
+      const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip'], { FAKE_ROUTING: flowOnly });
+      expect(run.artifact?.routing).toMatchObject({ declared: ['portrait-roundtrip'], quarantined: [] });
+    });
   });
 
   it('a bare --also-flows declares nothing', () => {

@@ -191,12 +191,13 @@ export async function runRoundTrip(
   } catch {
     restoreWriteFailed = true;
   }
-  if (!restoreWriteFailed) {
-    try {
-      restorePoll = await pollReadBack(readBack, original, clock);
-    } catch {
-      restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
-    }
+  // Polled even when the restore write threw: a server that refused both writes left the
+  // world unchanged, and only a read-back showing the original proves it — then the pending
+  // restore is cleared (the probe still FAILs). A test write that did land is still caught here.
+  try {
+    restorePoll = await pollReadBack(readBack, original, clock);
+  } catch {
+    restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
   }
   const restored = restorePoll.verdict === 'CONFIRMED';
   const restoreReadBack = restorePoll.verdict;
@@ -214,7 +215,9 @@ export async function runRoundTrip(
     );
   }
   if (log && !logLine) failures.push('no model-server log line — the write never reached the object');
-  if (restoreWriteFailed) {
+  if (restoreWriteFailed && restored) {
+    failures.push('restore write failed — the read-back shows the original, so the world is unchanged');
+  } else if (restoreWriteFailed) {
     failures.push('restore failed — the world is left dirty');
   } else if (!restored) {
     failures.push(

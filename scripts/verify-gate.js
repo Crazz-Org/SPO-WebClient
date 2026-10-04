@@ -317,7 +317,11 @@ async function main() {
     return 1;
   }
 
-  const { route, presidentMembersInDiff, SPINE_FLOW } = require(path.resolve('dist/e2e/routing.js'));
+  const routing = require(path.resolve('dist/e2e/routing.js'));
+  const { route, presidentMembersInDiff, SPINE_FLOW } = routing;
+  // A flow blocked by a known live-server fault is never required, wherever the requirement
+  // comes from (doc/E2E-POLICY.md §7, "Server quarantine"). An explicit --flows= still drives it.
+  const SERVER_QUARANTINE = routing.SERVER_QUARANTINE || {};
   const { FLOW_SOURCES, flowsChangedInWorktree } = require(
     path.resolve('dist/e2e/bench/changed-flows.js'),
   );
@@ -365,7 +369,10 @@ async function main() {
     return 1;
   }
   const alsoFlows = flag('also-flows');
-  const declared = !alsoFlows || alsoFlows === 'true' ? [] : alsoFlows.split(',').filter(Boolean);
+  const declaredAll = !alsoFlows || alsoFlows === 'true' ? [] : alsoFlows.split(',').filter(Boolean);
+  const isQuarantined = f => Object.prototype.hasOwnProperty.call(SERVER_QUARANTINE, f);
+  const declaredQuarantined = declaredAll.filter(isQuarantined);
+  const declared = declaredAll.filter(f => !isQuarantined(f));
   const extra = [...changed.required, ...declared];
   const required =
     extra.length > 0
@@ -375,10 +382,14 @@ async function main() {
   artifact.routing.changedFlows = changed.required;
   artifact.routing.changedFlowsNotDriven = changed.notDriven;
   artifact.routing.declared = declared;
+  artifact.routing.quarantined = [...new Set([...(changed.quarantined || []), ...declaredQuarantined])];
   artifact.routing.reasons = [
     ...decision.reasons,
     ...changed.reasons,
     ...(declared.length > 0 ? [`declared by --also-flows: ${declared.join(', ')}`] : []),
+    ...declaredQuarantined.map(
+      f => `server quarantine: ${f} — declared by --also-flows, not required: ${SERVER_QUARANTINE[f].reason}`,
+    ),
   ];
 
   const liveRequested = flag('live') === 'true';
@@ -468,7 +479,7 @@ async function main() {
   const { runLive, formatSummary } = require(path.resolve('dist/e2e/run.js'));
   const live = await runLive({ flows: staticOnly ? [] : flows, branch, capabilities });
   artifact.live = live;
-  process.stdout.write(`${formatSummary(live)}\n`);
+  process.stdout.write(`${formatSummary(live, SERVER_QUARANTINE)}\n`);
 
   // The live status is CARRIED, not collapsed. An ENVIRONMENT abort used to arrive here and
   // leave as `FAIL`, and every reader downstream — the exit code, the worker's verdict, the

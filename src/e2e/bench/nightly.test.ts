@@ -6,6 +6,7 @@ import { Spool, type ManualRequester } from './job';
 import type { GitRunner, TreeFingerprint } from './fingerprint';
 import {
   deleteManualRequest,
+  flowSummary,
   manualProofDue,
   manualRecordFile,
   manualRequestFile,
@@ -641,6 +642,23 @@ describe('nightlyResultFromReport', () => {
     expect(built.skipped).toEqual(['c']);
   });
 
+  it('names the server-quarantined flows under quarantined, from the SERVER_QUARANTINE table (#1310)', () => {
+    const liveFlows = [
+      { name: 'portrait-roundtrip', status: 'FAIL' },
+      { name: 'a', status: 'PASS' },
+    ];
+    expect(flowSummary(liveFlows).quarantined).toEqual(['portrait-roundtrip']);
+    const built = nightlyResultFromReport(
+      { id: 'job-9', verdict: 'PASS', fingerprints: { atSubmit: fingerprint('s') }, liveFlows },
+      { submittedAt: 'deposited-at' },
+    );
+    expect(built.quarantined).toEqual(['portrait-roundtrip']);
+  });
+
+  it('reads the quarantine from the table it is given', () => {
+    expect(flowSummary([{ name: 'a', status: 'FAIL' }, { name: 'b', status: 'PASS' }], { a: {} }).quarantined).toEqual(['a']);
+  });
+
   it('adds none of the per-flow keys when no live artifact was read', () => {
     const built = nightlyResultFromReport(
       { id: 'job-9', verdict: 'FAIL', fingerprints: { atSubmit: fingerprint('s') } },
@@ -650,6 +668,7 @@ describe('nightlyResultFromReport', () => {
     expect(built).not.toHaveProperty('flows');
     expect(built).not.toHaveProperty('unproven');
     expect(built).not.toHaveProperty('skipped');
+    expect(built).not.toHaveProperty('quarantined');
   });
 });
 

@@ -472,11 +472,13 @@ not the failure.
   "supersedes": { "jobId": "…", "sha": "…", "verdict": "FAIL",
                   "trigger": "scheduled", "finishedAt": "…" },
   "flows": [{ "name": "…", "status": "PASS | FAIL | UNPROVEN | SKIPPED" }],
-  "unproven": ["…"], "skipped": ["…"] }
+  "unproven": ["…"], "skipped": ["…"], "quarantined": ["…"] }
 ```
 
-`flows`, `unproven` and `skipped` come from the `live-*.json` the run wrote (§3 step 9), so a
-flow that never proves anything is visible by name without opening the artifact. They are
+`flows`, `unproven`, `skipped` and `quarantined` come from the `live-*.json` the run wrote (§3
+step 9), so a flow that never proves anything is visible by name without opening the artifact.
+`quarantined` names the flows under server quarantine that ran (`SERVER_QUARANTINE`,
+`doc/E2E-POLICY.md` §7): their FAIL alone does not turn the nightly red. All four are
 absent on records written before #1182 and whenever no live artifact was read.
 
 `submittedAt` is the **deposit** time, not the start: it is what the 20 h gap is measured
