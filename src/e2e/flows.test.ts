@@ -1043,6 +1043,10 @@ describe('vote-roundtrip', () => {
     apply?: (call: number) => boolean;
     /** Whether the n-th vote prints its log line. */
     logs?: (call: number) => boolean;
+    /** The votes section's RulerName; absent when undefined. */
+    rulerName?: string;
+    /** Whether the gateway refuses the n-th vote (`success: false`). */
+    refuse?: (call: number) => boolean;
   }) {
     let current = opts.prior;
     const votes: string[] = [];
@@ -1061,6 +1065,7 @@ describe('vote-roundtrip', () => {
         if (msg.type === WsMessageType.REQ_POLITICS_VOTE) {
           const choice = (msg as unknown as { candidateName: string }).candidateName;
           votes.push(choice);
+          if (opts.refuse?.(votes.length)) return { type: WsMessageType.RESP_POLITICS_VOTE, success: false, message: 'no' };
           if (opts.logs?.(votes.length) ?? true) lines.push(`1/1/2026 12:00:00 Voting: SPO_test3 by ${choice}`);
           if (opts.apply?.(votes.length) ?? true) current = choice;
           return { type: WsMessageType.RESP_POLITICS_VOTE, success: true };
@@ -1072,7 +1077,10 @@ describe('vote-roundtrip', () => {
     jest.spyOn(session, 'findTown').mockResolvedValue(helartia);
     jest.spyOn(session, 'resolveVisualClass').mockResolvedValue('7010');
     jest.spyOn(session, 'readSectionGroups').mockImplementation(async () => ({
-      votes: current === undefined ? [] : [{ name: 'VoteOf', value: current }],
+      votes: [
+        ...(current === undefined ? [] : [{ name: 'VoteOf', value: current }]),
+        ...(opts.rulerName === undefined ? [] : [{ name: 'RulerName', value: opts.rulerName }]),
+      ],
     }));
     jest.spyOn(liveLog, 'openLogWindow').mockResolvedValue(logWindow);
     jest.spyOn(liveLog, 'awaitMarker').mockImplementation(
@@ -1100,12 +1108,81 @@ describe('vote-roundtrip', () => {
     expect(votes).toEqual(['Bob', 'spo_test3']);
   });
 
-  it('never votes without a prior vote', async () => {
-    const votes = voteHall({ prior: undefined, candidates: ['Alice', 'Bob'] });
+  it('seeds a vote for the mayor when there is no prior and RulerName names the mayor — PASS, no pending restore', async () => {
+    const votes = voteHall({ prior: undefined, candidates: [], mayor: 'SPO_test3', rulerName: 'SPO_test3' });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(votes).toEqual(['SPO_test3']);
+    expect(result.assertions.find(a => a.what === 'the seed vote for the mayor logged its Voting line')?.ok).toBe(true);
+    expect(result.assertions.find(a => a.what === 'the seed vote read back as SPO_test3')?.ok).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails a seed whose VoteOf read-back stays empty, with no pending restore', async () => {
+    const votes = voteHall({ prior: undefined, candidates: [], mayor: 'SPO_test3', rulerName: 'SPO_test3', apply: () => false });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('FAIL');
+    const failed = result.assertions.find(a => !a.ok);
+    expect(`${failed?.what} ${failed?.detail}`).toMatch(/read-back/);
+    expect(votes).toEqual(['SPO_test3']);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['absent', undefined],
+  ])('never votes without a prior when RulerName is %s', async (_label, rulerName) => {
+    const votes = voteHall({ prior: undefined, candidates: ['Alice', 'Bob'], mayor: 'SPO_test3', rulerName });
     const result = await run();
     expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven[0]).toMatch(/no readable prior vote.*CurrBlock/);
+    expect(result.unproven[0]).toMatch(/RulerName/);
+    expect(result.unproven[0]).toMatch(/Politics\.pas:1053-1060/);
+    expect(result.unproven[0]).not.toMatch(/no readable prior vote/);
     expect(votes).toEqual([]);
+  });
+
+  it('never votes without a prior when RulerName is not the mayor', async () => {
+    const votes = voteHall({ prior: undefined, candidates: ['Alice', 'Bob'], mayor: 'SPO_test3', rulerName: 'Bob' });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(votes).toEqual([]);
+  });
+
+  it('never seeds when the mayor is empty, even if RulerName is empty too', async () => {
+    const votes = voteHall({ prior: undefined, candidates: ['Alice'], mayor: '', rulerName: ' ' });
+    const result = await run();
+    expect(result.status).toBe('UNPROVEN');
+    expect(votes).toEqual([]);
+  });
+
+  it('runs the round trip from the mayor after a proven seed when another candidate exists', async () => {
+    const votes = voteHall({ prior: undefined, candidates: ['Bob'], mayor: 'SPO_test3', rulerName: 'SPO_test3' });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('PASS');
+    expect(votes).toEqual(['SPO_test3', 'Bob', 'SPO_test3']);
+    expect(result.assertions.find(a => a.what === 'the restore vote reached the object')?.ok).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails a seed vote the gateway refuses, with no pending restore', async () => {
+    const votes = voteHall({ prior: undefined, candidates: ['Bob'], mayor: 'SPO_test3', rulerName: 'SPO_test3', refuse: call => call === 1 });
+    const lock = cleanLock();
+    const result = await run(lock);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.what).toBe('the seed vote for the mayor was accepted');
+    expect(votes).toEqual(['SPO_test3']);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('fails a seed vote that prints no Voting line', async () => {
+    const votes = voteHall({ prior: undefined, candidates: ['Bob'], mayor: 'SPO_test3', rulerName: 'SPO_test3', logs: () => false });
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => a.what === 'the seed vote for the mayor logged its Voting line')?.ok).toBe(false);
+    expect(votes).toEqual(['SPO_test3']);
   });
 
   it('never votes when the prior is stale — no campaign now and not the mayor', async () => {

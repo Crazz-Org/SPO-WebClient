@@ -35,7 +35,7 @@ export const NIGHTLY_ONLY: Record<string, string> = {
   'newspaper-read':
     'data-gated: planitia keeps no newspaper issue and the bench cannot create one (News.pas:986, #1009) — a required run could only end UNPROVEN, which fails the gate',
   'vote-roundtrip':
-    'data-gated: a prior vote cannot be seeded (a vote with no prior cannot be retracted) and goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
+    'data-gated: an empty prior vote is seeded by voting for the mayor, which sticks only when RulerName names a winning campaign (Kernel/Politics.pas:1053-1060, Kernel/TownPolitics.pas:483-489); a prior goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
   'fixtures-ensure':
     'builds only when a fixture is missing — the one sanctioned permanent mutation (#1149); the nightly re-creates a fixture that disappeared, no gate requires it',
   'industry-supply-limits':

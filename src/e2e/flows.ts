@@ -987,9 +987,21 @@ const tycoonRoleRead: Flow = {
 };
 
 /**
- * `TPoliticalTownHall.RDOVote` (`Kernel/TownPolitics.pas:395`, log `:400`). Data-gated: it
- * votes only when a prior vote exists and still names a current candidate or the mayor, so
- * the restore is a real vote and not a silent no-op (`Kernel/Politics.pas:916-933`).
+ * `TPoliticalTownHall.RDOVote` (`Kernel/TownPolitics.pas:395`, log `:400`, applied only when the
+ * voter pays taxes in the town, `:405`). The round trip votes for another candidate, then re-votes
+ * the prior choice — only when that prior still names a current candidate or the mayor, so the
+ * restore is a real vote and not a silent no-op (`Kernel/Politics.pas:916-933`).
+ *
+ * When SPO_test3 has never voted here (empty `VoteOf`) and `RulerName` names the mayor, the flow
+ * first **seeds** a vote for the mayor: `VoteFor` keeps a vote for the tycoon of the winning
+ * campaign (`Kernel/Politics.pas:1053-1060`), and the town hall caches `RulerName` only when that
+ * campaign exists (`Kernel/TownPolitics.pas:483-489`). The seed is proven by its `Voting:` line and
+ * a `VoteOf` read-back equal to the mayor, or the flow FAILs. It records **no pending restore**: the
+ * target is isolated (no other flow or fixture reads `VoteOf` or Helartia's vote counts), and the
+ * maintainer rule of 2026-10-01 says an isolated target on the disposable account is reset by the
+ * test itself — the vote the seed leaves is the state the next run starts from. An empty or foreign
+ * `RulerName`, a stale prior, and a prior with no other candidate end UNPROVEN with nothing written
+ * (after a proven seed, no other candidate means the seed is the run's vote proof: PASS).
  */
 const voteRoundTrip: Flow = {
   name: 'vote-roundtrip',
@@ -1006,18 +1018,55 @@ const voteRoundTrip: Flow = {
       const data = await readPolitics(session, town);
       const candidates = (data?.campaigns ?? []).map(c => c.candidateName).filter(n => n.trim() !== '');
       const mayor = data?.mayorName ?? '';
-      const readVoteOf = async (): Promise<string | undefined> =>
-        propertyValue(await readSectionGroups(session, town.x, town.y, 'votes', visualClass), 'votes', 'VoteOf');
+      const readVotes = () => readSectionGroups(session, town.x, town.y, 'votes', visualClass);
+      const readVoteOf = async (): Promise<string | undefined> => propertyValue(await readVotes(), 'votes', 'VoteOf');
+      // The choice ends the line (TownPolitics.pas:400), so "by Bob" never matches "by Bobby".
+      const votedBy = (line: string, choice: string): boolean =>
+        line.trim().toLowerCase().endsWith(`voting: ${voter} by ${choice}`.toLowerCase());
+      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
 
-      const prior = await readVoteOf();
+      const groups = await readVotes();
+      let prior = propertyValue(groups, 'votes', 'VoteOf');
+      let seeded = false;
       if (prior === undefined || prior.trim() === '') {
-        assertions.unproven(
-          'the vote round trip',
-          `${voter} has no readable prior vote at ${town.name} — RDOVoteOf answered nothing, or the ` +
-            'gateway did not serve VoteOf (enrichVotesTab binds to CurrBlock, which no Town Hall ' +
-            'template requests); nothing written',
-        );
-        return report('vote-roundtrip', assertions, probes, session);
+        const ruler = (propertyValue(groups, 'votes', 'RulerName') ?? '').trim();
+        if (ruler === '' || mayor.trim() === '' || !sameName(ruler, mayor)) {
+          assertions.unproven(
+            'the vote round trip',
+            `${voter} has no prior vote at ${town.name}, and RulerName "${ruler}" is empty or is not the ` +
+              `mayor "${mayor}": no winning campaign a seed vote would stick to ` +
+              '(Kernel/Politics.pas:1053-1060, Kernel/TownPolitics.pas:483-489); nothing written',
+          );
+          return report('vote-roundtrip', assertions, probes, session);
+        }
+        // The seed: no pending restore — an isolated target, reset by the test itself (2026-10-01 rule).
+        let proven = false;
+        try {
+          const seedWindow = await openLogWindow(url);
+          const resp = await session.driver.request<WsRespPoliticsVote>(
+            { type: WsMessageType.REQ_POLITICS_VOTE, buildingX: town.x, buildingY: town.y, candidateName: mayor },
+            WsMessageType.RESP_POLITICS_VOTE,
+          );
+          if (resp.success === false) throw new Error(`VOTE refused: ${resp.message ?? 'no message'}`);
+          const polled = await pollUntil(readVoteOf, v => v !== undefined && sameName(v, mayor), ctx, TIMEOUTS.logSettle);
+          const line = await awaitMarker(
+            seedWindow,
+            { marker: LOG_MARKERS.RDOVote, match: l => votedBy(l, mayor) },
+            TIMEOUTS.logSettle,
+          );
+          assertions.check('the seed vote for the mayor logged its Voting line', line !== null, line ?? '(no line)');
+          assertions.check(
+            `the seed vote read back as ${mayor}`,
+            polled.ok,
+            `VoteOf read-back never showed "${mayor}" within ${TIMEOUTS.logSettle} ms (last "${polled.last ?? '(absent)'}")`,
+          );
+          proven = line !== null && polled.ok;
+        } catch (err: unknown) {
+          assertions.check('the seed vote for the mayor was accepted', false, toErrorMessage(err));
+        }
+        if (!proven) return report('vote-roundtrip', assertions, probes, session);
+        prior = mayor;
+        seeded = true;
       }
       const choices = [...candidates, mayor].filter(n => n.trim() !== '');
       if (!choices.some(n => sameName(n, prior))) {
@@ -1031,16 +1080,14 @@ const voteRoundTrip: Flow = {
       }
       const other = choices.find(n => !sameName(n, prior));
       if (other === undefined) {
+        // After a proven seed, its two checks are the run's vote proof.
+        if (seeded) return report('vote-roundtrip', assertions, probes, session);
         assertions.unproven('the vote round trip', `no other candidate to vote for than "${prior}"; nothing written`);
         return report('vote-roundtrip', assertions, probes, session);
       }
 
       const what = `${town.name} vote of ${voter} — prior choice ${prior}`;
       const member = 'RDOVote';
-      // The choice ends the line (TownPolitics.pas:400), so "by Bob" never matches "by Bobby".
-      const votedBy = (line: string, choice: string): boolean =>
-        line.trim().toLowerCase().endsWith(`voting: ${voter} by ${choice}`.toLowerCase());
-      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
       let restoreLine: string | null = null;
       try {
         // Opened before the change vote: the restore's line is the one naming the prior choice.
@@ -6769,15 +6816,16 @@ async function lotBuilding(session: LiveSession, x: number, y: number): Promise<
   return buildings.find(b => b.x === x && b.y === y);
 }
 
-/** Read at least once, then every `readBackPoll` until `done` holds or `readBack` has elapsed. */
+/** Read at least once, then every `readBackPoll` until `done` holds or `boundMs` (default `readBack`) has elapsed. */
 async function pollUntil<T>(
   read: () => Promise<T>,
   done: (v: T) => boolean,
   ctx: FlowContext,
+  boundMs: number = TIMEOUTS.readBack,
 ): Promise<{ ok: boolean; last: T }> {
   const now = ctx.now ?? Date.now;
   const sleep = ctx.sleep ?? defaultSleep;
-  const deadline = now() + TIMEOUTS.readBack;
+  const deadline = now() + boundMs;
   for (;;) {
     const last = await read();
     if (done(last)) return { ok: true, last };
