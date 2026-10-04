@@ -330,6 +330,7 @@ reason it is not opened.
 | Sheet chrome (pin, chip row) | `Sheet` | 3.9 |
 | Building preview | `StatusOverlay` | 4.1 |
 | Inspector, section menu, sections | `BuildingInspector` | 4.2–4.4 |
+| Inspector v2 (UI v2 side panel) and its diagnosis-banner Connect | `InspectorV2` | 6 — Banner Connect step: Settings → Interface → "New (experimental)", map click → FocusCard `Inspect`; switched back to Classic |
 | One inspector per fixture kind (industry, warehouse, residential, TV, research HQ, bank) | `PropertyGroup`, `template-groups.ts` | 4.7 |
 | Research panel | `ResearchPanel` | 4.7 |
 | Bank loan request | `BankLoanRequest` | recorded absent — renders only for a visitor of the bank |
@@ -626,6 +627,33 @@ runs.
 After each, assert the flag is back to `false`. A disabled `Place Building` (unaffordable) or no
 facility offering `Connect` is recorded *absent* with that reason.
 
+- **Banner Connect** — as `SPO_test3`, the diagnosis banner's `Connect` (`DiagnosisBanner`), in
+  both inspectors. Read-only: the map is never clicked while connect mode runs.
+  - **Building**: the TV station **TV 1** at (968, 993), banner
+    "No antenna attached — connect one.", or the antenna at (933, 993), banner
+    "Connect this antenna to a station.". Reach it
+    with the **Clicking a Building on the Map** recipe. The map preview's banner is compact and has
+    no button, so the full inspector must be opened.
+  - **Nothing-sent check**: just before each click, take a baseline `t0 = Date.now()`. After
+    Escape, `__spoDebug.history` must hold no `REQ_CONNECT_FACILITIES` entry (`message-types.ts`)
+    with `ts > t0` — the count is unchanged (0 before, 0 after); a completed connect would send one.
+  - **(a) Classic inspector**: preview → `INSPECT` → `BuildingInspector`. Click the banner's
+    `Connect` — not the General tab's `Connect` action. Assert `modes.connecting === true` (the
+    pick cursor or connect hint shows). Press Escape; assert `modes.connecting === false` and the
+    nothing-sent check.
+  - **(b) v2 inspector**: More → `Settings` → section "Interface" → `In-game interface` →
+    `New (experimental)`; assert the v2 chrome (dock, top bar) and `Close`. Click the same building
+    on the map; the `FocusCard` appears — click its `Inspect` (`data-testid="inspect-button"`) and
+    the side panel shows `InspectorV2`. Same banner `Connect` click, same
+    `modes.connecting === true`, same Escape → `false`, same nothing-sent check with a fresh `t0`.
+  - **Switch back** (mandatory, even when (b) fails or is recorded absent after the switch): dock
+    `More` → `Settings` → "Interface" → `Classic`, `Close`, assert the classic chrome is back.
+    `uiVersion` is persisted in localStorage (`ui-version.ts`) and survives a logout, so leaving v2
+    on would change every later phase and the next run.
+  - **Absent**: if neither building shows the banner (the station already has an antenna attached,
+    or the buildings are gone), the step is recorded *absent* with that reason — still switching
+    back if v2 was turned on.
+
 - **Zone painting** — opened in Phase 8b, not here. `login.isPublicOfficeRole` is set from the
   account's real offices by the `REQ_TYCOON_ROLE` reply, and SPO_test3 is mayor and minister,
   so `Zone painting` may already be listed in the More menu at this point. It is still opened
@@ -638,7 +666,8 @@ facility offering `Connect` is recorded *absent* with that reason.
   close it. The same dialog is More → `Keyboard shortcuts`.
 - **Settings** — More → `Settings`; assert the dialog "Settings" and `ui.modal === "settings"`.
   Scroll through each section — Visual, Audio, Connection, Ignored Players, Keyboard Shortcuts,
-  and Support when the bug reporter is on — toggling nothing; `Close`.
+  and Support when the bug reporter is on — toggling nothing; `Close`. (Interface is switched
+  only in the **Banner Connect** step above, and always switched back to `Classic`.)
 - **Bug reporter** — present only when the gateway runs with `SPO_BUG_REPORT`
   (`window.__SPO_BUG_REPORT__` defined, `src/server/runtime-config.ts`). When present: Settings →
   Support → `Report a problem` arms it (`[data-testid="report-mode-overlay"]`,
