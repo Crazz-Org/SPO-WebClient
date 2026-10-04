@@ -126,6 +126,50 @@ describe('Spool — claim, discard, finish', () => {
   });
 });
 
+describe('Spool — detach (#1300)', () => {
+  it('hands a queued job to the worker: pid → 0, everything else as deposited', () => {
+    const paths = tempBench();
+    const spool = new Spool(paths);
+    const job = spool.submit(requestFor('/wt/a'), 1_000);
+    expect(spool.detach(job.id)).toBe(true);
+    const queued = spool.queued();
+    expect(queued).toHaveLength(1);
+    expect(queued[0].request).toEqual({ ...job, submitter: { pid: 0 } });
+    expect(fs.readdirSync(paths.spool).filter(n => /\.(detach|tmp)-/.test(n))).toEqual([]);
+  });
+
+  it('leaves a claimed (running) job untouched', () => {
+    const paths = tempBench();
+    const spool = new Spool(paths);
+    const job = spool.submit(requestFor('/wt/a'), 1_000);
+    const runningFile = spool.claim(spool.queued()[0].file);
+    const before = fs.readFileSync(runningFile, 'utf8');
+    expect(spool.detach(job.id)).toBe(false);
+    expect(fs.readFileSync(runningFile, 'utf8')).toBe(before);
+    expect(fs.readdirSync(paths.spool)).toEqual([]);
+  });
+
+  it('leaves a finished job or an unknown id alone, creating nothing in spool/', () => {
+    const paths = tempBench();
+    const spool = new Spool(paths);
+    spool.writeReport(finishedReportFor('job-done'));
+    expect(spool.detach('job-done')).toBe(false);
+    expect(spool.detach('job-never')).toBe(false);
+    expect(fs.readdirSync(paths.spool)).toEqual([]);
+    expect(spool.readReport('job-done')?.verdict).toBe('PASS');
+  });
+
+  it('puts a corrupt entry back exactly as it was', () => {
+    const paths = tempBench();
+    const spool = new Spool(paths);
+    const file = path.join(paths.spool, 'job-00000000000000-bad.json');
+    fs.writeFileSync(file, '{broken', 'utf8');
+    expect(spool.detach('job-00000000000000-bad')).toBe(false);
+    expect(fs.readFileSync(file, 'utf8')).toBe('{broken');
+    expect(fs.readdirSync(paths.spool)).toEqual(['job-00000000000000-bad.json']);
+  });
+});
+
 describe('Spool — lease release markers', () => {
   it('records and reads a release request, and finish() clears it', () => {
     const paths = tempBench();

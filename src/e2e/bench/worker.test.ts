@@ -6,6 +6,7 @@ import * as path from 'path';
 import { type runGit } from './fingerprint';
 import { benchPaths, ensureLayout, readHeartbeat, readWorkerInfo, type BenchPaths } from './paths';
 import { Spool, type JobRequest } from './job';
+import { main as cliMain, type CliDeps } from './cli';
 import { listVerdicts, publishPendingStatuses, writeVerdictIn } from './verdict';
 import { nightlyResultFile, readManualRecords, readNightlyResult } from './nightly';
 import { type GatewayDeps } from './gateway';
@@ -390,6 +391,40 @@ describe('processOldest — the queue discipline', () => {
     // ABANDONED is written before runJob is ever called (there is no worktree to run
     // against) — the other non-attesting verdict that must not depend on reaching finish().
     expect(jobsLogVerdicts(h)).toEqual([{ id: job.id, verdict: 'ABANDONED' }]);
+  });
+
+  it('runs a job whose waiting submitter exited 3 — wait detached it, so it is not ABANDONED (#1300)', async () => {
+    const h = harness();
+    const job = deposit(h); // submitter pid 4321
+    const out: string[] = [];
+    const err: string[] = [];
+    const unused = (): never => {
+      throw new Error('not used by wait');
+    };
+    const cliDeps: CliDeps = {
+      paths: h.paths,
+      spool: h.spool,
+      fingerprint: unused,
+      git: unused,
+      workerAlive: () => ({ alive: false, reason: 'heartbeat is 45 s old' }),
+      now: () => (h.clock.nowMs += 10),
+      sleep: async () => {},
+      pid: 4321,
+      out: line => out.push(line),
+      err: line => err.push(line),
+      env: {},
+      isInteractive: () => false,
+      promptLine: async () => null,
+      requesterIdentity: () => ({ user: 'u', host: 'h', tty: 'unknown' }),
+    };
+    expect(await cliMain(['wait', job.id], cliDeps)).toBe(3);
+
+    // The waiting process is gone now.
+    h.submitterAlive = false;
+    expect(await processOldest(h.deps)).toBe(true);
+    expect(h.spool.readReport(job.id)?.verdict).toBe('PASS');
+    expect(h.commands.length).toBeGreaterThan(0);
+    expect(jobsLogVerdicts(h).map(l => l.verdict)).not.toContain('ABANDONED');
   });
 
   it('runs the oldest job end to end: claim, execute, report, release', async () => {

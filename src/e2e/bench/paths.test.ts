@@ -214,6 +214,22 @@ describe('workerStatus — what a submitter learns at deposit time', () => {
     expect(status.reason).toMatch(/heartbeat is \d+ s old/);
   });
 
+  it('a 45 s stall in a synchronous gh call is not a dead worker (#1300)', () => {
+    const paths = tempBench();
+    writeWorkerInfo(paths, INFO);
+    touchHeartbeat(paths);
+    expect(workerStatus(paths, Date.now() + 45_000, () => true)).toEqual({ alive: true, info: INFO });
+  });
+
+  it('a loop frozen past HEARTBEAT_STALE_MS is still reported dead', () => {
+    const paths = tempBench();
+    writeWorkerInfo(paths, INFO);
+    touchHeartbeat(paths);
+    const status = workerStatus(paths, Date.now() + HEARTBEAT_STALE_MS + 1_000, () => true);
+    expect(status.alive).toBe(false);
+    expect(status.reason).toMatch(/heartbeat is \d+ s old/);
+  });
+
   it('reports alive when the pid runs and the heartbeat is fresh', () => {
     const paths = tempBench();
     writeWorkerInfo(paths, INFO);
