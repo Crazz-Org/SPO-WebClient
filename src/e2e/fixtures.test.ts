@@ -982,14 +982,33 @@ describe('ensureFixtures', () => {
     ['a line with another company', (cls, x, y) => `New Facility: ${cls} Company: 9 x: ${x} y: ${y}`],
     ['a line whose y only starts with the lot y', (cls, x, y) => `New Facility: ${cls} Company: 1 x: ${x} y: ${y}3`],
     ['a line with another class', (_c, x, y) => `New Facility: PGITVStation Company: 1 x: ${x} y: ${y}`],
-  ])('FAILs on code 0 and a read-back, with %s', async (_label, line) => {
+  // Contract changed by #1320 (maintainer decision 2026-10-05): the lot read-back already shows
+  // the class placed, so a missing line is unobservable, not wrong — the fixture is unproven,
+  // which fixtures-ensure reports UNTESTABLE, its reason kept.
+  ])('is unproven on code 0 and a read-back, with %s', async (_label, line) => {
     const w = new World();
     ownAllBut(w, 'store');
     spyLog(w);
     w.offer('PGIFoodStore', 1);
     w.place = (cls, x, y) => ({ code: 0, lands: mb(CONSTRUCTION_VC, OWN, x, y), line: line(cls, x, y) });
     const out = await ensure(w);
-    expect(out.store).toMatchObject({ status: 'FAIL', reason: expect.stringMatching(/no New Facility: line for PGIFoodStore, company 1/) });
+    expect(out.store).toMatchObject({
+      status: 'unproven',
+      reason: expect.stringMatching(/^no New Facility: line for PGIFoodStore, company 1, .* in u — the lot read-back shows it owned by SPO_test3$/),
+    });
+  });
+
+  it('is unproven, naming the fault, when the log cannot be read after a confirmed placement', async () => {
+    const w = new World();
+    ownAllBut(w, 'store');
+    spyLog(w).marker.mockRejectedValue(new Error('listing gone'));
+    w.offer('PGIFoodStore', 1);
+    w.place = (cls, x, y) => ({ code: 0, lands: mb(CONSTRUCTION_VC, OWN, x, y), line: undefined });
+    const out = await ensure(w);
+    expect(out.store).toMatchObject({
+      status: 'unproven',
+      reason: expect.stringMatching(/\(the log could not be read: listing gone\) — the lot read-back shows it owned by SPO_test3/),
+    });
   });
 
   it('never picks a locked build-menu row', async () => {
@@ -1209,11 +1228,16 @@ describe('ensureFixtures — research that unlocks a kind (#1233)', () => {
     expect(out.tv.reason).toBe('server did not take the queue for Distributed Direction (for Television); not retried');
   });
 
-  it('FAILs a taken queue that logs no Queue Research: line', async () => {
+  // Contract changed by #1320: the inventory already shows the queue, so the missing line is
+  // unobservable, not wrong — unproven (UNTESTABLE in fixtures-ensure), its reason kept.
+  it('is unproven when a taken queue logs no Queue Research: line', async () => {
     const w = track(lockedWorld());
     w.logsQueue = false;
     const out = await ensure(w);
-    expect(out.bank).toMatchObject({ status: 'FAIL', reason: expect.stringMatching(/^no Queue Research: line for Banking/) });
+    expect(out.bank).toMatchObject({
+      status: 'unproven',
+      reason: expect.stringMatching(/^no Queue Research: line for Banking at .* — the inventory reads it /),
+    });
   });
 
   it('FAILs an invention that reads absent after the queue', async () => {

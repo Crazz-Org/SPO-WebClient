@@ -28,30 +28,31 @@ export const SPINE_FLOW = 'login-spine';
 
 /**
  * Flow -> why no gate requires it (data-gated, or a reading). The nightly still runs it.
- * A data-gated flow ends UNPROVEN when the world holds no data, and a required UNPROVEN flow
- * fails the gate (scripts/verify-gate.js, stage 6) — so routing must never require it.
+ * A data-gated flow ends UNTESTABLE when the world holds no data — non-blocking, its reason kept
+ * (scripts/verify-gate.js, stage 6) — so a required run could only end UNTESTABLE, and routing does
+ * not require it.
  */
 export const NIGHTLY_ONLY: Record<string, string> = {
   'newspaper-read':
-    'data-gated: planitia keeps no newspaper issue and the bench cannot create one (News.pas:986, #1009) — a required run could only end UNPROVEN, which fails the gate',
+    'data-gated: planitia keeps no newspaper issue and the bench cannot create one (News.pas:986, #1009) — a required run could only end UNTESTABLE',
   'vote-roundtrip':
     'data-gated: with no prior vote the flow seeds one for the mayor, which sticks only while the town has a winning campaign (Kernel/Politics.pas:1053-1060; RulerName, Kernel/TownPolitics.pas:483-489), and a prior vote goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
   'fixtures-ensure':
     'builds only when a fixture is missing — the one sanctioned permanent mutation (#1149); the nightly re-creates a fixture that disappeared, no gate requires it',
   'industry-supply-limits':
-    "data-gated: it needs the industry fixture's supply gate to publish MaxPrice — only a TPullInput caches it (Kernel/Kernel.pas:7813, #1149); none ends UNPROVEN, which fails a gate (E2E-POLICY §7). Its sort-mode and overprice writes are excluded, not unproven (#1195): a plain input's SetSortMode is empty (Kernel/Kernel.pas:7169-7171), only TMediaInput caches a sort mode (Kernel/MediaGates.pas:388-389) and only the movie theatre's Films input is one (StdBlocks/Movie.pas:84), which no fixture kind is; the overprice needs an own supplier row, which only supplier-hire-fire creates (#1153)",
+    "data-gated: it needs the industry fixture's supply gate to publish MaxPrice — only a TPullInput caches it (Kernel/Kernel.pas:7813, #1149); with none, a required run ends UNTESTABLE (E2E-POLICY §7). Its sort-mode and overprice writes are excluded, not untestable (#1195): a plain input's SetSortMode is empty (Kernel/Kernel.pas:7169-7171), only TMediaInput caches a sort mode (Kernel/MediaGates.pas:388-389) and only the movie theatre's Films input is one (StdBlocks/Movie.pas:84), which no fixture kind is; the overprice needs an own supplier row, which only supplier-hire-fire creates (#1153)",
   'supplier-hire-fire':
-    "data-gated: it needs a supplier of SPO_test3's own company, in Helartia, on an input fluid of the industry fixture; none ends UNPROVEN, which fails a gate. Hiring anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
+    "data-gated: it needs a supplier of SPO_test3's own company, in Helartia, on an input fluid of the industry fixture; with none, a required run could only end UNTESTABLE. Hiring anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
   'client-hire-remove':
-    "data-gated: it needs a client of SPO_test3's own company, in Helartia, on an output fluid of the industry fixture; none ends UNPROVEN, which fails a gate. Adding anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
+    "data-gated: it needs a client of SPO_test3's own company, in Helartia, on an output fluid of the industry fixture; with none, a required run could only end UNTESTABLE. Adding anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
   'connect-on-map':
     'data-gated: it needs an own counterpart that shares a tradeable fluid with the industry fixture. ConnectFacilities hires every matching fluid in both directions (Kernel/World.pas:3710-3726, Kernel/Kernel.pas:5470-5513), on both gates (Kernel/Kernel.pas:6784-6785)',
   'company-input-demand':
-    'data-gated: an editable company input is data, not guaranteed — cEditable is written only for a meta input flagged Editable (Kernel/Kernel.pas:5887); none ends UNPROVEN, which fails a gate',
+    'data-gated: an editable company input is data, not guaranteed — cEditable is written only for a meta input flagged Editable (Kernel/Kernel.pas:5887); with none, a required run could only end UNTESTABLE',
   'warehouse-wares':
     'data-gated: only a MegaStorage publishes RDOSelectWare (StdBlocks/MegaWarehouse.pas:25; a TWarehouse publishes RDOSetRole only, StdBlocks/Warehouses.pas:95), and findFixture takes the first holding that carries whGeneral (#1149), which need not be one',
   'quick-trade-roundtrip':
-    "data-gated by three guards: the disconnect drops the fixture's outputs from every SPO_test3 facility's matching input, whatever its type (Kernel/Kernel.pas:4593-4600), across all its companies and towns (Kernel/Kernel.pas:4537-4553), and unregisters the fixture as an initial supplier (Kernel/Kernel.pas:4564-4565, :4606-4607); a guard that holds ends UNPROVEN, which fails a gate",
+    "data-gated by three guards: the disconnect drops the fixture's outputs from every SPO_test3 facility's matching input, whatever its type (Kernel/Kernel.pas:4593-4600), across all its companies and towns (Kernel/Kernel.pas:4537-4553), and unregisters the fixture as an initial supplier (Kernel/Kernel.pas:4564-4565, :4606-4607); a guard that holds could only end UNTESTABLE",
 };
 
 /**
@@ -85,8 +86,9 @@ export interface ServerQuarantine {
 /**
  * Flow -> the known live-server fault that blocks it (doc/E2E-POLICY.md §7, "Server quarantine").
  *
- * A temporary maintainer decision, only for a fault of the live server the client cannot fix —
- * never for a code defect. It is applied on top of ROUTES / NIGHTLY_ONLY / EXCLUDED, which describe
+ * A temporary maintainer decision, only for a fault of the live server the client cannot fix that
+ * still surfaces as a FAIL — never for a code defect. A fault that leaves the flow UNTESTABLE needs
+ * no entry: UNTESTABLE already passes. It is applied on top of ROUTES / NIGHTLY_ONLY / EXCLUDED, which describe
  * a healthy server: no gate requires a quarantined flow, the nightly still runs it and prints its
  * real outcome, and a nightly whose only FAILs are quarantined flows is PASS — a dirty world still
  * FAILs. Deleting the entry is the only change when its lift condition holds.
@@ -97,13 +99,6 @@ export const SERVER_QUARANTINE: Record<string, ServerQuarantine> = {
       'the picture server cannot store an upload since the 2026-10-02 planitia maintenance (SERVER_ERROR The picture server could not store the picture (ERROR after the transfer))',
     link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1310',
     lift: '`npm run test:live -- --flows=portrait-roundtrip` PASSes on the bench',
-    added: '2026-10-04',
-  },
-  'newspaper-board-read': {
-    reason:
-      'every post to the Helartia Herald (boardmsg.asp?action=post) answers HTTP 500 since the 2026-10-02 planitia maintenance, so no column can be seeded',
-    link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1260#issuecomment-5973821564',
-    lift: "a post to the Helartia Herald succeeds, so #1260's seed can land",
     added: '2026-10-04',
   },
 };
@@ -201,9 +196,9 @@ export const ROUTES: RouteRule[] = [
   //
   // How an E2E area card routes its flows: its rule goes BEFORE THE FALLBACKS (the rules
   // with `fallback: true`) — a rule placed after a fallback is shadowed and never matches —
-  // and it removes its handler files from FALLBACK_ONLY. A data-gated flow (it ends UNPROVEN
-  // when the world holds no data, and a required UNPROVEN fails the gate, verify-gate.js
-  // stage 6) goes in NIGHTLY_ONLY; a flow whose action posts a message every online player
+  // and it removes its handler files from FALLBACK_ONLY. A data-gated flow (a required run
+  // could only end UNTESTABLE when the world holds no data, verify-gate.js stage 6) goes in
+  // NIGHTLY_ONLY; a flow whose action posts a message every online player
   // sees goes in GATE_ONLY (the card states the maintainer accepts the broadcast at the gate
   // on that basis). A flow blocked by a live-server fault goes in SERVER_QUARANTINE, never in
   // NIGHTLY_ONLY: these tables describe a healthy server. Each exemption carries a cited reason: `File.pas:Line`, `file.asp:Line`
@@ -212,7 +207,8 @@ export const ROUTES: RouteRule[] = [
   // inside a `FLOWS` entry, or inside a shared helper of the seven flow sources, which drives
   // every flow that reaches it (src/e2e/bench/changed-flows.ts) — and the flows a card
   // DECLARES with `npm run gate -- --also-flows=a,b`. All of them land in `routing.required`,
-  // so the card's own gate drives them and a required flow that ends UNPROVEN fails it.
+  // so the card's own gate drives them; a required flow that ends UNTESTABLE is recorded with
+  // its reason and does not change the verdict.
   // `--flows=` replaces the set and is refused unless it names every required flow.
   // Every request a handler file (server session, ws-handlers, client handlers) serves or
   // sends must be sent by a flow its rule routes to, or appear in EXCLUDED / NOT_ROUTED (#1187).
@@ -326,17 +322,17 @@ export const ROUTES: RouteRule[] = [
     test: /^src\/client\/components\/modals\/NewspaperModal\.tsx$/,
     flows: ['newspaper-board-read'],
     needsL3: true,
-    why: 'the town paper modal — newspaper-board-read reads the columns board it shows; a browser look at the modal (server quarantine while posts answer HTTP 500, #1260)',
+    why: 'the town paper modal — newspaper-board-read reads the columns board it shows; a browser look at the modal',
   },
   {
     // Before the broad wire-level rule below: the paper is not on the RDO wire
     // at all, so the governance flows would say nothing about it. newspaper-read itself is
     // not required (#1009): planitia keeps no newspaper issue and the bench cannot create
-    // one (News.pas:986), so it could only end UNPROVEN. The columns board read stays required
-    // instead; a board with no column ends UNPROVEN too (#1188).
+    // one (News.pas:986), so it could only end UNTESTABLE. The columns board read stays required
+    // instead; a board with no column ends UNTESTABLE too (#1188).
     test: /newspaper-handlers?\.ts$|^src\/client\/store\/newspaper-store\.ts$/,
     flows: ['newspaper-board-read'],
-    why: 'the town paper — newspaper-board-read reads the columns board, required, and an empty board ends UNPROVEN (#1188); newspaper-read stays nightly-only (News.pas:986, #1009) (server quarantine while posts answer HTTP 500, #1260)',
+    why: 'the town paper — newspaper-board-read reads the columns board, required, and an empty board ends UNTESTABLE (#1188); newspaper-read stays nightly-only (News.pas:986, #1009)',
   },
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.

@@ -34,7 +34,7 @@ import {
   readCheckoutFlowCount,
   stageDeadlineFor,
   VERIFY_GATE_DEADLINE_MS,
-  countUnprovenFlows,
+  countUntestableFlows,
   DEADLINE_EXIT_CODE,
   downgradeUnreachable,
   liveAttestationFrom,
@@ -116,7 +116,7 @@ interface Harness {
   /** Overrides the `sha` the harness's live artifact carries (default: the `--sha=` it was given). */
   liveArtifactSha: string | undefined;
   /** Overrides the flows the harness's live artifact carries (default: exactly the flows asked). */
-  liveArtifactFlows: { name: string; status: string }[] | undefined;
+  liveArtifactFlows: { name: string; status: string; untestable?: string[] }[] | undefined;
 }
 
 /** A flag's value, first match wins — the way run.ts and verify-gate.js read their argv. */
@@ -492,7 +492,7 @@ describe('processOldest — the queue discipline', () => {
     expect(countCapabilityExceptions(bad)).toBe(0);
   });
 
-  it('carries the gate artifact\'s unproven flows into the attestation', async () => {
+  it('carries the gate artifact\'s untestable flows into the attestation', async () => {
     const h = harness();
     deposit(h);
     const artifactDir = path.join(h.worktree, 'report', 'e2e');
@@ -501,34 +501,34 @@ describe('processOldest — the queue discipline', () => {
       path.join(artifactDir, `gate-head-of-${path.basename(h.worktree)}.json`),
       JSON.stringify({
         exclusions: { capability: [] },
-        unproven: [{ flow: 'zoning-alert-read', required: true, reasons: ['r'] }],
+        untestable: [{ flow: 'zoning-alert-read', required: true, reasons: ['r'] }],
       }),
       'utf8',
     );
     await processOldest(h.deps);
-    expect(listVerdicts(h.paths)[0].verdict.unproven).toBe(1);
+    expect(listVerdicts(h.paths)[0].verdict.untestable).toBe(1);
   });
 
-  it('counts unproven flows, and zero when the artifact is absent, unreadable or predates the field', () => {
+  it('counts untestable flows, and zero when the artifact is absent, unreadable or predates the field', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-art-'));
     const write = (name: string, body: string): string => {
       const file = path.join(dir, name);
       fs.writeFileSync(file, body, 'utf8');
       return file;
     };
-    expect(countUnprovenFlows(undefined)).toBe(0);
-    expect(countUnprovenFlows('/nowhere/gate.json')).toBe(0);
-    expect(countUnprovenFlows(write('bad.json', '{not json'))).toBe(0);
+    expect(countUntestableFlows(undefined)).toBe(0);
+    expect(countUntestableFlows('/nowhere/gate.json')).toBe(0);
+    expect(countUntestableFlows(write('bad.json', '{not json'))).toBe(0);
     // An artifact written before the field existed.
-    expect(countUnprovenFlows(write('old.json', JSON.stringify({ exclusions: { capability: [] } })))).toBe(0);
-    expect(countUnprovenFlows(write('odd.json', JSON.stringify({ unproven: 'two' })))).toBe(0);
+    expect(countUntestableFlows(write('old.json', JSON.stringify({ exclusions: { capability: [] } })))).toBe(0);
+    expect(countUntestableFlows(write('odd.json', JSON.stringify({ untestable: 'two' })))).toBe(0);
     const two = JSON.stringify({
-      unproven: [
+      untestable: [
         { flow: 'zoning-alert-read', required: true, reasons: ['r'] },
         { flow: 'newspaper-read', required: false, reasons: ['s'] },
       ],
     });
-    expect(countUnprovenFlows(write('two.json', two))).toBe(2);
+    expect(countUntestableFlows(write('two.json', two))).toBe(2);
   });
 
   // B2.1 — the attestation gains what the gate actually did. These are the exact class
@@ -681,7 +681,7 @@ describe('processOldest — the queue discipline', () => {
       status,
       ...(skipped ? { skipped } : {}),
       assertions: [],
-      unproven: [],
+      untestable: [],
       probes: [],
       messagesSent: 0,
       messagesReceived: 0,
@@ -3452,20 +3452,24 @@ describe('#1182 — an exit code alone is not a PASS', () => {
       expect(report.detail).toMatch(/missing: c/);
     });
 
-    it("the nightly's latest.json lists each flow's status, and the UNPROVEN and SKIPPED ones by name", async () => {
+    it("the nightly's latest.json lists each flow's status, the UNTESTABLE one with its reasons, and the UNTESTABLE and SKIPPED ones by name", async () => {
       const h = harness();
       h.defaultLiveFlows = ['a', 'b', 'c'];
       h.liveArtifactFlows = [
-        { name: 'a', status: 'PASS' },
-        { name: 'b', status: 'UNPROVEN' },
-        { name: 'c', status: 'SKIPPED' },
+        { name: 'a', status: 'PASS', untestable: [] },
+        { name: 'b', status: 'UNTESTABLE', untestable: ['the restore line — no "Setting" line in http://log'] },
+        { name: 'c', status: 'SKIPPED', untestable: [] },
       ];
       deposit(h, 'nightly');
       await processOldest(h.deps);
       const result = readNightlyResult(h.paths);
       expect(result?.verdict).toBe('PASS');
-      expect(result?.flows).toEqual(h.liveArtifactFlows);
-      expect(result?.unproven).toEqual(['b']);
+      expect(result?.flows).toEqual([
+        { name: 'a', status: 'PASS' },
+        { name: 'b', status: 'UNTESTABLE', reasons: ['the restore line — no "Setting" line in http://log'] },
+        { name: 'c', status: 'SKIPPED' },
+      ]);
+      expect(result?.untestable).toEqual(['b']);
       expect(result?.skipped).toEqual(['c']);
     });
 
@@ -3608,6 +3612,20 @@ describe('#1182 — an exit code alone is not a PASS', () => {
       ).toEqual([
         { name: 'a', status: 'PASS' },
         { name: 'b', status: 'UNKNOWN' },
+      ]);
+    });
+
+    it("liveFlowStatuses: carries an UNTESTABLE flow's reasons, strings only, and [] when it has none (#1320)", () => {
+      const dir = tmp();
+      const flows = [
+        { name: 'a', status: 'UNTESTABLE', untestable: ['no line', 7] },
+        { name: 'b', status: 'UNTESTABLE' },
+        { name: 'c', status: 'PASS', untestable: ['ignored'] },
+      ];
+      expect(liveFlowStatuses(write(path.join(dir, 'u.json'), JSON.stringify({ flows })))).toEqual([
+        { name: 'a', status: 'UNTESTABLE', reasons: ['no line'] },
+        { name: 'b', status: 'UNTESTABLE', reasons: [] },
+        { name: 'c', status: 'PASS' },
       ]);
     });
 

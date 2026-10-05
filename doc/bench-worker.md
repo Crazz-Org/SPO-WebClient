@@ -173,9 +173,9 @@ comment in `job.ts` for the measured line size and growth rate.
     trusts — and `merge-queue.ts` treats any existing attestation as *already answered*, so
     a wrong one is never revisited.
 
-Verdicts: `PASS` (possibly with capability exceptions listed — §7 of the policy) · `FAIL`
-(including a required flow that ended UNPROVEN — §7 of the policy; the `bench/gate` status
-then shows `— N unproven flow(s)`) ·
+Verdicts: `PASS` (possibly with capability exceptions listed, or with UNTESTABLE flows recorded
+with their reasons — §7 of the policy; the `bench/gate` status then shows
+`— N untestable flow(s)`) · `FAIL` ·
 `BLOCKED` (the live stage was refused before running: dirty world or another run already
 in flight — or a flow ended `SKIPPED`, the second account refused at login) · `ENVIRONMENT` (does not consume an attempt) · `STALE` · `DIRTY` (gate on
 uncommitted changes — commit first) · `ABANDONED` ·
@@ -471,11 +471,12 @@ not the failure.
                    "via": "bench-cli | spo", "reason": "…", "requestedAt": "…" },
   "supersedes": { "jobId": "…", "sha": "…", "verdict": "FAIL",
                   "trigger": "scheduled", "finishedAt": "…" },
-  "flows": [{ "name": "…", "status": "PASS | FAIL | UNPROVEN | SKIPPED" }],
-  "unproven": ["…"], "skipped": ["…"], "quarantined": ["…"] }
+  "flows": [{ "name": "…", "status": "PASS | FAIL | UNTESTABLE | SKIPPED",
+              "reasons": ["…"] }],         // reasons: on an UNTESTABLE flow only
+  "untestable": ["…"], "skipped": ["…"], "quarantined": ["…"] }
 ```
 
-`flows`, `unproven`, `skipped` and `quarantined` come from the `live-*.json` the run wrote (§3 step 9), so a
+`flows`, `untestable`, `skipped` and `quarantined` come from the `live-*.json` the run wrote (§3 step 9), so a
 flow that never proves anything is visible by name without opening the artifact. They are
 absent on records written before #1182 and whenever no live artifact was read.
 `quarantined` names the `SERVER_QUARANTINE` flows the run drove, whatever their status: a

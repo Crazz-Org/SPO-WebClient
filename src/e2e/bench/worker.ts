@@ -57,6 +57,7 @@ import {
   unknownRequester,
   writeManualRecord,
   writeNightlyResult,
+  type NightlyFlowStatus,
 } from './nightly';
 import { githubAuthEnv, type GitAuthEnv } from './git-auth';
 import {
@@ -441,7 +442,7 @@ export async function processOldest(deps: WorkerDeps): Promise<boolean> {
       jobId: request.id,
       createdAt: new Date(deps.now()).toISOString(),
       exceptions: countCapabilityExceptions(report.gateArtifact),
-      unproven: countUnprovenFlows(report.gateArtifact),
+      untestable: countUntestableFlows(report.gateArtifact),
       live: liveAttestationFrom(report.gateArtifact),
       staticProof: staticProofAttestationFrom(report.staticProof),
     });
@@ -478,15 +479,15 @@ export function countCapabilityExceptions(artifactPath: string | undefined): num
 }
 
 /**
- * How many UNPROVEN flows the gate artifact records (doc/E2E-POLICY.md §7), required or
- * informational; 0 when unreadable, absent, or written before the field existed. Shown on
- * GitHub only — a required one already made the gate's exit code FAIL.
+ * How many UNTESTABLE flows the gate artifact records (doc/E2E-POLICY.md §7), required or
+ * not; 0 when unreadable, absent, or written before the field existed. Shown on GitHub only —
+ * an UNTESTABLE flow never changes the gate's verdict.
  */
-export function countUnprovenFlows(artifactPath: string | undefined): number {
+export function countUntestableFlows(artifactPath: string | undefined): number {
   if (!artifactPath) return 0;
   try {
-    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as { unproven?: unknown };
-    return Array.isArray(artifact.unproven) ? artifact.unproven.length : 0;
+    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as { untestable?: unknown };
+    return Array.isArray(artifact.untestable) ? artifact.untestable.length : 0;
   } catch {
     return 0;
   }
@@ -519,7 +520,7 @@ export function newLiveArtifact(worktree: string, before: Set<string>): string |
 /** The shape of `report/e2e/live-*.json` this module reads — `LiveRunResult` in src/e2e/run.ts. */
 interface LiveArtifactShape {
   sha?: unknown;
-  flows?: { name?: unknown; status?: unknown }[];
+  flows?: { name?: unknown; status?: unknown; untestable?: unknown }[];
 }
 
 /** The flow names an artifact's `flows` array carries, strings only. */
@@ -529,15 +530,25 @@ function flowNamesOf(flows: { name?: unknown }[] | undefined): string[] {
     : [];
 }
 
-/** Each flow's name and status from a readable live artifact; undefined when absent or unreadable. */
-export function liveFlowStatuses(artifactPath: string | undefined): { name: string; status: string }[] | undefined {
+/**
+ * Each flow's name and status from a readable live artifact, and an UNTESTABLE flow's reasons
+ * (so `latest.json` says why it proved nothing); undefined when absent or unreadable.
+ */
+export function liveFlowStatuses(artifactPath: string | undefined): NightlyFlowStatus[] | undefined {
   if (!artifactPath) return undefined;
   try {
     const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as LiveArtifactShape;
     if (!Array.isArray(artifact.flows)) return undefined;
     return artifact.flows
       .filter(f => typeof f?.name === 'string')
-      .map(f => ({ name: f.name as string, status: typeof f.status === 'string' ? f.status : 'UNKNOWN' }));
+      .map(f => {
+        const status = typeof f.status === 'string' ? f.status : 'UNKNOWN';
+        const entry: NightlyFlowStatus = { name: f.name as string, status };
+        if (status === 'UNTESTABLE') {
+          entry.reasons = Array.isArray(f.untestable) ? f.untestable.filter((r): r is string => typeof r === 'string') : [];
+        }
+        return entry;
+      });
   } catch {
     return undefined;
   }

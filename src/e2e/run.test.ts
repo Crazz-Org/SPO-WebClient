@@ -26,7 +26,7 @@ function passingFlow(name: string): flowsModule.FlowResult {
     name,
     status: 'PASS',
     assertions: [],
-    unproven: [],
+    untestable: [],
     probes: [],
     messagesSent: 4,
     messagesReceived: 6,
@@ -81,20 +81,20 @@ describe('runLive', () => {
     expect(result.flows.map(f => f.name)).toEqual(['login-spine']);
   });
 
-  it('an UNPROVEN flow never fails the run, and the summary says why', async () => {
+  it('an UNTESTABLE flow never fails the run, and the summary says why', async () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
     jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => ({
       ...passingFlow(flow.name),
-      status: 'UNPROVEN',
-      unproven: ['x — y'],
+      status: 'UNTESTABLE',
+      untestable: ['x — y'],
     }));
 
     const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
 
     expect(result.status).toBe('PASS');
     const summary = formatSummary(result);
-    expect(summary).toContain('UNPROVEN');
-    expect(summary).toContain('? unproven: x — y');
+    expect(summary).toContain('UNTESTABLE');
+    expect(summary).toContain('? untestable: x — y');
   });
 
   it('fails the run when any flow fails', async () => {
@@ -328,7 +328,7 @@ describe('formatSummary', () => {
           name: 'permission-negative',
           status: 'FAIL',
           assertions: [{ what: 'a non-mayor is refused', ok: false, detail: 'canGovern=true' }],
-          unproven: [],
+          untestable: [],
           probes: [],
           messagesSent: 1,
           messagesReceived: 1,
@@ -347,7 +347,7 @@ describe('formatSummary', () => {
           name: 'politics-write',
           status: 'FAIL',
           assertions: [],
-          unproven: [],
+          untestable: [],
           probes: [
             {
               what: 'tax row 0',
@@ -388,7 +388,7 @@ describe('formatSummary', () => {
           name: 'zoning-alert-read',
           status: 'FAIL',
           assertions: [],
-          unproven: [],
+          untestable: [],
           probes: [],
           messagesSent: 1,
           messagesReceived: 1,
@@ -413,9 +413,9 @@ describe('formatSummary', () => {
       flows: [
         {
           name: 'zoning-alert-read',
-          status: 'UNPROVEN',
+          status: 'UNTESTABLE',
           assertions: [],
-          unproven: [],
+          untestable: [],
           probes: [],
           messagesSent: 0,
           messagesReceived: 0,
@@ -439,7 +439,7 @@ describe('formatSummary', () => {
           status: 'SKIPPED',
           skipped: `${SECONDARY_ACCOUNT.username} refused`,
           assertions: [],
-          unproven: [],
+          untestable: [],
           probes: [],
           messagesSent: 0,
           messagesReceived: 0,
@@ -452,11 +452,13 @@ describe('formatSummary', () => {
   });
 
   it('prints the server quarantine block with each entry and its outcome in this run (#1310)', () => {
-    const summary = formatSummary(
-      { ...base, flows: [{ ...passingFlow('portrait-roundtrip'), status: 'FAIL' }] },
-      SERVER_QUARANTINE,
-    );
-    const entries = Object.keys(SERVER_QUARANTINE);
+    // A second entry that did not run — newspaper-board-read left the live table with #1320.
+    const table = {
+      ...SERVER_QUARANTINE,
+      'newspaper-board-read': { reason: 'posts answer HTTP 500', link: 'https://example.com/1', lift: 'a post lands', added: '2026-10-04' },
+    };
+    const summary = formatSummary({ ...base, flows: [{ ...passingFlow('portrait-roundtrip'), status: 'FAIL' }] }, table);
+    const entries = Object.keys(table);
     expect(summary).toContain(`Server quarantine (${entries.length}):`);
     const portrait = SERVER_QUARANTINE['portrait-roundtrip'];
     expect(summary).toContain(
@@ -617,7 +619,7 @@ describe('main', () => {
           status: 'SKIPPED',
           skipped: `${SECONDARY_ACCOUNT.username} refused`,
           assertions: [],
-          unproven: [],
+          untestable: [],
           probes: [],
           messagesSent: 0,
           messagesReceived: 0,
@@ -649,6 +651,43 @@ describe('main', () => {
     it('a lock-refusal BLOCK (no flows) stays BLOCKED for the nightly too', async () => {
       const refused = { ...result, status: 'BLOCKED' as const, error: 'world dirty' };
       expect(await main([], async () => refused, sink().stream)).toBe(2);
+    });
+  });
+
+  describe('UNTESTABLE flows in the nightly (#1320)', () => {
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    afterEach(() => {
+      if (fs.existsSync(written)) fs.unlinkSync(written);
+    });
+    const untestable = (name: string, reasons: string[]): flowsModule.FlowResult => ({
+      ...passingFlow(name),
+      status: 'UNTESTABLE',
+      untestable: reasons,
+    });
+    const flows = [
+      passingFlow('login-spine'),
+      untestable('mayor-rating-roundtrip', ["the restore to 100's Tycoon rating line — no line, so the pending restore is cleared"]),
+      untestable('newspaper-board-read', ['a column is listed — 0 columns', 'a tree entry is listed — 0 entries']),
+    ];
+
+    it('exits 0 with PASS when every flow is PASS or UNTESTABLE, printing each reason', async () => {
+      const out = sink();
+      expect(await main([], async () => ({ ...result, status: 'PASS', flows }), out.stream)).toBe(0);
+      expect(out.text()).toContain('L2 live drive on planitia — PASS');
+      expect(out.text()).toContain("? untestable: the restore to 100's Tycoon rating line — no line, so the pending restore is cleared");
+      expect(out.text()).toContain('? untestable: a column is listed — 0 columns');
+      expect(out.text()).toContain('? untestable: a tree entry is listed — 0 entries');
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('PASS');
+      expect(artifact.flows[1]).toMatchObject({ status: 'UNTESTABLE', untestable: flows[1].untestable });
+    });
+
+    it('still FAILs, exit 1, on a dirty world beside them', async () => {
+      const dirty: LiveRunResult = { ...result, status: 'FAIL', flows, releaseError: 'world left dirty', error: 'world left dirty' };
+      const out = sink();
+      expect(await main([], async () => dirty, out.stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+      expect(out.text()).toContain('? untestable: a column is listed — 0 columns');
     });
   });
 

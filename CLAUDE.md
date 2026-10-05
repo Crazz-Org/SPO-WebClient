@@ -252,7 +252,7 @@ already killed a gateway mid-job. **Only the worker attests**; `npm run gate:loc
 for reading, never a merge unblock. **A crash is a failure, but silence is not a pass**: the
 `FIVEMODELSERVER/Survival` log line proves receipt, not a `success: true` response (`OB-28`),
 and the read-back proves the change; a lag (`OB-29`) is waited out up to the spec's bound, and
-a read-back that never shows the value FAILs, as does a missing log line. Three attempts maximum, each naming a different root cause. Full rules:
+a read-back that never shows the value FAILs; a log line that cannot be found or read, with the read-back agreeing, is UNTESTABLE — non-blocking, its reason kept in the report and `latest.json`. Three attempts maximum, each naming a different root cause. Full rules:
 [doc/E2E-POLICY.md](doc/E2E-POLICY.md), [doc/bench-worker.md](doc/bench-worker.md). Live server
 logs (open IIS listing, `http://158.69.153.134/logs/`) prove what happened; reading one is not
 probing the server — `doc/E2E-POLICY.md` §5.
