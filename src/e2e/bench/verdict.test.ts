@@ -294,18 +294,18 @@ describe('statusDescription', () => {
     });
   });
 
-  // #1010 — a required flow that ended UNTESTABLE fails the gate; the status says how many.
+  // #1320 — an UNTESTABLE flow never changes the verdict (doc/E2E-POLICY.md §7); the status says how many.
   describe('untestable flows (doc/E2E-POLICY.md §7)', () => {
     it('renders the untestable count in the protected tail', () => {
       const description = statusDescription(
         verdictFor('c1', {
-          verdict: 'FAIL',
+          verdict: 'PASS',
           live: { status: 'ran', flows: ['zoning-alert-read'] },
           untestable: 1,
           baseMain: 'b'.repeat(40),
         }),
       );
-      expect(description).toBe('FAIL — live — 1 untestable flow(s) — base bbbbbbbb — job job-1');
+      expect(description).toBe('PASS — live — 1 untestable flow(s) — base bbbbbbbb — job job-1');
     });
 
     it('keeps both counts within the limit next to a long job id', () => {
