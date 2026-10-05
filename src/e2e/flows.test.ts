@@ -5873,6 +5873,11 @@ describe('inspector flows (#1152)', () => {
     requests: WsMessage[];
     /** What the directory lists for SPO_test3 (`listTycoonFacilities`). */
     tycoon?: { companies: string[]; facilities: fixtures.TycoonFacility[] };
+    /**
+     * The Supplies tab drops a gate whose Selected is `0`: its GateMap bit is `IsActive`
+     * (Kernel/Kernel.pas:5843-5845, :7897-7899) and `listGates` hides a `'0'` finger.
+     */
+    hideDeselected?: boolean;
   }
 
   function makeWorld(over: Partial<World> = {}): World {
@@ -5950,7 +5955,10 @@ describe('inspector flows (#1152)', () => {
               : { tabs: [{ id: 'indGeneral' }, { id: 'supplies' }, { id: 'products' }], groups: { indGeneral: [pv('Name', 'Farm')] } },
           };
         case WsMessageType.REQ_BUILDING_TAB_DATA: {
-          if (m.tabId === 'supplies') return { supplies: world.supplies.map(s => ({ path: s.path, name: s.name, connections: [] })) };
+          if (m.tabId === 'supplies') {
+            const listed = world.hideDeselected ? world.supplies.filter(s => s.selected !== '0') : world.supplies;
+            return { supplies: listed.map(s => ({ path: s.path, name: s.name, connections: [] })) };
+          }
           if (m.tabId === 'products') return { products: world.products.map(o => ({ path: o.path, name: o.name, connections: [] })) };
           if (m.tabId === 'srvGeneral') {
             const g: BuildingPropertyValue[] = [];
@@ -6427,6 +6435,17 @@ describe('inspector flows (#1152)', () => {
       expect(result.probes[0].logLine).toBeNull();
       expect(liveLog.openLogWindow).not.toHaveBeenCalled();
       expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    // #1322 — nightly job-01791211056862-7c3f88: once Selected is 0 the Supplies tab stops
+    // listing the gate, so a by-name re-list read "(absent)" for the whole bound.
+    it('reads the gate back on its own path when the Supplies tab stops listing it once deselected', async () => {
+      const world = makeWorld({ hideDeselected: true });
+      arrange(world);
+      const result = await run('industry-auto-buy');
+      expect(result.status).toBe('PASS');
+      expect(result.probes[0].readBack).toBe('CONFIRMED');
+      expect(world.writes.map(w => w.value)).toEqual(['0', '1']);
     });
 
     it('FAILs a toggle that never reads back', async () => {
