@@ -5909,11 +5909,11 @@ const industryAutoBuy: Flow = {
       const fx = await ownFixture(session, 'industry', assertions);
       if (!fx) return report('industry-auto-buy', assertions, probes, session);
 
-      let gate: { name: string; fluid: string } | undefined;
+      let gate: { stub: GateStub; name: string; fluid: string } | undefined;
       for (const stub of await gateStubs(session, fx, 'supplies')) {
         const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
         if (supply?.metaFluid && supply.selected !== undefined) {
-          gate = { name: stub.name, fluid: supply.metaFluid };
+          gate = { stub, name: stub.name, fluid: supply.metaFluid };
           break;
         }
       }
@@ -5925,9 +5925,13 @@ const industryAutoBuy: Flow = {
         return report('industry-auto-buy', assertions, probes, session);
       }
 
-      const { name, fluid } = gate;
+      const { stub, name, fluid } = gate;
       const url = await survivalUrl(ctx);
-      const readSelected = async (): Promise<string | undefined> => (await readSupply(session, fx, name))?.selected;
+      // Read on the gate's own path, never re-listed by name: once Selected is 0 the gate's
+      // GateMap bit is 0 (`IsActive`, Kernel/Kernel.pas:5843-5845, :7897-7899) and the
+      // Supplies tab stops listing it (Voyager/SupplySheetForm.pas:382) — #1322.
+      const readSelected = async (): Promise<string | undefined> =>
+        (await gateConnections(session, fx, 'supplies', stub)).supply?.selected;
       const probe = await roundTripProbe(ctx, url, {
         what: `${fixtureLabel(fx)} ${name} auto-buy`,
         member: 'RDOSelSelected',
