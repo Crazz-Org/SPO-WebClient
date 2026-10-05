@@ -884,12 +884,16 @@ async function mayorRatingSteps(crazz: LiveSession, ctx: FlowContext, assertions
       ctx,
     );
     after = polled.last;
+    // The evidence beside a missing line, as observed: only a move towards the probe agrees.
+    const observed = after === undefined ? undefined : ratingMove(before, after, RATING_BASELINE, RATING_PROBE);
     checkLogLine(
       assertions,
       `the write of ${RATING_PROBE} logged its Tycoon rating line`,
       await lookForLine(opened, window => lineOf(window, RATING_PROBE)),
       { marker: LOG_MARKERS.RDOSetRatingFrom, url },
-      `the aggregate read ${before} -> ${String(after)}`,
+      observed === 'towards'
+        ? `the aggregate read ${before} -> ${String(after)}`
+        : `and the aggregate does not agree (${observed === undefined ? `row ${ratingId} no longer listed` : `${before} -> ${String(after)}`})`,
     );
     if (after === undefined) {
       assertions.check('the rating row reads back after the write', false, `row ${ratingId} is no longer listed`);

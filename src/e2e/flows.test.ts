@@ -10293,6 +10293,26 @@ describe('player actions (#1195)', () => {
       expect(result.assertions.find(a => a.what === 'the rating row reads back after the write')?.ok).toBe(false);
     });
 
+    it('never records a vanished row as agreeing evidence for a missing write line', async () => {
+      const world = ratingWorld({ silent: [1] });
+      arrange(world);
+      world.move = () => {
+        world.rows = [];
+        return 0;
+      };
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.untestable[0]).toMatch(/— and the aggregate does not agree \(row 7 no longer listed\)$/);
+    });
+
+    it('never records an aggregate that moved away as agreeing evidence for a missing write line', async () => {
+      const world = ratingWorld({ silent: [1], move: () => 70 });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.untestable[0]).toMatch(/— and the aggregate does not agree \(60 -> 70\)$/);
+    });
+
     it('FAILs and writes nothing when no rated row carries an id', async () => {
       const world = ratingWorld({ rows: [{ name: 'Overall', value: 60 }] });
       arrange(world);
