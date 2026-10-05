@@ -96,11 +96,14 @@ describe('runProbe', () => {
     expect(lock.read().pendingRestores).toEqual([]);
   });
 
-  it('fails when no log line appears — the write never reached the object', async () => {
+  // Contract changed by #1320 (maintainer decision 2026-10-05): a missing line beside a confirmed
+  // read-back is not observable, not wrong — UNTESTABLE, its reason kept.
+  it('is UNTESTABLE when no log line appears but the read-back confirms the write', async () => {
     jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue(null);
     const result = await runProbe(sessionReading(['7', '8']), spec, tempLock(), factory, window.url);
-    expect(result.status).toBe('FAIL');
-    expect(result.note).toMatch(/never reached the object/);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.readBack).toBe('CONFIRMED');
+    expect(result.note).toMatch(/no model-server log line "Setting Tax value:" in .* — the read-back confirmed "8"/);
   });
 
   it('still restores after a failed assertion', async () => {
@@ -172,13 +175,14 @@ describe('runProbe', () => {
   });
 
   it('refuses a member with no known log marker — it could never be proven', async () => {
-    const unproven = { ...spec, member: 'RDOSetSomethingNew' };
-    await expect(runProbe(sessionReading(['7']), unproven, tempLock(), factory, window.url)).rejects.toThrow(
+    const unknown = { ...spec, member: 'RDOSetSomethingNew' };
+    await expect(runProbe(sessionReading(['7']), unknown, tempLock(), factory, window.url)).rejects.toThrow(
       /No model-server log marker/,
     );
   });
 
-  it('reports a mid-probe throw as a failure and still restores', async () => {
+  // Contract changed by #1320: a log that cannot be read is never reported as a failed write.
+  it('reports a log read that throws as UNTESTABLE beside a confirmed read-back, and still restores', async () => {
     jest.spyOn(liveLog, 'awaitMarker').mockRejectedValue(new Error('log host vanished'));
     const writes: string[] = [];
     const result = await runProbe(
@@ -188,9 +192,26 @@ describe('runProbe', () => {
       factory,
       window.url,
     );
-    expect(result.status).toBe('FAIL');
-    expect(result.note).toBe('log host vanished');
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.note).toMatch(/the log could not be read: log host vanished/);
     expect(result.restored).toBe(true);
+    expect(writes).toEqual(['8', '7']);
+  });
+
+  it('reports a log window that cannot be opened as UNTESTABLE beside a confirmed read-back', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: 8');
+    const writes: string[] = [];
+    const result = await runProbe(
+      sessionReading(['7', '8'], v => writes.push(v)),
+      spec,
+      tempLock(),
+      async () => {
+        throw new Error('listing unreachable');
+      },
+      window.url,
+    );
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.note).toMatch(/the log window could not be opened: listing unreachable/);
     expect(writes).toEqual(['8', '7']);
   });
 
@@ -216,12 +237,15 @@ describe('runProbe', () => {
     expect(result.status).toBe('PASS');
   });
 
-  it('fails a log line that holds the marker but fails logMatch', async () => {
+  // Contract changed by #1320: a line that fails logMatch is not this write's line — the line is
+  // missing, which beside a confirmed read-back is UNTESTABLE, never a PASS.
+  it('never takes a log line that holds the marker but fails logMatch', async () => {
     jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Elsewhere, 3, 8');
     const logMatch = (line: string, written: string): boolean =>
       line.includes(`Setting Tax value: Helartia, 3, ${written}`);
     const result = await runProbe(sessionReading(['7', '8']), { ...spec, logMatch }, tempLock(), factory, window.url);
-    expect(result.status).toBe('FAIL');
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.logLine).toBeNull();
     expect(result.note).toMatch(/no model-server log line/);
   });
 });
@@ -301,24 +325,40 @@ describe('runRoundTrip', () => {
     expect(lock.read().pendingRestores).toEqual([]);
   });
 
-  it('restores after a proof that fails', async () => {
+  // Contract changed by #1320: the missing line beside a confirmed read-back is UNTESTABLE.
+  it('restores after a proof that could not be observed', async () => {
     jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue(null);
     const w = world('7');
     const lock = tempLock();
     const result = await runRoundTrip(roundTrip(w), lock, factory, window.url);
-    expect(result.status).toBe('FAIL');
-    expect(result.note).toMatch(/never reached the object/);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.note).toMatch(/no model-server log line/);
     expect(w.state.writes).toEqual(['8', '7']);
     expect(result.restored).toBe(true);
     expect(lock.read().pendingRestores).toEqual([]);
   });
 
-  it('fails a log line that contains the prefix but fails match', async () => {
+  // Contract changed by #1320: the unmatched line is never taken; beside a confirmed read-back
+  // the missing line is UNTESTABLE.
+  it('fails when no log line appears and the read-back never confirms — the write never reached the object', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue(null);
+    const w = world('7');
+    // A write the server ignores: the value never moves, so nothing observable agrees.
+    const write = jest.fn(async (v: string) => {
+      w.state.writes.push(v);
+    });
+    const result = await runRoundTrip(roundTrip(w, { write }), tempLock(), factory, window.url, timed());
+    expect(result.status).toBe('FAIL');
+    expect(result.readBack).toBe('UNCONFIRMED');
+    expect(result.note).toMatch(/no model-server log line "Setting Tax value:" in .* — the write never reached the object/);
+  });
+
+  it('never takes a log line that contains the prefix but fails match', async () => {
     jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Elsewhere, 0, 8');
     const result = await runRoundTrip(roundTrip(world('7')), tempLock(), factory, window.url);
-    expect(result.status).toBe('FAIL');
+    expect(result.status).toBe('UNTESTABLE');
     expect(result.logLine).toBeNull();
-    expect(result.note).toMatch(/never reached the object/);
+    expect(result.note).toMatch(/no model-server log line/);
   });
 
   it('hands awaitMarker a proof that requires both the marker and the match', async () => {

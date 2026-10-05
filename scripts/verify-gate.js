@@ -18,8 +18,8 @@
  *   live          pre-flight, lock, capability reads, flows against planitia, restore, release
  *   judge         a capability the server GRANTS must be exercised by a flow (fail closed);
  *                 one it REFUSES is a recorded exception, never a human override
- *   unproven      a required flow that ended UNPROVEN fails; one run only because --flows
- *                 named it is recorded as informational (§7)
+ *   untestable    a flow that ended UNTESTABLE (not observable) is recorded with its reasons,
+ *                 required or not, and never changes the verdict (§7)
  *   artifact      report/e2e/gate-<sha>.json, which the push hook reads
  *
  * Exit codes — the interface, one per outcome (see EXIT below):
@@ -269,9 +269,9 @@ async function main() {
     routing: {},
     live: null,
     exclusions: { presidentMembersTouched: [], capability: [] },
-    // Outside `exclusions` on purpose: a required UNPROVEN flow is a failure, not an
-    // exclusion — doc/E2E-POLICY.md §7 (Unproven flows).
-    unproven: [],
+    // Outside `exclusions` on purpose: an UNTESTABLE flow is a recorded observation gap, not
+    // an exclusion — doc/E2E-POLICY.md §7 (Untestable flows).
+    untestable: [],
   };
 
   // --- Stage 1: static -------------------------------------------------------
@@ -540,46 +540,32 @@ async function main() {
     }
   }
 
-  // --- Stage 6: unproven flows (doc/E2E-POLICY.md §7, "Unproven flows") -----
-  // A flow that ran, failed nothing, but found no data to exercise is not a PASS for the
-  // change: when routing required it, the change was never seen working. An ENVIRONMENT or
-  // BLOCKED run carries no flows, so this list stays empty and its exit code is unchanged.
+  // --- Stage 6: untestable flows (doc/E2E-POLICY.md §7, "Untestable flows") ---
+  // A flow that ran, failed nothing, but could not observe its result — the log line could not
+  // be found or read, the server answered a fault the client can neither cause nor fix, or the
+  // world held no data — is UNTESTABLE: recorded with its reasons, required or not, and never
+  // a change of verdict (maintainer decision 2026-10-05). FAIL is only what a flow observed
+  // wrong. An ENVIRONMENT or BLOCKED run carries no flows, so this list stays empty.
   const requiredFlows = artifact.routing.required || [];
   for (const flow of live.flows || []) {
-    if (flow.status !== 'UNPROVEN') continue;
-    artifact.unproven.push({
+    if (flow.status !== 'UNTESTABLE') continue;
+    artifact.untestable.push({
       flow: flow.name,
       required: requiredFlows.includes(flow.name),
-      reasons: flow.unproven || [],
+      reasons: flow.untestable || [],
     });
   }
-  const unprovenRequired = artifact.unproven.filter(entry => entry.required);
-  const unprovenInformational = artifact.unproven.filter(entry => !entry.required);
-  if (unprovenRequired.length > 0) {
-    artifact.verdict = 'FAIL';
+  if (artifact.untestable.length > 0) {
     process.stdout.write(
       [
         '',
-        '=== UNPROVEN REQUIRED FLOW ===============================================',
-        ...unprovenRequired.flatMap(entry => [entry.flow, ...entry.reasons.map(r => `  ? ${r}`)]),
-        'A required flow that ends UNPROVEN fails the gate: the world held no data to exercise',
-        'it on, so the change was never seen working. The remedy is the flow\'s seed step, never',
-        'an override — doc/E2E-POLICY.md §7 (Unproven flows).',
-        '==========================================================================',
-        '',
-      ].join('\n'),
-    );
-  }
-  if (unprovenInformational.length > 0) {
-    process.stdout.write(
-      [
-        '',
-        '=== unproven flow(s), informational — not required by routing ============',
-        ...unprovenInformational.flatMap(entry => [
-          entry.flow,
+        '=== untestable flow(s) — not observable, verdict unchanged ===',
+        ...artifact.untestable.flatMap(entry => [
+          `${entry.flow}${entry.required ? ' (required)' : ''}`,
           ...entry.reasons.map(r => `  ? ${r}`),
         ]),
-        'Run only because --flows named them; recorded in the artifact, no verdict changed.',
+        'Recorded in the artifact with each reason. The remedy that turns one into a PASS is the',
+        "flow's seed step — doc/E2E-POLICY.md §7 (Untestable flows).",
         '',
       ].join('\n'),
     );

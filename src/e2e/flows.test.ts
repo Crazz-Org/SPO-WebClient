@@ -144,7 +144,7 @@ describe('runFlow', () => {
         name: 'ok',
         status: 'PASS' as const,
         assertions: [],
-        unproven: [],
+        untestable: [],
         probes: [],
         messagesSent: 1,
         messagesReceived: 1,
@@ -159,7 +159,7 @@ describe('runFlow', () => {
       name,
       status: 'PASS',
       assertions: [],
-      unproven: [],
+      untestable: [],
       probes: [],
       messagesSent: 1,
       messagesReceived: 1,
@@ -211,13 +211,13 @@ describe('runFlow', () => {
       expect(result).toMatchObject({ status: 'FAIL', error: 'socket died' });
     });
 
-    it('a seed that throws is UNPROVEN, and run is never called', async () => {
+    it('a seed that throws is UNTESTABLE, and run is never called', async () => {
       const { flow, calls } = seeded({ seed: async () => Promise.reject(new Error('no login')) });
       const result = await runFlow(flow, ctx);
       expect(calls).toEqual([]);
-      expect(result.status).toBe('UNPROVEN');
+      expect(result.status).toBe('UNTESTABLE');
       expect(result.seed).toEqual({ what: 'seed', ok: false, detail: 'no login' });
-      expect(result.unproven[0]).toBe("the flow's data — seed failed: seed (no login)");
+      expect(result.untestable[0]).toBe("the flow's data — seed failed: seed (no login)");
       expect(result.cleanup).toEqual([]);
     });
 
@@ -234,8 +234,8 @@ describe('runFlow', () => {
       });
       const result = await runFlow(flow, ctx);
       expect(calls).toEqual(['cleanup']);
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual(["the flow's data — seed failed: plant"]);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual(["the flow's data — seed failed: plant"]);
     });
 
     it('a cleanup that throws turns a PASS into a FAIL', async () => {
@@ -269,7 +269,7 @@ describe('runFlow', () => {
       });
       const result = await runFlow(flow, { lock: cleanLock() });
       expect(calls).toEqual([]);
-      expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused`, unproven: [] });
+      expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused`, untestable: [] });
     });
 
     it('a flow without a seed carries no seed or cleanup keys', async () => {
@@ -291,7 +291,7 @@ describe('runFlow and a SKIPPED flow', () => {
       status: 'SKIPPED',
       skipped: `${SECONDARY_NAME} refused`,
       assertions: [],
-      unproven: [],
+      untestable: [],
       probes: [],
       messagesSent: 0,
       messagesReceived: 0,
@@ -707,7 +707,7 @@ describe('politics-write', () => {
 
     expect(runProbe).toHaveBeenCalledTimes(1);
     expect(result.status).toBe('FAIL');
-    expect(result.unproven.join()).toMatch(/subsidy probe — not attempted/);
+    expect(result.untestable.join()).toMatch(/subsidy probe — not attempted/);
   });
 
   it('records a subsidy probe that threw', async () => {
@@ -920,11 +920,14 @@ describe('town-min-wage', () => {
     expect(result.probes[0].restored).toBe(true);
   });
 
-  it('restores after a failed proof (no log line)', async () => {
+  // Contract changed by #1320 (maintainer decision 2026-10-05): a log line that cannot be
+  // observed beside an agreeing read-back is UNTESTABLE, not FAIL — its reason kept.
+  it('is UNTESTABLE, and restores, when no log line appears beside a confirmed read-back', async () => {
     const writes = minWageHall({ wage: '40', logLine: () => null });
     const result = await run();
-    expect(result.status).toBe('FAIL');
+    expect(result.status).toBe('UNTESTABLE');
     expect(result.probes[0].note).toMatch(/no model-server log line/);
+    expect(result.untestable[0]).toMatch(/no model-server log line/);
     expect(writes.map(w => w.value)).toEqual(['41', '40']);
   });
 });
@@ -1000,10 +1003,13 @@ describe('publicity-roundtrip', () => {
     expect(lock.read().pendingRestores).toEqual([]);
   });
 
-  it('fails a line that carries another RatingId, and still restores', async () => {
+  // Contract changed by #1320 (maintainer decision 2026-10-05): a log line that cannot be
+  // observed beside an agreeing read-back is UNTESTABLE, not FAIL — its reason kept.
+  it('never takes a line that carries another RatingId — UNTESTABLE — and still restores', async () => {
     const writes = publicityHall({ logRatingId: '6' });
     const result = await run();
-    expect(result.status).toBe('FAIL');
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.probes[0].logLine).toBeNull();
     expect(result.probes[0].note).toMatch(/no model-server log line/);
     expect(writes.map(w => w.value)).toEqual([25, 50]);
   });
@@ -1129,16 +1135,16 @@ describe('vote-roundtrip', () => {
   it('never votes without a prior vote when RulerName is empty', async () => {
     const votes = voteHall({ prior: undefined, candidates: ['Alice', 'Bob'] });
     const result = await run();
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven[0]).toMatch(/RulerName.*Politics\.pas:1053-1060/);
-    expect(result.unproven[0]).not.toMatch(/no readable prior vote/);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable[0]).toMatch(/RulerName.*Politics\.pas:1053-1060/);
+    expect(result.untestable[0]).not.toMatch(/no readable prior vote/);
     expect(votes).toEqual([]);
   });
 
   it('never votes without a prior vote when RulerName is not the mayor', async () => {
     const votes = voteHall({ prior: undefined, ruler: 'Carol', mayor: 'SPO_test3' });
     const result = await run();
-    expect(result.status).toBe('UNPROVEN');
+    expect(result.status).toBe('UNTESTABLE');
     expect(votes).toEqual([]);
   });
 
@@ -1152,36 +1158,48 @@ describe('vote-roundtrip', () => {
     expect(lock.read().pendingRestores).toEqual([]);
   });
 
-  it('fails the seed when its vote prints no log line', async () => {
+  // Contract changed by #1320 (maintainer decision 2026-10-05): a Voting: line that cannot be
+  // observed beside an agreeing VoteOf read-back is UNTESTABLE, not FAIL — its reason kept.
+  it('is UNTESTABLE when the seed vote prints no log line', async () => {
     const votes = voteHall({ prior: undefined, ruler: 'SPO_test3', logs: () => false });
     const result = await run();
-    expect(result.status).toBe('FAIL');
-    expect(result.assertions.find(a => a.what === 'the seed vote logged its Voting: line')?.ok).toBe(false);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.assertions.find(a => a.what === 'the seed vote logged its Voting: line')).toBeUndefined();
+    expect(result.untestable[0]).toMatch(/^the seed vote logged its Voting: line — no "Voting:" within .* — votes\.VoteOf read back "SPO_test3"$/);
     expect(votes).toEqual(['SPO_test3']);
   });
 
-  it('fails the seed when the log host throws, with nothing sent', async () => {
+  it('is UNTESTABLE, never "the seed vote was accepted = false", when the log host throws', async () => {
     const votes = voteHall({ prior: undefined, ruler: 'SPO_test3' });
     jest.spyOn(liveLog, 'openLogWindow').mockRejectedValue(new Error('log host vanished'));
     const result = await run();
-    expect(result.status).toBe('FAIL');
-    expect(result.assertions.find(a => a.what === 'the seed vote was accepted')?.ok).toBe(false);
-    expect(votes).toEqual([]);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.assertions.find(a => a.what === 'the seed vote was accepted')).toBeUndefined();
+    expect(result.untestable[0]).toMatch(/the log window could not be opened: log host vanished/);
+    expect(votes).toEqual(['SPO_test3']);
+  });
+
+  it('names the fault when the current Survival log cannot be found for the seed vote', async () => {
+    voteHall({ prior: undefined, ruler: 'SPO_test3' });
+    jest.spyOn(liveLog, 'findCurrentSurvivalLog').mockRejectedValue(new Error('no listing'));
+    const result = await flowByName('vote-roundtrip').run({ lock: cleanLock(), ...fastClock() });
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable[0]).toMatch(/no "Voting:" line could be looked for in \(the Survival log\) — the current Survival log could not be found: no listing/);
   });
 
   it('never votes when the prior is stale — no campaign now and not the mayor', async () => {
     const votes = voteHall({ prior: 'Carol', candidates: ['Alice', 'Bob'], mayor: 'SPO_test3' });
     const result = await run();
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven[0]).toMatch(/stale prior vote "Carol"/);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable[0]).toMatch(/stale prior vote "Carol"/);
     expect(votes).toEqual([]);
   });
 
   it('never votes when no other candidate exists', async () => {
     const votes = voteHall({ prior: 'SPO_test3', candidates: [], mayor: 'SPO_test3' });
     const result = await run();
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven[0]).toMatch(/no other candidate/);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable[0]).toMatch(/no other candidate/);
     expect(votes).toEqual([]);
   });
 
@@ -1196,11 +1214,13 @@ describe('vote-roundtrip', () => {
     expect(lock.read().pendingRestores).toEqual([]);
   });
 
-  it('fails the re-vote of the mayor when it prints no log line', async () => {
+  // Contract changed by #1320 (maintainer decision 2026-10-05): a Voting: line that cannot be
+  // observed beside an agreeing VoteOf read-back is UNTESTABLE, not FAIL — its reason kept.
+  it('is UNTESTABLE when the re-vote of the mayor prints no log line', async () => {
     const votes = voteHall({ prior: 'SPO_test3', ruler: 'SPO_test3', candidates: [], logs: () => false });
     const result = await run();
-    expect(result.status).toBe('FAIL');
-    expect(result.assertions.find(a => a.what === 'the re-vote vote logged its Voting: line')?.ok).toBe(false);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable[0]).toMatch(/^the re-vote vote logged its Voting: line — /);
     expect(votes).toEqual(['SPO_test3']);
   });
 
@@ -1212,27 +1232,42 @@ describe('vote-roundtrip', () => {
     expect(votes).toEqual(['Bob', 'Alice']);
   });
 
-  it('fails when the restore vote prints no log line', async () => {
+  // Contract changed by #1320 (maintainer decision 2026-10-05): a Voting: line that cannot be
+  // observed beside an agreeing VoteOf read-back is UNTESTABLE, not FAIL — its reason kept.
+  it('is UNTESTABLE when the restore vote prints no log line', async () => {
     const votes = voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'], logs: call => call === 1 });
     const result = await run();
-    expect(result.status).toBe('FAIL');
-    expect(result.assertions.find(a => a.what === 'the restore vote reached the object')?.ok).toBe(false);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable[0]).toMatch(/^the restore vote reached the object — .* — votes\.VoteOf read back the prior choice "Alice"$/);
     expect(votes).toEqual(['Bob', 'Alice']);
   });
 
-  it('fails when the change vote prints no log line', async () => {
+  // Contract changed by #1320 (maintainer decision 2026-10-05): a Voting: line that cannot be
+  // observed beside an agreeing VoteOf read-back is UNTESTABLE, not FAIL — its reason kept.
+  it('is UNTESTABLE when the change vote prints no log line', async () => {
     voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'], logs: () => false });
     const result = await run();
-    expect(result.status).toBe('FAIL');
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.probes[0].status).toBe('UNTESTABLE');
     expect(result.probes[0].note).toMatch(/no model-server log line/);
+  });
+
+  it('records a log host that throws as UNTESTABLE, the votes still read back and restored', async () => {
+    const votes = voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'] });
+    jest.spyOn(liveLog, 'openLogWindow').mockRejectedValue(new Error('log host vanished'));
+    const result = await run();
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.probes[0]).toMatchObject({ member: 'RDOVote', status: 'UNTESTABLE', restored: true });
+    expect(result.probes[0].note).toMatch(/the log window could not be opened: log host vanished/);
+    expect(votes).toEqual(['Bob', 'Alice']);
   });
 
   it('records a round trip that threw', async () => {
     voteHall({ prior: 'Alice', candidates: ['Alice', 'Bob'] });
-    jest.spyOn(liveLog, 'openLogWindow').mockRejectedValue(new Error('log host vanished'));
+    jest.spyOn(probeModule, 'runRoundTrip').mockRejectedValue(new Error('round trip blew up'));
     const result = await run();
     expect(result.status).toBe('FAIL');
-    expect(result.probes[0]).toMatchObject({ member: 'RDOVote', note: 'log host vanished' });
+    expect(result.probes[0]).toMatchObject({ member: 'RDOVote', note: 'round trip blew up' });
   });
 });
 
@@ -1784,21 +1819,21 @@ describe('newspaper-read', () => {
 
   // A bar that parses but lists nothing is the world running no news server —
   // an environment exception. It is recorded, and no issue is opened.
-  it('is UNPROVEN, and opens no issue, when the paper keeps none', async () => {
+  it('is UNTESTABLE, and opens no issue, when the paper keeps none', async () => {
     const requests = arrange({ list: { paperName: 'Helartia Herald', issues: [], error: '' } });
     const result = await flowByName('newspaper-read').run(ctx);
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven).toHaveLength(1);
-    expect(result.unproven[0]).toMatch(/Helartia Herald: 0 issues/);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable).toHaveLength(1);
+    expect(result.untestable[0]).toMatch(/Helartia Herald: 0 issues/);
     expect(result.assertions.every(a => a.ok)).toBe(true);
     expect(requests.some(m => m.type === WsMessageType.REQ_NEWSPAPER_ISSUE)).toBe(false);
   });
 
-  it('fails when the bar itself could not be read — a failure wins over UNPROVEN', async () => {
+  it('fails when the bar itself could not be read — a failure wins over UNTESTABLE', async () => {
     arrange({ list: { paperName: 'Helartia Herald', issues: [], error: 'HTTP 500' } });
     const result = await flowByName('newspaper-read').run(ctx);
     expect(result.status).toBe('FAIL');
-    expect(result.unproven).toHaveLength(1);
+    expect(result.untestable).toHaveLength(1);
     expect(result.assertions.find(a => !a.ok)?.detail).toBe('HTTP 500');
   });
 
@@ -1877,12 +1912,12 @@ describe('newspaper-board-read', () => {
   const wellFormed = (r: { assertions: { what: string; detail?: string }[] }) =>
     r.assertions.find(a => /well-formed/.test(a.what));
 
-  it('ends UNPROVEN on an empty board, its detail naming both counts', async () => {
+  it('ends UNTESTABLE on an empty board, its detail naming both counts', async () => {
     arrange();
     const result = await flowByName('newspaper-board-read').run(ctx);
-    expect(result.status).toBe('UNPROVEN');
+    expect(result.status).toBe('UNTESTABLE');
     expect(wellFormed(result)).toMatchObject({ ok: true, detail: '0 columns, 0 tree entries' });
-    expect(result.unproven).toEqual([
+    expect(result.untestable).toEqual([
       'the board lists a column — Helartia Herald: 0 columns, 0 tree entries — nothing is posted, ' +
         'and posting is excluded (News Server/NewsObject.pas:11-53)',
     ]);
@@ -1895,7 +1930,7 @@ describe('newspaper-board-read', () => {
     arrange({ board });
     const result = await flowByName('newspaper-board-read').run(ctx);
     expect(result.status).toBe('PASS');
-    expect(result.unproven).toEqual([]);
+    expect(result.untestable).toEqual([]);
   });
 
   it('passes on a populated board and counts it', async () => {
@@ -2016,14 +2051,14 @@ describe('zoning-alert-read', () => {
     expect(requests.some(m => m.type === WsMessageType.REQ_BUILDING_UNFOCUS)).toBe(true);
   });
 
-  it('an empty inbox is UNPROVEN, and sends no REQ_BUILDING_FOCUS', async () => {
+  it('an empty inbox is UNTESTABLE, and sends no REQ_BUILDING_FOCUS', async () => {
     const requests = arrange({ inboxSubjects: [] });
 
     const result = await flowByName('zoning-alert-read').run(ctx);
 
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven).toHaveLength(1);
-    expect(result.unproven[0]).toMatch(/no "Zoning Alert!" in the inbox/);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable).toHaveLength(1);
+    expect(result.untestable[0]).toMatch(/no "Zoning Alert!" in the inbox/);
     expect(requests.some(m => m.type === WsMessageType.REQ_BUILDING_FOCUS)).toBe(false);
   });
 
@@ -2287,8 +2322,8 @@ describe('zoning-alert-read seed', () => {
 
     expect(result.seed).toMatchObject({ ok: false, detail: 'Post refused' });
     expect(result.status).not.toBe('PASS');
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven[0]).toMatch(/seed failed/);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable[0]).toMatch(/seed failed/);
     expect(requests.some(r => r.msg.type === WsMessageType.REQ_BUILDING_FOCUS)).toBe(false);
   });
 
@@ -2298,7 +2333,7 @@ describe('zoning-alert-read seed', () => {
     const result = await runFlow(flowByName('zoning-alert-read'), ctx);
 
     expect(result.seed).toMatchObject({ ok: false, detail: 'mail socket closed' });
-    expect(result.status).toBe('UNPROVEN');
+    expect(result.status).toBe('UNTESTABLE');
   });
 
   it('a login with no world IP fails the seed, and sends no compose', async () => {
@@ -2728,24 +2763,24 @@ describe('search-menu-read', () => {
     expect(flowByName('search-menu-read').mutates).toBe(false);
   });
 
-  it('ends UNPROVEN on an empty newspaper list and records the counts', async () => {
+  it('ends UNTESTABLE on an empty newspaper list and records the counts', async () => {
     arrange({ newspapers: [] });
     const result = await run();
-    expect(result.status).toBe('UNPROVEN');
+    expect(result.status).toBe('UNTESTABLE');
     expect(failed(result)).toEqual([]);
     expect(result.assertions.find(a => a.what.includes('newspapers'))?.detail).toBe('0 newspapers');
     expect(result.assertions.find(a => a.what.includes('banks'))?.detail).toBe('1 banks');
-    expect(result.unproven).toEqual([
+    expect(result.untestable).toEqual([
       'a newspaper is listed — 0 newspapers — Newspapers.asp:61-62 lists none on this world',
     ]);
   });
 
-  it('ends UNPROVEN on an empty bank list, naming the count', async () => {
+  it('ends UNTESTABLE on an empty bank list, naming the count', async () => {
     arrange({ banks: [] });
     const result = await run();
-    expect(result.status).toBe('UNPROVEN');
+    expect(result.status).toBe('UNTESTABLE');
     expect(failed(result)).toEqual([]);
-    expect(result.unproven).toEqual(['a bank is listed — 0 banks — Banks.asp lists none on this world']);
+    expect(result.untestable).toEqual(['a bank is listed — 0 banks — Banks.asp lists none on this world']);
   });
 
   it('fails on a malformed bank or newspaper row', async () => {
@@ -2862,14 +2897,14 @@ describe('fixtures-ensure', () => {
     expect(off).toHaveBeenCalledTimes(1);
   });
 
-  it('is UNPROVEN on an unproven or under-construction kind', async () => {
+  it('is UNTESTABLE on an untestable or under-construction kind', async () => {
     arrange([
       { kind: 'bank', status: 'unproven', reason: 'no candidate offered to SPO_test3 - Green' },
       { kind: 'tv', status: 'under construction', reason: 'site' },
     ]);
     const result = await flowByName('fixtures-ensure').run(ctx);
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven).toEqual([
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable).toEqual([
       'bank fixture — no candidate offered to SPO_test3 - Green',
       'tv fixture — under construction — site',
     ]);
@@ -3052,7 +3087,33 @@ describe('session-resume', () => {
     expect(assertion(result, /used token is refused/)).toMatchObject({ ok: false, detail: 'boom' });
   });
 
-  it('fails when an explicit logout leaves no teardown line', async () => {
+  it('is UNTESTABLE when an answered logout leaves no teardown line (#1320)', async () => {
+    const s = setup({ after: null });
+    s.off.mockImplementation(async live => {
+      (live.driver.log as { direction: string; type: string }[]).push({ direction: 'received', type: WsMessageType.RESP_LOGOUT });
+    });
+    const result = await run(s.sleep);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(assertion(result, /explicit logout tears/)).toBeUndefined();
+    expect(result.untestable).toEqual([
+      expect.stringMatching(
+        /^an explicit logout tears the ClientView down — no "Start Disconnecting SPO_test3" within \d+ ms in http:\/\/logs\/FIVEINTERFACESERVER\/S\.log — the logout request was answered \(RESP_LOGOUT\)$/,
+      ),
+    ]);
+  });
+
+  it('is UNTESTABLE when the teardown line cannot be read after an answered logout (#1320)', async () => {
+    const s = setup();
+    s.marker.mockRejectedValue(new Error('listing gone'));
+    s.off.mockImplementation(async live => {
+      (live.driver.log as { direction: string; type: string }[]).push({ direction: 'received', type: WsMessageType.RESP_LOGOUT });
+    });
+    const result = await run(s.sleep);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable[0]).toMatch(/the log could not be read: listing gone/);
+  });
+
+  it('fails when an unanswered logout leaves no teardown line', async () => {
     const s = setup({ after: null });
     const result = await run(s.sleep);
     expect(result.status).toBe('FAIL');
@@ -3263,11 +3324,11 @@ describe('world-readers', () => {
     ]);
   });
 
-  it('ends UNPROVEN on the restore when the saved position is (0,0), with no third login', async () => {
+  it('ends UNTESTABLE on the restore when the saved position is (0,0), with no third login', async () => {
     const { run, logins } = arrange({ cookie: { x: 0, y: 0 } });
     const result = await run();
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven).toEqual([
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable).toEqual([
       'the camera cookie is restored — the saved position was (0,0), which savePlayerPosition never writes (spo_session.ts)',
     ]);
     expect(logins()).toBe(2);
@@ -3421,11 +3482,11 @@ describe('company-switch', () => {
     expect(result.assertions.filter(a => !a.ok)).toEqual([{ what: BACK_CHECK, ok: false, detail: '(empty)' }]);
   });
 
-  it('ends UNPROVEN when the role was already listed before the switch', async () => {
+  it('ends UNTESTABLE when the role was already listed before the switch', async () => {
     const { run } = arrange({ users: identity => [identity, 'Mayor of Helartia'] });
     const result = await run();
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven).toEqual([
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable).toEqual([
       `${ROLE_CHECK} — the role was already listed before the switch — the list cannot tell this session’s switch apart`,
     ]);
   });
@@ -3590,7 +3651,7 @@ describe('profile-read', () => {
     const result = await run();
     expect(failed(result)).toEqual([]);
     expect(result.status).toBe('PASS');
-    expect(result.unproven).toEqual([]);
+    expect(result.untestable).toEqual([]);
     expect(off).toHaveBeenCalled();
     expect(flowByName('profile-read').mutates).toBe(false);
     expect(sent.map(m => m.type)).toEqual([
@@ -3648,11 +3709,11 @@ describe('profile-read', () => {
     expect(sent.some(m => m.type === T.REQ_PROFILE_COMPANY_PROFITLOSS)).toBe(false);
   });
 
-  it('passes with no strategy row towards the secondary account, never unproven', async () => {
+  it('passes with no strategy row towards the secondary account, never untestable', async () => {
     arrange({ [T.REQ_PROFILE_POLICY]: { data: { policies: [], alliesAllowed: true } } });
     const result = await run();
     expect(result.status).toBe('PASS');
-    expect(result.unproven).toEqual([]);
+    expect(result.untestable).toEqual([]);
     expect(result.assertions.find(a => a.what === `no ${SECONDARY_NAME} strategy row`)?.detail).toMatch(/Kernel\.pas:11348/);
   });
 
@@ -4349,10 +4410,12 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
       expect(statuses()).toEqual([2, 0]);
     });
 
-    it('FAILs a read-back with no Survival line', async () => {
+      // Contract changed by #1320 (maintainer decision 2026-10-05): a log line that cannot be
+      // observed beside an agreeing read-back is UNTESTABLE, not FAIL — its reason kept.
+    it('is UNTESTABLE on a read-back with no Survival line', async () => {
       drive({ row: null, silentLog: true });
       const result = await run();
-      expect(result.status).toBe('FAIL');
+      expect(result.status).toBe('UNTESTABLE');
       expect(result.probes[0].readBack).toBe('CONFIRMED');
       expect(result.probes[0].logLine).toBeNull();
     });
@@ -4493,15 +4556,15 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
       ]);
     });
 
-    it('with no storable fluid, ends the warehouse flip unproven and writes nothing for it', async () => {
+    it('with no storable fluid, ends the warehouse flip untestable and writes nothing for it', async () => {
       drive({ fluids: [fluid('Chemicals')], search: { Chemicals: [{ facilityName: 'B', companyName: 'C', x: 5, y: 6 }] } });
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven.join()).toMatch(/only-warehouses flip — no storable fluid/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable.join()).toMatch(/only-warehouses flip — no storable fluid/);
       expect(actions().some(a => /nlyWarehouses/.test(a))).toBe(false);
     });
 
-    it('with every result already listed (or a Trade Center), ends the add half unproven with no add', async () => {
+    it('with every result already listed (or a Trade Center), ends the add half untestable with no add', async () => {
       drive({
         fluids: [fluid('Chemicals', { storable: true, suppliers: [{ facilityName: 'A', facilityId: '1,2,', companyName: 'C' }] })],
         search: {
@@ -4512,8 +4575,8 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
         },
       });
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven.join()).toMatch(/add\/delete supplier half/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable.join()).toMatch(/add\/delete supplier half/);
       expect(actions().some(a => a.startsWith('add') || a.startsWith('delete'))).toBe(false);
     });
 
@@ -4524,11 +4587,11 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
       expect(actions()).toEqual([]);
     });
 
-    it('ends every half unproven when the page lists no fluid', async () => {
+    it('ends every half untestable when the page lists no fluid', async () => {
       drive({ fluids: [], search: {} });
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toHaveLength(3);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toHaveLength(3);
       expect(actions()).toEqual([]);
     });
 
@@ -4546,7 +4609,7 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
       expect(actions().slice(0, 2)).toEqual(['hireTradeCenter Chemicals', 'dontHireTradeCenter Chemicals']);
     });
 
-    it('keeps polling through a dead page and FAILs the unproven read-backs', async () => {
+    it('keeps polling through a dead page and FAILs the untestable read-backs', async () => {
       drive({ fluids: [fluid('Chemicals')], search: { Chemicals: [{ facilityName: 'B', companyName: 'C', x: 5, y: 6 }] }, deadAfterFirstRead: true });
       const result = await run();
       expect(result.status).toBe('FAIL');
@@ -4678,11 +4741,11 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it.each(['0', '-250'])('borrows nothing when the balance is %s — UNPROVEN', async balance => {
+    it.each(['0', '-250'])('borrows nothing when the balance is %s — UNTESTABLE', async balance => {
       drive({ balance, loans: [] });
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven.join()).toMatch(/Kernel\/Kernel\.pas:11572/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable.join()).toMatch(/Kernel\/Kernel\.pas:11572/);
       expect(actions()).toEqual([]);
     });
 
@@ -4716,10 +4779,12 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(pending[0].what).toMatch(/\$1 loan from the main bank — pay off the \$1 loan not among the 1 loans/);
     });
 
-    it('does not take "AskLoan: SPO_test3, $10" for the $1 borrow', async () => {
+      // Contract changed by #1320 (maintainer decision 2026-10-05): a log line that cannot be
+      // observed beside an agreeing read-back is UNTESTABLE, not FAIL — its reason kept.
+    it('does not take "AskLoan: SPO_test3, $10" for the $1 borrow — UNTESTABLE, never PASS', async () => {
       drive({ balance: '1000', loans: [], logLine: ` AskLoan: ${ME}, $10` });
       const result = await run();
-      expect(result.status).toBe('FAIL');
+      expect(result.status).toBe('UNTESTABLE');
       expect(result.probes[0].logLine).toBeNull();
     });
 
@@ -4862,23 +4927,23 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       ['a denied transfer', { transferDenied: 'loans' as const }],
       ['no transfer note', {}],
       ['a $0 ceiling', { maxTransfer: '0' }],
-    ])('sends nothing when SPO_test3\'s own page offers %s — UNPROVEN', async (_label, bank) => {
+    ])('sends nothing when SPO_test3\'s own page offers %s — UNTESTABLE', async (_label, bank) => {
       const w = world();
       w.banks[ME] = bank;
       drive(w);
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven.join()).toMatch(new RegExp(`${ME} cannot send \\$1`));
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable.join()).toMatch(new RegExp(`${ME} cannot send \\$1`));
       expect(sends()).toEqual([]);
     });
 
-    it('sends nothing when the secondary\'s page does not offer the transfer back — UNPROVEN', async () => {
+    it('sends nothing when the secondary\'s page does not offer the transfer back — UNTESTABLE', async () => {
       const w = world();
       w.banks[HIM] = { transferDenied: 'loans' };
       drive(w);
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven.join()).toMatch(new RegExp(`${HIM} cannot send \\$1 back`));
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable.join()).toMatch(new RegExp(`${HIM} cannot send \\$1 back`));
       expect(sends()).toEqual([]);
     });
 
@@ -4887,13 +4952,13 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       [HIM, { levelTier: 6, levelName: 'BeyondLegend' }, /level tier 6/],
       [ME, { levelName: '' }, /no level name/],
       [HIM, { levelName: 'Baron' }, /"Baron" is not one/],
-    ])('sends nothing when %s\'s profile reads %o — UNPROVEN', async (who, profile, reason) => {
+    ])('sends nothing when %s\'s profile reads %o — UNTESTABLE', async (who, profile, reason) => {
       const w = world();
       w.profiles[who] = { ...goodProfile, ...profile };
       drive(w);
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven.join()).toMatch(reason);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable.join()).toMatch(reason);
       expect(sends()).toEqual([]);
       // Each profile is read through that account's own session.
       const reads = sentOf(WsMessageType.REQ_GET_PROFILE).map(e => e.account);
@@ -5062,11 +5127,11 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(pendingAtUpload[0]).toEqual([orig.toString('base64')]);
     });
 
-    it('uploads nothing when the original is missing (HTTP 404) — UNPROVEN', async () => {
+    it('uploads nothing when the original is missing (HTTP 404) — UNTESTABLE', async () => {
       drive({ stored: null });
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven.join()).toMatch(/HTTP 404/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable.join()).toMatch(/HTTP 404/);
       expect(uploads).toEqual([]);
     });
 
@@ -5074,11 +5139,11 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       ['wrong dimensions', (() => { const b = original(); b[78] = 0x00; b[79] = 0x97; return b; })(), 'WRONG_DIMENSIONS'],
       ['not a JPEG', Buffer.from('\x89PNG\r\n\x1a\n'), 'NOT_A_JPEG'],
       ['too large', Buffer.concat([original(), Buffer.alloc(33 * 1024)]), 'TOO_LARGE'],
-    ])('uploads nothing when the original fails the picture checks (%s) — UNPROVEN', async (_label, bytes, reason) => {
+    ])('uploads nothing when the original fails the picture checks (%s) — UNTESTABLE', async (_label, bytes, reason) => {
       drive({ stored: bytes });
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven.join()).toContain(reason);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable.join()).toContain(reason);
       expect(uploads).toEqual([]);
     });
 
@@ -5391,20 +5456,20 @@ describe('road-roundtrip and zone-roundtrip (#1151)', () => {
     it.each([
       ['no tile of the town', () => false],
       ['a span next to a road', (x: number, y: number) => x >= 95 && x <= 97 && y === 43],
-    ])('is UNPROVEN with %s — writes nothing, records nothing, still switches back', async (_label, helartia) => {
+    ])('is UNTESTABLE with %s — writes nothing, records nothing, still switches back', async (_label, helartia) => {
       drive({ helartia });
       const result = await run('road-roundtrip');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/no straight 3-tile span inside Helartia/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/no straight 3-tile span inside Helartia/);
       expect(sentOf(WsMessageType.REQ_BUILD_ROAD)).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
       expect(switched()).toEqual(['7', '1']);
     });
 
-    it('is UNPROVEN when a facility footprint covers the span halo', async () => {
+    it('is UNTESTABLE when a facility footprint covers the span halo', async () => {
       drive({ buildings: [{ x: HALL.x, y: HALL.y, visualClass: '5' }, { x: 92, y: 44, visualClass: 'W' }] });
       const result = await run('road-roundtrip');
-      expect(result.status).toBe('UNPROVEN');
+      expect(result.status).toBe('UNTESTABLE');
       expect(sentOf(WsMessageType.REQ_BUILD_ROAD)).toEqual([]);
     });
 
@@ -5439,12 +5504,14 @@ describe('road-roundtrip and zone-roundtrip (#1151)', () => {
       ['build', /CreateCircuitSeg/],
       ['break', /BreakCircuit/],
       ['wipe', /WipingCircuit/],
-    ] as const)('FAILs a %s whose read-back holds but whose Survival line never appears', async (step, line) => {
+    ] as const)('is UNTESTABLE on a %s whose read-back holds but whose Survival line never appears', async (step, line) => {
+      // Contract changed by #1320: the map read-back agrees, so the missing line is UNTESTABLE.
       drive({ silent: { [step]: true } });
       const result = await run('road-roundtrip');
-      expect(result.status).toBe('FAIL');
-      expect(check(result, line)?.ok).toBe(false);
-      expect(result.assertions.filter(a => !a.ok)).toHaveLength(1);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(check(result, line)).toBeUndefined();
+      expect(result.untestable.some(u => line.test(u) && /the map read-back agrees/.test(u))).toBe(true);
+      expect(result.assertions.filter(a => !a.ok)).toHaveLength(0);
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
@@ -5541,11 +5608,11 @@ describe('road-roundtrip and zone-roundtrip (#1151)', () => {
       ['original zone 1 (Reserved)', { zone: () => 1 }],
       ['original zone 2 (Residential)', { zone: () => 2 }],
       ['no road within reach', { segments: [] }],
-    ])('is UNPROVEN on %s — no REQ_DEFINE_ZONE, still switches back', async (_label, world) => {
+    ])('is UNTESTABLE on %s — no REQ_DEFINE_ZONE, still switches back', async (_label, world) => {
       drive(world);
       const result = await run('zone-roundtrip');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/no 3×2 rectangle inside Helartia/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/no 3×2 rectangle inside Helartia/);
       expect(zonesSent()).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
       expect(switched()).toEqual(['7', '1']);
@@ -5567,19 +5634,26 @@ describe('road-roundtrip and zone-roundtrip (#1151)', () => {
       expect(result.probes[0].logLine).not.toBeNull();
     });
 
-    it('FAILs a paint whose surface changes but whose line is missing', async () => {
+      // Contract changed by #1320 (maintainer decision 2026-10-05): a log line that cannot be
+      // observed beside an agreeing read-back is UNTESTABLE, not FAIL — its reason kept.
+    it('is UNTESTABLE on a paint whose surface changes but whose line is missing', async () => {
       drive({ silentZone: [1] });
       const result = await run('zone-roundtrip');
-      expect(result.status).toBe('FAIL');
+      expect(result.status).toBe('UNTESTABLE');
       expect(result.probes[0]).toMatchObject({ readBack: 'CONFIRMED', logLine: null });
     });
 
-    it('FAILs when the repaint never logs its line', async () => {
+      // Contract changed by #1320 (maintainer decision 2026-10-05): a log line that cannot be
+      // observed beside an agreeing read-back is UNTESTABLE, not FAIL — its reason kept.
+    it('is UNTESTABLE when the repaint never logs its line, the ZONES read-back showing the original', async () => {
       drive({ silentZone: [2] });
       const result = await run('zone-roundtrip');
-      expect(result.status).toBe('FAIL');
+      expect(result.status).toBe('UNTESTABLE');
       expect(result.probes[0].status).toBe('PASS');
-      expect(check(result, /repaint to the original logged/)).toMatchObject({ ok: false, detail: '(no line)' });
+      expect(check(result, /repaint to the original logged/)).toBeUndefined();
+      expect(result.untestable.find(u => /repaint to the original logged/.test(u))).toMatch(
+        /no "Defining Zone:" within \d+ ms in .* — the ZONES read-back shows the original/,
+      );
     });
 
     it('FAILs on a throw after the switch, and still switches back', async () => {
@@ -5980,22 +6054,22 @@ describe('inspector flows (#1152)', () => {
       expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_BUILDING_GATE_CONNECTIONS, tabId: 'products' }));
     });
 
-    it('is UNPROVEN, not FAIL, when a fixture is missing — and the other half still runs', async () => {
+    it('is UNTESTABLE, not FAIL, when a fixture is missing — and the other half still runs', async () => {
       const world = makeWorld();
       arrange(world, { industry: false });
       const result = await run('inspector-reads');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual(['industry fixture — under construction']);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual(['industry fixture — under construction']);
       expect(world.requests.some(r => r.type === WsMessageType.REQ_BUILDING_SERVICE_FIGURES)).toBe(true);
       expect(world.requests.some(r => r.type === WsMessageType.REQ_BUILDING_GATE_CONNECTIONS)).toBe(false);
     });
 
-    it('is UNPROVEN when the store fixture is missing', async () => {
+    it('is UNTESTABLE when the store fixture is missing', async () => {
       const world = makeWorld();
       arrange(world, { store: false });
       const result = await run('inspector-reads');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual(['store fixture — none in Helartia']);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual(['store fixture — none in Helartia']);
     });
   });
 
@@ -6042,30 +6116,31 @@ describe('inspector flows (#1152)', () => {
     });
 
     it('restores after a failed write, and after a missing Survival line', async () => {
+      // Contract changed by #1320: a missing line beside a confirmed read-back is UNTESTABLE.
       const world = makeWorld({ failWrite: 1, silent: new Set(['RDOSetSalaries']) });
       arrange(world);
       const result = await run('store-price-salaries');
       expect(result.status).toBe('FAIL');
       expect(result.probes[0]).toMatchObject({ status: 'FAIL', restored: true, note: 'write rejected' });
-      expect(result.probes[1]).toMatchObject({ status: 'FAIL', restored: true });
+      expect(result.probes[1]).toMatchObject({ status: 'UNTESTABLE', restored: true });
       expect(result.probes[1].note).toMatch(/no model-server log line/);
       expect(world.writes.map(w => w.value)).toEqual(['130', '120', '149', '150']);
     });
 
-    it('records RDOSetSalaries unproven by name when the template has no workforce group, and still runs RDOSetPrice', async () => {
+    it('records RDOSetSalaries untestable by name when the template has no workforce group, and still runs RDOSetPrice', async () => {
       const world = makeWorld({ storeTabs: ['srvGeneral', 'supplies'] });
       arrange(world);
       const result = await run('store-price-salaries');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetSalaries — .*workforce.*#1149/)]);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual([expect.stringMatching(/^RDOSetSalaries — .*workforce.*#1149/)]);
       expect(world.writes.map(w => w.property)).toEqual(['RDOSetPrice', 'RDOSetPrice']);
     });
 
-    it('is UNPROVEN and writes nothing, anywhere, when the store fixture is missing', async () => {
+    it('is UNTESTABLE and writes nothing, anywhere, when the store fixture is missing', async () => {
       const world = makeWorld();
       arrange(world, { store: false });
       const result = await run('store-price-salaries');
-      expect(result.status).toBe('UNPROVEN');
+      expect(result.status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
     });
 
@@ -6110,13 +6185,13 @@ describe('inspector flows (#1152)', () => {
       ]);
     });
 
-    it('is UNPROVEN for RDOSetSalaries, and sends nothing for it, when the store publishes no salary class', async () => {
+    it('is UNTESTABLE for RDOSetSalaries, and sends nothing for it, when the store publishes no salary class', async () => {
       const world = makeWorld({ salaries: ['', '', ''] });
       const lock = cleanLock();
       arrange(world);
       const result = await run('store-price-salaries', lock);
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetSalaries — .*publishes no salary class.*WorkCenterBlock\.pas:567-571/)]);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual([expect.stringMatching(/^RDOSetSalaries — .*publishes no salary class.*WorkCenterBlock\.pas:567-571/)]);
       expect(world.writes.map(w => w.property)).toEqual(['RDOSetPrice', 'RDOSetPrice']);
       expect(result.probes).toHaveLength(1);
       expect(lock.read().pendingRestores).toEqual([]);
@@ -6159,7 +6234,7 @@ describe('inspector flows (#1152)', () => {
       arrange(world);
       const result = await run('industry-output-price', lock);
       expect(result.status).toBe('PASS');
-      expect(result.unproven.filter(u => u.startsWith('RDOSetOutputPrice'))).toEqual([]);
+      expect(result.untestable.filter(u => u.startsWith('RDOSetOutputPrice'))).toEqual([]);
       expect(world.writes).toEqual([
         { property: 'RDOSetOutputPrice', value: '101', params: { fluidId: 'Chemicals' } },
         { property: 'RDOSetOutputPrice', value: '100', params: { fluidId: 'Chemicals' } },
@@ -6179,12 +6254,12 @@ describe('inspector flows (#1152)', () => {
       expect(world.writes.map(w => w.property)).toEqual(['RDOSetOutputPrice', 'RDOSetOutputPrice']);
     });
 
-    it('writes nothing when a product client belongs to another company (UNPROVEN)', async () => {
+    it('writes nothing when a product client belongs to another company (UNTESTABLE)', async () => {
       const world = makeWorld({ products: [product({ connections: [conn('Their Shop', 'Other Co', 5, 6)], connectionCount: 1 })] });
       arrange(world);
       const result = await run('industry-output-price');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/^RDOSetOutputPrice — .*Kernel\/Kernel\.pas:7193-7205.*Their Shop \(5,6\) of Other Co/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/^RDOSetOutputPrice — .*Kernel\/Kernel\.pas:7193-7205.*Their Shop \(5,6\) of Other Co/);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -6197,11 +6272,11 @@ describe('inspector flows (#1152)', () => {
       expect(world.writes.map(w => w.params?.fluidId)).toEqual(['Chemicals', 'Chemicals']);
     });
 
-    it('is UNPROVEN when the fixture lists no product gate', async () => {
+    it('is UNTESTABLE when the fixture lists no product gate', async () => {
       const world = makeWorld({ products: [] });
       arrange(world);
       const result = await run('industry-output-price');
-      expect(result.unproven[0]).toMatch(/lists no product gate/);
+      expect(result.untestable[0]).toMatch(/lists no product gate/);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -6222,11 +6297,11 @@ describe('inspector flows (#1152)', () => {
       expect(failed?.detail).toMatch(/lost: Own Shop \(1,2\) of SPO_test3 - Green/);
     });
 
-    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+    it('is UNTESTABLE and writes nothing when the industry fixture is missing', async () => {
       const world = makeWorld();
       arrange(world, { industry: false });
       const result = await run('industry-output-price');
-      expect(result.status).toBe('UNPROVEN');
+      expect(result.status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
     });
   });
@@ -6244,7 +6319,7 @@ describe('inspector flows (#1152)', () => {
         ['RDOSetInputMaxPrice', '199', '200'],
         ['RDOSetInputMinK', '11', '10'],
       ]);
-      expect(result.unproven).toEqual([]);
+      expect(result.untestable).toEqual([]);
       const members = world.writes.map(w => w.property);
       expect(members).not.toContain('RDOSetInputSortMode');
       expect(members).not.toContain('RDOSetInputOverPrice');
@@ -6252,12 +6327,12 @@ describe('inspector flows (#1152)', () => {
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('records nothing unproven for the excluded members on a plain gate with no supplier', async () => {
+    it('records nothing untestable for the excluded members on a plain gate with no supplier', async () => {
       const world = makeWorld({ supplies: [supplyGate({ connections: [], connectionCount: 0 })] });
       arrange(world);
       const result = await run('industry-supply-limits');
       expect(result.status).toBe('PASS');
-      expect(result.unproven).toEqual([]);
+      expect(result.untestable).toEqual([]);
       expect(result.probes.map(p => [p.member, p.status])).toEqual([
         ['RDOSetInputMaxPrice', 'PASS'],
         ['RDOSetInputMinK', 'PASS'],
@@ -6272,19 +6347,19 @@ describe('inspector flows (#1152)', () => {
       expect(result.probes[0]).toMatchObject({ status: 'FAIL', logLine: '12:00 - Fac(30,40) Input max price set: Water to 199' });
     });
 
-    it('is UNPROVEN when no supply gate publishes MaxPrice', async () => {
+    it('is UNTESTABLE when no supply gate publishes MaxPrice', async () => {
       const world = makeWorld({ supplies: [supplyGate({ maxPrice: undefined })] });
       arrange(world);
       const result = await run('industry-supply-limits');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/Kernel\/Kernel\.pas:7813/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/Kernel\/Kernel\.pas:7813/);
       expect(setProps(world)).toEqual([]);
     });
 
-    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+    it('is UNTESTABLE and writes nothing when the industry fixture is missing', async () => {
       const world = makeWorld();
       arrange(world, { industry: false });
-      expect((await run('industry-supply-limits')).status).toBe('UNPROVEN');
+      expect((await run('industry-supply-limits')).status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
     });
   });
@@ -6330,10 +6405,10 @@ describe('inspector flows (#1152)', () => {
       expect(setProps(world)).toEqual([]);
     });
 
-    it('is UNPROVEN and writes nothing when the store fixture is missing', async () => {
+    it('is UNTESTABLE and writes nothing when the store fixture is missing', async () => {
       const world = makeWorld();
       arrange(world, { store: false });
-      expect((await run('facility-open-close')).status).toBe('UNPROVEN');
+      expect((await run('facility-open-close')).status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
     });
   });
@@ -6362,18 +6437,18 @@ describe('inspector flows (#1152)', () => {
       expect(world.writes.map(w => w.value)).toEqual(['1', '0']);
     });
 
-    it('is UNPROVEN when no supply gate publishes Selected', async () => {
+    it('is UNTESTABLE when no supply gate publishes Selected', async () => {
       const world = makeWorld({ supplies: [supplyGate({ selected: undefined })] });
       arrange(world);
       const result = await run('industry-auto-buy');
-      expect(result.status).toBe('UNPROVEN');
+      expect(result.status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
     });
 
-    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+    it('is UNTESTABLE and writes nothing when the industry fixture is missing', async () => {
       const world = makeWorld();
       arrange(world, { industry: false });
-      expect((await run('industry-auto-buy')).status).toBe('UNPROVEN');
+      expect((await run('industry-auto-buy')).status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
     });
   });
@@ -6633,11 +6708,11 @@ describe('build & demolish (#1150)', () => {
       expect(lock.read().pendingRestores).toHaveLength(1);
     });
 
-    it('is UNPROVEN on ERROR_TooManyFacilities: nothing demolished, pending restore cleared', async () => {
+    it('is UNTESTABLE on ERROR_TooManyFacilities: nothing demolished, pending restore cleared', async () => {
       drive({ code: 33 });
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/ERROR_TooManyFacilities for PGIFoodStore/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/ERROR_TooManyFacilities for PGIFoodStore/);
       expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([]);
       expect(pendingAtPlace).toHaveLength(1);
       expect(lock.read().pendingRestores).toEqual([]);
@@ -6658,11 +6733,11 @@ describe('build & demolish (#1150)', () => {
       ['nothing is buildable', { buildable: [] }, /nothing buildable offered \(SPO_test3 - Green\)/],
       ['no free lot', { lot: null }, /no free lot in Helartia for PGIFoodStore \(2×2, no zone\)/],
       ['the footprint is unknown', { buildable: [info('PGIFoodStore', 1, { visualClassId: '1234' })] }, /footprint unknown for PGIFoodStore/],
-    ] as [string, World, RegExp][])('is UNPROVEN when %s: nothing placed, nothing recorded', async (_l, world, reason) => {
+    ] as [string, World, RegExp][])('is UNTESTABLE when %s: nothing placed, nothing recorded', async (_l, world, reason) => {
       drive(world);
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(reason);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(reason);
       expect(place).not.toHaveBeenCalled();
       expect(lock.read().pendingRestores).toEqual([]);
     });
@@ -6670,7 +6745,7 @@ describe('build & demolish (#1150)', () => {
     it('takes the footprint from the facility row when it carries one', async () => {
       drive({ buildable: [info('PGIFoodStore', 1, { visualClassId: '1234', xsize: 3, ysize: 4 })], lot: null });
       const result = await run();
-      expect(result.unproven[0]).toMatch(/\(3×4, no zone\)/);
+      expect(result.untestable[0]).toMatch(/\(3×4, no zone\)/);
     });
 
     it('FAILs when placeFacility throws after the pending restore, and the cleanup still demolishes', async () => {
@@ -7228,11 +7303,11 @@ describe('inspector connections & trade (#1153)', () => {
       expect(world.requests.some(r => r.type === WsMessageType.REQ_SEARCH_CONNECTIONS)).toBe(false);
     });
 
-    it('is UNPROVEN when the industry fixture is missing', async () => {
+    it('is UNTESTABLE when the industry fixture is missing', async () => {
       const world = new ConnWorld();
       world.found.industry = false;
       arrange(world);
-      expect((await run('supplier-search-read')).status).toBe('UNPROVEN');
+      expect((await run('supplier-search-read')).status).toBe('UNTESTABLE');
     });
   });
 
@@ -7272,10 +7347,10 @@ describe('inspector connections & trade (#1153)', () => {
       ];
       const { refusal } = arrange(world);
       const result = await run('supplier-hire-fire');
-      expect(result.status).toBe('UNPROVEN');
+      expect(result.status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
       expect(refusal.mock.calls.map(c => [c[1], c[2]])).toEqual([[97, 97]]);
-      expect(result.unproven[0]).toMatch(/^RDOConnectInput — .*Kernel\/Kernel\.pas:6784-6785.*Odd Well \(97,97\) — \(97,97\) is not in Helartia/);
+      expect(result.untestable[0]).toMatch(/^RDOConnectInput — .*Kernel\/Kernel\.pas:6784-6785.*Odd Well \(97,97\) — \(97,97\) is not in Helartia/);
     });
 
     it('takes the next own candidate when the first is refused by its lot', async () => {
@@ -7336,16 +7411,16 @@ describe('inspector connections & trade (#1153)', () => {
       world.facs.industry.supplies = [{ ...sg('Water'), connectionCount: 3 }, { ...sg('Ore'), path: 'in:none', name: 'None', metaFluid: undefined }];
       arrange(world);
       const result = await run('supplier-hire-fire');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/Water: 3 link\(s\) listed but 0 read.*None: its header was not read/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/Water: 3 link\(s\) listed but 0 read.*None: its header was not read/);
       expect(setProps(world)).toEqual([]);
     });
 
-    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+    it('is UNTESTABLE and writes nothing when the industry fixture is missing', async () => {
       const world = new ConnWorld();
       world.found.industry = false;
       arrange(world);
-      expect((await run('supplier-hire-fire')).status).toBe('UNPROVEN');
+      expect((await run('supplier-hire-fire')).status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
     });
   });
@@ -7368,13 +7443,13 @@ describe('inspector connections & trade (#1153)', () => {
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('writes nothing when no own client exists (UNPROVEN, cited)', async () => {
+    it('writes nothing when no own client exists (UNTESTABLE, cited)', async () => {
       const world = new ConnWorld();
       world.search = () => [{ facilityName: 'Their Shop', companyName: 'Other Co', x: 5, y: 6, town: 'Helartia' }];
       arrange(world);
       const result = await run('client-hire-remove');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/^RDOConnectOutput — no client .*Kernel\/Kernel\.pas:6784-6785/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/^RDOConnectOutput — no client .*Kernel\/Kernel\.pas:6784-6785/);
       expect(setProps(world)).toEqual([]);
     });
   });
@@ -7445,33 +7520,33 @@ describe('inspector connections & trade (#1153)', () => {
       expect(result.probes[0].note).toMatch(/success=false: too far/);
     });
 
-    it('sends nothing when the two facilities share no fluid on opposite gates (UNPROVEN)', async () => {
+    it('sends nothing when the two facilities share no fluid on opposite gates (UNTESTABLE)', async () => {
       const world = new ConnWorld();
       world.facs.warehouse.supplies = [sg('Ore')];
       world.facs.warehouse.products = [pg('Fruit')];
       arrange(world);
       const result = await run('connect-on-map');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/share no fluid.*Kernel\/Kernel\.pas:5470-5513/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/share no fluid.*Kernel\/Kernel\.pas:5470-5513/);
       expect(world.requests.some(r => r.type === WsMessageType.REQ_CONNECT_FACILITIES)).toBe(false);
       expect(setProps(world)).toEqual([]);
     });
 
-    it('sends nothing when a gate of either facility was not read in full (UNPROVEN)', async () => {
+    it('sends nothing when a gate of either facility was not read in full (UNTESTABLE)', async () => {
       const world = new ConnWorld();
       world.facs.warehouse.products[0].connectionCount = 4;
       arrange(world);
       const result = await run('connect-on-map');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/Storage \(50,60\) products:Water/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/Storage \(50,60\) products:Water/);
       expect(world.requests.some(r => r.type === WsMessageType.REQ_CONNECT_FACILITIES)).toBe(false);
     });
 
-    it('is UNPROVEN and writes nothing when the warehouse fixture is missing', async () => {
+    it('is UNTESTABLE and writes nothing when the warehouse fixture is missing', async () => {
       const world = new ConnWorld();
       world.found.warehouse = false;
       arrange(world);
-      expect((await run('connect-on-map')).status).toBe('UNPROVEN');
+      expect((await run('connect-on-map')).status).toBe('UNTESTABLE');
       expect(world.requests.some(r => r.type === WsMessageType.REQ_CONNECT_FACILITIES)).toBe(false);
     });
   });
@@ -7512,14 +7587,14 @@ describe('inspector connections & trade (#1153)', () => {
       expect(world.writes.map(w => w.params.index)).toEqual(['1', '1']);
     });
 
-    it('refuses a non-editable input: UNPROVEN, cited, nothing written', async () => {
+    it('refuses a non-editable input: UNTESTABLE, cited, nothing written', async () => {
       const world = new ConnWorld();
       world.facs.store.compInputs = [{ ...(world.facs.store.compInputs as CompInputData[])[0], editable: false }];
       world.found.warehouse = false;
       arrange(world);
       const result = await run('company-input-demand');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/^RDOSetCompanyInputDemand — .*Kernel\/Kernel\.pas:5887.*"Advertisement": not editable.*industry Farm \(30,40\): no company input.*warehouse fixture: none in Helartia/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/^RDOSetCompanyInputDemand — .*Kernel\/Kernel\.pas:5887.*"Advertisement": not editable.*industry Farm \(30,40\): no company input.*warehouse fixture: none in Helartia/);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -7528,17 +7603,17 @@ describe('inspector connections & trade (#1153)', () => {
       world.facs.store.compInputs = [{ ...(world.facs.store.compInputs as CompInputData[])[0], maxDemand: 0 }];
       arrange(world);
       const result = await run('company-input-demand');
-      expect(result.unproven[0]).toMatch(/capacity 0/);
+      expect(result.untestable[0]).toMatch(/capacity 0/);
       expect(setProps(world)).toEqual([]);
     });
 
-    it('is UNPROVEN when the capacity is too small to tell a move from the ceil', async () => {
+    it('is UNTESTABLE when the capacity is too small to tell a move from the ceil', async () => {
       const world = new ConnWorld();
       world.facs.store.compInputs = [{ ...(world.facs.store.compInputs as CompInputData[])[0], demanded: 2, maxDemand: 4 }];
       arrange(world);
       const result = await run('company-input-demand');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/capacity 4 is too small.*Kernel\/Kernel\.pas:5878/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/capacity 4 is too small.*Kernel\/Kernel\.pas:5878/);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -7583,7 +7658,7 @@ describe('inspector connections & trade (#1153)', () => {
       expect(result.probes.map(p => p.logLine)).toEqual([
         '12:00 - Fac(50,60) SetTradeLevel', '12:00 - Fac(30,40) SetTradeLevel',
       ]);
-      expect(result.unproven).toEqual([]);
+      expect(result.untestable).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
@@ -7603,7 +7678,7 @@ describe('inspector connections & trade (#1153)', () => {
       world.facs.industry.tradeLevel = '1';
       arrange(world);
       const result = await run('trade-settings');
-      expect(result.unproven).toEqual([expect.stringMatching(/^RDOSetTradeLevel on Farm \(30,40\) — its TradeLevel "1".*TRADE_LEVEL_VALUES 0\/2\/3/)]);
+      expect(result.untestable).toEqual([expect.stringMatching(/^RDOSetTradeLevel on Farm \(30,40\) — its TradeLevel "1".*TRADE_LEVEL_VALUES 0\/2\/3/)]);
       expect(atIndustry(world)).toEqual([]);
     });
 
@@ -7621,13 +7696,13 @@ describe('inspector connections & trade (#1153)', () => {
       world.found.warehouse = false;
       arrange(world);
       const result = await run('trade-settings');
-      expect(result.status).toBe('UNPROVEN');
+      expect(result.status).toBe('UNTESTABLE');
       expect(world.writes.map(w => [w.x, w.property])).toEqual([[30, 'RDOSetTradeLevel'], [30, 'RDOSetTradeLevel']]);
 
       const none = new ConnWorld();
       none.found = { warehouse: false, industry: false };
       arrange(none);
-      expect((await run('trade-settings')).status).toBe('UNPROVEN');
+      expect((await run('trade-settings')).status).toBe('UNTESTABLE');
       expect(setProps(none)).toEqual([]);
     });
   });
@@ -7637,13 +7712,13 @@ describe('inspector connections & trade (#1153)', () => {
       '532': { visualClass: '532', name: 'Storage', facid: '', xsize: 4, ysize: 4, level: 0, facId },
     });
 
-    it('sends nothing to a warehouse that is not a MegaStorage, and records it unproven', async () => {
+    it('sends nothing to a warehouse that is not a MegaStorage, and records it untestable', async () => {
       const world = new ConnWorld();
       world.dims = mega(122);
       arrange(world);
       const result = await run('warehouse-wares');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/^RDOSelectWare — .*facId 122.*StdBlocks\/MegaWarehouse\.pas:25.*StdBlocks\/Warehouses\.pas:95/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/^RDOSelectWare — .*facId 122.*StdBlocks\/MegaWarehouse\.pas:25.*StdBlocks\/Warehouses\.pas:95/);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -7680,17 +7755,17 @@ describe('inspector connections & trade (#1153)', () => {
       expect((await run('warehouse-wares')).status).toBe('FAIL');
     });
 
-    it('is UNPROVEN when the storage lists no ware, or the fixture is missing', async () => {
+    it('is UNTESTABLE when the storage lists no ware, or the fixture is missing', async () => {
       const world = new ConnWorld();
       world.dims = mega(125);
       world.facs.warehouse.wares = [];
       arrange(world);
-      expect((await run('warehouse-wares')).unproven[0]).toMatch(/lists no ware/);
+      expect((await run('warehouse-wares')).untestable[0]).toMatch(/lists no ware/);
 
       const gone = new ConnWorld();
       gone.found.warehouse = false;
       arrange(gone);
-      expect((await run('warehouse-wares')).status).toBe('UNPROVEN');
+      expect((await run('warehouse-wares')).status).toBe('UNTESTABLE');
       expect(setProps(gone)).toEqual([]);
     });
   });
@@ -7719,15 +7794,15 @@ describe('inspector connections & trade (#1153)', () => {
       byCompany.link(byCompany.facs.industry, 'products', 'Chemicals', { x: 90, y: 91, name: 'Mayor Shop', company: 'Mayor of Helartia' });
       arrange(byCompany);
       const r1 = await run('quick-trade-roundtrip');
-      expect(r1.status).toBe('UNPROVEN');
-      expect(r1.unproven[0]).toMatch(/^RDOConnectToTycoon — .*Kernel\/Kernel\.pas:4593-4600.*Mayor Shop \(90,91\)/);
+      expect(r1.status).toBe('UNTESTABLE');
+      expect(r1.untestable[0]).toMatch(/^RDOConnectToTycoon — .*Kernel\/Kernel\.pas:4593-4600.*Mayor Shop \(90,91\)/);
       expect(setProps(byCompany)).toEqual([]);
 
       const byLot = new ConnWorld();
       byLot.tycoon.push({ company: 'Renamed Co', x: 92, y: 93, name: 'Shop' });
       byLot.link(byLot.facs.industry, 'products', 'Chemicals', { x: 92, y: 93, name: 'Shop', company: 'Unlisted Co' });
       arrange(byLot);
-      expect((await run('quick-trade-roundtrip')).status).toBe('UNPROVEN');
+      expect((await run('quick-trade-roundtrip')).status).toBe('UNTESTABLE');
       expect(setProps(byLot)).toEqual([]);
     });
 
@@ -7736,7 +7811,7 @@ describe('inspector connections & trade (#1153)', () => {
       world.facs.industry.products[0].connectionCount = 5;
       arrange(world);
       const result = await run('quick-trade-roundtrip');
-      expect(result.unproven[0]).toMatch(/5 client\(s\) listed but 0 read/);
+      expect(result.untestable[0]).toMatch(/5 client\(s\) listed but 0 read/);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -7745,8 +7820,8 @@ describe('inspector connections & trade (#1153)', () => {
       world.auto.fluids[0].suppliers.push({ facilityName: 'Farm', facilityId: '30,40,', companyName: OWN_CO });
       arrange(world);
       const result = await run('quick-trade-roundtrip');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([expect.stringMatching(/initial suppliers.*Kernel\/Kernel\.pas:4564-4565, :4606-4607/)]);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual([expect.stringMatching(/initial suppliers.*Kernel\/Kernel\.pas:4564-4565, :4606-4607/)]);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -7758,11 +7833,11 @@ describe('inspector connections & trade (#1153)', () => {
       world.unreadable.add('220,220');
       arrange(world);
       const result = await run('quick-trade-roundtrip');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual([
         expect.stringMatching(/outside Helartia.*Kernel\/Kernel\.pas:4537-4553.*Far Storage \(200,200\) of SPO_test3 - Green \| Gone \(220,220\) could not be read/),
       ]);
-      expect(result.unproven[0]).not.toMatch(/Far Farm/);
+      expect(result.untestable[0]).not.toMatch(/Far Farm/);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -7800,11 +7875,11 @@ describe('inspector connections & trade (#1153)', () => {
       expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/after: \(unreadable: .*cacheUnavailable/);
     });
 
-    it('is UNPROVEN and writes nothing when the industry fixture is missing', async () => {
+    it('is UNTESTABLE and writes nothing when the industry fixture is missing', async () => {
       const world = new ConnWorld();
       world.found.industry = false;
       arrange(world);
-      expect((await run('quick-trade-roundtrip')).status).toBe('UNPROVEN');
+      expect((await run('quick-trade-roundtrip')).status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
     });
   });
@@ -8124,27 +8199,27 @@ describe('inspector flows (#1154)', () => {
     const { off } = arrange(world);
     const result = await run(name, lock);
     expect(result.status).toBe('PASS');
-    expect(result.unproven).toEqual([]);
+    expect(result.untestable).toEqual([]);
     expect(pending(lock)).toEqual([]);
     expect(off).toHaveBeenCalledTimes(1);
   });
 
-  it.each(SEVEN)('%s is UNPROVEN and sends nothing when its fixture is missing', async (name, kind) => {
+  it.each(SEVEN)('%s is UNTESTABLE and sends nothing when its fixture is missing', async (name, kind) => {
     const world = makeWorld({ missingKind: kind });
     arrange(world);
     const result = await run(name);
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven).toEqual([`${kind} fixture — none in Helartia`]);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable).toEqual([`${kind} fixture — none in Helartia`]);
     expect(setProps(world)).toEqual([]);
     expect(upgrades(world)).toEqual([]);
   });
 
-  it.each(SEVEN)('%s is UNPROVEN and sends nothing when its template lacks the tab', async (name, kind) => {
+  it.each(SEVEN)('%s is UNTESTABLE and sends nothing when its template lacks the tab', async (name, kind) => {
     const world = makeWorld({ missingTab: kind });
     arrange(world);
     const result = await run(name);
-    expect(result.status).toBe('UNPROVEN');
-    expect(result.unproven[0]).toMatch(new RegExp(`carries no ${TAB[kind]} tab`));
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable[0]).toMatch(new RegExp(`carries no ${TAB[kind]} tab`));
     expect(setProps(world)).toEqual([]);
     expect(upgrades(world)).toEqual([]);
   });
@@ -8198,8 +8273,8 @@ describe('inspector flows (#1154)', () => {
       const world = makeWorld({ res: { Name: 'Home', Repair: '40' } });
       arrange(world);
       const result = await run('residential-repair');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/Repair reads 40/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/Repair reads 40/);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -8223,12 +8298,13 @@ describe('inspector flows (#1154)', () => {
       expect(world.events).toEqual(['set:RdoRepair=0', 'set:RdoStopRepair=0']);
     });
 
-    it('does not take a Stop Repairing: line as the proof', async () => {
+    it('does not take a Stop Repairing: line as the proof — UNTESTABLE, never PASS', async () => {
+      // Contract changed by #1320: a missing line beside a confirmed read-back is UNTESTABLE.
       const world = makeWorld({ silent: new Set(['RdoRepair']) });
       world.lines.push('12:00 Stop Repairing: Home');
       arrange(world);
       const result = await run('residential-repair');
-      expect(result.status).toBe('FAIL');
+      expect(result.status).toBe('UNTESTABLE');
       expect(result.probes[0].logLine).toBeNull();
       expect(world.events).toContain('set:RdoStopRepair=0');
     });
@@ -8250,12 +8326,12 @@ describe('inspector flows (#1154)', () => {
       expect(world.bank).toEqual({ Interest: '5', Term: '10', BudgetPerc: '40' });
     });
 
-    it('never sends Interest when it reads 0 — unproven — and still drives Term and RDOSetLoanPerc', async () => {
+    it('never sends Interest when it reads 0 — untestable — and still drives Term and RDOSetLoanPerc', async () => {
       const world = makeWorld({ bank: { Interest: '0', Term: '10', BudgetPerc: '40' } });
       arrange(world);
       const result = await run('bank-settings');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/^Interest — reads 0 .*Kernel\/Kernel\.pas:8837/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/^Interest — reads 0 .*Kernel\/Kernel\.pas:8837/);
       expect(world.writes.some(w => w.params?.propertyName === 'Interest')).toBe(false);
       expect(world.events).toEqual([
         'set:property.Term=11', 'set:RDOSetLoanPerc=41', 'set:property.Term=10', 'set:RDOSetLoanPerc=40',
@@ -8362,7 +8438,7 @@ describe('inspector flows (#1154)', () => {
       expect(world.writes.map(w => `${w.property}:${w.params?.inventionId}`)).toEqual([`RDOQueueResearch:${HH}`, `RDOCancelResearch:${HH}`]);
     });
 
-    it('is UNPROVEN and sends nothing when Happy Hour is not listed', async () => {
+    it('is UNTESTABLE and sends nothing when Happy Hour is not listed', async () => {
       const world = makeWorld({
         categories: [
           { available: [{ id: 'R1', enabled: true }], developing: ['D1'], completed: ['C1'] },
@@ -8371,35 +8447,35 @@ describe('inspector flows (#1154)', () => {
       });
       arrange(world);
       const result = await run('research-roundtrip');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual(['RDOQueueResearch — Happy Hour not listed at HQ (9,10) (categories 0..1)']);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual(['RDOQueueResearch — Happy Hour not listed at HQ (9,10) (categories 0..1)']);
       expect(world.requests.some(r => r.type === WsMessageType.REQ_RESEARCH_DETAILS)).toBe(false);
       expect(setProps(world)).toEqual([]);
     });
 
     it.each([
       ['listed but not enabled', { available: [{ id: HH, enabled: false }], developing: [], completed: [] }, /: listed but not enabled — its prerequisite Bars is not owned/],
-    ])('is UNPROVEN and sends nothing when Happy Hour is %s', async (_label, cat, reason) => {
+    ])('is UNTESTABLE and sends nothing when Happy Hour is %s', async (_label, cat, reason) => {
       const world = makeWorld({ categories: [{ available: [], developing: [], completed: [] }, cat] });
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toHaveLength(1);
-      expect(result.unproven[0]).toMatch(/^RDOQueueResearch — Happy Hour at HQ \(9,10\): /);
-      expect(result.unproven[0]).toMatch(reason);
-      expect(result.unproven[0]).toMatch(/; nothing sent$/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toHaveLength(1);
+      expect(result.untestable[0]).toMatch(/^RDOQueueResearch — Happy Hour at HQ \(9,10\): /);
+      expect(result.untestable[0]).toMatch(reason);
+      expect(result.untestable[0]).toMatch(/; nothing sent$/);
       expect(setProps(world)).toEqual([]);
       expect(pending(lock)).toEqual([]);
     });
 
-    it('is UNPROVEN and sends nothing when Happy Hour costs more than the cash', async () => {
+    it('is UNTESTABLE and sends nothing when Happy Hour costs more than the cash', async () => {
       const world = makeWorld({ cash: 30_000_000, details: { [HH]: 'Price: $25,000,000\r\nLicense: $8,000,000\r\n' } });
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual([
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual([
         'RDOQueueResearch — Happy Hour costs $33000000 (Price + License), above the cash ($30000000); nothing sent',
       ]);
       expect(setProps(world)).toEqual([]);
@@ -8414,12 +8490,12 @@ describe('inspector flows (#1154)', () => {
       expect(world.writes.map(w => w.property)).toEqual(['RDOQueueResearch', 'RDOCancelResearch']);
     });
 
-    it('is UNPROVEN and sends nothing when the cash is unknown', async () => {
+    it('is UNTESTABLE and sends nothing when the cash is unknown', async () => {
       const world = makeWorld({ cash: null });
       arrange(world);
       const result = await run('research-roundtrip');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toEqual(['RDOQueueResearch — cash unknown — no EVENT_TYCOON_UPDATE received']);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual(['RDOQueueResearch — cash unknown — no EVENT_TYCOON_UPDATE received']);
       expect(setProps(world)).toEqual([]);
     });
 
@@ -8438,7 +8514,7 @@ describe('inspector flows (#1154)', () => {
       expect(lock.read().dirty).toBe(false);
     });
 
-    it('is UNPROVEN, queues nothing and records no restore when the pre-reset never reads available', async () => {
+    it('is UNTESTABLE, queues nothing and records no restore when the pre-reset never reads available', async () => {
       const world = makeWorld({
         categories: [{ available: [], developing: [], completed: [] }, { available: [], developing: [], completed: [HH] }],
         apply: w => w.property !== 'RDOCancelResearch',
@@ -8446,10 +8522,10 @@ describe('inspector flows (#1154)', () => {
       const lock = cleanLock();
       arrange(world);
       const result = await run('research-roundtrip', lock);
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven).toHaveLength(1);
-      expect(result.unproven[0]).toMatch(/^RDOQueueResearch — Happy Hour at HQ \(9,10\): read owned/);
-      expect(result.unproven[0]).toMatch(/nothing else sent$/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toHaveLength(1);
+      expect(result.untestable[0]).toMatch(/^RDOQueueResearch — Happy Hour at HQ \(9,10\): read owned/);
+      expect(result.untestable[0]).toMatch(/nothing else sent$/);
       expect(world.writes.map(w => w.property)).toEqual(['RDOCancelResearch']);
       expect(pending(lock)).toEqual([]);
     });
@@ -8629,12 +8705,12 @@ describe('inspector flows (#1154)', () => {
       expect(world.events).toEqual(['set:RDOAcceptCloning=1', 'set:RDOAcceptCloning=0']);
     });
 
-    it('is UNPROVEN at MaxUpgrade, sending nothing', async () => {
+    it('is UNTESTABLE at MaxUpgrade, sending nothing', async () => {
       const world = makeWorld({ upgrade: { UpgradeLevel: '5', Upgrading: '0', Pending: '0', MaxUpgrade: '5', AcceptCloning: '1' } });
       arrange(world);
       const result = await run('upgrade-stop');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/at MaxUpgrade \(5\/5\)/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/at MaxUpgrade \(5\/5\)/);
       expect(upgrades(world)).toEqual([]);
       expect(setProps(world)).toEqual([]);
     });
@@ -8642,12 +8718,12 @@ describe('inspector flows (#1154)', () => {
     it.each([
       ['Upgrading', { Upgrading: '3', Pending: '0' }],
       ['Pending', { Upgrading: '0', Pending: '1' }],
-    ])('is UNPROVEN, sending nothing, when %s is already non-zero', async (_name, busy) => {
+    ])('is UNTESTABLE, sending nothing, when %s is already non-zero', async (_name, busy) => {
       const world = makeWorld({ upgrade: { UpgradeLevel: '1', MaxUpgrade: '5', AcceptCloning: '1', ...busy } });
       arrange(world);
       const result = await run('upgrade-stop');
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/Kernel\/Kernel\.pas:6525/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/Kernel\/Kernel\.pas:6525/);
       expect(upgrades(world)).toEqual([]);
       expect(setProps(world)).toEqual([]);
     });
@@ -9609,11 +9685,11 @@ describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
       ['BudgetPerc is unreadable', { perc: undefined }, /BudgetPerc \(unreadable\)/],
       ["SPO_test's balance is not above 0", { secondaryBalance: '0' }, /balance 0 is not > 0 .*Kernel\/Kernel\.pas:11572/],
       ['the bank lists no LoanCount', { noLoanCount: true }, /carries no LoanCount/],
-    ])('is UNPROVEN, borrowing nothing, when %s', async (_label, over, reason) => {
+    ])('is UNTESTABLE, borrowing nothing, when %s', async (_label, over, reason) => {
       drive(happy(over));
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven.join()).toMatch(reason);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable.join()).toMatch(reason);
       expect(loanRequests()).toEqual([]);
       expect(payoffs()).toEqual([]);
     });
@@ -9671,11 +9747,12 @@ describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
     });
 
     it.each([` AskLoan: ${HIM}, $1`, '12:00 - Fac(5,4) AskLoan', '12:00 - Fac(3,4) Error in AskLoan'])(
-      'does not take "%s" as the proof of the block borrow',
+      'does not take "%s" as the proof of the block borrow — UNTESTABLE, never PASS',
       async line => {
+        // Contract changed by #1320: a missing line beside a confirmed read-back is UNTESTABLE.
         drive(happy({ logLine: line }));
         const result = await run();
-        expect(result.status).toBe('FAIL');
+        expect(result.status).toBe('UNTESTABLE');
         expect(result.probes[0].logLine).toBeNull();
       },
     );
@@ -9840,12 +9917,12 @@ describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
         { salaries: { '10,10': ',,', '11,10': ',,', '12,10': ',,', '13,10': ',,', '14,10': '30,20,10' } },
         /Shop A \(10,10\) publishes no salary class .*WorkCenterBlock\.pas:567-571.*nothing sent/,
       ],
-    ])('is UNPROVEN, sending nothing, when %s', async (_label, over, reason) => {
+    ])('is UNTESTABLE, sending nothing, when %s', async (_label, over, reason) => {
       const world = makeWorld(over);
       arrange(world);
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven.join()).toMatch(reason);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable.join()).toMatch(reason);
       expect(writes()).toEqual([]);
       expect(clones()).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
@@ -9926,11 +10003,12 @@ describe('facility-bank-loan and clone-salaries-roundtrip (#1189)', () => {
     });
 
     it.each<[string, string | null]>([['no line', null], ['a line for another tycoon', '421']])(
-      'FAILs with %s',
+      'is UNTESTABLE with %s',
       async (_label, logId) => {
+        // Contract changed by #1320: a missing line beside a confirmed read-back is UNTESTABLE.
         arrange(makeWorld({ logId }));
         const result = await run();
-        expect(result.status).toBe('FAIL');
+        expect(result.status).toBe('UNTESTABLE');
         expect(result.probes[0].logLine).toBeNull();
         expect(result.probes[0].note).toMatch(/no model-server log line/);
       },
@@ -9974,6 +10052,8 @@ describe('player actions (#1195)', () => {
       silent: number[];
       writes: number[];
       lines: string[];
+      /** The politics read from which every REQ_POLITICS_DATA throws (1-based). */
+      readsFailFrom?: number;
     }
 
     function ratingWorld(over: Partial<RatingWorld> = {}): RatingWorld {
@@ -9989,8 +10069,11 @@ describe('player actions (#1195)', () => {
     }
 
     function arrange(world: RatingWorld) {
+      let reads = 0;
       const crazz = stubSession(msg => {
         if (msg.type === WsMessageType.REQ_POLITICS_DATA) {
+          reads += 1;
+          if (world.readsFailFrom !== undefined && reads >= world.readsFailFrom) throw new Error('politics page down');
           return {
             type: WsMessageType.RESP_POLITICS_DATA,
             data: { mayorName: world.mayorName, tycoonsRatings: world.rows.map(r => ({ ...r })) },
@@ -10046,24 +10129,24 @@ describe('player actions (#1195)', () => {
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('is UNPROVEN, citing the aggregate formula, when the aggregate never moves — and still restores', async () => {
+    it('is UNTESTABLE, citing the aggregate formula, when the aggregate never moves — and still restores', async () => {
       const world = ratingWorld({ move: (_v, _n, current) => current });
       arrange(world);
       const lock = cleanLock();
       const result = await run(lock);
-      expect(result.status).toBe('UNPROVEN');
+      expect(result.status).toBe('UNTESTABLE');
       expect(world.writes).toEqual([0, 100]);
-      expect(result.unproven[0]).toMatch(/Kernel\/Politics\.pas:374-392/);
+      expect(result.untestable[0]).toMatch(/Kernel\/Politics\.pas:374-392/);
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('is UNPROVEN and writes nothing when the mayor is not SPO_test3', async () => {
+    it('is UNTESTABLE and writes nothing when the mayor is not SPO_test3', async () => {
       const world = ratingWorld({ mayorName: 'Someone Else' });
       arrange(world);
       const lock = cleanLock();
       const result = await run(lock);
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/Someone Else/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/Someone Else/);
       expect(world.writes).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
     });
@@ -10080,15 +10163,22 @@ describe('player actions (#1195)', () => {
       expect(world.writes).toEqual([0, 100]);
     });
 
-    it('FAILs when the write logs no line, though the aggregate moved', async () => {
+    // Contract changed by #1320 (maintainer decision 2026-10-05): the aggregate agrees, so the
+    // missing write line is UNTESTABLE, not FAIL.
+    it('is UNTESTABLE, not FAIL, when the write logs no line though the aggregate moved towards 0', async () => {
       const world = ratingWorld({ silent: [1] });
       arrange(world);
-      const result = await run();
-      expect(result.status).toBe('FAIL');
-      expect(result.assertions.find(a => a.what === 'the write of 0 logged its Tycoon rating line')).toMatchObject({
-        ok: false,
-        detail: '(no line)',
-      });
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.assertions.find(a => a.what === 'the write of 0 logged its Tycoon rating line')).toBeUndefined();
+      expect(result.assertions.every(a => a.ok)).toBe(true);
+      expect(result.untestable).toEqual([
+        expect.stringMatching(
+          /^the write of 0 logged its Tycoon rating line — no "Setting town politics Tycoon rating:" within \d+ ms in u — the aggregate read 60 -> 40$/,
+        ),
+      ]);
+      expect(lock.read().pendingRestores).toEqual([]);
     });
 
     it('FAILs and keeps the pending restore when the restore never moves the aggregate back', async () => {
@@ -10103,12 +10193,69 @@ describe('player actions (#1195)', () => {
       expect(lock.read().pendingRestores[0].what).toMatch(/put back 100/);
     });
 
-    it('FAILs and keeps the pending restore when the restore logs no line', async () => {
+    // Contract changed by #1320 (option b): the restore was accepted and the aggregate moved back,
+    // so the missing restore line is UNTESTABLE and the pending restore is cleared.
+    it('is UNTESTABLE and clears the pending restore when the restore logs no line but the aggregate moves back', async () => {
       const world = ratingWorld({ silent: [2] });
       arrange(world);
       const lock = cleanLock();
       const result = await run(lock);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.assertions.every(a => a.ok)).toBe(true);
+      expect(result.untestable).toEqual([
+        expect.stringMatching(
+          /^the restore to 100's Tycoon rating line — no "Setting town politics Tycoon rating:" within \d+ ms in u — the aggregate read 40 -> 60, so the pending restore is cleared \(maintainer decision 2026-10-05, option b\)$/,
+        ),
+      ]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('is UNTESTABLE and clears the pending restore when the log cannot be opened for the restore', async () => {
+      const world = ratingWorld();
+      arrange(world);
+      jest
+        .spyOn(liveLog, 'openLogWindow')
+        .mockResolvedValueOnce(logWindow)
+        .mockRejectedValueOnce(new Error('log host vanished'));
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.assertions.find(a => /was accepted/.test(a.what))).toBeUndefined();
+      expect(result.assertions.every(a => a.ok)).toBe(true);
+      expect(result.untestable[0]).toMatch(
+        /^the restore to 100's Tycoon rating line — .*the log window could not be opened: log host vanished — the aggregate read 40 -> 60, so the pending restore is cleared/,
+      );
+      expect(world.writes).toEqual([0, 100]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('FAILs and keeps the pending restore when the restore logs no line and the aggregate moves away', async () => {
+      const world = ratingWorld({ silent: [2], move: (value, _n, current) => (value === 0 ? 40 : current - 5) });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
       expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the aggregate moved back towards 100')).toMatchObject({ ok: false });
+      expect(result.assertions.find(a => a.what === 'the rating restore is proven')).toMatchObject({
+        ok: false,
+        detail: 'pending restore kept',
+      });
+      expect(result.untestable[0]).toMatch(/and the aggregate does not agree \(40 -> 35\), so the pending restore is kept$/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
+    it('FAILs and keeps the pending restore when the row cannot be read back after the restore', async () => {
+      // The write is refused (no proven move), so the restore reads the row once: make it throw.
+      const world = ratingWorld({ refuse: 1, readsFailFrom: 2 });
+      arrange(world);
+      const lock = cleanLock();
+      const result = await run(lock);
+      expect(result.status).toBe('FAIL');
+      expect(result.assertions.find(a => a.what === 'the rating row reads back after the restore')).toMatchObject({
+        ok: false,
+        detail: 'politics page down',
+      });
+      expect(result.untestable.some(u => /not read back\), so the pending restore is kept$/.test(u))).toBe(false);
       expect(lock.read().pendingRestores).toHaveLength(1);
     });
 
@@ -10130,6 +10277,7 @@ describe('player actions (#1195)', () => {
       const result = await run(lock);
       expect(result.status).toBe('FAIL');
       expect(result.assertions.find(a => a.what === 'the restore to 100 was accepted')?.ok).toBe(false);
+      expect(result.assertions.find(a => a.what === 'the rating restore is proven')?.ok).toBe(false);
       expect(lock.read().pendingRestores).toHaveLength(1);
     });
 
@@ -10143,6 +10291,26 @@ describe('player actions (#1195)', () => {
       const result = await run();
       expect(result.status).toBe('FAIL');
       expect(result.assertions.find(a => a.what === 'the rating row reads back after the write')?.ok).toBe(false);
+    });
+
+    it('never records a vanished row as agreeing evidence for a missing write line', async () => {
+      const world = ratingWorld({ silent: [1] });
+      arrange(world);
+      world.move = () => {
+        world.rows = [];
+        return 0;
+      };
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.untestable[0]).toMatch(/— and the aggregate does not agree \(row 7 no longer listed\)$/);
+    });
+
+    it('never records an aggregate that moved away as agreeing evidence for a missing write line', async () => {
+      const world = ratingWorld({ silent: [1], move: () => 70 });
+      arrange(world);
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(result.untestable[0]).toMatch(/— and the aggregate does not agree \(60 -> 70\)$/);
     });
 
     it('FAILs and writes nothing when no rated row carries an id', async () => {
@@ -10320,7 +10488,7 @@ describe('player actions (#1195)', () => {
       const lock = cleanLock();
       const result = await run(lock);
       expect(result.status).toBe('PASS');
-      expect(result.unproven).toEqual([]);
+      expect(result.untestable).toEqual([]);
       expect(result.probes[0]).toMatchObject({
         status: 'PASS',
         written: '99',
@@ -10337,16 +10505,20 @@ describe('player actions (#1195)', () => {
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('FAILs when the write logs no Setting Input fluid perc line, and still restores', async () => {
+    // Contract changed by #1320 (maintainer decision 2026-10-05): a missing *write* line is
+    // UNTESTABLE; only the restore's line stays required (the ad-budget exception, E2E-POLICY §9).
+    it('is UNTESTABLE when the write logs no Setting Input fluid perc line, and still restores', async () => {
       const world = adWorld({ apply: false, silentOn: 'write' });
       arrange(world);
       const lock = cleanLock();
       const result = await run(lock);
-      expect(result.status).toBe('FAIL');
-      expect(result.probes[0]).toMatchObject({ status: 'FAIL', logLine: null, restored: true });
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.probes[0]).toMatchObject({ status: 'UNTESTABLE', logLine: null, restored: true });
       expect(labels(result)).toEqual([
-        ['RDOSetInputFluidPerc: the write of 99 logged its Setting Input fluid perc line', false],
         ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', true],
+      ]);
+      expect(result.untestable).toEqual([
+        expect.stringMatching(/ — the write of 99's Setting Input fluid perc line: no "Setting Input fluid perc:" within \d+ ms in u; proven by the Survival lines alone/),
       ]);
       expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
       expect(lock.read().pendingRestores).toEqual([]);
@@ -10375,13 +10547,16 @@ describe('player actions (#1195)', () => {
       ]);
     });
 
-    it('FAILs when neither the write nor the restore logs a line', async () => {
+    // Contract changed by #1320: the missing write line is UNTESTABLE; the missing restore line
+    // still FAILs and keeps the pending restore (the ad-budget exception).
+    it('FAILs when neither the write nor the restore logs a line — the restore keeps it FAIL', async () => {
       const world = adWorld({ silent: true });
       arrange(world);
       const lock = cleanLock();
       const result = await run(lock);
       expect(result.status).toBe('FAIL');
-      expect(labels(result).map(([, ok]) => ok)).toEqual([false, false]);
+      expect(labels(result).map(([, ok]) => ok)).toEqual([false]);
+      expect(result.probes[0].note).toMatch(/^the write of 99's Setting Input fluid perc line: no "Setting Input fluid perc:"/);
       expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
       expect(lock.read().pendingRestores).toHaveLength(1);
     });
@@ -10428,29 +10603,29 @@ describe('player actions (#1195)', () => {
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
-    it('is UNPROVEN and writes nothing when the fixture lists no Advertisement input', async () => {
+    it('is UNTESTABLE and writes nothing when the fixture lists no Advertisement input', async () => {
       const world = adWorld({ supplies: [supplyGate()] });
       arrange(world);
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/Kernel\/Headquarters\.pas:130-143/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/Kernel\/Headquarters\.pas:130-143/);
       expect(world.writes).toEqual([]);
     });
 
-    it('is UNPROVEN and writes nothing when the fixture has no supplies tab', async () => {
+    it('is UNTESTABLE and writes nothing when the fixture has no supplies tab', async () => {
       const world = adWorld({ tabs: ['hqGeneral'] });
       arrange(world);
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
+      expect(result.status).toBe('UNTESTABLE');
       expect(world.writes).toEqual([]);
     });
 
-    it('is UNPROVEN and writes nothing when the research fixture is missing', async () => {
+    it('is UNTESTABLE and writes nothing when the research fixture is missing', async () => {
       const world = adWorld();
       arrange(world, false);
       const result = await run();
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/^research fixture — none in Helartia/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/^research fixture — none in Helartia/);
       expect(world.writes).toEqual([]);
     });
   });

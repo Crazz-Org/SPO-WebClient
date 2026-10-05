@@ -734,78 +734,80 @@ describe('stage 5 — capability judgement (doc/E2E-POLICY.md §7)', () => {
   });
 });
 
-describe('stage 6 — unproven flows (doc/E2E-POLICY.md §7)', () => {
+describe('stage 6 — untestable flows (doc/E2E-POLICY.md §7)', () => {
   const noAlert = 'no "Zoning Alert!" in the inbox — the flow\'s data — seed failed: timeout';
   const noIssue = 'the newest issue opens with stories — 0 issues';
-  const liveWith = (flows: Array<{ name: string; status: string; unproven: string[] }>) =>
+  const liveWith = (flows: Array<{ name: string; status: string; untestable: string[] }>) =>
     JSON.stringify({ status: 'PASS', flows });
 
-  it('fails the gate when a REQUIRED flow ends UNPROVEN', () => {
+  // Contract changed by #1320 (maintainer decision 2026-10-05): UNTESTABLE never changes the
+  // verdict, required or not; its reasons are recorded and printed.
+  it('passes the gate when a REQUIRED flow ends UNTESTABLE, recording it with its reasons', () => {
     const run = runGate(scratchRepo(), ['--live'], {
       FAKE_ROUTING: JSON.stringify({ required: ['login-spine', 'zoning-alert-read'] }),
       FAKE_LIVE: liveWith([
-        { name: 'login-spine', status: 'PASS', unproven: [] },
-        { name: 'zoning-alert-read', status: 'UNPROVEN', unproven: [noAlert] },
+        { name: 'login-spine', status: 'PASS', untestable: [] },
+        { name: 'zoning-alert-read', status: 'UNTESTABLE', untestable: [noAlert] },
       ]),
     });
-    expect(run.code).toBe(1);
-    expect(run.artifact?.verdict).toBe('FAIL');
-    expect(run.artifact?.unproven).toEqual([
+    expect(run.code).toBe(0);
+    expect(run.artifact?.verdict).toBe('PASS');
+    expect(run.artifact?.untestable).toEqual([
       { flow: 'zoning-alert-read', required: true, reasons: [noAlert] },
     ]);
-    expect(run.stdout).toMatch(/UNPROVEN REQUIRED FLOW/);
-    expect(run.stdout).toContain('zoning-alert-read');
+    expect(run.stdout).toContain('=== untestable flow(s) — not observable, verdict unchanged ===');
+    expect(run.stdout).toContain('zoning-alert-read (required)');
     expect(run.stdout).toContain(`  ? ${noAlert}`);
     expect(run.stdout).toMatch(/§7/);
-    expect(run.stdout).toMatch(/Gate FAIL\. Artifact:/);
+    expect(run.stdout).toMatch(/Gate PASS\. Artifact:/);
   });
 
-  it('records an UNPROVEN flow run only because --flows named it as informational, and passes', () => {
+  it('records an UNTESTABLE flow run only because --flows named it, and passes', () => {
     const run = runGate(scratchRepo(), ['--live', '--flows=login-spine,newspaper-read'], {
       FAKE_ROUTING: JSON.stringify({ required: ['login-spine'] }),
       FAKE_LIVE: liveWith([
-        { name: 'login-spine', status: 'PASS', unproven: [] },
-        { name: 'newspaper-read', status: 'UNPROVEN', unproven: [noIssue] },
+        { name: 'login-spine', status: 'PASS', untestable: [] },
+        { name: 'newspaper-read', status: 'UNTESTABLE', untestable: [noIssue] },
       ]),
     });
     expect(run.code).toBe(0);
     expect(run.artifact?.verdict).toBe('PASS');
-    expect(run.artifact?.unproven).toEqual([
+    expect(run.artifact?.untestable).toEqual([
       { flow: 'newspaper-read', required: false, reasons: [noIssue] },
     ]);
-    expect(run.stdout).toMatch(/informational/);
+    expect(run.stdout).toContain('=== untestable flow(s) — not observable, verdict unchanged ===');
     expect(run.stdout).toContain(`  ? ${noIssue}`);
-    expect(run.stdout).not.toMatch(/UNPROVEN REQUIRED FLOW/);
+    expect(run.stdout).not.toContain('newspaper-read (required)');
   });
 
-  it('leaves unproven empty when every flow passes', () => {
+  it('leaves untestable empty when every flow passes', () => {
     const run = runGate(scratchRepo(), ['--live'], {
       FAKE_ROUTING: JSON.stringify({ required: ['login-spine'] }),
-      FAKE_LIVE: liveWith([{ name: 'login-spine', status: 'PASS', unproven: [] }]),
+      FAKE_LIVE: liveWith([{ name: 'login-spine', status: 'PASS', untestable: [] }]),
     });
     expect(run.code).toBe(0);
     expect(run.artifact?.verdict).toBe('PASS');
-    expect(run.artifact?.unproven).toEqual([]);
-    expect(run.stdout).not.toMatch(/informational/);
+    expect(run.artifact?.untestable).toEqual([]);
+    expect(run.stdout).not.toMatch(/untestable flow\(s\)/);
   });
 
-  it('leaves unproven empty and still exits 3 on an ENVIRONMENT abort', () => {
+  it('leaves untestable empty and still exits 3 on an ENVIRONMENT abort', () => {
     const run = runGate(scratchRepo(), ['--live'], {
       FAKE_ROUTING: JSON.stringify({ required: ['zoning-alert-read'] }),
       FAKE_LIVE: JSON.stringify({ status: 'ENVIRONMENT' }),
     });
     expect(run.code).toBe(3);
     expect(run.artifact?.verdict).toBe('ENVIRONMENT');
-    expect(run.artifact?.unproven).toEqual([]);
+    expect(run.artifact?.untestable).toEqual([]);
   });
 
-  it('still fails on a required UNPROVEN next to a refused capability, and records the exception', () => {
+  it('passes on a required UNTESTABLE next to a refused capability, and records both', () => {
     const run = runGate(scratchRepo(), ['--live'], {
       FAKE_ROUTING: JSON.stringify({ required: ['zoning-alert-read'] }),
       FAKE_PRESIDENT: JSON.stringify(['RDOSitMayor']),
       FAKE_LIVE: JSON.stringify({
         status: 'PASS',
-        flows: [{ name: 'zoning-alert-read', status: 'UNPROVEN', unproven: [noAlert] }],
+        flows: [{ name: 'zoning-alert-read', status: 'UNTESTABLE', untestable: [noAlert] }],
         capabilities: [
           {
             capability: 'president',
@@ -819,11 +821,11 @@ describe('stage 6 — unproven flows (doc/E2E-POLICY.md §7)', () => {
         ],
       }),
     });
-    expect(run.code).toBe(1);
-    expect(run.artifact?.verdict).toBe('FAIL');
+    expect(run.code).toBe(0);
+    expect(run.artifact?.verdict).toBe('PASS');
     expect(run.stdout).toMatch(/CAPABILITY EXCEPTION/);
     expect((run.artifact?.exclusions as { capability: unknown[] }).capability).toHaveLength(1);
-    expect(run.artifact?.unproven).toEqual([
+    expect(run.artifact?.untestable).toEqual([
       { flow: 'zoning-alert-read', required: true, reasons: [noAlert] },
     ]);
   });
@@ -952,20 +954,20 @@ describe('stage 3 — changed and declared flows (#1183)', () => {
     expect(run.liveOptions).toBeNull();
   });
 
-  it('a changed flow that ends UNPROVEN fails the gate — it is required', () => {
+  it('a changed flow that ends UNTESTABLE is required, recorded as such, and passes the gate', () => {
     const run = runGate(scratchRepo(), ['--live'], {
       FAKE_ROUTING: flowOnly,
       FAKE_CHANGED: JSON.stringify({ required: ['zoning-alert-read'], notDriven: [], reasons: [] }),
       FAKE_LIVE: JSON.stringify({
         status: 'PASS',
         flows: [
-          { name: 'login-spine', status: 'PASS', unproven: [] },
-          { name: 'zoning-alert-read', status: 'UNPROVEN', unproven: ['no alert'] },
+          { name: 'login-spine', status: 'PASS', untestable: [] },
+          { name: 'zoning-alert-read', status: 'UNTESTABLE', untestable: ['no alert'] },
         ],
       }),
     });
-    expect(run.code).toBe(1);
-    expect(run.artifact?.unproven).toEqual([
+    expect(run.code).toBe(0);
+    expect(run.artifact?.untestable).toEqual([
       { flow: 'zoning-alert-read', required: true, reasons: ['no alert'] },
     ]);
   });

@@ -126,7 +126,7 @@ Five exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`F
 `src/e2e/routing.test.ts` holds all five.
 
 - **`NIGHTLY_ONLY`** lists the flows no routing rule requires — a data-gated flow (a required
-  `UNPROVEN` fails the gate), a reading that asserts nothing, or the fixture builder
+  run could only end `UNTESTABLE`), a reading that asserts nothing, or the fixture builder
   `fixtures-ensure`, which builds only when a fixture is missing (§9). The nightly still runs
   them; every other flow must be reached by some tracked path. A diff that changes such a
   flow's own body does require it (below).
@@ -175,7 +175,8 @@ one and drives **routed ∪ changed ∪ declared** (`scripts/verify-gate.js`, st
 
 When either set is non-empty the spine is added too. All of them land in `routing.required`,
 so a flow-only diff is no longer static-only: an undriven required flow is `BLOCKED`, and a
-required flow that ends `UNPROVEN` fails (§7). `--flows=` still **replaces** the set, but it
+required flow that ends `UNTESTABLE` is recorded with its reason and does not change the
+verdict (§7). `--flows=` still **replaces** the set, but it
 is refused (`BLOCKED`) unless it names every required flow — a gate cannot attest `PASS`
 having driven only the spine. No separate `test:live` run proves a card's flows: its own gate
 does.
@@ -237,12 +238,24 @@ its line, its result code and the lot read-back.
 **The line proves receipt; the read-back proves the change.** Most handlers log before their
 owner check (e.g. `Kernel/Kernel.pas:4336` -> `:4337`), so a refused write prints its line.
 A lag (`OB-29`) is polled out up to the spec's `boundMs`; a read-back that never shows the
-value FAILs, as does a missing line. A member with a marker must carry a log part; a member
-with none (e.g. `RDOPayOff`, `RDOSendMoney`) is proven by the read-back alone. The restore is
-proven the same way: its read-back must reach the original, or the pending restore is kept.
-When the restore write throws, the read-back is still polled: only a read-back that shows the
-original clears the pending restore (a server that refused both writes left the world
-unchanged), and the probe still FAILs.
+value FAILs. **A log line that cannot be found or read, with the read-back agreeing, is
+`UNTESTABLE`** (maintainer decision 2026-10-05): the test could not observe it, which is not
+the same as observing something wrong. It is non-blocking, and its reason — the marker looked
+for, the log URL, and the fault when the log could not be read — is kept in the report, the run
+log and `latest.json`. A log that cannot be opened or read is never reported as a failed write:
+each flow searches the log apart from the write. A member with a marker must carry a log part;
+a member with none (e.g. `RDOPayOff`, `RDOSendMoney`) is proven by the read-back alone.
+
+The restore is proven the same way: its read-back must reach the original, or the pending
+restore is kept. When the restore write throws, the read-back is still polled: only a
+read-back that shows the original clears the pending restore (a server that refused both
+writes left the world unchanged), and the probe still FAILs. **A restore whose only missing
+proof is its log line is cleared (option b, maintainer decision 2026-10-05):** the restore write
+was sent and accepted without error and the observable evidence agrees, so the line is
+`UNTESTABLE` and the pending restore goes. Accepted risk: rarely, a test-account value stays
+wrong unnoticed. A restore that errored, or whose observable evidence contradicts it or cannot
+be read at all, keeps the pending restore (dirty world) and FAILs. The one exception is the ad
+budget (§9), whose read-back can never show the value: its missing restore line still FAILs.
 
 The read-back is any authoritative channel, named in the spec with why it is authoritative —
 an object-cache property re-read after its refresh, a live RDO `get`, a server-generated mail
@@ -387,10 +400,14 @@ distinction is the whole point:
 
 | What the gate sees | What it is | What happens |
 |---|---|---|
-| a control missing, a request refused by the gateway, a wrong frame | a **bug** | `FAIL` — diagnose, fix, iterate (§8) |
+| a control missing, a request refused by the gateway, a wrong frame, a wrong value read back | a **bug** | `FAIL` — diagnose, fix, iterate (§8) |
 | the server says the account does not hold the role the member needs | a **capability exception** | recorded with its evidence; the gate continues |
-| the flow ran and nothing failed, but the world held no data to exercise it on (`UNPROVEN`) | an **unproven flow** | required by routing → `FAIL`; run only because `--flows` named it → recorded, informational |
+| the flow ran and nothing failed, but could not observe the result: the log line cannot be found or read, the server answers a fault the client can neither cause nor fix, or the world held no data to exercise it on (`UNTESTABLE`) | an **untestable flow** | recorded with its reason, required or not; counts as a pass for the gate and the nightly |
 | the flow needs the optional second account, which was refused at login before the flow's first write (`SKIPPED`) | a **skipped flow** | never a gate `PASS` — `runLive` returns `BLOCKED`, and so does an explicit `--flows`; the no-`--flows` nightly records it and reports `PASS` with the skip listed. A skip after a write is `FAIL` |
+
+**`FAIL` is only what the test observed wrong** (maintainer decision 2026-10-05): a wrong value
+read back, a request refused or answered with an error the client caused, a missing control, a
+wrong frame. What the test could not observe is `UNTESTABLE`.
 
 The six `TPresidentialHall` members ([civic-roles-reference.md:101-106](civic-roles-reference.md))
 — `RDOSetMinSalaryValue` · `RDOSetTownTaxes` · `RDOSitMayor` · `RDOSitMinister` ·
@@ -418,31 +435,33 @@ There is **no human override**: nothing a session or a developer types turns an 
 into a verification. The only way to verify these members is an account that holds the
 capability — and then the gate demands the flow.
 
-### Unproven flows — what the world cannot show
+### Untestable flows — what the test cannot observe
 
-**A required flow that ends UNPROVEN fails the gate.**
+**A flow that ends `UNTESTABLE` never changes the verdict, required or not — and its reason is
+always kept** (maintainer decision 2026-10-05). It covers three cases: the log line cannot be
+found or read (§5), the server answers with a fault the client can neither cause nor fix, and
+the world holds no data to exercise. A failed seed ends `UNTESTABLE` whatever threw, the seed's
+own error kept in the reason.
 
 - Missing data is not a capability exception. The account *can* act; the world holds
-  nothing to act on, so the change was never seen working.
-- The remedy is the flow's seed step (#1009), which creates the data before the flow runs.
-  It is never an override, and never a `PASS` for a flow that exercised nothing.
-- A flow whose data cannot be seeded is either kept failing or taken out of the routed set
-  by a routing change (`src/e2e/routing.ts`), and that choice is the maintainer's.
-- A flow that is not required — run only because `--flows=` named it beyond the required
-  set (for example the probes of #1004 and #1006) — may end UNPROVEN as information. A flow
-  the diff changed or a card declared (§4, "Changed and declared flows") is required. **A card
-  that makes such a flow required must seed its data first.**
+  nothing to act on, so the change was not seen working — which is recorded, not hidden.
+- The remedy that turns `UNTESTABLE` into `PASS` is the flow's seed step (#1009), which creates
+  the data before the flow runs. It is never an override.
+- `FixtureOutcome`'s internal `unproven` status (`src/e2e/fixtures.ts`) is a fixture state that
+  `fixtures-ensure` reports as `UNTESTABLE`, not a flow status.
 
-`verify-gate.js` records every UNPROVEN flow in the artifact's top-level `unproven` list
-(`{ flow, required, reasons }`, §10) — outside `exclusions`, because a required entry is a
-failure, not an exclusion — and the `bench/gate` status shows the count as
-`— N unproven flow(s)`.
+`verify-gate.js` records every UNTESTABLE flow in the artifact's top-level `untestable` list
+(`{ flow, required, reasons }`, §10), prints the reasons under `=== untestable flow(s) — not
+observable, verdict unchanged ===`, and the `bench/gate` status shows the count as
+`— N untestable flow(s)`. The run summary prints each reason as `? untestable: <reason>`, and
+the nightly's `latest.json` carries each UNTESTABLE flow's reasons (`doc/bench-worker.md` §8).
 
 ### Server quarantine — a live-server fault, never a code defect
 
-A flow the **live server** keeps from passing — a fault the client cannot fix — can be put in
-`SERVER_QUARANTINE` (`src/e2e/routing.ts`). It is a temporary maintainer decision, and never
-for a code defect, nor for a flake (§8 handles a flake). Every entry carries a `reason`, a
+A flow the **live server** keeps from passing — a fault the client cannot fix **that still
+surfaces as a `FAIL`** — can be put in `SERVER_QUARANTINE`. A fault that leaves a flow
+`UNTESTABLE` needs no entry: `UNTESTABLE` already passes. The table lives in
+`src/e2e/routing.ts`. It is a temporary maintainer decision, and never for a code defect, nor for a flake (§8 handles a flake). Every entry carries a `reason`, a
 `link` (`https://`) to where the fault is recorded, a `lift` condition and the date it was
 `added` (`YYYY-MM-DD`); `src/e2e/routing.test.ts` refuses an entry missing any of them. The
 entry is deleted the day its lift condition holds, and the entry is the only thing that
@@ -464,7 +483,6 @@ quarantine is applied on top of them.
 | Flow | Reason | Link | Lift when | Added |
 |---|---|---|---|---|
 | `portrait-roundtrip` | The picture server cannot store an upload since the 2026-10-02 planitia maintenance (`SERVER_ERROR The picture server could not store the picture (ERROR after the transfer)`). | [#1310](https://github.com/Crazz-Org/SPO-WebClient/issues/1310) | `npm run test:live -- --flows=portrait-roundtrip` PASSes on the bench | 2026-10-04 |
-| `newspaper-board-read` | Every post to the Helartia Herald (`boardmsg.asp?action=post`) answers HTTP 500 since the 2026-10-02 planitia maintenance, so no column can be seeded. | [#1260 comment](https://github.com/Crazz-Org/SPO-WebClient/issues/1260#issuecomment-5973821564) | a post to the Helartia Herald succeeds, so #1260's seed can land | 2026-10-04 |
 
 ### Parked flows — never built, by maintainer decision
 
@@ -539,7 +557,7 @@ in the same run, and the `zoning-alert-read` seed has it send SPO_test3 one look
 reply; each flow sweeps and deletes every copy it created in the same run. In
 `mayor-rating-roundtrip` it rates SPO_test3's term at Helartia `0`, then `100` again — the
 flow's fixed baseline; the aggregate `TycoonsRating` is the read-back, and a run where it does
-not move ends `UNPROVEN` (`Kernel/Politics.pas:374-392`).
+not move ends `UNTESTABLE` (`Kernel/Politics.pas:374-392`).
 No flow reads or writes its buildings (`flows.ts`: it appears at the login in
 `permission-negative`, which does not mutate, as the mail recipient, as the reply sender, as the seed sender, and as the rater).
 `facility-bank-loan` (#1189, lifted by the maintainer on 2026-09-29) has SPO_test borrow $1 at
@@ -586,7 +604,7 @@ company, the row's company checked, the lot's owner read back), snapshot every g
 touch, and undo every new link in the same run. `quick-trade-roundtrip` runs only when its undo
 cannot reach beyond the test: no SPO_test3 facility already a client of the fixture
 (`Kernel/Kernel.pas:4593-4600`), the fixture not an initial supplier (`:4564-4565`,
-`:4606-4607`), and no SPO_test3 warehouse outside Helartia (`:4537-4553`) — otherwise `UNPROVEN`,
+`:4606-4607`), and no SPO_test3 warehouse outside Helartia (`:4537-4553`) — otherwise `UNTESTABLE`,
 nothing sent.
 
 **Clone facility (#1189).** Clone facility is driven only as `clone-salaries-roundtrip` (lifted
@@ -596,7 +614,7 @@ of the source's kind in that scope (`Kernel/World.pas:3494`), so the flow snapsh
 of every SPO_test3 work center in Helartia, and each same-class target's `AcceptCloning`, before
 it sends anything. A target that refuses cloning (`Kernel/Kernel.pas:5101-5104`) must read back
 unchanged. Every facility is restored in the same run. An unreadable target, or no accepting
-target, is `UNPROVEN` with nothing sent.
+target, is `UNTESTABLE` with nothing sent.
 
 **Excluded members (#1195).** `industry-supply-limits` drives the max price and the min K only.
 `RDOSetInputSortMode` is never driven: only `TMediaInput` caches `QPSorted` / `SortMode`
@@ -617,9 +635,11 @@ its company's `TCompanyInput` (`Kernel/Kernel.pas:5232-5233`), whose `Spread` ru
 cycle (`:10160`) and overwrites `ActualMaxFluid` from the demand slices (`:10003-10008`). **The one
 log-proven round trip (maintainer decision 2026-10-01, #1195 option c):** the write PASSes on its
 own `Setting Input fluid perc` Survival line at the fixture's coordinates, and the restore — the
-percentage read before the write, put back — is proven by its own line. A missing write line
-FAILs; a missing restore line FAILs and keeps the pending restore. Every other round trip still
-needs its read-back.
+percentage read before the write, put back — is proven by its own line. A missing or unreadable
+write line is `UNTESTABLE`. **The ad budget is the one exception to option b (§5), confirmed by
+the maintainer on 2026-10-05:** its read-back can never show the value, so nothing observable
+could agree with a restore whose line is missing — a missing restore line still FAILs and keeps
+the pending restore. Every other round trip still needs its read-back.
 
 ---
 
@@ -648,16 +668,16 @@ needs its read-back.
                 "probes": [{ "member": "RDOSetTaxValue", "logLine": "Setting Tax value: 12",
                              "restored": true, "readBack": "CONFIRMED",
                              "restoreReadBack": "CONFIRMED" }] },
-              { "name": "zoning-alert-read", "status": "UNPROVEN",
-                "unproven": ["the flow's data — seed failed: …"] }]
+              { "name": "zoning-alert-read", "status": "UNTESTABLE",
+                "untestable": ["the flow's data — seed failed: …"] }]
   },
   "exclusions": { "presidentMembersTouched": ["RDOSitMayor"],
                   "capability": [{ "capability": "president", "members": ["RDOSitMayor"],
                                    "account": "SPO_test3",
                                    "checks": [{ "what": "canGovern on the Capitol (server grantAccess)", "value": "false" }],
                                    "checkedAt": "…Z" }] },
-  // Outside `exclusions`: a required entry is a failure (§7, "Unproven flows").
-  "unproven": [{ "flow": "zoning-alert-read", "required": true,
+  // Outside `exclusions`: an observation gap, never a change of verdict (§7, "Untestable flows").
+  "untestable": [{ "flow": "zoning-alert-read", "required": true,
                  "reasons": ["the flow's data — seed failed: …"] }],
   "attempt": 1
 }

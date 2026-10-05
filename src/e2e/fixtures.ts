@@ -893,22 +893,30 @@ export async function ensureFixtures(session: LiveSession, deps: FixtureDeps = {
       });
       continue;
     }
-    const line = await awaitMarker(
-      logWindow,
-      {
-        marker: LOG_MARKERS.RDONewFacility,
-        match: l => newFacilityLineMatches(l, info.facilityClass, companyId, lot.x, lot.y),
-      },
-      TIMEOUTS.logSettle,
-      undefined,
-      deps.now,
-      deps.sleep,
+    const window = logWindow;
+    const { line, fault } = await lineOrFault(() =>
+      awaitMarker(
+        window,
+        {
+          marker: LOG_MARKERS.RDONewFacility,
+          match: l => newFacilityLineMatches(l, info.facilityClass, companyId, lot.x, lot.y),
+        },
+        TIMEOUTS.logSettle,
+        undefined,
+        deps.now,
+        deps.sleep,
+      ),
     );
     if (line === null) {
+      // The lot read-back already shows the class placed: the missing line is unobservable, not
+      // wrong — UNTESTABLE (maintainer decision 2026-10-05, doc/E2E-POLICY.md §5).
       set({
-        status: 'FAIL',
+        status: 'unproven',
         ...base,
-        reason: `no New Facility: line for ${info.facilityClass}, company ${companyId}, ${where}`,
+        visualClass: placed.readBack.visualClass,
+        reason:
+          `no New Facility: line for ${info.facilityClass}, company ${companyId}, ${where} in ${window.url}` +
+          `${fault ? ` (${fault})` : ''} — the lot read-back shows it owned by SPO_test3`,
       });
       continue;
     }
@@ -930,6 +938,15 @@ export async function ensureFixtures(session: LiveSession, deps: FixtureDeps = {
     set({ status: 'built', ...base, visualClass: vc, logLine: line });
   }
   return ordered();
+}
+
+/** Search the log without throwing: a read fault becomes a reason, never a failed build. */
+export async function lineOrFault(find: () => Promise<string | null>): Promise<{ line: string | null; fault?: string }> {
+  try {
+    return { line: await find() };
+  } catch (err: unknown) {
+    return { line: null, fault: `the log could not be read: ${toErrorMessage(err)}` };
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1168,13 +1185,15 @@ async function researchUnlock(
 
   const window = await run.logWindow();
   await setBuildingProperty(session, hq.x, hq.y, 'RDOQueueResearch', '0', { inventionId: next.id, priority: '10' });
-  const line = await awaitMarker(
-    window,
-    { marker: LOG_MARKERS.RDOQueueResearch, match: l => queueResearchLineMatches(l, next.id) },
-    TIMEOUTS.logSettle,
-    undefined,
-    run.deps.now,
-    run.deps.sleep,
+  const { line, fault } = await lineOrFault(() =>
+    awaitMarker(
+      window,
+      { marker: LOG_MARKERS.RDOQueueResearch, match: l => queueResearchLineMatches(l, next.id) },
+      TIMEOUTS.logSettle,
+      undefined,
+      run.deps.now,
+      run.deps.sleep,
+    ),
   );
   const listed = inventory.get(next.id) as Listed;
   const now = run.deps.now ?? Date.now;
@@ -1192,6 +1211,10 @@ async function researchUnlock(
   }
   if (after === 'absent') return done(`${next.id} reads absent at ${at} after the queue`, 'FAIL');
   inventory.set(next.id, { ...listed, state: after });
-  if (line === null) return { ...done(`no Queue Research: line for ${next.id} at ${at}`, 'FAIL'), spent: cost };
+  // The inventory already shows the queue: the missing line is unobservable, not wrong (UNTESTABLE).
+  if (line === null) {
+    const why = `no Queue Research: line for ${next.id} at ${at} in ${window.url}${fault ? ` (${fault})` : ''}`;
+    return { ...done(`${why} — the inventory reads it ${after}`), spent: cost };
+  }
   return { outcome: { status: 'unproven', facilityClass: unlock.facilityClass, logLine: line, reason: `researching ${label}` }, spent: cost };
 }

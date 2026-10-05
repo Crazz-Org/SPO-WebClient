@@ -625,12 +625,12 @@ describe('nightlyResultFromReport', () => {
     expect(built.scheduledSubmittedAt).toBe('2026-09-14T02:10:00.000Z');
   });
 
-  it('carries each flow\'s status, and names the UNPROVEN and SKIPPED flows (#1182)', () => {
+  it('carries each flow\'s status and an UNTESTABLE flow\'s reasons, and names the UNTESTABLE and SKIPPED flows (#1182, #1320)', () => {
     const liveFlows = [
       { name: 'a', status: 'PASS' },
-      { name: 'b', status: 'UNPROVEN' },
+      { name: 'b', status: 'UNTESTABLE', reasons: ['the restore line — no "Setting" line in http://log'] },
       { name: 'c', status: 'SKIPPED' },
-      { name: 'd', status: 'UNPROVEN' },
+      { name: 'd', status: 'UNTESTABLE', reasons: ['a bank is listed — 0 banks'] },
     ];
     const built = nightlyResultFromReport(
       { id: 'job-9', verdict: 'PASS', fingerprints: { atSubmit: fingerprint('s') }, liveFlows },
@@ -638,7 +638,8 @@ describe('nightlyResultFromReport', () => {
     );
 
     expect(built.flows).toEqual(liveFlows);
-    expect(built.unproven).toEqual(['b', 'd']);
+    expect(built.flows?.[1].reasons).toEqual(['the restore line — no "Setting" line in http://log']);
+    expect(built.untestable).toEqual(['b', 'd']);
     expect(built.skipped).toEqual(['c']);
   });
 
@@ -649,7 +650,7 @@ describe('nightlyResultFromReport', () => {
     );
 
     expect(built).not.toHaveProperty('flows');
-    expect(built).not.toHaveProperty('unproven');
+    expect(built).not.toHaveProperty('untestable');
     expect(built).not.toHaveProperty('skipped');
   });
 });
@@ -1224,13 +1225,13 @@ describe('publishManualResult — attest-only replacement', () => {
     const h = harness();
     const liveFlows = [
       { name: 'a', status: 'PASS' },
-      { name: 'b', status: 'UNPROVEN' },
+      { name: 'b', status: 'UNTESTABLE' },
       { name: 'c', status: 'SKIPPED' },
     ];
 
     publishManualResult(h.paths, report({ liveFlows }), request);
 
-    const expected = { flows: liveFlows, unproven: ['b'], skipped: ['c'] };
+    const expected = { flows: liveFlows, untestable: ['b'], skipped: ['c'] };
     expect(readNightlyResult(h.paths)).toMatchObject(expected);
     expect(readManualRecords(h.paths)).toEqual([expect.objectContaining(expected)]);
   });
