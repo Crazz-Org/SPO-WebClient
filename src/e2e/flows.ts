@@ -6280,7 +6280,7 @@ function chemicalRemains(s: ChemicalLinks): string {
  * removes both sides (`TGate.DisconnectFrom`, Kernel/Kernel.pas:6794-6799). `RDODisconnectFromTycoon`
  * drops the plant's outputs from every own facility's matching input (:4581-4600) and unregisters it
  * as an initial supplier (:4606-4607); `RDODisconnectInput` carries own keys only — a foreign link is
- * never touched (FOREIGN_WHY). Returns false after recording the flow unproven; one retry.
+ * never touched (FOREIGN_WHY). Returns false after recording the flow untestable; one retry.
  */
 async function resetChemical(
   session: LiveSession,
@@ -6335,7 +6335,7 @@ async function resetChemical(
 
   const first = await readState();
   if (first.unread.length > 0) {
-    assertions.unproven(
+    assertions.untestable(
       member,
       `chemical fixture reset: cannot see every link of ${fixtureLabel(fx)} — ${first.unread.join(' | ')}; nothing sent`,
     );
@@ -6350,7 +6350,7 @@ async function resetChemical(
     if (polled.ok) return true;
     last = polled.last;
   }
-  assertions.unproven(member, `chemical fixture reset did not take: ${chemicalRemains(last)}`);
+  assertions.untestable(member, `chemical fixture reset did not take: ${chemicalRemains(last)}`);
   return false;
 }
 
