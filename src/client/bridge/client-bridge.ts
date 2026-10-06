@@ -1095,6 +1095,7 @@ export const ClientBridge = {
     } else {
       useNewspaperStore.getState().setPosting(false);
     }
+    if (resp.success) useNewspaperStore.getState().markPublished();
     showToast(resp.message, resp.success ? 'success' : 'error');
   },
 
