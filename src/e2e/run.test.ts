@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Writable } from 'stream';
-import { formatSummary, main, runLive, type LiveRunOptions, type LiveRunResult } from './run';
+import { formatSummary, main, runLive, STOPPED_BY_DEADLINE, type LiveRunOptions, type LiveRunResult } from './run';
 import { WorldLock } from './world-lock';
 import * as preflightModule from './preflight';
 import * as flowsModule from './flows';
@@ -301,6 +301,132 @@ describe('runLive — the drain guard (#1181)', () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue({ ...okPreflight, ok: false });
     await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
     expect(process.listeners('beforeExit')).toHaveLength(count);
+  });
+});
+
+describe('runLive — a SIGTERM stops the drive gracefully (#1328)', () => {
+  const restore = { key: 'clone', what: 'salaries', x: 1, y: 2, propertyName: 'RDOSetSalaries', originalValue: '100' };
+
+  // The listeners present before the test's runLive — the drain-guard test leaves a run pending
+  // forever, so its handler is still installed and must never see this file's signals.
+  let before: NodeJS.SignalsListener[] = [];
+  let kill: jest.SpyInstance;
+  beforeEach(() => {
+    before = process.listeners('SIGTERM');
+    // A safety net: a re-raised SIGTERM must never reach the Jest worker itself.
+    kill = jest.spyOn(process, 'kill').mockImplementation(() => true);
+  });
+
+  /** Delivers a SIGTERM to the handler this test's runLive installed — no real signal is sent. */
+  function sigterm(): void {
+    for (const listener of process.listeners('SIGTERM').filter(l => !before.includes(l))) listener('SIGTERM');
+  }
+
+  it('lets flow k finish its restore, starts nothing after it, reports k+1..n as not run, and releases the lock clean', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const write = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const lock = tempLock();
+    const started: string[] = [];
+    let restored = false;
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => {
+      started.push(flow.name);
+      if (flow.name === 'clone-salaries-roundtrip') {
+        lock.addPendingRestore(restore);
+        sigterm();
+        await new Promise(resolve => setTimeout(resolve, 5));
+        lock.clearPendingRestore(restore.key);
+        restored = true;
+      }
+      return passingFlow(flow.name);
+    });
+
+    const result = await runLive({
+      flows: ['login-spine', 'clone-salaries-roundtrip', 'politics-read', 'chat-read'],
+      branch: 'fix/a',
+      lock,
+    });
+
+    expect(restored).toBe(true);
+    expect(started).toEqual(['login-spine', 'clone-salaries-roundtrip']);
+    expect(result.flows.map(f => [f.name, f.status])).toEqual([
+      ['login-spine', 'PASS'],
+      ['clone-salaries-roundtrip', 'PASS'],
+      ['politics-read', 'SKIPPED'],
+      ['chat-read', 'SKIPPED'],
+    ]);
+    expect(result.flows.slice(2).map(f => f.skipped)).toEqual([STOPPED_BY_DEADLINE, STOPPED_BY_DEADLINE]);
+    expect(STOPPED_BY_DEADLINE).toBe('stopped by deadline');
+    expect(result.status).not.toBe('PASS');
+    expect(result.stopped).toBe(true);
+    expect(lock.read()).toEqual({ holder: null, pendingRestores: [], dirty: false });
+    const text = write.mock.calls.map(c => String(c[0])).join('');
+    expect(text).toContain('stop requested — finishing flow clone-salaries-roundtrip');
+  });
+
+  it('is not a PASS even when the stop lands during the last flow', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => {
+      sigterm();
+      return passingFlow(flow.name);
+    });
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+
+    expect(result.status).toBe('BLOCKED');
+    expect(result.error).toBe('stopped by SIGTERM before the drive settled');
+  });
+
+  it('does not swallow a second SIGTERM — it steps aside and re-raises it for the default termination', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    let afterFirst: number | undefined;
+    let afterSecond: number | undefined;
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => {
+      sigterm();
+      afterFirst = process.listeners('SIGTERM').length;
+      expect(kill).not.toHaveBeenCalled();
+      sigterm();
+      afterSecond = process.listeners('SIGTERM').length;
+      return passingFlow(flow.name);
+    });
+
+    await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+
+    expect(kill).toHaveBeenCalledTimes(1);
+    expect(kill).toHaveBeenCalledWith(process.pid, 'SIGTERM');
+    expect(afterFirst).toBe(before.length + 1);
+    expect(afterSecond).toBe(before.length);
+  });
+
+  it('removes the handler once runLive returns — PASS, FAIL and BLOCKED alike', async () => {
+    const count = process.listeners('SIGTERM').length;
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const runFlow = jest.spyOn(flowsModule, 'runFlow');
+    let installed = 0;
+
+    runFlow.mockImplementation(async flow => {
+      installed = process.listeners('SIGTERM').length;
+      return passingFlow(flow.name);
+    });
+    expect((await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() })).status).toBe('PASS');
+    expect(installed).toBe(count + 1);
+    expect(process.listeners('SIGTERM')).toHaveLength(count);
+
+    runFlow.mockImplementation(async flow => ({ ...passingFlow(flow.name), status: 'FAIL' as const }));
+    expect((await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() })).status).toBe('FAIL');
+    expect(process.listeners('SIGTERM')).toHaveLength(count);
+
+    runFlow.mockImplementation(async flow => ({ ...passingFlow(flow.name), status: 'SKIPPED' as const }));
+    expect((await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() })).status).toBe('BLOCKED');
+    expect(process.listeners('SIGTERM')).toHaveLength(count);
+
+    const dirty = tempLock();
+    dirty.acquire('fix/a', 1, () => false);
+    dirty.addPendingRestore(restore);
+    expect(() => dirty.release()).toThrow();
+    expect((await runLive({ flows: ['login-spine'], branch: 'fix/b', lock: dirty })).status).toBe('BLOCKED');
+    expect(process.listeners('SIGTERM')).toHaveLength(count);
   });
 });
 
@@ -652,6 +778,12 @@ describe('main', () => {
       const refused = { ...result, status: 'BLOCKED' as const, error: 'world dirty' };
       expect(await main([], async () => refused, sink().stream)).toBe(2);
     });
+
+    it('a run a SIGTERM stopped stays BLOCKED for the nightly — its unreached flows are not a pass (#1328)', async () => {
+      const stopped = { ...skippedRun, stopped: true as const };
+      expect(await main([], async () => stopped, sink().stream)).toBe(2);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('BLOCKED');
+    });
   });
 
   describe('UNTESTABLE flows in the nightly (#1320)', () => {
@@ -722,6 +854,12 @@ describe('main', () => {
     it('still FAILs, exit 1, when a non-quarantined flow FAILs beside it', async () => {
       const both = { ...quarantinedFail, flows: [...quarantinedFail.flows, failing('politics-read')] };
       expect(await main([], async () => both, sink().stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+    });
+
+    it('still FAILs, exit 1, when a SIGTERM stopped the run — the quarantine never absorbs a stopped drive (#1328)', async () => {
+      const stopped = { ...quarantinedFail, stopped: true as const };
+      expect(await main([], async () => stopped, sink().stream)).toBe(1);
       expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
     });
 

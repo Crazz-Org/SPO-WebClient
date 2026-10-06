@@ -56,6 +56,28 @@ export interface LiveRunResult {
   error?: string;
   /** Set when releasing the world lock threw — the world is left dirty, which always FAILs. */
   releaseError?: string;
+  /**
+   * Set when a SIGTERM stopped the drive (#1328): the flows after the in-flight one are SKIPPED
+   * with {@link STOPPED_BY_DEADLINE}. Never reported PASS, nightly or not.
+   */
+  stopped?: true;
+}
+
+/** The `skipped` detail of a flow a SIGTERM kept from starting (#1328). */
+export const STOPPED_BY_DEADLINE = 'stopped by deadline';
+
+function notRun(name: string): FlowResult {
+  return {
+    name,
+    status: 'SKIPPED',
+    skipped: STOPPED_BY_DEADLINE,
+    assertions: [],
+    untestable: [],
+    probes: [],
+    messagesSent: 0,
+    messagesReceived: 0,
+    wireErrors: 0,
+  };
 }
 
 export interface LiveRunOptions {
@@ -105,6 +127,22 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
   };
   process.on('beforeExit', onDrain);
 
+  // A deadline kill sends SIGTERM, then SIGKILL after a grace (#1328). The first SIGTERM only
+  // asks the drive to stop: the in-flight flow finishes — its restore included — no new flow
+  // starts, and the lock is released as on a normal end. A second SIGTERM is not swallowed:
+  // the handler steps aside and re-raises it, so the process ends as it would with no handler.
+  let stopRequested = false;
+  const onSigterm = (): void => {
+    if (stopRequested) {
+      process.removeListener('SIGTERM', onSigterm);
+      process.kill(process.pid, 'SIGTERM');
+      return;
+    }
+    stopRequested = true;
+    process.stderr.write(`stop requested — finishing ${inProgress}\n`);
+  };
+  process.on('SIGTERM', onSigterm);
+
   try {
     const checks = await preflight();
     if (!checks.ok) {
@@ -132,6 +170,10 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
         capabilities.push(await checkCapability(capability));
       }
       for (const name of options.flows) {
+        if (stopRequested) {
+          results.push(notRun(name));
+          continue;
+        }
         inProgress = `flow ${name}`;
         results.push(await runFlow(flowByName(name), { lock, survivalLogUrl: checks.survivalLogUrl }));
       }
@@ -154,15 +196,18 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
     return {
       ...base,
       finishedAt: new Date().toISOString(),
-      status: failed ? 'FAIL' : skippedFlows.length > 0 ? 'BLOCKED' : 'PASS',
+      // A stopped drive is never a PASS, even when the stop landed during its last flow.
+      status: failed ? 'FAIL' : skippedFlows.length > 0 || stopRequested ? 'BLOCKED' : 'PASS',
       preflight: checks,
       flows: results,
       capabilities,
-      error: releaseError ?? skipError,
+      error: releaseError ?? skipError ?? (stopRequested ? 'stopped by SIGTERM before the drive settled' : undefined),
       ...(releaseError !== undefined ? { releaseError } : {}),
+      ...(stopRequested ? { stopped: true as const } : {}),
     };
   } finally {
     process.removeListener('beforeExit', onDrain);
+    process.removeListener('SIGTERM', onSigterm);
   }
 }
 
@@ -209,14 +254,17 @@ export async function main(
       })
     : result.flows;
   const fails = flowResults.filter(f => f.status === 'FAIL');
+  // A run a SIGTERM stopped short (#1328) is never absorbed: the flows it did not reach are not a pass.
   const absorbed =
     nightly &&
+    result.stopped === undefined &&
     result.status === 'FAIL' &&
     result.releaseError === undefined &&
     fails.length > 0 &&
     fails.every(f => f.name in SERVER_QUARANTINE);
   const reported: LiveRunResult =
-    absorbed || (nightly && result.status === 'BLOCKED' && result.flows.some(f => f.status === 'SKIPPED'))
+    absorbed ||
+    (nightly && result.stopped === undefined && result.status === 'BLOCKED' && result.flows.some(f => f.status === 'SKIPPED'))
       ? { ...result, flows: flowResults, status: 'PASS' }
       : { ...result, flows: flowResults };
   const file = path.join(REPORT_DIR, `live-${reported.startedAt.replace(/[:.]/g, '-')}.json`);

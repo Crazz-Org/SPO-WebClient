@@ -88,6 +88,15 @@ export const TIMEOUTS = {
   connect: 15_000,
   /** World login is the slow one — directory + world + company. */
   login: 60_000,
+  /**
+   * The search menu's tycoon full profile (`REQ_SEARCH_MENU_TYCOON_FULL_PROFILE`): not one round
+   * trip but three ASP pages fetched one after the other by the gateway —
+   * `TycoonCurriculum.asp`, `RenderTycoon.asp`, then `TycoonCurriculum.asp` again
+   * (`fetchCurriculumData` in profile-finance-handler.ts). Observed 5-34 s over 13 bench jobs,
+   * 2026-10-03/04 (issue #1319). 60 s is the observed maximum plus ~75 % margin, the same
+   * bound as `login`. Past it the flow still FAILs.
+   */
+  profilePage: 60_000,
   /** How long a write may take to appear in the model-server log. */
   logSettle: 20_000,
   /**

@@ -2763,6 +2763,19 @@ describe('search-menu-read', () => {
     expect(flowByName('search-menu-read').mutates).toBe(false);
   });
 
+  it('waits TIMEOUTS.profilePage for the full profile and the default for the tycoon card', async () => {
+    arrange();
+    await run();
+    const stub = await (session.login as jest.Mock).mock.results[0].value;
+    const calls = (stub.driver.request as jest.Mock).mock.calls as unknown[][];
+    const callFor = (t: WsMessageType) => calls.find(c => (c[0] as { type: WsMessageType }).type === t);
+    expect(TIMEOUTS.profilePage).toBe(60_000);
+    expect(callFor(WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE)?.[2]).toBe(TIMEOUTS.profilePage);
+    const card = callFor(WsMessageType.REQ_SEARCH_MENU_TYCOON_PROFILE);
+    expect(card).toBeDefined();
+    expect(card?.[2]).toBeUndefined();
+  });
+
   it('ends UNTESTABLE on an empty newspaper list and records the counts', async () => {
     arrange({ newspapers: [] });
     const result = await run();

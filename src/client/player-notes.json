@@ -1,5 +1,11 @@
 [
   {
+    "id": 1298,
+    "type": "fixed",
+    "text": "In the town newspaper, Post a column opens the writing form again instead of jumping back to the column list.",
+    "date": "2026-10-03"
+  },
+  {
     "id": 1297,
     "type": "fixed",
     "text": "In the new interface, the Connect button on a TV station or antenna warning now starts linking them on the map.",

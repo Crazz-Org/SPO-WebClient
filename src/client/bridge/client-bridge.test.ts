@@ -642,6 +642,41 @@ describe('ClientBridge handleNewspaperResponse — the paper view (#516)', () =>
   });
 });
 
+describe('ClientBridge handleNewspaperResponse — RESP_NEWSPAPER_POST (#1298)', () => {
+  const BOARD = {
+    paperName: 'Helartia Herald', root: 'r', path: 'r', columns: [], tree: [], article: null, error: '',
+  };
+  const post = (success: boolean, board: typeof BOARD | null): void => {
+    ClientBridge.handleNewspaperResponse({
+      type: WsMessageType.RESP_NEWSPAPER_POST, success, message: 'm', board,
+    } as unknown as WsMessage);
+  };
+
+  beforeEach(() => {
+    useNewspaperStore.getState().reset();
+    useNewspaperStore.getState().setPosting(true);
+  });
+
+  it('an accepted post lands the board and counts as published', () => {
+    post(true, BOARD);
+    const s = useNewspaperStore.getState();
+    expect(s.publishedCount).toBe(1);
+    expect(s.board).toEqual(BOARD);
+    expect(s.isPosting).toBe(false);
+  });
+
+  it('a refused post with no board does not count', () => {
+    post(false, null);
+    expect(useNewspaperStore.getState().publishedCount).toBe(0);
+    expect(useNewspaperStore.getState().isPosting).toBe(false);
+  });
+
+  it('a refused post with a board does not count', () => {
+    post(false, BOARD);
+    expect(useNewspaperStore.getState().publishedCount).toBe(0);
+  });
+});
+
 describe('ClientBridge handleSearchMenuResponse — RESP_SEARCH_MENU_NEWSPAPERS (#517)', () => {
   beforeEach(() => {
     useSearchStore.getState().reset();
