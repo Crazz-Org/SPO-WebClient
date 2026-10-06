@@ -63,7 +63,7 @@ import {
   RdoValue,
   RdoParser,
 } from '../shared/rdo-types';
-import { rdoCall, rdoGet, rdoIdOf } from '../shared/rdo-frame';
+import { rdoCall, rdoGet, rdoIdOf, rdoSet } from '../shared/rdo-frame';
 import type { RoadTileFacts } from '../shared/road-cost';
 import { config } from '../shared/config';
 import { createLogger, generateSessionId } from '../shared/logger';
@@ -113,6 +113,8 @@ import * as cacherPool from './session/cacher-object-pool';
 import { dispatchPush } from './session/push-dispatcher';
 import * as loginHandler from './session/login-handler';
 import { LatencyTracker } from './session/latency-tracker';
+import { PushLiveness } from './session/push-liveness';
+import type { EventsTrigger } from './session/push-liveness';
 import * as abandonRoleHandler from './session/abandon-role-handler';
 import type { AbandonRoleResult } from './session/abandon-role-handler';
 import { canBufferRequest, isConnectionBoundMember } from './session/request-routing';
@@ -390,6 +392,23 @@ export class StarpeaceSession extends EventEmitter {
 
   // Connection diagnostics — rolling RDO round-trip mean, pushed to the browser periodically
   private latency = new LatencyTracker();
+  /** Wall-clock ms of the last RDO reply (any socket); the push watchdog's "requests still answer". */
+  private lastRdoAnswerAt = 0;
+  /**
+   * Re-sends EnableEvents when RefreshDate stays silent while requests answer
+   * (push-liveness.ts). Armed by selectCompany via onEventsEnabled.
+   */
+  private pushLiveness = new PushLiveness({
+    log: {
+      info: (m: string) => this.log.info(m),
+      warn: (m: string) => this.log.warn(m),
+      error: (m: string) => this.log.error(m),
+      debug: (m: string) => this.log.debug(m),
+    },
+    now: () => Date.now(),
+    lastAnswerAt: () => this.lastRdoAnswerAt,
+    resendEnableEvents: () => this.resendEnableEvents(),
+  });
   private statsPushInterval: NodeJS.Timeout | null = null;
   private readonly STATS_PUSH_INTERVAL_MS = 5_000;
 
@@ -593,6 +612,21 @@ export class StarpeaceSession extends EventEmitter {
   }
   public setKnownObject(name: string, id: string): void { this.knownObjects.set(name, id); }
   public getInitClientReceived(): Promise<void> | null { return this.initClientReceived; }
+  public onEventsEnabled(trigger: EventsTrigger): void { this.pushLiveness.arm(trigger); }
+
+  /** The push watchdog's re-send: `set EnableEvents #-1` on the current ClientView. */
+  private async resendEnableEvents(): Promise<void> {
+    const contextId = this.worldContextId;
+    if (!contextId || this.phase !== SessionPhase.WORLD_CONNECTED || this.worldReconnecting || this.isClosing) {
+      throw new Error(`session not in the world (phase=${this.phase})`);
+    }
+    const reply = await this.sendRdoRequest(
+      'world', rdoSet('EnableEvents', contextId, RdoValue.int(-1)).packet, undefined, TimeoutCategory.NORMAL,
+    );
+    if (reply.errorCode && reply.errorCode > 0) {
+      throw new Error(`EnableEvents answered ${reply.errorName ?? 'error'} ${reply.errorCode}`);
+    }
+  }
   public setInitClientReceived(value: Promise<void> | null): void { this.initClientReceived = value; }
   public deleteSocket(name: string): void { this.sockets.delete(name); }
   public getSocketNames(): string[] { return Array.from(this.sockets.keys()); }
@@ -1842,6 +1876,8 @@ public createSocket(name: string, host: string, port: number): Promise<net.Socke
 
       // 1. Set phase → RECONNECTING (prevents new requests from executing)
       this.phase = SessionPhase.RECONNECTING;
+      // The re-login re-arms it once EnableEvents is accepted again.
+      this.pushLiveness.disarm();
 
       // 2. Stop ServerBusy polling (avoid queries on half-ready socket)
       this.stopServerBusyPolling();
@@ -2568,6 +2604,7 @@ private async executeRdoRequest(socketName: string, packetData: Partial<RdoPacke
 		  this.pendingRequests.delete(packet.rid!);
 		  clearTimeout(entry.timeoutHandle);
 
+		  this.lastRdoAnswerAt = Date.now();
 		  if (entry.state === 'pending') {
 			this.latency.record(Date.now() - entry.sentAt);
 			// Normal path — resolve the promise
@@ -2704,6 +2741,7 @@ private async executeRdoRequest(socketName: string, packetData: Partial<RdoPacke
   }
 
 private handlePush(socketName: string, packet: RdoPacket) {
+  this.pushLiveness.onPush(packet.member);
   dispatchPush(this, socketName, packet);
 }
 
@@ -2827,6 +2865,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.stopCacherKeepAlive();
     this.stopGcSweep();
     this.stopStatsPush();
+    this.pushLiveness.disarm();
 
     // 3. Close all persistent sockets (keep directory data intact)
     for (const [name, socket] of this.sockets.entries()) {
@@ -3010,6 +3049,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     // Stop GC sweep
     this.stopGcSweep();
     this.stopStatsPush();
+    this.pushLiveness.disarm();
 
     // Reject all pending RDO requests before clearing (mirrors cleanupWorldSession pattern)
     const destroyError = new Error('Session destroyed');
