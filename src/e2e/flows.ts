@@ -2999,6 +2999,7 @@ const searchMenuRead: Flow = {
           const full = await session.driver.request<WsRespSearchMenuTycoonFullProfile>(
             { type: WsMessageType.REQ_SEARCH_MENU_TYCOON_FULL_PROFILE, tycoonName: tycoon },
             WsMessageType.RESP_SEARCH_MENU_TYCOON_FULL_PROFILE,
+            TIMEOUTS.profilePage,
           );
           assertions.check(
             `the ${tycoon} full profile names a current level`,
