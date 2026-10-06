@@ -37,6 +37,7 @@ import type { RdoScenario } from '../../mock-server/types/rdo-exchange-types';
 import { setActiveInspectorForTest, releaseInspector } from '../session/building-details-handler';
 import type { ActiveInspector } from '../session/building-details-handler';
 import type { SessionContext } from '../session/session-context';
+import * as buildingManagementHandler from '../session/building-management-handler';
 
 // ── Fixture ids ─────────────────────────────────────────────────────────────
 const CONTEXT_ID = '8161308';
@@ -737,6 +738,70 @@ describe('building focus', () => {
       .toMatch(new RegExp(`sel ${CONTEXT_ID} call SwitchFocusEx "\\^" "#0","#706","#436"$`));
     expect(harness.session.currentFocusedBuildingId).toBe(CURR_BLOCK);
     expect(harness.session.currentFocusedCoords).toEqual({ x: 706, y: 436 });
+  });
+
+  it('records the id its own SwitchFocusEx returned for status reads, and forgets it on a successful delete there', async () => {
+    await connectWorld();
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(false);
+
+    await harness.session.focusBuilding(706, 436);
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(true);
+    expect(harness.session.hasFocusedFacilityId('0')).toBe(false);
+
+    const del = jest.spyOn(buildingManagementHandler, 'deleteFacility');
+    del.mockResolvedValueOnce({ success: false, message: 'denied' });
+    await harness.session.deleteFacility(706, 436);
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(true);
+
+    del.mockResolvedValueOnce({ success: true });
+    await harness.session.deleteFacility(706, 436);
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(false);
+    del.mockRestore();
+  });
+
+  it('forgets a focused id on its fchDestruction push, not on a status push (#1335)', async () => {
+    const socket = await connectWorld();
+    await harness.session.focusBuilding(706, 436);
+
+    socket.emit('data', Buffer.from(`C sel ${CONTEXT_ID} call RefreshObject "*" "#${CURR_BLOCK}","#0";`, 'latin1'));
+    await flush();
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(true);
+
+    socket.emit('data', Buffer.from(`C sel ${CONTEXT_ID} call RefreshObject "*" "#${CURR_BLOCK}","#2";`, 'latin1'));
+    await flush();
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(false);
+  });
+
+  it('forgets every focused id when the session is destroyed (#1335)', async () => {
+    await connectWorld();
+    await harness.session.focusBuilding(706, 436);
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(true);
+    harness.session.destroy();
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(false);
+  });
+
+  it('forgets every focused id on logout (#1335)', async () => {
+    await connectWorld();
+    await harness.session.focusBuilding(706, 436);
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(true);
+    await harness.session.endSession();
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(false);
+  });
+
+  it('forgets every focused id when it leaves the world for another server (#1335)', async () => {
+    await connectWorld();
+    await harness.session.focusBuilding(706, 436);
+    jest.spyOn(harness.session, 'endSession').mockResolvedValue(undefined);
+    await harness.session.cleanupWorldSession();
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(false);
+  });
+
+  it('forgets every focused id on a world reconnect (#1335)', async () => {
+    await connectWorld();
+    await harness.session.focusBuilding(706, 436);
+    jest.spyOn(await import('../session/login-handler'), 'reconnectWorldSocket').mockResolvedValue(undefined);
+    await harness.session.attemptWorldReconnect();
+    expect(harness.session.hasFocusedFacilityId(CURR_BLOCK)).toBe(false);
   });
 
   it('shares one SwitchFocusEx between concurrent requests for the same tile', async () => {

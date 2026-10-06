@@ -32,6 +32,7 @@ import * as autoConnectionHandler from '../session/auto-connection-handler';
 import * as politicsHandler from '../session/politics-handler';
 import * as favoritesHandler from '../session/favorites-handler';
 import * as buildingManagementHandler from '../session/building-management-handler';
+import * as facilityStatusHandler from '../session/facility-status-handler';
 import * as roadHandler from '../session/road-handler';
 import * as zoneSurfaceHandler from '../session/zone-surface-handler';
 import * as contextStatusHandler from '../session/context-status-handler';
@@ -472,6 +473,13 @@ const DELEGATIONS: readonly Delegation[] = [
     result: { success: true },
   },
   {
+    method: 'readFacilityStatusBatch',
+    install: () => jest.spyOn(facilityStatusHandler, 'readFacilityStatusBatch'),
+    call: s => s.readFacilityStatusBatch(['202334236', '127706280']),
+    forwarded: [['202334236', '127706280']],
+    result: [{ id: '202334236', status: 'unknown', error: 'x' }],
+  },
+  {
     method: 'deleteFacility',
     install: () => jest.spyOn(buildingManagementHandler, 'deleteFacility'),
     call: s => s.deleteFacility(706, 436),
@@ -752,7 +760,9 @@ describe('StarpeaceSession — handler delegation', () => {
     // 78: `createChatChannel`, issue 619.
     // 79-80: `getTutorialState` / `runTutorialAction`, issue 626.
     // 81: `getActiveResearchStatus`, issue 887.
-    expect(DELEGATIONS).toHaveLength(81);
+    // 82: `readFacilityStatusBatch`, REQ_FACILITY_STATUS_BATCH, issue 1335.
+    // Contract changed by #1335: the pinned count goes 81 -> 82 for the new delegation.
+    expect(DELEGATIONS).toHaveLength(82);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 

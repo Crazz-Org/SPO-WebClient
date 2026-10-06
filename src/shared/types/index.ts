@@ -351,6 +351,8 @@ export type {
   WsRespConnectionReachability,
   WsReqNearCircuits,
   WsRespNearCircuits,
+  WsReqFacilityStatusBatch,
+  WsRespFacilityStatusBatch,
   // Company Creation
   WsReqCreateCompany,
   WsRespCreateCompany,
@@ -394,4 +396,4 @@ export type {
   WsRespCloneFacility,
 } from './message-types';
 
-export type { ConnectionSearchResult, ConnectionReachabilityEntry, NearCircuitsEntry, FavoritesItem, ResearchCategoryData, ResearchInventionItem, ResearchInventionDetails, ActiveResearchStatus } from './message-types';
+export type { ConnectionSearchResult, ConnectionReachabilityEntry, NearCircuitsEntry, FacilityStatusText, FacilityStatusEntry, FacilityStatusOk, FacilityStatusUnanswered, FavoritesItem, ResearchCategoryData, ResearchInventionItem, ResearchInventionDetails, ActiveResearchStatus } from './message-types';

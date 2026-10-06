@@ -301,6 +301,7 @@ export function makeSessionCtx(overrides: FakeSessionOptions = {}): FakeSessionC
     currentFocusedBuildingName: null,
     currentFocusedOwnerName: null,
     clearBuildingFocus: jest.fn(() => undefined),
+    hasFocusedFacilityId: jest.fn((_id: string) => false),
 
     // ── Emission + helpers ───────────────────────────────────────────────
     emit: jest.fn(() => true),
