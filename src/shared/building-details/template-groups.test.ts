@@ -444,6 +444,13 @@ describe('Specialized handler RDO properties', () => {
     expect(rdoNames).toContain('Transcended');
   });
 
+  it('Votes requests the hidden CurrBlock enrichVotesTab binds RDOVoteOf to', () => {
+    const block = VOTES_GROUP.properties.find(p => p.rdoName === 'CurrBlock');
+    expect(block).toBeDefined();
+    expect(block!.notCached).toBeUndefined(); // it IS in the cache — it is what we read
+    expect(HIDDEN_PROPERTY_NAMES.has('CurrBlock')).toBe(true);
+  });
+
   it('Votes should have ruler properties and candidate TABLE', () => {
     const rdoNames = VOTES_GROUP.properties.map(p => p.rdoName);
     expect(rdoNames).toContain('RulerName');
@@ -1203,5 +1210,16 @@ describe('ordinary-facility general groups declare kind, cluster and town', () =
     for (const name of ['MetaFacilityName0', 'Cluster', 'Town']) {
       expect(HIDDEN_PROPERTY_NAMES.has(name)).toBe(false);
     }
+  });
+});
+
+describe('UNK_GENERAL_GROUP Connect (UnkFacilitySheet.pas:130)', () => {
+  it('carries a connectMap action button before demolish', () => {
+    const props = UNK_GENERAL_GROUP.properties;
+    const ci = props.findIndex((p) => p.actionId === 'connectMap');
+    const di = props.findIndex((p) => p.actionId === 'demolish');
+    expect(ci).toBeGreaterThan(-1);
+    expect(ci).toBeLessThan(di);
+    expect(props[ci]).toMatchObject({ rdoName: 'connectMap', type: PropertyType.ACTION_BUTTON, buttonLabel: 'Connect' });
   });
 });

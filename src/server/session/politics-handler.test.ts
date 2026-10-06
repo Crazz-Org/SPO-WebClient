@@ -1065,22 +1065,33 @@ describe('getDefaultPoliticsData', () => {
 });
 
 // =============================================================================
-// getPoliticsData — three ASP pages then the town hall cache
+// getPoliticsData — the town hall cache, then the Politics pages
 // =============================================================================
 describe('getPoliticsData', () => {
   const RATINGS = (name: string, v: string) => ratingsPage([[name, v]]);
 
   /**
-   * The five pages `getPoliticsData` fetches, in order. Anything not supplied
-   * answers with an empty body, which every parser reads as "no rows".
+   * The pages `getPoliticsData` fetches, in order: the three ratings pages, the
+   * same three again when the first round is all empty (`popular2` / `ifel2` /
+   * `tycoons2`), then publicity and campaign. Anything not supplied answers
+   * with an empty body, which every parser reads as "no rows".
    */
   function stubPages(opts: {
     popular?: string; ifel?: string; tycoons?: string; publicity?: string; campaign?: string;
+    popular2?: string; ifel2?: string; tycoons2?: string;
   } = {}): void {
     mockFetch
       .mockResolvedValueOnce(htmlResponse(opts.popular ?? ''))
       .mockResolvedValueOnce(htmlResponse(opts.ifel ?? ''))
-      .mockResolvedValueOnce(htmlResponse(opts.tycoons ?? ''))
+      .mockResolvedValueOnce(htmlResponse(opts.tycoons ?? ''));
+    // An all-empty first round triggers the one retry of the three ratings pages.
+    if (!opts.popular && !opts.ifel && !opts.tycoons) {
+      mockFetch
+        .mockResolvedValueOnce(htmlResponse(opts.popular2 ?? ''))
+        .mockResolvedValueOnce(htmlResponse(opts.ifel2 ?? ''))
+        .mockResolvedValueOnce(htmlResponse(opts.tycoons2 ?? ''));
+    }
+    mockFetch
       .mockResolvedValueOnce(htmlResponse(opts.publicity ?? ''))
       .mockResolvedValueOnce(htmlResponse(opts.campaign ?? ''));
   }
@@ -1106,6 +1117,74 @@ describe('getPoliticsData', () => {
 
   /** Ten values, in `RULER_PROPS_ORDER`, for a town with a sitting mayor. */
   const RULER_ROW = ['Rio', '55', '70', '60', '45', '2', '3', '0', '90210', '-1'];
+
+  it('reads the town (re-caching its Ratings folder) before the first ratings page', async () => {
+    const fake = makeWebCtx();
+    stubPages();
+    stubTownRead(fake, RULER_ROW);
+
+    await getPoliticsData(fake.ctx, 'New Town', 118, 226);
+
+    const townIdx = fake.cacher.setPath.mock.calls.findIndex(c => c[1] === 'Towns\\New Town.five\\');
+    expect(townIdx).toBeGreaterThanOrEqual(0);
+    expect(fake.cacher.setPath.mock.invocationCallOrder[townIdx]).toBeLessThan(mockFetch.mock.invocationCallOrder[0]);
+    expect(mockFetch.mock.calls[0][0]).toContain('/popularratings.asp?');
+  });
+
+  it('re-reads the three ratings pages once when the first round is all empty', async () => {
+    const fake = makeWebCtx();
+    stubPages({
+      popular2: RATINGS('Unemployment', '85'),
+      ifel2: RATINGS('IFEL A', '40'),
+      tycoons2: tycoonRatingsPage([{ id: '3', name: 'Tycoon B', rating: '12' }]),
+      campaign: campaignPage({ view: 'invite' }),
+    });
+    stubTownRead(fake, RULER_ROW);
+
+    const data = await getPoliticsData(fake.ctx, 'New Town', 118, 226);
+
+    expect(data.popularRatings.map(r => r.name)).toEqual(['Unemployment']);
+    expect(data.ifelRatings.map(r => r.name)).toEqual(['IFEL A']);
+    expect(data.tycoonsRatings.map(r => r.name)).toEqual(['Tycoon B']);
+    expect(mockFetch).toHaveBeenCalledTimes(8);
+    const urls = mockFetch.mock.calls.map(c => c[0] as string);
+    for (const k of [0, 3]) {
+      expect(urls[k]).toContain('/popularratings.asp?');
+      expect(urls[k + 1]).toContain('/ifelratings.asp?');
+      expect(urls[k + 2]).toContain('/tycoonratings.asp?');
+    }
+    expect(urls[6]).toContain('/mayorpub.asp?');
+    expect(urls[7]).toContain('/tycooncampaign.asp?');
+  });
+
+  it.each([
+    ['popular', { popular: RATINGS('Unemployment', '85') }],
+    ['ifel', { ifel: RATINGS('IFEL A', '40') }],
+    ['tycoons', { tycoons: tycoonRatingsPage([{ id: '3', name: 'Tycoon B', rating: '12' }]) }],
+  ])('does not re-read the ratings when the %s list has a row', async (_label, first) => {
+    const fake = makeWebCtx();
+    stubPages({ ...first, campaign: campaignPage({ view: 'invite' }) });
+    stubTownRead(fake, RULER_ROW);
+
+    await getPoliticsData(fake.ctx, 'New Town', 118, 226);
+
+    expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch.mock.calls[3][0]).toContain('/mayorpub.asp?');
+  });
+
+  it('returns empty ratings after two empty rounds, with no third round and no error', async () => {
+    const fake = makeWebCtx();
+    stubPages({ campaign: campaignPage({ view: 'invite' }) });
+    stubTownRead(fake, RULER_ROW);
+
+    const data = await getPoliticsData(fake.ctx, 'New Town', 118, 226);
+
+    expect(data.popularRatings).toEqual([]);
+    expect(data.ifelRatings).toEqual([]);
+    expect(data.tycoonsRatings).toEqual([]);
+    expect(mockFetch).toHaveBeenCalledTimes(8);
+    expect(fake.log.warn).not.toHaveBeenCalledWith(expect.stringContaining('Failed to fetch politics data'));
+  });
 
   it('fetches the five Politics pages with the session credentials, %20-encoded', async () => {
     const fake = makeWebCtx();
@@ -1200,6 +1279,9 @@ describe('getPoliticsData', () => {
       .mockResolvedValueOnce(htmlResponse(''))
       .mockResolvedValueOnce(htmlResponse(''))
       .mockResolvedValueOnce(htmlResponse(''))
+      .mockResolvedValueOnce(htmlResponse(''))
+      .mockResolvedValueOnce(htmlResponse(''))
+      .mockResolvedValueOnce(htmlResponse(''))
       .mockRejectedValueOnce(new Error('campaign page unreachable'));
     stubTownRead(fake, RULER_ROW);
 
@@ -1253,7 +1335,7 @@ describe('getPoliticsData', () => {
 
   it('ElectionsOn = 0 on world.five names the state noElections and never fetches the campaign page', async () => {
     const fake = makeWebCtx();
-    stubPages({ campaign: campaignPage({ view: 'invite' }) });
+    stubPages({ popular: RATINGS('Unemployment', '85'), campaign: campaignPage({ view: 'invite' }) });
     stubTownRead(fake, RULER_ROW, ['0']);
 
     const data = await getPoliticsData(fake.ctx, 'New Town', 118, 226);
@@ -1275,7 +1357,7 @@ describe('getPoliticsData', () => {
 
   it('ElectionsOn = 1 leaves the campaign page to decide, as before', async () => {
     const fake = makeWebCtx();
-    stubPages({ campaign: campaignPage({ view: 'invite' }) });
+    stubPages({ popular: RATINGS('Unemployment', '85'), campaign: campaignPage({ view: 'invite' }) });
     stubTownRead(fake, RULER_ROW, ['1']);
 
     const data = await getPoliticsData(fake.ctx, 'New Town', 118, 226);
@@ -1488,7 +1570,7 @@ describe('getPoliticsData', () => {
   // must send neither — otherwise opening the tab would launch a campaign.
   it('reads the campaign panel with neither Launch nor Cancel', async () => {
     const fake = makeWebCtx();
-    stubPages({ campaign: campaignPage({ view: 'invite' }) });
+    stubPages({ popular: RATINGS('Unemployment', '85'), campaign: campaignPage({ view: 'invite' }) });
     stubTownRead(fake, RULER_ROW);
 
     await getPoliticsData(fake.ctx, 'New Town', 118, 226);

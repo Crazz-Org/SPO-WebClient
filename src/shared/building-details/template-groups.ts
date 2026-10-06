@@ -49,6 +49,7 @@ export const UNK_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
+    { rdoName: 'connectMap', displayName: 'Connect', type: PropertyType.ACTION_BUTTON, actionId: 'connectMap', buttonLabel: 'Connect' },
     { rdoName: 'demolish', displayName: 'Demolish', type: PropertyType.ACTION_BUTTON, actionId: 'demolish', buttonLabel: 'Demolish' },
   ],
   rdoCommands: {
@@ -778,6 +779,11 @@ export const VOTES_GROUP: PropertyGroup = {
   icon: 'V',
   order: 10,
   properties: [
+    // Read, never shown (HIDDEN_PROPERTY_NAMES): the block id `enrichVotesTab`
+    // binds its `RDOVoteOf` read to. The Voyager sheet asks for it in the same
+    // read as the votes — `Names.Add(tidCurrBlock)` (Voyager/VotesSheet.pas:110) —
+    // then `MSProxy.BindTo(fCurrBlock)` + `RDOVoteOf(voter)` (:275-276).
+    { rdoName: 'CurrBlock', displayName: 'Block ID', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Trouble', displayName: 'Trouble', type: PropertyType.NUMBER, hideEmpty: true },
     { rdoName: 'RulerName', displayName: 'Ruler', type: PropertyType.TEXT },
     { rdoName: 'RulerVotes', displayName: 'Ruler Votes', type: PropertyType.NUMBER },

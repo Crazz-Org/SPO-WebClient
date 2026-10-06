@@ -661,6 +661,40 @@ function parseBankAccountHtml(ctx: SessionContext, html: string, baseUrl: string
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PRIVATE — the send re-read
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * How long a send waits for the sender's cache entry to catch up. RDOSendMoney
+ * refreshes the receiver at once (`InvalidateCache(Dest, false)`,
+ * Kernel/Kernel.pas:11542) but only queues the sender
+ * (`BackgroundInvalidateCache(self)`, Kernel/Kernel.pas:11514); the spool thread
+ * drains that queue within `SPOOL_TIMEOUT = 5*1000` (Cache/MSCacheSpool.pas:17).
+ * 6 reads 1 s apart outlast it. `wait` is replaced by the tests, so none waits for real.
+ */
+export const bankSendReread = {
+  reads: 6,
+  intervalMs: 1000,
+  wait: (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms)),
+};
+
+/**
+ * Re-read the bank page until `var budget` differs from `before`. Returns the new
+ * budget, or null once the bound has passed with no change. A cache-unavailable
+ * page, or one without `var budget`, counts as "no change" for that read.
+ */
+async function rereadMovedBudget(ctx: SessionContext, before: string): Promise<string | null> {
+  for (let i = 0; i < bankSendReread.reads; i++) {
+    await bankSendReread.wait(bankSendReread.intervalMs);
+    const { html } = await readBankAccountPage(ctx);
+    if (isCacheUnavailablePage(html)) continue;
+    const match = /var\s+budget\s*=\s*(-?\d+)\s*;/i.exec(html);
+    if (match && match[1] !== before) return match[1];
+  }
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC — executeBankAction
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -798,9 +832,15 @@ export async function executeBankAction(
         }
         break;
       case 'send':
-        // RDOSendMoney (:45) debits the sender.
+        // RDOSendMoney (:45) debits the sender — but the answer page may be
+        // rendered before the sender's cache entry is refreshed (see
+        // bankSendReread), so an unchanged balance is re-read before it is refused.
         if (after.balance === before.balance) {
-          return { success: false, message: 'send was not applied: the server still reports the same balance' };
+          const moved = await rereadMovedBudget(ctx, before.balance);
+          if (moved === null) {
+            return { success: false, message: 'send was not applied: the server still reports the same balance' };
+          }
+          ctx.setAccountMoney(moved);
         }
         break;
       case 'payoff':

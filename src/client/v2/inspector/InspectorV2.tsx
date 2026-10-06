@@ -189,6 +189,10 @@ export function InspectorV2() {
           <DiagnosisBanner
             diagnosis={inspectorDiagnosis(parseFacilityDiagnosis(focusedBuilding.detailsText, focusedBuilding.hintsText))}
             onAction={(action) => {
+              if (action.kind === 'connect') {
+                client.onBuildingAction('connectMap');
+                return;
+              }
               const tab = tabForAction(action, details.tabs);
               if (tab) setCurrentTab(tab);
             }}

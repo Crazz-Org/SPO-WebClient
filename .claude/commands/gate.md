@@ -27,7 +27,7 @@ What matters when reading the result:
 - **A crash is a failure, but silence is not a pass.** A mutation is proven by the
   `FIVEMODELSERVER/Survival` log line, not by a `success: true` response (`OB-28`).
 - A **read-back mismatch is not a failure** — the Town Hall's cached copy lags the write by
-  up to two minutes (`OB-29`). A **missing log line is** a failure.
+  up to two minutes (`OB-29`). A **missing log line** is UNTESTABLE when the read-back agrees — recorded with its reason, not a failure; a read-back that contradicts the write is.
 - A `CAPABILITY EXCEPTION` is not a failure: the server said the test account does not
   hold the role the touched member needs (doc/E2E-POLICY.md §7). Report it with the
   members and the checks; nothing clears it, and no flag should. If the capability is

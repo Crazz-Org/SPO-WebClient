@@ -73,8 +73,21 @@ export interface BenchPaths {
   jobsLog: string;
 }
 
-/** Heartbeat older than this = the worker is not running, whatever systemd believes. */
-export const HEARTBEAT_STALE_MS = 20_000;
+/**
+ * Heartbeat older than this = the worker is not running, whatever systemd believes.
+ *
+ * The beat rides a `setInterval` on the worker's main thread, and the worker's synchronous
+ * `execFileSync` calls block it: `gh api` via `runGh`/`ghExec` (`ciStaticProof`,
+ * `publishPendingStatuses`, the owner lease) and `git` via `runGit` (`serveMergeQueue`).
+ * Gaps measured from the worker journal on 2026-10-03: 20 s, 34 s, 22 s (`ciStaticProof`)
+ * and 29 s (`publishPendingStatuses`) — up to 39 s with the 5 s period on top. 120 s gives
+ * about 3× margin. A dead pid is still reported dead at once; a frozen loop is still caught,
+ * after 120 s instead of 20 s.
+ *
+ * Do NOT move the beat to a worker thread or any timer that ignores the main loop: a beat
+ * that ticks while the loop is wedged would hide exactly the failure it exists to show.
+ */
+export const HEARTBEAT_STALE_MS = 120_000;
 
 /** How often the worker touches the heartbeat. */
 export const HEARTBEAT_PERIOD_MS = 5_000;

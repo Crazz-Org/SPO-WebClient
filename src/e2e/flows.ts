@@ -128,8 +128,10 @@ import { flattenFavoriteLinks, flattenFolders } from '../shared/favorites-tree';
 import { toErrorMessage } from '../shared/error-utils';
 import { ERROR_AccessDenied, ERROR_TooManyFacilities } from '../shared/error-codes';
 import { parseLocalAspUrl } from '../shared/local-asp-url';
-import { WsDriverError, type OutboundMessage } from './ws-driver';
+import { WsDriver, WsDriverError, type OutboundMessage } from './ws-driver';
 import {
+  GATEWAY_ORIGIN,
+  GATEWAY_URL,
   GOVERNED_TOWN,
   INTERFACE_LOG_BASE,
   LIMITS,
@@ -137,9 +139,10 @@ import {
   SECONDARY_ACCOUNT,
   TIMEOUTS,
   WORLD_NAME,
+  ZONE_PATH,
   type E2eAccount,
 } from './config';
-import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, readSince } from './live-log';
+import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, readSince, type LogWindow } from './live-log';
 import {
   runProbe,
   runRoundTrip,
@@ -219,12 +222,12 @@ export interface FlowContext {
 
 export interface FlowResult {
   name: string;
-  status: 'PASS' | 'FAIL' | 'UNPROVEN' | 'SKIPPED';
+  status: 'PASS' | 'FAIL' | 'UNTESTABLE' | 'SKIPPED';
   /** Why the flow did not run — only on `SKIPPED`: the second account was refused at login. */
   skipped?: string;
   assertions: { what: string; ok: boolean; detail?: string }[];
   /** What the flow could not prove, each with its reason. */
-  unproven: string[];
+  untestable: string[];
   probes: ProbeResult[];
   messagesSent: number;
   messagesReceived: number;
@@ -276,7 +279,7 @@ export interface Flow {
   mutates: boolean;
   /**
    * Optional: plants the data the flow reads. It runs before `run`; the cleanup it returns
-   * runs after `run`, even when `run` throws. A failed seed skips `run` (UNPROVEN).
+   * runs after `run`, even when `run` throws. A failed seed skips `run` (UNTESTABLE).
    */
   seed?: (ctx: FlowContext) => Promise<FlowSeed>;
   run: (ctx: FlowContext) => Promise<FlowResult>;
@@ -287,10 +290,14 @@ class Assertions {
   check(what: string, ok: boolean, detail?: string): void {
     this.items.push({ what, ok, detail });
   }
-  /** Record what the flow could not prove, and why — the world held nothing to test. */
-  readonly unprovenItems: string[] = [];
-  unproven(what: string, reason: string): void {
-    this.unprovenItems.push(`${what} — ${reason}`);
+  /**
+   * Record what the flow could not observe, and why (doc/E2E-POLICY.md §7): the world held
+   * nothing to exercise, the log line could not be found or read, or the server answered a
+   * fault the client can neither cause nor fix. Non-blocking — the reason is always kept.
+   */
+  readonly untestableItems: string[] = [];
+  untestable(what: string, reason: string): void {
+    this.untestableItems.push(`${what} — ${reason}`);
   }
   get failed(): boolean {
     return this.items.some(a => !a.ok);
@@ -413,12 +420,16 @@ const sessionResume: Flow = {
 
       await logoff(live);
       loggedOff = true;
-      const after = await awaitMarker(window, marker, TIMEOUTS.logSettle);
-      assertions.check(
-        'an explicit logout tears the ClientView down',
-        after !== null,
-        after ?? `no "${marker}" within ${TIMEOUTS.logSettle} ms`,
-      );
+      // logoff() swallows its answer; the driver's log keeps it. An answered logout is the
+      // evidence that agrees when the teardown line cannot be seen — there is no read-back here.
+      const answered = live.driver.log.some(e => e.direction === 'received' && e.type === WsMessageType.RESP_LOGOUT);
+      const teardown = 'an explicit logout tears the ClientView down';
+      const look = await lookForLine({ url: window.url, window }, w => awaitMarker(w, marker, TIMEOUTS.logSettle));
+      if (look.line === null && !answered) {
+        assertions.check(teardown, false, `${logMissReason(look, marker, window.url)} — and the logout request was not answered`);
+      } else {
+        checkLogLine(assertions, teardown, look, { marker, url: window.url }, 'the logout request was answered (RESP_LOGOUT)');
+      }
 
       assertions.check('no gateway errors', live.driver.errors.length === 0);
       return report('session-resume', assertions, [], live);
@@ -501,7 +512,7 @@ const politicsWrite: Flow = {
       } catch (err: unknown) {
         probes.push(probeFailure(spec, err));
       }
-      assertions.check('the probe proved the write reached the object', probes[0]?.status === 'PASS', probes[0]?.note);
+      assertions.check('the probe proved the write reached the object', probeHeld(probes[0]), probes[0]?.note);
 
       // The subsidy restores to the rate probe's original, never to a value re-read now: the
       // facility's cache (two-minute TTL, Kernel/Population.pas:1192) can still hand back the
@@ -526,11 +537,11 @@ const politicsWrite: Flow = {
         }
         assertions.check(
           "the subsidy probe proved the write and restored the rate probe's original",
-          probes[1]?.status === 'PASS',
+          probeHeld(probes[1]),
           probes[1]?.note,
         );
       } else {
-        assertions.unproven(
+        assertions.untestable(
           'the subsidy probe',
           "not attempted — the rate probe's restore did not read back, so its original is unconfirmed",
         );
@@ -630,7 +641,7 @@ const townMinWage: Flow = {
       } catch (err: unknown) {
         probes.push(probeFailure(spec, err));
       }
-      assertions.check('the probe proved the write reached the object', probes[0]?.status === 'PASS', probes[0]?.note);
+      assertions.check('the probe proved the write reached the object', probeHeld(probes[0]), probes[0]?.note);
       return report('town-min-wage', assertions, probes, session);
     } finally {
       await logoff(session);
@@ -734,7 +745,7 @@ const publicityRoundTrip: Flow = {
       } catch (err: unknown) {
         probes.push(probeFailure({ what, member }, err));
       }
-      assertions.check('the round trip proved the write and restored it', probes[0]?.status === 'PASS', probes[0]?.note);
+      assertions.check('the round trip proved the write and restored it', probeHeld(probes[0]), probes[0]?.note);
       return report('publicity-roundtrip', assertions, probes, session);
     } finally {
       await logoff(session);
@@ -790,7 +801,7 @@ const RATING_STILL_REASON =
  * (`parsePoliticsRatings`, tycoonratings.asp:147), and the per-rater `RDOGetRatingFrom`
  * (Kernel/TownPolitics.pas:163-184) is uncatalogued. So the opinion is a test-owned value with the
  * fixed baseline `RATING_BASELINE`: write `RATING_PROBE`, see the line and the aggregate move towards
- * it, rate the baseline again, see it move back. An aggregate that does not move is UNPROVEN.
+ * it, rate the baseline again, see it move back. An aggregate that does not move is UNTESTABLE.
  */
 const mayorRatingRoundTrip: Flow = {
   name: 'mayor-rating-roundtrip',
@@ -817,7 +828,7 @@ async function mayorRatingSteps(crazz: LiveSession, ctx: FlowContext, assertions
   const data = await readPolitics(crazz, town);
   const mayor = data?.mayorName ?? '';
   if (!holdsGovernedOffice(mayor)) {
-    assertions.unproven(
+    assertions.untestable(
       'the rating round trip',
       `${GOVERNED_TOWN}'s mayor is "${mayor}", not ${PRIMARY_ACCOUNT.username} — ${rater} rates only ` +
         `${PRIMARY_ACCOUNT.username}'s term (maintainer, 2026-09-29); nothing written`,
@@ -864,7 +875,8 @@ async function mayorRatingSteps(crazz: LiveSession, ctx: FlowContext, assertions
   let move: RatingMove | undefined;
   let after: number | undefined;
   try {
-    const window = await openLogWindow(url);
+    // A log fault is never reported as the write's: the window opens, and is searched, apart.
+    const opened = await openLog(url);
     await rate(RATING_PROBE);
     const polled = await pollUntil(
       read,
@@ -872,13 +884,22 @@ async function mayorRatingSteps(crazz: LiveSession, ctx: FlowContext, assertions
       ctx,
     );
     after = polled.last;
-    const line = await lineOf(window, RATING_PROBE);
-    assertions.check(`the write of ${RATING_PROBE} logged its Tycoon rating line`, line !== null, line ?? '(no line)');
+    // The evidence beside a missing line, as observed: only a move towards the probe agrees.
+    const observed = after === undefined ? undefined : ratingMove(before, after, RATING_BASELINE, RATING_PROBE);
+    checkLogLine(
+      assertions,
+      `the write of ${RATING_PROBE} logged its Tycoon rating line`,
+      await lookForLine(opened, window => lineOf(window, RATING_PROBE)),
+      { marker: LOG_MARKERS.RDOSetRatingFrom, url },
+      observed === 'towards'
+        ? `the aggregate read ${before} -> ${String(after)}`
+        : `and the aggregate does not agree (${observed === undefined ? `row ${ratingId} no longer listed` : `${before} -> ${String(after)}`})`,
+    );
     if (after === undefined) {
       assertions.check('the rating row reads back after the write', false, `row ${ratingId} is no longer listed`);
     } else {
       move = ratingMove(before, after, RATING_BASELINE, RATING_PROBE);
-      if (move === 'still') assertions.unproven('the rating write', `${before} -> ${after}: ${RATING_STILL_REASON}`);
+      if (move === 'still') assertions.untestable('the rating write', `${before} -> ${after}: ${RATING_STILL_REASON}`);
       else {
         assertions.check(
           `the aggregate moved towards the written ${RATING_PROBE}`,
@@ -903,8 +924,13 @@ async function mayorRatingSteps(crazz: LiveSession, ctx: FlowContext, assertions
 
 /**
  * The rating's restore — rate the baseline again, always, even after a failed write. After a proven
- * write the aggregate must move back; otherwise it must at least not move away. The pending restore
- * is cleared only when the restore line was seen and that condition holds.
+ * write the aggregate must move back; otherwise it must at least not move away.
+ *
+ * The pending restore is cleared when the restore write did not throw and that aggregate condition
+ * holds — with the restore line seen, or with it missing or unreadable (maintainer decision
+ * 2026-10-05, option b: the line is then UNTESTABLE, its reason kept). It is kept, and the flow
+ * FAILs, when the write throws or is refused, the aggregate moves away or never moves back, or the
+ * row cannot be read back: nothing observable agrees.
  */
 async function restoreRating(
   ctx: FlowContext,
@@ -913,20 +939,19 @@ async function restoreRating(
   leg: {
     url: string;
     write: () => Promise<void>;
-    line: (window: Awaited<ReturnType<typeof openLogWindow>>) => Promise<string | null>;
+    line: (window: LogWindow) => Promise<string | null>;
     read: () => Promise<number | undefined>;
     anchor: number;
     moved: boolean;
   },
 ): Promise<void> {
-  let restored = false;
+  const opened = await openLog(leg.url);
+  let back = false;
+  let detail = '';
+  let look: LogLook | undefined;
   try {
-    const window = await openLogWindow(leg.url);
     await leg.write();
-    const line = await leg.line(window);
-    assertions.check(`the restore to ${RATING_BASELINE} logged its Tycoon rating line`, line !== null, line ?? '(no line)');
-    let back: boolean;
-    let detail: string;
+    look = await lookForLine(opened, leg.line);
     if (leg.moved) {
       const polled = await pollUntil(
         leg.read,
@@ -942,11 +967,23 @@ async function restoreRating(
       detail = `${leg.anchor} -> ${String(now)}`;
       assertions.check(`the restore did not move the aggregate away from ${RATING_BASELINE}`, back, detail);
     }
-    restored = line !== null && back;
   } catch (err: unknown) {
-    assertions.check(`the restore to ${RATING_BASELINE} was accepted`, false, toErrorMessage(err));
+    const what = look === undefined ? `the restore to ${RATING_BASELINE} was accepted` : 'the rating row reads back after the restore';
+    assertions.check(what, false, toErrorMessage(err));
   }
-  if (restored) ctx.lock.clearPendingRestore(key);
+  if (look !== undefined) {
+    checkLogLine(
+      assertions,
+      `the restore to ${RATING_BASELINE} logged its Tycoon rating line`,
+      look,
+      { marker: LOG_MARKERS.RDOSetRatingFrom, url: leg.url },
+      back
+        ? `the aggregate read ${detail}, so the pending restore is cleared (maintainer decision 2026-10-05, option b)`
+        : `and the aggregate does not agree (${detail || 'not read back'}), so the pending restore is kept`,
+      `the restore to ${RATING_BASELINE}'s Tycoon rating line`,
+    );
+  }
+  if (back) ctx.lock.clearPendingRestore(key);
   else assertions.check('the rating restore is proven', false, 'pending restore kept');
 }
 
@@ -984,9 +1021,24 @@ const tycoonRoleRead: Flow = {
 };
 
 /**
- * `TPoliticalTownHall.RDOVote` (`Kernel/TownPolitics.pas:395`, log `:400`). Data-gated: it
- * votes only when a prior vote exists and still names a current candidate or the mayor, so
- * the restore is a real vote and not a silent no-op (`Kernel/Politics.pas:916-933`).
+ * `TPoliticalTownHall.RDOVote` (`Kernel/TownPolitics.pas:395`, log `:400`): vote for another
+ * candidate, then re-vote the prior choice.
+ *
+ * With no prior vote, the flow first seeds a vote for the mayor. That vote sticks only through
+ * the town's winning campaign (`Kernel/Politics.pas:1053-1060`), and the town hall caches
+ * `RulerName` only when that campaign exists (`Kernel/TownPolitics.pas:483-489`) — so the seed
+ * runs only when `RulerName` names the mayor, and ends UNTESTABLE, nothing written, otherwise.
+ * The seed is proven by its `Voting:` line (`Kernel/TownPolitics.pas:400`) and a `VoteOf`
+ * read-back. It records no pending restore: SPO_test3's own vote at the governed town is an
+ * isolated target of a disposable test account (maintainer rule 2026-10-01, #1236), and a vote
+ * cannot be retracted (`Kernel/Politics.pas:1035-1074`), so the vote the seed leaves is the
+ * state the next run starts from. That next run, when the prior names the mayor, the mayor is
+ * still `RulerName` and no other candidate exists, re-votes the mayor through the same proof
+ * (line and read-back, no pending restore) instead of ending UNTESTABLE.
+ *
+ * A prior that no longer names a current candidate or the mayor — stale after a town election
+ * (`Kernel/TownPolitics.pas:690`, `:744`) — ends UNTESTABLE, since its restore would be a silent
+ * no-op (`Kernel/Politics.pas:916-933`).
  */
 const voteRoundTrip: Flow = {
   name: 'vote-roundtrip',
@@ -1005,20 +1057,73 @@ const voteRoundTrip: Flow = {
       const mayor = data?.mayorName ?? '';
       const readVoteOf = async (): Promise<string | undefined> =>
         propertyValue(await readSectionGroups(session, town.x, town.y, 'votes', visualClass), 'votes', 'VoteOf');
-
-      const prior = await readVoteOf();
-      if (prior === undefined || prior.trim() === '') {
-        assertions.unproven(
-          'the vote round trip',
-          `${voter} has no readable prior vote at ${town.name} — RDOVoteOf answered nothing, or the ` +
-            'gateway did not serve VoteOf (enrichVotesTab binds to CurrBlock, which no Town Hall ' +
-            'template requests); nothing written',
+      // The choice ends the line (TownPolitics.pas:400), so "by Bob" never matches "by Bobby".
+      const votedBy = (line: string, choice: string): boolean =>
+        line.trim().toLowerCase().endsWith(`voting: ${voter} by ${choice}`.toLowerCase());
+      const vote = async (value: string): Promise<void> => {
+        const resp = await session.driver.request<WsRespPoliticsVote>(
+          {
+            type: WsMessageType.REQ_POLITICS_VOTE,
+            buildingX: town.x,
+            buildingY: town.y,
+            candidateName: value,
+          },
+          WsMessageType.RESP_POLITICS_VOTE,
         );
-        return report('vote-roundtrip', assertions, probes, session);
+        if (resp.success === false) throw new Error(`VOTE refused: ${resp.message ?? 'no message'}`);
+      };
+
+      // A vote for the mayor, proven by its Voting: line and a VoteOf read-back. No pending
+      // restore — an isolated target of a disposable account (see the doc comment).
+      const voteForMayor = async (kind: 'seed' | 're-vote'): Promise<void> => {
+        // The log is opened and searched apart from the vote: a log fault is never the vote's.
+        const opened = await openSurvivalLog(ctx);
+        try {
+          await vote(mayor);
+          const back = await pollUntil(readVoteOf, v => v !== undefined && sameName(v, mayor), ctx, TIMEOUTS.logSettle);
+          assertions.check(
+            `the ${kind} vote for ${mayor} read back through votes.VoteOf (RDOVoteOf)`,
+            back.ok,
+            `last "${back.last ?? '(absent)'}" after ${TIMEOUTS.logSettle} ms`,
+          );
+          checkLogLine(
+            assertions,
+            `the ${kind} vote logged its Voting: line`,
+            await lookForLine(opened, window =>
+              awaitMarker(window, { marker: LOG_MARKERS.RDOVote, match: l => votedBy(l, mayor) }, TIMEOUTS.logSettle),
+            ),
+            { marker: LOG_MARKERS.RDOVote, url: opened.url },
+            `votes.VoteOf read back "${back.last ?? '(absent)'}"`,
+          );
+        } catch (err: unknown) {
+          assertions.check(`the ${kind} vote was accepted`, false, toErrorMessage(err));
+        }
+      };
+
+      const gate = await readSectionGroups(session, town.x, town.y, 'votes', visualClass);
+      let prior = propertyValue(gate, 'votes', 'VoteOf');
+      const ruler = propertyValue(gate, 'votes', 'RulerName') ?? '';
+      const rulerIsMayor = ruler.trim() !== '' && mayor.trim() !== '' && sameName(ruler, mayor);
+      let seeded = false;
+      if (prior === undefined || prior.trim() === '') {
+        if (!rulerIsMayor) {
+          assertions.untestable(
+            'the vote round trip',
+            `${voter} has no prior vote at ${town.name}, and RulerName "${ruler}" is not the mayor ` +
+              `"${mayor}": no winning campaign to vote for (a vote sticks only for a campaign or the ` +
+              'winning campaign — Kernel/Politics.pas:1053-1060; RulerName is cached only when that ' +
+              'campaign exists — Kernel/TownPolitics.pas:483-489); nothing written',
+          );
+          return report('vote-roundtrip', assertions, probes, session);
+        }
+        await voteForMayor('seed');
+        if (assertions.failed) return report('vote-roundtrip', assertions, probes, session);
+        prior = mayor;
+        seeded = true;
       }
       const choices = [...candidates, mayor].filter(n => n.trim() !== '');
       if (!choices.some(n => sameName(n, prior))) {
-        assertions.unproven(
+        assertions.untestable(
           'the vote round trip',
           `stale prior vote "${prior}": no campaign now and not the mayor (a town election deletes ` +
             'campaigns but keeps Voter.Votes — Kernel/TownPolitics.pas:690, :744; ' +
@@ -1028,38 +1133,31 @@ const voteRoundTrip: Flow = {
       }
       const other = choices.find(n => !sameName(n, prior));
       if (other === undefined) {
-        assertions.unproven('the vote round trip', `no other candidate to vote for than "${prior}"; nothing written`);
+        // After a proven seed, the seed itself is this run's vote proof.
+        if (seeded) return report('vote-roundtrip', assertions, probes, session);
+        // The steady state a seed leaves: the prior already names the mayor, still the ruler.
+        // Re-voting the mayor through the seed's proof is this run's vote proof.
+        if (rulerIsMayor && sameName(prior, mayor)) {
+          await voteForMayor('re-vote');
+          return report('vote-roundtrip', assertions, probes, session);
+        }
+        assertions.untestable('the vote round trip', `no other candidate to vote for than "${prior}"; nothing written`);
         return report('vote-roundtrip', assertions, probes, session);
       }
 
       const what = `${town.name} vote of ${voter} — prior choice ${prior}`;
       const member = 'RDOVote';
-      // The choice ends the line (TownPolitics.pas:400), so "by Bob" never matches "by Bobby".
-      const votedBy = (line: string, choice: string): boolean =>
-        line.trim().toLowerCase().endsWith(`voting: ${voter} by ${choice}`.toLowerCase());
-      const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
-      let restoreLine: string | null = null;
+      const url = await survivalUrl(ctx);
       try {
         // Opened before the change vote: the restore's line is the one naming the prior choice.
-        const restoreWindow = await openLogWindow(url);
+        const restoreLog = await openLog(url);
         const result = await runRoundTrip(
           {
             what,
             member,
             read: async () => prior,
             testValue: () => other,
-            write: async value => {
-              const resp = await session.driver.request<WsRespPoliticsVote>(
-                {
-                  type: WsMessageType.REQ_POLITICS_VOTE,
-                  buildingX: town.x,
-                  buildingY: town.y,
-                  candidateName: value,
-                },
-                WsMessageType.RESP_POLITICS_VOTE,
-              );
-              if (resp.success === false) throw new Error(`VOTE refused: ${resp.message ?? 'no message'}`);
-            },
+            write: vote,
             proof: {
               // The voter in the match excludes the Capitol's identical line (WorldPolitics.pas:1822).
               log: { marker: LOG_MARKERS.RDOVote, match: votedBy },
@@ -1079,17 +1177,20 @@ const voteRoundTrip: Flow = {
         );
         probes.push(result);
         if (result.restored) {
-          restoreLine = await awaitMarker(
-            restoreWindow,
-            { marker: LOG_MARKERS.RDOVote, match: line => votedBy(line, prior) },
-            TIMEOUTS.logSettle,
+          checkLogLine(
+            assertions,
+            'the restore vote reached the object',
+            await lookForLine(restoreLog, window =>
+              awaitMarker(window, { marker: LOG_MARKERS.RDOVote, match: line => votedBy(line, prior) }, TIMEOUTS.logSettle),
+            ),
+            { marker: LOG_MARKERS.RDOVote, url },
+            `votes.VoteOf read back the prior choice "${prior}"`,
           );
-          assertions.check('the restore vote reached the object', restoreLine !== null, restoreLine ?? undefined);
         }
       } catch (err: unknown) {
         probes.push(probeFailure({ what, member }, err));
       }
-      assertions.check('the round trip proved the vote and restored it', probes[0]?.status === 'PASS', probes[0]?.note);
+      assertions.check('the round trip proved the vote and restored it', probeHeld(probes[0]), probes[0]?.note);
       return report('vote-roundtrip', assertions, probes, session);
     } finally {
       await logoff(session);
@@ -1559,7 +1660,7 @@ const favoritesFolders: Flow = {
  * half this world can prove: the town hall names its paper, and `showbar.asp`
  * is reachable and parses. The empty-list rendering itself is covered at L0/L1.
  *
- * Not required by routing (#1009): it runs and reports; its UNPROVEN is informational.
+ * Not required by routing (#1009): it runs and reports; its UNTESTABLE is informational.
  */
 const newspaperRead: Flow = {
   name: 'newspaper-read',
@@ -1611,7 +1712,7 @@ const newspaperRead: Flow = {
       } else {
         // Environment exception, not a defect — see the flow's note above. Never
         // fall through to REQ_NEWSPAPER_ISSUE with the folder `''`.
-        assertions.unproven(
+        assertions.untestable(
           'the newest issue opens with stories',
           `${paperName}: 0 issues — no news server prints on this world`,
         );
@@ -1631,7 +1732,7 @@ const newspaperRead: Flow = {
  * `boardmsg.asp` only opens `NewsBoard.NewsObject`; `action=post` is the only write branch
  * and is never sent (posting is excluded, maintainer 2026-09-29: no member deletes a post,
  * `News Server/NewsObject.pas:11-53`). The detail records the counts. A board with no column
- * and no tree entry ends UNPROVEN (#1188): the page answering proves no read of a post, and
+ * and no tree entry ends UNTESTABLE (#1188): the page answering proves no read of a post, and
  * the flow cannot post one. Routing still requires it.
  */
 const newspaperBoardRead: Flow = {
@@ -1673,7 +1774,7 @@ const newspaperBoardRead: Flow = {
         `${board.columns.length} columns, ${board.tree.length} tree entries`,
       );
       if (board.columns.length === 0 && board.tree.length === 0) {
-        assertions.unproven(
+        assertions.untestable(
           'the board lists a column',
           `${paperName}: 0 columns, 0 tree entries — nothing is posted, and posting is excluded ` +
             '(News Server/NewsObject.pas:11-53)',
@@ -1847,7 +1948,7 @@ async function seedZoningAlert(): Promise<FlowSeed> {
  *
  * The seed (`seedZoningAlert`, #1009) feeds the flow: the secondary account sends SPO_test3 one look-alike
  * alert before the run, and it is deleted from both mailboxes after. Read without the seed,
- * no zoning alert in the inbox is reported UNPROVEN, not PASS and not a failure — nothing
+ * no zoning alert in the inbox is reported UNTESTABLE, not PASS and not a failure — nothing
  * was zoned out of this account lately, so the flow proved nothing. A demolished building is
  * also accepted — the whole point of the alert is that the building is gone — but only on the
  * empty-tile message (`EMPTY_TILE_FOCUS_ERROR`). The error code proves nothing: every focus
@@ -1876,7 +1977,7 @@ const zoningAlertRead: Flow = {
       const alert = inbox.messages.find(m => m.subject === ZONING_ALERT_SUBJECT);
 
       if (!alert) {
-        assertions.unproven(
+        assertions.untestable(
           'a zoning alert link focuses its tile',
           'no "Zoning Alert!" in the inbox — nothing was zoned out of this account lately',
         );
@@ -2142,7 +2243,7 @@ function failedResult(name: string, err: unknown): FlowResult {
     name,
     status: 'FAIL',
     assertions: [],
-    unproven: [],
+    untestable: [],
     probes: [],
     messagesSent: 0,
     messagesReceived: 0,
@@ -2529,7 +2630,7 @@ async function readSavedCamera(then?: Tile): Promise<Tile> {
 /**
  * The camera cookie read back at a new login (#1188): it must hold `sent`; the camera is then
  * put back on `original`, and a third login confirms it. Never throws. `savePlayerPosition`
- * never writes (0,0) (`spo_session.ts`), so an original (0,0) cannot be restored — UNPROVEN.
+ * never writes (0,0) (`spo_session.ts`), so an original (0,0) cannot be restored — UNTESTABLE.
  */
 async function cameraReadBack(assertions: Assertions, original: Tile, sent: Tile): Promise<void> {
   const readBack = 'the camera cookie reads back the camera sent';
@@ -2542,7 +2643,7 @@ async function cameraReadBack(assertions: Assertions, original: Tile, sent: Tile
   }
   const restored = 'the camera cookie is restored';
   if (original.x === 0 && original.y === 0) {
-    assertions.unproven(restored, 'the saved position was (0,0), which savePlayerPosition never writes (spo_session.ts)');
+    assertions.untestable(restored, 'the saved position was (0,0), which savePlayerPosition never writes (spo_session.ts)');
     return;
   }
   try {
@@ -2842,7 +2943,7 @@ function firstOpenableRanking(categories: RankingCategory[]): RankingCategory | 
  * The profiles are read for a tycoon other than the session's own — the own branch of
  * `resolveTycoon` answers with the gateway's name — and never assert the echoed name
  * (`RenderTycoon.asp:55` renders the request's `Tycoon`). Banks and newspapers are checked
- * well-formed, their count in the detail; an empty one ends UNPROVEN (#1188) — a page that
+ * well-formed, their count in the detail; an empty one ends UNTESTABLE (#1188) — a page that
  * lists nothing proves only that it answered.
  */
 const searchMenuRead: Flow = {
@@ -2917,7 +3018,7 @@ const searchMenuRead: Flow = {
         `${banks.banks.length} banks`,
       );
       if (banks.banks.length === 0) {
-        assertions.unproven('a bank is listed', '0 banks — Banks.asp lists none on this world');
+        assertions.untestable('a bank is listed', '0 banks — Banks.asp lists none on this world');
       }
 
       const papers = await session.driver.request<WsRespSearchMenuNewspapers>(
@@ -2930,7 +3031,7 @@ const searchMenuRead: Flow = {
         `${papers.newspapers.length} newspapers`,
       );
       if (papers.newspapers.length === 0) {
-        assertions.unproven(
+        assertions.untestable(
           'a newspaper is listed',
           '0 newspapers — Newspapers.asp:61-62 lists none on this world',
         );
@@ -3013,7 +3114,7 @@ async function userListCheck(
  * ClientView logs on under the role name (`Interface Server/InterfaceServer.pas:3238`) and
  * `GetUserList` lists clients by that name (`:3342-3358`) — the role after the switch,
  * SPO_test3 after the switch back. A role already listed before the switch cannot tell this
- * session's switch apart, so that step ends UNPROVEN.
+ * session's switch apart, so that step ends UNTESTABLE.
  */
 const companySwitch: Flow = {
   name: 'company-switch',
@@ -3057,7 +3158,7 @@ const companySwitch: Flow = {
             'a world read answers on the role ClientView (REQ_BUILDING_DETAILS at the town hall)',
           );
           if (before !== undefined && namesRole(before)) {
-            assertions.unproven(
+            assertions.untestable(
               roleLabel,
               'the role was already listed before the switch — the list cannot tell this session’s switch apart',
             );
@@ -3376,7 +3477,7 @@ const policyRoundTrip: Flow = {
           },
         }),
       );
-      assertions.check('the policy round trip proved the write and the restore', probes[0]?.status === 'PASS', probes[0]?.note);
+      assertions.check('the policy round trip proved the write and the restore', probeHeld(probes[0]), probes[0]?.note);
       return report('policy-roundtrip', assertions, probes, session);
     } finally {
       await logoff(session);
@@ -3477,7 +3578,7 @@ const autoConnectionRoundTrip: Flow = {
       }
       if (initial.fluids.length === 0) {
         for (const half of ['the Trade Center flip', 'the only-warehouses flip', 'the add/delete supplier half']) {
-          assertions.unproven(half, 'the initial suppliers page lists no fluid');
+          assertions.untestable(half, 'the initial suppliers page lists no fluid');
         }
         return report('autoconnection-roundtrip', assertions, probes, session);
       }
@@ -3521,7 +3622,7 @@ const autoConnectionRoundTrip: Flow = {
           },
         });
         probes.push(probe);
-        assertions.check(`the ${key} flip proved the write and the restore`, probe.status === 'PASS', probe.note);
+        assertions.check(`the ${key} flip proved the write and the restore`, probeHeld(probe), probe.note);
       };
 
       await flip(initial.fluids[0], 'hireTradeCenter');
@@ -3532,7 +3633,7 @@ const autoConnectionRoundTrip: Flow = {
       if (storable) {
         await flip(storable, 'onlyWarehouses');
       } else {
-        assertions.unproven(
+        assertions.untestable(
           'the only-warehouses flip',
           'no storable fluid listed — the checkbox is rendered only under Storable (TycoonAutoConnections.asp:103-104)',
         );
@@ -3564,7 +3665,7 @@ const autoConnectionRoundTrip: Flow = {
         }
       }
       if (!target) {
-        assertions.unproven('the add/delete supplier half', 'no search result not already listed for any fluid');
+        assertions.untestable('the add/delete supplier half', 'no search result not already listed for any fluid');
         return report('autoconnection-roundtrip', assertions, probes, session);
       }
 
@@ -3593,7 +3694,7 @@ const autoConnectionRoundTrip: Flow = {
         },
       });
       probes.push(probe);
-      assertions.check('the supplier add proved the write and the delete', probe.status === 'PASS', probe.note);
+      assertions.check('the supplier add proved the write and the delete', probeHeld(probe), probe.note);
       if (probe.original !== '') {
         const deleted = await awaitMarker(
           delWindow,
@@ -3707,7 +3808,7 @@ const bankBorrowPayoff: Flow = {
     try {
       const baseline = await readBank(session);
       if (!(Number(baseline.balance) > 0)) {
-        assertions.unproven(
+        assertions.untestable(
           'the borrow → pay off round trip',
           `balance ${baseline.balance} is not > 0 — RDOPayOff pays only if Loan.Amount < Budget - AprFee ` +
             '(Kernel/Kernel.pas:11572); nothing borrowed',
@@ -3764,7 +3865,7 @@ const bankBorrowPayoff: Flow = {
           },
         }),
       );
-      assertions.check('the loan round trip proved the borrow and the payoff', probes[0]?.status === 'PASS', probes[0]?.note);
+      assertions.check('the loan round trip proved the borrow and the payoff', probeHeld(probes[0]), probes[0]?.note);
       return report(name, assertions, probes, session);
     } finally {
       await logoff(session);
@@ -3881,19 +3982,19 @@ async function driveSendReturn(secondary: LiveSession, ctx: FlowContext, sleep: 
     // mirrors it as "You can transfer up to $…" (NewTycoon/TycoonBankAccount.asp:116-122).
     const mine = transferRefusal(await readBank(me));
     if (mine) {
-      assertions.unproven(what, `${ME} cannot send $1: ${mine}; nothing sent`);
+      assertions.untestable(what, `${ME} cannot send $1: ${mine}; nothing sent`);
       return report(name, assertions, probes, me);
     }
     const theirs = transferRefusal(await readBank(secondary));
     if (theirs) {
-      assertions.unproven(what, `${HIM} cannot send $1 back: ${theirs}; nothing sent`);
+      assertions.untestable(what, `${HIM} cannot send $1 back: ${theirs}; nothing sent`);
       return report(name, assertions, probes, me);
     }
     // The :11499 receiver limits, each profile read through its own session.
     for (const [account, s] of [[PRIMARY_ACCOUNT, me], [SECONDARY_ACCOUNT, secondary]] as const) {
       const refusal = receiverLimitRefusal(account, await readProfile(s));
       if (refusal) {
-        assertions.unproven(what, `${refusal}; nothing sent`);
+        assertions.untestable(what, `${refusal}; nothing sent`);
         return report(name, assertions, probes, me);
       }
     }
@@ -3955,7 +4056,7 @@ async function driveSendReturn(secondary: LiveSession, ctx: FlowContext, sleep: 
         },
       }),
     );
-    assertions.check('the transfer round trip proved the send and the send back', probes[0]?.status === 'PASS', probes[0]?.note);
+    assertions.check('the transfer round trip proved the send and the send back', probeHeld(probes[0]), probes[0]?.note);
     return report(name, assertions, probes, me);
   } finally {
     await logoff(me);
@@ -4105,12 +4206,12 @@ const portraitRoundTrip: Flow = {
       const url = portraitUrl(ip, session.world?.name ?? WORLD_NAME, ME);
       const first = await fetchPortrait(url);
       if (!first.bytes) {
-        assertions.unproven(what, `no readable original portrait at ${url} (HTTP ${first.status}) — nothing to restore to; nothing uploaded`);
+        assertions.untestable(what, `no readable original portrait at ${url} (HTTP ${first.status}) — nothing to restore to; nothing uploaded`);
         return report(name, assertions, probes, session);
       }
       const refused = pictureCheck(first.bytes);
       if (refused) {
-        assertions.unproven(
+        assertions.untestable(
           what,
           `the original at ${url} fails the picture checks (${refused}) — the gateway would refuse the restore ` +
             'upload after the test image is stored; nothing uploaded',
@@ -4158,7 +4259,7 @@ const portraitRoundTrip: Flow = {
           },
         }),
       );
-      assertions.check('the portrait round trip proved the upload and the restore', probes[0]?.status === 'PASS', probes[0]?.note);
+      assertions.check('the portrait round trip proved the upload and the restore', probeHeld(probes[0]), probes[0]?.note);
       return report(name, assertions, probes, session);
     } finally {
       await logoff(session);
@@ -4540,7 +4641,7 @@ const roadRoundTrip: Flow = {
         const area = await readArea(session, town, false);
         span = findRoadSpan(area, town);
         if (!span) {
-          assertions.unproven(
+          assertions.untestable(
             `a road round trip in ${GOVERNED_TOWN}`,
             `no straight ${ROAD_SPAN}-tile span inside ${GOVERNED_TOWN} with no object and no road on or next to it ` +
               `in the ±${SEARCH_RADIUS} window`,
@@ -4570,9 +4671,14 @@ async function roadSteps(
 ): Promise<void> {
   const tiles = spanTiles(span).map(t => tileKey(t.x, t.y));
   const [, second, third] = spanTiles(span);
-  const window = await openLogWindow(url);
-  const line = (marker: string, coords: number[]): Promise<string | null> =>
-    awaitMarker(window, { marker, match: l => circuitLogMatches(l, marker, coords) }, TIMEOUTS.logSettle);
+  const opened = await openLog(url);
+  const line = (marker: string, coords: number[]): Promise<LogLook> =>
+    lookForLine(opened, window =>
+      awaitMarker(window, { marker, match: l => circuitLogMatches(l, marker, coords) }, TIMEOUTS.logSettle),
+    );
+  // A missing line is UNTESTABLE beside the map read-back, which decides the step.
+  const mapSays = (ok: boolean, read: SpanRead): string =>
+    `the map read-back ${ok ? 'agrees' : 'does not agree'} (${spanReadText(read)})`;
 
   // Build.
   const built = await session.driver.request<WsRespBuildRoad>(
@@ -4588,8 +4694,13 @@ async function roadSteps(
   if (built.success !== true) return;
   const afterBuild = await pollSpan(session, span, exactly(tiles), ctx);
   assertions.check('the map shows segments covering exactly the span', afterBuild.ok, spanReadText(afterBuild.last));
-  const buildLine = await line(LOG_MARKERS.RDOCreateCircuitSeg, [span.x1, span.y1, span.x2, span.y2]);
-  assertions.check('the build logged its CreateCircuitSeg: line', buildLine !== null, buildLine ?? '(no line)');
+  checkLogLine(
+    assertions,
+    'the build logged its CreateCircuitSeg: line',
+    await line(LOG_MARKERS.RDOCreateCircuitSeg, [span.x1, span.y1, span.x2, span.y2]),
+    { marker: LOG_MARKERS.RDOCreateCircuitSeg, url },
+    mapSays(afterBuild.ok, afterBuild.last),
+  );
   if (!afterBuild.ok) return;
 
   // Break the start tile: the node moves in, the other two tiles stay as one segment.
@@ -4601,8 +4712,13 @@ async function roadSteps(
   assertions.check('the gateway accepted the break', broken.success === true, broken.message);
   const afterBreak = await pollSpan(session, span, exactly(tiles.slice(1)), ctx);
   assertions.check('the map shows exactly the other two tiles left', afterBreak.ok, spanReadText(afterBreak.last));
-  const breakLine = await line(LOG_MARKERS.RDOBreakCircuitAt, [span.x1, span.y1]);
-  assertions.check('the break logged its BreakCircuit: line', breakLine !== null, breakLine ?? '(no line)');
+  checkLogLine(
+    assertions,
+    'the break logged its BreakCircuit: line',
+    await line(LOG_MARKERS.RDOBreakCircuitAt, [span.x1, span.y1]),
+    { marker: LOG_MARKERS.RDOBreakCircuitAt, url },
+    mapSays(afterBreak.ok, afterBreak.last),
+  );
   // A break that removed everything goes on to the wipe step, which FAILs for it.
   if (!afterBreak.ok && afterBreak.last.covered.length > 0) return;
 
@@ -4624,8 +4740,13 @@ async function roadSteps(
   assertions.check('the gateway accepted the wipe', wiped.success === true, wiped.message);
   const afterWipe = await pollSpan(session, span, exactly([]), ctx);
   assertions.check('the map shows no segment left on the span', afterWipe.ok, spanReadText(afterWipe.last));
-  const wipeLine = await line(LOG_MARKERS.RDOWipeCircuit, [second.x, second.y, third.x, third.y]);
-  assertions.check('the wipe logged its WipingCircuit: line', wipeLine !== null, wipeLine ?? '(no line)');
+  checkLogLine(
+    assertions,
+    'the wipe logged its WipingCircuit: line',
+    await line(LOG_MARKERS.RDOWipeCircuit, [second.x, second.y, third.x, third.y]),
+    { marker: LOG_MARKERS.RDOWipeCircuit, url },
+    mapSays(afterWipe.ok, afterWipe.last),
+  );
 }
 
 /**
@@ -4689,14 +4810,14 @@ const zoneRoundTrip: Flow = {
       const area = await readArea(session, town, true);
       const rect = findZoneRect(area, town);
       if (!rect) {
-        assertions.unproven(
+        assertions.untestable(
           `a zone round trip in ${GOVERNED_TOWN}`,
           `no ${ZONE_W}×${ZONE_H} rectangle inside ${GOVERNED_TOWN} in the ±${SEARCH_RADIUS} window holding one zone id ` +
             `of {${MAYOR_ZONE_IDS.join(', ')}}, overlapped by no facility footprint, with a road within ${ZONE_REACH} tiles`,
         );
         return;
       }
-      const window = await openLogWindow(url);
+      const opened = await openLog(url);
       const probe = await roundTripProbe(ctx, url, {
         what: `the zone of ${rectText(rect)} in ${GOVERNED_TOWN} — repaint it as Mayor of ${GOVERNED_TOWN} with REQ_DEFINE_ZONE`,
         member: 'RDODefineZone',
@@ -4724,14 +4845,21 @@ const zoneRoundTrip: Flow = {
         },
       });
       probes.push(probe);
-      assertions.check('the zone round trip proved the paint and the repaint', probe.status === 'PASS', probe.note);
+      assertions.check('the zone round trip proved the paint and the repaint', probeHeld(probe), probe.note);
       if (probe.written !== '') {
-        const repaint = await awaitMarker(
-          window,
-          { marker: LOG_MARKERS.RDODefineZone, match: l => zoneLogMatches(l, Number(probe.original), rect) },
-          TIMEOUTS.logSettle,
+        checkLogLine(
+          assertions,
+          'the repaint to the original logged its Defining Zone: line',
+          await lookForLine(opened, window =>
+            awaitMarker(
+              window,
+              { marker: LOG_MARKERS.RDODefineZone, match: l => zoneLogMatches(l, Number(probe.original), rect) },
+              TIMEOUTS.logSettle,
+            ),
+          ),
+          { marker: LOG_MARKERS.RDODefineZone, url },
+          `the ZONES read-back ${probe.restored ? 'shows' : 'does not show'} the original ${probe.original}`,
         );
-        assertions.check('the repaint to the original logged its Defining Zone: line', repaint !== null, repaint ?? '(no line)');
       }
     }),
 };
@@ -4765,7 +4893,7 @@ const fixturesEnsure: Flow = {
           assertions.check(`${o.kind}: fixture built`, Boolean(o.logLine) && o.x !== undefined, `${at} — ${o.logLine ?? ''}`);
         }
         else if (o.status === 'FAIL') assertions.check(`${o.kind} fixture`, false, o.reason);
-        else assertions.unproven(`${o.kind} fixture`, `${o.status === 'under construction' ? 'under construction — ' : ''}${o.reason ?? ''}`);
+        else assertions.untestable(`${o.kind} fixture`, `${o.status === 'under construction' ? 'under construction — ' : ''}${o.reason ?? ''}`);
       }
       return { ...report('fixtures-ensure', assertions, [], session), fixtures: outcomes };
     } finally {
@@ -4804,7 +4932,7 @@ export function fixtureKind(id: FixtureKindId): FixtureKind {
 }
 
 /**
- * SPO_test3's own fixture of a kind, or `undefined` with the reason recorded as unproven. A flow
+ * SPO_test3's own fixture of a kind, or `undefined` with the reason recorded as untestable. A flow
  * whose fixture is missing writes nothing, anywhere.
  */
 async function ownFixture(
@@ -4814,7 +4942,7 @@ async function ownFixture(
 ): Promise<OwnFixture | undefined> {
   const lookup = await findFixture(session, fixtureKind(kindId));
   if (!lookup.found) {
-    assertions.unproven(`${kindId} fixture`, lookup.reason ?? 'not found');
+    assertions.untestable(`${kindId} fixture`, lookup.reason ?? 'not found');
     return undefined;
   }
   return lookup.found;
@@ -5062,9 +5190,93 @@ export function refreshMissingKeys(
   return missing;
 }
 
+/**
+ * Whether a round trip held: PASS, or UNTESTABLE (the read-back confirmed, the log line could
+ * not be observed). Only a FAIL fails the check; `report()` carries an UNTESTABLE probe's note.
+ */
+export function probeHeld(probe: ProbeResult | undefined): boolean {
+  return probe !== undefined && probe.status !== 'FAIL';
+}
+
 /** One round trip's verdict, as an assertion naming the member. */
 function checkProbe(assertions: Assertions, probe: ProbeResult): void {
-  assertions.check(`${probe.member}: the write read back and was restored`, probe.status === 'PASS', probe.note);
+  assertions.check(`${probe.member}: the write read back and was restored`, probeHeld(probe), probe.note);
+}
+
+/**
+ * A log window opened before a write, or why it could not be: a log that cannot be read is a
+ * reason the line is unobservable, never a failed write (maintainer decision 2026-10-05).
+ */
+export interface OpenedLog {
+  url: string;
+  window: LogWindow | null;
+  fault?: string;
+}
+
+/** One search of the log for a line: the line, or `null` with the fault that stopped the read. */
+export interface LogLook {
+  line: string | null;
+  /** Why the log could not be read at all — absent when it was read and held no line. */
+  fault?: string;
+}
+
+/** Open the log window without throwing — the fault is kept for the UNTESTABLE reason. */
+export async function openLog(url: string): Promise<OpenedLog> {
+  try {
+    return { url, window: await openLogWindow(url) };
+  } catch (err: unknown) {
+    return { url, window: null, fault: `the log window could not be opened: ${toErrorMessage(err)}` };
+  }
+}
+
+/** Find the current Survival log and open its window, without throwing. */
+export async function openSurvivalLog(ctx: FlowContext): Promise<OpenedLog> {
+  let url: string;
+  try {
+    url = await survivalUrl(ctx);
+  } catch (err: unknown) {
+    return { url: '(the Survival log)', window: null, fault: `the current Survival log could not be found: ${toErrorMessage(err)}` };
+  }
+  return openLog(url);
+}
+
+/** Look for a line in an opened log without throwing. */
+export async function lookForLine(
+  opened: OpenedLog,
+  find: (window: LogWindow) => Promise<string | null>,
+): Promise<LogLook> {
+  if (opened.window === null) return { line: null, fault: opened.fault };
+  try {
+    return { line: await find(opened.window) };
+  } catch (err: unknown) {
+    return { line: null, fault: `the log could not be read: ${toErrorMessage(err)}` };
+  }
+}
+
+/** What was looked for and where, and why it was not seen — the UNTESTABLE reason's head. */
+export function logMissReason(look: LogLook, marker: string, url: string): string {
+  return look.fault !== undefined
+    ? `no "${marker}" line could be looked for in ${url} — ${look.fault}`
+    : `no "${marker}" within ${TIMEOUTS.logSettle} ms in ${url}`;
+}
+
+/**
+ * Record a log-line check (maintainer decision 2026-10-05, doc/E2E-POLICY.md §5). A line seen
+ * passes. A line missing or unreadable is UNTESTABLE — the line proves receipt only, and the
+ * agreeing evidence (`agrees`, e.g. the read-back) is what was observed. Returns whether it was seen.
+ */
+export function checkLogLine(
+  assertions: Assertions,
+  what: string,
+  look: LogLook,
+  where: { marker: string; url: string },
+  agrees: string,
+  untestableWhat: string = what,
+): boolean {
+  const seen = look.line !== null;
+  if (seen) assertions.check(what, seen, look.line ?? undefined);
+  else assertions.untestable(untestableWhat, `${logMissReason(look, where.marker, where.url)} — ${agrees}`);
+  return seen;
 }
 
 async function survivalUrl(ctx: FlowContext): Promise<string> {
@@ -5210,7 +5422,7 @@ const storePriceSalaries: Flow = {
       checkProbe(assertions, price);
 
       if (!details.tabs.some(t => t.id === 'workforce')) {
-        assertions.unproven('RDOSetSalaries', NO_WORKFORCE_REASON);
+        assertions.untestable('RDOSetSalaries', NO_WORKFORCE_REASON);
         return report('store-price-salaries', assertions, probes, session);
       }
 
@@ -5221,7 +5433,7 @@ const storePriceSalaries: Flow = {
       };
       const before = await readSalaries();
       if (before !== undefined && before.split(',').every(s => s.trim() === '')) {
-        assertions.unproven('RDOSetSalaries', NO_SALARY_CLASS_REASON);
+        assertions.untestable('RDOSetSalaries', NO_SALARY_CLASS_REASON);
         return report('store-price-salaries', assertions, probes, session);
       }
       const salaries = await roundTripProbe(ctx, url, {
@@ -5299,7 +5511,7 @@ const industryOutputPrice: Flow = {
         refusals.push(`${stub.name}: ${refusal ?? 'no fluid'}`);
       }
       if (!chosen) {
-        assertions.unproven(
+        assertions.untestable(
           'RDOSetOutputPrice',
           `no product gate is safe to drive — a price change re-checks every client link and drops a failing ` +
             `one (Kernel/Kernel.pas:7193-7205): ${refusals.length > 0 ? refusals.join(' | ') : 'the fixture lists no product gate'}`,
@@ -5385,7 +5597,7 @@ const industrySupplyLimits: Flow = {
         }
       }
       if (!gate) {
-        assertions.unproven(
+        assertions.untestable(
           'the supply limits',
           'no supply gate of the industry fixture publishes MaxPrice — only a TPullInput caches it (Kernel/Kernel.pas:7813)',
         );
@@ -5505,7 +5717,7 @@ const adBudgetRoundTrip: Flow = {
         }
       }
       if (!gate) {
-        assertions.unproven(
+        assertions.untestable(
           'RDOSetInputFluidPerc',
           `${fixtureLabel(fx)} lists no ${ADVERTISEMENT} input — the HQ declares one (Kernel/Headquarters.pas:130-143); ` +
             'nothing written',
@@ -5536,7 +5748,9 @@ const adBudgetRoundTrip: Flow = {
 /**
  * The ad budget's write and restore, each proven by its own Survival line — no read-back (see
  * `adBudgetRoundTrip`). The pending restore is recorded before the write and cleared only when
- * the restore's line is seen.
+ * the restore's line is seen: with no read-back, nothing observable could agree with a restore
+ * whose line is missing, so it still FAILs — the one exception to option b (maintainer decision
+ * 2026-10-05, doc/E2E-POLICY.md §9). A missing or unreadable *write* line is UNTESTABLE.
  */
 async function adBudgetLogRoundTrip(
   ctx: FlowContext,
@@ -5551,7 +5765,7 @@ async function adBudgetLogRoundTrip(
   const set = async (value: string): Promise<void> => {
     await setBuildingProperty(session, fx.x, fx.y, 'RDOSetInputFluidPerc', value, { fluidId: ADVERTISEMENT });
   };
-  const lineFor = (window: Awaited<ReturnType<typeof openLogWindow>>, value: string): Promise<string | null> =>
+  const lineFor = (window: LogWindow, value: string): Promise<string | null> =>
     awaitMarker(
       window,
       {
@@ -5572,50 +5786,58 @@ async function adBudgetLogRoundTrip(
     additionalParams: { fluidId: ADVERTISEMENT },
   });
 
+  const marker = LOG_MARKERS.RDOSetInputFluidPerc;
   let logLine: string | null = null;
+  let writeThrew = false;
+  let untestable: string | null = null;
+  // Each log is opened and searched apart from its write: a log fault is never the write's.
+  const writeLog = await openLog(url);
   try {
-    const window = await openLogWindow(url);
     await set(written);
-    logLine = await lineFor(window, written);
-    assertions.check(
-      `RDOSetInputFluidPerc: the write of ${written} logged its Setting Input fluid perc line`,
-      logLine !== null,
-      logLine ?? 'no model-server log line — the write never reached the object',
-    );
+    const look = await lookForLine(writeLog, window => lineFor(window, written));
+    logLine = look.line;
+    if (logLine === null) {
+      untestable = `the write of ${written}'s Setting Input fluid perc line: ${logMissReason(look, marker, url)}`;
+    } else {
+      assertions.check(`RDOSetInputFluidPerc: the write of ${written} logged its Setting Input fluid perc line`, logLine !== '', logLine);
+    }
   } catch (err: unknown) {
+    writeThrew = true;
     assertions.check(`RDOSetInputFluidPerc: the write of ${written} was accepted`, false, toErrorMessage(err));
   }
 
   // The restore runs whatever happened above.
-  let restoreLine: string | null = null;
+  let restoreLook: LogLook = { line: null };
+  const restoreLog = await openLog(url);
   try {
-    const window = await openLogWindow(url);
     await set(original);
-    restoreLine = await lineFor(window, original);
+    restoreLook = await lookForLine(restoreLog, window => lineFor(window, original));
   } catch (err: unknown) {
     assertions.check(`RDOSetInputFluidPerc: the restore to ${original} was accepted`, false, toErrorMessage(err));
   }
+  const restoreLine = restoreLook.line;
   const restored = restoreLine !== null;
   if (restored) ctx.lock.clearPendingRestore(key);
   assertions.check(
     `RDOSetInputFluidPerc: the restore to ${original} logged its Setting Input fluid perc line`,
     restored,
-    restoreLine ?? 'no restore line — pending restore kept',
+    restoreLine ?? `no restore line${restoreLook.fault ? ` (${restoreLook.fault})` : ''} — pending restore kept`,
   );
 
-  const failed = logLine === null || !restored;
+  const failed = writeThrew || !restored;
+  const proof =
+    'proven by the Survival lines alone — TCompanyInput.Spread overwrites the read-back every cycle ' +
+    '(Kernel/Kernel.pas:10003-10008, :10160; maintainer decision 2026-10-01)';
   return {
     what,
     member: 'RDOSetInputFluidPerc',
-    status: failed ? 'FAIL' : 'PASS',
+    status: failed ? 'FAIL' : untestable !== null ? 'UNTESTABLE' : 'PASS',
     original,
     written,
     logLine,
     readBack: 'UNCONFIRMED',
     restored,
-    note:
-      'proven by the Survival lines alone — TCompanyInput.Spread overwrites the read-back every cycle ' +
-      '(Kernel/Kernel.pas:10003-10008, :10160; maintainer decision 2026-10-01)',
+    note: untestable !== null ? `${untestable}; ${proof}` : proof,
   };
 }
 
@@ -5687,25 +5909,29 @@ const industryAutoBuy: Flow = {
       const fx = await ownFixture(session, 'industry', assertions);
       if (!fx) return report('industry-auto-buy', assertions, probes, session);
 
-      let gate: { name: string; fluid: string } | undefined;
+      let gate: { stub: GateStub; name: string; fluid: string } | undefined;
       for (const stub of await gateStubs(session, fx, 'supplies')) {
         const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
         if (supply?.metaFluid && supply.selected !== undefined) {
-          gate = { name: stub.name, fluid: supply.metaFluid };
+          gate = { stub, name: stub.name, fluid: supply.metaFluid };
           break;
         }
       }
       if (!gate) {
-        assertions.unproven(
+        assertions.untestable(
           'RDOSelSelected',
           'no supply gate of the industry fixture publishes Selected — only a TPullInput caches it (Kernel/Kernel.pas:7815)',
         );
         return report('industry-auto-buy', assertions, probes, session);
       }
 
-      const { name, fluid } = gate;
+      const { stub, name, fluid } = gate;
       const url = await survivalUrl(ctx);
-      const readSelected = async (): Promise<string | undefined> => (await readSupply(session, fx, name))?.selected;
+      // Read on the gate's own path, never re-listed by name: once Selected is 0 the gate's
+      // GateMap bit is 0 (`IsActive`, Kernel/Kernel.pas:5843-5845, :7897-7899) and the
+      // Supplies tab stops listing it (Voyager/SupplySheetForm.pas:382) — #1322.
+      const readSelected = async (): Promise<string | undefined> =>
+        (await gateConnections(session, fx, 'supplies', stub)).supply?.selected;
       const probe = await roundTripProbe(ctx, url, {
         what: `${fixtureLabel(fx)} ${name} auto-buy`,
         member: 'RDOSelSelected',
@@ -6081,7 +6307,7 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
       if (target) break;
     }
     if (!target) {
-      assertions.unproven(
+      assertions.untestable(
         side.connect,
         `no ${side.role} of SPO_test3's own company in ${GOVERNED_TOWN} for any ${side.tab} gate of the industry ` +
           `fixture — ${FOREIGN_WHY}: ${refusals.length > 0 ? refusals.join(' | ') : `the fixture lists no ${side.tab} gate`}`,
@@ -6130,7 +6356,7 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
     probes.push(probe);
     assertions.check(
       `${side.connect}: the gate listed the ${side.role}, and exactly its snapshot again after ${side.disconnect}`,
-      probe.status === 'PASS',
+      probeHeld(probe),
       probe.note,
     );
     // `written` is empty only when the round trip never reached its write (probeFailure);
@@ -6243,7 +6469,7 @@ const connectOnMap: Flow = {
         ...Object.entries(snapWarehouse).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(warehouse)} ${gate}`),
       ];
       if (incomplete.length > 0) {
-        assertions.unproven(
+        assertions.untestable(
           'ConnectFacilities',
           `gate(s) whose links were not all read — the undo could not tell a new link from an unread one: ${incomplete.join(' | ')}`,
         );
@@ -6251,7 +6477,7 @@ const connectOnMap: Flow = {
       }
       const shared = sharedFluids(snapIndustry, snapWarehouse);
       if (shared.length === 0) {
-        assertions.unproven(
+        assertions.untestable(
           'ConnectFacilities',
           `${fixtureLabel(industry)} and ${fixtureLabel(warehouse)} share no fluid on opposite gates — ConnectFacilities ` +
             'hires only a matching fluid (Kernel/Kernel.pas:5470-5513), so nothing is sent',
@@ -6314,7 +6540,7 @@ const connectOnMap: Flow = {
       probes.push(probe);
       assertions.check(
         'ConnectFacilities: a new link read back, and both facilities equal their snapshot after the undo',
-        probe.status === 'PASS',
+        probeHeld(probe),
         probe.note,
       );
       return report('connect-on-map', assertions, probes, session);
@@ -6368,7 +6594,7 @@ const companyInputDemand: Flow = {
         if (chosen) break;
       }
       if (!chosen) {
-        assertions.unproven(
+        assertions.untestable(
           'RDOSetCompanyInputDemand',
           'no editable company input on any fixture — cEditable is written only for a meta input flagged Editable ' +
             `(Kernel/Kernel.pas:5887): ${refusals.join(' | ')}`,
@@ -6382,7 +6608,7 @@ const companyInputDemand: Flow = {
       const p0 = companyDemandPercent(dem0, max);
       const p1 = companyDemandTarget(p0);
       if (Math.abs(companyDemandUnits(p1, max) - dem0) < 3) {
-        assertions.unproven(
+        assertions.untestable(
           'RDOSetCompanyInputDemand',
           `${fixtureLabel(fx)} input ${index} "${input.name}": capacity ${max} is too small to tell a move from the one ` +
             'unit the ceil introduces (Kernel/Kernel.pas:5878)',
@@ -6460,7 +6686,7 @@ const tradeSettings: Flow = {
         const read = readField(fx, groupId, 'TradeLevel');
         const original = await read();
         if (!isTradeLevelValue(original)) {
-          assertions.unproven(
+          assertions.untestable(
             `RDOSetTradeLevel on ${fixtureLabel(fx)}`,
             `its TradeLevel "${original ?? 'absent'}" is not one the client sends (TRADE_LEVEL_VALUES ` +
               `${TRADE_LEVEL_VALUES.join('/')}, trade-settings.ts) — the restore would need a value the client never writes`,
@@ -6519,7 +6745,7 @@ const warehouseWares: Flow = {
       if (!fx) return report('warehouse-wares', assertions, probes, session);
       const dims = await facilityDimensions(session);
       if (!isMegaStorage(dims, fx.visualClass)) {
-        assertions.unproven(
+        assertions.untestable(
           'RDOSelectWare',
           `${fixtureLabel(fx)} (facId ${String(dims[fx.visualClass]?.facId ?? 'absent')}) is not an Import/Export Storage — ` +
             'only a TMegaStorage publishes RDOSelectWare (StdBlocks/MegaWarehouse.pas:25); a TWarehouse publishes ' +
@@ -6530,7 +6756,7 @@ const warehouseWares: Flow = {
       const wares = (await readBuildingDetails(session, fx.x, fx.y, fx.visualClass)).warehouseWares ?? [];
       const ware = wares.find(w => !w.enabled) ?? wares[0];
       if (!ware) {
-        assertions.unproven('RDOSelectWare', `${fixtureLabel(fx)} lists no ware (GateMap)`);
+        assertions.untestable('RDOSelectWare', `${fixtureLabel(fx)} lists no ware (GateMap)`);
         return report('warehouse-wares', assertions, probes, session);
       }
       const read = async (): Promise<string | undefined> => {
@@ -6609,7 +6835,7 @@ const quickTradeRoundTrip: Flow = {
       }
       if (clients.length > 0) {
         refused = true;
-        assertions.unproven(
+        assertions.untestable(
           'RDOConnectToTycoon',
           'an SPO_test3 facility is already a client of the fixture (or a client could not be read) — the undo would ' +
             `drop it, whatever its type (Kernel/Kernel.pas:4593-4600): ${clients.join(' | ')}`,
@@ -6620,7 +6846,7 @@ const quickTradeRoundTrip: Flow = {
       const auto = await readAutoConnections(session);
       if (initialSupplierAt(auto, fx.x, fx.y)) {
         refused = true;
-        assertions.unproven(
+        assertions.untestable(
           'RDOConnectToTycoon',
           `${fixtureLabel(fx)} is one of SPO_test3's initial suppliers — the undo would remove it for good ` +
             '(Kernel/Kernel.pas:4564-4565, :4606-4607)',
@@ -6642,7 +6868,7 @@ const quickTradeRoundTrip: Flow = {
       }
       if (outside.length > 0) {
         refused = true;
-        assertions.unproven(
+        assertions.untestable(
           'RDOConnectToTycoon',
           `an SPO_test3 warehouse lies outside ${GOVERNED_TOWN} — Quick Trade reaches every company and town of the ` +
             `tycoon (Kernel/Kernel.pas:4537-4553): ${outside.join(' | ')}`,
@@ -6686,7 +6912,7 @@ const quickTradeRoundTrip: Flow = {
       probes.push(probe);
       assertions.check(
         'RDOConnectToTycoon: new links read back, and the output links equal their snapshot after the undo',
-        probe.status === 'PASS',
+        probeHeld(probe),
         probe.note,
       );
 
@@ -6766,15 +6992,16 @@ async function lotBuilding(session: LiveSession, x: number, y: number): Promise<
   return buildings.find(b => b.x === x && b.y === y);
 }
 
-/** Read at least once, then every `readBackPoll` until `done` holds or `readBack` has elapsed. */
+/** Read at least once, then every `readBackPoll` until `done` holds or `boundMs` (default `readBack`) has elapsed. */
 async function pollUntil<T>(
   read: () => Promise<T>,
   done: (v: T) => boolean,
   ctx: FlowContext,
+  boundMs: number = TIMEOUTS.readBack,
 ): Promise<{ ok: boolean; last: T }> {
   const now = ctx.now ?? Date.now;
   const sleep = ctx.sleep ?? defaultSleep;
-  const deadline = now() + TIMEOUTS.readBack;
+  const deadline = now() + boundMs;
   for (;;) {
     const last = await read();
     if (done(last)) return { ok: true, last };
@@ -6893,13 +7120,13 @@ async function placeRenameDemolishSteps(session: LiveSession, ctx: FlowContext, 
   const what = `a place-rename-demolish round trip in ${GOVERNED_TOWN}`;
   const cash = await readCash(session);
   if (cash === null) {
-    assertions.unproven(what, 'cash unknown — no EVENT_TYCOON_UPDATE received');
+    assertions.untestable(what, 'cash unknown — no EVENT_TYCOON_UPDATE received');
     return;
   }
   const pick = pickPlacement(await listBuildable(session), cash - FIXTURE_CASH_FLOOR);
   const info = pick.info;
   if (!info) {
-    assertions.unproven(what, `${pick.reason ?? 'nothing picked'} (${session.company.name})`);
+    assertions.untestable(what, `${pick.reason ?? 'nothing picked'} (${session.company.name})`);
     return;
   }
   const cls = info.facilityClass;
@@ -6908,12 +7135,12 @@ async function placeRenameDemolishSteps(session: LiveSession, ctx: FlowContext, 
   const footprint =
     info.xsize && info.ysize ? { xsize: info.xsize, ysize: info.ysize } : d ? { xsize: d.xsize, ysize: d.ysize } : null;
   if (!footprint) {
-    assertions.unproven(what, `footprint unknown for ${cls}`);
+    assertions.untestable(what, `footprint unknown for ${cls}`);
     return;
   }
   const lot = await findFreeLot(session, footprint, info.zoneRequirement);
   if (!lot) {
-    assertions.unproven(
+    assertions.untestable(
       what,
       `no free lot in ${GOVERNED_TOWN} for ${cls} (${footprint.xsize}×${footprint.ysize}, ${info.zoneRequirement || 'no zone'})`,
     );
@@ -6947,7 +7174,7 @@ async function placeRenameDemolishSteps(session: LiveSession, ctx: FlowContext, 
     });
     refused = placed.code !== 0;
     if (placed.code === ERROR_TooManyFacilities) {
-      assertions.unproven(
+      assertions.untestable(
         what,
         `NewFacility answered ERROR_TooManyFacilities for ${cls} — facility limit or company uniqueness (Kernel/World.pas:3195)`,
       );
@@ -7187,7 +7414,7 @@ function propertyWriter(session: LiveSession, fx: OwnFixture, propertyName: stri
   };
 }
 
-/** Whether the fixture's template carries the tab — otherwise `member` is unproven, nothing sent. */
+/** Whether the fixture's template carries the tab — otherwise `member` is untestable, nothing sent. */
 async function hasTab(
   session: LiveSession,
   fx: OwnFixture,
@@ -7197,7 +7424,7 @@ async function hasTab(
 ): Promise<boolean> {
   const details = await readBuildingDetails(session, fx.x, fx.y, fx.visualClass);
   if (details.tabs.some(t => t.id === tabId)) return true;
-  assertions.unproven(member, `${fixtureLabel(fx)} carries no ${tabId} tab — its template does not offer it`);
+  assertions.untestable(member, `${fixtureLabel(fx)} carries no ${tabId} tab — its template does not offer it`);
   return false;
 }
 
@@ -7209,7 +7436,7 @@ type FixtureSteps = (
   probes: ProbeResult[],
 ) => Promise<void>;
 
-/** A flow on one fixture's tab: no fixture or no tab → unproven, nothing sent. */
+/** A flow on one fixture's tab: no fixture or no tab → untestable, nothing sent. */
 function fixtureFlow(
   name: string,
   what: string,
@@ -7290,7 +7517,7 @@ const residentialRepair = fixtureFlow(
       return;
     }
     if (Number(raw) !== 0) {
-      assertions.unproven(
+      assertions.untestable(
         'RdoRepair',
         `Repair reads ${raw} — a repair of the owner's own is running; RdoStopRepair would cancel it (Kernel/PopulatedBlock.pas:783)`,
       );
@@ -7330,7 +7557,7 @@ const residentialRepair = fixtureFlow(
 
 /**
  * The bank's interest, term and budget percentage — three live gets (`enrichBankTab`). Interest
- * only ever goes down (`lowerInterest`); an original of 0 leaves it unsent and unproven.
+ * only ever goes down (`lowerInterest`); an original of 0 leaves it unsent and untestable.
  */
 const bankSettings = fixtureFlow(
   'bank-settings',
@@ -7347,7 +7574,7 @@ const bankSettings = fixtureFlow(
     if (interest === undefined || Number(interest) > 0) {
       members.push({ key: 'Interest', label: 'Interest', testValue: lowerInterest, write: propertyWriter(session, fx, 'Interest') });
     } else {
-      assertions.unproven(
+      assertions.untestable(
         'Interest',
         `reads ${interest} — the flow only nudges it down: a loan granted during the window keeps its rate for life (Kernel/Kernel.pas:8837)`,
       );
@@ -7430,7 +7657,7 @@ async function driveFacilityLoan(secondary: LiveSession, ctx: FlowContext): Prom
     const perc = general ? propertyValue(general, 'bankGeneral', 'BudgetPerc') : undefined;
     const balance = (await readOrUndefined(() => readBank(me)))?.balance;
     if (perc === undefined || perc.trim() === '' || balance === undefined || balance.trim() === '') {
-      assertions.unproven(
+      assertions.untestable(
         what,
         `the bank's BudgetPerc (${perc ?? 'unreadable'}) or ${PRIMARY_ACCOUNT.username}'s balance ` +
           `(${balance ?? 'unreadable'}) cannot be read — the owner's cover (Kernel/Kernel.pas:8813-8814, ` +
@@ -7440,7 +7667,7 @@ async function driveFacilityLoan(secondary: LiveSession, ctx: FlowContext): Prom
     }
     const cover = Math.min(1, Number(perc) / 100) * Number(balance);
     if (!(cover >= Number(BORROW_AMOUNT))) {
-      assertions.unproven(
+      assertions.untestable(
         what,
         `the owner's loan limit is ${cover} (BudgetPerc ${perc} of ${balance}, Kernel/Kernel.pas:9095-9097) < ` +
           `$${BORROW_AMOUNT} — TBank.LoanApproved would refuse it (Kernel/Kernel.pas:8911) or grant it ` +
@@ -7451,7 +7678,7 @@ async function driveFacilityLoan(secondary: LiveSession, ctx: FlowContext): Prom
 
     const secondaryBank = await readOrUndefined(() => readBank(secondary));
     if (!secondaryBank || !(Number(secondaryBank.balance) > 0)) {
-      assertions.unproven(
+      assertions.untestable(
         what,
         `${HIM}'s balance ${secondaryBank?.balance ?? 'unreadable'} is not > 0 — RDOPayOff pays only if ` +
           'Loan.Amount < Budget - AprFee (Kernel/Kernel.pas:11572); nothing borrowed',
@@ -7463,7 +7690,7 @@ async function driveFacilityLoan(secondary: LiveSession, ctx: FlowContext): Prom
       bankDebtorCount(await readSectionGroups(me, fx.x, fx.y, 'bankLoans', fx.visualClass), SECONDARY_ACCOUNT);
     const rows0 = await readOrUndefined(readRows);
     if (rows0 === undefined) {
-      assertions.unproven(
+      assertions.untestable(
         what,
         `${fixtureLabel(fx)}'s bankLoans group carries no LoanCount (StdBlocks/Banks.pas:194-204) — the ` +
           "bank's side of the loan cannot be read back; nothing borrowed",
@@ -7701,7 +7928,7 @@ async function cloneSalariesSteps(
   const holdings = (await scanHoldings(session)).holdings.filter(h => h.tabIds.includes('workforce'));
   const cls = holdings.find(h => holdings.filter(o => o.visualClass === h.visualClass).length >= 2)?.visualClass;
   if (cls === undefined) {
-    assertions.unproven(
+    assertions.untestable(
       what,
       'no two finished SPO_test3 work centers of one class in Helartia; TWorld.CloneFacility writes only the ' +
         'same FacId (Kernel/World.pas:3529); nothing sent',
@@ -7718,7 +7945,7 @@ async function cloneSalariesSteps(
   for (const h of listed) {
     const triplet = await readSalaryTriplet(session, h);
     if (triplet === undefined) {
-      assertions.unproven(
+      assertions.untestable(
         what,
         `the salaries of ${fixtureLabel(h)} cannot be read (workforce.Salaries0..2) — it could not be restored ` +
           'or proven unchanged; nothing sent',
@@ -7731,7 +7958,7 @@ async function cloneSalariesSteps(
   for (const h of same) {
     const flag = await readAcceptCloning(session, h);
     if (flag === undefined) {
-      assertions.unproven(
+      assertions.untestable(
         what,
         `${fixtureLabel(h)}'s AcceptCloning cannot be read — whether the clone writes it is unknown ` +
           '(Kernel/Kernel.pas:5101-5104); nothing sent',
@@ -7741,7 +7968,7 @@ async function cloneSalariesSteps(
     if (flag === '1') accepting.add(holdingKey(h));
   }
   if (accepting.size === 0) {
-    assertions.unproven(
+    assertions.untestable(
       what,
       `no ${cls} target accepts cloning — TFacility.CopySettingsFrom skips it (Kernel/Kernel.pas:5101-5104); nothing sent`,
     );
@@ -7750,7 +7977,7 @@ async function cloneSalariesSteps(
 
   const sourceTriplet = originals.get(holdingKey(source)) as string;
   if (sourceTriplet.split(',').every(s => s.trim() === '')) {
-    assertions.unproven(
+    assertions.untestable(
       what,
       `${fixtureLabel(source)} publishes no salary class — TWorkCenter.StoreToCache writes Salaries<k> only for ` +
         'a class with capacity (Kernel/WorkCenterBlock.pas:567-571), so no clone could be read back; nothing sent',
@@ -7826,7 +8053,7 @@ async function cloneSalariesSteps(
  * (Kernel/World.pas:3494) writes every facility of the source's kind of that company in that town,
  * so every SPO_test3 work center in Helartia is snapshotted before anything is sent, and each one
  * is restored in the same run. A target refusing cloning (Kernel/Kernel.pas:5101-5104) must read
- * back unchanged. An unreadable target, or no accepting one, is UNPROVEN with nothing sent.
+ * back unchanged. An unreadable target, or no accepting one, is UNTESTABLE with nothing sent.
  */
 const cloneSalariesRoundTrip: Flow = {
   name: 'clone-salaries-roundtrip',
@@ -7877,7 +8104,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
 
   const cash = await readCash(session);
   if (cash === null) {
-    assertions.unproven('RDOQueueResearch', 'cash unknown — no EVENT_TYCOON_UPDATE received');
+    assertions.untestable('RDOQueueResearch', 'cash unknown — no EVENT_TYCOON_UPDATE received');
     return;
   }
 
@@ -7894,7 +8121,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     }
   }
   if (!found) {
-    assertions.unproven('RDOQueueResearch', `${name} not listed at ${at} (categories 0..${catMax})`);
+    assertions.untestable('RDOQueueResearch', `${name} not listed at ${at} (categories 0..${catMax})`);
     return;
   }
   const { category } = found;
@@ -7904,7 +8131,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: id });
     const reset = await pollUntil(stateOf, s => s === 'available', ctx);
     if (!reset.ok) {
-      assertions.unproven(
+      assertions.untestable(
         'RDOQueueResearch',
         `${name} at ${at}: read ${found.state}, cancel/sell sent, still reads ${reset.last} — not reset; nothing else sent`,
       );
@@ -7914,7 +8141,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
     found = { category, state: 'available', enabled: data.available.some(i => i.inventionId === id && i.enabled === true) };
   }
   if (!found.enabled) {
-    assertions.unproven(
+    assertions.untestable(
       'RDOQueueResearch',
       `${name} at ${at}: listed but not enabled — its prerequisite Bars is not owned, or the tier / nobility does not match ` +
         '(TInvention.Enabled, Inventions/Inventions.pas:658-693); nothing sent',
@@ -7933,7 +8160,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
   // Kernel/ResearchCenter.pas:240-253) — it would never read queued.
   const cost = researchCost(details.properties);
   if (cost > cash) {
-    assertions.unproven('RDOQueueResearch', `${name} costs $${cost} (Price + License), above the cash ($${cash}); nothing sent`);
+    assertions.untestable('RDOQueueResearch', `${name} costs $${cost} (Price + License), above the cash ($${cash}); nothing sent`);
     return;
   }
 
@@ -8115,11 +8342,11 @@ async function upgradeSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixtu
     return;
   }
   if (before.level >= before.max) {
-    assertions.unproven('REQ_BUILDING_UPGRADE', `${fixtureLabel(fx)} is at MaxUpgrade (${before.level}/${before.max}) — nothing to start`);
+    assertions.untestable('REQ_BUILDING_UPGRADE', `${fixtureLabel(fx)} is at MaxUpgrade (${before.level}/${before.max}) — nothing to start`);
     return;
   }
   if (before.upgrading > 0 || before.pending > 0) {
-    assertions.unproven(
+    assertions.untestable(
       'REQ_BUILDING_UPGRADE',
       `${fixtureLabel(fx)} is already upgrading (Upgrading ${before.upgrading}, Pending ${before.pending}) — ` +
         'TBlock.StartUpgrading is a no-op while fUpgradeHours > 0 (Kernel/Kernel.pas:6525), and the STOP would cancel ' +
@@ -8632,7 +8859,7 @@ const chatPrivateChannel: Flow = {
           : `${channel} is still listed — a third party may have joined: its name and password are ` +
               'public (Interface Server/InterfaceServer.pas:4594, :3373-3390); a human must check',
       );
-      assertions.check('the channel round trip passed', probe?.status === 'PASS', probe?.note);
+      assertions.check('the channel round trip passed', probeHeld(probe), probe?.note);
       assertions.check('no gateway errors in the channel', driver.errors.length === 0);
       return report('chat-private-channel', assertions, probes, session);
     } finally {
@@ -8705,6 +8932,145 @@ const chatChase: Flow = {
   },
 };
 
+/** The refusal `handleGmChatSend` answers a non-GM with (ws-handlers/chat-handlers.ts). */
+const GM_REFUSAL = 'Only Game Masters can send GM messages';
+/** The phase gate's refusal (`PHASE_ALLOWED_MESSAGES` in server.ts). */
+const PHASE_REFUSAL = 'Operation not allowed in current session state';
+
+/**
+ * Send one GM message expecting a refusal. The handler never answers an accepted GM send, so
+ * acceptance surfaces as a timeout (a plain Error), a refusal as a WsDriverError.
+ */
+async function gmSendRefusal(driver: WsDriver, message: string): Promise<WsDriverError | string> {
+  try {
+    await driver.request<WsRespChatSuccess>(
+      { type: WsMessageType.REQ_GM_CHAT_SEND, message },
+      WsMessageType.RESP_CHAT_SUCCESS,
+    );
+    return 'answered without an error';
+  } catch (err: unknown) {
+    return err instanceof WsDriverError ? err : `not refused: ${toErrorMessage(err)}`;
+  }
+}
+
+/**
+ * GM broadcast (#1199). `handleGmChatSend` (ws-handlers/chat-handlers.ts) makes no RDO call and
+ * sends only to the gateway's own `connectedClients` — on the bench, the drive's own sessions,
+ * where SPO_test3 is the named GM (#1197, doc/E2E-POLICY.md §6). Nothing reaches a player and
+ * there is nothing to undo. The secondary account logs in BEFORE the send, and is the receiver
+ * rather than a second SPO_test3 session: a second SPO_test3 world session would retire the first
+ * (Interface Server/InterfaceServer.pas:3138-3146).
+ */
+const gmBroadcast: Flow = {
+  name: 'gm-broadcast',
+  what:
+    `${SECONDARY_ACCOUNT.username} online -> SPO_test3 GM message -> ${SECONDARY_ACCOUNT.username} receives it on GM -> ` +
+    `${SECONDARY_ACCOUNT.username} refused -> a directory-only session refused by the phase gate`,
+  mutates: false,
+  run: async () => {
+    const secondary = await loginSecondary();
+    if ('skipped' in secondary) return skippedResult('gm-broadcast', secondary.skipped);
+    try {
+      const session = await login(PRIMARY_ACCOUNT);
+      try {
+        const assertions = new Assertions();
+        const id = randomUUID().slice(0, 8);
+        const text = `e2e gm probe ${id} — automated L2 check, safe to ignore`;
+
+        // 1. Delivered. Matched on channel, text, GM flag and sender — Lobby chat shares the event type.
+        const from = secondary.driver.receivedCount();
+        await attempt(assertions, `${SECONDARY_ACCOUNT.username} received the GM message on channel GM`, () => {
+          // send, not request: an accepted GM send gets no reply.
+          session.driver.send({ type: WsMessageType.REQ_GM_CHAT_SEND, message: text });
+          return secondary.driver.waitFor(
+            m => {
+              const e = m as WsEventChatMsg;
+              return (
+                m.type === WsMessageType.EVENT_CHAT_MSG &&
+                e.channel === 'GM' &&
+                e.message === text &&
+                e.isGM === true &&
+                isSelf(e.from)
+              );
+            },
+            TIMEOUTS.request,
+            `EVENT_CHAT_MSG on GM carrying "${text}"`,
+            from,
+          );
+        });
+        const senderErrors = session.driver.errors
+          .map(e => (e as { errorMessage?: string }).errorMessage ?? 'gateway error')
+          .join('; ');
+        assertions.check(
+          'no gateway errors on the GM sender',
+          session.driver.errors.length === 0,
+          senderErrors === ''
+            ? undefined
+            : `${senderErrors} — is the gateway started with SPO_GM_USERS=SPO_test3 (#1197)?`,
+        );
+
+        // 2. A non-GM is refused by the GM check.
+        const refusal = await gmSendRefusal(secondary.driver, `e2e gm refusal probe ${id} — safe to ignore`);
+        const refusalDetail = refusal instanceof WsDriverError ? refusal.message : refusal;
+        assertions.check(
+          `a non-GM session (${SECONDARY_ACCOUNT.username}) is refused`,
+          refusalDetail === GM_REFUSAL,
+          refusalDetail,
+        );
+
+        // 3. A session still DIRECTORY_CONNECTED — as the GM, so only the phase gate can refuse it
+        // (it is not in connectedClients, so the GM check would give the other message).
+        // No REQ_LOGIN_WORLD: no Interface Server logon, no eviction of the world session.
+        let phaseOk = false;
+        let phaseDetail: string;
+        try {
+          const dir = await WsDriver.connect(GATEWAY_URL, GATEWAY_ORIGIN);
+          try {
+            await dir.request(
+              {
+                type: WsMessageType.REQ_AUTH_CHECK,
+                username: PRIMARY_ACCOUNT.username,
+                password: PRIMARY_ACCOUNT.password,
+              },
+              WsMessageType.RESP_AUTH_SUCCESS,
+              TIMEOUTS.login,
+            );
+            await dir.request(
+              {
+                type: WsMessageType.REQ_CONNECT_DIRECTORY,
+                username: PRIMARY_ACCOUNT.username,
+                password: PRIMARY_ACCOUNT.password,
+                zonePath: ZONE_PATH,
+              },
+              WsMessageType.RESP_CONNECT_SUCCESS,
+              TIMEOUTS.login,
+            );
+            const outcome = await gmSendRefusal(dir, `e2e gm phase probe ${id} — safe to ignore`);
+            phaseOk =
+              outcome instanceof WsDriverError &&
+              outcome.message === PHASE_REFUSAL &&
+              outcome.code === ERROR_AccessDenied;
+            phaseDetail = outcome instanceof WsDriverError ? `${outcome.message} (code ${outcome.code})` : outcome;
+          } finally {
+            // A session never in the world is never parked: a bare close ends it.
+            await dir.close();
+          }
+        } catch (err: unknown) {
+          phaseOk = false;
+          phaseDetail = toErrorMessage(err);
+        }
+        assertions.check('a session not yet WORLD_CONNECTED is refused by the phase gate', phaseOk, phaseDetail);
+
+        return report('gm-broadcast', assertions, [], session);
+      } finally {
+        await logoff(session);
+      }
+    } finally {
+      await logoff(secondary);
+    }
+  },
+};
+
 export const FLOWS: Flow[] = [
   loginSpine,
   sessionResume,
@@ -8739,6 +9105,7 @@ export const FLOWS: Flow[] = [
   chatRead,
   chatPrivateChannel,
   chatChase,
+  gmBroadcast,
   bankBorrowPayoff,
   bankSendReturn,
   portraitRoundTrip,
@@ -8807,9 +9174,9 @@ export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult>
       const { what, detail } = seeded.outcome;
       result = {
         name: flow.name,
-        status: 'UNPROVEN',
+        status: 'UNTESTABLE',
         assertions: [],
-        unproven: [`the flow's data — seed failed: ${what}${detail ? ` (${detail})` : ''}`],
+        untestable: [`the flow's data — seed failed: ${what}${detail ? ` (${detail})` : ''}`],
         probes: [],
         messagesSent: 0,
         messagesReceived: 0,
@@ -8856,7 +9223,7 @@ function skippedResult(name: string, reason: string): FlowResult {
     status: 'SKIPPED',
     skipped: reason,
     assertions: [],
-    unproven: [],
+    untestable: [],
     probes: [],
     messagesSent: 0,
     messagesReceived: 0,
@@ -8872,7 +9239,7 @@ async function runUnseeded(flow: Flow, ctx: FlowContext): Promise<FlowResult> {
       name: flow.name,
       status: 'FAIL',
       assertions: [],
-      unproven: [],
+      untestable: [],
       probes: [],
       messagesSent: 0,
       messagesReceived: 0,
@@ -8903,11 +9270,15 @@ function report(
   const sent = session.driver.log.filter(e => e.direction === 'sent').length;
   const received = session.driver.log.filter(e => e.direction === 'received').length;
   const failed = assertions.failed || probes.some(p => p.status === 'FAIL');
+  const untestable = [
+    ...assertions.untestableItems,
+    ...probes.filter(p => p.status === 'UNTESTABLE').map(p => `${p.what} — ${p.note ?? 'not observable'}`),
+  ];
   return {
     name,
-    status: failed ? 'FAIL' : assertions.unprovenItems.length > 0 ? 'UNPROVEN' : 'PASS',
+    status: failed ? 'FAIL' : untestable.length > 0 ? 'UNTESTABLE' : 'PASS',
     assertions: assertions.items,
-    unproven: assertions.unprovenItems,
+    untestable,
     probes,
     messagesSent: sent,
     messagesReceived: received,

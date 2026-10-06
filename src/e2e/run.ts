@@ -12,7 +12,7 @@ import { REPORT_DIR, WORLD_NAME } from './config';
 import { CAPABILITIES, checkCapability, type Capability, type CapabilityEvidence } from './capability';
 import { FLOWS, flowByName, runFlow, type FlowResult } from './flows';
 import { preflight, type PreflightResult } from './preflight';
-import { GATE_ONLY } from './routing';
+import { GATE_ONLY, SERVER_QUARANTINE, type ServerQuarantine } from './routing';
 import { WorldLock } from './world-lock';
 
 /**
@@ -28,6 +28,9 @@ const EXIT: Readonly<Record<LiveRunResult['status'], number>> = {
   BLOCKED: 2,
   ENVIRONMENT: 3,
 };
+
+/** What the nightly attaches to a SERVER_QUARANTINE flow's result (doc/E2E-POLICY.md §7). */
+export type QuarantineMark = Pick<ServerQuarantine, 'reason' | 'link' | 'lift'>;
 
 export interface LiveRunResult {
   world: string;
@@ -46,10 +49,13 @@ export interface LiveRunResult {
   finishedAt: string;
   status: 'PASS' | 'FAIL' | 'ENVIRONMENT' | 'BLOCKED';
   preflight: PreflightResult;
-  flows: FlowResult[];
+  /** A quarantined flow keeps its real status; the nightly marks it (see {@link main}). */
+  flows: Array<FlowResult & { quarantined?: QuarantineMark }>;
   /** What the server says the test account may do — read-only, gathered before the flows. */
   capabilities: CapabilityEvidence[];
   error?: string;
+  /** Set when releasing the world lock threw — the world is left dirty, which always FAILs. */
+  releaseError?: string;
 }
 
 export interface LiveRunOptions {
@@ -153,6 +159,7 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
       flows: results,
       capabilities,
       error: releaseError ?? skipError,
+      ...(releaseError !== undefined ? { releaseError } : {}),
     };
   } finally {
     process.removeListener('beforeExit', onDrain);
@@ -189,20 +196,43 @@ export async function main(
   // SKIPPED flows is reported PASS, the skips listed. An explicit --flows — a card's proof —
   // stays BLOCKED: a card cannot prove a flow that did not run. The lock-refusal BLOCK carries
   // no flows, and a skip beside a failure is already FAIL, so this test is exact.
+  //
+  // The nightly also absorbs a SERVER_QUARANTINE flow's FAIL (doc/E2E-POLICY.md §7): each such
+  // flow keeps its real status and is marked, and a run whose only FAILs are quarantined flows
+  // is PASS. A dirty world (releaseError) or any other FAIL still FAILs. An explicit --flows
+  // drives and judges a quarantined flow like any other.
+  const nightly = named === undefined;
+  const flowResults = nightly
+    ? result.flows.map(flow => {
+        const entry = SERVER_QUARANTINE[flow.name];
+        return entry ? { ...flow, quarantined: { reason: entry.reason, link: entry.link, lift: entry.lift } } : flow;
+      })
+    : result.flows;
+  const fails = flowResults.filter(f => f.status === 'FAIL');
+  const absorbed =
+    nightly &&
+    result.status === 'FAIL' &&
+    result.releaseError === undefined &&
+    fails.length > 0 &&
+    fails.every(f => f.name in SERVER_QUARANTINE);
   const reported: LiveRunResult =
-    named === undefined && result.status === 'BLOCKED' && result.flows.some(f => f.status === 'SKIPPED')
-      ? { ...result, status: 'PASS' }
-      : result;
+    absorbed || (nightly && result.status === 'BLOCKED' && result.flows.some(f => f.status === 'SKIPPED'))
+      ? { ...result, flows: flowResults, status: 'PASS' }
+      : { ...result, flows: flowResults };
   const file = path.join(REPORT_DIR, `live-${reported.startedAt.replace(/[:.]/g, '-')}.json`);
   fs.mkdirSync(REPORT_DIR, { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(reported, null, 2)}\n`, 'utf8');
 
   const notDriven = skipped.map(n => `  gate-only, not driven: ${n} — ${GATE_ONLY[n]}`);
-  out.write(`${[formatSummary(reported), ...notDriven].join('\n')}\nArtifact: ${file}\n`);
+  out.write(`${[formatSummary(reported, SERVER_QUARANTINE), ...notDriven].join('\n')}\nArtifact: ${file}\n`);
   return EXIT[reported.status];
 }
 
-export function formatSummary(result: LiveRunResult): string {
+/**
+ * The run's summary. With a quarantine table, a `Server quarantine (N):` block lists every entry
+ * and the flow's real outcome in this run — printed on every run, passing or not.
+ */
+export function formatSummary(result: LiveRunResult, quarantine: Record<string, ServerQuarantine> = {}): string {
   const shaSuffix = result.sha ? ` (${result.sha.slice(0, 8)})` : '';
   const lines = [`L2 live drive on ${result.world} — ${result.status}${shaSuffix}`];
   if (result.error) lines.push(`  ! ${result.error}`);
@@ -230,11 +260,24 @@ export function formatSummary(result: LiveRunResult): string {
     for (const assertion of flow.assertions.filter(a => !a.ok)) {
       lines.push(`          x ${assertion.what}${assertion.detail ? ` (${assertion.detail})` : ''}`);
     }
-    for (const reason of flow.unproven) lines.push(`          ? unproven: ${reason}`);
+    // Every reason, flow and probe alike (report() folds an UNTESTABLE probe's note in): the job
+    // log is this output, so the reason lands in the run log on every run.
+    for (const reason of flow.untestable) lines.push(`          ? untestable: ${reason}`);
     for (const probe of flow.probes) {
       lines.push(
         `          probe ${probe.status}: ${probe.what} — log=${probe.logLine ? 'yes' : 'NO'}, ` +
           `readBack=${probe.readBack}, restored=${probe.restored}`,
+      );
+    }
+  }
+  const entries = Object.entries(quarantine);
+  if (entries.length > 0) {
+    lines.push(`Server quarantine (${entries.length}):`);
+    for (const [flow, entry] of entries) {
+      const ran = result.flows.find(f => f.name === flow);
+      lines.push(
+        `  ${flow} — ${entry.reason} | link: ${entry.link} | lift: ${entry.lift} | added: ${entry.added} | ` +
+          `this run: ${ran ? ran.status : 'not run'}`,
       );
     }
   }

@@ -9,11 +9,13 @@ import {
   FALLBACK_ONLY,
   EXCLUDED,
   NOT_ROUTED,
+  SERVER_QUARANTINE,
   route,
   presidentMembersInDiff,
   isCallSite,
   launderedTests,
   type RouteRule,
+  type ServerQuarantine,
 } from './routing';
 import { PRESIDENT_MEMBERS } from './config';
 import { FLOWS } from './flows';
@@ -345,17 +347,49 @@ describe('the town paper', () => {
   // The paper is not on the RDO wire at all — it is scraped off the ASP pages —
   // so the governance flows would prove nothing about a change to it.
   // newspaper-read stays nightly-only (#1009): the bench cannot create a kept issue,
-  // so it could only end UNPROVEN. The columns board read is required instead.
+  // so it could only end UNTESTABLE. The columns board read is routed by both newspaper rules
+  // and required: an empty board (#1260: every post answers HTTP 500 server-side, so no column
+  // can be seeded) ends UNTESTABLE, which passes — its quarantine entry was removed (#1320).
   const paperPaths = [
     'src/server/session/newspaper-handler.ts',
     'src/client/components/modals/NewspaperModal.tsx',
     'src/client/store/newspaper-store.ts',
   ];
 
-  it.each(paperPaths)('routes %s to the spine and the board read, and it is observable live', file => {
-    const d = route([file]);
+  it('routes the paper modal to the columns board read, with a browser look', () => {
+    const d = route(['src/client/components/modals/NewspaperModal.tsx']);
     expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
+    expect(d.needsL3).toBe(true);
     expect(d.staticOnly).toBe(false);
+  });
+
+  it.each(['src/server/session/newspaper-handler.ts', 'src/client/store/newspaper-store.ts'])(
+    'routes %s to the columns board read',
+    file => {
+      const d = route([file]);
+      expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
+      expect(d.staticOnly).toBe(false);
+    },
+  );
+
+  it('requires newspaper-board-read from both newspaper rules, no longer quarantined (#1320)', () => {
+    const modalRule = firstRule(ROUTES, 'src/client/components/modals/NewspaperModal.tsx');
+    const paperRule = firstRule(ROUTES, 'src/server/session/newspaper-handler.ts');
+    expect(modalRule?.flows).toContain('newspaper-board-read');
+    expect(paperRule?.flows).toContain('newspaper-board-read');
+    expect(NIGHTLY_ONLY).not.toHaveProperty('newspaper-board-read');
+    expect(Object.values(EXCLUDED).some(why => why.includes('newspaper-board-read'))).toBe(false);
+    expect(EXCLUDED).not.toHaveProperty('REQ_NEWSPAPER_BOARD');
+    expect(SERVER_QUARANTINE).not.toHaveProperty('newspaper-board-read');
+    for (const f of [
+      'src/server/session/newspaper-handler.ts',
+      'src/server/ws-handlers/newspaper-handlers.ts',
+      'src/client/store/newspaper-store.ts',
+      'src/client/components/modals/NewspaperModal.tsx',
+    ]) {
+      expect(route([f]).required).toContain('newspaper-board-read');
+      expect(route([f]).reasons.some(r => r.startsWith('server quarantine'))).toBe(false);
+    }
   });
 
   it.each(paperPaths)('does not route %s to the governance or inspector flows', file => {
@@ -365,9 +399,12 @@ describe('the town paper', () => {
     }
   });
 
-  it('routes the newspaper WS handler to the board read, not to the ws-handlers rule', () => {
-    expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).required)
-      .toEqual([SPINE_FLOW, 'newspaper-board-read']);
+  it('routes the newspaper WS handler by the newspaper rule, not the ws-handlers fallback, to the columns board read', () => {
+    const file = 'src/server/ws-handlers/newspaper-handlers.ts';
+    const rule = firstRule(ROUTES, file);
+    expect(rule?.fallback).toBeFalsy();
+    expect(rule?.test.test('src/client/store/newspaper-store.ts')).toBe(true);
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
   });
 
   it('leaves no rule with a spine-alone option', () => {
@@ -661,6 +698,73 @@ describe('routing invariants (#1134)', () => {
   });
 });
 
+/** Every way an entry of a SERVER_QUARANTINE table breaks its contract (#1310). */
+function quarantineViolations(table: Record<string, Partial<ServerQuarantine>>, names: string[]): string[] {
+  const out: string[] = [];
+  for (const [flow, entry] of Object.entries(table)) {
+    if (!names.includes(flow)) out.push(`not a flow: ${flow}`);
+    if (!entry.reason?.trim()) out.push(`no reason: ${flow}`);
+    if (!/^https:\/\/\S+$/.test(entry.link ?? '')) out.push(`no https link: ${flow}`);
+    if (!entry.lift?.trim()) out.push(`no lift condition: ${flow}`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.added ?? '')) out.push(`no YYYY-MM-DD date: ${flow}`);
+  }
+  return out;
+}
+
+describe('SERVER_QUARANTINE — a live-server fault, never a code defect (#1310)', () => {
+  const good: ServerQuarantine = {
+    reason: 'the server refuses',
+    link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1',
+    lift: 'it stops refusing',
+    added: '2026-10-04',
+  };
+
+  // newspaper-board-read left the table with #1320: its fault leaves it UNTESTABLE, which passes.
+  it('holds portrait-roundtrip, with a reason, an https link, a lift and a date', () => {
+    expect(Object.keys(SERVER_QUARANTINE).sort()).toEqual(['portrait-roundtrip']);
+    expect(quarantineViolations(SERVER_QUARANTINE, flowNames)).toEqual([]);
+  });
+
+  it.each<[string, Partial<ServerQuarantine>, string]>([
+    ['a missing lift', { ...good, lift: undefined }, 'no lift condition: login-spine'],
+    ['an empty reason', { ...good, reason: ' ' }, 'no reason: login-spine'],
+    ['an http link', { ...good, link: 'http://example.com' }, 'no https link: login-spine'],
+    ['a bad date', { ...good, added: '4 Oct 2026' }, 'no YYYY-MM-DD date: login-spine'],
+  ])('the guard catches %s', (_label, entry, violation) => {
+    expect(quarantineViolations({ 'login-spine': entry }, flowNames)).toEqual([violation]);
+  });
+
+  it('the guard catches an entry that names no flow', () => {
+    expect(quarantineViolations({ 'no-such-flow': good }, flowNames)).toEqual(['not a flow: no-such-flow']);
+  });
+
+  it('keeps every entry out of NIGHTLY_ONLY and GATE_ONLY, and reached by some ROUTES rule', () => {
+    const hit = reached(ROUTES, tracked);
+    for (const flow of Object.keys(SERVER_QUARANTINE)) {
+      expect(flow in NIGHTLY_ONLY).toBe(false);
+      expect(flow in GATE_ONLY).toBe(false);
+      expect(hit.has(flow)).toBe(true);
+    }
+  });
+
+  it.each(['src/server/session/picture-transfer.ts'])('route(%s) requires no quarantined flow and says why', file => {
+    const d = route([file]);
+    for (const flow of Object.keys(SERVER_QUARANTINE)) expect(d.required).not.toContain(flow);
+    expect(d.required[0]).toBe(SPINE_FLOW);
+    expect(d.reasons.some(r => r.startsWith('server quarantine: '))).toBe(true);
+  });
+
+  it('names the flow and its reason in the route() reason line', () => {
+    expect(route(['src/server/session/picture-transfer.ts']).reasons).toContain(
+      `server quarantine: portrait-roundtrip — ${SERVER_QUARANTINE['portrait-roundtrip'].reason}`,
+    );
+  });
+
+  it('adds no quarantine reason when no rule routed a quarantined flow', () => {
+    expect(route(['src/server/session/politics-handler.ts']).reasons.some(r => r.startsWith('server quarantine'))).toBe(false);
+  });
+});
+
 describe('route — L3 on the component folders (#1134)', () => {
   it.each([
     'src/client/components/mobile/BottomNav.tsx',
@@ -683,7 +787,7 @@ describe('route — L3 on the component folders (#1134)', () => {
     expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).needsL3).toBe(false);
   });
 
-  it('flags the paper modal, on the board read', () => {
+  it('flags the paper modal, with the columns board read', () => {
     const d = route(['src/client/components/modals/NewspaperModal.tsx']);
     expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
     expect(d.needsL3).toBe(true);
@@ -745,7 +849,7 @@ describe('route — handler rules seeded by #1134', () => {
   // #1148: chat-handler.ts left FALLBACK_ONLY — its own rule is now the first match.
   it('routes the former FALLBACK_ONLY chat handler through its own rule', () => {
     expect(route(['src/server/session/chat-handler.ts']).required).toEqual([
-      SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase',
+      SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase', 'gm-broadcast',
     ]);
     expect('src/server/session/chat-handler.ts' in FALLBACK_ONLY).toBe(false);
   });
@@ -847,18 +951,20 @@ describe('route — profile & finance reads (#1141)', () => {
     'src/client/store/profile-store.ts',
     'src/server/session/picture-transfer.ts',
   ])('%s requires profile-read and the profile write flows', file => {
+    // portrait-roundtrip is in SERVER_QUARANTINE (#1310): the rule names it, no gate requires it.
     expect(route([file]).required).toEqual([
       SPINE_FLOW, 'profile-read', 'policy-roundtrip', 'autoconnection-roundtrip',
-      'bank-borrow-payoff', 'bank-send-return', 'portrait-roundtrip',
+      'bank-borrow-payoff', 'bank-send-return',
     ]);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
 
-  it('profile-finance-handler.ts requires both bank flows and picture-transfer.ts the portrait flow (#1147)', () => {
+  it('profile-finance-handler.ts requires both bank flows; picture-transfer.ts names the portrait flow, quarantined (#1147, #1310)', () => {
     const bank = route(['src/server/session/profile-finance-handler.ts']).required;
     expect(bank).toContain('bank-borrow-payoff');
     expect(bank).toContain('bank-send-return');
-    expect(route(['src/server/session/picture-transfer.ts']).required).toContain('portrait-roundtrip');
+    expect(firstRule(ROUTES, 'src/server/session/picture-transfer.ts')?.flows).toContain('portrait-roundtrip');
+    expect(route(['src/server/session/picture-transfer.ts']).required).not.toContain('portrait-roundtrip');
   });
 
   it('keeps bank-borrow-payoff gate-only with its cited broadcast, and the other two nightly (#1147)', () => {
@@ -891,14 +997,16 @@ describe('route — profile & finance reads (#1141)', () => {
 
 describe('route — chat (#1148)', () => {
   const CHAT = [SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase'];
+  // #1199: the handler/store rule also drives the GM broadcast; the component rule does not.
+  const CHAT_RULE = [...CHAT, 'gm-broadcast'];
 
   it.each([
     'src/server/session/chat-handler.ts',
     'src/server/ws-handlers/chat-handlers.ts',
     'src/client/store/chat-store.ts',
-  ])('%s requires the three chat flows, and is not fallback-only', file => {
+  ])('%s requires the chat flows and the GM broadcast, and is not fallback-only', file => {
     const d = route([file]);
-    expect(d.required).toEqual(CHAT);
+    expect(d.required).toEqual(CHAT_RULE);
     expect(d.needsL3).toBe(false);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
@@ -921,7 +1029,7 @@ describe('route — chat (#1148)', () => {
   it('keeps chat-private-channel gate-only with its broadcast cited, and the other two on both', () => {
     expect(GATE_ONLY['chat-private-channel']).toMatch(/InterfaceServer\.pas:4594/);
     expect(GATE_ONLY['chat-private-channel']).toMatch(/:3968-3980/);
-    for (const name of ['chat-read', 'chat-chase']) {
+    for (const name of ['chat-read', 'chat-chase', 'gm-broadcast']) {
       expect(name in GATE_ONLY).toBe(false);
       expect(name in NIGHTLY_ONLY).toBe(false);
     }
@@ -1156,7 +1264,7 @@ describe('route — player actions (#1195)', () => {
     expect(reason).toMatch(/Kernel\/MediaGates\.pas:388-389/);
     expect(reason).toMatch(/StdBlocks\/Movie\.pas:84/);
     expect(reason).toMatch(/excluded/);
-    expect(reason).not.toMatch(/end UNPROVEN/);
+    expect(reason).not.toMatch(/end UNTESTABLE/);
     expect(uncited({ 'industry-supply-limits': reason })).toEqual([]);
   });
 });
@@ -1331,6 +1439,8 @@ describe('route — handler requests reach a flow that sends them (#1187)', () =
   const requests = handlerRequests();
   const ROAD = ['REQ_BUILD_ROAD', 'REQ_DEMOLISH_ROAD', 'REQ_DEMOLISH_ROAD_AREA'];
   const CHAT = [SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase'];
+  // #1199: the chat-handlers rule also drives the GM broadcast; push-dispatcher does not.
+  const CHAT_RULE = [...CHAT, 'gm-broadcast'];
 
   describe('the derivation reads the tree (it must not pass vacuously)', () => {
     it('gives the spine exactly its five requests', () => {
@@ -1359,6 +1469,11 @@ describe('route — handler requests reach a flow that sends them (#1187)', () =
       expect(misc).toContain('REQ_SEARCH_CONNECTIONS');
       expect(misc).toContain('REQ_DEFINE_ZONE');
       expect(requests.get('src/server/session/chat-handler.ts')).toContain('REQ_CHAT_SEND_MESSAGE');
+    });
+
+    it('gives gm-broadcast the GM send, which has left EXCLUDED (#1199)', () => {
+      expect(sends.get('gm-broadcast')).toContain('REQ_GM_CHAT_SEND');
+      expect('REQ_GM_CHAT_SEND' in EXCLUDED).toBe(false);
     });
   });
 
@@ -1426,7 +1541,7 @@ describe('route — handler requests reach a flow that sends them (#1187)', () =
     it.each([
       ['src/client/handlers/road-handler.ts', [SPINE_FLOW, 'road-roundtrip']],
       ['src/client/handlers/zone-handler.ts', [SPINE_FLOW, 'zone-roundtrip']],
-      ['src/client/handlers/chat-handler.ts', CHAT],
+      ['src/client/handlers/chat-handler.ts', CHAT_RULE],
       ['src/server/session/push-dispatcher.ts', CHAT],
     ])('%s -> %j', (file, flows) => {
       const d = route([file]);

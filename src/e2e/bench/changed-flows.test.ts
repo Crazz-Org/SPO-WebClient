@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { FLOWS } from '../flows';
-import { NIGHTLY_ONLY } from '../routing';
+import { NIGHTLY_ONLY, SERVER_QUARANTINE } from '../routing';
 import { FLOW_SOURCES, changedFlows, flowsChangedInWorktree } from './changed-flows';
 
 /**
@@ -113,6 +113,32 @@ describe('changedFlows — direct changes', () => {
     });
   });
 
+  it('a quarantined flow whose own body changed is listed, never required (#1310)', () => {
+    const result = changedFlows({
+      diff: hunk('src/e2e/flows.ts', '@@ -16 +16 @@', '@@ -22 +22 @@'),
+      sources: { 'src/e2e/flows.ts': FLOWS_TS, 'src/e2e/session.ts': SESSION_TS },
+      flowNames: NAMES,
+      nightlyOnly: {},
+      quarantine: { alpha: { reason: 'server fault' } },
+    });
+    expect(result.required).toEqual(['beta']);
+    expect(result.quarantined).toEqual(['alpha']);
+    expect(result.notDriven).toEqual([]);
+  });
+
+  it('a quarantined flow reached only through a helper is listed under quarantined, not notDriven (#1310)', () => {
+    const result = changedFlows({
+      diff: hunk('src/e2e/flows.ts', '@@ -11 +11 @@'),
+      sources: { 'src/e2e/flows.ts': FLOWS_TS, 'src/e2e/session.ts': SESSION_TS },
+      flowNames: NAMES,
+      nightlyOnly: { alpha: 'data-gated' },
+      quarantine: { alpha: { reason: 'server fault' } },
+    });
+    expect(result.required).toEqual(['beta']);
+    expect(result.notDriven).toEqual([]);
+    expect(result.quarantined).toEqual(['alpha']);
+  });
+
   it('a NIGHTLY_ONLY flow whose own body changed is required', () => {
     expect(run(hunk('src/e2e/flows.ts', '@@ -16 +16 @@'), { alpha: 'data-gated' }).required).toEqual(
       ['alpha'],
@@ -216,8 +242,22 @@ describe('flowsChangedInWorktree — the real tree', () => {
     bindings.forEach((binding, i) => {
       const line = flowsTs.findIndex(l => new RegExp(`^const ${binding}\\b`).test(l)) + 1;
       const diff = hunk('src/e2e/flows.ts', `@@ -${line} +${line} @@`);
-      expect(flowsChangedInWorktree(diff, root).required).toEqual([FLOWS[i].name]);
+      const result = flowsChangedInWorktree(diff, root);
+      // A SERVER_QUARANTINE flow is never required, even on a direct change (#1310).
+      if (FLOWS[i].name in SERVER_QUARANTINE) {
+        expect(result.required).toEqual([]);
+        expect(result.quarantined).toEqual([FLOWS[i].name]);
+      } else {
+        expect(result.required).toEqual([FLOWS[i].name]);
+      }
     });
+  });
+
+  it("a hunk inside portraitRoundTrip's own body lists portrait-roundtrip as quarantined, never required (#1310)", () => {
+    const line = flowsTs.findIndex(l => l.startsWith('const portraitRoundTrip')) + 1 + 2;
+    const result = flowsChangedInWorktree(hunk('src/e2e/flows.ts', `@@ -${line} +${line} @@`), root);
+    expect(result.required).not.toContain('portrait-roundtrip');
+    expect(result.quarantined).toContain('portrait-roundtrip');
   });
 
   it('a change to session.ts login drives the related flows, never a NIGHTLY_ONLY one', () => {
@@ -228,6 +268,17 @@ describe('flowsChangedInWorktree — the real tree', () => {
     for (const flow of result.required) expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
     expect(result.notDriven.length).toBeGreaterThan(0);
     for (const flow of result.notDriven) expect(NIGHTLY_ONLY).toHaveProperty(flow);
+  });
+
+  // #1320 removed newspaper-board-read's quarantine entry: an empty board ends UNTESTABLE, which
+  // passes, so a change that reaches it requires it again.
+  it('a change to session.ts readBuildingDetails requires newspaper-board-read (#1307, #1320)', () => {
+    const session = fs.readFileSync(path.join(root, 'src/e2e/session.ts'), 'utf8').split('\n');
+    const line = session.findIndex(l => l.startsWith('export async function readBuildingDetails(')) + 2;
+    const result = flowsChangedInWorktree(hunk('src/e2e/session.ts', `@@ -${line} +${line} @@`), root);
+    expect(result.required).toContain('newspaper-board-read');
+    expect(result.quarantined ?? []).not.toContain('newspaper-board-read');
+    expect(result.notDriven).not.toContain('newspaper-board-read');
   });
 
   it('a change to a research.ts helper drives research-roundtrip and lists fixtures-ensure (#1233)', () => {

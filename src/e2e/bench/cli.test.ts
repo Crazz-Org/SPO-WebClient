@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { benchPaths, ensureLayout, type BenchPaths } from './paths';
-import { Spool, type JobReport } from './job';
+import { Spool, type JobReport, type JobRequest } from './job';
 import {
   manualRequestFile,
   readManualRequest,
@@ -137,10 +137,19 @@ describe('submit', () => {
 
   it('records the waiting process as submitter when --wait is given', async () => {
     const h = harness();
+    const real = h.spool.submit.bind(h.spool);
+    const deposited: JobRequest[] = [];
+    h.spool.submit = (request, nowMs) => {
+      const job = real(request, nowMs);
+      deposited.push(job);
+      return job;
+    };
     // The harness clock advances 100 ms per call, so a 1-minute wait times out (exit 4)
     // almost at once; the deposit itself is what we check.
     expect(await main(['submit', '--type=ref', '--wait', '--timeout-min=1'], h.deps)).toBe(4);
-    expect(h.spool.queued()[0].request.submitter.pid).toBe(777);
+    expect(deposited[0].submitter.pid).toBe(777);
+    // The timeout then detached it (#1300): the job still runs once this process is gone.
+    expect(h.spool.queued()[0].request.submitter.pid).toBe(0);
   });
 
   it('defaults a lease to 30 minutes', async () => {
@@ -258,6 +267,48 @@ describe('wait', () => {
     // now() advances 100 ms per call; a 1-minute budget runs out quickly.
     expect(await main(['wait', 'job-1', '--timeout-min=1'], h.deps)).toBe(4);
     expect(h.err.join('\n')).toMatch(/timed out/);
+  });
+
+  const queuedRef = (h: Harness): JobRequest =>
+    h.spool.submit(
+      {
+        type: 'ref',
+        worktree: '/wt/a',
+        branch: 'fix/x',
+        fingerprint: { head: 'abc123', hash: 'h1', clean: true },
+        submitter: { pid: 4242 },
+        args: [],
+        ref: 'abc123',
+      },
+      1_000,
+    );
+
+  it('detaches its still-queued job when the worker reads as down — exit 3, pid → 0 (#1300)', async () => {
+    const h = harness();
+    const job = queuedRef(h);
+    h.alive = false;
+    h.aliveReason = 'heartbeat is 45 s old';
+    expect(await main(['wait', job.id], h.deps)).toBe(3);
+    expect(h.spool.queued()[0].request.submitter.pid).toBe(0);
+    expect(h.out[0]).toMatch(/^worker-down:/);
+    expect(h.out.join('\n')).toContain(`detached: ${job.id}`);
+    expect(h.err.join('\n')).toContain(`bash scripts/bench-wait.sh ${job.id}`);
+  });
+
+  it('detaches its still-queued job on a timeout too — exit 4, pid → 0', async () => {
+    const h = harness();
+    const job = queuedRef(h);
+    expect(await main(['wait', job.id, '--timeout-min=1'], h.deps)).toBe(4);
+    expect(h.spool.queued()[0].request.submitter.pid).toBe(0);
+    expect(h.out.join('\n')).toContain(`detached: ${job.id}`);
+  });
+
+  it('says so when the job is no longer queued — nothing to detach', async () => {
+    const h = harness();
+    h.alive = false;
+    expect(await main(['wait', 'job-1'], h.deps)).toBe(3);
+    expect(h.err.join('\n')).toMatch(/job job-1 is no longer queued/);
+    expect(h.out.join('\n')).not.toMatch(/detached:/);
   });
 });
 
