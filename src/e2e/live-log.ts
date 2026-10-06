@@ -24,6 +24,10 @@
  *    allowance. A line earlier than that never counts, whatever the byte offset says. A line
  *    without a stamp falls back to the byte offset alone.
  *
+ * Stale tail (#1318): when no polled tail matched by the deadline, the file is read once
+ * whole, without `Range`, under the same two rules — and `describeLogMiss` reports the offset
+ * and what each read got back, so a miss names its cause.
+ *
  * Rollover (#1269): the server starts a new `Survival <YY-MM-DD>.log` at 00:00 server time
  * (≈ UTC, per the assumption below), so a run can span two files.
  *
@@ -246,10 +250,17 @@ async function readSegments(window: LogWindow): Promise<LogSegment[]> {
     // A server that ignores Range returns 200 and the whole file — slice it ourselves.
     tail = response.status === 206 ? text : text.slice(window.offset);
   }
+  recordRead(window).tail = { status: response.status, bytes: tail.length };
   const day = logDayOf(window.url);
   const segments: LogSegment[] = [{ day, text: tail }];
   if (day === undefined) return segments;
+  return segments.concat(await newerSegments(window, day));
+}
+
+/** The whole of every Survival file in the window's directory dated after `day`, oldest first. */
+async function newerSegments(window: LogWindow, day: string): Promise<LogSegment[]> {
   const dir = logDirOf(window.url);
+  const segments: LogSegment[] = [];
   for (const newer of (await listSurvivalDays(dir)).filter(d => d > day)) {
     const url = survivalUrl(dir, newer);
     const next = await fetch(url, { headers: { 'Accept-Encoding': 'identity' } });
@@ -259,6 +270,83 @@ async function readSegments(window: LogWindow): Promise<LogSegment[]> {
     segments.push({ day: newer, text: await next.text() });
   }
   return segments;
+}
+
+/** What one read of a window got back. `bytes` is the text's length — the log is single-byte text. */
+interface ReadSeen {
+  status: number;
+  bytes: number;
+}
+
+/** What the reader saw during a window's last awaitMarker search (#1318). */
+interface LogReads {
+  tail?: ReadSeen;
+  full?: ReadSeen;
+  fullError?: string;
+}
+
+/** Kept off LogWindow so its shape — and every mock of it — stays unchanged. */
+const reads = new WeakMap<LogWindow, LogReads>();
+
+function recordRead(window: LogWindow): LogReads {
+  let seen = reads.get(window);
+  if (seen === undefined) {
+    seen = {};
+    reads.set(window, seen);
+  }
+  return seen;
+}
+
+/** The first line passing the byte-sliced segments' marker, timestamp and match rules, trimmed. */
+function findLine(segments: LogSegment[], window: LogWindow, proof: LogProof): string | null {
+  for (const segment of segments) {
+    const line = segment.text
+      .split(/\r?\n/)
+      .find(l => l.includes(proof.marker) && loggedInWindow(l, window, segment.day) && (proof.match?.(l) ?? true));
+    if (line) return line.trim();
+  }
+  return null;
+}
+
+/**
+ * The last read after the deadline: the window's file whole, with no `Range` and
+ * `Cache-Control: no-cache`, under exactly the tail's byte and timestamp rules. Never throws —
+ * a failed last read is recorded and gives null, as the deadline did before it existed.
+ */
+async function fullRead(window: LogWindow, proof: LogProof): Promise<string | null> {
+  const seen = recordRead(window);
+  try {
+    const response = await fetch(window.url, {
+      headers: { 'Accept-Encoding': 'identity', 'Cache-Control': 'no-cache' },
+    });
+    const text = response.ok ? await response.text() : '';
+    seen.full = { status: response.status, bytes: text.length };
+    if (!response.ok) return null;
+    const day = logDayOf(window.url);
+    const segments: LogSegment[] = [{ day, text: text.slice(window.offset) }];
+    if (day !== undefined) segments.push(...(await newerSegments(window, day)));
+    return findLine(segments, window, proof);
+  } catch (err: unknown) {
+    seen.fullError = toErrorMessage(err);
+    return null;
+  }
+}
+
+/**
+ * A missing-line detail carrying what the reader saw for `window`'s last awaitMarker search:
+ * `<what> — offset 1234567, last tail 416 / 0 B, full read 200 / 1236012 B`.
+ * `what` alone when no search of that window was recorded (no window, or awaitMarker never ran on it).
+ */
+export function describeLogMiss(window: LogWindow | null | undefined, what = '(no line)'): string {
+  const seen = window ? reads.get(window) : undefined;
+  if (!window || seen === undefined) return what;
+  const tail = seen.tail ? `last tail ${seen.tail.status} / ${seen.tail.bytes} B` : 'no tail read';
+  const full = seen.full
+    ? `full read ${seen.full.status} / ${seen.full.bytes} B`
+    : seen.fullError !== undefined
+      ? `full read failed: ${seen.fullError}`
+      : 'no full read';
+  return `${what} — offset ${window.offset}, ${tail}, ${full}`;
 }
 
 /** How far a line's stamp may trail `openedAt` and still count — the server clock can lag the bench. */
@@ -295,7 +383,9 @@ export function loggedInWindow(line: string, window: LogWindow, fileDay?: string
 /**
  * Poll the log tail until a line containing the marker — and satisfying `match`, when
  * given — appears or the deadline passes. Returns the matching line, or null if it never
- * arrived.
+ * arrived. When the deadline passes, the whole file is read once more (no `Range`,
+ * `Cache-Control: no-cache`) under the same byte and timestamp rules (#1318);
+ * `describeLogMiss` reports what the reads saw.
  */
 export async function awaitMarker(
   window: LogWindow,
@@ -322,17 +412,12 @@ export async function awaitMarker(
   sleep: (ms: number) => Promise<void> = defaultSleep,
 ): Promise<string | null> {
   const proof: LogProof = typeof markerOrProof === 'string' ? { marker: markerOrProof } : markerOrProof;
+  reads.set(window, {}); // the record describes this search only
   const deadline = now() + timeoutMs;
   for (;;) {
-    for (const segment of await readSegments(window)) {
-      const line = segment.text
-        .split(/\r?\n/)
-        .find(
-          l => l.includes(proof.marker) && loggedInWindow(l, window, segment.day) && (proof.match?.(l) ?? true),
-        );
-      if (line) return line.trim();
-    }
-    if (now() >= deadline) return null;
+    const line = findLine(await readSegments(window), window, proof);
+    if (line !== null) return line;
+    if (now() >= deadline) return fullRead(window, proof);
     await sleep(pollMs);
   }
 }

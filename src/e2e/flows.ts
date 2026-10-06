@@ -142,7 +142,15 @@ import {
   ZONE_PATH,
   type E2eAccount,
 } from './config';
-import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, readSince, type LogWindow } from './live-log';
+import {
+  LOG_MARKERS,
+  awaitMarker,
+  describeLogMiss,
+  findCurrentSurvivalLog,
+  openLogWindow,
+  readSince,
+  type LogWindow,
+} from './live-log';
 import {
   runProbe,
   runRoundTrip,
@@ -3708,7 +3716,7 @@ const autoConnectionRoundTrip: Flow = {
         assertions.check(
           'the delete reached the model server (Deleting initial suppliers: line)',
           deleted !== null,
-          deleted ?? `no "${LOG_MARKERS.RDODelAutoConnection}" line for ${identity}`,
+          deleted ?? describeLogMiss(delWindow, `no "${LOG_MARKERS.RDODelAutoConnection}" line for ${identity}`),
         );
       }
       return report('autoconnection-roundtrip', assertions, probes, session);
@@ -5219,6 +5227,8 @@ export interface LogLook {
   line: string | null;
   /** Why the log could not be read at all — absent when it was read and held no line. */
   fault?: string;
+  /** The window searched, when the search ran. */
+  window?: LogWindow;
 }
 
 /** Open the log window without throwing — the fault is kept for the UNTESTABLE reason. */
@@ -5248,7 +5258,7 @@ export async function lookForLine(
 ): Promise<LogLook> {
   if (opened.window === null) return { line: null, fault: opened.fault };
   try {
-    return { line: await find(opened.window) };
+    return { line: await find(opened.window), window: opened.window };
   } catch (err: unknown) {
     return { line: null, fault: `the log could not be read: ${toErrorMessage(err)}` };
   }
@@ -5258,7 +5268,7 @@ export async function lookForLine(
 export function logMissReason(look: LogLook, marker: string, url: string): string {
   return look.fault !== undefined
     ? `no "${marker}" line could be looked for in ${url} — ${look.fault}`
-    : `no "${marker}" within ${TIMEOUTS.logSettle} ms in ${url}`;
+    : describeLogMiss(look.window, `no "${marker}" within ${TIMEOUTS.logSettle} ms in ${url}`);
 }
 
 /**
@@ -5822,7 +5832,8 @@ async function adBudgetLogRoundTrip(
   assertions.check(
     `RDOSetInputFluidPerc: the restore to ${original} logged its Setting Input fluid perc line`,
     restored,
-    restoreLine ?? `no restore line${restoreLook.fault ? ` (${restoreLook.fault})` : ''} — pending restore kept`,
+    restoreLine ??
+      `${describeLogMiss(restoreLook.window, 'no restore line')}${restoreLook.fault ? ` (${restoreLook.fault})` : ''} — pending restore kept`,
   );
 
   const failed = writeThrew || !restored;
@@ -6375,7 +6386,7 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
       assertions.check(
         `the undo reached the model server (${marker} line)`,
         undoLine !== null,
-        undoLine ?? `no "${marker}" line for Fac(${fx.x},${fx.y}) ${fluid} from ${list}`,
+        undoLine ?? describeLogMiss(undoWindow, `no "${marker}" line for Fac(${fx.x},${fx.y}) ${fluid} from ${list}`),
       );
     }
     return report(side.flow, assertions, probes, session);
@@ -7194,7 +7205,7 @@ async function placeRenameDemolishSteps(session: LiveSession, ctx: FlowContext, 
       assertions.check(
         'the placement logged its New Facility: line (class, company, x, y)',
         line !== null,
-        line ?? `(no New Facility: line for ${cls}, company ${companyId}, ${where})`,
+        line ?? describeLogMiss(newWindow, `(no New Facility: line for ${cls}, company ${companyId}, ${where})`),
       );
       const rb = placed.readBack;
       assertions.check(
@@ -7304,7 +7315,7 @@ async function removePlacement(session: LiveSession, ctx: FlowContext, p: Placem
     );
     const gone = await pollUntil(() => lotBuilding(session, p.x, p.y), v => v === undefined, ctx);
     const kept = delLine !== null && gone.ok ? '' : ' — pending restore kept';
-    assertions.check('the demolition logged its Del Facility line', delLine !== null, (delLine ?? `(no Del Facility line for ${where})`) + kept);
+    assertions.check('the demolition logged its Del Facility line', delLine !== null, (delLine ?? describeLogMiss(delWindow, `(no Del Facility line for ${where})`)) + kept);
     assertions.check(
       'nothing stands at the lot on REQ_MAP_LOAD',
       gone.ok,
@@ -8193,7 +8204,7 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
       ctx.now,
       ctx.sleep,
     );
-    assertions.check('the queue logged its Queue Research: line', line !== null, line ?? `(no Queue Research: line for ${id})`);
+    assertions.check('the queue logged its Queue Research: line', line !== null, line ?? describeLogMiss(window, `(no Queue Research: line for ${id})`));
     const listed = await pollUntil(stateOf, s => s !== 'available' && s !== 'absent', ctx);
     if (listed.last === 'owned') {
       assertions.check(
@@ -8240,10 +8251,12 @@ async function cancelQueuedResearch(
 ): Promise<void> {
   try {
     let line: string | null = null;
+    let searched: LogWindow | undefined;
     let back: { ok: boolean; last: ResearchState } = { ok: false, last: 'absent' };
     for (let attempt = 1; attempt <= 2 && !back.ok; attempt++) {
       const window = await openLogWindow(q.url);
       await setBuildingProperty(session, fx.x, fx.y, 'RDOCancelResearch', '0', { inventionId: q.id });
+      if (line === null) searched = window;
       line ??= await awaitMarker(
         window,
         { marker: LOG_MARKERS.RDOCancelResearch, match: l => cancelResearchLineMatches(l, q.id) },
@@ -8256,7 +8269,7 @@ async function cancelQueuedResearch(
     }
     if (back.ok) ctx.lock.clearPendingRestore(q.key);
     const kept = back.ok ? '' : ' — pending restore kept';
-    assertions.check('the cancel logged its Cancel Research: line', line !== null, line ?? `(no Cancel Research: line for ${q.id})`);
+    assertions.check('the cancel logged its Cancel Research: line', line !== null, line ?? describeLogMiss(searched, `(no Cancel Research: line for ${q.id})`));
     assertions.check(`the inventory reads ${q.id} available again`, back.ok, `reads ${back.last}${kept}`);
   } catch (err: unknown) {
     assertions.check('the research cancel ran without a throw', false, `${toErrorMessage(err)} — pending restore kept`);
@@ -8411,7 +8424,7 @@ async function startUpgrade(
     ctx.now,
     ctx.sleep,
   );
-  assertions.check('the START logged Facility Start Upgrade count: 1', line !== null, line ?? '(no Facility Start Upgrade count: 1 line)');
+  assertions.check('the START logged Facility Start Upgrade count: 1', line !== null, line ?? describeLogMiss(window, '(no Facility Start Upgrade count: 1 line)'));
   const moved = await pollUntil(() => readUpgrade(session, fx), u => u.upgrading > 0 || u.pending >= 1, ctx);
   assertions.check(
     'Upgrading or Pending moved after the START',
@@ -8496,7 +8509,7 @@ async function undoUpgrade(
       assertions.check('the gateway accepted STOP_UPGRADE', r.success === true, r.message);
       // The line carries no coordinates (Kernel/Kernel.pas:4689): the read-back attributes it.
       const line = await awaitMarker(window, { marker: LOG_MARKERS.RDOStopUpgrade }, TIMEOUTS.logSettle, undefined, ctx.now, ctx.sleep);
-      assertions.check('the STOP logged Facility Stop Upgrade..', line !== null, line ?? '(no Facility Stop Upgrade.. line)');
+      assertions.check('the STOP logged Facility Stop Upgrade..', line !== null, line ?? describeLogMiss(window, '(no Facility Stop Upgrade.. line)'));
       const idle = await pollUntil(
         () => tryReadUpgrade(session, fx),
         u => typeof u === 'object' && u.upgrading === 0 && u.pending === 0,

@@ -8657,6 +8657,17 @@ describe('inspector flows (#1154)', () => {
       expect(pending(lock)).toEqual([]);
     });
 
+    it('carries the log reader diagnostics when the cancel logs no line (#1318)', async () => {
+      const world = makeWorld({ silent: new Set(['RDOCancelResearch']) });
+      arrange(world);
+      const diag = jest.spyOn(liveLog, 'describeLogMiss').mockImplementation((_w, what) => `${what ?? ''} — DIAG`);
+      const result = await run('research-roundtrip', cleanLock());
+      expect(result.assertions.find(a => a.what === 'the cancel logged its Cancel Research: line')?.detail).toBe(
+        `(no Cancel Research: line for ${HH}) — DIAG`,
+      );
+      expect(diag).toHaveBeenCalledWith(logWindow, `(no Cancel Research: line for ${HH})`);
+    });
+
     it('clears the pending restore when the inventory reads available but the cancel logs no line', async () => {
       const world = makeWorld({ silent: new Set(['RDOCancelResearch']) });
       const lock = cleanLock();
@@ -10240,6 +10251,18 @@ describe('player actions (#1195)', () => {
         ),
       ]);
       expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    // #1318: the miss names what the log reader saw for the searched window.
+    it('carries the log reader diagnostics when the restore logs no line', async () => {
+      const world = ratingWorld({ silent: [2] });
+      arrange(world);
+      const diag = jest.spyOn(liveLog, 'describeLogMiss').mockImplementation((_w, what) => `${what ?? ''} — offset 7, last tail 416 / 0 B, full read 200 / 9 B`);
+      const result = await run();
+      expect(result.untestable[0]).toContain(
+        `no "${liveLog.LOG_MARKERS.RDOSetRatingFrom}" within ${TIMEOUTS.logSettle} ms in u — offset 7, last tail 416 / 0 B, full read 200 / 9 B — the aggregate read 40 -> 60`,
+      );
+      expect(diag).toHaveBeenCalledWith(logWindow, `no "${liveLog.LOG_MARKERS.RDOSetRatingFrom}" within ${TIMEOUTS.logSettle} ms in u`);
     });
 
     it('is UNTESTABLE and clears the pending restore when the log cannot be opened for the restore', async () => {

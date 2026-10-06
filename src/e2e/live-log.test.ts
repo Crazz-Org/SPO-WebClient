@@ -1,6 +1,7 @@
 import {
   LOG_MARKERS,
   awaitMarker,
+  describeLogMiss,
   findCurrentSurvivalLog,
   loggedInWindow,
   openLogWindow,
@@ -444,5 +445,172 @@ describe('UTC-midnight rollover (#1269)', () => {
     await expect(readSince({ url: DAY2, offset: 500, openedAt: '2026-10-02T23:59:50.000Z' })).rejects.toThrow(
       /Log read failed \(500\) for http:\/\/logs\/Survival%2026-10-03\.log/,
     );
+  });
+});
+
+describe('the full read after the deadline (#1318)', () => {
+  const DIR = 'http://logs/';
+  const URL = 'http://logs/Survival%2026-10-04.log';
+  const RESTORE = '8:38:02 PM Setting town politics Tycoon rating: SPO_test, CampaignAccuracy, 100';
+  const proof = { marker: LOG_MARKERS.RDOSetRatingFrom, match: (l: string) => l.includes('CampaignAccuracy, 100') };
+  const before = '8:00:00 PM Caching Town..\n'.repeat(40);
+  const offset = before.length;
+
+  function win(): { url: string; offset: number; openedAt: string } {
+    return { url: URL, offset, openedAt: '2026-10-04T20:38:03.530Z' };
+  }
+
+  /** Tail calls carry a Range header; the full read carries none. */
+  function serve(tail: () => Response, full: () => Response | Promise<Response>): void {
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === DIR) return response({ body: '<a href="Survival%2026-10-04.log">x</a>' });
+      const range = new Headers(init?.headers).get('range');
+      return range === null ? full() : tail();
+    });
+  }
+
+  const fullReads = (): unknown[][] =>
+    fetchMock.mock.calls.filter(([u, init]) => String(u) === URL && new Headers(init?.headers).get('range') === null);
+
+  it('(a) returns the line the full read holds after offset when every tail poll answered 416', async () => {
+    serve(
+      () => response({ ok: false, status: 416 }),
+      () => response({ body: `${before}${RESTORE}\n` }),
+    );
+    const window = win();
+    const line = await awaitMarker(window, proof, 5, 0, mockClock([0, 1, 100]), noSleep);
+    expect(line).toBe(RESTORE);
+    expect(fetchMock).toHaveBeenCalledWith(URL, {
+      headers: { 'Accept-Encoding': 'identity', 'Cache-Control': 'no-cache' },
+    });
+    expect(fullReads()).toHaveLength(1);
+    expect(describeLogMiss(window)).toBe(
+      `(no line) — offset ${offset}, last tail 416 / 0 B, full read 200 / ${before.length + RESTORE.length + 1} B`,
+    );
+  });
+
+  it('(a) returns it too when every tail poll answered an unchanged, non-matching tail', async () => {
+    serve(
+      () => response({ status: 206, body: 'stale' }),
+      () => response({ body: `${before}${RESTORE}` }),
+    );
+    expect(await awaitMarker(win(), proof, 5, 0, mockClock([0, 100]), noSleep)).toBe(RESTORE);
+  });
+
+  it('(b) refuses a marker the full read holds only before offset', async () => {
+    const early = `${RESTORE}\n`;
+    serve(
+      () => response({ ok: false, status: 416 }),
+      () => response({ body: `${early}${before.slice(early.length)}8:38:05 PM Caching Town..` }),
+    );
+    expect(await awaitMarker(win(), proof, 5, 0, mockClock([0, 100]), noSleep)).toBeNull();
+  });
+
+  it('(b) refuses a line after offset stamped earlier than the window less CLOCK_SKEW_SECONDS', async () => {
+    serve(
+      () => response({ ok: false, status: 416 }),
+      () => response({ body: `${before}${RESTORE.replace('8:38:02 PM', '8:37:50 PM')}` }),
+    );
+    expect(await awaitMarker(win(), proof, 5, 0, mockClock([0, 100]), noSleep)).toBeNull();
+  });
+
+  it('(c) returns null when the full read holds no match, and the helper names what each read saw', async () => {
+    const body = `${before}8:38:05 PM Caching Town..`;
+    serve(
+      () => response({ ok: false, status: 416 }),
+      () => response({ body }),
+    );
+    const window = win();
+    expect(await awaitMarker(window, proof, 5, 0, mockClock([0, 100]), noSleep)).toBeNull();
+    expect(describeLogMiss(window)).toBe(
+      `(no line) — offset ${offset}, last tail 416 / 0 B, full read 200 / ${body.length} B`,
+    );
+    expect(describeLogMiss(window, 'no restore line')).toBe(
+      `no restore line — offset ${offset}, last tail 416 / 0 B, full read 200 / ${body.length} B`,
+    );
+  });
+
+  it('(d) returns a matching tail at once, with no full read', async () => {
+    serve(
+      () => response({ status: 206, body: RESTORE }),
+      () => response({ body: 'never read' }),
+    );
+    const window = win();
+    expect(await awaitMarker(window, proof, 5, 0, mockClock([0, 100]), noSleep)).toBe(RESTORE);
+    expect(fullReads()).toHaveLength(0);
+    expect(describeLogMiss(window)).toBe(`(no line) — offset ${offset}, last tail 206 / ${RESTORE.length} B, no full read`);
+  });
+
+  it('returns null on a full read answered 500, and records it', async () => {
+    serve(
+      () => response({ ok: false, status: 416 }),
+      () => response({ ok: false, status: 500, body: 'error page' }),
+    );
+    const window = win();
+    expect(await awaitMarker(window, proof, 5, 0, mockClock([0, 100]), noSleep)).toBeNull();
+    expect(describeLogMiss(window)).toBe(`(no line) — offset ${offset}, last tail 416 / 0 B, full read 500 / 0 B`);
+  });
+
+  it('returns null, never throws, when the full read itself fails', async () => {
+    serve(
+      () => response({ ok: false, status: 416 }),
+      () => Promise.reject(new Error('socket hang up')),
+    );
+    const window = win();
+    expect(await awaitMarker(window, proof, 5, 0, mockClock([0, 100]), noSleep)).toBeNull();
+    expect(describeLogMiss(window)).toBe(
+      `(no line) — offset ${offset}, last tail 416 / 0 B, full read failed: socket hang up`,
+    );
+  });
+
+  it('reads newer-dated files in the full read as the tail reads them', async () => {
+    const NEXT = 'http://logs/Survival%2026-10-05.log';
+    let newer = false;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === DIR) {
+        return response({
+          body: `<a href="Survival%2026-10-04.log">x</a>${newer ? '<a href="Survival%2026-10-05.log">y</a>' : ''}`,
+        });
+      }
+      if (url === NEXT) return response({ body: '12:00:01 AM Setting town politics Tycoon rating: SPO_test, CampaignAccuracy, 100' });
+      if (new Headers(init?.headers).get('range') !== null) return response({ ok: false, status: 416 });
+      newer = true; // the new day appears just as the full read is sent
+      return response({ body: before });
+    });
+    expect(await awaitMarker(win(), proof, 5, 0, mockClock([0, 100]), noSleep)).toBe(
+      '12:00:01 AM Setting town politics Tycoon rating: SPO_test, CampaignAccuracy, 100',
+    );
+  });
+
+  it('describes nothing for a window no search ran on', () => {
+    expect(describeLogMiss(win())).toBe('(no line)');
+    expect(describeLogMiss(null, 'what')).toBe('what');
+    expect(describeLogMiss(undefined)).toBe('(no line)');
+  });
+
+  it('describes a search whose tail read threw before recording anything', async () => {
+    serve(
+      () => response({ ok: false, status: 503 }),
+      () => response({ body: '' }),
+    );
+    const window = win();
+    await expect(awaitMarker(window, proof, 5, 0, mockClock([0, 100]), noSleep)).rejects.toThrow(/Log read failed \(503\)/);
+    expect(describeLogMiss(window)).toBe(`(no line) — offset ${offset}, no tail read, no full read`);
+  });
+
+  it('resets the record on a second search of the same window', async () => {
+    serve(
+      () => response({ ok: false, status: 416 }),
+      () => response({ body: before }),
+    );
+    const window = win();
+    await awaitMarker(window, proof, 5, 0, mockClock([0, 100]), noSleep);
+    serve(
+      () => response({ status: 206, body: RESTORE }),
+      () => response({ body: 'never read' }),
+    );
+    await awaitMarker(window, proof, 5, 0, mockClock([0, 100]), noSleep);
+    expect(describeLogMiss(window)).toBe(`(no line) — offset ${offset}, last tail 206 / ${RESTORE.length} B, no full read`);
   });
 });
