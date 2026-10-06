@@ -347,32 +347,32 @@ describe('the town paper', () => {
   // The paper is not on the RDO wire at all — it is scraped off the ASP pages —
   // so the governance flows would prove nothing about a change to it.
   // newspaper-read stays nightly-only (#1009): the bench cannot create a kept issue,
-  // so it could only end UNPROVEN. The columns board read is routed by both newspaper rules,
-  // but it is in SERVER_QUARANTINE (#1260: every post answers HTTP 500 server-side, so no
-  // column can be seeded) — no gate requires it while the quarantine holds.
+  // so it could only end UNTESTABLE. The columns board read is routed by both newspaper rules
+  // and required: an empty board (#1260: every post answers HTTP 500 server-side, so no column
+  // can be seeded) ends UNTESTABLE, which passes — its quarantine entry was removed (#1320).
   const paperPaths = [
     'src/server/session/newspaper-handler.ts',
     'src/client/components/modals/NewspaperModal.tsx',
     'src/client/store/newspaper-store.ts',
   ];
 
-  it('routes the paper modal to the spine alone, with a browser look', () => {
+  it('routes the paper modal to the columns board read, with a browser look', () => {
     const d = route(['src/client/components/modals/NewspaperModal.tsx']);
-    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
     expect(d.needsL3).toBe(true);
     expect(d.staticOnly).toBe(false);
   });
 
   it.each(['src/server/session/newspaper-handler.ts', 'src/client/store/newspaper-store.ts'])(
-    'routes %s to the spine alone while the board read is quarantined',
+    'routes %s to the columns board read',
     file => {
       const d = route([file]);
-      expect(d.required).toEqual([SPINE_FLOW]);
+      expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
       expect(d.staticOnly).toBe(false);
     },
   );
 
-  it('quarantines newspaper-board-read: both newspaper rules route it, no gate requires it, its link cites #1260', () => {
+  it('requires newspaper-board-read from both newspaper rules, no longer quarantined (#1320)', () => {
     const modalRule = firstRule(ROUTES, 'src/client/components/modals/NewspaperModal.tsx');
     const paperRule = firstRule(ROUTES, 'src/server/session/newspaper-handler.ts');
     expect(modalRule?.flows).toContain('newspaper-board-read');
@@ -380,14 +380,15 @@ describe('the town paper', () => {
     expect(NIGHTLY_ONLY).not.toHaveProperty('newspaper-board-read');
     expect(Object.values(EXCLUDED).some(why => why.includes('newspaper-board-read'))).toBe(false);
     expect(EXCLUDED).not.toHaveProperty('REQ_NEWSPAPER_BOARD');
-    expect(SERVER_QUARANTINE['newspaper-board-read'].link).toMatch(/issues\/1260/);
+    expect(SERVER_QUARANTINE).not.toHaveProperty('newspaper-board-read');
     for (const f of [
       'src/server/session/newspaper-handler.ts',
       'src/server/ws-handlers/newspaper-handlers.ts',
       'src/client/store/newspaper-store.ts',
       'src/client/components/modals/NewspaperModal.tsx',
     ]) {
-      expect(route([f]).required).not.toContain('newspaper-board-read');
+      expect(route([f]).required).toContain('newspaper-board-read');
+      expect(route([f]).reasons.some(r => r.startsWith('server quarantine'))).toBe(false);
     }
   });
 
@@ -398,12 +399,12 @@ describe('the town paper', () => {
     }
   });
 
-  it('routes the newspaper WS handler by the newspaper rule, not the ws-handlers fallback, to the spine alone', () => {
+  it('routes the newspaper WS handler by the newspaper rule, not the ws-handlers fallback, to the columns board read', () => {
     const file = 'src/server/ws-handlers/newspaper-handlers.ts';
     const rule = firstRule(ROUTES, file);
     expect(rule?.fallback).toBeFalsy();
     expect(rule?.test.test('src/client/store/newspaper-store.ts')).toBe(true);
-    expect(route([file]).required).toEqual([SPINE_FLOW]);
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
   });
 
   it('leaves no rule with a spine-alone option', () => {
@@ -718,8 +719,9 @@ describe('SERVER_QUARANTINE — a live-server fault, never a code defect (#1310)
     added: '2026-10-04',
   };
 
-  it('holds portrait-roundtrip and newspaper-board-read, each with a reason, an https link, a lift and a date', () => {
-    expect(Object.keys(SERVER_QUARANTINE).sort()).toEqual(['newspaper-board-read', 'portrait-roundtrip']);
+  // newspaper-board-read left the table with #1320: its fault leaves it UNTESTABLE, which passes.
+  it('holds portrait-roundtrip, with a reason, an https link, a lift and a date', () => {
+    expect(Object.keys(SERVER_QUARANTINE).sort()).toEqual(['portrait-roundtrip']);
     expect(quarantineViolations(SERVER_QUARANTINE, flowNames)).toEqual([]);
   });
 
@@ -745,11 +747,7 @@ describe('SERVER_QUARANTINE — a live-server fault, never a code defect (#1310)
     }
   });
 
-  it.each([
-    'src/server/session/picture-transfer.ts',
-    'src/server/session/newspaper-handler.ts',
-    'src/client/components/modals/NewspaperModal.tsx',
-  ])('route(%s) requires no quarantined flow and says why', file => {
+  it.each(['src/server/session/picture-transfer.ts'])('route(%s) requires no quarantined flow and says why', file => {
     const d = route([file]);
     for (const flow of Object.keys(SERVER_QUARANTINE)) expect(d.required).not.toContain(flow);
     expect(d.required[0]).toBe(SPINE_FLOW);
@@ -789,9 +787,9 @@ describe('route — L3 on the component folders (#1134)', () => {
     expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).needsL3).toBe(false);
   });
 
-  it('flags the paper modal, on the spine alone', () => {
+  it('flags the paper modal, with the columns board read', () => {
     const d = route(['src/client/components/modals/NewspaperModal.tsx']);
-    expect(d.required).toEqual([SPINE_FLOW]);
+    expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
     expect(d.needsL3).toBe(true);
   });
 });
@@ -1266,7 +1264,7 @@ describe('route — player actions (#1195)', () => {
     expect(reason).toMatch(/Kernel\/MediaGates\.pas:388-389/);
     expect(reason).toMatch(/StdBlocks\/Movie\.pas:84/);
     expect(reason).toMatch(/excluded/);
-    expect(reason).not.toMatch(/end UNPROVEN/);
+    expect(reason).not.toMatch(/end UNTESTABLE/);
     expect(uncited({ 'industry-supply-limits': reason })).toEqual([]);
   });
 });

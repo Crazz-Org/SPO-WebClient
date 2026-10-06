@@ -96,8 +96,11 @@ export interface NightlyResult {
    * live artifact was read — every record written before #1182, and any run that wrote none.
    */
   flows?: NightlyFlowStatus[];
-  /** The flows whose status is `UNPROVEN`, by name — visible without opening the artifact. */
-  unproven?: string[];
+  /**
+   * The flows whose status is `UNTESTABLE`, by name — visible without opening the artifact;
+   * each one's reasons ride on its `flows` entry.
+   */
+  untestable?: string[];
   /** The flows whose status is `SKIPPED`, by name. */
   skipped?: string[];
   /**
@@ -119,6 +122,8 @@ export interface NightlyResult {
 export interface NightlyFlowStatus {
   name: string;
   status: string;
+  /** Why an `UNTESTABLE` flow could not observe its result — set only on such a flow. */
+  reasons?: string[];
 }
 
 /** The marker a maintainer's `request-nightly` leaves for the worker's idle branch. */
@@ -734,17 +739,18 @@ interface NightlyReportView {
 }
 
 /**
- * The per-flow keys `latest.json` carries: every flow's status, plus the UNPROVEN, SKIPPED
+ * The per-flow keys `latest.json` carries: every flow's status (an UNTESTABLE one with its
+ * reasons), plus the UNTESTABLE, SKIPPED
  * and SERVER_QUARANTINE ones by name, so a flow that never proves anything is visible at a glance. `{}`
  * when no live artifact was read — a conditional spread, so such a record gains no key.
  */
 export function flowSummary(
   liveFlows: NightlyFlowStatus[] | undefined,
-): Pick<NightlyResult, 'flows' | 'unproven' | 'skipped' | 'quarantined'> {
+): Pick<NightlyResult, 'flows' | 'untestable' | 'skipped' | 'quarantined'> {
   if (!liveFlows) return {};
   return {
     flows: liveFlows,
-    unproven: liveFlows.filter(f => f.status === 'UNPROVEN').map(f => f.name),
+    untestable: liveFlows.filter(f => f.status === 'UNTESTABLE').map(f => f.name),
     skipped: liveFlows.filter(f => f.status === 'SKIPPED').map(f => f.name),
     quarantined: liveFlows.filter(f => f.name in SERVER_QUARANTINE).map(f => f.name),
   };

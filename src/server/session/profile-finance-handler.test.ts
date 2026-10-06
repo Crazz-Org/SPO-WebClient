@@ -36,6 +36,7 @@ import {
   fetchCurriculumData,
   fetchBankAccount,
   executeBankAction,
+  bankSendReread,
   fetchProfitLoss,
   fetchCompanyProfitLoss,
   fetchCompanies,
@@ -1319,9 +1320,17 @@ describe('executeBankAction', () => {
     return fake;
   }
 
+  let wait: jest.SpyInstance<Promise<void>, [number]>;
+
   beforeEach(() => {
     // Default answer to the mutation: the page re-rendered with a moved balance.
     mockFetch.mockResolvedValue(htmlResponse(bankPage({ budget: 99999, loans: [LOAN_A, LOAN_B], totalPayment: '$37,500,000' })));
+    // The send re-read pauses between reads; no test waits for real.
+    wait = jest.spyOn(bankSendReread, 'wait').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    wait.mockRestore();
   });
 
   // ── input validation, before any URL, any snapshot, any fetch ────────────
@@ -1532,6 +1541,78 @@ describe('executeBankAction', () => {
       expect(await executeBankAction(fake.ctx, 'send', '1', 'Bob')).toEqual({
         success: false, message: 'send was not applied: the server still reports the same balance',
       });
+    });
+
+    // ── #1324: the sender's cache entry is refreshed in the background ─────
+    // RDOSendMoney queues the sender (BackgroundInvalidateCache, Kernel/Kernel.pas:11514)
+    // while it refreshes the receiver at once (:11542): the answer page may still
+    // show the old balance although the money has moved.
+
+    it('send: an unchanged answer followed by a re-read with a new budget is a success, and the new budget is pushed', async () => {
+      const fake = withSnapshot(makeWebCtx());
+      fetchAsp(fake)
+        .mockResolvedValueOnce(BEFORE)                                   // before the action
+        .mockResolvedValueOnce(bankPage({ budget: 123456788 }));        // first re-read
+      mockFetch.mockResolvedValue(htmlResponse(BEFORE));                 // stale answer page
+      expect(await executeBankAction(fake.ctx, 'send', '1', 'Bob')).toEqual({ success: true, message: 'send completed successfully' });
+      expect(setMoney(fake)).toHaveBeenLastCalledWith('123456788');
+      expect(fetchAsp(fake)).toHaveBeenCalledTimes(2);
+      expect(wait).toHaveBeenCalledTimes(1);
+      expect(wait).toHaveBeenCalledWith(1000);
+    });
+
+    it('send: a balance unchanged over every re-read of the bound is refused, after a bounded number of reads', async () => {
+      const fake = withSnapshot(makeWebCtx());
+      // Unreadable re-reads count as "no change": a cache-unavailable page (whose
+      // budget is not to be trusted) and a page without `var budget` at all.
+      fetchAsp(fake)
+        .mockResolvedValueOnce(BEFORE)
+        .mockResolvedValueOnce(bankPage({ objValid: false, budget: 1 }))
+        .mockResolvedValueOnce('<html><body>done</body></html>');
+      mockFetch.mockResolvedValue(htmlResponse(BEFORE));
+      expect(await executeBankAction(fake.ctx, 'send', '1', 'Bob')).toEqual({
+        success: false, message: 'send was not applied: the server still reports the same balance',
+      });
+      expect(fetchAsp(fake)).toHaveBeenCalledTimes(1 + bankSendReread.reads);
+      expect(wait).toHaveBeenCalledTimes(bankSendReread.reads);
+      expect(bankSendReread.reads * bankSendReread.intervalMs).toBeGreaterThan(5000); // SPOOL_TIMEOUT, Cache/MSCacheSpool.pas:17
+      expect(setMoney(fake)).not.toHaveBeenCalledWith('1');
+    });
+
+    it('send: an errorText answer is refused at once, with no re-read', async () => {
+      const fake = withSnapshot(makeWebCtx());
+      mockFetch.mockResolvedValue(htmlResponse(bankPage({ errorText: 'You cannot send money to that tycoon.' })));
+      expect(await executeBankAction(fake.ctx, 'send', '1', 'Bob')).toEqual({
+        success: false, message: 'You cannot send money to that tycoon.',
+      });
+      expect(fetchAsp(fake)).toHaveBeenCalledTimes(1);
+      expect(wait).not.toHaveBeenCalled();
+    });
+
+    it('borrow and payoff make no extra read when the state has not moved', async () => {
+      const fake = withSnapshot(makeWebCtx());
+      mockFetch.mockResolvedValue(htmlResponse(BEFORE));
+      expect((await executeBankAction(fake.ctx, 'borrow', '1')).success).toBe(false);
+      expect(fetchAsp(fake)).toHaveBeenCalledTimes(1);
+      expect((await executeBankAction(fake.ctx, 'payoff', undefined, undefined, undefined, 0)).success).toBe(false);
+      expect(fetchAsp(fake)).toHaveBeenCalledTimes(2);
+      expect(wait).not.toHaveBeenCalled();
+    });
+
+    it('the pause between two re-reads is a real timer of the given length', async () => {
+      wait.mockRestore();
+      jest.useFakeTimers();
+      try {
+        let done = false;
+        const pending = bankSendReread.wait(1000).then(() => { done = true; });
+        await jest.advanceTimersByTimeAsync(999);
+        expect(done).toBe(false);
+        await jest.advanceTimersByTimeAsync(1);
+        await pending;
+        expect(done).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     // Regression guard for B-1 / A-11. `payoff_error` is computed at :111 and

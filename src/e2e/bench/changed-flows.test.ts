@@ -270,12 +270,14 @@ describe('flowsChangedInWorktree — the real tree', () => {
     for (const flow of result.notDriven) expect(NIGHTLY_ONLY).toHaveProperty(flow);
   });
 
-  it('a change to session.ts readBuildingDetails lists newspaper-board-read as quarantined, never requires it (#1307, #1310)', () => {
+  // #1320 removed newspaper-board-read's quarantine entry: an empty board ends UNTESTABLE, which
+  // passes, so a change that reaches it requires it again.
+  it('a change to session.ts readBuildingDetails requires newspaper-board-read (#1307, #1320)', () => {
     const session = fs.readFileSync(path.join(root, 'src/e2e/session.ts'), 'utf8').split('\n');
     const line = session.findIndex(l => l.startsWith('export async function readBuildingDetails(')) + 2;
     const result = flowsChangedInWorktree(hunk('src/e2e/session.ts', `@@ -${line} +${line} @@`), root);
-    expect(result.required).not.toContain('newspaper-board-read');
-    expect(result.quarantined).toContain('newspaper-board-read');
+    expect(result.required).toContain('newspaper-board-read');
+    expect(result.quarantined ?? []).not.toContain('newspaper-board-read');
     expect(result.notDriven).not.toContain('newspaper-board-read');
   });
 

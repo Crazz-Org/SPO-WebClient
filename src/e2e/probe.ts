@@ -12,7 +12,9 @@
  * when it was discarded, so "the response said success" proves nothing on its own. The log
  * line proves receipt only — most handlers log before their owner check, so a refused write
  * prints its line too. The read-back proves the change: one that never shows the written
- * value within its bound FAILs, even with the line present.
+ * value within its bound FAILs, even with the line present. A log line that cannot be found or
+ * read while the read-back confirms the value is UNTESTABLE — not observable, never a failure
+ * (maintainer decision 2026-10-05, doc/E2E-POLICY.md §5).
  */
 
 import { randomUUID } from 'crypto';
@@ -53,7 +55,8 @@ export type ReadBackVerdict = 'CONFIRMED' | 'UNCONFIRMED';
 export interface ProbeResult {
   what: string;
   member: string;
-  status: 'PASS' | 'FAIL';
+  /** `UNTESTABLE`: the read-back confirmed, but the log line could not be found or read. */
+  status: 'PASS' | 'FAIL' | 'UNTESTABLE';
   original: string;
   written: string;
   /** The proving line from FIVEMODELSERVER's Survival log, or null if it never appeared. */
@@ -153,7 +156,16 @@ export async function runRoundTrip(
   }
 
   const written = spec.testValue(original);
-  const window = log ? await logWindowFactory(logUrl) : null;
+  // A log that cannot be opened is a reason the line is unobservable, not a failed write.
+  let logFault: string | null = null;
+  let window: LogWindow | null = null;
+  if (log) {
+    try {
+      window = await logWindowFactory(logUrl);
+    } catch (err: unknown) {
+      logFault = `the log window could not be opened: ${toErrorMessage(err)}`;
+    }
+  }
 
   const key = `${spec.member}:${randomUUID()}`;
   const shown =
@@ -178,9 +190,13 @@ export async function runRoundTrip(
     if (log && window) {
       const matches = (line: string): boolean =>
         line.includes(log.marker) && (log.match?.(line, written) ?? true);
-      const line = await awaitMarker(window, { marker: log.marker, match: matches }, TIMEOUTS.logSettle);
-      // Re-checked here so the rule holds whatever awaitMarker returned.
-      logLine = line !== null && matches(line) ? line : null;
+      try {
+        const line = await awaitMarker(window, { marker: log.marker, match: matches }, TIMEOUTS.logSettle);
+        // Re-checked here so the rule holds whatever awaitMarker returned.
+        logLine = line !== null && matches(line) ? line : null;
+      } catch (err: unknown) {
+        logFault = `the log could not be read: ${toErrorMessage(err)}`;
+      }
     }
   } catch (err: unknown) {
     thrown = err;
@@ -216,7 +232,17 @@ export async function runRoundTrip(
         `"${poll.last ?? '(absent)'}", ${readBack.source}) — the write did not change the value`,
     );
   }
-  if (log && !logLine) failures.push('no model-server log line — the write never reached the object');
+  // The line proves receipt only; with a confirmed read-back its absence is unobservable, not
+  // wrong. With an unconfirmed read-back nothing agrees, so it stays a failure.
+  let untestable: string | null = null;
+  if (log && !logLine) {
+    const missing = `no model-server log line "${log.marker}" in ${logUrl}${logFault ? ` (${logFault})` : ''}`;
+    if (poll.verdict === 'CONFIRMED') {
+      untestable = `${missing} — the read-back confirmed "${written}" (${readBack.source})`;
+    } else {
+      failures.push(`${missing} — the write never reached the object`);
+    }
+  }
   if (restoreWriteFailed && restored) {
     failures.push('restore write failed, but the read-back shows the original — the world is unchanged');
   } else if (restoreWriteFailed) {
@@ -231,7 +257,7 @@ export async function runRoundTrip(
   const result: ProbeResult = {
     what: spec.what,
     member: spec.member,
-    status: failures.length === 0 ? 'PASS' : 'FAIL',
+    status: failures.length > 0 ? 'FAIL' : untestable !== null ? 'UNTESTABLE' : 'PASS',
     original,
     written,
     logLine,
@@ -240,6 +266,7 @@ export async function runRoundTrip(
     restored,
   };
   if (failures.length > 0) result.note = failures.join('; ');
+  else if (untestable !== null) result.note = untestable;
   return result;
 }
 

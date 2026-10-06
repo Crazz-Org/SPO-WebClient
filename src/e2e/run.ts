@@ -260,7 +260,9 @@ export function formatSummary(result: LiveRunResult, quarantine: Record<string, 
     for (const assertion of flow.assertions.filter(a => !a.ok)) {
       lines.push(`          x ${assertion.what}${assertion.detail ? ` (${assertion.detail})` : ''}`);
     }
-    for (const reason of flow.unproven) lines.push(`          ? unproven: ${reason}`);
+    // Every reason, flow and probe alike (report() folds an UNTESTABLE probe's note in): the job
+    // log is this output, so the reason lands in the run log on every run.
+    for (const reason of flow.untestable) lines.push(`          ? untestable: ${reason}`);
     for (const probe of flow.probes) {
       lines.push(
         `          probe ${probe.status}: ${probe.what} — log=${probe.logLine ? 'yes' : 'NO'}, ` +
