@@ -1394,7 +1394,7 @@ interface StageDeadline {
   stage: string;
   deadlineMs: number;
   /** Overridable so a test can prove the kill fires without waiting on production-scale
-   *  minutes; production never sets this (defaults to KILL_GRACE_MS). */
+   *  minutes; production never sets this (defaults per stage — see killGraceFor). */
   killGraceMs?: number;
 }
 
@@ -1469,12 +1469,15 @@ export const LIVE_RUN_BASE_MS = 120_000;
 
 /**
  * The flow count used when the checkout's own count cannot be read (`dist/e2e/flows.js`
- * missing, throwing on load, or exporting no `FLOWS` array): the E2E coverage census' planned
- * ≈60 flows (2026-09-29). An upper bound for the nightly, which leaves out the gate-only flows —
- * the safe side. It exists because an `undefined`/`NaN` deadline fires at once and would kill
- * every run as ENVIRONMENT.
+ * missing, throwing on load, or exporting no `FLOWS` array) — for the live drive and for
+ * verify-gate.js alike. `FLOWS` already had 66 entries on 2026-10-06 (#1329), past the E2E
+ * coverage census' planned ≈60 (2026-09-29); 80 leaves room for the next few flows. A
+ * `worker.test.ts` tripwire fails when `FLOWS.length` goes past it. An upper bound for the
+ * nightly, which leaves out the gate-only flows, and for a gate, which drives at most every
+ * flow — the safe side. It exists because an `undefined`/`NaN` deadline fires at once and
+ * would kill every run as ENVIRONMENT.
  */
-export const LIVE_RUN_FLOW_CEILING = 60;
+export const LIVE_RUN_FLOW_CEILING = 80;
 
 /**
  * The fixed share of a `ref` job: the re-measured max `ref` job wall time in
@@ -1498,11 +1501,15 @@ export const PLANNED_MAX_ROUTED_FLOWS = 27;
  * `node scripts/verify-gate.js --live ...` (ref jobs) — one opaque child process running
  * typecheck + lint + unit/component tests + build:e2e + the L2 live drive internally; none of
  * those sub-stages are separate `runCommand` calls, so none can be bounded individually from
- * here. Derived: GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS × LIVE_RUN_PER_FLOW_MS =
- * 677 s + 27 × 160 s = 4 997 s ≈ 83 min. This is a KILL bound, not an expectation: the
- * expected duration of the largest planned gate is ~20 min (maintainer decision 2026-09-29).
- * For comparison the live-drive bound (classifyStage below) gives 120 s + 15 × 160 s = 42 min
- * for today's 15-flow nightly and 120 s + 60 × 160 s ≈ 2.7 h for a 60-flow one.
+ * here. Its bound is sized from the flow count like the live drive's (classifyStage below:
+ * GATE_BASE_MS + n × LIVE_RUN_PER_FLOW_MS), and THIS figure is its floor:
+ * GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS × LIVE_RUN_PER_FLOW_MS = 677 s + 27 × 160 s =
+ * 4 997 s ≈ 83 min. A fixed 27-flow bound alone was not enough: a diff to a FLOW_SOURCES file
+ * (changed-flows.ts) can route every flow reaching a changed helper — 61 for #1317, killed at
+ * this very figure (#1329). Every figure here is a KILL bound, not an expectation: the expected
+ * duration of the largest planned gate is ~20 min (maintainer decision 2026-09-29). For
+ * comparison the live-drive bound gives 120 s + 15 × 160 s = 42 min for a 15-flow nightly, and
+ * a 66-flow gate gets 677 s + 66 × 160 s ≈ 3.1 h.
  */
 export const VERIFY_GATE_DEADLINE_MS = GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS * LIVE_RUN_PER_FLOW_MS;
 
@@ -1519,11 +1526,14 @@ const DEFAULT_STAGE_DEADLINE_MS = 660_000;
  * Classify a call by (cmd, args) into the stage it represents and how long it gets. Structural
  * matching only — no knowledge of WHICH job type is running, because the same `git`/`npm ci`
  * call serves every job type identically (checkout.ts's `prepareCheckout` has no job-type
- * concept at all). The live drive's bound grows with `flowCount`, which the CALLER hands in
- * (stageDeadlineFor below) — this function never reads the disk; a missing or non-finite count
- * falls back to LIVE_RUN_FLOW_CEILING, never a NaN deadline.
+ * concept at all). The live drive's bound — and verify-gate.js's, which contains one — grows
+ * with `flowCount`, which the CALLER hands in (stageDeadlineFor below) — this function never
+ * reads the disk; a missing or non-finite count falls back to LIVE_RUN_FLOW_CEILING, never a
+ * NaN deadline. verify-gate.js never gets less than VERIFY_GATE_DEADLINE_MS, its floor.
  */
 export function classifyStage(cmd: string, args: string[], flowCount?: number): StageDeadline {
+  const n =
+    flowCount !== undefined && Number.isFinite(flowCount) && flowCount >= 0 ? flowCount : LIVE_RUN_FLOW_CEILING;
   if (cmd === 'git') return { stage: `git ${args[0] ?? ''}`.trim(), deadlineMs: GIT_DEADLINE_MS };
   if (cmd === 'npm' && args[0] === 'ci') return { stage: 'npm ci', deadlineMs: NPM_CI_DEADLINE_MS };
   if (cmd === 'npm' && args[0] === 'run' && args[1] === 'build') {
@@ -1533,14 +1543,30 @@ export function classifyStage(cmd: string, args: string[], flowCount?: number): 
     return { stage: `npm run ${args[1]}`, deadlineMs: BUILD_STEP_DEADLINE_MS };
   }
   if (cmd === 'node' && args[0] === 'scripts/verify-gate.js') {
-    return { stage: 'verify-gate.js', deadlineMs: VERIFY_GATE_DEADLINE_MS };
+    return {
+      stage: 'verify-gate.js',
+      deadlineMs: Math.max(VERIFY_GATE_DEADLINE_MS, GATE_BASE_MS + LIVE_RUN_PER_FLOW_MS * n),
+    };
   }
   if (cmd === 'node' && args[0] === 'dist/e2e/run.js') {
-    const n =
-      flowCount !== undefined && Number.isFinite(flowCount) && flowCount >= 0 ? flowCount : LIVE_RUN_FLOW_CEILING;
     return { stage: 'run.js', deadlineMs: LIVE_RUN_BASE_MS + LIVE_RUN_PER_FLOW_MS * n };
   }
   return { stage: `${cmd} ${args.join(' ')}`.trim().slice(0, 80), deadlineMs: DEFAULT_STAGE_DEADLINE_MS };
+}
+
+/** The stages that run the live drive, and so may hold the world lock when the kill lands. */
+const DRIVE_STAGES: ReadonlySet<string> = new Set(['verify-gate.js', 'run.js']);
+
+/**
+ * Time between SIGTERM and SIGKILL for a stage: `deadline.killGraceMs` when set (tests only),
+ * else one flow's share (LIVE_RUN_PER_FLOW_MS) for a stage that drives the world, else
+ * KILL_GRACE_MS. A drive that handles SIGTERM (#1328) needs the in-flight flow to reach its
+ * restore — probe.ts runs it after the write, and the logs-settle wait alone is 20 s — or the
+ * next job finds the world DIRTY and every gate after it is BLOCKED until a human restores it.
+ */
+export function killGraceFor(deadline: StageDeadline): number {
+  if (deadline.killGraceMs !== undefined) return deadline.killGraceMs;
+  return DRIVE_STAGES.has(deadline.stage) ? LIVE_RUN_PER_FLOW_MS : KILL_GRACE_MS;
 }
 
 function safeKillGroup(pid: number, signal: NodeJS.Signals, kill: (pid: number, signal: NodeJS.Signals) => void): void {
@@ -1560,7 +1586,7 @@ function safeKillGroup(pid: number, signal: NodeJS.Signals, kill: (pid: number, 
  * actual kill — not just a signal sent and forgotten.
  *
  * What the kill guarantees: this Promise resolves within `deadline.deadlineMs +
- * 2 * killGraceMs` of being called, no matter what the child does — SIGTERM first, SIGKILL
+ * 2 * killGraceMs` of being called (killGraceFor), no matter what the child does — SIGTERM first, SIGKILL
  * after `killGraceMs` if the process is still alive, and if the OS still has not reaped it
  * `killGraceMs` after THAT (a pathological case — a process stuck in uninterruptible I/O wait
  * can outlive even SIGKILL for a while), this function gives up waiting and resolves
@@ -1583,7 +1609,7 @@ export function runWithDeadline(
     kill: (pid: number, signal: NodeJS.Signals) => void;
   } = { spawnProcess: spawn, kill: (pid, signal) => process.kill(pid, signal) },
 ): Promise<number> {
-  const killGraceMs = deadline.killGraceMs ?? KILL_GRACE_MS;
+  const killGraceMs = killGraceFor(deadline);
   return new Promise(resolve => {
     const out = fs.openSync(options.logFile, 'a');
     const child = processControl.spawnProcess(cmd, args, {
@@ -1637,13 +1663,16 @@ export function runWithDeadline(
         giveUpTimer = setTimeout(() => settle(DEADLINE_EXIT_CODE), killGraceMs);
       }, killGraceMs);
     }, deadline.deadlineMs);
-    // A spawn failure (ENOENT) emits 'error' and then 'close' — settle exactly once. A process
-    // killed by a signal reports `code: null` here (Node's own contract) — DEADLINE_EXIT_CODE
-    // when THIS function did the killing (the ordinary path: 'close' wins the race against the
-    // backstop above, so the giveUpTimer above never fires), 1 for any OTHER signal death
-    // (unchanged from before this action — e.g. the whole worker process itself receiving
-    // SIGTERM and the child dying with it).
-    child.on('close', code => settle(code ?? (timedOut ? DEADLINE_EXIT_CODE : 1)));
+    // A spawn failure (ENOENT) emits 'error' and then 'close' — settle exactly once. Once THIS
+    // function has fired the deadline, the run is a deadline kill whatever the child reports:
+    // DEADLINE_EXIT_CODE for `code: null` (killed by a signal, Node's own contract) AND for a
+    // child that trapped SIGTERM, drained, and exited 0 or 1 by itself (#1329) — that exit
+    // code describes a run cut short, never a verdict on the code, so the caller's ENVIRONMENT
+    // stands even when the drain restored everything. The ordinary path: 'close' wins the race
+    // against the backstop above, so the giveUpTimer above never fires. Without a deadline
+    // kill, a signal death settles 1 (unchanged from before this action — e.g. the whole
+    // worker process itself receiving SIGTERM and the child dying with it).
+    child.on('close', code => settle(timedOut ? DEADLINE_EXIT_CODE : (code ?? 1)));
     child.on('error', () => settle(1));
   });
 }
@@ -1674,7 +1703,8 @@ const READ_FLOWS_SCRIPT =
  * caches its modules until restart, so an imported count would freeze at the last bench install;
  * a child also keeps an unmerged branch's code out of the long-lived worker. The live/nightly
  * branch of runJob has already run `build:e2e` in that checkout (BUILD_STEPS), so the file is
- * fresh. Undefined when it is missing, throws, or exports no `FLOWS` array.
+ * fresh there; a ref job has not before verify-gate.js, so it may be missing or stale.
+ * Undefined when it is missing, throws, or exports no `FLOWS` array.
  */
 export function readCheckoutFlowCount(cwd: string): number | undefined {
   try {
@@ -1728,9 +1758,13 @@ export function liveRunFlowCount(
   return flowCountFromArgs(args) ?? read(cwd) ?? LIVE_RUN_FLOW_CEILING;
 }
 
-/** classifyStage, with the live drive's flow count computed from the checkout being driven. */
+/**
+ * classifyStage, with the flow count computed from the checkout being driven — for the live
+ * drive and for verify-gate.js alike. A ref job runs no `build:e2e` before verify-gate.js
+ * (BUILD_STEPS.ref), so its `dist/e2e/flows.js` may be missing, which falls to the ceiling.
+ */
 export function stageDeadlineFor(cmd: string, args: string[], cwd: string): StageDeadline {
-  if (cmd === 'node' && args[0] === 'dist/e2e/run.js') {
+  if (cmd === 'node' && (args[0] === 'dist/e2e/run.js' || args[0] === 'scripts/verify-gate.js')) {
     return classifyStage(cmd, args, liveRunFlowCount(args.slice(1), cwd));
   }
   return classifyStage(cmd, args);
