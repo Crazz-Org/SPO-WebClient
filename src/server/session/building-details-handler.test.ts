@@ -2084,7 +2084,8 @@ describe('getBuildingGateConnections', () => {
       MetaFluid: 'Fresh Food', FluidValue: '1200', LastCostPerc: '85', minK: '30',
       MaxPrice: '150', QPSorted: '1', SortMode: '0', cnxCount: '1', Selected: '1',
       ObjectId: '40133999',
-    }, 'res="%Farm A\tSPO_test3\tYellow Inc.\t100\t10\t900\t$12\t95%\t1\t40\t50\t"');
+    // Contract changed by #1340: the supply row request carries a 12th name, cnxPricePerc.
+    }, 'res="%Farm A\tSPO_test3\tYellow Inc.\t100\t10\t900\t$12\t95%\t1\t40\t50\t\t"');
 
     const { supply } = await getBuildingGateConnections(
       fake.ctx, X, Y, 'supplies', 'Seg0', 'Fresh Food',
@@ -2130,7 +2131,8 @@ describe('getBuildingGateConnections', () => {
     expect(fake.cacher.getPropertyList).toHaveBeenCalledWith(FIRST_TEMP, [
       'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
       'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
-      'nfCapacity', 'nfActualMaxFluidValue',
+      // Contract changed by #1340: nfFluidValue appended at index 12.
+      'nfCapacity', 'nfActualMaxFluidValue', 'nfFluidValue',
     ]);
   });
 
@@ -2148,6 +2150,72 @@ describe('getBuildingGateConnections', () => {
 
     expect(supply?.capacity).toBe('200');
     expect(supply?.actualMaxFluid).toBe('150');
+  });
+
+  it('appends nfFluidValue at header index 12, every earlier index unchanged (#1340)', async () => {
+    const fake = gateCtx('supplies', { MetaFluid: 'Fresh Food', cnxCount: '0' }, '');
+
+    await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Fresh Food');
+
+    const names = fake.cacher.getPropertyList.mock.calls[0][1];
+    expect(names).toHaveLength(13);
+    expect(names[12]).toBe('nfFluidValue');
+    expect(names.slice(0, 12)).toEqual([
+      'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
+      'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
+      'nfCapacity', 'nfActualMaxFluidValue',
+    ]);
+  });
+
+  it('maps header index 12 to nfFluidValue, the delivered flow as a number (#1340)', async () => {
+    // TInputCacheAgent writes it beside nfActualMaxFluidValue
+    // (Kernel/KernelCache.pas:613, :617).
+    const fake = gateCtx('supplies', {
+      MetaFluid: 'Fresh Food', cnxCount: '0', nfActualMaxFluidValue: '150', nfFluidValue: '87.5',
+    }, '');
+
+    const { supply } = await getBuildingGateConnections(
+      fake.ctx, X, Y, 'supplies', 'Seg0', 'Fresh Food',
+    );
+
+    expect(supply?.nfFluidValue).toBe('87.5');
+    expect(supply?.actualMaxFluid).toBe('150');
+  });
+
+  it('appends cnxPricePerc at row index 11, after cnxYPos (#1340)', async () => {
+    const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
+      'res="%a\tb\tc\td\te\tf\tg\th\t1\t0\t0\t115\t"');
+
+    await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
+
+    const query = fake.sent.find(s => s.packet.member === 'GetSubObjectProps')?.packet.args?.[1];
+    expect(query).toBe(RdoValue.string(
+      'cnxFacilityName0\tcnxCreatedBy0\tcnxCompanyName0\tcnxNfPrice0\t' +
+      'OverPriceCnxInfo0\tLastValueCnxInfo0\ttCostCnxInfo0\tcnxQuality0\t' +
+      'ConnectedCnxInfo0\tcnxXPos0\tcnxYPos0\tcnxPricePerc0\t',
+    ).format());
+  });
+
+  it('maps row index 11 to pricePerc, the integer the server compares to MaxPrice (#1340)', async () => {
+    // round(100*Connection.Price/MarketPrice), Kernel/KernelCache.pas:573-574.
+    const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
+      'res="%Farm\tBob\tBobCorp\t10\t0\t5\t$1\t90%\t1\t12\t34\t115\t"');
+
+    const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
+
+    expect(supply?.connections[0]?.pricePerc).toBe('115');
+    expect(supply?.connections[0]?.y).toBe(34);
+  });
+
+  it('leaves nfFluidValue and pricePerc undefined when the server answers them empty (#1340)', async () => {
+    const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
+      'res="%Farm\tBob\tBobCorp\t10\t0\t5\t$1\t90%\t1\t12\t34\t\t"');
+
+    const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
+
+    expect(supply).toHaveProperty('nfFluidValue', undefined);
+    expect(supply?.connections).toHaveLength(1);
+    expect(supply?.connections[0]).toHaveProperty('pricePerc', undefined);
   });
 
   it('leaves the auto-buy flag undefined on a gate that does not publish it', async () => {
@@ -2255,8 +2323,9 @@ describe('getBuildingGateConnections', () => {
   });
 
   it('caps the connection sweep at 20 however many the gate claims', async () => {
+    // Contract changed by #1340: the supply row request carries a 12th name, cnxPricePerc.
     const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '75' },
-      'res="%a\tb\tc\td\te\tf\tg\th\t1\t0\t0\t"');
+      'res="%a\tb\tc\td\te\tf\tg\th\t1\t0\t0\t\t"');
 
     const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
 
@@ -2336,8 +2405,9 @@ describe('getBuildingGateConnections', () => {
   });
 
   it('keeps a supply row whose columns are all empty', async () => {
+    // Contract changed by #1340: the supply row request carries a 12th name, cnxPricePerc.
     const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
-      'res="%\t\t\t\t\t\t\t\t\t\t\t"');
+      'res="%\t\t\t\t\t\t\t\t\t\t\t\t"');
 
     const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
 
@@ -2346,9 +2416,10 @@ describe('getBuildingGateConnections', () => {
   });
 
   it('substitutes the documented defaults for every blank supply column', async () => {
-    // 12 columns: only the first and last carry text, so columns 1-10 blank.
+    // 13 columns: only the first and last carry text, so columns 1-11 blank.
+    // Contract changed by #1340: the supply row request carries a 12th name, cnxPricePerc.
     const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
-      `res="%head${'\t'.repeat(11)}tail"`);
+      `res="%head${'\t'.repeat(12)}tail"`);
 
     const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
 
@@ -2435,8 +2506,9 @@ describe('getBuildingGateConnections', () => {
   it('stays quiet when every row came back', async () => {
     // The warning has to be absent on the happy path, or it is noise nobody
     // reads when it does fire.
+    // Contract changed by #1340: the supply row request carries a 12th name, cnxPricePerc.
     const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
-      'res="%Farm\tBob\tBobCorp\t10\t0\t5\t$1\t90%\t1\t12\t34\t"');
+      'res="%Farm\tBob\tBobCorp\t10\t0\t5\t$1\t90%\t1\t12\t34\t\t"');
 
     const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
 
