@@ -20,7 +20,7 @@ import {
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
   bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
-  RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent,
+  RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent, lookForLine, logMissReason,
   type Flow, type FlowResult, type GateLinks,
 } from './flows';
 import { parseBuildingFocusResponse } from '@/server/map-parsers';
@@ -3097,7 +3097,7 @@ describe('session-resume', () => {
     expect(assertion(result, /explicit logout tears/)).toBeUndefined();
     expect(result.untestable).toEqual([
       expect.stringMatching(
-        /^an explicit logout tears the ClientView down — no "Start Disconnecting SPO_test3" within \d+ ms in http:\/\/logs\/FIVEINTERFACESERVER\/S\.log — the logout request was answered \(RESP_LOGOUT\)$/,
+        /^an explicit logout tears the ClientView down — no "Start Disconnecting SPO_test3" within \d+ ms in http:\/\/logs\/FIVEINTERFACESERVER\/S\.log \(no line\) — offset 100, no tail read, no full read — the logout request was answered \(RESP_LOGOUT\)$/,
       ),
     ]);
   });
@@ -10194,7 +10194,7 @@ describe('player actions (#1195)', () => {
       expect(result.assertions.every(a => a.ok)).toBe(true);
       expect(result.untestable).toEqual([
         expect.stringMatching(
-          /^the write of 0 logged its Tycoon rating line — no "Setting town politics Tycoon rating:" within \d+ ms in u — the aggregate read 60 -> 40$/,
+          /^the write of 0 logged its Tycoon rating line — no "Setting town politics Tycoon rating:" within \d+ ms in u \(no line\) — offset 0, no tail read, no full read — the aggregate read 60 -> 40$/,
         ),
       ]);
       expect(lock.read().pendingRestores).toEqual([]);
@@ -10223,7 +10223,7 @@ describe('player actions (#1195)', () => {
       expect(result.assertions.every(a => a.ok)).toBe(true);
       expect(result.untestable).toEqual([
         expect.stringMatching(
-          /^the restore to 100's Tycoon rating line — no "Setting town politics Tycoon rating:" within \d+ ms in u — the aggregate read 40 -> 60, so the pending restore is cleared \(maintainer decision 2026-10-05, option b\)$/,
+          /^the restore to 100's Tycoon rating line — no "Setting town politics Tycoon rating:" within \d+ ms in u \(no line\) — offset 0, no tail read, no full read — the aggregate read 40 -> 60, so the pending restore is cleared \(maintainer decision 2026-10-05, option b\)$/,
         ),
       ]);
       expect(lock.read().pendingRestores).toEqual([]);
@@ -10537,7 +10537,7 @@ describe('player actions (#1195)', () => {
         ['RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line', true],
       ]);
       expect(result.untestable).toEqual([
-        expect.stringMatching(/ — the write of 99's Setting Input fluid perc line: no "Setting Input fluid perc:" within \d+ ms in u; proven by the Survival lines alone/),
+        expect.stringMatching(/ — the write of 99's Setting Input fluid perc line: no "Setting Input fluid perc:" within \d+ ms in u \(no line\) — offset 0, no tail read, no full read; proven by the Survival lines alone/),
       ]);
       expect(world.writes.map(w => w.value)).toEqual(['99', '100']);
       expect(lock.read().pendingRestores).toEqual([]);
@@ -10553,7 +10553,7 @@ describe('player actions (#1195)', () => {
       expect(result.assertions.find(a => a.what.startsWith('RDOSetInputFluidPerc: the restore'))).toEqual({
         what: 'RDOSetInputFluidPerc: the restore to 100 logged its Setting Input fluid perc line',
         ok: false,
-        detail: 'no restore line — pending restore kept',
+        detail: 'no restore line (no line) — offset 0, no tail read, no full read — pending restore kept',
       });
       expect(lock.read().pendingRestores).toEqual([
         expect.objectContaining({
@@ -10647,5 +10647,23 @@ describe('player actions (#1195)', () => {
       expect(result.untestable[0]).toMatch(/^research fixture — none in Helartia/);
       expect(world.writes).toEqual([]);
     });
+  });
+});
+
+describe('lookForLine and logMissReason (#1318)', () => {
+  const window = { url: 'http://logs/Survival%2026-10-04.log', offset: 1234, openedAt: '2026-10-04T20:38:03.530Z' };
+
+  it('carries what the reads saw when the log was read and held no line', async () => {
+    const look = await lookForLine({ url: window.url, window }, async () => null);
+    expect(look).toEqual({ line: null, seen: liveLog.describeLogMiss(window) });
+    expect(look.seen).toBe('(no line) — offset 1234, no tail read, no full read');
+    expect(logMissReason(look, 'Setting town politics Tycoon rating:', window.url)).toBe(
+      `no "Setting town politics Tycoon rating:" within ${TIMEOUTS.logSettle} ms in ${window.url} (no line) — offset 1234, no tail read, no full read`,
+    );
+  });
+
+  it('carries no seen text when the line is found', async () => {
+    const look = await lookForLine({ url: window.url, window }, async () => 'the line');
+    expect(look).toEqual({ line: 'the line' });
   });
 });

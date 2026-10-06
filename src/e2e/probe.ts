@@ -20,7 +20,7 @@
 import { randomUUID } from 'crypto';
 import { toErrorMessage } from '../shared/error-utils';
 import { TIMEOUTS } from './config';
-import { LOG_MARKERS, awaitMarker, openLogWindow, type LogWindow } from './live-log';
+import { LOG_MARKERS, awaitMarker, describeLogMiss, openLogWindow, type LogWindow } from './live-log';
 import { readSectionGroups, setBuildingProperty, propertyValue, type LiveSession } from './session';
 import type { PendingRestore, WorldLock } from './world-lock';
 import { sleep as defaultSleep } from './sleep';
@@ -236,7 +236,7 @@ export async function runRoundTrip(
   // wrong. With an unconfirmed read-back nothing agrees, so it stays a failure.
   let untestable: string | null = null;
   if (log && !logLine) {
-    const missing = `no model-server log line "${log.marker}" in ${logUrl}${logFault ? ` (${logFault})` : ''}`;
+    const missing = `no model-server log line "${log.marker}" in ${logUrl} ${logFault ? `(${logFault})` : describeLogMiss(window)}`;
     if (poll.verdict === 'CONFIRMED') {
       untestable = `${missing} — the read-back confirmed "${written}" (${readBack.source})`;
     } else {

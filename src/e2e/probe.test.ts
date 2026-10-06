@@ -351,6 +351,7 @@ describe('runRoundTrip', () => {
     expect(result.status).toBe('FAIL');
     expect(result.readBack).toBe('UNCONFIRMED');
     expect(result.note).toMatch(/no model-server log line "Setting Tax value:" in .* — the write never reached the object/);
+    expect(result.note).toMatch(/ \(no line\) — offset \d+, no tail read, no full read — the write never reached/);
   });
 
   it('never takes a log line that contains the prefix but fails match', async () => {

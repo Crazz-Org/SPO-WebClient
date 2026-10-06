@@ -35,6 +35,11 @@
  *   dated after `openedAt`'s UTC day counts as later than the window, and the time-of-day
  *   comparison applies only to lines from the window's own day.
  *
+ * Full read: when the deadline passes with no polled tail matching, the window's file is read
+ * once more, whole and with no Range (a web server can keep serving a stale length or tail for
+ * a file that grows by small appends — #1318), under the same two rules. Each window's reads —
+ * the last tail's status and length, the full read's — are recorded for `describeLogMiss`.
+ *
  * Assumption: **Survival log time = UTC** — verified 2026-09-30 and 2026-10-01 (tail line
  * `6:28:28 AM` read at `06:28:30 UTC`). The server clock can trail the bench by a second or
  * two, and a line logged right after the window opens would then carry a stamp earlier than
@@ -232,6 +237,46 @@ interface LogSegment {
   text: string;
 }
 
+/**
+ * What the reads of one window got back — the last tail read and the deadline's full read.
+ * Lengths are the `text.length` of the body as read: one per byte for the ASCII Survival log.
+ */
+interface LogReads {
+  tail?: { status: number; length: number };
+  full?: { status: number; length: number } | { error: string };
+}
+
+/** Per-window read record, keyed by the window object so `LogWindow` keeps its shape. */
+const windowReads = new WeakMap<LogWindow, LogReads>();
+
+function readsOf(window: LogWindow): LogReads {
+  let reads = windowReads.get(window);
+  if (reads === undefined) {
+    reads = {};
+    windowReads.set(window, reads);
+  }
+  return reads;
+}
+
+/**
+ * One line naming what the reader saw for a window whose line never came: its offset, the
+ * status and length of the last tail read, and the status and length of the full read.
+ * e.g. `(no line) — offset 1234567, last tail 416 / 0 B, full read 200 / 1236012 B`.
+ */
+export function describeLogMiss(window: LogWindow | null | undefined, missing = 'no line'): string {
+  if (!window) return `(${missing}) — no log window`;
+  const reads = windowReads.get(window) ?? {};
+  const tail = reads.tail ? `last tail ${reads.tail.status} / ${reads.tail.length} B` : 'no tail read';
+  let full = 'no full read';
+  if (reads.full) {
+    full =
+      'error' in reads.full
+        ? `full read failed: ${reads.full.error}`
+        : `full read ${reads.full.status} / ${reads.full.length} B`;
+  }
+  return `(${missing}) — offset ${window.offset}, ${tail}, ${full}`;
+}
+
 /** The window's own tail, then every newer-dated Survival file in its directory, oldest first. */
 async function readSegments(window: LogWindow): Promise<LogSegment[]> {
   const response = await fetch(window.url, {
@@ -240,15 +285,22 @@ async function readSegments(window: LogWindow): Promise<LogSegment[]> {
   let tail = ''; // 416: nothing appended yet.
   if (response.status !== 416) {
     if (!response.ok) {
+      readsOf(window).tail = { status: response.status, length: 0 };
       throw new Error(`Log read failed (${response.status}) for ${window.url}`);
     }
     const text = await response.text();
     // A server that ignores Range returns 200 and the whole file — slice it ourselves.
     tail = response.status === 206 ? text : text.slice(window.offset);
   }
+  readsOf(window).tail = { status: response.status, length: tail.length };
+  return [{ day: logDayOf(window.url), text: tail }, ...(await newerSegments(window))];
+}
+
+/** Every newer-dated Survival file in the window's directory, whole, oldest first. */
+async function newerSegments(window: LogWindow): Promise<LogSegment[]> {
   const day = logDayOf(window.url);
-  const segments: LogSegment[] = [{ day, text: tail }];
-  if (day === undefined) return segments;
+  if (day === undefined) return [];
+  const segments: LogSegment[] = [];
   const dir = logDirOf(window.url);
   for (const newer of (await listSurvivalDays(dir)).filter(d => d > day)) {
     const url = survivalUrl(dir, newer);
@@ -259,6 +311,41 @@ async function readSegments(window: LogWindow): Promise<LogSegment[]> {
     segments.push({ day: newer, text: await next.text() });
   }
   return segments;
+}
+
+/**
+ * The deadline's last chance: the window's file read whole, with no Range, then the newer
+ * files. The byte rule still holds — only the text after `window.offset` is kept. Never
+ * throws: a failure is recorded for `describeLogMiss` and yields null.
+ */
+async function readWhole(window: LogWindow): Promise<LogSegment[] | null> {
+  const reads = readsOf(window);
+  try {
+    const response = await fetch(window.url, {
+      headers: { 'Accept-Encoding': 'identity', 'Cache-Control': 'no-cache' },
+    });
+    if (!response.ok) {
+      reads.full = { status: response.status, length: 0 };
+      return null;
+    }
+    const body = await response.text();
+    reads.full = { status: response.status, length: body.length };
+    return [{ day: logDayOf(window.url), text: body.slice(window.offset) }, ...(await newerSegments(window))];
+  } catch (err: unknown) {
+    reads.full = { error: toErrorMessage(err) };
+    return null;
+  }
+}
+
+/** The first line of the segments that carries the marker, passes the timestamp rule and `match`. */
+function findProof(segments: LogSegment[], window: LogWindow, proof: LogProof): string | null {
+  for (const segment of segments) {
+    const line = segment.text
+      .split(/\r?\n/)
+      .find(l => l.includes(proof.marker) && loggedInWindow(l, window, segment.day) && (proof.match?.(l) ?? true));
+    if (line) return line.trim();
+  }
+  return null;
 }
 
 /** How far a line's stamp may trail `openedAt` and still count — the server clock can lag the bench. */
@@ -324,15 +411,12 @@ export async function awaitMarker(
   const proof: LogProof = typeof markerOrProof === 'string' ? { marker: markerOrProof } : markerOrProof;
   const deadline = now() + timeoutMs;
   for (;;) {
-    for (const segment of await readSegments(window)) {
-      const line = segment.text
-        .split(/\r?\n/)
-        .find(
-          l => l.includes(proof.marker) && loggedInWindow(l, window, segment.day) && (proof.match?.(l) ?? true),
-        );
-      if (line) return line.trim();
+    const line = findProof(await readSegments(window), window, proof);
+    if (line) return line;
+    if (now() >= deadline) {
+      const whole = await readWhole(window);
+      return whole === null ? null : findProof(whole, window, proof);
     }
-    if (now() >= deadline) return null;
     await sleep(pollMs);
   }
 }
