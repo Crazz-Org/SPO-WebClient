@@ -6,7 +6,9 @@
  * coordinates committed to the tree, because the world moves — and `ensureFixtures` builds each
  * missing kind once — called by `fixtures-ensure` for every kind, and by each fixture flow's own
  * seed for the kinds it reads (#1185). That build is the permanent fixture build the maintainer
- * sanctioned (2026-09-29, doc/E2E-POLICY.md §9): nothing here is restored.
+ * sanctioned (2026-09-29, doc/E2E-POLICY.md §9): nothing here is restored. A kind locked behind
+ * research gets one research step per run instead (#1233, RESEARCH_UNLOCKS) — permanent setup
+ * data too (maintainer, 2026-10-01): never cancelled, no pending restore.
  *
  * The placement helpers (`listBuildable`, `findFreeLot`, `placeFacility`) are exported for the
  * build-and-demolish flow (#1150).
@@ -23,6 +25,7 @@ import type {
   WsRespAllFacilityDimensions,
   WsRespBuildingCategories,
   WsRespBuildingFacilities,
+  WsRespGetProfile,
   WsRespLoginSuccess,
   WsRespMapData,
   WsRespSearchMenuDirectory,
@@ -41,8 +44,27 @@ import { ERROR_TooManyFacilities } from '../shared/error-codes';
 import { isWater } from '../shared/land-utils';
 import { GOVERNED_TOWN, HTTP_BASE, PRIMARY_ACCOUNT, TIMEOUTS, WORLD_NAME } from './config';
 import { LOG_MARKERS, awaitMarker, findCurrentSurvivalLog, openLogWindow, type LogWindow } from './live-log';
-import { findTown, readBuildingDetails, type LiveSession } from './session';
+import {
+  findTown,
+  propertyValue,
+  readBuildingDetails,
+  readSectionGroups,
+  setBuildingProperty,
+  type LiveSession,
+} from './session';
+import {
+  RESEARCH_TARGET,
+  queueResearchLineMatches,
+  readResearchDetails,
+  researchCost,
+  researchInventory,
+  researchLevel,
+  researchState,
+  type ResearchState,
+} from './research';
+import { toErrorMessage } from '../shared/error-utils';
 import { WsDriverError } from './ws-driver';
+import { sleep as defaultSleep } from './sleep';
 
 // ---------------------------------------------------------------------------------------------
 // 1. The kind table
@@ -288,6 +310,14 @@ export async function helartiaValue(session: LiveSession): Promise<number | unde
 
 /** What the company may build now — `available` rows only (a locked row's class is guessed from an icon). */
 export async function listBuildable(session: LiveSession): Promise<BuildingInfo[]> {
+  return (await readBuildMenu(session)).filter(f => f.available === true);
+}
+
+/**
+ * Every row of the company's build menu, locked rows kept. A locked row carries no kernel class
+ * (its class is guessed from an icon), only the server's own `requirement` sentence.
+ */
+export async function readBuildMenu(session: LiveSession): Promise<BuildingInfo[]> {
   const companyName = session.company.name;
   const { categories } = await session.driver.request<WsRespBuildingCategories>(
     { type: WsMessageType.REQ_GET_BUILDING_CATEGORIES, companyName },
@@ -307,7 +337,7 @@ export async function listBuildable(session: LiveSession): Promise<BuildingInfo[
       },
       WsMessageType.RESP_BUILDING_FACILITIES,
     );
-    out.push(...facilities.filter(f => f.available === true));
+    out.push(...facilities);
   }
   return out;
 }
@@ -407,11 +437,29 @@ function cell(rows: number[][], area: LotArea, x: number, y: number): number | u
 /**
  * A free NW corner for a `xsize × ysize` facility in Helartia, nearest the hall first, or null.
  *
- * Every footprint tile must: sit inside the window with a margin (a building anchored outside it
- * can reach in); read Helartia's value on TOWNS; hold the required zone exactly (stricter than the
- * server, which accepts a lot where any tile `ZoneMatches`, `Kernel/World.pas:5767`), or with no
- * requirement any zone but reserved; not be water (`AreaIsClear`, `Kernel/World.pas:5724-5726` —
- * WaterQuest is not assumed); and carry no building footprint and no road.
+ * The server rule: `TWorld.NewFacility` checks the zone only through
+ * `MatchesZone(x, y, XSize, YSize, ZoneType)`, unless the class has `mfcIgnoreZoning`
+ * (`Kernel/World.pas:3077`). `MatchesZone` ORs over the footprint, so one matching tile is enough
+ * (`Kernel/World.pas:5767-5788`). Per tile, `ZoneMatches` (`Protocol/Protocol.pas:433-445`): tile 0
+ * matches every class; tile reserved (1) also matches every class (`result := true;//false;`,
+ * `:438-439`); tile residential (2) matches classes 3/4/5; any other tile matches the same zone, or
+ * a class with no zone. `AreaIsClear` separately needs every tile free of objects and roads, and
+ * not water (`Kernel/World.pas:5700-5742`).
+ *
+ * The client rule — a strict subset (if every tile matches, at least one does). Every footprint
+ * tile must: sit inside the window with a margin (a building anchored outside it can reach in);
+ * read Helartia's value on TOWNS; hold the required zone or zone 0, or with no requirement any
+ * zone but reserved; not be water (`Kernel/World.pas:5724-5726` — WaterQuest is not assumed); and
+ * carry no building footprint and no road. Reserved is refused for every class, stricter than the
+ * server on purpose: reserved land is the mayor's.
+ *
+ * Accepted consequence: Helartia has a mayor and SPO_test3 holds the role (`TTycoon.AssumeRole`
+ * sets `SuperRole`, `Kernel/Kernel.pas:11377`), so a footprint more than half unzoned
+ * (`AreaIsZoned`, `Kernel/World.pas:5790-5810`) gets the `facForbiddenZone` trouble bit when built
+ * (`Kernel/World.pas:3128-3133`) and keeps it every period (`Kernel/Kernel.pas:4093-4095`). Its
+ * only effect: a demolition ordered by a later zoning change pays no refund
+ * (`Kernel/World.pas:1556-1559`). An owner's own demolition (`place-rename-demolish`) still takes
+ * the level-based refund (`Kernel/World.pas:1561-1563`).
  */
 export async function findFreeLot(
   session: LiveSession,
@@ -446,7 +494,7 @@ export async function findFreeLot(
     if (cell(area.towns, area, x, y) !== area.helartia) return false;
     const zone = cell(area.zones, area, x, y);
     if (zone === undefined || zone === ZONE_RESERVED) return false;
-    if (required > 0 && zone !== required) return false;
+    if (required > 0 && zone !== required && zone !== 0) return false;
     const land = terrain.landId(x, y);
     if (land === undefined || isWater(land)) return false;
     return !blocked.has(key(x, y));
@@ -766,9 +814,17 @@ export async function ensureFixtures(
   }
 
   let cash = await readCash(session);
-  const buildable = await listBuildable(session);
+  const menu = await readBuildMenu(session);
+  const buildable = menu.filter(f => f.available === true);
+  const locked = menu.filter(f => f.available !== true);
   let logWindow: LogWindow | undefined;
   const companyId = session.company.id;
+  const research: ResearchRun = {
+    session,
+    holdings,
+    deps,
+    logWindow: async () => (logWindow ??= await openLogWindow(deps.survivalLogUrl ?? (await findCurrentSurvivalLog()))),
+  };
 
   for (const kind of absent) {
     const set = (o: Omit<FixtureOutcome, 'kind'>): void => {
@@ -776,6 +832,19 @@ export async function ensureFixtures(
     };
     const offered = buildable.filter(b => kind.candidates.some(c => c.facilityClass === b.facilityClass));
     if (offered.length === 0) {
+      // Not offered: when research unlocks the kind, take one step of it (#1233).
+      let researched: Awaited<ReturnType<typeof researchUnlock>>;
+      try {
+        researched = await researchUnlock(research, kind, locked, cash);
+      } catch (err: unknown) {
+        set({ status: 'unproven', reason: `research step: ${toErrorMessage(err)}` });
+        continue;
+      }
+      if (researched) {
+        set(researched.outcome);
+        if (cash !== null) cash -= researched.spent;
+        continue;
+      }
       set({ status: 'unproven', reason: `no candidate offered to ${session.company.name}` });
       continue;
     }
@@ -830,22 +899,30 @@ export async function ensureFixtures(
       });
       continue;
     }
-    const line = await awaitMarker(
-      logWindow,
-      {
-        marker: LOG_MARKERS.RDONewFacility,
-        match: l => newFacilityLineMatches(l, info.facilityClass, companyId, lot.x, lot.y),
-      },
-      TIMEOUTS.logSettle,
-      undefined,
-      deps.now,
-      deps.sleep,
+    const window = logWindow;
+    const { line, fault } = await lineOrFault(() =>
+      awaitMarker(
+        window,
+        {
+          marker: LOG_MARKERS.RDONewFacility,
+          match: l => newFacilityLineMatches(l, info.facilityClass, companyId, lot.x, lot.y),
+        },
+        TIMEOUTS.logSettle,
+        undefined,
+        deps.now,
+        deps.sleep,
+      ),
     );
     if (line === null) {
+      // The lot read-back already shows the class placed: the missing line is unobservable, not
+      // wrong — UNTESTABLE (maintainer decision 2026-10-05, doc/E2E-POLICY.md §5).
       set({
-        status: 'FAIL',
+        status: 'unproven',
         ...base,
-        reason: `no New Facility: line for ${info.facilityClass}, company ${companyId}, ${where}`,
+        visualClass: placed.readBack.visualClass,
+        reason:
+          `no New Facility: line for ${info.facilityClass}, company ${companyId}, ${where} in ${window.url}` +
+          `${fault ? ` (${fault})` : ''} — the lot read-back shows it owned by SPO_test3`,
       });
       continue;
     }
@@ -869,8 +946,281 @@ export async function ensureFixtures(
   return ordered();
 }
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise(resolve => {
-    setTimeout(resolve, ms).unref?.();
+/** Search the log without throwing: a read fault becomes a reason, never a failed build. */
+export async function lineOrFault(find: () => Promise<string | null>): Promise<{ line: string | null; fault?: string }> {
+  try {
+    return { line: await find() };
+  } catch (err: unknown) {
+    return { line: null, fault: `the log could not be read: ${toErrorMessage(err)}` };
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// 6. Research that unlocks a kind (#1233)
+// ---------------------------------------------------------------------------------------------
+
+export interface ResearchUnlock {
+  facilityClass: string;
+  /** The invention id (`research.0.dat`) whose research makes the class buildable. */
+  inventionId: string;
+  why: string;
+}
+
+/**
+ * A class the build menu offers only once an invention is owned. `FacilityList.asp:208` makes a
+ * class available when the company owns its technology; an invention links itself to every class
+ * whose `TechnologyKind` equals its `tech` attribute (`TInvention.EnableFacilities`,
+ * `Inventions/Inventions.pas:582-595`). That attribute is not in the SPO-Original tree, so each
+ * entry is checked live: a locked build-menu row's `requirement` must name the invention.
+ * Kept apart from FIXTURE_KINDS on purpose: it changes no kind's candidates.
+ */
+export const RESEARCH_UNLOCKS: readonly ResearchUnlock[] = [
+  {
+    facilityClass: 'DissBank',
+    inventionId: 'Banking',
+    why: "TechnologyKind := tidInventionKind_Banking — Model Extensions/Dissidents/DissidentPack1.dpr:327; 'Banking', Model Extensions/Standards.pas:43",
+  },
+  {
+    facilityClass: 'DissTVStation',
+    inventionId: 'BasicTelevision',
+    why: "TechnologyKind := tidInventionKind_Television — Model Extensions/Dissidents/DissidentPack1.dpr:3441; 'TV', Model Extensions/Standards.pas:37",
+  },
+];
+
+/** One invention of the research index the gateway serves (`/api/research-inventions`, research.0.dat). */
+export interface IndexedInvention {
+  id: string;
+  name: string;
+  /** Prerequisite display names. */
+  requires: string[];
+}
+
+export interface ResearchIndex {
+  byId: Map<string, IndexedInvention>;
+  byName: Map<string, IndexedInvention>;
+}
+
+/** The research index, as the client reads it. Throws on failure. */
+export async function loadResearchIndex(fetchImpl: typeof fetch = fetch): Promise<ResearchIndex> {
+  const res = await fetchImpl(`${HTTP_BASE}/api/research-inventions`);
+  if (!res.ok) throw new Error(`research index: /api/research-inventions answered ${res.status}`);
+  const { inventions } = (await res.json()) as { inventions?: IndexedInvention[] };
+  if (!Array.isArray(inventions)) throw new Error('research index: no inventions array');
+  const index: ResearchIndex = { byId: new Map(), byName: new Map() };
+  for (const inv of inventions) {
+    const entry = { id: inv.id, name: inv.name, requires: inv.requires ?? [] };
+    index.byId.set(entry.id, entry);
+    index.byName.set(entry.name, entry);
+  }
+  return index;
+}
+
+/** `Requires research <name> at <location>.` (`TMetaFacility.EvaluateTexts`, Kernel/Kernel.pas:3312-3315; Kernel/SimHints.pas:390) → the location. */
+export function requiredResearchAt(requirement: string | undefined, name: string): string | undefined {
+  const prefix = `Requires research ${name} at `;
+  const text = (requirement ?? '').trim();
+  return text.startsWith(prefix) ? text.slice(prefix.length).replace(/\.$/, '') : undefined;
+}
+
+interface Listed {
+  state: ResearchState;
+  enabled: boolean;
+  category: number;
+}
+
+/** What one ensureFixtures run learnt about research — read once, updated by its own queues. */
+interface ResearchRun {
+  session: LiveSession;
+  holdings: Holding[];
+  deps: FixtureDeps;
+  logWindow: () => Promise<LogWindow>;
+  index?: ResearchIndex;
+  inventory?: Map<string, Listed>;
+  reserve?: number | null;
+  /** Inventions whose queue the server did not take this run — never sent again in the run. */
+  refused?: Set<string>;
+}
+
+async function runIndex(run: ResearchRun): Promise<ResearchIndex> {
+  run.index ??= await loadResearchIndex(run.deps.fetchImpl);
+  return run.index;
+}
+
+/** Every category of the HQ's inventory, up to `CatCount` (the highest index, Kernel/ResearchCenter.pas:820). */
+async function runInventory(run: ResearchRun, hq: Holding): Promise<Map<string, Listed>> {
+  if (run.inventory) return run.inventory;
+  const groups = await readSectionGroups(run.session, hq.x, hq.y, 'hqInventions', hq.visualClass);
+  const parsed = Number(propertyValue(groups, 'hqInventions', 'CatCount') ?? '0');
+  const catMax = Number.isFinite(parsed) ? parsed : 0;
+  const listed = new Map<string, Listed>();
+  for (let category = 0; category <= catMax; category++) {
+    const { data } = await researchInventory(run.session, hq, category);
+    for (const item of [...data.developing, ...data.completed, ...data.available]) {
+      listed.set(item.inventionId, {
+        state: researchState(data, item.inventionId),
+        enabled: data.available.some(i => i.inventionId === item.inventionId && i.enabled === true),
+        category,
+      });
+    }
+  }
+  run.inventory = listed;
+  return listed;
+}
+
+/** The live cost of research-roundtrip's own queue, or null when its details show no price. */
+async function runReserve(run: ResearchRun, hq: Holding): Promise<number | null> {
+  if (run.reserve === undefined) {
+    try {
+      const details = await readResearchDetails(run.session, hq, RESEARCH_TARGET.id);
+      run.reserve = /(?:^|\s)Price:/.test(details.properties) ? researchCost(details.properties) : null;
+    } catch {
+      run.reserve = null;
+    }
+  }
+  return run.reserve;
+}
+
+async function readLevelName(session: LiveSession): Promise<string> {
+  try {
+    const answer = await session.driver.request<WsRespGetProfile>(
+      { type: WsMessageType.REQ_GET_PROFILE },
+      WsMessageType.RESP_GET_PROFILE,
+    );
+    return answer.profile?.levelName?.trim() || '(unread)';
+  } catch {
+    return '(unread)';
+  }
+}
+
+type Unproven = Omit<FixtureOutcome, 'kind'>;
+
+/**
+ * A kind no candidate of which is offered: research the invention that unlocks it, one step per
+ * run. Returns null when the kind has no entry in RESEARCH_UNLOCKS or the build menu has no locked
+ * row at all — the caller keeps "no candidate offered". Every other path is unproven or FAIL, and
+ * sends at most one `RDOQueueResearch`; it never sends `RDOCancelResearch` (on an owned invention
+ * it reaches `RetireInvention`, a sell, Kernel/ResearchCenter.pas:372) and records no pending
+ * restore: queued research is permanent fixture setup (doc/E2E-POLICY.md §9).
+ */
+async function researchUnlock(
+  run: ResearchRun,
+  kind: FixtureKind,
+  locked: BuildingInfo[],
+  cash: number | null,
+): Promise<{ outcome: Unproven; spent: number } | null> {
+  const unlock = RESEARCH_UNLOCKS.find(u => kind.candidates.some(c => c.facilityClass === u.facilityClass));
+  if (!unlock || locked.length === 0) return null;
+  const done = (reason: string, status: FixtureOutcome['status'] = 'unproven'): { outcome: Unproven; spent: number } => ({
+    outcome: { status, facilityClass: unlock.facilityClass, reason },
+    spent: 0,
   });
+  const { session } = run;
+  const company = session.company.name;
+
+  const index = await runIndex(run);
+  const target = index.byId.get(unlock.inventionId);
+  if (!target) return done(`${unlock.inventionId} is not in the research index`);
+  const location = locked.map(r => requiredResearchAt(r.requirement, target.name)).find(l => l !== undefined);
+  if (location === undefined) return done(`no locked row requires ${target.name}`);
+
+  const research = FIXTURE_KINDS.find(k => k.id === 'research') as FixtureKind;
+  const hq = run.holdings.find(h => carriesKind(h.tabIds.map(id => ({ id })), research));
+  if (!hq) return done(`no research fixture — ${target.name} is researched at an HQ (${location}); nothing sent`);
+  const at = `${hq.name} (${hq.x},${hq.y})`;
+  const inventory = await runInventory(run, hq);
+  const stateOf = (id: string): ResearchState => inventory.get(id)?.state ?? 'absent';
+
+  switch (stateOf(target.id)) {
+    case 'owned':
+      return done(`${target.name} is owned but ${unlock.facilityClass} is still not offered to ${company}`);
+    case 'developing':
+      return done(`researching ${target.name}`);
+    case 'absent':
+      return done(`${target.name} is not listed at ${at}; it is researched at ${location}`);
+    default:
+      break;
+  }
+
+  // The chain, prerequisites first. QueueResearch drops an invention not Enabled at queue time
+  // (Kernel/ResearchCenter.pas:320), so only the first missing link is queued this run.
+  const order: IndexedInvention[] = [];
+  const seen = new Set<string>();
+  const visit = (inv: IndexedInvention): void => {
+    if (seen.has(inv.id)) return;
+    seen.add(inv.id);
+    for (const name of inv.requires) {
+      const pre = index.byName.get(name);
+      if (!pre) throw new Error(`prerequisite "${name}" of ${inv.name} is not in the research index`);
+      visit(pre);
+    }
+    order.push(inv);
+  };
+  visit(target);
+  const next = order.find(
+    inv => stateOf(inv.id) !== 'owned' && inv.requires.every(n => stateOf((index.byName.get(n) as IndexedInvention).id) === 'owned'),
+  ) as IndexedInvention;
+  const label = next.id === target.id ? next.name : `${next.name} (for ${target.name})`;
+  const nextState = stateOf(next.id);
+  if (nextState === 'developing') return done(`researching ${label}`);
+  if (nextState === 'absent') return done(`${label} is not listed at ${at}`);
+  if (next.id === RESEARCH_TARGET.id) return done(`${label} is research-roundtrip's own target; the builder never queues it`);
+  if (run.refused?.has(next.id)) return done(`server did not take the queue for ${label}; not retried`);
+
+  const details = await readResearchDetails(session, hq, next.id);
+  if (!(inventory.get(next.id) as Listed).enabled) {
+    const level = researchLevel(details.properties) ?? '(unread)';
+    return done(
+      `${label} needs level ${level}; ${PRIMARY_ACCOUNT.username} is ${await readLevelName(session)} — ` +
+        'a level can only be earned, not seeded; nothing sent',
+    );
+  }
+
+  // A Time > 0 invention is accepted with no cash check and dropped at start when the budget is
+  // short (Kernel/ResearchCenter.pas:240-253); a Time = 0 one is bought at once (:319-334).
+  const cost = researchCost(details.properties);
+  if (cash === null) return done('cash unknown — no EVENT_TYCOON_UPDATE received; nothing sent');
+  const reserve = await runReserve(run, hq);
+  if (reserve === null) return done(`research reserve unknown — ${RESEARCH_TARGET.name}'s details show no price; nothing sent`);
+  const budget = cash - FIXTURE_CASH_FLOOR - reserve;
+  if (cost > budget) {
+    return done(
+      `${label} costs $${cost} (Price + License), above cash $${cash} − floor $${FIXTURE_CASH_FLOOR} − ` +
+        `${RESEARCH_TARGET.name} reserve $${reserve}; nothing sent`,
+    );
+  }
+
+  const window = await run.logWindow();
+  await setBuildingProperty(session, hq.x, hq.y, 'RDOQueueResearch', '0', { inventionId: next.id, priority: '10' });
+  const { line, fault } = await lineOrFault(() =>
+    awaitMarker(
+      window,
+      { marker: LOG_MARKERS.RDOQueueResearch, match: l => queueResearchLineMatches(l, next.id) },
+      TIMEOUTS.logSettle,
+      undefined,
+      run.deps.now,
+      run.deps.sleep,
+    ),
+  );
+  const listed = inventory.get(next.id) as Listed;
+  const now = run.deps.now ?? Date.now;
+  const sleep = run.deps.sleep ?? defaultSleep;
+  const deadline = now() + TIMEOUTS.readBack;
+  let after: ResearchState;
+  for (;;) {
+    after = researchState((await researchInventory(session, hq, listed.category)).data, next.id);
+    if (after !== 'available' || now() >= deadline) break;
+    await sleep(TIMEOUTS.readBackPoll);
+  }
+  if (after === 'available') {
+    (run.refused ??= new Set()).add(next.id);
+    return done(`server did not take the queue for ${label}; not retried`);
+  }
+  if (after === 'absent') return done(`${next.id} reads absent at ${at} after the queue`, 'FAIL');
+  inventory.set(next.id, { ...listed, state: after });
+  // The inventory already shows the queue: the missing line is unobservable, not wrong (UNTESTABLE).
+  if (line === null) {
+    const why = `no Queue Research: line for ${next.id} at ${at} in ${window.url}${fault ? ` (${fault})` : ''}`;
+    return { ...done(`${why} — the inventory reads it ${after}`), spent: cost };
+  }
+  return { outcome: { status: 'unproven', facilityClass: unlock.facilityClass, logLine: line, reason: `researching ${label}` }, spent: cost };
 }

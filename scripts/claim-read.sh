@@ -145,20 +145,22 @@ total_json=$(jq -s -c '.[0].data.organization.projectV2.items.totalCount' <<< "$
 ratelimit_json=$(jq -s -c '{cost: ([.[] | .data.rateLimit.cost] | add), remaining: .[-1].data.rateLimit.remaining, resetAt: .[-1].data.rateLimit.resetAt}' <<< "$raw")
 meta_json=$(jq -s -c '{projectId: .[0].data.organization.projectV2.id, fields: .[0].data.organization.projectV2.fields.nodes}' <<< "$raw")
 
+# A single argv string is capped at 128 KiB by the kernel (MAX_ARG_STRLEN): anything that grows
+# with the board goes in via `--slurpfile <(…)` (a file descriptor), never `--argjson`.
 jq -n -r \
-  --argjson cards "$cards_json" \
+  --slurpfile cards_in <(printf '%s' "$cards_json") \
   --argjson total "$total_json" \
   --argjson rl "$ratelimit_json" \
   --argjson meta "$meta_json" \
-  --argjson issues "$blocked_json" \
+  --slurpfile issues_in <(printf '%s' "$blocked_json") \
   --argjson live "$live_json" \
   --arg ref_note "$ref_note" '
-  if ($cards | length) != ($total // -1)
+  $cards_in[0] as $cards | $issues_in[0] as $issues
+  | if ($cards | length) != ($total // -1)
     then error(if $total == null
                then "claim read: gh returned no usable response"
                else "claim read incomplete: \($cards | length) of \($total) items" end)
     else . end
-  | ($cards) as $cards
   # The blocked set, bound ONCE from the rendered OPEN nodes — never from the (possibly
   # lagging) issueDependenciesSummary count. The `#N blocked by …` line and the walk both
   # read this same object, so they can never disagree.

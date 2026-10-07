@@ -30,12 +30,14 @@ afterEach(() => { jest.useRealTimers(); });
 
 describe('General tabs — direct property writes (setBuildingProperty)', () => {
   it.each([
-    { propertyName: 'Stopped', value: '-1', frame: 'C sel 40133497 set Stopped="#-1";' }, // Close — WordBool true, never #1
-    { propertyName: 'Stopped', value: '0', frame: 'C sel 40133497 set Stopped="#0";' }, // Open
+    // Stopped and Name are published by TFacility (Kernel/Kernel.pas:1043, :1029), so they go to
+    // the facility's ObjectId; the rest are published by block classes and go to CurrBlock.
+    { propertyName: 'Stopped', value: '-1', frame: 'C sel 40133512 set Stopped="#-1";' }, // Close — WordBool true, never #1
+    { propertyName: 'Stopped', value: '0', frame: 'C sel 40133512 set Stopped="#0";' }, // Open
     { propertyName: 'Rent', value: '120', frame: 'C sel 40133497 set Rent="#120";' },
     { propertyName: 'Maintenance', value: '80', frame: 'C sel 40133497 set Maintenance="#80";' },
     { propertyName: 'HoursOnAir', value: '75', frame: 'C sel 40133497 set HoursOnAir="#75";' },
-    { propertyName: 'Name', value: '', frame: 'C sel 40133497 set Name="%";' }, // widestring, empty clears
+    { propertyName: 'Name', value: '', frame: 'C sel 40133512 set Name="%";' }, // widestring, empty clears
   ])('$propertyName=$value is sent as $frame', async ({ propertyName, value, frame }) => {
     const fake = makeInspectorCtx();
     const pending = setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName });

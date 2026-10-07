@@ -120,6 +120,10 @@ export interface JobReport {
   detail?: string;
   /** `ref` only: path of report/e2e/gate-<sha>.json inside the checkout. */
   gateArtifact?: string;
+  /** `live` / `nightly` only: the `report/e2e/live-*.json` THIS run wrote (absent before the drive). */
+  liveArtifact?: string;
+  /** `live` / `nightly` only: each flow's status, as that artifact recorded it. */
+  liveFlows?: { name: string; status: string }[];
   /**
    * `ref` only: whether the static stage (typecheck, lint, tests) was taken from CI's run
    * on this sha instead of replayed on the bench, and why not when it was not. See
@@ -298,6 +302,40 @@ export class Spool {
   /** Drop a spool entry without running it (dead submitter). */
   discard(file: string): void {
     fs.rmSync(file, { force: true });
+  }
+
+  /**
+   * Hand a still-queued job over to the worker for good: rewrite its request with
+   * `submitter: { pid: 0 }`, the same shape a deposit without --wait has, so processOldest
+   * runs it instead of reporting ABANDONED once the waiting process is gone. Called by
+   * cli.ts `wait` on its two early exits (worker reads as down: 3; timeout: 4). A job
+   * already claimed (running/) or finished (done/) is left untouched — returns false.
+   *
+   * The file is first renamed OUT of spool/ to a hold name the queue never lists
+   * (`<id>.json.detach-<pid>` does not end in `.json`), then rewritten there with
+   * writeAtomically, then renamed back. A plain read-modify-write in place would race the
+   * worker's claim (also a rename): if the claim landed between the read and the write, the
+   * write would re-create spool/<id>.json and the job would run twice. Here, whichever
+   * rename lands first wins; if the worker's claim won, our rename fails with ENOENT and
+   * nothing is touched. The file keeps its own name, so it keeps its queue position.
+   */
+  detach(id: string): boolean {
+    const file = path.join(this.paths.spool, `${id}.json`);
+    const hold = `${file}.detach-${process.pid}`;
+    try {
+      fs.renameSync(file, hold);
+    } catch {
+      return false; // not queued: already claimed, finished, or never existed
+    }
+    try {
+      const request = JSON.parse(fs.readFileSync(hold, 'utf8')) as JobRequest;
+      writeAtomically(hold, { ...request, submitter: { pid: 0 } });
+      return true;
+    } catch {
+      return false; // unreadable entry: put it back exactly as it was
+    } finally {
+      fs.renameSync(hold, file);
+    }
   }
 
   finish(runningFile: string): void {

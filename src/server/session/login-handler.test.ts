@@ -195,6 +195,18 @@ async function runLoginWorld(
   return promise;
 }
 
+/**
+ * The re-login waits for the InitClient push the same way the login does. These
+ * fakes deliver it as soon as the waiter is installed — what dispatchPush does
+ * when the server pushes it while handling RegisterEventsById.
+ */
+function autoInitClient(fake: FakeLoginCtx): void {
+  (fake.ctx.setInitClientResolver as jest.Mock).mockImplementation((value: (() => void) | null) => {
+    fake.state.initClientResolver = value;
+    if (value) queueMicrotask(value);
+  });
+}
+
 /** Every `[Session] Logon page` warning the login wrote — the fail-open trace. */
 function logonPageWarnings(fake: FakeLoginCtx): string[] {
   return fake.log.warn.mock.calls
@@ -916,9 +928,11 @@ describe('loginWorld', () => {
       : base(packet, index)));
 
     await expect(runLoginWorld(fake)).resolves.toMatchObject({ contextId: CONTEXT_ID });
-    await new Promise(resolve => setImmediate(resolve));
-    expect(fake.log.debug).toHaveBeenCalledWith(
-      '[Session] RegisterEventsById completed (or timed out, which is normal)',
+    // Contract changed by #1336: the reply is awaited (30 s cap, WARN), no longer
+    // ignored, so the old `completed (or timed out, which is normal)` debug line is
+    // gone and the rejection is reported on the WARN path.
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[Session] RegisterEventsById failed: Request timeout: RegisterEventsById — continuing',
     );
   });
 
@@ -2026,6 +2040,7 @@ describe('reconnectWorldSocket — the full re-login', () => {
       if (member === 'GetTycoonCookie') return 'res="%0"';
       return 'res="#0"';
     });
+    autoInitClient(fake);
     return fake;
   }
 
@@ -2136,10 +2151,11 @@ describe('reconnectWorldSocket — the full re-login', () => {
     });
 
     await expect(reconnectWorldSocket(fake.ctx)).resolves.toBeUndefined();
-    // The rejection is handled out of band — let its handler run before asserting.
-    await new Promise(resolve => setImmediate(resolve));
-    expect(fake.log.debug).toHaveBeenCalledWith(
-      '[Reconnect] RegisterEventsById completed (or timed out, normal)',
+    // Contract changed by #1336: the reply is awaited (30 s cap, WARN), no longer
+    // ignored, so the old `completed (or timed out, normal)` debug line is gone and
+    // the rejection is reported on the WARN path.
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[Reconnect] RegisterEventsById failed: Request timeout: RegisterEventsById — continuing',
     );
   });
 
@@ -2161,5 +2177,215 @@ describe('reconnectWorldSocket — the full re-login', () => {
     await reconnectWorldSocket(fake.ctx);
 
     expect(fake.sent.some(s => s.packet.member === 'EnableEvents')).toBe(false);
+  });
+
+  // ── Events after re-login: RegisterEventsById ends with EnableEvents := false ──
+  //
+  // TClientView.RegisterEventsById (Interface Server/InterfaceServer.pas) runs
+  //   EnableEvents := true; fConnected := true; SendClientData;
+  //   ReportNewMail(...); EnableEvents := false; result := NOERROR;
+  // so an EnableEvents sent before its reply can be overwritten by that trailing
+  // false. The re-login must wait for InitClient AND the reply first.
+
+  it('sends nothing after RegisterEventsById until its reply has arrived', async () => {
+    const fake = reconnectFake();
+    fake.ctx.setCurrentCompany({ id: '55', name: 'SPO_test3 - Green' });
+    const held = holdRegisterEvents(fake);
+
+    const done = reconnectWorldSocket(fake.ctx);
+    await tickUntil(() => held.sent);
+    await tickUntil(() => false, 20);
+
+    // InitClient arrived (autoInitClient), the reply has not: nothing moves.
+    const members = fake.sent.map(s => s.packet.member);
+    expect(members[members.length - 1]).toBe('RegisterEventsById');
+    expect(fake.frames.world.some(f => f.includes('SetLanguage'))).toBe(false);
+    expect(fake.hooks.populateWorldPool).not.toHaveBeenCalled();
+
+    held.answer();
+    await done;
+
+    const after = fake.sent.map(s => s.packet.member);
+    expect(after.indexOf('EnableEvents')).toBeGreaterThan(after.indexOf('RegisterEventsById'));
+    expect(fake.frames.world).toContain(setLanguageFrame(NEW_CONTEXT_ID));
+  });
+
+  it('waits for the InitClient push before company selection', async () => {
+    const fake = reconnectFake();
+    fake.ctx.setCurrentCompany({ id: '55', name: 'SPO_test3 - Green' });
+    // Undo autoInitClient: the push is delivered by hand below.
+    (fake.ctx.setInitClientResolver as jest.Mock).mockImplementation((value: (() => void) | null) => {
+      fake.state.initClientResolver = value;
+    });
+
+    const done = reconnectWorldSocket(fake.ctx);
+    await tickUntil(() => fake.state.initClientResolver !== null);
+    await tickUntil(() => false, 20);
+    expect(fake.sent.some(s => s.packet.member === 'EnableEvents')).toBe(false);
+
+    fake.state.initClientResolver?.();
+    await done;
+    expect(fake.sent.some(s => s.packet.member === 'EnableEvents')).toBe(true);
+  });
+
+  it('fails the re-login when InitClient never arrives, like the first login', async () => {
+    jest.useFakeTimers();
+    try {
+      const fake = reconnectFake();
+      (fake.ctx.setInitClientResolver as jest.Mock).mockImplementation((value: (() => void) | null) => {
+        fake.state.initClientResolver = value;
+      });
+      const settled = reconnectWorldSocket(fake.ctx).then(() => null, (err: Error) => err);
+      await jest.advanceTimersByTimeAsync(0);
+      await jest.advanceTimersByTimeAsync(15_001);
+      await expect(settled).resolves.toMatchObject({ message: 'InitClient push timeout after 15s' });
+      expect(fake.state.waitingForInitClient).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('continues after 30 s when the RegisterEventsById reply never comes, and says so', async () => {
+    jest.useFakeTimers({ doNotFake: ['queueMicrotask'] });
+    try {
+      const fake = reconnectFake();
+      fake.ctx.setCurrentCompany({ id: '55', name: 'SPO_test3 - Green' });
+      const held = holdRegisterEvents(fake);
+      const settled = reconnectWorldSocket(fake.ctx).then(() => null, (err: Error) => err);
+
+      await jest.advanceTimersByTimeAsync(29_000);
+      expect(held.sent).toBe(true);
+      expect(fake.sent.some(s => s.packet.member === 'EnableEvents')).toBe(false);
+
+      await jest.advanceTimersByTimeAsync(1_001);
+      await expect(settled).resolves.toBeNull();
+      expect(fake.sent.some(s => s.packet.member === 'EnableEvents')).toBe(true);
+      expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining(
+        '[Reconnect] RegisterEventsById did not answer within 30s of InitClient',
+      ));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('arms the push watchdog as a re-login once EnableEvents is accepted', async () => {
+    const fake = reconnectFake();
+    fake.ctx.setCurrentCompany({ id: '55', name: 'SPO_test3 - Green' });
+    const onEventsEnabled = jest.fn();
+    (fake.ctx as { onEventsEnabled?: unknown }).onEventsEnabled = onEventsEnabled;
+
+    await reconnectWorldSocket(fake.ctx);
+
+    expect(onEventsEnabled).toHaveBeenCalledTimes(1);
+    expect(onEventsEnabled).toHaveBeenCalledWith('re-login');
+  });
+});
+
+/**
+ * Hold the RegisterEventsById reply until the test calls `answer()`. Every
+ * other request still goes through the fake's responder.
+ */
+function holdRegisterEvents(fake: FakeLoginCtx): { readonly sent: boolean; answer(): void } {
+  const send = fake.ctx.sendRdoRequest as jest.Mock;
+  const original = send.getMockImplementation()!;
+  let release: (() => void) | null = null;
+  const state = {
+    sent: false,
+    answer(): void { release?.(); },
+  };
+  send.mockImplementation((socketName: string, packet: Partial<RdoPacket>, timeoutMs: number | undefined, category: TimeoutCategory) => {
+    const reply = original(socketName, packet, timeoutMs, category);
+    if (packet.member !== 'RegisterEventsById') return reply;
+    state.sent = true;
+    return new Promise<RdoPacket>((resolve) => { release = () => { resolve(reply); }; });
+  });
+  return state;
+}
+
+describe('loginWorld — RegisterEventsById reply before company selection', () => {
+  it('does not read the company list or send SetLanguage until RegisterEventsById answered', async () => {
+    const fake = makeLoginCtx({ sockets: ['world'] });
+    fake.respond(loginResponder());
+    const held = holdRegisterEvents(fake);
+
+    const promise = loginWorld(fake.ctx, 'SPO_test3', 'test3', WORLD);
+    promise.catch(() => { /* asserted below */ });
+    await tickUntil(() => fake.state.initClientResolver !== null);
+    fake.state.initClientResolver?.();
+    await tickUntil(() => false, 20);
+
+    expect(held.sent).toBe(true);
+    expect(fake.sent.some(s => s.packet.member === 'GetCompanyCount')).toBe(false);
+    expect(fake.frames.world ?? []).toEqual([]);
+    expect(fake.hooks.populateWorldPool).not.toHaveBeenCalled();
+
+    held.answer();
+    await expect(promise).resolves.toMatchObject({ contextId: CONTEXT_ID });
+    expect(fake.frames.world).toContain(setLanguageFrame(CONTEXT_ID));
+    expect(fake.hooks.populateWorldPool).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues after 30 s when the RegisterEventsById reply never comes, and says so', async () => {
+    jest.useFakeTimers({ doNotFake: ['queueMicrotask'] });
+    try {
+      const fake = makeLoginCtx({ sockets: ['world'] });
+      fake.respond(loginResponder());
+      const held = holdRegisterEvents(fake);
+      const settled = loginWorld(fake.ctx, 'SPO_test3', 'test3', WORLD).then(r => r, (err: Error) => err);
+
+      await jest.advanceTimersByTimeAsync(0);
+      fake.state.initClientResolver?.();
+      await jest.advanceTimersByTimeAsync(29_000);
+      expect(held.sent).toBe(true);
+      expect(fake.sent.some(s => s.packet.member === 'GetCompanyCount')).toBe(false);
+      expect(fake.log.warn).not.toHaveBeenCalledWith(expect.stringContaining('did not answer'));
+
+      await jest.advanceTimersByTimeAsync(1_001);
+      await expect(settled).resolves.toMatchObject({ contextId: CONTEXT_ID });
+      expect(fake.log.warn).toHaveBeenCalledWith(
+        '[Session] RegisterEventsById did not answer within 30s of InitClient — ' +
+        'continuing; the push watchdog re-sends EnableEvents if pushes stay silent',
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('warns when RegisterEventsById answers with an error, and still logs in', async () => {
+    const fake = makeLoginCtx({ sockets: ['world'] });
+    const base = loginResponder();
+    fake.respond((packet, index) => (packet.member === 'RegisterEventsById'
+      ? { raw: 'A1 error 2', type: 'RESPONSE', rid: 1, errorCode: 2, errorName: 'errIllegalObject' } as RdoPacket
+      : base(packet, index)));
+
+    await expect(runLoginWorld(fake)).resolves.toMatchObject({ contextId: CONTEXT_ID });
+    expect(fake.log.warn).toHaveBeenCalledWith(
+      '[Session] RegisterEventsById answered errIllegalObject 2 — continuing',
+    );
+  });
+});
+
+describe('selectCompany — push watchdog hook', () => {
+  it('reports EnableEvents as a login by default', async () => {
+    const fake = makeLoginCtx({ sockets: ['world'], worldContextId: CONTEXT_ID, tycoonId: TYCOON_ID });
+    fake.respond(() => 'res="#0"');
+    const onEventsEnabled = jest.fn();
+    (fake.ctx as { onEventsEnabled?: unknown }).onEventsEnabled = onEventsEnabled;
+
+    await selectCompany(fake.ctx, '55');
+
+    expect(onEventsEnabled).toHaveBeenCalledWith('login');
+  });
+
+  it('does not arm the watchdog when EnableEvents fails', async () => {
+    const fake = makeLoginCtx({ sockets: ['world'], worldContextId: CONTEXT_ID, tycoonId: TYCOON_ID });
+    fake.respond((packet) => (packet.member === 'EnableEvents'
+      ? { raw: 'A1 error 2', type: 'RESPONSE', rid: 1, errorCode: 2, errorName: 'errIllegalObject' } as RdoPacket
+      : 'res="#0"'));
+    const onEventsEnabled = jest.fn();
+    (fake.ctx as { onEventsEnabled?: unknown }).onEventsEnabled = onEventsEnabled;
+
+    await expect(selectCompany(fake.ctx, '55')).rejects.toThrow(/EnableEvents failed/);
+    expect(onEventsEnabled).not.toHaveBeenCalled();
   });
 });

@@ -33,7 +33,8 @@ qui a été livré, pour que le code et les canevas restent lisibles côte à c�
 - `DiagnosisBanner` : mot + phrase + **une** action (trouver un fournisseur du fluide nommé,
   ouvrir services / main-d'œuvre / recherche, connecter) ; `stop` = `role=alert`. Dans
   l'inspecteur l'action ouvre la section correspondante parmi celles que le serveur a
-  déclarées (`tabForAction`) ; l'aperçu carte l'affiche en lecture seule (`compact`).
+  déclarées (`tabForAction`) ;
+  seule l'action de liaison fait exception : elle lance la sélection sur la carte comme le bouton Connect de l'onglet Général (`connectMap`) ; l'aperçu carte l'affiche en lecture seule (`compact`).
 
 ## T7 — trouver un bâtiment / une ville / un point
 

@@ -11,12 +11,15 @@
  *                 (src/e2e/bench/ci-proof.ts). --static-from names which, in the artifact.
  *   capabilities  President members in the diff -> the live stage must read, from the
  *                 server, whether the test account holds the capability (§7)
- *   routing       diff -> required L2 flows
+ *   routing       diff -> routed ∪ changed ∪ declared flows: the routing table, the flows
+ *                 the diff changed in the flow sources (src/e2e/bench/changed-flows.ts) and
+ *                 the flows named by --also-flows; all of them are required, except a
+ *                 SERVER_QUARANTINE flow, which is recorded in routing.quarantined
  *   live          pre-flight, lock, capability reads, flows against planitia, restore, release
  *   judge         a capability the server GRANTS must be exercised by a flow (fail closed);
  *                 one it REFUSES is a recorded exception, never a human override
- *   unproven      a required flow that ended UNPROVEN fails; one run only because --flows
- *                 named it is recorded as informational (§7)
+ *   untestable    a flow that ended UNTESTABLE (not observable) is recorded with its reasons,
+ *                 required or not, and never changes the verdict (§7)
  *   artifact      report/e2e/gate-<sha>.json, which the push hook reads
  *
  * Exit codes — the interface, one per outcome (see EXIT below):
@@ -30,7 +33,10 @@
  *   node scripts/verify-gate.js --static-only
  *   node scripts/verify-gate.js --skip-static      # worker only: a receipt covers stage 1
  *   node scripts/verify-gate.js --skip-static --static-from=ci   # worker only: CI proved this sha
+ *   node scripts/verify-gate.js --also-flows=a,b          # adds flows to the routed set (a union)
  *   node scripts/verify-gate.js --flows=login-spine,politics-write
+ *                                                          # replaces the set; refused unless it
+ *                                                          # names every required flow
  *   node scripts/verify-gate.js --attempt=2               # worker only: the bench computes
  *                                                          # and passes this — see worker.ts's
  *                                                          # nextGateAttempt (B4.3)
@@ -122,6 +128,19 @@ function deletedFiles() {
     ? ['diff', '--name-only', '--diff-filter=D', base, 'HEAD']
     : ['diff', '--name-only', '--diff-filter=D', 'HEAD'];
   return git(args).split('\n').filter(Boolean);
+}
+
+/**
+ * A zero-context diff of `paths`, from the diff base to the WORKING TREE — committed and
+ * uncommitted changes together, so its new-side line numbers match the files on disk, which
+ * is what the changed-flow mapping reads them against.
+ */
+function flowSourceDiff(paths) {
+  return execFileSync(
+    'git',
+    ['diff', '-U0', '--no-color', '--no-ext-diff', diffBase() || 'HEAD', '--', ...paths],
+    { encoding: 'utf8' },
+  );
 }
 
 /**
@@ -250,9 +269,9 @@ async function main() {
     routing: {},
     live: null,
     exclusions: { presidentMembersTouched: [], capability: [] },
-    // Outside `exclusions` on purpose: a required UNPROVEN flow is a failure, not an
-    // exclusion — doc/E2E-POLICY.md §7 (Unproven flows).
-    unproven: [],
+    // Outside `exclusions` on purpose: an UNTESTABLE flow is a recorded observation gap, not
+    // an exclusion — doc/E2E-POLICY.md §7 (Untestable flows).
+    untestable: [],
   };
 
   // --- Stage 1: static -------------------------------------------------------
@@ -299,7 +318,12 @@ async function main() {
     return 1;
   }
 
-  const { route, presidentMembersInDiff } = require(path.resolve('dist/e2e/routing.js'));
+  const { route, presidentMembersInDiff, SPINE_FLOW, SERVER_QUARANTINE = {} } = require(
+    path.resolve('dist/e2e/routing.js'),
+  );
+  const { FLOW_SOURCES, flowsChangedInWorktree } = require(
+    path.resolve('dist/e2e/bench/changed-flows.js'),
+  );
   const { capabilitiesFor } = require(path.resolve('dist/e2e/capability.js'));
 
   // --- Stage 2: capabilities -------------------------------------------------
@@ -330,10 +354,71 @@ async function main() {
     return 1;
   }
 
+  // Routed ∪ changed ∪ declared (doc/E2E-POLICY.md §4, "Changed and declared flows"). The
+  // routing table sends src/e2e/ to no flow, so without this a card that edits a flow never
+  // drives it. A diff the mapping cannot read fails closed: never a hunk paired with the
+  // wrong flow, never a silent "nothing changed".
+  let changed;
+  try {
+    changed = flowsChangedInWorktree(flowSourceDiff(FLOW_SOURCES));
+  } catch (err) {
+    artifact.verdict = 'FAIL';
+    const file = write(artifact);
+    fail(`could not map the diff to changed flows: ${err && err.message ? err.message : String(err)}`, file);
+    return 1;
+  }
+  const alsoFlows = flag('also-flows');
+  const declaredAll = !alsoFlows || alsoFlows === 'true' ? [] : alsoFlows.split(',').filter(Boolean);
+  // A SERVER_QUARANTINE flow is never required by a gate, however it was named (doc/E2E-POLICY.md
+  // §7, "Server quarantine"). An explicit --flows= still drives and judges it.
+  const declaredQuarantined = declaredAll.filter(flow => flow in SERVER_QUARANTINE);
+  const declared = declaredAll.filter(flow => !(flow in SERVER_QUARANTINE));
+  const quarantined = Array.from(new Set([...(changed.quarantined || []), ...declaredQuarantined]));
+  const extra = [...changed.required, ...declared];
+  const required =
+    extra.length > 0
+      ? Array.from(new Set([SPINE_FLOW, ...decision.required, ...extra]))
+      : decision.required;
+  artifact.routing.required = required;
+  artifact.routing.changedFlows = changed.required;
+  artifact.routing.changedFlowsNotDriven = changed.notDriven;
+  artifact.routing.declared = declared;
+  artifact.routing.quarantined = quarantined;
+  artifact.routing.reasons = [
+    ...decision.reasons,
+    ...changed.reasons,
+    ...(declared.length > 0 ? [`declared by --also-flows: ${declared.join(', ')}`] : []),
+    ...quarantined.map(
+      flow => `server quarantine, not required: ${flow} — ${SERVER_QUARANTINE[flow].reason}`,
+    ),
+  ];
+
   const liveRequested = flag('live') === 'true';
-  const staticOnly = !liveRequested || flag('static-only') === 'true' || decision.staticOnly;
+  // A diff that changes a flow, or declares one, is never static-only: its flows are required.
+  const staticOnly =
+    !liveRequested ||
+    flag('static-only') === 'true' ||
+    (decision.staticOnly && extra.length === 0);
   const requested = flag('flows');
-  const flows = requested ? requested.split(',').filter(Boolean) : decision.required;
+  const requestedList = requested ? requested.split(',').filter(Boolean) : [];
+  const flows = requested ? requestedList : required;
+
+  // --flows= replaces the set, so it must still name every required flow: otherwise a gate
+  // could attest PASS having driven only the spine.
+  const missing = requested ? required.filter(f => !requestedList.includes(f)) : [];
+  if (missing.length > 0) {
+    artifact.verdict = 'BLOCKED';
+    artifact.live = {
+      skipped: true,
+      why: `--flows= leaves out required flow(s): ${missing.join(', ')}`,
+    };
+    const file = write(artifact);
+    process.stdout.write(
+      `\nGate BLOCKED — --flows= replaces the routed set but leaves out required flow(s): ` +
+        `${missing.join(', ')}; name them too, or add flows with --also-flows=\nArtifact: ${file}\n`,
+    );
+    return EXIT.BLOCKED;
+  }
 
   // A capability question cannot be answered statically, and without --live the live stage
   // cannot run at all — so it is a BLOCKED question for the worker, never a silent pass.
@@ -352,7 +437,7 @@ async function main() {
     return EXIT.BLOCKED;
   }
 
-  // Nothing routed: the common case (doc/E2E-POLICY.md §4 — 186 of 215 skips in the
+  // Nothing routed, changed or declared: the common case (doc/E2E-POLICY.md §4 — 186 of 215 skips in the
   // corpus), and the only shape that may legitimately PASS without a live drive.
   if (flows.length === 0 && capabilities.length === 0) {
     artifact.verdict = 'PASS';
@@ -395,7 +480,7 @@ async function main() {
   const { runLive, formatSummary } = require(path.resolve('dist/e2e/run.js'));
   const live = await runLive({ flows: staticOnly ? [] : flows, branch, capabilities });
   artifact.live = live;
-  process.stdout.write(`${formatSummary(live)}\n`);
+  process.stdout.write(`${formatSummary(live, SERVER_QUARANTINE)}\n`);
 
   // The live status is CARRIED, not collapsed. An ENVIRONMENT abort used to arrive here and
   // leave as `FAIL`, and every reader downstream — the exit code, the worker's verdict, the
@@ -455,46 +540,32 @@ async function main() {
     }
   }
 
-  // --- Stage 6: unproven flows (doc/E2E-POLICY.md §7, "Unproven flows") -----
-  // A flow that ran, failed nothing, but found no data to exercise is not a PASS for the
-  // change: when routing required it, the change was never seen working. An ENVIRONMENT or
-  // BLOCKED run carries no flows, so this list stays empty and its exit code is unchanged.
+  // --- Stage 6: untestable flows (doc/E2E-POLICY.md §7, "Untestable flows") ---
+  // A flow that ran, failed nothing, but could not observe its result — the log line could not
+  // be found or read, the server answered a fault the client can neither cause nor fix, or the
+  // world held no data — is UNTESTABLE: recorded with its reasons, required or not, and never
+  // a change of verdict (maintainer decision 2026-10-05). FAIL is only what a flow observed
+  // wrong. An ENVIRONMENT or BLOCKED run carries no flows, so this list stays empty.
   const requiredFlows = artifact.routing.required || [];
   for (const flow of live.flows || []) {
-    if (flow.status !== 'UNPROVEN') continue;
-    artifact.unproven.push({
+    if (flow.status !== 'UNTESTABLE') continue;
+    artifact.untestable.push({
       flow: flow.name,
       required: requiredFlows.includes(flow.name),
-      reasons: flow.unproven || [],
+      reasons: flow.untestable || [],
     });
   }
-  const unprovenRequired = artifact.unproven.filter(entry => entry.required);
-  const unprovenInformational = artifact.unproven.filter(entry => !entry.required);
-  if (unprovenRequired.length > 0) {
-    artifact.verdict = 'FAIL';
+  if (artifact.untestable.length > 0) {
     process.stdout.write(
       [
         '',
-        '=== UNPROVEN REQUIRED FLOW ===============================================',
-        ...unprovenRequired.flatMap(entry => [entry.flow, ...entry.reasons.map(r => `  ? ${r}`)]),
-        'A required flow that ends UNPROVEN fails the gate: the world held no data to exercise',
-        'it on, so the change was never seen working. The remedy is the flow\'s seed step, never',
-        'an override — doc/E2E-POLICY.md §7 (Unproven flows).',
-        '==========================================================================',
-        '',
-      ].join('\n'),
-    );
-  }
-  if (unprovenInformational.length > 0) {
-    process.stdout.write(
-      [
-        '',
-        '=== unproven flow(s), informational — not required by routing ============',
-        ...unprovenInformational.flatMap(entry => [
-          entry.flow,
+        '=== untestable flow(s) — not observable, verdict unchanged ===',
+        ...artifact.untestable.flatMap(entry => [
+          `${entry.flow}${entry.required ? ' (required)' : ''}`,
           ...entry.reasons.map(r => `  ? ${r}`),
         ]),
-        'Run only because --flows named them; recorded in the artifact, no verdict changed.',
+        'Recorded in the artifact with each reason. The remedy that turns one into a PASS is the',
+        "flow's seed step — doc/E2E-POLICY.md §7 (Untestable flows).",
         '',
       ].join('\n'),
     );

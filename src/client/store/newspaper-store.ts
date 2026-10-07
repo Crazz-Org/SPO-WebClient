@@ -36,6 +36,8 @@ interface NewspaperState {
   /** Path being requested, so a stale answer for another column can be ignored. */
   requestedPath: string;
   isPosting: boolean;
+  /** Counts the posts the server accepted; the modal clears its form when this number moves. */
+  publishedCount: number;
 
   /** The paper's kept issues, newest first as the gateway sorted them. */
   issues: NewspaperIssueRef[];
@@ -52,6 +54,7 @@ interface NewspaperState {
   setRequestedPath: (path: string) => void;
   setBoard: (board: NewspaperBoard) => void;
   setPosting: (posting: boolean) => void;
+  markPublished: () => void;
   setIssuesState: (state: NewspaperLoadState) => void;
   setIssues: (list: NewspaperIssueList) => void;
   selectIssue: (folder: string) => void;
@@ -67,6 +70,7 @@ const EMPTY = {
   loadState: 'idle' as NewspaperLoadState,
   requestedPath: '',
   isPosting: false,
+  publishedCount: 0,
   issues: [] as NewspaperIssueRef[],
   issuesState: 'idle' as NewspaperLoadState,
   issuesError: '',
@@ -101,6 +105,7 @@ export const useNewspaperStore = create<NewspaperState>((set) => ({
     isPosting: false,
   }),
   setPosting: (isPosting) => set({ isPosting }),
+  markPublished: () => set((s) => ({ publishedCount: s.publishedCount + 1 })),
 
   setIssuesState: (issuesState) => set({ issuesState }),
   setIssues: (list) => set({

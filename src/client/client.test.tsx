@@ -32,7 +32,7 @@ import { StarpeaceClient } from './client';
 import * as chatHandler from './handlers/chat-handler';
 import * as authHandler from './handlers/auth-handler';
 import * as buildingActionHandler from './handlers/building-action-handler';
-import { WsMessageType, type WsMessage } from '../shared/types';
+import { WsMessageType, SurfaceType, type WsMessage } from '../shared/types';
 import { useGameStore } from './store/game-store';
 import { useUiStore } from './store/ui-store';
 import { ClientBridge } from './bridge/client-bridge';
@@ -42,6 +42,8 @@ import { useBuildingStore } from './store/building-store';
 import { RESUME_TOKEN_KEY } from './store/resume-token';
 import * as ErrorCodes from '../shared/error-codes';
 import type { SpoDebugState } from './client';
+import { DEBUG_MARKERS } from './debug-markers';
+import { config } from '../shared/config';
 import { useChatStore, type ChatMessage } from './store/chat-store';
 import { useProfileStore } from './store/profile-store';
 import { useSearchStore } from './store/search-store';
@@ -2057,8 +2059,6 @@ describe('window.__spoDebug.getState() (issue 1133)', () => {
     expect(snap().panels.buildMenu).toBe(true);
     useUiStore.setState({ stack: [{ kind: 'build' }, { kind: 'mail' }] });
     expect(snap().panels.buildMenu).toBe(false);
-    useUiStore.setState({ stack: [], modal: 'buildMenu' });
-    expect(snap().panels.buildMenu).toBe(false);
   });
 
   it('chat.shown follows chatVisible independently of chat.visible (expanded)', () => {
@@ -2080,7 +2080,7 @@ describe('window.__spoDebug.getState() (issue 1133)', () => {
   const rows: Row[] = [
     ['ui.stack', ui({ stack: [{ kind: 'mail' }, { kind: 'build' }] }), ui({ stack: [] }), s => s.ui.stack, ['mail', 'build'], []],
     ['ui.modal', ui({ modal: 'settings' }), ui({ modal: null }), s => s.ui.modal, 'settings', null],
-    ['ui.modalBeneath', ui({ modalBeneath: 'buildingInspector' }), ui({ modalBeneath: null }), s => s.ui.modalBeneath, 'buildingInspector', null],
+    ['ui.modalBeneath', ui({ modalBeneath: 'settings' }), ui({ modalBeneath: null }), s => s.ui.modalBeneath, 'settings', null],
     ['ui.pinned', ui({ pinned: true }), ui({ pinned: false }), s => s.ui.pinned, true, false],
     ['ui.commandPaletteOpen', ui({ commandPaletteOpen: true }), ui({ commandPaletteOpen: false }), s => s.ui.commandPaletteOpen, true, false],
     ['ui.contextMenuOpen', ui({ mapContextMenu: { clientX: 1, clientY: 2, tileX: 3, tileY: 4, layer: 'terrain' } }), ui({ mapContextMenu: null }), s => s.ui.contextMenuOpen, true, false],
@@ -2131,5 +2131,137 @@ describe('window.__spoDebug.getState() (issue 1133)', () => {
     expect(json).not.toContain('OTHER-CHAN-1133');
     expect(json.split('LAST-MSG-1133').length - 1).toBe(1);
     expect(snap().chat.lastMessage).toBe('LAST-MSG-1133');
+  });
+
+  // ---- Issue 1192: fields read from on-screen markers, overlays and the renderer ----
+
+  /** Appends a marker element carrying `data-testid` and optional `data-*` attributes. */
+  const mount = (testid: string, data: Record<string, string> = {}, text = ''): HTMLElement => {
+    const el = document.createElement('div');
+    el.setAttribute('data-testid', testid);
+    for (const [k, v] of Object.entries(data)) el.dataset[k] = v;
+    el.textContent = text;
+    document.body.appendChild(el);
+    return el;
+  };
+
+  it.each([
+    ['ui.moreMenuOpen', DEBUG_MARKERS.moreMenu, (s: SpoDebugState) => s.ui.moreMenuOpen],
+    ['chat.channelPickerOpen', DEBUG_MARKERS.chatChannelPicker, (s: SpoDebugState) => s.chat.channelPickerOpen],
+    ['chat.usersListShown', DEBUG_MARKERS.chatUsers, (s: SpoDebugState) => s.chat.usersListShown],
+    ['mobile.infoBar', DEBUG_MARKERS.mobileInfoBar, (s: SpoDebugState) => s.mobile.infoBar],
+    ['mobile.chatBanner', DEBUG_MARKERS.chatBanner, (s: SpoDebugState) => s.mobile.chatBanner],
+    ['bugReporter.armed', DEBUG_MARKERS.reportModeOverlay, (s: SpoDebugState) => s.bugReporter.armed],
+    ['bugReporter.modalOpen', DEBUG_MARKERS.reportModal, (s: SpoDebugState) => s.bugReporter.modalOpen],
+  ])('%s is true only while its marker is on screen', (_name, testid, read) => {
+    expect(read(snap())).toBe(false);
+    const el = mount(testid);
+    expect(read(snap())).toBe(true);
+    el.remove();
+    expect(read(snap())).toBe(false);
+  });
+
+  it('build.* is all-empty when no BuildMenu is on screen', () => {
+    expect(snap().build).toEqual({ phase: null, category: null, loading: false, facilityCount: 0, mobileSubTab: null });
+  });
+
+  it('build.phase reads the categories screen, with no category and no facility count', () => {
+    useUiStore.setState({ buildMenuFacilities: [{} as never, {} as never] });
+    mount(DEBUG_MARKERS.buildMenu, { phase: 'categories', loading: 'false' });
+    const b = snap().build;
+    expect(b.phase).toBe('categories');
+    expect(b.category).toBeNull();
+    expect(b.loading).toBe(false);
+    expect(b.facilityCount).toBe(0);
+  });
+
+  it('build.phase reads the facilities screen, its category and the loaded facility count', () => {
+    useUiStore.setState({ buildMenuFacilities: [{} as never, {} as never] });
+    const el = mount(DEBUG_MARKERS.buildMenu, { phase: 'facilities', loading: 'false', category: 'Commerce' });
+    expect(snap().build).toEqual({ phase: 'facilities', category: 'Commerce', loading: false, facilityCount: 2, mobileSubTab: null });
+    el.dataset.loading = 'true';
+    expect(snap().build.loading).toBe(true);
+    expect(snap().build.facilityCount).toBe(0);
+  });
+
+  it('build.mobileSubTab reads the mobile Build tab, and panels.buildMenu turns true with an empty stack', () => {
+    expect(snap().panels.buildMenu).toBe(false);
+    const el = mount(DEBUG_MARKERS.mobileBuildContent, { subtab: 'roads' });
+    const s = snap();
+    expect(s.ui.stack).toEqual([]);
+    expect(s.panels.buildMenu).toBe(true);
+    expect(s.build.mobileSubTab).toBe('roads');
+    el.remove();
+    expect(snap().panels.buildMenu).toBe(false);
+    expect(snap().build.mobileSubTab).toBeNull();
+  });
+
+  it('bugReporter.available follows config.server.bugReportMode', () => {
+    const restore = jest.replaceProperty(config.server, 'bugReportMode', true);
+    expect(snap().bugReporter.available).toBe(true);
+    config.server.bugReportMode = false;
+    expect(snap().bugReporter.available).toBe(false);
+    restore.restore();
+  });
+
+  it.each<[string, () => void, string | null]>([
+    ['an active overlay', game({ activeOverlay: SurfaceType.CRIME }), 'Crime'],
+    ['city zones (wins over any overlay)', game({ isCityZonesEnabled: true, activeOverlay: SurfaceType.CRIME }), 'ZONES'],
+    ['no overlay', game({ activeOverlay: null, isCityZonesEnabled: false }), null],
+  ])('layers.overlay reads %s', (_name, set, expected) => {
+    set();
+    expect(snap().layers.overlay).toBe(expected);
+  });
+
+  it('layers.debugSubLayers and layers.season are null without a renderer', () => {
+    const s = snap();
+    expect(s.layers.debugSubLayers).toBeNull();
+    expect(s.layers.season).toBeNull();
+  });
+
+  it('layers.debugSubLayers and layers.season read the renderer', () => {
+    const client = new StarpeaceClient();
+    const renderer = {
+      getAllBuildings: () => [],
+      getAllSegments: () => [],
+      getZoom: () => 2,
+      getCameraPosition: () => ({ x: 0, y: 0 }),
+      getMapDimensions: () => ({ width: 10, height: 10 }),
+      getSeason: () => 0,
+      debugShowTileInfo: true,
+      debugShowBuildingInfo: false,
+      debugShowConcreteInfo: true,
+      debugShowWaterGrid: true,
+      debugShowRoadInfo: false,
+    };
+    (client as unknown as { mapNavigationUI: unknown }).mapNavigationUI = { getRenderer: () => renderer };
+    expect(snap().layers).toEqual({
+      overlay: null,
+      debugSubLayers: { tileInfo: true, buildingInfo: false, concreteInfo: true, waterGrid: true, roadInfo: false },
+      season: 'Winter',
+    });
+    renderer.getSeason = () => 3;
+    renderer.debugShowRoadInfo = true;
+    expect(snap().layers.season).toBe('Autumn');
+    expect(snap().layers.debugSubLayers?.roadInfo).toBe(true);
+    (client as unknown as { mapNavigationUI: unknown }).mapNavigationUI = null;
+  });
+
+  it('a chat banner carrying message text exposes a boolean only', () => {
+    mount(DEBUG_MARKERS.chatBanner, {}, 'someone: BANNER-TEXT-1192');
+    const s = snap();
+    expect(typeof s.mobile.chatBanner).toBe('boolean');
+    expect(JSON.stringify(s)).not.toContain('BANNER-TEXT-1192');
+  });
+
+  it('lists every field added by issue 1192', () => {
+    const s = snap();
+    expect(Object.keys(s)).toEqual(expect.arrayContaining(['build', 'bugReporter', 'layers', 'mobile']));
+    expect(Object.keys(s.ui)).toContain('moreMenuOpen');
+    expect(Object.keys(s.chat)).toEqual(expect.arrayContaining(['channelPickerOpen', 'usersListShown']));
+    expect(Object.keys(s.build).sort()).toEqual(['category', 'facilityCount', 'loading', 'mobileSubTab', 'phase']);
+    expect(Object.keys(s.bugReporter).sort()).toEqual(['armed', 'available', 'modalOpen']);
+    expect(Object.keys(s.layers).sort()).toEqual(['debugSubLayers', 'overlay', 'season']);
+    expect(Object.keys(s.mobile).sort()).toEqual(['chatBanner', 'infoBar']);
   });
 });

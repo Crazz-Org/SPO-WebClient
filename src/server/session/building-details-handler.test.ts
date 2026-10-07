@@ -153,14 +153,10 @@ const PROBE_INDEXED_GROUP: PropertyGroup = {
 /**
  * A group carrying `CurrBlock`.
  *
- * FINDING (lot 3): `enrichVotesTab` (:930) reads `CurrBlock` out of the values
- * the template collected, but `CurrBlock` appears in exactly one shipped group
- * — GENERIC_GROUP (template-groups.ts:25) — and GENERIC_GROUP is reachable only
- * through the fallback GENERIC_TEMPLATE, which has no `votes` tab. No
- * CLASSES.BIN registration can therefore produce a template with both, so on
- * the shipped data the RDOVoteOf enrichment never fires. The probe group makes
- * the enrichment reachable so its wire form can still be pinned; the
- * "never fires" case is pinned separately, on the real town-hall template.
+ * The probe group isolates the enrichment's wire form from template data: a
+ * minimal group whose read always carries `CurrBlock`. On shipped data
+ * VOTES_GROUP carries `CurrBlock` itself (Voyager/VotesSheet.pas:110), pinned
+ * by the real town-hall tests in `votes enrichment` below.
  */
 const PROBE_BLOCK_GROUP: PropertyGroup = {
   id: 'probeBlock',
@@ -960,8 +956,8 @@ describe('property collection and grouping', () => {
 describe('votes enrichment', () => {
   /**
    * townGeneral auto-injects the Votes tab (property-templates.ts:102-110); the
-   * probe group supplies the `CurrBlock` the enrichment needs and that no
-   * shipped group pairs with a votes tab — see PROBE_BLOCK_GROUP above.
+   * probe group supplies the `CurrBlock` the enrichment needs, independently of
+   * the shipped VOTES_GROUP — see PROBE_BLOCK_GROUP above.
    */
   function makeVotesCtx(over: DetailsCtxOptions = {}): FakeSessionCtx {
     const fake = makeDetailsCtx({ activeUsername: 'SPO_test3', ...over });
@@ -987,9 +983,9 @@ describe('votes enrichment', () => {
     return tab.groups ?? {};
   }
 
-  // The reason the enrichment exists — and the reason it never runs in
-  // production. Pinned on the real registration, with no probe group.
-  it('never fires on a real town hall: no shipped template carries CurrBlock', async () => {
+  // The opening read stays cheap: it never asks for CurrBlock, so no RDOVoteOf.
+  // Pinned on the real registration, with no probe group.
+  it('the opening read of a real town hall never asks for CurrBlock, so never sends RDOVoteOf', async () => {
     const fake = makeDetailsCtx({ activeUsername: 'SPO_test3' });
     registerTabs('9020', ['townGeneral']);
     focusReturns(fake, '40133602');
@@ -1005,6 +1001,33 @@ describe('votes enrichment', () => {
     expect(asked).not.toContain('CurrBlock');
     expect(fake.sent).toEqual([]);
     expect(details.groups['votes'].some(v => v.name === 'VoteOf')).toBe(false);
+  });
+
+  it('fires on a real town hall when the votes section is read: VOTES_GROUP carries CurrBlock', async () => {
+    const fake = makeDetailsCtx({ activeUsername: 'SPO_test3' });
+    registerTabs('9021', ['townGeneral']);
+    focusReturns(fake, '40133602');
+    cacheValues(fake, { RulerName: 'Fred', RulerVotes: '120', CurrBlock: '40133888' });
+    rdoMembers(fake, { RDOVoteOf: 'res="%Fred"' });
+
+    await getBuildingBasicDetails(fake.ctx, X, Y, '9021');
+    const openingAsked = fake.cacher.getPropertyList.mock.calls.flatMap(([, names]) => names);
+    expect(openingAsked).not.toContain('CurrBlock');
+    expect(fake.sent).toEqual([]);
+
+    fake.cacher.getPropertyList.mockClear(); // keeps the cacheValues implementation
+    fake.sent.length = 0;
+    const tab = await getBuildingTabData(fake.ctx, X, Y, 'votes', '9021', ['votes']);
+
+    const sectionAsked = fake.cacher.getPropertyList.mock.calls.flatMap(([, names]) => names);
+    expect(sectionAsked).toContain('CurrBlock');
+    expect(fake.sent).toHaveLength(1);
+    const [{ packet }] = fake.sent;
+    expect(packet.member).toBe('RDOVoteOf');
+    expect(packet.targetId).toBe('40133888');
+    expect(packet.separator).toBe('"^"');
+    expect(packet.args).toEqual([RdoValue.string('SPO_test3').format()]);
+    expect(tab.groups?.['votes']).toContainEqual({ name: 'VoteOf', value: 'Fred' });
   });
 
   it('asks RDOVoteOf on CurrBlock and appends the answer to the votes tab', async () => {
@@ -2061,7 +2084,8 @@ describe('getBuildingGateConnections', () => {
       MetaFluid: 'Fresh Food', FluidValue: '1200', LastCostPerc: '85', minK: '30',
       MaxPrice: '150', QPSorted: '1', SortMode: '0', cnxCount: '1', Selected: '1',
       ObjectId: '40133999',
-    }, 'res="%Farm A\tSPO_test3\tYellow Inc.\t100\t10\t900\t$12\t95%\t1\t40\t50\t"');
+    // Contract changed by #1340: the supply row request carries a 12th name, cnxPricePerc.
+    }, 'res="%Farm A\tSPO_test3\tYellow Inc.\t100\t10\t900\t$12\t95%\t1\t40\t50\t\t"');
 
     const { supply } = await getBuildingGateConnections(
       fake.ctx, X, Y, 'supplies', 'Seg0', 'Fresh Food',
@@ -2092,7 +2116,7 @@ describe('getBuildingGateConnections', () => {
     expect(setPath?.category).toBe(TimeoutCategory.SLOW);
   });
 
-  it("asks for the ten header names Voyager asks for, in its order", async () => {
+  it("asks for the ten header names Voyager asks for, in its order, then the ad sheet's two", async () => {
     // `SheetUtils.GetPropertyArray(Proxy, [tidFluidId, tidFluidValue,
     // tidLastCost, tidKmin, tidPmax, tidQPSorted, tidSortMode, tidCnxCount,
     // tidSelected, tidObjectId], ...)` — Voyager/SupplySheetForm.pas:460.
@@ -2102,10 +2126,96 @@ describe('getBuildingGateConnections', () => {
 
     await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Fresh Food');
 
+    // The first ten stay Voyager's, in order; #1195 appends the two names the ad
+    // sheet reads off the same input (Voyager/AdvSheetForm.pas:316-321).
     expect(fake.cacher.getPropertyList).toHaveBeenCalledWith(FIRST_TEMP, [
       'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
       'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
+      // Contract changed by #1340: nfFluidValue appended at index 12.
+      'nfCapacity', 'nfActualMaxFluidValue', 'nfFluidValue',
     ]);
+  });
+
+  it('maps nfCapacity and nfActualMaxFluidValue to capacity / actualMaxFluid (#1195)', async () => {
+    // Every TInput cache object writes both (Kernel/KernelCache.pas:617-619);
+    // Voyager's ad percentage is min(100, round(100*fld/cap)) of them
+    // (Voyager/AdvSheetForm.pas:651-660).
+    const fake = gateCtx('supplies', {
+      MetaFluid: 'Advertisement', cnxCount: '0', nfCapacity: '200', nfActualMaxFluidValue: '150',
+    }, '');
+
+    const { supply } = await getBuildingGateConnections(
+      fake.ctx, X, Y, 'supplies', 'Seg0', 'Advertisement',
+    );
+
+    expect(supply?.capacity).toBe('200');
+    expect(supply?.actualMaxFluid).toBe('150');
+  });
+
+  it('appends nfFluidValue at header index 12, every earlier index unchanged (#1340)', async () => {
+    const fake = gateCtx('supplies', { MetaFluid: 'Fresh Food', cnxCount: '0' }, '');
+
+    await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Fresh Food');
+
+    const names = fake.cacher.getPropertyList.mock.calls[0][1];
+    expect(names).toHaveLength(13);
+    expect(names[12]).toBe('nfFluidValue');
+    expect(names.slice(0, 12)).toEqual([
+      'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
+      'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
+      'nfCapacity', 'nfActualMaxFluidValue',
+    ]);
+  });
+
+  it('maps header index 12 to nfFluidValue, the delivered flow as a number (#1340)', async () => {
+    // TInputCacheAgent writes it beside nfActualMaxFluidValue
+    // (Kernel/KernelCache.pas:613, :617).
+    const fake = gateCtx('supplies', {
+      MetaFluid: 'Fresh Food', cnxCount: '0', nfActualMaxFluidValue: '150', nfFluidValue: '87.5',
+    }, '');
+
+    const { supply } = await getBuildingGateConnections(
+      fake.ctx, X, Y, 'supplies', 'Seg0', 'Fresh Food',
+    );
+
+    expect(supply?.nfFluidValue).toBe('87.5');
+    expect(supply?.actualMaxFluid).toBe('150');
+  });
+
+  it('appends cnxPricePerc at row index 11, after cnxYPos (#1340)', async () => {
+    const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
+      'res="%a\tb\tc\td\te\tf\tg\th\t1\t0\t0\t115\t"');
+
+    await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
+
+    const query = fake.sent.find(s => s.packet.member === 'GetSubObjectProps')?.packet.args?.[1];
+    expect(query).toBe(RdoValue.string(
+      'cnxFacilityName0\tcnxCreatedBy0\tcnxCompanyName0\tcnxNfPrice0\t' +
+      'OverPriceCnxInfo0\tLastValueCnxInfo0\ttCostCnxInfo0\tcnxQuality0\t' +
+      'ConnectedCnxInfo0\tcnxXPos0\tcnxYPos0\tcnxPricePerc0\t',
+    ).format());
+  });
+
+  it('maps row index 11 to pricePerc, the integer the server compares to MaxPrice (#1340)', async () => {
+    // round(100*Connection.Price/MarketPrice), Kernel/KernelCache.pas:573-574.
+    const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
+      'res="%Farm\tBob\tBobCorp\t10\t0\t5\t$1\t90%\t1\t12\t34\t115\t"');
+
+    const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
+
+    expect(supply?.connections[0]?.pricePerc).toBe('115');
+    expect(supply?.connections[0]?.y).toBe(34);
+  });
+
+  it('leaves nfFluidValue and pricePerc undefined when the server answers them empty (#1340)', async () => {
+    const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
+      'res="%Farm\tBob\tBobCorp\t10\t0\t5\t$1\t90%\t1\t12\t34\t\t"');
+
+    const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
+
+    expect(supply).toHaveProperty('nfFluidValue', undefined);
+    expect(supply?.connections).toHaveLength(1);
+    expect(supply?.connections[0]).toHaveProperty('pricePerc', undefined);
   });
 
   it('leaves the auto-buy flag undefined on a gate that does not publish it', async () => {
@@ -2213,8 +2323,9 @@ describe('getBuildingGateConnections', () => {
   });
 
   it('caps the connection sweep at 20 however many the gate claims', async () => {
+    // Contract changed by #1340: the supply row request carries a 12th name, cnxPricePerc.
     const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '75' },
-      'res="%a\tb\tc\td\te\tf\tg\th\t1\t0\t0\t"');
+      'res="%a\tb\tc\td\te\tf\tg\th\t1\t0\t0\t\t"');
 
     const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
 
@@ -2294,8 +2405,9 @@ describe('getBuildingGateConnections', () => {
   });
 
   it('keeps a supply row whose columns are all empty', async () => {
+    // Contract changed by #1340: the supply row request carries a 12th name, cnxPricePerc.
     const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
-      'res="%\t\t\t\t\t\t\t\t\t\t\t"');
+      'res="%\t\t\t\t\t\t\t\t\t\t\t\t"');
 
     const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
 
@@ -2304,9 +2416,10 @@ describe('getBuildingGateConnections', () => {
   });
 
   it('substitutes the documented defaults for every blank supply column', async () => {
-    // 12 columns: only the first and last carry text, so columns 1-10 blank.
+    // 13 columns: only the first and last carry text, so columns 1-11 blank.
+    // Contract changed by #1340: the supply row request carries a 12th name, cnxPricePerc.
     const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
-      `res="%head${'\t'.repeat(11)}tail"`);
+      `res="%head${'\t'.repeat(12)}tail"`);
 
     const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
 
@@ -2393,8 +2506,9 @@ describe('getBuildingGateConnections', () => {
   it('stays quiet when every row came back', async () => {
     // The warning has to be absent on the happy path, or it is noise nobody
     // reads when it does fire.
+    // Contract changed by #1340: the supply row request carries a 12th name, cnxPricePerc.
     const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '1' },
-      'res="%Farm\tBob\tBobCorp\t10\t0\t5\t$1\t90%\t1\t12\t34\t"');
+      'res="%Farm\tBob\tBobCorp\t10\t0\t5\t$1\t90%\t1\t12\t34\t\t"');
 
     const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
 

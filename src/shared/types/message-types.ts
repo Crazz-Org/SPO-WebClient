@@ -326,6 +326,10 @@ export enum WsMessageType {
   RESP_SEARCH_CONNECTIONS = 'RESP_SEARCH_CONNECTIONS',
   REQ_CONNECTION_REACHABILITY = 'REQ_CONNECTION_REACHABILITY',
   RESP_CONNECTION_REACHABILITY = 'RESP_CONNECTION_REACHABILITY',
+  REQ_NEAR_CIRCUITS = 'REQ_NEAR_CIRCUITS',
+  RESP_NEAR_CIRCUITS = 'RESP_NEAR_CIRCUITS',
+  REQ_FACILITY_STATUS_BATCH = 'REQ_FACILITY_STATUS_BATCH',
+  RESP_FACILITY_STATUS_BATCH = 'RESP_FACILITY_STATUS_BATCH',
 
   // Company Creation
   REQ_CREATE_COMPANY = 'REQ_CREATE_COMPANY',
@@ -1991,6 +1995,93 @@ export interface WsRespConnectionReachability extends WsMessage {
   fluidId: string;
   direction: 'input' | 'output';
   entries: ConnectionReachabilityEntry[];
+}
+
+/** The tiles whose cached `NearCircuits` to read, at most `MAX_NEAR_CIRCUITS_TILES`. */
+export interface WsReqNearCircuits extends WsMessage {
+  type: WsMessageType.REQ_NEAR_CIRCUITS;
+  tiles: Array<{ x: number; y: number }>;
+}
+
+/**
+ * One tile's cached `NearCircuits` (`RenderCircuitStr`, `Kernel/KernelCache.pas:156-165`):
+ * `''` is a tile that touches no road, `null` a read that established nothing.
+ */
+export interface NearCircuitsEntry {
+  x: number;
+  y: number;
+  circuits: string | null;
+}
+
+/** One frame, every asked tile in request order. */
+export interface WsRespNearCircuits extends WsMessage {
+  type: WsMessageType.RESP_NEAR_CIRCUITS;
+  tiles: NearCircuitsEntry[];
+}
+
+/**
+ * Facility ids (the `buildingId` a REQ_BUILDING_FOCUS answered in THIS gateway session)
+ * whose status text to read without focusing them, at most `MAX_FACILITY_STATUS_BATCH_IDS`.
+ * Ids are decimal integer strings (or integers), exactly as focus returns them.
+ */
+export interface WsReqFacilityStatusBatch extends WsMessage {
+  type: WsMessageType.REQ_FACILITY_STATUS_BATCH;
+  ids: Array<string | number>;
+}
+
+/**
+ * The parsed `AllObjectStatusText` of one facility: the same fields REQ_BUILDING_FOCUS
+ * returns, minus what only a focus at a tile knows (coordinates, footprint, visual class).
+ * `revenue` is the `($X/h)` money-per-hour token as focus returns it (`'-$39,127/h'`), `''`
+ * when the text carries none; `revenuePerHour` is the same as a number, `null` when absent.
+ */
+export interface FacilityStatusText {
+  buildingName: string;
+  ownerName: string;
+  salesInfo: string;
+  revenue: string;
+  revenuePerHour: number | null;
+  detailsText: string;
+  hintsText: string;
+}
+
+/** An id the server answered: its parsed status text. */
+export interface FacilityStatusOk {
+  id: string;
+  status: 'ok';
+  text: FacilityStatusText;
+}
+
+/**
+ * An id with no status text this time, and why (`error`, a human-readable reason):
+ * - `'unknown'` — the id was asked of the server, or would have been, and gave no usable
+ *   answer: no answer within the gateway's per-id budget (`FACILITY_STATUS_BUDGET_MS` = 10 s,
+ *   which covers the wait for the session's one status-read slot — an id still waiting when it
+ *   runs out is never sent), the whole-batch cap reached (`FACILITY_STATUS_BATCH_CAP_MS` = 60 s
+ *   from the batch's start; every id not yet answered then gets `batch cap of 60000 ms reached`
+ *   and nothing more is sent), a rejected or timed-out call, the façade's `ERROR_Unknown`, or
+ *   an empty text. The id may be fine; ask again next cycle. Both constants live in
+ *   `session/facility-status-handler.ts`.
+ * - `'error'` — refused by the gateway, nothing sent: an id this gateway session's own focus
+ *   never returned (or has since forgotten), or no world login.
+ */
+export interface FacilityStatusUnanswered {
+  id: string;
+  status: 'unknown' | 'error';
+  error: string;
+}
+
+/** One asked id, discriminated on `status`. */
+export type FacilityStatusEntry = FacilityStatusOk | FacilityStatusUnanswered;
+
+/**
+ * One frame, one entry per asked id in request order (duplicates answered once each). The
+ * batch as a whole only fails (RESP_ERROR) when its body is invalid — never on a slow or
+ * failed id.
+ */
+export interface WsRespFacilityStatusBatch extends WsMessage {
+  type: WsMessageType.RESP_FACILITY_STATUS_BATCH;
+  entries: FacilityStatusEntry[];
 }
 
 // =============================================================================

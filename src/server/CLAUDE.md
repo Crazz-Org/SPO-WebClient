@@ -42,7 +42,7 @@ When adding a new handler:
 2. Accept `SessionContext` as the first parameter
 3. Import it in `spo_session.ts` and wire the delegation
 
-Existing handlers: `abandon-role-handler`, `auto-connection-handler`, `building-details-handler`, `building-management-handler`, `building-property-handler`, `building-templates-handler`, `chat-handler`, `context-status-handler`, `favorites-handler`, `login-handler`, `mail-handler`, `newspaper-handler`, `politics-handler`, `profile-finance-handler`, `research-handler`, `research-status-handler`, `road-handler`, `tutorial-handler`, `world-events-handler`, `zone-surface-handler`.
+Existing handlers: `abandon-role-handler`, `auto-connection-handler`, `building-details-handler`, `building-management-handler`, `building-property-handler`, `building-templates-handler`, `chat-handler`, `context-status-handler`, `facility-status-handler`, `favorites-handler`, `login-handler`, `mail-handler`, `newspaper-handler`, `politics-handler`, `profile-finance-handler`, `research-handler`, `research-status-handler`, `road-handler`, `tutorial-handler`, `world-events-handler`, `zone-surface-handler`.
 
 A function with a twin (`enrich*Tab`, `place*`, `handle*`) gets its fix in the same diff and one `it.each` over the set.
 

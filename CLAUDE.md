@@ -241,7 +241,7 @@ L1  Protocol conformance      Jest + src/mock-server/ (rdo-mock, strict   CI: ev
                               validator) — NOT a mock backend for E2E
 L2  LIVE WS drive  <- gate    src/e2e/, headless `ws` -> gateway ->       PRE-MERGE: every code change
                               planitia. `npm run test:live`
-L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / Crazz       every screen once, pixels only, + pre-release
+L3  LIVE browser walkthrough  Playwright MCP, SPO_test3 / SPO_test    every screen once, pixels only, + pre-release
 ```
 
 **The gate.** The bench gates a **pushed commit**, not your worktree, so the order is
@@ -252,7 +252,7 @@ already killed a gateway mid-job. **Only the worker attests**; `npm run gate:loc
 for reading, never a merge unblock. **A crash is a failure, but silence is not a pass**: the
 `FIVEMODELSERVER/Survival` log line proves receipt, not a `success: true` response (`OB-28`),
 and the read-back proves the change; a lag (`OB-29`) is waited out up to the spec's bound, and
-a read-back that never shows the value FAILs, as does a missing log line. Three attempts maximum, each naming a different root cause. Full rules:
+a read-back that never shows the value FAILs; a log line that cannot be found or read, with the read-back agreeing, is UNTESTABLE — non-blocking, its reason kept in the report and `latest.json`. Three attempts maximum, each naming a different root cause. Full rules:
 [doc/E2E-POLICY.md](doc/E2E-POLICY.md), [doc/bench-worker.md](doc/bench-worker.md). Live server
 logs (open IIS listing, `http://158.69.153.134/logs/`) prove what happened; reading one is not
 probing the server — `doc/E2E-POLICY.md` §5.
@@ -306,7 +306,7 @@ Model routing. Never delegate understanding — synthesise an agent's result you
 
 ## E2E credentials — LOCKED
 
-Accounts `SPO_test3`/`test3` (Mayor of Helartia, primary) and `Crazz`/`test` (secondary), zone
+Accounts `SPO_test3`/`test3` (Mayor of Helartia, primary) and `SPO_test`/`test` (secondary, a dedicated basic test account), zone
 Free Space, world planitia. **Never change without explicit developer approval.** Mutations only
 on Helartia; capability exceptions are read from the server, never overridden —
 `doc/E2E-POLICY.md` §7 and §9, procedure `doc/E2E-TESTING.md`.

@@ -28,31 +28,31 @@ export const SPINE_FLOW = 'login-spine';
 
 /**
  * Flow -> why no gate requires it (data-gated, or a reading). The nightly still runs it.
- * A data-gated flow ends UNPROVEN when the world holds no data, and a required UNPROVEN flow
- * fails the gate (scripts/verify-gate.js, stage 6) — so routing must never require it.
+ * A data-gated flow ends UNTESTABLE when the world holds no data — non-blocking, its reason kept
+ * (scripts/verify-gate.js, stage 6) — so a required run could only end UNTESTABLE, and routing does
+ * not require it.
  */
 export const NIGHTLY_ONLY: Record<string, string> = {
   'newspaper-read':
-    'data-gated: planitia keeps no newspaper issue and the bench cannot create one (News.pas:986, #1009) — a required run could only end UNPROVEN, which fails the gate',
-  'warehouse-role-reading': 'a reading, recorded and never asserted (#1006) — nothing a gate could require',
+    'data-gated: planitia keeps no newspaper issue and the bench cannot create one (News.pas:986, #1009) — a required run could only end UNTESTABLE',
   'vote-roundtrip':
-    'data-gated: a prior vote cannot be seeded (a vote with no prior cannot be retracted) and goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
+    'data-gated: with no prior vote the flow seeds one for the mayor, which sticks only while the town has a winning campaign (Kernel/Politics.pas:1053-1060; RulerName, Kernel/TownPolitics.pas:483-489), and a prior vote goes stale at any town election (Kernel/TownPolitics.pas:690, :744; Kernel/Politics.pas:916-933) — E2E-POLICY §7',
   'fixtures-ensure':
     "ensures every fixture kind in one pass, building a missing one — the sanctioned permanent fixture build (#1149), which each fixture flow's own seed also runs for its kinds (#1185); the nightly re-creates a fixture that disappeared, no gate requires it",
   'industry-supply-limits':
-    "data-gated: every industry fixture candidate is a farm (#1149), whose supply gate is a plain TPullInput (StdBlocks/Farms.pas:76-82) that never caches a sort mode (Kernel/Kernel.pas:7169-7171; only Kernel/MediaGates.pas:388-389 does), and a fixture built fresh has no supplier row for the overprice write — RDOSetInputSortMode / RDOSetInputOverPrice end UNPROVEN, which fails a gate (E2E-POLICY §7)",
+    "data-gated: it needs the industry fixture's supply gate to publish MaxPrice — only a TPullInput caches it (Kernel/Kernel.pas:7813, #1149); with none, a required run ends UNTESTABLE (E2E-POLICY §7). Its sort-mode and overprice writes are excluded, not untestable (#1195): a plain input's SetSortMode is empty (Kernel/Kernel.pas:7169-7171), only TMediaInput caches a sort mode (Kernel/MediaGates.pas:388-389) and only the movie theatre's Films input is one (StdBlocks/Movie.pas:84), which no fixture kind is; the overprice needs an own supplier row, which only supplier-hire-fire creates (#1153)",
   'supplier-hire-fire':
-    "data-gated: it needs a supplier of SPO_test3's own company, in Helartia, on an input fluid of the industry fixture; none ends UNPROVEN, which fails a gate. Hiring anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
+    "data-gated: it needs a supplier of SPO_test3's own company, in Helartia, on an input fluid of the industry fixture; with none, a required run could only end UNTESTABLE. Hiring anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
   'client-hire-remove':
-    "data-gated: it needs a client of SPO_test3's own company, in Helartia, on an output fluid of the industry fixture; none ends UNPROVEN, which fails a gate. Adding anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
+    "data-gated: it needs a client of SPO_test3's own company, in Helartia, on an output fluid of the industry fixture; with none, a required run could only end UNTESTABLE. Adding anyone else writes their gate: TGate.ConnectTo inserts the link on both sides (Kernel/Kernel.pas:6784-6785)",
   'connect-on-map':
     'data-gated: it needs an own counterpart that shares a tradeable fluid with the industry fixture. ConnectFacilities hires every matching fluid in both directions (Kernel/World.pas:3710-3726, Kernel/Kernel.pas:5470-5513), on both gates (Kernel/Kernel.pas:6784-6785)',
   'company-input-demand':
-    'data-gated: an editable company input is data, not guaranteed — cEditable is written only for a meta input flagged Editable (Kernel/Kernel.pas:5887); none ends UNPROVEN, which fails a gate',
+    'data-gated: an editable company input is data, not guaranteed — cEditable is written only for a meta input flagged Editable (Kernel/Kernel.pas:5887); with none, a required run could only end UNTESTABLE',
   'warehouse-wares':
     'data-gated: only a MegaStorage publishes RDOSelectWare (StdBlocks/MegaWarehouse.pas:25; a TWarehouse publishes RDOSetRole only, StdBlocks/Warehouses.pas:95), and findFixture takes the first holding that carries whGeneral (#1149), which need not be one',
   'quick-trade-roundtrip':
-    "data-gated by three guards: the disconnect drops the fixture's outputs from every SPO_test3 facility's matching input, whatever its type (Kernel/Kernel.pas:4593-4600), across all its companies and towns (Kernel/Kernel.pas:4537-4553), and unregisters the fixture as an initial supplier (Kernel/Kernel.pas:4564-4565, :4606-4607); a guard that holds ends UNPROVEN, which fails a gate",
+    "data-gated by three guards: the disconnect drops the fixture's outputs from every SPO_test3 facility's matching input, whatever its type (Kernel/Kernel.pas:4593-4600), across all its companies and towns (Kernel/Kernel.pas:4537-4553), and unregisters the fixture as an initial supplier (Kernel/Kernel.pas:4564-4565, :4606-4607); a guard that holds could only end UNTESTABLE",
 };
 
 /**
@@ -63,15 +63,49 @@ export const GATE_ONLY: Record<string, string> = {
   'politics-write':
     'each RDOSetTaxValue by the mayor posts a world event every online player sees (Kernel/Population.pas:1264-1284, WorldLocator.SendEvent) — driven only at the gate, when its code changes',
   'policy-roundtrip':
-    'RDOSetPolicyStatus broadcasts a world event naming Crazz to every online tycoon, twice per run (Kernel/Kernel.pas:11790-11800, Kernel/World.pas:5179-5196, texts Kernel/Kernel.pas:13495-13497); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly',
+    'RDOSetPolicyStatus broadcasts a world event naming the secondary account to every online tycoon, twice per run (Kernel/Kernel.pas:11790-11800, Kernel/World.pas:5179-5196, texts Kernel/Kernel.pas:13495-13497); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly',
   'chat-private-channel':
     'creating and deleting a channel and the typing / away states broadcast to every connected client (Interface Server/InterfaceServer.pas:4594, :4049-4060, :4690, :3968-3980); accepted by the maintainer (2026-09-29) at the gate only, when chat code changes — never in the nightly',
   'bank-borrow-payoff':
     "TBank.AskLoan broadcasts 'SPO_test3 borrowed $X from the <bank>.' to every online tycoon (Kernel/Kernel.pas:8849-8859, text Kernel/Kernel.pas:13487); accepted by the maintainer (2026-09-29) at the gate only, when this code changes — never in the nightly",
+  'facility-bank-loan':
+    "TBank.AskLoan broadcasts 'SPO_test borrowed $1 from the Bank of SPO_test3.' to every online tycoon (Kernel/Kernel.pas:8849-8859, text Kernel/Kernel.pas:13487); lifted by the maintainer (2026-09-29, #1189) — at the gate only, when this code changes, never in the nightly",
+};
+
+export interface ServerQuarantine {
+  /** The live-server fault that blocks the flow. */
+  reason: string;
+  /** An `https://` link to where the fault is recorded. */
+  link: string;
+  /** The observable condition under which the entry is deleted. */
+  lift: string;
+  /** The day the entry was added, `YYYY-MM-DD`. */
+  added: string;
+}
+
+/**
+ * Flow -> the known live-server fault that blocks it (doc/E2E-POLICY.md §7, "Server quarantine").
+ *
+ * A temporary maintainer decision, only for a fault of the live server the client cannot fix that
+ * still surfaces as a FAIL — never for a code defect. A fault that leaves the flow UNTESTABLE needs
+ * no entry: UNTESTABLE already passes. It is applied on top of ROUTES / NIGHTLY_ONLY / EXCLUDED, which describe
+ * a healthy server: no gate requires a quarantined flow, the nightly still runs it and prints its
+ * real outcome, and a nightly whose only FAILs are quarantined flows is PASS — a dirty world still
+ * FAILs. Deleting the entry is the only change when its lift condition holds.
+ */
+export const SERVER_QUARANTINE: Record<string, ServerQuarantine> = {
+  'portrait-roundtrip': {
+    reason:
+      'the picture server cannot store an upload since the 2026-10-02 planitia maintenance (SERVER_ERROR The picture server could not store the picture (ERROR after the transfer))',
+    link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1310',
+    lift: '`npm run test:live -- --flows=portrait-roundtrip` PASSes on the bench',
+    added: '2026-10-04',
+  },
 };
 
 /**
- * Handler file (repo-relative) -> why only a fallback rule routes it:
+ * Handler file (repo-relative; src/server/session/*-handler.ts, src/server/ws-handlers/*-handlers.ts
+ * and src/client/handlers/*-handler.ts) -> why only a fallback rule routes it:
  * `awaiting card #<n>` or `excluded: <reason>`. An area card that gives a file its own rule
  * (placed before the fallbacks) removes it from here.
  */
@@ -82,21 +116,104 @@ export const FALLBACK_ONLY: Record<string, string> = {
     'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
 };
 
+const NO_FLOW_YET = 'no flow sends it yet — recorded by the E2E coverage audit (#1187)';
+
+/**
+ * Request type -> why no gate-required flow sends it. It excuses that request in every handler
+ * file (server session, ws-handlers, client handlers) of the request ratchet in routing.test.ts.
+ * A key a gate flow does send, or that no handler file requests, fails that ratchet.
+ */
+export const EXCLUDED: Record<string, string> = {
+  REQ_CREATE_COMPANY: NO_FLOW_YET,
+  REQ_BUILD_CAPITOL: NO_FLOW_YET,
+  REQ_NEWSPAPER_POST: NO_FLOW_YET,
+  REQ_POLITICS_LAUNCH_CAMPAIGN: NO_FLOW_YET,
+  REQ_POLITICS_CANCEL_CAMPAIGN: NO_FLOW_YET,
+  REQ_POLITICS_SET_PROJECT: NO_FLOW_YET,
+  REQ_PROFILE_CURRICULUM_ACTION:
+    'no flow sends it — one of its actions abandons a role, which is never driven (maintainer, 2026-09-29 — recorded in card #1134)',
+  REQ_CONNECT_FACILITIES: 'sent only by connect-on-map, which is NIGHTLY_ONLY (data-gated: Kernel/World.pas:3710-3726)',
+  REQ_POLITICS_VOTE: 'sent only by vote-roundtrip, which is NIGHTLY_ONLY (data-gated: Kernel/TownPolitics.pas:690)',
+  REQ_NEWSPAPER_ISSUES: 'sent only by newspaper-read, which is NIGHTLY_ONLY (planitia keeps no issue: News.pas:986, #1009)',
+  REQ_NEWSPAPER_ISSUE: 'sent only by newspaper-read, which is NIGHTLY_ONLY (planitia keeps no issue: News.pas:986, #1009)',
+  REQ_TUTORIAL_STATE:
+    'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
+  REQ_TUTORIAL_ACTION:
+    'excluded: the tutorial needs an active assignment and its close finalises the task (maintainer, 2026-09-29 — recorded in card #1134)',
+  REQ_GET_ROAD_COST:
+    'answered by the gateway alone — getRoadCostEstimate in session/road-handler.ts is synchronous and sends no RDO frame, so no live drive can observe it (#1151)',
+};
+
+/**
+ * Handler file (repo-relative) -> request -> why that file's rule leaves out the gate flow that
+ * sends it. Per file, not per request: a request-wide key would blind the ratchet in every other
+ * file that serves the same request. Each of these rules is pinned by an exact routing test.
+ */
+export const NOT_ROUTED: Record<string, Record<string, string>> = {
+  'src/server/session/building-templates-handler.ts': {
+    REQ_CLUSTER_INFO: "cluster-info-read sends it; this rule's flows are pinned by routing.test.ts (#1150)",
+    REQ_CLUSTER_FACILITIES: "cluster-info-read sends it; this rule's flows are pinned by routing.test.ts (#1150)",
+  },
+  'src/server/session/politics-handler.ts': {
+    REQ_SEARCH_CONNECTIONS: "supplier-search-read sends it; the governance rule's flows are pinned by routing.test.ts (#1134, #1145)",
+    REQ_CONNECTION_REACHABILITY:
+      "supplier-search-read sends it; the governance rule's flows are pinned by routing.test.ts (#1134, #1145)",
+    REQ_NEAR_CIRCUITS:
+      "near-circuits-read sends it; the governance rule's flows are pinned by routing.test.ts (#1134, #1145, #1334)",
+  },
+  'src/server/session/profile-finance-handler.ts': {
+    REQ_SEARCH_MENU_TYCOON_FULL_PROFILE: "search-menu-read sends it; the profile rule's flows are pinned by routing.test.ts (#1141)",
+  },
+  'src/server/ws-handlers/search-handlers.ts': {
+    REQ_SEARCH_MENU_DIRECTORY: 'directory-browse sends it, but #526 keeps the search WS handler off directory-browse',
+  },
+};
+
+/**
+ * The facility inspector flows — shared by the inspector UI (components/building/) and its
+ * template groups (src/shared/building-details/), which only the UI half flags for a browser look.
+ */
+const INSPECTOR_UI_FLOWS: string[] = [
+  'building-details', 'town-min-wage',
+  'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
+  'trade-settings',
+  'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+  'ad-budget-roundtrip',
+];
+
+const INSPECTOR_UI_WHY =
+  "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in " +
+  'template-groups.ts, the store and industry owner setters the panels send (#1152), the trade role and ' +
+  'level (trade-settings.ts, #1153), and the residential, bank, TV, accept-cloning and research controls ' +
+  "(ResearchPanel.tsx, HQ_INVENTIONS_GROUP) (#1154), and ADS_GROUP's AdPerc slider — the Advertisement input's " +
+  'RDOSetInputFluidPerc, gate-bound (#1195)';
+
+const MAIL_FLOWS = ['mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply'];
+
+const CHAT_FLOWS = ['chat-read', 'chat-private-channel', 'chat-chase'];
+
 export const ROUTES: RouteRule[] = [
   // Order matters: the first matching rule wins, so the paths that need no live drive
   // are matched before the broad source rules that would otherwise swallow them.
   //
   // How an E2E area card routes its flows: its rule goes BEFORE THE FALLBACKS (the rules
   // with `fallback: true`) — a rule placed after a fallback is shadowed and never matches —
-  // and it removes its handler files from FALLBACK_ONLY. A data-gated flow (it ends UNPROVEN
-  // when the world holds no data, and a required UNPROVEN fails the gate, verify-gate.js
-  // stage 6) goes in NIGHTLY_ONLY; a flow whose action posts a message every online player
+  // and it removes its handler files from FALLBACK_ONLY. A data-gated flow (a required run
+  // could only end UNTESTABLE when the world holds no data, verify-gate.js stage 6) goes in
+  // NIGHTLY_ONLY; a flow whose action posts a message every online player
   // sees goes in GATE_ONLY (the card states the maintainer accepts the broadcast at the gate
-  // on that basis). Each exemption carries a cited reason: `File.pas:Line`, `file.asp:Line`
-  // or `#<issue>`. A diff under src/e2e/ routes to no flow, so the area card's own gate is
-  // static: it proves its flows ran with `npm run test:live -- --flows=login-spine,<new flows>`
-  // exiting 0 — never `npm run gate -- --flows=…`, which verify-gate.js stage 3 BLOCKs on a
-  // static-only diff.
+  // on that basis). A flow blocked by a live-server fault goes in SERVER_QUARANTINE, never in
+  // NIGHTLY_ONLY: these tables describe a healthy server. Each exemption carries a cited reason: `File.pas:Line`, `file.asp:Line`
+  // or `#<issue>`. The tooling rule below routes no flow for a diff under src/e2e/; the gate
+  // itself adds the flows. verify-gate.js stage 3 adds the flows the diff CHANGED — a hunk
+  // inside a `FLOWS` entry, or inside a shared helper of the seven flow sources, which drives
+  // every flow that reaches it (src/e2e/bench/changed-flows.ts) — and the flows a card
+  // DECLARES with `npm run gate -- --also-flows=a,b`. All of them land in `routing.required`,
+  // so the card's own gate drives them; a required flow that ends UNTESTABLE is recorded with
+  // its reason and does not change the verdict.
+  // `--flows=` replaces the set and is refused unless it names every required flow.
+  // Every request a handler file (server session, ws-handlers, client handlers) serves or
+  // sends must be sent by a flow its rule routes to, or appear in EXCLUDED / NOT_ROUTED (#1187).
   {
     test: /^doc\/|\.md$|^src\/mock-server\/|\.test\.tsx?$|^src\/__tests__\//,
     flows: [],
@@ -148,7 +265,8 @@ export const ROUTES: RouteRule[] = [
     // Before the favorites rule: the Empire panel shows the Favorites tree and the profile tabs.
     test: /^src\/client\/components\/empire\//,
     flows: ['favorites-roundtrip', 'favorites-folders', 'profile-read'],
-    why: 'the Empire panel — the Favorites tree it shows and the profile & finance pages it reads',
+    needsL3: true,
+    why: 'the Empire panel — the Favorites tree it shows and the profile & finance pages it reads, plus a browser look',
   },
   {
     // Before the broad wire-level rule below, which would otherwise swallow
@@ -212,17 +330,22 @@ export const ROUTES: RouteRule[] = [
     // Before the broad wire-level rule below: the paper is not on the RDO wire
     // at all, so the governance flows would say nothing about it. newspaper-read itself is
     // not required (#1009): planitia keeps no newspaper issue and the bench cannot create
-    // one (News.pas:986), so it could only end UNPROVEN. The columns board read is required
-    // instead: it answers with or without columns.
+    // one (News.pas:986), so it could only end UNTESTABLE. The columns board read stays required
+    // instead; a board with no column ends UNTESTABLE too (#1188).
     test: /newspaper-handlers?\.ts$|^src\/client\/store\/newspaper-store\.ts$/,
     flows: ['newspaper-board-read'],
-    why: 'the town paper — newspaper-board-read reads the columns board, which answers with or without columns; newspaper-read stays nightly-only (News.pas:986, #1009)',
+    why: 'the town paper — newspaper-board-read reads the columns board, required, and an empty board ends UNTESTABLE (#1188); newspaper-read stays nightly-only (News.pas:986, #1009)',
   },
   {
     // Before the fallbacks below: the governance handlers are driven by these two flows.
     test: /^src\/server\/session\/politics-handler\.ts$|^src\/server\/ws-handlers\/politics-handlers\.ts$/,
-    flows: ['politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip'],
-    why: 'the governance handlers changed — the flows that read and write the town hall (tax, minimum wage, publicity)',
+    flows: [
+      'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
+      'mayor-rating-roundtrip', 'tycoon-role-read',
+    ],
+    why:
+      'the governance handlers changed — the flows that read and write the town hall (tax, minimum wage, publicity), ' +
+      "SPO_test's rating of the mayor's term (politicsSetRating) and the tycoon role read (handleTycoonRole) (#1195)",
   },
   {
     // Before the fallbacks below: the Empire panel's profile & finance reads and writes.
@@ -245,6 +368,8 @@ export const ROUTES: RouteRule[] = [
       'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
       'trade-settings',
       'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+      'facility-bank-loan',
+      'ad-budget-roundtrip',
     ],
     why:
       'the facility details/property handlers changed — the flows that read and write a facility (including the ' +
@@ -252,35 +377,40 @@ export const ROUTES: RouteRule[] = [
       "flow sends (gate connections, service figures, worker counts, refresh), the owner setters on SPO_test3's " +
       'store and industry fixtures (#1152), the trade role and level on its warehouse and industry (#1153), and its ' +
       'residential, bank, TV, industry and research fixtures — including the RDOQueueResearch / RDOCancelResearch ' +
-      'cases of buildRdoCommandArgs (#1154)',
+      'cases of buildRdoCommandArgs (#1154), the loan a visitor asks at the bank fixture (requestBankLoan, #1189), ' +
+      "and the Advertisement input's RDOSetInputFluidPerc, bound to the gate (#1195)",
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
     // zoning-alert-read is left out: its one REQ_BUILDING_FOCUS is incidental to reading the
-    // alert, it needs Crazz, and the mail rules route it.
+    // alert, it needs the secondary account, and the mail rules route it.
     test: /^src\/server\/ws-handlers\/building-handlers\.ts$/,
     flows: [
       'building-details', 'politics-write', 'permission-negative', 'nearest-town-hall',
       'build-menu-read', 'place-rename-demolish', 'inspector-reads', 'upgrade-stop',
+      'facility-bank-loan', 'clone-salaries-roundtrip',
     ],
     why:
       'the building WS handlers changed — the flows sending its REQ_BUILDING_DETAILS / TAB_DATA / SET_PROPERTY / FOCUS, ' +
       'REQ_GET_BUILDING_CATEGORIES / _FACILITIES / REQ_PLACE_BUILDING / REQ_RENAME_FACILITY / REQ_DELETE_FACILITY, ' +
       'the one sending GATE_CONNECTIONS / SERVICE_FIGURES / WORKER_COUNTS / REFRESH_PROPERTIES, and the one sending ' +
-      'REQ_BUILDING_UPGRADE (#1154)',
+      'REQ_BUILDING_UPGRADE (#1154), and REQ_BUILDING_LOAN_REQUEST (facility-bank-loan) and REQ_CLONE_FACILITY ' +
+      '(clone-salaries-roundtrip) (#1189)',
   },
   {
     // Before the fallbacks below. A shared file: later area cards only APPEND flows here.
     test: /^src\/server\/ws-handlers\/misc-handlers\.ts$/,
     flows: [
       'favorites-roundtrip', 'favorites-folders', 'world-readers', 'cluster-info-read', 'zone-roundtrip',
-      'supplier-search-read', 'research-roundtrip',
+      'supplier-search-read', 'research-roundtrip', 'autoconnection-roundtrip', 'near-circuits-read',
+      'facility-status-batch-read',
     ],
     why:
       'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_* / REQ_WORLD_EVENT / ' +
       'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES / REQ_DEFINE_ZONE, REQ_SEARCH_CONNECTIONS / ' +
-      'REQ_CONNECTION_REACHABILITY (supplier-search-read, #1153) and REQ_RESEARCH_INVENTORY / REQ_RESEARCH_DETAILS ' +
-      '(research-roundtrip, #1154); not driven by any flow yet: REQ_CREATE_COMPANY',
+      'REQ_CONNECTION_REACHABILITY (supplier-search-read, #1153; autoconnection-roundtrip also sends REQ_SEARCH_CONNECTIONS, #1187) and REQ_RESEARCH_INVENTORY / REQ_RESEARCH_DETAILS ' +
+      '(research-roundtrip, #1154), REQ_NEAR_CIRCUITS (near-circuits-read, #1334), ' +
+      'REQ_FACILITY_STATUS_BATCH (facility-status-batch-read, #1335); not driven by any flow yet: REQ_CREATE_COMPANY',
   },
   {
     // Before the fallbacks below. A shared rule: later area cards only APPEND flows here.
@@ -293,9 +423,17 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the fallbacks below. src/shared/road-circuits.ts is deliberately not here: it is
     // connection-candidate reachability (NearCircuits), which road-roundtrip never sends.
-    test: /^src\/server\/ws-handlers\/road-handlers\.ts$|^src\/server\/session\/road-handler\.ts$/,
+    test: /^src\/server\/ws-handlers\/road-handlers\.ts$|^src\/server\/session\/road-handler\.ts$|^src\/client\/handlers\/road-handler\.ts$/,
     flows: ['road-roundtrip'],
-    why: 'the road handlers changed — the flow that builds, breaks and wipes a road as the Mayor of the governed town',
+    why: 'the road handlers changed (gateway and client halves) — the flow that builds, breaks and wipes a road as the Mayor of the governed town',
+  },
+  {
+    // Before the broader build rule below: the management handler also answers the tycoon role read (#1195).
+    test: /^src\/server\/session\/building-management-handler\.ts$/,
+    flows: ['build-menu-read', 'place-rename-demolish', 'upgrade-stop', 'tycoon-role-read'],
+    why:
+      'the placement, rename, demolition and upgrade handler — the flows of the build rule below, plus the tycoon ' +
+      'role read it answers (queryTycoonPoliticalRole, REQ_TYCOON_ROLE, #1195)',
   },
   {
     // Before the fallbacks below: the build menu, placement, rename and demolition (#1150).
@@ -307,6 +445,16 @@ export const ROUTES: RouteRule[] = [
       "SPO_test3's industry fixture (manageConstruction, #1154)",
   },
   {
+    // Before the fallbacks below: REQ_FACILITY_STATUS_BATCH (#1335) parses the same status text
+    // as focus (parseBuildingFocusResponse); building-details drives focus.
+    test: /^src\/server\/session\/facility-status-handler\.ts$/,
+    flows: ['facility-status-batch-read', 'building-details'],
+    why:
+      'the batch status-text read — AllObjectStatusText per focused id (facility-status-batch-read, #1335), parsed ' +
+      'by the focus parser that the building-details flow drives (SwitchFocusEx = id + AllObjectStatusText, ' +
+      'InterfaceServer.pas:924-935)',
+  },
+  {
     // Before the fallbacks below: the research inventory / details reads and the queue → cancel round trip (#1154).
     test: /^src\/server\/session\/research(-status)?-handler\.ts$/,
     flows: ['research-roundtrip'],
@@ -316,9 +464,9 @@ export const ROUTES: RouteRule[] = [
   },
   {
     // Before the fallbacks below (#1148): chat-private-channel is GATE_ONLY — it broadcasts.
-    test: /^src\/server\/session\/chat-handler\.ts$|^src\/server\/ws-handlers\/chat-handlers\.ts$|^src\/client\/store\/chat-store\.ts$/,
-    flows: ['chat-read', 'chat-private-channel', 'chat-chase'],
-    why: 'the chat handlers and store — the channel list read, the password channel the flow creates and removes (send, typing, away), and the chase of Crazz',
+    test: /^src\/server\/session\/chat-handler\.ts$|^src\/server\/ws-handlers\/chat-handlers\.ts$|^src\/client\/store\/chat-store\.ts$|^src\/client\/handlers\/chat-handler\.ts$/,
+    flows: ['chat-read', 'chat-private-channel', 'chat-chase', 'gm-broadcast'],
+    why: 'the chat handlers (gateway and client halves) and store — the channel list read, the password channel the flow creates and removes (send, typing, away), the chase of the secondary account, and the GM broadcast delivered to the secondary account and refused to a non-GM and to a session not yet in the world',
   },
   {
     // After the pixel rule, which keeps the chat CSS.
@@ -326,6 +474,46 @@ export const ROUTES: RouteRule[] = [
     flows: ['chat-read', 'chat-private-channel', 'chat-chase'],
     needsL3: true,
     why: 'the chat strip and chase badge — the chat flows, plus a browser look',
+  },
+  {
+    // Before the session fallback (#1187): the pushes a flow observes are the chat events.
+    test: /^src\/server\/session\/push-dispatcher\.ts$/,
+    flows: CHAT_FLOWS,
+    why:
+      'the push dispatcher — the pushes a flow observes are the chat events (EVENT_CHAT_MSG / _USER_TYPING / ' +
+      '_CHANNEL_CHANGE, EVENT_MOVE_TO), driven by the chat flows; never politics-write',
+  },
+  {
+    // Before the client fallback (#1187): the client half of the push dispatcher, and the unread-mail count.
+    test: /^src\/client\/handlers\/event-handler\.ts$/,
+    flows: [...CHAT_FLOWS, 'mail-roundtrip'],
+    why: 'the client event handler — the chat pushes it receives, and the REQ_MAIL_GET_UNREAD_COUNT mail-roundtrip sends',
+  },
+  {
+    // Before the client fallback (#1187): the client half of the zone paint.
+    test: /^src\/client\/handlers\/zone-handler\.ts$/,
+    flows: ['zone-roundtrip'],
+    why: 'the client zone handler — the flow that sends its REQ_DEFINE_ZONE',
+  },
+  {
+    // Before the client fallback (#1187). politics-write is deliberately left out: it is a
+    // world-broadcast GATE_ONLY flow, and REQ_POLITICS_VOTE is EXCLUDED (vote-roundtrip is nightly-only).
+    test: /^src\/client\/handlers\/building-action-handler\.ts$/,
+    flows: [
+      ...INSPECTOR_UI_FLOWS, 'upgrade-stop', 'place-rename-demolish', 'supplier-search-read',
+      'facility-bank-loan', 'clone-salaries-roundtrip',
+    ],
+    why:
+      'the client facility actions — the setter, upgrade, research, place/rename/demolish, connection-search, ' +
+      'facility-loan and clone flows that send its SET_PROPERTY / UPGRADE / RENAME / DELETE / RESEARCH_* / ' +
+      'SEARCH_CONNECTIONS / GATE_CONNECTIONS / BUILDING_LOAN_REQUEST / CLONE_FACILITY requests (#1189)',
+  },
+  {
+    // Before the client fallback (#1187). zoning-alert-read is left out for the reason the
+    // building-handlers rule gives.
+    test: /^src\/client\/handlers\/building-focus-handler\.ts$/,
+    flows: ['nearest-town-hall'],
+    why: 'the client focus handler — the flow that sends its REQ_BUILDING_FOCUS / REQ_BUILDING_UNFOCUS',
   },
   {
     test: /^src\/shared\/rdo-|^src\/server\/rdo\.ts$/,
@@ -358,26 +546,33 @@ export const ROUTES: RouteRule[] = [
   },
   {
     test: /^src\/client\/components\/politics\//,
-    flows: ['politics-read', 'politics-write', 'permission-negative', 'town-min-wage', 'publicity-roundtrip'],
-    why: 'governance UI — including who is offered the controls',
-  },
-  {
-    test: /^src\/client\/components\/building\/|^src\/shared\/building-details\//,
     flows: [
-      'building-details', 'town-min-wage',
-      'inspector-reads', 'store-price-salaries', 'industry-output-price', 'facility-open-close', 'industry-auto-buy',
-      'trade-settings',
-      'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+      'politics-read', 'politics-write', 'permission-negative', 'town-min-wage', 'publicity-roundtrip',
+      'mayor-rating-roundtrip',
     ],
-    why:
-      "facility inspector and its template groups — TOWN_JOBS_GROUP's rdoCommands (the minimum-wage mapping) live in " +
-      'template-groups.ts, the store and industry owner setters the panels send (#1152), the trade role and ' +
-      'level (trade-settings.ts, #1153), and the residential, bank, TV, accept-cloning and research controls ' +
-      '(ResearchPanel.tsx, HQ_INVENTIONS_GROUP) (#1154)',
+    needsL3: true,
+    why: "governance UI — including who is offered the controls, and the Tycoons' rating control (#1195), plus a browser look",
   },
   {
-    test: /^src\/client\/components\/mail\/|^src\/server\/mail/,
-    flows: ['mail-roundtrip', 'zoning-alert-read', 'mail-drafts', 'mail-send-from-draft', 'mail-reply'],
+    test: /^src\/client\/components\/building\//,
+    flows: INSPECTOR_UI_FLOWS,
+    needsL3: true,
+    why: `${INSPECTOR_UI_WHY}, plus a browser look`,
+  },
+  {
+    test: /^src\/shared\/building-details\//,
+    flows: INSPECTOR_UI_FLOWS,
+    why: INSPECTOR_UI_WHY,
+  },
+  {
+    test: /^src\/client\/components\/mail\//,
+    flows: MAIL_FLOWS,
+    needsL3: true,
+    why: 'mail path — plus a browser look at the mail panel',
+  },
+  {
+    test: /^src\/server\/mail/,
+    flows: MAIL_FLOWS,
     why: 'mail path',
   },
   {
@@ -409,7 +604,8 @@ export const ROUTES: RouteRule[] = [
     // Before the broad src/ rule below: the company list's switch into a Political Office.
     test: /^src\/client\/components\/login\/CompanyStage\.tsx$/,
     flows: ['company-switch'],
-    why: 'the company list — the flow that drives its REQ_SWITCH_COMPANY',
+    needsL3: true,
+    why: 'the company list — the flow that drives its REQ_SWITCH_COMPANY, plus a browser look',
   },
   {
     // Before the modals/ rule below: the company-creation dialog's cluster reads.
@@ -421,16 +617,18 @@ export const ROUTES: RouteRule[] = [
   {
     // Before the broad src/ rule below: the sender of the switch and the cluster reads.
     test: /^src\/client\/handlers\/auth-handler\.ts$/,
-    flows: ['company-switch', 'cluster-info-read'],
-    why: 'the client auth handler — the flows that drive its company switch and cluster reads',
+    flows: ['company-switch', 'cluster-info-read', 'tycoon-role-read'],
+    why: 'the client auth handler — the flows that drive its company switch, cluster reads and tycoon role read (REQ_TYCOON_ROLE, #1195)',
   },
   {
-    // Before the broad src/ rule below: the rest of these component folders gets the same
-    // flows that rule gives, plus a browser look.
-    test: /^src\/client\/components\/hud\/|^src\/client\/components\/sheet\/|^src\/client\/components\/modals\/|^src\/client\/components\/map\//,
+    // Before the broad src/ rule below: the rest of these UI surfaces gets the same flows that
+    // rule gives, plus a browser look — the component folders, the report modal, the app
+    // shell and entry points (client.ts hosts getDebugState), the minimap canvas (ui/), the
+    // hooks and the UI store (#1187). components/panels/ is not listed: no tracked file lives there.
+    test: /^src\/client\/components\/hud\/|^src\/client\/components\/sheet\/|^src\/client\/components\/modals\/|^src\/client\/components\/map\/|^src\/client\/components\/login\/|^src\/client\/components\/common\/|^src\/client\/components\/command-palette\/|^src\/client\/components\/startup\/|^src\/client\/components\/tutorial\/|^src\/client\/report\/[^/]+\.tsx$|^src\/client\/App\.tsx$|^src\/client\/main\.tsx$|^src\/client\/client\.ts$|^src\/client\/ui\/|^src\/client\/hooks\/|^src\/client\/store\/ui-store\.ts$/,
     flows: ['building-details'],
     needsL3: true,
-    why: 'HUD, sheets, modals and map surface — the gateway contract, plus a browser look',
+    why: 'the UI surfaces (HUD, sheets, modals, map, login, common, command palette, startup, tutorial, report, app shell, minimap, hooks, UI store) — the gateway contract, plus a browser look',
   },
   {
     test: /^src\/client\/|^src\/shared\/|^src\/server\//,
@@ -481,6 +679,11 @@ export function route(changedFiles: string[], deletedFiles: string[] = []): Rout
       reasons.add(rule.why);
     }
     for (const flow of rule.flows) required.add(flow);
+  }
+
+  // The quarantine is applied on top of the healthy-server rules: no gate requires such a flow.
+  for (const [flow, entry] of Object.entries(SERVER_QUARANTINE)) {
+    if (required.delete(flow)) reasons.add(`server quarantine: ${flow} — ${entry.reason}`);
   }
 
   // The spine rides along whenever anything observable changed.

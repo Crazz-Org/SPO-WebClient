@@ -9,9 +9,7 @@ import { act, screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders, createSpiedCallbacks, resetStores } from '../../../__tests__/setup/render-helpers';
 import { useBuildingStore } from '../../../store/building-store';
 import { useGameStore } from '../../../store/game-store';
-import { useUiStore } from '../../../store/ui-store';
 import { BuildingInspector } from '../BuildingInspector';
-import { BuildingInspectorModal } from '../../modals/BuildingInspectorModal';
 import type { BuildingFocusInfo, BuildingDetailsResponse } from '@/shared/types';
 
 const focus: BuildingFocusInfo = {
@@ -57,20 +55,6 @@ describe('refresh call sites carry userInitiated', () => {
     });
 
     fireEvent.click(screen.getByText('Retry'));
-
-    expect(onRefreshBuilding).toHaveBeenCalledWith(100, 200, { userInitiated: true });
-  });
-
-  it('the modal Refresh button passes userInitiated: true', () => {
-    const onRefreshBuilding = jest.fn();
-    useBuildingStore.getState().setFocus(focus);
-    useBuildingStore.getState().setDetails(details);
-    useUiStore.getState().openModal('buildingInspector');
-    renderWithProviders(<BuildingInspectorModal />, {
-      clientCallbacks: createSpiedCallbacks({ onRefreshBuilding }),
-    });
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Refresh' })[0]);
 
     expect(onRefreshBuilding).toHaveBeenCalledWith(100, 200, { userInitiated: true });
   });

@@ -4,7 +4,8 @@
  * The script shells out to `npm`, reads git, and requires the compiled e2e driver from
  * `dist/e2e/`. Each case therefore gets a scratch git repo, a fake `npm` on PATH whose
  * failures are chosen per stage, and two small CommonJS fakes standing in for
- * `dist/e2e/routing.js` and `dist/e2e/run.js`, steered through environment variables.
+ * `dist/e2e/routing.js`, `dist/e2e/run.js` and `dist/e2e/bench/changed-flows.js`, steered
+ * through environment variables.
  * Nothing here touches the real bench, ~/.spo-bench or the live servers.
  */
 
@@ -12,6 +13,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { SECONDARY_ACCOUNT } from './config';
 
 const SCRIPT = path.join(process.cwd(), 'scripts', 'verify-gate.js');
 
@@ -27,6 +29,8 @@ interface GateRun {
   diffSeen: string | null;
   /** The options handed to `runLive`, when the run got that far. */
   liveOptions: Record<string, unknown> | null;
+  /** The diff handed to `flowsChangedInWorktree`, when the run got that far. */
+  flowDiffSeen: string | null;
 }
 
 interface RepoOptions {
@@ -56,9 +60,21 @@ exports.route = files => ({
   reasons: [],
   ...decision,
 });
+exports.SPINE_FLOW = 'login-spine';
+exports.SERVER_QUARANTINE = JSON.parse(process.env.FAKE_QUARANTINE || '{}');
 exports.presidentMembersInDiff = diff => {
   if (process.env.FAKE_DIFF_OUT) fs.writeFileSync(process.env.FAKE_DIFF_OUT, diff, 'utf8');
   return JSON.parse(process.env.FAKE_PRESIDENT || '[]');
+};
+`;
+
+const FAKE_CHANGED_FLOWS = `'use strict';
+const fs = require('fs');
+exports.FLOW_SOURCES = ['src/e2e/flows.ts'];
+exports.flowsChangedInWorktree = diff => {
+  if (process.env.FAKE_FLOW_DIFF_OUT) fs.writeFileSync(process.env.FAKE_FLOW_DIFF_OUT, diff, 'utf8');
+  if (process.env.FAKE_CHANGED_THROW) throw new Error(process.env.FAKE_CHANGED_THROW);
+  return JSON.parse(process.env.FAKE_CHANGED || '{"required":[],"notDriven":[],"reasons":[]}');
 };
 `;
 
@@ -115,6 +131,12 @@ beforeAll(() => {
   fs.writeFileSync(path.join(template, 'dist', 'e2e', 'routing.js'), FAKE_ROUTING, 'utf8');
   fs.writeFileSync(path.join(template, 'dist', 'e2e', 'run.js'), FAKE_RUN, 'utf8');
   fs.writeFileSync(path.join(template, 'dist', 'e2e', 'capability.js'), FAKE_CAPABILITY, 'utf8');
+  fs.mkdirSync(path.join(template, 'dist', 'e2e', 'bench'), { recursive: true });
+  fs.writeFileSync(
+    path.join(template, 'dist', 'e2e', 'bench', 'changed-flows.js'),
+    FAKE_CHANGED_FLOWS,
+    'utf8',
+  );
 });
 
 /**
@@ -157,6 +179,7 @@ function runGate(dir: string, args: string[] = [], env: NodeJS.ProcessEnv = {}):
   const npmLog = path.join(work, 'npm.log');
   const diffOut = path.join(work, 'diff.txt');
   const liveOut = path.join(work, 'live.json');
+  const flowDiffOut = path.join(work, 'flow-diff.txt');
   const result = spawnSync('node', [SCRIPT, ...args], {
     cwd: dir,
     encoding: 'utf8',
@@ -166,6 +189,7 @@ function runGate(dir: string, args: string[] = [], env: NodeJS.ProcessEnv = {}):
       FAKE_NPM_LOG: npmLog,
       FAKE_DIFF_OUT: diffOut,
       FAKE_LIVE_OUT: liveOut,
+      FAKE_FLOW_DIFF_OUT: flowDiffOut,
       ...env,
     },
   });
@@ -183,6 +207,7 @@ function runGate(dir: string, args: string[] = [], env: NodeJS.ProcessEnv = {}):
     npmCalls: fs.existsSync(npmLog) ? fs.readFileSync(npmLog, 'utf8').trim().split('\n') : [],
     diffSeen: fs.existsSync(diffOut) ? fs.readFileSync(diffOut, 'utf8') : null,
     liveOptions: readJson(liveOut),
+    flowDiffSeen: fs.existsSync(flowDiffOut) ? fs.readFileSync(flowDiffOut, 'utf8') : null,
   };
 }
 
@@ -435,10 +460,10 @@ describe('stage 4 — live', () => {
   it('never passes a live result BLOCKED by a skipped flow', () => {
     const live = {
       status: 'BLOCKED',
-      error: 'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused)',
+      error: `skipped — a flow that did not run is not a pass: permission-negative (${SECONDARY_ACCOUNT.username} refused)`,
       flows: [
         { name: 'login-spine', status: 'PASS' },
-        { name: 'permission-negative', status: 'SKIPPED', skipped: 'Crazz refused' },
+        { name: 'permission-negative', status: 'SKIPPED', skipped: `${SECONDARY_ACCOUNT.username} refused` },
       ],
     };
     const run = runGate(scratchRepo(), ['--live'], {
@@ -479,12 +504,32 @@ describe('stage 4 — live', () => {
     expect(run.stdout).not.toMatch(/did not answer whether/);
   });
 
-  it('lets --flows= override the routed set', () => {
-    const run = runGate(scratchRepo(), ['--live', '--flows=mail-roundtrip,building-details'], {
+  it('lets --flows= override the routed set only when it still covers the required set', () => {
+    // #1183 changed this contract: --flows= replaced the routed set and nothing checked it
+    // still named the required flows, so a gate could attest PASS having driven none of them.
+    const refused = runGate(scratchRepo(), ['--live', '--flows=mail-roundtrip,building-details'], {
       FAKE_ROUTING: needsLive,
     });
-    expect(run.code).toBe(0);
-    expect(run.liveOptions).toMatchObject({ flows: ['mail-roundtrip', 'building-details'] });
+    expect(refused.code).toBe(2);
+    expect(refused.liveOptions).toBeNull();
+    expect(refused.artifact).toMatchObject({
+      verdict: 'BLOCKED',
+      live: {
+        skipped: true,
+        why: '--flows= leaves out required flow(s): login-spine, politics-read',
+      },
+    });
+    expect(refused.stdout).toMatch(/Gate BLOCKED — --flows= replaces the routed set/);
+
+    const covered = runGate(
+      scratchRepo(),
+      ['--live', '--flows=login-spine,politics-read,mail-roundtrip'],
+      { FAKE_ROUTING: needsLive },
+    );
+    expect(covered.code).toBe(0);
+    expect(covered.liveOptions).toMatchObject({
+      flows: ['login-spine', 'politics-read', 'mail-roundtrip'],
+    });
   });
 
   it('exits 1 when the live driver crashes', () => {
@@ -689,78 +734,80 @@ describe('stage 5 — capability judgement (doc/E2E-POLICY.md §7)', () => {
   });
 });
 
-describe('stage 6 — unproven flows (doc/E2E-POLICY.md §7)', () => {
+describe('stage 6 — untestable flows (doc/E2E-POLICY.md §7)', () => {
   const noAlert = 'no "Zoning Alert!" in the inbox — the flow\'s data — seed failed: timeout';
   const noIssue = 'the newest issue opens with stories — 0 issues';
-  const liveWith = (flows: Array<{ name: string; status: string; unproven: string[] }>) =>
+  const liveWith = (flows: Array<{ name: string; status: string; untestable: string[] }>) =>
     JSON.stringify({ status: 'PASS', flows });
 
-  it('fails the gate when a REQUIRED flow ends UNPROVEN', () => {
+  // Contract changed by #1320 (maintainer decision 2026-10-05): UNTESTABLE never changes the
+  // verdict, required or not; its reasons are recorded and printed.
+  it('passes the gate when a REQUIRED flow ends UNTESTABLE, recording it with its reasons', () => {
     const run = runGate(scratchRepo(), ['--live'], {
       FAKE_ROUTING: JSON.stringify({ required: ['login-spine', 'zoning-alert-read'] }),
       FAKE_LIVE: liveWith([
-        { name: 'login-spine', status: 'PASS', unproven: [] },
-        { name: 'zoning-alert-read', status: 'UNPROVEN', unproven: [noAlert] },
+        { name: 'login-spine', status: 'PASS', untestable: [] },
+        { name: 'zoning-alert-read', status: 'UNTESTABLE', untestable: [noAlert] },
       ]),
     });
-    expect(run.code).toBe(1);
-    expect(run.artifact?.verdict).toBe('FAIL');
-    expect(run.artifact?.unproven).toEqual([
+    expect(run.code).toBe(0);
+    expect(run.artifact?.verdict).toBe('PASS');
+    expect(run.artifact?.untestable).toEqual([
       { flow: 'zoning-alert-read', required: true, reasons: [noAlert] },
     ]);
-    expect(run.stdout).toMatch(/UNPROVEN REQUIRED FLOW/);
-    expect(run.stdout).toContain('zoning-alert-read');
+    expect(run.stdout).toContain('=== untestable flow(s) — not observable, verdict unchanged ===');
+    expect(run.stdout).toContain('zoning-alert-read (required)');
     expect(run.stdout).toContain(`  ? ${noAlert}`);
     expect(run.stdout).toMatch(/§7/);
-    expect(run.stdout).toMatch(/Gate FAIL\. Artifact:/);
+    expect(run.stdout).toMatch(/Gate PASS\. Artifact:/);
   });
 
-  it('records an UNPROVEN flow run only because --flows named it as informational, and passes', () => {
+  it('records an UNTESTABLE flow run only because --flows named it, and passes', () => {
     const run = runGate(scratchRepo(), ['--live', '--flows=login-spine,newspaper-read'], {
       FAKE_ROUTING: JSON.stringify({ required: ['login-spine'] }),
       FAKE_LIVE: liveWith([
-        { name: 'login-spine', status: 'PASS', unproven: [] },
-        { name: 'newspaper-read', status: 'UNPROVEN', unproven: [noIssue] },
+        { name: 'login-spine', status: 'PASS', untestable: [] },
+        { name: 'newspaper-read', status: 'UNTESTABLE', untestable: [noIssue] },
       ]),
     });
     expect(run.code).toBe(0);
     expect(run.artifact?.verdict).toBe('PASS');
-    expect(run.artifact?.unproven).toEqual([
+    expect(run.artifact?.untestable).toEqual([
       { flow: 'newspaper-read', required: false, reasons: [noIssue] },
     ]);
-    expect(run.stdout).toMatch(/informational/);
+    expect(run.stdout).toContain('=== untestable flow(s) — not observable, verdict unchanged ===');
     expect(run.stdout).toContain(`  ? ${noIssue}`);
-    expect(run.stdout).not.toMatch(/UNPROVEN REQUIRED FLOW/);
+    expect(run.stdout).not.toContain('newspaper-read (required)');
   });
 
-  it('leaves unproven empty when every flow passes', () => {
+  it('leaves untestable empty when every flow passes', () => {
     const run = runGate(scratchRepo(), ['--live'], {
       FAKE_ROUTING: JSON.stringify({ required: ['login-spine'] }),
-      FAKE_LIVE: liveWith([{ name: 'login-spine', status: 'PASS', unproven: [] }]),
+      FAKE_LIVE: liveWith([{ name: 'login-spine', status: 'PASS', untestable: [] }]),
     });
     expect(run.code).toBe(0);
     expect(run.artifact?.verdict).toBe('PASS');
-    expect(run.artifact?.unproven).toEqual([]);
-    expect(run.stdout).not.toMatch(/informational/);
+    expect(run.artifact?.untestable).toEqual([]);
+    expect(run.stdout).not.toMatch(/untestable flow\(s\)/);
   });
 
-  it('leaves unproven empty and still exits 3 on an ENVIRONMENT abort', () => {
+  it('leaves untestable empty and still exits 3 on an ENVIRONMENT abort', () => {
     const run = runGate(scratchRepo(), ['--live'], {
       FAKE_ROUTING: JSON.stringify({ required: ['zoning-alert-read'] }),
       FAKE_LIVE: JSON.stringify({ status: 'ENVIRONMENT' }),
     });
     expect(run.code).toBe(3);
     expect(run.artifact?.verdict).toBe('ENVIRONMENT');
-    expect(run.artifact?.unproven).toEqual([]);
+    expect(run.artifact?.untestable).toEqual([]);
   });
 
-  it('still fails on a required UNPROVEN next to a refused capability, and records the exception', () => {
+  it('passes on a required UNTESTABLE next to a refused capability, and records both', () => {
     const run = runGate(scratchRepo(), ['--live'], {
       FAKE_ROUTING: JSON.stringify({ required: ['zoning-alert-read'] }),
       FAKE_PRESIDENT: JSON.stringify(['RDOSitMayor']),
       FAKE_LIVE: JSON.stringify({
         status: 'PASS',
-        flows: [{ name: 'zoning-alert-read', status: 'UNPROVEN', unproven: [noAlert] }],
+        flows: [{ name: 'zoning-alert-read', status: 'UNTESTABLE', untestable: [noAlert] }],
         capabilities: [
           {
             capability: 'president',
@@ -774,12 +821,175 @@ describe('stage 6 — unproven flows (doc/E2E-POLICY.md §7)', () => {
         ],
       }),
     });
-    expect(run.code).toBe(1);
-    expect(run.artifact?.verdict).toBe('FAIL');
+    expect(run.code).toBe(0);
+    expect(run.artifact?.verdict).toBe('PASS');
     expect(run.stdout).toMatch(/CAPABILITY EXCEPTION/);
     expect((run.artifact?.exclusions as { capability: unknown[] }).capability).toHaveLength(1);
-    expect(run.artifact?.unproven).toEqual([
+    expect(run.artifact?.untestable).toEqual([
       { flow: 'zoning-alert-read', required: true, reasons: [noAlert] },
     ]);
+  });
+});
+
+describe('stage 3 — changed and declared flows (#1183)', () => {
+  const flowOnly = JSON.stringify({ staticOnly: true, required: [] });
+  const changedPolitics = JSON.stringify({
+    required: ['politics-read'],
+    notDriven: [],
+    reasons: ['flow changed in src/e2e/flows.ts: politics-read'],
+  });
+
+  it('a flow-only diff is not static-only: it drives the spine and the changed flow', () => {
+    const run = runGate(scratchRepo(), ['--live'], {
+      FAKE_ROUTING: flowOnly,
+      FAKE_CHANGED: changedPolitics,
+    });
+    expect(run.code).toBe(0);
+    expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'politics-read'] });
+    expect(run.artifact?.routing).toMatchObject({
+      required: ['login-spine', 'politics-read'],
+      changedFlows: ['politics-read'],
+      changedFlowsNotDriven: [],
+      declared: [],
+      reasons: ['flow changed in src/e2e/flows.ts: politics-read'],
+    });
+    expect(run.stdout).not.toMatch(/static only/);
+  });
+
+  it('a flow-only diff without --live BLOCKS, never PASS', () => {
+    const run = runGate(scratchRepo(), [], { FAKE_ROUTING: flowOnly, FAKE_CHANGED: changedPolitics });
+    expect(run.code).toBe(2);
+    expect(run.artifact).toMatchObject({
+      verdict: 'BLOCKED',
+      live: { why: '--live was never supplied; routed flows: login-spine, politics-read' },
+    });
+    expect(run.liveOptions).toBeNull();
+  });
+
+  it('a flow-only diff under --static-only BLOCKS', () => {
+    const run = runGate(scratchRepo(), ['--live', '--static-only'], {
+      FAKE_ROUTING: flowOnly,
+      FAKE_CHANGED: changedPolitics,
+    });
+    expect(run.code).toBe(2);
+    expect(run.artifact).toMatchObject({ verdict: 'BLOCKED' });
+    expect(run.liveOptions).toBeNull();
+  });
+
+  it('--also-flows= unions with the routed set and records what was declared', () => {
+    const run = runGate(scratchRepo(), ['--live', '--also-flows=mail-roundtrip'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['login-spine', 'politics-read'] }),
+    });
+    expect(run.code).toBe(0);
+    expect(run.liveOptions).toMatchObject({
+      flows: ['login-spine', 'politics-read', 'mail-roundtrip'],
+    });
+    expect(run.artifact?.routing).toMatchObject({
+      required: ['login-spine', 'politics-read', 'mail-roundtrip'],
+      declared: ['mail-roundtrip'],
+      reasons: ['declared by --also-flows: mail-roundtrip'],
+    });
+  });
+
+  it('--also-flows= over a static routing decision drives the spine and the declared flow', () => {
+    const run = runGate(scratchRepo(), ['--live', '--also-flows=politics-read'], {
+      FAKE_ROUTING: flowOnly,
+    });
+    expect(run.code).toBe(0);
+    expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'politics-read'] });
+  });
+
+  it('--also-flows= naming a quarantined flow does not require it, and records it as quarantined (#1310)', () => {
+    const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['login-spine', 'politics-read'] }),
+      FAKE_QUARANTINE: JSON.stringify({ 'portrait-roundtrip': { reason: 'the picture server refuses' } }),
+    });
+    expect(run.code).toBe(0);
+    expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'politics-read'] });
+    expect((run.artifact?.routing as { required: string[] }).required).not.toContain('portrait-roundtrip');
+    expect(run.artifact?.routing).toMatchObject({
+      required: ['login-spine', 'politics-read'],
+      declared: [],
+      quarantined: ['portrait-roundtrip'],
+      reasons: ['server quarantine, not required: portrait-roundtrip — the picture server refuses'],
+    });
+  });
+
+  it('records a quarantined flow the diff changed, once, beside a declared one (#1310)', () => {
+    const run = runGate(scratchRepo(), ['--live', '--also-flows=portrait-roundtrip'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['login-spine', 'politics-read'] }),
+      FAKE_CHANGED: JSON.stringify({ required: [], notDriven: [], quarantined: ['portrait-roundtrip'], reasons: [] }),
+      FAKE_QUARANTINE: JSON.stringify({ 'portrait-roundtrip': { reason: 'refused' } }),
+    });
+    expect(run.code).toBe(0);
+    expect(run.artifact?.routing).toMatchObject({ quarantined: ['portrait-roundtrip'] });
+  });
+
+  it('--flows= naming a quarantined flow still drives it (#1310)', () => {
+    const run = runGate(scratchRepo(), ['--live', '--flows=login-spine,portrait-roundtrip'], {
+      FAKE_ROUTING: JSON.stringify({ required: ['login-spine'] }),
+      FAKE_QUARANTINE: JSON.stringify({ 'portrait-roundtrip': { reason: 'refused' } }),
+    });
+    expect(run.code).toBe(0);
+    expect(run.liveOptions).toMatchObject({ flows: ['login-spine', 'portrait-roundtrip'] });
+  });
+
+  it('a bare --also-flows declares nothing', () => {
+    const run = runGate(scratchRepo(), ['--live', '--also-flows'], { FAKE_ROUTING: flowOnly });
+    expect(run.code).toBe(0);
+    expect(run.stdout).toMatch(/Gate PASS \(static only\)/);
+    expect(run.artifact?.routing).toMatchObject({ declared: [], required: [] });
+  });
+
+  it('--flows= that leaves out a changed flow is refused', () => {
+    const run = runGate(scratchRepo(), ['--live', '--flows=login-spine'], {
+      FAKE_ROUTING: flowOnly,
+      FAKE_CHANGED: changedPolitics,
+    });
+    expect(run.code).toBe(2);
+    expect(run.artifact).toMatchObject({
+      verdict: 'BLOCKED',
+      live: { why: '--flows= leaves out required flow(s): politics-read' },
+    });
+    expect(run.liveOptions).toBeNull();
+  });
+
+  it('a changed flow that ends UNTESTABLE is required, recorded as such, and passes the gate', () => {
+    const run = runGate(scratchRepo(), ['--live'], {
+      FAKE_ROUTING: flowOnly,
+      FAKE_CHANGED: JSON.stringify({ required: ['zoning-alert-read'], notDriven: [], reasons: [] }),
+      FAKE_LIVE: JSON.stringify({
+        status: 'PASS',
+        flows: [
+          { name: 'login-spine', status: 'PASS', untestable: [] },
+          { name: 'zoning-alert-read', status: 'UNTESTABLE', untestable: ['no alert'] },
+        ],
+      }),
+    });
+    expect(run.code).toBe(0);
+    expect(run.artifact?.untestable).toEqual([
+      { flow: 'zoning-alert-read', required: true, reasons: ['no alert'] },
+    ]);
+  });
+
+  it('fails closed when the diff cannot be mapped to changed flows', () => {
+    const run = runGate(scratchRepo(), ['--live'], {
+      FAKE_ROUTING: flowOnly,
+      FAKE_CHANGED_THROW: 'FLOWS lists 60 binding(s) but 61 flow(s) were loaded',
+    });
+    expect(run.code).toBe(1);
+    expect(run.stderr).toMatch(/could not map the diff to changed flows: FLOWS lists 60/);
+    expect(run.artifact).toMatchObject({ verdict: 'FAIL' });
+    expect(run.liveOptions).toBeNull();
+  });
+
+  it('hands the helper a -U0 diff restricted to the flow sources', () => {
+    const dir = scratchRepo();
+    commitFile(dir, 'src/e2e/flows.ts', 'export const x = 1;\n', 'feat: a flow');
+    const run = runGate(dir, [], { FAKE_ROUTING: flowOnly });
+    expect(run.code).toBe(0);
+    expect(run.flowDiffSeen).toContain('+++ b/src/e2e/flows.ts');
+    expect(run.flowDiffSeen).toMatch(/^@@ -\d+(,\d+)? \+\d+(,\d+)? @@/m);
+    expect(run.flowDiffSeen).not.toContain('src/server/thing.ts');
   });
 });

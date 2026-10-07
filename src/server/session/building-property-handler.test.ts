@@ -14,8 +14,9 @@
  * `KNOWN_RDO_COMMANDS` and pins, in this order:
  *
  *   1. TARGET     — `ObjectId` for the ten gate commands, the INPUT GATE's own
- *                   id for the one member declared on a gate (`RDOSelSelected`,
- *                   Kernel/Kernel.pas:1623), `CurrBlock` otherwise. The fake
+ *                   id for the two members declared on an input gate
+ *                   (`RDOSelSelected`, Kernel/Kernel.pas:1623;
+ *                   `RDOSetInputFluidPerc`, :1508), `CurrBlock` otherwise. The fake
  *                   answers with three DIFFERENT ids (the warehouse case, plus
  *                   the gate), so a handler that always picked one fails here.
  *   2. SEPARATOR  — `"*"` everywhere, and which channel carries it: a QueryId
@@ -451,9 +452,13 @@ const MATRIX: readonly MatrixEntry[] = [
     target: 'currBlock', verb: 'call', channel: 'frame', readBack: 'cInputDem1',
   },
   {
-    command: 'RDOSetInputFluidPerc', value: '80',
+    // Declared on TInput, the gate (Kernel/Kernel.pas:1508), and Voyager binds
+    // it to the ad input's own ObjectId — `MSProxy.BindTo(fAdInputId)`
+    // (Voyager/AdvSheetForm.pas:456-457, id read at :645). `fluidId` names that
+    // gate; it is not a wire argument (#1195).
+    command: 'RDOSetInputFluidPerc', value: '80', params: { fluidId: GATE_FLUID },
     args: [RdoValue.int(80)],
-    target: 'currBlock', verb: 'call', channel: 'frame', readBack: 'nfActualMaxFluidValue',
+    target: 'gate', verb: 'call', channel: 'frame', readBack: 'nfActualMaxFluidValue',
   },
 
   // ── Prices, trade, roles ─────────────────────────────────────────────────
@@ -688,9 +693,10 @@ describe('target selection', () => {
       'RDODisconnectFromTycoon', 'RDODisconnectInput', 'RDODisconnectOutput',
       'RDOSetInputMaxPrice', 'RDOSetInputMinK', 'RDOSetInputOverPrice', 'RDOSetOutputPrice',
     ]);
-    // And exactly one member is bound to neither: it is declared on the gate.
-    expect(GATE_COMMANDS).toEqual(['RDOSelSelected']);
-    expect(CURR_BLOCK_COMMANDS).toHaveLength(MATRIX.length - 11);
+    // And exactly two members are bound to neither: they are declared on the
+    // input gate (Kernel/Kernel.pas:1623, :1508).
+    expect(GATE_COMMANDS).toEqual(['RDOSelSelected', 'RDOSetInputFluidPerc']);
+    expect(CURR_BLOCK_COMMANDS).toHaveLength(MATRIX.length - 12);
   });
 
   it('binds both synchronous commands to ObjectId — the CurrBlock arm of :193 is dead', () => {
@@ -1227,13 +1233,112 @@ describe('direct property set', () => {
   });
 
   it('writes Name as a widestring — the only WIDESTRING_PROPERTIES entry (:637)', async () => {
+    // Target changed from CurrBlock to ObjectId: `Name` is published by
+    // TFacility (Kernel/Kernel.pas:1029), not by the block, and Voyager assigns
+    // it on the facility proxy (Voyager/SrvGeneralSheetForm.pas:248).
     const fake = makeConstructionCtx();
 
     await settle(setBuildingProperty(fake.ctx, X, Y, 'property', 'Café de la Gare', { propertyName: 'Name' }));
 
     expect(onlyFrame(fake)).toEqual(
-      RdoCommand.sel(CURR_BLOCK).set('Name').args(RdoValue.string('Café de la Gare')).build(),
+      RdoCommand.sel(OBJECT_ID).set('Name').args(RdoValue.string('Café de la Gare')).build(),
     );
+  });
+
+  // Close / Open. `Stopped` is published by TFacility (Kernel/Kernel.pas:1043),
+  // the object whose id the cacher calls ObjectId (Cache/CacheAgent.pas:89).
+  // Sent to CurrBlock — a TBlock, which does not publish it — the server
+  // answered errUnexistentProperty (Rdo/Server/RDOObjectServer.pas:176) to
+  // nobody, and the building never closed. The reference client binds to the
+  // facility first: StopFacility.asp:12-15, SrvGeneralSheetForm.pas:488.
+  it.each([
+    { label: 'Close', value: '-1', wire: -1 },
+    { label: 'Open', value: '0', wire: 0 },
+  ])('sends Stopped ($label) to the facility ObjectId, never to CurrBlock', async ({ value, wire }) => {
+    const fake = makeConstructionCtx();
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName: 'Stopped' }));
+
+    const frame = onlyFrame(fake);
+    expect(frame).toMatchRdoSetFormat('Stopped');
+    expect(frame).toEqual(RdoCommand.sel(OBJECT_ID).set('Stopped').args(RdoValue.int(wire)).build());
+    expect(frame).not.toContain(CURR_BLOCK);
+  });
+
+  // The cache writes `Trouble` and no `Stopped` (Kernel/KernelCache.pas:417);
+  // the tycoon stop is its facStoppedByTycoon bit, $04 (Kernel/Kernel.pas:107).
+  it('reads Stopped back through Trouble, never under its own name', async () => {
+    const fake = makeConstructionCtx({ readBack: ['4'] });
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }));
+
+    const calls = fake.cacher.getPropertyList.mock.calls;
+    expect(calls[calls.length - 1][1]).toEqual(['Trouble']);
+  });
+
+  it.each([
+    { label: 'Close', value: '-1', trouble: '4', newValue: '-1' },
+    { label: 'Close', value: '-1', trouble: '12', newValue: '-1' },
+    { label: 'Close', value: '1', trouble: '4', newValue: '-1' },
+    { label: 'Open', value: '0', trouble: '0', newValue: '0' },
+    { label: 'Open', value: '0', trouble: '1', newValue: '0' },
+  ])('confirms Stopped ($label) when Trouble $trouble carries the matching bit', async ({ value, trouble, newValue }) => {
+    const fake = makeConstructionCtx({ readBack: [trouble] });
+
+    const result = await settle(
+      setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName: 'Stopped' }),
+    );
+
+    expect(result).toMatchObject({ success: true, confirmed: true, newValue });
+  });
+
+  it.each([
+    { label: 'Close', value: '-1', trouble: '0' },
+    { label: 'Open', value: '0', trouble: '4' },
+  ])('does not confirm Stopped ($label) when Trouble $trouble contradicts it', async ({ value, trouble }) => {
+    const fake = makeConstructionCtx({ readBack: [trouble] });
+
+    const result = await settle(
+      setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName: 'Stopped' }),
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.confirmed).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalled();
+  });
+
+  it.each(['', 'x'])('does not confirm Stopped when Trouble reads back %p', async (trouble) => {
+    const fake = makeConstructionCtx({ readBack: [trouble] });
+
+    const result = await settle(
+      setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }),
+    );
+
+    expect(result.confirmed).toBeUndefined();
+    expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('read-back of "Trouble" came back empty'));
+  });
+
+  it('keeps Stopped on CurrBlock only when the building publishes no ObjectId (the fallback)', async () => {
+    const fake = makeConstructionCtx({ objectId: null });
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'property', '-1', { propertyName: 'Stopped' }));
+
+    expect(onlyFrame(fake)).toEqual(RdoCommand.sel(CURR_BLOCK).set('Stopped').args(RdoValue.int(-1)).build());
+  });
+
+  // Rent and Maintenance are published by TPopulatedBlock
+  // (Kernel/PopulatedBlock.pas:148-149) — a block — so they stay on CurrBlock.
+  it.each([
+    { propertyName: 'Rent', value: '120' },
+    { propertyName: 'Maintenance', value: '80' },
+  ])('keeps $propertyName on CurrBlock, where the block publishes it', async ({ propertyName, value }) => {
+    const fake = makeConstructionCtx();
+
+    await settle(setBuildingProperty(fake.ctx, X, Y, 'property', value, { propertyName }));
+
+    const frame = onlyFrame(fake);
+    expect(frame).toMatchRdoSetFormat(propertyName);
+    expect(frame).toEqual(RdoCommand.sel(CURR_BLOCK).set(propertyName).args(RdoValue.int(Number(value))).build());
   });
 
   it('reads the property back under its own name', async () => {
@@ -1245,7 +1350,7 @@ describe('direct property set', () => {
     expect(listCalls[listCalls.length - 1][1]).toEqual(['Interest']);
   });
 
-  it('never targets ObjectId, even for a warehouse', async () => {
+  it('never targets ObjectId for a block-published property, even for a warehouse', async () => {
     // Was `AcceptCloning`, a name this path cannot receive: template-groups.ts:540
     // maps it to `command: 'RDOAcceptCloning'`, not to `'property'`. Now that the
     // settable set is closed, the test has to use a name the UI actually produces.
@@ -1613,6 +1718,23 @@ describe('read-back on the gate object', () => {
     );
     expect(fake.log.error).toHaveBeenCalledWith(
       expect.stringContaining('RDOSelSelected cannot be addressed'),
+    );
+  });
+
+  it('refuses RDOSetInputFluidPerc when no input gate carries that fluid (#1195)', async () => {
+    // Same gate binding as RDOSelSelected: with no gate resolved there is no
+    // legal target (the block does not publish the member, Kernel/Kernel.pas:1508),
+    // so nothing goes on the wire.
+    const fake = makeConstructionCtx({ readBack: ['1'] });
+
+    const result = await settle(setBuildingProperty(fake.ctx, X, Y, 'RDOSetInputFluidPerc', '50', {
+      fluidId: 'Advertisement',
+    }));
+
+    expect(fake.frames.construction).toEqual([]);
+    expect(result).toEqual({ success: false, newValue: '' });
+    expect(fake.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('RDOSetInputFluidPerc cannot be addressed'),
     );
   });
 

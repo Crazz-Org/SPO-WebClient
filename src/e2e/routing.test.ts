@@ -7,14 +7,19 @@ import {
   NIGHTLY_ONLY,
   GATE_ONLY,
   FALLBACK_ONLY,
+  EXCLUDED,
+  NOT_ROUTED,
+  SERVER_QUARANTINE,
   route,
   presidentMembersInDiff,
   isCallSite,
   launderedTests,
   type RouteRule,
+  type ServerQuarantine,
 } from './routing';
 import { PRESIDENT_MEMBERS } from './config';
 import { FLOWS } from './flows';
+import { declarationsOf, FLOW_SOURCES, type Declaration } from './bench/changed-flows';
 
 describe('route', () => {
   it('appends the login spine whenever anything observable changed', () => {
@@ -29,6 +34,8 @@ describe('route', () => {
     const decision = route(['src/server/session/politics-handler.ts']);
     expect(decision.required).toEqual([
       'login-spine', 'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
+      // #1195: SPO_test's rating of the mayor's term and the tycoon role read.
+      'mayor-rating-roundtrip', 'tycoon-role-read',
     ]);
     expect(decision.staticOnly).toBe(false);
   });
@@ -53,6 +60,8 @@ describe('route', () => {
       'trade-settings',
       // #1154: the residential, bank, TV, accept-cloning and research controls.
       'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+      // #1195: ADS_GROUP's AdPerc slider (RDOSetInputFluidPerc).
+      'ad-budget-roundtrip',
     ]);
   });
 
@@ -338,17 +347,49 @@ describe('the town paper', () => {
   // The paper is not on the RDO wire at all — it is scraped off the ASP pages —
   // so the governance flows would prove nothing about a change to it.
   // newspaper-read stays nightly-only (#1009): the bench cannot create a kept issue,
-  // so it could only end UNPROVEN. The columns board read is required instead.
+  // so it could only end UNTESTABLE. The columns board read is routed by both newspaper rules
+  // and required: an empty board (#1260: every post answers HTTP 500 server-side, so no column
+  // can be seeded) ends UNTESTABLE, which passes — its quarantine entry was removed (#1320).
   const paperPaths = [
     'src/server/session/newspaper-handler.ts',
     'src/client/components/modals/NewspaperModal.tsx',
     'src/client/store/newspaper-store.ts',
   ];
 
-  it.each(paperPaths)('routes %s to the spine and the board read, and it is observable live', file => {
-    const d = route([file]);
+  it('routes the paper modal to the columns board read, with a browser look', () => {
+    const d = route(['src/client/components/modals/NewspaperModal.tsx']);
     expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
+    expect(d.needsL3).toBe(true);
     expect(d.staticOnly).toBe(false);
+  });
+
+  it.each(['src/server/session/newspaper-handler.ts', 'src/client/store/newspaper-store.ts'])(
+    'routes %s to the columns board read',
+    file => {
+      const d = route([file]);
+      expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
+      expect(d.staticOnly).toBe(false);
+    },
+  );
+
+  it('requires newspaper-board-read from both newspaper rules, no longer quarantined (#1320)', () => {
+    const modalRule = firstRule(ROUTES, 'src/client/components/modals/NewspaperModal.tsx');
+    const paperRule = firstRule(ROUTES, 'src/server/session/newspaper-handler.ts');
+    expect(modalRule?.flows).toContain('newspaper-board-read');
+    expect(paperRule?.flows).toContain('newspaper-board-read');
+    expect(NIGHTLY_ONLY).not.toHaveProperty('newspaper-board-read');
+    expect(Object.values(EXCLUDED).some(why => why.includes('newspaper-board-read'))).toBe(false);
+    expect(EXCLUDED).not.toHaveProperty('REQ_NEWSPAPER_BOARD');
+    expect(SERVER_QUARANTINE).not.toHaveProperty('newspaper-board-read');
+    for (const f of [
+      'src/server/session/newspaper-handler.ts',
+      'src/server/ws-handlers/newspaper-handlers.ts',
+      'src/client/store/newspaper-store.ts',
+      'src/client/components/modals/NewspaperModal.tsx',
+    ]) {
+      expect(route([f]).required).toContain('newspaper-board-read');
+      expect(route([f]).reasons.some(r => r.startsWith('server quarantine'))).toBe(false);
+    }
   });
 
   it.each(paperPaths)('does not route %s to the governance or inspector flows', file => {
@@ -358,9 +399,12 @@ describe('the town paper', () => {
     }
   });
 
-  it('routes the newspaper WS handler to the board read, not to the ws-handlers rule', () => {
-    expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).required)
-      .toEqual([SPINE_FLOW, 'newspaper-board-read']);
+  it('routes the newspaper WS handler by the newspaper rule, not the ws-handlers fallback, to the columns board read', () => {
+    const file = 'src/server/ws-handlers/newspaper-handlers.ts';
+    const rule = firstRule(ROUTES, file);
+    expect(rule?.fallback).toBeFalsy();
+    expect(rule?.test.test('src/client/store/newspaper-store.ts')).toBe(true);
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
   });
 
   it('leaves no rule with a spine-alone option', () => {
@@ -511,7 +555,11 @@ function uncited(set: Record<string, string>): string[] {
 function handlerFiles(): string[] {
   const list = (dir: string, re: RegExp) =>
     fs.readdirSync(path.join(ROOT, dir)).filter(f => re.test(f)).map(f => `${dir}/${f}`);
-  return [...list('src/server/session', /-handler\.ts$/), ...list('src/server/ws-handlers', /-handlers\.ts$/)];
+  return [
+    ...list('src/server/session', /-handler\.ts$/),
+    ...list('src/server/ws-handlers', /-handlers\.ts$/),
+    ...list('src/client/handlers', /-handler\.ts$/),
+  ];
 }
 
 function ratchetViolations(routes: RouteRule[], handlers: string[], fallbackOnly: Record<string, string>): string[] {
@@ -557,11 +605,14 @@ describe('routing invariants (#1134)', () => {
   });
 
   // #1145: the vote is data-gated — never required, never nightly-excluded by GATE_ONLY.
-  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip, chat-private-channel and bank-borrow-payoff alone', () => {
+  it('keeps vote-roundtrip nightly-only with a cited reason, and GATE_ONLY at politics-write, policy-roundtrip, chat-private-channel, bank-borrow-payoff and facility-bank-loan alone', () => {
     expect(NIGHTLY_ONLY['vote-roundtrip']).toMatch(/Kernel\/TownPolitics\.pas:690/);
     expect(uncited({ 'vote-roundtrip': NIGHTLY_ONLY['vote-roundtrip'] })).toEqual([]);
     expect(ROUTES.some(r => r.flows.includes('vote-roundtrip'))).toBe(false);
-    expect(Object.keys(GATE_ONLY)).toEqual(['politics-write', 'policy-roundtrip', 'chat-private-channel', 'bank-borrow-payoff']);
+    // #1189: facility-bank-loan broadcasts the approved loan like bank-borrow-payoff (Kernel/Kernel.pas:8849-8859).
+    expect(Object.keys(GATE_ONLY)).toEqual([
+      'politics-write', 'policy-roundtrip', 'chat-private-channel', 'bank-borrow-payoff', 'facility-bank-loan',
+    ]);
   });
 
   // #1149: the all-kinds fixture builder is nightly only, no gate requires it (a fixture flow's own seed builds its kind, #1185).
@@ -647,6 +698,73 @@ describe('routing invariants (#1134)', () => {
   });
 });
 
+/** Every way an entry of a SERVER_QUARANTINE table breaks its contract (#1310). */
+function quarantineViolations(table: Record<string, Partial<ServerQuarantine>>, names: string[]): string[] {
+  const out: string[] = [];
+  for (const [flow, entry] of Object.entries(table)) {
+    if (!names.includes(flow)) out.push(`not a flow: ${flow}`);
+    if (!entry.reason?.trim()) out.push(`no reason: ${flow}`);
+    if (!/^https:\/\/\S+$/.test(entry.link ?? '')) out.push(`no https link: ${flow}`);
+    if (!entry.lift?.trim()) out.push(`no lift condition: ${flow}`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.added ?? '')) out.push(`no YYYY-MM-DD date: ${flow}`);
+  }
+  return out;
+}
+
+describe('SERVER_QUARANTINE — a live-server fault, never a code defect (#1310)', () => {
+  const good: ServerQuarantine = {
+    reason: 'the server refuses',
+    link: 'https://github.com/Crazz-Org/SPO-WebClient/issues/1',
+    lift: 'it stops refusing',
+    added: '2026-10-04',
+  };
+
+  // newspaper-board-read left the table with #1320: its fault leaves it UNTESTABLE, which passes.
+  it('holds portrait-roundtrip, with a reason, an https link, a lift and a date', () => {
+    expect(Object.keys(SERVER_QUARANTINE).sort()).toEqual(['portrait-roundtrip']);
+    expect(quarantineViolations(SERVER_QUARANTINE, flowNames)).toEqual([]);
+  });
+
+  it.each<[string, Partial<ServerQuarantine>, string]>([
+    ['a missing lift', { ...good, lift: undefined }, 'no lift condition: login-spine'],
+    ['an empty reason', { ...good, reason: ' ' }, 'no reason: login-spine'],
+    ['an http link', { ...good, link: 'http://example.com' }, 'no https link: login-spine'],
+    ['a bad date', { ...good, added: '4 Oct 2026' }, 'no YYYY-MM-DD date: login-spine'],
+  ])('the guard catches %s', (_label, entry, violation) => {
+    expect(quarantineViolations({ 'login-spine': entry }, flowNames)).toEqual([violation]);
+  });
+
+  it('the guard catches an entry that names no flow', () => {
+    expect(quarantineViolations({ 'no-such-flow': good }, flowNames)).toEqual(['not a flow: no-such-flow']);
+  });
+
+  it('keeps every entry out of NIGHTLY_ONLY and GATE_ONLY, and reached by some ROUTES rule', () => {
+    const hit = reached(ROUTES, tracked);
+    for (const flow of Object.keys(SERVER_QUARANTINE)) {
+      expect(flow in NIGHTLY_ONLY).toBe(false);
+      expect(flow in GATE_ONLY).toBe(false);
+      expect(hit.has(flow)).toBe(true);
+    }
+  });
+
+  it.each(['src/server/session/picture-transfer.ts'])('route(%s) requires no quarantined flow and says why', file => {
+    const d = route([file]);
+    for (const flow of Object.keys(SERVER_QUARANTINE)) expect(d.required).not.toContain(flow);
+    expect(d.required[0]).toBe(SPINE_FLOW);
+    expect(d.reasons.some(r => r.startsWith('server quarantine: '))).toBe(true);
+  });
+
+  it('names the flow and its reason in the route() reason line', () => {
+    expect(route(['src/server/session/picture-transfer.ts']).reasons).toContain(
+      `server quarantine: portrait-roundtrip — ${SERVER_QUARANTINE['portrait-roundtrip'].reason}`,
+    );
+  });
+
+  it('adds no quarantine reason when no rule routed a quarantined flow', () => {
+    expect(route(['src/server/session/politics-handler.ts']).reasons.some(r => r.startsWith('server quarantine'))).toBe(false);
+  });
+});
+
 describe('route — L3 on the component folders (#1134)', () => {
   it.each([
     'src/client/components/mobile/BottomNav.tsx',
@@ -669,7 +787,7 @@ describe('route — L3 on the component folders (#1134)', () => {
     expect(route(['src/server/ws-handlers/newspaper-handlers.ts']).needsL3).toBe(false);
   });
 
-  it('flags the paper modal, on the board read', () => {
+  it('flags the paper modal, with the columns board read', () => {
     const d = route(['src/client/components/modals/NewspaperModal.tsx']);
     expect(d.required).toEqual([SPINE_FLOW, 'newspaper-board-read']);
     expect(d.needsL3).toBe(true);
@@ -690,6 +808,8 @@ describe('route — handler rules seeded by #1134', () => {
       'build-menu-read', 'place-rename-demolish', 'inspector-reads',
       // #1154: upgrade-stop sends REQ_BUILDING_UPGRADE.
       'upgrade-stop',
+      // #1189: REQ_BUILDING_LOAN_REQUEST and REQ_CLONE_FACILITY.
+      'facility-bank-loan', 'clone-salaries-roundtrip',
     ]);
   });
 
@@ -704,6 +824,10 @@ describe('route — handler rules seeded by #1134', () => {
         'trade-settings',
         // #1154: the residential, bank, TV, accept-cloning and research setters.
         'residential-settings', 'residential-repair', 'bank-settings', 'tv-settings', 'accept-cloning', 'research-roundtrip',
+        // #1189: requestBankLoan lives in building-details-handler.ts.
+        'facility-bank-loan',
+        // #1195: the Advertisement input's RDOSetInputFluidPerc, bound to the gate.
+        'ad-budget-roundtrip',
       ]);
     },
   );
@@ -711,6 +835,8 @@ describe('route — handler rules seeded by #1134', () => {
   it('routes the politics WS handlers like the session one', () => {
     expect(route(['src/server/ws-handlers/politics-handlers.ts']).required).toEqual([
       SPINE_FLOW, 'politics-read', 'politics-write', 'town-min-wage', 'publicity-roundtrip',
+      // #1195: handleTycoonRole and the rating write.
+      'mayor-rating-roundtrip', 'tycoon-role-read',
     ]);
   });
 
@@ -723,7 +849,7 @@ describe('route — handler rules seeded by #1134', () => {
   // #1148: chat-handler.ts left FALLBACK_ONLY — its own rule is now the first match.
   it('routes the former FALLBACK_ONLY chat handler through its own rule', () => {
     expect(route(['src/server/session/chat-handler.ts']).required).toEqual([
-      SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase',
+      SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase', 'gm-broadcast',
     ]);
     expect('src/server/session/chat-handler.ts' in FALLBACK_ONLY).toBe(false);
   });
@@ -736,7 +862,11 @@ describe('route — handler rules seeded by #1134', () => {
   });
 
   it('keeps cross-cutting session helpers on the fallback, by design', () => {
+    // #1187: push-dispatcher's observed pushes are the chat events
     expect(route(['src/server/session/push-dispatcher.ts']).required).toEqual([
+      SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase',
+    ]);
+    expect(route(['src/server/session/session-utils.ts']).required).toEqual([
       SPINE_FLOW, 'politics-read', 'politics-write', 'building-details',
     ]);
   });
@@ -788,10 +918,10 @@ describe('route — session & company (#1142)', () => {
     expect(route(['src/server/session/login-handler.ts']).required).toContain('company-switch');
   });
 
-  it('CompanyStage routes to company-switch, no browser look', () => {
+  it('CompanyStage routes to company-switch, with a browser look (#1187)', () => {
     const d = route(['src/client/components/login/CompanyStage.tsx']);
     expect(d.required).toEqual([SPINE_FLOW, 'company-switch']);
-    expect(d.needsL3).toBe(false);
+    expect(d.needsL3).toBe(true);
   });
 
   it('CompanyCreationModal routes to cluster-info-read with a browser look', () => {
@@ -800,9 +930,10 @@ describe('route — session & company (#1142)', () => {
     expect(d.needsL3).toBe(true);
   });
 
-  it('the client auth handler routes to both flows', () => {
+  it('the client auth handler routes to company-switch, cluster-info-read and tycoon-role-read', () => {
     const d = route(['src/client/handlers/auth-handler.ts']);
-    expect(d.required).toEqual([SPINE_FLOW, 'company-switch', 'cluster-info-read']);
+    // #1195: tycoon-role-read sends REQ_TYCOON_ROLE, which this handler sends.
+    expect(d.required).toEqual([SPINE_FLOW, 'company-switch', 'cluster-info-read', 'tycoon-role-read']);
     expect(d.needsL3).toBe(false);
   });
 
@@ -820,18 +951,20 @@ describe('route — profile & finance reads (#1141)', () => {
     'src/client/store/profile-store.ts',
     'src/server/session/picture-transfer.ts',
   ])('%s requires profile-read and the profile write flows', file => {
+    // portrait-roundtrip is in SERVER_QUARANTINE (#1310): the rule names it, no gate requires it.
     expect(route([file]).required).toEqual([
       SPINE_FLOW, 'profile-read', 'policy-roundtrip', 'autoconnection-roundtrip',
-      'bank-borrow-payoff', 'bank-send-return', 'portrait-roundtrip',
+      'bank-borrow-payoff', 'bank-send-return',
     ]);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
 
-  it('profile-finance-handler.ts requires both bank flows and picture-transfer.ts the portrait flow (#1147)', () => {
+  it('profile-finance-handler.ts requires both bank flows; picture-transfer.ts names the portrait flow, quarantined (#1147, #1310)', () => {
     const bank = route(['src/server/session/profile-finance-handler.ts']).required;
     expect(bank).toContain('bank-borrow-payoff');
     expect(bank).toContain('bank-send-return');
-    expect(route(['src/server/session/picture-transfer.ts']).required).toContain('portrait-roundtrip');
+    expect(firstRule(ROUTES, 'src/server/session/picture-transfer.ts')?.flows).toContain('portrait-roundtrip');
+    expect(route(['src/server/session/picture-transfer.ts']).required).not.toContain('portrait-roundtrip');
   });
 
   it('keeps bank-borrow-payoff gate-only with its cited broadcast, and the other two nightly (#1147)', () => {
@@ -864,14 +997,16 @@ describe('route — profile & finance reads (#1141)', () => {
 
 describe('route — chat (#1148)', () => {
   const CHAT = [SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase'];
+  // #1199: the handler/store rule also drives the GM broadcast; the component rule does not.
+  const CHAT_RULE = [...CHAT, 'gm-broadcast'];
 
   it.each([
     'src/server/session/chat-handler.ts',
     'src/server/ws-handlers/chat-handlers.ts',
     'src/client/store/chat-store.ts',
-  ])('%s requires the three chat flows, and is not fallback-only', file => {
+  ])('%s requires the chat flows and the GM broadcast, and is not fallback-only', file => {
     const d = route([file]);
-    expect(d.required).toEqual(CHAT);
+    expect(d.required).toEqual(CHAT_RULE);
     expect(d.needsL3).toBe(false);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
@@ -894,7 +1029,7 @@ describe('route — chat (#1148)', () => {
   it('keeps chat-private-channel gate-only with its broadcast cited, and the other two on both', () => {
     expect(GATE_ONLY['chat-private-channel']).toMatch(/InterfaceServer\.pas:4594/);
     expect(GATE_ONLY['chat-private-channel']).toMatch(/:3968-3980/);
-    for (const name of ['chat-read', 'chat-chase']) {
+    for (const name of ['chat-read', 'chat-chase', 'gm-broadcast']) {
       expect(name in GATE_ONLY).toBe(false);
       expect(name in NIGHTLY_ONLY).toBe(false);
     }
@@ -1022,7 +1157,9 @@ describe('route — build & demolish (#1150)', () => {
     'src/client/handlers/build-menu-handler.ts',
   ])('%s requires build-menu-read and place-rename-demolish', file => {
     // #1154: the rule gains upgrade-stop (manageConstruction).
-    expect(route([file]).required).toEqual([SPINE_FLOW, 'build-menu-read', 'place-rename-demolish', 'upgrade-stop']);
+    // #1195: the management handler also answers REQ_TYCOON_ROLE, so it adds tycoon-role-read.
+    const extra = file.endsWith('building-management-handler.ts') ? ['tycoon-role-read'] : [];
+    expect(route([file]).required).toEqual([SPINE_FLOW, 'build-menu-read', 'place-rename-demolish', 'upgrade-stop', ...extra]);
     expect(file in FALLBACK_ONLY).toBe(false);
   });
 
@@ -1070,5 +1207,393 @@ describe('route — inspector flows (#1154)', () => {
       expect(GATE_ONLY).not.toHaveProperty(flow);
       expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
     }
+  });
+});
+
+describe('route — the bank-fixture loan and the salaries clone (#1189)', () => {
+  it('keeps facility-bank-loan gate-only with its broadcast cited, and the clone neither gate- nor nightly-only', () => {
+    expect(GATE_ONLY['facility-bank-loan']).toMatch(/Kernel\/Kernel\.pas:8849-8859/);
+    expect(uncited({ 'facility-bank-loan': GATE_ONLY['facility-bank-loan'] })).toEqual([]);
+    expect(GATE_ONLY).not.toHaveProperty('clone-salaries-roundtrip');
+    expect(NIGHTLY_ONLY).not.toHaveProperty('clone-salaries-roundtrip');
+    expect(NIGHTLY_ONLY).not.toHaveProperty('facility-bank-loan');
+  });
+
+  it('building-handlers.ts requires both flows; building-details-handler.ts the loan only', () => {
+    const building = route(['src/server/ws-handlers/building-handlers.ts']).required;
+    expect(building).toContain('facility-bank-loan');
+    expect(building).toContain('clone-salaries-roundtrip');
+    const details = route(['src/server/session/building-details-handler.ts']).required;
+    expect(details).toContain('facility-bank-loan');
+    expect(details).not.toContain('clone-salaries-roundtrip');
+  });
+});
+
+describe('route — player actions (#1195)', () => {
+  const NEW_FLOWS = ['mayor-rating-roundtrip', 'tycoon-role-read', 'ad-budget-roundtrip'];
+
+  it.each([
+    ['src/server/session/politics-handler.ts', 'mayor-rating-roundtrip'],
+    ['src/server/ws-handlers/politics-handlers.ts', 'mayor-rating-roundtrip'],
+    ['src/client/components/politics/RatingsRail.tsx', 'mayor-rating-roundtrip'],
+    ['src/server/session/politics-handler.ts', 'tycoon-role-read'],
+    ['src/server/ws-handlers/politics-handlers.ts', 'tycoon-role-read'],
+    ['src/client/handlers/auth-handler.ts', 'tycoon-role-read'],
+    ['src/server/session/building-property-handler.ts', 'ad-budget-roundtrip'],
+    ['src/server/session/building-details-handler.ts', 'ad-budget-roundtrip'],
+    ['src/shared/building-details/template-groups.ts', 'ad-budget-roundtrip'],
+    ['src/client/components/building/PropertyGroup.tsx', 'ad-budget-roundtrip'],
+  ])('%s requires %s', (file, flow) => {
+    expect(route([file]).required).toContain(flow);
+  });
+
+  it('every new flow is in the catalogue', () => {
+    const names = FLOWS.map(f => f.name);
+    for (const flow of NEW_FLOWS) expect(names).toContain(flow);
+  });
+
+  it('none of the three is nightly-only or gate-only', () => {
+    for (const flow of NEW_FLOWS) {
+      expect(NIGHTLY_ONLY).not.toHaveProperty(flow);
+      expect(GATE_ONLY).not.toHaveProperty(flow);
+    }
+  });
+
+  it('records the sort-mode and overprice exclusion of industry-supply-limits with its citations', () => {
+    const reason = NIGHTLY_ONLY['industry-supply-limits'];
+    expect(reason).toMatch(/Kernel\/MediaGates\.pas:388-389/);
+    expect(reason).toMatch(/StdBlocks\/Movie\.pas:84/);
+    expect(reason).toMatch(/excluded/);
+    expect(reason).not.toMatch(/end UNTESTABLE/);
+    expect(uncited({ 'industry-supply-limits': reason })).toEqual([]);
+  });
+});
+
+// ---- #1187: every request a handler serves or sends reaches a flow that sends it ----------
+
+const read = (file: string): string => fs.readFileSync(path.join(ROOT, file), 'utf8');
+const REQ = /WsMessageType\.(REQ_[A-Z0-9_]+)/g;
+const IDENT = /[A-Za-z_$][\w$]*/g;
+const TYPE_ONLY = /^(?:export\s+)?(?:declare\s+)?(?:interface|type)\s/;
+const FLOW_BINDING = /^\s*([A-Za-z_$][\w$]*),?\s*$/;
+
+function requestsIn(text: string): Set<string> {
+  return new Set([...text.matchAll(REQ)].map(m => m[1]));
+}
+
+/** Flow name -> every WsMessageType.REQ_* its binding reaches through the flow sources. */
+function flowRequests(): Map<string, Set<string>> {
+  const decls = FLOW_SOURCES.flatMap(file => declarationsOf(file, read(file))).filter(d => !TYPE_ONLY.test(d.text));
+  const byName = new Map<string, Declaration[]>();
+  for (const d of decls) byName.set(d.name, [...(byName.get(d.name) ?? []), d]);
+  const flowsDecl = decls.find(d => d.file === 'src/e2e/flows.ts' && d.name === 'FLOWS');
+  if (!flowsDecl) throw new Error('no FLOWS declaration in src/e2e/flows.ts');
+  const bindings = flowsDecl.text.split('\n').slice(1).flatMap(line => {
+    const m = FLOW_BINDING.exec(line);
+    return m ? [m[1]] : [];
+  });
+  if (bindings.length !== flowNames.length) {
+    throw new Error(`FLOWS lists ${bindings.length} binding(s) but ${flowNames.length} flow(s) were loaded`);
+  }
+  const stop = new Set(['FLOWS', ...bindings]);
+  const out = new Map<string, Set<string>>();
+  bindings.forEach((binding, i) => {
+    const seen = new Set<Declaration>(byName.get(binding) ?? []);
+    const queue = [...seen];
+    const reqs = new Set<string>();
+    while (queue.length > 0) {
+      const d = queue.pop() as Declaration;
+      for (const r of requestsIn(d.text)) reqs.add(r);
+      for (const [id] of d.text.matchAll(IDENT)) {
+        if (stop.has(id)) continue;
+        for (const next of byName.get(id) ?? []) {
+          if (!seen.has(next)) {
+            seen.add(next);
+            queue.push(next);
+          }
+        }
+      }
+    }
+    out.set(flowNames[i], reqs);
+  });
+  return out;
+}
+
+const MEMBER_START =
+  /^ {2}(?:public |private |protected )?(?:static )?(?:async )?(?:get |set )?([A-Za-z_$][\w$]*)\s*[(<]/;
+const NOT_A_MEMBER = new Set(['if', 'for', 'while', 'switch', 'return']);
+const WS_EXPORT = /^export\s+(?:const|async\s+function|function)\s+(\w+)/;
+const TOP_LEVEL = /^(?:const|function|export|import|async\s+function)\b/;
+
+/** Handler file -> every WsMessageType.REQ_* it serves (server) or sends (client). */
+function handlerRequests(): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  const add = (file: string, req: string): void => {
+    out.set(file, new Set([...(out.get(file) ?? []), req]));
+  };
+
+  // ws-handlers: the registry pairs a request with a function, the imports a function with a file.
+  const index = read('src/server/ws-handlers/index.ts');
+  const fnFile = new Map<string, string>();
+  for (const [, names, file] of index.matchAll(/import\s*\{([^}]*)\}\s*from\s*'\.\/([\w-]+)'/g)) {
+    for (const name of names.split(',').map(n => n.trim()).filter(Boolean)) {
+      fnFile.set(name, `src/server/ws-handlers/${file}.ts`);
+    }
+  }
+  const fnRequest = new Map<string, string>();
+  for (const [, req, fn] of index.matchAll(/\[WsMessageType\.(REQ_[A-Z0-9_]+)\]:\s*(\w+)/g)) {
+    const file = fnFile.get(fn);
+    if (!file) throw new Error(`registry function ${fn} has no import`);
+    fnRequest.set(fn, req);
+    add(file, req);
+  }
+  if (fnRequest.size === 0) throw new Error('no registry entry parsed from ws-handlers/index.ts');
+
+  // Session handlers: facade member -> handler alias, then ws function -> facade member.
+  const facade = read('src/server/spo_session.ts');
+  const aliases = [...facade.matchAll(/import \* as (\w+) from '\.\/session\/([\w-]+)'/g)].map(
+    ([, alias, file]) => ({ alias, file: `src/server/session/${file}.ts` }),
+  );
+  if (aliases.length === 0) throw new Error('no session handler import parsed from spo_session.ts');
+  const members: Array<{ name: string; text: string }> = [];
+  for (const line of facade.split('\n')) {
+    const m = MEMBER_START.exec(line);
+    if (m && !NOT_A_MEMBER.has(m[1])) members.push({ name: m[1], text: line });
+    else if (members.length > 0) members[members.length - 1].text += `\n${line}`;
+  }
+  const memberHandlers = new Map<string, Set<string>>();
+  for (const { name, text } of members) {
+    for (const { alias, file } of aliases) {
+      if (text.includes(`${alias}.`) && new RegExp(`\\b${alias}\\.\\w+\\(`).test(text)) {
+        memberHandlers.set(name, new Set([...(memberHandlers.get(name) ?? []), file]));
+      }
+    }
+  }
+  for (const wsFile of handlerFiles().filter(f => f.startsWith('src/server/ws-handlers/'))) {
+    let current: { fn: string; text: string } | null = null;
+    const spans: Array<{ fn: string; text: string }> = [];
+    for (const line of read(wsFile).split('\n')) {
+      const m = WS_EXPORT.exec(line);
+      if (m) {
+        current = { fn: m[1], text: line };
+        spans.push(current);
+      } else if (TOP_LEVEL.test(line)) {
+        current = null;
+      } else if (current) {
+        current.text += `\n${line}`;
+      }
+    }
+    for (const { fn, text } of spans) {
+      const req = fnRequest.get(fn);
+      if (!req) continue;
+      for (const [, member] of text.matchAll(/session\.(\w+)\(/g)) {
+        for (const file of memberHandlers.get(member) ?? []) add(file, req);
+      }
+    }
+  }
+
+  // Client handlers: the requests the file text names.
+  for (const file of handlerFiles().filter(f => f.startsWith('src/client/handlers/'))) {
+    for (const req of requestsIn(read(file))) add(file, req);
+  }
+  for (const file of handlerFiles()) if (!out.has(file)) out.set(file, new Set());
+  return out;
+}
+
+function requestViolations(
+  routes: RouteRule[],
+  requests: Map<string, Set<string>>,
+  sends: Map<string, Set<string>>,
+  excluded: Record<string, string>,
+  notRouted: Record<string, Record<string, string>>,
+  fallbackOnly: Record<string, string>,
+): string[] {
+  const out: string[] = [];
+  const gateSends = (req: string): boolean =>
+    [...sends].some(([flow, reqs]) => !(flow in NIGHTLY_ONLY) && reqs.has(req));
+  for (const [file, reqs] of requests) {
+    if (file in fallbackOnly) continue;
+    const flows = [SPINE_FLOW, ...(firstRule(routes, file)?.flows ?? [])];
+    const own = notRouted[file] ?? {};
+    for (const req of reqs) {
+      const driven = flows.some(f => sends.get(f)?.has(req));
+      if (driven && req in own) out.push(`stale NOT_ROUTED: ${file} ${req}`);
+      else if (!driven && !(req in excluded) && !(req in own)) out.push(`undriven: ${file} ${req}`);
+    }
+  }
+  for (const [file, entries] of Object.entries(notRouted)) {
+    for (const req of Object.keys(entries)) {
+      if (!requests.get(file)?.has(req)) out.push(`not requested: ${file} ${req}`);
+      else if (!gateSends(req)) out.push(`belongs in EXCLUDED: ${file} ${req}`);
+    }
+  }
+  for (const req of Object.keys(excluded)) {
+    if (![...requests.values()].some(reqs => reqs.has(req))) out.push(`not requested: ${req}`);
+    else if (gateSends(req)) out.push(`sent by a gate flow: ${req}`);
+  }
+  return out;
+}
+
+describe('route — handler requests reach a flow that sends them (#1187)', () => {
+  const sends = flowRequests();
+  const requests = handlerRequests();
+  const ROAD = ['REQ_BUILD_ROAD', 'REQ_DEMOLISH_ROAD', 'REQ_DEMOLISH_ROAD_AREA'];
+  const CHAT = [SPINE_FLOW, 'chat-read', 'chat-private-channel', 'chat-chase'];
+  // #1199: the chat-handlers rule also drives the GM broadcast; push-dispatcher does not.
+  const CHAT_RULE = [...CHAT, 'gm-broadcast'];
+
+  describe('the derivation reads the tree (it must not pass vacuously)', () => {
+    it('gives the spine exactly its five requests', () => {
+      expect(sends.get(SPINE_FLOW)).toEqual(
+        new Set(['REQ_AUTH_CHECK', 'REQ_CONNECT_DIRECTORY', 'REQ_LOGIN_WORLD', 'REQ_SELECT_COMPANY', 'REQ_LOGOUT']),
+      );
+    });
+
+    it('gives road-roundtrip the road requests and autoconnection-roundtrip the connection search', () => {
+      for (const req of ROAD) expect(sends.get('road-roundtrip')).toContain(req);
+      expect(sends.get('autoconnection-roundtrip')).toContain('REQ_SEARCH_CONNECTIONS');
+    });
+
+    it('derives client handler requests from the file text', () => {
+      expect(requests.get('src/client/handlers/road-handler.ts')).toEqual(new Set(ROAD));
+      const chat = [...(requests.get('src/client/handlers/chat-handler.ts') ?? [])];
+      expect(chat).toHaveLength(11);
+      expect(chat.filter(r => r.startsWith('REQ_CHAT_'))).toHaveLength(10);
+      expect(chat).toContain('REQ_GM_CHAT_SEND');
+    });
+
+    it('derives server handler requests through the registry and the facade', () => {
+      const road = requests.get('src/server/session/road-handler.ts');
+      for (const req of [...ROAD, 'REQ_GET_ROAD_COST']) expect(road).toContain(req);
+      const misc = requests.get('src/server/ws-handlers/misc-handlers.ts');
+      expect(misc).toContain('REQ_SEARCH_CONNECTIONS');
+      expect(misc).toContain('REQ_DEFINE_ZONE');
+      expect(requests.get('src/server/session/chat-handler.ts')).toContain('REQ_CHAT_SEND_MESSAGE');
+    });
+
+    it('gives gm-broadcast the GM send, which has left EXCLUDED (#1199)', () => {
+      expect(sends.get('gm-broadcast')).toContain('REQ_GM_CHAT_SEND');
+      expect('REQ_GM_CHAT_SEND' in EXCLUDED).toBe(false);
+    });
+  });
+
+  it('drives every handler request, or lists it in EXCLUDED / NOT_ROUTED', () => {
+    expect(requestViolations(ROUTES, requests, sends, EXCLUDED, NOT_ROUTED, FALLBACK_ONLY)).toEqual([]);
+  });
+
+  it('cites a reason for every request exception', () => {
+    expect(uncited(EXCLUDED)).toEqual([]);
+    for (const entries of Object.values(NOT_ROUTED)) expect(uncited(entries)).toEqual([]);
+  });
+
+  describe('the ratchet fails when its set is broken', () => {
+    const roadRule = firstRule(ROUTES, 'src/client/handlers/road-handler.ts') as RouteRule;
+
+    it('catches a handler request no routed flow sends', () => {
+      const routes = ROUTES.filter(r => r !== roadRule);
+      expect(requestViolations(routes, requests, sends, EXCLUDED, NOT_ROUTED, FALLBACK_ONLY)).toContain(
+        'undriven: src/client/handlers/road-handler.ts REQ_BUILD_ROAD',
+      );
+    });
+
+    it('catches an EXCLUDED request a gate flow sends', () => {
+      const excluded = { ...EXCLUDED, REQ_BUILD_ROAD: 'x #1' };
+      expect(requestViolations(ROUTES, requests, sends, excluded, NOT_ROUTED, FALLBACK_ONLY)).toEqual([
+        'sent by a gate flow: REQ_BUILD_ROAD',
+      ]);
+    });
+
+    it('catches a stale NOT_ROUTED entry, and one the file does not request', () => {
+      const stale = { ...NOT_ROUTED, 'src/client/handlers/road-handler.ts': { REQ_BUILD_ROAD: 'x #1' } };
+      expect(requestViolations(ROUTES, requests, sends, EXCLUDED, stale, FALLBACK_ONLY)).toEqual([
+        'stale NOT_ROUTED: src/client/handlers/road-handler.ts REQ_BUILD_ROAD',
+      ]);
+      const ghost = { ...NOT_ROUTED, 'src/client/handlers/road-handler.ts': { REQ_LOGOUT: 'x #1' } };
+      expect(requestViolations(ROUTES, requests, sends, EXCLUDED, ghost, FALLBACK_ONLY)).toEqual([
+        'not requested: src/client/handlers/road-handler.ts REQ_LOGOUT',
+      ]);
+    });
+
+    it('catches a NOT_ROUTED entry no gate flow sends', () => {
+      const nightly = { ...NOT_ROUTED, 'src/client/handlers/building-action-handler.ts': { REQ_POLITICS_VOTE: 'x #1' } };
+      expect(requestViolations(ROUTES, requests, sends, EXCLUDED, nightly, FALLBACK_ONLY)).toEqual([
+        'belongs in EXCLUDED: src/client/handlers/building-action-handler.ts REQ_POLITICS_VOTE',
+      ]);
+    });
+
+    it('catches an EXCLUDED key no handler requests', () => {
+      const excluded = { ...EXCLUDED, REQ_NO_SUCH_THING: 'x #1' };
+      expect(requestViolations(ROUTES, requests, sends, excluded, NOT_ROUTED, FALLBACK_ONLY)).toEqual([
+        'not requested: REQ_NO_SUCH_THING',
+      ]);
+    });
+
+    it('skips a FALLBACK_ONLY file', () => {
+      const routes = ROUTES.filter(r => r !== roadRule);
+      const fallbackOnly = { ...FALLBACK_ONLY, 'src/client/handlers/road-handler.ts': 'excluded: x' };
+      expect(requestViolations(routes, requests, sends, EXCLUDED, NOT_ROUTED, fallbackOnly)).not.toContain(
+        'undriven: src/client/handlers/road-handler.ts REQ_BUILD_ROAD',
+      );
+    });
+  });
+
+  describe('the files the audit named route to the flows that send their requests', () => {
+    it.each([
+      ['src/client/handlers/road-handler.ts', [SPINE_FLOW, 'road-roundtrip']],
+      ['src/client/handlers/zone-handler.ts', [SPINE_FLOW, 'zone-roundtrip']],
+      ['src/client/handlers/chat-handler.ts', CHAT_RULE],
+      ['src/server/session/push-dispatcher.ts', CHAT],
+    ])('%s -> %j', (file, flows) => {
+      const d = route([file]);
+      expect(d.required).toEqual(flows);
+      expect(d.needsL3).toBe(false);
+    });
+
+    it('routes the client facility actions to the setter, upgrade, research and place flows, never politics-write', () => {
+      const d = route(['src/client/handlers/building-action-handler.ts']);
+      for (const flow of ['store-price-salaries', 'upgrade-stop', 'research-roundtrip', 'place-rename-demolish']) {
+        expect(d.required).toContain(flow);
+      }
+      expect(d.required).not.toContain('politics-write');
+      expect(d.needsL3).toBe(false);
+    });
+
+    it('no longer drives politics-write for the push dispatcher', () => {
+      expect(route(['src/server/session/push-dispatcher.ts']).required).not.toContain('politics-write');
+    });
+
+    it('routes misc-handlers.ts to autoconnection-roundtrip, the second REQ_SEARCH_CONNECTIONS sender', () => {
+      expect(firstRule(ROUTES, 'src/server/ws-handlers/misc-handlers.ts')?.flows).toContain('autoconnection-roundtrip');
+    });
+  });
+
+  describe('every UI directory sets the L3 reminder', () => {
+    // components/panels/ is not listed: no tracked file lives there (the audit named it in error).
+    it.each([
+      'src/client/components/building/BuildingInspector.tsx',
+      'src/client/components/politics/CampaignPanel.tsx',
+      'src/client/components/mail/MailPanel.tsx',
+      'src/client/components/empire/FacilityList.tsx',
+      'src/client/components/login/AuthStage.tsx',
+      'src/client/components/common/Button.tsx',
+      'src/client/components/command-palette/CommandPalette.tsx',
+      'src/client/components/startup/MapLoadingScreen.tsx',
+      'src/client/components/tutorial/TutorialPanel.tsx',
+      'src/client/report/ReportModal.tsx',
+      'src/client/App.tsx',
+      'src/client/main.tsx',
+      'src/client/client.ts',
+      'src/client/ui/minimap-ui.ts',
+      'src/client/hooks/useKeyboardShortcuts.ts',
+      'src/client/store/ui-store.ts',
+    ])('%s needs a browser look', file => {
+      expect(tracked).toContain(file);
+      expect(route([file]).needsL3).toBe(true);
+    });
+
+    it('does not flag the shared and server halves of the split rules', () => {
+      expect(route(['src/shared/building-details/template-groups.ts']).needsL3).toBe(false);
+      expect(route(['src/server/mail-list-parser.ts']).needsL3).toBe(false);
+    });
   });
 });

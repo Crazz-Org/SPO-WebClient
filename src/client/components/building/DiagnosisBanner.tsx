@@ -26,8 +26,6 @@ export function tabForAction(action: DiagnosisAction | undefined, tabs: Building
       return find(/work/i);
     case 'openResearch':
       return find(/research/i);
-    case 'connect':
-      return find(/suppl|connect/i);
     default:
       return null;
   }

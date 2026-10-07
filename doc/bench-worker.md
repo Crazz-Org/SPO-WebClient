@@ -76,12 +76,16 @@ comment in `job.ts` for the measured line size and growth rate.
 ## 3. A job's life
 
 1. **Deposit** (`npm run gate` / `test:live` / `dev`): the client checks the worker is
-   alive (pid + heartbeat < 20 s) — **a dead worker is exit 3, immediately, at deposit
+   alive (pid + heartbeat < 120 s — §4 says why not tighter) — **a dead worker is exit 3, immediately, at deposit
    time**. It fingerprints the tree, writes the request, returns the job id. `--wait`
    folds into the wait loop so the whole round trip is one background command —
    a queued session spends **zero tokens** waiting.
 2. **Claim**: the worker takes the oldest deposit. If the depositing session's pid is
-   dead → report `ABANDONED`, nothing runs, the queue cleans itself.
+   dead → report `ABANDONED`, nothing runs, the queue cleans itself. A `wait` that exits
+   early — 3 (the worker reads as down) or 4 (timeout) — first detaches its still-queued
+   job (`submitter.pid` → 0), so the job runs anyway and its report lands in
+   `done/<id>.json` (`bash scripts/bench-wait.sh <id>`). Only a session killed outright is
+   abandoned.
 3. **Owner lease** (§9): the worker must hold `BENCH_OWNER`, or the job is `ENVIRONMENT`
    and **nothing runs** — checked before the port is cleared, because clearing it SIGKILLs
    whatever holds 8080 and on a second host that would be the other worker's gateway.
@@ -131,6 +135,24 @@ comment in `job.ts` for the measured line size and growth rate.
      attested a sha whose code was never judged. The two tables must move together:
      `EXIT` in `scripts/verify-gate.js`, `GATE_EXIT_VERDICT` in `src/e2e/bench/worker.ts`
    - `live`, `nightly` → `node dist/e2e/run.js [flags]`
+   - **The artifact is the proof — an exit code alone is not a PASS** (#1182). Exit 0 is
+     only a claim; the artifact the body wrote is the proof, and a PASS whose artifact does not back it becomes `FAIL`,
+     the detail naming what is missing. A drive that stopped early with exit 0 was published
+     as a PASS five times before this rule.
+     - `live` / `nightly`: a `report/e2e/live-*.json` that **this run** wrote (a file absent
+       from the directory just before the drive — a set difference, so a leftover from an
+       earlier run never counts), carrying this job's sha, whose flow list is exactly the
+       flows asked for: `--flows=` when given, otherwise every `FLOWS` entry minus
+       `GATE_ONLY`, read from the checkout's own `dist/e2e/` in a child process
+       (`readCheckoutDefaultFlows`). A flow list that cannot be read is itself a FAIL.
+     - `ref`: `report/e2e/gate-<gatedSha>.json` naming the gated and deposited shas and this
+       run's `attempt` (the worker passes `--attempt`, so an artifact from an earlier run
+       carries a lower one), whose live stage drove exactly the flows asked for (`--flows=`,
+       else `routing.required`) — or legitimately skipped with none routed.
+     - The check runs after the reachability probe and only on a PASS: a drive that claimed
+       success cannot be downgraded to `ENVIRONMENT` by it, and every other verdict keeps its
+       own meaning. `liveArtifactProblem` / `gateArtifactProblem` in
+       `src/e2e/bench/worker.ts`.
    - `lease` → report `LEASED` **immediately** (that is what the waiting session unblocks
      on), then hold the gateway until the lease expires or the session releases it
      (`npm run dev:release` drops a marker the hold loop watches). No pid watching: the
@@ -151,9 +173,9 @@ comment in `job.ts` for the measured line size and growth rate.
     trusts — and `merge-queue.ts` treats any existing attestation as *already answered*, so
     a wrong one is never revisited.
 
-Verdicts: `PASS` (possibly with capability exceptions listed — §7 of the policy) · `FAIL`
-(including a required flow that ended UNPROVEN — §7 of the policy; the `bench/gate` status
-then shows `— N unproven flow(s)`) ·
+Verdicts: `PASS` (possibly with capability exceptions listed, or with UNTESTABLE flows recorded
+with their reasons — §7 of the policy; the `bench/gate` status then shows
+`— N untestable flow(s)`) · `FAIL` ·
 `BLOCKED` (the live stage was refused before running: dirty world or another run already
 in flight — or a flow ended `SKIPPED`, the second account refused at login) · `ENVIRONMENT` (does not consume an attempt) · `STALE` · `DIRTY` (gate on
 uncommitted changes — commit first) · `ABANDONED` ·
@@ -167,9 +189,15 @@ queued job** (exit 2) — what a retry-after-edit wants is the newest tree teste
 systemd (`Restart=always`, `RestartSec=2`, linger enabled) revives a dead worker; the
 spool survives; `running/` jobs are reported `INTERRUPTED` at startup. What systemd cannot
 see — a worker wedged in a crash loop, deposits silently piling up — is caught by the
-**heartbeat**: submitters check its mtime at deposit and during waits, and fail loudly
-(`WORKER DOWN`, exit 3) the moment it goes stale. The failure mode "requests accumulate
-and nobody notices" is structurally announced at the deposit.
+**heartbeat**: submitters check the timestamp it carries at deposit and during waits, and
+fail loudly (`WORKER DOWN`, exit 3) the moment it goes stale. The failure mode "requests
+accumulate and nobody notices" is structurally announced at the deposit.
+
+"Stale" means older than 120 s (`HEARTBEAT_STALE_MS`), not a few beat periods: the beat
+rides a timer on the worker's main thread, and the worker's synchronous `gh` / `git`
+calls block that timer — up to ~34 s for one `gh api` call, measured 2026-10-03 (#1300).
+A 20 s bound read those stalls as a dead worker. The beat deliberately stays on the main
+loop rather than a thread of its own, so a loop that is really wedged still reads as dead.
 
 ```bash
 scripts/bench-install.sh                       # one-time (or after worker changes): build, unit, enable, linger
@@ -282,8 +310,8 @@ the `bench/gate` description renders `merged base <sha8>` in place of the plain
 | 0 | `PASS` — or `LEASED`, for `npm run dev` | push |
 | 1 | the job ran and the verdict is not passing (`FAIL`, `BLOCKED`, `STALE`, `ABANDONED`, `INTERRUPTED`, `ENVIRONMENT`) | read the report, fix, retry — 3 attempts, each naming a different root cause. `ENVIRONMENT` and `ABANDONED` are the exceptions: they judged nothing, so they cost no attempt and leave `verdicts/<sha>.json` exactly as they found it — resubmit |
 | 2 | refused at deposit: a gate on a **dirty tree**, or a duplicate of a job already queued | commit (an attestation names a sha, so the tested tree must BE that sha), then re-deposit |
-| 3 | **worker down** — nothing was queued | `systemctl --user restart spo-bench-worker`, then re-deposit |
-| 4 | the wait timed out; the job may still be queued or running | `npm run bench:status` before assuming anything |
+| 3 | **worker down** — at deposit, nothing was queued; from a `wait`, the job stays queued, detached, and still runs (`bash scripts/bench-wait.sh <id>` for its report) — a re-deposit while it is still queued is refused with exit 2, naming it | `systemctl --user restart spo-bench-worker`, then re-deposit (at deposit) or wait on the detached job (from a `wait`) |
+| 4 | the wait timed out; the job may still be queued or running — a still-queued job is detached and still runs | `npm run bench:status` before assuming anything |
 | 5 | refused: `npm run bench:nightly-request` from somewhere that may not make one — a Claude Code session (`CLAUDECODE`) or no terminal | nothing — a manual nightly is the maintainer's to ask for, at a real terminal (§8) |
 | 6 | `npm run bench:nightly-request` could not read `origin/main`'s tip (`git ls-remote` failed or answered no sha) | check the network and the `origin` remote, then ask again |
 
@@ -442,8 +470,18 @@ not the failure.
   "requestedBy": { "user": "…", "host": "…", "tty": "…",
                    "via": "bench-cli | spo", "reason": "…", "requestedAt": "…" },
   "supersedes": { "jobId": "…", "sha": "…", "verdict": "FAIL",
-                  "trigger": "scheduled", "finishedAt": "…" } }
+                  "trigger": "scheduled", "finishedAt": "…" },
+  "flows": [{ "name": "…", "status": "PASS | FAIL | UNTESTABLE | SKIPPED",
+              "reasons": ["…"] }],         // reasons: on an UNTESTABLE flow only
+  "untestable": ["…"], "skipped": ["…"], "quarantined": ["…"] }
 ```
+
+`flows`, `untestable`, `skipped` and `quarantined` come from the `live-*.json` the run wrote (§3 step 9), so a
+flow that never proves anything is visible by name without opening the artifact. They are
+absent on records written before #1182 and whenever no live artifact was read.
+`quarantined` names the `SERVER_QUARANTINE` flows the run drove, whatever their status: a
+nightly whose only FAILs are quarantined flows is `PASS`, a dirty world still FAILs
+(`doc/E2E-POLICY.md` §7, "Server quarantine").
 
 `submittedAt` is the **deposit** time, not the start: it is what the 20 h gap is measured
 from, so a night that queued behind a long job cannot buy itself a second slot. A failure to
@@ -507,7 +545,8 @@ It dials **both halves of the game server**, in order, because a drive needs bot
 2. the **world server** the directory hands back at runtime (`158.69.153.134:8000` on
    2026-09-13). Its address is unknown to a process that never logged in, so the probe reads it
    out of the drive's own log: Node writes a failed connect as `connect ETIMEDOUT <ip>:<port>`,
-   which names the exact endpoint. Every distinct endpoint the log names that way is re-dialled
+   and the gateway's own connect deadline as `Connect timeout: world socket to <ip>:<port> not
+   connected after <n> ms` — either names the exact endpoint. Every distinct endpoint the log names that way is re-dialled
    after the drive is over, up to `MAX_LOG_ENDPOINTS`.
 
 Either dial refused or timed out → the verdict is rewritten `ENVIRONMENT` and `detail` names that
@@ -850,7 +889,8 @@ and § The gate base still announces a moved base rather than refusing it.
 
 - **Discovery by polling.** Required checks in a merge queue report on the *speculative*
   commit, and the worker takes no inbound connection — it pulls. One `git ls-remote` names
-  every `gh-readonly-queue/main/*` ref and its sha per idle tick.
+  every `gh-readonly-queue/main/*` ref and its sha before each job (once per worker tick,
+  idle or not), so an entry jumps a spool backlog instead of waiting it out (#1268).
 - **Priority over the spool.** GitHub ejects an entry whose checks exceed the queue's
   response timeout. The bench is serialised machine-wide and a `lease` can hold it — median
   11 min, **max 33 min** measured. Without priority a lease would eject a healthy branch, and
@@ -861,7 +901,10 @@ and § The gate base still announces a moved base rather than refusing it.
   whenever the queue head has not moved since that head was gated — the common case at one
   entry at a time. An identical tree reuses the verdict and publishes the status at once.
   When `main` has moved the trees differ, the drive happens, and that is the case worth
-  paying for.
+  paying for. **A reused verdict must prove its liveness** (#1182): its live stage `ran`, or
+  it `skipped` with nothing routed. A PASS whose `live` is missing or `'unknown'` carries no
+  `required` list to judge by, so it proves nothing live — that entry is re-gated, never
+  reused. Such verdicts stay readable (`listVerdicts`); they just cost a live slot.
 - **The entry is fetched before its tree is read.** A speculative commit exists on GitHub and
   in no checkout, so `rev-parse <sha>^{tree}` can only answer "unknown" until its objects are
   local. The ref is fetched by name with no refspec — objects only, nothing written under
@@ -978,6 +1021,8 @@ believe a mechanism is in place. It was restored by reverting #178 once the repo
   `ABANDONED`, queue cleaned — no orphan gateway is possible since sessions start none.
   Killed mid-lease: the gateway lives until the lease expires, then the worker tears it
   down. `worker.test.ts`.
+- A `wait` that exits 3 or 4 detaches its still-queued job, which then runs and is not
+  `ABANDONED` — `cli.test.ts`, `job.test.ts`, `worker.test.ts`.
 - A killed worker restarts (systemd) and resumes the queue; mid-flight jobs are reported
   `INTERRUPTED`. `worker.test.ts`.
 - No gateway survives between jobs — teardown re-verifies the port. `gateway.test.ts`.
@@ -1017,6 +1062,14 @@ believe a mechanism is in place. It was restored by reverting #178 once the repo
   byte-identical and are recorded under `nightly/manual/` instead. The request itself refuses
   an agent session and a non-terminal, both before writing anything. — `nightly.test.ts`,
   `worker.test.ts`, `cli.test.ts`.
+- An exit code alone is not a PASS: a `live` / `nightly` PASS needs a `live-*.json` written
+  by this run, for this sha, with exactly the flows asked; a `ref` PASS needs its matching
+  `gate-<gatedSha>.json` (shas, attempt, flows driven versus asked). Anything else is `FAIL`
+  with the missing piece named, and `latest.json` lists every flow's status.
+  `worker.test.ts`, `nightly.test.ts`.
+- A merge-queue entry reuses a verdict only when that verdict's own liveness proves
+  something — `ran`, or skipped with nothing routed; a missing or `'unknown'` one is
+  re-gated. `merge-queue.test.ts`.
 - A merge-queue entry is gated exactly once, only from GitHub's own queue refs, and its
   objects are **fetched before its tree is read** — so an entry whose tree already carries a
   passing attestation reuses it and takes no live slot, while an unfetchable or unreadable

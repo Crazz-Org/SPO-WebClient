@@ -380,6 +380,10 @@ export function BuildingInspector({ hideHeader }: BuildingInspectorProps = {}) {
         <DiagnosisBanner
           diagnosis={diagnosis}
           onAction={(action) => {
+            if (action.kind === 'connect') {
+              client.onBuildingAction('connectMap');
+              return;
+            }
             const tab = tabForAction(action, details.tabs);
             if (tab) setCurrentTab(tab);
           }}

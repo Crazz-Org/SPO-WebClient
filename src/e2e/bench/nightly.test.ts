@@ -6,6 +6,7 @@ import { Spool, type ManualRequester } from './job';
 import type { GitRunner, TreeFingerprint } from './fingerprint';
 import {
   deleteManualRequest,
+  flowSummary,
   manualProofDue,
   manualRecordFile,
   manualRequestFile,
@@ -623,6 +624,35 @@ describe('nightlyResultFromReport', () => {
     expect(built.trigger).toBe('scheduled');
     expect(built.scheduledSubmittedAt).toBe('2026-09-14T02:10:00.000Z');
   });
+
+  it('carries each flow\'s status and an UNTESTABLE flow\'s reasons, and names the UNTESTABLE and SKIPPED flows (#1182, #1320)', () => {
+    const liveFlows = [
+      { name: 'a', status: 'PASS' },
+      { name: 'b', status: 'UNTESTABLE', reasons: ['the restore line — no "Setting" line in http://log'] },
+      { name: 'c', status: 'SKIPPED' },
+      { name: 'd', status: 'UNTESTABLE', reasons: ['a bank is listed — 0 banks'] },
+    ];
+    const built = nightlyResultFromReport(
+      { id: 'job-9', verdict: 'PASS', fingerprints: { atSubmit: fingerprint('s') }, liveFlows },
+      { submittedAt: 'deposited-at' },
+    );
+
+    expect(built.flows).toEqual(liveFlows);
+    expect(built.flows?.[1].reasons).toEqual(['the restore line — no "Setting" line in http://log']);
+    expect(built.untestable).toEqual(['b', 'd']);
+    expect(built.skipped).toEqual(['c']);
+  });
+
+  it('adds none of the per-flow keys when no live artifact was read', () => {
+    const built = nightlyResultFromReport(
+      { id: 'job-9', verdict: 'FAIL', fingerprints: { atSubmit: fingerprint('s') } },
+      { submittedAt: 'deposited-at' },
+    );
+
+    expect(built).not.toHaveProperty('flows');
+    expect(built).not.toHaveProperty('untestable');
+    expect(built).not.toHaveProperty('skipped');
+  });
 });
 
 /**
@@ -1189,5 +1219,35 @@ describe('publishManualResult — attest-only replacement', () => {
     publishManualResult(h.paths, report(), { submittedAt: 'deposited-at', fingerprint: fp(TIP) });
 
     expect(readNightlyResult(h.paths)?.requestedBy).toMatchObject({ user: 'unknown', host: 'unknown' });
+  });
+
+  it('carries the per-flow statuses into both the manual record and latest.json (#1182)', () => {
+    const h = harness();
+    const liveFlows = [
+      { name: 'a', status: 'PASS' },
+      { name: 'b', status: 'UNTESTABLE' },
+      { name: 'c', status: 'SKIPPED' },
+    ];
+
+    publishManualResult(h.paths, report({ liveFlows }), request);
+
+    const expected = { flows: liveFlows, untestable: ['b'], skipped: ['c'] };
+    expect(readNightlyResult(h.paths)).toMatchObject(expected);
+    expect(readManualRecords(h.paths)).toEqual([expect.objectContaining(expected)]);
+  });
+});
+
+describe('flowSummary — the server quarantine (#1310)', () => {
+  it('lists the quarantined flows the run drove, whatever their status, and leaves the others out', () => {
+    const summary = flowSummary([
+      { name: 'login-spine', status: 'PASS' },
+      { name: 'portrait-roundtrip', status: 'FAIL' },
+      { name: 'politics-read', status: 'FAIL' },
+    ]);
+    expect(summary.quarantined).toEqual(['portrait-roundtrip']);
+  });
+
+  it('carries no key when no live artifact was read', () => {
+    expect(flowSummary(undefined)).toEqual({});
   });
 });

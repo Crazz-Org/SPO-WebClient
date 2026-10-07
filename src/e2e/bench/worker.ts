@@ -57,6 +57,7 @@ import {
   unknownRequester,
   writeManualRecord,
   writeNightlyResult,
+  type NightlyFlowStatus,
 } from './nightly';
 import { githubAuthEnv, type GitAuthEnv } from './git-auth';
 import {
@@ -118,6 +119,8 @@ export interface WorkerDeps {
    * from the failed connect the drive already logged.
    */
   gameServerReachable: (driveLog: string) => Promise<ReachabilityResult>;
+  /** The flows `dist/e2e/run.js` drives when given no `--flows` — FLOWS minus GATE_ONLY, read from the checkout (readCheckoutDefaultFlows). */
+  defaultLiveFlows: (worktree: string) => string[] | undefined;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   log: (line: string) => void;
@@ -439,7 +442,7 @@ export async function processOldest(deps: WorkerDeps): Promise<boolean> {
       jobId: request.id,
       createdAt: new Date(deps.now()).toISOString(),
       exceptions: countCapabilityExceptions(report.gateArtifact),
-      unproven: countUnprovenFlows(report.gateArtifact),
+      untestable: countUntestableFlows(report.gateArtifact),
       live: liveAttestationFrom(report.gateArtifact),
       staticProof: staticProofAttestationFrom(report.staticProof),
     });
@@ -476,18 +479,176 @@ export function countCapabilityExceptions(artifactPath: string | undefined): num
 }
 
 /**
- * How many UNPROVEN flows the gate artifact records (doc/E2E-POLICY.md §7), required or
- * informational; 0 when unreadable, absent, or written before the field existed. Shown on
- * GitHub only — a required one already made the gate's exit code FAIL.
+ * How many UNTESTABLE flows the gate artifact records (doc/E2E-POLICY.md §7), required or
+ * not; 0 when unreadable, absent, or written before the field existed. Shown on GitHub only —
+ * an UNTESTABLE flow never changes the gate's verdict.
  */
-export function countUnprovenFlows(artifactPath: string | undefined): number {
+export function countUntestableFlows(artifactPath: string | undefined): number {
   if (!artifactPath) return 0;
   try {
-    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as { unproven?: unknown };
-    return Array.isArray(artifact.unproven) ? artifact.unproven.length : 0;
+    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as { untestable?: unknown };
+    return Array.isArray(artifact.untestable) ? artifact.untestable.length : 0;
   } catch {
     return 0;
   }
+}
+
+/** A live drive's artifact name — `live-<startedAt>.json`, as src/e2e/run.ts writes it. */
+const LIVE_ARTIFACT_NAME = /^live-.*\.json$/;
+
+/** The `live-*.json` names in `<worktree>/report/e2e`; empty when the directory does not exist. */
+export function liveArtifactNames(worktree: string): Set<string> {
+  try {
+    return new Set(fs.readdirSync(path.join(worktree, 'report', 'e2e')).filter(n => LIVE_ARTIFACT_NAME.test(n)));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * The `live-*.json` present now that was not in `before` — what "written by THIS run" means
+ * for a live drive. A set difference, not a clock: a file an earlier run left behind can
+ * never count, however recent. Several new ones → the lexicographically last (the names are
+ * ISO timestamps); none → undefined.
+ */
+export function newLiveArtifact(worktree: string, before: Set<string>): string | undefined {
+  const fresh = [...liveArtifactNames(worktree)].filter(n => !before.has(n)).sort();
+  const last = fresh[fresh.length - 1];
+  return last === undefined ? undefined : path.join(worktree, 'report', 'e2e', last);
+}
+
+/** The shape of `report/e2e/live-*.json` this module reads — `LiveRunResult` in src/e2e/run.ts. */
+interface LiveArtifactShape {
+  sha?: unknown;
+  flows?: { name?: unknown; status?: unknown; untestable?: unknown }[];
+}
+
+/** The flow names an artifact's `flows` array carries, strings only. */
+function flowNamesOf(flows: { name?: unknown }[] | undefined): string[] {
+  return Array.isArray(flows)
+    ? flows.map(f => f?.name).filter((n): n is string => typeof n === 'string')
+    : [];
+}
+
+/**
+ * Each flow's name and status from a readable live artifact, and an UNTESTABLE flow's reasons
+ * (so `latest.json` says why it proved nothing); undefined when absent or unreadable.
+ */
+export function liveFlowStatuses(artifactPath: string | undefined): NightlyFlowStatus[] | undefined {
+  if (!artifactPath) return undefined;
+  try {
+    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as LiveArtifactShape;
+    if (!Array.isArray(artifact.flows)) return undefined;
+    return artifact.flows
+      .filter(f => typeof f?.name === 'string')
+      .map(f => {
+        const status = typeof f.status === 'string' ? f.status : 'UNKNOWN';
+        const entry: NightlyFlowStatus = { name: f.name as string, status };
+        if (status === 'UNTESTABLE') {
+          entry.reasons = Array.isArray(f.untestable) ? f.untestable.filter((r): r is string => typeof r === 'string') : [];
+        }
+        return entry;
+      });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * How the flows driven differ from the flows asked for, compared as sorted sets — or
+ * undefined when they match. Names only the non-empty halves.
+ */
+function flowMismatch(driven: string[], asked: string[]): string | undefined {
+  const drivenSet = new Set(driven);
+  const askedSet = new Set(asked);
+  const missing = [...askedSet].filter(n => !drivenSet.has(n)).sort();
+  const unexpected = [...drivenSet].filter(n => !askedSet.has(n)).sort();
+  if (missing.length === 0 && unexpected.length === 0) return undefined;
+  const halves = [
+    ...(missing.length > 0 ? [`missing: ${missing.join(', ')}`] : []),
+    ...(unexpected.length > 0 ? [`unexpected: ${unexpected.join(', ')}`] : []),
+  ];
+  return `drove [${[...driven].sort().join(', ')}], not the flows asked for (${halves.join('; ')})`;
+}
+
+/**
+ * Why a `live` / `nightly` PASS cannot stand on this artifact — or undefined when it can.
+ * An exit code alone is not a PASS: the drive must have written its artifact in this run,
+ * for this sha, with exactly the flows the job asked for. `asked` undefined means the flow
+ * list could not be read from the checkout, which is itself a reason to refuse.
+ */
+export function liveArtifactProblem(
+  artifactPath: string | undefined,
+  sha: string,
+  asked: string[] | undefined,
+): string | undefined {
+  if (!artifactPath) return 'no report/e2e/live-*.json was written by this run';
+  let artifact: LiveArtifactShape;
+  try {
+    artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as LiveArtifactShape;
+  } catch (err: unknown) {
+    return `the live artifact at ${artifactPath} could not be read (${toErrorMessage(err)})`;
+  }
+  if (artifact.sha !== sha) {
+    const named = typeof artifact.sha === 'string' ? artifact.sha : 'none';
+    return `the live artifact at ${artifactPath} names sha ${named}, not ${sha}`;
+  }
+  if (asked === undefined) {
+    return 'the flow list this job asked for could not be read from the checkout (dist/e2e/flows.js, dist/e2e/routing.js)';
+  }
+  const mismatch = flowMismatch(flowNamesOf(artifact.flows), asked);
+  return mismatch === undefined ? undefined : `the live artifact ${mismatch}`;
+}
+
+/** What a `ref` job's gate artifact must name to back this run's PASS. */
+export interface GateArtifactExpectation {
+  gatedSha: string;
+  depositedSha: string;
+  attempt: number;
+  /** `--flows=` when the job forwarded one; otherwise the artifact's own `routing.required`. */
+  askedFlows: string[] | undefined;
+}
+
+/**
+ * Why a `ref` PASS cannot stand on its gate artifact — or undefined when it can. The
+ * artifact must be this run's (gated and deposited shas, and the attempt number the worker
+ * passed as `--attempt`), and its live stage must have driven exactly the flows asked for,
+ * or legitimately skipped with none routed — the static-only PASS verify-gate itself writes.
+ */
+export function gateArtifactProblem(
+  artifactPath: string | undefined,
+  expected: GateArtifactExpectation,
+): string | undefined {
+  if (!artifactPath) return 'no readable gate artifact was recorded for this run';
+  const read = readGateArtifact(artifactPath);
+  if (!read.ok) return `no readable gate artifact at ${artifactPath} (${read.error})`;
+  const artifact = read.artifact;
+  if (artifact.head !== expected.gatedSha) {
+    return `the gate artifact names head ${String(artifact.head ?? 'none')}, not the gated sha ${expected.gatedSha}`;
+  }
+  if (artifact.depositedSha !== expected.depositedSha) {
+    return `the gate artifact names deposited sha ${String(artifact.depositedSha ?? 'none')}, not ${expected.depositedSha}`;
+  }
+  if (artifact.attempt !== expected.attempt) {
+    return `the gate artifact is from attempt ${String(artifact.attempt ?? 'none')}, not this run's attempt ${expected.attempt} — an earlier run wrote it`;
+  }
+  // Mirrors verify-gate.js: `requested ? requested.split(',') : decision.required`.
+  const asked =
+    expected.askedFlows ??
+    (Array.isArray(artifact.routing?.required)
+      ? artifact.routing.required.filter((f): f is string => typeof f === 'string')
+      : []);
+  const live = artifact.live;
+  if (live?.skipped) {
+    return asked.length > 0
+      ? `the gate artifact skipped the live stage while ${asked.join(', ')} were asked for`
+      : undefined;
+  }
+  if (live && (live.status === 'PASS' || live.status === 'FAIL')) {
+    const mismatch = flowMismatch(flowNamesOf(live.flows), asked);
+    return mismatch === undefined ? undefined : `the gate artifact ${mismatch}`;
+  }
+  return 'the gate artifact records no completed live stage';
 }
 
 /** Where `verify-gate.js` files a gate artifact for a sha, inside a given worktree. */
@@ -595,6 +756,9 @@ export function nextGateAttempt(root: string, depositedSha: string, log?: (line:
 
 /** The shape of `report/e2e/gate-<sha>.json` this module reads — see scripts/verify-gate.js. */
 interface GateArtifactShape {
+  head?: unknown;
+  depositedSha?: unknown;
+  attempt?: unknown;
   live?: {
     skipped?: boolean;
     why?: string;
@@ -602,7 +766,7 @@ interface GateArtifactShape {
     status?: unknown;
     /** `LiveRunResult['error']` — set on BLOCKED/ENVIRONMENT/FAIL. */
     error?: unknown;
-    flows?: { name?: unknown }[];
+    flows?: { name?: unknown; status?: unknown }[];
   } | null;
   routing?: { required?: unknown[] };
 }
@@ -637,7 +801,10 @@ function readGateArtifact(artifactPath: string): GateArtifactRead {
  * the world; `'BLOCKED'` (a rate-limit or dirty-world refusal — run.ts's own comment:
  * "nothing ran") and `'ENVIRONMENT'` (a preflight abort) both mean the flows were never
  * driven, exactly like a missing artifact, so they — and any `status` this code has never
- * seen — read `'unknown'`, not `'ran'`.
+ * seen — read `'unknown'`, not `'ran'`. One exception: a `'BLOCKED'` run whose flows
+ * include at least one `SKIPPED` flow (run.ts blocks on a skip, not a lock) reads
+ * `'blocked-skip'`, naming those flows — a lock-refusal `'BLOCKED'` (`flows: []`) still
+ * reads `'unknown'`.
  *
  * Ways to land on `'unknown'`: no artifact path at all (`report.gateArtifact` unset —
  * most `NON_ATTESTING` outcomes never reach here anyway), a path that does not read as
@@ -679,6 +846,13 @@ export function liveAttestationFrom(artifactPath: string | undefined): LiveAttes
           .filter((name): name is string => name !== undefined)
       : [];
     return { status: 'ran', flows };
+  }
+  if (live.status === 'BLOCKED' && Array.isArray(live.flows)) {
+    const skipped = live.flows
+      .filter(f => f?.status === 'SKIPPED')
+      .map(f => (typeof f?.name === 'string' ? f.name : undefined))
+      .filter((name): name is string => name !== undefined);
+    if (skipped.length > 0) return { status: 'blocked-skip', skipped };
   }
   const reason =
     typeof live.error === 'string'
@@ -759,10 +933,10 @@ function mergeShaByFirstParent(
  *  - `verdict.merged` is true — a non-merge verdict has no business being looked up this way.
  *
  * Any failure along this path — no artifact directory, no `git`, no match, a match that
- * fails validation — resolves to `'unknown'`, never a thrown error and never a refusal
- * invented out of missing evidence: `'unknown'` is exactly what {@link mayReuseVerdict}
- * (./merge-queue) already treats as "allow", precisely the disposition a verdict with no
- * answer on file has always had.
+ * fails validation — resolves to `'unknown'`, never a thrown error. Since #1182 that verdict
+ * stays readable but proves nothing live: {@link mayReuseVerdict} (./merge-queue) re-gates
+ * it rather than reusing it, so a verdict with no answer on file costs a live slot instead
+ * of lending a PASS it cannot back.
  */
 export function resolveLegacyLiveness(
   refCheckout: string,
@@ -943,7 +1117,10 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
   // own drive. Gateway only: the body's env is unchanged, so a replayed Jest suite never sees
   // it. A loopback exemption was rejected: behind nginx without TRUST_PROXY every public
   // client is 127.0.0.1 too.
-  const gatewayEnv = { ...env, SINGLE_USER_MODE: 'true' };
+  // It also names the LOCKED primary account SPO_test3 as GM, so the GM broadcast can be
+  // driven live: handleGmChatSend makes no RDO / game-server call and reaches only the
+  // clients of this gateway process — on the bench, the drive's own sessions. Gateway only.
+  const gatewayEnv = { ...env, SINGLE_USER_MODE: 'true', SPO_GM_USERS: 'SPO_test3' };
 
   let gateway: RunningGateway;
   try {
@@ -1007,6 +1184,20 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
         bodyDetail = `verify-gate exited ${code} (${bodyVerdict})`;
       }
       report.gateArtifact = gateArtifactPath(request.worktree, report.fingerprints.atStart.head);
+      if (bodyVerdict === 'PASS') {
+        // An exit code alone is not a PASS (#1182): the gate artifact THIS run wrote must
+        // back it — see gateArtifactProblem.
+        const problem = gateArtifactProblem(report.gateArtifact, {
+          gatedSha: report.fingerprints.atStart.head,
+          depositedSha: request.fingerprint.head,
+          attempt,
+          askedFlows: flowsFromArgs(request.args),
+        });
+        if (problem !== undefined) {
+          bodyVerdict = 'FAIL';
+          bodyDetail = `${bodyDetail}, but ${problem} — an exit code alone is not a PASS`;
+        }
+      }
     } else if (request.type === 'live' || request.type === 'nightly') {
       // Same reasoning as the `ref` bookkeeping above: placed AHEAD of `request.args` so
       // they win over anything a caller happened to forward (run.ts's `flagged()` takes
@@ -1020,6 +1211,9 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
       // is caught independently by `targetMoved` below and turned into STALE, so this
       // sha is never trusted past the run it names.
       const bookkeeping = [`--branch=${request.branch}`, `--sha=${report.fingerprints.atStart.head}`];
+      // Taken immediately before the drive, so the set difference after it names exactly the
+      // artifact THIS run wrote — see newLiveArtifact.
+      const before = liveArtifactNames(request.worktree);
       const code = await deps.runCommand('node', ['dist/e2e/run.js', ...bookkeeping, ...request.args], {
         cwd: request.worktree,
         env,
@@ -1033,6 +1227,9 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
         bodyVerdict = 'ENVIRONMENT';
         bodyDetail = `live drive exceeded its deadline and was killed — see ${logFile}`;
       } else {
+        report.liveArtifact = newLiveArtifact(request.worktree, before);
+        const liveFlows = liveFlowStatuses(report.liveArtifact);
+        if (liveFlows !== undefined) report.liveFlows = liveFlows;
         bodyVerdict = GATE_EXIT_VERDICT[code] ?? 'FAIL';
         bodyDetail = `live drive exited ${code} (${bodyVerdict})`;
         const reconsidered = await downgradeUnreachable(
@@ -1043,6 +1240,18 @@ export async function runJob(deps: WorkerDeps, request: JobRequest): Promise<Job
         );
         bodyVerdict = reconsidered.verdict;
         bodyDetail = reconsidered.detail;
+        // After the reachability probe, on purpose: the drive claimed success, so whether the
+        // world was reachable is not the question and must never downgrade this FAIL. An exit
+        // code alone is not a PASS (#1182) — the artifact this run wrote must back it: this
+        // sha, and exactly the flows asked (`--flows=`, else FLOWS minus GATE_ONLY).
+        if (bodyVerdict === 'PASS') {
+          const asked = flowsFromArgs(request.args) ?? deps.defaultLiveFlows(request.worktree);
+          const problem = liveArtifactProblem(report.liveArtifact, report.fingerprints.atStart.head, asked);
+          if (problem !== undefined) {
+            bodyVerdict = 'FAIL';
+            bodyDetail = `${bodyDetail}, but ${problem} — an exit code alone is not a PASS`;
+          }
+        }
       }
     } else {
       // Lease: the report is written EARLY — it is what the waiting session unblocks on.
@@ -1116,6 +1325,13 @@ export async function workerLoop(
   const publishFailures = new Map<string, number>();
   for (let tick = 0; tick < maxTicks; tick++) {
     try {
+      // The merge queue is served before each job, idle or not. Nothing is running here (the
+      // loop is single-flight), so an entry it deposits jumps the line without interrupting
+      // anything: processOldest picks a queueEntry first, and a tree-dedup reuse posts its
+      // status at once with no job. Serving it only when the spool was empty let a backlog
+      // hold an entry past the queue's 60-min check-response timeout, and GitHub ejected a
+      // healthy PR for a reason that was never about its code (#1268).
+      deps.serveMergeQueue();
       const worked = await processOldest(deps);
       deps.spool.purgeDone(DONE_RETENTION_MS, deps.now());
       if (deps.now() - lastPublish > 30_000) {
@@ -1123,13 +1339,8 @@ export async function workerLoop(
         publishPendingStatuses(deps.paths, deps.publishStatus, deps.log, deps.now(), deps.paths.verdicts, publishFailures);
       }
       if (!worked) {
-        // Only when the queue came back empty: these take the bench like any job, so they
-        // must never start while a session is waiting behind one.
-        //
-        // The merge queue goes first. An entry it deposits jumps the spool (processOldest),
-        // because GitHub ejects an entry whose required checks time out — and an ejection
-        // costs a session its turn for a reason that was never about its code.
-        deps.serveMergeQueue();
+        // Only when the spool came back empty: the nightly takes the bench like any job, so
+        // it must never start while a session is waiting behind one.
         await nightly(deps);
         await deps.sleep(2_000);
       }
@@ -1183,7 +1394,7 @@ interface StageDeadline {
   stage: string;
   deadlineMs: number;
   /** Overridable so a test can prove the kill fires without waiting on production-scale
-   *  minutes; production never sets this (defaults to KILL_GRACE_MS). */
+   *  minutes; production never sets this (defaults per stage — see killGraceFor). */
   killGraceMs?: number;
 }
 
@@ -1258,12 +1469,15 @@ export const LIVE_RUN_BASE_MS = 120_000;
 
 /**
  * The flow count used when the checkout's own count cannot be read (`dist/e2e/flows.js`
- * missing, throwing on load, or exporting no `FLOWS` array): the E2E coverage census' planned
- * ≈60 flows (2026-09-29). An upper bound for the nightly, which leaves out the gate-only flows —
- * the safe side. It exists because an `undefined`/`NaN` deadline fires at once and would kill
- * every run as ENVIRONMENT.
+ * missing, throwing on load, or exporting no `FLOWS` array) — for the live drive and for
+ * verify-gate.js alike. `FLOWS` already had 66 entries on 2026-10-06 (#1329), past the E2E
+ * coverage census' planned ≈60 (2026-09-29); 80 leaves room for the next few flows. A
+ * `worker.test.ts` tripwire fails when `FLOWS.length` goes past it. An upper bound for the
+ * nightly, which leaves out the gate-only flows, and for a gate, which drives at most every
+ * flow — the safe side. It exists because an `undefined`/`NaN` deadline fires at once and
+ * would kill every run as ENVIRONMENT.
  */
-export const LIVE_RUN_FLOW_CEILING = 60;
+export const LIVE_RUN_FLOW_CEILING = 80;
 
 /**
  * The fixed share of a `ref` job: the re-measured max `ref` job wall time in
@@ -1287,11 +1501,15 @@ export const PLANNED_MAX_ROUTED_FLOWS = 27;
  * `node scripts/verify-gate.js --live ...` (ref jobs) — one opaque child process running
  * typecheck + lint + unit/component tests + build:e2e + the L2 live drive internally; none of
  * those sub-stages are separate `runCommand` calls, so none can be bounded individually from
- * here. Derived: GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS × LIVE_RUN_PER_FLOW_MS =
- * 677 s + 27 × 160 s = 4 997 s ≈ 83 min. This is a KILL bound, not an expectation: the
- * expected duration of the largest planned gate is ~20 min (maintainer decision 2026-09-29).
- * For comparison the live-drive bound (classifyStage below) gives 120 s + 15 × 160 s = 42 min
- * for today's 15-flow nightly and 120 s + 60 × 160 s ≈ 2.7 h for a 60-flow one.
+ * here. Its bound is sized from the flow count like the live drive's (classifyStage below:
+ * GATE_BASE_MS + n × LIVE_RUN_PER_FLOW_MS), and THIS figure is its floor:
+ * GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS × LIVE_RUN_PER_FLOW_MS = 677 s + 27 × 160 s =
+ * 4 997 s ≈ 83 min. A fixed 27-flow bound alone was not enough: a diff to a FLOW_SOURCES file
+ * (changed-flows.ts) can route every flow reaching a changed helper — 61 for #1317, killed at
+ * this very figure (#1329). Every figure here is a KILL bound, not an expectation: the expected
+ * duration of the largest planned gate is ~20 min (maintainer decision 2026-09-29). For
+ * comparison the live-drive bound gives 120 s + 15 × 160 s = 42 min for a 15-flow nightly, and
+ * a 66-flow gate gets 677 s + 66 × 160 s ≈ 3.1 h.
  */
 export const VERIFY_GATE_DEADLINE_MS = GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS * LIVE_RUN_PER_FLOW_MS;
 
@@ -1308,11 +1526,14 @@ const DEFAULT_STAGE_DEADLINE_MS = 660_000;
  * Classify a call by (cmd, args) into the stage it represents and how long it gets. Structural
  * matching only — no knowledge of WHICH job type is running, because the same `git`/`npm ci`
  * call serves every job type identically (checkout.ts's `prepareCheckout` has no job-type
- * concept at all). The live drive's bound grows with `flowCount`, which the CALLER hands in
- * (stageDeadlineFor below) — this function never reads the disk; a missing or non-finite count
- * falls back to LIVE_RUN_FLOW_CEILING, never a NaN deadline.
+ * concept at all). The live drive's bound — and verify-gate.js's, which contains one — grows
+ * with `flowCount`, which the CALLER hands in (stageDeadlineFor below) — this function never
+ * reads the disk; a missing or non-finite count falls back to LIVE_RUN_FLOW_CEILING, never a
+ * NaN deadline. verify-gate.js never gets less than VERIFY_GATE_DEADLINE_MS, its floor.
  */
 export function classifyStage(cmd: string, args: string[], flowCount?: number): StageDeadline {
+  const n =
+    flowCount !== undefined && Number.isFinite(flowCount) && flowCount >= 0 ? flowCount : LIVE_RUN_FLOW_CEILING;
   if (cmd === 'git') return { stage: `git ${args[0] ?? ''}`.trim(), deadlineMs: GIT_DEADLINE_MS };
   if (cmd === 'npm' && args[0] === 'ci') return { stage: 'npm ci', deadlineMs: NPM_CI_DEADLINE_MS };
   if (cmd === 'npm' && args[0] === 'run' && args[1] === 'build') {
@@ -1322,14 +1543,30 @@ export function classifyStage(cmd: string, args: string[], flowCount?: number): 
     return { stage: `npm run ${args[1]}`, deadlineMs: BUILD_STEP_DEADLINE_MS };
   }
   if (cmd === 'node' && args[0] === 'scripts/verify-gate.js') {
-    return { stage: 'verify-gate.js', deadlineMs: VERIFY_GATE_DEADLINE_MS };
+    return {
+      stage: 'verify-gate.js',
+      deadlineMs: Math.max(VERIFY_GATE_DEADLINE_MS, GATE_BASE_MS + LIVE_RUN_PER_FLOW_MS * n),
+    };
   }
   if (cmd === 'node' && args[0] === 'dist/e2e/run.js') {
-    const n =
-      flowCount !== undefined && Number.isFinite(flowCount) && flowCount >= 0 ? flowCount : LIVE_RUN_FLOW_CEILING;
     return { stage: 'run.js', deadlineMs: LIVE_RUN_BASE_MS + LIVE_RUN_PER_FLOW_MS * n };
   }
   return { stage: `${cmd} ${args.join(' ')}`.trim().slice(0, 80), deadlineMs: DEFAULT_STAGE_DEADLINE_MS };
+}
+
+/** The stages that run the live drive, and so may hold the world lock when the kill lands. */
+const DRIVE_STAGES: ReadonlySet<string> = new Set(['verify-gate.js', 'run.js']);
+
+/**
+ * Time between SIGTERM and SIGKILL for a stage: `deadline.killGraceMs` when set (tests only),
+ * else one flow's share (LIVE_RUN_PER_FLOW_MS) for a stage that drives the world, else
+ * KILL_GRACE_MS. A drive that handles SIGTERM (#1328) needs the in-flight flow to reach its
+ * restore — probe.ts runs it after the write, and the logs-settle wait alone is 20 s — or the
+ * next job finds the world DIRTY and every gate after it is BLOCKED until a human restores it.
+ */
+export function killGraceFor(deadline: StageDeadline): number {
+  if (deadline.killGraceMs !== undefined) return deadline.killGraceMs;
+  return DRIVE_STAGES.has(deadline.stage) ? LIVE_RUN_PER_FLOW_MS : KILL_GRACE_MS;
 }
 
 function safeKillGroup(pid: number, signal: NodeJS.Signals, kill: (pid: number, signal: NodeJS.Signals) => void): void {
@@ -1349,7 +1586,7 @@ function safeKillGroup(pid: number, signal: NodeJS.Signals, kill: (pid: number, 
  * actual kill — not just a signal sent and forgotten.
  *
  * What the kill guarantees: this Promise resolves within `deadline.deadlineMs +
- * 2 * killGraceMs` of being called, no matter what the child does — SIGTERM first, SIGKILL
+ * 2 * killGraceMs` of being called (killGraceFor), no matter what the child does — SIGTERM first, SIGKILL
  * after `killGraceMs` if the process is still alive, and if the OS still has not reaped it
  * `killGraceMs` after THAT (a pathological case — a process stuck in uninterruptible I/O wait
  * can outlive even SIGKILL for a while), this function gives up waiting and resolves
@@ -1372,7 +1609,7 @@ export function runWithDeadline(
     kill: (pid: number, signal: NodeJS.Signals) => void;
   } = { spawnProcess: spawn, kill: (pid, signal) => process.kill(pid, signal) },
 ): Promise<number> {
-  const killGraceMs = deadline.killGraceMs ?? KILL_GRACE_MS;
+  const killGraceMs = killGraceFor(deadline);
   return new Promise(resolve => {
     const out = fs.openSync(options.logFile, 'a');
     const child = processControl.spawnProcess(cmd, args, {
@@ -1426,22 +1663,30 @@ export function runWithDeadline(
         giveUpTimer = setTimeout(() => settle(DEADLINE_EXIT_CODE), killGraceMs);
       }, killGraceMs);
     }, deadline.deadlineMs);
-    // A spawn failure (ENOENT) emits 'error' and then 'close' — settle exactly once. A process
-    // killed by a signal reports `code: null` here (Node's own contract) — DEADLINE_EXIT_CODE
-    // when THIS function did the killing (the ordinary path: 'close' wins the race against the
-    // backstop above, so the giveUpTimer above never fires), 1 for any OTHER signal death
-    // (unchanged from before this action — e.g. the whole worker process itself receiving
-    // SIGTERM and the child dying with it).
-    child.on('close', code => settle(code ?? (timedOut ? DEADLINE_EXIT_CODE : 1)));
+    // A spawn failure (ENOENT) emits 'error' and then 'close' — settle exactly once. Once THIS
+    // function has fired the deadline, the run is a deadline kill whatever the child reports:
+    // DEADLINE_EXIT_CODE for `code: null` (killed by a signal, Node's own contract) AND for a
+    // child that trapped SIGTERM, drained, and exited 0 or 1 by itself (#1329) — that exit
+    // code describes a run cut short, never a verdict on the code, so the caller's ENVIRONMENT
+    // stands even when the drain restored everything. The ordinary path: 'close' wins the race
+    // against the backstop above, so the giveUpTimer above never fires. Without a deadline
+    // kill, a signal death settles 1 (unchanged from before this action — e.g. the whole
+    // worker process itself receiving SIGTERM and the child dying with it).
+    child.on('close', code => settle(timedOut ? DEADLINE_EXIT_CODE : (code ?? 1)));
     child.on('error', () => settle(1));
   });
 }
 
-/** The `--flows=` count, read the way `run.ts` reads it (first flag wins); undefined when absent. */
-export function flowCountFromArgs(args: string[]): number | undefined {
+/** The `--flows=` list, read the way `run.ts` / `verify-gate.js` read it (first flag wins, blanks dropped); undefined when absent. */
+export function flowsFromArgs(args: string[]): string[] | undefined {
   const flag = args.find(a => a.startsWith('--flows='));
   if (flag === undefined) return undefined;
-  return flag.split('=').slice(1).join('=').split(',').filter(Boolean).length;
+  return flag.split('=').slice(1).join('=').split(',').filter(Boolean);
+}
+
+/** The `--flows=` count, read the way `run.ts` reads it (first flag wins); undefined when absent. */
+export function flowCountFromArgs(args: string[]): number | undefined {
+  return flowsFromArgs(args)?.length;
 }
 
 /** Bounds the child that loads `dist/e2e/flows.js` — a module load, so a hang cannot wedge the worker. */
@@ -1458,7 +1703,8 @@ const READ_FLOWS_SCRIPT =
  * caches its modules until restart, so an imported count would freeze at the last bench install;
  * a child also keeps an unmerged branch's code out of the long-lived worker. The live/nightly
  * branch of runJob has already run `build:e2e` in that checkout (BUILD_STEPS), so the file is
- * fresh. Undefined when it is missing, throws, or exports no `FLOWS` array.
+ * fresh there; a ref job has not before verify-gate.js, so it may be missing or stale.
+ * Undefined when it is missing, throws, or exports no `FLOWS` array.
  */
 export function readCheckoutFlowCount(cwd: string): number | undefined {
   try {
@@ -1474,6 +1720,35 @@ export function readCheckoutFlowCount(cwd: string): number | undefined {
   }
 }
 
+const READ_DEFAULT_FLOWS_SCRIPT =
+  "const p = require('path');" +
+  " const f = require(p.resolve('dist/e2e/flows.js'));" +
+  " const r = require(p.resolve('dist/e2e/routing.js'));" +
+  " if (Array.isArray(f.FLOWS) && r.GATE_ONLY && typeof r.GATE_ONLY === 'object')" +
+  " process.stdout.write(JSON.stringify(f.FLOWS.map(x => x && x.name).filter(n => !(n in r.GATE_ONLY))));";
+
+/**
+ * The flows `dist/e2e/run.js` drives when given no `--flows` — every `FLOWS` entry minus
+ * `GATE_ONLY`, exactly run.ts `main()`'s default — read from the checkout at `cwd` in a CHILD
+ * process, for the same reasons as {@link readCheckoutFlowCount}. Undefined when either module
+ * is missing, throws, exports the wrong shape, or the answer is not an array of strings.
+ */
+export function readCheckoutDefaultFlows(cwd: string): string[] | undefined {
+  try {
+    const out = execFileSync(process.execPath, ['-e', READ_DEFAULT_FLOWS_SCRIPT], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: FLOW_COUNT_READ_TIMEOUT_MS,
+    }).trim();
+    if (out === '') return undefined;
+    const parsed: unknown = JSON.parse(out);
+    return Array.isArray(parsed) && parsed.every(n => typeof n === 'string') ? (parsed as string[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Flows the live drive will run: `--flows=` when given, else the checkout's count, else the ceiling. */
 export function liveRunFlowCount(
   args: string[],
@@ -1483,9 +1758,13 @@ export function liveRunFlowCount(
   return flowCountFromArgs(args) ?? read(cwd) ?? LIVE_RUN_FLOW_CEILING;
 }
 
-/** classifyStage, with the live drive's flow count computed from the checkout being driven. */
+/**
+ * classifyStage, with the flow count computed from the checkout being driven — for the live
+ * drive and for verify-gate.js alike. A ref job runs no `build:e2e` before verify-gate.js
+ * (BUILD_STEPS.ref), so its `dist/e2e/flows.js` may be missing, which falls to the ceiling.
+ */
 export function stageDeadlineFor(cmd: string, args: string[], cwd: string): StageDeadline {
-  if (cmd === 'node' && args[0] === 'dist/e2e/run.js') {
+  if (cmd === 'node' && (args[0] === 'dist/e2e/run.js' || args[0] === 'scripts/verify-gate.js')) {
     return classifyStage(cmd, args, liveRunFlowCount(args.slice(1), cwd));
   }
   return classifyStage(cmd, args);
@@ -1689,6 +1968,7 @@ export function realWorkerDeps(
     renewLease: nowMs => renewLease(ownerDeps, lease, nowMs),
     processAlive,
     gameServerReachable: driveLog => probeDriveEndpoints(driveLog),
+    defaultLiveFlows: readCheckoutDefaultFlows,
     now: () => Date.now(),
     sleep,
     gitAuthEnv,

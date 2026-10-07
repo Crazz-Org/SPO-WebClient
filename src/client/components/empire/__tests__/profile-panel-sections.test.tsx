@@ -252,6 +252,20 @@ describe('ProfilePanel — sections', () => {
     expect(screen.getByRole('alert').textContent).toBe('Prestige is falling.');
   });
 
+  it('offers Reset Account and Abandon Role, and no Rebuild Links button', () => {
+    renderWithProviders(<ProfilePanel />);
+
+    clickSection('Curriculum');
+    act(() => {
+      useProfileStore.getState().setCurriculum({ ...CURRICULUM_BASE });
+    });
+
+    expect(screen.getByRole('button', { name: /Reset Account/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Abandon Role/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Rebuild Links/i })).toBeNull();
+    expect(screen.queryByText(/Rebuild Links/i)).toBeNull();
+  });
+
   it('shows the unavailable state, not the skeleton, when the bank page could not be read', () => {
     const { container } = renderWithProviders(<ProfilePanel />);
 

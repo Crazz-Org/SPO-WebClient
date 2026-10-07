@@ -324,6 +324,34 @@ describe('ClientBridge building overlay (stale data prevention)', () => {
   });
 });
 
+describe('ClientBridge hideBuildingPanel', () => {
+  beforeEach(() => {
+    useBuildingStore.getState().clearFocus();
+    useUiStore.getState().clearSurfaces();
+  });
+
+  it('clears the focus and unstacks the building surface, uncovering what was under it', () => {
+    useUiStore.getState().setRootSurface({ kind: 'politics' });
+    useUiStore.getState().pushSurface({ kind: 'building' });
+    useBuildingStore.getState().setFocus({ x: 10, y: 20, buildingId: 'B1' } as never);
+
+    ClientBridge.hideBuildingPanel();
+
+    expect(useBuildingStore.getState().focusedBuilding).toBeNull();
+    expect(useUiStore.getState().stack.map((s) => s.kind)).toEqual(['politics']);
+  });
+
+  it('clears the focus but leaves the stack alone when the building is not on top', () => {
+    useUiStore.getState().setRootSurface({ kind: 'mail' });
+    useBuildingStore.getState().setFocus({ x: 10, y: 20, buildingId: 'B1' } as never);
+
+    ClientBridge.hideBuildingPanel();
+
+    expect(useBuildingStore.getState().focusedBuilding).toBeNull();
+    expect(useUiStore.getState().stack.map((s) => s.kind)).toEqual(['mail']);
+  });
+});
+
 describe('ClientBridge mail responses (T6)', () => {
   const { useMailStore } = jest.requireActual('../store/mail-store') as typeof import('../store/mail-store');
   const { WsMessageType } = jest.requireActual('../../shared/types') as typeof import('../../shared/types');
@@ -611,6 +639,41 @@ describe('ClientBridge handleNewspaperResponse — the paper view (#516)', () =>
 
     expect(useNewspaperStore.getState().issue).toEqual(ISSUE);
     expect(useNewspaperStore.getState().issueState).toBe('loaded');
+  });
+});
+
+describe('ClientBridge handleNewspaperResponse — RESP_NEWSPAPER_POST (#1298)', () => {
+  const BOARD = {
+    paperName: 'Helartia Herald', root: 'r', path: 'r', columns: [], tree: [], article: null, error: '',
+  };
+  const post = (success: boolean, board: typeof BOARD | null): void => {
+    ClientBridge.handleNewspaperResponse({
+      type: WsMessageType.RESP_NEWSPAPER_POST, success, message: 'm', board,
+    } as unknown as WsMessage);
+  };
+
+  beforeEach(() => {
+    useNewspaperStore.getState().reset();
+    useNewspaperStore.getState().setPosting(true);
+  });
+
+  it('an accepted post lands the board and counts as published', () => {
+    post(true, BOARD);
+    const s = useNewspaperStore.getState();
+    expect(s.publishedCount).toBe(1);
+    expect(s.board).toEqual(BOARD);
+    expect(s.isPosting).toBe(false);
+  });
+
+  it('a refused post with no board does not count', () => {
+    post(false, null);
+    expect(useNewspaperStore.getState().publishedCount).toBe(0);
+    expect(useNewspaperStore.getState().isPosting).toBe(false);
+  });
+
+  it('a refused post with a board does not count', () => {
+    post(false, BOARD);
+    expect(useNewspaperStore.getState().publishedCount).toBe(0);
   });
 });
 

@@ -266,6 +266,13 @@ describe('statusDescription', () => {
       expect(description).toBe('PASS — live unknown — job job-1');
     });
 
+    it('marks a skip-BLOCKED run with its own marker, distinct from unknown', () => {
+      const description = statusDescription(
+        verdictFor('c1', { verdict: 'BLOCKED', live: { status: 'blocked-skip', skipped: ['permission-negative'] } }),
+      );
+      expect(description).toBe('BLOCKED — live blocked-skip — job job-1');
+    });
+
     it('omits the marker entirely for a verdict written before the field existed', () => {
       // No `live` key at all — verdictFor's default. Must render exactly as it always did,
       // never inferring "ran" or "static-only" from silence.
@@ -287,18 +294,18 @@ describe('statusDescription', () => {
     });
   });
 
-  // #1010 — a required flow that ended UNPROVEN fails the gate; the status says how many.
-  describe('unproven flows (doc/E2E-POLICY.md §7)', () => {
-    it('renders the unproven count in the protected tail', () => {
+  // #1320 — an UNTESTABLE flow never changes the verdict (doc/E2E-POLICY.md §7); the status says how many.
+  describe('untestable flows (doc/E2E-POLICY.md §7)', () => {
+    it('renders the untestable count in the protected tail', () => {
       const description = statusDescription(
         verdictFor('c1', {
-          verdict: 'FAIL',
+          verdict: 'PASS',
           live: { status: 'ran', flows: ['zoning-alert-read'] },
-          unproven: 1,
+          untestable: 1,
           baseMain: 'b'.repeat(40),
         }),
       );
-      expect(description).toBe('FAIL — live — 1 unproven flow(s) — base bbbbbbbb — job job-1');
+      expect(description).toBe('PASS — live — 1 untestable flow(s) — base bbbbbbbb — job job-1');
     });
 
     it('keeps both counts within the limit next to a long job id', () => {
@@ -307,14 +314,14 @@ describe('statusDescription', () => {
           verdict: 'FAIL',
           live: { status: 'ran', flows: ['zoning-alert-read'] },
           exceptions: 3,
-          unproven: 2,
+          untestable: 2,
           baseMain: 'b'.repeat(40),
           reusedFrom: 'e'.repeat(40),
           jobId: 'x'.repeat(200),
         }),
       );
       expect(description.length).toBeLessThanOrEqual(STATUS_DESCRIPTION_MAX);
-      expect(description).toContain('3 capability exception(s) — 2 unproven flow(s)');
+      expect(description).toContain('3 capability exception(s) — 2 untestable flow(s)');
       expect(description).toContain('base bbbbbbbb');
     });
 
@@ -325,14 +332,14 @@ describe('statusDescription', () => {
         verdictFor('c1', { exceptions: 2, baseMain: 'b'.repeat(40), reusedFrom: 'e'.repeat(40) }),
       ];
       for (const v of shapes) {
-        expect(statusDescription({ ...v, unproven: 0 })).toBe(statusDescription(v));
+        expect(statusDescription({ ...v, untestable: 0 })).toBe(statusDescription(v));
       }
       expect(
         statusDescription(
           verdictFor('c1', {
             live: { status: 'ran', flows: ['login-spine'] },
             baseMain: 'b'.repeat(40),
-            unproven: 0,
+            untestable: 0,
           }),
         ),
       ).toBe('PASS — live — base bbbbbbbb — job job-1');

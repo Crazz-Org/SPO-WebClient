@@ -49,6 +49,7 @@ export const UNK_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
+    { rdoName: 'connectMap', displayName: 'Connect', type: PropertyType.ACTION_BUTTON, actionId: 'connectMap', buttonLabel: 'Connect' },
     { rdoName: 'demolish', displayName: 'Demolish', type: PropertyType.ACTION_BUTTON, actionId: 'demolish', buttonLabel: 'Demolish' },
   ],
   rdoCommands: {
@@ -122,6 +123,11 @@ export const SRV_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'Trouble', displayName: 'Issues', type: PropertyType.NUMBER, hideEmpty: true },
     { rdoName: 'SecurityId', displayName: 'SecurityId', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
+    // Potential customers per class — StdBlocks/ServiceBlock.pas:1749-1751 (TServiceBlock.StoreToCache,
+    // Cache.WriteInteger(.., GetPeopleCount(pkHigh/pkMiddle/pkLow))): plain integers, no MLS suffix.
+    { rdoName: 'hiPotCustomers', displayName: 'Potential customers (high)', type: PropertyType.NUMBER },
+    { rdoName: 'miPotCustomers', displayName: 'Potential customers (middle)', type: PropertyType.NUMBER },
+    { rdoName: 'loPotCustomers', displayName: 'Potential customers (low)', type: PropertyType.NUMBER },
     {
       rdoName: 'srvNames',
       displayName: 'Services',
@@ -330,7 +336,14 @@ export const WH_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'Cost', displayName: 'Value', type: PropertyType.CURRENCY },
     { rdoName: 'ROI', displayName: 'ROI', type: PropertyType.PERCENTAGE, colorCode: 'auto' },
     { rdoName: 'Years', displayName: 'Age', type: PropertyType.NUMBER, unit: 'years' },
-    { rdoName: 'Role', displayName: 'Trade Role', type: PropertyType.ENUM },
+    // Read for the Supplies tab's automatic-buying gate only (Voyager/SupplySheetForm.pas:225,
+    // :349-359). The trade mode is cached as `TradeRole` (TBlock.StoreToCache, Kernel/Kernel.pas:5893,
+    // inherited by TWarehouse.StoreToCache, StdBlocks/Warehouses.pas:614-617); no `Role` is cached.
+    // Declared TEXT, never a control: Voyager's warehouse sheet offers no trade mode (it has only
+    // cbTrade, WHGeneralSheet.pas:46; its cbMode line sits in a commented-out block, :250-258), and each class
+    // is preset — Import Storage rolCompInport, Export Storage rolCompExport (GeneralPack1.dpr:719, :753).
+    // PropertyGroup skips the row.
+    { rdoName: 'TradeRole', displayName: 'Trade Role', type: PropertyType.TEXT },
     { rdoName: 'TradeLevel', displayName: 'Trade Level', type: PropertyType.ENUM, editable: true },
     { rdoName: 'GateMap', displayName: 'Wares', type: PropertyType.WARE_CHECKLIST },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
@@ -771,6 +784,11 @@ export const VOTES_GROUP: PropertyGroup = {
   icon: 'V',
   order: 10,
   properties: [
+    // Read, never shown (HIDDEN_PROPERTY_NAMES): the block id `enrichVotesTab`
+    // binds its `RDOVoteOf` read to. The Voyager sheet asks for it in the same
+    // read as the votes — `Names.Add(tidCurrBlock)` (Voyager/VotesSheet.pas:110) —
+    // then `MSProxy.BindTo(fCurrBlock)` + `RDOVoteOf(voter)` (:275-276).
+    { rdoName: 'CurrBlock', displayName: 'Block ID', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Trouble', displayName: 'Trouble', type: PropertyType.NUMBER, hideEmpty: true },
     { rdoName: 'RulerName', displayName: 'Ruler', type: PropertyType.TEXT },
     { rdoName: 'RulerVotes', displayName: 'Ruler Votes', type: PropertyType.NUMBER },

@@ -12,6 +12,7 @@ import { formatMoney, formatIncome, incomeSign } from '../../format-utils';
 import { useGameStore } from '../../store/game-store';
 import { useUiStore } from '../../store/ui-store';
 import { isPanelOffered } from '../../visitor-gating';
+import { DEBUG_MARKERS } from '../../debug-markers';
 import styles from './MobileInfoBar.module.css';
 
 /** Format date compactly: "Aug 27, 92" */
@@ -73,7 +74,7 @@ export function MobileInfoBar() {
   );
 
   return (
-    <div className={styles.bar}>
+    <div className={styles.bar} data-testid={DEBUG_MARKERS.mobileInfoBar}>
       {/* A visitor has no empire to open: the same content, not a button (no dead control). */}
       {canOpenEmpire ? (
         <button className={styles.tapArea} onClick={handleTap} aria-label="Open empire overview">

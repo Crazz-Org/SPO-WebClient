@@ -6,6 +6,7 @@ import * as path from 'path';
 import { type runGit } from './fingerprint';
 import { benchPaths, ensureLayout, readHeartbeat, readWorkerInfo, type BenchPaths } from './paths';
 import { Spool, type JobRequest } from './job';
+import { main as cliMain, type CliDeps } from './cli';
 import { listVerdicts, publishPendingStatuses, writeVerdictIn } from './verdict';
 import { nightlyResultFile, readManualRecords, readNightlyResult } from './nightly';
 import { type GatewayDeps } from './gateway';
@@ -17,7 +18,15 @@ import {
   classifyStage,
   countCapabilityExceptions,
   flowCountFromArgs,
+  flowsFromArgs,
+  gateArtifactProblem,
+  liveArtifactNames,
+  liveArtifactProblem,
+  liveFlowStatuses,
+  newLiveArtifact,
+  readCheckoutDefaultFlows,
   GATE_BASE_MS,
+  killGraceFor,
   LIVE_RUN_BASE_MS,
   LIVE_RUN_FLOW_CEILING,
   LIVE_RUN_PER_FLOW_MS,
@@ -26,7 +35,7 @@ import {
   readCheckoutFlowCount,
   stageDeadlineFor,
   VERIFY_GATE_DEADLINE_MS,
-  countUnprovenFlows,
+  countUntestableFlows,
   DEADLINE_EXIT_CODE,
   downgradeUnreachable,
   liveAttestationFrom,
@@ -45,6 +54,9 @@ import {
   type WorkerDeps,
 } from './worker';
 import { ROUTES, SPINE_FLOW } from '../routing';
+import { FLOWS } from '../flows';
+import type { LiveRunResult } from '../run';
+import { SECONDARY_ACCOUNT } from '../config';
 
 interface Harness {
   deps: WorkerDeps;
@@ -95,6 +107,67 @@ interface Harness {
   reachProbeCalls: number;
   /** The drive log file each probe invocation was handed. */
   reachProbeLogs: string[];
+  /** What deps.defaultLiveFlows answers — run.js's no-`--flows` default (FLOWS minus GATE_ONLY). */
+  defaultLiveFlows: string[] | undefined;
+  /**
+   * When true (the default), a `node` body that exits 0 writes the artifact the real body
+   * writes — `live-*.json` for run.js, `gate-<head>.json` for verify-gate.js — because an
+   * exit code alone is no longer a PASS (#1182). False = the body exits 0 and writes nothing.
+   */
+  writeArtifacts: boolean;
+  /** Overrides the `sha` the harness's live artifact carries (default: the `--sha=` it was given). */
+  liveArtifactSha: string | undefined;
+  /** Overrides the flows the harness's live artifact carries (default: exactly the flows asked). */
+  liveArtifactFlows: { name: string; status: string; untestable?: string[] }[] | undefined;
+}
+
+/** A flag's value, first match wins — the way run.ts and verify-gate.js read their argv. */
+function argValue(args: string[], name: string): string | undefined {
+  return args.find(a => a.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
+}
+
+/**
+ * Writes what the real body would have written on exit 0: run.js's `live-*.json`, or
+ * verify-gate.js's `gate-<head>.json` (only when the test has not seeded one itself).
+ */
+function writeBodyArtifact(h: Harness, cmd: string, args: string[], cwd: string, seq: number): void {
+  if (cmd !== 'node') return;
+  const dir = path.join(cwd, 'report', 'e2e');
+  if (args[0] === 'dist/e2e/run.js') {
+    const asked = flowsFromArgs(args) ?? h.defaultLiveFlows ?? [];
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, `live-harness-${String(seq).padStart(6, '0')}.json`),
+      JSON.stringify({
+        sha: h.liveArtifactSha ?? argValue(args, 'sha'),
+        status: 'PASS',
+        flows: h.liveArtifactFlows ?? asked.map(name => ({ name, status: 'PASS' })),
+      }),
+    );
+  } else if (args[0] === 'scripts/verify-gate.js') {
+    const head = `head-of-${path.basename(cwd)}`;
+    const file = path.join(dir, `gate-${head}.json`);
+    fs.mkdirSync(dir, { recursive: true });
+    // Exclusive create ('wx'): a gate artifact the test seeded itself is kept, atomically —
+    // no check-then-write window.
+    try {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          head,
+          depositedSha: argValue(args, 'deposited-sha'),
+          gatedSha: head,
+          attempt: Number(argValue(args, 'attempt')),
+          verdict: 'PASS',
+          routing: { required: [] },
+          live: { skipped: true, why: 'nothing in this diff is observable over the wire' },
+        }),
+        { flag: 'wx' },
+      );
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+  }
 }
 
 function harness(): Harness {
@@ -106,6 +179,7 @@ function harness(): Harness {
   // other worker log line does.
   const spool = new Spool(paths, line => h.logs.push(line));
   let fingerprintCalls = 0;
+  let bodyRuns = 0;
 
   const h: Harness = {
     paths,
@@ -138,6 +212,10 @@ function harness(): Harness {
     reachProbeThrows: false,
     reachProbeCalls: 0,
     reachProbeLogs: [],
+    defaultLiveFlows: ['login-spine', 'send-message'],
+    writeArtifacts: true,
+    liveArtifactSha: undefined,
+    liveArtifactFlows: undefined,
     deps: {
       paths,
       spool,
@@ -149,7 +227,9 @@ function harness(): Harness {
       resolveRef: (_wt, ref) => (ref === 'origin/main' ? h.baseMain : h.trees[ref]),
       runCommand: async (cmd, args, options) => {
         h.commands.push({ cmd, args, cwd: options.cwd, env: options.env });
-        return h.exitCodes.shift() ?? 0;
+        const code = h.exitCodes.shift() ?? 0;
+        if (code === 0 && h.writeArtifacts) writeBodyArtifact(h, cmd, args, options.cwd, ++bodyRuns);
+        return code;
       },
       gateway: {
         clearPort: async () => {},
@@ -179,6 +259,7 @@ function harness(): Harness {
         return { held: h.leaseDecision.ok };
       },
       processAlive: () => h.submitterAlive,
+      defaultLiveFlows: () => h.defaultLiveFlows,
       gameServerReachable: async driveLog => {
         h.reachProbeCalls++;
         h.reachProbeLogs.push(driveLog);
@@ -314,6 +395,40 @@ describe('processOldest — the queue discipline', () => {
     expect(jobsLogVerdicts(h)).toEqual([{ id: job.id, verdict: 'ABANDONED' }]);
   });
 
+  it('runs a job whose waiting submitter exited 3 — wait detached it, so it is not ABANDONED (#1300)', async () => {
+    const h = harness();
+    const job = deposit(h); // submitter pid 4321
+    const out: string[] = [];
+    const err: string[] = [];
+    const unused = (): never => {
+      throw new Error('not used by wait');
+    };
+    const cliDeps: CliDeps = {
+      paths: h.paths,
+      spool: h.spool,
+      fingerprint: unused,
+      git: unused,
+      workerAlive: () => ({ alive: false, reason: 'heartbeat is 45 s old' }),
+      now: () => (h.clock.nowMs += 10),
+      sleep: async () => {},
+      pid: 4321,
+      out: line => out.push(line),
+      err: line => err.push(line),
+      env: {},
+      isInteractive: () => false,
+      promptLine: async () => null,
+      requesterIdentity: () => ({ user: 'u', host: 'h', tty: 'unknown' }),
+    };
+    expect(await cliMain(['wait', job.id], cliDeps)).toBe(3);
+
+    // The waiting process is gone now.
+    h.submitterAlive = false;
+    expect(await processOldest(h.deps)).toBe(true);
+    expect(h.spool.readReport(job.id)?.verdict).toBe('PASS');
+    expect(h.commands.length).toBeGreaterThan(0);
+    expect(jobsLogVerdicts(h).map(l => l.verdict)).not.toContain('ABANDONED');
+  });
+
   it('runs the oldest job end to end: claim, execute, report, release', async () => {
     const h = harness();
     const job = deposit(h);
@@ -379,7 +494,7 @@ describe('processOldest — the queue discipline', () => {
     expect(countCapabilityExceptions(bad)).toBe(0);
   });
 
-  it('carries the gate artifact\'s unproven flows into the attestation', async () => {
+  it('carries the gate artifact\'s untestable flows into the attestation', async () => {
     const h = harness();
     deposit(h);
     const artifactDir = path.join(h.worktree, 'report', 'e2e');
@@ -388,34 +503,34 @@ describe('processOldest — the queue discipline', () => {
       path.join(artifactDir, `gate-head-of-${path.basename(h.worktree)}.json`),
       JSON.stringify({
         exclusions: { capability: [] },
-        unproven: [{ flow: 'zoning-alert-read', required: true, reasons: ['r'] }],
+        untestable: [{ flow: 'zoning-alert-read', required: true, reasons: ['r'] }],
       }),
       'utf8',
     );
     await processOldest(h.deps);
-    expect(listVerdicts(h.paths)[0].verdict.unproven).toBe(1);
+    expect(listVerdicts(h.paths)[0].verdict.untestable).toBe(1);
   });
 
-  it('counts unproven flows, and zero when the artifact is absent, unreadable or predates the field', () => {
+  it('counts untestable flows, and zero when the artifact is absent, unreadable or predates the field', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-art-'));
     const write = (name: string, body: string): string => {
       const file = path.join(dir, name);
       fs.writeFileSync(file, body, 'utf8');
       return file;
     };
-    expect(countUnprovenFlows(undefined)).toBe(0);
-    expect(countUnprovenFlows('/nowhere/gate.json')).toBe(0);
-    expect(countUnprovenFlows(write('bad.json', '{not json'))).toBe(0);
+    expect(countUntestableFlows(undefined)).toBe(0);
+    expect(countUntestableFlows('/nowhere/gate.json')).toBe(0);
+    expect(countUntestableFlows(write('bad.json', '{not json'))).toBe(0);
     // An artifact written before the field existed.
-    expect(countUnprovenFlows(write('old.json', JSON.stringify({ exclusions: { capability: [] } })))).toBe(0);
-    expect(countUnprovenFlows(write('odd.json', JSON.stringify({ unproven: 'two' })))).toBe(0);
+    expect(countUntestableFlows(write('old.json', JSON.stringify({ exclusions: { capability: [] } })))).toBe(0);
+    expect(countUntestableFlows(write('odd.json', JSON.stringify({ untestable: 'two' })))).toBe(0);
     const two = JSON.stringify({
-      unproven: [
+      untestable: [
         { flow: 'zoning-alert-read', required: true, reasons: ['r'] },
         { flow: 'newspaper-read', required: false, reasons: ['s'] },
       ],
     });
-    expect(countUnprovenFlows(write('two.json', two))).toBe(2);
+    expect(countUntestableFlows(write('two.json', two))).toBe(2);
   });
 
   // B2.1 — the attestation gains what the gate actually did. These are the exact class
@@ -551,6 +666,59 @@ describe('processOldest — the queue discipline', () => {
   });
 
   describe('liveAttestationFrom — unit', () => {
+    // #1225 — one test per runLive() BLOCKED producer, each the literal LiveRunResult shape.
+    const blockedRun = (flows: LiveRunResult['flows'], error: string): LiveRunResult => ({
+      world: 'planitia',
+      branch: 'feature/x',
+      startedAt: '2026-09-30T00:00:00.000Z',
+      finishedAt: '2026-09-30T00:01:00.000Z',
+      status: 'BLOCKED',
+      preflight: { ok: flows.length > 0, checks: [], environmentAbort: false },
+      flows,
+      capabilities: [],
+      error,
+    });
+    const flow = (name: string, status: LiveRunResult['flows'][number]['status'], skipped?: string) => ({
+      name,
+      status,
+      ...(skipped ? { skipped } : {}),
+      assertions: [],
+      untestable: [],
+      probes: [],
+      messagesSent: 0,
+      messagesReceived: 0,
+      wireErrors: 0,
+    });
+    const writeArtifact = (live: LiveRunResult, required: string[]): string => {
+      const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-art-')), 'gate.json');
+      fs.writeFileSync(file, JSON.stringify({ live, routing: { required } }));
+      return file;
+    };
+
+    it('a skip-BLOCKED run reads "blocked-skip", naming only the SKIPPED flows', () => {
+      const file = writeArtifact(
+        blockedRun(
+          [flow('login-spine', 'PASS'), flow('permission-negative', 'SKIPPED', `${SECONDARY_ACCOUNT.username} refused`)],
+          `skipped — a flow that did not run is not a pass: permission-negative (${SECONDARY_ACCOUNT.username} refused)`,
+        ),
+        ['login-spine', 'permission-negative'],
+      );
+      expect(liveAttestationFrom(file)).toEqual({ status: 'blocked-skip', skipped: ['permission-negative'] });
+    });
+
+    it('a lock-refusal BLOCKED run (typed LiveRunResult, flows: []) still reads "unknown"', () => {
+      const file = writeArtifact(blockedRun([], 'world lock held by another branch'), ['login-spine']);
+      expect(liveAttestationFrom(file)).toEqual({
+        status: 'unknown',
+        why: 'world lock held by another branch; routed flows: login-spine',
+      });
+    });
+
+    it('a BLOCKED run with flows but none SKIPPED reads "unknown"', () => {
+      const file = writeArtifact(blockedRun([flow('login-spine', 'PASS')], 'blocked'), []);
+      expect(liveAttestationFrom(file).status).toBe('unknown');
+    });
+
     it('reads a "ran" live block with named flows', () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spo-art-'));
       const file = path.join(dir, 'gate.json');
@@ -721,16 +889,18 @@ describe('runJob — gate', () => {
     ['gate (ref)', 'ref'],
     ['live', 'live'],
     ['nightly', 'nightly'],
-  ] as const)('starts the %s gateway in single-user mode, and keeps it out of the body env', async (_label, type) => {
+  ] as const)('starts the %s gateway in single-user mode with a GM, and keeps both out of the body env', async (_label, type) => {
     const h = harness();
     const job = deposit(h, type);
     await runJob(h.deps, job);
     expect(h.gatewayEnvs).toHaveLength(1);
     expect(h.gatewayEnvs[0].SINGLE_USER_MODE).toBe('true');
+    expect(h.gatewayEnvs[0].SPO_GM_USERS).toBe('SPO_test3');
     // A replayed Jest suite reads SINGLE_USER_MODE through src/shared/config.ts.
     const body = h.commands.find(c => c.cmd === 'node');
     expect(body).toBeDefined();
     expect(body?.env?.SINGLE_USER_MODE).toBeUndefined();
+    expect(body?.env?.SPO_GM_USERS).toBeUndefined();
   });
 
   it('points the gateway and the body at the bench-wide asset cache, not the worktree', async () => {
@@ -740,7 +910,7 @@ describe('runJob — gate', () => {
     // The gateway is what primes and reads the mirror; without this it would download
     // all ~570 files into a fresh worktree on the bench's exclusive time.
     expect(h.gatewayEnvs).toEqual([
-      { E2E_WORLD_STATE_DIR: h.paths.world, SPO_CACHE_DIR: h.paths.cache, SINGLE_USER_MODE: 'true' },
+      { E2E_WORLD_STATE_DIR: h.paths.world, SPO_CACHE_DIR: h.paths.cache, SINGLE_USER_MODE: 'true', SPO_GM_USERS: 'SPO_test3' },
     ]);
     // verify-gate replays the Jest suite when there is no receipt, and tests that read
     // real assets must be pointed at the same mirror or they silently self-skip.
@@ -1723,6 +1893,7 @@ describe('the real command runner and deps', () => {
     ensureLayout(paths);
     const deps = realWorkerDeps(paths);
     expect(deps.port).toBe(8080);
+    expect(deps.defaultLiveFlows).toBe(readCheckoutDefaultFlows);
     expect(typeof deps.now()).toBe('number');
     await deps.sleep(1);
     deps.log('smoke'); // writes to stdout; must not throw
@@ -1848,16 +2019,86 @@ describe('workerLoop and main', () => {
 });
 
 describe('the merge queue takes the bench first', () => {
-  it('serves the queue only on an idle tick, never over a waiting job', async () => {
+  function submitEntry(h: ReturnType<typeof harness>): { id: string } {
+    return h.spool.submit(
+      {
+        type: 'ref',
+        worktree: h.worktree,
+        branch: 'gh-readonly-queue/main/pr-1-abc',
+        fingerprint: { head: 'q'.repeat(40), hash: 'ref:q', clean: true },
+        submitter: { pid: 0 },
+        args: [],
+        ref: 'q'.repeat(40),
+        queueEntry: true,
+      },
+      h.clock.nowMs + 1000,
+    );
+  }
+
+  it('serves the queue before taking a waiting job, never while one is running', async () => {
     // An entry jumps the spool once deposited, but the pass that deposits it must not run
     // while something is mid-flight — otherwise "jumping the line" becomes "interrupting".
     const h = harness();
-    deposit(h);
-    await workerLoop(h.deps, 1, async () => false);
-    expect(h.queueServed).toBe(0);
-
+    const ordinary = deposit(h);
+    const commandsAtServe: number[] = [];
+    h.deps.serveMergeQueue = () => {
+      h.queueServed++;
+      commandsAtServe.push(h.commands.length);
+      return 0;
+    };
     await workerLoop(h.deps, 1, async () => false);
     expect(h.queueServed).toBe(1);
+    expect(commandsAtServe).toEqual([0]);
+    expect(h.spool.readReport(ordinary.id)).not.toBeNull();
+
+    await workerLoop(h.deps, 1, async () => false);
+    expect(h.queueServed).toBe(2);
+  });
+
+  it('takes a queue entry discovered on a busy tick before the waiting deposit', async () => {
+    const h = harness();
+    const ordinary = deposit(h);
+    let entry: { id: string } | undefined;
+    h.deps.serveMergeQueue = () => {
+      h.queueServed++;
+      if (!entry) entry = submitEntry(h);
+      return 1;
+    };
+    await workerLoop(h.deps, 1, async () => false);
+    expect(h.spool.readReport(entry!.id)?.verdict).toBe('PASS');
+    expect(h.spool.readReport(ordinary.id)).toBeNull();
+    expect(h.queueServed).toBe(1);
+  });
+
+  it('serves an entry that appears mid-backlog before the next ordinary job', async () => {
+    const h = harness();
+    const first = deposit(h);
+    h.clock.nowMs += 1000;
+    const second = deposit(h, 'ref', [], { ref: 's'.repeat(40) });
+    let entry: { id: string } | undefined;
+    h.deps.serveMergeQueue = () => {
+      h.queueServed++;
+      if (h.queueServed === 2) entry = submitEntry(h);
+      return entry ? 1 : 0;
+    };
+    await workerLoop(h.deps, 1, async () => false);
+    expect(h.spool.readReport(first.id)).not.toBeNull();
+    expect(h.spool.readReport(second.id)).toBeNull();
+    expect(entry).toBeUndefined();
+
+    await workerLoop(h.deps, 1, async () => false);
+    // The entry ran (its verdict depends on the fake gate artifact the first job left
+    // behind, not on scheduling) — the point is that it ran before the second deposit.
+    expect(h.spool.readReport(entry!.id)).not.toBeNull();
+    expect(h.spool.readReport(second.id)).toBeNull();
+    expect(h.queueServed).toBe(2);
+  });
+
+  it('calls the queue exactly once per tick, whether the spool is empty or not', async () => {
+    const h = harness();
+    deposit(h);
+    await workerLoop(h.deps, 3, async () => false);
+    expect(h.queueServed).toBe(3);
   });
 
   it('takes a queue entry ahead of an older ordinary deposit', async () => {
@@ -2429,9 +2670,23 @@ describe('classifyStage', () => {
   it('classifies verify-gate.js on a derived bound (gate base + planned max routed flows), never tighter than the old 20 min', () => {
     const gate = classifyStage('node', ['scripts/verify-gate.js', '--live', '--deposited-sha=x']);
     expect(gate.stage).toBe('verify-gate.js');
-    expect(gate.deadlineMs).toBe(GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS * LIVE_RUN_PER_FLOW_MS);
-    expect(gate.deadlineMs).toBe(VERIFY_GATE_DEADLINE_MS);
+    expect(VERIFY_GATE_DEADLINE_MS).toBe(GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS * LIVE_RUN_PER_FLOW_MS);
+    // Contract changed by #1329: with no count the bound is sized from LIVE_RUN_FLOW_CEILING,
+    // and the fixed figure is a floor, no longer the bound itself.
+    expect(gate.deadlineMs).toBeGreaterThanOrEqual(VERIFY_GATE_DEADLINE_MS);
     expect(gate.deadlineMs).toBeGreaterThanOrEqual(1_200_000);
+  });
+
+  it('sizes verify-gate.js from the flow count (#1329), never below VERIFY_GATE_DEADLINE_MS', () => {
+    const args = ['scripts/verify-gate.js', '--live', '--deposited-sha=x'];
+    expect(classifyStage('node', args, 66).deadlineMs).toBeGreaterThanOrEqual(GATE_BASE_MS + 66 * LIVE_RUN_PER_FLOW_MS);
+    expect(classifyStage('node', args, 66).deadlineMs).toBe(GATE_BASE_MS + 66 * LIVE_RUN_PER_FLOW_MS);
+    // A 2-flow gate: its own figure is under the floor, so the floor applies.
+    expect(GATE_BASE_MS + 2 * LIVE_RUN_PER_FLOW_MS).toBeLessThan(VERIFY_GATE_DEADLINE_MS);
+    expect(classifyStage('node', [...args, '--flows=a,b'], 2).deadlineMs).toBe(VERIFY_GATE_DEADLINE_MS);
+    for (const count of [undefined, Number.NaN, -1, Number.POSITIVE_INFINITY]) {
+      expect(classifyStage('node', args, count).deadlineMs).toBe(GATE_BASE_MS + LIVE_RUN_FLOW_CEILING * LIVE_RUN_PER_FLOW_MS);
+    }
   });
 
   it('classifies run.js (live/nightly) on base + flows × per-flow', () => {
@@ -2517,6 +2772,24 @@ describe('the live-drive bound follows the checkout being driven', () => {
   it('takes the reader as a parameter, and falls back to the ceiling when it reads nothing', () => {
     expect(liveRunFlowCount(['--branch=main'], '/unused', () => 7)).toBe(7);
     expect(liveRunFlowCount(['--branch=main'], '/unused', () => undefined)).toBe(LIVE_RUN_FLOW_CEILING);
+  });
+
+  it('sizes verify-gate.js from --flows=, else the checkout count, else the ceiling (#1329)', () => {
+    const gate = (n: number): number => Math.max(VERIFY_GATE_DEADLINE_MS, GATE_BASE_MS + n * LIVE_RUN_PER_FLOW_MS);
+    const flows66 = `exports.FLOWS = [${Array.from({ length: 66 }, (_, i) => `{name:'f${i}'}`).join(',')}];`;
+    const dir = checkout(flows66);
+    expect(stageDeadlineFor('node', ['scripts/verify-gate.js', '--live'], dir)).toEqual({
+      stage: 'verify-gate.js',
+      deadlineMs: gate(66),
+    });
+    expect(stageDeadlineFor('node', ['scripts/verify-gate.js', '--live', '--flows=a,b'], dir).deadlineMs).toBe(gate(2));
+    expect(stageDeadlineFor('node', ['scripts/verify-gate.js', '--live'], checkout()).deadlineMs).toBe(
+      gate(LIVE_RUN_FLOW_CEILING),
+    );
+  });
+
+  it('tripwire: FLOWS never outgrows LIVE_RUN_FLOW_CEILING — the fallback bound must cover every flow (#1329)', () => {
+    expect(FLOWS.length).toBeLessThanOrEqual(LIVE_RUN_FLOW_CEILING);
   });
 
   it('classifies every other command exactly as classifyStage does', () => {
@@ -2677,6 +2950,106 @@ describe('runWithDeadline: an actual kill, not just a timer that gives up waitin
         { pid: -4242, signal: 'SIGTERM' },
         { pid: -4242, signal: 'SIGKILL' },
       ]);
+    } finally {
+      jest.useRealTimers();
+    }
+  }, 5_000);
+});
+
+describe('runWithDeadline: the live drive gets one flow to drain (#1329)', () => {
+  function fakeRun(stage: string): {
+    done: Promise<number>;
+    settled: number[];
+    killCalls: NodeJS.Signals[];
+    child: EventEmitter;
+  } {
+    const logFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-bench-drain-')), 'job.log');
+    const child = new EventEmitter();
+    (child as unknown as { pid: number }).pid = 4343;
+    const killCalls: NodeJS.Signals[] = [];
+    const settled: number[] = [];
+    const done = runWithDeadline(
+      'ignored-because-spawn-is-injected',
+      [],
+      { cwd: process.cwd(), logFile },
+      { stage, deadlineMs: 1_000 },
+      {
+        spawnProcess: (() => child) as unknown as typeof import('child_process').spawn,
+        kill: (_pid, signal) => killCalls.push(signal),
+      },
+    ).then(c => {
+      settled.push(c);
+      return c;
+    });
+    return { done, settled, killCalls, child };
+  }
+
+  it('gives verify-gate.js and run.js one flow of grace, every other stage KILL_GRACE_MS (5 s)', () => {
+    expect(killGraceFor({ stage: 'verify-gate.js', deadlineMs: 1 })).toBe(LIVE_RUN_PER_FLOW_MS);
+    expect(killGraceFor({ stage: 'run.js', deadlineMs: 1 })).toBe(LIVE_RUN_PER_FLOW_MS);
+    expect(killGraceFor({ stage: 'npm run build:e2e', deadlineMs: 1 })).toBe(5_000);
+    expect(killGraceFor({ stage: 'git fetch', deadlineMs: 1 })).toBe(5_000);
+    expect(killGraceFor({ stage: 'run.js', deadlineMs: 1, killGraceMs: 250 })).toBe(250);
+  });
+
+  it.each(['verify-gate.js', 'run.js'])(
+    'a %s that traps SIGTERM, drains, and exits 0 by itself resolves DEADLINE_EXIT_CODE, with no SIGKILL',
+    async stage => {
+      jest.useFakeTimers();
+      try {
+        const run = fakeRun(stage);
+        await jest.advanceTimersByTimeAsync(1_000);
+        expect(run.killCalls).toEqual(['SIGTERM']);
+        // Well past the 5 s other stages get: still no SIGKILL, the drain is still running.
+        await jest.advanceTimersByTimeAsync(LIVE_RUN_PER_FLOW_MS - 1_000);
+        expect(run.killCalls).toEqual(['SIGTERM']);
+        expect(run.settled).toEqual([]);
+        run.child.emit('close', 0);
+        expect(await run.done).toBe(DEADLINE_EXIT_CODE);
+        await jest.advanceTimersByTimeAsync(2 * LIVE_RUN_PER_FLOW_MS);
+        expect(run.killCalls).toEqual(['SIGTERM']);
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+    5_000,
+  );
+
+  it('a killed child that exits 1 by itself is a deadline kill too, never FAIL', async () => {
+    jest.useFakeTimers();
+    try {
+      const run = fakeRun('run.js');
+      await jest.advanceTimersByTimeAsync(1_000);
+      run.child.emit('close', 1);
+      expect(await run.done).toBe(DEADLINE_EXIT_CODE);
+    } finally {
+      jest.useRealTimers();
+    }
+  }, 5_000);
+
+  it('any other stage still gets SIGKILL 5 s after SIGTERM', async () => {
+    jest.useFakeTimers();
+    try {
+      const run = fakeRun('npm run build:e2e');
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(run.killCalls).toEqual(['SIGTERM']);
+      await jest.advanceTimersByTimeAsync(4_999);
+      expect(run.killCalls).toEqual(['SIGTERM']);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(run.killCalls).toEqual(['SIGTERM', 'SIGKILL']);
+      run.child.emit('close', null);
+      expect(await run.done).toBe(DEADLINE_EXIT_CODE);
+    } finally {
+      jest.useRealTimers();
+    }
+  }, 5_000);
+
+  it("without a deadline kill, the exit code is the child's own", async () => {
+    jest.useFakeTimers();
+    try {
+      const run = fakeRun('verify-gate.js');
+      run.child.emit('close', 1);
+      expect(await run.done).toBe(1);
     } finally {
       jest.useRealTimers();
     }
@@ -3121,5 +3494,329 @@ describe('a manual nightly — attest-only replacement of latest.json', () => {
       scheduledSubmittedAt: job.submittedAt,
     });
     expect(readManualRecords(h.paths)).toEqual([]);
+  });
+});
+
+describe('#1182 — an exit code alone is not a PASS', () => {
+  const head = (h: Harness): string => `head-of-${path.basename(h.worktree)}`;
+  const e2eDir = (h: Harness): string => path.join(h.worktree, 'report', 'e2e');
+  function seedGate(h: Harness, artifact: Record<string, unknown>): void {
+    fs.mkdirSync(e2eDir(h), { recursive: true });
+    fs.writeFileSync(
+      path.join(e2eDir(h), `gate-${head(h)}.json`),
+      JSON.stringify({ head: head(h), depositedSha: head(h), attempt: 1, ...artifact }),
+    );
+  }
+
+  describe('live / nightly', () => {
+    it('exit 0 with no artifact written is a FAIL naming what is missing', async () => {
+      const h = harness();
+      h.writeArtifacts = false;
+      const report = await runJob(h.deps, deposit(h, 'live'));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/no report\/e2e\/live-\*\.json was written by this run/);
+      expect(report.detail).toMatch(/an exit code alone is not a PASS/);
+      expect(report.liveArtifact).toBeUndefined();
+    });
+
+    it('an artifact for another sha is a FAIL naming that sha', async () => {
+      const h = harness();
+      h.liveArtifactSha = 'some-other-sha';
+      const report = await runJob(h.deps, deposit(h, 'live'));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(new RegExp(`names sha some-other-sha, not ${head(h)}`));
+    });
+
+    it('an artifact missing one requested flow is a FAIL naming the missing flow', async () => {
+      const h = harness();
+      h.liveArtifactFlows = [{ name: 'a', status: 'PASS' }];
+      const report = await runJob(h.deps, deposit(h, 'live', ['--flows=a,b']));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/missing: b/);
+      expect(report.detail).not.toMatch(/unexpected/);
+    });
+
+    it('an artifact carrying a flow nobody asked for is a FAIL naming it', async () => {
+      const h = harness();
+      h.liveArtifactFlows = [{ name: 'a', status: 'PASS' }, { name: 'z', status: 'PASS' }];
+      const report = await runJob(h.deps, deposit(h, 'live', ['--flows=a']));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/unexpected: z/);
+      expect(report.detail).not.toMatch(/missing/);
+    });
+
+    it('a complete artifact written by this run is a PASS, and the report points at it', async () => {
+      const h = harness();
+      const report = await runJob(h.deps, deposit(h, 'live', ['--flows=a,b']));
+      expect(report.verdict).toBe('PASS');
+      expect(report.liveArtifact).toMatch(new RegExp(`^${e2eDir(h)}/live-.*\\.json$`));
+      expect(report.liveFlows).toEqual([
+        { name: 'a', status: 'PASS' },
+        { name: 'b', status: 'PASS' },
+      ]);
+    });
+
+    it('a matching artifact left by an EARLIER run does not count — only one this run wrote', async () => {
+      const h = harness();
+      fs.mkdirSync(e2eDir(h), { recursive: true });
+      fs.writeFileSync(
+        path.join(e2eDir(h), 'live-2026-01-01T00-00-00-000Z.json'),
+        JSON.stringify({ sha: head(h), flows: [{ name: 'login-spine', status: 'PASS' }, { name: 'send-message', status: 'PASS' }] }),
+      );
+      h.writeArtifacts = false;
+      const report = await runJob(h.deps, deposit(h, 'live'));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/no report\/e2e\/live-\*\.json was written by this run/);
+    });
+
+    it('a nightly whose default flow list cannot be read from the checkout is a FAIL saying so', async () => {
+      const h = harness();
+      h.defaultLiveFlows = undefined;
+      const report = await runJob(h.deps, deposit(h, 'nightly'));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/the flow list this job asked for could not be read from the checkout/);
+    });
+
+    it('a nightly is judged against FLOWS minus GATE_ONLY — the checkout default', async () => {
+      const h = harness();
+      h.defaultLiveFlows = ['a', 'b', 'c'];
+      h.liveArtifactFlows = [{ name: 'a', status: 'PASS' }, { name: 'b', status: 'PASS' }];
+      const report = await runJob(h.deps, deposit(h, 'nightly'));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/missing: c/);
+    });
+
+    it("the nightly's latest.json lists each flow's status, the UNTESTABLE one with its reasons, and the UNTESTABLE and SKIPPED ones by name", async () => {
+      const h = harness();
+      h.defaultLiveFlows = ['a', 'b', 'c'];
+      h.liveArtifactFlows = [
+        { name: 'a', status: 'PASS', untestable: [] },
+        { name: 'b', status: 'UNTESTABLE', untestable: ['the restore line — no "Setting" line in http://log'] },
+        { name: 'c', status: 'SKIPPED', untestable: [] },
+      ];
+      deposit(h, 'nightly');
+      await processOldest(h.deps);
+      const result = readNightlyResult(h.paths);
+      expect(result?.verdict).toBe('PASS');
+      expect(result?.flows).toEqual([
+        { name: 'a', status: 'PASS' },
+        { name: 'b', status: 'UNTESTABLE', reasons: ['the restore line — no "Setting" line in http://log'] },
+        { name: 'c', status: 'SKIPPED' },
+      ]);
+      expect(result?.untestable).toEqual(['b']);
+      expect(result?.skipped).toEqual(['c']);
+    });
+
+    it('a drive that exits non-zero keeps its own verdict — the artifact check only vetoes a PASS', async () => {
+      const h = harness();
+      h.writeArtifacts = false;
+      const job = deposit(h, 'live');
+      h.exitCodes = [0, 0, 0, 2];
+      const report = await runJob(h.deps, job);
+      expect(report.verdict).toBe('BLOCKED');
+      expect(report.detail).not.toMatch(/exit code alone/);
+    });
+  });
+
+  describe('ref', () => {
+    it('exit 0 with no gate artifact is a FAIL', async () => {
+      const h = harness();
+      h.writeArtifacts = false;
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/no readable gate artifact at .*gate-.*\.json/);
+      expect(report.detail).toMatch(/an exit code alone is not a PASS/);
+    });
+
+    it('a gate artifact whose head is another sha is a FAIL', async () => {
+      const h = harness();
+      seedGate(h, { head: 'another-sha', routing: { required: [] }, live: { skipped: true } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/names head another-sha, not the gated sha/);
+    });
+
+    it('a gate artifact whose deposited sha differs is a FAIL', async () => {
+      const h = harness();
+      seedGate(h, { depositedSha: 'someone-else', routing: { required: [] }, live: { skipped: true } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/names deposited sha someone-else/);
+    });
+
+    it('a gate artifact from an earlier attempt is a FAIL — an earlier run wrote it', async () => {
+      const h = harness();
+      seedGate(h, { attempt: 99, routing: { required: [] }, live: { skipped: true } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/from attempt 99, not this run's attempt 1/);
+    });
+
+    it('a live stage that drove fewer flows than routed is a FAIL', async () => {
+      const h = harness();
+      seedGate(h, { routing: { required: ['a', 'b'] }, live: { status: 'PASS', flows: [{ name: 'a' }] } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/missing: b/);
+    });
+
+    it('a skipped live stage with flows routed is a FAIL', async () => {
+      const h = harness();
+      seedGate(h, { routing: { required: ['a'] }, live: { skipped: true, why: 'x' } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/skipped the live stage while a were asked for/);
+    });
+
+    it('a gate artifact with no completed live stage is a FAIL', async () => {
+      const h = harness();
+      seedGate(h, { routing: { required: ['a'] }, live: { status: 'BLOCKED' } });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('FAIL');
+      expect(report.detail).toMatch(/records no completed live stage/);
+    });
+
+    it('a complete, matching gate artifact is a PASS', async () => {
+      const h = harness();
+      seedGate(h, {
+        routing: { required: ['a', 'b'] },
+        live: { status: 'PASS', flows: [{ name: 'b' }, { name: 'a' }] },
+      });
+      const report = await runJob(h.deps, deposit(h));
+      expect(report.verdict).toBe('PASS');
+    });
+
+    it('a forwarded --flows= is what the live stage is judged against, not routing.required', async () => {
+      const h = harness();
+      seedGate(h, { routing: { required: ['a', 'b'] }, live: { status: 'PASS', flows: [{ name: 'a' }] } });
+      const report = await runJob(h.deps, deposit(h, 'ref', ['--flows=a']));
+      expect(report.verdict).toBe('PASS');
+    });
+
+    it('a vetoed PASS is attested as a FAIL', async () => {
+      const h = harness();
+      h.writeArtifacts = false;
+      const job = deposit(h);
+      await processOldest(h.deps);
+      expect(listVerdicts(h.paths).find(v => v.verdict.head === job.fingerprint.head)?.verdict.verdict).toBe('FAIL');
+    });
+  });
+
+  describe('the pure helpers', () => {
+    const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'spo-bench-1182-'));
+    function write(file: string, body: string): string {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, body, 'utf8');
+      return file;
+    }
+
+    it('flowsFromArgs: absent is undefined, the first flag wins, blanks are dropped', () => {
+      expect(flowsFromArgs(['--branch=main'])).toBeUndefined();
+      expect(flowsFromArgs(['--flows=a', '--flows=b,c'])).toEqual(['a']);
+      expect(flowsFromArgs(['--flows=a,,b,'])).toEqual(['a', 'b']);
+    });
+
+    it('liveArtifactNames: empty when report/e2e does not exist; only live-*.json otherwise', () => {
+      const wt = tmp();
+      expect(liveArtifactNames(wt).size).toBe(0);
+      write(path.join(wt, 'report', 'e2e', 'live-1.json'), '{}');
+      write(path.join(wt, 'report', 'e2e', 'gate-x.json'), '{}');
+      expect([...liveArtifactNames(wt)]).toEqual(['live-1.json']);
+    });
+
+    it('newLiveArtifact: the lexicographically last new name; undefined when nothing is new', () => {
+      const wt = tmp();
+      write(path.join(wt, 'report', 'e2e', 'live-1.json'), '{}');
+      const before = liveArtifactNames(wt);
+      expect(newLiveArtifact(wt, before)).toBeUndefined();
+      write(path.join(wt, 'report', 'e2e', 'live-3.json'), '{}');
+      write(path.join(wt, 'report', 'e2e', 'live-2.json'), '{}');
+      expect(newLiveArtifact(wt, before)).toBe(path.join(wt, 'report', 'e2e', 'live-3.json'));
+    });
+
+    it('liveFlowStatuses: undefined without a path, unreadable, or with no flows array', () => {
+      const dir = tmp();
+      expect(liveFlowStatuses(undefined)).toBeUndefined();
+      expect(liveFlowStatuses(write(path.join(dir, 'bad.json'), '{'))).toBeUndefined();
+      expect(liveFlowStatuses(write(path.join(dir, 'none.json'), '{}'))).toBeUndefined();
+      expect(
+        liveFlowStatuses(
+          write(path.join(dir, 'ok.json'), JSON.stringify({ flows: [{ name: 'a', status: 'PASS' }, { name: 'b' }, { status: 'X' }] })),
+        ),
+      ).toEqual([
+        { name: 'a', status: 'PASS' },
+        { name: 'b', status: 'UNKNOWN' },
+      ]);
+    });
+
+    it("liveFlowStatuses: carries an UNTESTABLE flow's reasons, strings only, and [] when it has none (#1320)", () => {
+      const dir = tmp();
+      const flows = [
+        { name: 'a', status: 'UNTESTABLE', untestable: ['no line', 7] },
+        { name: 'b', status: 'UNTESTABLE' },
+        { name: 'c', status: 'PASS', untestable: ['ignored'] },
+      ];
+      expect(liveFlowStatuses(write(path.join(dir, 'u.json'), JSON.stringify({ flows })))).toEqual([
+        { name: 'a', status: 'UNTESTABLE', reasons: ['no line'] },
+        { name: 'b', status: 'UNTESTABLE', reasons: [] },
+        { name: 'c', status: 'PASS' },
+      ]);
+    });
+
+    it('liveArtifactProblem: an unreadable artifact, and one naming no sha', () => {
+      const dir = tmp();
+      expect(liveArtifactProblem(write(path.join(dir, 'bad.json'), '{'), 's', ['a'])).toMatch(/could not be read/);
+      expect(liveArtifactProblem(write(path.join(dir, 'nosha.json'), '{}'), 's', ['a'])).toMatch(/names sha none, not s/);
+      expect(
+        liveArtifactProblem(write(path.join(dir, 'ok.json'), JSON.stringify({ sha: 's', flows: [{ name: 'a' }] })), 's', ['a']),
+      ).toBeUndefined();
+    });
+
+    it('gateArtifactProblem: no path, and fields absent from the artifact', () => {
+      const dir = tmp();
+      const expected = { gatedSha: 'g', depositedSha: 'd', attempt: 1, askedFlows: undefined };
+      expect(gateArtifactProblem(undefined, expected)).toMatch(/no readable gate artifact/);
+      const empty = write(path.join(dir, 'empty.json'), '{}');
+      expect(gateArtifactProblem(empty, expected)).toMatch(/names head none/);
+      const noDep = write(path.join(dir, 'nodep.json'), JSON.stringify({ head: 'g' }));
+      expect(gateArtifactProblem(noDep, expected)).toMatch(/names deposited sha none/);
+      const noAttempt = write(path.join(dir, 'noatt.json'), JSON.stringify({ head: 'g', depositedSha: 'd' }));
+      expect(gateArtifactProblem(noAttempt, expected)).toMatch(/from attempt none/);
+      const noRouting = write(
+        path.join(dir, 'norouting.json'),
+        JSON.stringify({ head: 'g', depositedSha: 'd', attempt: 1, live: { skipped: true } }),
+      );
+      expect(gateArtifactProblem(noRouting, expected)).toBeUndefined();
+      const liveNull = write(path.join(dir, 'livenull.json'), JSON.stringify({ head: 'g', depositedSha: 'd', attempt: 1, live: null }));
+      expect(gateArtifactProblem(liveNull, expected)).toMatch(/no completed live stage/);
+    });
+
+    describe('readCheckoutDefaultFlows', () => {
+      function checkout(flowsJs: string | undefined, routingJs: string | undefined): string {
+        const dir = tmp();
+        if (flowsJs !== undefined) write(path.join(dir, 'dist', 'e2e', 'flows.js'), flowsJs);
+        if (routingJs !== undefined) write(path.join(dir, 'dist', 'e2e', 'routing.js'), routingJs);
+        return dir;
+      }
+
+      it('reads FLOWS minus GATE_ONLY from the checkout', () => {
+        const dir = checkout(
+          "exports.FLOWS = [{name:'a'},{name:'chat'},{name:'b'}];",
+          "exports.GATE_ONLY = { chat: 'broadcasts' };",
+        );
+        expect(readCheckoutDefaultFlows(dir)).toEqual(['a', 'b']);
+      });
+
+      it.each([
+        ['flows.js is missing', undefined, 'exports.GATE_ONLY = {};'],
+        ['routing.js is missing', "exports.FLOWS = [{name:'a'}];", undefined],
+        ['flows.js throws on load', "throw new Error('boom');", 'exports.GATE_ONLY = {};'],
+        ['FLOWS is not an array', "exports.FLOWS = 'x';", 'exports.GATE_ONLY = {};'],
+        ['GATE_ONLY is not an object', "exports.FLOWS = [{name:'a'}];", 'exports.GATE_ONLY = 3;'],
+        ['a flow has no string name', 'exports.FLOWS = [{}];', 'exports.GATE_ONLY = {};'],
+      ])('is undefined when %s', (_label, flowsJs, routingJs) => {
+        expect(readCheckoutDefaultFlows(checkout(flowsJs, routingJs))).toBeUndefined();
+      });
+    });
   });
 });

@@ -11,6 +11,7 @@ import { useClient } from '../../context';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
 import { BuildMenu } from '../modals';
+import { DEBUG_MARKERS } from '../../debug-markers';
 import styles from './MobileBuildContent.module.css';
 
 type BuildSubtab = 'buildings' | 'roads' | 'demolish';
@@ -36,7 +37,7 @@ export function MobileBuildContent() {
   };
 
   return (
-    <div className={styles.container}>
+    <div className={styles.container} data-testid={DEBUG_MARKERS.mobileBuildContent} data-subtab={subtab}>
       {/* Segmented control */}
       <div className={styles.tabs} role="tablist">
         <button
@@ -71,7 +72,7 @@ export function MobileBuildContent() {
       {/* Subtab content */}
       <div className={styles.content}>
         {subtab === 'buildings' && (
-          <BuildMenu embedded onClose={handleBuildMenuClose} />
+          <BuildMenu onClose={handleBuildMenuClose} />
         )}
 
         {subtab === 'roads' && (

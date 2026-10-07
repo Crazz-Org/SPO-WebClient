@@ -12,7 +12,7 @@ import { REPORT_DIR, WORLD_NAME } from './config';
 import { CAPABILITIES, checkCapability, type Capability, type CapabilityEvidence } from './capability';
 import { FLOWS, flowByName, runFlow, type FlowResult } from './flows';
 import { preflight, type PreflightResult } from './preflight';
-import { GATE_ONLY } from './routing';
+import { GATE_ONLY, SERVER_QUARANTINE, type ServerQuarantine } from './routing';
 import { WorldLock } from './world-lock';
 
 /**
@@ -28,6 +28,9 @@ const EXIT: Readonly<Record<LiveRunResult['status'], number>> = {
   BLOCKED: 2,
   ENVIRONMENT: 3,
 };
+
+/** What the nightly attaches to a SERVER_QUARANTINE flow's result (doc/E2E-POLICY.md §7). */
+export type QuarantineMark = Pick<ServerQuarantine, 'reason' | 'link' | 'lift'>;
 
 export interface LiveRunResult {
   world: string;
@@ -46,10 +49,35 @@ export interface LiveRunResult {
   finishedAt: string;
   status: 'PASS' | 'FAIL' | 'ENVIRONMENT' | 'BLOCKED';
   preflight: PreflightResult;
-  flows: FlowResult[];
+  /** A quarantined flow keeps its real status; the nightly marks it (see {@link main}). */
+  flows: Array<FlowResult & { quarantined?: QuarantineMark }>;
   /** What the server says the test account may do — read-only, gathered before the flows. */
   capabilities: CapabilityEvidence[];
   error?: string;
+  /** Set when releasing the world lock threw — the world is left dirty, which always FAILs. */
+  releaseError?: string;
+  /**
+   * Set when a SIGTERM stopped the drive (#1328): the flows after the in-flight one are SKIPPED
+   * with {@link STOPPED_BY_DEADLINE}. Never reported PASS, nightly or not.
+   */
+  stopped?: true;
+}
+
+/** The `skipped` detail of a flow a SIGTERM kept from starting (#1328). */
+export const STOPPED_BY_DEADLINE = 'stopped by deadline';
+
+function notRun(name: string): FlowResult {
+  return {
+    name,
+    status: 'SKIPPED',
+    skipped: STOPPED_BY_DEADLINE,
+    assertions: [],
+    untestable: [],
+    probes: [],
+    messagesSent: 0,
+    messagesReceived: 0,
+    wireErrors: 0,
+  };
 }
 
 export interface LiveRunOptions {
@@ -82,58 +110,105 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
     };
   }
 
-  const checks = await preflight();
-  if (!checks.ok) {
-    lock.release();
+  // Every sleep of the drive is a ref'd timer (#1181), but if the event loop still drains
+  // before the run settles, Node would exit 0 half-way — a silent false PASS. Fail loudly.
+  let inProgress = 'preflight';
+  const onDrain = (): void => {
+    process.stderr.write(
+      `L2 live drive: the event loop drained before the run settled — Node was about to exit mid-drive (in progress: ${inProgress}). ` +
+        `A drive that stopped half-way is not a PASS: exiting ${EXIT.FAIL}.\n`,
+    );
+    try {
+      lock.release(`live drive drained mid-run (${inProgress})`);
+    } catch {
+      // release() already marked the world dirty (pending restores) — nothing more to do here.
+    }
+    process.exit(EXIT.FAIL);
+  };
+  process.on('beforeExit', onDrain);
+
+  // A deadline kill sends SIGTERM, then SIGKILL after a grace (#1328). The first SIGTERM only
+  // asks the drive to stop: the in-flight flow finishes — its restore included — no new flow
+  // starts, and the lock is released as on a normal end. A second SIGTERM is not swallowed:
+  // the handler steps aside and re-raises it, so the process ends as it would with no handler.
+  let stopRequested = false;
+  const onSigterm = (): void => {
+    if (stopRequested) {
+      process.removeListener('SIGTERM', onSigterm);
+      process.kill(process.pid, 'SIGTERM');
+      return;
+    }
+    stopRequested = true;
+    process.stderr.write(`stop requested — finishing ${inProgress}\n`);
+  };
+  process.on('SIGTERM', onSigterm);
+
+  try {
+    const checks = await preflight();
+    if (!checks.ok) {
+      lock.release();
+      return {
+        ...base,
+        finishedAt: new Date().toISOString(),
+        status: 'ENVIRONMENT',
+        preflight: checks,
+        flows: [],
+        capabilities: [],
+        error: checks.checks.filter(c => !c.ok).map(c => `${c.what}: ${c.detail}`).join('; '),
+      };
+    }
+
+    const results: FlowResult[] = [];
+    const capabilities: CapabilityEvidence[] = [];
+    let releaseError: string | undefined;
+
+    try {
+      // Capability reads come first: they mutate nothing, and the gate needs the answer
+      // whether or not a flow then runs.
+      for (const capability of options.capabilities ?? []) {
+        inProgress = `capability ${capability}`;
+        capabilities.push(await checkCapability(capability));
+      }
+      for (const name of options.flows) {
+        if (stopRequested) {
+          results.push(notRun(name));
+          continue;
+        }
+        inProgress = `flow ${name}`;
+        results.push(await runFlow(flowByName(name), { lock, survivalLogUrl: checks.survivalLogUrl }));
+      }
+    } finally {
+      try {
+        lock.release();
+      } catch (err: unknown) {
+        // A dirty world is worse than a failed flow — surface it as the headline.
+        releaseError = toErrorMessage(err);
+      }
+    }
+
+    const failed = releaseError !== undefined || results.some(r => r.status === 'FAIL');
+    // A flow that did not run is not a pass: a skip BLOCKS, and verify-gate.js maps that to a
+    // BLOCKED gate (doc/E2E-POLICY.md §7).
+    const skippedFlows = results.filter(r => r.status === 'SKIPPED');
+    const skipError = skippedFlows.length
+      ? `skipped — a flow that did not run is not a pass: ${skippedFlows.map(f => `${f.name} (${f.skipped ?? ''})`).join('; ')}`
+      : undefined;
     return {
       ...base,
       finishedAt: new Date().toISOString(),
-      status: 'ENVIRONMENT',
+      // A stopped drive is never a PASS, even when the stop landed during its last flow.
+      status: failed ? 'FAIL' : skippedFlows.length > 0 || stopRequested ? 'BLOCKED' : 'PASS',
       preflight: checks,
-      flows: [],
-      capabilities: [],
-      error: checks.checks.filter(c => !c.ok).map(c => `${c.what}: ${c.detail}`).join('; '),
+      flows: results,
+      capabilities,
+      error: releaseError ?? skipError ?? (stopRequested ? 'stopped by SIGTERM before the drive settled' : undefined),
+      ...(releaseError !== undefined ? { releaseError } : {}),
+      ...(stopRequested ? { stopped: true as const } : {}),
     };
-  }
-
-  const results: FlowResult[] = [];
-  const capabilities: CapabilityEvidence[] = [];
-  let releaseError: string | undefined;
-
-  try {
-    // Capability reads come first: they mutate nothing, and the gate needs the answer
-    // whether or not a flow then runs.
-    for (const capability of options.capabilities ?? []) {
-      capabilities.push(await checkCapability(capability));
-    }
-    for (const name of options.flows) {
-      results.push(await runFlow(flowByName(name), { lock, survivalLogUrl: checks.survivalLogUrl }));
-    }
   } finally {
-    try {
-      lock.release();
-    } catch (err: unknown) {
-      // A dirty world is worse than a failed flow — surface it as the headline.
-      releaseError = toErrorMessage(err);
-    }
+    process.removeListener('beforeExit', onDrain);
+    process.removeListener('SIGTERM', onSigterm);
   }
-
-  const failed = releaseError !== undefined || results.some(r => r.status === 'FAIL');
-  // A flow that did not run is not a pass: a skip BLOCKS, and verify-gate.js maps that to a
-  // BLOCKED gate (doc/E2E-POLICY.md §7).
-  const skippedFlows = results.filter(r => r.status === 'SKIPPED');
-  const skipError = skippedFlows.length
-    ? `skipped — a flow that did not run is not a pass: ${skippedFlows.map(f => `${f.name} (${f.skipped ?? ''})`).join('; ')}`
-    : undefined;
-  return {
-    ...base,
-    finishedAt: new Date().toISOString(),
-    status: failed ? 'FAIL' : skippedFlows.length > 0 ? 'BLOCKED' : 'PASS',
-    preflight: checks,
-    flows: results,
-    capabilities,
-    error: releaseError ?? skipError,
-  };
 }
 
 /** `npm run test:live -- --flows=a,b --branch=fix/x --sha=<40-hex> --capabilities=president` */
@@ -166,20 +241,46 @@ export async function main(
   // SKIPPED flows is reported PASS, the skips listed. An explicit --flows — a card's proof —
   // stays BLOCKED: a card cannot prove a flow that did not run. The lock-refusal BLOCK carries
   // no flows, and a skip beside a failure is already FAIL, so this test is exact.
+  //
+  // The nightly also absorbs a SERVER_QUARANTINE flow's FAIL (doc/E2E-POLICY.md §7): each such
+  // flow keeps its real status and is marked, and a run whose only FAILs are quarantined flows
+  // is PASS. A dirty world (releaseError) or any other FAIL still FAILs. An explicit --flows
+  // drives and judges a quarantined flow like any other.
+  const nightly = named === undefined;
+  const flowResults = nightly
+    ? result.flows.map(flow => {
+        const entry = SERVER_QUARANTINE[flow.name];
+        return entry ? { ...flow, quarantined: { reason: entry.reason, link: entry.link, lift: entry.lift } } : flow;
+      })
+    : result.flows;
+  const fails = flowResults.filter(f => f.status === 'FAIL');
+  // A run a SIGTERM stopped short (#1328) is never absorbed: the flows it did not reach are not a pass.
+  const absorbed =
+    nightly &&
+    result.stopped === undefined &&
+    result.status === 'FAIL' &&
+    result.releaseError === undefined &&
+    fails.length > 0 &&
+    fails.every(f => f.name in SERVER_QUARANTINE);
   const reported: LiveRunResult =
-    named === undefined && result.status === 'BLOCKED' && result.flows.some(f => f.status === 'SKIPPED')
-      ? { ...result, status: 'PASS' }
-      : result;
+    absorbed ||
+    (nightly && result.stopped === undefined && result.status === 'BLOCKED' && result.flows.some(f => f.status === 'SKIPPED'))
+      ? { ...result, flows: flowResults, status: 'PASS' }
+      : { ...result, flows: flowResults };
   const file = path.join(REPORT_DIR, `live-${reported.startedAt.replace(/[:.]/g, '-')}.json`);
   fs.mkdirSync(REPORT_DIR, { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(reported, null, 2)}\n`, 'utf8');
 
   const notDriven = skipped.map(n => `  gate-only, not driven: ${n} — ${GATE_ONLY[n]}`);
-  out.write(`${[formatSummary(reported), ...notDriven].join('\n')}\nArtifact: ${file}\n`);
+  out.write(`${[formatSummary(reported, SERVER_QUARANTINE), ...notDriven].join('\n')}\nArtifact: ${file}\n`);
   return EXIT[reported.status];
 }
 
-export function formatSummary(result: LiveRunResult): string {
+/**
+ * The run's summary. With a quarantine table, a `Server quarantine (N):` block lists every entry
+ * and the flow's real outcome in this run — printed on every run, passing or not.
+ */
+export function formatSummary(result: LiveRunResult, quarantine: Record<string, ServerQuarantine> = {}): string {
   const shaSuffix = result.sha ? ` (${result.sha.slice(0, 8)})` : '';
   const lines = [`L2 live drive on ${result.world} — ${result.status}${shaSuffix}`];
   if (result.error) lines.push(`  ! ${result.error}`);
@@ -207,11 +308,24 @@ export function formatSummary(result: LiveRunResult): string {
     for (const assertion of flow.assertions.filter(a => !a.ok)) {
       lines.push(`          x ${assertion.what}${assertion.detail ? ` (${assertion.detail})` : ''}`);
     }
-    for (const reason of flow.unproven) lines.push(`          ? unproven: ${reason}`);
+    // Every reason, flow and probe alike (report() folds an UNTESTABLE probe's note in): the job
+    // log is this output, so the reason lands in the run log on every run.
+    for (const reason of flow.untestable) lines.push(`          ? untestable: ${reason}`);
     for (const probe of flow.probes) {
       lines.push(
         `          probe ${probe.status}: ${probe.what} — log=${probe.logLine ? 'yes' : 'NO'}, ` +
           `readBack=${probe.readBack}, restored=${probe.restored}`,
+      );
+    }
+  }
+  const entries = Object.entries(quarantine);
+  if (entries.length > 0) {
+    lines.push(`Server quarantine (${entries.length}):`);
+    for (const [flow, entry] of entries) {
+      const ran = result.flows.find(f => f.name === flow);
+      lines.push(
+        `  ${flow} — ${entry.reason} | link: ${entry.link} | lift: ${entry.lift} | added: ${entry.added} | ` +
+          `this run: ${ran ? ran.status : 'not run'}`,
       );
     }
   }

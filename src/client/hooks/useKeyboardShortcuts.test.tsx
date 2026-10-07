@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { renderHook } from '@testing-library/react';
 import { useUiStore } from '../store/ui-store';
 import { useGameStore } from '../store/game-store';
@@ -27,7 +27,7 @@ describe('useKeyboardShortcuts', () => {
   let client: ClientCallbacks;
   beforeEach(() => {
     client = makeClient();
-    useUiStore.setState({ modal: null, commandPaletteOpen: false, minimapFullscreen: false, hudVisible: true });
+    useUiStore.setState({ modal: null, commandPaletteOpen: false, hudVisible: true });
     useUiStore.getState().clearSurfaces();
     useGameStore.setState({ isVisitor: false });
     document.body.innerHTML = '';
@@ -184,6 +184,50 @@ describe('useKeyboardShortcuts', () => {
     document.body.appendChild(input);
     press('h', { target: input });
     expect(useUiStore.getState().hudVisible).toBe(true);
+  });
+
+  describe('V switches the interface', () => {
+    beforeEach(() => { useUiStore.setState({ uiVersion: 'v1' }); });
+    afterEach(() => { localStorage.removeItem('spo_ui_version'); });
+
+    it('the reference list names V', () => {
+      expect(SHORTCUTS.map((s) => s.keys)).toContain('V');
+    });
+
+    it('V toggles uiVersion (either case), remembers it and is prevented', () => {
+      renderHook(() => useKeyboardShortcuts(client));
+      const ev = press('v');
+      expect(ev.defaultPrevented).toBe(true);
+      expect(useUiStore.getState().uiVersion).toBe('v2');
+      expect(localStorage.getItem('spo_ui_version')).toBe('v2');
+      press('V', { shiftKey: true });
+      expect(useUiStore.getState().uiVersion).toBe('v1');
+    });
+
+    it('V is inert while a modal or the palette owns the keyboard', () => {
+      renderHook(() => useKeyboardShortcuts(client));
+      useUiStore.setState({ modal: 'settings' });
+      press('v');
+      useUiStore.setState({ modal: null, commandPaletteOpen: true });
+      press('v');
+      expect(useUiStore.getState().uiVersion).toBe('v1');
+    });
+
+    it('V typed into a text field leaves the interface alone', () => {
+      renderHook(() => useKeyboardShortcuts(client));
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      const ev = press('v', { target: input });
+      expect(ev.defaultPrevented).toBe(false);
+      expect(useUiStore.getState().uiVersion).toBe('v1');
+    });
+
+    it('Ctrl+V (paste) is left to the browser', () => {
+      renderHook(() => useKeyboardShortcuts(client));
+      const ev = press('v', { ctrlKey: true });
+      expect(ev.defaultPrevented).toBe(false);
+      expect(useUiStore.getState().uiVersion).toBe('v1');
+    });
   });
 });
 

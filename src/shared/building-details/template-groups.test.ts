@@ -373,6 +373,15 @@ describe('General handler RDO properties', () => {
     const suffix = col.indexSuffix !== undefined ? col.indexSuffix : (info.indexSuffix ?? '');
     expect(`${col.rdoSuffix}0${col.columnSuffix ?? ''}${suffix}`).toBe('srvSales0');
   });
+
+  it('SrvGeneral reads the potential customers per class as plain NUMBERs', () => {
+    // StdBlocks/ServiceBlock.pas:1749-1751 — Cache.WriteInteger('hi/mi/loPotCustomers', GetPeopleCount(..))
+    for (const rdoName of ['hiPotCustomers', 'miPotCustomers', 'loPotCustomers']) {
+      const prop = SRV_GENERAL_GROUP.properties.find(p => p.rdoName === rdoName);
+      expect(prop).toBeDefined();
+      expect(prop!.type).toBe(PropertyType.NUMBER);
+    }
+  });
 });
 
 describe('Specialized handler RDO properties', () => {
@@ -442,6 +451,13 @@ describe('Specialized handler RDO properties', () => {
     expect(rdoNames).toContain('WordsOfWisdom');
     expect(rdoNames).toContain('OwnerName');
     expect(rdoNames).toContain('Transcended');
+  });
+
+  it('Votes requests the hidden CurrBlock enrichVotesTab binds RDOVoteOf to', () => {
+    const block = VOTES_GROUP.properties.find(p => p.rdoName === 'CurrBlock');
+    expect(block).toBeDefined();
+    expect(block!.notCached).toBeUndefined(); // it IS in the cache — it is what we read
+    expect(HIDDEN_PROPERTY_NAMES.has('CurrBlock')).toBe(true);
   });
 
   it('Votes should have ruler properties and candidate TABLE', () => {
@@ -525,7 +541,7 @@ describe('ENUM type properties', () => {
   // is covered by src/client/components/building/__tests__/trade-controls.test.tsx.
   const cases: Array<[string, typeof IND_GENERAL_GROUP, string[]]> = [
     ['IND_GENERAL_GROUP', IND_GENERAL_GROUP, ['TradeRole', 'TradeLevel']],
-    ['WH_GENERAL_GROUP', WH_GENERAL_GROUP, ['Role', 'TradeLevel']],
+    ['WH_GENERAL_GROUP', WH_GENERAL_GROUP, ['TradeLevel']],
     ['TRADE_GROUP', TRADE_GROUP, ['TradeRole', 'TradeLevel']],
   ];
 
@@ -542,6 +558,18 @@ describe('ENUM type properties', () => {
     expect(ind.find(p => p.rdoName === 'TradeRole')!.editable).toBe(true);
     expect(ind.find(p => p.rdoName === 'TradeLevel')!.editable).toBe(true);
     expect(WH_GENERAL_GROUP.properties.find(p => p.rdoName === 'TradeLevel')!.editable).toBe(true);
+  });
+
+  // #1255: the warehouse trade mode is cached as `TradeRole` (Kernel/Kernel.pas:5893, inherited by
+  // TWarehouse.StoreToCache, StdBlocks/Warehouses.pas:614-617); no `Role` is cached. The warehouse
+  // sheet reads it for the Supplies tab's automatic buying only — TEXT, not an editable control
+  // (Voyager/WHGeneralSheet.pas offers no trade mode, :46).
+  it('reads the warehouse TradeRole as a read-only TEXT, and never Role', () => {
+    const wh = WH_GENERAL_GROUP.properties;
+    const def = wh.find(p => p.rdoName === 'TradeRole');
+    expect(def?.type).toBe(PropertyType.TEXT);
+    expect(def?.editable).toBeUndefined();
+    expect(wh.some(p => p.rdoName === 'Role')).toBe(false);
   });
 });
 
@@ -1191,5 +1219,16 @@ describe('ordinary-facility general groups declare kind, cluster and town', () =
     for (const name of ['MetaFacilityName0', 'Cluster', 'Town']) {
       expect(HIDDEN_PROPERTY_NAMES.has(name)).toBe(false);
     }
+  });
+});
+
+describe('UNK_GENERAL_GROUP Connect (UnkFacilitySheet.pas:130)', () => {
+  it('carries a connectMap action button before demolish', () => {
+    const props = UNK_GENERAL_GROUP.properties;
+    const ci = props.findIndex((p) => p.actionId === 'connectMap');
+    const di = props.findIndex((p) => p.actionId === 'demolish');
+    expect(ci).toBeGreaterThan(-1);
+    expect(ci).toBeLessThan(di);
+    expect(props[ci]).toMatchObject({ rdoName: 'connectMap', type: PropertyType.ACTION_BUTTON, buttonLabel: 'Connect' });
   });
 });

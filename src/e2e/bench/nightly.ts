@@ -35,6 +35,7 @@ import { runGit, type GitRunner, type TreeFingerprint } from './fingerprint';
 import { prepareCheckout as sharedPrepareCheckout } from './checkout';
 import { type GitAuthEnv } from './git-auth';
 import type { Spool, JobRequest, JobVerdict, ManualRequester, NightlyTrigger } from './job';
+import { SERVER_QUARANTINE } from '../routing';
 
 /**
  * The window, in **UTC** hours: the run may start at 02:00, 03:00 or 04:00 UTC.
@@ -90,6 +91,23 @@ export interface NightlyResult {
   scheduledSubmittedAt?: string;
   /** manual only: who asked. */
   requestedBy?: ManualRequester;
+  /**
+   * Each flow's status, as this run's `report/e2e/live-*.json` recorded it. Absent when no
+   * live artifact was read — every record written before #1182, and any run that wrote none.
+   */
+  flows?: NightlyFlowStatus[];
+  /**
+   * The flows whose status is `UNTESTABLE`, by name — visible without opening the artifact;
+   * each one's reasons ride on its `flows` entry.
+   */
+  untestable?: string[];
+  /** The flows whose status is `SKIPPED`, by name. */
+  skipped?: string[];
+  /**
+   * The SERVER_QUARANTINE flows this run drove, by name, whatever their status — a known
+   * live-server fault keeps them out of the verdict, never out of sight (doc/E2E-POLICY.md §7).
+   */
+  quarantined?: string[];
   /** manual only: a summary of the record this one replaced. */
   supersedes?: {
     jobId?: string;
@@ -98,6 +116,14 @@ export interface NightlyResult {
     trigger?: NightlyTrigger;
     finishedAt?: string;
   };
+}
+
+/** One flow of a live drive, as its artifact recorded it (`FlowResult['status']`, src/e2e/flows.ts). */
+export interface NightlyFlowStatus {
+  name: string;
+  status: string;
+  /** Why an `UNTESTABLE` flow could not observe its result — set only on such a flow. */
+  reasons?: string[];
 }
 
 /** The marker a maintainer's `request-nightly` leaves for the worker's idle branch. */
@@ -708,6 +734,26 @@ interface NightlyReportView {
   finishedAt?: string;
   detail?: string;
   logFile?: string;
+  /** Each flow's status from the live artifact this run wrote; absent when none was read. */
+  liveFlows?: NightlyFlowStatus[];
+}
+
+/**
+ * The per-flow keys `latest.json` carries: every flow's status (an UNTESTABLE one with its
+ * reasons), plus the UNTESTABLE, SKIPPED
+ * and SERVER_QUARANTINE ones by name, so a flow that never proves anything is visible at a glance. `{}`
+ * when no live artifact was read — a conditional spread, so such a record gains no key.
+ */
+export function flowSummary(
+  liveFlows: NightlyFlowStatus[] | undefined,
+): Pick<NightlyResult, 'flows' | 'untestable' | 'skipped' | 'quarantined'> {
+  if (!liveFlows) return {};
+  return {
+    flows: liveFlows,
+    untestable: liveFlows.filter(f => f.status === 'UNTESTABLE').map(f => f.name),
+    skipped: liveFlows.filter(f => f.status === 'SKIPPED').map(f => f.name),
+    quarantined: liveFlows.filter(f => f.name in SERVER_QUARANTINE).map(f => f.name),
+  };
 }
 
 /** The sha a nightly job actually started on; the deposit sha when it never started. */
@@ -740,6 +786,7 @@ export function nightlyResultFromReport(
     // A scheduled deposit IS the night's slot, so the two stamps are the same value; a
     // later manual write carries this one forward rather than resetting the window.
     scheduledSubmittedAt: request.submittedAt,
+    ...flowSummary(report.liveFlows),
   };
 }
 
@@ -788,6 +835,7 @@ export function publishManualResult(
     detail: report.detail,
     logFile: report.logFile,
     trigger: 'manual',
+    ...flowSummary(report.liveFlows),
   });
 
   if (!attested) return;
@@ -809,6 +857,7 @@ export function publishManualResult(
       ? { scheduledSubmittedAt: previous.scheduledSubmittedAt ?? previous.submittedAt }
       : {}),
     requestedBy,
+    ...flowSummary(report.liveFlows),
     ...(previous
       ? {
           supersedes: {

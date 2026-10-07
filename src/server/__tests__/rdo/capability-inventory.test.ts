@@ -101,6 +101,17 @@ const UNWIRED: ReadonlyArray<{ type: string; reason: string }> = [
     reason: 'handleGetRoadCost exists; the client prices the road itself with ' +
       'estimateRoadCost. This is the gateway-side door bridge pricing needs. Issue #99.',
   },
+  {
+    type: 'REQ_NEAR_CIRCUITS',
+    reason: 'handleNearCircuits serves the headless bots (SPO-Bots read-market), which compare ' +
+      'NearCircuits per pair themselves; the browser picker keeps REQ_CONNECTION_REACHABILITY.',
+  },
+  // Contract changed by #1335: REQ_FACILITY_STATUS_BATCH is a new request the browser never sends.
+  {
+    type: 'REQ_FACILITY_STATUS_BATCH',
+    reason: 'handleFacilityStatusBatch serves the headless bots (SPO-Bots money-per-hour reads ' +
+      'of a whole estate per cycle); the browser inspector reads one building by focus.',
+  },
 ];
 
 function declaredRequestTypes(): string[] {

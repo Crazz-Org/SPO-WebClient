@@ -121,8 +121,9 @@ describe('auto-buy scenario — the ten header names', () => {
     releaseInspector(fake.ctx);
   });
 
-  it('is ten names long — Voyager reads ten, not nine', () => {
-    expect(SUPPLY_HEADER_NAMES).toHaveLength(10);
+  // Contract changed by #1340: nfFluidValue appended, so thirteen names.
+  it("is thirteen names long — Voyager's ten, the ad sheet's two (#1195), then nfFluidValue (#1340)", () => {
+    expect(SUPPLY_HEADER_NAMES).toHaveLength(13);
     expect(SUPPLY_HEADER_NAMES[8]).toBe('Selected');
     expect(SUPPLY_HEADER_NAMES[9]).toBe('ObjectId');
   });

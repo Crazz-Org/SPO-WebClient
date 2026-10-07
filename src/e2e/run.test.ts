@@ -2,12 +2,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Writable } from 'stream';
-import { formatSummary, main, runLive, type LiveRunOptions, type LiveRunResult } from './run';
+import { formatSummary, main, runLive, STOPPED_BY_DEADLINE, type LiveRunOptions, type LiveRunResult } from './run';
 import { WorldLock } from './world-lock';
 import * as preflightModule from './preflight';
 import * as flowsModule from './flows';
 import * as capabilityModule from './capability';
-import { GATE_ONLY } from './routing';
+import { GATE_ONLY, SERVER_QUARANTINE } from './routing';
+import { SECONDARY_ACCOUNT } from './config';
 
 function tempLock(): WorldLock {
   return new WorldLock(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-run-')));
@@ -25,7 +26,7 @@ function passingFlow(name: string): flowsModule.FlowResult {
     name,
     status: 'PASS',
     assertions: [],
-    unproven: [],
+    untestable: [],
     probes: [],
     messagesSent: 4,
     messagesReceived: 6,
@@ -80,20 +81,20 @@ describe('runLive', () => {
     expect(result.flows.map(f => f.name)).toEqual(['login-spine']);
   });
 
-  it('an UNPROVEN flow never fails the run, and the summary says why', async () => {
+  it('an UNTESTABLE flow never fails the run, and the summary says why', async () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
     jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => ({
       ...passingFlow(flow.name),
-      status: 'UNPROVEN',
-      unproven: ['x — y'],
+      status: 'UNTESTABLE',
+      untestable: ['x — y'],
     }));
 
     const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
 
     expect(result.status).toBe('PASS');
     const summary = formatSummary(result);
-    expect(summary).toContain('UNPROVEN');
-    expect(summary).toContain('? unproven: x — y');
+    expect(summary).toContain('UNTESTABLE');
+    expect(summary).toContain('? untestable: x — y');
   });
 
   it('fails the run when any flow fails', async () => {
@@ -110,7 +111,7 @@ describe('runLive', () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
     jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow =>
       flow.name === 'permission-negative'
-        ? { ...passingFlow(flow.name), status: 'SKIPPED', skipped: 'Crazz refused at REQ_AUTH_CHECK (code 7)' }
+        ? { ...passingFlow(flow.name), status: 'SKIPPED', skipped: `${SECONDARY_ACCOUNT.username} refused at REQ_AUTH_CHECK (code 7)` }
         : passingFlow(flow.name),
     );
 
@@ -122,7 +123,7 @@ describe('runLive', () => {
 
     expect(result.status).toBe('BLOCKED');
     expect(result.error).toBe(
-      'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused at REQ_AUTH_CHECK (code 7))',
+      `skipped — a flow that did not run is not a pass: permission-negative (${SECONDARY_ACCOUNT.username} refused at REQ_AUTH_CHECK (code 7))`,
     );
   });
 
@@ -201,6 +202,28 @@ describe('runLive', () => {
     expect(result.error).toMatch(/dirty/);
   });
 
+  it('records the release error apart, so the nightly never absorbs a dirty world (#1310)', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const lock = tempLock();
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => {
+      lock.addPendingRestore({ key: 'k', what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
+      return passingFlow(flow.name);
+    });
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock });
+
+    expect(result.releaseError).toMatch(/dirty/);
+  });
+
+  it('carries no releaseError key when the world was released clean', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => passingFlow(flow.name));
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+
+    expect(Object.prototype.hasOwnProperty.call(result, 'releaseError')).toBe(false);
+  });
+
   it('passes the resolved log url down to the flows', async () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
     const runFlow = jest
@@ -236,6 +259,177 @@ describe('runLive', () => {
   });
 });
 
+describe('runLive — the drain guard (#1181)', () => {
+  async function flush(): Promise<void> {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  }
+
+  it('exits non-zero, naming the flow in progress, when the event loop drains mid-drive', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    // A flow whose awaited timer never fires — exactly the drained session-resume.
+    const runFlow = jest.spyOn(flowsModule, 'runFlow').mockImplementation(() => new Promise(() => {}));
+    const before = process.listeners('beforeExit');
+    const lock = tempLock();
+
+    void runLive({ flows: ['session-resume'], branch: 'fix/a', lock });
+    await flush();
+    expect(runFlow).toHaveBeenCalled();
+
+    const added = process.listeners('beforeExit').filter(l => !before.includes(l));
+    expect(added).toHaveLength(1);
+    const exit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const write = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      (added[0] as () => void)();
+      expect(exit).toHaveBeenCalledWith(1);
+      const text = write.mock.calls.map(c => String(c[0])).join('');
+      expect(text).toContain('in progress');
+      expect(text).toContain('session-resume');
+      expect(lock.read().holder).toBeNull();
+    } finally {
+      process.removeListener('beforeExit', added[0] as () => void);
+    }
+  });
+
+  it('disarms the guard once a run settles — PASS or ENVIRONMENT', async () => {
+    const count = process.listeners('beforeExit').length;
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => passingFlow(flow.name));
+    await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+    expect(process.listeners('beforeExit')).toHaveLength(count);
+
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue({ ...okPreflight, ok: false });
+    await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+    expect(process.listeners('beforeExit')).toHaveLength(count);
+  });
+});
+
+describe('runLive — a SIGTERM stops the drive gracefully (#1328)', () => {
+  const restore = { key: 'clone', what: 'salaries', x: 1, y: 2, propertyName: 'RDOSetSalaries', originalValue: '100' };
+
+  // The listeners present before the test's runLive — the drain-guard test leaves a run pending
+  // forever, so its handler is still installed and must never see this file's signals.
+  let before: NodeJS.SignalsListener[] = [];
+  let kill: jest.SpyInstance;
+  beforeEach(() => {
+    before = process.listeners('SIGTERM');
+    // A safety net: a re-raised SIGTERM must never reach the Jest worker itself.
+    kill = jest.spyOn(process, 'kill').mockImplementation(() => true);
+  });
+
+  /** Delivers a SIGTERM to the handler this test's runLive installed — no real signal is sent. */
+  function sigterm(): void {
+    for (const listener of process.listeners('SIGTERM').filter(l => !before.includes(l))) listener('SIGTERM');
+  }
+
+  it('lets flow k finish its restore, starts nothing after it, reports k+1..n as not run, and releases the lock clean', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const write = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const lock = tempLock();
+    const started: string[] = [];
+    let restored = false;
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => {
+      started.push(flow.name);
+      if (flow.name === 'clone-salaries-roundtrip') {
+        lock.addPendingRestore(restore);
+        sigterm();
+        await new Promise(resolve => setTimeout(resolve, 5));
+        lock.clearPendingRestore(restore.key);
+        restored = true;
+      }
+      return passingFlow(flow.name);
+    });
+
+    const result = await runLive({
+      flows: ['login-spine', 'clone-salaries-roundtrip', 'politics-read', 'chat-read'],
+      branch: 'fix/a',
+      lock,
+    });
+
+    expect(restored).toBe(true);
+    expect(started).toEqual(['login-spine', 'clone-salaries-roundtrip']);
+    expect(result.flows.map(f => [f.name, f.status])).toEqual([
+      ['login-spine', 'PASS'],
+      ['clone-salaries-roundtrip', 'PASS'],
+      ['politics-read', 'SKIPPED'],
+      ['chat-read', 'SKIPPED'],
+    ]);
+    expect(result.flows.slice(2).map(f => f.skipped)).toEqual([STOPPED_BY_DEADLINE, STOPPED_BY_DEADLINE]);
+    expect(STOPPED_BY_DEADLINE).toBe('stopped by deadline');
+    expect(result.status).not.toBe('PASS');
+    expect(result.stopped).toBe(true);
+    expect(lock.read()).toEqual({ holder: null, pendingRestores: [], dirty: false });
+    const text = write.mock.calls.map(c => String(c[0])).join('');
+    expect(text).toContain('stop requested — finishing flow clone-salaries-roundtrip');
+  });
+
+  it('is not a PASS even when the stop lands during the last flow', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => {
+      sigterm();
+      return passingFlow(flow.name);
+    });
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+
+    expect(result.status).toBe('BLOCKED');
+    expect(result.error).toBe('stopped by SIGTERM before the drive settled');
+  });
+
+  it('does not swallow a second SIGTERM — it steps aside and re-raises it for the default termination', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    let afterFirst: number | undefined;
+    let afterSecond: number | undefined;
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => {
+      sigterm();
+      afterFirst = process.listeners('SIGTERM').length;
+      expect(kill).not.toHaveBeenCalled();
+      sigterm();
+      afterSecond = process.listeners('SIGTERM').length;
+      return passingFlow(flow.name);
+    });
+
+    await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() });
+
+    expect(kill).toHaveBeenCalledTimes(1);
+    expect(kill).toHaveBeenCalledWith(process.pid, 'SIGTERM');
+    expect(afterFirst).toBe(before.length + 1);
+    expect(afterSecond).toBe(before.length);
+  });
+
+  it('removes the handler once runLive returns — PASS, FAIL and BLOCKED alike', async () => {
+    const count = process.listeners('SIGTERM').length;
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const runFlow = jest.spyOn(flowsModule, 'runFlow');
+    let installed = 0;
+
+    runFlow.mockImplementation(async flow => {
+      installed = process.listeners('SIGTERM').length;
+      return passingFlow(flow.name);
+    });
+    expect((await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() })).status).toBe('PASS');
+    expect(installed).toBe(count + 1);
+    expect(process.listeners('SIGTERM')).toHaveLength(count);
+
+    runFlow.mockImplementation(async flow => ({ ...passingFlow(flow.name), status: 'FAIL' as const }));
+    expect((await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() })).status).toBe('FAIL');
+    expect(process.listeners('SIGTERM')).toHaveLength(count);
+
+    runFlow.mockImplementation(async flow => ({ ...passingFlow(flow.name), status: 'SKIPPED' as const }));
+    expect((await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock() })).status).toBe('BLOCKED');
+    expect(process.listeners('SIGTERM')).toHaveLength(count);
+
+    const dirty = tempLock();
+    dirty.acquire('fix/a', 1, () => false);
+    dirty.addPendingRestore(restore);
+    expect(() => dirty.release()).toThrow();
+    expect((await runLive({ flows: ['login-spine'], branch: 'fix/b', lock: dirty })).status).toBe('BLOCKED');
+    expect(process.listeners('SIGTERM')).toHaveLength(count);
+  });
+});
+
 describe('formatSummary', () => {
   const base: LiveRunResult = {
     world: 'planitia',
@@ -260,7 +454,7 @@ describe('formatSummary', () => {
           name: 'permission-negative',
           status: 'FAIL',
           assertions: [{ what: 'a non-mayor is refused', ok: false, detail: 'canGovern=true' }],
-          unproven: [],
+          untestable: [],
           probes: [],
           messagesSent: 1,
           messagesReceived: 1,
@@ -279,7 +473,7 @@ describe('formatSummary', () => {
           name: 'politics-write',
           status: 'FAIL',
           assertions: [],
-          unproven: [],
+          untestable: [],
           probes: [
             {
               what: 'tax row 0',
@@ -320,23 +514,23 @@ describe('formatSummary', () => {
           name: 'zoning-alert-read',
           status: 'FAIL',
           assertions: [],
-          unproven: [],
+          untestable: [],
           probes: [],
           messagesSent: 1,
           messagesReceived: 1,
           wireErrors: 0,
-          seed: { what: 'Crazz sends SPO_test3 one alert', ok: true, detail: 'hall (220,41) via 10.1.2.3' },
+          seed: { what: `${SECONDARY_ACCOUNT.username} sends SPO_test3 one alert`, ok: true, detail: 'hall (220,41) via 10.1.2.3' },
           cleanup: [
             { what: "removed from SPO_test3's Inbox", ok: true, detail: '1/1 deleted' },
-            { what: "removed from Crazz's Sent", ok: false },
+            { what: `removed from ${SECONDARY_ACCOUNT.username}'s Sent`, ok: false },
           ],
         },
       ],
     });
-    expect(summary).toContain('seed ok: Crazz sends SPO_test3 one alert (hall (220,41) via 10.1.2.3)');
+    expect(summary).toContain(`seed ok: ${SECONDARY_ACCOUNT.username} sends SPO_test3 one alert (hall (220,41) via 10.1.2.3)`);
     expect(summary).toContain("cleanup ok: removed from SPO_test3's Inbox (1/1 deleted)");
-    expect(summary).toContain("cleanup FAIL: removed from Crazz's Sent");
-    expect(summary).not.toContain("Crazz's Sent (");
+    expect(summary).toContain(`cleanup FAIL: removed from ${SECONDARY_ACCOUNT.username}'s Sent`);
+    expect(summary).not.toContain(`${SECONDARY_ACCOUNT.username}'s Sent (`);
   });
 
   it('shows a failed seed as FAIL', () => {
@@ -345,9 +539,9 @@ describe('formatSummary', () => {
       flows: [
         {
           name: 'zoning-alert-read',
-          status: 'UNPROVEN',
+          status: 'UNTESTABLE',
           assertions: [],
-          unproven: [],
+          untestable: [],
           probes: [],
           messagesSent: 0,
           messagesReceived: 0,
@@ -369,9 +563,9 @@ describe('formatSummary', () => {
         {
           name: 'permission-negative',
           status: 'SKIPPED',
-          skipped: 'Crazz refused',
+          skipped: `${SECONDARY_ACCOUNT.username} refused`,
           assertions: [],
-          unproven: [],
+          untestable: [],
           probes: [],
           messagesSent: 0,
           messagesReceived: 0,
@@ -379,8 +573,29 @@ describe('formatSummary', () => {
         },
       ],
     });
-    expect(summary).toContain('  SKIP  permission-negative — Crazz refused');
+    expect(summary).toContain(`  SKIP  permission-negative — ${SECONDARY_ACCOUNT.username} refused`);
     expect(summary).not.toContain('SKIPPED  permission-negative');
+  });
+
+  it('prints the server quarantine block with each entry and its outcome in this run (#1310)', () => {
+    // A second entry that did not run — newspaper-board-read left the live table with #1320.
+    const table = {
+      ...SERVER_QUARANTINE,
+      'newspaper-board-read': { reason: 'posts answer HTTP 500', link: 'https://example.com/1', lift: 'a post lands', added: '2026-10-04' },
+    };
+    const summary = formatSummary({ ...base, flows: [{ ...passingFlow('portrait-roundtrip'), status: 'FAIL' }] }, table);
+    const entries = Object.keys(table);
+    expect(summary).toContain(`Server quarantine (${entries.length}):`);
+    const portrait = SERVER_QUARANTINE['portrait-roundtrip'];
+    expect(summary).toContain(
+      `  portrait-roundtrip — ${portrait.reason} | link: ${portrait.link} | lift: ${portrait.lift} | ` +
+        `added: ${portrait.added} | this run: FAIL`,
+    );
+    expect(summary).toMatch(/ {2}newspaper-board-read — .* \| this run: not run$/m);
+  });
+
+  it('prints no quarantine block without a table', () => {
+    expect(formatSummary(base)).not.toContain('Server quarantine');
   });
 
   it('surfaces failed pre-flight checks', () => {
@@ -523,14 +738,14 @@ describe('main', () => {
     const skippedRun: LiveRunResult = {
       ...result,
       status: 'BLOCKED',
-      error: 'skipped — a flow that did not run is not a pass: permission-negative (Crazz refused)',
+      error: `skipped — a flow that did not run is not a pass: permission-negative (${SECONDARY_ACCOUNT.username} refused)`,
       flows: [
         {
           name: 'permission-negative',
           status: 'SKIPPED',
-          skipped: 'Crazz refused',
+          skipped: `${SECONDARY_ACCOUNT.username} refused`,
           assertions: [],
-          unproven: [],
+          untestable: [],
           probes: [],
           messagesSent: 0,
           messagesReceived: 0,
@@ -547,10 +762,10 @@ describe('main', () => {
       const out = sink();
       expect(await main([], async () => skippedRun, out.stream)).toBe(0);
       expect(out.text()).toContain('L2 live drive on planitia — PASS');
-      expect(out.text()).toContain('  SKIP  permission-negative — Crazz refused');
+      expect(out.text()).toContain(`  SKIP  permission-negative — ${SECONDARY_ACCOUNT.username} refused`);
       const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
       expect(artifact.status).toBe('PASS');
-      expect(artifact.flows[0]).toMatchObject({ status: 'SKIPPED', skipped: 'Crazz refused' });
+      expect(artifact.flows[0]).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_ACCOUNT.username} refused` });
     });
 
     it('stays BLOCKED, exit 2, when the caller named the flows', async () => {
@@ -562,6 +777,113 @@ describe('main', () => {
     it('a lock-refusal BLOCK (no flows) stays BLOCKED for the nightly too', async () => {
       const refused = { ...result, status: 'BLOCKED' as const, error: 'world dirty' };
       expect(await main([], async () => refused, sink().stream)).toBe(2);
+    });
+
+    it('a run a SIGTERM stopped stays BLOCKED for the nightly — its unreached flows are not a pass (#1328)', async () => {
+      const stopped = { ...skippedRun, stopped: true as const };
+      expect(await main([], async () => stopped, sink().stream)).toBe(2);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('BLOCKED');
+    });
+  });
+
+  describe('UNTESTABLE flows in the nightly (#1320)', () => {
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    afterEach(() => {
+      if (fs.existsSync(written)) fs.unlinkSync(written);
+    });
+    const untestable = (name: string, reasons: string[]): flowsModule.FlowResult => ({
+      ...passingFlow(name),
+      status: 'UNTESTABLE',
+      untestable: reasons,
+    });
+    const flows = [
+      passingFlow('login-spine'),
+      untestable('mayor-rating-roundtrip', ["the restore to 100's Tycoon rating line — no line, so the pending restore is cleared"]),
+      untestable('newspaper-board-read', ['a column is listed — 0 columns', 'a tree entry is listed — 0 entries']),
+    ];
+
+    it('exits 0 with PASS when every flow is PASS or UNTESTABLE, printing each reason', async () => {
+      const out = sink();
+      expect(await main([], async () => ({ ...result, status: 'PASS', flows }), out.stream)).toBe(0);
+      expect(out.text()).toContain('L2 live drive on planitia — PASS');
+      expect(out.text()).toContain("? untestable: the restore to 100's Tycoon rating line — no line, so the pending restore is cleared");
+      expect(out.text()).toContain('? untestable: a column is listed — 0 columns');
+      expect(out.text()).toContain('? untestable: a tree entry is listed — 0 entries');
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('PASS');
+      expect(artifact.flows[1]).toMatchObject({ status: 'UNTESTABLE', untestable: flows[1].untestable });
+    });
+
+    it('still FAILs, exit 1, on a dirty world beside them', async () => {
+      const dirty: LiveRunResult = { ...result, status: 'FAIL', flows, releaseError: 'world left dirty', error: 'world left dirty' };
+      const out = sink();
+      expect(await main([], async () => dirty, out.stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+      expect(out.text()).toContain('? untestable: a column is listed — 0 columns');
+    });
+  });
+
+  describe('the server quarantine (#1310)', () => {
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    afterEach(() => {
+      if (fs.existsSync(written)) fs.unlinkSync(written);
+    });
+    const failing = (name: string): flowsModule.FlowResult => ({ ...passingFlow(name), status: 'FAIL', error: 'refused' });
+    const quarantinedFail: LiveRunResult = {
+      ...result,
+      status: 'FAIL',
+      flows: [passingFlow('login-spine'), failing('portrait-roundtrip')],
+    };
+
+    it('reports PASS, exit 0, when the only FAIL is a quarantined flow — the flow keeps its FAIL and is marked', async () => {
+      const out = sink();
+      expect(await main([], async () => quarantinedFail, out.stream)).toBe(0);
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('PASS');
+      const portrait = SERVER_QUARANTINE['portrait-roundtrip'];
+      expect(artifact.flows[1]).toMatchObject({
+        name: 'portrait-roundtrip',
+        status: 'FAIL',
+        quarantined: { reason: portrait.reason, link: portrait.link, lift: portrait.lift },
+      });
+      expect(artifact.flows[0].quarantined).toBeUndefined();
+      expect(out.text()).toContain('L2 live drive on planitia — PASS');
+      expect(out.text()).toContain('  FAIL  portrait-roundtrip — refused');
+    });
+
+    it('still FAILs, exit 1, when a non-quarantined flow FAILs beside it', async () => {
+      const both = { ...quarantinedFail, flows: [...quarantinedFail.flows, failing('politics-read')] };
+      expect(await main([], async () => both, sink().stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+    });
+
+    it('still FAILs, exit 1, when a SIGTERM stopped the run — the quarantine never absorbs a stopped drive (#1328)', async () => {
+      const stopped = { ...quarantinedFail, stopped: true as const };
+      expect(await main([], async () => stopped, sink().stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+    });
+
+    it('still FAILs, exit 1, on a dirty world — the quarantine never excuses a safety rail', async () => {
+      const dirty = { ...quarantinedFail, releaseError: 'world left dirty', error: 'world left dirty' };
+      expect(await main([], async () => dirty, sink().stream)).toBe(1);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('FAIL');
+    });
+
+    it('still FAILs, exit 1, when --flows names the quarantined flow, and marks nothing', async () => {
+      const named = { ...quarantinedFail, flows: [failing('portrait-roundtrip')] };
+      expect(await main(['--flows=portrait-roundtrip'], async () => named, sink().stream)).toBe(1);
+      const artifact = JSON.parse(fs.readFileSync(written, 'utf8'));
+      expect(artifact.status).toBe('FAIL');
+      expect(artifact.flows[0].quarantined).toBeUndefined();
+    });
+
+    it('prints the Server quarantine block, every entry, on a passing run', async () => {
+      const out = sink();
+      expect(await main([], async () => ({ ...result, flows: [passingFlow('login-spine')] }), out.stream)).toBe(0);
+      const entries = Object.keys(SERVER_QUARANTINE);
+      expect(out.text()).toContain(`Server quarantine (${entries.length}):`);
+      expect(entries.length).toBeGreaterThan(0);
+      for (const flow of entries) expect(out.text()).toContain(`  ${flow} — ${SERVER_QUARANTINE[flow].reason}`);
     });
   });
 

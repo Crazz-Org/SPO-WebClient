@@ -83,20 +83,4 @@ describe('SupplierSearchModal (store integration)', () => {
     useProfileStore.getState().setSupplierSearchResults([]);
     expect(useProfileStore.getState().supplierSearchLoading).toBe(false);
   });
-
-  it('should not interfere with connectionPicker modal state', () => {
-    // Open supplier search
-    useProfileStore.getState().openSupplierSearch('coal', 'Coal');
-    useUiStore.getState().openModal('supplierSearch');
-
-    // Modal is supplierSearch, not connectionPicker
-    expect(useUiStore.getState().modal).toBe('supplierSearch');
-
-    // Close and open connectionPicker
-    useProfileStore.getState().clearSupplierSearch();
-    useUiStore.getState().openModal('connectionPicker');
-
-    expect(useUiStore.getState().modal).toBe('connectionPicker');
-    expect(useProfileStore.getState().supplierSearch).toBeNull();
-  });
 });

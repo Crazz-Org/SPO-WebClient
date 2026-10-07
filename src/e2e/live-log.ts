@@ -8,13 +8,43 @@
  *
  * Reading a log is not probing the server (CLAUDE.md) — it is an open IIS listing.
  *
- * Windowing is done by **byte offset**, not by timestamp: we record the log's length
- * before the write and read only what was appended after. That needs no knowledge of the
- * Delphi timestamp format and no assumption about the server's timezone.
+ * Windowing applies two rules, and a line must pass both to count as proof:
+ *
+ * 1. **Byte offset.** We record the log's length before the write (a HEAD request sent with
+ *    `Accept-Encoding: identity`) and read only what was appended after. A HEAD answered with
+ *    any other `Content-Encoding` is refused: its length is the compressed size, which opens
+ *    the window a fraction of the way into the file (#1228).
+ * 2. **Timestamp.** A Survival line is stamped in one of two forms. `TimeToStr(Now)` writes
+ *    `h:mm:ss AM/PM` (e.g. `Kernel/Kernel.pas:4689`), dated by the file it was read from (see
+ *    the rollover rule below). `DateTimeToStr(Now)` writes `YYYY-MM-DD h:mm:ss AM/PM` — the `Voting:`
+ *    (`Kernel/TownPolitics.pas:400`, `Kernel/WorldPolitics.pas:1822`), `Service SetPrice:`
+ *    (`StdBlocks/ServiceBlock.pas:1580`) and `Setting salaries:`
+ *    (`Kernel/WorkCenterBlock.pas:584`) markers — compared as a full UTC date-time. Either way
+ *    the stamp must be at or after `LogWindow.openedAt`, less a `CLOCK_SKEW_SECONDS`
+ *    allowance. A line earlier than that never counts, whatever the byte offset says. A line
+ *    without a stamp falls back to the byte offset alone.
+ *
+ * Rollover (#1269): the server starts a new `Survival <YY-MM-DD>.log` at 00:00 server time
+ * (≈ UTC, per the assumption below), so a run can span two files.
+ *
+ * - (a) Each window opens on the newest Survival file in the directory of the URL it is given,
+ *   at the moment it opens — the URL resolved at preflight only names the directory.
+ * - (b) Reading a window returns its file's tail, then the whole of every newer-dated Survival
+ *   file that has appeared in that directory since.
+ * - (c) An `h:mm:ss AM/PM` stamp is dated by the file it was read from: a line from a file
+ *   dated after `openedAt`'s UTC day counts as later than the window, and the time-of-day
+ *   comparison applies only to lines from the window's own day.
+ *
+ * Assumption: **Survival log time = UTC** — verified 2026-09-30 and 2026-10-01 (tail line
+ * `6:28:28 AM` read at `06:28:30 UTC`). The server clock can trail the bench by a second or
+ * two, and a line logged right after the window opens would then carry a stamp earlier than
+ * `openedAt` (research-roundtrip's `Cancel Research:` line, dropped on the first #1228 gate) —
+ * hence the allowance. It is seconds; the stale lines this rule exists to refuse are hours old.
  */
 
 import { toErrorMessage } from '../shared/error-utils';
 import { LIVE_LOG_BASE } from './config';
+import { sleep as defaultSleep } from './sleep';
 
 /**
  * Markers proving a write entered its handler — doc/E2E-POLICY.md §5. `member -> prefix`;
@@ -38,6 +68,12 @@ import { LIVE_LOG_BASE } from './config';
  * - **No public line.** `RDOPayOff` (`Kernel/Kernel.pas:11555`) logs nothing, and
  *   `RDOSendMoney` logs to a `Money` log (`Logs.Log('Money', …)`, `Kernel/Kernel.pas:11491`)
  *   the public listing does not carry — both are proven by `readBack` alone.
+ * - **Two `AskLoan` lines.** The bank block's `TBankBlock.RDOAskLoan` logs
+ *   `Fac(<x>,<y>) AskLoan` (`StdBlocks/Banks.pas:162`) while the tycoon's `RDOAskLoan` logs
+ *   `AskLoan: <tycoon>, $<amount>` (`Kernel/Kernel.pas:11455`). One member name cannot carry two
+ *   markers (`runRoundTrip` refuses a differing one), so the block form has a class-qualified key,
+ *   and its `match` must be `facLineMatches(…, 'AskLoan')` — the bare marker is also a substring of
+ *   `AskLoan:` and of an `Error in AskLoan` line, neither of which proves the block's borrow.
  */
 export const LOG_MARKERS: Record<string, string> = {
   // Kernel/Population.pas:1250 (log :1254) — "Setting Tax value: <town>, <TaxId>, <value>"
@@ -64,6 +100,8 @@ export const LOG_MARKERS: Record<string, string> = {
   RDOSetInputMinK: 'Input min K set:',
   // Kernel/Kernel.pas:4442 (log :4446)
   RDOSetInputSortMode: 'Changing Sort Mode..',
+  // Kernel/Kernel.pas:7154 (log :7156) — "Fac(<x>,<y>) Setting Input fluid perc: <perc>"
+  RDOSetInputFluidPerc: 'Setting Input fluid perc:',
   // Kernel/Kernel.pas:4304 (log :4306) — "Fac(<x>,<y>) Input connected:"
   RDOConnectInput: 'Input connected:',
   // Kernel/Kernel.pas:4311 (log :4313) — "Fac(<x>,<y>) Output connected:"
@@ -119,6 +157,11 @@ export const LOG_MARKERS: Record<string, string> = {
   // Kernel/Kernel.pas:11753 (log :11757) — "Initial suppliers, hire all: <tycoon>, <fluid>" (the later
   // "hire all OK!" line, :11766, does not contain "hire all:")
   RDODontHireOnlyFromWarehouse: 'Initial suppliers, hire all:',
+  // StdBlocks/Banks.pas:46 (impl :160, log :162) — "<date> - Fac(<x>,<y>) AskLoan", no tycoon, no amount.
+  // Its own key: RDOAskLoan above is the tycoon form's "AskLoan:" (Kernel/Kernel.pas:11455).
+  'TBankBlock.RDOAskLoan': 'AskLoan',
+  // Kernel/World.pas:4794 (log :4801) — "CloneFacility: <TycoonId>"; the clone itself is only queued (:4815)
+  CloneFacility: 'CloneFacility:',
   // Kernel/PoliticsCache.pas:139 — kept; not a write, no flow's proof
   CacheTown: 'Caching Town..',
 };
@@ -139,33 +182,114 @@ export interface LogWindow {
 
 /** Newest `Survival <YY-MM-DD>.log` in the listing — avoids guessing the server's date. */
 export async function findCurrentSurvivalLog(base: string = LIVE_LOG_BASE): Promise<string> {
-  const listing = await fetchText(base);
-  const names = new Set<string>();
-  const pattern = /Survival[%20\s][\d-]+\.log/gi;
-  for (const match of listing.matchAll(pattern)) names.add(match[0]);
-  if (names.size === 0) {
+  const days = await listSurvivalDays(base);
+  if (days.length === 0) {
     throw new Error(`No Survival log found in the listing at ${base}`);
   }
-  // YY-MM-DD sorts lexicographically, so the last name is the newest day.
-  const newest = Array.from(names).sort().pop() as string;
-  return base + newest.replace(/\s/g, '%20');
+  return survivalUrl(base, days[days.length - 1]);
 }
 
-/** Record where the log currently ends, before the write is issued. */
+/** Every `YY-MM-DD` a `Survival <YY-MM-DD>.log` in the listing carries, oldest first. */
+async function listSurvivalDays(base: string): Promise<string[]> {
+  const listing = await fetchText(base);
+  const days = new Set<string>();
+  for (const match of listing.matchAll(/Survival(?:%20|\s)(\d{2}-\d{2}-\d{2})\.log/gi)) days.add(match[1]);
+  // YY-MM-DD sorts lexicographically, so the last day is the newest.
+  return Array.from(days).sort();
+}
+
+function survivalUrl(dir: string, day: string): string {
+  return `${dir}Survival%20${day}.log`;
+}
+
+/** The directory a log URL lives in, trailing slash included. */
+function logDirOf(url: string): string {
+  return url.slice(0, url.lastIndexOf('/') + 1);
+}
+
+/** The `YY-MM-DD` of a `Survival <YY-MM-DD>.log` URL, or undefined for any other name. */
+function logDayOf(url: string): string | undefined {
+  return /^Survival(?:%20|\s)(\d{2}-\d{2}-\d{2})\.log$/i.exec(url.slice(url.lastIndexOf('/') + 1))?.[1];
+}
+
+/**
+ * Record where the log currently ends, before the write is issued. The URL handed in only
+ * supplies the directory: the window opens on the newest Survival file there right now.
+ */
 export async function openLogWindow(url: string): Promise<LogWindow> {
-  return { url, offset: await logLength(url), openedAt: new Date().toISOString() };
+  const current = await findCurrentSurvivalLog(logDirOf(url));
+  return { url: current, offset: await logLength(current), openedAt: new Date().toISOString() };
 }
 
-/** Everything appended to the log since the window opened. */
+/** Everything appended to the log since the window opened, then any newer day's file in full. */
 export async function readSince(window: LogWindow): Promise<string> {
-  const response = await fetch(window.url, { headers: { Range: `bytes=${window.offset}-` } });
-  if (response.status === 416) return ''; // Nothing appended yet.
-  if (!response.ok) {
-    throw new Error(`Log read failed (${response.status}) for ${window.url}`);
+  return (await readSegments(window)).map(s => s.text).join('\n');
+}
+
+interface LogSegment {
+  /** `YY-MM-DD` of the file the text was read from, when its name carries one. */
+  day?: string;
+  text: string;
+}
+
+/** The window's own tail, then every newer-dated Survival file in its directory, oldest first. */
+async function readSegments(window: LogWindow): Promise<LogSegment[]> {
+  const response = await fetch(window.url, {
+    headers: { Range: `bytes=${window.offset}-`, 'Accept-Encoding': 'identity' },
+  });
+  let tail = ''; // 416: nothing appended yet.
+  if (response.status !== 416) {
+    if (!response.ok) {
+      throw new Error(`Log read failed (${response.status}) for ${window.url}`);
+    }
+    const text = await response.text();
+    // A server that ignores Range returns 200 and the whole file — slice it ourselves.
+    tail = response.status === 206 ? text : text.slice(window.offset);
   }
-  const text = await response.text();
-  // A server that ignores Range returns 200 and the whole file — slice it ourselves.
-  return response.status === 206 ? text : text.slice(window.offset);
+  const day = logDayOf(window.url);
+  const segments: LogSegment[] = [{ day, text: tail }];
+  if (day === undefined) return segments;
+  const dir = logDirOf(window.url);
+  for (const newer of (await listSurvivalDays(dir)).filter(d => d > day)) {
+    const url = survivalUrl(dir, newer);
+    const next = await fetch(url, { headers: { 'Accept-Encoding': 'identity' } });
+    if (!next.ok) {
+      throw new Error(`Log read failed (${next.status}) for ${url}`);
+    }
+    segments.push({ day: newer, text: await next.text() });
+  }
+  return segments;
+}
+
+/** How far a line's stamp may trail `openedAt` and still count — the server clock can lag the bench. */
+export const CLOCK_SKEW_SECONDS = 10;
+
+/**
+ * True unless the line carries a stamp earlier than window.openedAt less
+ * `CLOCK_SKEW_SECONDS`: a `YYYY-MM-DD h:mm:ss AM|PM` stamp is compared as a full UTC
+ * date-time. An `h:mm:ss AM|PM` stamp is dated by `fileDay`, the `YY-MM-DD` of the file it
+ * was read from — so a line from a file dated after openedAt's UTC day is later than the
+ * window — and, without one, by openedAt's own UTC day.
+ */
+export function loggedInWindow(line: string, window: LogWindow, fileDay?: string): boolean {
+  const stamp = /^\s*(?:(\d{4})-(\d{2})-(\d{2})\s+)?(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)\b/i.exec(line);
+  const opened = new Date(window.openedAt);
+  if (!stamp || Number.isNaN(opened.getTime())) return true;
+  const hours = (Number(stamp[4]) % 12) + (stamp[7].toUpperCase() === 'PM' ? 12 : 0);
+  const minutes = Number(stamp[5]);
+  const seconds = Number(stamp[6]);
+  if (stamp[1] !== undefined) {
+    // DateTimeToStr(Now): full UTC date-time against openedAt.
+    const lineMs = Date.UTC(Number(stamp[1]), Number(stamp[2]) - 1, Number(stamp[3]), hours, minutes, seconds);
+    return lineMs >= opened.getTime() - CLOCK_SKEW_SECONDS * 1000;
+  }
+  // TimeToStr(Now): a time of day, placed on the day of the file it was read from.
+  const day = fileDay === undefined ? undefined : /^(\d{2})-(\d{2})-(\d{2})$/.exec(fileDay);
+  const dayStartMs = day
+    ? Date.UTC(2000 + Number(day[1]), Number(day[2]) - 1, Number(day[3]))
+    : Date.UTC(opened.getUTCFullYear(), opened.getUTCMonth(), opened.getUTCDate());
+  const lineSeconds = dayStartMs / 1000 + hours * 3600 + minutes * 60 + seconds;
+  return lineSeconds >= Math.floor(opened.getTime() / 1000) - CLOCK_SKEW_SECONDS;
 }
 
 /**
@@ -200,20 +324,29 @@ export async function awaitMarker(
   const proof: LogProof = typeof markerOrProof === 'string' ? { marker: markerOrProof } : markerOrProof;
   const deadline = now() + timeoutMs;
   for (;;) {
-    const tail = await readSince(window);
-    const line = tail
-      .split(/\r?\n/)
-      .find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true));
-    if (line) return line.trim();
+    for (const segment of await readSegments(window)) {
+      const line = segment.text
+        .split(/\r?\n/)
+        .find(
+          l => l.includes(proof.marker) && loggedInWindow(l, window, segment.day) && (proof.match?.(l) ?? true),
+        );
+      if (line) return line.trim();
+    }
     if (now() >= deadline) return null;
     await sleep(pollMs);
   }
 }
 
 async function logLength(url: string): Promise<number> {
-  const response = await fetch(url, { method: 'HEAD' });
+  const response = await fetch(url, { method: 'HEAD', headers: { 'Accept-Encoding': 'identity' } });
   if (!response.ok) {
     throw new Error(`Cannot read log length (${response.status}) for ${url}`);
+  }
+  const encoding = response.headers.get('content-encoding');
+  if (encoding !== null && encoding.trim().toLowerCase() !== 'identity') {
+    throw new Error(
+      `Log at ${url} was served with Content-Encoding: ${encoding} despite Accept-Encoding: identity — its content-length is not the file's length`,
+    );
   }
   const header = response.headers.get('content-length');
   const length = Number(header);
@@ -236,10 +369,4 @@ async function fetchText(url: string): Promise<string> {
     (wrapped as Error & { cause?: unknown }).cause = err;
     throw wrapped;
   }
-}
-
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise(resolve => {
-    setTimeout(resolve, ms).unref?.();
-  });
 }
