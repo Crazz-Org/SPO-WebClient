@@ -3557,6 +3557,22 @@ function supplierGate(r: ConnectionSearchResult): string {
 }
 
 /**
+ * One REQ_PROFILE_AUTOCONNECTION_ACTION, as the initial-suppliers page sends it. `success` is
+ * ignored; the page read-back is the judge (doc/E2E-POLICY.md §5).
+ */
+async function autoConnectionAction(
+  session: LiveSession,
+  action: AutoConnectionActionType,
+  fluidId: string,
+  suppliers?: string,
+): Promise<void> {
+  await session.driver.request<WsRespProfileAutoConnectionAction>(
+    { type: WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION, action, fluidId, suppliers },
+    WsMessageType.RESP_PROFILE_AUTOCONNECTION_ACTION,
+  );
+}
+
+/**
  * The initial suppliers, change-then-undo (#1146): flip the Trade Center switch, flip the
  * only-warehouses switch on a storable fluid, then add one default supplier not already listed
  * and delete it. None of these members broadcasts (Kernel/Kernel.pas:11679-11766).
@@ -3586,13 +3602,8 @@ const autoConnectionRoundTrip: Flow = {
       const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
       const fluidOf = async (fluidId: string) =>
         (await readAutoConnections(session)).fluids.find(f => f.fluidId === fluidId);
-      const act = async (action: AutoConnectionActionType, fluidId: string, suppliers?: string): Promise<void> => {
-        // `success` is ignored; the page read-back is the judge (doc/E2E-POLICY.md §5).
-        await session.driver.request<WsRespProfileAutoConnectionAction>(
-          { type: WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION, action, fluidId, suppliers },
-          WsMessageType.RESP_PROFILE_AUTOCONNECTION_ACTION,
-        );
-      };
+      const act = (action: AutoConnectionActionType, fluidId: string, suppliers?: string): Promise<void> =>
+        autoConnectionAction(session, action, fluidId, suppliers);
       const readBackWhy =
         `${PAGE_AUTOCONNECTIONS} reads the object cache (NewTycoon/TycoonAutoConnections.asp:3,12,29), ` +
         'refreshed by the member with BackgroundInvalidateCache — OB-29 lag, so the poll is bounded';
@@ -6086,14 +6097,41 @@ export function companyDemandUnits(p: number, max: number): number {
   return Math.ceil((p * max) / 100);
 }
 
-/** (x, y) is one of the tycoon's initial suppliers — `facilityId` is `"x,y,"` (auto-connection-handler.ts). */
-export function initialSupplierAt(data: AutoConnectionsData, x: number, y: number): boolean {
-  return data.fluids.some(f =>
-    f.suppliers.some(s => {
-      const [sx, sy] = s.facilityId.split(',');
-      return Number(sx) === x && Number(sy) === y;
-    }),
+/** One initial-supplier row: its fluid and the page's `facilityId`, verbatim. */
+export interface InitialSupplierRow {
+  fluidId: string;
+  facilityId: string;
+}
+
+/**
+ * The initial-supplier rows of the facility at (x, y), one per fluid that lists it. `facilityId`
+ * is `"x,y,"` (auto-connection-handler.ts) and is kept as the page gives it: `ParseGateList`
+ * needs the trailing comma (Kernel/Kernel.pas:4277-4302).
+ */
+export function initialSupplierRowsAt(data: AutoConnectionsData, x: number, y: number): InitialSupplierRow[] {
+  return data.fluids.flatMap(f =>
+    f.suppliers
+      .filter(s => {
+        const [sx, sy] = s.facilityId.split(',');
+        return Number(sx) === x && Number(sy) === y;
+      })
+      .map(s => ({ fluidId: f.fluidId, facilityId: s.facilityId })),
   );
+}
+
+/** (x, y) is one of the tycoon's initial suppliers. */
+export function initialSupplierAt(data: AutoConnectionsData, x: number, y: number): boolean {
+  return initialSupplierRowsAt(data, x, y).length > 0;
+}
+
+/**
+ * `RDODelAutoConnection` for each row (DeleteDefaultSupplier.asp:11-14 → `TTycoon.RDODelAutoConnection`,
+ * Kernel/Kernel.pas:11689): `ModifyAutoConnection` removes the facility found at the row's
+ * coordinates and invalidates the tycoon's cache (:11640-11676). Deleting a facility the list no
+ * longer holds is a no-op (`TCollection.Delete`, Kernel/Collection.pas:235-242).
+ */
+async function deleteInitialSupplierRows(session: LiveSession, rows: readonly InitialSupplierRow[]): Promise<void> {
+  for (const r of rows) await autoConnectionAction(session, 'delete', r.fluidId, r.facilityId);
 }
 
 /** The initial-supplier list's identity: sorted `fluidId:facilityId` entries. */
@@ -6253,20 +6291,23 @@ interface ChemicalLinks {
   ownSupplies: { fluid: string; keys: string[] }[];
   /** Own clients, as `<gate>: <linkLabel>`. */
   ownClients: string[];
-  initialSupplier: boolean;
+  /** The plant's rows in the initial-supplier list. */
+  initialSupplier: InitialSupplierRow[];
   /** Gates (or the initial-supplier list) that could not be read in full. */
   unread: string[];
 }
 
 function chemicalClean(s: ChemicalLinks): boolean {
-  return s.ownSupplies.length === 0 && s.ownClients.length === 0 && !s.initialSupplier && s.unread.length === 0;
+  return s.ownSupplies.length === 0 && s.ownClients.length === 0 && s.initialSupplier.length === 0 && s.unread.length === 0;
 }
 
-function chemicalRemains(s: ChemicalLinks): string {
+/** What is left; `delSent` names an entry that outlived an `RDODelAutoConnection` as such. */
+function chemicalRemains(s: ChemicalLinks, delSent: boolean): string {
+  const entry = delSent ? 'initial supplier (still listed after RDODelAutoConnection)' : 'initial supplier';
   return [
     ...s.ownSupplies.map(g => `${g.fluid} from ${g.keys.join(' ')}`),
     ...s.ownClients.map(c => `client ${c}`),
-    ...(s.initialSupplier ? ['initial supplier'] : []),
+    ...(s.initialSupplier.length > 0 ? [entry] : []),
     ...s.unread.map(u => `unread ${u}`),
   ].join(' | ');
 }
@@ -6279,9 +6320,17 @@ function chemicalRemains(s: ChemicalLinks): string {
  * an isolated target (maintainer rule 2026-10-01, #1236): reset from whatever state it is found in,
  * no pending restore. Every link removed has an SPO_test3 facility on both ends, and a disconnect
  * removes both sides (`TGate.DisconnectFrom`, Kernel/Kernel.pas:6794-6799). `RDODisconnectFromTycoon`
- * drops the plant's outputs from every own facility's matching input (:4581-4600) and unregisters it
- * as an initial supplier (:4606-4607); `RDODisconnectInput` carries own keys only — a foreign link is
- * never touched (FOREIGN_WHY). Returns false after recording the flow untestable; one retry.
+ * drops the plant's outputs from every own facility's matching input (:4581-4600) and, by its
+ * RemoveAsDefault flag, calls `UnregisterSupplier` (:4606-4607). That alone was observed not to
+ * clear the initial-supplier entry live: on 2026-10-07 it logged `OK.` 8 times (Survival log,
+ * 2:27:29-2:51:56) while TycoonAutoConnections.asp kept listing the plant for 24 minutes — past the
+ * tycoon cache's 5-minute TTL (Kernel/KernelCache.pas:964), so the model kept (or regained) the
+ * entry; why was not identified without probing. So each row the plant holds is also deleted the
+ * way the reference client deletes one, `RDODelAutoConnection` with the page's `facilityId`
+ * (`deleteInitialSupplierRows`): it removes by `FacilityAt` and invalidates the tycoon's cache
+ * (:11640-11676), which covers both a kept entry and a stale page. `RDODisconnectInput` carries own
+ * keys only — a foreign link is never touched (FOREIGN_WHY). Returns false after recording the flow
+ * untestable; one retry.
  */
 async function resetChemical(
   session: LiveSession,
@@ -6296,7 +6345,7 @@ async function resetChemical(
   const isOwn = (c: BuildingConnectionData): boolean => ownCompanies.has(c.companyName) || ownLots.has(`${c.x},${c.y}`);
 
   const readState = async (): Promise<ChemicalLinks> => {
-    const state: ChemicalLinks = { ownSupplies: [], ownClients: [], initialSupplier: false, unread: [] };
+    const state: ChemicalLinks = { ownSupplies: [], ownClients: [], initialSupplier: [], unread: [] };
     for (const stub of await gateStubs(session, fx, 'supplies')) {
       const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
       if (!supply?.metaFluid || supply.connectionCount !== supply.connections.length) {
@@ -6315,16 +6364,21 @@ async function resetChemical(
       for (const c of product.connections) if (isOwn(c)) state.ownClients.push(`${stub.name}: ${linkLabel(c)}`);
     }
     try {
-      state.initialSupplier = initialSupplierAt(await readAutoConnections(session), fx.x, fx.y);
+      state.initialSupplier = initialSupplierRowsAt(await readAutoConnections(session), fx.x, fx.y);
     } catch (err: unknown) {
       state.unread.push(`initial suppliers: ${toErrorMessage(err)}`);
     }
     return state;
   };
 
+  let delSent = false;
   const apply = async (state: ChemicalLinks): Promise<void> => {
-    if (state.initialSupplier || state.ownClients.length > 0) {
+    if (state.initialSupplier.length > 0 || state.ownClients.length > 0) {
       await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: QUICK_TRADE_KIND });
+    }
+    if (state.initialSupplier.length > 0) {
+      await deleteInitialSupplierRows(session, state.initialSupplier);
+      delSent = true;
     }
     for (const g of state.ownSupplies) {
       await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectInput', '0', {
@@ -6351,7 +6405,7 @@ async function resetChemical(
     if (polled.ok) return true;
     last = polled.last;
   }
-  assertions.untestable(member, `chemical fixture reset did not take: ${chemicalRemains(last)}`);
+  assertions.untestable(member, `chemical fixture reset did not take: ${chemicalRemains(last, delSent)}`);
   return false;
 }
 
@@ -6918,8 +6972,11 @@ const QUICK_TRADE_KIND = '1';
  * Quick Trade (`TFacility.RDOConnectToTycoon`, Kernel/Kernel.pas:4521) and its undo
  * (`RDODisconnectFromTycoon`), which reaches every SPO_test3 facility (:4537-4553, :4593-4600) and
  * unregisters the fixture as an initial supplier (:4564-4565, :4606-4607) — so it runs only
- * behind three data guards. Its target is the chemical fixture (#1293), reset first
- * (`resetChemical`); the industry fixture is never touched. NIGHTLY_ONLY (routing.ts).
+ * behind three data guards. The connect registers the fixture as an initial supplier
+ * (SetAsDefault, :4564-4565), and the undo's `UnregisterSupplier` alone was seen not to clear such
+ * an entry live (`resetChemical`), so the undo also deletes every row the fixture holds that the
+ * snapshot did not (`deleteInitialSupplierRows`). Its target is the chemical fixture (#1293), reset
+ * first (`resetChemical`); the industry fixture is never touched. NIGHTLY_ONLY (routing.ts).
  */
 const quickTradeRoundTrip: Flow = {
   name: 'quick-trade-roundtrip',
@@ -7011,6 +7068,17 @@ const quickTradeRoundTrip: Flow = {
         },
         restore: async () => {
           await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: QUICK_TRADE_KIND });
+          let after: AutoConnectionsData;
+          try {
+            after = await readAutoConnections(session);
+          } catch {
+            return; // the initial-supplier check below reports an unreadable page
+          }
+          const listed = new Set(suppliersKey.split(' '));
+          await deleteInitialSupplierRows(
+            session,
+            initialSupplierRowsAt(after, fx.x, fx.y).filter(r => !listed.has(`${r.fluidId}:${r.facilityId}`)),
+          );
         },
         proof: {
           log: {

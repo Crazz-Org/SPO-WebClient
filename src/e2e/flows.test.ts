@@ -16,7 +16,7 @@ import {
   fixtureKind,
   pickPlacement, ownsPlacement, delFacilityLineMatches,
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
-  companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
+  companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSupplierRowsAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
   bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
@@ -7156,6 +7156,15 @@ describe('inspector connections & trade (#1153)', () => {
         }
         case WsMessageType.REQ_PROFILE_AUTOCONNECTIONS:
           return { data: clone(this.auto) };
+        case WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION: {
+          // `TTycoon.RDODelAutoConnection` (Kernel/Kernel.pas:11689): removes the listed facility.
+          if (m.action !== 'delete') throw new Error(`unexpected autoconnection action ${String(m.action)}`);
+          if (!this.inert.has('RDODelAutoConnection')) {
+            const fl = this.auto.fluids.find(f => f.fluidId === m.fluidId);
+            if (fl) fl.suppliers = fl.suppliers.filter(s => s.facilityId !== m.suppliers);
+          }
+          return { type: WsMessageType.RESP_PROFILE_AUTOCONNECTION_ACTION, success: true };
+        }
         case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
           const w: Write = {
             x: m.x as number, y: m.y as number, property: String(m.propertyName), value: String(m.value),
@@ -7278,6 +7287,8 @@ describe('inspector connections & trade (#1153)', () => {
       };
       expect(initialSupplierAt(data, 30, 40)).toBe(true);
       expect(initialSupplierAt(data, 30, 4)).toBe(false);
+      expect(initialSupplierRowsAt(data, 30, 40)).toEqual([{ fluidId: 'Water', facilityId: '30,40,' }]);
+      expect(initialSupplierRowsAt(data, 30, 4)).toEqual([]);
       expect(initialSuppliersKey(data)).toBe('Chem:1,2, Water:30,40,');
     });
   });
@@ -7899,6 +7910,23 @@ describe('inspector connections & trade (#1153)', () => {
       expect(setProps(world)).toEqual([]);
     });
 
+    it('deletes the initial-supplier row the connect added when the undo leaves it, and only that one', async () => {
+      const world = new ConnWorld();
+      // SetAsDefault registered the plant (Kernel/Kernel.pas:4564-4565); RemoveAsDefault left it.
+      world.onUndoTycoon = () => {
+        world.auto.fluids[0].suppliers.push({ facilityName: 'Chemical Plant', facilityId: '80,90,', companyName: OWN_CO });
+      };
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('PASS');
+      const deletes = world.requests.filter(r => r.type === WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION);
+      expect(deletes).toEqual([expect.objectContaining({ action: 'delete', fluidId: 'Water', suppliers: '80,90,' })]);
+      expect(world.requests.indexOf(deletes[0])).toBeGreaterThan(
+        world.requests.findIndex(r => (r as { propertyName?: string }).propertyName === 'RDODisconnectFromTycoon'),
+      );
+      expect(result.assertions.find(a => a.what === 'the initial-supplier list equals its snapshot')?.ok).toBe(true);
+    });
+
     it('FAILs when the initial-supplier list differs after the undo', async () => {
       const world = new ConnWorld();
       world.onUndoTycoon = () => {
@@ -8071,18 +8099,77 @@ describe('inspector connections & trade (#1153)', () => {
 
     it('names every own link left, and the initial-supplier entry, when nothing of the reset takes', async () => {
       // Contract changed by #1320: UNPROVEN is now UNTESTABLE.
+      // Contract changed by #1293 (2026-10-07): the reset now also sends RDODelAutoConnection for the
+      // plant's initial-supplier row (RemoveAsDefault alone was seen not to clear it live), so "nothing
+      // takes" must make that delete inert too, and an entry that outlives the delete is named as such.
       const world = chemWorld();
       world.inert.add('RDODisconnectInput');
       world.inert.add('RDODisconnectFromTycoon');
+      world.inert.add('RDODelAutoConnection');
       arrange(world);
       const result = await run('quick-trade-roundtrip');
       expect(result.status).toBe('UNTESTABLE');
       expect(result.untestable[0]).toBe(
         'RDOConnectToTycoon — chemical fixture reset did not take: Raw Chemicals from 30,40 | ' +
-          'client Chemicals: Storage (50,60) of SPO_test3 - Green | initial supplier',
+          'client Chemicals: Storage (50,60) of SPO_test3 - Green | initial supplier (still listed after RDODelAutoConnection)',
       );
       expect(world.writes.filter(w => w.property === 'RDODisconnectFromTycoon')).toHaveLength(2);
       expect(world.writes.some(w => w.property === 'RDOConnectToTycoon')).toBe(false);
+    });
+
+    const deletesOf = (world: ConnWorld) =>
+      world.requests
+        .filter(r => r.type === WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION)
+        .map(r => r as WsMessage & { action?: string; fluidId?: string; suppliers?: string })
+        .map(r => [r.action, r.fluidId, r.suppliers]);
+
+    it("deletes the plant's initial-supplier rows with the page's facilityId, after RDODisconnectFromTycoon, and no other row", async () => {
+      const world = chemWorld();
+      // RemoveAsDefault leaves the entry, as observed live on 2026-10-07.
+      world.onUndoTycoon = () => {
+        world.auto.fluids[1].suppliers.push({ facilityName: 'Chemical Plant', facilityId: '80,90,', companyName: OWN_CO });
+      };
+      world.auto.fluids[1].suppliers.push({ facilityName: 'Other Plant', facilityId: '81,90,', companyName: OWN_CO });
+      world.auto.fluids[0].suppliers.push({ facilityName: 'Chemical Plant', facilityId: '80,90,', companyName: OWN_CO });
+      arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('PASS');
+      expect(deletesOf(world)).toEqual([
+        ['delete', 'Water', '80,90,'],
+        ['delete', 'Raw Chemicals', '80,90,'],
+      ]);
+      const order = world.requests.map(r =>
+        r.type === WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION ? 'del' : (r as { propertyName?: string }).propertyName,
+      ).filter(t => t === 'del' || t === 'RDODisconnectFromTycoon');
+      expect(order).toEqual(['RDODisconnectFromTycoon', 'del', 'del']);
+      expect(world.auto.fluids[1].suppliers.map(s => s.facilityId)).toEqual(['81,90,']);
+      expect(world.auto.fluids[0].suppliers.map(s => s.facilityId)).toEqual(['7,8,']);
+      expect(fixturesInitialSupplier(world)).toBe(false);
+    });
+
+    it('sends no delete when the plant is not an initial supplier', async () => {
+      const world = chemWorld();
+      world.auto.fluids[1].suppliers = [];
+      arrange(world);
+      expect((await run('supplier-hire-fire')).status).toBe('PASS');
+      expect(deletesOf(world)).toEqual([]);
+    });
+
+    it('names an entry still listed after RDODelAutoConnection as such', async () => {
+      const world = chemWorld();
+      world.inert.add('RDODisconnectFromTycoon');
+      world.inert.add('RDODelAutoConnection');
+      world.facs.chemical.supplies[0].connections = world.facs.chemical.supplies[0].connections.filter(c => c.x === 300);
+      world.facs.chemical.supplies[0].connectionCount = 1;
+      world.facs.chemical.products[0].connections = [];
+      world.facs.chemical.products[0].connectionCount = 0;
+      arrange(world);
+      const result = await run('connect-on-map');
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toBe(
+        'ConnectFacilities — chemical fixture reset did not take: initial supplier (still listed after RDODelAutoConnection)',
+      );
+      expect(deletesOf(world)).toEqual([['delete', 'Raw Chemicals', '80,90,'], ['delete', 'Raw Chemicals', '80,90,']]);
     });
 
     it('goes on when the reset takes on its retry', async () => {
