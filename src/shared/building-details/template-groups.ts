@@ -123,6 +123,11 @@ export const SRV_GENERAL_GROUP: PropertyGroup = {
     { rdoName: 'Trouble', displayName: 'Issues', type: PropertyType.NUMBER, hideEmpty: true },
     { rdoName: 'SecurityId', displayName: 'SecurityId', type: PropertyType.TEXT, hideEmpty: true },
     { rdoName: 'Stopped', displayName: 'Status', type: PropertyType.STOP_TOGGLE },
+    // Potential customers per class — StdBlocks/ServiceBlock.pas:1749-1751 (TServiceBlock.StoreToCache,
+    // Cache.WriteInteger(.., GetPeopleCount(pkHigh/pkMiddle/pkLow))): plain integers, no MLS suffix.
+    { rdoName: 'hiPotCustomers', displayName: 'Potential customers (high)', type: PropertyType.NUMBER },
+    { rdoName: 'miPotCustomers', displayName: 'Potential customers (middle)', type: PropertyType.NUMBER },
+    { rdoName: 'loPotCustomers', displayName: 'Potential customers (low)', type: PropertyType.NUMBER },
     {
       rdoName: 'srvNames',
       displayName: 'Services',

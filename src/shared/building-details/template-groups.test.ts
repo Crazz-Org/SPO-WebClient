@@ -373,6 +373,15 @@ describe('General handler RDO properties', () => {
     const suffix = col.indexSuffix !== undefined ? col.indexSuffix : (info.indexSuffix ?? '');
     expect(`${col.rdoSuffix}0${col.columnSuffix ?? ''}${suffix}`).toBe('srvSales0');
   });
+
+  it('SrvGeneral reads the potential customers per class as plain NUMBERs', () => {
+    // StdBlocks/ServiceBlock.pas:1749-1751 — Cache.WriteInteger('hi/mi/loPotCustomers', GetPeopleCount(..))
+    for (const rdoName of ['hiPotCustomers', 'miPotCustomers', 'loPotCustomers']) {
+      const prop = SRV_GENERAL_GROUP.properties.find(p => p.rdoName === rdoName);
+      expect(prop).toBeDefined();
+      expect(prop!.type).toBe(PropertyType.NUMBER);
+    }
+  });
 });
 
 describe('Specialized handler RDO properties', () => {
