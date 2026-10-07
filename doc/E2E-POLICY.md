@@ -611,11 +611,23 @@ fixture's opposite) is the expected own counterpart. `connect-on-map` links the 
 *SPO_test3 - Green* in Helartia (search filtered by town and owner — the cache indexes the owner's
 name, `Kernel/KernelCache.pas:514-516` — the row must be the `chemical` fixture's lot, and the lot's
 owner is read back), snapshot every gate they can touch, and undo every new link in the
-same run. `quick-trade-roundtrip` targets the `chemical` fixture and no longer touches the
-industry fixture. It runs only when its undo cannot reach beyond the test: no SPO_test3 facility
-already a client of the fixture (`Kernel/Kernel.pas:4593-4600`), the fixture not an initial
-supplier (`:4564-4565`, `:4606-4607`), and no SPO_test3 warehouse outside Helartia
-(`:4537-4553`) — otherwise `UNTESTABLE`, nothing sent.
+same run. `quick-trade-roundtrip` sends `RDOConnectToTycoon` from the `chemical` fixture and
+never writes to the industry fixture. Its proof is **kind 2** (`ftpFactories`): the live server
+links the plant's outputs into every own `rolProducer`'s matching input (`Kernel/Kernel.pas:4543`),
+and the read-back must show the link on both sides — new links on the plant's product gates
+*and* the industry fixture's input listing the plant. Every link lands on the plant's product
+gates too (`:6784-6785`), so their snapshot covers every own facility it touches (another own
+producer with that input included), and each newly linked lot must be SPO_test3's in Helartia.
+**Kind 1** (`ftpWarehouses`) linked none of SPO_test3's MegaStorages live on 2026-10-07 (attempt-6
+gate, job `fae2cc`), while kind 2 and a direct `RDOConnectOutput` linked the same plant — the
+shape of `Kernel/Kernel1.pas:3150`, which tests the class role `rolDistributer` only. So kind 1
+is sent only when an own warehouse in Helartia reads `TradeRole` 2 (rolDistributer), and is
+`UNTESTABLE` with the roles read otherwise. Each kind is undone by `RDODisconnectFromTycoon` and
+read back to its snapshot, and the initial-supplier list must equal its own. The flow runs only
+when its writes cannot reach beyond the test: no SPO_test3 facility already a client of the
+fixture (`:4593-4600`), the fixture not an initial supplier (`:4564-4565`, `:4606-4607`), and no
+SPO_test3 facility outside Helartia with an input of a plant product (`:4537-4553`) — otherwise
+`UNTESTABLE`, nothing sent.
 
 All four first **reset the `chemical` fixture** (`resetChemical`): a new plant arrives linked to
 the tycoon's initial suppliers and own warehouses. This is **self-heal of an isolated target**

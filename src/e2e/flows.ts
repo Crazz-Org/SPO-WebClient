@@ -6394,7 +6394,7 @@ async function resetChemical(
   let delSent = false;
   const apply = async (state: ChemicalLinks): Promise<void> => {
     if (state.initialSupplier.length > 0 || state.ownClients.length > 0) {
-      await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: QUICK_TRADE_KIND });
+      await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: WAREHOUSES_KIND });
     }
     if (state.initialSupplier.length > 0) {
       await deleteInitialSupplierRows(session, state.initialSupplier);
@@ -7081,37 +7081,25 @@ const warehouseWares: Flow = {
   },
 };
 
-/** `ftpWarehouses` (Kernel/Kernel.pas:2760) — the facility types Quick Trade connects to. */
-const QUICK_TRADE_KIND = '1';
+/**
+ * `ftpWarehouses` (Kernel/Kernel.pas:2760) — Voyager's `btnSellToWareHouses`
+ * (Voyager/IndustryGeneralSheet.pas:45, sent by `SellToAll`, :345). Also the kind every reset sends
+ * with `RDODisconnectFromTycoon`, which ignores it (Kernel/Kernel.pas:4581-4600).
+ */
+const WAREHOUSES_KIND = '1';
+/** `ftpFactories` (Kernel/Kernel.pas:2761) — Voyager's `btnSellToFacs` (Voyager/IndustryGeneralSheet.pas:44, :345). */
+const FACTORIES_KIND = '2';
 
 /**
- * What one storage's supply gate of a plant fluid shows of the plant, for the Quick Trade
- * diagnostic: `undefined` is a gate the storage does not list. A link found among the rows read
- * counts even when not every row was read.
+ * What one storage's (or the industry fixture's) supply gate of a plant fluid shows of the plant:
+ * `undefined` is a gate the facility does not list. A link found among the rows read counts even
+ * when not every row was read.
  */
 export function storageGateState(gate: BuildingSupplyData | undefined, plant: { x: number; y: number }): string {
   if (!gate) return 'gate not listed';
   if (gate.connections.some(c => c.x === plant.x && c.y === plant.y)) return 'plant linked';
   if (gate.connectionCount !== gate.connections.length) return 'count mismatch (unread)';
   return 'no plant link';
-}
-
-/**
- * The plant's initial-supplier rows as the diagnostic records them. None is not a proof the
- * connect registered nothing: the page is served from the tycoon's cache, up to 5 minutes old.
- */
-export function initialSupplierNote(rows: readonly InitialSupplierRow[]): string {
-  return rows.length === 0
-    ? 'inconclusive (auto-connections cache up to 5 min, KernelCache.pas:964)'
-    : rows.map(r => `${r.fluidId}:${r.facilityId}`).join(' ');
-}
-
-/** The lines of a Survival log extract that name an error or an exception. */
-export function errorLines(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map(l => l.trim())
-    .filter(l => /\berror\b|exception/i.test(l));
 }
 
 /** The first supply gate of `fx` whose fluid is `fluid` — a stub named after it is read first. */
@@ -7128,201 +7116,12 @@ async function supplyByFluid(
   return undefined;
 }
 
-/**
- * `TFacilityRole`, in ordinal order — the cached `TradeRole` is `integer(Role)` (TBlock.StoreToCache,
- * Kernel/Kernel.pas:5893). Kernel's own declaration is commented out (:405); the live one is
- * Cache/CacheCommon.pas:53, which Kernel uses (:11), in the order the permission map's comment gives (:2862).
- */
-const FACILITY_ROLES = ['rolNeutral', 'rolProducer', 'rolDistributer', 'rolBuyer', 'rolImporter', 'rolCompExport', 'rolCompInport'];
-const ROL_IMPORTER = 4;
-
-/**
- * One cached `TradeRole` as the Quick Trade diagnostic records it: `<n> (<name>)`, `unread` when
- * the read did not return it. A rolImporter is flagged: its row of the tycoons' permission map is
- * all zeros (Kernel/Kernel.pas:2875), and `TGate.ConnectTo` checks that map on both sides
- * (:6766-6767), so every link it is asked for is refused.
- */
-export function tradeRoleNote(raw: string | undefined): string {
-  if (raw === undefined) return 'unread';
-  const n = Number(raw);
-  const name = Number.isInteger(n) ? FACILITY_ROLES[n] : undefined;
-  if (raw.trim() === '' || !name) return `${raw} (not a TFacilityRole)`;
-  const note = `${n} (${name})`;
-  return n === ROL_IMPORTER
-    ? `${note} — refuses every link per the tycoon permission map (Kernel/Kernel.pas:2875, checked at :6766-6767)`
-    : note;
-}
-
-/** The cached `TradeRole` of `fx` from its general group, as `tradeRoleNote` writes it. Never throws. */
-async function cachedTradeRole(session: LiveSession, fx: OwnFixture, groupId: 'indGeneral' | 'whGeneral'): Promise<string> {
-  try {
-    return tradeRoleNote(propertyValue(await readSectionGroups(session, fx.x, fx.y, groupId, fx.visualClass), groupId, 'TradeRole'));
-  } catch (err: unknown) {
-    return `unread: ${toErrorMessage(err)}`;
-  }
-}
-
-/**
- * Every own MegaStorage in Helartia (`isMegaStorage`) but the plant — or, for a lot that could not
- * be read, its label and why. Throws only when the facility classes cannot be read.
- */
-async function ownMegaStorages(
-  session: LiveSession,
-  plant: OwnFixture,
-  facilities: readonly TycoonFacility[],
-  helartia: number | undefined,
-): Promise<({ storage: OwnFixture } | { unread: string })[]> {
-  const dims = await facilityDimensions(session);
-  const lots: ({ storage: OwnFixture } | { unread: string })[] = [];
-  for (const f of facilities) {
-    if (f.x === plant.x && f.y === plant.y) continue;
-    try {
-      if (helartia === undefined || (await townValueAt(session, f.x, f.y)) !== helartia) continue;
-      const visualClass = await resolveVisualClass(session, f.x, f.y);
-      if (isMegaStorage(dims, visualClass)) lots.push({ storage: { x: f.x, y: f.y, visualClass, name: f.name } });
-    } catch (err: unknown) {
-      lots.push({ unread: `${f.name} (${f.x},${f.y}) unread: ${toErrorMessage(err)}` });
-    }
-  }
-  return lots;
-}
-
-/**
- * Read-only, before the `RDOConnectToTycoon` write: the cached trade role of the plant and of every
- * own MegaStorage in Helartia. A storage whose runtime role is rolImporter (TWarehouse.GetRole,
- * StdBlocks/Warehouses.pas:543-546, settable by RDOSetRole with no log line) refuses every link the
- * connect asks for, yet the connect still logs. Never throws.
- */
-async function quickTradeRoles(
-  session: LiveSession,
-  plant: OwnFixture,
-  facilities: readonly TycoonFacility[],
-  helartia: number | undefined,
-): Promise<string> {
-  const roles = [`${fixtureLabel(plant)}: ${await cachedTradeRole(session, plant, 'indGeneral')}`];
-  try {
-    for (const lot of await ownMegaStorages(session, plant, facilities, helartia)) {
-      roles.push('unread' in lot ? lot.unread : `${fixtureLabel(lot.storage)}: ${await cachedTradeRole(session, lot.storage, 'whGeneral')}`);
-    }
-  } catch (err: unknown) {
-    roles.push(`facility classes unread: ${toErrorMessage(err)}`);
-  }
-  return `trade roles before the write — ${roles.join(' | ')}`;
-}
-
-/**
- * Read-only diagnostic of Quick Trade's other side, taken after the read-back poll and before the
- * undo: every own MegaStorage in Helartia (`ownMegaStorages`), and each of its supply gates carrying
- * one of the plant's product fluids, should list the plant (`RDOConnectToTycoon`,
- * Kernel/Kernel.pas:4521). A link is written on both gates at once (Kernel/Kernel.pas:6779-6780),
- * so this only says which side a missing link shows on — never the proof. Then the plant's
- * initial-supplier rows (SetAsDefault, :4564-4565) and any error line the Survival log took since
- * the write. Never throws.
- */
-async function quickTradeDiagnostic(
-  session: LiveSession,
-  plant: OwnFixture,
-  facilities: readonly TycoonFacility[],
-  helartia: number | undefined,
-  fluids: readonly string[],
-  window: LogWindow | string,
-): Promise<string> {
-  const storages: string[] = [];
-  try {
-    for (const lot of await ownMegaStorages(session, plant, facilities, helartia)) {
-      if ('unread' in lot) {
-        storages.push(lot.unread);
-        continue;
-      }
-      const storage = lot.storage;
-      try {
-        const stubs = await gateStubs(session, storage, 'supplies');
-        for (const fluid of fluids) {
-          storages.push(`${fixtureLabel(storage)} ${fluid}: ${storageGateState(await supplyByFluid(session, storage, stubs, fluid), plant)}`);
-        }
-      } catch (err: unknown) {
-        storages.push(`${fixtureLabel(storage)} unread: ${toErrorMessage(err)}`);
-      }
-    }
-  } catch (err: unknown) {
-    storages.push(`facility classes unread: ${toErrorMessage(err)}`);
-  }
-  let suppliers: string;
-  try {
-    suppliers = initialSupplierNote(initialSupplierRowsAt(await readAutoConnections(session), plant.x, plant.y));
-  } catch (err: unknown) {
-    suppliers = `unread: ${toErrorMessage(err)}`;
-  }
-  let log: string;
-  if (typeof window === 'string') {
-    log = window;
-  } else {
-    try {
-      const lines = errorLines(await readSince(window));
-      log = lines.length > 0 ? lines.slice(0, 5).join(' | ') : 'none';
-    } catch (err: unknown) {
-      log = `unread: ${toErrorMessage(err)}`;
-    }
-  }
-  return (
-    `diagnostic before the undo — own MegaStorages: ${storages.length > 0 ? storages.join(' | ') : `none in ${GOVERNED_TOWN}`}; ` +
-    `the plant's initial-supplier rows: ${suppliers}; Survival error lines since the write: ${log}`
-  );
-}
-
-/** `ftpFactories` (Kernel/Kernel.pas:2761) — Voyager's `btnSellToFacs` (Voyager/IndustryGeneralSheet.pas:345, :431). */
-const FACTORIES_KIND = '2';
-const ROL_COMP_EXPORT = 5;
-
-/** What one Quick Trade experiment showed: `not run` is a skip, a throw or an unread side — its line says which. */
-export type QuickTradeExperiment = 'links' | 'none' | 'not run';
-
-/**
- * Which cause the two experiments point to, when the kind-1 read-back failed. The verdict stays a
- * FAIL in every row: this only names what the next attempt has to look at.
- */
-export function quickTradeOutcome(e1: QuickTradeExperiment, e2: QuickTradeExperiment): string {
-  if (e2 === 'none') return 'the plant/pair is refused live — plant to rebuild under self-heal, re-diagnose';
-  if (e2 === 'links' && e1 === 'links') {
-    return (
-      'RDOConnectToTycoon works live and the pair links; the deployed ftpWarehouses branch skips MegaStorages ' +
-      '(Kernel/Kernel1.pas:3150 shape) — expectation to revisit by observation'
-    );
-  }
-  if (e2 === 'links' && e1 === 'none') return 'RDOConnectToTycoon is a live no-op with correct pointer and arguments';
-  return `no outcome row (E1 ${e1}, E2 ${e2})`;
-}
-
-/** The Quick Trade flow's live context, shared by both experiments. */
-interface QuickTradeScope {
-  session: LiveSession;
-  plant: OwnFixture;
-  facilities: readonly TycoonFacility[];
-  helartia: number | undefined;
-  fluids: readonly string[];
-  ctx: FlowContext;
-}
-
-interface ExperimentRecord {
-  result: QuickTradeExperiment;
-  lines: string[];
-}
-
-/** Both sides of one experiment's link, read once; a throw is kept as `unread` so the poll goes on. */
-interface ExperimentSides {
-  note: string;
-  linked: boolean;
-  /** Nothing left of the experiment on either side — what its undo waits for. */
-  clean: boolean;
-  unread: boolean;
-}
-
-async function readSides(read: () => Promise<Omit<ExperimentSides, 'unread'>>): Promise<ExperimentSides> {
-  try {
-    return { ...(await read()), unread: false };
-  } catch (err: unknown) {
-    return { note: `unread: ${toErrorMessage(err)}`, linked: false, clean: false, unread: true };
-  }
+/** The fluids among `fluids` that `fx` lists a supply gate for. */
+async function suppliedFluids(session: LiveSession, fx: OwnFixture, fluids: readonly string[]): Promise<string[]> {
+  const stubs = await gateStubs(session, fx, 'supplies');
+  const out: string[] = [];
+  for (const fluid of fluids) if (await supplyByFluid(session, fx, stubs, fluid)) out.push(fluid);
+  return out;
 }
 
 /** Each supply gate of `fx` carrying one of `fluids`, as `storageGateState` writes it. */
@@ -7340,173 +7139,185 @@ async function supplySideNote(
     if (state === 'plant linked') linked = true;
     parts.push(`${fixtureLabel(fx)} ${fluid}: ${state}`);
   }
-  return { note: parts.join(' | ') || `${fixtureLabel(fx)}: no plant fluid`, linked };
+  return { note: parts.join(' | '), linked };
 }
 
 /**
- * One experiment: `connect`, a bounded poll for the link (`pollUntil`, the read-back bound), then
- * `undo` — sent whenever the connect was sent, even after a throw — and a poll for it to clear.
- * Neither records a pending restore: the probe's own `RDODisconnectFromTycoon` restore covers any
- * leftover, and `resetChemical` clears it on the next run (self-heal, #1236). Never throws.
+ * `TFacilityRole`, in ordinal order — the cached `TradeRole` is `integer(Role)` (TBlock.StoreToCache,
+ * Kernel/Kernel.pas:5893). Kernel's own declaration is commented out (:405); the live one is
+ * Cache/CacheCommon.pas:53, which Kernel uses (:11), in the order the permission map's comment gives (:2862).
  */
-async function runExperiment(
-  label: string,
-  ctx: FlowContext,
-  sides: () => Promise<Omit<ExperimentSides, 'unread'>>,
-  connect: () => Promise<unknown>,
-  undo: () => Promise<unknown>,
-): Promise<ExperimentRecord> {
-  const lines: string[] = [];
-  let result: QuickTradeExperiment = 'not run';
+const FACILITY_ROLES = ['rolNeutral', 'rolProducer', 'rolDistributer', 'rolBuyer', 'rolImporter', 'rolCompExport', 'rolCompInport'];
+const ROL_DISTRIBUTER = 2;
+const ROL_IMPORTER = 4;
+
+/**
+ * One cached `TradeRole` as the flow records it: `<n> (<name>)`, `unread` when the read did not
+ * return it. A rolImporter is flagged: its row of the tycoons' permission map is all zeros
+ * (Kernel/Kernel.pas:2875), and `TGate.ConnectTo` checks that map on both sides (:6766-6767), so
+ * every link it is asked for is refused.
+ */
+export function tradeRoleNote(raw: string | undefined): string {
+  if (raw === undefined) return 'unread';
+  const n = Number(raw);
+  const name = Number.isInteger(n) ? FACILITY_ROLES[n] : undefined;
+  if (raw.trim() === '' || !name) return `${raw} (not a TFacilityRole)`;
+  const note = `${n} (${name})`;
+  return n === ROL_IMPORTER
+    ? `${note} — refuses every link per the tycoon permission map (Kernel/Kernel.pas:2875, checked at :6766-6767)`
+    : note;
+}
+
+/** The cached `TradeRole` of a warehouse from its general group, as `tradeRoleNote` writes it. Never throws. */
+async function cachedTradeRole(session: LiveSession, fx: OwnFixture): Promise<string> {
   try {
-    await connect();
-    const polled = await pollUntil(() => readSides(sides), v => v.linked, ctx);
-    result = polled.ok ? 'links' : polled.last.unread ? 'not run' : 'none';
-    lines.push(`${label}: ${result} (${polled.last.note})`);
+    return tradeRoleNote(propertyValue(await readSectionGroups(session, fx.x, fx.y, 'whGeneral', fx.visualClass), 'whGeneral', 'TradeRole'));
   } catch (err: unknown) {
-    lines.push(`${label}: not run — ${toErrorMessage(err)}`);
+    return `unread: ${toErrorMessage(err)}`;
   }
-  try {
-    await undo();
-    const polled = await pollUntil(() => readSides(sides), v => v.clean, ctx);
-    lines.push(`${label} undo: ${polled.ok ? 'gone' : 'still linked'} (${polled.last.note})`);
-  } catch (err: unknown) {
-    lines.push(`${label} undo: failed — ${toErrorMessage(err)}`);
-  }
-  return { result, lines };
 }
 
 /**
- * E1: `RDOConnectToTycoon` with `ftpFactories` on the plant. The Pascal links the plant's outputs
- * into every own `rolProducer` input of the same fluid (Kernel/Kernel.pas:4521-4580, the filter at
- * :4543) — the industry fixture's Chemicals input. Undone by `RDODisconnectFromTycoon`, whose kind
- * is ignored (:4590-4600).
+ * What the guards read of SPO_test3's other facilities, before any write: the own lots in Helartia
+ * (the only places a Quick Trade link may land), the facilities outside Helartia that carry an
+ * input of a plant product — `RDOConnectToTycoon` links only an input whose fluid is one of the
+ * plant's outputs (Kernel/Kernel.pas:4545-4549), so these are every lot outside Helartia it could
+ * write, for either kind — and the cached trade role of each own warehouse in Helartia (any
+ * facility showing the whGeneral tab, MegaStorage or not). That role is the block's runtime `Role`
+ * (a warehouse's `fRole`, StdBlocks/Warehouses.pas:543-546), while the connect tests the class's
+ * `MetaFacility.Kind.Role` (Kernel/Kernel.pas:4542): the runtime one is the only one the client can
+ * read, so a 2 makes kind 1 worth sending, not certain to link.
  */
-async function kindTwoExperiment(s: QuickTradeScope): Promise<ExperimentRecord> {
-  const { session, plant } = s;
-  const label = 'E1 kind 2 (factories)';
-  const mine = await ownFixture(session, 'industry', new Assertions());
-  const before = await readGateLinks(session, plant, ['products']);
-  const sides = async (): Promise<Omit<ExperimentSides, 'unread'>> => {
-    const plantSide = linkState(before, await readGateLinks(session, plant, ['products']));
-    const mineSide = mine
-      ? await supplySideNote(session, mine, s.fluids, plant)
-      : { note: 'industry fixture not found', linked: false };
-    return {
-      note: `plant side: ${plantSide}, mine side: ${mineSide.note}`,
-      linked: plantSide === 'new-links' || mineSide.linked,
-      clean: plantSide === 'snapshot' && !mineSide.linked,
-    };
-  };
-  return runExperiment(
-    label,
-    s.ctx,
-    sides,
-    () => setBuildingProperty(session, plant.x, plant.y, 'RDOConnectToTycoon', '0', { kind: FACTORIES_KIND }),
-    () => setBuildingProperty(session, plant.x, plant.y, 'RDODisconnectFromTycoon', '0', { kind: FACTORIES_KIND }),
-  );
+interface QuickTradeReach {
+  helartiaLots: Set<string>;
+  outside: string[];
+  warehouses: string[];
+  distributers: number;
 }
 
-/**
- * The storage E2 links to: an own MegaStorage in Helartia with a supply gate of a plant fluid, a
- * `rolCompExport` one first. Lots that cannot be read are skipped.
- */
-async function directLinkTarget(
-  s: QuickTradeScope,
-): Promise<{ storage: OwnFixture; fluid: string; state: string } | undefined> {
-  const found: { storage: OwnFixture; fluid: string; state: string; role: string }[] = [];
-  for (const lot of await ownMegaStorages(s.session, s.plant, s.facilities, s.helartia)) {
-    if ('unread' in lot) continue;
+async function quickTradeReach(
+  session: LiveSession,
+  plant: OwnFixture,
+  facilities: readonly TycoonFacility[],
+  helartia: number | undefined,
+  fluids: readonly string[],
+): Promise<QuickTradeReach> {
+  const reach: QuickTradeReach = { helartiaLots: new Set(), outside: [], warehouses: [], distributers: 0 };
+  for (const f of facilities) {
+    if (f.x === plant.x && f.y === plant.y) continue;
+    const label = `${f.name} (${f.x},${f.y})`;
+    const inHelartia = helartia !== undefined && (await townValueAt(session, f.x, f.y)) === helartia;
+    if (inHelartia) reach.helartiaLots.add(`${f.x},${f.y}`);
     try {
-      const stubs = await gateStubs(s.session, lot.storage, 'supplies');
-      for (const fluid of s.fluids) {
-        const gate = await supplyByFluid(s.session, lot.storage, stubs, fluid);
-        if (!gate) continue;
-        const role = await cachedTradeRole(s.session, lot.storage, 'whGeneral');
-        found.push({ storage: lot.storage, fluid, state: storageGateState(gate, s.plant), role });
-        break;
+      const fx: OwnFixture = { x: f.x, y: f.y, visualClass: await resolveVisualClass(session, f.x, f.y), name: f.name };
+      if (!inHelartia) {
+        const carried = await suppliedFluids(session, fx, fluids);
+        if (carried.length > 0) reach.outside.push(`${label} of ${f.company} takes ${carried.join('/')}`);
+        continue;
       }
-    } catch {
-      // an unreadable storage is not a target
-    }
-  }
-  return found.find(f => f.role.startsWith(`${ROL_COMP_EXPORT} (`)) ?? found[0];
-}
-
-/**
- * E2: a direct link from the plant's output to one own MegaStorage's input, sent the way
- * client-hire-remove sends one (`RDOConnectOutput` through `setPropertySlow`), undone by
- * `RDODisconnectOutput` with the same arguments.
- */
-async function directLinkExperiment(s: QuickTradeScope): Promise<ExperimentRecord> {
-  const { session, plant } = s;
-  const target = await directLinkTarget(s);
-  if (!target) {
-    return {
-      result: 'not run',
-      lines: [`E2 direct plant→storage: not run — no own MegaStorage in ${GOVERNED_TOWN} lists a ${s.fluids.join('/') || 'plant'} input`],
-    };
-  }
-  const { storage, fluid } = target;
-  const label = `E2 direct plant→${fixtureLabel(storage)} ${fluid}`;
-  if (target.state === 'plant linked') {
-    return { result: 'not run', lines: [`${label}: not run — the storage lists the plant before the write`] };
-  }
-  const key = `${storage.x},${storage.y}`;
-  const params = { fluidId: fluid, connectionList: connectionList([key]) };
-  const sides = async (): Promise<Omit<ExperimentSides, 'unread'>> => {
-    const gate = Object.values(await readGateLinks(session, plant, ['products'])).find(g => g.fluid === fluid);
-    const plantLists = gate?.keys.includes(key) ?? false;
-    const storageSide = await supplySideNote(session, storage, [fluid], plant);
-    return {
-      note: `plant side: ${plantLists ? `lists ${key}` : `does not list ${key}`}, storage side: ${storageSide.note}`,
-      linked: plantLists || storageSide.linked,
-      clean: !plantLists && !storageSide.linked,
-    };
-  };
-  return runExperiment(
-    label,
-    s.ctx,
-    sides,
-    () => setPropertySlow(session, plant, 'RDOConnectOutput', params),
-    () => setBuildingProperty(session, plant.x, plant.y, 'RDODisconnectOutput', '0', params),
-  );
-}
-
-/**
- * Run only when the kind-1 write was sent and its read-back never showed a new link, after the
- * read-only diagnostic and before the flow's undo: E1 (`kindTwoExperiment`) then E2
- * (`directLinkExperiment`), each undone and read back, and the outcome they point to
- * (`quickTradeOutcome`). Diagnostic only — the verdict is the kind-1 round trip's. Never throws.
- */
-async function quickTradeExperiments(s: QuickTradeScope): Promise<string> {
-  const guarded = async (label: string, run: () => Promise<ExperimentRecord>): Promise<ExperimentRecord> => {
-    try {
-      return await run();
+      if (!(await readBuildingDetails(session, f.x, f.y, fx.visualClass)).tabs.some(t => t.id === 'whGeneral')) continue;
+      const role = await cachedTradeRole(session, fx);
+      if (role.startsWith(`${ROL_DISTRIBUTER} (`)) reach.distributers++;
+      reach.warehouses.push(`${label}: ${role}`);
     } catch (err: unknown) {
-      return { result: 'not run', lines: [`${label}: not run — ${toErrorMessage(err)}`] };
+      (inHelartia ? reach.warehouses : reach.outside).push(`${label} could not be read: ${toErrorMessage(err)}`);
     }
-  };
-  const e1 = await guarded('E1 kind 2 (factories)', () => kindTwoExperiment(s));
-  const e2 = await guarded('E2 direct plant→storage', () => directLinkExperiment(s));
-  return `experiments before the undo — ${[...e1.lines, ...e2.lines].join('; ')}; outcome: ${quickTradeOutcome(e1.result, e2.result)}`;
+  }
+  return reach;
+}
+
+/** The Quick Trade flow's live context, shared by both kinds. */
+interface QuickTradeScope {
+  session: LiveSession;
+  plant: OwnFixture;
+  ctx: FlowContext;
+  url: string;
+  /** The initial-supplier list before any write: what the restore puts back. */
+  suppliersKey: string;
+  /** Every key a read-back saw newly linked on the plant's product gates. */
+  touched: Set<string>;
 }
 
 /**
- * Quick Trade (`TFacility.RDOConnectToTycoon`, Kernel/Kernel.pas:4521) and its undo
- * (`RDODisconnectFromTycoon`), which reaches every SPO_test3 facility (:4537-4553, :4593-4600) and
- * unregisters the fixture as an initial supplier (:4564-4565, :4606-4607) — so it runs only
- * behind three data guards. The connect registers the fixture as an initial supplier
+ * One `RDOConnectToTycoon` round trip of `kind` on the plant, undone by `RDODisconnectFromTycoon`
+ * (whose kind is ignored: it drops the plant's outputs from every own facility's matching input,
+ * Kernel/Kernel.pas:4590-4600). The connect registers the plant as an initial supplier
  * (SetAsDefault, :4564-4565), and the undo's `UnregisterSupplier` alone was seen not to clear such
- * an entry live (`resetChemical`), so the undo also deletes every row the fixture holds that the
- * snapshot did not (`deleteInitialSupplierRows`). Its target is the chemical fixture (#1293), reset
- * first (`resetChemical`); the industry fixture is never touched. NIGHTLY_ONLY (routing.ts).
+ * an entry live (`resetChemical`), so the undo also deletes every row the plant holds that the
+ * snapshot did not (`deleteInitialSupplierRows`).
+ */
+async function tycoonRoundTrip(
+  s: QuickTradeScope,
+  kind: string,
+  target: string,
+  source: string,
+  read: () => Promise<string>,
+): Promise<ProbeResult> {
+  const { session, plant } = s;
+  const listed = new Set(s.suppliersKey.split(' '));
+  return roundTripProbe(s.ctx, s.url, {
+    what: `${fixtureLabel(plant)} Quick Trade kind ${kind} (${target})`,
+    member: 'RDOConnectToTycoon',
+    read,
+    testValue: () => 'new-links',
+    write: async () => {
+      await setBuildingProperty(session, plant.x, plant.y, 'RDOConnectToTycoon', '0', { kind });
+    },
+    restore: async () => {
+      await setBuildingProperty(session, plant.x, plant.y, 'RDODisconnectFromTycoon', '0', { kind });
+      let after: AutoConnectionsData;
+      try {
+        after = await readAutoConnections(session);
+      } catch {
+        return; // the initial-supplier check reports an unreadable page
+      }
+      await deleteInitialSupplierRows(
+        session,
+        initialSupplierRowsAt(after, plant.x, plant.y).filter(r => !listed.has(`${r.fluidId}:${r.facilityId}`)),
+      );
+    },
+    proof: {
+      log: { marker: LOG_MARKERS.RDOConnectToTycoon, match: line => facLineMatches(line, plant.x, plant.y, 'Connect to Tycoon:') },
+      readBack: readBackOn(source, LINK_WHY, tolerantRead(read)),
+    },
+    restoreRecord: { x: plant.x, y: plant.y, propertyName: 'RDODisconnectFromTycoon', additionalParams: { kind } },
+  });
+}
+
+/** The plant's product gates against the snapshot (`linkState`), each newly linked key kept in `touched`. */
+async function plantSide(s: QuickTradeScope, snapshot: GateLinks): Promise<string> {
+  const now = await readGateLinks(s.session, s.plant, ['products']);
+  for (const g of gainedLinks(snapshot, now)) for (const k of g.keys) s.touched.add(k);
+  return linkState(snapshot, now);
+}
+
+/**
+ * Quick Trade (`TFacility.RDOConnectToTycoon`, Kernel/Kernel.pas:4521) on the chemical fixture
+ * (#1293, reset first by `resetChemical`), proven on the kind the live server honours for it.
+ *
+ * Kind 2 (`ftpFactories`) links the plant's outputs into the matching input of every own
+ * `rolProducer` (Kernel/Kernel.pas:4543) — the industry fixture's, and any other own producer's
+ * with such an input. Its proof needs both sides: new links on the plant's product gates, and the
+ * industry fixture's supply gate listing the plant. Every link it makes is written on both gates
+ * (:6784-6785), so the plant's product-gate snapshot covers every own facility it touches, and
+ * every newly linked key must be an SPO_test3 lot in Helartia.
+ *
+ * Kind 1 (`ftpWarehouses`) linked no MegaStorage of SPO_test3's live (attempt-6 gate, 2026-10-07):
+ * the shape of Kernel/Kernel1.pas:3150 tests the class's `Kind.Role = rolDistributer` only, where
+ * Kernel/Kernel.pas:4542 also accepts rolCompExport/rolCompInport. So it is sent only when an own
+ * warehouse in Helartia reads `TradeRole` 2 (rolDistributer), and is UNTESTABLE otherwise.
+ *
+ * The undo reaches every SPO_test3 facility (:4537-4553, :4593-4600) and unregisters the plant as
+ * an initial supplier (:4564-4565, :4606-4607), so the flow runs only behind three data guards.
+ * NIGHTLY_ONLY (routing.ts).
  */
 const quickTradeRoundTrip: Flow = {
   name: 'quick-trade-roundtrip',
   what:
-    "RDOConnectToTycoon on SPO_test3's chemical fixture (reset first; warehouses) behind three guards -> Connect to Tycoon: line + " +
-    'new links -> RDODisconnectFromTycoon -> the output links and the initial-supplier list equal their snapshots',
+    "RDOConnectToTycoon on SPO_test3's chemical fixture (reset first) behind three guards: kind 2 (factories) -> " +
+    "Connect to Tycoon: line + new links on the plant and the industry fixture's input; kind 1 (warehouses) only when an " +
+    'own warehouse reads rolDistributer -> RDODisconnectFromTycoon after each -> the output links and the initial-supplier ' +
+    'list equal their snapshots',
   mutates: true,
   run: async ctx => {
     const assertions = new Assertions();
@@ -7556,104 +7367,86 @@ const quickTradeRoundTrip: Flow = {
       }
 
       // Guard 3: the connect and its undo reach every company and town of the tycoon.
+      const snapshot = await readGateLinks(session, fx, ['products']);
+      const fluids = [...new Set(Object.values(snapshot).map(g => g.fluid).filter(Boolean))];
       const helartia = await helartiaValue(session);
-      const outside: string[] = [];
-      for (const f of own.facilities) {
-        if (helartia !== undefined && (await townValueAt(session, f.x, f.y)) === helartia) continue;
-        try {
-          const vc = await resolveVisualClass(session, f.x, f.y);
-          const details = await readBuildingDetails(session, f.x, f.y, vc);
-          if (details.tabs.some(t => t.id === 'whGeneral')) outside.push(`${f.name} (${f.x},${f.y}) of ${f.company}`);
-        } catch (err: unknown) {
-          outside.push(`${f.name} (${f.x},${f.y}) could not be read: ${toErrorMessage(err)}`);
-        }
-      }
-      if (outside.length > 0) {
+      const reach = await quickTradeReach(session, fx, own.facilities, helartia, fluids);
+      if (reach.outside.length > 0) {
         refused = true;
         assertions.untestable(
           'RDOConnectToTycoon',
-          `an SPO_test3 warehouse lies outside ${GOVERNED_TOWN} — Quick Trade reaches every company and town of the ` +
-            `tycoon (Kernel/Kernel.pas:4537-4553): ${outside.join(' | ')}`,
+          `an SPO_test3 facility outside ${GOVERNED_TOWN} takes a plant product (or could not be read) — Quick Trade ` +
+            `reaches every company and town of the tycoon (Kernel/Kernel.pas:4537-4553): ${reach.outside.join(' | ')}`,
         );
       }
       if (refused) return report('quick-trade-roundtrip', assertions, probes, session);
 
-      const snapshot = await readGateLinks(session, fx, ['products']);
-      const suppliersKey = initialSuppliersKey(auto);
-      const read = async (): Promise<string> => linkState(snapshot, await readGateLinks(session, fx, ['products']));
-      const url = await survivalUrl(ctx);
-      const fluids = [...new Set(Object.values(snapshot).map(g => g.fluid).filter(Boolean))];
-      let diagWindow: LogWindow | string;
-      try {
-        diagWindow = await openLogWindow(url);
-      } catch (err: unknown) {
-        diagWindow = `the log window could not be opened: ${toErrorMessage(err)}`;
+      const s: QuickTradeScope = { session, plant: fx, ctx, url: await survivalUrl(ctx), suppliersKey: initialSuppliersKey(auto), touched: new Set() };
+      const productsSource = "the plant's product gates' links via REQ_BUILDING_GATE_CONNECTIONS";
+
+      // Kind 2: both sides must show the link.
+      let kindOneBlocked: string | undefined;
+      const mine = await ownFixture(session, 'industry', assertions);
+      const mineFluids = mine ? await suppliedFluids(session, mine, fluids) : [];
+      if (!mine) {
+        assertions.untestable('RDOConnectToTycoon kind 2 (factories)', "the industry fixture is the other side of its proof and was not found");
+      } else if (mineFluids.length === 0) {
+        assertions.untestable(
+          'RDOConnectToTycoon kind 2 (factories)',
+          `${fixtureLabel(mine)} lists no input of the plant's products (${fluids.join('/') || 'none'}) — no own side to read back`,
+        );
+      } else {
+        const readFactories = async (): Promise<string> => {
+          const plantState = await plantSide(s, snapshot);
+          const mineSide = await supplySideNote(session, mine, mineFluids, fx);
+          if (plantState === 'new-links' && mineSide.linked) return 'new-links';
+          if (plantState === 'snapshot' && !mineSide.linked) return 'snapshot';
+          return `plant side: ${plantState}; ${mineSide.note}`;
+        };
+        const probe = await tycoonRoundTrip(
+          s,
+          FACTORIES_KIND,
+          'factories',
+          `${productsSource}, and ${fixtureLabel(mine)}'s ${mineFluids.join('/')} supply gate listing the plant`,
+          readFactories,
+        );
+        probes.push(probe);
+        assertions.check(
+          'RDOConnectToTycoon kind 2: new links on the plant and the industry fixture, and both equal their snapshot after the undo',
+          probeHeld(probe),
+          probe.note,
+        );
+        if (!probe.restored) kindOneBlocked = "kind 2's undo did not read back the snapshot, so a kind-1 read-back could not tell its links apart";
       }
-      // Reads only, before the write: the verdict below never looks at it.
-      const roles = await quickTradeRoles(session, fx, own.facilities, helartia);
-      let diagnostic = '';
-      let experiments = '';
-      // Whether the kind-1 read-back showed a new link after the write: only a failed one runs the experiments.
-      let written = false;
-      let linked = false;
-      const watched = async (): Promise<string> => {
-        const state = await read();
-        if (written && state === 'new-links') linked = true;
-        return state;
-      };
-      const probe = await roundTripProbe(ctx, url, {
-        what: `${fixtureLabel(fx)} Quick Trade with SPO_test3's warehouses`,
-        member: 'RDOConnectToTycoon',
-        read,
-        testValue: () => 'new-links',
-        write: async () => {
-          await setBuildingProperty(session, fx.x, fx.y, 'RDOConnectToTycoon', '0', { kind: QUICK_TRADE_KIND });
-          written = true;
-        },
-        restore: async () => {
-          // Reads only, before the undo: the verdict below never looks at it.
-          diagnostic = await quickTradeDiagnostic(session, fx, own.facilities, helartia, fluids, diagWindow);
-          // Two writes, each undone and read back, before the undo below — which drops whatever they
-          // left on an own input anyway (Kernel/Kernel.pas:4590-4600). The verdict never looks at them.
-          if (written && !linked) {
-            experiments = await quickTradeExperiments({ session, plant: fx, facilities: own.facilities, helartia, fluids, ctx });
-          }
-          await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: QUICK_TRADE_KIND });
-          let after: AutoConnectionsData;
-          try {
-            after = await readAutoConnections(session);
-          } catch {
-            return; // the initial-supplier check below reports an unreadable page
-          }
-          const listed = new Set(suppliersKey.split(' '));
-          await deleteInitialSupplierRows(
-            session,
-            initialSupplierRowsAt(after, fx.x, fx.y).filter(r => !listed.has(`${r.fluidId}:${r.facilityId}`)),
-          );
-        },
-        proof: {
-          log: {
-            marker: LOG_MARKERS.RDOConnectToTycoon,
-            match: line => facLineMatches(line, fx.x, fx.y, 'Connect to Tycoon:'),
-          },
-          readBack: readBackOn(
-            "the fixture's product gates' links via REQ_BUILDING_GATE_CONNECTIONS",
-            LINK_WHY,
-            tolerantRead(watched),
-          ),
-        },
-        restoreRecord: {
-          x: fx.x,
-          y: fx.y,
-          propertyName: 'RDODisconnectFromTycoon',
-          additionalParams: { kind: QUICK_TRADE_KIND },
-        },
-      });
-      probes.push(probe);
+
+      // Kind 1: only a rolDistributer warehouse can take it.
+      const roles = reach.warehouses.length > 0 ? reach.warehouses.join(' | ') : `no own warehouse in ${GOVERNED_TOWN}`;
+      if (reach.distributers === 0) {
+        assertions.untestable(
+          'RDOConnectToTycoon kind 1 (warehouses)',
+          `no own warehouse in ${GOVERNED_TOWN} reads TradeRole ${ROL_DISTRIBUTER} (rolDistributer) — ${roles}. Live, the ` +
+            "ftpWarehouses branch linked none of SPO_test3's MegaStorages (roles 6/5/6) while kind 2 and a direct " +
+            'RDOConnectOutput linked the same plant (attempt-6 gate, job fae2cc, 2026-10-07) — the shape of ' +
+            'Kernel/Kernel1.pas:3150, which tests the class role `Kind.Role = rolDistributer` only; nothing sent',
+        );
+      } else if (kindOneBlocked) {
+        assertions.untestable('RDOConnectToTycoon kind 1 (warehouses)', `${kindOneBlocked}; nothing sent`);
+      } else {
+        const probe = await tycoonRoundTrip(s, WAREHOUSES_KIND, 'warehouses', productsSource, () => plantSide(s, snapshot));
+        probes.push(probe);
+        assertions.check(
+          'RDOConnectToTycoon kind 1: new links read back, and the output links equal their snapshot after the undo',
+          probeHeld(probe),
+          [probe.note, `trade roles before the write — ${roles}`].filter(Boolean).join(' — '),
+        );
+      }
+      if (probes.length === 0) return report('quick-trade-roundtrip', assertions, probes, session);
+
+      const strays = [...s.touched].filter(k => !reach.helartiaLots.has(k));
       assertions.check(
-        'RDOConnectToTycoon: new links read back, and the output links equal their snapshot after the undo',
-        probeHeld(probe),
-        [probe.note, roles, diagnostic, experiments].filter(Boolean).join(' — ') || undefined,
+        `every link Quick Trade made is an SPO_test3 lot in ${GOVERNED_TOWN}`,
+        strays.length === 0,
+        strays.length > 0 ? `linked outside: ${strays.join(' ')}` : `linked: ${[...s.touched].join(' ') || '(none)'}`,
       );
 
       const suppliers = await pollUntil(
@@ -7664,13 +7457,13 @@ const quickTradeRoundTrip: Flow = {
             return `(unreadable: ${toErrorMessage(err)})`;
           }
         },
-        k => k === suppliersKey,
+        k => k === s.suppliersKey,
         ctx,
       );
       assertions.check(
         'the initial-supplier list equals its snapshot',
         suppliers.ok,
-        suppliers.ok ? `${suppliersKey || '(none)'}` : `before: ${suppliersKey || '(none)'} — after: ${suppliers.last || '(none)'}`,
+        suppliers.ok ? `${s.suppliersKey || '(none)'}` : `before: ${s.suppliersKey || '(none)'} — after: ${suppliers.last || '(none)'}`,
       );
       return report('quick-trade-roundtrip', assertions, probes, session);
     } finally {

@@ -17,7 +17,7 @@ import {
   pickPlacement, ownsPlacement, delFacilityLineMatches,
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSupplierRowsAt, initialSuppliersKey,
-  storageGateState, initialSupplierNote, errorLines, tradeRoleNote, quickTradeOutcome,
+  storageGateState, tradeRoleNote,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
   bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
@@ -6990,7 +6990,8 @@ describe('inspector connections & trade (#1153)', () => {
     ];
     tycoonCompanies = [OWN_CO, 'Mayor of Helartia'];
     towns: Record<string, number> = {};
-    outsideTabs: Record<string, string[]> = {};
+    /** Further facilities the world answers for — own or not as `tycoon` / `company` say. */
+    extra: Fac[] = [];
     unreadable = new Set<string>();
     dims: Record<string, FacilityDimensions> = {};
     auto: AutoConnectionsData = {
@@ -7012,7 +7013,7 @@ describe('inspector connections & trade (#1153)', () => {
     requests: WsMessage[] = [];
 
     all(): Fac[] {
-      return [this.facs.industry, this.facs.warehouse, this.facs.store, this.facs.chemical];
+      return [this.facs.industry, this.facs.warehouse, this.facs.store, this.facs.chemical, ...this.extra];
     }
 
     at(x: number, y: number): Fac | undefined {
@@ -7100,10 +7101,15 @@ describe('inspector connections & trade (#1153)', () => {
           for (const c of this.pairs(p.connectionList)) this.unlink(f, 'products', p.fluidId, c.x, c.y);
           break;
         case 'RDOConnectToTycoon': {
-          // ftpWarehouses (1) reaches the warehouse, ftpFactories (2) the industry fixture (Kernel/Kernel.pas:4541-4543).
-          const to = p.kind === '2' ? this.facs.industry : this.facs.warehouse;
-          for (const g of f.products) {
-            if (to.supplies.some(s => s.metaFluid === g.metaFluid)) this.link(f, 'products', g.metaFluid as string, to);
+          // ftpWarehouses (1) reaches the warehouse, ftpFactories (2) every producer — the industry
+          // fixture and any further one (Kernel/Kernel.pas:4541-4543).
+          const targets = p.kind === '2'
+            ? [this.facs.industry, ...this.extra.filter(e => e.tabs.includes('indGeneral'))]
+            : [this.facs.warehouse];
+          for (const to of targets) {
+            for (const g of f.products) {
+              if (to.supplies.some(s => s.metaFluid === g.metaFluid)) this.link(f, 'products', g.metaFluid as string, to);
+            }
           }
           break;
         }
@@ -7137,7 +7143,7 @@ describe('inspector connections & trade (#1153)', () => {
       const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
       switch (msg.type) {
         case WsMessageType.REQ_BUILDING_DETAILS: {
-          const tabs = f ? f.tabs : (this.outsideTabs[`${String(m.x)},${String(m.y)}`] ?? []);
+          const tabs = f ? f.tabs : [];
           return { details: { tabs: tabs.map(id => ({ id })), groups: {}, ...(f?.wares ? { warehouseWares: clone(f.wares) } : {}) } };
         }
         case WsMessageType.REQ_BUILDING_TAB_DATA: {
@@ -7322,12 +7328,6 @@ describe('inspector connections & trade (#1153)', () => {
       expect(storageGateState(gate([conn('q', OWN_CO, 1, 2)]), plant)).toBe('no plant link');
     });
 
-    it('initialSupplierNote lists the rows, and calls none inconclusive (cached page)', () => {
-      expect(initialSupplierNote([])).toBe('inconclusive (auto-connections cache up to 5 min, KernelCache.pas:964)');
-      expect(initialSupplierNote([{ fluidId: 'Chemicals', facilityId: '80,90,' }, { fluidId: 'Water', facilityId: '80,90,' }]))
-        .toBe('Chemicals:80,90, Water:80,90,');
-    });
-
     it('tradeRoleNote names the TFacilityRole, flags rolImporter, and calls an absent role unread', () => {
       expect(tradeRoleNote(undefined)).toBe('unread');
       expect(tradeRoleNote('0')).toBe('0 (rolNeutral)');
@@ -7339,12 +7339,6 @@ describe('inspector connections & trade (#1153)', () => {
       expect(tradeRoleNote('7')).toBe('7 (not a TFacilityRole)');
       expect(tradeRoleNote('x')).toBe('x (not a TFacilityRole)');
       expect(tradeRoleNote('')).toBe(' (not a TFacilityRole)');
-    });
-
-    it('errorLines keeps the lines naming an error or an exception', () => {
-      expect(errorLines('12:00 - ok\r\n12:01 - Error in Connect \n12:02 - EAccessViolation exception\n12:03 - terrorist')).toEqual([
-        '12:01 - Error in Connect', '12:02 - EAccessViolation exception',
-      ]);
     });
 
     it('initialSupplierAt and initialSuppliersKey read the "x,y," facility ids', () => {
@@ -8059,35 +8053,200 @@ describe('inspector connections & trade (#1153)', () => {
   });
 
   describe('quick-trade-roundtrip', () => {
-    it('connects to the own warehouses, proves the line and the new links, undoes it, and checks the initial suppliers', async () => {
+    const K2 = [[80, 90, 'RDOConnectToTycoon', { kind: '2' }], [80, 90, 'RDODisconnectFromTycoon', { kind: '2' }]];
+    const K1 = [[80, 90, 'RDOConnectToTycoon', { kind: '1' }], [80, 90, 'RDODisconnectFromTycoon', { kind: '1' }]];
+    const KIND2 = 'RDOConnectToTycoon kind 2: new links on the plant and the industry fixture, and both equal their snapshot after the undo';
+    const KIND1 = 'RDOConnectToTycoon kind 1: new links read back, and the output links equal their snapshot after the undo';
+    const STRAYS = 'every link Quick Trade made is an SPO_test3 lot in Helartia';
+    const writesOf = (world: ConnWorld) => world.writes.map(w => [w.x, w.y, w.property, w.params]);
+    const checkOf = (result: FlowResult, what: string) => result.assertions.find(a => a.what === what);
+
+    it('proves kind 2 on both sides, then kind 1 on a rolDistributer warehouse, undoes each, and checks the initial suppliers', async () => {
+      // Contract changed by #1293 (2026-10-07): kind 1 alone linked no MegaStorage live (attempt-6 gate, job fae2cc);
+      // the proof is now kind 2 (plant + industry fixture), and kind 1 runs only beside a warehouse reading TradeRole 2.
       const world = new ConnWorld();
       const lock = cleanLock();
       arrange(world);
       const result = await run('quick-trade-roundtrip', lock);
       expect(result.status).toBe('PASS');
-      expect(world.writes.map(w => [w.x, w.y, w.property, w.params])).toEqual([
-        [80, 90, 'RDOConnectToTycoon', { kind: '1' }],
-        [80, 90, 'RDODisconnectFromTycoon', { kind: '1' }],
+      expect(writesOf(world)).toEqual([...K2, ...K1]);
+      for (const probe of result.probes) {
+        expect(probe).toMatchObject({
+          original: 'snapshot', written: 'new-links', logLine: '12:00 - Fac(80,90) Connect to Tycoon: 123456', restored: true,
+        });
+      }
+      expect(result.probes.map(p => p.what)).toEqual([
+        'Chemical Plant (80,90) Quick Trade kind 2 (factories)', 'Chemical Plant (80,90) Quick Trade kind 1 (warehouses)',
       ]);
-      expect(result.probes[0]).toMatchObject({
-        original: 'snapshot', written: 'new-links', logLine: '12:00 - Fac(80,90) Connect to Tycoon: 123456', restored: true,
-      });
-      expect(result.assertions.find(a => a.what === 'the initial-supplier list equals its snapshot')?.ok).toBe(true);
+      // The kind-2 read-back reads the industry fixture's gate too.
+      expect(world.requests.some(r => r.type === WsMessageType.REQ_BUILDING_GATE_CONNECTIONS && (r as { x?: number }).x === 30)).toBe(true);
+      expect(checkOf(result, KIND2)?.ok).toBe(true);
+      expect(checkOf(result, KIND1)?.detail).toMatch(/trade roles before the write — Storage \(50,60\): 2 \(rolDistributer\)$/);
+      expect(checkOf(result, STRAYS)).toMatchObject({ ok: true, detail: 'linked: 30,40 50,60' });
+      expect(checkOf(result, 'the initial-supplier list equals its snapshot')?.ok).toBe(true);
       expect(keysOf(world.facs.chemical.products[0])).toEqual([]);
+      expect(keysOf(world.facs.chemical.products[1])).toEqual([]);
+      expect(keysOf(world.facs.industry.supplies[0])).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
+    it('FAILs kind 2 when the connect links nothing, and still runs kind 1 once its undo read back', async () => {
+      const world = new ConnWorld();
+      world.inert.add('RDOConnectToTycoon:2');
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ status: 'FAIL', readBack: 'UNCONFIRMED', restored: true });
+      expect(checkOf(result, KIND2)?.ok).toBe(false);
+      expect(result.probes[1].status).toBe('PASS');
+      expect(writesOf(world)).toEqual([...K2, ...K1]);
+    });
+
+    it("FAILs kind 2 when only the plant side shows the link — the industry fixture's input must list the plant too", async () => {
+      const world = new ConnWorld();
+      world.facs.warehouse.role = '6';
+      const { stub } = arrange(world);
+      const answer = world.respond.bind(world);
+      (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
+        const out = answer(msg);
+        if ((msg as { propertyName?: string }).propertyName === 'RDOConnectToTycoon') {
+          Object.assign(world.facs.industry.supplies[0], { connections: [], connectionCount: 0 });
+        }
+        return out;
+      });
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0]).toMatchObject({ readBack: 'UNCONFIRMED', restored: true });
+      expect(checkOf(result, KIND2)?.detail).toMatch(/plant side: new-links; Farm \(30,40\) Water: no plant link/);
+    });
+
+    it.each([
+      ['reads another role', (w: ConnWorld) => { w.facs.warehouse.role = '6'; }, 'Storage \\(50,60\\): 6 \\(rolCompInport\\)'],
+      ['cannot be read', (w: ConnWorld) => { w.unreadable.add('50,60'); }, 'Storage \\(50,60\\) could not be read: No building at \\(50,60\\)'],
+      ['is not an SPO_test3 facility', (w: ConnWorld) => { w.tycoon = w.tycoon.filter(t => t.x !== 50); }, 'no own warehouse in Helartia'],
+    ])('records kind 1 UNTESTABLE with the roles read, and sends nothing for it, when the warehouse %s', async (_l, setup, roles) => {
+      const world = new ConnWorld();
+      setup(world);
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.probes).toHaveLength(1);
+      expect(result.probes[0].status).toBe('PASS');
+      expect(writesOf(world)).toEqual(K2);
+      expect(result.untestable).toEqual([
+        expect.stringMatching(
+          new RegExp(
+            `^RDOConnectToTycoon kind 1 \\(warehouses\\) — no own warehouse in Helartia reads TradeRole 2 \\(rolDistributer\\) — ${roles}\\. ` +
+              'Live, the ftpWarehouses branch linked none .*job fae2cc.*Kernel/Kernel1\\.pas:3150.*; nothing sent$',
+          ),
+        ),
+      ]);
+    });
+
+    it('FAILs kind 1 when a rolDistributer warehouse is linked nothing', async () => {
+      const world = new ConnWorld();
+      world.inert.add('RDOConnectToTycoon:1');
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes.map(p => p.status)).toEqual(['PASS', 'FAIL']);
+      expect(checkOf(result, KIND1)).toMatchObject({ ok: false });
+      expect(checkOf(result, KIND1)?.detail).toMatch(/read-back never showed "new-links".* — trade roles before the write — Storage \(50,60\): 2 \(rolDistributer\)$/);
+    });
+
+    it("sends no kind 1 when kind 2's undo did not read back", async () => {
+      const world = new ConnWorld();
+      world.inert.add('RDODisconnectFromTycoon:2');
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(result.probes[0].restored).toBe(false);
+      expect(result.untestable).toEqual([
+        expect.stringMatching(/^RDOConnectToTycoon kind 1 \(warehouses\) — kind 2's undo did not read back the snapshot.*; nothing sent$/),
+      ]);
+      expect(writesOf(world)).toEqual(K2);
+    });
+
+    it('links, reads back and undoes every own producer kind 2 reaches — not only the industry fixture', async () => {
+      const world = new ConnWorld();
+      const other: Fac = {
+        x: 60, y: 70, name: 'Other Mill', company: OWN_CO, visualClass: '4116', tabs: ['indGeneral', 'supplies', 'products'],
+        supplies: [sg('Water')], products: [],
+      };
+      world.extra.push(other);
+      world.tycoon.push({ company: OWN_CO, x: 60, y: 70, name: 'Other Mill' });
+      world.facs.warehouse.role = '6';
+      let linkedOther: string[] = [];
+      const { stub } = arrange(world);
+      const answer = world.respond.bind(world);
+      (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
+        const out = answer(msg);
+        if ((msg as { propertyName?: string }).propertyName === 'RDOConnectToTycoon') linkedOther = keysOf(other.supplies[0]);
+        return out;
+      });
+      const result = await run('quick-trade-roundtrip');
+      expect(result.probes[0].status).toBe('PASS');
+      expect(linkedOther).toEqual(['80,90']);
+      expect(checkOf(result, STRAYS)).toMatchObject({ ok: true, detail: 'linked: 30,40 60,70' });
+      expect(keysOf(other.supplies[0])).toEqual([]);
+      expect(keysOf(world.facs.chemical.products[1])).toEqual([]);
+    });
+
+    it('FAILs when a link lands on a lot that is not an SPO_test3 facility in Helartia', async () => {
+      const world = new ConnWorld();
+      // Own company, but the directory does not list the lot.
+      world.extra.push({
+        x: 61, y: 71, name: 'Unlisted Mill', company: OWN_CO, visualClass: '4116', tabs: ['indGeneral', 'supplies', 'products'],
+        supplies: [sg('Water')], products: [],
+      });
+      world.facs.warehouse.role = '6';
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('FAIL');
+      expect(checkOf(result, STRAYS)).toMatchObject({ ok: false, detail: 'linked outside: 61,71' });
+    });
+
+    it('records kind 2 UNTESTABLE when the industry fixture is missing or takes no plant product, and still runs kind 1', async () => {
+      const gone = new ConnWorld();
+      gone.found.industry = false;
+      arrange(gone);
+      const r1 = await run('quick-trade-roundtrip');
+      expect(r1.status).toBe('UNTESTABLE');
+      expect(r1.untestable).toEqual([
+        'industry fixture — none in Helartia',
+        'RDOConnectToTycoon kind 2 (factories) — the industry fixture is the other side of its proof and was not found',
+      ]);
+      expect(writesOf(gone)).toEqual(K1);
+
+      const dry = new ConnWorld();
+      dry.facs.industry.supplies = [sg('Coal')];
+      arrange(dry);
+      const r2 = await run('quick-trade-roundtrip');
+      expect(r2.untestable).toEqual([
+        "RDOConnectToTycoon kind 2 (factories) — Farm (30,40) lists no input of the plant's products (Chemicals/Water) — no own side to read back",
+      ]);
+      expect(writesOf(dry)).toEqual(K1);
+    });
+
+    it('sends nothing and skips the after-checks when neither kind can run', async () => {
+      const world = new ConnWorld();
+      world.found.industry = false;
+      world.facs.warehouse.role = '5';
+      arrange(world);
+      const result = await run('quick-trade-roundtrip');
+      expect(result.status).toBe('UNTESTABLE');
+      expect(setProps(world)).toEqual([]);
+      expect(checkOf(result, 'the initial-supplier list equals its snapshot')).toBeUndefined();
+    });
+
     it('resets an SPO_test3 client of the plant first — by company or by lot — then runs the round trip', async () => {
+      // Contract changed by #1293 (2026-10-07): the round trip after the reset is kind 2, then kind 1.
       const byCompany = new ConnWorld();
       byCompany.link(byCompany.facs.chemical, 'products', 'Chemicals', { x: 90, y: 91, name: 'Mayor Shop', company: 'Mayor of Helartia' });
       arrange(byCompany);
       const r1 = await run('quick-trade-roundtrip');
       expect(r1.status).toBe('PASS');
-      expect(byCompany.writes.map(w => [w.x, w.y, w.property])).toEqual([
-        [80, 90, 'RDODisconnectFromTycoon'],
-        [80, 90, 'RDOConnectToTycoon'],
-        [80, 90, 'RDODisconnectFromTycoon'],
-      ]);
+      expect(writesOf(byCompany)).toEqual([[80, 90, 'RDODisconnectFromTycoon', { kind: '1' }], ...K2, ...K1]);
 
       const byLot = new ConnWorld();
       byLot.tycoon.push({ company: 'Renamed Co', x: 92, y: 93, name: 'Shop' });
@@ -8109,36 +8268,45 @@ describe('inspector connections & trade (#1153)', () => {
     });
 
     it('resets the plant first when it is an initial supplier, then runs the round trip', async () => {
+      // Contract changed by #1293 (2026-10-07): the round trip after the reset is kind 2, then kind 1.
       const world = new ConnWorld();
       world.auto.fluids[0].suppliers.push({ facilityName: 'Chemical Plant', facilityId: '80,90,', companyName: OWN_CO });
       arrange(world);
       const result = await run('quick-trade-roundtrip');
       expect(result.status).toBe('PASS');
-      expect(world.writes.map(w => [w.x, w.y, w.property])).toEqual([
-        [80, 90, 'RDODisconnectFromTycoon'],
-        [80, 90, 'RDOConnectToTycoon'],
-        [80, 90, 'RDODisconnectFromTycoon'],
-      ]);
+      expect(writesOf(world)).toEqual([[80, 90, 'RDODisconnectFromTycoon', { kind: '1' }], ...K2, ...K1]);
       expect(fixturesInitialSupplier(world)).toBe(false);
     });
 
-    it('does nothing when an SPO_test3 warehouse lies outside Helartia, or cannot be read', async () => {
+    it('does nothing when an SPO_test3 facility outside Helartia takes a plant product, or cannot be read', async () => {
+      // Contract changed by #1293 (2026-10-07): kind 2 links every own producer's matching input (Kernel/Kernel.pas:4543),
+      // so the guard names any facility outside Helartia with an input of a plant product — warehouse or producer —
+      // and no longer one that takes none.
       const world = new ConnWorld();
-      world.tycoon.push({ company: OWN_CO, x: 200, y: 200, name: 'Far Storage' }, { company: OWN_CO, x: 210, y: 210, name: 'Far Farm' }, { company: OWN_CO, x: 220, y: 220, name: 'Gone' });
-      world.towns = { '200,200': 6, '210,210': 6, '220,220': 6 };
-      world.outsideTabs = { '200,200': ['whGeneral'], '210,210': ['indGeneral'] };
+      const far = (x: number, name: string, tab: string, fluid: string): Fac => ({
+        x, y: x, name, company: OWN_CO, visualClass: '999', tabs: [tab, 'supplies', 'products'], supplies: [sg(fluid)], products: [],
+      });
+      world.extra.push(far(200, 'Far Storage', 'whGeneral', 'Chemicals'), far(205, 'Far Mill', 'indGeneral', 'Water'), far(210, 'Far Farm', 'indGeneral', 'Coal'));
+      world.tycoon.push(
+        { company: OWN_CO, x: 200, y: 200, name: 'Far Storage' }, { company: OWN_CO, x: 205, y: 205, name: 'Far Mill' },
+        { company: OWN_CO, x: 210, y: 210, name: 'Far Farm' }, { company: OWN_CO, x: 220, y: 220, name: 'Gone' },
+      );
+      world.towns = { '200,200': 6, '205,205': 6, '210,210': 6, '220,220': 6 };
       world.unreadable.add('220,220');
       arrange(world);
       const result = await run('quick-trade-roundtrip');
       expect(result.status).toBe('UNTESTABLE');
       expect(result.untestable).toEqual([
-        expect.stringMatching(/outside Helartia.*Kernel\/Kernel\.pas:4537-4553.*Far Storage \(200,200\) of SPO_test3 - Green \| Gone \(220,220\) could not be read/),
+        expect.stringMatching(
+          /outside Helartia takes a plant product.*Kernel\/Kernel\.pas:4537-4553.*Far Storage \(200,200\) of SPO_test3 - Green takes Chemicals \| Far Mill \(205,205\) of SPO_test3 - Green takes Water \| Gone \(220,220\) could not be read/,
+        ),
       ]);
       expect(result.untestable[0]).not.toMatch(/Far Farm/);
       expect(setProps(world)).toEqual([]);
     });
 
-    it('deletes the initial-supplier row the connect added when the undo leaves it, and only that one', async () => {
+    it('deletes the initial-supplier row each connect added when its undo leaves it, and only that one', async () => {
+      // Contract changed by #1293 (2026-10-07): two round trips (kind 2, kind 1), so the row left by each undo is deleted after it.
       const world = new ConnWorld();
       // SetAsDefault registered the plant (Kernel/Kernel.pas:4564-4565); RemoveAsDefault left it.
       world.onUndoTycoon = () => {
@@ -8147,12 +8315,12 @@ describe('inspector connections & trade (#1153)', () => {
       arrange(world);
       const result = await run('quick-trade-roundtrip');
       expect(result.status).toBe('PASS');
-      const deletes = world.requests.filter(r => r.type === WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION);
-      expect(deletes).toEqual([expect.objectContaining({ action: 'delete', fluidId: 'Water', suppliers: '80,90,' })]);
-      expect(world.requests.indexOf(deletes[0])).toBeGreaterThan(
-        world.requests.findIndex(r => (r as { propertyName?: string }).propertyName === 'RDODisconnectFromTycoon'),
-      );
-      expect(result.assertions.find(a => a.what === 'the initial-supplier list equals its snapshot')?.ok).toBe(true);
+      const order = world.requests
+        .map(r => (r.type === WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION ? r : (r as { propertyName?: string }).propertyName))
+        .filter(t => typeof t === 'object' || t === 'RDODisconnectFromTycoon');
+      const row = expect.objectContaining({ action: 'delete', fluidId: 'Water', suppliers: '80,90,' });
+      expect(order).toEqual(['RDODisconnectFromTycoon', row, 'RDODisconnectFromTycoon', row]);
+      expect(checkOf(result, 'the initial-supplier list equals its snapshot')?.ok).toBe(true);
     });
 
     it('FAILs when the initial-supplier list differs after the undo', async () => {
@@ -8195,370 +8363,6 @@ describe('inspector connections & trade (#1153)', () => {
       arrange(world);
       expect((await run('quick-trade-roundtrip')).status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
-    });
-
-    describe('the storage-side diagnostic (#1293)', () => {
-      const VERDICT = 'RDOConnectToTycoon: new links read back, and the output links equal their snapshot after the undo';
-      const detailOf = (result: FlowResult) => result.assertions.find(a => a.what === VERDICT)?.detail ?? '';
-
-      /** The warehouse (50,60) is a MegaStorage; every lot resolves to its own visual class. */
-      function arrangeMega(world: ConnWorld) {
-        world.dims = { '532': { visualClass: '532', name: 'Storage', facid: '', xsize: 4, ysize: 4, level: 0, facId: 125 } };
-        const arranged = arrange(world);
-        jest.spyOn(session, 'resolveVisualClass').mockImplementation(async (_s, x, y) => {
-          if (world.unreadable.has(`${x},${y}`)) throw new Error(`No building at (${x},${y})`);
-          return world.at(x, y)?.visualClass ?? '999';
-        });
-        return arranged;
-      }
-
-      it('records each own MegaStorage gate of a plant fluid — linked, or not listed — and an inconclusive initial-supplier read, before the undo', async () => {
-        // Contract changed by #1293 (2026-10-07): the detail opens with the trade roles read before the write.
-        const world = new ConnWorld();
-        world.facs.chemical.role = '1';
-        arrangeMega(world);
-        const result = await run('quick-trade-roundtrip');
-        expect(result.status).toBe('PASS');
-        expect(detailOf(result)).toBe(
-          'trade roles before the write — Chemical Plant (80,90): 1 (rolProducer) | Storage (50,60): 2 (rolDistributer) — ' +
-            'diagnostic before the undo — own MegaStorages: Storage (50,60) Chemicals: plant linked | Storage (50,60) Water: gate not listed; ' +
-            "the plant's initial-supplier rows: inconclusive (auto-connections cache up to 5 min, KernelCache.pas:964); " +
-            'Survival error lines since the write: none',
-        );
-        // Reads only: the writes are the round trip's own.
-        expect(world.writes.map(w => w.property)).toEqual(['RDOConnectToTycoon', 'RDODisconnectFromTycoon']);
-      });
-
-      it('records "no plant link" beside the unchanged FAIL when the connect links nothing', async () => {
-        const world = new ConnWorld();
-        world.inert.add('RDOConnectToTycoon');
-        arrangeMega(world);
-        const result = await run('quick-trade-roundtrip');
-        expect(result.status).toBe('FAIL');
-        expect(result.probes[0].readBack).toBe('UNCONFIRMED');
-        expect(detailOf(result)).toMatch(/read-back never showed "new-links".* — diagnostic before the undo — own MegaStorages: Storage \(50,60\) Chemicals: no plant link \|/);
-      });
-
-      it('records a storage gate whose links were not all read', async () => {
-        const world = new ConnWorld();
-        world.inert.add('RDOConnectToTycoon');
-        world.facs.warehouse.supplies[0].connectionCount = 3;
-        arrangeMega(world);
-        expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(/Storage \(50,60\) Chemicals: count mismatch \(unread\)/);
-      });
-
-      it("records the plant's initial-supplier rows after the write, and the Survival error lines", async () => {
-        const world = new ConnWorld();
-        const { stub } = arrangeMega(world);
-        const answer = world.respond.bind(world);
-        (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
-          const out = answer(msg);
-          if ((msg as { propertyName?: string }).propertyName === 'RDOConnectToTycoon') {
-            // SetAsDefault (Kernel/Kernel.pas:4564-4565) registers the plant.
-            world.auto.fluids[0].suppliers.push({ facilityName: 'Chemical Plant', facilityId: '80,90,', companyName: OWN_CO });
-            world.lines.push('12:00 - Error: Connect to Tycoon failed for Storage');
-          }
-          return out;
-        });
-        const result = await run('quick-trade-roundtrip');
-        expect(result.status).toBe('PASS');
-        expect(detailOf(result)).toMatch(
-          /the plant's initial-supplier rows: Water:80,90,; Survival error lines since the write: 12:00 - Error: Connect to Tycoon failed for Storage$/,
-        );
-      });
-
-      it('names what it could not read, and never changes the verdict', async () => {
-        const world = new ConnWorld();
-        world.unreadable.add('50,60');
-        const { stub } = arrangeMega(world);
-        const answer = world.respond.bind(world);
-        const saved = world.auto;
-        (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
-          const out = answer(msg);
-          if ((msg as { propertyName?: string }).propertyName === 'RDOConnectToTycoon') world.auto = { fluids: [], cacheUnavailable: true };
-          return out;
-        });
-        world.onUndoTycoon = () => {
-          world.auto = saved;
-        };
-        jest.spyOn(liveLog, 'readSince').mockRejectedValue(new Error('log host vanished'));
-        const result = await run('quick-trade-roundtrip');
-        expect(result.status).toBe('PASS');
-        expect(detailOf(result)).toMatch(
-          /own MegaStorages: Storage \(50,60\) unread: No building at \(50,60\); the plant's initial-supplier rows: unread: .*cacheUnavailable.*; Survival error lines since the write: unread: log host vanished$/,
-        );
-      });
-
-      it('names an unopened log window and unread facility classes', async () => {
-        const world = new ConnWorld();
-        arrangeMega(world);
-        jest.spyOn(fixtures, 'facilityDimensions').mockRejectedValue(new Error('no dims'));
-        jest.spyOn(liveLog, 'openLogWindow').mockRejectedValueOnce(new Error('listing down'));
-        const result = await run('quick-trade-roundtrip');
-        expect(result.status).toBe('PASS');
-        expect(detailOf(result)).toMatch(
-          /own MegaStorages: facility classes unread: no dims;.*Survival error lines since the write: the log window could not be opened: listing down$/,
-        );
-      });
-
-      it('says when Helartia holds no own MegaStorage', async () => {
-        // Contract changed by #1293 (2026-10-07): the detail opens with the trade roles read before the write.
-        const world = new ConnWorld();
-        arrange(world);
-        expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(
-          /^trade roles before the write — Chemical Plant \(80,90\): unread — diagnostic before the undo — own MegaStorages: none in Helartia;/,
-        );
-      });
-
-      it('reads the trade roles before the write, and flags an importer storage without changing the verdict', async () => {
-        const world = new ConnWorld();
-        world.facs.chemical.role = '1';
-        world.facs.warehouse.role = '4';
-        arrangeMega(world);
-        const result = await run('quick-trade-roundtrip');
-        expect(result.status).toBe('PASS');
-        expect(detailOf(result)).toMatch(
-          /^trade roles before the write — Chemical Plant \(80,90\): 1 \(rolProducer\) \| Storage \(50,60\): 4 \(rolImporter\) — refuses every link per the tycoon permission map \(Kernel\/Kernel\.pas:2875, checked at :6766-6767\) — diagnostic before the undo/,
-        );
-        const at = (pred: (m: WsMessage & Record<string, unknown>) => boolean) =>
-          world.requests.findIndex(m => pred(m as WsMessage & Record<string, unknown>));
-        const storageRole = at(m => m.type === WsMessageType.REQ_BUILDING_TAB_DATA && m.tabId === 'whGeneral');
-        const plantRole = at(m => m.type === WsMessageType.REQ_BUILDING_TAB_DATA && m.tabId === 'indGeneral' && m.x === 80);
-        const write = at(m => m.propertyName === 'RDOConnectToTycoon');
-        expect(plantRole).toBeGreaterThanOrEqual(0);
-        expect(storageRole).toBeGreaterThan(plantRole);
-        expect(write).toBeGreaterThan(storageRole);
-        expect(world.writes.map(w => w.property)).toEqual(['RDOConnectToTycoon', 'RDODisconnectFromTycoon']);
-      });
-
-      it('records an unreadable trade role as unread, and still runs the round trip', async () => {
-        const world = new ConnWorld();
-        world.facs.warehouse.role = '4';
-        const { stub } = arrangeMega(world);
-        const answer = world.respond.bind(world);
-        (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
-          const m = msg as WsMessage & Record<string, unknown>;
-          if (m.type === WsMessageType.REQ_BUILDING_TAB_DATA && m.tabId === 'whGeneral') throw new Error('section timed out');
-          return answer(msg);
-        });
-        const result = await run('quick-trade-roundtrip');
-        expect(result.status).toBe('PASS');
-        expect(detailOf(result)).toMatch(
-          /^trade roles before the write — Chemical Plant \(80,90\): unread \| Storage \(50,60\): unread: section timed out — diagnostic before the undo/,
-        );
-      });
-
-      it("records a storage whose supply gates cannot be listed", async () => {
-        const world = new ConnWorld();
-        const { stub } = arrangeMega(world);
-        const answer = world.respond.bind(world);
-        (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
-          const m = msg as WsMessage & Record<string, unknown>;
-          if (m.type === WsMessageType.REQ_BUILDING_TAB_DATA && m.tabId === 'supplies' && m.x === 50) throw new Error('gates timed out');
-          return answer(msg);
-        });
-        const result = await run('quick-trade-roundtrip');
-        expect(result.status).toBe('PASS');
-        expect(detailOf(result)).toMatch(/own MegaStorages: Storage \(50,60\) unread: gates timed out;/);
-      });
-
-      it('records the facility classes as unread in the role note too', async () => {
-        const world = new ConnWorld();
-        arrangeMega(world);
-        jest.spyOn(fixtures, 'facilityDimensions').mockRejectedValue(new Error('no dims'));
-        expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(
-          /^trade roles before the write — Chemical Plant \(80,90\): unread \| facility classes unread: no dims — /,
-        );
-      });
-
-      describe('the kind-2 and direct-link experiments, when kind 1 links nothing (#1293)', () => {
-        const ROW_A =
-          'RDOConnectToTycoon works live and the pair links; the deployed ftpWarehouses branch skips MegaStorages ' +
-          '(Kernel/Kernel1.pas:3150 shape) — expectation to revisit by observation';
-        const ROW_B = 'RDOConnectToTycoon is a live no-op with correct pointer and arguments';
-        const ROW_C = 'the plant/pair is refused live — plant to rebuild under self-heal, re-diagnose';
-        const E1_NONE =
-          'E1 kind 2 (factories): none (plant side: snapshot, mine side: Farm (30,40) Chemicals: no plant link); ' +
-          'E1 kind 2 (factories) undo: gone (plant side: snapshot, mine side: Farm (30,40) Chemicals: no plant link)';
-        const E1_LINKS =
-          'E1 kind 2 (factories): links (plant side: new-links, mine side: Farm (30,40) Chemicals: plant linked); ' +
-          'E1 kind 2 (factories) undo: gone (plant side: snapshot, mine side: Farm (30,40) Chemicals: no plant link)';
-        const E2_LINKS =
-          'E2 direct plant→Storage (50,60) Chemicals: links (plant side: lists 50,60, storage side: Storage (50,60) Chemicals: plant linked); ' +
-          'E2 direct plant→Storage (50,60) Chemicals undo: gone (plant side: does not list 50,60, storage side: Storage (50,60) Chemicals: no plant link)';
-        const E2_NONE =
-          'E2 direct plant→Storage (50,60) Chemicals: none (plant side: does not list 50,60, storage side: Storage (50,60) Chemicals: no plant link); ' +
-          'E2 direct plant→Storage (50,60) Chemicals undo: gone (plant side: does not list 50,60, storage side: Storage (50,60) Chemicals: no plant link)';
-        const K1 = [80, 90, 'RDOConnectToTycoon', { kind: '1' }];
-        const UNDO = [80, 90, 'RDODisconnectFromTycoon', { kind: '1' }];
-        const E1_WRITES = [[80, 90, 'RDOConnectToTycoon', { kind: '2' }], [80, 90, 'RDODisconnectFromTycoon', { kind: '2' }]];
-        const E2_WRITES = [
-          [80, 90, 'RDOConnectOutput', { fluidId: 'Chemicals', connectionList: '50,60,' }],
-          [80, 90, 'RDODisconnectOutput', { fluidId: 'Chemicals', connectionList: '50,60,' }],
-        ];
-        const writesOf = (world: ConnWorld) => world.writes.map(w => [w.x, w.y, w.property, w.params]);
-
-        /** The live shape: the mine takes Chemicals in, the plant puts Chemicals out, the MegaStorage takes Chemicals in. */
-        function plantWorld(...inert: string[]): ConnWorld {
-          const world = new ConnWorld();
-          const { industry, chemical } = world.facs;
-          industry.supplies = [sg('Chemicals')];
-          industry.products = [pg('Raw Chemicals')];
-          chemical.supplies = [sg('Raw Chemicals')];
-          chemical.products = [pg('Chemicals')];
-          for (const m of inert) world.inert.add(m);
-          return world;
-        }
-
-        it.each([
-          ['E1 links, E2 links', ['RDOConnectToTycoon:1'], E1_LINKS, E2_LINKS, ROW_A],
-          ['E1 none, E2 links', ['RDOConnectToTycoon'], E1_NONE, E2_LINKS, ROW_B],
-          ['E1 none, E2 none', ['RDOConnectToTycoon', 'RDOConnectOutput'], E1_NONE, E2_NONE, ROW_C],
-          ['E1 links, E2 none', ['RDOConnectToTycoon:1', 'RDOConnectOutput'], E1_LINKS, E2_NONE, ROW_C],
-        ])('%s: records both experiments, their undo and the outcome row — and the verdict stays FAIL', async (_row, inert, e1, e2, outcome) => {
-          const world = plantWorld(...inert);
-          const lock = cleanLock();
-          arrangeMega(world);
-          const result = await run('quick-trade-roundtrip', lock);
-          expect(result.status).toBe('FAIL');
-          expect(result.probes[0]).toMatchObject({ status: 'FAIL', readBack: 'UNCONFIRMED', restored: true });
-          expect(result.assertions.find(a => a.what === VERDICT)?.ok).toBe(false);
-          expect(detailOf(result)).toMatch(/^read-back never showed "new-links".* — diagnostic before the undo — .* — experiments before the undo — /);
-          expect(detailOf(result).endsWith(`experiments before the undo — ${e1}; ${e2}; outcome: ${outcome}`)).toBe(true);
-          // Each experiment is undone before the next write; the flow's own undo comes last.
-          expect(writesOf(world)).toEqual([K1, ...E1_WRITES, ...E2_WRITES, UNDO]);
-          expect(keysOf(world.facs.chemical.products[0])).toEqual([]);
-          expect(keysOf(world.facs.industry.supplies[0])).toEqual([]);
-          expect(keysOf(world.facs.warehouse.supplies[0])).toEqual([]);
-          expect(lock.read().pendingRestores).toEqual([]);
-        });
-
-        it('does not run when the kind-1 read-back shows the new links — the PASS path is unchanged', async () => {
-          const world = plantWorld();
-          arrangeMega(world);
-          const result = await run('quick-trade-roundtrip');
-          expect(result.status).toBe('PASS');
-          expect(writesOf(world)).toEqual([K1, UNDO]);
-          expect(detailOf(result)).not.toMatch(/experiments|E1|E2/);
-        });
-
-        it('does not run when the kind-1 write itself throws', async () => {
-          const world = plantWorld();
-          const { stub } = arrangeMega(world);
-          const answer = world.respond.bind(world);
-          (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
-            const m = msg as WsMessage & Record<string, unknown>;
-            if (m.propertyName === 'RDOConnectToTycoon') throw new Error('socket closed');
-            return answer(msg);
-          });
-          const result = await run('quick-trade-roundtrip');
-          expect(result.status).toBe('FAIL');
-          expect(detailOf(result)).not.toMatch(/experiments/);
-          expect(world.writes.map(w => w.property)).toEqual(['RDODisconnectFromTycoon']);
-        });
-
-        it("leaves the world clean when an experiment's undo does not take: the flow's undo drops the leftover", async () => {
-          const world = plantWorld('RDOConnectToTycoon:1', 'RDODisconnectFromTycoon:2', 'RDODisconnectOutput');
-          const lock = cleanLock();
-          arrangeMega(world);
-          const result = await run('quick-trade-roundtrip', lock);
-          expect(result.status).toBe('FAIL');
-          expect(detailOf(result)).toContain(
-            'E1 kind 2 (factories) undo: still linked (plant side: new-links, mine side: Farm (30,40) Chemicals: plant linked)',
-          );
-          // E1's link is still there when E2 starts: the plant side reads it, the E2 link is its own.
-          expect(detailOf(result)).toContain('E2 direct plant→Storage (50,60) Chemicals undo: still linked (plant side: lists 50,60,');
-          expect(detailOf(result)).toMatch(new RegExp(`outcome: ${ROW_A.replace(/[()]/g, '\\$&')}$`));
-          expect(result.probes[0].restored).toBe(true);
-          expect(keysOf(world.facs.chemical.products[0])).toEqual([]);
-          expect(lock.read().pendingRestores).toEqual([]);
-        });
-
-        it('records a throwing experiment and still undoes it, runs the next one, and never throws', async () => {
-          const world = plantWorld('RDOConnectToTycoon');
-          const { stub } = arrangeMega(world);
-          const answer = world.respond.bind(world);
-          (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
-            const m = msg as WsMessage & Record<string, unknown>;
-            const params = (m.additionalParams ?? {}) as Record<string, string>;
-            if (m.propertyName === 'RDOConnectToTycoon' && params.kind === '2') throw new Error('kind 2 refused');
-            if (m.propertyName === 'RDODisconnectOutput') throw new Error('undo refused');
-            return answer(msg);
-          });
-          const result = await run('quick-trade-roundtrip');
-          expect(result.status).toBe('FAIL');
-          expect(detailOf(result)).toContain('E1 kind 2 (factories): not run — kind 2 refused; E1 kind 2 (factories) undo: gone');
-          expect(detailOf(result)).toContain('E2 direct plant→Storage (50,60) Chemicals undo: failed — undo refused');
-          expect(detailOf(result)).toMatch(/outcome: no outcome row \(E1 not run, E2 links\)$/);
-          expect(keysOf(world.facs.chemical.products[0])).toEqual([]);
-        });
-
-        it('records an experiment whose storage list throws, and one whose sides cannot be read', async () => {
-          const world = plantWorld('RDOConnectToTycoon');
-          const { stub } = arrangeMega(world);
-          const answer = world.respond.bind(world);
-          (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
-            const m = msg as WsMessage & Record<string, unknown>;
-            if (m.type === WsMessageType.REQ_BUILDING_GATE_CONNECTIONS && m.x === 30) throw new Error('mine gate timed out');
-            return answer(msg);
-          });
-          // The diagnostic reads the classes once, the experiments' storage list a second time.
-          jest.spyOn(fixtures, 'facilityDimensions')
-            .mockResolvedValueOnce(world.dims)
-            .mockResolvedValueOnce(world.dims)
-            .mockRejectedValue(new Error('no dims'));
-          const result = await run('quick-trade-roundtrip');
-          expect(result.status).toBe('FAIL');
-          expect(detailOf(result)).toContain(
-            'E1 kind 2 (factories): not run (unread: mine gate timed out); E1 kind 2 (factories) undo: still linked (unread: mine gate timed out)',
-          );
-          expect(detailOf(result)).toMatch(/E2 direct plant→storage: not run — no dims; outcome: no outcome row \(E1 not run, E2 not run\)$/);
-        });
-
-        it('names a missing industry fixture on the mine side', async () => {
-          const world = plantWorld('RDOConnectToTycoon');
-          world.found.industry = false;
-          arrangeMega(world);
-          expect(detailOf(await run('quick-trade-roundtrip'))).toContain(
-            'E1 kind 2 (factories): none (plant side: snapshot, mine side: industry fixture not found)',
-          );
-        });
-
-        it('skips E2 when no own MegaStorage carries a plant fluid, or the storage already lists the plant', async () => {
-          const none = plantWorld('RDOConnectToTycoon');
-          arrange(none);
-          expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(
-            /E2 direct plant→storage: not run — no own MegaStorage in Helartia lists a Chemicals input; outcome: no outcome row \(E1 none, E2 not run\)$/,
-          );
-          expect(none.writes.some(w => w.property === 'RDOConnectOutput')).toBe(false);
-
-          const listed = plantWorld('RDOConnectToTycoon');
-          // Only the storage side lists the plant: the plant's own gate (the guards, the reset) shows nothing.
-          listed.facs.warehouse.supplies[0].connections.push(conn('Chemical Plant', OWN_CO, 80, 90));
-          listed.facs.warehouse.supplies[0].connectionCount = 1;
-          arrangeMega(listed);
-          expect(detailOf(await run('quick-trade-roundtrip'))).toContain(
-            'E2 direct plant→Storage (50,60) Chemicals: not run — the storage lists the plant before the write',
-          );
-          expect(listed.writes.some(w => w.property === 'RDOConnectOutput')).toBe(false);
-        });
-
-        it('takes a rolCompExport MegaStorage first', async () => {
-          const world = plantWorld('RDOConnectToTycoon');
-          const { store } = world.facs;
-          Object.assign(store, { visualClass: '532', tabs: ['whGeneral', 'supplies', 'products'], supplies: [sg('Chemicals')], role: '5' });
-          world.tycoon.push({ company: OWN_CO, x: 10, y: 20, name: 'Food Store' });
-          arrangeMega(world);
-          const result = await run('quick-trade-roundtrip');
-          expect(detailOf(result)).toContain('E2 direct plant→Food Store (10,20) Chemicals: links');
-          expect(world.writes.find(w => w.property === 'RDOConnectOutput')?.params).toEqual({ fluidId: 'Chemicals', connectionList: '10,20,' });
-        });
-
-        it('quickTradeOutcome names no row when an experiment did not run', () => {
-          expect(quickTradeOutcome('links', 'not run')).toBe('no outcome row (E1 links, E2 not run)');
-          expect(quickTradeOutcome('not run', 'none')).toBe(ROW_C);
-        });
-      });
     });
   });
 
@@ -8653,8 +8457,11 @@ describe('inspector connections & trade (#1153)', () => {
       arrange(world);
       const result = await run('quick-trade-roundtrip');
       expect(result.status).toBe('PASS');
+      // Contract changed by #1293 (2026-10-07): the round trip is kind 2 (factories), then kind 1 beside a rolDistributer warehouse.
       expect(writesOf(world)).toEqual([
         ...RESET,
+        [80, 90, 'RDOConnectToTycoon', { kind: '2' }],
+        [80, 90, 'RDODisconnectFromTycoon', { kind: '2' }],
         [80, 90, 'RDOConnectToTycoon', { kind: '1' }],
         [80, 90, 'RDODisconnectFromTycoon', { kind: '1' }],
       ]);
