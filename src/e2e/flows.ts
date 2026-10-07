@@ -5749,6 +5749,7 @@ const adBudgetRoundTrip: Flow = {
     "round trip on RDOSetInputFluidPerc at the Advertisement input of SPO_test3's research (HQ) fixture — " +
     'proven by the Survival line of the write and of the restore (no read-back: Kernel/Kernel.pas:10003-10008, :10160)',
   mutates: true,
+  seed: fixtureSeed('research'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -6330,7 +6331,9 @@ const nearCircuitsRead: Flow = {
   what:
     "REQ_NEAR_CIRCUITS for SPO_test3's industry fixture and a facility linked to it -> both NearCircuits, " +
     'non-empty and agreeing with REQ_CONNECTION_REACHABILITY for the pair — no write',
-  mutates: false,
+  // Its seed may build a permanent fixture (#1185).
+  mutates: true,
+  seed: fixtureSeed('industry'),
   run: async () => {
     const assertions = new Assertions();
     const session = await login(PRIMARY_ACCOUNT);
@@ -6408,7 +6411,9 @@ const facilityStatusBatchRead: Flow = {
   what:
     "REQ_BUILDING_FOCUS on SPO_test3's industry and store fixtures, then REQ_FACILITY_STATUS_BATCH for both ids " +
     'and one never focused -> both status texts as focus shows them, the third a per-id error — no write',
-  mutates: false,
+  // Its seed may build a permanent fixture (#1185).
+  mutates: true,
+  seed: fixtureSeed('industry', 'store'),
   run: async () => {
     const assertions = new Assertions();
     const session = await login(PRIMARY_ACCOUNT);
@@ -8017,6 +8022,7 @@ const facilityBankLoan: Flow = {
     "SPO_test asks $1 at SPO_test3's bank fixture -> Fac(x,y) AskLoan line + SPO_test's loan list and the bank's " +
     'debtors show it -> SPO_test pays it off -> both lists as before',
   mutates: true,
+  seed: fixtureSeed('bank'),
   run: async ctx => {
     const secondary = await loginSecondary();
     if ('skipped' in secondary) return skippedResult('facility-bank-loan', secondary.skipped);

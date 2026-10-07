@@ -98,6 +98,8 @@ describe('the catalogue', () => {
         // #1189
         'facility-bank-loan',
         'facility-open-close',
+        // #1185: its seed may build a permanent fixture
+        'facility-status-batch-read',
         'favorites-folders', 'favorites-roundtrip', 'fixtures-ensure', 'industry-auto-buy', 'industry-output-price',
         'industry-supply-limits',
         // #1185: its seed may build a permanent fixture
@@ -105,6 +107,8 @@ describe('the catalogue', () => {
         'mail-drafts', 'mail-reply', 'mail-roundtrip', 'mail-send-from-draft',
         // #1195
         'mayor-rating-roundtrip',
+        // #1185: its seed may build a permanent fixture
+        'near-circuits-read',
         'place-rename-demolish',
         'policy-roundtrip', 'politics-write', 'portrait-roundtrip', 'publicity-roundtrip',
         // #1153
@@ -9514,6 +9518,10 @@ describe('a fixture flow ensures its own fixture (#1185)', () => {
     ['accept-cloning', ['industry']],
     ['research-roundtrip', ['research']],
     ['upgrade-stop', ['industry']],
+    ['ad-budget-roundtrip', ['research']],
+    ['near-circuits-read', ['industry']],
+    ['facility-status-batch-read', ['industry', 'store']],
+    ['facility-bank-loan', ['bank']],
   ];
 
   const outcome = (kind: fixtures.FixtureKindId, status: fixtures.FixtureOutcome['status'], extra: Partial<fixtures.FixtureOutcome> = {}) =>
@@ -10997,8 +11005,9 @@ describe('facility-status-batch-read (#1335)', () => {
   const failed = (result: FlowResult) => result.assertions.find(a => !a.ok);
   const batchesOf = (world: StatusWorld) => world.requests.filter(r => r.type === WsMessageType.REQ_FACILITY_STATUS_BATCH);
 
-  it('is read-only and registered', () => {
-    expect(flowByName('facility-status-batch-read').mutates).toBe(false);
+  // Contract changed by #1185: the run still writes nothing, but its seed may build a permanent fixture.
+  it('is read-only in its run and registered', () => {
+    expect(flowByName('facility-status-batch-read').mutates).toBe(true);
   });
 
   it('focuses both fixtures, drops the focus, asks both ids plus a never-focused one, and PASSes', async () => {
