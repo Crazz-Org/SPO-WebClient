@@ -18,7 +18,7 @@ import {
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
-  researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
+  researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR, NEVER_FOCUSED_FACILITY_ID,
   bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
   RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent,
   type Flow, type FlowResult, type GateLinks,
@@ -6955,6 +6955,14 @@ describe('inspector connections & trade (#1153)', () => {
   class ConnWorld {
     facs = makeFacilities();
     found: Partial<Record<'industry' | 'warehouse' | 'store', boolean>> = {};
+    /** Each tile's cached NearCircuits, keyed `x,y`; a tile not listed touches no road. */
+    circuits: Record<string, string | null> = { '30,40': '17,42,', '50,60': '17,' };
+    /** REQ_NEAR_CIRCUITS: one entry per asked tile, in request order. */
+    nearCircuits: (tiles: { x: number; y: number }[]) => { x: number; y: number; circuits: string | null }[] = tiles =>
+      tiles.map(t => {
+        const k = `${t.x},${t.y}`;
+        return { ...t, circuits: k in this.circuits ? this.circuits[k] : '' };
+      });
     search: (direction: string, fluid: string) => ConnectionSearchResult[] = (direction, fluid) => {
       const w = this.facs.warehouse;
       const carries = direction === 'input' ? w.products.some(p => p.metaFluid === fluid) : w.supplies.some(s => s.metaFluid === fluid);
@@ -7125,6 +7133,8 @@ describe('inspector connections & trade (#1153)', () => {
         }
         case WsMessageType.REQ_SEARCH_CONNECTIONS:
           return { results: this.search(String(m.direction), String(m.fluidId)), fluidId: m.fluidId, direction: m.direction };
+        case WsMessageType.REQ_NEAR_CIRCUITS:
+          return { tiles: this.nearCircuits(m.tiles as { x: number; y: number }[]) };
         case WsMessageType.REQ_CONNECTION_REACHABILITY: {
           const candidates = m.candidates as { x: number; y: number }[];
           const entries = candidates
@@ -7340,6 +7350,134 @@ describe('inspector connections & trade (#1153)', () => {
       world.found.industry = false;
       arrange(world);
       expect((await run('supplier-search-read')).status).toBe('UNTESTABLE');
+    });
+  });
+
+  describe('near-circuits-read (#1334)', () => {
+    const sentOf = (world: ConnWorld, type: WsMessageType) => world.requests.filter(r => r.type === type);
+    const failed = (result: { assertions: { what: string; ok: boolean; detail?: string }[] }) => result.assertions.find(a => !a.ok);
+
+    it('reads the fixture tile and its linked supplier in order, both non-empty, agreeing with reachability, and writes nothing', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      const { off } = arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('PASS');
+      expect(sentOf(world, WsMessageType.REQ_NEAR_CIRCUITS)).toEqual([
+        expect.objectContaining({ tiles: [{ x: 30, y: 40 }, { x: 50, y: 60 }] }),
+      ]);
+      expect(sentOf(world, WsMessageType.REQ_CONNECTION_REACHABILITY)).toEqual([
+        expect.objectContaining({
+          buildingX: 30, buildingY: 40, fluidId: 'Water', direction: 'input', candidates: [{ x: 50, y: 60 }],
+        }),
+      ]);
+      expect(result.assertions.find(a => a.what.startsWith('NearCircuits agrees'))?.detail)
+        .toBe('NearCircuits says connected, reachability says connected');
+      expect(setProps(world)).toEqual([]);
+      expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes a linked client on a product gate as an output when no supply gate has a link', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'products', 'Chemicals', world.facs.warehouse);
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('PASS');
+      expect(sentOf(world, WsMessageType.REQ_CONNECTION_REACHABILITY)).toEqual([
+        expect.objectContaining({ fluidId: 'Chemicals', direction: 'output' }),
+      ]);
+    });
+
+    it('expects isolated when the two circuit lists share no id', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.circuits['50,60'] = '99,';
+      world.reach = () => 'isolated';
+      arrange(world);
+      expect((await run('near-circuits-read')).status).toBe('PASS');
+    });
+
+    it('FAILs when reachability disagrees with the compared circuits', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.reach = () => 'isolated';
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toMatchObject({
+        what: 'NearCircuits agrees with REQ_CONNECTION_REACHABILITY for the pair',
+        detail: 'NearCircuits says connected, reachability says isolated',
+      });
+    });
+
+    it('FAILs when reachability leaves the pair unanswered', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.reach = () => undefined;
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)?.detail).toBe('NearCircuits says connected, reachability says nothing');
+    });
+
+    it('FAILs a linked tile that touches no road, and asks no reachability', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      delete world.circuits['50,60'];
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toMatchObject({ what: "the linked facility's NearCircuits is non-empty (50,60)", detail: '""' });
+      expect(sentOf(world, WsMessageType.REQ_CONNECTION_REACHABILITY)).toEqual([]);
+    });
+
+    it('FAILs a fixture tile whose read failed (null)', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.circuits['30,40'] = null;
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toMatchObject({ what: "the industry fixture's NearCircuits is non-empty (30,40)", detail: 'null' });
+    });
+
+    it('FAILs an answer out of request order, and reads no circuits from it', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.nearCircuits = tiles => [...tiles].reverse().map(t => ({ ...t, circuits: '17,' }));
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toMatchObject({
+        what: 'REQ_NEAR_CIRCUITS answered one entry per tile, in request order',
+        detail: '(50,60) "17," (30,40) "17,"',
+      });
+      expect(sentOf(world, WsMessageType.REQ_CONNECTION_REACHABILITY)).toEqual([]);
+    });
+
+    it('FAILs an answer with no entries', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.nearCircuits = () => undefined as unknown as [];
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)?.detail).toBe('no entries');
+    });
+
+    it('is UNTESTABLE, and sends no REQ_NEAR_CIRCUITS, when no gate of the fixture lists a link', async () => {
+      const world = new ConnWorld();
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('UNTESTABLE');
+      expect(sentOf(world, WsMessageType.REQ_NEAR_CIRCUITS)).toEqual([]);
+    });
+
+    it('is UNTESTABLE when the industry fixture is missing', async () => {
+      const world = new ConnWorld();
+      world.found.industry = false;
+      arrange(world);
+      expect((await run('near-circuits-read')).status).toBe('UNTESTABLE');
     });
   });
 
@@ -10683,5 +10821,167 @@ describe('player actions (#1195)', () => {
       expect(result.untestable[0]).toMatch(/^research fixture — none in Helartia/);
       expect(world.writes).toEqual([]);
     });
+  });
+});
+
+describe('facility-status-batch-read (#1335)', () => {
+  const OWNER = 'SPO_test3 - Green';
+  const FIXTURES: Record<'industry' | 'store', { x: number; y: number; id: string; name: string; revenue: string }> = {
+    industry: { x: 30, y: 40, id: '127706280', name: 'Farm', revenue: '-$29/h' },
+    store: { x: 10, y: 20, id: '127839460', name: 'Food Store', revenue: '$1,398/h' },
+  };
+
+  type Entry = { id: string; status: string; text?: Record<string, unknown>; error?: string };
+
+  /** A world whose batch answers as the gateway does, unless a test swaps `batch`. */
+  class StatusWorld {
+    missing = new Set<string>();
+    requests: WsMessage[] = [];
+    focused = new Set<string>();
+    batch: (ids: string[]) => Entry[] = ids =>
+      ids.map(id => {
+        const fx = Object.values(FIXTURES).find(f => f.id === id);
+        if (!fx || !this.focused.has(id)) return { id, status: 'error', error: 'unknown id' };
+        const perHour = Number(fx.revenue.replace(/[$,/h]/g, ''));
+        return {
+          id, status: 'ok',
+          text: { buildingName: fx.name, ownerName: OWNER, salesInfo: '', revenue: fx.revenue, revenuePerHour: perHour, detailsText: '', hintsText: '' },
+        };
+      });
+
+    respond(msg: WsMessage): unknown {
+      this.requests.push(msg);
+      const m = msg as WsMessage & Record<string, unknown>;
+      switch (msg.type) {
+        case WsMessageType.REQ_BUILDING_FOCUS: {
+          const fx = Object.values(FIXTURES).find(f => f.x === m.x && f.y === m.y);
+          if (!fx) throw new Error('no fixture there');
+          this.focused.add(fx.id);
+          return { building: { buildingId: fx.id, buildingName: fx.name, ownerName: OWNER, revenue: fx.revenue, x: fx.x, y: fx.y } };
+        }
+        case WsMessageType.REQ_BUILDING_UNFOCUS:
+          return {};
+        case WsMessageType.REQ_FACILITY_STATUS_BATCH:
+          return { entries: this.batch(m.ids as string[]) };
+        default:
+          throw new Error(`unexpected request ${msg.type}`);
+      }
+    }
+  }
+
+  function arrange(world: StatusWorld) {
+    jest.spyOn(session, 'login').mockResolvedValue(stubSession(msg => world.respond(msg)));
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(fixtures, 'findFixture').mockImplementation(async (_s, kind) => {
+      const fx = FIXTURES[kind.id as 'industry' | 'store'];
+      if (!fx || world.missing.has(kind.id)) return { kind: kind.id, reason: 'none in Helartia' };
+      return { kind: kind.id, found: { x: fx.x, y: fx.y, visualClass: '1', name: fx.name } };
+    });
+    return { off };
+  }
+
+  const run = () => flowByName('facility-status-batch-read').run({ lock: cleanLock(), survivalLogUrl: 'u', ...fastClock() });
+  const failed = (result: FlowResult) => result.assertions.find(a => !a.ok);
+  const batchesOf = (world: StatusWorld) => world.requests.filter(r => r.type === WsMessageType.REQ_FACILITY_STATUS_BATCH);
+
+  it('is read-only and registered', () => {
+    expect(flowByName('facility-status-batch-read').mutates).toBe(false);
+  });
+
+  it('focuses both fixtures, drops the focus, asks both ids plus a never-focused one, and PASSes', async () => {
+    const world = new StatusWorld();
+    const { off } = arrange(world);
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(world.requests.map(r => r.type)).toEqual([
+      WsMessageType.REQ_BUILDING_FOCUS, WsMessageType.REQ_BUILDING_FOCUS,
+      WsMessageType.REQ_BUILDING_UNFOCUS, WsMessageType.REQ_FACILITY_STATUS_BATCH,
+    ]);
+    expect(batchesOf(world)).toEqual([
+      expect.objectContaining({ ids: ['127706280', '127839460', NEVER_FOCUSED_FACILITY_ID] }),
+    ]);
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it('FAILs a fixture the batch answers unknown', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).map(e => (e.id === '127839460' ? { id: e.id, status: 'unknown', error: 'no answer within 10000 ms' } : e));
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)?.what).toBe('Food Store (10,20): the batch answered its status text');
+  });
+
+  it('FAILs a status text naming another facility than focus showed', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).map(e => (e.text ? { ...e, text: { ...e.text, buildingName: 'Other' } } : e));
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toMatchObject({
+      what: 'Farm (30,40): the batch names the facility and owner focus showed',
+      detail: `batch "Other" / "${OWNER}", focus "Farm" / "${OWNER}"`,
+    });
+  });
+
+  it('FAILs a status text that drops the money per hour focus showed', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).map(e => (e.text ? { ...e, text: { ...e.text, revenue: '', revenuePerHour: null } } : e));
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)?.what).toBe('Farm (30,40): the batch carries money per hour exactly when focus does');
+  });
+
+  it('FAILs a revenue token with no number beside it', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).map(e => (e.text ? { ...e, text: { ...e.text, revenuePerHour: null } } : e));
+    arrange(world);
+    expect((await run()).status).toBe('FAIL');
+  });
+
+  it('FAILs when the never-focused id is answered', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).map(e => (e.id === NEVER_FOCUSED_FACILITY_ID ? { id: e.id, status: 'unknown', error: 'x' } : e));
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)?.what).toBe(`the never-focused id ${NEVER_FOCUSED_FACILITY_ID} is a per-id error`);
+  });
+
+  it('FAILs an answer out of request order', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).reverse();
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toMatchObject({
+      what: 'REQ_FACILITY_STATUS_BATCH answered one entry per id, in request order',
+      detail: '1:error 127839460:ok 127706280:ok',
+    });
+  });
+
+  it('FAILs an answer with no entries', async () => {
+    const world = new StatusWorld();
+    world.batch = () => undefined as unknown as Entry[];
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)?.detail).toBe('no entries');
+  });
+
+  it('is UNTESTABLE, and sends no batch, when a fixture is missing', async () => {
+    const world = new StatusWorld();
+    world.missing.add('store');
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('UNTESTABLE');
+    expect(batchesOf(world)).toEqual([]);
   });
 });

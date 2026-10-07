@@ -1246,17 +1246,26 @@ const SUPPLY_GATES: GateSpec<BuildingSupplyData> = {
   // The two appended are the names Voyager's ad sheet reads off the same input
   // cache object (Voyager/AdvSheetForm.pas:316-321, used at :651-660) — every
   // TInput writes both (Kernel/KernelCache.pas:617-619) — so the ad percentage
-  // can be read back (#1195). Appended, never interleaved: indices 0-9 hold.
+  // can be read back (#1195). Index 12 is the delivered flow as a number,
+  // `nfFluidValue` (Kernel/KernelCache.pas:613), written beside the requested
+  // `nfActualMaxFluidValue` (:617) so a client can take delivered / requested
+  // without parsing the localised `FluidValue` string (#1340). Appended, never
+  // interleaved: indices 0-11 hold.
   headerProps: [
     'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
     'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
-    'nfCapacity', 'nfActualMaxFluidValue',
+    'nfCapacity', 'nfActualMaxFluidValue', 'nfFluidValue',
   ],
-  // Same list, same order, as Voyager/SupplySheetForm.pas:480-490.
+  // The first eleven: same list, same order, as Voyager/SupplySheetForm.pas:480-490.
+  // Index 11 is the row's price as the integer percentage of market price the
+  // cache writes, `cnxPricePerc` (Kernel/KernelCache.pas:573-574, 0 when there
+  // is no market price) — the number the server compares to MaxPrice, which a
+  // client cannot recover exactly from the rounded price string (#1340).
+  // Appended, never interleaved: indices 0-10 hold.
   connectionProps: [
     'cnxFacilityName', 'cnxCreatedBy', 'cnxCompanyName', 'cnxNfPrice',
     'OverPriceCnxInfo', 'LastValueCnxInfo', 'tCostCnxInfo', 'cnxQuality',
-    'ConnectedCnxInfo', 'cnxXPos', 'cnxYPos',
+    'ConnectedCnxInfo', 'cnxXPos', 'cnxYPos', 'cnxPricePerc',
   ],
   gateLabel: 'supply',
   rowLabel: 'connection',
@@ -1278,6 +1287,7 @@ const SUPPLY_GATES: GateSpec<BuildingSupplyData> = {
     selected: header[8] || undefined,
     capacity: header[10] || undefined,
     actualMaxFluid: header[11] || undefined,
+    nfFluidValue: header[12] || undefined,
     connectionCount,
     connections,
   }),
@@ -1293,6 +1303,7 @@ const SUPPLY_GATES: GateSpec<BuildingSupplyData> = {
     connected: v[8] === '1',
     x: parseInt(v[9] || '0', 10),
     y: parseInt(v[10] || '0', 10),
+    pricePerc: v[11] || undefined,
   }),
 };
 

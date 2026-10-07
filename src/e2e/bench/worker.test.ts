@@ -26,6 +26,7 @@ import {
   newLiveArtifact,
   readCheckoutDefaultFlows,
   GATE_BASE_MS,
+  killGraceFor,
   LIVE_RUN_BASE_MS,
   LIVE_RUN_FLOW_CEILING,
   LIVE_RUN_PER_FLOW_MS,
@@ -53,6 +54,7 @@ import {
   type WorkerDeps,
 } from './worker';
 import { ROUTES, SPINE_FLOW } from '../routing';
+import { FLOWS } from '../flows';
 import type { LiveRunResult } from '../run';
 import { SECONDARY_ACCOUNT } from '../config';
 
@@ -2668,9 +2670,23 @@ describe('classifyStage', () => {
   it('classifies verify-gate.js on a derived bound (gate base + planned max routed flows), never tighter than the old 20 min', () => {
     const gate = classifyStage('node', ['scripts/verify-gate.js', '--live', '--deposited-sha=x']);
     expect(gate.stage).toBe('verify-gate.js');
-    expect(gate.deadlineMs).toBe(GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS * LIVE_RUN_PER_FLOW_MS);
-    expect(gate.deadlineMs).toBe(VERIFY_GATE_DEADLINE_MS);
+    expect(VERIFY_GATE_DEADLINE_MS).toBe(GATE_BASE_MS + PLANNED_MAX_ROUTED_FLOWS * LIVE_RUN_PER_FLOW_MS);
+    // Contract changed by #1329: with no count the bound is sized from LIVE_RUN_FLOW_CEILING,
+    // and the fixed figure is a floor, no longer the bound itself.
+    expect(gate.deadlineMs).toBeGreaterThanOrEqual(VERIFY_GATE_DEADLINE_MS);
     expect(gate.deadlineMs).toBeGreaterThanOrEqual(1_200_000);
+  });
+
+  it('sizes verify-gate.js from the flow count (#1329), never below VERIFY_GATE_DEADLINE_MS', () => {
+    const args = ['scripts/verify-gate.js', '--live', '--deposited-sha=x'];
+    expect(classifyStage('node', args, 66).deadlineMs).toBeGreaterThanOrEqual(GATE_BASE_MS + 66 * LIVE_RUN_PER_FLOW_MS);
+    expect(classifyStage('node', args, 66).deadlineMs).toBe(GATE_BASE_MS + 66 * LIVE_RUN_PER_FLOW_MS);
+    // A 2-flow gate: its own figure is under the floor, so the floor applies.
+    expect(GATE_BASE_MS + 2 * LIVE_RUN_PER_FLOW_MS).toBeLessThan(VERIFY_GATE_DEADLINE_MS);
+    expect(classifyStage('node', [...args, '--flows=a,b'], 2).deadlineMs).toBe(VERIFY_GATE_DEADLINE_MS);
+    for (const count of [undefined, Number.NaN, -1, Number.POSITIVE_INFINITY]) {
+      expect(classifyStage('node', args, count).deadlineMs).toBe(GATE_BASE_MS + LIVE_RUN_FLOW_CEILING * LIVE_RUN_PER_FLOW_MS);
+    }
   });
 
   it('classifies run.js (live/nightly) on base + flows × per-flow', () => {
@@ -2756,6 +2772,24 @@ describe('the live-drive bound follows the checkout being driven', () => {
   it('takes the reader as a parameter, and falls back to the ceiling when it reads nothing', () => {
     expect(liveRunFlowCount(['--branch=main'], '/unused', () => 7)).toBe(7);
     expect(liveRunFlowCount(['--branch=main'], '/unused', () => undefined)).toBe(LIVE_RUN_FLOW_CEILING);
+  });
+
+  it('sizes verify-gate.js from --flows=, else the checkout count, else the ceiling (#1329)', () => {
+    const gate = (n: number): number => Math.max(VERIFY_GATE_DEADLINE_MS, GATE_BASE_MS + n * LIVE_RUN_PER_FLOW_MS);
+    const flows66 = `exports.FLOWS = [${Array.from({ length: 66 }, (_, i) => `{name:'f${i}'}`).join(',')}];`;
+    const dir = checkout(flows66);
+    expect(stageDeadlineFor('node', ['scripts/verify-gate.js', '--live'], dir)).toEqual({
+      stage: 'verify-gate.js',
+      deadlineMs: gate(66),
+    });
+    expect(stageDeadlineFor('node', ['scripts/verify-gate.js', '--live', '--flows=a,b'], dir).deadlineMs).toBe(gate(2));
+    expect(stageDeadlineFor('node', ['scripts/verify-gate.js', '--live'], checkout()).deadlineMs).toBe(
+      gate(LIVE_RUN_FLOW_CEILING),
+    );
+  });
+
+  it('tripwire: FLOWS never outgrows LIVE_RUN_FLOW_CEILING — the fallback bound must cover every flow (#1329)', () => {
+    expect(FLOWS.length).toBeLessThanOrEqual(LIVE_RUN_FLOW_CEILING);
   });
 
   it('classifies every other command exactly as classifyStage does', () => {
@@ -2916,6 +2950,106 @@ describe('runWithDeadline: an actual kill, not just a timer that gives up waitin
         { pid: -4242, signal: 'SIGTERM' },
         { pid: -4242, signal: 'SIGKILL' },
       ]);
+    } finally {
+      jest.useRealTimers();
+    }
+  }, 5_000);
+});
+
+describe('runWithDeadline: the live drive gets one flow to drain (#1329)', () => {
+  function fakeRun(stage: string): {
+    done: Promise<number>;
+    settled: number[];
+    killCalls: NodeJS.Signals[];
+    child: EventEmitter;
+  } {
+    const logFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'spo-bench-drain-')), 'job.log');
+    const child = new EventEmitter();
+    (child as unknown as { pid: number }).pid = 4343;
+    const killCalls: NodeJS.Signals[] = [];
+    const settled: number[] = [];
+    const done = runWithDeadline(
+      'ignored-because-spawn-is-injected',
+      [],
+      { cwd: process.cwd(), logFile },
+      { stage, deadlineMs: 1_000 },
+      {
+        spawnProcess: (() => child) as unknown as typeof import('child_process').spawn,
+        kill: (_pid, signal) => killCalls.push(signal),
+      },
+    ).then(c => {
+      settled.push(c);
+      return c;
+    });
+    return { done, settled, killCalls, child };
+  }
+
+  it('gives verify-gate.js and run.js one flow of grace, every other stage KILL_GRACE_MS (5 s)', () => {
+    expect(killGraceFor({ stage: 'verify-gate.js', deadlineMs: 1 })).toBe(LIVE_RUN_PER_FLOW_MS);
+    expect(killGraceFor({ stage: 'run.js', deadlineMs: 1 })).toBe(LIVE_RUN_PER_FLOW_MS);
+    expect(killGraceFor({ stage: 'npm run build:e2e', deadlineMs: 1 })).toBe(5_000);
+    expect(killGraceFor({ stage: 'git fetch', deadlineMs: 1 })).toBe(5_000);
+    expect(killGraceFor({ stage: 'run.js', deadlineMs: 1, killGraceMs: 250 })).toBe(250);
+  });
+
+  it.each(['verify-gate.js', 'run.js'])(
+    'a %s that traps SIGTERM, drains, and exits 0 by itself resolves DEADLINE_EXIT_CODE, with no SIGKILL',
+    async stage => {
+      jest.useFakeTimers();
+      try {
+        const run = fakeRun(stage);
+        await jest.advanceTimersByTimeAsync(1_000);
+        expect(run.killCalls).toEqual(['SIGTERM']);
+        // Well past the 5 s other stages get: still no SIGKILL, the drain is still running.
+        await jest.advanceTimersByTimeAsync(LIVE_RUN_PER_FLOW_MS - 1_000);
+        expect(run.killCalls).toEqual(['SIGTERM']);
+        expect(run.settled).toEqual([]);
+        run.child.emit('close', 0);
+        expect(await run.done).toBe(DEADLINE_EXIT_CODE);
+        await jest.advanceTimersByTimeAsync(2 * LIVE_RUN_PER_FLOW_MS);
+        expect(run.killCalls).toEqual(['SIGTERM']);
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+    5_000,
+  );
+
+  it('a killed child that exits 1 by itself is a deadline kill too, never FAIL', async () => {
+    jest.useFakeTimers();
+    try {
+      const run = fakeRun('run.js');
+      await jest.advanceTimersByTimeAsync(1_000);
+      run.child.emit('close', 1);
+      expect(await run.done).toBe(DEADLINE_EXIT_CODE);
+    } finally {
+      jest.useRealTimers();
+    }
+  }, 5_000);
+
+  it('any other stage still gets SIGKILL 5 s after SIGTERM', async () => {
+    jest.useFakeTimers();
+    try {
+      const run = fakeRun('npm run build:e2e');
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(run.killCalls).toEqual(['SIGTERM']);
+      await jest.advanceTimersByTimeAsync(4_999);
+      expect(run.killCalls).toEqual(['SIGTERM']);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(run.killCalls).toEqual(['SIGTERM', 'SIGKILL']);
+      run.child.emit('close', null);
+      expect(await run.done).toBe(DEADLINE_EXIT_CODE);
+    } finally {
+      jest.useRealTimers();
+    }
+  }, 5_000);
+
+  it("without a deadline kill, the exit code is the child's own", async () => {
+    jest.useFakeTimers();
+    try {
+      const run = fakeRun('verify-gate.js');
+      run.child.emit('close', 1);
+      expect(await run.done).toBe(1);
     } finally {
       jest.useRealTimers();
     }

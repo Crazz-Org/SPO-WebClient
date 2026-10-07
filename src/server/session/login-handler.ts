@@ -36,6 +36,7 @@ import { RDO_PREFIX_STRIP } from '../../shared/rdo-types';
 import { VISITOR_COMPANY_ID, VISITOR_COMPANY } from '../../shared/visitor-visa';
 import { toProxyUrl } from '../../shared/proxy-utils';
 import { companySealPath } from '../../shared/company-seal';
+import type { EventsTrigger } from './push-liveness';
 
 
 // ── Login Context ───────────────────────────────────────────────────────────
@@ -125,6 +126,13 @@ export interface LoginContext {
   getInitClientReceived(): Promise<void> | null;
   setInitClientReceived(value: Promise<void> | null): void;
   setInitClientResolver(value: (() => void) | null): void;
+
+  // ── Push liveness ──
+  /**
+   * `set EnableEvents #-1` was accepted. The session arms its push watchdog
+   * (push-liveness.ts). Optional so narrow test fakes need not provide it.
+   */
+  onEventsEnabled?(trigger: EventsTrigger): void;
 
   // ── Lifecycle hooks ──
   startServerBusyPolling(): void;
@@ -500,31 +508,9 @@ export async function loginWorld(
   const rdoCnntId = parsePropertyResponseHelper(cnntPacket.payload!, 'RDOCnntId');
   ctx.setRdoCnntId(rdoCnntId);
 
-  // 6. Setup InitClient waiter BEFORE RegisterEventsById
-  ctx.setWaitingForInitClient(true);
-  const initClientPromise = new Promise<void>((resolve) => {
-    ctx.setInitClientResolver(resolve);
-  });
-  ctx.setInitClientReceived(initClientPromise);
-
-  // 7. Register Events - This triggers server's "C <rid> idof InterfaceEvents"
-  // IMPORTANT: Don't await this! The server sends InitClient push BEFORE responding
-  ctx.sendRdoRequest('world', rdoCall(
-    'RegisterEventsById', contextId,
-    RdoValue.int(parseInt(rdoCnntId, 10)),
-  ).packet, undefined, TimeoutCategory.NORMAL).catch(() => {
-    ctx.log.debug(`[Session] RegisterEventsById completed (or timed out, which is normal)`);
-  });
-
-  // CRITICAL: Wait for server to send InitClient push command (with timeout)
-  ctx.log.debug(`[Session] Waiting for server InitClient push...`);
-  let initTimeoutHandle: ReturnType<typeof setTimeout>;
-  const initClientTimeout = new Promise<never>((_, reject) =>
-    initTimeoutHandle = setTimeout(() => reject(new Error('InitClient push timeout after 15s')), 15000),
-  );
-  await Promise.race([initClientPromise, initClientTimeout]);
-  clearTimeout(initTimeoutHandle!);
-  ctx.log.debug(`[Session] InitClient received, continuing...`);
+  // 6-7. RegisterEventsById, InitClient, and the RegisterEventsById REPLY —
+  //      all before EnableEvents (see registerEventsAndAwait).
+  await registerEventsAndAwait(ctx, contextId, rdoCnntId, '[Session]');
 
   // 7b. Only now may the world pool hold connections. Everything above binds
   // the server-side session to the connection that carried it: `get RDOCnntId`
@@ -678,9 +664,109 @@ export async function readCompanyList(
   return companies;
 }
 
+// ── Event registration ──────────────────────────────────────────────────────
+
+/** The InitClient push must arrive within this long of RegisterEventsById. */
+const INIT_CLIENT_TIMEOUT_MS = 15_000;
+/**
+ * How long to wait for the RegisterEventsById REPLY after InitClient arrived.
+ * The IS answers right after SendClientData + ReportNewMail; the cap only
+ * bounds login latency when the reply is lost. Past it the push watchdog
+ * (push-liveness.ts) is the backstop.
+ */
+const REGISTER_EVENTS_REPLY_CAP_MS = 30_000;
+
+/**
+ * Bind the push channel: install the InitClient waiter, send
+ * RegisterEventsById, wait for the InitClient push, then wait for the
+ * RegisterEventsById REPLY.
+ *
+ * The reply matters. `TClientView.RegisterEventsById` runs
+ *     EnableEvents := true;                (Interface Server/InterfaceServer.pas:1924)
+ *     fConnected := true; SendClientData; ReportNewMail(...);
+ *     EnableEvents := false;               (:1928)
+ *     result := NOERROR;
+ * — InitClient (SendClientData) is pushed BEFORE that trailing
+ * `EnableEvents := false`. A `set EnableEvents #-1` sent once InitClient is in
+ * but before the reply can be applied first by the IS thread pool and then
+ * overwritten, and RefreshDate/RefreshTycoon push only when
+ * `fConnected and fEnableEvents`: a session with requests but no pushes.
+ *
+ * A failed or missing reply does not fail the login (it never did); it is
+ * logged and the watchdog covers the session. A missing InitClient does.
+ */
+async function registerEventsAndAwait(
+  ctx: LoginContext,
+  contextId: string,
+  rdoCnntId: string,
+  tag: '[Session]' | '[Reconnect]',
+): Promise<void> {
+  ctx.setWaitingForInitClient(true);
+  const initClientPromise = new Promise<void>((resolve) => {
+    ctx.setInitClientResolver(resolve);
+  });
+  ctx.setInitClientReceived(initClientPromise);
+
+  // RegisterEventsById triggers the server's `idof "InterfaceEvents"` and the
+  // InitClient push before it answers — keep the promise, await it later.
+  type RegisterOutcome = { ok: true; packet: RdoPacket } | { ok: false; error: unknown };
+  const registerReply: Promise<RegisterOutcome> = ctx.sendRdoRequest('world', rdoCall(
+    'RegisterEventsById', contextId,
+    RdoValue.int(parseInt(rdoCnntId, 10)),
+  ).packet, undefined, TimeoutCategory.NORMAL).then(
+    (packet) => ({ ok: true as const, packet }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+
+  ctx.log.debug(`${tag} Waiting for server InitClient push...`);
+  let initTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const initClientTimeout = new Promise<never>((_, reject) => {
+    initTimeoutHandle = setTimeout(
+      () => reject(new Error(`InitClient push timeout after ${INIT_CLIENT_TIMEOUT_MS / 1000}s`)),
+      INIT_CLIENT_TIMEOUT_MS,
+    );
+  });
+  try {
+    await Promise.race([initClientPromise, initClientTimeout]);
+  } catch (err: unknown) {
+    ctx.setWaitingForInitClient(false);
+    ctx.setInitClientResolver(null);
+    throw err;
+  } finally {
+    clearTimeout(initTimeoutHandle);
+  }
+  ctx.log.debug(`${tag} InitClient received, waiting for the RegisterEventsById reply...`);
+
+  let capHandle: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<'cap'>((resolve) => {
+    capHandle = setTimeout(() => resolve('cap'), REGISTER_EVENTS_REPLY_CAP_MS);
+  });
+  const outcome = await Promise.race([registerReply, cap]);
+  clearTimeout(capHandle);
+
+  if (outcome === 'cap') {
+    ctx.log.warn(
+      `${tag} RegisterEventsById did not answer within ${REGISTER_EVENTS_REPLY_CAP_MS / 1000}s of InitClient — ` +
+      'continuing; the push watchdog re-sends EnableEvents if pushes stay silent',
+    );
+  } else if (!outcome.ok) {
+    ctx.log.warn(`${tag} RegisterEventsById failed: ${toErrorMessage(outcome.error)} — continuing`);
+  } else if (outcome.packet.errorCode && outcome.packet.errorCode > 0) {
+    ctx.log.warn(
+      `${tag} RegisterEventsById answered ${outcome.packet.errorName ?? 'error'} ${outcome.packet.errorCode} — continuing`,
+    );
+  } else {
+    ctx.log.debug(`${tag} RegisterEventsById answered`);
+  }
+}
+
 // ── Company Selection ───────────────────────────────────────────────────────
 
-export async function selectCompany(ctx: LoginContext, companyId: string): Promise<void> {
+export async function selectCompany(
+  ctx: LoginContext,
+  companyId: string,
+  trigger: EventsTrigger = 'login',
+): Promise<void> {
   const worldContextId = ctx.worldContextId;
   if (!worldContextId) {
     throw new Error('Not logged into world');
@@ -719,6 +805,7 @@ export async function selectCompany(ctx: LoginContext, companyId: string): Promi
     );
   }
   ctx.log.debug(`[Session] EnableEvents activated`);
+  ctx.onEventsEnabled?.(trigger);
 
   // 2. First PickEvent - Subscribe to Tycoon updates
   // Delphi: TClientView.PickEvent(TycoonId: integer) — must be "#" int, not "%" string
@@ -1408,15 +1495,13 @@ async function fullWorldRelogin(ctx: LoginContext): Promise<void> {
   ctx.setKnownObject('InterfaceEvents', virtualEventId);
   ctx.log.debug(`[Reconnect] InterfaceEvents virtual ID: ${virtualEventId}`);
 
-  // RegisterEvents + SetLanguage
+  // RegisterEventsById, InitClient, then the RegisterEventsById REPLY — the
+  // first login's order. The reply is awaited because the IS ends
+  // RegisterEventsById with `EnableEvents := false`; an EnableEvents sent
+  // before that reply can be overwritten (registerEventsAndAwait).
   const rdoCnntId = ctx.rdoCnntId;
   if (rdoCnntId) {
-    ctx.sendRdoRequest('world', rdoCall(
-      'RegisterEventsById', contextId,
-      RdoValue.int(parseInt(rdoCnntId, 10)),
-    ).packet, undefined, TimeoutCategory.NORMAL).catch(() => {
-      ctx.log.debug('[Reconnect] RegisterEventsById completed (or timed out, normal)');
-    });
+    await registerEventsAndAwait(ctx, contextId, rdoCnntId, '[Reconnect]');
   }
 
   // Same ordering rule as the initial login: the pool stays empty until the
@@ -1434,7 +1519,7 @@ async function fullWorldRelogin(ctx: LoginContext): Promise<void> {
   // Re-select company if one was active
   const company = ctx.currentCompany;
   if (company) {
-    await selectCompany(ctx, company.id);
+    await selectCompany(ctx, company.id, 're-login');
   }
 
   ctx.log.info(`[Reconnect] Full re-login complete (contextId=${contextId})`);

@@ -17,6 +17,7 @@ import type {
   CampaignState,
   ConnectionSearchResult,
   ConnectionReachabilityEntry,
+  NearCircuitsEntry,
 } from '../../shared/types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
 import { RdoValue } from '../../shared/rdo-types';
@@ -1338,6 +1339,49 @@ export async function resolveConnectionReachability(
     }
     flush();
 
+    return entries;
+  } finally {
+    ctx.cacherCloseObject(tempObjectId);
+  }
+}
+
+/**
+ * The cached `NearCircuits` of each tile, raw, for a client that compares them itself
+ * (`TFluidLink.Intercept`, `Cache/FluidLinks.pas:116-134`, as `sharesRoadCircuit` does).
+ * The same reads as `resolveConnectionReachability`, in the same order of operations:
+ * one temp object, `SetObject` + `GetPropertyList('NearCircuits')` per tile
+ * (`readNearCircuits`), closed once. One entry per asked tile, in request order, no
+ * dedupe: a client that sends each tile once pays N + M reads for N buyers against
+ * M suppliers, not N x (M + 2). `''` is a tile that touches no road; `circuits: null` means the read could not establish a value (nothing loaded there,
+ * the round trip failed, or no temp object could be had), never an empty string.
+ */
+export async function readNearCircuitsAt(
+  ctx: SessionContext,
+  tiles: ReadonlyArray<{ x: number; y: number }>,
+): Promise<NearCircuitsEntry[]> {
+  if (tiles.length === 0) return [];
+
+  const allUnknown = (): NearCircuitsEntry[] => tiles.map(({ x, y }) => ({ x, y, circuits: null }));
+
+  await ctx.connectMapService();
+  if (!ctx.cacherId) {
+    ctx.log.warn('[Connections] NearCircuits unavailable: no cacherId');
+    return allUnknown();
+  }
+
+  let tempObjectId: string;
+  try {
+    tempObjectId = await ctx.cacherCreateObject();
+  } catch (e: unknown) {
+    ctx.log.warn(`[Connections] NearCircuits unavailable: ${toErrorMessage(e)}`);
+    return allUnknown();
+  }
+
+  try {
+    const entries: NearCircuitsEntry[] = [];
+    for (const { x, y } of tiles) {
+      entries.push({ x, y, circuits: await readNearCircuits(ctx, tempObjectId, x, y) });
+    }
     return entries;
   } finally {
     ctx.cacherCloseObject(tempObjectId);

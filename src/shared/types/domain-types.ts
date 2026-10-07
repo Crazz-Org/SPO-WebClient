@@ -517,6 +517,12 @@ export interface BuildingConnectionData {
   x: number;
   /** Y coordinate */
   y: number;
+  /**
+   * Supply rows only: the price as an integer percentage of market price,
+   * `cnxPricePerc` (Kernel/KernelCache.pas:573-574) — the value the server
+   * compares to the input's MaxPrice. Undefined when not read.
+   */
+  pricePerc?: string;
 }
 
 /**
@@ -570,6 +576,11 @@ export interface BuildingSupplyData {
   capacity?: string;
   /** The input's current ceiling, `nfActualMaxFluidValue` (Kernel/KernelCache.pas:617). */
   actualMaxFluid?: string;
+  /**
+   * Delivered flow as a number, `nfFluidValue` (Kernel/KernelCache.pas:613) —
+   * the numeric twin of {@link fluidValue}. Undefined until the gate is opened.
+   */
+  nfFluidValue?: string;
   /** Connection count. Undefined until the gate is opened — not zero. */
   connectionCount?: number;
   /** Connections — empty until the gate is opened. */
