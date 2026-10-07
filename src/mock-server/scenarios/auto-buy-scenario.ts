@@ -62,7 +62,7 @@ export const SUPPLY_HEADER_NAMES: readonly string[] = [
   'MetaFluid', 'FluidValue', 'LastCostPerc', 'minK', 'MaxPrice',
   'QPSorted', 'SortMode', 'cnxCount', 'Selected', 'ObjectId',
   // Appended by #1195: the ad sheet's two names (Voyager/AdvSheetForm.pas:316-321).
-  'nfCapacity', 'nfActualMaxFluidValue',
+  'nfCapacity', 'nfActualMaxFluidValue', 'nfFluidValue',
 ];
 
 /** The two arguments the checkbox can send: WordBool true and false. */
