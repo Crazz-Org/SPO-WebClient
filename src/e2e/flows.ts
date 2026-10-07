@@ -6807,8 +6807,9 @@ const tradeSettings: Flow = {
 
       // No RDOSetRole: the warehouse fixture is an Import Storage (WHGeneral), whose sheet never
       // offered a trade mode (Voyager/WHGeneralSheet.pas carries cbTrade only, :46) — its role is
-      // preset by class (Model Extensions/General/GeneralPack1.dpr:719). Proving RDOSetRole needs an
-      // IndGeneral storage fixture (follow-up to #1255).
+      // preset by class (Model Extensions/General/GeneralPack1.dpr:719). No storage that offers it
+      // can be built (ordinary storages are seed-only), so its live proof is parked:
+      // doc/E2E-POLICY.md §7 "Parked flows". L1 covers it (trade-settings-scenario.ts).
       if (warehouse) {
         await tradeLevel(warehouse, 'whGeneral');
       }
