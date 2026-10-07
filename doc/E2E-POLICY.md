@@ -605,8 +605,9 @@ is theirs. `supplier-hire-fire` and `client-hire-remove` hire on the industry fi
 `chemical` fixture (#1293: a Chemical Plant, Raw Chemicals in, Chemicals out — the industry
 fixture's opposite) is the expected own counterpart. `connect-on-map` links the industry and
 `chemical` fixtures. All three link the industry fixture only to a facility of
-*SPO_test3 - Green* in Helartia (search filtered by town and company, the row's company checked,
-the lot's owner read back), snapshot every gate they can touch, and undo every new link in the
+*SPO_test3 - Green* in Helartia (search filtered by town and owner — the cache indexes the owner's
+name, `Kernel/KernelCache.pas:514-516` — the row must be the `chemical` fixture's lot, and the lot's
+owner is read back), snapshot every gate they can touch, and undo every new link in the
 same run. `quick-trade-roundtrip` targets the `chemical` fixture and no longer touches the
 industry fixture. It runs only when its undo cannot reach beyond the test: no SPO_test3 facility
 already a client of the fixture (`Kernel/Kernel.pas:4593-4600`), the fixture not an initial

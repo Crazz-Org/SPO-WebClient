@@ -17,6 +17,7 @@ import {
   pickPlacement, ownsPlacement, delFacilityLineMatches,
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSupplierRowsAt, initialSuppliersKey,
+  storageGateState, initialSupplierNote, errorLines,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
   bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
@@ -6905,6 +6906,8 @@ describe('build & demolish (#1150)', () => {
 
 describe('inspector connections & trade (#1153)', () => {
   const OWN_CO = 'SPO_test3 - Green';
+  /** A search row's company column: the owner's name the cache indexes (Kernel/KernelCache.pas:514-516, :657-659). */
+  const OWNER = 'SPO_test3';
   const HELARTIA_TOWNS = 5;
 
   interface Fac {
@@ -6962,11 +6965,14 @@ describe('inspector connections & trade (#1153)', () => {
     found: Partial<Record<'industry' | 'warehouse' | 'store' | 'chemical', boolean>> = {};
     /** The reason findFixture gives for a kind it does not find (default `none in Helartia`). */
     reasons: Partial<Record<'industry' | 'warehouse' | 'store' | 'chemical', string>> = {};
-    search: (direction: string, fluid: string) => ConnectionSearchResult[] = (direction, fluid) => {
-      const w = this.facs.warehouse;
-      const carries = direction === 'input' ? w.products.some(p => p.metaFluid === fluid) : w.supplies.some(s => s.metaFluid === fluid);
-      return carries ? [{ facilityName: w.name, companyName: OWN_CO, x: w.x, y: w.y, town: 'Helartia' }] : [];
-    };
+    /**
+     * Every own facility carrying the fluid on the opposite side, as the cache lists it: the row's
+     * company column is the owner's name. `respond` applies `filters.company` to whatever this answers.
+     */
+    search: (direction: string, fluid: string) => ConnectionSearchResult[] = (direction, fluid) =>
+      this.all()
+        .filter(f => (direction === 'input' ? f.products : f.supplies).some(g => g.metaFluid === fluid))
+        .map(f => ({ facilityName: f.name, companyName: OWNER, x: f.x, y: f.y, town: 'Helartia' }));
     reach: (c: { x: number; y: number }) => string | undefined = () => 'connected';
     ownLots = new Set(['50,60', '30,40', '10,20', '80,90']);
     tycoon: fixtures.TycoonFacility[] = [
@@ -7139,8 +7145,15 @@ describe('inspector connections & trade (#1153)', () => {
           if (m.tabId === 'supplies') return { supply: clone(fac.supplies.find(s => s.path === m.path)) };
           return { product: clone(fac.products.find(o => o.path === m.path)) };
         }
-        case WsMessageType.REQ_SEARCH_CONNECTIONS:
-          return { results: this.search(String(m.direction), String(m.fluidId)), fluidId: m.fluidId, direction: m.direction };
+        case WsMessageType.REQ_SEARCH_CONNECTIONS: {
+          // The cache's file mask: `filters.company` matches the Company segment of the link-file
+          // names, which holds the owner's name (Cache/OutputSearch.pas:166-171, Cache/InputSearch.pas:111-115,
+          // Kernel/KernelCache.pas:514-516) — a company name matches nothing.
+          const company = String((m.filters as { company?: string } | undefined)?.company ?? '').toLowerCase();
+          const rows = this.search(String(m.direction), String(m.fluidId));
+          const results = Array.isArray(rows) ? rows.filter(r => company === '' || r.companyName.toLowerCase() === company) : rows;
+          return { results, fluidId: m.fluidId, direction: m.direction };
+        }
         case WsMessageType.REQ_CONNECTION_REACHABILITY: {
           const candidates = m.candidates as { x: number; y: number }[];
           const entries = candidates
@@ -7209,6 +7222,7 @@ describe('inspector connections & trade (#1153)', () => {
       if (typeof proof !== 'object') return null;
       return [...world.lines].reverse().find(l => l.includes(proof.marker) && (proof.match?.(l) ?? true)) ?? null;
     });
+    jest.spyOn(liveLog, 'readSince').mockImplementation(async () => world.lines.join('\r\n'));
     return { stub, off, refusal };
   }
 
@@ -7222,14 +7236,20 @@ describe('inspector connections & trade (#1153)', () => {
       expect(linkSet([])).toBe('');
     });
 
-    it('hireCandidates keeps only own-company, Helartia (or unnamed town), unconnected results that are not the fixture', () => {
-      const r = (x: number, y: number, companyName: string, town?: string): ConnectionSearchResult =>
-        ({ facilityName: `f${x}`, companyName, x, y, ...(town !== undefined ? { town } : {}) });
+    it('hireCandidates keeps only owner-matched, on-the-lot, Helartia (or unnamed town), unconnected results that are not the fixture', () => {
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — the row's company column is
+      // the owner's name, compared case-insensitively, and only the chemical fixture's lot is a candidate.
+      const r = (name: string, x: number, y: number, companyName: string, town?: string): ConnectionSearchResult =>
+        ({ facilityName: name, companyName, x, y, ...(town !== undefined ? { town } : {}) });
+      const lot = { x: 80, y: 90 };
       const results = [
-        r(1, 1, OWN_CO, 'Helartia'), r(2, 2, 'Other Co', 'Helartia'), r(3, 3, OWN_CO, 'Elsewhere'),
-        r(4, 4, OWN_CO), r(5, 5, OWN_CO, 'Helartia'), r(30, 40, OWN_CO, 'Helartia'),
+        r('owner', 80, 90, OWNER, 'Helartia'), r('owner-case', 80, 90, 'spo_test3', 'Helartia'), r('other', 80, 90, 'Other Co', 'Helartia'),
+        r('company', 80, 90, OWN_CO, 'Helartia'), r('elsewhere', 80, 90, OWNER, 'Elsewhere'), r('no-town', 80, 90, OWNER),
+        r('other-lot', 1, 1, OWNER, 'Helartia'),
       ];
-      expect(hireCandidates(results, [conn('x', OWN_CO, 5, 5)], OWN_CO, { x: 30, y: 40 }).map(c => c.x)).toEqual([1, 4]);
+      expect(hireCandidates(results, [], OWNER, { x: 30, y: 40 }, lot).map(c => c.facilityName)).toEqual(['owner', 'owner-case', 'no-town']);
+      expect(hireCandidates(results, [conn('x', OWN_CO, 80, 90)], OWNER, { x: 30, y: 40 }, lot)).toEqual([]);
+      expect(hireCandidates(results, [], OWNER, lot, lot)).toEqual([]);
     });
 
     it('linkState: snapshot, new links, or the lost links by gate', () => {
@@ -7278,6 +7298,29 @@ describe('inspector connections & trade (#1153)', () => {
       expect(companyDemandUnits(46, 70)).toBe(33);
     });
 
+    it('storageGateState names what a storage gate shows of the plant', () => {
+      const plant = { x: 80, y: 90 };
+      const gate = (connections: BuildingConnectionData[], connectionCount = connections.length): BuildingSupplyData =>
+        ({ ...sg('Chemicals'), connections, connectionCount });
+      expect(storageGateState(undefined, plant)).toBe('gate not listed');
+      expect(storageGateState(gate([conn('p', OWN_CO, 80, 90)]), plant)).toBe('plant linked');
+      expect(storageGateState(gate([conn('p', OWN_CO, 80, 90)], 4), plant)).toBe('plant linked');
+      expect(storageGateState(gate([conn('q', OWN_CO, 1, 2)], 4), plant)).toBe('count mismatch (unread)');
+      expect(storageGateState(gate([conn('q', OWN_CO, 1, 2)]), plant)).toBe('no plant link');
+    });
+
+    it('initialSupplierNote lists the rows, and calls none inconclusive (cached page)', () => {
+      expect(initialSupplierNote([])).toBe('inconclusive (auto-connections cache up to 5 min, KernelCache.pas:964)');
+      expect(initialSupplierNote([{ fluidId: 'Chemicals', facilityId: '80,90,' }, { fluidId: 'Water', facilityId: '80,90,' }]))
+        .toBe('Chemicals:80,90, Water:80,90,');
+    });
+
+    it('errorLines keeps the lines naming an error or an exception', () => {
+      expect(errorLines('12:00 - ok\r\n12:01 - Error in Connect \n12:02 - EAccessViolation exception\n12:03 - terrorist')).toEqual([
+        '12:01 - Error in Connect', '12:02 - EAccessViolation exception',
+      ]);
+    });
+
     it('initialSupplierAt and initialSuppliersKey read the "x,y," facility ids', () => {
       const data: AutoConnectionsData = {
         fluids: [
@@ -7294,19 +7337,21 @@ describe('inspector connections & trade (#1153)', () => {
   });
 
   describe('supplier-search-read', () => {
-    it('searches one input fluid in Helartia for its own company, asks reachability per candidate, and writes nothing', async () => {
+    it('searches one input fluid in Helartia for its owner, asks reachability per candidate, and writes nothing', async () => {
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — the search sends the
+      // username, and every own facility carrying the fluid comes back (the warehouse and the plant).
       const world = new ConnWorld();
       const { off } = arrange(world);
       const result = await run('supplier-search-read');
       expect(result.status).toBe('PASS');
       expect(world.requests).toContainEqual(expect.objectContaining({
         type: WsMessageType.REQ_SEARCH_CONNECTIONS, fluidId: 'Water', direction: 'input', buildingX: 30, buildingY: 40,
-        filters: { town: 'Helartia', company: OWN_CO },
+        filters: { town: 'Helartia', company: OWNER },
       }));
       expect(world.requests).toContainEqual(expect.objectContaining({
-        type: WsMessageType.REQ_CONNECTION_REACHABILITY, candidates: [{ x: 50, y: 60 }],
+        type: WsMessageType.REQ_CONNECTION_REACHABILITY, candidates: [{ x: 50, y: 60 }, { x: 80, y: 90 }],
       }));
-      expect(result.assertions.find(a => a.what === 'REQ_CONNECTION_REACHABILITY answered each candidate')?.detail).toBe('(50,60) connected');
+      expect(result.assertions.find(a => a.what === 'REQ_CONNECTION_REACHABILITY answered each candidate')?.detail).toBe('(50,60) connected (80,90) connected');
       expect(setProps(world)).toEqual([]);
       expect(off).toHaveBeenCalledTimes(1);
     });
@@ -7333,8 +7378,9 @@ describe('inspector connections & trade (#1153)', () => {
     });
 
     it('asks about the first five candidates only, and FAILs a candidate left unanswered', async () => {
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — rows carry the owner.
       const world = new ConnWorld();
-      world.search = () => Array.from({ length: 7 }, (_, i) => ({ facilityName: `f${i}`, companyName: OWN_CO, x: i, y: i }));
+      world.search = () => Array.from({ length: 7 }, (_, i) => ({ facilityName: `f${i}`, companyName: OWNER, x: i, y: i }));
       world.reach = c => (c.x === 3 ? undefined : 'isolated');
       arrange(world);
       const result = await run('supplier-search-read');
@@ -7371,66 +7417,88 @@ describe('inspector connections & trade (#1153)', () => {
   });
 
   describe('supplier-hire-fire', () => {
-    it('hires the own warehouse on the Water input, proves the line and the link, fires it, and reads back the snapshot', async () => {
+    it('hires the chemical plant on the Water input — never the warehouse the owner search also lists — proves it, fires it, and reads back the snapshot', async () => {
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — the owner search also
+      // lists the warehouse (50,60); only the chemical fixture's lot (80,90) is hired.
       const world = new ConnWorld();
       const lock = cleanLock();
       const { stub } = arrange(world);
       const result = await run('supplier-hire-fire', lock);
       expect(result.status).toBe('PASS');
       expect(world.writes.map(w => [w.x, w.y, w.property, w.params])).toEqual([
-        [30, 40, 'RDOConnectInput', { fluidId: 'Water', connectionList: '50,60,' }],
-        [30, 40, 'RDODisconnectInput', { fluidId: 'Water', connectionList: '50,60,' }],
+        [30, 40, 'RDOConnectInput', { fluidId: 'Water', connectionList: '80,90,' }],
+        [30, 40, 'RDODisconnectInput', { fluidId: 'Water', connectionList: '80,90,' }],
       ]);
       expect(result.probes[0]).toMatchObject({
-        original: '', written: '50,60', logLine: '12:00 - Fac(30,40) Input connected: Water to 50,60,',
+        original: '', written: '80,90', logLine: '12:00 - Fac(30,40) Input connected: Water to 80,90,',
         readBack: 'CONFIRMED', restoreReadBack: 'CONFIRMED',
       });
-      expect(result.assertions.find(a => a.what.startsWith('the undo'))?.detail).toBe('12:00 - Fac(30,40) Input disconnect: Water from 50,60,');
+      expect(result.assertions.find(a => a.what.startsWith('the undo'))?.detail).toBe('12:00 - Fac(30,40) Input disconnect: Water from 80,90,');
       expect(keysOf(world.facs.industry.supplies[0])).toEqual([]);
-      expect(keysOf(world.facs.warehouse.products[0])).toEqual([]);
+      expect(keysOf(world.facs.chemical.products[1])).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
       // The connect is synchronous at the gateway: it gets the long bound.
       const connectCall = (stub.driver.request as jest.Mock).mock.calls.find(c => (c[0] as { propertyName?: string }).propertyName === 'RDOConnectInput');
       expect(connectCall?.[2]).toBe(TIMEOUTS.login);
     });
 
-    it('never hires a candidate already connected, of another company, or refused by its lot — and writes nothing when none is left', async () => {
+    it('never hires a candidate already connected, of another owner, off the plant\'s lot, or refused by its lot — and writes nothing when none is left', async () => {
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — rows carry the owner,
+      // only the chemical fixture's lot is a candidate, and its lot refusal (ownLotRefusal) is the last check.
       const world = new ConnWorld();
       world.facs.industry.supplies[0].connections = [conn('Own Well', OWN_CO, 70, 80)];
       world.facs.industry.supplies[0].connectionCount = 1;
+      world.ownLots.delete('80,90');
       world.search = () => [
-        { facilityName: 'Own Well', companyName: OWN_CO, x: 70, y: 80, town: 'Helartia' },
+        { facilityName: 'Own Well', companyName: OWNER, x: 70, y: 80, town: 'Helartia' },
         { facilityName: 'Their Well', companyName: 'Other Co', x: 90, y: 90, town: 'Helartia' },
-        { facilityName: 'Far Well', companyName: OWN_CO, x: 95, y: 95, town: 'Elsewhere' },
-        { facilityName: 'Odd Well', companyName: OWN_CO, x: 97, y: 97, town: 'Helartia' },
+        { facilityName: 'Far Well', companyName: OWNER, x: 95, y: 95, town: 'Elsewhere' },
+        { facilityName: 'Odd Well', companyName: OWNER, x: 97, y: 97, town: 'Helartia' },
+        { facilityName: 'Chemical Plant', companyName: OWNER, x: 80, y: 90, town: 'Helartia' },
       ];
       const { refusal } = arrange(world);
       const result = await run('supplier-hire-fire');
       expect(result.status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
-      expect(refusal.mock.calls.map(c => [c[1], c[2]])).toEqual([[97, 97]]);
-      expect(result.untestable[0]).toMatch(/^RDOConnectInput — .*Kernel\/Kernel\.pas:6784-6785.*Odd Well \(97,97\) — \(97,97\) is not in Helartia/);
+      expect(refusal.mock.calls.map(c => [c[1], c[2]])).toEqual([[80, 90]]);
+      expect(result.untestable[0]).toMatch(/^RDOConnectInput — .*Kernel\/Kernel\.pas:6784-6785.*Chemical Plant \(80,90\) — \(80,90\) is not in Helartia/);
     });
 
-    it('takes the next own candidate when the first is refused by its lot', async () => {
+    it('skips a row from another SPO_test3 lot without asking its lot, and hires the plant', async () => {
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — the owner search reaches
+      // every SPO_test3 company (shared fixtures included), so a row off the plant's lot is no candidate.
       const world = new ConnWorld();
       world.search = () => [
-        { facilityName: 'Odd Well', companyName: OWN_CO, x: 97, y: 97, town: 'Helartia' },
-        { facilityName: 'Storage', companyName: OWN_CO, x: 50, y: 60, town: 'Helartia' },
+        { facilityName: 'Odd Well', companyName: OWNER, x: 97, y: 97, town: 'Helartia' },
+        { facilityName: 'Chemical Plant', companyName: OWNER, x: 80, y: 90, town: 'Helartia' },
       ];
-      arrange(world);
+      const { refusal } = arrange(world);
       const result = await run('supplier-hire-fire');
       expect(result.status).toBe('PASS');
-      expect(world.writes.map(w => w.params.connectionList)).toEqual(['50,60,', '50,60,']);
+      expect(refusal.mock.calls.map(c => [c[1], c[2]])).toEqual([[80, 90]]);
+      expect(world.writes.map(w => w.params.connectionList)).toEqual(['80,90,', '80,90,']);
+    });
+
+    it('is UNTESTABLE, with the owner-filtered result count, when only another SPO_test3 lot answers', async () => {
+      const world = new ConnWorld();
+      world.search = () => [{ facilityName: 'Import Storage 1', companyName: OWNER, x: 50, y: 60, town: 'Helartia' }];
+      const { refusal } = arrange(world);
+      const result = await run('supplier-hire-fire');
+      expect(result.status).toBe('UNTESTABLE');
+      expect(refusal).not.toHaveBeenCalled();
+      expect(setProps(world)).toEqual([]);
+      expect(result.untestable[0]).toMatch(/Water: no supplier on Chemical Plant \(80,90\) in Helartia not already connected \(1 result\(s\) for owner SPO_test3\)/);
     });
 
     it('keeps an existing supplier: the snapshot holds it before and after', async () => {
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — the plant (80,90), not
+      // the warehouse, is the hire.
       const world = new ConnWorld();
       world.link(world.facs.industry, 'supplies', 'Water', { x: 70, y: 80, name: 'Own Well', company: OWN_CO });
       arrange(world);
       const result = await run('supplier-hire-fire');
       expect(result.status).toBe('PASS');
-      expect(result.probes[0]).toMatchObject({ original: '70,80', written: '50,60 70,80' });
+      expect(result.probes[0]).toMatchObject({ original: '70,80', written: '70,80 80,90' });
       expect(keysOf(world.facs.industry.supplies[0])).toEqual(['70,80']);
     });
 
@@ -7446,23 +7514,25 @@ describe('inspector connections & trade (#1153)', () => {
     });
 
     it('FAILs a connect whose gate never lists the candidate, even with its line present', async () => {
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — the plant (80,90) is the hire.
       const world = new ConnWorld();
       world.inert.add('RDOConnectInput');
       arrange(world);
       const result = await run('supplier-hire-fire');
       expect(result.status).toBe('FAIL');
-      expect(result.probes[0].logLine).toBe('12:00 - Fac(30,40) Input connected: Water to 50,60,');
-      expect(result.probes[0].note).toMatch(/read-back never showed "50,60"/);
+      expect(result.probes[0].logLine).toBe('12:00 - Fac(30,40) Input connected: Water to 80,90,');
+      expect(result.probes[0].note).toMatch(/read-back never showed "80,90"/);
     });
 
     it('FAILs when the fire prints no Input disconnect: line', async () => {
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — the plant (80,90) is the hire.
       const world = new ConnWorld();
       world.silent.add('RDODisconnectInput');
       arrange(world);
       const result = await run('supplier-hire-fire');
       expect(result.status).toBe('FAIL');
       expect(result.probes[0].status).toBe('PASS');
-      expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/no "Input disconnect:" line for Fac\(30,40\) Water from 50,60,/);
+      expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/no "Input disconnect:" line for Fac\(30,40\) Water from 80,90,/);
     });
 
     it('skips a gate whose links were not all read, and one with no header', async () => {
@@ -7485,20 +7555,24 @@ describe('inspector connections & trade (#1153)', () => {
   });
 
   describe('client-hire-remove', () => {
-    it('adds the own warehouse as a client of Chemicals, proves it, removes it, and reads back the snapshot', async () => {
+    it('adds the chemical plant as a client of Chemicals — never the warehouse — proves it, removes it, and reads back the snapshot', async () => {
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — the owner search also
+      // lists the warehouse (50,60); only the chemical fixture's lot (80,90) is taken.
       const world = new ConnWorld();
       const lock = cleanLock();
       arrange(world);
       const result = await run('client-hire-remove', lock);
       expect(result.status).toBe('PASS');
       expect(world.writes.map(w => [w.property, w.params])).toEqual([
-        ['RDOConnectOutput', { fluidId: 'Chemicals', connectionList: '50,60,' }],
-        ['RDODisconnectOutput', { fluidId: 'Chemicals', connectionList: '50,60,' }],
+        ['RDOConnectOutput', { fluidId: 'Chemicals', connectionList: '80,90,' }],
+        ['RDODisconnectOutput', { fluidId: 'Chemicals', connectionList: '80,90,' }],
       ]);
-      expect(result.probes[0].logLine).toBe('12:00 - Fac(30,40) Output connected: Chemicals to 50,60,');
-      expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_SEARCH_CONNECTIONS, direction: 'output', fluidId: 'Chemicals' }));
+      expect(result.probes[0].logLine).toBe('12:00 - Fac(30,40) Output connected: Chemicals to 80,90,');
+      expect(world.requests).toContainEqual(expect.objectContaining({
+        type: WsMessageType.REQ_SEARCH_CONNECTIONS, direction: 'output', fluidId: 'Chemicals', filters: { town: 'Helartia', company: OWNER },
+      }));
       expect(keysOf(world.facs.industry.products[0])).toEqual([]);
-      expect(keysOf(world.facs.warehouse.supplies[0])).toEqual([]);
+      expect(keysOf(world.facs.chemical.supplies[0])).toEqual([]);
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
@@ -7968,6 +8042,114 @@ describe('inspector connections & trade (#1153)', () => {
       expect((await run('quick-trade-roundtrip')).status).toBe('UNTESTABLE');
       expect(setProps(world)).toEqual([]);
     });
+
+    describe('the storage-side diagnostic (#1293)', () => {
+      const VERDICT = 'RDOConnectToTycoon: new links read back, and the output links equal their snapshot after the undo';
+      const detailOf = (result: FlowResult) => result.assertions.find(a => a.what === VERDICT)?.detail ?? '';
+
+      /** The warehouse (50,60) is a MegaStorage; every lot resolves to its own visual class. */
+      function arrangeMega(world: ConnWorld) {
+        world.dims = { '532': { visualClass: '532', name: 'Storage', facid: '', xsize: 4, ysize: 4, level: 0, facId: 125 } };
+        const arranged = arrange(world);
+        jest.spyOn(session, 'resolveVisualClass').mockImplementation(async (_s, x, y) => {
+          if (world.unreadable.has(`${x},${y}`)) throw new Error(`No building at (${x},${y})`);
+          return world.at(x, y)?.visualClass ?? '999';
+        });
+        return arranged;
+      }
+
+      it('records each own MegaStorage gate of a plant fluid — linked, or not listed — and an inconclusive initial-supplier read, before the undo', async () => {
+        const world = new ConnWorld();
+        arrangeMega(world);
+        const result = await run('quick-trade-roundtrip');
+        expect(result.status).toBe('PASS');
+        expect(detailOf(result)).toBe(
+          'diagnostic before the undo — own MegaStorages: Storage (50,60) Chemicals: plant linked | Storage (50,60) Water: gate not listed; ' +
+            "the plant's initial-supplier rows: inconclusive (auto-connections cache up to 5 min, KernelCache.pas:964); " +
+            'Survival error lines since the write: none',
+        );
+        // Reads only: the writes are the round trip's own.
+        expect(world.writes.map(w => w.property)).toEqual(['RDOConnectToTycoon', 'RDODisconnectFromTycoon']);
+      });
+
+      it('records "no plant link" beside the unchanged FAIL when the connect links nothing', async () => {
+        const world = new ConnWorld();
+        world.inert.add('RDOConnectToTycoon');
+        arrangeMega(world);
+        const result = await run('quick-trade-roundtrip');
+        expect(result.status).toBe('FAIL');
+        expect(result.probes[0].readBack).toBe('UNCONFIRMED');
+        expect(detailOf(result)).toMatch(/read-back never showed "new-links".* — diagnostic before the undo — own MegaStorages: Storage \(50,60\) Chemicals: no plant link \|/);
+      });
+
+      it('records a storage gate whose links were not all read', async () => {
+        const world = new ConnWorld();
+        world.inert.add('RDOConnectToTycoon');
+        world.facs.warehouse.supplies[0].connectionCount = 3;
+        arrangeMega(world);
+        expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(/Storage \(50,60\) Chemicals: count mismatch \(unread\)/);
+      });
+
+      it("records the plant's initial-supplier rows after the write, and the Survival error lines", async () => {
+        const world = new ConnWorld();
+        const { stub } = arrangeMega(world);
+        const answer = world.respond.bind(world);
+        (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
+          const out = answer(msg);
+          if ((msg as { propertyName?: string }).propertyName === 'RDOConnectToTycoon') {
+            // SetAsDefault (Kernel/Kernel.pas:4564-4565) registers the plant.
+            world.auto.fluids[0].suppliers.push({ facilityName: 'Chemical Plant', facilityId: '80,90,', companyName: OWN_CO });
+            world.lines.push('12:00 - Error: Connect to Tycoon failed for Storage');
+          }
+          return out;
+        });
+        const result = await run('quick-trade-roundtrip');
+        expect(result.status).toBe('PASS');
+        expect(detailOf(result)).toMatch(
+          /the plant's initial-supplier rows: Water:80,90,; Survival error lines since the write: 12:00 - Error: Connect to Tycoon failed for Storage$/,
+        );
+      });
+
+      it('names what it could not read, and never changes the verdict', async () => {
+        const world = new ConnWorld();
+        world.unreadable.add('50,60');
+        const { stub } = arrangeMega(world);
+        const answer = world.respond.bind(world);
+        const saved = world.auto;
+        (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
+          const out = answer(msg);
+          if ((msg as { propertyName?: string }).propertyName === 'RDOConnectToTycoon') world.auto = { fluids: [], cacheUnavailable: true };
+          return out;
+        });
+        world.onUndoTycoon = () => {
+          world.auto = saved;
+        };
+        jest.spyOn(liveLog, 'readSince').mockRejectedValue(new Error('log host vanished'));
+        const result = await run('quick-trade-roundtrip');
+        expect(result.status).toBe('PASS');
+        expect(detailOf(result)).toMatch(
+          /own MegaStorages: Storage \(50,60\) unread: No building at \(50,60\); the plant's initial-supplier rows: unread: .*cacheUnavailable.*; Survival error lines since the write: unread: log host vanished$/,
+        );
+      });
+
+      it('names an unopened log window and unread facility classes', async () => {
+        const world = new ConnWorld();
+        arrangeMega(world);
+        jest.spyOn(fixtures, 'facilityDimensions').mockRejectedValue(new Error('no dims'));
+        jest.spyOn(liveLog, 'openLogWindow').mockRejectedValueOnce(new Error('listing down'));
+        const result = await run('quick-trade-roundtrip');
+        expect(result.status).toBe('PASS');
+        expect(detailOf(result)).toMatch(
+          /own MegaStorages: facility classes unread: no dims;.*Survival error lines since the write: the log window could not be opened: listing down$/,
+        );
+      });
+
+      it('says when Helartia holds no own MegaStorage', async () => {
+        const world = new ConnWorld();
+        arrange(world);
+        expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(/^diagnostic before the undo — own MegaStorages: none in Helartia;/);
+      });
+    });
   });
 
   /** The plant's entry in the initial-supplier list. */
@@ -7986,9 +8168,10 @@ describe('inspector connections & trade (#1153)', () => {
       industry.products = [pg('Raw Chemicals')];
       chemical.supplies = [sg('Raw Chemicals')];
       chemical.products = [pg('Chemicals')];
+      // Contract changed by #1293 (2026-10-07): the cache search indexes the owner's name (Kernel/KernelCache.pas:514-516, :657-659), not the company — the row carries the owner.
       world.search = (direction, fluid) =>
         (direction === 'input' && fluid === 'Chemicals') || (direction === 'output' && fluid === 'Raw Chemicals')
-          ? [{ facilityName: chemical.name, companyName: OWN_CO, x: chemical.x, y: chemical.y, town: 'Helartia' }]
+          ? [{ facilityName: chemical.name, companyName: OWNER, x: chemical.x, y: chemical.y, town: 'Helartia' }]
           : [];
       world.link(chemical, 'supplies', 'Raw Chemicals', industry);
       world.link(chemical, 'supplies', 'Raw Chemicals', FOREIGN);

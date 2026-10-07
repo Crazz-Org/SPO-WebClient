@@ -205,6 +205,7 @@ import {
   type FixtureKindId,
   type FixtureOutcome,
   type Holding,
+  type TycoonFacility,
 } from './fixtures';
 
 /** Moved to ./research (#1233) — re-exported for research-roundtrip's tests. */
@@ -5998,19 +5999,25 @@ function connectionList(keys: string[]): string {
 }
 
 /**
- * The search results a hire may pick: SPO_test3's own company, in Helartia (or no town given),
- * not already connected to the gate, and not the fixture itself.
+ * The search results a hire may pick: owned by `owner` (a search row's company column is the
+ * owner's name — `searchOwn`), on `lot`, in Helartia (or no town given), not already connected to
+ * the gate, and not the fixture itself. The owner filter reaches every company of the tycoon,
+ * shared fixtures included, so only the expected counterpart's lot is kept; `ownLotRefusal` stays
+ * the last check (`runHire`).
  */
 export function hireCandidates(
   results: ConnectionSearchResult[],
   connected: BuildingConnectionData[],
-  ownCompany: string,
+  owner: string,
   fx: { x: number; y: number },
+  lot: { x: number; y: number },
 ): ConnectionSearchResult[] {
   const linked = new Set(connected.map(c => `${c.x},${c.y}`));
   return results.filter(
     r =>
-      r.companyName === ownCompany &&
+      sameName(r.companyName, owner) &&
+      r.x === lot.x &&
+      r.y === lot.y &&
       (!r.town || r.town === GOVERNED_TOWN) &&
       !linked.has(`${r.x},${r.y}`) &&
       !(r.x === fx.x && r.y === fx.y),
@@ -6160,7 +6167,18 @@ async function setPropertySlow(
   );
 }
 
-/** A connection search the way the hire dialogs send it, restricted to Helartia and SPO_test3's own company. */
+/**
+ * A connection search the way the hire dialogs send it, restricted to Helartia and SPO_test3 as
+ * owner. `filters.company` is the cache's `Name` argument (Cache Server/CacheServerReportForm.pas:108-109,
+ * :217-233), matched against the Company segment of the link-file names (Cache/OutputSearch.pas:166-171,
+ * Cache/InputSearch.pas:111-115). `CreateOutputLink` / `CreateInputLink` (Cache/MSObjectCacher.pas:430-480)
+ * fill that segment with the owner's name, `Block.Facility.Company.Owner.Name`
+ * (Kernel/KernelCache.pas:514-516, :526 inputs; :657-659, :669 outputs), and a row's company column
+ * is that same segment (Cache/OutputSearch.pas:81, Cache/InputSearch.pas:74; Cache Server/OutputSearchWrap.pas:33,
+ * Cache Server/InputSearchWrap.pas:39). Voyager labels the field "Owner"
+ * (Voyager/URLHandlers/OutputSearchHandlerViewer.pas:261, InputSearchHandlerViewer.pas:194). A company
+ * name ("SPO_test3 - Green") matches nothing.
+ */
 async function searchOwn(
   session: LiveSession,
   fx: OwnFixture,
@@ -6174,7 +6192,7 @@ async function searchOwn(
       buildingY: fx.y,
       fluidId,
       direction,
-      filters: { town: GOVERNED_TOWN, company: session.company.name },
+      filters: { town: GOVERNED_TOWN, company: PRIMARY_ACCOUNT.username },
     },
     WsMessageType.RESP_SEARCH_CONNECTIONS,
   );
@@ -6209,12 +6227,12 @@ const FOREIGN_WHY = 'hiring anyone else writes their gate (Kernel/Kernel.pas:678
 
 /**
  * The connection searches the hire dialogs send, read only: one input fluid of the industry
- * fixture, Helartia and SPO_test3's own company, then the road reachability of the first results.
+ * fixture, Helartia and SPO_test3 as owner (`searchOwn`), then the road reachability of the first results.
  */
 const supplierSearchRead: Flow = {
   name: 'supplier-search-read',
   what:
-    "REQ_SEARCH_CONNECTIONS for one input fluid of SPO_test3's industry fixture (Helartia, own company) -> " +
+    "REQ_SEARCH_CONNECTIONS for one input fluid of SPO_test3's industry fixture (Helartia, owner SPO_test3) -> " +
     'REQ_CONNECTION_REACHABILITY for the first candidates — no write',
   mutates: false,
   run: async () => {
@@ -6425,9 +6443,11 @@ interface HireSide {
 
 /**
  * Hire one own counterpart on a gate of the industry fixture, then fire it. The chemical fixture
- * (#1293) is reset first (`resetChemical`) and is the expected counterpart: Chemicals for a supplier,
- * Raw Chemicals for a client. The candidate is SPO_test3's own facility in Helartia and not already
- * connected; the gate must list exactly its snapshot again after the undo.
+ * (#1293) is reset first (`resetChemical`) and is the only counterpart taken: Chemicals for a supplier,
+ * Raw Chemicals for a client. The search is filtered by owner (`searchOwn`), which reaches every
+ * SPO_test3 company, shared fixtures included — so the candidate must be the chemical fixture's lot,
+ * in Helartia and not already connected (`hireCandidates`), and its lot's owner is read back last
+ * (`ownLotRefusal`); the gate must list exactly its snapshot again after the undo.
  */
 async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
   const assertions = new Assertions();
@@ -6458,9 +6478,12 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
       }
       const search = await searchOwn(session, fx, gate.metaFluid, side.direction);
       const results = search.results ?? [];
-      const candidates = hireCandidates(results, gate.connections, session.company.name, fx);
+      const candidates = hireCandidates(results, gate.connections, PRIMARY_ACCOUNT.username, fx, chem);
       if (candidates.length === 0) {
-        refusals.push(`${stub.name}: no own ${side.role} in ${GOVERNED_TOWN} not already connected (${results.length} result(s))`);
+        refusals.push(
+          `${stub.name}: no ${side.role} on ${fixtureLabel(chem)} in ${GOVERNED_TOWN} not already connected ` +
+            `(${results.length} result(s) for owner ${PRIMARY_ACCOUNT.username})`,
+        );
         continue;
       }
       for (const candidate of candidates) {
@@ -6476,7 +6499,7 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
     if (!target) {
       assertions.untestable(
         side.connect,
-        `no ${side.role} of SPO_test3's own company in ${GOVERNED_TOWN} for any ${side.tab} gate of the industry ` +
+        `no ${side.role} owned by ${PRIMARY_ACCOUNT.username} on the chemical fixture's lot in ${GOVERNED_TOWN} for any ${side.tab} gate of the industry ` +
           `fixture — ${FOREIGN_WHY}: ${refusals.length > 0 ? refusals.join(' | ') : `the fixture lists no ${side.tab} gate`}`,
       );
       return report(side.flow, assertions, probes, session);
@@ -6550,12 +6573,12 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
   }
 }
 
-/** Hire an own supplier (the chemical fixture) on an input gate of the industry fixture, then fire it. NIGHTLY_ONLY (routing.ts). */
+/** Hire an own supplier (the chemical fixture, searched by owner) on an input gate of the industry fixture, then fire it. NIGHTLY_ONLY (routing.ts). */
 const supplierHireFire: Flow = {
   name: 'supplier-hire-fire',
   what:
-    "reset the chemical fixture, then hire an own supplier (Helartia, SPO_test3's company; the chemical fixture " +
-    'expected) on an input of the industry fixture -> Input connected: line + the gate lists it -> fire it -> the gate lists exactly its snapshot',
+    "reset the chemical fixture, then hire an own supplier (Helartia, owner SPO_test3; only the chemical fixture's lot " +
+    'taken) on an input of the industry fixture -> Input connected: line + the gate lists it -> fire it -> the gate lists exactly its snapshot',
   mutates: true,
   run: ctx =>
     runHire(
@@ -6573,12 +6596,12 @@ const supplierHireFire: Flow = {
     ),
 };
 
-/** Add an own client (the chemical fixture) on an output gate of the industry fixture, then remove it. NIGHTLY_ONLY (routing.ts). */
+/** Add an own client (the chemical fixture, searched by owner) on an output gate of the industry fixture, then remove it. NIGHTLY_ONLY (routing.ts). */
 const clientHireRemove: Flow = {
   name: 'client-hire-remove',
   what:
-    "reset the chemical fixture, then add an own client (Helartia, SPO_test3's company; the chemical fixture " +
-    'expected) on an output of the industry fixture -> Output connected: line + the gate lists it -> remove it -> the gate lists exactly its snapshot',
+    "reset the chemical fixture, then add an own client (Helartia, owner SPO_test3; only the chemical fixture's lot " +
+    'taken) on an output of the industry fixture -> Output connected: line + the gate lists it -> remove it -> the gate lists exactly its snapshot',
   mutates: true,
   run: ctx =>
     runHire(
@@ -6969,6 +6992,111 @@ const warehouseWares: Flow = {
 const QUICK_TRADE_KIND = '1';
 
 /**
+ * What one storage's supply gate of a plant fluid shows of the plant, for the Quick Trade
+ * diagnostic: `undefined` is a gate the storage does not list. A link found among the rows read
+ * counts even when not every row was read.
+ */
+export function storageGateState(gate: BuildingSupplyData | undefined, plant: { x: number; y: number }): string {
+  if (!gate) return 'gate not listed';
+  if (gate.connections.some(c => c.x === plant.x && c.y === plant.y)) return 'plant linked';
+  if (gate.connectionCount !== gate.connections.length) return 'count mismatch (unread)';
+  return 'no plant link';
+}
+
+/**
+ * The plant's initial-supplier rows as the diagnostic records them. None is not a proof the
+ * connect registered nothing: the page is served from the tycoon's cache, up to 5 minutes old.
+ */
+export function initialSupplierNote(rows: readonly InitialSupplierRow[]): string {
+  return rows.length === 0
+    ? 'inconclusive (auto-connections cache up to 5 min, KernelCache.pas:964)'
+    : rows.map(r => `${r.fluidId}:${r.facilityId}`).join(' ');
+}
+
+/** The lines of a Survival log extract that name an error or an exception. */
+export function errorLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(l => /\berror\b|exception/i.test(l));
+}
+
+/** The first supply gate of `fx` whose fluid is `fluid` — a stub named after it is read first. */
+async function supplyByFluid(
+  session: LiveSession,
+  fx: OwnFixture,
+  stubs: readonly GateStub[],
+  fluid: string,
+): Promise<BuildingSupplyData | undefined> {
+  for (const stub of [...stubs.filter(s => s.name === fluid), ...stubs.filter(s => s.name !== fluid)]) {
+    const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
+    if (supply?.metaFluid === fluid) return supply;
+  }
+  return undefined;
+}
+
+/**
+ * Read-only diagnostic of Quick Trade's other side, taken after the read-back poll and before the
+ * undo: every own MegaStorage in Helartia (`isMegaStorage`), and each of its supply gates carrying
+ * one of the plant's product fluids, should list the plant (`RDOConnectToTycoon`,
+ * Kernel/Kernel.pas:4521). A link is written on both gates at once (Kernel/Kernel.pas:6779-6780),
+ * so this only says which side a missing link shows on — never the proof. Then the plant's
+ * initial-supplier rows (SetAsDefault, :4564-4565) and any error line the Survival log took since
+ * the write. Never throws.
+ */
+async function quickTradeDiagnostic(
+  session: LiveSession,
+  plant: OwnFixture,
+  facilities: readonly TycoonFacility[],
+  helartia: number | undefined,
+  fluids: readonly string[],
+  window: LogWindow | string,
+): Promise<string> {
+  const storages: string[] = [];
+  try {
+    const dims = await facilityDimensions(session);
+    for (const f of facilities) {
+      if (f.x === plant.x && f.y === plant.y) continue;
+      try {
+        if (helartia === undefined || (await townValueAt(session, f.x, f.y)) !== helartia) continue;
+        const visualClass = await resolveVisualClass(session, f.x, f.y);
+        if (!isMegaStorage(dims, visualClass)) continue;
+        const storage: OwnFixture = { x: f.x, y: f.y, visualClass, name: f.name };
+        const stubs = await gateStubs(session, storage, 'supplies');
+        for (const fluid of fluids) {
+          storages.push(`${fixtureLabel(storage)} ${fluid}: ${storageGateState(await supplyByFluid(session, storage, stubs, fluid), plant)}`);
+        }
+      } catch (err: unknown) {
+        storages.push(`${f.name} (${f.x},${f.y}) unread: ${toErrorMessage(err)}`);
+      }
+    }
+  } catch (err: unknown) {
+    storages.push(`facility classes unread: ${toErrorMessage(err)}`);
+  }
+  let suppliers: string;
+  try {
+    suppliers = initialSupplierNote(initialSupplierRowsAt(await readAutoConnections(session), plant.x, plant.y));
+  } catch (err: unknown) {
+    suppliers = `unread: ${toErrorMessage(err)}`;
+  }
+  let log: string;
+  if (typeof window === 'string') {
+    log = window;
+  } else {
+    try {
+      const lines = errorLines(await readSince(window));
+      log = lines.length > 0 ? lines.slice(0, 5).join(' | ') : 'none';
+    } catch (err: unknown) {
+      log = `unread: ${toErrorMessage(err)}`;
+    }
+  }
+  return (
+    `diagnostic before the undo — own MegaStorages: ${storages.length > 0 ? storages.join(' | ') : `none in ${GOVERNED_TOWN}`}; ` +
+    `the plant's initial-supplier rows: ${suppliers}; Survival error lines since the write: ${log}`
+  );
+}
+
+/**
  * Quick Trade (`TFacility.RDOConnectToTycoon`, Kernel/Kernel.pas:4521) and its undo
  * (`RDODisconnectFromTycoon`), which reaches every SPO_test3 facility (:4537-4553, :4593-4600) and
  * unregisters the fixture as an initial supplier (:4564-4565, :4606-4607) — so it runs only
@@ -7058,6 +7186,14 @@ const quickTradeRoundTrip: Flow = {
       const suppliersKey = initialSuppliersKey(auto);
       const read = async (): Promise<string> => linkState(snapshot, await readGateLinks(session, fx, ['products']));
       const url = await survivalUrl(ctx);
+      const fluids = [...new Set(Object.values(snapshot).map(g => g.fluid).filter(Boolean))];
+      let diagWindow: LogWindow | string;
+      try {
+        diagWindow = await openLogWindow(url);
+      } catch (err: unknown) {
+        diagWindow = `the log window could not be opened: ${toErrorMessage(err)}`;
+      }
+      let diagnostic = '';
       const probe = await roundTripProbe(ctx, url, {
         what: `${fixtureLabel(fx)} Quick Trade with SPO_test3's warehouses`,
         member: 'RDOConnectToTycoon',
@@ -7067,6 +7203,8 @@ const quickTradeRoundTrip: Flow = {
           await setBuildingProperty(session, fx.x, fx.y, 'RDOConnectToTycoon', '0', { kind: QUICK_TRADE_KIND });
         },
         restore: async () => {
+          // Reads only, before the undo: the verdict below never looks at it.
+          diagnostic = await quickTradeDiagnostic(session, fx, own.facilities, helartia, fluids, diagWindow);
           await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: QUICK_TRADE_KIND });
           let after: AutoConnectionsData;
           try {
@@ -7102,7 +7240,7 @@ const quickTradeRoundTrip: Flow = {
       assertions.check(
         'RDOConnectToTycoon: new links read back, and the output links equal their snapshot after the undo',
         probeHeld(probe),
-        probe.note,
+        [probe.note, diagnostic].filter(Boolean).join(' — ') || undefined,
       );
 
       const suppliers = await pollUntil(
