@@ -5983,8 +5983,13 @@ describe('inspector flows (#1152)', () => {
           throw new Error(`unexpected tab ${String(m.tabId)}`);
         }
         case WsMessageType.REQ_BUILDING_GATE_CONNECTIONS: {
-          if (m.tabId === 'supplies') return { supply: clone(world.supplies.find(s => s.path === m.path)) };
-          return { product: clone(world.products.find(o => o.path === m.path)) };
+          const gate = m.tabId === 'supplies'
+            ? clone(world.supplies.find(s => s.path === m.path))
+            : clone(world.products.find(o => o.path === m.path));
+          // #1347: headerOnly echoes the flag and drops the rows, keeping the count.
+          const answered = m.headerOnly === true && gate ? { ...gate, connections: [] } : gate;
+          const echo = m.headerOnly === true ? { headerOnly: true } : {};
+          return m.tabId === 'supplies' ? { ...echo, supply: answered } : { ...echo, product: answered };
         }
         case WsMessageType.REQ_BUILDING_SET_PROPERTY: {
           const w: Write = { property: String(m.propertyName), value: String(m.value), params: m.additionalParams as Record<string, string> };
@@ -6037,6 +6042,26 @@ describe('inspector flows (#1152)', () => {
       expect(world.requests).toContainEqual(expect.objectContaining({ type: WsMessageType.REQ_BUILDING_REFRESH_PROPERTIES, activeTabId: 'srvGeneral' }));
       expect(setProps(world)).toEqual([]);
       expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-reads each gate header-only and checks echo, empty rows and equal count (#1347)', async () => {
+      const world = makeWorld();
+      arrange(world);
+      const result = await run('inspector-reads');
+      expect(result.status).toBe('PASS');
+      for (const tabId of ['supplies', 'products']) {
+        expect(world.requests).toContainEqual(expect.objectContaining({
+          type: WsMessageType.REQ_BUILDING_GATE_CONNECTIONS, tabId, headerOnly: true,
+        }));
+      }
+      const lite = result.assertions.filter(a => a.what.includes('headerOnly'));
+      expect(lite).toHaveLength(6);
+      expect(lite.every(a => a.ok)).toBe(true);
+      expect(lite.map(a => a.what)).toEqual(expect.arrayContaining([
+        expect.stringMatching(/headerOnly: the answer echoes headerOnly$/),
+        expect.stringMatching(/headerOnly: connections is empty$/),
+        expect.stringMatching(/headerOnly: connectionCount equals the full read's$/),
+      ]));
     });
 
     it('FAILs a missing worker kind, naming it', async () => {

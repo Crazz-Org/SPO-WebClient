@@ -60,6 +60,32 @@ const SUPPLY = {
 };
 
 describe('handleBuildingGateConnections', () => {
+  it('headerOnly: passes the flag to the session and echoes it (#1347)', async () => {
+    const r = createCtx({ supply: { ...SUPPLY, connections: [] } });
+
+    await handleBuildingGateConnections(r.ctx, request({ headerOnly: true }));
+
+    expect(r.getBuildingGateConnections).toHaveBeenCalledWith(924, 820, 'supplies', 'Seg0', 'Books', '9013', true);
+    expect(r.sent[0].headerOnly).toBe(true);
+  });
+
+  it('no headerOnly echo when the request did not set it', async () => {
+    const r = createCtx({ supply: SUPPLY });
+
+    await handleBuildingGateConnections(r.ctx, request());
+
+    expect('headerOnly' in r.sent[0]).toBe(false);
+  });
+
+  it('headerOnly: false is not echoed and not forwarded', async () => {
+    const r = createCtx({ supply: SUPPLY });
+
+    await handleBuildingGateConnections(r.ctx, request({ headerOnly: false }));
+
+    expect(r.getBuildingGateConnections).toHaveBeenCalledWith(924, 820, 'supplies', 'Seg0', 'Books', '9013');
+    expect('headerOnly' in r.sent[0]).toBe(false);
+  });
+
   it('passes the gate identity to the session unchanged', async () => {
     const r = createCtx({ supply: SUPPLY });
 

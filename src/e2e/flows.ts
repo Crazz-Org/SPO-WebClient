@@ -4970,6 +4970,7 @@ function gateConnections(
   fx: OwnFixture,
   tabId: 'supplies' | 'products',
   stub: GateStub,
+  headerOnly = false,
 ): Promise<WsRespBuildingGateConnections> {
   return session.driver.request<WsRespBuildingGateConnections>(
     {
@@ -4980,6 +4981,7 @@ function gateConnections(
       path: stub.path,
       name: stub.name,
       visualClass: fx.visualClass,
+      ...(headerOnly ? { headerOnly: true } : {}),
     },
     WsMessageType.RESP_BUILDING_GATE_CONNECTIONS,
   );
@@ -5303,6 +5305,22 @@ async function readIndustryGates(session: LiveSession, fx: OwnFixture, assertion
         typeof gate.connectionCount === 'number' &&
         Array.isArray(gate.connections),
       gate ? `metaFluid ${gate.metaFluid ?? '(none)'}, ${String(gate.connectionCount)} connection(s)` : 'no gate in the answer',
+    );
+    if (gate === undefined) continue;
+    // #1347: the same gate, header only — the count without the rows.
+    const lite = await gateConnections(session, fx, tabId, stubs[0], true);
+    const liteGate = tabId === 'supplies' ? lite.supply : lite.product;
+    const label = `${tabId} gate "${stubs[0].name}" headerOnly`;
+    assertions.check(`${label}: the answer echoes headerOnly`, lite.headerOnly === true, `headerOnly ${String(lite.headerOnly)}`);
+    assertions.check(
+      `${label}: connections is empty`,
+      liteGate !== undefined && liteGate.connections.length === 0,
+      liteGate ? `${liteGate.connections.length} row(s)` : 'no gate in the answer',
+    );
+    assertions.check(
+      `${label}: connectionCount equals the full read's`,
+      liteGate?.connectionCount === gate.connectionCount,
+      `header-only ${String(liteGate?.connectionCount)}, full ${String(gate.connectionCount)}`,
     );
   }
 }

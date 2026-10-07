@@ -3142,11 +3142,12 @@ private handlePush(socketName: string, packet: RdoPacket) {
     path: string,
     name: string,
     visualClass?: string,
+    headerOnly?: boolean,
   ): Promise<{
     supply?: import('../shared/types').BuildingSupplyData;
     product?: import('../shared/types').BuildingProductData;
   }> {
-    return buildingDetailsHandler.getBuildingGateConnections(this, x, y, tabId, path, name, visualClass);
+    return buildingDetailsHandler.getBuildingGateConnections(this, x, y, tabId, path, name, visualClass, headerOnly);
   }
 
   /**

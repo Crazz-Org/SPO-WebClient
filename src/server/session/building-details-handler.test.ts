@@ -2079,6 +2079,61 @@ describe('getBuildingGateConnections', () => {
     return fake;
   }
 
+  describe('headerOnly (#1347)', () => {
+    const ROW = 'res="%Farm A\tSPO_test3\tYellow Inc.\t100\t10\t900\t$12\t95%\t1\t40\t50\t\t"';
+    const count = (fake: FakeSessionCtx, member: string): number =>
+      fake.sent.filter(s => s.packet.member === member).length;
+
+    it('sends SetPath and one header read, and no GetSubObjectProps', async () => {
+      const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '7' }, ROW);
+
+      await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books', undefined, true);
+
+      expect(count(fake, 'SetPath')).toBe(1);
+      expect(fake.cacher.getPropertyList).toHaveBeenCalledTimes(1);
+      expect(count(fake, 'GetSubObjectProps')).toBe(0);
+    });
+
+    it('answers connectionCount from cnxCount with no rows (supplies)', async () => {
+      const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '7' }, ROW);
+
+      const { supply } = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books', undefined, true);
+
+      expect(supply?.connectionCount).toBe(7);
+      expect(supply?.connections).toEqual([]);
+      expect(supply?.metaFluid).toBe('Books');
+    });
+
+    it('answers connectionCount from cnxCount with no rows (products)', async () => {
+      const fake = gateCtx('products', { MetaFluid: 'Books', cnxCount: '4' }, ROW);
+
+      const { product } = await getBuildingGateConnections(fake.ctx, X, Y, 'products', 'Seg0', 'Books', undefined, true);
+
+      expect(product?.connectionCount).toBe(4);
+      expect(product?.connections).toEqual([]);
+      expect(count(fake, 'GetSubObjectProps')).toBe(0);
+    });
+
+    it('without the flag, still reads every row', async () => {
+      const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '7' }, ROW);
+
+      await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books');
+
+      expect(count(fake, 'SetPath')).toBe(1);
+      expect(count(fake, 'GetSubObjectProps')).toBe(7);
+    });
+
+    it('a refused SetPath answers {} and reads no header', async () => {
+      const fake = gateCtx('supplies', { MetaFluid: 'Books', cnxCount: '7' }, ROW);
+      fake.respond(() => 'res="#0"');
+
+      const result = await getBuildingGateConnections(fake.ctx, X, Y, 'supplies', 'Seg0', 'Books', undefined, true);
+
+      expect(result).toEqual({});
+      expect(fake.cacher.getPropertyList).not.toHaveBeenCalled();
+    });
+  });
+
   it("reads one gate on the inspector's own object: SetPath, header, then rows", async () => {
     const fake = gateCtx('supplies', {
       MetaFluid: 'Fresh Food', FluidValue: '1200', LastCostPerc: '85', minK: '30',
