@@ -145,6 +145,28 @@ describe('endpointsFromDriveLog', () => {
     ]);
   });
 
+  const gatewayTimeout =
+    'REQ_LOGIN_WORLD FAIL {"error":"Connect timeout: world socket to 158.69.153.134:8000 not connected after 10000 ms"}';
+
+  it("reads the gateway's own Connect timeout wording", () => {
+    const log = [gatewayTimeout, gatewayTimeout, gatewayTimeout].join('\n');
+    expect(endpointsFromDriveLog(log)).toEqual([{ host: '158.69.153.134', port: 8000 }]);
+  });
+
+  it('names one endpoint when both wordings name the same one', () => {
+    const log = [gatewayTimeout, 'Error: connect ETIMEDOUT 158.69.153.134:8000'].join('\n');
+    expect(endpointsFromDriveLog(log)).toEqual([{ host: '158.69.153.134', port: 8000 }]);
+  });
+
+  it('keeps first-seen order across both wordings', () => {
+    const log = ['Error: connect ECONNREFUSED 10.0.0.2:1111', gatewayTimeout, 'connect ETIMEDOUT 10.0.0.3:9000'].join('\n');
+    expect(endpointsFromDriveLog(log)).toEqual([
+      { host: '10.0.0.2', port: 1111 },
+      { host: '158.69.153.134', port: 8000 },
+      { host: '10.0.0.3', port: 9000 },
+    ]);
+  });
+
   it('finds nothing in a log that records no connect failure', () => {
     expect(endpointsFromDriveLog('[flow] login-spine failed: assertion on rating\n')).toEqual([]);
   });
@@ -183,6 +205,46 @@ describe('probeDriveEndpoints', () => {
     expect(result.target).toBe('158.69.153.134:8000');
     expect(result.detail).toMatch(/the drive's own log names this endpoint as unreachable/);
     expect(dialled).toEqual([frontDoor, '158.69.153.134:8000']);
+  });
+
+  const gatewayOutage =
+    'REQ_LOGIN_WORLD FAIL {"error":"Connect timeout: world socket to 158.69.153.134:8000 not connected after 10000 ms"}\n'.repeat(3);
+
+  it("downgrades on the gateway's Connect timeout wording exactly as on connect ETIMEDOUT", async () => {
+    const dialled: string[] = [];
+    const result = await probeDriveEndpoints(
+      'drive.log',
+      factory(port => port === gameServerTarget().port, dialled),
+      500,
+      () => gatewayOutage,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.target).toBe('158.69.153.134:8000');
+    expect(result.detail).toMatch(/the drive's own log names this endpoint as unreachable/);
+    expect(dialled).toEqual([frontDoor, '158.69.153.134:8000']);
+  });
+
+  it('re-dials once when both wordings name the same endpoint', async () => {
+    const dialled: string[] = [];
+    await probeDriveEndpoints(
+      'drive.log',
+      factory(port => port === gameServerTarget().port, dialled),
+      500,
+      () => gatewayOutage + worldOutage,
+    );
+    expect(dialled).toEqual([frontDoor, '158.69.153.134:8000']);
+  });
+
+  it('does not re-dial on a REQ_LOGIN_WORLD FAIL that names no endpoint', async () => {
+    const dialled: string[] = [];
+    const result = await probeDriveEndpoints(
+      'drive.log',
+      factory(() => true, dialled),
+      500,
+      () => 'REQ_LOGIN_WORLD FAIL {"error":"wrong password"}\n',
+    );
+    expect(result.ok).toBe(true);
+    expect(dialled).toEqual([frontDoor]);
   });
 
   it('answers ok: true when every endpoint the drive failed on answers now — the FAIL is the code', async () => {
