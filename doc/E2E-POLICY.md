@@ -585,7 +585,7 @@ directory's tycoon branch, then the lot's owner and the inspector's template gro
 coordinates committed to the tree — the world moves. A build is proven by its `New Facility:`
 line, result code 0 and the lot read-back. While SPO_test3 owns a construction site in Helartia,
 neither places anything: a site cannot be tied to a kind. A fixture a seed places is still under
-construction in that run — the flow ends UNPROVEN `under construction`; a later run finds it
+construction in that run — the flow ends UNTESTABLE `under construction`; a later run finds it
 finished. A mausoleum is never a fixture
 (placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
 and neither is a studio. The seven fixtures occupy seven of SPO_test3's facility slots for good.

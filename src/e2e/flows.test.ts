@@ -9568,12 +9568,12 @@ describe('a fixture flow ensures its own fixture (#1185)', () => {
   });
 
   describe('through runFlow', () => {
-    it('skips the run on a failed seed — UNPROVEN, nothing looked up', async () => {
+    it('skips the run on a failed seed — UNTESTABLE, nothing looked up', async () => {
       spySeed(() => [outcome('industry', 'FAIL', { reason: 'no read-back' })]);
       const find = jest.spyOn(fixtures, 'findFixture');
       const result = await runFlow(flowByName('industry-output-price'), { lock: cleanLock() });
-      expect(result.status).toBe('UNPROVEN');
-      expect(result.unproven[0]).toMatch(/^the flow's data — seed failed: ensure industry fixture\(s\) in Helartia \(industry: FAIL — no read-back\)/);
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable[0]).toMatch(/^the flow's data — seed failed: ensure industry fixture\(s\) in Helartia \(industry: FAIL — no read-back\)/);
       expect(find).not.toHaveBeenCalled();
     });
 
@@ -9581,9 +9581,9 @@ describe('a fixture flow ensures its own fixture (#1185)', () => {
       spySeed(() => [outcome('industry', reason === 'under construction' ? 'under construction' : 'unproven', { reason: 'x' })]);
       jest.spyOn(fixtures, 'findFixture').mockResolvedValue({ kind: 'industry', reason });
       const result = await runFlow(flowByName('industry-output-price'), { lock: cleanLock() });
-      expect(result.status).toBe('UNPROVEN');
+      expect(result.status).toBe('UNTESTABLE');
       expect(result.seed?.ok).toBe(true);
-      expect(result.unproven).toContain(`industry fixture — ${reason}`);
+      expect(result.untestable).toContain(`industry fixture — ${reason}`);
     });
   });
 });

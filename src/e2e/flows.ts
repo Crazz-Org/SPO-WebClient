@@ -4942,9 +4942,10 @@ export function fixtureKind(id: FixtureKindId): FixtureKind {
  * building a missing one once, as `fixtures-ensure` would — so the flow runs alone. Nothing is
  * undone (permanent fixtures, doc/E2E-POLICY.md §9), so there is no cleanup. `found`, `built`,
  * `under construction` and `unproven` leave the seed ok: the run then looks the fixture up and
- * reports `pickFixture`'s own reason (a fixture placed now is still under construction in this
- * run). Only a `FAIL` — a build that went wrong — fails the seed, so the run is skipped. A throw
- * (login refused, terrain unreadable) propagates; `runFlow` records it as a failed seed.
+ * reports `pickFixture`'s own reason as UNTESTABLE (a fixture placed now is still under
+ * construction in this run). Only a `FAIL` — a build that went wrong — fails the seed, so the run
+ * is skipped and the flow ends UNTESTABLE `seed failed`. A throw (login refused, terrain
+ * unreadable) propagates; `runFlow` records it as a failed seed.
  */
 function fixtureSeed(...kindIds: FixtureKindId[]): (ctx: FlowContext) => Promise<FlowSeed> {
   return async ctx => {
