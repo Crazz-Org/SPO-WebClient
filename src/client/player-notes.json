@@ -1,5 +1,11 @@
 [
   {
+    "id": 1333,
+    "type": "added",
+    "text": "A store's General tab now shows how many potential customers it has in each class (high, middle, low).",
+    "date": "2026-10-06"
+  },
+  {
     "id": 1298,
     "type": "fixed",
     "text": "In the town newspaper, Post a column opens the writing form again instead of jumping back to the column list.",

@@ -545,7 +545,8 @@ It dials **both halves of the game server**, in order, because a drive needs bot
 2. the **world server** the directory hands back at runtime (`158.69.153.134:8000` on
    2026-09-13). Its address is unknown to a process that never logged in, so the probe reads it
    out of the drive's own log: Node writes a failed connect as `connect ETIMEDOUT <ip>:<port>`,
-   which names the exact endpoint. Every distinct endpoint the log names that way is re-dialled
+   and the gateway's own connect deadline as `Connect timeout: world socket to <ip>:<port> not
+   connected after <n> ms` — either names the exact endpoint. Every distinct endpoint the log names that way is re-dialled
    after the drive is over, up to `MAX_LOG_ENDPOINTS`.
 
 Either dial refused or timed out → the verdict is rewritten `ENVIRONMENT` and `detail` names that
