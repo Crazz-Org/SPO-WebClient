@@ -41,6 +41,7 @@ import {
   politicsSetProjectData,
   searchConnections,
   resolveConnectionReachability,
+  readNearCircuitsAt,
   REACHABILITY_BATCH_SIZE,
   holdsOffice,
 } from './politics-handler';
@@ -51,6 +52,7 @@ import type { RdoPacket, WorldInfo } from '../../shared/types';
 import { RdoValue, RdoCommand } from '../../shared/rdo-types';
 import { RdoVerb, RdoAction } from '../../shared/types';
 import { TimeoutCategory } from '../../shared/timeout-categories';
+import { sharesRoadCircuit } from '../../shared/road-circuits';
 
 const mockFetch = fetch as unknown as jest.MockedFunction<
   (url: string, init?: unknown) => Promise<Response>
@@ -2261,6 +2263,100 @@ describe('resolveConnectionReachability', () => {
     expect(onBatch.mock.calls[2][0]).toHaveLength(3);
     expect(onBatch.mock.calls.flatMap(c => c[0])).toEqual(entries);
     expect(entries.every(e => e.reachability === 'connected')).toBe(true);
+  });
+
+  // readNearCircuitsAt — the same reads, the raw strings, each tile once.
+  it('readNearCircuitsAt answers each tile\'s raw NearCircuits in order, null where nothing loads, one temp object', async () => {
+    const fake = makeReachCtx([UNKNOWN_POS]);
+
+    const tiles = await readNearCircuitsAt(fake.ctx, [BUILDING, CONNECTED_POS, ISOLATED_EMPTY_POS, UNKNOWN_POS]);
+
+    expect(tiles).toEqual([
+      { x: BUILDING.x, y: BUILDING.y, circuits: '17,42,' },
+      { x: CONNECTED_POS.x, y: CONNECTED_POS.y, circuits: '17,' },
+      { x: ISOLATED_EMPTY_POS.x, y: ISOLATED_EMPTY_POS.y, circuits: '' },
+      { x: UNKNOWN_POS.x, y: UNKNOWN_POS.y, circuits: null },
+    ]);
+    expect(fake.sent.map(s => s.packet.member)).toEqual(['SetObject', 'SetObject', 'SetObject', 'SetObject']);
+    for (const req of fake.sent) {
+      expect(req.socketName).toBe('map');
+      expect(req.packet.targetId).toBe(TEMP_ID);
+    }
+    expect(fake.cacher.getPropertyList).toHaveBeenCalledTimes(3);
+    expect(fake.cacher.createObject).toHaveBeenCalledTimes(1);
+    expect(fake.cacher.closeObject).toHaveBeenCalledTimes(1);
+    expect(fake.cacher.closeObject).toHaveBeenCalledWith(TEMP_ID);
+  });
+
+  it('readNearCircuitsAt: a rejected read is null, not an empty string, and siblings still read', async () => {
+    const fake = makeReachCtx();
+    fake.cacher.getPropertyList
+      .mockRejectedValueOnce(new Error('read failed'))
+      .mockResolvedValueOnce(['17,']);
+
+    const tiles = await readNearCircuitsAt(fake.ctx, [BUILDING, CONNECTED_POS]);
+
+    expect(tiles).toEqual([
+      { x: BUILDING.x, y: BUILDING.y, circuits: null },
+      { x: CONNECTED_POS.x, y: CONNECTED_POS.y, circuits: '17,' },
+    ]);
+    expect(fake.cacher.closeObject).toHaveBeenCalledTimes(1);
+  });
+
+  it('readNearCircuitsAt answers a tile asked twice twice, in place — no dedupe (#1334)', async () => {
+    const fake = makeReachCtx();
+
+    const tiles = await readNearCircuitsAt(fake.ctx, [CONNECTED_POS, BUILDING, CONNECTED_POS]);
+
+    expect(tiles).toEqual([
+      { x: CONNECTED_POS.x, y: CONNECTED_POS.y, circuits: '17,' },
+      { x: BUILDING.x, y: BUILDING.y, circuits: '17,42,' },
+      { x: CONNECTED_POS.x, y: CONNECTED_POS.y, circuits: '17,' },
+    ]);
+    expect(fake.sent).toHaveLength(3);
+  });
+
+  it('readNearCircuitsAt returns [] and sends nothing for no tiles', async () => {
+    const fake = makeReachCtx();
+    expect(await readNearCircuitsAt(fake.ctx, [])).toEqual([]);
+    expect(fake.sent).toHaveLength(0);
+    expect(fake.cacher.createObject).not.toHaveBeenCalled();
+  });
+
+  it('readNearCircuitsAt gives every tile null when there is no cacherId', async () => {
+    const fake = makeSessionCtx({ currentWorldInfo: WORLD, cacherId: null });
+    expect(await readNearCircuitsAt(fake.ctx, [BUILDING, CONNECTED_POS])).toEqual([
+      { x: BUILDING.x, y: BUILDING.y, circuits: null },
+      { x: CONNECTED_POS.x, y: CONNECTED_POS.y, circuits: null },
+    ]);
+    expect(fake.log.warn).toHaveBeenCalled();
+  });
+
+  it('readNearCircuitsAt gives every tile null and never closes when CreateObject rejects', async () => {
+    const fake = makeSessionCtx({ currentWorldInfo: WORLD });
+    fake.cacher.createObject.mockRejectedValue(new Error('create failed'));
+    expect(await readNearCircuitsAt(fake.ctx, [BUILDING])).toEqual([{ x: BUILDING.x, y: BUILDING.y, circuits: null }]);
+    expect(fake.cacher.closeObject).not.toHaveBeenCalled();
+    expect(fake.log.warn).toHaveBeenCalled();
+  });
+
+  it('readNearCircuitsAt + sharesRoadCircuit gives the verdicts resolveConnectionReachability gives', async () => {
+    const all = [BUILDING, CONNECTED_POS, ISOLATED_POS, ISOLATED_EMPTY_POS, UNKNOWN_POS];
+    const raw = await readNearCircuitsAt(makeReachCtx([UNKNOWN_POS]).ctx, all);
+    const at = new Map(raw.map(t => [key(t), t.circuits]));
+    for (const origin of all) {
+      const candidates = all;
+      const pairwise = await resolveConnectionReachability(makeReachCtx([UNKNOWN_POS]).ctx, origin.x, origin.y, candidates);
+      const own = at.get(key(origin)) ?? null;
+      const local = candidates.map(c => {
+        const theirs = at.get(key(c)) ?? null;
+        return {
+          x: c.x, y: c.y,
+          reachability: own === null || theirs === null ? 'unknown' : sharesRoadCircuit(own, theirs) ? 'connected' : 'isolated',
+        };
+      });
+      expect(local).toEqual(pairwise);
+    }
   });
 });
 

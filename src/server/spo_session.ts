@@ -46,6 +46,7 @@ import {
   TutorialActionType,
   ConnectionSearchResult,
   ConnectionReachabilityEntry,
+  NearCircuitsEntry,
   FavoritesItem,
   ResearchCategoryData,
   ResearchInventionDetails,
@@ -1302,6 +1303,10 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
 
   public async resolveConnectionReachability(buildingX: number, buildingY: number, candidates: ReadonlyArray<{ x: number; y: number }>, onBatch?: (entries: ConnectionReachabilityEntry[]) => void): Promise<ConnectionReachabilityEntry[]> {
     return politicsHandler.resolveConnectionReachability(this, buildingX, buildingY, candidates, onBatch);
+  }
+
+  public async readNearCircuitsAt(tiles: ReadonlyArray<{ x: number; y: number }>): Promise<NearCircuitsEntry[]> {
+    return politicsHandler.readNearCircuitsAt(this, tiles);
   }
 
 public async loadMapArea(x?: number, y?: number, w: number = 64, h: number = 64): Promise<MapData> {

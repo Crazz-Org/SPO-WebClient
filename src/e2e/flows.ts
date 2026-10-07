@@ -66,6 +66,7 @@ import type {
   WsRespSearchConnections,
   ConnectionSearchResult,
   WsRespConnectionReachability,
+  WsRespNearCircuits,
   WsRespConnectFacilities,
   WsRespBuildingSetProperty,
   WsRespBuildRoad,
@@ -152,6 +153,7 @@ import {
   type RoundTripSpec,
 } from './probe';
 import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
+import { sharesRoadCircuit } from '../shared/road-circuits';
 import { TRADE_LEVEL_VALUES, TRADE_MODE_VALUES } from '../shared/building-details/trade-settings';
 import { bankLoanOutcomeOf } from '../shared/building-details/bank-loan';
 import {
@@ -6427,6 +6429,96 @@ async function resetChemical(
   return false;
 }
 
+/** The first facility linked on a gate of the fixture, supply gates first, with that gate's fluid and direction. */
+async function firstLinkedFacility(
+  session: LiveSession,
+  fx: OwnFixture,
+): Promise<{ x: number; y: number; fluid: string; direction: 'input' | 'output' } | undefined> {
+  for (const tabId of BOTH_TABS) {
+    for (const stub of await gateStubs(session, fx, tabId)) {
+      const response = await gateConnections(session, fx, tabId, stub);
+      const gate = tabId === 'supplies' ? response.supply : response.product;
+      const link = gate?.connections[0];
+      if (gate && link) {
+        return { x: link.x, y: link.y, fluid: gate.metaFluid ?? '', direction: tabId === 'supplies' ? 'input' : 'output' };
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The raw road circuits, read only (#1334): REQ_NEAR_CIRCUITS for the industry fixture's tile and
+ * a facility linked to it. Each answer is the cached `NearCircuits` (`Kernel/KernelCache.pas:440`),
+ * and the pair must compare (`sharesRoadCircuit`) to the verdict REQ_CONNECTION_REACHABILITY gives
+ * for the same tiles — both are `readNearCircuits` in politics-handler.ts.
+ */
+const nearCircuitsRead: Flow = {
+  name: 'near-circuits-read',
+  what:
+    "REQ_NEAR_CIRCUITS for SPO_test3's industry fixture and a facility linked to it -> both NearCircuits, " +
+    'non-empty and agreeing with REQ_CONNECTION_REACHABILITY for the pair — no write',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const fx = await ownFixture(session, 'industry', assertions);
+      if (!fx) return report('near-circuits-read', assertions, [], session);
+      const linked = await firstLinkedFacility(session, fx);
+      if (!linked) {
+        assertions.untestable('a facility linked to the industry fixture', 'no supply or product gate lists a link');
+      } else {
+        const tiles = [{ x: fx.x, y: fx.y }, { x: linked.x, y: linked.y }];
+        const answer = await session.driver.request<WsRespNearCircuits>(
+          { type: WsMessageType.REQ_NEAR_CIRCUITS, tiles },
+          WsMessageType.RESP_NEAR_CIRCUITS,
+        );
+        const entries = answer.tiles ?? [];
+        const inOrder =
+          entries.length === tiles.length && tiles.every((t, i) => entries[i].x === t.x && entries[i].y === t.y);
+        assertions.check(
+          'REQ_NEAR_CIRCUITS answered one entry per tile, in request order',
+          inOrder,
+          entries.map(e => `(${e.x},${e.y}) ${JSON.stringify(e.circuits)}`).join(' ') || 'no entries',
+        );
+        const own = inOrder ? entries[0].circuits : null;
+        const theirs = inOrder ? entries[1].circuits : null;
+        assertions.check(`the industry fixture's NearCircuits is non-empty (${fx.x},${fx.y})`, !!own, JSON.stringify(own));
+        assertions.check(
+          `the linked facility's NearCircuits is non-empty (${linked.x},${linked.y})`,
+          !!theirs,
+          JSON.stringify(theirs),
+        );
+        if (own && theirs) {
+          const reach = await session.driver.request<WsRespConnectionReachability>(
+            {
+              type: WsMessageType.REQ_CONNECTION_REACHABILITY,
+              buildingX: fx.x,
+              buildingY: fx.y,
+              fluidId: linked.fluid,
+              direction: linked.direction,
+              candidates: [{ x: linked.x, y: linked.y }],
+            },
+            WsMessageType.RESP_CONNECTION_REACHABILITY,
+          );
+          const verdict = (reach.entries ?? []).find(e => e.x === linked.x && e.y === linked.y)?.reachability;
+          const expected = sharesRoadCircuit(own, theirs) ? 'connected' : 'isolated';
+          assertions.check(
+            'NearCircuits agrees with REQ_CONNECTION_REACHABILITY for the pair',
+            verdict === expected,
+            `NearCircuits says ${expected}, reachability says ${verdict ?? 'nothing'}`,
+          );
+        }
+      }
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('near-circuits-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 /** One side of a hire: a supplier on an input gate, or a client on an output gate. */
 interface HireSide {
   flow: string;
@@ -6908,8 +7000,9 @@ const tradeSettings: Flow = {
 
       // No RDOSetRole: the warehouse fixture is an Import Storage (WHGeneral), whose sheet never
       // offered a trade mode (Voyager/WHGeneralSheet.pas carries cbTrade only, :46) — its role is
-      // preset by class (Model Extensions/General/GeneralPack1.dpr:719). Proving RDOSetRole needs an
-      // IndGeneral storage fixture (follow-up to #1255).
+      // preset by class (Model Extensions/General/GeneralPack1.dpr:719). No storage that offers it
+      // can be built (ordinary storages are seed-only), so its live proof is parked:
+      // doc/E2E-POLICY.md §7 "Parked flows". L1 covers it (trade-settings-scenario.ts).
       if (warehouse) {
         await tradeLevel(warehouse, 'whGeneral');
       }
@@ -9447,6 +9540,7 @@ export const FLOWS: Flow[] = [
   facilityOpenClose,
   industryAutoBuy,
   supplierSearchRead,
+  nearCircuitsRead,
   supplierHireFire,
   clientHireRemove,
   connectOnMap,

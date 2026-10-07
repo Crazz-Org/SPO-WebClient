@@ -349,6 +349,8 @@ export type {
   WsRespSearchConnections,
   WsReqConnectionReachability,
   WsRespConnectionReachability,
+  WsReqNearCircuits,
+  WsRespNearCircuits,
   // Company Creation
   WsReqCreateCompany,
   WsRespCreateCompany,
@@ -392,4 +394,4 @@ export type {
   WsRespCloneFacility,
 } from './message-types';
 
-export type { ConnectionSearchResult, ConnectionReachabilityEntry, FavoritesItem, ResearchCategoryData, ResearchInventionItem, ResearchInventionDetails, ActiveResearchStatus } from './message-types';
+export type { ConnectionSearchResult, ConnectionReachabilityEntry, NearCircuitsEntry, FavoritesItem, ResearchCategoryData, ResearchInventionItem, ResearchInventionDetails, ActiveResearchStatus } from './message-types';

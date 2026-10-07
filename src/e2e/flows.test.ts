@@ -6965,6 +6965,14 @@ describe('inspector connections & trade (#1153)', () => {
     found: Partial<Record<'industry' | 'warehouse' | 'store' | 'chemical', boolean>> = {};
     /** The reason findFixture gives for a kind it does not find (default `none in Helartia`). */
     reasons: Partial<Record<'industry' | 'warehouse' | 'store' | 'chemical', string>> = {};
+    /** Each tile's cached NearCircuits, keyed `x,y`; a tile not listed touches no road. */
+    circuits: Record<string, string | null> = { '30,40': '17,42,', '50,60': '17,' };
+    /** REQ_NEAR_CIRCUITS: one entry per asked tile, in request order. */
+    nearCircuits: (tiles: { x: number; y: number }[]) => { x: number; y: number; circuits: string | null }[] = tiles =>
+      tiles.map(t => {
+        const k = `${t.x},${t.y}`;
+        return { ...t, circuits: k in this.circuits ? this.circuits[k] : '' };
+      });
     /**
      * Every own facility carrying the fluid on the opposite side, as the cache lists it: the row's
      * company column is the owner's name. `respond` applies `filters.company` to whatever this answers.
@@ -7154,6 +7162,8 @@ describe('inspector connections & trade (#1153)', () => {
           const results = Array.isArray(rows) ? rows.filter(r => company === '' || r.companyName.toLowerCase() === company) : rows;
           return { results, fluidId: m.fluidId, direction: m.direction };
         }
+        case WsMessageType.REQ_NEAR_CIRCUITS:
+          return { tiles: this.nearCircuits(m.tiles as { x: number; y: number }[]) };
         case WsMessageType.REQ_CONNECTION_REACHABILITY: {
           const candidates = m.candidates as { x: number; y: number }[];
           const entries = candidates
@@ -7413,6 +7423,134 @@ describe('inspector connections & trade (#1153)', () => {
       world.found.industry = false;
       arrange(world);
       expect((await run('supplier-search-read')).status).toBe('UNTESTABLE');
+    });
+  });
+
+  describe('near-circuits-read (#1334)', () => {
+    const sentOf = (world: ConnWorld, type: WsMessageType) => world.requests.filter(r => r.type === type);
+    const failed = (result: { assertions: { what: string; ok: boolean; detail?: string }[] }) => result.assertions.find(a => !a.ok);
+
+    it('reads the fixture tile and its linked supplier in order, both non-empty, agreeing with reachability, and writes nothing', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      const { off } = arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('PASS');
+      expect(sentOf(world, WsMessageType.REQ_NEAR_CIRCUITS)).toEqual([
+        expect.objectContaining({ tiles: [{ x: 30, y: 40 }, { x: 50, y: 60 }] }),
+      ]);
+      expect(sentOf(world, WsMessageType.REQ_CONNECTION_REACHABILITY)).toEqual([
+        expect.objectContaining({
+          buildingX: 30, buildingY: 40, fluidId: 'Water', direction: 'input', candidates: [{ x: 50, y: 60 }],
+        }),
+      ]);
+      expect(result.assertions.find(a => a.what.startsWith('NearCircuits agrees'))?.detail)
+        .toBe('NearCircuits says connected, reachability says connected');
+      expect(setProps(world)).toEqual([]);
+      expect(off).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes a linked client on a product gate as an output when no supply gate has a link', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'products', 'Chemicals', world.facs.warehouse);
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('PASS');
+      expect(sentOf(world, WsMessageType.REQ_CONNECTION_REACHABILITY)).toEqual([
+        expect.objectContaining({ fluidId: 'Chemicals', direction: 'output' }),
+      ]);
+    });
+
+    it('expects isolated when the two circuit lists share no id', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.circuits['50,60'] = '99,';
+      world.reach = () => 'isolated';
+      arrange(world);
+      expect((await run('near-circuits-read')).status).toBe('PASS');
+    });
+
+    it('FAILs when reachability disagrees with the compared circuits', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.reach = () => 'isolated';
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toMatchObject({
+        what: 'NearCircuits agrees with REQ_CONNECTION_REACHABILITY for the pair',
+        detail: 'NearCircuits says connected, reachability says isolated',
+      });
+    });
+
+    it('FAILs when reachability leaves the pair unanswered', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.reach = () => undefined;
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)?.detail).toBe('NearCircuits says connected, reachability says nothing');
+    });
+
+    it('FAILs a linked tile that touches no road, and asks no reachability', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      delete world.circuits['50,60'];
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toMatchObject({ what: "the linked facility's NearCircuits is non-empty (50,60)", detail: '""' });
+      expect(sentOf(world, WsMessageType.REQ_CONNECTION_REACHABILITY)).toEqual([]);
+    });
+
+    it('FAILs a fixture tile whose read failed (null)', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.circuits['30,40'] = null;
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toMatchObject({ what: "the industry fixture's NearCircuits is non-empty (30,40)", detail: 'null' });
+    });
+
+    it('FAILs an answer out of request order, and reads no circuits from it', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.nearCircuits = tiles => [...tiles].reverse().map(t => ({ ...t, circuits: '17,' }));
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)).toMatchObject({
+        what: 'REQ_NEAR_CIRCUITS answered one entry per tile, in request order',
+        detail: '(50,60) "17," (30,40) "17,"',
+      });
+      expect(sentOf(world, WsMessageType.REQ_CONNECTION_REACHABILITY)).toEqual([]);
+    });
+
+    it('FAILs an answer with no entries', async () => {
+      const world = new ConnWorld();
+      world.link(world.facs.industry, 'supplies', 'Water', world.facs.warehouse);
+      world.nearCircuits = () => undefined as unknown as [];
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('FAIL');
+      expect(failed(result)?.detail).toBe('no entries');
+    });
+
+    it('is UNTESTABLE, and sends no REQ_NEAR_CIRCUITS, when no gate of the fixture lists a link', async () => {
+      const world = new ConnWorld();
+      arrange(world);
+      const result = await run('near-circuits-read');
+      expect(result.status).toBe('UNTESTABLE');
+      expect(sentOf(world, WsMessageType.REQ_NEAR_CIRCUITS)).toEqual([]);
+    });
+
+    it('is UNTESTABLE when the industry fixture is missing', async () => {
+      const world = new ConnWorld();
+      world.found.industry = false;
+      arrange(world);
+      expect((await run('near-circuits-read')).status).toBe('UNTESTABLE');
     });
   });
 

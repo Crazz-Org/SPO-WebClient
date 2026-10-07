@@ -13,6 +13,8 @@ import {
   type WsRespSearchConnections,
   type WsReqConnectionReachability,
   type WsRespConnectionReachability,
+  type WsReqNearCircuits,
+  type WsRespNearCircuits,
   type WsRespEmpireFacilities,
   type WsReqFavoriteAdd,
   type WsRespFavoriteAdd,
@@ -141,6 +143,61 @@ export const handleConnectionReachability: WsHandler = async (ctx: WsHandlerCont
         sendResponse(ctx.ws, response);
       },
     );
+  });
+};
+
+/**
+ * Most tiles one REQ_NEAR_CIRCUITS may ask for. The request holds the socket's RDO lane
+ * for its whole run, two map-socket round trips plus a 30 ms settle per tile
+ * (`readNearCircuits`). Measured on the live bots (SPO-Bots run records, 2026-10-04,
+ * cycles.jsonl timing.byType.REQ_CONNECTION_REACHABILITY): 3.7-4.9 s per request of at
+ * most 11 tile reads, so about 0.4-0.5 s per tile; 100 tiles is under a minute, a
+ * client's request timeout, and the frame stays far inside `WS_MAX_PAYLOAD_BYTES`.
+ */
+export const MAX_NEAR_CIRCUITS_TILES = 100;
+
+/** A map tile coordinate: a non-negative safe integer. */
+function isTileCoord(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+}
+
+/**
+ * The validation of a REQ_NEAR_CIRCUITS body: the tile list, or why it is refused.
+ * `tiles` must be an array of 1..MAX_NEAR_CIRCUITS_TILES `{ x, y }` with integer
+ * coordinates >= 0; anything else is refused before any RDO frame is sent.
+ */
+export function validateNearCircuitsTiles(raw: unknown): { tiles: Array<{ x: number; y: number }> } | { error: string } {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: 'tiles must be a non-empty array' };
+  if (raw.length > MAX_NEAR_CIRCUITS_TILES) return { error: `at most ${MAX_NEAR_CIRCUITS_TILES} tiles per request` };
+  const tiles: Array<{ x: number; y: number }> = [];
+  for (const t of raw) {
+    const tile = typeof t === 'object' && t !== null ? (t as { x?: unknown; y?: unknown }) : null;
+    if (tile === null || !isTileCoord(tile.x) || !isTileCoord(tile.y)) {
+      return { error: 'each tile needs integer x and y >= 0' };
+    }
+    tiles.push({ x: tile.x, y: tile.y });
+  }
+  return { tiles };
+}
+
+/**
+ * Raw `NearCircuits` per tile, so a client can compare every (buyer, supplier) pair
+ * itself and read each tile once (`readNearCircuitsAt` in politics-handler.ts).
+ */
+export const handleNearCircuits: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  const checked = validateNearCircuitsTiles((msg as Partial<WsReqNearCircuits>).tiles);
+  if ('error' in checked) {
+    sendError(ctx.ws, msg.wsRequestId, checked.error, ErrorCodes.ERROR_InvalidParameter);
+    return;
+  }
+  await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_Unknown, async () => {
+    const tiles = await ctx.session.readNearCircuitsAt(checked.tiles);
+    const response: WsRespNearCircuits = {
+      type: WsMessageType.RESP_NEAR_CIRCUITS,
+      wsRequestId: msg.wsRequestId,
+      tiles,
+    };
+    sendResponse(ctx.ws, response);
   });
 };
 

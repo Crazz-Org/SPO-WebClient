@@ -158,6 +158,8 @@ export const NOT_ROUTED: Record<string, Record<string, string>> = {
     REQ_SEARCH_CONNECTIONS: "supplier-search-read sends it; the governance rule's flows are pinned by routing.test.ts (#1134, #1145)",
     REQ_CONNECTION_REACHABILITY:
       "supplier-search-read sends it; the governance rule's flows are pinned by routing.test.ts (#1134, #1145)",
+    REQ_NEAR_CIRCUITS:
+      "near-circuits-read sends it; the governance rule's flows are pinned by routing.test.ts (#1134, #1145, #1334)",
   },
   'src/server/session/profile-finance-handler.ts': {
     REQ_SEARCH_MENU_TYCOON_FULL_PROFILE: "search-menu-read sends it; the profile rule's flows are pinned by routing.test.ts (#1141)",
@@ -400,13 +402,13 @@ export const ROUTES: RouteRule[] = [
     test: /^src\/server\/ws-handlers\/misc-handlers\.ts$/,
     flows: [
       'favorites-roundtrip', 'favorites-folders', 'world-readers', 'cluster-info-read', 'zone-roundtrip',
-      'supplier-search-read', 'research-roundtrip', 'autoconnection-roundtrip',
+      'supplier-search-read', 'research-roundtrip', 'autoconnection-roundtrip', 'near-circuits-read',
     ],
     why:
       'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_* / REQ_WORLD_EVENT / ' +
       'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES / REQ_DEFINE_ZONE, REQ_SEARCH_CONNECTIONS / ' +
       'REQ_CONNECTION_REACHABILITY (supplier-search-read, #1153; autoconnection-roundtrip also sends REQ_SEARCH_CONNECTIONS, #1187) and REQ_RESEARCH_INVENTORY / REQ_RESEARCH_DETAILS ' +
-      '(research-roundtrip, #1154); not driven by any flow yet: REQ_CREATE_COMPANY',
+      '(research-roundtrip, #1154), REQ_NEAR_CIRCUITS (near-circuits-read, #1334); not driven by any flow yet: REQ_CREATE_COMPANY',
   },
   {
     // Before the fallbacks below. A shared rule: later area cards only APPEND flows here.

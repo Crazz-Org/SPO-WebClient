@@ -14,8 +14,9 @@
  * - the **world server** the directory hands back at runtime (`158.69.153.134:8000` on
  *   2026-09-13). Its address is unknown to a process that never logged in — so instead of
  *   guessing it, the probe reads it out of the drive's own log: a failed connect is logged by
- *   Node as `connect ETIMEDOUT <ip>:<port>`, which names the exact endpoint the drive could
- *   not reach. Re-dialling that endpoint, after the fact and outside the drive, is what tells
+ *   Node as `connect ETIMEDOUT <ip>:<port>`, or by the gateway's own connect deadline as
+ *   `Connect timeout: world socket to <ip>:<port> not connected after <n> ms` — either names
+ *   the exact endpoint the drive could not reach. Re-dialling that endpoint, after the fact and outside the drive, is what tells
  *   "the world server is down" apart from "this change broke the login path".
  */
 import * as fs from 'fs';
@@ -49,16 +50,25 @@ export const MAX_LOG_ENDPOINTS = 4;
 
 /**
  * Node writes a refused or timed-out connect as `connect ECONNREFUSED 1.2.3.4:8000`, and that
- * text reaches the drive's log verbatim. It is the only place the world server's address is
- * written down on this host.
+ * text reaches the drive's log verbatim. Together with the gateway's own wording below, it is
+ * the only place the world server's address is written down on this host.
  */
 const CONNECT_FAILURE = /connect E[A-Z]+ (\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})/g;
+
+/**
+ * The gateway bounds a socket connect itself (spo_session.ts, the connect timer) and rejects with
+ * `Connect timeout: world socket to 1.2.3.4:8000 not connected after 10000 ms`.
+ */
+const GATEWAY_CONNECT_TIMEOUT = /Connect timeout: \w+ socket to (\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5}) not connected/g;
 
 /** Every distinct endpoint the drive's own log says it could not connect to, in first-seen order. */
 export function endpointsFromDriveLog(text: string): Endpoint[] {
   const seen = new Set<string>();
   const found: Endpoint[] = [];
-  for (const match of text.matchAll(CONNECT_FAILURE)) {
+  const matches = [...text.matchAll(CONNECT_FAILURE), ...text.matchAll(GATEWAY_CONNECT_TIMEOUT)].sort(
+    (a, b) => (a.index ?? 0) - (b.index ?? 0),
+  );
+  for (const match of matches) {
     const host = match[1];
     const port = Number(match[2]);
     const label = `${host}:${port}`;

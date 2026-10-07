@@ -326,6 +326,8 @@ export enum WsMessageType {
   RESP_SEARCH_CONNECTIONS = 'RESP_SEARCH_CONNECTIONS',
   REQ_CONNECTION_REACHABILITY = 'REQ_CONNECTION_REACHABILITY',
   RESP_CONNECTION_REACHABILITY = 'RESP_CONNECTION_REACHABILITY',
+  REQ_NEAR_CIRCUITS = 'REQ_NEAR_CIRCUITS',
+  RESP_NEAR_CIRCUITS = 'RESP_NEAR_CIRCUITS',
 
   // Company Creation
   REQ_CREATE_COMPANY = 'REQ_CREATE_COMPANY',
@@ -1991,6 +1993,28 @@ export interface WsRespConnectionReachability extends WsMessage {
   fluidId: string;
   direction: 'input' | 'output';
   entries: ConnectionReachabilityEntry[];
+}
+
+/** The tiles whose cached `NearCircuits` to read, at most `MAX_NEAR_CIRCUITS_TILES`. */
+export interface WsReqNearCircuits extends WsMessage {
+  type: WsMessageType.REQ_NEAR_CIRCUITS;
+  tiles: Array<{ x: number; y: number }>;
+}
+
+/**
+ * One tile's cached `NearCircuits` (`RenderCircuitStr`, `Kernel/KernelCache.pas:156-165`):
+ * `''` is a tile that touches no road, `null` a read that established nothing.
+ */
+export interface NearCircuitsEntry {
+  x: number;
+  y: number;
+  circuits: string | null;
+}
+
+/** One frame, every asked tile in request order. */
+export interface WsRespNearCircuits extends WsMessage {
+  type: WsMessageType.RESP_NEAR_CIRCUITS;
+  tiles: NearCircuitsEntry[];
 }
 
 // =============================================================================
