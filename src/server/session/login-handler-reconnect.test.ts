@@ -69,6 +69,11 @@ function makeCtx(): { ctx: LoginContext; sent: Sent[]; known: Map<string, string
     setTycoonId: jest.fn(),
     setRdoCnntId: jest.fn(),
     setKnownObject: jest.fn((name: string, id: string) => { known.set(name, id); }),
+    // Stand in for the InitClient push: the server fires it while handling
+    // RegisterEventsById, so the re-login waits for it before going on.
+    setWaitingForInitClient: jest.fn(),
+    setInitClientReceived: jest.fn(),
+    setInitClientResolver: jest.fn((resolve: (() => void) | null) => { if (resolve) queueMicrotask(resolve); }),
   } as unknown as LoginContext;
 
   return { ctx, sent, known };
