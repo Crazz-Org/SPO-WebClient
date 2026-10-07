@@ -101,6 +101,11 @@ const UNWIRED: ReadonlyArray<{ type: string; reason: string }> = [
     reason: 'handleGetRoadCost exists; the client prices the road itself with ' +
       'estimateRoadCost. This is the gateway-side door bridge pricing needs. Issue #99.',
   },
+  {
+    type: 'REQ_NEAR_CIRCUITS',
+    reason: 'handleNearCircuits serves the headless bots (SPO-Bots read-market), which compare ' +
+      'NearCircuits per pair themselves; the browser picker keeps REQ_CONNECTION_REACHABILITY.',
+  },
 ];
 
 function declaredRequestTypes(): string[] {
