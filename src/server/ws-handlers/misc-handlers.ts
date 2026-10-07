@@ -15,6 +15,8 @@ import {
   type WsRespConnectionReachability,
   type WsReqNearCircuits,
   type WsRespNearCircuits,
+  type WsReqFacilityStatusBatch,
+  type WsRespFacilityStatusBatch,
   type WsRespEmpireFacilities,
   type WsReqFavoriteAdd,
   type WsRespFavoriteAdd,
@@ -196,6 +198,65 @@ export const handleNearCircuits: WsHandler = async (ctx: WsHandlerContext, msg: 
       type: WsMessageType.RESP_NEAR_CIRCUITS,
       wsRequestId: msg.wsRequestId,
       tiles,
+    };
+    sendResponse(ctx.ws, response);
+  });
+};
+
+/**
+ * Most ids one REQ_FACILITY_STATUS_BATCH may ask for. Sized for a whole estate per cycle
+ * (SPO-Bots plans 170-290 shops per bot, measurements/research/2026-10-05/money-read-paths.md)
+ * in ONE WS message, so the ws-message-guard (20/s, burst 50, queue 100) never sees a burst.
+ * The request frame stays far inside `WS_MAX_PAYLOAD_BYTES` (300 ids of at most 11 chars).
+ */
+export const MAX_FACILITY_STATUS_BATCH_IDS = 300;
+
+/** A facility id as focus returns it: `TObjId` is a 32-bit integer (`integer(FacilityAt(x,y))`). */
+const INT32_MAX = 2147483647;
+const INT32_MIN = -2147483648;
+
+/**
+ * The validation of a REQ_FACILITY_STATUS_BATCH body: the ids as decimal strings, or why
+ * the request is refused. `ids` must be 1..MAX_FACILITY_STATUS_BATCH_IDS non-zero 32-bit
+ * integers (numbers, or strings of digits as REQ_BUILDING_FOCUS returns them); anything else
+ * is refused before any RDO frame. Duplicates are kept (answered once each, in order).
+ */
+export function validateFacilityStatusIds(raw: unknown): { ids: string[] } | { error: string } {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: 'ids must be a non-empty array' };
+  if (raw.length > MAX_FACILITY_STATUS_BATCH_IDS) return { error: `at most ${MAX_FACILITY_STATUS_BATCH_IDS} ids per request` };
+  const ids: string[] = [];
+  for (const v of raw) {
+    let n: number;
+    if (typeof v === 'number') n = v;
+    else if (typeof v === 'string' && /^-?\d{1,10}$/.test(v)) n = Number(v);
+    else return { error: 'each id must be an integer or a string of digits' };
+    if (!Number.isSafeInteger(n) || n === 0 || n > INT32_MAX || n < INT32_MIN) {
+      return { error: 'each id must be a non-zero 32-bit integer' };
+    }
+    ids.push(String(n));
+  }
+  return { ids };
+}
+
+/**
+ * Status text (with the `($X/h)` money per hour) of many facilities in one frame, without
+ * focusing any (`readFacilityStatusBatch` in session/facility-status-handler.ts). Callers must
+ * only pass ids they hold as alive this cycle — see that module's SAFETY note; ids this
+ * gateway session never focused are answered `status: 'error'`, never sent to the server. A
+ * slow or failed id is answered `status: 'unknown'`; the batch itself fails only on its body.
+ */
+export const handleFacilityStatusBatch: WsHandler = async (ctx: WsHandlerContext, msg: WsMessage): Promise<void> => {
+  const checked = validateFacilityStatusIds((msg as Partial<WsReqFacilityStatusBatch>).ids);
+  if ('error' in checked) {
+    sendError(ctx.ws, msg.wsRequestId, checked.error, ErrorCodes.ERROR_InvalidParameter);
+    return;
+  }
+  await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_Unknown, async () => {
+    const entries = await ctx.session.readFacilityStatusBatch(checked.ids);
+    const response: WsRespFacilityStatusBatch = {
+      type: WsMessageType.RESP_FACILITY_STATUS_BATCH,
+      wsRequestId: msg.wsRequestId,
+      entries,
     };
     sendResponse(ctx.ws, response);
   });

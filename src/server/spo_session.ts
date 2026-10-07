@@ -47,6 +47,7 @@ import {
   ConnectionSearchResult,
   ConnectionReachabilityEntry,
   NearCircuitsEntry,
+  FacilityStatusEntry,
   FavoritesItem,
   ResearchCategoryData,
   ResearchInventionDetails,
@@ -98,6 +99,7 @@ import type { FavoriteMutationResult } from './session/favorites-handler';
 import * as newspaperHandler from './session/newspaper-handler';
 import type { NewspaperTarget } from './session/newspaper-handler';
 import * as buildingManagementHandler from './session/building-management-handler';
+import * as facilityStatusHandler from './session/facility-status-handler';
 import * as roadHandler from './session/road-handler';
 import * as zoneSurfaceHandler from './session/zone-surface-handler';
 import * as contextStatusHandler from './session/context-status-handler';
@@ -358,6 +360,13 @@ export class StarpeaceSession extends EventEmitter {
   public currentFocusedCoords: { x: number, y: number } | null = null;
   public currentFocusedBuildingName: string | null = null;
   public currentFocusedOwnerName: string | null = null;
+
+  /**
+   * Facility ids this session's own SwitchFocusEx returned, with the tile they were focused
+   * at: the guard for id-based reads that skip focus (REQ_FACILITY_STATUS_BATCH,
+   * session/facility-status-handler.ts SAFETY). Cleared with the other per-login state.
+   */
+  private focusedFacilityIds: Map<string, { x: number; y: number }> = new Map();
   
   // RDO request lifecycle metrics
   private rdoMetrics: RdoMetrics = {
@@ -494,6 +503,15 @@ export class StarpeaceSession extends EventEmitter {
     this.currentFocusedCoords = null;
     this.currentFocusedBuildingName = null;
     this.currentFocusedOwnerName = null;
+  }
+  public hasFocusedFacilityId(id: string): boolean {
+    return this.focusedFacilityIds.has(id);
+  }
+  /** Forget every focused id recorded at tile (x, y) — after RDODelFacility there succeeded. */
+  private forgetFocusedFacilityAt(x: number, y: number): void {
+    for (const [id, at] of this.focusedFacilityIds) {
+      if (at.x === x && at.y === y) this.focusedFacilityIds.delete(id);
+    }
   }
 
   // -- PushContext implementation -------------------------------------------
@@ -759,6 +777,10 @@ public async switchCompany(company: CompanyInfo): Promise<void> {
 	  this.currentFocusedOwnerName = buildingInfo.ownerName;
 	  this.lastFocusInfo = buildingInfo;
 	  this.lastFocusAt = Date.now();
+	  // `TClientView.ObjectAt` answers 0 for an empty tile (InterfaceServer.pas); 0 is no facility.
+	  if (/^\d+$/.test(buildingInfo.buildingId) && buildingInfo.buildingId !== '0') {
+	    this.focusedFacilityIds.set(buildingInfo.buildingId, { x, y });
+	  }
 
 	  this.log.debug(`[Session] Focused on building ${buildingInfo.buildingId}: ${buildingInfo.buildingName}`);
 
@@ -1524,7 +1546,14 @@ public async loadMapArea(x?: number, y?: number, w: number = 64, h: number = 64)
   }
 
   public async deleteFacility(x: number, y: number): Promise<{ success: boolean, message?: string }> {
-    return buildingManagementHandler.deleteFacility(this, x, y);
+    const result = await buildingManagementHandler.deleteFacility(this, x, y);
+    if (result.success) this.forgetFocusedFacilityAt(x, y);
+    return result;
+  }
+
+  /** REQ_FACILITY_STATUS_BATCH: status text per id, no focus (session/facility-status-handler.ts). */
+  public async readFacilityStatusBatch(ids: ReadonlyArray<string>): Promise<FacilityStatusEntry[]> {
+    return facilityStatusHandler.readFacilityStatusBatch(this, ids);
   }
 
   // -- ROADS (facade -> road-handler) ---------------------------------------
@@ -1846,6 +1875,7 @@ public createSocket(name: string, host: string, port: number): Promise<net.Socke
 
         // 5. Clear stale caches (interfaceServerId may have changed)
         this.knownObjects.clear();
+        this.focusedFacilityIds.clear();
         this.aspActionCache.clear();
 
         // 6. Restart ServerBusy polling
@@ -2492,6 +2522,9 @@ private async executeRdoRequest(socketName: string, packetData: Partial<RdoPacke
 		const result = this.parseRefreshObjectPush(packet);
 		if (result) {
 		  this.log.debug(`[Session] RefreshObject for building ${result.buildingId}, kindOfChange=${result.kindOfChange}`);
+		  // kindOfChange 2 = fchDestruction, sent by `TWorld.DeleteFacility` (Kernel/World.pas:
+		  // `RefeshFacility( Facility, fchDestruction )`): the id no longer names a live facility.
+		  if (result.kindOfChange === 2) this.focusedFacilityIds.delete(result.buildingId.replace(/[%#@]/g, ''));
 		  const building = result.buildingInfo ?? {
 			buildingId: result.buildingId,
 			buildingName: '',
@@ -2866,6 +2899,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.isServerBusy = false;
     this.activeMapRequests = 0;
     this.knownObjects.clear();
+    this.focusedFacilityIds.clear();
     this.chatUsers.clear();
     this.currentChannel = '';
     // Round trips to the previous server must not colour the new one's mean.
@@ -2908,6 +2942,8 @@ private handlePush(socketName: string, packet: RdoPacket) {
 
     // From here on the world socket close is intentional — no auto-reconnect.
     this.loggedOff = true;
+    // Logged off: no id this login's focus returned may be read again (REQ_FACILITY_STATUS_BATCH).
+    this.focusedFacilityIds.clear();
     this.log.debug(`[Session] Logging off ClientView ${this.worldContextId}`);
 
     const socket = this.sockets.get('world');
@@ -2994,6 +3030,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     this.availableWorlds.clear();
     this.atWorldLimit = null;
     this.knownObjects.clear();
+    this.focusedFacilityIds.clear();
     this.chatUsers.clear();
     this.requestBuffer = [];
     this.pendingMapRequests.clear();

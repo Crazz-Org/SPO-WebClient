@@ -67,6 +67,7 @@ import type {
   ConnectionSearchResult,
   WsRespConnectionReachability,
   WsRespNearCircuits,
+  WsRespFacilityStatusBatch,
   WsRespConnectFacilities,
   WsRespBuildingSetProperty,
   WsRespBuildRoad,
@@ -103,6 +104,7 @@ import type {
   BuildingConnectionData,
   BuildingProductData,
   BuildingSupplyData,
+  BuildingFocusInfo,
   BuildingInfo,
   ChatUser,
   CompaniesData,
@@ -6339,6 +6341,88 @@ const nearCircuitsRead: Flow = {
   },
 };
 
+/** An id no session's focus returns (a facility id is a pointer), valid for the request's own check. */
+export const NEVER_FOCUSED_FACILITY_ID = '1';
+
+/**
+ * The status text of own facilities, read without focus (#1335): REQ_BUILDING_FOCUS on two of
+ * SPO_test3's fixtures, then REQ_FACILITY_STATUS_BATCH for both ids plus one this session never
+ * focused. The batch reads `AllObjectStatusText`, which is the text SwitchFocusEx appends to the
+ * id (`Interface Server/InterfaceServer.pas:924-935`), so each answer must name the facility and
+ * owner the focus read showed, and carry a money-per-hour figure exactly when focus did — the
+ * figure itself may move with a sim tick between the two reads. The never-focused id must come
+ * back as a per-id error, refused by the gateway.
+ */
+const facilityStatusBatchRead: Flow = {
+  name: 'facility-status-batch-read',
+  what:
+    "REQ_BUILDING_FOCUS on SPO_test3's industry and store fixtures, then REQ_FACILITY_STATUS_BATCH for both ids " +
+    'and one never focused -> both status texts as focus shows them, the third a per-id error — no write',
+  mutates: false,
+  run: async () => {
+    const assertions = new Assertions();
+    const session = await login(PRIMARY_ACCOUNT);
+    try {
+      const focused: Array<{ fx: OwnFixture; building: BuildingFocusInfo }> = [];
+      for (const kind of ['industry', 'store'] as const) {
+        const fx = await ownFixture(session, kind, assertions);
+        if (!fx) continue;
+        const focus = await session.driver.request<WsRespBuildingFocus>(
+          { type: WsMessageType.REQ_BUILDING_FOCUS, x: fx.x, y: fx.y },
+          WsMessageType.RESP_BUILDING_FOCUS,
+        );
+        focused.push({ fx, building: focus.building });
+      }
+      if (focused.length < 2) return report('facility-status-batch-read', assertions, [], session);
+      // The batch must not need the focus: drop it before asking.
+      await session.driver.request({ type: WsMessageType.REQ_BUILDING_UNFOCUS }, WsMessageType.RESP_CHAT_SUCCESS);
+
+      const ids = [...focused.map(f => f.building.buildingId), NEVER_FOCUSED_FACILITY_ID];
+      const answer = await session.driver.request<WsRespFacilityStatusBatch>(
+        { type: WsMessageType.REQ_FACILITY_STATUS_BATCH, ids },
+        WsMessageType.RESP_FACILITY_STATUS_BATCH,
+      );
+      const entries = answer.entries ?? [];
+      const inOrder = entries.length === ids.length && ids.every((id, i) => entries[i].id === id);
+      assertions.check(
+        'REQ_FACILITY_STATUS_BATCH answered one entry per id, in request order',
+        inOrder,
+        entries.map(e => `${e.id}:${e.status}`).join(' ') || 'no entries',
+      );
+      if (inOrder) {
+        focused.forEach(({ fx, building }, i) => {
+          const entry = entries[i];
+          const label = fixtureLabel(fx);
+          assertions.check(`${label}: the batch answered its status text`, entry.status === 'ok', JSON.stringify(entry));
+          if (entry.status !== 'ok') return;
+          assertions.check(
+            `${label}: the batch names the facility and owner focus showed`,
+            entry.text.buildingName === building.buildingName && entry.text.ownerName === building.ownerName,
+            `batch "${entry.text.buildingName}" / "${entry.text.ownerName}", ` +
+              `focus "${building.buildingName}" / "${building.ownerName}"`,
+          );
+          assertions.check(
+            `${label}: the batch carries money per hour exactly when focus does`,
+            (entry.text.revenue === '') === (building.revenue === '') &&
+              (entry.text.revenue === '' || entry.text.revenuePerHour !== null),
+            `batch "${entry.text.revenue}" (${String(entry.text.revenuePerHour)}), focus "${building.revenue}"`,
+          );
+        });
+        const third = entries[ids.length - 1];
+        assertions.check(
+          `the never-focused id ${NEVER_FOCUSED_FACILITY_ID} is a per-id error`,
+          third.status === 'error',
+          JSON.stringify(third),
+        );
+      }
+      assertions.check('no gateway errors', session.driver.errors.length === 0);
+      return report('facility-status-batch-read', assertions, [], session);
+    } finally {
+      await logoff(session);
+    }
+  },
+};
+
 /** One side of a hire: a supplier on an input gate, or a client on an output gate. */
 interface HireSide {
   flow: string;
@@ -9215,6 +9299,7 @@ export const FLOWS: Flow[] = [
   industryAutoBuy,
   supplierSearchRead,
   nearCircuitsRead,
+  facilityStatusBatchRead,
   supplierHireFire,
   clientHireRemove,
   connectOnMap,

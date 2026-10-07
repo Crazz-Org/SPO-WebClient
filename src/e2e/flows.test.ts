@@ -18,7 +18,7 @@ import {
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSuppliersKey,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
-  researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
+  researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR, NEVER_FOCUSED_FACILITY_ID,
   bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
   RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent,
   type Flow, type FlowResult, type GateLinks,
@@ -10798,5 +10798,167 @@ describe('player actions (#1195)', () => {
       expect(result.untestable[0]).toMatch(/^research fixture — none in Helartia/);
       expect(world.writes).toEqual([]);
     });
+  });
+});
+
+describe('facility-status-batch-read (#1335)', () => {
+  const OWNER = 'SPO_test3 - Green';
+  const FIXTURES: Record<'industry' | 'store', { x: number; y: number; id: string; name: string; revenue: string }> = {
+    industry: { x: 30, y: 40, id: '127706280', name: 'Farm', revenue: '-$29/h' },
+    store: { x: 10, y: 20, id: '127839460', name: 'Food Store', revenue: '$1,398/h' },
+  };
+
+  type Entry = { id: string; status: string; text?: Record<string, unknown>; error?: string };
+
+  /** A world whose batch answers as the gateway does, unless a test swaps `batch`. */
+  class StatusWorld {
+    missing = new Set<string>();
+    requests: WsMessage[] = [];
+    focused = new Set<string>();
+    batch: (ids: string[]) => Entry[] = ids =>
+      ids.map(id => {
+        const fx = Object.values(FIXTURES).find(f => f.id === id);
+        if (!fx || !this.focused.has(id)) return { id, status: 'error', error: 'unknown id' };
+        const perHour = Number(fx.revenue.replace(/[$,/h]/g, ''));
+        return {
+          id, status: 'ok',
+          text: { buildingName: fx.name, ownerName: OWNER, salesInfo: '', revenue: fx.revenue, revenuePerHour: perHour, detailsText: '', hintsText: '' },
+        };
+      });
+
+    respond(msg: WsMessage): unknown {
+      this.requests.push(msg);
+      const m = msg as WsMessage & Record<string, unknown>;
+      switch (msg.type) {
+        case WsMessageType.REQ_BUILDING_FOCUS: {
+          const fx = Object.values(FIXTURES).find(f => f.x === m.x && f.y === m.y);
+          if (!fx) throw new Error('no fixture there');
+          this.focused.add(fx.id);
+          return { building: { buildingId: fx.id, buildingName: fx.name, ownerName: OWNER, revenue: fx.revenue, x: fx.x, y: fx.y } };
+        }
+        case WsMessageType.REQ_BUILDING_UNFOCUS:
+          return {};
+        case WsMessageType.REQ_FACILITY_STATUS_BATCH:
+          return { entries: this.batch(m.ids as string[]) };
+        default:
+          throw new Error(`unexpected request ${msg.type}`);
+      }
+    }
+  }
+
+  function arrange(world: StatusWorld) {
+    jest.spyOn(session, 'login').mockResolvedValue(stubSession(msg => world.respond(msg)));
+    const off = jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
+    jest.spyOn(fixtures, 'findFixture').mockImplementation(async (_s, kind) => {
+      const fx = FIXTURES[kind.id as 'industry' | 'store'];
+      if (!fx || world.missing.has(kind.id)) return { kind: kind.id, reason: 'none in Helartia' };
+      return { kind: kind.id, found: { x: fx.x, y: fx.y, visualClass: '1', name: fx.name } };
+    });
+    return { off };
+  }
+
+  const run = () => flowByName('facility-status-batch-read').run({ lock: cleanLock(), survivalLogUrl: 'u', ...fastClock() });
+  const failed = (result: FlowResult) => result.assertions.find(a => !a.ok);
+  const batchesOf = (world: StatusWorld) => world.requests.filter(r => r.type === WsMessageType.REQ_FACILITY_STATUS_BATCH);
+
+  it('is read-only and registered', () => {
+    expect(flowByName('facility-status-batch-read').mutates).toBe(false);
+  });
+
+  it('focuses both fixtures, drops the focus, asks both ids plus a never-focused one, and PASSes', async () => {
+    const world = new StatusWorld();
+    const { off } = arrange(world);
+    const result = await run();
+    expect(result.status).toBe('PASS');
+    expect(world.requests.map(r => r.type)).toEqual([
+      WsMessageType.REQ_BUILDING_FOCUS, WsMessageType.REQ_BUILDING_FOCUS,
+      WsMessageType.REQ_BUILDING_UNFOCUS, WsMessageType.REQ_FACILITY_STATUS_BATCH,
+    ]);
+    expect(batchesOf(world)).toEqual([
+      expect.objectContaining({ ids: ['127706280', '127839460', NEVER_FOCUSED_FACILITY_ID] }),
+    ]);
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it('FAILs a fixture the batch answers unknown', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).map(e => (e.id === '127839460' ? { id: e.id, status: 'unknown', error: 'no answer within 10000 ms' } : e));
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)?.what).toBe('Food Store (10,20): the batch answered its status text');
+  });
+
+  it('FAILs a status text naming another facility than focus showed', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).map(e => (e.text ? { ...e, text: { ...e.text, buildingName: 'Other' } } : e));
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toMatchObject({
+      what: 'Farm (30,40): the batch names the facility and owner focus showed',
+      detail: `batch "Other" / "${OWNER}", focus "Farm" / "${OWNER}"`,
+    });
+  });
+
+  it('FAILs a status text that drops the money per hour focus showed', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).map(e => (e.text ? { ...e, text: { ...e.text, revenue: '', revenuePerHour: null } } : e));
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)?.what).toBe('Farm (30,40): the batch carries money per hour exactly when focus does');
+  });
+
+  it('FAILs a revenue token with no number beside it', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).map(e => (e.text ? { ...e, text: { ...e.text, revenuePerHour: null } } : e));
+    arrange(world);
+    expect((await run()).status).toBe('FAIL');
+  });
+
+  it('FAILs when the never-focused id is answered', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).map(e => (e.id === NEVER_FOCUSED_FACILITY_ID ? { id: e.id, status: 'unknown', error: 'x' } : e));
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)?.what).toBe(`the never-focused id ${NEVER_FOCUSED_FACILITY_ID} is a per-id error`);
+  });
+
+  it('FAILs an answer out of request order', async () => {
+    const world = new StatusWorld();
+    const real = world.batch;
+    world.batch = ids => real(ids).reverse();
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)).toMatchObject({
+      what: 'REQ_FACILITY_STATUS_BATCH answered one entry per id, in request order',
+      detail: '1:error 127839460:ok 127706280:ok',
+    });
+  });
+
+  it('FAILs an answer with no entries', async () => {
+    const world = new StatusWorld();
+    world.batch = () => undefined as unknown as Entry[];
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('FAIL');
+    expect(failed(result)?.detail).toBe('no entries');
+  });
+
+  it('is UNTESTABLE, and sends no batch, when a fixture is missing', async () => {
+    const world = new StatusWorld();
+    world.missing.add('store');
+    arrange(world);
+    const result = await run();
+    expect(result.status).toBe('UNTESTABLE');
+    expect(batchesOf(world)).toEqual([]);
   });
 });

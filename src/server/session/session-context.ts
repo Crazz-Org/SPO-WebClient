@@ -84,6 +84,11 @@ export interface SessionContext {
   readonly currentFocusedBuildingName: string | null;
   readonly currentFocusedOwnerName: string | null;
   clearBuildingFocus(): void;
+  /**
+   * Whether THIS session's own SwitchFocusEx returned `id` and nothing since says it is gone
+   * (see facility-status-handler.ts SAFETY). Guards id-based reads that skip focus.
+   */
+  hasFocusedFacilityId(id: string): boolean;
 
   // ── Event Emission + Helpers ───────────────────────────────────────────
   emit(event: string, ...args: unknown[]): boolean;

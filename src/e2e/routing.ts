@@ -403,12 +403,14 @@ export const ROUTES: RouteRule[] = [
     flows: [
       'favorites-roundtrip', 'favorites-folders', 'world-readers', 'cluster-info-read', 'zone-roundtrip',
       'supplier-search-read', 'research-roundtrip', 'autoconnection-roundtrip', 'near-circuits-read',
+      'facility-status-batch-read',
     ],
     why:
       'the misc WS handlers changed — the flows sending its REQ_EMPIRE_FACILITIES / REQ_FAVORITE_* / REQ_WORLD_EVENT / ' +
       'REQ_CLUSTER_INFO / REQ_CLUSTER_FACILITIES / REQ_DEFINE_ZONE, REQ_SEARCH_CONNECTIONS / ' +
       'REQ_CONNECTION_REACHABILITY (supplier-search-read, #1153; autoconnection-roundtrip also sends REQ_SEARCH_CONNECTIONS, #1187) and REQ_RESEARCH_INVENTORY / REQ_RESEARCH_DETAILS ' +
-      '(research-roundtrip, #1154), REQ_NEAR_CIRCUITS (near-circuits-read, #1334); not driven by any flow yet: REQ_CREATE_COMPANY',
+      '(research-roundtrip, #1154), REQ_NEAR_CIRCUITS (near-circuits-read, #1334), ' +
+      'REQ_FACILITY_STATUS_BATCH (facility-status-batch-read, #1335); not driven by any flow yet: REQ_CREATE_COMPANY',
   },
   {
     // Before the fallbacks below. A shared rule: later area cards only APPEND flows here.
@@ -441,6 +443,16 @@ export const ROUTES: RouteRule[] = [
       'the build menu, placement, rename, demolition and upgrade handlers — the flow that reads the build menu, the one ' +
       'that places, renames and demolishes a facility on a free Helartia lot, and the upgrade → stop round trip on ' +
       "SPO_test3's industry fixture (manageConstruction, #1154)",
+  },
+  {
+    // Before the fallbacks below: REQ_FACILITY_STATUS_BATCH (#1335) parses the same status text
+    // as focus (parseBuildingFocusResponse); building-details drives focus.
+    test: /^src\/server\/session\/facility-status-handler\.ts$/,
+    flows: ['facility-status-batch-read', 'building-details'],
+    why:
+      'the batch status-text read — AllObjectStatusText per focused id (facility-status-batch-read, #1335), parsed ' +
+      'by the focus parser that the building-details flow drives (SwitchFocusEx = id + AllObjectStatusText, ' +
+      'InterfaceServer.pas:924-935)',
   },
   {
     // Before the fallbacks below: the research inventory / details reads and the queue → cancel round trip (#1154).
