@@ -7129,8 +7129,90 @@ async function supplyByFluid(
 }
 
 /**
+ * `TFacilityRole`, in ordinal order — the cached `TradeRole` is `integer(Role)` (TBlock.StoreToCache,
+ * Kernel/Kernel.pas:5893). Kernel's own declaration is commented out (:405); the live one is
+ * Cache/CacheCommon.pas:53, which Kernel uses (:11), in the order the permission map's comment gives (:2862).
+ */
+const FACILITY_ROLES = ['rolNeutral', 'rolProducer', 'rolDistributer', 'rolBuyer', 'rolImporter', 'rolCompExport', 'rolCompInport'];
+const ROL_IMPORTER = 4;
+
+/**
+ * One cached `TradeRole` as the Quick Trade diagnostic records it: `<n> (<name>)`, `unread` when
+ * the read did not return it. A rolImporter is flagged: its row of the tycoons' permission map is
+ * all zeros (Kernel/Kernel.pas:2875), and `TGate.ConnectTo` checks that map on both sides
+ * (:6766-6767), so every link it is asked for is refused.
+ */
+export function tradeRoleNote(raw: string | undefined): string {
+  if (raw === undefined) return 'unread';
+  const n = Number(raw);
+  const name = Number.isInteger(n) ? FACILITY_ROLES[n] : undefined;
+  if (raw.trim() === '' || !name) return `${raw} (not a TFacilityRole)`;
+  const note = `${n} (${name})`;
+  return n === ROL_IMPORTER
+    ? `${note} — refuses every link per the tycoon permission map (Kernel/Kernel.pas:2875, checked at :6766-6767)`
+    : note;
+}
+
+/** The cached `TradeRole` of `fx` from its general group, as `tradeRoleNote` writes it. Never throws. */
+async function cachedTradeRole(session: LiveSession, fx: OwnFixture, groupId: 'indGeneral' | 'whGeneral'): Promise<string> {
+  try {
+    return tradeRoleNote(propertyValue(await readSectionGroups(session, fx.x, fx.y, groupId, fx.visualClass), groupId, 'TradeRole'));
+  } catch (err: unknown) {
+    return `unread: ${toErrorMessage(err)}`;
+  }
+}
+
+/**
+ * Every own MegaStorage in Helartia (`isMegaStorage`) but the plant — or, for a lot that could not
+ * be read, its label and why. Throws only when the facility classes cannot be read.
+ */
+async function ownMegaStorages(
+  session: LiveSession,
+  plant: OwnFixture,
+  facilities: readonly TycoonFacility[],
+  helartia: number | undefined,
+): Promise<({ storage: OwnFixture } | { unread: string })[]> {
+  const dims = await facilityDimensions(session);
+  const lots: ({ storage: OwnFixture } | { unread: string })[] = [];
+  for (const f of facilities) {
+    if (f.x === plant.x && f.y === plant.y) continue;
+    try {
+      if (helartia === undefined || (await townValueAt(session, f.x, f.y)) !== helartia) continue;
+      const visualClass = await resolveVisualClass(session, f.x, f.y);
+      if (isMegaStorage(dims, visualClass)) lots.push({ storage: { x: f.x, y: f.y, visualClass, name: f.name } });
+    } catch (err: unknown) {
+      lots.push({ unread: `${f.name} (${f.x},${f.y}) unread: ${toErrorMessage(err)}` });
+    }
+  }
+  return lots;
+}
+
+/**
+ * Read-only, before the `RDOConnectToTycoon` write: the cached trade role of the plant and of every
+ * own MegaStorage in Helartia. A storage whose runtime role is rolImporter (TWarehouse.GetRole,
+ * StdBlocks/Warehouses.pas:543-546, settable by RDOSetRole with no log line) refuses every link the
+ * connect asks for, yet the connect still logs. Never throws.
+ */
+async function quickTradeRoles(
+  session: LiveSession,
+  plant: OwnFixture,
+  facilities: readonly TycoonFacility[],
+  helartia: number | undefined,
+): Promise<string> {
+  const roles = [`${fixtureLabel(plant)}: ${await cachedTradeRole(session, plant, 'indGeneral')}`];
+  try {
+    for (const lot of await ownMegaStorages(session, plant, facilities, helartia)) {
+      roles.push('unread' in lot ? lot.unread : `${fixtureLabel(lot.storage)}: ${await cachedTradeRole(session, lot.storage, 'whGeneral')}`);
+    }
+  } catch (err: unknown) {
+    roles.push(`facility classes unread: ${toErrorMessage(err)}`);
+  }
+  return `trade roles before the write — ${roles.join(' | ')}`;
+}
+
+/**
  * Read-only diagnostic of Quick Trade's other side, taken after the read-back poll and before the
- * undo: every own MegaStorage in Helartia (`isMegaStorage`), and each of its supply gates carrying
+ * undo: every own MegaStorage in Helartia (`ownMegaStorages`), and each of its supply gates carrying
  * one of the plant's product fluids, should list the plant (`RDOConnectToTycoon`,
  * Kernel/Kernel.pas:4521). A link is written on both gates at once (Kernel/Kernel.pas:6779-6780),
  * so this only says which side a missing link shows on — never the proof. Then the plant's
@@ -7147,20 +7229,19 @@ async function quickTradeDiagnostic(
 ): Promise<string> {
   const storages: string[] = [];
   try {
-    const dims = await facilityDimensions(session);
-    for (const f of facilities) {
-      if (f.x === plant.x && f.y === plant.y) continue;
+    for (const lot of await ownMegaStorages(session, plant, facilities, helartia)) {
+      if ('unread' in lot) {
+        storages.push(lot.unread);
+        continue;
+      }
+      const storage = lot.storage;
       try {
-        if (helartia === undefined || (await townValueAt(session, f.x, f.y)) !== helartia) continue;
-        const visualClass = await resolveVisualClass(session, f.x, f.y);
-        if (!isMegaStorage(dims, visualClass)) continue;
-        const storage: OwnFixture = { x: f.x, y: f.y, visualClass, name: f.name };
         const stubs = await gateStubs(session, storage, 'supplies');
         for (const fluid of fluids) {
           storages.push(`${fixtureLabel(storage)} ${fluid}: ${storageGateState(await supplyByFluid(session, storage, stubs, fluid), plant)}`);
         }
       } catch (err: unknown) {
-        storages.push(`${f.name} (${f.x},${f.y}) unread: ${toErrorMessage(err)}`);
+        storages.push(`${fixtureLabel(storage)} unread: ${toErrorMessage(err)}`);
       }
     }
   } catch (err: unknown) {
@@ -7286,6 +7367,8 @@ const quickTradeRoundTrip: Flow = {
       } catch (err: unknown) {
         diagWindow = `the log window could not be opened: ${toErrorMessage(err)}`;
       }
+      // Reads only, before the write: the verdict below never looks at it.
+      const roles = await quickTradeRoles(session, fx, own.facilities, helartia);
       let diagnostic = '';
       const probe = await roundTripProbe(ctx, url, {
         what: `${fixtureLabel(fx)} Quick Trade with SPO_test3's warehouses`,
@@ -7333,7 +7416,7 @@ const quickTradeRoundTrip: Flow = {
       assertions.check(
         'RDOConnectToTycoon: new links read back, and the output links equal their snapshot after the undo',
         probeHeld(probe),
-        [probe.note, diagnostic].filter(Boolean).join(' — ') || undefined,
+        [probe.note, roles, diagnostic].filter(Boolean).join(' — ') || undefined,
       );
 
       const suppliers = await pollUntil(

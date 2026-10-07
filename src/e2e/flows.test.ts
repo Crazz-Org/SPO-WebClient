@@ -17,7 +17,7 @@ import {
   pickPlacement, ownsPlacement, delFacilityLineMatches,
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSupplierRowsAt, initialSuppliersKey,
-  storageGateState, initialSupplierNote, errorLines,
+  storageGateState, initialSupplierNote, errorLines, tradeRoleNote,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
   bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
@@ -7325,6 +7325,19 @@ describe('inspector connections & trade (#1153)', () => {
         .toBe('Chemicals:80,90, Water:80,90,');
     });
 
+    it('tradeRoleNote names the TFacilityRole, flags rolImporter, and calls an absent role unread', () => {
+      expect(tradeRoleNote(undefined)).toBe('unread');
+      expect(tradeRoleNote('0')).toBe('0 (rolNeutral)');
+      expect(tradeRoleNote('1')).toBe('1 (rolProducer)');
+      expect(tradeRoleNote('6')).toBe('6 (rolCompInport)');
+      expect(tradeRoleNote('4')).toBe(
+        '4 (rolImporter) — refuses every link per the tycoon permission map (Kernel/Kernel.pas:2875, checked at :6766-6767)',
+      );
+      expect(tradeRoleNote('7')).toBe('7 (not a TFacilityRole)');
+      expect(tradeRoleNote('x')).toBe('x (not a TFacilityRole)');
+      expect(tradeRoleNote('')).toBe(' (not a TFacilityRole)');
+    });
+
     it('errorLines keeps the lines naming an error or an exception', () => {
       expect(errorLines('12:00 - ok\r\n12:01 - Error in Connect \n12:02 - EAccessViolation exception\n12:03 - terrorist')).toEqual([
         '12:01 - Error in Connect', '12:02 - EAccessViolation exception',
@@ -8197,12 +8210,15 @@ describe('inspector connections & trade (#1153)', () => {
       }
 
       it('records each own MegaStorage gate of a plant fluid — linked, or not listed — and an inconclusive initial-supplier read, before the undo', async () => {
+        // Contract changed by #1293 (2026-10-07): the detail opens with the trade roles read before the write.
         const world = new ConnWorld();
+        world.facs.chemical.role = '1';
         arrangeMega(world);
         const result = await run('quick-trade-roundtrip');
         expect(result.status).toBe('PASS');
         expect(detailOf(result)).toBe(
-          'diagnostic before the undo — own MegaStorages: Storage (50,60) Chemicals: plant linked | Storage (50,60) Water: gate not listed; ' +
+          'trade roles before the write — Chemical Plant (80,90): 1 (rolProducer) | Storage (50,60): 2 (rolDistributer) — ' +
+            'diagnostic before the undo — own MegaStorages: Storage (50,60) Chemicals: plant linked | Storage (50,60) Water: gate not listed; ' +
             "the plant's initial-supplier rows: inconclusive (auto-connections cache up to 5 min, KernelCache.pas:964); " +
             'Survival error lines since the write: none',
         );
@@ -8283,9 +8299,73 @@ describe('inspector connections & trade (#1153)', () => {
       });
 
       it('says when Helartia holds no own MegaStorage', async () => {
+        // Contract changed by #1293 (2026-10-07): the detail opens with the trade roles read before the write.
         const world = new ConnWorld();
         arrange(world);
-        expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(/^diagnostic before the undo — own MegaStorages: none in Helartia;/);
+        expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(
+          /^trade roles before the write — Chemical Plant \(80,90\): unread — diagnostic before the undo — own MegaStorages: none in Helartia;/,
+        );
+      });
+
+      it('reads the trade roles before the write, and flags an importer storage without changing the verdict', async () => {
+        const world = new ConnWorld();
+        world.facs.chemical.role = '1';
+        world.facs.warehouse.role = '4';
+        arrangeMega(world);
+        const result = await run('quick-trade-roundtrip');
+        expect(result.status).toBe('PASS');
+        expect(detailOf(result)).toMatch(
+          /^trade roles before the write — Chemical Plant \(80,90\): 1 \(rolProducer\) \| Storage \(50,60\): 4 \(rolImporter\) — refuses every link per the tycoon permission map \(Kernel\/Kernel\.pas:2875, checked at :6766-6767\) — diagnostic before the undo/,
+        );
+        const at = (pred: (m: WsMessage & Record<string, unknown>) => boolean) =>
+          world.requests.findIndex(m => pred(m as WsMessage & Record<string, unknown>));
+        const storageRole = at(m => m.type === WsMessageType.REQ_BUILDING_TAB_DATA && m.tabId === 'whGeneral');
+        const plantRole = at(m => m.type === WsMessageType.REQ_BUILDING_TAB_DATA && m.tabId === 'indGeneral' && m.x === 80);
+        const write = at(m => m.propertyName === 'RDOConnectToTycoon');
+        expect(plantRole).toBeGreaterThanOrEqual(0);
+        expect(storageRole).toBeGreaterThan(plantRole);
+        expect(write).toBeGreaterThan(storageRole);
+        expect(world.writes.map(w => w.property)).toEqual(['RDOConnectToTycoon', 'RDODisconnectFromTycoon']);
+      });
+
+      it('records an unreadable trade role as unread, and still runs the round trip', async () => {
+        const world = new ConnWorld();
+        world.facs.warehouse.role = '4';
+        const { stub } = arrangeMega(world);
+        const answer = world.respond.bind(world);
+        (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
+          const m = msg as WsMessage & Record<string, unknown>;
+          if (m.type === WsMessageType.REQ_BUILDING_TAB_DATA && m.tabId === 'whGeneral') throw new Error('section timed out');
+          return answer(msg);
+        });
+        const result = await run('quick-trade-roundtrip');
+        expect(result.status).toBe('PASS');
+        expect(detailOf(result)).toMatch(
+          /^trade roles before the write — Chemical Plant \(80,90\): unread \| Storage \(50,60\): unread: section timed out — diagnostic before the undo/,
+        );
+      });
+
+      it("records a storage whose supply gates cannot be listed", async () => {
+        const world = new ConnWorld();
+        const { stub } = arrangeMega(world);
+        const answer = world.respond.bind(world);
+        (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
+          const m = msg as WsMessage & Record<string, unknown>;
+          if (m.type === WsMessageType.REQ_BUILDING_TAB_DATA && m.tabId === 'supplies' && m.x === 50) throw new Error('gates timed out');
+          return answer(msg);
+        });
+        const result = await run('quick-trade-roundtrip');
+        expect(result.status).toBe('PASS');
+        expect(detailOf(result)).toMatch(/own MegaStorages: Storage \(50,60\) unread: gates timed out;/);
+      });
+
+      it('records the facility classes as unread in the role note too', async () => {
+        const world = new ConnWorld();
+        arrangeMega(world);
+        jest.spyOn(fixtures, 'facilityDimensions').mockRejectedValue(new Error('no dims'));
+        expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(
+          /^trade roles before the write — Chemical Plant \(80,90\): unread \| facility classes unread: no dims — /,
+        );
       });
     });
   });
