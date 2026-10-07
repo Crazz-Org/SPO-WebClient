@@ -17,7 +17,7 @@ import {
   pickPlacement, ownsPlacement, delFacilityLineMatches,
   linkSet, hireCandidates, linkState, gainedLinks, tradeRoleNudge, tradeLevelNudge, isMegaStorage,
   companyDemandPercent, companyDemandTarget, companyDemandUnits, initialSupplierAt, initialSupplierRowsAt, initialSuppliersKey,
-  storageGateState, initialSupplierNote, errorLines, tradeRoleNote,
+  storageGateState, initialSupplierNote, errorLines, tradeRoleNote, quickTradeOutcome,
   truthyFlag, repairLineMatches, queueResearchLineMatches, cancelResearchLineMatches, startUpgradeLineMatches,
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR,
   bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
@@ -6999,7 +6999,7 @@ describe('inspector connections & trade (#1153)', () => {
         suppliers: [{ facilityName: 'Well', facilityId: '7,8,', companyName: 'Other' }],
       }],
     };
-    /** Members that are acknowledged but change nothing. */
+    /** Members that are acknowledged but change nothing — `<member>:<kind>` for one kind only. */
     inert = new Set<string>();
     /** Members whose Survival line never appears. */
     silent = new Set<string>();
@@ -7099,11 +7099,14 @@ describe('inspector connections & trade (#1153)', () => {
         case 'RDODisconnectOutput':
           for (const c of this.pairs(p.connectionList)) this.unlink(f, 'products', p.fluidId, c.x, c.y);
           break;
-        case 'RDOConnectToTycoon':
+        case 'RDOConnectToTycoon': {
+          // ftpWarehouses (1) reaches the warehouse, ftpFactories (2) the industry fixture (Kernel/Kernel.pas:4541-4543).
+          const to = p.kind === '2' ? this.facs.industry : this.facs.warehouse;
           for (const g of f.products) {
-            if (this.facs.warehouse.supplies.some(s => s.metaFluid === g.metaFluid)) this.link(f, 'products', g.metaFluid as string, this.facs.warehouse);
+            if (to.supplies.some(s => s.metaFluid === g.metaFluid)) this.link(f, 'products', g.metaFluid as string, to);
           }
           break;
+        }
         case 'RDODisconnectFromTycoon': {
           // Kernel/Kernel.pas:4591-4607: every own client of the fixture's outputs is dropped, and the
           // fixture is unregistered as an initial supplier.
@@ -7196,7 +7199,7 @@ describe('inspector connections & trade (#1153)', () => {
           this.writes.push(w);
           const line = this.line(w);
           if (line && !this.silent.has(w.property)) this.lines.push(line);
-          if (!this.inert.has(w.property)) this.apply(w);
+          if (!this.inert.has(w.property) && !this.inert.has(`${w.property}:${w.params.kind}`)) this.apply(w);
           return { type: WsMessageType.RESP_BUILDING_SET_PROPERTY, success: true, newValue: '' };
         }
         default:
@@ -8366,6 +8369,195 @@ describe('inspector connections & trade (#1153)', () => {
         expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(
           /^trade roles before the write — Chemical Plant \(80,90\): unread \| facility classes unread: no dims — /,
         );
+      });
+
+      describe('the kind-2 and direct-link experiments, when kind 1 links nothing (#1293)', () => {
+        const ROW_A =
+          'RDOConnectToTycoon works live and the pair links; the deployed ftpWarehouses branch skips MegaStorages ' +
+          '(Kernel/Kernel1.pas:3150 shape) — expectation to revisit by observation';
+        const ROW_B = 'RDOConnectToTycoon is a live no-op with correct pointer and arguments';
+        const ROW_C = 'the plant/pair is refused live — plant to rebuild under self-heal, re-diagnose';
+        const E1_NONE =
+          'E1 kind 2 (factories): none (plant side: snapshot, mine side: Farm (30,40) Chemicals: no plant link); ' +
+          'E1 kind 2 (factories) undo: gone (plant side: snapshot, mine side: Farm (30,40) Chemicals: no plant link)';
+        const E1_LINKS =
+          'E1 kind 2 (factories): links (plant side: new-links, mine side: Farm (30,40) Chemicals: plant linked); ' +
+          'E1 kind 2 (factories) undo: gone (plant side: snapshot, mine side: Farm (30,40) Chemicals: no plant link)';
+        const E2_LINKS =
+          'E2 direct plant→Storage (50,60) Chemicals: links (plant side: lists 50,60, storage side: Storage (50,60) Chemicals: plant linked); ' +
+          'E2 direct plant→Storage (50,60) Chemicals undo: gone (plant side: does not list 50,60, storage side: Storage (50,60) Chemicals: no plant link)';
+        const E2_NONE =
+          'E2 direct plant→Storage (50,60) Chemicals: none (plant side: does not list 50,60, storage side: Storage (50,60) Chemicals: no plant link); ' +
+          'E2 direct plant→Storage (50,60) Chemicals undo: gone (plant side: does not list 50,60, storage side: Storage (50,60) Chemicals: no plant link)';
+        const K1 = [80, 90, 'RDOConnectToTycoon', { kind: '1' }];
+        const UNDO = [80, 90, 'RDODisconnectFromTycoon', { kind: '1' }];
+        const E1_WRITES = [[80, 90, 'RDOConnectToTycoon', { kind: '2' }], [80, 90, 'RDODisconnectFromTycoon', { kind: '2' }]];
+        const E2_WRITES = [
+          [80, 90, 'RDOConnectOutput', { fluidId: 'Chemicals', connectionList: '50,60,' }],
+          [80, 90, 'RDODisconnectOutput', { fluidId: 'Chemicals', connectionList: '50,60,' }],
+        ];
+        const writesOf = (world: ConnWorld) => world.writes.map(w => [w.x, w.y, w.property, w.params]);
+
+        /** The live shape: the mine takes Chemicals in, the plant puts Chemicals out, the MegaStorage takes Chemicals in. */
+        function plantWorld(...inert: string[]): ConnWorld {
+          const world = new ConnWorld();
+          const { industry, chemical } = world.facs;
+          industry.supplies = [sg('Chemicals')];
+          industry.products = [pg('Raw Chemicals')];
+          chemical.supplies = [sg('Raw Chemicals')];
+          chemical.products = [pg('Chemicals')];
+          for (const m of inert) world.inert.add(m);
+          return world;
+        }
+
+        it.each([
+          ['E1 links, E2 links', ['RDOConnectToTycoon:1'], E1_LINKS, E2_LINKS, ROW_A],
+          ['E1 none, E2 links', ['RDOConnectToTycoon'], E1_NONE, E2_LINKS, ROW_B],
+          ['E1 none, E2 none', ['RDOConnectToTycoon', 'RDOConnectOutput'], E1_NONE, E2_NONE, ROW_C],
+          ['E1 links, E2 none', ['RDOConnectToTycoon:1', 'RDOConnectOutput'], E1_LINKS, E2_NONE, ROW_C],
+        ])('%s: records both experiments, their undo and the outcome row — and the verdict stays FAIL', async (_row, inert, e1, e2, outcome) => {
+          const world = plantWorld(...inert);
+          const lock = cleanLock();
+          arrangeMega(world);
+          const result = await run('quick-trade-roundtrip', lock);
+          expect(result.status).toBe('FAIL');
+          expect(result.probes[0]).toMatchObject({ status: 'FAIL', readBack: 'UNCONFIRMED', restored: true });
+          expect(result.assertions.find(a => a.what === VERDICT)?.ok).toBe(false);
+          expect(detailOf(result)).toMatch(/^read-back never showed "new-links".* — diagnostic before the undo — .* — experiments before the undo — /);
+          expect(detailOf(result).endsWith(`experiments before the undo — ${e1}; ${e2}; outcome: ${outcome}`)).toBe(true);
+          // Each experiment is undone before the next write; the flow's own undo comes last.
+          expect(writesOf(world)).toEqual([K1, ...E1_WRITES, ...E2_WRITES, UNDO]);
+          expect(keysOf(world.facs.chemical.products[0])).toEqual([]);
+          expect(keysOf(world.facs.industry.supplies[0])).toEqual([]);
+          expect(keysOf(world.facs.warehouse.supplies[0])).toEqual([]);
+          expect(lock.read().pendingRestores).toEqual([]);
+        });
+
+        it('does not run when the kind-1 read-back shows the new links — the PASS path is unchanged', async () => {
+          const world = plantWorld();
+          arrangeMega(world);
+          const result = await run('quick-trade-roundtrip');
+          expect(result.status).toBe('PASS');
+          expect(writesOf(world)).toEqual([K1, UNDO]);
+          expect(detailOf(result)).not.toMatch(/experiments|E1|E2/);
+        });
+
+        it('does not run when the kind-1 write itself throws', async () => {
+          const world = plantWorld();
+          const { stub } = arrangeMega(world);
+          const answer = world.respond.bind(world);
+          (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
+            const m = msg as WsMessage & Record<string, unknown>;
+            if (m.propertyName === 'RDOConnectToTycoon') throw new Error('socket closed');
+            return answer(msg);
+          });
+          const result = await run('quick-trade-roundtrip');
+          expect(result.status).toBe('FAIL');
+          expect(detailOf(result)).not.toMatch(/experiments/);
+          expect(world.writes.map(w => w.property)).toEqual(['RDODisconnectFromTycoon']);
+        });
+
+        it("leaves the world clean when an experiment's undo does not take: the flow's undo drops the leftover", async () => {
+          const world = plantWorld('RDOConnectToTycoon:1', 'RDODisconnectFromTycoon:2', 'RDODisconnectOutput');
+          const lock = cleanLock();
+          arrangeMega(world);
+          const result = await run('quick-trade-roundtrip', lock);
+          expect(result.status).toBe('FAIL');
+          expect(detailOf(result)).toContain(
+            'E1 kind 2 (factories) undo: still linked (plant side: new-links, mine side: Farm (30,40) Chemicals: plant linked)',
+          );
+          // E1's link is still there when E2 starts: the plant side reads it, the E2 link is its own.
+          expect(detailOf(result)).toContain('E2 direct plant→Storage (50,60) Chemicals undo: still linked (plant side: lists 50,60,');
+          expect(detailOf(result)).toMatch(new RegExp(`outcome: ${ROW_A.replace(/[()]/g, '\\$&')}$`));
+          expect(result.probes[0].restored).toBe(true);
+          expect(keysOf(world.facs.chemical.products[0])).toEqual([]);
+          expect(lock.read().pendingRestores).toEqual([]);
+        });
+
+        it('records a throwing experiment and still undoes it, runs the next one, and never throws', async () => {
+          const world = plantWorld('RDOConnectToTycoon');
+          const { stub } = arrangeMega(world);
+          const answer = world.respond.bind(world);
+          (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
+            const m = msg as WsMessage & Record<string, unknown>;
+            const params = (m.additionalParams ?? {}) as Record<string, string>;
+            if (m.propertyName === 'RDOConnectToTycoon' && params.kind === '2') throw new Error('kind 2 refused');
+            if (m.propertyName === 'RDODisconnectOutput') throw new Error('undo refused');
+            return answer(msg);
+          });
+          const result = await run('quick-trade-roundtrip');
+          expect(result.status).toBe('FAIL');
+          expect(detailOf(result)).toContain('E1 kind 2 (factories): not run — kind 2 refused; E1 kind 2 (factories) undo: gone');
+          expect(detailOf(result)).toContain('E2 direct plant→Storage (50,60) Chemicals undo: failed — undo refused');
+          expect(detailOf(result)).toMatch(/outcome: no outcome row \(E1 not run, E2 links\)$/);
+          expect(keysOf(world.facs.chemical.products[0])).toEqual([]);
+        });
+
+        it('records an experiment whose storage list throws, and one whose sides cannot be read', async () => {
+          const world = plantWorld('RDOConnectToTycoon');
+          const { stub } = arrangeMega(world);
+          const answer = world.respond.bind(world);
+          (stub.driver.request as jest.Mock).mockImplementation(async (msg: WsMessage) => {
+            const m = msg as WsMessage & Record<string, unknown>;
+            if (m.type === WsMessageType.REQ_BUILDING_GATE_CONNECTIONS && m.x === 30) throw new Error('mine gate timed out');
+            return answer(msg);
+          });
+          // The diagnostic reads the classes once, the experiments' storage list a second time.
+          jest.spyOn(fixtures, 'facilityDimensions')
+            .mockResolvedValueOnce(world.dims)
+            .mockResolvedValueOnce(world.dims)
+            .mockRejectedValue(new Error('no dims'));
+          const result = await run('quick-trade-roundtrip');
+          expect(result.status).toBe('FAIL');
+          expect(detailOf(result)).toContain(
+            'E1 kind 2 (factories): not run (unread: mine gate timed out); E1 kind 2 (factories) undo: still linked (unread: mine gate timed out)',
+          );
+          expect(detailOf(result)).toMatch(/E2 direct plant→storage: not run — no dims; outcome: no outcome row \(E1 not run, E2 not run\)$/);
+        });
+
+        it('names a missing industry fixture on the mine side', async () => {
+          const world = plantWorld('RDOConnectToTycoon');
+          world.found.industry = false;
+          arrangeMega(world);
+          expect(detailOf(await run('quick-trade-roundtrip'))).toContain(
+            'E1 kind 2 (factories): none (plant side: snapshot, mine side: industry fixture not found)',
+          );
+        });
+
+        it('skips E2 when no own MegaStorage carries a plant fluid, or the storage already lists the plant', async () => {
+          const none = plantWorld('RDOConnectToTycoon');
+          arrange(none);
+          expect(detailOf(await run('quick-trade-roundtrip'))).toMatch(
+            /E2 direct plant→storage: not run — no own MegaStorage in Helartia lists a Chemicals input; outcome: no outcome row \(E1 none, E2 not run\)$/,
+          );
+          expect(none.writes.some(w => w.property === 'RDOConnectOutput')).toBe(false);
+
+          const listed = plantWorld('RDOConnectToTycoon');
+          // Only the storage side lists the plant: the plant's own gate (the guards, the reset) shows nothing.
+          listed.facs.warehouse.supplies[0].connections.push(conn('Chemical Plant', OWN_CO, 80, 90));
+          listed.facs.warehouse.supplies[0].connectionCount = 1;
+          arrangeMega(listed);
+          expect(detailOf(await run('quick-trade-roundtrip'))).toContain(
+            'E2 direct plant→Storage (50,60) Chemicals: not run — the storage lists the plant before the write',
+          );
+          expect(listed.writes.some(w => w.property === 'RDOConnectOutput')).toBe(false);
+        });
+
+        it('takes a rolCompExport MegaStorage first', async () => {
+          const world = plantWorld('RDOConnectToTycoon');
+          const { store } = world.facs;
+          Object.assign(store, { visualClass: '532', tabs: ['whGeneral', 'supplies', 'products'], supplies: [sg('Chemicals')], role: '5' });
+          world.tycoon.push({ company: OWN_CO, x: 10, y: 20, name: 'Food Store' });
+          arrangeMega(world);
+          const result = await run('quick-trade-roundtrip');
+          expect(detailOf(result)).toContain('E2 direct plant→Food Store (10,20) Chemicals: links');
+          expect(world.writes.find(w => w.property === 'RDOConnectOutput')?.params).toEqual({ fluidId: 'Chemicals', connectionList: '10,20,' });
+        });
+
+        it('quickTradeOutcome names no row when an experiment did not run', () => {
+          expect(quickTradeOutcome('links', 'not run')).toBe('no outcome row (E1 links, E2 not run)');
+          expect(quickTradeOutcome('not run', 'none')).toBe(ROW_C);
+        });
       });
     });
   });

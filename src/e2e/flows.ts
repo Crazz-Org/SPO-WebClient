@@ -7270,6 +7270,228 @@ async function quickTradeDiagnostic(
   );
 }
 
+/** `ftpFactories` (Kernel/Kernel.pas:2761) — Voyager's `btnSellToFacs` (Voyager/IndustryGeneralSheet.pas:345, :431). */
+const FACTORIES_KIND = '2';
+const ROL_COMP_EXPORT = 5;
+
+/** What one Quick Trade experiment showed: `not run` is a skip, a throw or an unread side — its line says which. */
+export type QuickTradeExperiment = 'links' | 'none' | 'not run';
+
+/**
+ * Which cause the two experiments point to, when the kind-1 read-back failed. The verdict stays a
+ * FAIL in every row: this only names what the next attempt has to look at.
+ */
+export function quickTradeOutcome(e1: QuickTradeExperiment, e2: QuickTradeExperiment): string {
+  if (e2 === 'none') return 'the plant/pair is refused live — plant to rebuild under self-heal, re-diagnose';
+  if (e2 === 'links' && e1 === 'links') {
+    return (
+      'RDOConnectToTycoon works live and the pair links; the deployed ftpWarehouses branch skips MegaStorages ' +
+      '(Kernel/Kernel1.pas:3150 shape) — expectation to revisit by observation'
+    );
+  }
+  if (e2 === 'links' && e1 === 'none') return 'RDOConnectToTycoon is a live no-op with correct pointer and arguments';
+  return `no outcome row (E1 ${e1}, E2 ${e2})`;
+}
+
+/** The Quick Trade flow's live context, shared by both experiments. */
+interface QuickTradeScope {
+  session: LiveSession;
+  plant: OwnFixture;
+  facilities: readonly TycoonFacility[];
+  helartia: number | undefined;
+  fluids: readonly string[];
+  ctx: FlowContext;
+}
+
+interface ExperimentRecord {
+  result: QuickTradeExperiment;
+  lines: string[];
+}
+
+/** Both sides of one experiment's link, read once; a throw is kept as `unread` so the poll goes on. */
+interface ExperimentSides {
+  note: string;
+  linked: boolean;
+  /** Nothing left of the experiment on either side — what its undo waits for. */
+  clean: boolean;
+  unread: boolean;
+}
+
+async function readSides(read: () => Promise<Omit<ExperimentSides, 'unread'>>): Promise<ExperimentSides> {
+  try {
+    return { ...(await read()), unread: false };
+  } catch (err: unknown) {
+    return { note: `unread: ${toErrorMessage(err)}`, linked: false, clean: false, unread: true };
+  }
+}
+
+/** Each supply gate of `fx` carrying one of `fluids`, as `storageGateState` writes it. */
+async function supplySideNote(
+  session: LiveSession,
+  fx: OwnFixture,
+  fluids: readonly string[],
+  plant: OwnFixture,
+): Promise<{ note: string; linked: boolean }> {
+  const stubs = await gateStubs(session, fx, 'supplies');
+  const parts: string[] = [];
+  let linked = false;
+  for (const fluid of fluids) {
+    const state = storageGateState(await supplyByFluid(session, fx, stubs, fluid), plant);
+    if (state === 'plant linked') linked = true;
+    parts.push(`${fixtureLabel(fx)} ${fluid}: ${state}`);
+  }
+  return { note: parts.join(' | ') || `${fixtureLabel(fx)}: no plant fluid`, linked };
+}
+
+/**
+ * One experiment: `connect`, a bounded poll for the link (`pollUntil`, the read-back bound), then
+ * `undo` — sent whenever the connect was sent, even after a throw — and a poll for it to clear.
+ * Neither records a pending restore: the probe's own `RDODisconnectFromTycoon` restore covers any
+ * leftover, and `resetChemical` clears it on the next run (self-heal, #1236). Never throws.
+ */
+async function runExperiment(
+  label: string,
+  ctx: FlowContext,
+  sides: () => Promise<Omit<ExperimentSides, 'unread'>>,
+  connect: () => Promise<unknown>,
+  undo: () => Promise<unknown>,
+): Promise<ExperimentRecord> {
+  const lines: string[] = [];
+  let result: QuickTradeExperiment = 'not run';
+  try {
+    await connect();
+    const polled = await pollUntil(() => readSides(sides), v => v.linked, ctx);
+    result = polled.ok ? 'links' : polled.last.unread ? 'not run' : 'none';
+    lines.push(`${label}: ${result} (${polled.last.note})`);
+  } catch (err: unknown) {
+    lines.push(`${label}: not run — ${toErrorMessage(err)}`);
+  }
+  try {
+    await undo();
+    const polled = await pollUntil(() => readSides(sides), v => v.clean, ctx);
+    lines.push(`${label} undo: ${polled.ok ? 'gone' : 'still linked'} (${polled.last.note})`);
+  } catch (err: unknown) {
+    lines.push(`${label} undo: failed — ${toErrorMessage(err)}`);
+  }
+  return { result, lines };
+}
+
+/**
+ * E1: `RDOConnectToTycoon` with `ftpFactories` on the plant. The Pascal links the plant's outputs
+ * into every own `rolProducer` input of the same fluid (Kernel/Kernel.pas:4521-4580, the filter at
+ * :4543) — the industry fixture's Chemicals input. Undone by `RDODisconnectFromTycoon`, whose kind
+ * is ignored (:4590-4600).
+ */
+async function kindTwoExperiment(s: QuickTradeScope): Promise<ExperimentRecord> {
+  const { session, plant } = s;
+  const label = 'E1 kind 2 (factories)';
+  const mine = await ownFixture(session, 'industry', new Assertions());
+  const before = await readGateLinks(session, plant, ['products']);
+  const sides = async (): Promise<Omit<ExperimentSides, 'unread'>> => {
+    const plantSide = linkState(before, await readGateLinks(session, plant, ['products']));
+    const mineSide = mine
+      ? await supplySideNote(session, mine, s.fluids, plant)
+      : { note: 'industry fixture not found', linked: false };
+    return {
+      note: `plant side: ${plantSide}, mine side: ${mineSide.note}`,
+      linked: plantSide === 'new-links' || mineSide.linked,
+      clean: plantSide === 'snapshot' && !mineSide.linked,
+    };
+  };
+  return runExperiment(
+    label,
+    s.ctx,
+    sides,
+    () => setBuildingProperty(session, plant.x, plant.y, 'RDOConnectToTycoon', '0', { kind: FACTORIES_KIND }),
+    () => setBuildingProperty(session, plant.x, plant.y, 'RDODisconnectFromTycoon', '0', { kind: FACTORIES_KIND }),
+  );
+}
+
+/**
+ * The storage E2 links to: an own MegaStorage in Helartia with a supply gate of a plant fluid, a
+ * `rolCompExport` one first. Lots that cannot be read are skipped.
+ */
+async function directLinkTarget(
+  s: QuickTradeScope,
+): Promise<{ storage: OwnFixture; fluid: string; state: string } | undefined> {
+  const found: { storage: OwnFixture; fluid: string; state: string; role: string }[] = [];
+  for (const lot of await ownMegaStorages(s.session, s.plant, s.facilities, s.helartia)) {
+    if ('unread' in lot) continue;
+    try {
+      const stubs = await gateStubs(s.session, lot.storage, 'supplies');
+      for (const fluid of s.fluids) {
+        const gate = await supplyByFluid(s.session, lot.storage, stubs, fluid);
+        if (!gate) continue;
+        const role = await cachedTradeRole(s.session, lot.storage, 'whGeneral');
+        found.push({ storage: lot.storage, fluid, state: storageGateState(gate, s.plant), role });
+        break;
+      }
+    } catch {
+      // an unreadable storage is not a target
+    }
+  }
+  return found.find(f => f.role.startsWith(`${ROL_COMP_EXPORT} (`)) ?? found[0];
+}
+
+/**
+ * E2: a direct link from the plant's output to one own MegaStorage's input, sent the way
+ * client-hire-remove sends one (`RDOConnectOutput` through `setPropertySlow`), undone by
+ * `RDODisconnectOutput` with the same arguments.
+ */
+async function directLinkExperiment(s: QuickTradeScope): Promise<ExperimentRecord> {
+  const { session, plant } = s;
+  const target = await directLinkTarget(s);
+  if (!target) {
+    return {
+      result: 'not run',
+      lines: [`E2 direct plant→storage: not run — no own MegaStorage in ${GOVERNED_TOWN} lists a ${s.fluids.join('/') || 'plant'} input`],
+    };
+  }
+  const { storage, fluid } = target;
+  const label = `E2 direct plant→${fixtureLabel(storage)} ${fluid}`;
+  if (target.state === 'plant linked') {
+    return { result: 'not run', lines: [`${label}: not run — the storage lists the plant before the write`] };
+  }
+  const key = `${storage.x},${storage.y}`;
+  const params = { fluidId: fluid, connectionList: connectionList([key]) };
+  const sides = async (): Promise<Omit<ExperimentSides, 'unread'>> => {
+    const gate = Object.values(await readGateLinks(session, plant, ['products'])).find(g => g.fluid === fluid);
+    const plantLists = gate?.keys.includes(key) ?? false;
+    const storageSide = await supplySideNote(session, storage, [fluid], plant);
+    return {
+      note: `plant side: ${plantLists ? `lists ${key}` : `does not list ${key}`}, storage side: ${storageSide.note}`,
+      linked: plantLists || storageSide.linked,
+      clean: !plantLists && !storageSide.linked,
+    };
+  };
+  return runExperiment(
+    label,
+    s.ctx,
+    sides,
+    () => setPropertySlow(session, plant, 'RDOConnectOutput', params),
+    () => setBuildingProperty(session, plant.x, plant.y, 'RDODisconnectOutput', '0', params),
+  );
+}
+
+/**
+ * Run only when the kind-1 write was sent and its read-back never showed a new link, after the
+ * read-only diagnostic and before the flow's undo: E1 (`kindTwoExperiment`) then E2
+ * (`directLinkExperiment`), each undone and read back, and the outcome they point to
+ * (`quickTradeOutcome`). Diagnostic only — the verdict is the kind-1 round trip's. Never throws.
+ */
+async function quickTradeExperiments(s: QuickTradeScope): Promise<string> {
+  const guarded = async (label: string, run: () => Promise<ExperimentRecord>): Promise<ExperimentRecord> => {
+    try {
+      return await run();
+    } catch (err: unknown) {
+      return { result: 'not run', lines: [`${label}: not run — ${toErrorMessage(err)}`] };
+    }
+  };
+  const e1 = await guarded('E1 kind 2 (factories)', () => kindTwoExperiment(s));
+  const e2 = await guarded('E2 direct plant→storage', () => directLinkExperiment(s));
+  return `experiments before the undo — ${[...e1.lines, ...e2.lines].join('; ')}; outcome: ${quickTradeOutcome(e1.result, e2.result)}`;
+}
+
 /**
  * Quick Trade (`TFacility.RDOConnectToTycoon`, Kernel/Kernel.pas:4521) and its undo
  * (`RDODisconnectFromTycoon`), which reaches every SPO_test3 facility (:4537-4553, :4593-4600) and
@@ -7370,6 +7592,15 @@ const quickTradeRoundTrip: Flow = {
       // Reads only, before the write: the verdict below never looks at it.
       const roles = await quickTradeRoles(session, fx, own.facilities, helartia);
       let diagnostic = '';
+      let experiments = '';
+      // Whether the kind-1 read-back showed a new link after the write: only a failed one runs the experiments.
+      let written = false;
+      let linked = false;
+      const watched = async (): Promise<string> => {
+        const state = await read();
+        if (written && state === 'new-links') linked = true;
+        return state;
+      };
       const probe = await roundTripProbe(ctx, url, {
         what: `${fixtureLabel(fx)} Quick Trade with SPO_test3's warehouses`,
         member: 'RDOConnectToTycoon',
@@ -7377,10 +7608,16 @@ const quickTradeRoundTrip: Flow = {
         testValue: () => 'new-links',
         write: async () => {
           await setBuildingProperty(session, fx.x, fx.y, 'RDOConnectToTycoon', '0', { kind: QUICK_TRADE_KIND });
+          written = true;
         },
         restore: async () => {
           // Reads only, before the undo: the verdict below never looks at it.
           diagnostic = await quickTradeDiagnostic(session, fx, own.facilities, helartia, fluids, diagWindow);
+          // Two writes, each undone and read back, before the undo below — which drops whatever they
+          // left on an own input anyway (Kernel/Kernel.pas:4590-4600). The verdict never looks at them.
+          if (written && !linked) {
+            experiments = await quickTradeExperiments({ session, plant: fx, facilities: own.facilities, helartia, fluids, ctx });
+          }
           await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: QUICK_TRADE_KIND });
           let after: AutoConnectionsData;
           try {
@@ -7402,7 +7639,7 @@ const quickTradeRoundTrip: Flow = {
           readBack: readBackOn(
             "the fixture's product gates' links via REQ_BUILDING_GATE_CONNECTIONS",
             LINK_WHY,
-            tolerantRead(read),
+            tolerantRead(watched),
           ),
         },
         restoreRecord: {
@@ -7416,7 +7653,7 @@ const quickTradeRoundTrip: Flow = {
       assertions.check(
         'RDOConnectToTycoon: new links read back, and the output links equal their snapshot after the undo',
         probeHeld(probe),
-        [probe.note, roles, diagnostic].filter(Boolean).join(' — ') || undefined,
+        [probe.note, roles, diagnostic, experiments].filter(Boolean).join(' — ') || undefined,
       );
 
       const suppliers = await pollUntil(
