@@ -6829,7 +6829,7 @@ const supplierHireFire: Flow = {
     "reset the chemical fixture, then hire an own supplier (Helartia, owner SPO_test3; only the chemical fixture's lot " +
     'taken) on an input of the industry fixture -> Input connected: line + the gate lists it -> fire it -> the gate lists exactly its snapshot',
   mutates: true,
-  seed: fixtureSeed('industry'),
+  seed: fixtureSeed('industry', 'chemical'),
   run: ctx =>
     runHire(
       {
@@ -6853,7 +6853,7 @@ const clientHireRemove: Flow = {
     "reset the chemical fixture, then add an own client (Helartia, owner SPO_test3; only the chemical fixture's lot " +
     'taken) on an output of the industry fixture -> Output connected: line + the gate lists it -> remove it -> the gate lists exactly its snapshot',
   mutates: true,
-  seed: fixtureSeed('industry'),
+  seed: fixtureSeed('industry', 'chemical'),
   run: ctx =>
     runHire(
       {
@@ -6895,7 +6895,7 @@ const connectOnMap: Flow = {
     'REQ_CONNECT_FACILITIES between the industry and chemical fixtures (the chemical one reset first) -> a new link read back -> every new link ' +
     'disconnected -> both facilities\' inputs and outputs equal their snapshot',
   mutates: true,
-  seed: fixtureSeed('industry', 'warehouse'),
+  seed: fixtureSeed('industry', 'chemical'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
@@ -7482,7 +7482,7 @@ const quickTradeRoundTrip: Flow = {
     'own warehouse reads rolDistributer -> RDODisconnectFromTycoon after each -> the output links and the initial-supplier ' +
     'list equal their snapshots',
   mutates: true,
-  seed: fixtureSeed('industry'),
+  seed: fixtureSeed('chemical', 'industry'),
   run: async ctx => {
     const assertions = new Assertions();
     const probes: ProbeResult[] = [];
