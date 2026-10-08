@@ -1372,6 +1372,11 @@ const peopleSearch: Flow = {
  * temp object has to survive between the two round-trips and be reset to the
  * building root before the second.
  */
+/** #1351: the six town-hall population figures the townRes section serves hidden. */
+const TOWN_RES_DATA_PROPERTIES: readonly string[] = [
+  'hiFloating', 'hiPopulationK', 'midFloating', 'midPopulationK', 'loFloating', 'loPopulationK',
+];
+
 const buildingDetails: Flow = {
   name: 'building-details',
   what: 'town hall inspector read: header group at open, section group on demand',
@@ -1417,6 +1422,20 @@ const buildingDetails: Flow = {
         'the section read has property values, not just a key',
         (section.groups?.townTaxes?.length ?? 0) > 0,
         `${section.groups?.townTaxes?.length ?? 0} values`,
+      );
+
+      // #1351: the townRes section serves six hidden figures as data
+      // (Kernel/Population.pas:1194, :1197). Floating may legitimately be 0,
+      // so this checks presence and form, not a value.
+      const res = await readBuildingTabData(
+        session, town.x, town.y, 'townRes', visualClass, ['townRes'],
+      );
+      const resValues = new Map((res.groups?.townRes ?? []).map(v => [v.name, v.value]));
+      const malformed = TOWN_RES_DATA_PROPERTIES.filter(n => !/^\d+$/.test(resValues.get(n) ?? ''));
+      assertions.check(
+        'the townRes section serves the six hidden population figures, each an integer >= 0',
+        malformed.length === 0,
+        malformed.map(n => `${n}=${JSON.stringify(resValues.get(n) ?? null)}`).join(' ') || 'all six present',
       );
 
       assertions.check('no gateway errors', session.driver.errors.length === 0);

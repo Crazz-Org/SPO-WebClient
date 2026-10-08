@@ -31,6 +31,12 @@ export const HIDDEN_PROPERTY_NAMES: ReadonlySet<string> = new Set([
   // Owner: the header already names the society and the tycoon
   'Creator',
   'OwnerName',
+  // Town-hall population figures served as data on the townRes tab
+  // (Kernel/Population.pas:1194, :1197), never shown — the same
+  // read-but-never-show case as CurrBlock.
+  'hiFloating', 'hiPopulationK',
+  'midFloating', 'midPopulationK',
+  'loFloating', 'loPopulationK',
 ]);
 
 /** Should this property's row be rendered? */

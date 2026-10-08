@@ -938,7 +938,8 @@ export const TOWN_JOBS_GROUP: PropertyGroup = {
 /**
  * townRes — Town hall residential statistics
  * Voyager: TownHallResSheet.pas — uses FiveViewUtils (xfer_ prefixed controls)
- * Properties: 3 residential classes × (Demand, Quantity, Rent Price)
+ * Properties: 3 residential classes × (Demand, Quantity, Rent Price), plus six
+ * hidden data properties (<prefix>Floating, <prefix>PopulationK) served, not shown.
  */
 export const TOWN_RES_GROUP: PropertyGroup = {
   id: 'townRes',
@@ -958,6 +959,17 @@ export const TOWN_RES_GROUP: PropertyGroup = {
     { rdoName: 'loResDemand', displayName: 'Low Class Vacancies', type: PropertyType.NUMBER },
     { rdoName: 'loRentPrice', displayName: 'Low Class Rent Price', type: PropertyType.PERCENTAGE },
     { rdoName: 'loResQ', displayName: 'Low Class Quality Index', type: PropertyType.PERCENTAGE },
+    // Read, never shown (HIDDEN_PROPERTY_NAMES): served as data for API consumers
+    // (SPO-Bots placement forecast). TTownHall.StoreToCache writes them per kind —
+    // <prefix>PopulationK = round(fLastPop[i].K) (Kernel/Population.pas:1194),
+    // <prefix>Floating = round(fResInmigration[i].Extra.Q) (Kernel/Population.pas:1197).
+    // No Voyager sheet and no Five/0 ASP page reads them.
+    { rdoName: 'hiFloating', displayName: 'High Class Homeless', type: PropertyType.NUMBER },
+    { rdoName: 'hiPopulationK', displayName: 'High Class Population Quality', type: PropertyType.NUMBER },
+    { rdoName: 'midFloating', displayName: 'Middle Class Homeless', type: PropertyType.NUMBER },
+    { rdoName: 'midPopulationK', displayName: 'Middle Class Population Quality', type: PropertyType.NUMBER },
+    { rdoName: 'loFloating', displayName: 'Low Class Homeless', type: PropertyType.NUMBER },
+    { rdoName: 'loPopulationK', displayName: 'Low Class Population Quality', type: PropertyType.NUMBER },
   ],
 };
 
