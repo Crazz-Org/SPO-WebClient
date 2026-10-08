@@ -2889,7 +2889,12 @@ const directoryBrowse: Flow = {
 
         const companyPage = await readDirectory(session, { kind: 'town-company', town: town.name, company });
         const owner = companyPage.kind === 'folder' ? companyPage.ownedBy : null;
-        assertions.check(`"${company}" names its owner — InTownCompany.asp:63-71`, owner !== null, owner ?? '(none)');
+        const ownerWhat = `"${company}" names its owner — InTownCompany.asp:63-71`;
+        if (owner === null && await companyPathMissing(session, company)) {
+          assertions.untestable(ownerWhat, COMPANY_FILE_MISSING_REASON);
+          return report('directory-browse', assertions, [], session);
+        }
+        assertions.check(ownerWhat, owner !== null, owner ?? '(none)');
         if (owner === null) return report('directory-browse', assertions, [], session);
 
         const ownerCompanies = await readDirectory(session, { kind: 'tycoon-companies', tycoon: owner });
@@ -3340,11 +3345,12 @@ const profileRead: Flow = {
             WsMessageType.RESP_PROFILE_COMPANY_PROFITLOSS,
           );
           const lines = cpl.data?.root.children?.length ?? 0;
-          assertions.check(
-            'the company P&L parses',
-            cpl.data != null && cpl.error === undefined && lines > 0,
-            cpl.error ?? `${lines} lines`,
-          );
+          const ok = cpl.data != null && cpl.error === undefined && lines > 0;
+          if (!ok && await companyPathMissing(session, found.name)) {
+            assertions.untestable('the company P&L parses', COMPANY_FILE_MISSING_REASON);
+          } else {
+            assertions.check('the company P&L parses', ok, cpl.error ?? `${lines} lines`);
+          }
         });
       }
 
@@ -7707,6 +7713,27 @@ async function pollUntil<T>(
   }
 }
 
+/** #1349 — the reason a company-file failure ends UNTESTABLE: planitia's cache cleaner deleted the company folder. */
+const COMPANY_FILE_MISSING_REASON =
+  'company cache file missing — KindList.asp:18 "Couldn\'t open the path" (server cache cleaner)';
+
+/**
+ * Whether KindList.asp could not open `Companies\<companyName>.five\` — the one page of the three
+ * that says so (#1349). Asks about the named company only: the cleaner's 20 000-file cap can
+ * leave one company's folder and delete another's. A throw, or no marker, reads as "present".
+ */
+async function companyPathMissing(session: LiveSession, companyName: string): Promise<boolean> {
+  try {
+    const answer: WsRespBuildingCategories | undefined = await session.driver.request<WsRespBuildingCategories>(
+      { type: WsMessageType.REQ_GET_BUILDING_CATEGORIES, companyName },
+      WsMessageType.RESP_BUILDING_CATEGORIES,
+    );
+    return answer?.companyPathMissing === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The build menu, read only (#1150): the categories the own company is offered, then the
  * facilities of the first category of its cluster — the two reads the client's build menu makes.
@@ -7720,10 +7747,15 @@ const buildMenuRead: Flow = {
     const session = await login(PRIMARY_ACCOUNT);
     try {
       const companyName = session.company.name;
-      const { categories } = await session.driver.request<WsRespBuildingCategories>(
+      const answer = await session.driver.request<WsRespBuildingCategories>(
         { type: WsMessageType.REQ_GET_BUILDING_CATEGORIES, companyName },
         WsMessageType.RESP_BUILDING_CATEGORIES,
       );
+      const { categories } = answer;
+      if (categories.length === 0 && answer.companyPathMissing === true) {
+        assertions.untestable('the build menu lists at least one category', COMPANY_FILE_MISSING_REASON);
+        return report('build-menu-read', assertions, [], session);
+      }
       assertions.check('the build menu lists at least one category', categories.length > 0, `${categories.length} categories`);
       if (categories.length === 0) return report('build-menu-read', assertions, [], session);
 

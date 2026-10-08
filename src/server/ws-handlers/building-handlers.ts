@@ -81,13 +81,14 @@ export async function handleGetBuildingCategories(ctx: WsHandlerContext, msg: Ws
   console.log(`[Gateway] Fetching building categories for company: ${req.companyName}`);
 
   await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_UnknownClass, async () => {
-    const categories = await ctx.session.fetchBuildingCategories(req.companyName);
+    const { categories, companyPathMissing } = await ctx.session.fetchBuildingCategories(req.companyName);
     const capitolIconUrl = ctx.session.getCapitolIconUrl();
     const response: WsRespBuildingCategories = {
       type: WsMessageType.RESP_BUILDING_CATEGORIES,
       wsRequestId: msg.wsRequestId,
       categories,
       capitolIconUrl,
+      ...(companyPathMissing ? { companyPathMissing } : {}),
     };
     sendResponse(ctx.ws, response);
   });

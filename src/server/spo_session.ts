@@ -20,7 +20,6 @@ import {
   BuildingFocusInfo,
   WsEventBuildingRefresh,
   WsEventAreaRefresh,
-  BuildingCategory,
   BuildingInfo,
   SurfaceData,
   SurfaceType,
@@ -3139,7 +3138,7 @@ private handlePush(socketName: string, packet: RdoPacket) {
     return buildingTemplatesHandler.fetchClusterFacilities(this, cluster, folder);
   }
 
-  public async fetchBuildingCategories(companyName: string): Promise<BuildingCategory[]> {
+  public async fetchBuildingCategories(companyName: string): Promise<buildingTemplatesHandler.BuildingCategoriesResult> {
     return buildingTemplatesHandler.fetchBuildingCategories(this, companyName);
   }
 
