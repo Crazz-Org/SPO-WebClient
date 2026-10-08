@@ -353,6 +353,31 @@ describe('runRoundTrip', () => {
     expect(result.note).toMatch(/no model-server log line "Setting Tax value:" in .* — the write never reached the object/);
   });
 
+  // #1318: the missing-line detail carries what the log reader saw for the searched window.
+  const DIAG = 'X — offset 7, last tail 416 / 0 B, full read 200 / 9 B';
+
+  it('carries the reader diagnostics in the UNTESTABLE note (#1318)', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue(null);
+    const describeMiss = jest.spyOn(liveLog, 'describeLogMiss').mockReturnValue(DIAG);
+    const result = await runRoundTrip(roundTrip(world('7')), tempLock(), factory, window.url);
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.note).toContain(`${DIAG} — the read-back confirmed "8"`);
+    expect(describeMiss).toHaveBeenCalledWith(window, `no model-server log line "Setting Tax value:" in ${window.url}`);
+  });
+
+  it('carries the reader diagnostics in the FAIL note (#1318)', async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue(null);
+    const describeMiss = jest.spyOn(liveLog, 'describeLogMiss').mockReturnValue(DIAG);
+    const w = world('7');
+    const write = jest.fn(async (v: string) => {
+      w.state.writes.push(v);
+    });
+    const result = await runRoundTrip(roundTrip(w, { write }), tempLock(), factory, window.url, timed());
+    expect(result.status).toBe('FAIL');
+    expect(result.note).toContain(`${DIAG} — the write never reached the object`);
+    expect(describeMiss).toHaveBeenCalledWith(window, expect.stringContaining('no model-server log line'));
+  });
+
   it('never takes a log line that contains the prefix but fails match', async () => {
     jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: Elsewhere, 0, 8');
     const result = await runRoundTrip(roundTrip(world('7')), tempLock(), factory, window.url);
