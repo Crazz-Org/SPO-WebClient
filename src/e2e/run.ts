@@ -19,7 +19,8 @@ import { WorldLock } from './world-lock';
  * Exit codes — matches `EXIT` in scripts/verify-gate.js, and read the same way by
  * `worker.ts`'s `GATE_EXIT_VERDICT`: 0 PASS, 1 FAIL, 2 BLOCKED (refused before driving
  * anything — a dirty world or another live run already in flight — or a flow ended SKIPPED,
- * the second account refused at login), 3 ENVIRONMENT (a
+ * the second account refused at login — or, with an explicit `--flows`, a flow ended
+ * UNTESTABLE), 3 ENVIRONMENT (a
  * preflight abort; does not consume an attempt, doc/E2E-POLICY.md §8).
  */
 const EXIT: Readonly<Record<LiveRunResult['status'], number>> = {
@@ -221,6 +222,9 @@ export async function main(
     argv.find(a => a.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
 
   const named = flagged('flows')?.split(',').filter(Boolean);
+  if (named !== undefined && named.length === 0) {
+    throw new Error('--flows= names no flow — name at least one (e.g. --flows=login-spine), or omit --flows for the nightly set');
+  }
   // The nightly calls with no --flows (`args: []` in bench/nightly.ts): every flow but the
   // gate-only ones, whose action posts a message every online player sees. An explicit list
   // (the gate, `test:live --flows=`) runs exactly what it names, gate-only flows included.
@@ -246,6 +250,11 @@ export async function main(
   // flow keeps its real status and is marked, and a run whose only FAILs are quarantined flows
   // is PASS. A dirty world (releaseError) or any other FAIL still FAILs. An explicit --flows
   // drives and judges a quarantined flow like any other.
+  //
+  // An explicit --flows is a card proving its own flows: a named flow that ended UNTESTABLE
+  // observed nothing and proved nothing, so that run is BLOCKED (exit 2), the flow named (#1184).
+  // The nightly keeps the #1320 rule — UNTESTABLE is listed and never changes the verdict.
+  // runLive and the gate (verify-gate.js calls runLive, not main) are untouched.
   const nightly = named === undefined;
   const flowResults = nightly
     ? result.flows.map(flow => {
@@ -267,13 +276,29 @@ export async function main(
     (nightly && result.stopped === undefined && result.status === 'BLOCKED' && result.flows.some(f => f.status === 'SKIPPED'))
       ? { ...result, flows: flowResults, status: 'PASS' }
       : { ...result, flows: flowResults };
-  const file = path.join(REPORT_DIR, `live-${reported.startedAt.replace(/[:.]/g, '-')}.json`);
+  const untestable = nightly ? [] : reported.flows.filter(f => f.status === 'UNTESTABLE');
+  const judged: LiveRunResult =
+    untestable.length > 0 && (reported.status === 'PASS' || reported.status === 'BLOCKED')
+      ? {
+          ...reported,
+          status: 'BLOCKED',
+          error: [
+            reported.error,
+            `untestable — a flow named by --flows that observed nothing is not a proof: ${untestable
+              .map(f => `${f.name} (${f.untestable.join('; ')})`)
+              .join('; ')}`,
+          ]
+            .filter(Boolean)
+            .join(' | '),
+        }
+      : reported;
+  const file = path.join(REPORT_DIR, `live-${judged.startedAt.replace(/[:.]/g, '-')}.json`);
   fs.mkdirSync(REPORT_DIR, { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(reported, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(file, `${JSON.stringify(judged, null, 2)}\n`, 'utf8');
 
   const notDriven = skipped.map(n => `  gate-only, not driven: ${n} — ${GATE_ONLY[n]}`);
-  out.write(`${[formatSummary(reported, SERVER_QUARANTINE), ...notDriven].join('\n')}\nArtifact: ${file}\n`);
-  return EXIT[reported.status];
+  out.write(`${[formatSummary(judged, SERVER_QUARANTINE), ...notDriven].join('\n')}\nArtifact: ${file}\n`);
+  return EXIT[judged.status];
 }
 
 /**

@@ -9903,7 +9903,8 @@ export function flowByName(name: string): Flow {
  * data behind turns the result FAIL (the restore rule, doc/E2E-POLICY.md §5/§9).
  */
 export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult> {
-  if (!flow.seed) return guardSkip(await runUnseeded(flow, ctx), ctx);
+  const before = new Set(ctx.lock.read().pendingRestores.map(p => p.key));
+  if (!flow.seed) return guardSkip(await runUnseeded(flow, ctx), ctx, before);
 
   let seeded: FlowSeed;
   try {
@@ -9947,16 +9948,19 @@ export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult>
   const seedSkipped = seeded.outcome.skipped !== undefined;
   const leftBehind = cleanup.some(c => !c.ok && !(seedSkipped && c.skipped !== undefined));
   const status = leftBehind ? 'FAIL' : result.status;
-  return guardSkip({ ...result, seed: seeded.outcome, cleanup, status }, ctx);
+  return guardSkip({ ...result, seed: seeded.outcome, cleanup, status }, ctx, before);
 }
 
 /**
  * A skip is only honest before the flow's first write. A `SKIPPED` result while the world
- * lock still holds a pending restore would leave that write behind, so it is a FAIL.
+ * lock still holds a pending restore this flow added would leave that write behind, so it is a
+ * FAIL. `before` is the set of restore keys already pending when the flow started: an earlier
+ * flow's unrestored write is that flow's problem (`lock.release()` marks the world dirty for
+ * it), not grounds to turn this flow's honest skip into a FAIL.
  */
-function guardSkip(result: FlowResult, ctx: FlowContext): FlowResult {
+function guardSkip(result: FlowResult, ctx: FlowContext, before: ReadonlySet<string | undefined>): FlowResult {
   if (result.status !== 'SKIPPED') return result;
-  const pending = ctx.lock.read().pendingRestores.length;
+  const pending = ctx.lock.read().pendingRestores.filter(p => !before.has(p.key)).length;
   if (pending === 0) return result;
   return {
     ...result,

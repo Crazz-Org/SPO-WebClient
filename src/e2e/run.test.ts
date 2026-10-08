@@ -81,7 +81,7 @@ describe('runLive', () => {
     expect(result.flows.map(f => f.name)).toEqual(['login-spine']);
   });
 
-  it('an UNTESTABLE flow never fails the run, and the summary says why', async () => {
+  it('runLive never fails the run on an UNTESTABLE flow (main BLOCKs it only under an explicit --flows), and the summary says why', async () => {
     jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
     jest.spyOn(flowsModule, 'runFlow').mockImplementation(async flow => ({
       ...passingFlow(flow.name),
@@ -732,6 +732,66 @@ describe('main', () => {
     expect(await main(['--flows=login-spine'], async () => failed, sink().stream)).toBe(1);
     const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
     if (fs.existsSync(written)) fs.unlinkSync(written);
+  });
+
+  it('refuses an empty --flows= instead of running nothing', async () => {
+    for (const argv of [['--flows='], ['--flows=,']]) {
+      const runner = jest.fn(async (_options: LiveRunOptions) => result);
+      await expect(main(argv, runner, sink().stream)).rejects.toThrow(/--flows= names no flow/);
+      expect(runner).not.toHaveBeenCalled();
+    }
+  });
+
+  describe('UNTESTABLE flows under an explicit --flows (#1184)', () => {
+    const untestableFlow: flowsModule.FlowResult = {
+      name: 'newspaper-board-read',
+      status: 'UNTESTABLE',
+      assertions: [],
+      untestable: ['no newspaper on the board'],
+      probes: [],
+      messagesSent: 0,
+      messagesReceived: 0,
+      wireErrors: 0,
+    };
+    const okFlow: flowsModule.FlowResult = { ...untestableFlow, name: 'login-spine', status: 'PASS', untestable: [] };
+    const withUntestable: LiveRunResult = { ...result, flows: [okFlow, untestableFlow] };
+    const written = path.join('report', 'e2e', 'live-2026-08-21T10-00-00-000Z.json');
+    afterEach(() => {
+      if (fs.existsSync(written)) fs.unlinkSync(written);
+    });
+
+    it('BLOCKS the run, exit 2, and names the flow', async () => {
+      const out = sink();
+      expect(await main(['--flows=login-spine,newspaper-board-read'], async () => withUntestable, out.stream)).toBe(2);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('BLOCKED');
+      expect(out.text()).toContain('L2 live drive on planitia — BLOCKED');
+      expect(out.text()).toContain('untestable — a flow named by --flows that observed nothing is not a proof');
+      expect(out.text()).toContain('newspaper-board-read (no newspaper on the board)');
+    });
+
+    it('leaves the nightly (no --flows) PASS', async () => {
+      expect(await main([], async () => withUntestable, sink().stream)).toBe(0);
+      expect(JSON.parse(fs.readFileSync(written, 'utf8')).status).toBe('PASS');
+    });
+
+    it('keeps a FAIL beside it a FAIL, exit 1', async () => {
+      const failed: LiveRunResult = { ...withUntestable, status: 'FAIL', flows: [{ ...okFlow, status: 'FAIL' }, untestableFlow] };
+      expect(await main(['--flows=login-spine,newspaper-board-read'], async () => failed, sink().stream)).toBe(1);
+    });
+
+    it('keeps a skip-BLOCKED run BLOCKED and names both the skip and the untestable flow', async () => {
+      const blocked: LiveRunResult = {
+        ...withUntestable,
+        status: 'BLOCKED',
+        error: 'skipped — a flow that did not run is not a pass: permission-negative',
+        flows: [{ ...okFlow, name: 'permission-negative', status: 'SKIPPED', skipped: 'refused' }, untestableFlow],
+      };
+      const out = sink();
+      expect(await main(['--flows=permission-negative,newspaper-board-read'], async () => blocked, out.stream)).toBe(2);
+      const error = JSON.parse(fs.readFileSync(written, 'utf8')).error;
+      expect(error).toContain('skipped — a flow that did not run is not a pass: permission-negative');
+      expect(error).toContain('not a proof: newspaper-board-read');
+    });
   });
 
   describe('a run BLOCKED only by skipped flows', () => {

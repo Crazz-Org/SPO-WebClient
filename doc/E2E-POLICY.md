@@ -402,8 +402,8 @@ distinction is the whole point:
 |---|---|---|
 | a control missing, a request refused by the gateway, a wrong frame, a wrong value read back | a **bug** | `FAIL` — diagnose, fix, iterate (§8) |
 | the server says the account does not hold the role the member needs | a **capability exception** | recorded with its evidence; the gate continues |
-| the flow ran and nothing failed, but could not observe the result: the log line cannot be found or read, the server answers a fault the client can neither cause nor fix, or the world held no data to exercise it on (`UNTESTABLE`) | an **untestable flow** | recorded with its reason, required or not; counts as a pass for the gate and the nightly |
-| the flow needs the optional second account, which was refused at login before the flow's first write (`SKIPPED`) | a **skipped flow** | never a gate `PASS` — `runLive` returns `BLOCKED`, and so does an explicit `--flows`; the no-`--flows` nightly records it and reports `PASS` with the skip listed. A skip after a write is `FAIL` |
+| the flow ran and nothing failed, but could not observe the result: the log line cannot be found or read, the server answers a fault the client can neither cause nor fix, or the world held no data to exercise it on (`UNTESTABLE`) | an **untestable flow** | recorded with its reason, required or not; counts as a pass for the gate and the nightly; a standalone `npm run test:live -- --flows=` proof that names it reports UNTESTABLE as `BLOCKED` (exit 2), the flow named (#1184) |
+| the flow needs the optional second account, which was refused at login before the flow's first write (`SKIPPED`) | a **skipped flow** | never a gate `PASS` — `runLive` returns `BLOCKED`, and so does an explicit `--flows`; the no-`--flows` nightly records it and reports `PASS` with the skip listed. A skip after a write is `FAIL` — a write this flow issued; an earlier flow's unrestored write does not turn a later flow's skip into FAIL |
 
 **`FAIL` is only what the test observed wrong** (maintainer decision 2026-10-05): a wrong value
 read back, a request refused or answered with an error the client caused, a missing control, a
@@ -447,6 +447,10 @@ own error kept in the reason.
   nothing to act on, so the change was not seen working — which is recorded, not hidden.
 - The remedy that turns `UNTESTABLE` into `PASS` is the flow's seed step (#1009), which creates
   the data before the flow runs. It is never an override.
+- **The gate and the standalone proof differ (#1184).** At the gate (`verify-gate.js`, which calls
+  `runLive`) an UNTESTABLE flow never changes the verdict, required or `--flows`-only, and the
+  nightly lists it. A standalone `npm run test:live -- --flows=<flows>` is a card proving its own flows: a named flow that ends UNTESTABLE makes that run `BLOCKED` (exit 2), the summary naming it.
+  An empty `--flows=` is refused, never run as "nothing".
 - `FixtureOutcome`'s internal `unproven` status (`src/e2e/fixtures.ts`) is a fixture state that
   `fixtures-ensure` reports as `UNTESTABLE`, not a flow status.
 - **Every flow runs alone** (#1185, maintainer direction 2026-09-29):
