@@ -127,9 +127,9 @@ Five exemption sets in `src/e2e/routing.ts` record, with a cited reason each (`F
 
 - **`NIGHTLY_ONLY`** lists the flows no routing rule requires — a data-gated flow (a required
   run could only end `UNTESTABLE`), a reading that asserts nothing, or the fixture builder
-  `fixtures-ensure`, which builds only when a fixture is missing (§9). The nightly still runs
-  them; every other flow must be reached by some tracked path. A diff that changes such a
-  flow's own body does require it (below).
+  `fixtures-ensure`, which ensures every kind in one pass and builds only when a fixture is
+  missing (§9). The nightly still runs them; every other flow must be reached by some tracked
+  path. A diff that changes such a flow's own body does require it (below).
 - **`GATE_ONLY`** lists the flows whose action posts a message every online player sees
   (`politics-write`, `Kernel/Population.pas:1264-1284`; `policy-roundtrip`,
   `Kernel/Kernel.pas:11790-11800`; `chat-private-channel`,
@@ -232,8 +232,8 @@ mutations; `runProbe` is its building-property adapter. `road-roundtrip` drives 
 step by step, because a road's undo is two proven writes of its own — a break, then a wipe —
 each shown by its Survival line and a `SegmentsInArea` read-back.
 
-The one mutation left in place is the permanent fixture build (`fixtures-ensure`, §9), proven by
-its line, its result code and the lot read-back.
+The one mutation left in place is the permanent fixture build (§9) — by `fixtures-ensure` or by
+a fixture flow's own seed — proven by its line, its result code and the lot read-back.
 
 **The line proves receipt; the read-back proves the change.** Most handlers log before their
 owner check (e.g. `Kernel/Kernel.pas:4336` -> `:4337`), so a refused write prints its line.
@@ -449,6 +449,11 @@ own error kept in the reason.
   the data before the flow runs. It is never an override.
 - `FixtureOutcome`'s internal `unproven` status (`src/e2e/fixtures.ts`) is a fixture state that
   `fixtures-ensure` reports as `UNTESTABLE`, not a flow status.
+- **Every flow runs alone** (#1185, maintainer direction 2026-09-29):
+  `--flows=login-spine,<flow>` proves it with no other flow before it. A flow opens and closes
+  its own session; a world prerequisite is created by the flow's own seed, or named in its
+  UNTESTABLE reason. The ratchet in `src/e2e/flows.test.ts` runs every `FLOWS` entry alone
+  through `runFlow` and checks that its first request is its own `REQ_AUTH_CHECK`.
 - **A deleted company cache file (#1349).** planitia's Cache Server cleaner
   (`FIVECACHESERVER/CacheClean`) deletes `Companies\<name>.five\` about 6 h after the world
   loads, and the file stays gone until the model server restarts. The three pages that read it
@@ -581,15 +586,20 @@ SPO_test3's own bank fixture and pay it off in the same run.
 Never another player's assets. Never a world-scope value. Every mutation is restored in
 the same run (§5).
 
-**Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29, the
-nightly-only flow `fixtures-ensure` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
+**Permanent fixtures — the one exception.** Sanctioned by the maintainer on 2026-09-29,
+`ensureFixtures` (#1149, `src/e2e/fixtures.ts`) keeps one facility of each
 kind the owner-setter flows need — `industry`, `store`, `warehouse`, `residential`, `research`,
-`bank`, `tv`, `chemical` — owned by *SPO_test3 - Green* in Helartia. It builds a kind only when it is
-missing, once, and keeps it. Fixtures are found **by kind at run time** (`findFixture`: the
+`bank`, `tv`, `chemical` — owned by *SPO_test3 - Green* in Helartia. Two callers build them: the
+nightly-only flow `fixtures-ensure`, for every kind, and each fixture flow's own seed, for the kinds
+it reads (#1185) — so a gate-routed fixture flow may build its missing fixture (sanction:
+maintainer direction 2026-09-29, given in session). Either builds a kind only when it is missing,
+once, and keeps it. Fixtures are found **by kind at run time** (`findFixture`: the
 directory's tycoon branch, then the lot's owner and the inspector's template groups), never by
 coordinates committed to the tree — the world moves. A build is proven by its `New Facility:`
 line, result code 0 and the lot read-back. While SPO_test3 owns a construction site in Helartia,
-the flow places nothing: a site cannot be tied to a kind. A mausoleum is never a fixture
+neither places anything: a site cannot be tied to a kind. A fixture a seed places is still under
+construction in that run — the flow ends UNTESTABLE `under construction`; a later run finds it
+finished. A mausoleum is never a fixture
 (placing one flags its owner to transcend, which resets the tycoon, `Kernel/Kernel.pas:10127-10128`),
 and neither is a studio. `industry` and `chemical` carry the same template groups, so they are told
 apart by `facId`: `chemical` takes only a Chemical Plant (`FID_Chemical` = 44,

@@ -4,10 +4,11 @@
  * The owner-setter flows need an owned, **finished** facility whose inspector template carries
  * the kind's groups. This module finds one by kind at run time (`findFixture`) — never by
  * coordinates committed to the tree, because the world moves — and `ensureFixtures` builds each
- * missing kind once. That build is the one permanent mutation the maintainer sanctioned
- * (2026-09-29, doc/E2E-POLICY.md §9): nothing here is restored. A kind locked behind research
- * gets one research step per run instead (#1233, RESEARCH_UNLOCKS) — permanent setup data too
- * (maintainer, 2026-10-01): never cancelled, no pending restore.
+ * missing kind once — called by `fixtures-ensure` for every kind, and by each fixture flow's own
+ * seed for the kinds it reads (#1185). That build is the permanent fixture build the maintainer
+ * sanctioned (2026-09-29, doc/E2E-POLICY.md §9): nothing here is restored. A kind locked behind
+ * research gets one research step per run instead (#1233, RESEARCH_UNLOCKS) — permanent setup
+ * data too (maintainer, 2026-10-01): never cancelled, no pending restore.
  *
  * The placement helpers (`listBuildable`, `findFreeLot`, `placeFacility`) are exported for the
  * build-and-demolish flow (#1150).
@@ -825,20 +826,25 @@ export function newFacilityLineMatches(line: string, facilityClass: string, comp
 const SITE_REASON = `SPO_test3 owns a construction site in ${GOVERNED_TOWN}; a site cannot be tied to a class`;
 
 /**
- * Find each kind; build each missing one once. Never places while SPO_test3 owns a construction
+ * Find each kind of `kinds` (every kind by default); build each missing one once. A fixture
+ * flow's seed passes only its own kinds (#1185). Never places while SPO_test3 owns a construction
  * site in Helartia — a site left by an earlier run cannot be attributed to a kind, so a build then
  * could duplicate a permanent fixture. The attribution is never taken from
  * `FacilityDimensions.facId`: whether a construction class carries it is [UNKNOWN].
  */
-export async function ensureFixtures(session: LiveSession, deps: FixtureDeps = {}): Promise<FixtureOutcome[]> {
+export async function ensureFixtures(
+  session: LiveSession,
+  deps: FixtureDeps = {},
+  kinds: readonly FixtureKind[] = FIXTURE_KINDS,
+): Promise<FixtureOutcome[]> {
   const { holdings, sites } = await scanHoldings(session);
   const outcomes = new Map<FixtureKindId, FixtureOutcome>();
-  for (const kind of FIXTURE_KINDS) {
+  for (const kind of kinds) {
     const hit = pickFixture(holdings, [], kind).found;
     if (hit) outcomes.set(kind.id, { kind: kind.id, status: 'found', x: hit.x, y: hit.y, visualClass: hit.visualClass });
   }
-  const ordered = (): FixtureOutcome[] => FIXTURE_KINDS.map(k => outcomes.get(k.id) as FixtureOutcome);
-  const absent = FIXTURE_KINDS.filter(k => !outcomes.has(k.id));
+  const ordered = (): FixtureOutcome[] => kinds.map(k => outcomes.get(k.id) as FixtureOutcome);
+  const absent = kinds.filter(k => !outcomes.has(k.id));
   if (absent.length === 0) return ordered();
 
   // Construction guard: the directory's sites, and every owned construction lot in the window.
