@@ -1414,6 +1414,9 @@ async function getGatePaths(
  * SetPath resolves through the world spool and releases whatever the object
  * held (Cache Server/CachedObjectWrap.pas:156-168), so it needs no reset first,
  * and it leaves the object on the gate afterwards.
+ *
+ * `headerOnly` stops after the header: the count comes from `cnxCount` and the
+ * gate is built with no connection rows.
  */
 async function fetchGateDetails<T>(
   ctx: SessionContext,
@@ -1421,6 +1424,7 @@ async function fetchGateDetails<T>(
   path: string,
   name: string,
   spec: GateSpec<T>,
+  headerOnly = false,
 ): Promise<T | null> {
   const setPathPacket = await ctx.sendRdoRequest('map', rdoCall(
     'SetPath', tempObjectId, RdoValue.string(path),
@@ -1434,7 +1438,9 @@ async function fetchGateDetails<T>(
   const header = await ctx.cacherGetPropertyList(tempObjectId, [...spec.headerProps]);
   const connectionCount = parseInt(header[gateCnxCountIndex(spec)] || '0', 10);
 
-  const connections = await fetchGateConnections(ctx, tempObjectId, path, spec, connectionCount);
+  const connections: BuildingConnectionData[] = headerOnly
+    ? []
+    : await fetchGateConnections(ctx, tempObjectId, path, spec, connectionCount);
 
   return spec.buildGate(path, name, header, connectionCount, connections);
 }
@@ -1552,6 +1558,7 @@ export async function getBuildingGateConnections(
   path: string,
   name: string,
   visualClass?: string,
+  headerOnly = false,
 ): Promise<{ supply?: BuildingSupplyData; product?: BuildingProductData }> {
   let inspector = getActiveInspector(ctx, x, y);
 
@@ -1572,10 +1579,10 @@ export async function getBuildingGateConnections(
     // (Cache Server/CachedObjectWrap.pas:156-168). One round-trip saved per
     // click, and the next tab load resets the object itself.
     if (tabId === 'supplies') {
-      const supply = await fetchGateDetails(ctx, tempObjectId, path, name, SUPPLY_GATES);
+      const supply = await fetchGateDetails(ctx, tempObjectId, path, name, SUPPLY_GATES, headerOnly);
       return supply ? { supply } : {};
     }
-    const product = await fetchGateDetails(ctx, tempObjectId, path, name, PRODUCT_GATES);
+    const product = await fetchGateDetails(ctx, tempObjectId, path, name, PRODUCT_GATES, headerOnly);
     return product ? { product } : {};
   } finally {
     release();

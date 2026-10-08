@@ -215,9 +215,14 @@ export async function handleBuildingGateConnections(ctx: WsHandlerContext, msg: 
   const req = msg as WsReqBuildingGateConnections;
 
   await withErrorHandler(ctx.ws, msg.wsRequestId, ErrorCodes.ERROR_FacilityNotFound, async () => {
-    const gate = await ctx.session.getBuildingGateConnections(
-      req.x, req.y, req.tabId, req.path, req.name, req.visualClass,
-    );
+    const headerOnly = req.headerOnly === true;
+    const gate = headerOnly
+      ? await ctx.session.getBuildingGateConnections(
+        req.x, req.y, req.tabId, req.path, req.name, req.visualClass, true,
+      )
+      : await ctx.session.getBuildingGateConnections(
+        req.x, req.y, req.tabId, req.path, req.name, req.visualClass,
+      );
 
     const response: WsRespBuildingGateConnections = {
       type: WsMessageType.RESP_BUILDING_GATE_CONNECTIONS,
@@ -226,6 +231,7 @@ export async function handleBuildingGateConnections(ctx: WsHandlerContext, msg: 
       y: req.y,
       tabId: req.tabId,
       path: req.path,
+      ...(headerOnly ? { headerOnly: true } : {}),
       ...gate,
     };
     sendResponse(ctx.ws, response);

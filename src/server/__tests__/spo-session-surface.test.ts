@@ -685,6 +685,13 @@ const DELEGATIONS: readonly Delegation[] = [
     result: { groups: {} },
   },
   {
+    method: 'getBuildingGateConnections',
+    install: () => jest.spyOn(buildingDetailsHandler, 'getBuildingGateConnections'),
+    call: s => s.getBuildingGateConnections(706, 436, 'supplies', 'Seg0', 'Books', 'CarFactoryA', true),
+    forwarded: [706, 436, 'supplies', 'Seg0', 'Books', 'CarFactoryA', true],
+    result: {},
+  },
+  {
     method: 'refreshBuildingProperties',
     install: () => jest.spyOn(buildingDetailsHandler, 'refreshBuildingProperties'),
     call: s => s.refreshBuildingProperties(706, 436, 'CarFactoryA', 'supplies'),
@@ -762,7 +769,9 @@ describe('StarpeaceSession — handler delegation', () => {
     // 81: `getActiveResearchStatus`, issue 887.
     // 82: `readFacilityStatusBatch`, REQ_FACILITY_STATUS_BATCH, issue 1335.
     // Contract changed by #1335: the pinned count goes 81 -> 82 for the new delegation.
-    expect(DELEGATIONS).toHaveLength(82);
+    // 83: `getBuildingGateConnections`, now forwarding `headerOnly`, issue 1347.
+    // Contract changed by #1347: the pinned count goes 82 -> 83 for the newly covered delegation.
+    expect(DELEGATIONS).toHaveLength(83);
     expect(new Set(DELEGATIONS.map(d => d.method)).size).toBe(DELEGATIONS.length);
   });
 
