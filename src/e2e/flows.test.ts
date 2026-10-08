@@ -22,7 +22,7 @@ import {
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR, NEVER_FOCUSED_FACILITY_ID,
   bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
   RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent,
-  type Flow, type FlowResult, type GateLinks,
+  type Flow, type FlowContext, type FlowResult, type GateLinks,
 } from './flows';
 import { parseBuildingFocusResponse } from '@/server/map-parsers';
 import { ERROR_AccessDenied, ERROR_FacilityNotFound } from '@/shared/error-codes';
@@ -314,22 +314,53 @@ describe('runFlow and a SKIPPED flow', () => {
     expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused` });
   });
 
-  it('turns a skip into a FAIL while the lock holds a pending restore', async () => {
-    const lock = cleanLock();
-    lock.addPendingRestore({ what: 'tax', x: 1, y: 2, propertyName: 'Tax0', originalValue: '5' });
-    const result = await runFlow(skipping, { lock });
+  const restore = (key: string) => ({ key, what: 'tax', x: 1, y: 2, propertyName: 'Tax0', originalValue: '5' });
+  const writingThenSkipping = (key: string): Flow => ({
+    ...skipping,
+    run: async (c: FlowContext) => {
+      c.lock.addPendingRestore(restore(key));
+      return skipping.run(c);
+    },
+  });
+  const seededSkip = (key?: string): Flow => ({
+    ...skipping,
+    seed: async (c: FlowContext) => {
+      if (key) c.lock.addPendingRestore(restore(key));
+      return { outcome: { what: 'plant', ok: false, skipped: `${SECONDARY_NAME} refused` } };
+    },
+  });
+
+  it('turns a skip into a FAIL while the lock holds a pending restore the flow itself added', async () => {
+    const result = await runFlow(writingThenSkipping('k1'), { lock: cleanLock() });
     expect(result.status).toBe('FAIL');
     expect(result.error).toMatch(`skipped after a write (${SECONDARY_NAME} refused) — 1 pending restore`);
   });
 
-  it('turns a seeded flow\'s skip into a FAIL while the lock holds a pending restore', async () => {
-    const lock = cleanLock();
-    lock.addPendingRestore({ what: 'tax', x: 1, y: 2, propertyName: 'Tax0', originalValue: '5' });
-    const result = await runFlow(
-      { ...skipping, seed: async () => ({ outcome: { what: 'plant', ok: false, skipped: `${SECONDARY_NAME} refused` } }) },
-      { lock },
-    );
+  it('turns a seeded flow\'s skip into a FAIL while the lock holds a pending restore its seed added', async () => {
+    const result = await runFlow(seededSkip('k1'), { lock: cleanLock() });
     expect(result.status).toBe('FAIL');
+  });
+
+  it('keeps a skip SKIPPED when the only pending restore is an earlier flow\'s', async () => {
+    const lock = cleanLock();
+    lock.addPendingRestore(restore('earlier'));
+    const result = await runFlow(skipping, { lock });
+    expect(result).toMatchObject({ status: 'SKIPPED', skipped: `${SECONDARY_NAME} refused` });
+  });
+
+  it('keeps a seeded flow\'s skip SKIPPED when the only pending restore is an earlier flow\'s', async () => {
+    const lock = cleanLock();
+    lock.addPendingRestore(restore('earlier'));
+    const result = await runFlow(seededSkip(), { lock });
+    expect(result.status).toBe('SKIPPED');
+  });
+
+  it('counts only the restores this flow added when an earlier one is also held', async () => {
+    const lock = cleanLock();
+    lock.addPendingRestore(restore('earlier'));
+    const result = await runFlow(writingThenSkipping('mine'), { lock });
+    expect(result.status).toBe('FAIL');
+    expect(result.error).toMatch('— 1 pending restore(s) still held');
   });
 });
 
