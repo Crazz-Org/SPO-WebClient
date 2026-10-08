@@ -209,6 +209,7 @@ import {
   type FixtureKindId,
   type FixtureOutcome,
   type Holding,
+  type TycoonFacility,
 } from './fixtures';
 
 /** Moved to ./research (#1233) — re-exported for research-roundtrip's tests. */
@@ -3561,6 +3562,22 @@ function supplierGate(r: ConnectionSearchResult): string {
 }
 
 /**
+ * One REQ_PROFILE_AUTOCONNECTION_ACTION, as the initial-suppliers page sends it. `success` is
+ * ignored; the page read-back is the judge (doc/E2E-POLICY.md §5).
+ */
+async function autoConnectionAction(
+  session: LiveSession,
+  action: AutoConnectionActionType,
+  fluidId: string,
+  suppliers?: string,
+): Promise<void> {
+  await session.driver.request<WsRespProfileAutoConnectionAction>(
+    { type: WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION, action, fluidId, suppliers },
+    WsMessageType.RESP_PROFILE_AUTOCONNECTION_ACTION,
+  );
+}
+
+/**
  * The initial suppliers, change-then-undo (#1146): flip the Trade Center switch, flip the
  * only-warehouses switch on a storable fluid, then add one default supplier not already listed
  * and delete it. None of these members broadcasts (Kernel/Kernel.pas:11679-11766).
@@ -3590,13 +3607,8 @@ const autoConnectionRoundTrip: Flow = {
       const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
       const fluidOf = async (fluidId: string) =>
         (await readAutoConnections(session)).fluids.find(f => f.fluidId === fluidId);
-      const act = async (action: AutoConnectionActionType, fluidId: string, suppliers?: string): Promise<void> => {
-        // `success` is ignored; the page read-back is the judge (doc/E2E-POLICY.md §5).
-        await session.driver.request<WsRespProfileAutoConnectionAction>(
-          { type: WsMessageType.REQ_PROFILE_AUTOCONNECTION_ACTION, action, fluidId, suppliers },
-          WsMessageType.RESP_PROFILE_AUTOCONNECTION_ACTION,
-        );
-      };
+      const act = (action: AutoConnectionActionType, fluidId: string, suppliers?: string): Promise<void> =>
+        autoConnectionAction(session, action, fluidId, suppliers);
       const readBackWhy =
         `${PAGE_AUTOCONNECTIONS} reads the object cache (NewTycoon/TycoonAutoConnections.asp:3,12,29), ` +
         'refreshed by the member with BackgroundInvalidateCache — OB-29 lag, so the poll is bounded';
@@ -5011,6 +5023,7 @@ function gateConnections(
   fx: OwnFixture,
   tabId: 'supplies' | 'products',
   stub: GateStub,
+  headerOnly = false,
 ): Promise<WsRespBuildingGateConnections> {
   return session.driver.request<WsRespBuildingGateConnections>(
     {
@@ -5021,6 +5034,7 @@ function gateConnections(
       path: stub.path,
       name: stub.name,
       visualClass: fx.visualClass,
+      ...(headerOnly ? { headerOnly: true } : {}),
     },
     WsMessageType.RESP_BUILDING_GATE_CONNECTIONS,
   );
@@ -5344,6 +5358,22 @@ async function readIndustryGates(session: LiveSession, fx: OwnFixture, assertion
         typeof gate.connectionCount === 'number' &&
         Array.isArray(gate.connections),
       gate ? `metaFluid ${gate.metaFluid ?? '(none)'}, ${String(gate.connectionCount)} connection(s)` : 'no gate in the answer',
+    );
+    if (gate === undefined) continue;
+    // #1347: the same gate, header only — the count without the rows.
+    const lite = await gateConnections(session, fx, tabId, stubs[0], true);
+    const liteGate = tabId === 'supplies' ? lite.supply : lite.product;
+    const label = `${tabId} gate "${stubs[0].name}" headerOnly`;
+    assertions.check(`${label}: the answer echoes headerOnly`, lite.headerOnly === true, `headerOnly ${String(lite.headerOnly)}`);
+    assertions.check(
+      `${label}: connections is empty`,
+      liteGate !== undefined && liteGate.connections.length === 0,
+      liteGate ? `${liteGate.connections.length} row(s)` : 'no gate in the answer',
+    );
+    assertions.check(
+      `${label}: connectionCount equals the full read's`,
+      liteGate?.connectionCount === gate.connectionCount,
+      `header-only ${String(liteGate?.connectionCount)}, full ${String(gate.connectionCount)}`,
     );
   }
 }
@@ -6040,19 +6070,25 @@ function connectionList(keys: string[]): string {
 }
 
 /**
- * The search results a hire may pick: SPO_test3's own company, in Helartia (or no town given),
- * not already connected to the gate, and not the fixture itself.
+ * The search results a hire may pick: owned by `owner` (a search row's company column is the
+ * owner's name — `searchOwn`), on `lot`, in Helartia (or no town given), not already connected to
+ * the gate, and not the fixture itself. The owner filter reaches every company of the tycoon,
+ * shared fixtures included, so only the expected counterpart's lot is kept; `ownLotRefusal` stays
+ * the last check (`runHire`).
  */
 export function hireCandidates(
   results: ConnectionSearchResult[],
   connected: BuildingConnectionData[],
-  ownCompany: string,
+  owner: string,
   fx: { x: number; y: number },
+  lot: { x: number; y: number },
 ): ConnectionSearchResult[] {
   const linked = new Set(connected.map(c => `${c.x},${c.y}`));
   return results.filter(
     r =>
-      r.companyName === ownCompany &&
+      sameName(r.companyName, owner) &&
+      r.x === lot.x &&
+      r.y === lot.y &&
       (!r.town || r.town === GOVERNED_TOWN) &&
       !linked.has(`${r.x},${r.y}`) &&
       !(r.x === fx.x && r.y === fx.y),
@@ -6139,14 +6175,41 @@ export function companyDemandUnits(p: number, max: number): number {
   return Math.ceil((p * max) / 100);
 }
 
-/** (x, y) is one of the tycoon's initial suppliers — `facilityId` is `"x,y,"` (auto-connection-handler.ts). */
-export function initialSupplierAt(data: AutoConnectionsData, x: number, y: number): boolean {
-  return data.fluids.some(f =>
-    f.suppliers.some(s => {
-      const [sx, sy] = s.facilityId.split(',');
-      return Number(sx) === x && Number(sy) === y;
-    }),
+/** One initial-supplier row: its fluid and the page's `facilityId`, verbatim. */
+export interface InitialSupplierRow {
+  fluidId: string;
+  facilityId: string;
+}
+
+/**
+ * The initial-supplier rows of the facility at (x, y), one per fluid that lists it. `facilityId`
+ * is `"x,y,"` (auto-connection-handler.ts) and is kept as the page gives it: `ParseGateList`
+ * needs the trailing comma (Kernel/Kernel.pas:4277-4302).
+ */
+export function initialSupplierRowsAt(data: AutoConnectionsData, x: number, y: number): InitialSupplierRow[] {
+  return data.fluids.flatMap(f =>
+    f.suppliers
+      .filter(s => {
+        const [sx, sy] = s.facilityId.split(',');
+        return Number(sx) === x && Number(sy) === y;
+      })
+      .map(s => ({ fluidId: f.fluidId, facilityId: s.facilityId })),
   );
+}
+
+/** (x, y) is one of the tycoon's initial suppliers. */
+export function initialSupplierAt(data: AutoConnectionsData, x: number, y: number): boolean {
+  return initialSupplierRowsAt(data, x, y).length > 0;
+}
+
+/**
+ * `RDODelAutoConnection` for each row (DeleteDefaultSupplier.asp:11-14 → `TTycoon.RDODelAutoConnection`,
+ * Kernel/Kernel.pas:11689): `ModifyAutoConnection` removes the facility found at the row's
+ * coordinates and invalidates the tycoon's cache (:11640-11676). Deleting a facility the list no
+ * longer holds is a no-op (`TCollection.Delete`, Kernel/Collection.pas:235-242).
+ */
+async function deleteInitialSupplierRows(session: LiveSession, rows: readonly InitialSupplierRow[]): Promise<void> {
+  for (const r of rows) await autoConnectionAction(session, 'delete', r.fluidId, r.facilityId);
 }
 
 /** The initial-supplier list's identity: sorted `fluidId:facilityId` entries. */
@@ -6175,7 +6238,18 @@ async function setPropertySlow(
   );
 }
 
-/** A connection search the way the hire dialogs send it, restricted to Helartia and SPO_test3's own company. */
+/**
+ * A connection search the way the hire dialogs send it, restricted to Helartia and SPO_test3 as
+ * owner. `filters.company` is the cache's `Name` argument (Cache Server/CacheServerReportForm.pas:108-109,
+ * :217-233), matched against the Company segment of the link-file names (Cache/OutputSearch.pas:166-171,
+ * Cache/InputSearch.pas:111-115). `CreateOutputLink` / `CreateInputLink` (Cache/MSObjectCacher.pas:430-480)
+ * fill that segment with the owner's name, `Block.Facility.Company.Owner.Name`
+ * (Kernel/KernelCache.pas:514-516, :526 inputs; :657-659, :669 outputs), and a row's company column
+ * is that same segment (Cache/OutputSearch.pas:81, Cache/InputSearch.pas:74; Cache Server/OutputSearchWrap.pas:33,
+ * Cache Server/InputSearchWrap.pas:39). Voyager labels the field "Owner"
+ * (Voyager/URLHandlers/OutputSearchHandlerViewer.pas:261, InputSearchHandlerViewer.pas:194). A company
+ * name ("SPO_test3 - Green") matches nothing.
+ */
 async function searchOwn(
   session: LiveSession,
   fx: OwnFixture,
@@ -6189,7 +6263,7 @@ async function searchOwn(
       buildingY: fx.y,
       fluidId,
       direction,
-      filters: { town: GOVERNED_TOWN, company: session.company.name },
+      filters: { town: GOVERNED_TOWN, company: PRIMARY_ACCOUNT.username },
     },
     WsMessageType.RESP_SEARCH_CONNECTIONS,
   );
@@ -6224,12 +6298,12 @@ const FOREIGN_WHY = 'hiring anyone else writes their gate (Kernel/Kernel.pas:678
 
 /**
  * The connection searches the hire dialogs send, read only: one input fluid of the industry
- * fixture, Helartia and SPO_test3's own company, then the road reachability of the first results.
+ * fixture, Helartia and SPO_test3 as owner (`searchOwn`), then the road reachability of the first results.
  */
 const supplierSearchRead: Flow = {
   name: 'supplier-search-read',
   what:
-    "REQ_SEARCH_CONNECTIONS for one input fluid of SPO_test3's industry fixture (Helartia, own company) -> " +
+    "REQ_SEARCH_CONNECTIONS for one input fluid of SPO_test3's industry fixture (Helartia, owner SPO_test3) -> " +
     'REQ_CONNECTION_REACHABILITY for the first candidates — no write',
   // Its seed may build a permanent fixture (#1185).
   mutates: true,
@@ -6301,6 +6375,130 @@ const supplierSearchRead: Flow = {
     }
   },
 };
+
+/** What a read of the chemical fixture shows that a reset must remove — or could not see. */
+interface ChemicalLinks {
+  /** Own suppliers, by supply fluid. */
+  ownSupplies: { fluid: string; keys: string[] }[];
+  /** Own clients, as `<gate>: <linkLabel>`. */
+  ownClients: string[];
+  /** The plant's rows in the initial-supplier list. */
+  initialSupplier: InitialSupplierRow[];
+  /** Gates (or the initial-supplier list) that could not be read in full. */
+  unread: string[];
+}
+
+function chemicalClean(s: ChemicalLinks): boolean {
+  return s.ownSupplies.length === 0 && s.ownClients.length === 0 && s.initialSupplier.length === 0 && s.unread.length === 0;
+}
+
+/** What is left; `delSent` names an entry that outlived an `RDODelAutoConnection` as such. */
+function chemicalRemains(s: ChemicalLinks, delSent: boolean): string {
+  const entry = delSent ? 'initial supplier (still listed after RDODelAutoConnection)' : 'initial supplier';
+  return [
+    ...s.ownSupplies.map(g => `${g.fluid} from ${g.keys.join(' ')}`),
+    ...s.ownClients.map(c => `client ${c}`),
+    ...(s.initialSupplier.length > 0 ? [entry] : []),
+    ...s.unread.map(u => `unread ${u}`),
+  ].join(' | ');
+}
+
+/**
+ * Bring the chemical fixture back to no own link (#1293) before a link flow uses it. A new plant
+ * arrives linked: its inputs are hired to the tycoon's initial suppliers (`TTycoon.AutoConnectFacility`,
+ * Kernel/Kernel.pas:12346-12390) and every own warehouse is linked both ways (`SearchOwner`,
+ * Kernel/World.pas:5216-5238). Only the four link flows use this fixture, so this is self-heal of
+ * an isolated target (maintainer rule 2026-10-01, #1236): reset from whatever state it is found in,
+ * no pending restore. Every link removed has an SPO_test3 facility on both ends, and a disconnect
+ * removes both sides (`TGate.DisconnectFrom`, Kernel/Kernel.pas:6794-6799). `RDODisconnectFromTycoon`
+ * drops the plant's outputs from every own facility's matching input (:4581-4600) and, by its
+ * RemoveAsDefault flag, calls `UnregisterSupplier` (:4606-4607). That alone was observed not to
+ * clear the initial-supplier entry live: on 2026-10-07 it logged `OK.` 8 times (Survival log,
+ * 2:27:29-2:51:56) while TycoonAutoConnections.asp kept listing the plant for 24 minutes — past the
+ * tycoon cache's 5-minute TTL (Kernel/KernelCache.pas:964), so the model kept (or regained) the
+ * entry; why was not identified without probing. So each row the plant holds is also deleted the
+ * way the reference client deletes one, `RDODelAutoConnection` with the page's `facilityId`
+ * (`deleteInitialSupplierRows`): it removes by `FacilityAt` and invalidates the tycoon's cache
+ * (:11640-11676), which covers both a kept entry and a stale page. `RDODisconnectInput` carries own
+ * keys only — a foreign link is never touched (FOREIGN_WHY). Returns false after recording the flow
+ * untestable; one retry.
+ */
+async function resetChemical(
+  session: LiveSession,
+  fx: OwnFixture,
+  ctx: FlowContext,
+  assertions: Assertions,
+  member: string,
+): Promise<boolean> {
+  const own = await listTycoonFacilities(session);
+  const ownCompanies = new Set(own.companies);
+  const ownLots = new Set(own.facilities.map(f => `${f.x},${f.y}`));
+  const isOwn = (c: BuildingConnectionData): boolean => ownCompanies.has(c.companyName) || ownLots.has(`${c.x},${c.y}`);
+
+  const readState = async (): Promise<ChemicalLinks> => {
+    const state: ChemicalLinks = { ownSupplies: [], ownClients: [], initialSupplier: [], unread: [] };
+    for (const stub of await gateStubs(session, fx, 'supplies')) {
+      const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
+      if (!supply?.metaFluid || supply.connectionCount !== supply.connections.length) {
+        state.unread.push(`supplies:${stub.name}`);
+        continue;
+      }
+      const keys = [...new Set(supply.connections.filter(isOwn).map(c => `${c.x},${c.y}`))];
+      if (keys.length > 0) state.ownSupplies.push({ fluid: supply.metaFluid, keys });
+    }
+    for (const stub of await gateStubs(session, fx, 'products')) {
+      const product = (await gateConnections(session, fx, 'products', stub)).product;
+      if (!product || product.connectionCount !== product.connections.length) {
+        state.unread.push(`products:${stub.name}`);
+        continue;
+      }
+      for (const c of product.connections) if (isOwn(c)) state.ownClients.push(`${stub.name}: ${linkLabel(c)}`);
+    }
+    try {
+      state.initialSupplier = initialSupplierRowsAt(await readAutoConnections(session), fx.x, fx.y);
+    } catch (err: unknown) {
+      state.unread.push(`initial suppliers: ${toErrorMessage(err)}`);
+    }
+    return state;
+  };
+
+  let delSent = false;
+  const apply = async (state: ChemicalLinks): Promise<void> => {
+    if (state.initialSupplier.length > 0 || state.ownClients.length > 0) {
+      await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: WAREHOUSES_KIND });
+    }
+    if (state.initialSupplier.length > 0) {
+      await deleteInitialSupplierRows(session, state.initialSupplier);
+      delSent = true;
+    }
+    for (const g of state.ownSupplies) {
+      await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectInput', '0', {
+        fluidId: g.fluid,
+        connectionList: connectionList(g.keys),
+      });
+    }
+  };
+
+  const first = await readState();
+  if (first.unread.length > 0) {
+    assertions.untestable(
+      member,
+      `chemical fixture reset: cannot see every link of ${fixtureLabel(fx)} — ${first.unread.join(' | ')}; nothing sent`,
+    );
+    return false;
+  }
+  if (chemicalClean(first)) return true;
+
+  let last = first;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await apply(last);
+    const polled = await pollUntil(readState, chemicalClean, ctx);
+    if (polled.ok) return true;
+    last = polled.last;
+  }
+  assertions.untestable(member, `chemical fixture reset did not take: ${chemicalRemains(last, delSent)}`);
+  return false;
+}
 
 /** The first facility linked on a gate of the fixture, supply gates first, with that gate's fluid and direction. */
 async function firstLinkedFacility(
@@ -6493,9 +6691,12 @@ interface HireSide {
 }
 
 /**
- * Hire one own counterpart on a gate of the industry fixture, then fire it. The candidate is
- * SPO_test3's own facility in Helartia and not already connected; the gate must list exactly its
- * snapshot again after the undo.
+ * Hire one own counterpart on a gate of the industry fixture, then fire it. The chemical fixture
+ * (#1293) is reset first (`resetChemical`) and is the only counterpart taken: Chemicals for a supplier,
+ * Raw Chemicals for a client. The search is filtered by owner (`searchOwn`), which reaches every
+ * SPO_test3 company, shared fixtures included — so the candidate must be the chemical fixture's lot,
+ * in Helartia and not already connected (`hireCandidates`), and its lot's owner is read back last
+ * (`ownLotRefusal`); the gate must list exactly its snapshot again after the undo.
  */
 async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
   const assertions = new Assertions();
@@ -6504,6 +6705,9 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
   try {
     const fx = await ownFixture(session, 'industry', assertions);
     if (!fx) return report(side.flow, assertions, probes, session);
+    const chem = await ownFixture(session, 'chemical', assertions);
+    if (!chem) return report(side.flow, assertions, probes, session);
+    if (!(await resetChemical(session, chem, ctx, assertions, side.connect))) return report(side.flow, assertions, probes, session);
 
     const refusals: string[] = [];
     let target: { name: string; fluid: string; candidate: ConnectionSearchResult } | undefined;
@@ -6523,9 +6727,12 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
       }
       const search = await searchOwn(session, fx, gate.metaFluid, side.direction);
       const results = search.results ?? [];
-      const candidates = hireCandidates(results, gate.connections, session.company.name, fx);
+      const candidates = hireCandidates(results, gate.connections, PRIMARY_ACCOUNT.username, fx, chem);
       if (candidates.length === 0) {
-        refusals.push(`${stub.name}: no own ${side.role} in ${GOVERNED_TOWN} not already connected (${results.length} result(s))`);
+        refusals.push(
+          `${stub.name}: no ${side.role} on ${fixtureLabel(chem)} in ${GOVERNED_TOWN} not already connected ` +
+            `(${results.length} result(s) for owner ${PRIMARY_ACCOUNT.username})`,
+        );
         continue;
       }
       for (const candidate of candidates) {
@@ -6541,7 +6748,7 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
     if (!target) {
       assertions.untestable(
         side.connect,
-        `no ${side.role} of SPO_test3's own company in ${GOVERNED_TOWN} for any ${side.tab} gate of the industry ` +
+        `no ${side.role} owned by ${PRIMARY_ACCOUNT.username} on the chemical fixture's lot in ${GOVERNED_TOWN} for any ${side.tab} gate of the industry ` +
           `fixture — ${FOREIGN_WHY}: ${refusals.length > 0 ? refusals.join(' | ') : `the fixture lists no ${side.tab} gate`}`,
       );
       return report(side.flow, assertions, probes, session);
@@ -6615,12 +6822,12 @@ async function runHire(side: HireSide, ctx: FlowContext): Promise<FlowResult> {
   }
 }
 
-/** Hire an own supplier on an input gate of the industry fixture, then fire it. NIGHTLY_ONLY (routing.ts). */
+/** Hire an own supplier (the chemical fixture, searched by owner) on an input gate of the industry fixture, then fire it. NIGHTLY_ONLY (routing.ts). */
 const supplierHireFire: Flow = {
   name: 'supplier-hire-fire',
   what:
-    "hire an own supplier (Helartia, SPO_test3's company) on an input of the industry fixture -> Input connected: " +
-    'line + the gate lists it -> fire it -> the gate lists exactly its snapshot',
+    "reset the chemical fixture, then hire an own supplier (Helartia, owner SPO_test3; only the chemical fixture's lot " +
+    'taken) on an input of the industry fixture -> Input connected: line + the gate lists it -> fire it -> the gate lists exactly its snapshot',
   mutates: true,
   seed: fixtureSeed('industry'),
   run: ctx =>
@@ -6639,12 +6846,12 @@ const supplierHireFire: Flow = {
     ),
 };
 
-/** Add an own client on an output gate of the industry fixture, then remove it. NIGHTLY_ONLY (routing.ts). */
+/** Add an own client (the chemical fixture, searched by owner) on an output gate of the industry fixture, then remove it. NIGHTLY_ONLY (routing.ts). */
 const clientHireRemove: Flow = {
   name: 'client-hire-remove',
   what:
-    "add an own client (Helartia, SPO_test3's company) on an output of the industry fixture -> Output connected: " +
-    'line + the gate lists it -> remove it -> the gate lists exactly its snapshot',
+    "reset the chemical fixture, then add an own client (Helartia, owner SPO_test3; only the chemical fixture's lot " +
+    'taken) on an output of the industry fixture -> Output connected: line + the gate lists it -> remove it -> the gate lists exactly its snapshot',
   mutates: true,
   seed: fixtureSeed('industry'),
   run: ctx =>
@@ -6677,14 +6884,15 @@ function sharedFluids(from: GateLinks, to: GateLinks): string[] {
 
 /**
  * Connect on the map (`TWorld.RDOConnectFacilities`, Kernel/World.pas:3710-3726): the industry and
- * warehouse fixtures, both SPO_test3's own. It hires every matching fluid in both directions
+ * chemical fixtures (#1293), both SPO_test3's own; the chemical fixture is reset first
+ * (`resetChemical`). It hires every matching fluid in both directions
  * (Kernel/Kernel.pas:5470-5513), so every gate of both facilities is snapshotted and every new
  * link is undone. NIGHTLY_ONLY (routing.ts).
  */
 const connectOnMap: Flow = {
   name: 'connect-on-map',
   what:
-    'REQ_CONNECT_FACILITIES between the industry and warehouse fixtures -> a new link read back -> every new link ' +
+    'REQ_CONNECT_FACILITIES between the industry and chemical fixtures (the chemical one reset first) -> a new link read back -> every new link ' +
     'disconnected -> both facilities\' inputs and outputs equal their snapshot',
   mutates: true,
   seed: fixtureSeed('industry', 'warehouse'),
@@ -6694,14 +6902,17 @@ const connectOnMap: Flow = {
     const session = await login(PRIMARY_ACCOUNT);
     try {
       const industry = await ownFixture(session, 'industry', assertions);
-      const warehouse = industry ? await ownFixture(session, 'warehouse', assertions) : undefined;
-      if (!industry || !warehouse) return report('connect-on-map', assertions, probes, session);
+      const chemical = industry ? await ownFixture(session, 'chemical', assertions) : undefined;
+      if (!industry || !chemical) return report('connect-on-map', assertions, probes, session);
+      if (!(await resetChemical(session, chemical, ctx, assertions, 'ConnectFacilities'))) {
+        return report('connect-on-map', assertions, probes, session);
+      }
 
       const snapIndustry = await readGateLinks(session, industry, BOTH_TABS);
-      const snapWarehouse = await readGateLinks(session, warehouse, BOTH_TABS);
+      const snapChemical = await readGateLinks(session, chemical, BOTH_TABS);
       const incomplete = [
         ...Object.entries(snapIndustry).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(industry)} ${gate}`),
-        ...Object.entries(snapWarehouse).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(warehouse)} ${gate}`),
+        ...Object.entries(snapChemical).filter(([, g]) => !g.complete).map(([gate]) => `${fixtureLabel(chemical)} ${gate}`),
       ];
       if (incomplete.length > 0) {
         assertions.untestable(
@@ -6710,11 +6921,11 @@ const connectOnMap: Flow = {
         );
         return report('connect-on-map', assertions, probes, session);
       }
-      const shared = sharedFluids(snapIndustry, snapWarehouse);
+      const shared = sharedFluids(snapIndustry, snapChemical);
       if (shared.length === 0) {
         assertions.untestable(
           'ConnectFacilities',
-          `${fixtureLabel(industry)} and ${fixtureLabel(warehouse)} share no fluid on opposite gates — ConnectFacilities ` +
+          `${fixtureLabel(industry)} and ${fixtureLabel(chemical)} share no fluid on opposite gates — ConnectFacilities ` +
             'hires only a matching fluid (Kernel/Kernel.pas:5470-5513), so nothing is sent',
         );
         return report('connect-on-map', assertions, probes, session);
@@ -6723,11 +6934,11 @@ const connectOnMap: Flow = {
       const read = async (): Promise<string> =>
         combinedState([
           linkState(snapIndustry, await readGateLinks(session, industry, BOTH_TABS)),
-          linkState(snapWarehouse, await readGateLinks(session, warehouse, BOTH_TABS)),
+          linkState(snapChemical, await readGateLinks(session, chemical, BOTH_TABS)),
         ]);
       const url = await survivalUrl(ctx);
       const probe = await roundTripProbe(ctx, url, {
-        what: `Connect ${fixtureLabel(industry)} with ${fixtureLabel(warehouse)} (shared: ${shared.join(', ')})`,
+        what: `Connect ${fixtureLabel(industry)} with ${fixtureLabel(chemical)} (shared: ${shared.join(', ')})`,
         member: 'ConnectFacilities',
         read,
         testValue: () => 'new-links',
@@ -6737,8 +6948,8 @@ const connectOnMap: Flow = {
               type: WsMessageType.REQ_CONNECT_FACILITIES,
               sourceX: industry.x,
               sourceY: industry.y,
-              targetX: warehouse.x,
-              targetY: warehouse.y,
+              targetX: chemical.x,
+              targetY: chemical.y,
             },
             WsMessageType.RESP_CONNECT_FACILITIES,
             TIMEOUTS.login,
@@ -6748,7 +6959,7 @@ const connectOnMap: Flow = {
         restore: async () => {
           for (const [fx, snap] of [
             [industry, snapIndustry],
-            [warehouse, snapWarehouse],
+            [chemical, snapChemical],
           ] as const) {
             for (const g of gainedLinks(snap, await readGateLinks(session, fx, BOTH_TABS))) {
               await setBuildingProperty(
@@ -7033,20 +7244,243 @@ const warehouseWares: Flow = {
   },
 };
 
-/** `ftpWarehouses` (Kernel/Kernel.pas:2760) — the facility types Quick Trade connects to. */
-const QUICK_TRADE_KIND = '1';
+/**
+ * `ftpWarehouses` (Kernel/Kernel.pas:2760) — Voyager's `btnSellToWareHouses`
+ * (Voyager/IndustryGeneralSheet.pas:45, sent by `SellToAll`, :345). Also the kind every reset sends
+ * with `RDODisconnectFromTycoon`, which ignores it (Kernel/Kernel.pas:4581-4600).
+ */
+const WAREHOUSES_KIND = '1';
+/** `ftpFactories` (Kernel/Kernel.pas:2761) — Voyager's `btnSellToFacs` (Voyager/IndustryGeneralSheet.pas:44, :345). */
+const FACTORIES_KIND = '2';
 
 /**
- * Quick Trade (`TFacility.RDOConnectToTycoon`, Kernel/Kernel.pas:4521) and its undo
- * (`RDODisconnectFromTycoon`), which reaches every SPO_test3 facility (:4537-4553, :4593-4600) and
- * unregisters the fixture as an initial supplier (:4564-4565, :4606-4607) — so it runs only
- * behind three data guards. NIGHTLY_ONLY (routing.ts).
+ * What one storage's (or the industry fixture's) supply gate of a plant fluid shows of the plant:
+ * `undefined` is a gate the facility does not list. A link found among the rows read counts even
+ * when not every row was read.
+ */
+export function storageGateState(gate: BuildingSupplyData | undefined, plant: { x: number; y: number }): string {
+  if (!gate) return 'gate not listed';
+  if (gate.connections.some(c => c.x === plant.x && c.y === plant.y)) return 'plant linked';
+  if (gate.connectionCount !== gate.connections.length) return 'count mismatch (unread)';
+  return 'no plant link';
+}
+
+/** The first supply gate of `fx` whose fluid is `fluid` — a stub named after it is read first. */
+async function supplyByFluid(
+  session: LiveSession,
+  fx: OwnFixture,
+  stubs: readonly GateStub[],
+  fluid: string,
+): Promise<BuildingSupplyData | undefined> {
+  for (const stub of [...stubs.filter(s => s.name === fluid), ...stubs.filter(s => s.name !== fluid)]) {
+    const supply = (await gateConnections(session, fx, 'supplies', stub)).supply;
+    if (supply?.metaFluid === fluid) return supply;
+  }
+  return undefined;
+}
+
+/** The fluids among `fluids` that `fx` lists a supply gate for. */
+async function suppliedFluids(session: LiveSession, fx: OwnFixture, fluids: readonly string[]): Promise<string[]> {
+  const stubs = await gateStubs(session, fx, 'supplies');
+  const out: string[] = [];
+  for (const fluid of fluids) if (await supplyByFluid(session, fx, stubs, fluid)) out.push(fluid);
+  return out;
+}
+
+/** Each supply gate of `fx` carrying one of `fluids`, as `storageGateState` writes it. */
+async function supplySideNote(
+  session: LiveSession,
+  fx: OwnFixture,
+  fluids: readonly string[],
+  plant: OwnFixture,
+): Promise<{ note: string; linked: boolean }> {
+  const stubs = await gateStubs(session, fx, 'supplies');
+  const parts: string[] = [];
+  let linked = false;
+  for (const fluid of fluids) {
+    const state = storageGateState(await supplyByFluid(session, fx, stubs, fluid), plant);
+    if (state === 'plant linked') linked = true;
+    parts.push(`${fixtureLabel(fx)} ${fluid}: ${state}`);
+  }
+  return { note: parts.join(' | '), linked };
+}
+
+/**
+ * `TFacilityRole`, in ordinal order — the cached `TradeRole` is `integer(Role)` (TBlock.StoreToCache,
+ * Kernel/Kernel.pas:5893). Kernel's own declaration is commented out (:405); the live one is
+ * Cache/CacheCommon.pas:53, which Kernel uses (:11), in the order the permission map's comment gives (:2862).
+ */
+const FACILITY_ROLES = ['rolNeutral', 'rolProducer', 'rolDistributer', 'rolBuyer', 'rolImporter', 'rolCompExport', 'rolCompInport'];
+const ROL_DISTRIBUTER = 2;
+const ROL_IMPORTER = 4;
+
+/**
+ * One cached `TradeRole` as the flow records it: `<n> (<name>)`, `unread` when the read did not
+ * return it. A rolImporter is flagged: its row of the tycoons' permission map is all zeros
+ * (Kernel/Kernel.pas:2875), and `TGate.ConnectTo` checks that map on both sides (:6766-6767), so
+ * every link it is asked for is refused.
+ */
+export function tradeRoleNote(raw: string | undefined): string {
+  if (raw === undefined) return 'unread';
+  const n = Number(raw);
+  const name = Number.isInteger(n) ? FACILITY_ROLES[n] : undefined;
+  if (raw.trim() === '' || !name) return `${raw} (not a TFacilityRole)`;
+  const note = `${n} (${name})`;
+  return n === ROL_IMPORTER
+    ? `${note} — refuses every link per the tycoon permission map (Kernel/Kernel.pas:2875, checked at :6766-6767)`
+    : note;
+}
+
+/** The cached `TradeRole` of a warehouse from its general group, as `tradeRoleNote` writes it. Never throws. */
+async function cachedTradeRole(session: LiveSession, fx: OwnFixture): Promise<string> {
+  try {
+    return tradeRoleNote(propertyValue(await readSectionGroups(session, fx.x, fx.y, 'whGeneral', fx.visualClass), 'whGeneral', 'TradeRole'));
+  } catch (err: unknown) {
+    return `unread: ${toErrorMessage(err)}`;
+  }
+}
+
+/**
+ * What the guards read of SPO_test3's other facilities, before any write: the own lots in Helartia
+ * (the only places a Quick Trade link may land), the facilities outside Helartia that carry an
+ * input of a plant product — `RDOConnectToTycoon` links only an input whose fluid is one of the
+ * plant's outputs (Kernel/Kernel.pas:4545-4549), so these are every lot outside Helartia it could
+ * write, for either kind — and the cached trade role of each own warehouse in Helartia (any
+ * facility showing the whGeneral tab, MegaStorage or not). That role is the block's runtime `Role`
+ * (a warehouse's `fRole`, StdBlocks/Warehouses.pas:543-546), while the connect tests the class's
+ * `MetaFacility.Kind.Role` (Kernel/Kernel.pas:4542): the runtime one is the only one the client can
+ * read, so a 2 makes kind 1 worth sending, not certain to link.
+ */
+interface QuickTradeReach {
+  helartiaLots: Set<string>;
+  outside: string[];
+  warehouses: string[];
+  distributers: number;
+}
+
+async function quickTradeReach(
+  session: LiveSession,
+  plant: OwnFixture,
+  facilities: readonly TycoonFacility[],
+  helartia: number | undefined,
+  fluids: readonly string[],
+): Promise<QuickTradeReach> {
+  const reach: QuickTradeReach = { helartiaLots: new Set(), outside: [], warehouses: [], distributers: 0 };
+  for (const f of facilities) {
+    if (f.x === plant.x && f.y === plant.y) continue;
+    const label = `${f.name} (${f.x},${f.y})`;
+    const inHelartia = helartia !== undefined && (await townValueAt(session, f.x, f.y)) === helartia;
+    if (inHelartia) reach.helartiaLots.add(`${f.x},${f.y}`);
+    try {
+      const fx: OwnFixture = { x: f.x, y: f.y, visualClass: await resolveVisualClass(session, f.x, f.y), name: f.name };
+      if (!inHelartia) {
+        const carried = await suppliedFluids(session, fx, fluids);
+        if (carried.length > 0) reach.outside.push(`${label} of ${f.company} takes ${carried.join('/')}`);
+        continue;
+      }
+      if (!(await readBuildingDetails(session, f.x, f.y, fx.visualClass)).tabs.some(t => t.id === 'whGeneral')) continue;
+      const role = await cachedTradeRole(session, fx);
+      if (role.startsWith(`${ROL_DISTRIBUTER} (`)) reach.distributers++;
+      reach.warehouses.push(`${label}: ${role}`);
+    } catch (err: unknown) {
+      (inHelartia ? reach.warehouses : reach.outside).push(`${label} could not be read: ${toErrorMessage(err)}`);
+    }
+  }
+  return reach;
+}
+
+/** The Quick Trade flow's live context, shared by both kinds. */
+interface QuickTradeScope {
+  session: LiveSession;
+  plant: OwnFixture;
+  ctx: FlowContext;
+  url: string;
+  /** The initial-supplier list before any write: what the restore puts back. */
+  suppliersKey: string;
+  /** Every key a read-back saw newly linked on the plant's product gates. */
+  touched: Set<string>;
+}
+
+/**
+ * One `RDOConnectToTycoon` round trip of `kind` on the plant, undone by `RDODisconnectFromTycoon`
+ * (whose kind is ignored: it drops the plant's outputs from every own facility's matching input,
+ * Kernel/Kernel.pas:4590-4600). The connect registers the plant as an initial supplier
+ * (SetAsDefault, :4564-4565), and the undo's `UnregisterSupplier` alone was seen not to clear such
+ * an entry live (`resetChemical`), so the undo also deletes every row the plant holds that the
+ * snapshot did not (`deleteInitialSupplierRows`).
+ */
+async function tycoonRoundTrip(
+  s: QuickTradeScope,
+  kind: string,
+  target: string,
+  source: string,
+  read: () => Promise<string>,
+): Promise<ProbeResult> {
+  const { session, plant } = s;
+  const listed = new Set(s.suppliersKey.split(' '));
+  return roundTripProbe(s.ctx, s.url, {
+    what: `${fixtureLabel(plant)} Quick Trade kind ${kind} (${target})`,
+    member: 'RDOConnectToTycoon',
+    read,
+    testValue: () => 'new-links',
+    write: async () => {
+      await setBuildingProperty(session, plant.x, plant.y, 'RDOConnectToTycoon', '0', { kind });
+    },
+    restore: async () => {
+      await setBuildingProperty(session, plant.x, plant.y, 'RDODisconnectFromTycoon', '0', { kind });
+      let after: AutoConnectionsData;
+      try {
+        after = await readAutoConnections(session);
+      } catch {
+        return; // the initial-supplier check reports an unreadable page
+      }
+      await deleteInitialSupplierRows(
+        session,
+        initialSupplierRowsAt(after, plant.x, plant.y).filter(r => !listed.has(`${r.fluidId}:${r.facilityId}`)),
+      );
+    },
+    proof: {
+      log: { marker: LOG_MARKERS.RDOConnectToTycoon, match: line => facLineMatches(line, plant.x, plant.y, 'Connect to Tycoon:') },
+      readBack: readBackOn(source, LINK_WHY, tolerantRead(read)),
+    },
+    restoreRecord: { x: plant.x, y: plant.y, propertyName: 'RDODisconnectFromTycoon', additionalParams: { kind } },
+  });
+}
+
+/** The plant's product gates against the snapshot (`linkState`), each newly linked key kept in `touched`. */
+async function plantSide(s: QuickTradeScope, snapshot: GateLinks): Promise<string> {
+  const now = await readGateLinks(s.session, s.plant, ['products']);
+  for (const g of gainedLinks(snapshot, now)) for (const k of g.keys) s.touched.add(k);
+  return linkState(snapshot, now);
+}
+
+/**
+ * Quick Trade (`TFacility.RDOConnectToTycoon`, Kernel/Kernel.pas:4521) on the chemical fixture
+ * (#1293, reset first by `resetChemical`), proven on the kind the live server honours for it.
+ *
+ * Kind 2 (`ftpFactories`) links the plant's outputs into the matching input of every own
+ * `rolProducer` (Kernel/Kernel.pas:4543) — the industry fixture's, and any other own producer's
+ * with such an input. Its proof needs both sides: new links on the plant's product gates, and the
+ * industry fixture's supply gate listing the plant. Every link it makes is written on both gates
+ * (:6784-6785), so the plant's product-gate snapshot covers every own facility it touches, and
+ * every newly linked key must be an SPO_test3 lot in Helartia.
+ *
+ * Kind 1 (`ftpWarehouses`) linked no MegaStorage of SPO_test3's live (attempt-6 gate, 2026-10-07):
+ * the shape of Kernel/Kernel1.pas:3150 tests the class's `Kind.Role = rolDistributer` only, where
+ * Kernel/Kernel.pas:4542 also accepts rolCompExport/rolCompInport. So it is sent only when an own
+ * warehouse in Helartia reads `TradeRole` 2 (rolDistributer), and is UNTESTABLE otherwise.
+ *
+ * The undo reaches every SPO_test3 facility (:4537-4553, :4593-4600) and unregisters the plant as
+ * an initial supplier (:4564-4565, :4606-4607), so the flow runs only behind three data guards.
+ * NIGHTLY_ONLY (routing.ts).
  */
 const quickTradeRoundTrip: Flow = {
   name: 'quick-trade-roundtrip',
   what:
-    "RDOConnectToTycoon on SPO_test3's industry fixture (warehouses) behind three guards -> Connect to Tycoon: line + " +
-    'new links -> RDODisconnectFromTycoon -> the output links and the initial-supplier list equal their snapshots',
+    "RDOConnectToTycoon on SPO_test3's chemical fixture (reset first) behind three guards: kind 2 (factories) -> " +
+    "Connect to Tycoon: line + new links on the plant and the industry fixture's input; kind 1 (warehouses) only when an " +
+    'own warehouse reads rolDistributer -> RDODisconnectFromTycoon after each -> the output links and the initial-supplier ' +
+    'list equal their snapshots',
   mutates: true,
   seed: fixtureSeed('industry'),
   run: async ctx => {
@@ -7054,8 +7488,11 @@ const quickTradeRoundTrip: Flow = {
     const probes: ProbeResult[] = [];
     const session = await login(PRIMARY_ACCOUNT);
     try {
-      const fx = await ownFixture(session, 'industry', assertions);
+      const fx = await ownFixture(session, 'chemical', assertions);
       if (!fx) return report('quick-trade-roundtrip', assertions, probes, session);
+      if (!(await resetChemical(session, fx, ctx, assertions, 'RDOConnectToTycoon'))) {
+        return report('quick-trade-roundtrip', assertions, probes, session);
+      }
       const own = await listTycoonFacilities(session);
       const ownCompanies = new Set(own.companies);
       const ownLots = new Set(own.facilities.map(f => `${f.x},${f.y}`));
@@ -7094,66 +7531,86 @@ const quickTradeRoundTrip: Flow = {
       }
 
       // Guard 3: the connect and its undo reach every company and town of the tycoon.
+      const snapshot = await readGateLinks(session, fx, ['products']);
+      const fluids = [...new Set(Object.values(snapshot).map(g => g.fluid).filter(Boolean))];
       const helartia = await helartiaValue(session);
-      const outside: string[] = [];
-      for (const f of own.facilities) {
-        if (helartia !== undefined && (await townValueAt(session, f.x, f.y)) === helartia) continue;
-        try {
-          const vc = await resolveVisualClass(session, f.x, f.y);
-          const details = await readBuildingDetails(session, f.x, f.y, vc);
-          if (details.tabs.some(t => t.id === 'whGeneral')) outside.push(`${f.name} (${f.x},${f.y}) of ${f.company}`);
-        } catch (err: unknown) {
-          outside.push(`${f.name} (${f.x},${f.y}) could not be read: ${toErrorMessage(err)}`);
-        }
-      }
-      if (outside.length > 0) {
+      const reach = await quickTradeReach(session, fx, own.facilities, helartia, fluids);
+      if (reach.outside.length > 0) {
         refused = true;
         assertions.untestable(
           'RDOConnectToTycoon',
-          `an SPO_test3 warehouse lies outside ${GOVERNED_TOWN} — Quick Trade reaches every company and town of the ` +
-            `tycoon (Kernel/Kernel.pas:4537-4553): ${outside.join(' | ')}`,
+          `an SPO_test3 facility outside ${GOVERNED_TOWN} takes a plant product (or could not be read) — Quick Trade ` +
+            `reaches every company and town of the tycoon (Kernel/Kernel.pas:4537-4553): ${reach.outside.join(' | ')}`,
         );
       }
       if (refused) return report('quick-trade-roundtrip', assertions, probes, session);
 
-      const snapshot = await readGateLinks(session, fx, ['products']);
-      const suppliersKey = initialSuppliersKey(auto);
-      const read = async (): Promise<string> => linkState(snapshot, await readGateLinks(session, fx, ['products']));
-      const url = await survivalUrl(ctx);
-      const probe = await roundTripProbe(ctx, url, {
-        what: `${fixtureLabel(fx)} Quick Trade with SPO_test3's warehouses`,
-        member: 'RDOConnectToTycoon',
-        read,
-        testValue: () => 'new-links',
-        write: async () => {
-          await setBuildingProperty(session, fx.x, fx.y, 'RDOConnectToTycoon', '0', { kind: QUICK_TRADE_KIND });
-        },
-        restore: async () => {
-          await setBuildingProperty(session, fx.x, fx.y, 'RDODisconnectFromTycoon', '0', { kind: QUICK_TRADE_KIND });
-        },
-        proof: {
-          log: {
-            marker: LOG_MARKERS.RDOConnectToTycoon,
-            match: line => facLineMatches(line, fx.x, fx.y, 'Connect to Tycoon:'),
-          },
-          readBack: readBackOn(
-            "the fixture's product gates' links via REQ_BUILDING_GATE_CONNECTIONS",
-            LINK_WHY,
-            tolerantRead(read),
-          ),
-        },
-        restoreRecord: {
-          x: fx.x,
-          y: fx.y,
-          propertyName: 'RDODisconnectFromTycoon',
-          additionalParams: { kind: QUICK_TRADE_KIND },
-        },
-      });
-      probes.push(probe);
+      const s: QuickTradeScope = { session, plant: fx, ctx, url: await survivalUrl(ctx), suppliersKey: initialSuppliersKey(auto), touched: new Set() };
+      const productsSource = "the plant's product gates' links via REQ_BUILDING_GATE_CONNECTIONS";
+
+      // Kind 2: both sides must show the link.
+      let kindOneBlocked: string | undefined;
+      const mine = await ownFixture(session, 'industry', assertions);
+      const mineFluids = mine ? await suppliedFluids(session, mine, fluids) : [];
+      if (!mine) {
+        assertions.untestable('RDOConnectToTycoon kind 2 (factories)', "the industry fixture is the other side of its proof and was not found");
+      } else if (mineFluids.length === 0) {
+        assertions.untestable(
+          'RDOConnectToTycoon kind 2 (factories)',
+          `${fixtureLabel(mine)} lists no input of the plant's products (${fluids.join('/') || 'none'}) — no own side to read back`,
+        );
+      } else {
+        const readFactories = async (): Promise<string> => {
+          const plantState = await plantSide(s, snapshot);
+          const mineSide = await supplySideNote(session, mine, mineFluids, fx);
+          if (plantState === 'new-links' && mineSide.linked) return 'new-links';
+          if (plantState === 'snapshot' && !mineSide.linked) return 'snapshot';
+          return `plant side: ${plantState}; ${mineSide.note}`;
+        };
+        const probe = await tycoonRoundTrip(
+          s,
+          FACTORIES_KIND,
+          'factories',
+          `${productsSource}, and ${fixtureLabel(mine)}'s ${mineFluids.join('/')} supply gate listing the plant`,
+          readFactories,
+        );
+        probes.push(probe);
+        assertions.check(
+          'RDOConnectToTycoon kind 2: new links on the plant and the industry fixture, and both equal their snapshot after the undo',
+          probeHeld(probe),
+          probe.note,
+        );
+        if (!probe.restored) kindOneBlocked = "kind 2's undo did not read back the snapshot, so a kind-1 read-back could not tell its links apart";
+      }
+
+      // Kind 1: only a rolDistributer warehouse can take it.
+      const roles = reach.warehouses.length > 0 ? reach.warehouses.join(' | ') : `no own warehouse in ${GOVERNED_TOWN}`;
+      if (reach.distributers === 0) {
+        assertions.untestable(
+          'RDOConnectToTycoon kind 1 (warehouses)',
+          `no own warehouse in ${GOVERNED_TOWN} reads TradeRole ${ROL_DISTRIBUTER} (rolDistributer) — ${roles}. Live, the ` +
+            "ftpWarehouses branch linked none of SPO_test3's MegaStorages (roles 6/5/6) while kind 2 and a direct " +
+            'RDOConnectOutput linked the same plant (attempt-6 gate, job fae2cc, 2026-10-07) — the shape of ' +
+            'Kernel/Kernel1.pas:3150, which tests the class role `Kind.Role = rolDistributer` only; nothing sent',
+        );
+      } else if (kindOneBlocked) {
+        assertions.untestable('RDOConnectToTycoon kind 1 (warehouses)', `${kindOneBlocked}; nothing sent`);
+      } else {
+        const probe = await tycoonRoundTrip(s, WAREHOUSES_KIND, 'warehouses', productsSource, () => plantSide(s, snapshot));
+        probes.push(probe);
+        assertions.check(
+          'RDOConnectToTycoon kind 1: new links read back, and the output links equal their snapshot after the undo',
+          probeHeld(probe),
+          [probe.note, `trade roles before the write — ${roles}`].filter(Boolean).join(' — '),
+        );
+      }
+      if (probes.length === 0) return report('quick-trade-roundtrip', assertions, probes, session);
+
+      const strays = [...s.touched].filter(k => !reach.helartiaLots.has(k));
       assertions.check(
-        'RDOConnectToTycoon: new links read back, and the output links equal their snapshot after the undo',
-        probeHeld(probe),
-        probe.note,
+        `every link Quick Trade made is an SPO_test3 lot in ${GOVERNED_TOWN}`,
+        strays.length === 0,
+        strays.length > 0 ? `linked outside: ${strays.join(' ')}` : `linked: ${[...s.touched].join(' ') || '(none)'}`,
       );
 
       const suppliers = await pollUntil(
@@ -7164,13 +7621,13 @@ const quickTradeRoundTrip: Flow = {
             return `(unreadable: ${toErrorMessage(err)})`;
           }
         },
-        k => k === suppliersKey,
+        k => k === s.suppliersKey,
         ctx,
       );
       assertions.check(
         'the initial-supplier list equals its snapshot',
         suppliers.ok,
-        suppliers.ok ? `${suppliersKey || '(none)'}` : `before: ${suppliersKey || '(none)'} — after: ${suppliers.last || '(none)'}`,
+        suppliers.ok ? `${s.suppliersKey || '(none)'}` : `before: ${s.suppliersKey || '(none)'} — after: ${suppliers.last || '(none)'}`,
       );
       return report('quick-trade-roundtrip', assertions, probes, session);
     } finally {

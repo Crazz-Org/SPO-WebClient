@@ -936,6 +936,11 @@ export interface WsReqBuildingGateConnections extends WsMessage {
   /** Gate display name, echoed back in the refreshed record. */
   name: string;
   visualClass: string;
+  /**
+   * Header only: SetPath and the gate header, no connection rows. The answer carries
+   * `connectionCount` (from `cnxCount`) and `connections: []`. Omitted = the full read.
+   */
+  headerOnly?: boolean;
 }
 
 /** Exactly one of `supply` / `product` is set, matching the request's tabId. */
@@ -945,6 +950,8 @@ export interface WsRespBuildingGateConnections extends WsMessage {
   y: number;
   tabId: 'supplies' | 'products';
   path: string;
+  /** Set to `true` only when the request asked for `headerOnly` — the capability signal. */
+  headerOnly?: boolean;
   supply?: BuildingSupplyData;
   product?: BuildingProductData;
 }
