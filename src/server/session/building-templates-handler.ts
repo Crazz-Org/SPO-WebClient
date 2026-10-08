@@ -232,10 +232,13 @@ function parseClusterFacilities(ctx: SessionContext, html: string): ClusterFacil
 // BUILD CONSTRUCTION — CATEGORIES
 // ===========================================================================
 
+/** The categories KindList.asp lists, and — #1349 — whether it could not open the company path. */
+export interface BuildingCategoriesResult { categories: BuildingCategory[]; companyPathMissing?: true }
+
 /**
  * Fetch building categories via HTTP (KindList.asp)
  */
-export async function fetchBuildingCategories(ctx: SessionContext, companyName: string): Promise<BuildingCategory[]> {
+export async function fetchBuildingCategories(ctx: SessionContext, companyName: string): Promise<BuildingCategoriesResult> {
   if (!ctx.currentWorldInfo || !ctx.cachedUsername) {
     throw new Error('Not logged into world - cannot fetch building categories');
   }
@@ -252,10 +255,10 @@ export async function fetchBuildingCategories(ctx: SessionContext, companyName: 
 
   try {
     const html = await fetchVoyagerPage(ctx, url, `KindList.asp for ${companyName}`);
-    return html === null ? [] : parseBuildingCategories(ctx, html);
+    return html === null ? { categories: [] } : parseBuildingCategories(ctx, html);
   } catch (e: unknown) {
     ctx.log.error('[BuildConstruction] Failed to fetch categories:', e);
-    return [];
+    return { categories: [] };
   }
 }
 
@@ -285,13 +288,14 @@ export async function fetchBuildingCategories(ctx: SessionContext, companyName: 
  * pins `LangId = 0`, where the two forms coincide. Only a `Five/1..5` tree —
  * which this gateway never requests — would tell them apart (audit field 75).
  */
-function parseBuildingCategories(ctx: SessionContext, html: string): BuildingCategory[] {
+function parseBuildingCategories(ctx: SessionContext, html: string): BuildingCategoriesResult {
   const categories: BuildingCategory[] = [];
 
   // `KindList.asp:211-217` — when the company path will not open, the page
   // renders `Error="Couldn't open the path…"` (`:18`) as bare text instead of a
   // table. Without this the caller sees the same empty list as an empty cluster.
-  if (/Couldn't open the path/i.test(html)) {
+  const pathMissing = /Couldn't open the path/i.test(html);
+  if (pathMissing) {
     ctx.log.error('[BuildConstruction] KindList.asp could not open the company path — no categories will be listed');
   }
 
@@ -345,7 +349,7 @@ function parseBuildingCategories(ctx: SessionContext, html: string): BuildingCat
   }
 
   ctx.log.debug(`[BuildConstruction] Parsed ${categories.length} categories total`);
-  return categories;
+  return pathMissing ? { categories, companyPathMissing: true } : { categories };
 }
 
 // ===========================================================================

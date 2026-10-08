@@ -939,7 +939,7 @@ describe('fetchBuildingCategories', () => {
     mockFetch.mockResolvedValue(htmlResponse(KIND_LIST_HTML));
     const fake = makeWebCtx();
 
-    const categories = await fetchBuildingCategories(fake.ctx, 'Yellow Inc.');
+    const { categories } = await fetchBuildingCategories(fake.ctx, 'Yellow Inc.');
 
     expect(categories).toEqual([
       {
@@ -968,7 +968,7 @@ describe('fetchBuildingCategories', () => {
     for (const [roads, mayor] of [[true, true], [false, false]] as const) {
       mockFetch.mockResolvedValue(htmlResponse(kindListPage({ roads, mayor, kinds: [] })));
       const fake = makeWebCtx();
-      expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual([]);
+      expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual({ categories: [] });
     }
   });
 
@@ -983,7 +983,7 @@ describe('fetchBuildingCategories', () => {
     })));
     const fake = makeWebCtx();
 
-    expect((await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).map(c => c.kind)).toEqual(['PGIFarms']);
+    expect((await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).categories.map(c => c.kind)).toEqual(['PGIFarms']);
   });
 
   // `KindList.asp:12-19` — the company path failed to open, so `ClusterName` is
@@ -995,7 +995,7 @@ describe('fetchBuildingCategories', () => {
     })));
     const fake = makeWebCtx();
 
-    expect(await fetchBuildingCategories(fake.ctx, 'Ghost Inc.')).toEqual([]);
+    expect(await fetchBuildingCategories(fake.ctx, 'Ghost Inc.')).toEqual({ categories: [], companyPathMissing: true });
     expect(fake.log.error).toHaveBeenCalledWith(
       expect.stringContaining('could not open the company path')
     );
@@ -1006,7 +1006,7 @@ describe('fetchBuildingCategories', () => {
     mockFetch.mockResolvedValue(htmlResponse(html));
     const fake = makeWebCtx();
 
-    const categories = await fetchBuildingCategories(fake.ctx, 'Yellow Inc.');
+    const { categories } = await fetchBuildingCategories(fake.ctx, 'Yellow Inc.');
 
     expect(categories).toEqual([]);
     expect(fake.log.warn).toHaveBeenCalledWith(expect.stringContaining('Skipped category'));
@@ -1023,7 +1023,7 @@ describe('fetchBuildingCategories', () => {
     mockFetch.mockResolvedValue(htmlResponse(html));
     const fake = makeWebCtx();
 
-    expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual([]);
+    expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual({ categories: [] });
   });
 
   it('skips a labelled row whose ref carries no Kind parameter', async () => {
@@ -1031,7 +1031,7 @@ describe('fetchBuildingCategories', () => {
     mockFetch.mockResolvedValue(htmlResponse(html));
     const fake = makeWebCtx();
 
-    expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual([]);
+    expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual({ categories: [] });
   });
 
   it('skips a labelled row whose ref has no query string at all', async () => {
@@ -1039,7 +1039,7 @@ describe('fetchBuildingCategories', () => {
     mockFetch.mockResolvedValue(htmlResponse(html));
     const fake = makeWebCtx();
 
-    expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual([]);
+    expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual({ categories: [] });
   });
 
   it('accepts a row with no icon, leaving the proxied path empty', async () => {
@@ -1047,7 +1047,7 @@ describe('fetchBuildingCategories', () => {
     mockFetch.mockResolvedValue(htmlResponse(html));
     const fake = makeWebCtx();
 
-    const categories = await fetchBuildingCategories(fake.ctx, 'Yellow Inc.');
+    const { categories } = await fetchBuildingCategories(fake.ctx, 'Yellow Inc.');
 
     expect(categories[0].iconPath).toBe('proxy:');
     expect(categories[0].tycoonLevel).toBe(0);
@@ -1057,7 +1057,7 @@ describe('fetchBuildingCategories', () => {
     mockFetch.mockRejectedValue(new Error('ETIMEDOUT'));
     const fake = makeWebCtx();
 
-    expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual([]);
+    expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual({ categories: [] });
     expect(fake.log.error).toHaveBeenCalled();
   });
 
@@ -1065,7 +1065,7 @@ describe('fetchBuildingCategories', () => {
     mockFetch.mockResolvedValue(htmlResponse('<html><body>500 - Internal server error</body></html>', 500));
     const fake = makeWebCtx();
 
-    expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual([]);
+    expect(await fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).toEqual({ categories: [] });
     expect(fake.log.error).toHaveBeenCalledWith(
       expect.stringContaining('KindList.asp for Yellow Inc. answered HTTP 500')
     );
@@ -1085,6 +1085,16 @@ describe('fetchBuildingCategories', () => {
     await expect(fetchBuildingCategories(fake.ctx, 'Yellow Inc.')).rejects.toThrow(
       'Not logged into world - cannot fetch building categories'
     );
+  });
+
+  // #1349 — the marker is absent, not `undefined` or `false`, whenever the text is not there.
+  it('answers without companyPathMissing on a normal page and on an empty page without the error text', async () => {
+    for (const html of [KIND_LIST_HTML, kindListPage({ kinds: [] })]) {
+      mockFetch.mockResolvedValue(htmlResponse(html));
+      const fake = makeWebCtx();
+      const result = await fetchBuildingCategories(fake.ctx, 'Yellow Inc.');
+      expect('companyPathMissing' in result).toBe(false);
+    }
   });
 });
 

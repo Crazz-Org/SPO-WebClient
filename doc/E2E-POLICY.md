@@ -449,6 +449,19 @@ own error kept in the reason.
   the data before the flow runs. It is never an override.
 - `FixtureOutcome`'s internal `unproven` status (`src/e2e/fixtures.ts`) is a fixture state that
   `fixtures-ensure` reports as `UNTESTABLE`, not a flow status.
+- **A deleted company cache file (#1349).** planitia's Cache Server cleaner
+  (`FIVECACHESERVER/CacheClean`) deletes `Companies\<name>.five\` about 6 h after the world
+  loads, and the file stays gone until the model server restarts. The three pages that read it
+  then answer empty, and the flows
+  `build-menu-read`, `profile-read` and `directory-browse` read nothing.
+  The one signal is `KindList.asp:18` — `Couldn't open the path` — which the gateway carries on
+  `RESP_BUILDING_CATEGORIES` as `companyPathMissing`. On its company-file failure only, each
+  flow asks KindList about **the company whose page failed**; when the marker comes back, that
+  one check ends `UNTESTABLE` with the reason `company cache file missing — KindList.asp:18
+  "Couldn't open the path" (server cache cleaner)`. Without the marker, it FAILs as before.
+  The marker is used **instead of** a server-quarantine entry:
+  a quarantined flow is required by no gate, while the marker excuses only the company-file
+  failure and keeps every other check of the three flows live.
 
 `verify-gate.js` records every UNTESTABLE flow in the artifact's top-level `untestable` list
 (`{ flow, required, reasons }`, §10), prints the reasons under `=== untestable flow(s) — not

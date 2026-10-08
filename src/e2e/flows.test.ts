@@ -2534,6 +2534,9 @@ describe('directory-browse', () => {
     y: 2,
   };
 
+  /** #1349 — the company names the KindList probe asked about, reset by each `arrange`. */
+  let probed: string[] = [];
+
   /** One responder keyed on the ref kind, plus the refs the flow actually sent. */
   function arrange(over: {
     town?: typeof TOWN;
@@ -2546,6 +2549,8 @@ describe('directory-browse', () => {
     ownerCompanies?: string[];
     companyKinds?: string[];
     tycoonRows?: (typeof ROW)[];
+    /** #1349 — companies whose KindList.asp answer carries companyPathMissing. */
+    pathMissingFor?: string[];
   } = {}) {
     const {
       town = TOWN,
@@ -2558,10 +2563,17 @@ describe('directory-browse', () => {
       ownerCompanies = ['Crazz Ltd'],
       companyKinds = ['Residentials'],
       tycoonRows = [ROW],
+      pathMissingFor,
     } = over;
 
     const refs: { kind: string }[] = [];
+    probed = [];
     jest.spyOn(session, 'login').mockResolvedValue(stubSession((msg) => {
+      if (pathMissingFor && msg.type === WsMessageType.REQ_GET_BUILDING_CATEGORIES) {
+        const companyName = (msg as unknown as { companyName: string }).companyName;
+        probed.push(companyName);
+        return { categories: [], ...(pathMissingFor.includes(companyName) ? { companyPathMissing: true } : {}) };
+      }
       if (msg.type !== WsMessageType.REQ_SEARCH_MENU_DIRECTORY) return undefined;
       const ref = (msg as unknown as { ref: { kind: string } }).ref;
       refs.push(ref);
@@ -2593,6 +2605,29 @@ describe('directory-browse', () => {
 
     return refs;
   }
+
+  // #1349 — the cache cleaner deleted the row's company folder: the owner check is UNTESTABLE.
+  it('ends UNTESTABLE when the owner page is empty and KindList cannot open that company path', async () => {
+    const refs = arrange({ ownedBy: null, pathMissingFor: ['Crazz Ltd'] });
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('UNTESTABLE');
+    expect(result.untestable).toEqual([
+      '"Crazz Ltd" names its owner — InTownCompany.asp:63-71 — ' + 'company cache file missing — KindList.asp:18 "Couldn\'t open the path" (server cache cleaner)',
+    ]);
+    expect(probed).toEqual(['Crazz Ltd']);
+    expect(refs[refs.length - 1].kind).toBe('town-company');
+  });
+
+  it('still FAILs when only another company path is missing', async () => {
+    arrange({ ownedBy: null, pathMissingFor: ['SPO_test3 - Green'] });
+
+    const result = await flowByName('directory-browse').run(ctx);
+
+    expect(result.status).toBe('FAIL');
+    expect(probed).toEqual(['Crazz Ltd']);
+  });
 
   // #1140: the walk now continues past the card into the company and tycoon branches.
   it('walks town -> Facilities -> a kind -> a card -> the company and tycoon branches, in that order', async () => {
@@ -3711,6 +3746,40 @@ describe('profile-read', () => {
     const result = await run();
     expect(result.status).toBe('FAIL');
     expect(failed(result).map(a => a.what)).toEqual([what]);
+  });
+
+  describe('company P&L on a missing company cache file (#1349)', () => {
+    const REASON = 'company cache file missing — KindList.asp:18 "Couldn\'t open the path" (server cache cleaner)';
+    const badPnl = { [T.REQ_PROFILE_COMPANY_PROFITLOSS]: { companyName: 'x', data: null, error: 'x' } };
+
+    it('ends UNTESTABLE when KindList reports the company path missing', async () => {
+      const { sent } = arrange({ ...badPnl, [T.REQ_GET_BUILDING_CATEGORIES]: { categories: [], companyPathMissing: true } });
+      const result = await run();
+      expect(result.status).toBe('UNTESTABLE');
+      expect(failed(result)).toEqual([]);
+      expect(result.untestable).toEqual(['the company P&L parses — ' + REASON]);
+      expect(sent.filter(m => m.type === T.REQ_GET_BUILDING_CATEGORIES)).toEqual([
+        expect.objectContaining({ companyName: 'SPO_test3 - Green' }),
+      ]);
+      expect(result.assertions.find(a => a.what === 'the bank page has a balance')?.ok).toBe(true);
+    });
+
+    it.each<[string, unknown]>([
+      ['no marker', { categories: [] }],
+      ['a throwing probe', new WsDriverError('boom', 1, 'REQ_GET_BUILDING_CATEGORIES')],
+    ])('still FAILs on %s', async (_label, probe) => {
+      arrange({ ...badPnl, [T.REQ_GET_BUILDING_CATEGORIES]: probe });
+      const result = await run();
+      expect(result.status).toBe('FAIL');
+      expect(failed(result).map(a => a.what)).toEqual(['the company P&L parses']);
+    });
+
+    it('does not probe when the company P&L is healthy', async () => {
+      const { sent } = arrange({ [T.REQ_GET_BUILDING_CATEGORIES]: { categories: [], companyPathMissing: true } });
+      const result = await run();
+      expect(result.status).toBe('PASS');
+      expect(sent.some(m => m.type === T.REQ_GET_BUILDING_CATEGORIES)).toBe(false);
+    });
   });
 
   it('fails the company checks when the session company is not listed', async () => {
@@ -6862,10 +6931,12 @@ describe('build & demolish (#1150)', () => {
       { kindName: 'Commerce', kind: 'PGIServiceFacilities', cluster: 'PGI', folder: 'f2', tycoonLevel: 1, iconPath: '' },
     ];
 
-    function menu(opts: { categories?: unknown[]; facilities?: unknown[]; cluster?: string } = {}) {
+    function menu(opts: { categories?: unknown[]; facilities?: unknown[]; cluster?: string; companyPathMissing?: true } = {}) {
       const stub = stubSession(raw => {
         sent.push(raw);
-        if (raw.type === WsMessageType.REQ_GET_BUILDING_CATEGORIES) return { categories: opts.categories ?? CATEGORIES };
+        if (raw.type === WsMessageType.REQ_GET_BUILDING_CATEGORIES) {
+          return { categories: opts.categories ?? CATEGORIES, ...(opts.companyPathMissing ? { companyPathMissing: true } : {}) };
+        }
         if (raw.type === WsMessageType.REQ_GET_BUILDING_FACILITIES) return { facilities: opts.facilities ?? [STORE] };
         throw new Error(`unexpected ${raw.type}`);
       });
@@ -6899,6 +6970,17 @@ describe('build & demolish (#1150)', () => {
       menu({ categories: [] });
       const result = await runMenu();
       expect(result.status).toBe('FAIL');
+      expect(sentOf(WsMessageType.REQ_GET_BUILDING_FACILITIES)).toEqual([]);
+    });
+
+    it('ends UNTESTABLE on an empty list whose answer carries companyPathMissing (#1349)', async () => {
+      menu({ categories: [], companyPathMissing: true });
+      const result = await runMenu();
+      expect(result.status).toBe('UNTESTABLE');
+      expect(result.untestable).toEqual([
+        'the build menu lists at least one category — ' + 'company cache file missing — KindList.asp:18 "Couldn\'t open the path" (server cache cleaner)',
+      ]);
+      expect(result.assertions.filter(a => !a.ok)).toEqual([]);
       expect(sentOf(WsMessageType.REQ_GET_BUILDING_FACILITIES)).toEqual([]);
     });
 

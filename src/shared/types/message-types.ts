@@ -830,6 +830,8 @@ export interface WsRespBuildingCategories extends WsMessage {
   type: WsMessageType.RESP_BUILDING_CATEGORIES;
   categories: BuildingCategory[];
   capitolIconUrl?: string;
+  /** #1349 — set only when KindList.asp rendered `Couldn't open the path` (KindList.asp:18): the company's cache folder is gone. */
+  companyPathMissing?: true;
 }
 
 export interface WsRespBuildingFacilities extends WsMessage {

@@ -644,7 +644,8 @@ const DELEGATIONS: readonly Delegation[] = [
     install: () => jest.spyOn(buildingTemplatesHandler, 'fetchBuildingCategories'),
     call: s => s.fetchBuildingCategories('SPO_test3 - Green'),
     forwarded: ['SPO_test3 - Green'],
-    result: [],
+    // Contract changed by #1349: fetchBuildingCategories answers { categories, companyPathMissing? } instead of the bare array.
+    result: { categories: [] },
   },
   {
     method: 'fetchBuildingFacilities',

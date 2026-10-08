@@ -17,12 +17,13 @@
  */
 
 import type { WebSocket } from 'ws';
-import { handleBuildCapitol, handleBuildingWorkerCounts, handlePlaceBuilding } from './building-handlers';
+import { handleBuildCapitol, handleBuildingWorkerCounts, handleGetBuildingCategories, handlePlaceBuilding } from './building-handlers';
 import type { WsHandlerContext } from './types';
 import {
   WsMessageType,
   type WsMessage,
   type WsRespBuildingWorkerCounts,
+  type WsRespBuildingCategories,
   type WsRespBuildingPlaced,
   type WsRespCapitolPlaced,
   type WsRespError,
@@ -225,5 +226,46 @@ describe('handlePlaceBuilding and handleBuildCapitol report a refusal the same w
     expect(resp.x).toBe(100);
     expect(resp.y).toBe(200);
     expect('buildingId' in resp).toBe(false);
+  });
+});
+
+describe('handleGetBuildingCategories', () => {
+  function makeCtx(result: unknown) {
+    const sent: WsMessage[] = [];
+    const ws = {
+      send: jest.fn((payload: string) => sent.push(JSON.parse(payload) as WsMessage)),
+    } as unknown as WebSocket;
+    const fetchBuildingCategories = jest.fn().mockResolvedValue(result);
+    const ctx = {
+      ws,
+      session: { fetchBuildingCategories, getCapitolIconUrl: jest.fn(() => 'cap.png') },
+    } as unknown as WsHandlerContext;
+    return { ctx, sent, fetchBuildingCategories };
+  }
+
+  const request = {
+    type: WsMessageType.REQ_GET_BUILDING_CATEGORIES,
+    wsRequestId: 'req-cat',
+    companyName: 'Ghost Inc.',
+  } as unknown as WsMessage;
+
+  beforeEach(() => jest.spyOn(console, 'log').mockImplementation(() => undefined));
+  afterEach(() => jest.restoreAllMocks());
+
+  it('carries companyPathMissing when the session reported it (#1349)', async () => {
+    const { ctx, sent, fetchBuildingCategories } = makeCtx({ categories: [], companyPathMissing: true });
+    await handleGetBuildingCategories(ctx, request);
+    expect(fetchBuildingCategories).toHaveBeenCalledWith('Ghost Inc.');
+    const resp = sent[0] as WsRespBuildingCategories;
+    expect(resp.type).toBe(WsMessageType.RESP_BUILDING_CATEGORIES);
+    expect(resp.categories).toEqual([]);
+    expect(resp.companyPathMissing).toBe(true);
+    expect(resp.capitolIconUrl).toBe('cap.png');
+  });
+
+  it('leaves the key out when the session did not report it', async () => {
+    const { ctx, sent } = makeCtx({ categories: [] });
+    await handleGetBuildingCategories(ctx, request);
+    expect('companyPathMissing' in sent[0]).toBe(false);
   });
 });
