@@ -10,10 +10,10 @@ import * as path from 'path';
 import { toErrorMessage } from '../shared/error-utils';
 import { REPORT_DIR, WORLD_NAME } from './config';
 import { CAPABILITIES, checkCapability, type Capability, type CapabilityEvidence } from './capability';
-import { FLOWS, flowByName, runFlow, type FlowResult } from './flows';
+import { FLOWS, flowByName, replayPendingRestores, runFlow, type FlowResult } from './flows';
 import { preflight, type PreflightResult } from './preflight';
 import { GATE_ONLY, SERVER_QUARANTINE, type ServerQuarantine } from './routing';
-import { WorldLock } from './world-lock';
+import { WorldDirtyError, WorldLock, type ReplayOutcome, type StoredPendingRestore } from './world-lock';
 
 /**
  * Exit codes — matches `EXIT` in scripts/verify-gate.js, and read the same way by
@@ -62,6 +62,8 @@ export interface LiveRunResult {
    * with {@link STOPPED_BY_DEADLINE}. Never reported PASS, nightly or not.
    */
   stopped?: true;
+  /** The automatic replay of a dirty world's pending restores — present only when one ran. */
+  replays?: ReplayOutcome[];
 }
 
 /** The `skipped` detail of a flow a SIGTERM kept from starting (#1328). */
@@ -89,6 +91,54 @@ export interface LiveRunOptions {
   lock?: WorldLock;
   /** Capabilities the diff depends on (doc/E2E-POLICY.md §7); the gate judges the evidence. */
   capabilities?: Capability[];
+  /** Replays a dirty world's pending restores; defaults to {@link replayPendingRestores}. */
+  replayer?: Replayer;
+}
+
+/** Puts back each recorded pending restore once, through the flow's own write and read-back. */
+export type Replayer = (lock: WorldLock, entries: StoredPendingRestore[]) => Promise<ReplayOutcome[]>;
+
+/**
+ * Take the lock — and when it is refused only because the world is dirty, replay each pending
+ * restore once first (doc/E2E-POLICY.md §6). The lock is cleared only when no pending restore is
+ * left and every replay reads its original back; otherwise the world stays dirty and the refusal
+ * carries the replay's failure. A live single-flight holder is never replayed over.
+ */
+async function acquireOrReplay(
+  lock: WorldLock,
+  branch: string,
+  replayer: Replayer,
+): Promise<{ error?: string; replays?: ReplayOutcome[] }> {
+  try {
+    lock.acquire(branch);
+    return {};
+  } catch (err: unknown) {
+    const pending = lock.read().pendingRestores;
+    if (!(err instanceof WorldDirtyError) || pending.length === 0) return { error: toErrorMessage(err) };
+
+    let replays: ReplayOutcome[];
+    try {
+      replays = await replayer(lock, pending);
+    } catch (thrown: unknown) {
+      replays = [{ what: 'the automatic replay', ok: false, detail: toErrorMessage(thrown) }];
+    }
+    const left = lock.read().pendingRestores.length;
+    const failed = replays.filter(r => !r.ok);
+    if (left > 0 || failed.length > 0) {
+      const failures = failed.length
+        ? failed.map(r => `${r.what}: ${r.detail}`).join('; ')
+        : `${left} pending restore(s) still recorded`;
+      return { error: `${new WorldDirtyError(lock.read()).message} Automatic replay failed — ${failures}`, replays };
+    }
+
+    lock.forceUnlock();
+    try {
+      lock.acquire(branch);
+    } catch (again: unknown) {
+      return { error: toErrorMessage(again), replays };
+    }
+    return { replays };
+  }
 }
 
 export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
@@ -96,10 +146,15 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
   const startedAt = new Date().toISOString();
   const base = { world: WORLD_NAME, branch: options.branch, sha: options.sha, startedAt };
 
-  // A dirty-world or single-flight refusal is a BLOCK, not a test failure: nothing ran.
-  try {
-    lock.acquire(options.branch);
-  } catch (err: unknown) {
+  // A dirty-world or single-flight refusal is a BLOCK, not a test failure: nothing ran. A dirty
+  // world is first replayed (doc/E2E-POLICY.md §6); only a replay that fails still BLOCKS.
+  const { error: lockError, replays } = await acquireOrReplay(
+    lock,
+    options.branch,
+    options.replayer ?? replayPendingRestores,
+  );
+  const replayed = replays ? { replays } : {};
+  if (lockError !== undefined) {
     return {
       ...base,
       finishedAt: new Date().toISOString(),
@@ -107,7 +162,8 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
       preflight: { ok: false, checks: [], environmentAbort: false },
       flows: [],
       capabilities: [],
-      error: toErrorMessage(err),
+      error: lockError,
+      ...replayed,
     };
   }
 
@@ -156,6 +212,7 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
         flows: [],
         capabilities: [],
         error: checks.checks.filter(c => !c.ok).map(c => `${c.what}: ${c.detail}`).join('; '),
+        ...replayed,
       };
     }
 
@@ -205,6 +262,7 @@ export async function runLive(options: LiveRunOptions): Promise<LiveRunResult> {
       error: releaseError ?? skipError ?? (stopRequested ? 'stopped by SIGTERM before the drive settled' : undefined),
       ...(releaseError !== undefined ? { releaseError } : {}),
       ...(stopRequested ? { stopped: true as const } : {}),
+      ...replayed,
     };
   } finally {
     process.removeListener('beforeExit', onDrain);
@@ -309,6 +367,7 @@ export function formatSummary(result: LiveRunResult, quarantine: Record<string, 
   const shaSuffix = result.sha ? ` (${result.sha.slice(0, 8)})` : '';
   const lines = [`L2 live drive on ${result.world} — ${result.status}${shaSuffix}`];
   if (result.error) lines.push(`  ! ${result.error}`);
+  for (const r of result.replays ?? []) lines.push(`  replay ${r.ok ? 'ok' : 'FAIL'}: ${r.what} — ${r.detail}`);
   for (const check of result.preflight.checks.filter(c => !c.ok)) {
     lines.push(`  pre-flight FAIL  ${check.what}: ${check.detail ?? ''}`);
   }

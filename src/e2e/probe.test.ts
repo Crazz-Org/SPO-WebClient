@@ -4,7 +4,16 @@ import * as path from 'path';
 import { WsMessageType } from '@/shared/types/message-types';
 import type { WsMessage } from '@/shared/types/message-types';
 import { WsDriver } from './ws-driver';
-import { runProbe, runRoundTrip, probeFailure, type ProbeSpec, type RoundTripSpec } from './probe';
+import {
+  replayRoundTrip,
+  runProbe,
+  runRoundTrip,
+  probeFailure,
+  sectionPropertyIo,
+  type ProbeSpec,
+  type RoundTripIo,
+  type RoundTripSpec,
+} from './probe';
 import { WorldLock } from './world-lock';
 import type { LiveSession } from './session';
 import { PRIMARY_ACCOUNT } from './config';
@@ -665,6 +674,125 @@ describe('runRoundTrip', () => {
     expect(labels[0].what.length).toBeLessThan(120);
     expect(labels[0].what.endsWith('…"')).toBe(true);
     expect(labels[0].originalValue).toBe(long);
+  });
+});
+
+describe('runProbe — the replay target (#1186)', () => {
+  it("records a section-property replay target in the pending restore, naming the probe's read and write", async () => {
+    jest.spyOn(liveLog, 'awaitMarker').mockResolvedValue('Setting Tax value: 8');
+    const lock = tempLock();
+    const recorded: unknown[] = [];
+    const session = sessionReading(['7', '8'], () => recorded.push(lock.read().pendingRestores[0]?.replay));
+    await runProbe(session, spec, lock, factory, window.url);
+    expect(recorded[0]).toEqual({
+      kind: 'section-property',
+      x: 100,
+      y: 200,
+      visualClass: '512',
+      groupId: 'townTaxes',
+      readProperty: 'Tax0Percent',
+      writeProperty: 'RDOSetTaxValue',
+      additionalParams: { index: '0' },
+    });
+  });
+});
+
+describe('sectionPropertyIo', () => {
+  it('reads through the section read and writes through setBuildingProperty', async () => {
+    const written: string[] = [];
+    const session = sessionReading(['7'], v => written.push(v));
+    const io = sectionPropertyIo(session, {
+      kind: 'section-property',
+      x: 100,
+      y: 200,
+      visualClass: '512',
+      groupId: 'townTaxes',
+      readProperty: 'Tax0Percent',
+      writeProperty: 'RDOSetTaxValue',
+      additionalParams: { index: '0' },
+    }, 1234);
+    expect(await io.read()).toBe('7');
+    await io.write('9');
+    expect(written).toEqual(['9']);
+    const sent = (session.driver.request as jest.Mock).mock.calls.map(c => c[0] as WsMessage);
+    expect(sent.find(m => m.type === WsMessageType.REQ_BUILDING_SET_PROPERTY)).toMatchObject({
+      x: 100,
+      y: 200,
+      propertyName: 'RDOSetTaxValue',
+      value: '9',
+      additionalParams: { index: '0' },
+    });
+    expect(await io.readBack.read()).toBe('9');
+    expect(io.readBack).toMatchObject({
+      source: "townTaxes.Tax0Percent at (100,200) via the gateway's section read",
+      boundMs: 1234,
+    });
+  });
+});
+
+describe('replayRoundTrip', () => {
+  const entry = { key: 'RDOSetTaxValue:1', what: 'Helartia tax row 0 — put back "7"', originalValue: '7' };
+
+  function dirty(): WorldLock {
+    const lock = tempLock();
+    lock.addPendingRestore({ ...entry });
+    return lock;
+  }
+
+  function io(w: ReturnType<typeof world>, overrides: Partial<RoundTripIo> = {}): RoundTripIo {
+    return {
+      read: w.read,
+      write: w.write,
+      readBack: { source: 'fake', why: 'test', read: w.read, boundMs: 50, pollMs: 0 },
+      ...overrides,
+    };
+  }
+
+  it('writes the original back and clears the key when the read-back confirms it', async () => {
+    const w = world('8');
+    const lock = dirty();
+    const outcome = await replayRoundTrip(io(w), entry, lock);
+    expect(w.state.writes).toEqual(['7']);
+    expect(outcome).toEqual({ key: entry.key, what: entry.what, ok: true, detail: 'fake reads the original back' });
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('keeps the key when the read-back never shows the original', async () => {
+    const w = world('8');
+    const lock = dirty();
+    const restore = jest.fn(async () => undefined);
+    const outcome = await replayRoundTrip(io(w, { restore }), entry, lock, timed());
+    expect(restore).toHaveBeenCalledWith('7');
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toBe('fake still shows "8" after 50 ms');
+    expect(lock.read().pendingRestores).toHaveLength(1);
+  });
+
+  it('clears the key when the restore write throws but the read-back shows the original', async () => {
+    const w = world('7');
+    const lock = dirty();
+    const write = jest.fn(async () => {
+      throw new Error('refused');
+    });
+    const outcome = await replayRoundTrip(io(w, { write }), entry, lock);
+    expect(outcome.ok).toBe(true);
+    expect(outcome.detail).toBe('the restore write threw; fake reads the original back');
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
+
+  it('keeps the key when the read-back throws', async () => {
+    const w = world('8');
+    const lock = dirty();
+    const read = jest.fn(async (): Promise<string | undefined> => {
+      throw new Error('dead page');
+    });
+    const outcome = await replayRoundTrip(
+      io(w, { readBack: { source: 'fake', why: 'test', read, boundMs: 50, pollMs: 0 } }),
+      entry,
+      lock,
+    );
+    expect(outcome).toMatchObject({ ok: false, detail: 'fake still shows "(absent)" after 50 ms' });
+    expect(lock.read().pendingRestores).toHaveLength(1);
   });
 });
 

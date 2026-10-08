@@ -22,6 +22,7 @@ import {
   researchState, researchCost, lowerInterest, EMPTY_TILE_FOCUS_ERROR, NEVER_FOCUSED_FACILITY_ID,
   bankDebtorCount, distinctSalaries, cloneLineMatches, CLONE_SALARIES_OPTIONS,
   RATING_BASELINE, RATING_PROBE, ratingLogMatches, ratingMove, adPercent,
+  replayPendingRestores,
   type Flow, type FlowContext, type FlowResult, type GateLinks,
 } from './flows';
 import { parseBuildingFocusResponse } from '@/server/map-parsers';
@@ -1031,6 +1032,24 @@ describe('publicity-roundtrip', () => {
 
   const run = (lock = cleanLock()) =>
     flowByName('publicity-roundtrip').run({ lock, survivalLogUrl: 'u', ...fastClock() });
+
+  it('records a publicity replay target, and the replay puts the level back through REQ_POLITICS_SET_PUBLICITY (#1186)', async () => {
+    const writes = publicityHall({});
+    const lock = cleanLock();
+    const recorded = jest.spyOn(lock, 'addPendingRestore');
+    await run(lock);
+    expect(recorded.mock.calls[0][0].replay).toEqual({
+      kind: 'publicity', town: { name: 'Helartia', x: helartia.x, y: helartia.y }, ratingId: '5',
+    });
+    // The level now reads 25; the entry asks for 50 back.
+    writes.length = 0;
+    const target = recorded.mock.calls[0][0].replay;
+    lock.addPendingRestore({ key: 'pub', what: 'publicity', originalValue: '25', replay: target });
+    const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, { survivalLogUrl: 'u', ...fastClock() });
+    expect(writes).toEqual([{ ratingId: '5', value: 25 }]);
+    expect(outcome.ok).toBe(true);
+    expect(lock.read().pendingRestores).toEqual([]);
+  });
 
   it('writes another level, proves it, and restores the original', async () => {
     const writes = publicityHall({});
@@ -4500,6 +4519,29 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
+    it('records a policy-status replay target, and the replay puts "none" back through REQ_PROFILE_POLICY_SET (#1186)', async () => {
+      const world: PolicyWorld = { row: null, keepNeutralRow: true };
+      drive(world);
+      await run();
+      const [entry] = lock.read().pendingRestores;
+      expect(entry.replay).toEqual({ kind: 'policy-status' });
+      world.keepNeutralRow = false;
+      const outcomes = await replayPendingRestores(lock, [entry], flowCtx());
+      expect(statuses()).toEqual([2, 1, 1]);
+      expect(outcomes).toEqual([{ key: entry.key, what: entry.what, ok: true, detail: 'read back its original — pending restore cleared' }]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('keeps the entry when the replay read-back never shows the original (#1186)', async () => {
+      drive({ row: null, keepNeutralRow: true });
+      await run();
+      const [entry] = lock.read().pendingRestores;
+      const outcomes = await replayPendingRestores(lock, [entry], flowCtx());
+      expect(outcomes[0].ok).toBe(false);
+      expect(outcomes[0].detail).toMatch(new RegExp(`the ${SECONDARY_NAME} row of .* still shows "1:1"`));
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
     it('FAILs when the restore from "no row" leaves a neutral row behind, and keeps the pending restore', async () => {
       drive({ row: null, keepNeutralRow: true });
       const result = await run();
@@ -4669,6 +4711,51 @@ describe('policy-roundtrip and autoconnection-roundtrip (#1146)', () => {
       ]);
       expect(result.assertions.find(a => a.what.startsWith('the delete reached'))?.ok).toBe(true);
       expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('records a structured replay target for each of its writes (#1186)', async () => {
+      drive({
+        fluids: [fluid('Chemicals', { hireTradeCenter: true }), fluid('Food', { storable: true })],
+        search: { Chemicals: [{ facilityName: 'B', companyName: 'C', x: 5, y: 6 }] },
+      });
+      const recorded = jest.spyOn(lock, 'addPendingRestore');
+      await run();
+      expect(recorded.mock.calls.map(c => c[0].replay)).toEqual([
+        { kind: 'autoconnection-switch', fluidId: 'Chemicals', key: 'hireTradeCenter' },
+        { kind: 'autoconnection-switch', fluidId: 'Food', key: 'onlyWarehouses' },
+        { kind: 'autoconnection-supplier', fluidId: 'Chemicals', gate: '5,6,' },
+      ]);
+    });
+
+    it('replays a switch and a supplier through REQ_PROFILE_AUTOCONNECTION_ACTION and clears both (#1186)', async () => {
+      drive({
+        fluids: [fluid('Chemicals', { hireTradeCenter: false, suppliers: [{ facilityName: 'B', facilityId: '5,6,', companyName: 'C' }] })],
+        search: {},
+      });
+      lock.addPendingRestore({
+        key: 'sw', what: 'switch', originalValue: 'true',
+        replay: { kind: 'autoconnection-switch', fluidId: 'Chemicals', key: 'hireTradeCenter' },
+      });
+      lock.addPendingRestore({
+        key: 'sup', what: 'supplier', originalValue: 'absent',
+        replay: { kind: 'autoconnection-supplier', fluidId: 'Chemicals', gate: '5,6,' },
+      });
+      const outcomes = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(actions()).toEqual(['hireTradeCenter Chemicals', 'delete Chemicals 5,6,']);
+      expect(outcomes.map(o => [o.key, o.ok])).toEqual([['sw', true], ['sup', true]]);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('keeps a supplier entry whose fluid is no longer listed (#1186)', async () => {
+      drive({ fluids: [fluid('Food')], search: {} });
+      lock.addPendingRestore({
+        key: 'sup', what: 'supplier', originalValue: 'absent',
+        replay: { kind: 'autoconnection-supplier', fluidId: 'Chemicals', gate: '5,6,' },
+      });
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(outcome.ok).toBe(false);
+      expect(outcome.detail).toMatch(/the restore write threw; Chemicals's supplier list .* still shows "\(absent\)"/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
     });
 
     it('runs the warehouse flip only on the storable fluid', async () => {
@@ -5243,6 +5330,33 @@ describe('bank-borrow-payoff, bank-send-return and portrait-roundtrip (#1147)', 
       expect(lock.read().pendingRestores).toEqual([]);
     });
 
+    it('records a portrait replay target, and the replay re-uploads the saved original (#1186)', async () => {
+      const orig = original();
+      drive({ stored: orig });
+      const recorded = jest.spyOn(lock, 'addPendingRestore');
+      await run();
+      expect(recorded.mock.calls[0][0].replay).toEqual({ kind: 'portrait' });
+
+      const w: PortraitWorld = { stored: testPortraitJpeg() };
+      drive(w);
+      lock.addPendingRestore({ key: 'pic', what: 'portrait', originalValue: orig.toString('base64'), replay: { kind: 'portrait' } });
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(uploads).toEqual([orig]);
+      expect(w.stored).toEqual(orig);
+      expect(urls.every(u => u === `http://${IP}/fivedata/userinfo/planitia/${ME}/largephoto.jpg`)).toBe(true);
+      expect(outcome.ok).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('keeps a portrait entry when the login carries no world IP (#1186)', async () => {
+      drive({ stored: testPortraitJpeg(), noIp: true });
+      lock.addPendingRestore({ key: 'pic', what: 'portrait', originalValue: original().toString('base64'), replay: { kind: 'portrait' } });
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(uploads).toEqual([]);
+      expect(outcome).toMatchObject({ ok: false, detail: 'the login carried no world IP — the portrait URL cannot be built' });
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
     it('saves the original bytes in the pending restore before the test upload', async () => {
       const orig = original();
       drive({ stored: orig });
@@ -5551,6 +5665,36 @@ describe('road-roundtrip and zone-roundtrip (#1151)', () => {
   });
 
   describe('road-roundtrip', () => {
+    it('records a road-span replay target (#1186)', async () => {
+      drive();
+      const recorded = jest.spyOn(lock, 'addPendingRestore');
+      await run('road-roundtrip');
+      expect(recorded.mock.calls[0][0].replay).toEqual({ kind: 'road-span', span: { x1: 95, y1: 45, x2: 97, y2: 45 } });
+    });
+
+    it('replays a road-span as the mayor: breaks the leftover road through REQ_DEMOLISH_ROAD and clears (#1186)', async () => {
+      drive({ segments: [STREET, { x1: 95, y1: 45, x2: 97, y2: 45 }] });
+      lock.addPendingRestore({
+        key: 'road', what: 'road', originalValue: 'no road', replay: { kind: 'road-span', span: { x1: 95, y1: 45, x2: 97, y2: 45 } },
+      });
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(switched()).toEqual(['7', '1']);
+      expect(sentOf(WsMessageType.REQ_DEMOLISH_ROAD).length).toBeGreaterThan(0);
+      expect(outcome.ok).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('keeps a road-span entry whose road never goes, naming the failed check (#1186)', async () => {
+      drive({ segments: [STREET, { x1: 95, y1: 45, x2: 97, y2: 45 }], ignoreBreaks: 99 });
+      lock.addPendingRestore({
+        key: 'road', what: 'road', originalValue: 'no road', replay: { kind: 'road-span', span: { x1: 95, y1: 45, x2: 97, y2: 45 } },
+      });
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(outcome.ok).toBe(false);
+      expect(outcome.detail).toMatch(/no segment is left on the span .*pending restore kept/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
     it('PASSes: builds the span as the mayor, breaks its start tile, wipes the other two, and switches back', async () => {
       drive();
       const result = await run('road-roundtrip');
@@ -5704,6 +5848,36 @@ describe('road-roundtrip and zone-roundtrip (#1151)', () => {
 
   describe('zone-roundtrip', () => {
     const zonesSent = () => sentOf(WsMessageType.REQ_DEFINE_ZONE).map(m => m.zoneId);
+
+    it('records a zone replay target (#1186)', async () => {
+      drive({ zone: () => 3 });
+      const recorded = jest.spyOn(lock, 'addPendingRestore');
+      await run('zone-roundtrip');
+      expect(recorded.mock.calls[0][0].replay).toEqual({ kind: 'zone', rect: { x1: 95, y1: 44, x2: 97, y2: 45 } });
+    });
+
+    it('replays a zone as the mayor: REQ_DEFINE_ZONE with the original, cleared on the ZONES read-back (#1186)', async () => {
+      drive({ zone: () => 4 });
+      lock.addPendingRestore({
+        key: 'zone', what: 'zone', originalValue: '3', replay: { kind: 'zone', rect: { x1: 95, y1: 44, x2: 97, y2: 45 } },
+      });
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(switched()).toEqual(['7', '1']);
+      expect(zonesSent()).toEqual([3]);
+      expect(outcome.ok).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('keeps a zone entry the repaint never reaches (#1186)', async () => {
+      drive({ zone: () => 4, ignoreZone: [1] });
+      lock.addPendingRestore({
+        key: 'zone', what: 'zone', originalValue: '3', replay: { kind: 'zone', rect: { x1: 95, y1: 44, x2: 97, y2: 45 } },
+      });
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(outcome.ok).toBe(false);
+      expect(outcome.detail).toMatch(/ZONES surface .* still shows "4"/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
 
     it.each([
       [0, [3, 0]],
@@ -6779,6 +6953,48 @@ describe('build & demolish (#1150)', () => {
   describe('place-rename-demolish', () => {
     it('is mutating', () => {
       expect(flowByName('place-rename-demolish').mutates).toBe(true);
+    });
+
+    const placementEntry = () => ({
+      key: 'place', what: 'placement', originalValue: 'no facility',
+      replay: { kind: 'placement' as const, x: 40, y: 50, facilityClass: 'PGIFoodStore', visualClassId: '4600', tycoonId: OWN_TYCOON },
+    });
+
+    it('records a placement replay target (#1186)', async () => {
+      drive();
+      const recorded = jest.spyOn(lock, 'addPendingRestore');
+      await run();
+      expect(recorded.mock.calls[0][0].replay).toEqual(placementEntry().replay);
+    });
+
+    it('replays a placement: demolishes the facility it placed through REQ_DELETE_FACILITY and clears (#1186)', async () => {
+      drive();
+      building = { x: 40, y: 50, visualClass: CONSTRUCTION_VC, tycoonId: Number(OWN_TYCOON) };
+      lock.addPendingRestore(placementEntry());
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([{ x: 40, y: 50 }]);
+      expect(outcome.ok).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('clears a placement entry whose lot is already empty, demolishing nothing (#1186)', async () => {
+      drive();
+      lock.addPendingRestore(placementEntry());
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([]);
+      expect(outcome.ok).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('keeps a placement entry when the lot holds a facility it did not place (#1186)', async () => {
+      drive();
+      building = { x: 40, y: 50, visualClass: '4600', tycoonId: Number(MAYOR_TYCOON) };
+      lock.addPendingRestore(placementEntry());
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, flowCtx());
+      expect(sentOf(WsMessageType.REQ_DELETE_FACILITY)).toEqual([]);
+      expect(outcome.ok).toBe(false);
+      expect(outcome.detail).toMatch(/the object at the lot is the one this run placed/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
     });
 
     it('PASSes on a construction-state read-back: pending restore first, rename and back, demolish, lock clean', async () => {
@@ -8072,6 +8288,48 @@ describe('inspector connections & trade (#1153)', () => {
   describe('trade-settings', () => {
     const atIndustry = (world: ConnWorld) => world.writes.filter(w => w.x === 30 && w.y === 40);
 
+    const industryTradeLevel = {
+      kind: 'section-property' as const, x: 30, y: 40, visualClass: '4116', groupId: 'indGeneral',
+      readProperty: 'TradeLevel', writeProperty: 'RDOSetTradeLevel',
+    };
+
+    it('records a section-property replay target for each trade level (#1186)', async () => {
+      const world = new ConnWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const recorded = jest.spyOn(lock, 'addPendingRestore');
+      await run('trade-settings', lock);
+      expect(recorded.mock.calls.map(c => c[0].replay)).toEqual([
+        { ...industryTradeLevel, x: 50, y: 60, visualClass: '532', groupId: 'whGeneral' },
+        industryTradeLevel,
+      ]);
+    });
+
+    it('replays a section-property through setBuildingProperty, cleared on the section read-back (#1186)', async () => {
+      const world = new ConnWorld();
+      world.facs.industry.tradeLevel = '2';
+      const lock = cleanLock();
+      arrange(world);
+      lock.addPendingRestore({ key: 'tl', what: 'trade level', originalValue: '3', replay: industryTradeLevel });
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, { survivalLogUrl: 'u', ...fastClock() });
+      expect(world.writes.map(w => [w.x, w.y, w.property, w.value])).toEqual([[30, 40, 'RDOSetTradeLevel', '3']]);
+      expect(outcome.ok).toBe(true);
+      expect(lock.read().pendingRestores).toEqual([]);
+    });
+
+    it('keeps a section-property entry whose read-back never shows the original (#1186)', async () => {
+      const world = new ConnWorld();
+      world.facs.industry.tradeLevel = '2';
+      world.inert.add('RDOSetTradeLevel');
+      const lock = cleanLock();
+      arrange(world);
+      lock.addPendingRestore({ key: 'tl', what: 'trade level', originalValue: '3', replay: industryTradeLevel });
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, { survivalLogUrl: 'u', ...fastClock() });
+      expect(outcome.ok).toBe(false);
+      expect(outcome.detail).toMatch(/indGeneral\.TradeLevel at \(30,40\) .* still shows "2"/);
+      expect(lock.read().pendingRestores).toHaveLength(1);
+    });
+
     it('nudges both trade levels, proves each, restores each — and never sends RDOSetRole (#1255)', async () => {
       const world = new ConnWorld();
       const lock = cleanLock();
@@ -9292,6 +9550,44 @@ describe('inspector flows (#1154)', () => {
       expect(pending(lock)).toEqual([]);
     });
 
+    const researchEntry = () => ({
+      key: 'rs', what: 'research', originalValue: 'available',
+      replay: { kind: 'research' as const, facility: { ...LOTS.research }, inventionId: HH, category: 1 },
+    });
+
+    it('records a research replay target (#1186)', async () => {
+      const world = makeWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const recorded = jest.spyOn(lock, 'addPendingRestore');
+      await run('research-roundtrip', lock);
+      expect(recorded.mock.calls[0][0].replay).toEqual(researchEntry().replay);
+    });
+
+    it('replays a research entry: RDOCancelResearch, cleared once the inventory reads it available (#1186)', async () => {
+      const world = makeWorld();
+      world.categories[1] = { available: [{ id: 'R1', enabled: true }], developing: [HH], completed: [] };
+      const lock = cleanLock();
+      arrange(world);
+      lock.addPendingRestore(researchEntry());
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, { survivalLogUrl: 'u', ...fastClock() });
+      expect(world.writes).toEqual([{ property: 'RDOCancelResearch', value: '0', params: { inventionId: HH } }]);
+      expect(outcome.ok).toBe(true);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('keeps a research entry the cancel never moves (#1186)', async () => {
+      const world = makeWorld({ apply: () => false });
+      world.categories[1] = { available: [], developing: [HH], completed: [] };
+      const lock = cleanLock();
+      arrange(world);
+      lock.addPendingRestore(researchEntry());
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, { survivalLogUrl: 'u', ...fastClock() });
+      expect(outcome.ok).toBe(false);
+      expect(outcome.detail).toMatch(/the inventory reads HappyHour available again \(reads developing — pending restore kept\)/);
+      expect(pending(lock)).toHaveLength(1);
+    });
+
     it('reads the category Happy Hour is listed in, whatever its index', async () => {
       const world = makeWorld({
         categories: [
@@ -9557,6 +9853,45 @@ describe('inspector flows (#1154)', () => {
       expect(upgrades(world)[1]).not.toHaveProperty('count');
       expect(world.upgrade.AcceptCloning).toBe('255');
       expect(pending(lock)).toEqual([]);
+    });
+
+    const upgradeEntry = () => ({
+      key: 'up', what: 'upgrade', originalValue: 'level 1, AcceptCloning 1',
+      replay: { kind: 'upgrade' as const, facility: { ...LOTS.industry }, level0: 1, cloning0: '1' as const },
+    });
+
+    it('records an upgrade replay target (#1186)', async () => {
+      const world = makeWorld();
+      const lock = cleanLock();
+      arrange(world);
+      const recorded = jest.spyOn(lock, 'addPendingRestore');
+      await run('upgrade-stop', lock);
+      expect(recorded.mock.calls[0][0].replay).toEqual(upgradeEntry().replay);
+    });
+
+    it('replays an upgrade entry: STOP_UPGRADE then AcceptCloning back, cleared at the original level (#1186)', async () => {
+      const world = makeWorld({ upgrade: { UpgradeLevel: '1', Upgrading: '0', Pending: '1', MaxUpgrade: '5', AcceptCloning: '255' } });
+      const lock = cleanLock();
+      arrange(world);
+      lock.addPendingRestore(upgradeEntry());
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, { survivalLogUrl: 'u', ...fastClock() });
+      expect(world.events).toEqual(['upgrade:STOP_UPGRADE', 'set:RDOAcceptCloning=1']);
+      expect(outcome.ok).toBe(true);
+      expect(pending(lock)).toEqual([]);
+    });
+
+    it('keeps an upgrade entry when a level completed before the STOP (#1186)', async () => {
+      const world = makeWorld({
+        upgrade: { UpgradeLevel: '1', Upgrading: '0', Pending: '1', MaxUpgrade: '5', AcceptCloning: '255' },
+        levelUpOnStop: true,
+      });
+      const lock = cleanLock();
+      arrange(world);
+      lock.addPendingRestore(upgradeEntry());
+      const [outcome] = await replayPendingRestores(lock, lock.read().pendingRestores, { survivalLogUrl: 'u', ...fastClock() });
+      expect(outcome.ok).toBe(false);
+      expect(outcome.detail).toMatch(/UpgradeLevel equals its original after the STOP/);
+      expect(pending(lock)).toHaveLength(1);
     });
 
     it('sets a falsy AcceptCloning true before the START and back to false after the STOP', async () => {
@@ -11818,5 +12153,44 @@ describe('facility-status-batch-read (#1335)', () => {
     const result = await run();
     expect(result.status).toBe('UNTESTABLE');
     expect(batchesOf(world)).toEqual([]);
+  });
+});
+
+describe('replayPendingRestores (#1186)', () => {
+  it('fails an entry with no structured replay target at once, and opens no session', async () => {
+    const lock = cleanLock();
+    const login = jest.spyOn(session, 'login').mockResolvedValue(stubSession(() => undefined));
+    lock.addPendingRestore({ key: 'k', what: 'the portrait leftover', originalValue: '' });
+    const outcomes = await replayPendingRestores(lock, lock.read().pendingRestores);
+    expect(outcomes).toEqual([
+      { key: 'k', what: 'the portrait leftover', ok: false, detail: 'no structured replay target — a human restore (doc/E2E-POLICY.md §6)' },
+    ]);
+    expect(login).not.toHaveBeenCalled();
+    expect(lock.read().pendingRestores).toHaveLength(1);
+  });
+
+  it('fails a keyless legacy entry at once, and opens no session', async () => {
+    const lock = cleanLock();
+    const login = jest.spyOn(session, 'login').mockResolvedValue(stubSession(() => undefined));
+    const outcomes = await replayPendingRestores(lock, [
+      { what: 'legacy', originalValue: '7', replay: { kind: 'policy-status' } },
+    ]);
+    expect(outcomes).toEqual([
+      { what: 'legacy', ok: false, detail: 'keyless entry written before keys existed — a human restore' },
+    ]);
+    expect(login).not.toHaveBeenCalled();
+  });
+
+  it('turns a failed login into the entry\'s failure, and goes on with the next entry', async () => {
+    const lock = cleanLock();
+    jest.spyOn(session, 'login').mockRejectedValue(new Error('REQ_AUTH_CHECK refused'));
+    lock.addPendingRestore({ key: 'a', what: 'policy', originalValue: 'none', replay: { kind: 'policy-status' } });
+    lock.addPendingRestore({ key: 'b', what: 'leftover', originalValue: '' });
+    const outcomes = await replayPendingRestores(lock, lock.read().pendingRestores);
+    expect(outcomes.map(o => [o.key, o.ok, o.detail])).toEqual([
+      ['a', false, 'REQ_AUTH_CHECK refused'],
+      ['b', false, 'no structured replay target — a human restore (doc/E2E-POLICY.md §6)'],
+    ]);
+    expect(lock.read().pendingRestores).toHaveLength(2);
   });
 });

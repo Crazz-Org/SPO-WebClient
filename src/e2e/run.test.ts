@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { Writable } from 'stream';
 import { formatSummary, main, runLive, STOPPED_BY_DEADLINE, type LiveRunOptions, type LiveRunResult } from './run';
-import { WorldLock } from './world-lock';
+import { WorldLock, type ReplayOutcome, type StoredPendingRestore } from './world-lock';
 import * as preflightModule from './preflight';
 import * as flowsModule from './flows';
 import * as capabilityModule from './capability';
@@ -169,22 +169,189 @@ describe('runLive', () => {
     expect(lock.read().holder).toBeNull();
   });
 
-  it('reports BLOCKED when the world is still dirty from an earlier run', async () => {
-    const preflight = jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
-    const runFlow = jest.spyOn(flowsModule, 'runFlow').mockImplementation(async f => passingFlow(f.name));
-
+  /** A lock left dirty by an earlier run, holding one replayable pending restore. */
+  function dirtyLock(): { lock: WorldLock; entry: StoredPendingRestore } {
     const lock = tempLock();
     lock.acquire('fix/a', 1, () => false);
-    lock.addPendingRestore({ key: 'k', what: 'x', x: 1, y: 2, propertyName: 'RDOSetTaxValue', originalValue: '7' });
+    const entry = {
+      key: 'k',
+      what: 'x',
+      x: 1,
+      y: 2,
+      propertyName: 'RDOSetTaxValue',
+      originalValue: '7',
+      replay: {
+        kind: 'section-property' as const,
+        x: 1,
+        y: 2,
+        visualClass: '4610',
+        groupId: 'townTaxes',
+        readProperty: 'Tax0Percent',
+        writeProperty: 'RDOSetTaxValue',
+      },
+    };
+    lock.addPendingRestore(entry);
     expect(() => lock.release()).toThrow();
+    return { lock, entry };
+  }
 
-    const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock });
+  it('replays a dirty lock through the injected replayer first, and BLOCKS — preflight and runFlow untouched — only when the replay fails', async () => {
+    const preflight = jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const runFlow = jest.spyOn(flowsModule, 'runFlow').mockImplementation(async f => passingFlow(f.name));
+    const { lock, entry } = dirtyLock();
+    const outcomes: ReplayOutcome[] = [{ key: 'k', what: 'x', ok: false, detail: 'read-back still shows "8"' }];
+    const replayer = jest.fn(async () => outcomes);
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock, replayer });
+
+    expect(replayer).toHaveBeenCalledTimes(1);
+    expect(replayer).toHaveBeenCalledWith(lock, [entry]);
     expect(result.status).toBe('BLOCKED');
     expect(result.error).toMatch(/dirty/);
+    expect(result.error).toContain('Automatic replay failed — x: read-back still shows "8"');
     // The BLOCKED refusal must happen before anything is driven — if the early return in
-    // runLive's lock.acquire() catch is ever broken, this is what stops the test from
-    // falling through into an unmocked preflight/flow that would reach the live world.
+    // runLive's lock refusal is ever broken, this is what stops the test from falling through
+    // into an unmocked preflight/flow that would reach the live world.
     expect(preflight).not.toHaveBeenCalled();
+    expect(runFlow).not.toHaveBeenCalled();
+    expect(lock.read().dirty).toBe(true);
+    expect(result.replays).toEqual(outcomes);
+  });
+
+  it('a replay that reads every original back clears the lock and the run proceeds', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const runFlow = jest.spyOn(flowsModule, 'runFlow').mockImplementation(async f => passingFlow(f.name));
+    const { lock } = dirtyLock();
+    const replayer = jest.fn(async (l: WorldLock, entries: StoredPendingRestore[]): Promise<ReplayOutcome[]> =>
+      entries.map(e => {
+        l.clearPendingRestore(e.key ?? '');
+        return { key: e.key, what: e.what, ok: true, detail: 'read back its original' };
+      }),
+    );
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock, replayer });
+
+    expect(result.status).toBe('PASS');
+    expect(runFlow).toHaveBeenCalledTimes(1);
+    expect(lock.read()).toEqual({ holder: null, pendingRestores: [], dirty: false });
+    expect(result.replays).toEqual([{ key: 'k', what: 'x', ok: true, detail: 'read back its original' }]);
+  });
+
+  it('BLOCKS when the replayer reports ok but the lock still holds the entry', async () => {
+    // Mocked so a broken refusal can never fall through to the live world.
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const runFlow = jest.spyOn(flowsModule, 'runFlow').mockImplementation(async f => passingFlow(f.name));
+    const { lock } = dirtyLock();
+    const replayer = jest.fn(async (): Promise<ReplayOutcome[]> => [{ key: 'k', what: 'x', ok: true, detail: 'claimed' }]);
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock, replayer });
+
+    expect(result.status).toBe('BLOCKED');
+    expect(result.error).toContain('Automatic replay failed — 1 pending restore(s) still recorded');
+    expect(runFlow).not.toHaveBeenCalled();
+    expect(lock.read().dirty).toBe(true);
+  });
+
+  it('BLOCKS when the replayer throws, carrying the throw text', async () => {
+    // Mocked so a broken refusal can never fall through to the live world.
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const runFlow = jest.spyOn(flowsModule, 'runFlow').mockImplementation(async f => passingFlow(f.name));
+    const { lock } = dirtyLock();
+    const replayer = jest.fn(async (): Promise<ReplayOutcome[]> => {
+      throw new Error('gateway unreachable');
+    });
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock, replayer });
+
+    expect(result.status).toBe('BLOCKED');
+    expect(result.error).toMatch(/dirty/);
+    expect(result.error).toContain('gateway unreachable');
+    expect(result.replays).toEqual([{ what: 'the automatic replay', ok: false, detail: 'gateway unreachable' }]);
+    expect(runFlow).not.toHaveBeenCalled();
+    expect(lock.read().dirty).toBe(true);
+  });
+
+  it('never replays over a live single-flight holder', async () => {
+    // Mocked so a broken refusal can never fall through to the live world.
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const runFlow = jest.spyOn(flowsModule, 'runFlow').mockImplementation(async f => passingFlow(f.name));
+    const lock = tempLock();
+    // The parent process is alive: its pid holds the lock, a rival live run with writes in flight.
+    lock.acquire('fix/a', process.ppid);
+    lock.addPendingRestore({ key: 'k', what: 'x', originalValue: '7', replay: { kind: 'policy-status' } });
+    const replayer = jest.fn(async (): Promise<ReplayOutcome[]> => []);
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock, replayer });
+
+    expect(result.status).toBe('BLOCKED');
+    expect(result.error).toMatch(/single-flight/);
+    expect(result.replays).toBeUndefined();
+    expect(replayer).not.toHaveBeenCalled();
+    expect(runFlow).not.toHaveBeenCalled();
+  });
+
+  it('BLOCKS with the refusal when the lock is taken again after a clean replay and refused', async () => {
+    // Mocked so a broken refusal can never fall through to the live world.
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const runFlow = jest.spyOn(flowsModule, 'runFlow').mockImplementation(async f => passingFlow(f.name));
+    const { lock } = dirtyLock();
+    const replayer = jest.fn(async (l: WorldLock): Promise<ReplayOutcome[]> => {
+      l.clearPendingRestore('k');
+      return [{ key: 'k', what: 'x', ok: true, detail: 'read back its original' }];
+    });
+    const realAcquire = lock.acquire.bind(lock);
+    let calls = 0;
+    jest.spyOn(lock, 'acquire').mockImplementation((branch: string) => {
+      calls++;
+      if (calls === 1) return realAcquire(branch);
+      throw new Error('A live run is already in flight (pid 2). Live runs are single-flight.');
+    });
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock, replayer });
+
+    expect(result.status).toBe('BLOCKED');
+    expect(result.error).toMatch(/single-flight/);
+    expect(result.replays).toHaveLength(1);
+    expect(runFlow).not.toHaveBeenCalled();
+  });
+
+  it('carries the replays into an ENVIRONMENT abort after a clean replay', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue({ ok: false, checks: [], environmentAbort: true });
+    const { lock } = dirtyLock();
+    const replayer = jest.fn(async (l: WorldLock): Promise<ReplayOutcome[]> => {
+      l.clearPendingRestore('k');
+      return [{ key: 'k', what: 'x', ok: true, detail: 'read back its original' }];
+    });
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock, replayer });
+
+    expect(result.status).toBe('ENVIRONMENT');
+    expect(result.replays).toHaveLength(1);
+  });
+
+  it('leaves replays unset when the lock was clean', async () => {
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    jest.spyOn(flowsModule, 'runFlow').mockImplementation(async f => passingFlow(f.name));
+    const replayer = jest.fn(async (): Promise<ReplayOutcome[]> => []);
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/a', lock: tempLock(), replayer });
+
+    expect(result.status).toBe('PASS');
+    expect('replays' in result).toBe(false);
+    expect(replayer).not.toHaveBeenCalled();
+  });
+
+  it('defaults to replayPendingRestores from flows.ts', async () => {
+    // Mocked so a broken refusal can never fall through to the live world.
+    jest.spyOn(preflightModule, 'preflight').mockResolvedValue(okPreflight);
+    const runFlow = jest.spyOn(flowsModule, 'runFlow').mockImplementation(async f => passingFlow(f.name));
+    const replay = jest.spyOn(flowsModule, 'replayPendingRestores').mockResolvedValue([]);
+    const { lock, entry } = dirtyLock();
+
+    const result = await runLive({ flows: ['login-spine'], branch: 'fix/b', lock });
+
+    expect(replay).toHaveBeenCalledWith(lock, [entry]);
+    expect(result.status).toBe('BLOCKED');
     expect(runFlow).not.toHaveBeenCalled();
   });
 
@@ -596,6 +763,21 @@ describe('formatSummary', () => {
 
   it('prints no quarantine block without a table', () => {
     expect(formatSummary(base)).not.toContain('Server quarantine');
+  });
+
+  it('prints one line per replayed pending restore, ok or FAIL', () => {
+    const summary = formatSummary({
+      ...base,
+      status: 'BLOCKED',
+      error: 'dirty',
+      replays: [
+        { key: 'a', what: 'zone of (1,1)-(3,2)', ok: true, detail: 'read back its original' },
+        { key: 'b', what: 'the road', ok: false, detail: 'no segment is left on the span' },
+      ],
+    });
+    expect(summary).toContain('  replay ok: zone of (1,1)-(3,2) — read back its original');
+    expect(summary).toContain('  replay FAIL: the road — no segment is left on the span');
+    expect(summary.indexOf('! dirty')).toBeLessThan(summary.indexOf('replay ok'));
   });
 
   it('surfaces failed pre-flight checks', () => {

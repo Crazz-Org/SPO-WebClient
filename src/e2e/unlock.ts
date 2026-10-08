@@ -1,8 +1,10 @@
 /**
  * `npm run e2e:unlock` — clear a world-dirty lock after a human has restored the world.
  *
- * Deliberately manual. A dirty world means a run wrote something and did not put it back;
- * only a person can confirm the game state is sane again (doc/E2E-POLICY.md §6).
+ * The last resort after `runLive`'s automatic replay. Before refusing a run on a dirty world,
+ * `runLive` already tried every pending restore that carries a structured target, and cleared the
+ * lock itself when each read its original back. What is left needs a person: confirm the game
+ * state is sane again, put back what the replay could not, then run this (doc/E2E-POLICY.md §6).
  */
 
 import { WorldLock } from './world-lock';

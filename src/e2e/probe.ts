@@ -22,7 +22,7 @@ import { toErrorMessage } from '../shared/error-utils';
 import { TIMEOUTS } from './config';
 import { LOG_MARKERS, awaitMarker, describeLogMiss, openLogWindow, type LogWindow } from './live-log';
 import { readSectionGroups, setBuildingProperty, propertyValue, type LiveSession } from './session';
-import type { PendingRestore, WorldLock } from './world-lock';
+import type { PendingRestore, ReplayOutcome, ReplayTarget, WorldLock } from './world-lock';
 import { sleep as defaultSleep } from './sleep';
 
 export interface ProbeSpec {
@@ -106,8 +106,20 @@ export interface RoundTripSpec {
   testValue: (original: string) => string;
   /** `readBack` is required by the type; `log` is required when the member has a marker. */
   proof: { readBack: ReadBackProof; log?: RoundTripLogProof };
-  /** Building fields folded into the pending restore, so the dirty report reads as before. */
-  restoreRecord?: Pick<PendingRestore, 'x' | 'y' | 'propertyName' | 'additionalParams'>;
+  /** Fields folded into the pending restore — `replay` makes it replayable. */
+  restoreRecord?: Pick<PendingRestore, 'x' | 'y' | 'propertyName' | 'additionalParams' | 'replay'>;
+}
+
+/**
+ * The read, write and read-back of one value — what a flow's round trip and the automatic replay
+ * of its pending restore (`replayRoundTrip`) share, so both go through the same path.
+ */
+export interface RoundTripIo {
+  read: () => Promise<string | undefined>;
+  write: (value: string) => Promise<void>;
+  /** Defaults to `write(original)`. */
+  restore?: (original: string) => Promise<void>;
+  readBack: ReadBackProof;
 }
 
 export interface RoundTripClock {
@@ -203,20 +215,11 @@ export async function runRoundTrip(
   }
 
   // The restore runs whatever happened above.
-  let restoreWriteFailed = false;
-  let restorePoll: PollOutcome;
-  try {
-    await (spec.restore ?? spec.write)(original);
-  } catch {
-    restoreWriteFailed = true;
-  }
-  // Polled even after a throwing restore write: the read-back, not the write, says whether
-  // the world still holds the original.
-  try {
-    restorePoll = await pollReadBack(readBack, original, clock);
-  } catch {
-    restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
-  }
+  const { restoreWriteFailed, restorePoll } = await restoreLeg(
+    { write: spec.write, restore: spec.restore, readBack },
+    original,
+    clock,
+  );
   const restored = restorePoll.verdict === 'CONFIRMED';
   const restoreReadBack = restorePoll.verdict;
   if (restored) lock.clearPendingRestore(key);
@@ -275,6 +278,86 @@ interface PollOutcome {
   last: string | undefined;
 }
 
+/**
+ * The restore leg of a round trip: write the original back, then poll the read-back for it —
+ * polled even after a throwing restore write: the read-back, not the write, says whether the
+ * world still holds the original.
+ */
+async function restoreLeg(
+  io: Pick<RoundTripIo, 'write' | 'restore' | 'readBack'>,
+  original: string,
+  clock: RoundTripClock,
+): Promise<{ restoreWriteFailed: boolean; restorePoll: PollOutcome }> {
+  let restoreWriteFailed = false;
+  let restorePoll: PollOutcome;
+  try {
+    await (io.restore ?? io.write)(original);
+  } catch {
+    restoreWriteFailed = true;
+  }
+  try {
+    restorePoll = await pollReadBack(io.readBack, original, clock);
+  } catch {
+    restorePoll = { verdict: 'UNCONFIRMED', last: undefined };
+  }
+  return { restoreWriteFailed, restorePoll };
+}
+
+/**
+ * Replay one recorded pending restore (doc/E2E-POLICY.md §6): the same restore write and
+ * read-back the round trip would have run, once. The key is cleared only when the read-back
+ * shows the original — the rule `runRoundTrip` applies.
+ */
+export async function replayRoundTrip(
+  io: RoundTripIo,
+  entry: { key: string; what: string; originalValue: string },
+  lock: WorldLock,
+  clock: RoundTripClock = {},
+): Promise<ReplayOutcome> {
+  const { restoreWriteFailed, restorePoll } = await restoreLeg(io, entry.originalValue, clock);
+  const ok = restorePoll.verdict === 'CONFIRMED';
+  if (ok) lock.clearPendingRestore(entry.key);
+  const wrote = restoreWriteFailed ? 'the restore write threw; ' : '';
+  return {
+    key: entry.key,
+    what: entry.what,
+    ok,
+    detail: ok
+      ? `${wrote}${io.readBack.source} reads the original back`
+      : `${wrote}${io.readBack.source} still shows "${restorePoll.last ?? '(absent)'}" after ${io.readBack.boundMs} ms`,
+  };
+}
+
+/** The why of a facility section read-back — shared by `runProbe` and its replay. */
+const SECTION_READ_WHY =
+  "the facility's object-cache entry refreshes within its two-minute TTL " +
+  '(Kernel/Population.pas:1192, OB-29); the poll waits the lag out';
+
+/**
+ * A building property's read (the gateway's section read) and write (`setBuildingProperty`) —
+ * what `runProbe` drives, and what the replay of its pending restore drives again.
+ */
+export function sectionPropertyIo(
+  session: LiveSession,
+  t: Extract<ReplayTarget, { kind: 'section-property' }>,
+  boundMs: number = TIMEOUTS.readBack,
+): RoundTripIo {
+  const read = async (): Promise<string | undefined> =>
+    propertyValue(await readSectionGroups(session, t.x, t.y, t.groupId, t.visualClass), t.groupId, t.readProperty);
+  return {
+    read,
+    write: async (value: string): Promise<void> => {
+      await setBuildingProperty(session, t.x, t.y, t.writeProperty, value, t.additionalParams);
+    },
+    readBack: {
+      source: `${t.groupId}.${t.readProperty} at (${t.x},${t.y}) via the gateway's section read`,
+      why: SECTION_READ_WHY,
+      read,
+      boundMs,
+    },
+  };
+}
+
 /** Read at least once, then every `pollMs` until the value matches or the bound runs out. */
 async function pollReadBack(
   proof: ReadBackProof,
@@ -316,40 +399,36 @@ export async function runProbe(
     );
   }
 
-  const read = async (): Promise<string | undefined> =>
-    propertyValue(
-      await readSectionGroups(session, spec.x, spec.y, spec.groupId, spec.visualClass),
-      spec.groupId,
-      spec.readProperty,
-    );
-  const write = async (value: string): Promise<void> => {
-    await setBuildingProperty(session, spec.x, spec.y, spec.writeProperty, value, spec.additionalParams);
+  const replay: ReplayTarget = {
+    kind: 'section-property',
+    x: spec.x,
+    y: spec.y,
+    visualClass: spec.visualClass,
+    groupId: spec.groupId,
+    readProperty: spec.readProperty,
+    writeProperty: spec.writeProperty,
+    additionalParams: spec.additionalParams,
   };
+  const io = sectionPropertyIo(session, replay, options.readBackBoundMs ?? TIMEOUTS.readBack);
 
   const fixedOriginal = spec.original;
   return runRoundTrip(
     {
       what: spec.what,
       member: spec.member,
-      read: fixedOriginal !== undefined ? async () => fixedOriginal : read,
-      write,
+      read: fixedOriginal !== undefined ? async () => fixedOriginal : io.read,
+      write: io.write,
       testValue: spec.testValue,
       proof: {
         log: { marker, match: spec.logMatch },
-        readBack: {
-          source: `${spec.groupId}.${spec.readProperty} at (${spec.x},${spec.y}) via the gateway's section read`,
-          why:
-            "the facility's object-cache entry refreshes within its two-minute TTL " +
-            '(Kernel/Population.pas:1192, OB-29); the poll waits the lag out',
-          read,
-          boundMs: options.readBackBoundMs ?? TIMEOUTS.readBack,
-        },
+        readBack: io.readBack,
       },
       restoreRecord: {
         x: spec.x,
         y: spec.y,
         propertyName: spec.writeProperty,
         additionalParams: spec.additionalParams,
+        replay,
       },
     },
     lock,

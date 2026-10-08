@@ -155,11 +155,14 @@ import {
   type LogWindow,
 } from './live-log';
 import {
+  replayRoundTrip,
   runProbe,
   runRoundTrip,
   probeFailure,
+  sectionPropertyIo,
   type ProbeResult,
   type ProbeSpec,
+  type RoundTripIo,
   type RoundTripSpec,
 } from './probe';
 import { ALL_CONNECTION_ROLES, rolesToMask } from '../shared/connection-roles';
@@ -184,7 +187,7 @@ import {
   type LiveSession,
   type SecondaryLogin,
 } from './session';
-import type { WorldLock } from './world-lock';
+import type { ReplayOutcome, ReplayTarget, StoredPendingRestore, WorldLock } from './world-lock';
 import {
   RESEARCH_TARGET,
   queueResearchLineMatches,
@@ -689,6 +692,38 @@ export function publicityLogMatches(line: string, ratingId: string, written: str
   return line.trim().endsWith(`Setting town politics publicity: ${ratingId}, ${written}`);
 }
 
+/** One rating's publicity at a town hall: read through REQ_POLITICS_DATA, written with REQ_POLITICS_SET_PUBLICITY. */
+function publicityIo(session: LiveSession, town: { name: string; x: number; y: number }, ratingId: string): RoundTripIo {
+  const read = async (): Promise<string | undefined> => {
+    const level = (await readPolitics(session, town))?.publicity?.find(p => p.id === ratingId)?.level;
+    return level === undefined ? undefined : String(level);
+  };
+  return {
+    read,
+    write: async value => {
+      const resp = await session.driver.request<WsRespPoliticsSetPublicity>(
+        {
+          type: WsMessageType.REQ_POLITICS_SET_PUBLICITY,
+          buildingX: town.x,
+          buildingY: town.y,
+          ratingId,
+          value: Number(value),
+        },
+        WsMessageType.RESP_POLITICS_SET_PUBLICITY,
+      );
+      if (!resp.success) throw new Error(`SET_PUBLICITY refused: ${resp.message ?? 'no message'}`);
+    },
+    readBack: {
+      source: `publicity[${ratingId}].level via REQ_POLITICS_DATA (mayorpub.asp's selected option)`,
+      why:
+        'the page reads 25*(RulerPublicity \\ 25) (mayorpub.asp:169) and the write ' +
+        'invalidates the town hall cache (Kernel/TownPolitics.pas:231-232)',
+      read,
+      boundMs: TIMEOUTS.readBack,
+    },
+  };
+}
+
 /** `TPoliticalTownHall.RDOSetPublicity` (`Kernel/TownPolitics.pas:220`) — town-scoped. */
 const publicityRoundTrip: Flow = {
   name: 'publicity-roundtrip',
@@ -706,10 +741,7 @@ const publicityRoundTrip: Flow = {
       if (!row) return report('publicity-roundtrip', assertions, probes, session);
 
       const ratingId = row.id;
-      const read = async (): Promise<string | undefined> => {
-        const level = (await readPolitics(session, town))?.publicity?.find(p => p.id === ratingId)?.level;
-        return level === undefined ? undefined : String(level);
-      };
+      const io = publicityIo(session, town, ratingId);
       const what = `${town.name} publicity for rating ${row.name} (${ratingId})`;
       const member = 'RDOSetPublicity';
       const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
@@ -719,34 +751,18 @@ const publicityRoundTrip: Flow = {
             {
               what,
               member,
-              read,
+              read: io.read,
               testValue: otherPublicityLevel,
-              write: async value => {
-                const resp = await session.driver.request<WsRespPoliticsSetPublicity>(
-                  {
-                    type: WsMessageType.REQ_POLITICS_SET_PUBLICITY,
-                    buildingX: town.x,
-                    buildingY: town.y,
-                    ratingId,
-                    value: Number(value),
-                  },
-                  WsMessageType.RESP_POLITICS_SET_PUBLICITY,
-                );
-                if (!resp.success) throw new Error(`SET_PUBLICITY refused: ${resp.message ?? 'no message'}`);
-              },
+              write: io.write,
               proof: {
                 log: {
                   marker: LOG_MARKERS.RDOSetPublicity,
                   match: (line, written) => publicityLogMatches(line, ratingId, written),
                 },
-                readBack: {
-                  source: `publicity[${ratingId}].level via REQ_POLITICS_DATA (mayorpub.asp's selected option)`,
-                  why:
-                    'the page reads 25*(RulerPublicity \\ 25) (mayorpub.asp:169) and the write ' +
-                    'invalidates the town hall cache (Kernel/TownPolitics.pas:231-232)',
-                  read,
-                  boundMs: TIMEOUTS.readBack,
-                },
+                readBack: io.readBack,
+              },
+              restoreRecord: {
+                replay: { kind: 'publicity', town: { name: town.name, x: town.x, y: town.y }, ratingId },
               },
             },
             ctx.lock,
@@ -3441,6 +3457,34 @@ function policyStatus(value: string): number {
   return value === 'none' ? PST_NEUTRAL : Number(value.split(':')[0]);
 }
 
+/** SPO_test3's strategy towards the secondary account: read on the strategy tab, written with REQ_PROFILE_POLICY_SET. */
+function policyIo(session: LiveSession): RoundTripIo {
+  const read = (): Promise<string> => policyTowardsSecondary(session);
+  return {
+    read,
+    write: async value => {
+      // `success` is ignored: the gateway answers false whenever the row disappears — every
+      // restore to neutral against a neutral counterpart. The read-back is the judge.
+      await session.driver.request<WsRespProfilePolicySet>(
+        {
+          type: WsMessageType.REQ_PROFILE_POLICY_SET,
+          tycoonName: SECONDARY_ACCOUNT.username,
+          status: policyStatus(value),
+        },
+        WsMessageType.RESP_PROFILE_POLICY_SET,
+      );
+    },
+    readBack: {
+      source: `the ${SECONDARY_ACCOUNT.username} row of ${PAGE_POLICY}`,
+      why:
+        'the page reads the object cache, refreshed after the write (Kernel/Kernel.pas:11787-11788) ' +
+        '— OB-29 lag, so the poll is bounded',
+      read: tolerantRead(read),
+      boundMs: TIMEOUTS.readBack,
+    },
+  };
+}
+
 /**
  * The strategy towards the secondary account, change-then-undo (#1146). GATE_ONLY: every `RDOSetPolicyStatus`
  * broadcasts a world event naming the secondary account (Kernel/Kernel.pas:11790-11800). The restore from "no
@@ -3456,45 +3500,29 @@ const policyRoundTrip: Flow = {
     const session = await login(PRIMARY_ACCOUNT);
     try {
       const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
-      const read = (): Promise<string> => policyTowardsSecondary(session);
+      const io = policyIo(session);
       probes.push(
         await roundTripProbe(ctx, url, {
           what: `${PRIMARY_ACCOUNT.username}'s strategy towards ${SECONDARY_ACCOUNT.username} ("none" = no row, both neutral)`,
           member: 'RDOSetPolicyStatus',
-          read,
+          read: io.read,
           testValue: original => {
             const [yours, theirs] =
               original === 'none' ? [PST_NEUTRAL, PST_NEUTRAL] : original.split(':').map(Number);
             const next = yours === PST_ENEMY ? PST_NEUTRAL : PST_ENEMY;
             return next === PST_NEUTRAL && theirs === PST_NEUTRAL ? 'none' : `${next}:${theirs}`;
           },
-          write: async value => {
-            // `success` is ignored: the gateway answers false whenever the row disappears — every
-            // restore to neutral against a neutral counterpart. The read-back is the judge.
-            await session.driver.request<WsRespProfilePolicySet>(
-              {
-                type: WsMessageType.REQ_PROFILE_POLICY_SET,
-                tycoonName: SECONDARY_ACCOUNT.username,
-                status: policyStatus(value),
-              },
-              WsMessageType.RESP_PROFILE_POLICY_SET,
-            );
-          },
+          write: io.write,
           proof: {
             log: {
               marker: LOG_MARKERS.RDOSetPolicyStatus,
               match: (line, written) =>
                 lineHas(line, `${PRIMARY_ACCOUNT.username}, ${SECONDARY_ACCOUNT.username}, ${policyStatus(written)}`),
             },
-            readBack: {
-              source: `the ${SECONDARY_ACCOUNT.username} row of ${PAGE_POLICY}`,
-              why:
-                'the page reads the object cache, refreshed after the write (Kernel/Kernel.pas:11787-11788) ' +
-                '— OB-29 lag, so the poll is bounded',
-              read: tolerantRead(read),
-              boundMs: TIMEOUTS.readBack,
-            },
+            readBack: io.readBack,
           },
+          // The counterpart is SECONDARY_ACCOUNT by construction, so the target names no one.
+          restoreRecord: { replay: { kind: 'policy-status' } },
         }),
       );
       assertions.check('the policy round trip proved the write and the restore', probeHeld(probes[0]), probes[0]?.note);
@@ -3591,6 +3619,52 @@ async function autoConnectionAction(
   );
 }
 
+const AUTOCONNECTION_READ_WHY =
+  `${PAGE_AUTOCONNECTIONS} reads the object cache (NewTycoon/TycoonAutoConnections.asp:3,12,29), ` +
+  'refreshed by the member with BackgroundInvalidateCache — OB-29 lag, so the poll is bounded';
+
+async function autoConnectionFluid(session: LiveSession, fluidId: string): Promise<AutoConnectionFluid | undefined> {
+  return (await readAutoConnections(session)).fluids.find(f => f.fluidId === fluidId);
+}
+
+/** One fluid's Trade Center / only-warehouses switch on the initial suppliers page: `"true"` / `"false"`. */
+function autoConnectionSwitchIo(session: LiveSession, fluidId: string, key: AutoConnectionSwitch): RoundTripIo {
+  const sw = SWITCHES[key];
+  const read = async (): Promise<string | undefined> => {
+    const f = await autoConnectionFluid(session, fluidId);
+    return f ? String(f[key]) : undefined;
+  };
+  return {
+    read,
+    write: value => autoConnectionAction(session, value === 'true' ? sw.on : sw.off, fluidId),
+    readBack: {
+      source: `${fluidId}.${key} on ${PAGE_AUTOCONNECTIONS}`,
+      why: AUTOCONNECTION_READ_WHY,
+      read: tolerantRead(read),
+      boundMs: TIMEOUTS.readBack,
+    },
+  };
+}
+
+/** Whether one default supplier is listed for a fluid: `"listed"` (add) / `"absent"` (delete). */
+function autoConnectionSupplierIo(session: LiveSession, fluidId: string, gate: string): RoundTripIo {
+  const read = async (): Promise<string | undefined> => {
+    const f = await autoConnectionFluid(session, fluidId);
+    if (!f) return undefined;
+    return f.suppliers.some(s => s.facilityId === gate) ? 'listed' : 'absent';
+  };
+  return {
+    read,
+    write: value => autoConnectionAction(session, value === 'listed' ? 'add' : 'delete', fluidId, gate),
+    readBack: {
+      source: `${fluidId}'s supplier list on ${PAGE_AUTOCONNECTIONS}`,
+      why: AUTOCONNECTION_READ_WHY,
+      read: tolerantRead(read),
+      boundMs: TIMEOUTS.readBack,
+    },
+  };
+}
+
 /**
  * The initial suppliers, change-then-undo (#1146): flip the Trade Center switch, flip the
  * only-warehouses switch on a storable fluid, then add one default supplier not already listed
@@ -3619,38 +3693,24 @@ const autoConnectionRoundTrip: Flow = {
         return report('autoconnection-roundtrip', assertions, probes, session);
       }
       const url = ctx.survivalLogUrl ?? (await findCurrentSurvivalLog());
-      const fluidOf = async (fluidId: string) =>
-        (await readAutoConnections(session)).fluids.find(f => f.fluidId === fluidId);
-      const act = (action: AutoConnectionActionType, fluidId: string, suppliers?: string): Promise<void> =>
-        autoConnectionAction(session, action, fluidId, suppliers);
-      const readBackWhy =
-        `${PAGE_AUTOCONNECTIONS} reads the object cache (NewTycoon/TycoonAutoConnections.asp:3,12,29), ` +
-        'refreshed by the member with BackgroundInvalidateCache — OB-29 lag, so the poll is bounded';
 
       const flip = async (fluid: AutoConnectionFluid, key: AutoConnectionSwitch): Promise<void> => {
         const sw = SWITCHES[key];
-        const read = async (): Promise<string | undefined> => {
-          const f = await fluidOf(fluid.fluidId);
-          return f ? String(f[key]) : undefined;
-        };
+        const io = autoConnectionSwitchIo(session, fluid.fluidId, key);
         const probe = await roundTripProbe(ctx, url, {
           what: `${PRIMARY_ACCOUNT.username}'s ${key} switch on ${fluid.fluidId}`,
           member: fluid[key] ? sw.offMember : sw.onMember,
-          read,
+          read: io.read,
           testValue: original => (original === 'true' ? 'false' : 'true'),
-          write: value => act(value === 'true' ? sw.on : sw.off, fluid.fluidId),
+          write: io.write,
           proof: {
             log: {
               marker: LOG_MARKERS[fluid[key] ? sw.offMember : sw.onMember],
               match: line => lineHas(line, `${PRIMARY_ACCOUNT.username}, ${fluid.fluidId}`),
             },
-            readBack: {
-              source: `${fluid.fluidId}.${key} on ${PAGE_AUTOCONNECTIONS}`,
-              why: readBackWhy,
-              read: tolerantRead(read),
-              boundMs: TIMEOUTS.readBack,
-            },
+            readBack: io.readBack,
           },
+          restoreRecord: { replay: { kind: 'autoconnection-switch', fluidId: fluid.fluidId, key } },
         });
         probes.push(probe);
         assertions.check(`the ${key} flip proved the write and the restore`, probeHeld(probe), probe.note);
@@ -3703,26 +3763,18 @@ const autoConnectionRoundTrip: Flow = {
       const { fluid, gate } = target;
       const identity = `${PRIMARY_ACCOUNT.username}, ${fluid.fluidId}, ${gate}`;
       const delWindow = await openLogWindow(url);
-      const read = async (): Promise<string | undefined> => {
-        const f = await fluidOf(fluid.fluidId);
-        if (!f) return undefined;
-        return f.suppliers.some(s => s.facilityId === gate) ? 'listed' : 'absent';
-      };
+      const io = autoConnectionSupplierIo(session, fluid.fluidId, gate);
       const probe = await roundTripProbe(ctx, url, {
         what: `${PRIMARY_ACCOUNT.username}'s default supplier ${gate} for ${fluid.fluidId}`,
         member: 'RDOAddAutoConnection',
-        read,
+        read: io.read,
         testValue: () => 'listed',
-        write: value => act(value === 'listed' ? 'add' : 'delete', fluid.fluidId, gate),
+        write: io.write,
         proof: {
           log: { marker: LOG_MARKERS.RDOAddAutoConnection, match: line => lineHas(line, identity) },
-          readBack: {
-            source: `${fluid.fluidId}'s supplier list on ${PAGE_AUTOCONNECTIONS}`,
-            why: readBackWhy,
-            read: tolerantRead(read),
-            boundMs: TIMEOUTS.readBack,
-          },
+          readBack: io.readBack,
         },
+        restoreRecord: { replay: { kind: 'autoconnection-supplier', fluidId: fluid.fluidId, gate } },
       });
       probes.push(probe);
       assertions.check('the supplier add proved the write and the delete', probeHeld(probe), probe.note);
@@ -4203,6 +4255,30 @@ export function portraitUrl(ip: string, world: string, tycoon: string): string {
   return `http://${ip}/fivedata/userinfo/${encodeURIComponent(world)}/${encodeURIComponent(tycoon)}/largephoto.jpg`;
 }
 
+/** The portrait at `url`: uploaded with REQ_PROFILE_UPLOAD_PICTURE, read back by a direct byte-for-byte re-fetch. */
+function portraitIo(session: LiveSession, url: string): RoundTripIo {
+  const read = async (): Promise<string | undefined> => (await fetchPortrait(url)).bytes?.toString('base64');
+  return {
+    read,
+    write: async value => {
+      const answer = await session.driver.request<WsRespProfileUploadPicture>(
+        { type: WsMessageType.REQ_PROFILE_UPLOAD_PICTURE, pictureBase64: value },
+        WsMessageType.RESP_PROFILE_UPLOAD_PICTURE,
+        TIMEOUTS.login,
+      );
+      if (answer.success !== true) throw new Error(`upload refused: ${answer.reason ?? ''} ${answer.message ?? ''}`.trim());
+    },
+    readBack: {
+      source: `a direct re-fetch of ${url}, compared byte for byte`,
+      why:
+        'the cache server writes the uploaded bytes verbatim and answers OK only then ' +
+        '(Cache Server/CacheServerReportForm.pas:548-549, :574-600); its OK alone proves nothing',
+      read: tolerantRead(read),
+      boundMs: TIMEOUTS.readBack,
+    },
+  };
+}
+
 async function fetchPortrait(url: string): Promise<{ status: number; bytes?: Buffer }> {
   const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(TIMEOUTS.request) });
   if (!res.ok) return { status: res.status };
@@ -4263,6 +4339,7 @@ const portraitRoundTrip: Flow = {
       }
       const originalB64 = first.bytes.toString('base64');
       const testB64 = test.toString('base64');
+      const io = portraitIo(session, url);
       probes.push(
         await roundTripProbe(ctx, ctx.survivalLogUrl ?? '', {
           what: `${ME}'s portrait ${url} — the original JPEG is this entry's originalValue (base64) in the world lock file; re-upload it`,
@@ -4270,24 +4347,9 @@ const portraitRoundTrip: Flow = {
           member: 'PictureUpload',
           read: async () => originalB64,
           testValue: () => testB64,
-          write: async value => {
-            const answer = await session.driver.request<WsRespProfileUploadPicture>(
-              { type: WsMessageType.REQ_PROFILE_UPLOAD_PICTURE, pictureBase64: value },
-              WsMessageType.RESP_PROFILE_UPLOAD_PICTURE,
-              TIMEOUTS.login,
-            );
-            if (answer.success !== true) throw new Error(`upload refused: ${answer.reason ?? ''} ${answer.message ?? ''}`.trim());
-          },
-          proof: {
-            readBack: {
-              source: `a direct re-fetch of ${url}, compared byte for byte`,
-              why:
-                'the cache server writes the uploaded bytes verbatim and answers OK only then ' +
-                '(Cache Server/CacheServerReportForm.pas:548-549, :574-600); its OK alone proves nothing',
-              read: tolerantRead(async () => (await fetchPortrait(url)).bytes?.toString('base64')),
-              boundMs: TIMEOUTS.readBack,
-            },
-          },
+          write: io.write,
+          proof: { readBack: io.readBack },
+          restoreRecord: { replay: { kind: 'portrait' } },
         }),
       );
       assertions.check('the portrait round trip proved the upload and the restore', probeHeld(probes[0]), probes[0]?.note);
@@ -4604,6 +4666,28 @@ async function readZone(session: LiveSession, rect: Rect): Promise<string | unde
   return String(first);
 }
 
+/** The zone of a rectangle: painted with REQ_DEFINE_ZONE (as Mayor), read back from the ZONES surface. */
+function zoneIo(session: LiveSession, rect: Rect): RoundTripIo {
+  const read = (): Promise<string | undefined> => readZone(session, rect);
+  return {
+    read,
+    write: async value => {
+      const answer = await session.driver.request<WsRespDefineZone>(
+        { type: WsMessageType.REQ_DEFINE_ZONE, zoneId: Number(value), ...rect },
+        WsMessageType.RESP_DEFINE_ZONE,
+        TIMEOUTS.login,
+      );
+      if (answer.success !== true) throw new Error(`REQ_DEFINE_ZONE refused: ${answer.message ?? ''}`.trim());
+    },
+    readBack: {
+      source: 'the ZONES surface over the rectangle (REQ_GET_SURFACE)',
+      why: 'GetSurface compresses fZones live — no object cache (Kernel/World.pas:4461-4464)',
+      read: tolerantRead(read),
+      boundMs: TIMEOUTS.readBack,
+    },
+  };
+}
+
 /**
  * Log in, find the governed town (the search menu belongs to the own session), switch to the
  * Mayor role company, run the body, and switch back in a `finally` — including when the switch
@@ -4684,6 +4768,7 @@ const roadRoundTrip: Flow = {
           key,
           what: `break the road on ${rectText(span)} as Mayor of ${GOVERNED_TOWN} — road-roundtrip built it`,
           originalValue: 'no road',
+          replay: { kind: 'road-span', span },
         });
         await roadSteps(session, span, url, assertions, ctx);
       } catch (err: unknown) {
@@ -4849,31 +4934,21 @@ const zoneRoundTrip: Flow = {
         return;
       }
       const opened = await openLog(url);
+      const io = zoneIo(session, rect);
       const probe = await roundTripProbe(ctx, url, {
         what: `the zone of ${rectText(rect)} in ${GOVERNED_TOWN} — repaint it as Mayor of ${GOVERNED_TOWN} with REQ_DEFINE_ZONE`,
         member: 'RDODefineZone',
-        read: () => readZone(session, rect),
+        read: io.read,
         testValue: original => String(PAINT_ZONE_IDS.find(z => String(z) !== original)),
-        write: async value => {
-          const answer = await session.driver.request<WsRespDefineZone>(
-            { type: WsMessageType.REQ_DEFINE_ZONE, zoneId: Number(value), ...rect },
-            WsMessageType.RESP_DEFINE_ZONE,
-            TIMEOUTS.login,
-          );
-          if (answer.success !== true) throw new Error(`REQ_DEFINE_ZONE refused: ${answer.message ?? ''}`.trim());
-        },
+        write: io.write,
         proof: {
           log: {
             marker: LOG_MARKERS.RDODefineZone,
             match: (line, written) => zoneLogMatches(line, Number(written), rect),
           },
-          readBack: {
-            source: 'the ZONES surface over the rectangle (REQ_GET_SURFACE)',
-            why: 'GetSurface compresses fZones live — no object cache (Kernel/World.pas:4461-4464)',
-            read: tolerantRead(() => readZone(session, rect)),
-            boundMs: TIMEOUTS.readBack,
-          },
+          readBack: io.readBack,
         },
+        restoreRecord: { replay: { kind: 'zone', rect } },
       });
       probes.push(probe);
       assertions.check('the zone round trip proved the paint and the repaint', probeHeld(probe), probe.note);
@@ -7171,7 +7246,20 @@ const tradeSettings: Flow = {
             log: { marker: LOG_MARKERS.RDOSetTradeLevel, match: line => facLineMatches(line, fx.x, fx.y, 'SetTradeLevel') },
             readBack: readBackOn(`${groupId}.TradeLevel at (${fx.x},${fx.y}) via the gateway's section read`, FACILITY_CACHE_WHY, tolerantRead(read)),
           },
-          restoreRecord: { x: fx.x, y: fx.y, propertyName: 'RDOSetTradeLevel' },
+          restoreRecord: {
+            x: fx.x,
+            y: fx.y,
+            propertyName: 'RDOSetTradeLevel',
+            replay: {
+              kind: 'section-property',
+              x: fx.x,
+              y: fx.y,
+              visualClass: fx.visualClass,
+              groupId,
+              readProperty: 'TradeLevel',
+              writeProperty: 'RDOSetTradeLevel',
+            },
+          },
         });
         probes.push(probe);
         checkProbe(assertions, probe);
@@ -7903,6 +7991,7 @@ async function placeRenameDemolishSteps(session: LiveSession, ctx: FlowContext, 
       `demolish the ${cls} at ${where}, company ${companyId} (${session.company.name}) — place-rename-demolish ` +
       `placed it in ${GOVERNED_TOWN}; demolish it as ${PRIMARY_ACCOUNT.username}, then npm run e2e:unlock`,
     originalValue: 'no facility',
+    replay: { kind: 'placement', x: lot.x, y: lot.y, facilityClass: cls, visualClassId: info.visualClassId, tycoonId },
   });
 
   let refused = false;
@@ -8921,6 +9010,12 @@ async function researchSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixt
       `invention and sells an owned one (Kernel/ResearchCenter.pas:354-372); ${name} is an isolated test invention, so ` +
       'selling it is the intended undo',
     originalValue: 'available',
+    replay: {
+      kind: 'research',
+      facility: { x: fx.x, y: fx.y, visualClass: fx.visualClass, name: fx.name },
+      inventionId: id,
+      category,
+    },
   });
 
   let queued = false;
@@ -9119,6 +9214,12 @@ async function upgradeSteps(session: LiveSession, ctx: FlowContext, fx: OwnFixtu
       `${run.cloning0 === '1' ? 'true' : 'false'} — upgrade-stop started one upgrade from level ${run.level0}; ` +
       `do both as ${PRIMARY_ACCOUNT.username}, then npm run e2e:unlock`,
     originalValue: `level ${run.level0}, AcceptCloning ${run.cloning0}`,
+    replay: {
+      kind: 'upgrade',
+      facility: { x: fx.x, y: fx.y, visualClass: fx.visualClass, name: fx.name },
+      level0: run.level0,
+      cloning0: run.cloning0,
+    },
   });
 
   try {
@@ -9902,6 +10003,171 @@ export function flowByName(name: string): Flow {
  * seed -> run -> cleanup; the cleanup runs even when `run` throws, and a cleanup that leaves
  * data behind turns the result FAIL (the restore rule, doc/E2E-POLICY.md §5/§9).
  */
+// ---------------------------------------------------------------------------------------------
+// The automatic replay of a dirty world's pending restores (#1186, doc/E2E-POLICY.md §6)
+// ---------------------------------------------------------------------------------------------
+
+/** The failed checks of a replay, as `what (detail)` — empty when none failed. */
+function failedChecks(items: { what: string; ok: boolean; detail?: string }[]): string {
+  return items
+    .filter(a => !a.ok)
+    .map(a => `${a.what}${a.detail ? ` (${a.detail})` : ''}`)
+    .join('; ');
+}
+
+type RoundTripTarget = Extract<
+  ReplayTarget,
+  { kind: 'section-property' | 'autoconnection-switch' | 'autoconnection-supplier' | 'policy-status' | 'publicity' | 'portrait' }
+>;
+
+/** The flow's own read/write factory for a round-trip target. */
+function roundTripIoFor(session: LiveSession, t: RoundTripTarget): RoundTripIo {
+  switch (t.kind) {
+    case 'section-property':
+      return sectionPropertyIo(session, t);
+    case 'autoconnection-switch':
+      return autoConnectionSwitchIo(session, t.fluidId, t.key);
+    case 'autoconnection-supplier':
+      return autoConnectionSupplierIo(session, t.fluidId, t.gate);
+    case 'policy-status':
+      return policyIo(session);
+    case 'publicity':
+      return publicityIo(session, t.town, t.ratingId);
+    case 'portrait': {
+      // The URL is rebuilt exactly as portrait-roundtrip builds it.
+      const ip = session.world?.ip;
+      if (!ip) throw new Error('the login carried no world IP — the portrait URL cannot be built');
+      return portraitIo(session, portraitUrl(ip, session.world?.name ?? WORLD_NAME, PRIMARY_ACCOUNT.username));
+    }
+  }
+}
+
+/** Log in as SPO_test3, run the flow's own cleanup, log off — the failed checks it recorded. */
+async function withCleanupSession(body: (session: LiveSession, assertions: Assertions) => Promise<void>): Promise<string> {
+  const assertions = new Assertions();
+  const session = await login(PRIMARY_ACCOUNT);
+  try {
+    await body(session, assertions);
+  } finally {
+    await logoff(session);
+  }
+  return failedChecks(assertions.items);
+}
+
+/** Run one target's undo through the flow's own code; the text of whatever failed. */
+async function replayTarget(
+  ctx: FlowContext,
+  entry: { key: string; what: string; originalValue: string },
+  t: ReplayTarget,
+): Promise<string> {
+  const clock = { now: ctx.now, sleep: ctx.sleep };
+  switch (t.kind) {
+    case 'zone': {
+      let detail = '';
+      const result = await asMayor('replay', ctx, async session => {
+        detail = (await replayRoundTrip(zoneIo(session, t.rect), entry, ctx.lock, clock)).detail;
+      });
+      return [detail, failedChecks(result.assertions)].filter(Boolean).join('; ');
+    }
+    case 'road-span': {
+      const result = await asMayor('replay', ctx, (session, _town, _url, assertions) =>
+        roadCleanup(session, t.span, entry.key, assertions, ctx),
+      );
+      return failedChecks(result.assertions);
+    }
+    case 'placement':
+      return withCleanupSession(async (session, assertions) =>
+        // `refused: true`: an empty lot already reads the original "no facility", and that branch
+        // clears exactly on an empty lot. Anything standing there is still checked by
+        // ownsPlacement before a demolition — nothing this run did not place is touched.
+        removePlacement(
+          session,
+          ctx,
+          {
+            x: t.x,
+            y: t.y,
+            facilityClass: t.facilityClass,
+            visualClassId: t.visualClassId,
+            tycoonId: t.tycoonId,
+            key: entry.key,
+            refused: true,
+            url: await survivalUrl(ctx),
+            dims: await facilityDimensions(session),
+          },
+          assertions,
+        ),
+      );
+    case 'research':
+      return withCleanupSession(async (session, assertions) => {
+        const stateOf = async (): Promise<ResearchState> =>
+          researchState((await researchInventory(session, t.facility, t.category)).data, t.inventionId);
+        await cancelQueuedResearch(
+          session,
+          ctx,
+          t.facility,
+          { id: t.inventionId, key: entry.key, url: await survivalUrl(ctx), stateOf },
+          assertions,
+        );
+      });
+    case 'upgrade':
+      return withCleanupSession(async (session, assertions) =>
+        // `startSent: true`: a STOP on an idle facility is ignored (Kernel/Kernel.pas:4694, see
+        // undoUpgrade), so sending it when the dead run never reached its START is harmless.
+        undoUpgrade(
+          session,
+          ctx,
+          t.facility,
+          { key: entry.key, url: await survivalUrl(ctx), level0: t.level0, cloning0: t.cloning0, startSent: true },
+          assertions,
+        ),
+      );
+    default: {
+      const session = await login(PRIMARY_ACCOUNT);
+      try {
+        return (await replayRoundTrip(roundTripIoFor(session, t), entry, ctx.lock, clock)).detail;
+      } finally {
+        await logoff(session);
+      }
+    }
+  }
+}
+
+/**
+ * Replay a dirty world's pending restores, once each and in order (doc/E2E-POLICY.md §6): the
+ * write and read-back the flow itself would have used, through its own factory or cleanup. An
+ * entry counts as replayed only when the lock no longer holds its key — the flow's code clears
+ * it only on a read-back of the original. An entry with no key or no structured `replay` target
+ * fails at once, and no session is opened for it.
+ */
+export async function replayPendingRestores(
+  lock: WorldLock,
+  entries: StoredPendingRestore[],
+  ctx: Omit<FlowContext, 'lock'> = {},
+): Promise<ReplayOutcome[]> {
+  const fctx: FlowContext = { lock, ...ctx };
+  const outcomes: ReplayOutcome[] = [];
+  for (const entry of entries) {
+    const { key, what, replay } = entry;
+    if (key === undefined) {
+      outcomes.push({ what, ok: false, detail: 'keyless entry written before keys existed — a human restore' });
+      continue;
+    }
+    if (replay === undefined) {
+      outcomes.push({ key, what, ok: false, detail: 'no structured replay target — a human restore (doc/E2E-POLICY.md §6)' });
+      continue;
+    }
+    let detail: string;
+    try {
+      detail = await replayTarget(fctx, { key, what, originalValue: entry.originalValue }, replay);
+    } catch (err: unknown) {
+      detail = toErrorMessage(err);
+    }
+    const ok = !lock.read().pendingRestores.some(p => p.key === key);
+    outcomes.push({ key, what, ok, detail: ok ? 'read back its original — pending restore cleared' : detail || 'pending restore kept' });
+  }
+  return outcomes;
+}
+
 export async function runFlow(flow: Flow, ctx: FlowContext): Promise<FlowResult> {
   const before = new Set(ctx.lock.read().pendingRestores.map(p => p.key));
   if (!flow.seed) return guardSkip(await runUnseeded(flow, ctx), ctx, before);

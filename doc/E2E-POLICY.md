@@ -337,8 +337,9 @@ An autonomous loop mutating a production game world needs two rails a human run 
 
 - **World-dirty lock.** If a run aborts before restore, `~/.spo-bench/world/world-lock.json`
   is left behind with the pending restores — one file for the whole machine, visible from
-  every worktree. **All further live runs are blocked** until a human clears it
-  (`npm run e2e:unlock`). Attempt 2 never starts on a world attempt 1 left mutated. This
+  every worktree. **All further live runs are refused** while it is dirty — but before a run
+  gives up, `runLive` tries an **automatic replay** of the pending restores (below), and only a
+  replay that fails leaves the run BLOCKED. Attempt 2 never starts on a world attempt 1 left mutated. This
   holds even when the aborting run never got to call `release()` — a hard crash (SIGKILL,
   OOM, host reboot) with writes still owed. `acquire()` treats any pending restores it finds
   on a takeover as proof the previous holder left the world dirty, and marks it dirty itself
@@ -351,6 +352,61 @@ An autonomous loop mutating a production game world needs two rails a human run 
   facility, the id or rating, the original value); `npm run e2e:unlock` prints both. A binary
   original is stored base64 in `originalValue`, so an interrupted run's restore uses the
   saved bytes.
+- **Automatic replay (#1186).** `acquire()` stays a plain refusal; the replay lives in
+  `runLive` (`acquireOrReplay`, `src/e2e/run.ts`), which can open a session. When the refusal
+  is a dirty world, each recorded pending restore that carries a structured `replay` target is
+  replayed **once**, through `replayPendingRestores` (`src/e2e/flows.ts`): the same write and the
+  same read-back the flow would have used — its own read/write factory or its own cleanup
+  function — and an entry is cleared **only when its read-back shows the original**. When every
+  entry clears, the lock is released and the run proceeds; the artifact carries the outcomes
+  under `replays`. When any entry fails (no target, no key, a read-back that never shows the
+  original, a throw), the world stays dirty and the run is BLOCKED with the dirty-world message
+  plus the replay's failure — that case alone needs a human: restore what is listed, then
+  `npm run e2e:unlock`. A live single-flight holder is never replayed over. The replay is safe
+  only because live runs are single-flight (the bench worker runs one job at a time): nothing
+  else writes the same values while it puts them back.
+
+  **Replayable pending restores** — the `replay.kind` each recorder writes:
+
+  | `replay.kind` | flow(s) | replayed through |
+  |---|---|---|
+  | `section-property` | `politics-write` (rate, subsidy), `town-min-wage` (`runProbe`), `trade-settings` | `sectionPropertyIo` (`probe.ts`) |
+  | `autoconnection-switch` | `autoconnection-roundtrip` (Trade Center, only-warehouses) | `autoConnectionSwitchIo` |
+  | `autoconnection-supplier` | `autoconnection-roundtrip` (add / delete a supplier) | `autoConnectionSupplierIo` |
+  | `policy-status` | `policy-roundtrip` | `policyIo` |
+  | `publicity` | `publicity-roundtrip` | `publicityIo` |
+  | `portrait` | `portrait-roundtrip` | `portraitIo` — the original bytes are the entry's `originalValue` |
+  | `zone` | `zone-roundtrip` | `zoneIo`, as Mayor |
+  | `road-span` | `road-roundtrip` | `roadCleanup`, as Mayor |
+  | `placement` | `place-rename-demolish` | `removePlacement` (an empty lot clears; anything else must be the placed, owned facility) |
+  | `research` | `research-roundtrip` | `cancelQueuedResearch` |
+  | `upgrade` | `upgrade-stop` | `undoUpgrade` (a STOP on an idle facility is ignored) |
+
+  **Manual by construction, with the reason** — these entries carry no `replay` target, so the
+  replay fails them at once and opens no session:
+
+  - `portrait-leftover` — `originalValue: ''`: the real bytes live in an earlier run's entry.
+  - `mayor-rating-roundtrip` — the restore runs as `SPO_test`, and its proof is the aggregate
+    moving relative to an anchor read during that run.
+  - `ad-budget-roundtrip` — no read-back exists (`TCompanyInput.Spread` overwrites it every
+    cycle), so "cleared only on the original" cannot hold.
+  - `vote-roundtrip` — the pinned prior vote sticks only while that candidate still campaigns or
+    is mayor; a later replay could vote a stale candidate.
+  - `bank-borrow-payoff` — the loan to pay off is chosen by diff against the run's in-memory
+    baseline loan list.
+  - `bank-send-return`, `facility-bank-loan` — need the secondary account's session.
+  - `connect-on-map`, `quick-trade-roundtrip` — the read derives over several facilities'
+    gate-link snapshots taken during the run.
+  - `chat-private-channel` — the channel belongs to the session that created it; that session's
+    logoff removes it.
+  - `clone-salaries-roundtrip` — the read spans every listed holding.
+  - Kept manual in this change because the read-back is a derived value the plain
+    `section-property` target does not carry: `store-price-salaries` (quantised price, composite
+    salaries), `industry-output-price`, `industry-supply-limits`, `industry-auto-buy` (gate
+    lookup), `facility-open-close` (a Trouble bit, write `-1`), `supplier-hire-fire` /
+    `client-hire-remove` (link set), `company-input-demand` (derived percent, ±1-unit match),
+    `warehouse-wares`, `residential-settings` / `bank-settings` / `tv-settings` (multi-member),
+    `residential-repair`, `accept-cloning` (truthy flag).
 - **Single-flight.** Mechanical since 2026-08-22: the bench worker executes one job at a
   time ([bench-worker.md](bench-worker.md)). The lock file remains as the world-dirty
   carrier and as a belt-and-braces refusal for `gate:local` runs.
@@ -768,7 +824,7 @@ npm run test:live                # the L2 drive as a bench job
 npm run dev                      # bench LEASE: this worktree's gateway held on 8080 for you
 npm run dev:release              # ...and give it back as soon as you are done
 npm run bench:status             # worker liveness + queue
-npm run e2e:unlock               # clear a world-dirty lock after a human restore
+npm run e2e:unlock               # clear a world-dirty lock the automatic replay could not restore, after a human restore
 npm run finish                   # after the merge: main ff'd, refs pruned, worker reinstalled if needed, worktree + branch gone
 npm run deps:gate [PR...]        # Dependabot PRs: merge main in, npm ci in the PR's worktree, gate, push, auto-merge — one at a time
 

@@ -5,7 +5,9 @@
  * 1. Single-flight — one live session at a time, across both accounts.
  * 2. World-dirty — a run that aborts before restoring what it wrote leaves the lock
  *    behind with the pending restores in it, and every later run refuses to start.
- *    Attempt 2 must never begin on a world attempt 1 left mutated. This holds even if
+ *    Attempt 2 must never begin on a world attempt 1 left mutated. `runLive`'s automatic
+ *    replay clears the lock when every pending restore reads back its original; otherwise a
+ *    human does, with `npm run e2e:unlock` (doc/E2E-POLICY.md §6). This holds even if
  *    the aborting run never got to call `release()` at all (a hard crash) — the next
  *    `acquire()` discovers the leftover pendingRestores itself and marks the world dirty
  *    before taking over, instead of wiping them (B5.5).
@@ -30,6 +32,58 @@ export interface PendingRestore {
   y?: number;
   propertyName?: string;
   additionalParams?: Record<string, string>;
+  /** The structured target `runLive`'s automatic replay puts the original back through. */
+  replay?: ReplayTarget;
+}
+
+/** A tile rectangle, corners inclusive. */
+export interface ReplayRect {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** A facility as the flow's fixture lookup found it. */
+export interface ReplayFacility {
+  x: number;
+  y: number;
+  visualClass: string;
+  name: string;
+}
+
+/**
+ * What a replay puts back, in structured form — the kind selects the flow code that does it
+ * (replayPendingRestores in flows.ts). A target held only in `what` prose is not replayable.
+ */
+export type ReplayTarget =
+  | {
+      kind: 'section-property';
+      x: number;
+      y: number;
+      visualClass: string;
+      groupId: string;
+      readProperty: string;
+      writeProperty: string;
+      additionalParams?: Record<string, string>;
+    }
+  | { kind: 'autoconnection-switch'; fluidId: string; key: 'hireTradeCenter' | 'onlyWarehouses' }
+  | { kind: 'autoconnection-supplier'; fluidId: string; gate: string }
+  | { kind: 'policy-status' }
+  | { kind: 'publicity'; town: { name: string; x: number; y: number }; ratingId: string }
+  | { kind: 'portrait' }
+  | { kind: 'zone'; rect: ReplayRect }
+  | { kind: 'road-span'; span: ReplayRect }
+  | { kind: 'placement'; x: number; y: number; facilityClass: string; visualClassId: string; tycoonId: string }
+  | { kind: 'research'; facility: ReplayFacility; inventionId: string; category: number }
+  | { kind: 'upgrade'; facility: ReplayFacility; level0: number; cloning0: '1' | '0' };
+
+/** One replayed pending restore — `ok` only when the lock no longer holds its key. */
+export interface ReplayOutcome {
+  key?: string;
+  what: string;
+  ok: boolean;
+  detail: string;
 }
 
 /** What a lock file may hold — an entry written before `key` existed has none. */
@@ -39,7 +93,10 @@ export interface WorldLockFile {
   holder: { pid: number; branch: string; startedAt: string } | null;
   /** Writes issued but not yet restored. Non-empty on release means the world is dirty. */
   pendingRestores: StoredPendingRestore[];
-  /** Set when a run ended with pending restores. Only a human clears this. */
+  /**
+   * Set when a run ended with pending restores. `runLive`'s automatic replay clears it when every
+   * pending restore reads back its original; otherwise a human does, with `npm run e2e:unlock`.
+   */
   dirty: boolean;
   dirtySince?: string;
   dirtyReason?: string;
@@ -133,8 +190,9 @@ export class WorldLock {
   }
 
   /**
-   * Release. If anything is still unrestored the lock is marked dirty instead, and
-   * every later run is blocked until a human clears it.
+   * Release. If anything is still unrestored the lock is marked dirty instead, and every later
+   * run is blocked — until `runLive`'s automatic replay reads every original back, or, when it
+   * cannot, a human restores the world and runs `npm run e2e:unlock` (doc/E2E-POLICY.md §6).
    */
   release(reason?: string): void {
     const lock = this.read();
