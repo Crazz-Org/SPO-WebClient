@@ -6,8 +6,20 @@ describe('hidden properties', () => {
   it('hides every name the redesign took off the sheet', () => {
     for (const name of ['MoneyGraph',
       'UpgradeActions', 'SecurityId', 'Trouble', 'Creator', 'OwnerName',
-      'CurrBlock']) {
+      'CurrBlock',
+      // Contract changed by #1351: the six town-hall population figures are served, not shown
+      'hiFloating', 'hiPopulationK', 'midFloating', 'midPopulationK',
+      'loFloating', 'loPopulationK']) {
       expect(isHiddenProperty(name)).toBe(true);
+    }
+  });
+
+  it('hides the six town-hall population figures yet keeps them in the townRes group', () => {
+    const fetched = HANDLER_TO_GROUP['townRes'].properties.map(p => p.rdoName);
+    for (const name of ['hiFloating', 'hiPopulationK', 'midFloating', 'midPopulationK',
+      'loFloating', 'loPopulationK']) {
+      expect(isHiddenProperty(name)).toBe(true);
+      expect(fetched).toContain(name);
     }
   });
 

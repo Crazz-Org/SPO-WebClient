@@ -469,7 +469,9 @@ describe('building-details', () => {
    */
   function arrange(
     details: { tabs: unknown[]; groups: Record<string, unknown> },
-    section: { groups?: Record<string, unknown> } = { groups: { townTaxes: [{ name: 'Tax0', value: '7' }] } },
+    section: { groups?: Record<string, unknown> } = {
+      groups: { townTaxes: [{ name: 'Tax0', value: '7' }], townRes: townResValues() },
+    },
   ) {
     jest.spyOn(session, 'login').mockResolvedValue(stubSession(() => undefined));
     jest.spyOn(session, 'logoff').mockResolvedValue(undefined);
@@ -484,6 +486,49 @@ describe('building-details', () => {
   }
 
   const TOWN_HALL_TABS = [{ id: 'townGeneral' }, { id: 'townTaxes' }];
+
+  /** The six hidden townRes figures (#1351), integer strings, one Floating at 0. */
+  function townResValues(overrides: Record<string, string | undefined> = {}) {
+    const base: Record<string, string | undefined> = {
+      hiFloating: '0', hiPopulationK: '84', midFloating: '120',
+      midPopulationK: '61', loFloating: '430', loPopulationK: '37', ...overrides,
+    };
+    return Object.entries(base)
+      .filter(([, v]) => v !== undefined)
+      .map(([name, value]) => ({ name, value }));
+  }
+
+  const HEADER = { tabs: TOWN_HALL_TABS, groups: { townGeneral: [] } };
+  const withRes = (townRes: unknown) => ({ groups: { townTaxes: [{ name: 'Tax0', value: '7' }], townRes } });
+
+  it('reads the townRes section for the six hidden figures', async () => {
+    arrange(HEADER);
+    expect((await flowByName('building-details').run(ctx)).status).toBe('PASS');
+    expect(session.readBuildingTabData).toHaveBeenCalledWith(
+      expect.anything(), 1, 2, 'townRes', '7010', ['townRes'],
+    );
+  });
+
+  it('fails when a hidden townRes figure is missing', async () => {
+    arrange(HEADER, withRes(townResValues({ midPopulationK: undefined })));
+    const result = await flowByName('building-details').run(ctx);
+    expect(result.status).toBe('FAIL');
+    const failed = result.assertions.find(a => !a.ok);
+    expect(failed?.what).toMatch(/six hidden population figures/);
+    expect(failed?.detail).toMatch(/midPopulationK=null/);
+  });
+
+  it.each(['-3', '', '2.5'])('fails when a hidden townRes figure is %j', async (bad) => {
+    arrange(HEADER, withRes(townResValues({ loFloating: bad })));
+    const result = await flowByName('building-details').run(ctx);
+    expect(result.status).toBe('FAIL');
+    expect(result.assertions.find(a => !a.ok)?.detail).toMatch(/loFloating/);
+  });
+
+  it('passes when every Floating figure is 0', async () => {
+    arrange(HEADER, withRes(townResValues({ midFloating: '0', loFloating: '0' })));
+    expect((await flowByName('building-details').run(ctx)).status).toBe('PASS');
+  });
 
   it('passes when the header group opens and the section arrives on demand', async () => {
     arrange({ tabs: TOWN_HALL_TABS, groups: { townGeneral: [{ name: 'Town', value: 'Helartia' }] } });

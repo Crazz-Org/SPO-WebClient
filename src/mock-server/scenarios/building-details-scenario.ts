@@ -565,6 +565,12 @@ const MOCK_TOWN_HALL: MockBuilding = {
       { name: 'loResDemand', value: '1500' },
       { name: 'loResQ', value: '12000' },
       { name: 'loRentPrice', value: '45' },
+      { name: 'hiFloating', value: '0' },
+      { name: 'hiPopulationK', value: '84' },
+      { name: 'midFloating', value: '120' },
+      { name: 'midPopulationK', value: '61' },
+      { name: 'loFloating', value: '430' },
+      { name: 'loPopulationK', value: '37' },
     ],
     // TOWN_SERVICES_GROUP declares GQOS / srvCount / svr* — this fixture used to
     // hold prd* keys, which belong to TOWN_PRODUCTS_GROUP, so nothing it served

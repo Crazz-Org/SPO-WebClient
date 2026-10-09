@@ -517,7 +517,20 @@ describe('Specialized handler RDO properties', () => {
     expect(gqos!.type).toBe(PropertyType.PERCENTAGE);
   });
 
-  it('townRes should have 9 residential properties (3 classes × 3 metrics)', () => {
+  // Contract changed by #1351
+  it('townRes serves the six town-hall population figures as hidden read-only NUMBERs', () => {
+    const commands = TOWN_RES_GROUP.rdoCommands ?? {};
+    for (const name of ['hiFloating', 'hiPopulationK', 'midFloating', 'midPopulationK', 'loFloating', 'loPopulationK']) {
+      const prop = TOWN_RES_GROUP.properties.find(p => p.rdoName === name);
+      expect(prop).toBeDefined();
+      expect(prop?.type).toBe(PropertyType.NUMBER);
+      expect(prop?.editable).toBeFalsy();
+      expect(name in commands).toBe(false);
+      expect(HIDDEN_PROPERTY_NAMES.has(name)).toBe(true);
+    }
+  });
+
+  it('townRes should have 15 properties (3 classes × 3 shown metrics + 3 classes × 2 hidden data)', () => {
     const rdoNames = TOWN_RES_GROUP.properties.map(p => p.rdoName);
     expect(rdoNames).toContain('hiResDemand');
     expect(rdoNames).toContain('hiResQ');
@@ -528,7 +541,7 @@ describe('Specialized handler RDO properties', () => {
     expect(rdoNames).toContain('loResDemand');
     expect(rdoNames).toContain('loResQ');
     expect(rdoNames).toContain('loRentPrice');
-    expect(TOWN_RES_GROUP.properties).toHaveLength(9);
+    expect(TOWN_RES_GROUP.properties).toHaveLength(15);
 
     // Rent prices should be PERCENTAGE type (displayed as "200%")
     const hiRent = TOWN_RES_GROUP.properties.find(p => p.rdoName === 'hiRentPrice');
