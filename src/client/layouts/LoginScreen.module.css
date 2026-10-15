@@ -80,13 +80,15 @@
   pointer-events: none;
 }
 
-/* Choosing a company: the NewLogon frameset — the "Joining a world" side panel and the
-   "Choose a Company" title band (Left 100 px, Top 80 px, the GIF at margin-top 2 px). */
+/* Choosing a company: the NewLogon frameset — the "Joining a world" side panel (Left 100 px)
+   over the frame rows (Top 80 px). The title band in the top frame depends on the page, so
+   CompanyStage.module.css draws it. */
 :global([data-theme="legacy"]) .screen[data-stage="companies"]::before {
-  background-image: url(../assets/legacy/joinleftpanel.jpg), url(../assets/legacy/choosecompanytitle.gif);
-  background-position: 0 0, 100px 2px;
+  background-image: url(../assets/legacy/joinleftpanel.jpg);
+  background-position: 0 0;
 }
 
 :global([data-theme="legacy"]) .screen[data-stage="companies"] {
+  display: block;
   padding: 80px 0 0 100px;
 }
