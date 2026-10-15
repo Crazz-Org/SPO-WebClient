@@ -393,6 +393,45 @@ describe('ui-store UI version (classic / new interface)', () => {
   });
 });
 
+describe('ui-store visual theme (Corporate Empire / legacy)', () => {
+  const saved = new Map<string, string>();
+  beforeEach(() => {
+    saved.clear();
+    (globalThis as unknown as { localStorage: unknown }).localStorage = {
+      getItem: (k: string) => saved.get(k) ?? null,
+      setItem: (k: string, v: string) => { saved.set(k, v); },
+      removeItem: (k: string) => { saved.delete(k); },
+    };
+    useUiStore.setState({ theme: 'empire' });
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: unknown }).localStorage; });
+
+  it('starts on Corporate Empire when nothing was chosen', () => {
+    // Module load ran with no storage, no URL and no gateway default: loadTheme() fell back.
+    expect(useUiStore.getState().theme).toBe('empire');
+  });
+
+  it('setTheme sets it and remembers the choice', () => {
+    useUiStore.getState().setTheme('legacy');
+    expect(useUiStore.getState().theme).toBe('legacy');
+    expect(saved.get('spo_theme')).toBe('legacy');
+    useUiStore.getState().setTheme('empire');
+    expect(useUiStore.getState().theme).toBe('empire');
+    expect(saved.get('spo_theme')).toBe('empire');
+  });
+
+  it('switching the theme leaves the interface choice, surfaces and HUD flag alone', () => {
+    useUiStore.getState().setRootSurface({ kind: 'mail' });
+    useUiStore.setState({ hudVisible: false, uiVersion: 'v2' });
+    useUiStore.getState().setTheme('legacy');
+    expect(useUiStore.getState().stack).toEqual([{ kind: 'mail' }]);
+    expect(useUiStore.getState().hudVisible).toBe(false);
+    expect(useUiStore.getState().uiVersion).toBe('v2');
+    useUiStore.getState().clearSurfaces();
+    useUiStore.setState({ hudVisible: true, uiVersion: 'v1' });
+  });
+});
+
 describe('ui-store map context menu', () => {
   beforeEach(() => {
     useUiStore.getState().closeMapContextMenu();

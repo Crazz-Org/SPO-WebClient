@@ -93,6 +93,16 @@ describe('buildRuntimeConfigScript', () => {
     expect(body).not.toMatch(/SUPPORT_URL/);
   });
 
+  it('carries the default theme, JSON-quoted', () => {
+    expect(buildRuntimeConfigScript({ cdnUrl: '', theme: 'legacy' }))
+      .toContain('window.__SPO_THEME__="legacy";');
+  });
+
+  it('treats an empty theme as no default — the client then falls back to Corporate Empire', () => {
+    expect(buildRuntimeConfigScript({ cdnUrl: '', theme: '' })).not.toContain('__SPO_THEME__');
+    expect(buildRuntimeConfigScript({ cdnUrl: '' })).not.toContain('__SPO_THEME__');
+  });
+
   it('emits every override together, in a fixed order', () => {
     const body = buildRuntimeConfigScript({
       cdnUrl: '',
@@ -100,6 +110,7 @@ describe('buildRuntimeConfigScript', () => {
       forceWorld: 'planitia',
       bugReport: true,
       registerUrl: 'https://example.org/signup',
+      theme: 'legacy',
     });
     expect(body.split('\n')).toEqual([
       'window.__SPO_CDN_URL__="";',
@@ -107,6 +118,7 @@ describe('buildRuntimeConfigScript', () => {
       'window.__SPO_FORCE_WORLD__="planitia";',
       'window.__SPO_BUG_REPORT__=true;',
       'window.__SPO_REGISTER_URL__="https://example.org/signup";',
+      'window.__SPO_THEME__="legacy";',
     ]);
   });
 

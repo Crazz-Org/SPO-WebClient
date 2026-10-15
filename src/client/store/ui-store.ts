@@ -10,6 +10,12 @@ import { useGameStore } from './game-store';
 import type { SnapPoint } from '../hooks/useSheetGesture';
 import { isDialogSuppressed, type DialogKind, type DialogRow } from '../components/common/Dialog';
 import { loadUiVersion, saveUiVersion, type UiVersion } from './ui-version';
+import { applyTheme, loadTheme, saveTheme, type Theme } from './theme';
+
+// The theme is stamped on <html> as soon as the bundle runs, before the first render, so the
+// login screen never flashes the other palette; the store only remembers what is applied.
+const initialTheme = loadTheme();
+applyTheme(initialTheme);
 
 /**
  * How a confirmation is asked. `kind` picks the initial focus (safe action for a
@@ -132,6 +138,13 @@ interface UiState {
    */
   uiVersion: UiVersion;
 
+  /**
+   * Which palette is on: Corporate Empire (`empire`, the base tokens) or the original
+   * client's look (`legacy`, `styles/theme-legacy.css`). Persisted in localStorage
+   * (`theme.ts`) and mirrored as `<html data-theme>`; a logout keeps it.
+   */
+  theme: Theme;
+
   // Mobile
   mobileTab: MobileTab;
   mobileSheetSnap: SnapPoint;
@@ -210,6 +223,9 @@ interface UiState {
   setUiVersion: (v: UiVersion) => void;
   toggleUiVersion: () => void;
 
+  // Actions — Visual theme (Corporate Empire / legacy)
+  setTheme: (theme: Theme) => void;
+
   // Actions — Mobile
   setMobileTab: (tab: MobileTab) => void;
   setMobileSheetSnap: (snap: SnapPoint) => void;
@@ -251,6 +267,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   reportModeRequest: 0,
   hudVisible: true,
   uiVersion: loadUiVersion(),
+  theme: initialTheme,
   mobileTab: 'map',
   mobileSheetSnap: 'half' as SnapPoint,
   isPlacingBuilding: false,
@@ -372,6 +389,13 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ uiVersion: v });
   },
   toggleUiVersion: () => get().setUiVersion(get().uiVersion === 'v2' ? 'v1' : 'v2'),
+
+  // Visual theme — applied to <html> at once and remembered for the next visit
+  setTheme: (theme) => {
+    saveTheme(theme);
+    applyTheme(theme);
+    set({ theme });
+  },
 
   // Mobile
   setMobileTab: (tab) => set({ mobileTab: tab }),

@@ -58,6 +58,13 @@ export const config = {
      * (LogonHandlerViewer.pas:937). Server-side read; the browser gets it through
      * /spo-runtime-config.js as `window.__SPO_REGISTER_URL__`, read by AuthStage per render. */
     registerUrl: getEnv('SPO_REGISTER_URL') || '',
+    /** The visual theme a fresh browser starts with (`empire` or `legacy`); a player's stored
+     * choice always wins (src/client/store/theme.ts). Server-side read; the browser gets it
+     * through /spo-runtime-config.js as `window.__SPO_THEME__`. Anything else is no default. */
+    theme: ((): 'empire' | 'legacy' | '' => {
+      const raw = getEnv('SPO_THEME');
+      return raw === 'empire' || raw === 'legacy' ? raw : '';
+    })(),
     reportsDir: getEnv('SPO_REPORTS_DIR') || undefined,
     /** Bearer token gating GET/POST /api/report-pull/* (see report-pull-endpoint.ts). Unset or
      * under 32 chars disables the whole surface — every route answers 404. Server-side only,

@@ -11,6 +11,7 @@ import { useGameStore, type GameSettings, type MinimapSize } from '../../store/g
 import { useChatStore } from '../../store/chat-store';
 import { useUiStore } from '../../store/ui-store';
 import type { UiVersion } from '../../store/ui-version';
+import type { Theme } from '../../store/theme';
 import { useClient } from '../../context';
 import { Switch, confirmLogout } from '../common';
 import { ShortcutList } from '../common/ShortcutList';
@@ -31,6 +32,8 @@ export function SettingsDialog() {
   const requestReportMode = useUiStore((s) => s.requestReportMode);
   const uiVersion = useUiStore((s) => s.uiVersion);
   const setUiVersion = useUiStore((s) => s.setUiVersion);
+  const theme = useUiStore((s) => s.theme);
+  const setTheme = useUiStore((s) => s.setTheme);
   // Update store + notify client.ts to apply to renderer/sound/localStorage
   const handleSettingChange = useCallback(
     (partial: Partial<GameSettings>) => {
@@ -64,6 +67,7 @@ export function SettingsDialog() {
           <section className={styles.section}>
             <h3 className={styles.sectionTitle}>Interface</h3>
             <InterfaceSelector value={uiVersion} onChange={setUiVersion} />
+            <ThemeSelector value={theme} onChange={setTheme} />
           </section>
 
           {/* Visual settings */}
@@ -293,6 +297,33 @@ function InterfaceSelector({ value, onChange }: { value: UiVersion; onChange: (v
       <span className={styles.sizeLabel}>In-game interface</span>
       <div className={styles.sizeButtons} role="group" aria-label="In-game interface">
         {INTERFACE_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            className={`${styles.sizeBtn} ${value === opt.value ? styles.sizeBtnActive : ''}`}
+            aria-pressed={value === opt.value}
+            onClick={() => onChange(opt.value)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string }> = [
+  { value: 'empire', label: 'Corporate Empire' },
+  { value: 'legacy', label: 'Legacy' },
+];
+
+/** Corporate Empire / Legacy — the palette, applied at once to the whole client (store/theme.ts). */
+function ThemeSelector({ value, onChange }: { value: Theme; onChange: (t: Theme) => void }) {
+  return (
+    <div className={styles.sizeRow}>
+      <span className={styles.sizeLabel}>Visual theme</span>
+      <div className={styles.sizeButtons} role="group" aria-label="Visual theme">
+        {THEME_OPTIONS.map((opt) => (
           <button
             key={opt.value}
             type="button"
