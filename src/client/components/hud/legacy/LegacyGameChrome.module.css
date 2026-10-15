@@ -1,0 +1,449 @@
+/* ============================================================================
+ * LegacyGameChrome — the original client's in-game frame (legacy theme only; GameScreen
+ * mounts it in place of the floating HUD). Measured on the original forms:
+ *
+ *   Toolbar frame       100 px, bottom (VoyagerWindow.pas:389-404, frame_Height=100)
+ *     LeftSide          468 px: toolbar.asp's 40 px icon row on toolbarbg.jpg, the icons
+ *                       centred, hi*.gif under the pointer; the BlockTicker under it (Verdana
+ *                       8 pt bold #7ED1BE on black, every other row #2A453F, margins 7)
+ *     RightPanel        GradientBox1 #395950 → black: UserName (8, 9) Arial 10 pt bold white,
+ *                       FacCounter right of it Verdana 8 pt #74B8A4 + FacIcon, CompanyName
+ *                       (23, 25) white, Money (23, 41) bold #BDD5CD, MoneyDelta (23, 58)
+ *                       #96BCB1 — #FF8000 bold below zero, Date (24, 74) #96BCB1
+ *     ScrollPanel       36 px black; LedsPanel 49 px black with the four LEDs
+ *   StatusPanel         42 px above it (MapIsoView.dfm): a 3 px black strip, then
+ *     Panel5            230 px: zoom / rotate 18 × 18 bitmaps, OVERLAY and CITY ZONES 97 × 18,
+ *                       INSPECT 83 × 39
+ *     Tickers           black, 1 px #395950: SecondaryText (green) at 2, HintText (#FF8000)
+ *                       at 20, Verdana 8 pt bold, digitalized
+ *     Panel4            133 px: < BACK / NEXT > 61 × 18, GO TOWN HALL 125 × 18
+ *   ChatEditPanel       25 px over the map, left of the minimap: 1 px #395950, the composer
+ *                       in Verdana 9 pt #FFFFD5, centred
+ *   MapOptionsPanel     379 × 37 black above the chat line while OVERLAY is on
+ *   TFramedButton       black, 1 px #395950 frame, text #5E9384; white frame and text under
+ *                       the pointer; #FFFFBF with black text when selected; #2E4740 disabled
+ * ============================================================================ */
+
+.chrome {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-hud);
+  pointer-events: none;
+  font-family: Verdana, Tahoma, sans-serif;
+}
+
+.chrome > * {
+  pointer-events: auto;
+}
+
+/* The map ends where the StatusPanel begins, as the original's map frame did (100 + 42) */
+:global([data-theme="legacy"] #game-panel) {
+  bottom: 142px;
+}
+
+/* The minimap sits bottom-right on the map, above the StatusPanel (SmallMapFrame) */
+:global([data-theme="legacy"] #minimap-wrapper) {
+  top: auto !important;
+  left: auto !important;
+  right: 0 !important;
+  bottom: 142px !important;
+}
+
+/* ---- TFramedButton ---- */
+.framed {
+  position: absolute;
+  padding: 0;
+  background: #000;
+  border: 1px solid #395950;
+  border-radius: 0;
+  color: #5e9384;
+  font: 10px / 16px Arial, sans-serif;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.framed:hover:not(:disabled) {
+  border-color: #fff;
+  color: #fff;
+}
+
+.framedOn,
+.framedOn:hover:not(:disabled) {
+  background: #ffffbf;
+  border-color: #ffffbf;
+  color: #000;
+}
+
+.framed:disabled {
+  border-color: #2e4740;
+  color: #2e4740;
+  cursor: default;
+}
+
+/* ---- MapOptionsPanel ---- */
+.mapOptions {
+  position: absolute;
+  left: 0;
+  bottom: 167px;
+  width: 379px;
+  height: 37px;
+  background: #000;
+  color: #5e9384;
+  font: 11px Arial, sans-serif;
+}
+
+.optionsLabel {
+  position: absolute;
+  top: 0;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 37px;
+}
+
+.overlaySel {
+  width: 141px;
+  height: 21px;
+  padding: 0 2px;
+  background: #fff;
+  border: 2px inset #c0c0c0;
+  border-radius: 0;
+  color: #000;
+  font: 11px Arial, sans-serif;
+}
+
+.losingAlert {
+  position: absolute;
+  top: 0;
+  left: 248px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 37px;
+  font: 11px 'MS Sans Serif', Tahoma, sans-serif;
+  cursor: pointer;
+}
+
+/* ---- ChatEditPanel ---- */
+.chatLine {
+  position: absolute;
+  left: 0;
+  right: 200px;
+  bottom: 142px;
+  height: 25px;
+  box-sizing: border-box;
+  background: #000;
+  border: 1px solid #395950;
+}
+
+.chatInput {
+  width: 100%;
+  height: 100%;
+  padding: 0 24px;
+  box-sizing: border-box;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: #ffffd5;
+  font: 12px Verdana, sans-serif;
+  text-align: center;
+}
+
+.chatInput::placeholder {
+  color: #ffffd5;
+  opacity: 1;
+}
+
+/* The original's composer had no focus mark; a keyboard user still gets one */
+.chatInput:focus-visible {
+  outline: 1px solid #5e9384;
+  outline-offset: -3px;
+}
+.chatInput:focus::placeholder {
+  color: transparent;
+}
+
+.closeChat {
+  top: 2px;
+  right: 2px;
+  width: 15px;
+  height: 18px;
+  line-height: 15px;
+}
+
+/* ---- StatusPanel ---- */
+.statusPanel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100px;
+  display: flex;
+  height: 42px;
+  box-sizing: border-box;
+  padding-top: 3px;
+  background: #000;
+}
+
+.mapTools {
+  position: relative;
+  flex: none;
+  width: 230px;
+  height: 39px;
+}
+
+.bmpButton {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: no-repeat 0 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.zoomIn { left: 2px; top: 0; background-image: url(../../../assets/legacy/game/zoom-in.png); }
+.zoomIn:hover { background-image: url(../../../assets/legacy/game/zoom-in-lit.png); }
+.zoomIn:active { background-image: url(../../../assets/legacy/game/zoom-in-down.png); }
+.zoomOut { left: 23px; top: 0; background-image: url(../../../assets/legacy/game/zoom-out.png); }
+.zoomOut:hover { background-image: url(../../../assets/legacy/game/zoom-out-lit.png); }
+.zoomOut:active { background-image: url(../../../assets/legacy/game/zoom-out-down.png); }
+.rotateCcw { left: 2px; top: 21px; background-image: url(../../../assets/legacy/game/rotate-ccw.png); }
+.rotateCcw:hover { background-image: url(../../../assets/legacy/game/rotate-ccw-lit.png); }
+.rotateCcw:active { background-image: url(../../../assets/legacy/game/rotate-ccw-down.png); }
+.rotateCw { left: 23px; top: 21px; background-image: url(../../../assets/legacy/game/rotate-cw.png); }
+.rotateCw:hover { background-image: url(../../../assets/legacy/game/rotate-cw-lit.png); }
+.rotateCw:active { background-image: url(../../../assets/legacy/game/rotate-cw-down.png); }
+
+.overlayBtn { left: 44px; top: 0; width: 97px; height: 18px; }
+.zonesBtn { left: 44px; top: 21px; width: 97px; height: 18px; }
+
+.inspectBtn {
+  left: 144px;
+  top: 0;
+  width: 83px;
+  height: 39px;
+  font: bold 12px / 37px Arial, sans-serif;
+}
+
+.tickers {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 39px;
+  box-sizing: border-box;
+  background: #000;
+  border: 1px solid #395950;
+}
+
+.navTools {
+  position: relative;
+  flex: none;
+  width: 133px;
+  height: 39px;
+}
+
+.backBtn { left: 4px; top: 0; width: 61px; height: 18px; }
+.nextBtn { left: 68px; top: 0; width: 61px; height: 18px; }
+.townHallBtn { left: 4px; top: 21px; width: 125px; height: 18px; }
+
+/* ---- TMarquee ---- */
+.marquee {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 18px;
+  overflow: hidden;
+  font: bold 11px / 18px Verdana, sans-serif;
+  white-space: nowrap;
+}
+
+/* Digitalize (MarqueeCtrl.pas DigitalizeBmp, :202-222): on every other row, every other pixel
+   becomes (back + 2·fore) / 3 — over the text and the black alike, so the whole line carries
+   a dot grid in two thirds of its colour (#00AA00 green, #AA5500 orange, read off the original) */
+.marquee::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-position: 0 1px;
+  pointer-events: none;
+}
+
+.secondaryText::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Crect width='1' height='1' fill='%2300aa00'/%3E%3C/svg%3E");
+}
+
+.hintText::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Crect width='1' height='1' fill='%23aa5500'/%3E%3C/svg%3E");
+}
+
+.marqueeLine {
+  position: absolute;
+  inset: 0;
+}
+
+.marqueeText {
+  position: absolute;
+  top: 0;
+  left: 0;
+  white-space: nowrap;
+}
+
+.secondaryText { top: 1px; color: #0f0; }
+.hintText { top: 19px; color: #ff8000; }
+
+/* ---- Toolbar frame ---- */
+.toolbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  height: 100px;
+  background: #000;
+}
+
+.leftSide {
+  flex: none;
+  width: 468px;
+  display: flex;
+  flex-direction: column;
+}
+
+.toolRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  background: #000 url(../../../assets/legacy/game/toolbar/toolbarbg.jpg) repeat-x 0 0;
+}
+
+.toolImg {
+  flex: none;
+  height: 32px;
+  padding: 0;
+  background: no-repeat 0 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.toolImg[data-tool="refresh"] { width: 27px; background-image: url(../../../assets/legacy/game/toolbar/refresh.gif); }
+.toolImg[data-tool="refresh"]:hover { background-image: url(../../../assets/legacy/game/toolbar/hirefresh.gif); }
+.toolImg[data-tool="home"] { width: 36px; background-image: url(../../../assets/legacy/game/toolbar/home.gif); }
+.toolImg[data-tool="home"]:hover { background-image: url(../../../assets/legacy/game/toolbar/hihome.gif); }
+.toolImg[data-tool="build"] { width: 39px; background-image: url(../../../assets/legacy/game/toolbar/build.gif); }
+.toolImg[data-tool="build"]:hover { background-image: url(../../../assets/legacy/game/toolbar/hibuild.gif); }
+.toolImg[data-tool="fav"] { width: 28px; background-image: url(../../../assets/legacy/game/toolbar/fav.gif); }
+.toolImg[data-tool="fav"]:hover { background-image: url(../../../assets/legacy/game/toolbar/hifav.gif); }
+.toolImg[data-tool="search"] { width: 36px; background-image: url(../../../assets/legacy/game/toolbar/search.gif); }
+.toolImg[data-tool="search"]:hover { background-image: url(../../../assets/legacy/game/toolbar/hisearch.gif); }
+.toolImg[data-tool="money"] { width: 23px; background-image: url(../../../assets/legacy/game/toolbar/money.gif); }
+.toolImg[data-tool="money"]:hover { background-image: url(../../../assets/legacy/game/toolbar/himoney.gif); }
+.toolImg[data-tool="map"] { width: 40px; background-image: url(../../../assets/legacy/game/toolbar/map.gif); }
+.toolImg[data-tool="map"]:hover { background-image: url(../../../assets/legacy/game/toolbar/himap.gif); }
+.toolImg[data-tool="stellarmap"] { width: 32px; background-image: url(../../../assets/legacy/game/toolbar/stellarmap.gif); }
+.toolImg[data-tool="stellarmap"]:hover { background-image: url(../../../assets/legacy/game/toolbar/histellarmap.gif); }
+.toolImg[data-tool="mail"] { width: 31px; background-image: url(../../../assets/legacy/game/toolbar/mail.gif); }
+.toolImg[data-tool="mail"]:hover { background-image: url(../../../assets/legacy/game/toolbar/himail.gif); }
+.toolImg[data-tool="chat"] { width: 35px; background-image: url(../../../assets/legacy/game/toolbar/chat.gif); }
+.toolImg[data-tool="chat"]:hover { background-image: url(../../../assets/legacy/game/toolbar/hichat.gif); }
+.toolImg[data-tool="options"] { width: 26px; background-image: url(../../../assets/legacy/game/toolbar/options.gif); }
+.toolImg[data-tool="options"]:hover { background-image: url(../../../assets/legacy/game/toolbar/hioptions.gif); }
+.toolImg[data-tool="help"] { width: 23px; background-image: url(../../../assets/legacy/game/toolbar/help.gif); }
+.toolImg[data-tool="help"]:hover { background-image: url(../../../assets/legacy/game/toolbar/hihelp.gif); }
+
+/* BlockTicker */
+.blockTicker {
+  flex: 1;
+  padding: 7px;
+  overflow: hidden;
+  background: repeating-linear-gradient(to bottom, transparent 0 1px, #2a453f 1px 2px), #000;
+  color: #7ed1be;
+  font: bold 11px / 13px Verdana, sans-serif;
+  overflow-wrap: break-word;
+}
+
+.blockTickerMid { color: #bee8de; }
+.blockTickerLit { color: #fff; }
+
+/* RightPanel — the tycoon block */
+.rightPanel {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: linear-gradient(to right, #395950, #000);
+  color: #fff;
+  font: 11px Verdana, sans-serif;
+}
+
+.rightPanel > * {
+  position: absolute;
+  white-space: nowrap;
+}
+
+/* UserName, then FacCounter 10 px after it and FacIcon 4 px after that */
+.nameRow {
+  left: 8px;
+  top: 7px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.userName {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #fff;
+  font: bold 13px Arial, sans-serif;
+  cursor: pointer;
+}
+
+.facCounter {
+  display: flex;
+  margin-top: 2px;
+  align-items: center;
+  gap: 4px;
+  color: #74b8a4;
+}
+
+.facIcon {
+  display: inline-block;
+  width: 17px;
+  height: 14px;
+  background: url(../../../assets/legacy/game/fac-icon.png) no-repeat;
+}
+
+.companyName { left: 23px; top: 25px; }
+.money { left: 23px; top: 41px; color: #bdd5cd; font-weight: bold; }
+.moneyDelta { left: 23px; top: 58px; color: #96bcb1; }
+.moneyDeltaNeg { color: #ff8000; font-weight: bold; }
+.date { left: 24px; top: 74px; color: #96bcb1; }
+
+/* ScrollPanel + LedsPanel */
+.leds {
+  position: relative;
+  flex: none;
+  width: 49px;
+  margin-left: 36px;
+  background: #000;
+}
+
+.led {
+  position: absolute;
+  background: no-repeat 0 0;
+}
+
+.ledWatch { left: -3px; top: 5px; width: 27px; height: 15px; background-image: url(../../../assets/legacy/game/led-watch-off.png); }
+.ledWatch.on { background-image: url(../../../assets/legacy/game/led-watch-on.png); }
+.ledMail { left: 26px; top: 5px; width: 17px; height: 14px; background-image: url(../../../assets/legacy/game/led-mail-off.png); }
+.ledMail.on { background-image: url(../../../assets/legacy/game/led-mail-on.png); animation: ledBlink 1s steps(1) infinite; }
+.ledBusy { left: 5px; top: 24px; width: 12px; height: 13px; background-image: url(../../../assets/legacy/game/led-busy-off.png); }
+.ledBusy.on { background-image: url(../../../assets/legacy/game/led-busy-on.png); }
+.ledOnline { left: 29px; top: 25px; width: 12px; height: 10px; background-image: url(../../../assets/legacy/game/led-offline.png); }
+.ledOnline.on { background-image: url(../../../assets/legacy/game/led-online.png); }
+
+@keyframes ledBlink {
+  50% { background-image: url(../../../assets/legacy/game/led-mail-off.png); }
+}

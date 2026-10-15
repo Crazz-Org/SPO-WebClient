@@ -19,6 +19,7 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { useUiStore } from '../store';
 import { StatusPill, CommandBar, ContextStatusStrip, WorldEventTicker, RightRail, VersionBadge } from '../components/hud';
+import { LegacyGameChrome } from '../components/hud/legacy/LegacyGameChrome';
 import { ChatStrip, ChaseBadge } from '../components/chat';
 import { useChatStore } from '../store/chat-store';
 import { StatusOverlay } from '../components/building';
@@ -50,6 +51,9 @@ export function GameScreen() {
   const closeModal = useUiStore((s) => s.closeModal);
   const chatVisible = useChatStore((s) => s.chatVisible);
   const hudVisible = useUiStore((s) => s.hudVisible);
+  // The legacy theme draws the original client's frame (toolbar, StatusPanel, chat line)
+  // in place of the floating HUD — the two never show together.
+  const legacy = useUiStore((s) => s.theme) === 'legacy';
 
   useChangelogCheck();
   useCameraHistory();
@@ -76,22 +80,26 @@ export function GameScreen() {
 
 
       {/* StatusPill — top, the player's state in one line; hidden while the HUD is collapsed (#613) */}
-      {hudVisible && <StatusPill />}
+      {hudVisible && !legacy && <StatusPill />}
 
       {/* ChaseBadge — top-right, shown only while following another player's camera */}
       <ChaseBadge />
 
       {/* WorldEventTicker — top band, under StatusPill; the newest world event (PickEvent), #612 #889 */}
-      <WorldEventTicker />
+      {!legacy && <WorldEventTicker />}
 
       {/* ContextStatusStrip — the server's sentence for the town under the camera */}
-      <ContextStatusStrip />
+      {!legacy && <ContextStatusStrip />}
 
       {/* CommandBar — bottom: search / mode bar + six tiles; hidden while the HUD is collapsed (#613) */}
-      {hudVisible && <CommandBar />}
+      {hudVisible && !legacy && <CommandBar />}
+
+      {/* The legacy theme's original frame — toolbar, StatusPanel, chat line; it carries the
+          world events and the town sentence itself (one poller each) */}
+      {hudVisible && legacy && <LegacyGameChrome />}
 
       {/* RightRail — map controls */}
-      <RightRail />
+      {!legacy && <RightRail />}
 
       {/* ChatStrip — bottom-edge persistent chat, hidden when the player closed it (#610) */}
       {chatVisible && <ChatStrip />}
@@ -144,7 +152,7 @@ export function GameScreen() {
       <ServerSwitchOverlay />
 
       {/* Version badge — bottom-right, desktop only */}
-      <VersionBadge />
+      {!legacy && <VersionBadge />}
 
       {/* Mobile shell — only renders on < 768px */}
       <MobileShell />

@@ -26,6 +26,23 @@ export const CAMERA_POLL_MS = 1000;
 
 export function ContextStatusStrip() {
   const focusedBuilding = useBuildingStore((s) => s.focusedBuilding);
+  const text = useContextStatusText();
+
+  if (focusedBuilding || !text.trim()) return null;
+
+  return (
+    <div className={styles.strip} role="status" aria-live="polite">
+      {text}
+    </div>
+  );
+}
+
+/**
+ * The town sentence under the camera, kept fresh as above — empty while a building is
+ * focused. Shared by this strip and the legacy theme's status panel (LegacyGameChrome).
+ */
+export function useContextStatusText(): string {
+  const focusedBuilding = useBuildingStore((s) => s.focusedBuilding);
   const client = useClient();
   const [text, setText] = useState('');
 
@@ -70,11 +87,5 @@ export function ContextStatusStrip() {
     };
   }, [focusedBuilding, client]);
 
-  if (focusedBuilding || !text.trim()) return null;
-
-  return (
-    <div className={styles.strip} role="status" aria-live="polite">
-      {text}
-    </div>
-  );
+  return focusedBuilding ? '' : text;
 }

@@ -125,3 +125,14 @@
     transition: none;
   }
 }
+
+/* Legacy theme — the panels open as the original's frames did: flush with the window's right
+   edge, from the top down to the map's StatusPanel (the 100 px toolbar + 42 px status band,
+   LegacyGameChrome). */
+:global([data-theme="legacy"]) .sheet {
+  top: 0;
+  right: 0;
+  bottom: 142px;
+  border-radius: 0;
+  box-shadow: none;
+}
