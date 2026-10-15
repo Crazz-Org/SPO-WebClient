@@ -398,6 +398,21 @@
   border-color: lime;
 }
 
+/* The world being entered, while the company page shows beside the map: framed, with its
+   line held in the ticker (a hovered world still takes the ticker over) */
+:global([data-theme="legacy"]) .selectedCard,
+:global([data-theme="legacy"]) .selectedCard:hover {
+  border-color: teal;
+}
+
+:global([data-theme="legacy"]) .selectedCard .worldStats {
+  display: flex;
+}
+
+:global([data-theme="legacy"]) .worldCard:hover .worldStats {
+  z-index: 3;
+}
+
 :global([data-theme="legacy"]) .cardHeader {
   display: block;
   margin: 0;

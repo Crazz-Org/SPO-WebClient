@@ -23,13 +23,18 @@ interface WorldStageProps {
   isLoading: boolean;
   /** RDOCanJoinNewWorld said this account already holds as many worlds as its nobility allows. */
   atWorldLimit?: boolean;
+  /**
+   * The world being entered — the legacy theme keeps the Universe Map beside the company page
+   * with this world selected (its frame lit, its line in the ticker, JUMP TO PLANET enabled).
+   */
+  selectedWorld?: string;
 }
 
 /** The original Universe Map's tab order (WORLD_ZONES lists beta first). */
 const LEGACY_TAB_ORDER = ['free', 'restricted', 'beta'] as const;
 
 export function WorldStage({
-  worlds, zoneId, onSelectZone, onSelect, onBack, onRetry, isLoading, atWorldLimit,
+  worlds, zoneId, onSelectZone, onSelect, onBack, onRetry, isLoading, atWorldLimit, selectedWorld,
 }: WorldStageProps) {
   const available = worlds.filter((w) => w.running3 !== false);
   const offline = worlds.filter((w) => w.running3 === false);
@@ -83,7 +88,7 @@ export function WorldStage({
         {available.map((world) => (
           <GlassCard
             key={world.name}
-            className={styles.worldCard}
+            className={`${styles.worldCard} ${world.name === selectedWorld ? styles.selectedCard : ''}`}
             onClick={() => !isLoading && onSelect(world.name)}
           >
             <div className={styles.cardHeader}>
@@ -153,10 +158,17 @@ export function WorldStage({
       )}
 
       {/* The original panel's buttons, legacy theme only (hidden elsewhere, never focusable).
-          JUMP TO PLANET stays disabled as on the original's fresh map: a click on a world
-          enters it directly here. REFRESH PLANET LIST re-queries the directory. */}
+          JUMP TO PLANET stays disabled as on the original's fresh map (a click on a world
+          enters it directly here) until a world is selected, then enters it again.
+          REFRESH PLANET LIST re-queries the directory. */}
       <div className={styles.legacyButtons} aria-hidden="true">
-        <button type="button" className={styles.legacyJump} tabIndex={-1} disabled>
+        <button
+          type="button"
+          className={styles.legacyJump}
+          tabIndex={-1}
+          onClick={selectedWorld ? () => onSelect(selectedWorld) : undefined}
+          disabled={!selectedWorld || isLoading}
+        >
           JUMP TO PLANET
         </button>
         <button

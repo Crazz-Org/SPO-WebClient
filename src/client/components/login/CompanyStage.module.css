@@ -237,62 +237,47 @@
 }
 
 /* ============================================================================
- * Legacy theme — the original NewLogon pages (chooseCompany.asp, chooseVisa.asp, logon.css)
- * inside the join.htm frameset: the "Joining a world" panel (LoginScreen.module.css) and
- * the frame's title band, drawn here because it depends on the page — "Choose a Company"
- * for the company list, "Identify yourself" still showing above the visa offer (chooseVisa
- * never replaced the logon's band).
+ * Legacy theme — the original NewLogon pages as the Universe Map opens them beside itself
+ * (chooseCompany.asp with Logon=FALSE, so voyager.css; chooseVisa.asp): the map stays on
+ * the left (LoginScreen / WorldStage), the page fills the rest of the window.
  *
  *   body       black, margin-top 20 px, padding-left 20 px
  *   notice     the new logo (150 px) and the community notices, centred, orange: 16 px, then
  *              14 px; the Discord link white, bold 18 px; an <hr> under them
- *   .comment   Tahoma bold 10 pt #ff9900, margin-left 70 px — the registered-companies line
- *              or, on the visa page, the visa text (margin-top 50 px)
- *   table      centred, 25 px down, four companies to a row; a cell is bottom-aligned with a
- *              2 px black border that turns #3A5950 under the pointer (FrameButtons.js):
- *              the cluster seal comp-<cluster>.gif, the name (.header3, Tahoma bold 12 pt
- *              #ff9900) and .data lines (Arial 10 pt white): Private or the office, N Facilities
+ *   .header2   "Companies" — Tahoma bold 11 pt #ff9900
+ *   .value     Arial 10 pt white, 20 px in, 10 px down: "You have registered the following
+ *              companies in <world>." / "Choose one from the list or create a new one."
+ *   .comment   Tahoma bold 10 pt #ff9900, margin-left 70 px — the visa text (50 px down)
+ *   table      centred, 25 px down, four companies to a row (ColNum = 4) — the page is a CSS
+ *              grid of four auto columns, so a short last row starts at the left as a table
+ *              row does; a cell is bottom-aligned with a 2 px black border that turns #3A5950
+ *              under the pointer (FrameButtons.js): the cluster seal comp-<cluster>.gif, the
+ *              name (.header3, Tahoma bold 12 pt #ff9900) and .data lines (Arial 10 pt
+ *              white): Private or the office, N Facilities
  *   visa       Tycoon Visa / Visitor Visa cells 70 px apart, InvestorVisa.jpg / VisitorVisa.jpg
  *              over the name and three .data lines
- *   button     "Create New!" two blank lines under the table — .button: Tahoma bold 10 pt
- *              white, padding 5 px, 1 px #345950 frame turning white under the pointer
+ *   button     "Create New!" two blank lines under the table, 40 px left of centre — .button:
+ *              Arial 8 pt white, 100 px wide, padding 1 px, 1 px #345950 frame turning white
+ *              under the pointer
  *
  * Not drawn: "more info" (CompanyPage.asp has no counterpart here) and the back link (the
- * original had no Cancel on this page; the Universe Map is reached from the game).
+ * map beside the page is the way to another world).
  * ============================================================================ */
 
 :global([data-theme="legacy"]) .stage {
-  flex-direction: row;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, auto);
   justify-content: center;
-  align-items: flex-end;
-  align-content: flex-start;
+  align-items: end;
+  align-content: start;
   gap: 0;
   width: 100%;
-  max-width: 860px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   padding: 20px 0 40px 20px;
+  box-sizing: border-box;
   font-family: Tahoma, Verdana, Arial, sans-serif;
   animation: none;
-}
-
-:global([data-theme="legacy"]) .stage::before {
-  content: '';
-  position: fixed;
-  top: 2px;
-  left: 100px;
-  width: 409px;
-  height: 76px;
-  background: url(../../assets/legacy/choosecompanytitle.gif) no-repeat;
-  pointer-events: none;
-}
-
-:global([data-theme="legacy"]) .stage[data-page="visa"]::before,
-:global([data-theme="legacy"]) .stage[data-page="denied"]::before,
-:global([data-theme="legacy"]) .stage[data-page="error"]::before {
-  width: 353px;
-  height: 74px;
-  background-image: url(../../assets/legacy/logontitle.gif);
 }
 
 :global([data-theme="legacy"]) .backLink,
@@ -310,7 +295,7 @@
 :global([data-theme="legacy"]) .emptyMessage,
 :global([data-theme="legacy"]) .denialMessage,
 :global([data-theme="legacy"]) .stage > .grid {
-  flex: 0 0 100%;
+  grid-column: 1 / -1;
 }
 
 :global([data-theme="legacy"]) .legacyNotice {
@@ -344,17 +329,28 @@
   text-decoration: underline;
 }
 
+/* IE's 2 px rule, as the page shows it */
 :global([data-theme="legacy"]) .legacyNotice hr {
   margin: 8px 0 0;
   border: 0;
-  border-top: 1px solid #808080;
-  border-bottom: 1px solid #404040;
+  border-top: 1px solid #a0a0a0;
+  border-bottom: 1px solid #f0f0f0;
 }
 
-/* .comment — the registered-companies line */
+/* .header2 "Companies" over the .value lines */
 :global([data-theme="legacy"]) .header {
   display: block;
-  margin: 14px 0 25px 70px;
+  margin: 10px 0 25px;
+}
+
+:global([data-theme="legacy"]) .header[data-legacy-text]::after {
+  content: attr(data-legacy-text);
+  display: block;
+  margin: 10px 0 0 20px;
+  white-space: pre-line;
+  text-align: left;
+  color: #fff;
+  font: 13.33px / 1.2 Arial, sans-serif;
 }
 
 :global([data-theme="legacy"]) .title[data-legacy-text],
@@ -363,7 +359,13 @@
   text-align: left;
 }
 
-:global([data-theme="legacy"]) .title[data-legacy-text]::after,
+:global([data-theme="legacy"]) .title[data-legacy-text]::after {
+  content: attr(data-legacy-text);
+  font: bold 14.67px / 1.3 Tahoma, Verdana, Arial, sans-serif;
+  color: #ff9900;
+}
+
+/* .comment — the visa text */
 :global([data-theme="legacy"]) .emptyMessage[data-legacy-text]::after {
   content: attr(data-legacy-text);
   font: bold 13.33px / 1.3 Tahoma, Verdana, Arial, sans-serif;
@@ -396,9 +398,9 @@
   align-items: center;
   justify-content: flex-end;
   gap: 0;
-  width: 190px;
-  margin: 0 2px 4px;
-  padding: 5px;
+  width: auto;
+  margin: 2px;
+  padding: 1px 4px;
   box-sizing: border-box;
   background: transparent;
   border: 2px solid #000;
@@ -481,19 +483,22 @@
 :global([data-theme="legacy"]) .stage[data-page="companies"] > .grid {
   display: flex;
   justify-content: center;
-  margin-top: 36px;
+  margin-top: 32px;
+  padding-right: 40px;
 }
 
 :global([data-theme="legacy"]) .createCard {
-  min-width: 100px;
+  width: 100px;
+  min-width: 0;
   min-height: 0;
-  padding: 5px;
+  margin: 5px;
+  padding: 1px;
   background: transparent;
   border: 1px solid #345950;
   border-radius: 0;
   box-shadow: none;
   color: #fff;
-  font: bold 13.33px Tahoma, Verdana, Arial, sans-serif;
+  font: 10.67px Arial, sans-serif;
   transition: none;
 }
 
@@ -513,7 +518,7 @@
 
 :global([data-theme="legacy"]) .createLabel[data-legacy-text]::after {
   content: attr(data-legacy-text);
-  font: bold 13.33px Tahoma, Verdana, Arial, sans-serif;
+  font: 10.67px Arial, sans-serif;
 }
 
 :global([data-theme="legacy"]) .overlay {

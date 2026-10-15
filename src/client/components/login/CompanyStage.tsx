@@ -18,9 +18,13 @@ import styles from './CompanyStage.module.css';
 /** LogonNoAccess.asp:97-100 — the `01/01/2008` PA value is the sentinel for "never had access", not an expiry date. */
 const NO_ACCESS_SENTINEL = '01/01/2008';
 
-/** NewLogon.lng — the original pages' wording, shown by the legacy theme's stylesheet. */
-const LEGACY_REGISTERED =
-  'You have registered the following companies. Choose one from the list or create a new one.';
+/**
+ * NewLogon.lng — the original pages' wording, shown by the legacy theme's stylesheet. The
+ * company list is the Universe Map's page (chooseCompany.asp with Logon=FALSE): the
+ * "Companies" heading (strCompanies) over strRegisteredIn and strChooseOne.
+ */
+const legacyRegistered = (world: string) =>
+  `You have registered the following companies in ${world}.\nChoose one from the list or create a new one.`;
 const legacyNoRecord = (world: string) =>
   `There is no record of you in IFEL's files for ${world}. You need a visa to enter this world. ` +
   'Investment opportunities are endless for holders of Tycoon Visas, while tourists can enjoy their stay using a Visitor Visa.';
@@ -223,6 +227,7 @@ export function CompanyStage({
 
   // With companies the player still picks one; with none, the title names why there is
   // nothing to pick from.
+  const hasList = companies.length > 0 && !worldLimitBlocks && !admission;
   let emptyTitle = companies.length > 0 ? 'Select a Company' : 'Get Started';
   if (worldLimitBlocks) {
     emptyTitle = 'World Limit Reached';
@@ -239,11 +244,11 @@ export function CompanyStage({
 
       <LegacyNotice />
 
-      <div className={styles.header}>
-        <h2
-          className={styles.title}
-          data-legacy-text={companies.length > 0 && !worldLimitBlocks && !admission ? LEGACY_REGISTERED : emptyTitle}
-        >
+      <div
+        className={styles.header}
+        data-legacy-text={hasList ? legacyRegistered(worldName) : undefined}
+      >
+        <h2 className={styles.title} data-legacy-text={hasList ? 'Companies' : emptyTitle}>
           {emptyTitle}
         </h2>
         <span className={styles.worldTag}>{worldName}</span>

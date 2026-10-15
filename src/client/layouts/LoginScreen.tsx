@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useGameStore } from '../store';
+import { useGameStore, useUiStore } from '../store';
 import { useClient } from '../context';
 import { LoginBackground, AuthStage, AuthErrorModal, ZoneStage, WorldStage, CompanyStage } from '../components/login';
 import { config } from '@/shared/config';
@@ -63,6 +63,10 @@ export function LoginScreen() {
   // The chained re-entry hides the zone/world/company stages while it runs; the store
   // still advances loginStage underneath, so a failed step still lands on the right one.
   const visibleStage = resumeTarget ? 'auth' : stage;
+  // The original client never left the Universe Map to choose a company: the world's company
+  // page opened beside it. The legacy theme keeps the map up through that stage.
+  const theme = useUiStore((s) => s.theme);
+  const mapBesideCompanies = theme === 'legacy' && visibleStage === 'companies';
 
   const client = useClient();
   const [storedCreds, setStoredCreds] = useState<{ username: string; password: string } | null>(null);
@@ -122,6 +126,15 @@ export function LoginScreen() {
       client.onWorldSelect(worldName);
     },
     [client, setLoginLoading],
+  );
+
+  // The map beside the company page: another world (or JUMP on this one) — never while a
+  // company is being entered
+  const handleWorldReselect = useCallback(
+    (worldName: string) => {
+      if (!isLoading) handleWorldSelect(worldName);
+    },
+    [isLoading, handleWorldSelect],
   );
 
   // Auto-advance zone + world stages when SPO_FORCE_WORLD is set (test phase).
@@ -203,16 +216,18 @@ export function LoginScreen() {
         />
       )}
 
-      {visibleStage === 'worlds' && (
+      {(visibleStage === 'worlds' || mapBesideCompanies) && (
         <WorldStage
           worlds={worlds}
           zoneId={lastZoneRef.current?.id}
           onSelectZone={handleZoneSelectById}
-          onSelect={handleWorldSelect}
+          onSelect={mapBesideCompanies ? handleWorldReselect : handleWorldSelect}
           onBack={handleBackToZones}
           onRetry={handleRetryWorlds}
-          isLoading={isLoading}
+          // Entering with a company shows its gauge on the company page, not over the map
+          isLoading={visibleStage === 'worlds' && isLoading}
           atWorldLimit={atWorldLimit}
+          selectedWorld={mapBesideCompanies ? selectedWorld : undefined}
         />
       )}
 
