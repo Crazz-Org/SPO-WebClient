@@ -102,7 +102,8 @@ export function GameScreen() {
       {!legacy && <RightRail />}
 
       {/* ChatStrip — bottom-edge persistent chat, hidden when the player closed it (#610) */}
-      {chatVisible && <ChatStrip />}
+      {/* (the legacy theme has the original chat window and chat line in LegacyGameChrome) */}
+      {chatVisible && !legacy && <ChatStrip />}
 
       {/* The universal sheet — one stack of surfaces (inspector, mail, search, politics, profile…) */}
       <Sheet />

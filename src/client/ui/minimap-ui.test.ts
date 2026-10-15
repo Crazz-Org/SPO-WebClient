@@ -22,6 +22,7 @@ interface MockElement {
   appendChild: jest.Mock;
   removeChild: jest.Mock;
   addEventListener: jest.Mock;
+  setAttribute: jest.Mock;
   onmousedown: ((e: unknown) => void) | null;
   onclick: (() => void) | null;
   getContext: jest.Mock;
@@ -80,6 +81,7 @@ function createMockElement(): MockElement {
       return child;
     }),
     addEventListener: jest.fn(),
+    setAttribute: jest.fn(),
     onmousedown: null,
     onclick: null,
     getContext: jest.fn(() => mockCtx),
@@ -1006,5 +1008,58 @@ describe('MinimapUI', () => {
 
       minimap.destroy();
     });
+  });
+});
+
+// The legacy theme's SmallMapFrame — MapIsoView.dfm :916-1068.
+describe('MinimapUI under the legacy theme', () => {
+  beforeEach(() => {
+    useUiStore.setState({ theme: 'legacy' });
+  });
+  afterEach(() => {
+    useUiStore.setState({ theme: 'empire' });
+  });
+
+  it('is a 200 × 97 frame bottom-right above the status panel, not a diamond', () => {
+    const minimap = new MinimapUI();
+    minimap.setRenderer(createMockRenderer());
+    const wrapper = allElements.find(el => el.id === 'minimap-wrapper')!;
+    const container = allElements.find(el => el.id === 'minimap-container')!;
+    expect(wrapper.style.cssText).toContain('right: 0');
+    expect(wrapper.style.cssText).toContain('bottom: 142px');
+    expect(wrapper.style.cssText).toContain('width: 200px');
+    expect(wrapper.style.cssText).toContain('height: 97px');
+    expect(container.style.clipPath).toBe('none');
+    minimap.destroy();
+  });
+
+  it('draws the map flattened 2:1 and never the diamond border', () => {
+    const minimap = new MinimapUI();
+    minimap.setRenderer(createMockRenderer());
+    jest.advanceTimersByTime(600);
+    expect(mockCtx.scale).toHaveBeenCalledWith(1, 0.5);
+    expect(mockCtx.createLinearGradient).not.toHaveBeenCalled();
+    minimap.destroy();
+  });
+
+  it('adds the + and - zoom buttons', () => {
+    const minimap = new MinimapUI();
+    minimap.setRenderer(createMockRenderer());
+    const wrapper = allElements.find(el => el.id === 'minimap-wrapper')!;
+    const labels = wrapper.children.map(c => (c as unknown as { textContent?: string }).textContent).filter(Boolean);
+    expect(labels).toEqual(['+', '-']);
+    minimap.destroy();
+  });
+
+  it('a click in the middle of the frame goes to the middle of the map', () => {
+    const renderer = createMockRenderer();
+    const minimap = new MinimapUI();
+    minimap.setRenderer(renderer);
+    const container = allElements.find(el => el.id === 'minimap-container')!;
+    // the canvas is 194 × 93 inside the 6 px left and 4 px top borders
+    container.onmousedown!({ offsetX: 97, offsetY: 46.5, preventDefault: jest.fn(), stopPropagation: jest.fn() });
+    const calls = (renderer.centerOn as jest.Mock).mock.calls;
+    expect(calls[calls.length - 1]).toEqual([50, 50]);
+    minimap.destroy();
   });
 });

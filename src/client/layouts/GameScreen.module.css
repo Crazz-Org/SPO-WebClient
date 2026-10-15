@@ -19,3 +19,11 @@
     padding-bottom: 56px; /* BottomNav height */
   }
 }
+
+/* Legacy theme — the small map belongs to the map, as the original's SmallMapFrame did: the
+   whole game layer (toolbar, StatusPanel, chat window, panels) sits above it. The minimap is
+   appended to <body> at --z-dropdown (minimap-ui.ts), outside this fixed layer, so the layer
+   has to rise over it; nothing in this layer overlaps the small map unless it should cover it. */
+:global([data-theme="legacy"]) .screen {
+  z-index: calc(var(--z-dropdown) + 1);
+}

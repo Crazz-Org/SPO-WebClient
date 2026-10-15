@@ -32,6 +32,7 @@ import { useWorldEvent } from '../WorldEventTicker';
 import { useModeDescriptor } from '../use-mode-descriptor';
 import { LegacyMarquee } from './LegacyMarquee';
 import { LegacyBlockTicker } from './LegacyBlockTicker';
+import { LegacyChatWindow } from './LegacyChatWindow';
 import styles from './LegacyGameChrome.module.css';
 
 /** MapIsoViewer.tln — the captions of the StatusPanel and the chat line. */
@@ -113,6 +114,10 @@ export function LegacyGameChrome() {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [chatText, setChatText] = useState('');
   const [townHallPending, setTownHallPending] = useState(false);
+  // The chat window over the map (the toolbar's chat icon) and the chat line on the map
+  // ("Chat over Map" in that window, the line's own x) — ChatListHandlerViewer / MapIsoView.
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOverMap, setChatOverMap] = useState(true);
 
   const ui = useUiStore.getState;
 
@@ -127,7 +132,7 @@ export function LegacyGameChrome() {
       { id: 'map', alt: 'Map view', img: 'map', onClick: () => ui().clearSurfaces() },
       { id: 'universe', alt: 'Universe View', img: 'stellarmap', onClick: () => client.onSwitchServer() },
       { id: 'mail', alt: 'Mail', img: 'mail', panel: 'mail', onClick: () => ui().toggleRightPanel('mail') },
-      { id: 'chat', alt: 'Chat', img: 'chat', onClick: () => useChatStore.getState().toggleChatVisible() },
+      { id: 'chat', alt: 'Chat', img: 'chat', onClick: () => setChatOpen((v) => !v) },
       { id: 'options', alt: 'Options', img: 'options', onClick: () => ui().openModal('settings') },
       { id: 'help', alt: 'Support', img: 'help', onClick: () => window.open(SUPPORT_URL, '_blank', 'noopener') },
     ];
@@ -223,7 +228,7 @@ export function LegacyGameChrome() {
   return (
     <div className={styles.chrome}>
       {/* MapOptionsPanel — over the map, above the chat line, while OVERLAY is on */}
-      {optionsOpen && (
+      {optionsOpen && !chatOpen && (
         <div className={styles.mapOptions}>
           <label className={styles.optionsLabel}>
             Active Overlay:
@@ -245,7 +250,8 @@ export function LegacyGameChrome() {
         </div>
       )}
 
-      {/* ChatEditPanel */}
+      {/* ChatEditPanel — while the chat goes over the map and its window is closed */}
+      {chatOverMap && !chatOpen && (
       <div className={styles.chatLine}>
         <input
           className={styles.chatInput}
@@ -260,8 +266,9 @@ export function LegacyGameChrome() {
             }
           }}
         />
-        <FramedButton className={styles.closeChat} title="Close chat box" onClick={() => setChatText('')}>x</FramedButton>
+        <FramedButton className={styles.closeChat} title="Close chat box" onClick={() => setChatOverMap(false)}>x</FramedButton>
       </div>
+      )}
 
       {/* StatusPanel */}
       <div className={styles.statusPanel}>
@@ -301,6 +308,11 @@ export function LegacyGameChrome() {
           </FramedButton>
         </div>
       </div>
+
+      {/* The chat window, over the map and its StatusPanel */}
+      {chatOpen && (
+        <LegacyChatWindow chatOverMap={chatOverMap} onToggleChatOverMap={() => setChatOverMap((v) => !v)} />
+      )}
 
       {/* Toolbar frame */}
       <div className={styles.toolbar}>

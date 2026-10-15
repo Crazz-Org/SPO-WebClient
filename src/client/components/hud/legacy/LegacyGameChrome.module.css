@@ -36,17 +36,16 @@
   pointer-events: auto;
 }
 
+/* The frame spans the window but must let the map (and the small map) take the clicks between
+   its pieces: GameScreen's `.screen > * { pointer-events: auto }` has the same weight as
+   `.chrome`, so the doubled class is what keeps this layer click-through. */
+.chrome.chrome {
+  pointer-events: none;
+}
+
 /* The map ends where the StatusPanel begins, as the original's map frame did (100 + 42) */
 :global([data-theme="legacy"] #game-panel) {
   bottom: 142px;
-}
-
-/* The minimap sits bottom-right on the map, above the StatusPanel (SmallMapFrame) */
-:global([data-theme="legacy"] #minimap-wrapper) {
-  top: auto !important;
-  left: auto !important;
-  right: 0 !important;
-  bottom: 142px !important;
 }
 
 /* ---- TFramedButton ---- */

@@ -701,12 +701,3 @@
   outline: 2px solid var(--accent-gold);
   outline-offset: 2px;
 }
-
-/* Legacy theme — the message window sits on the map's left, just above the chat line
-   (LegacyGameChrome's ChatEditPanel: 25 px over the 142 px StatusPanel + toolbar). */
-:global([data-theme="legacy"]) .strip,
-:global([data-theme="legacy"]) .strip.shifted {
-  left: 0;
-  bottom: 167px;
-  border-radius: 0;
-}
